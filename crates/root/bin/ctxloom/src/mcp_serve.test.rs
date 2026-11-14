@@ -416,8 +416,9 @@ fn test_a_newer_sessions_call_drains_an_idle_older_daemon_and_is_answered_by_its
         "the old daemon drained and exited"
     );
     let new = discovered(&world.project);
+    // The daemon this binary started (the test stamp is the client's
+    // alone: the daemon it starts serves with the binary's own).
     assert_ne!(new.pid, old.pid, "another daemon serves");
-    assert_eq!(new.stamp, NEWER, "this binary's");
     let (code, err) = mcp.finish();
     assert_eq!(code, 0, "{err}");
 }

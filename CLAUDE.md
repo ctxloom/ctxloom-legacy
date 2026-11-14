@@ -2095,9 +2095,21 @@ coordinator client), its `requester` the caller (project uid from
 has it (s3-Q4), its command id keyed by an id minted once per call (a
 message's, a clear's; a close's `close:<uid>`), so the one retry on a new
 daemon is a DUPLICATE. The answer is the session-index projection, or
-`GetSession` when none came back. A daemon of another stamp is refused
-`daemon-api-version-skew` and never stopped (OD-3, `Reach::never_stopping`;
-the old daemon's drain is not built). Under test-support, a
+`GetSession` when none came back. A session's call never ends what a
+daemon hosts (OD-3, owner 2026-11-13/14; `Reach::never_stopping`,
+`daemon_api::reconcile_session`): meeting an IDLE daemon of an OLDER
+version (`daemon_api::newer`: the stamps' `MAJOR.MINOR.PATCH[-pre]` by
+semver precedence; the hash and a dirty build's time order nothing, so two
+builds of one version are neither), it asks it to drain (`StopDaemon`,
+never `even_if_live`: its loop ticks no new child, its discovery is
+withdrawn, and its listener's stop answers the calls in flight within
+`STOP_GRACE`), waits it out, starts its own and is answered there; a busy
+one (hosting runs, or a run started between the look and the drain,
+`DaemonHosting`), or one of an older or the same version, refuses the call
+`daemon-api-version-skew`, naming both stamps, and is asked nothing. Not
+built (a wire change, escalated): the daemon itself seeing a client's
+stamp, refusing new calls while it drains, and draining a daemon that hosts
+runs without ending them. Under test-support, a
 `test-die-after-apply` file in the daemon's directory kills the daemon once
 a client's `HandleSync` is applied and before it answers
 (`serve.rs`'s `Dying`, taken by the daemon that finds it), and `ctxloom test
