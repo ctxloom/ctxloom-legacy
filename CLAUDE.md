@@ -1861,9 +1861,15 @@ library's `bundle` noun and owns `remote` and `deps`.
   `{}`), `deps check [ref]` one `CheckDependenciesResponse` (rows by
   `DependencyCheck.State`; a whole check lists outdated and unchecked only),
   `deps upgrade` `UpgradeDependenciesResponse`, `deps hold|unhold` the
-  Dependency, `bundle push` `PushBundleResponse` (`State` COMMITTED or
-  PULL_REQUEST_OPENED) and `bundle move` `MoveBundleResponse` (a directory
-  move gives its `path` alone). A pin change is the shared `PinChange`
+  Dependency (a local bundle, no dependency, `{"name": null}`), `bundle
+  push` `PushBundleResponse` (`State` COMMITTED or PULL_REQUEST_OPENED) and
+  `bundle move` `MoveBundleResponse` (a directory move gives its `path`, the
+  bundle there `{"name": null}`: that project's name is not this one's to
+  give). An unresolved name prints as JSON `null`, never left out (owner
+  ruling 2026-11-14): pbjson-build prints nothing for an unset field, so the
+  answer names the paths whose name always prints and
+  `daemon_proto::with_unresolved_names` puts `null` (first, a name being
+  field 1) where one is absent. A pin change is the shared `PinChange`
   (`old_`/`new_`, `ChangeKind`, `PinChange.Compatibility`, ItemKind's `HOOK`).
   Text output is unchanged.
 - Evidence rule: content is removed upstream only on a not-found from a
