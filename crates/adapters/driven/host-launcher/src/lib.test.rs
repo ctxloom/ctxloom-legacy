@@ -461,11 +461,13 @@ fn a_terminal_session_stays_in_the_callers_process_group_and_a_turn_does_not() {
     assert_ne!(held[0], held[1], "a turn is in a group of its own");
 }
 
-// A stop requested from outside ends a terminal session (the direct child);
-// forced, not waited for: the stop is requested once the pid is heard, which
-// is when the child is known to run.
+// A stop requested from outside ends a terminal session (the direct child):
+// it is asked to stop (SIGTERM), not killed outright, so a program that stops
+// on the ask ends by the ask. Forced, not waited for: the stop is requested
+// once the spawn is heard; a SIGTERM before the script's `exec` ends the
+// shell the same way.
 #[test]
-fn a_requested_stop_kills_the_terminal_sessions_direct_child() {
+fn a_requested_stop_asks_the_terminal_sessions_direct_child_to_stop() {
     if !runs_scripts() {
         return;
     }
@@ -483,10 +485,53 @@ fn a_requested_stop_kills_the_terminal_sessions_direct_child() {
         output.exit,
         Exit {
             code: None,
-            signal: Some(9)
+            signal: Some(15)
         }
     );
     assert!(began.elapsed() < Duration::from_secs(20));
+}
+
+// A terminal session's direct child that ignores the ask is killed once the
+// grace (run-within's five seconds) has passed. The stop is requested only
+// after the child said it ignores SIGTERM (the ignore survives its `exec`).
+#[test]
+fn a_requested_stop_kills_a_terminal_sessions_direct_child_that_ignores_it() {
+    if !runs_scripts() {
+        return;
+    }
+    let dir = Rooted::temp().unwrap();
+    let note = dir.real_path(&os::fixture("/")).unwrap().join("ignoring");
+    let body = format!(
+        "#!/bin/sh\ntrap '' TERM\necho > {}\nexec sleep 30\n",
+        note.display()
+    );
+    let path = fixture_program::install_program(&dir, &os::fixture("/turn"), &body).unwrap();
+    let mut command = TurnCommand::new(path.to_str().unwrap());
+    command
+        .env
+        .insert("PATH".to_string(), "/usr/bin:/bin".to_string());
+    let stop = Stop::new();
+    let launcher = HostLauncher::stopped_by(stop.clone());
+    let running = launcher.launch_terminal(&command).unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    while !dir.exists(&os::fixture("/ignoring")).unwrap() {
+        assert!(Instant::now() < until, "the child never said it was ready");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let began = Instant::now();
+    stop.request();
+    let output = running.finish().unwrap();
+    assert_eq!(
+        output.exit,
+        Exit {
+            code: None,
+            signal: Some(9)
+        }
+    );
+    let took = began.elapsed();
+    // run-within's `Terminal::STOP_GRACE`, the five seconds the owner chose.
+    assert!(took >= Duration::from_secs(5), "{took:?}");
+    assert!(took < Duration::from_secs(20), "{took:?}");
 }
 
 // A stop requested from outside ends a turn too (ruling 114): its tree is

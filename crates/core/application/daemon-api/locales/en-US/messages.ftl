@@ -18,3 +18,6 @@ daemon-api-version-skew = the serving daemon is ctxloom { $daemon }, not this ct
 daemon-api-version-skew-fix = once that daemon hosts nothing, `ctxloom daemon stop` lets this ctxloom start its own
 daemon-api-assembly-missing-fragment = no fragment is named { $name }
 daemon-api-assembly-missing-tag = no fragment is tagged { $name }
+daemon-api-launch-in-progress = another launch of { $harp } is being made now
+daemon-api-launch-in-progress-fix = wait for it to finish, then look at the child: ctxloom session show { $harp }
+daemon-api-launch-lock = a child's launch lock could not be taken: { $ext_err_txt }

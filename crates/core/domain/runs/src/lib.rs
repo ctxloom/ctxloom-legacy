@@ -21,7 +21,7 @@ pub type RunCommand = RunStateCommand;
 /// The run aggregate's events, one variant per event type.
 pub type RunEvent = RunStateEvent;
 
-pub use aggregate::RunAggregate;
+pub use aggregate::{pre_launch_refusal, RunAggregate};
 pub use generated::*;
 pub use refusal::NotOurs;
 #[cfg(any(test, feature = "test-support"))]

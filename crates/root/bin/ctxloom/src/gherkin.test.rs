@@ -118,6 +118,10 @@ impl CommonWorld for World {
         self.common.run_lines(&doc(step), "");
     }
 
+    fn before_line(&mut self, line: &str) {
+        daemon_spec::before_line(self, line);
+    }
+
     fn before_run(&mut self) {
         self.adopt_record();
         self.seed();

@@ -636,7 +636,8 @@ SIGHUP or SIGTERM only (a SIGINT is the terminal's Ctrl-C, which reaches the
 engine itself, and is let pass). The stop is `HostLauncher::stopped_by(Stop)`'s
 `Stop`: a turn's tree is asked to stop (SIGTERM to its group, run-within's
 `run_within_stopped_by`), given `Within::stop_grace` (five seconds), then
-killed; a terminal session's direct child is killed. The run then ends as any
+killed; a terminal session's direct child is asked to stop (SIGTERM), given
+`Terminal::STOP_GRACE` (5 s), then killed. The run then ends as any
 run whose engine exited (its end facts, the listener stopped, the locks
 released), and the command exits 128 plus the signal's number, the error
 `run-application-stopped` (`RunError::Stopped`) naming the signal. A second
@@ -1068,8 +1069,8 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `94f630a3` on angzarr-router `bec0c2bf`;
 - angzarr-build `7547415e` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `a35789ef`;
-- taskloom's crates `7af05807` and ctxloom-lib's `fb8e8212`, built on the
+- angzarr-platform `5f39b330`;
+- taskloom's crates `2db3ddf7` and ctxloom-lib's `2486af2a`, built on the
   same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
@@ -1126,8 +1127,10 @@ then killed; the outcome `stopped`).
 (never on a spawn failure). `run_terminal(spec, &Stop, started)` is the mode
 for a program that owns the terminal: inherited stdio, NOT a process group of
 its own (a Ctrl-C reaches it), no deadline, and a `Stop` (a cloneable flag the
-caller sets, e.g. from `Os::signals`) that kills only the DIRECT child, not
-its descendants. Tested on unix; macOS and Windows are not. No adapter bypasses
+caller sets, e.g. from `Os::signals`) that asks only the DIRECT child to stop,
+not its descendants (SIGTERM to that one process, `os::process::request_stop`;
+none on Windows), gives it `Terminal::STOP_GRACE` (5 s; `run_terminal_with`
+takes a `Terminal` of another), then kills it. Tested on unix; macOS and Windows are not. No adapter bypasses
 `run-within` any more.
 All of ctxloom-lib's crates are pinned at one rev (`cli-support`,
 `process-env`, `project-dir`, `run-within`), and so is each family above.
@@ -1214,7 +1217,7 @@ a file naming none is unreadable). A client whose ctxloom home is not the
 serving daemon's is refused before it does anything, `ctxloom-wiring-daemon-
 other-home` (exit 20, naming both homes, its fix the daemon's home or a
 `daemon stop` from it), and never served by a second daemon (`daemon
-status`, `daemon stop` and the hidden verbs; a hook's rediscovery passes
+status`, `daemon stop`, `daemon resolve` and the child verbs; a hook's rediscovery passes
 such a daemon over and delivers to its run's listener). The file is 0600
 and its directory 0700, tightened on each publish whoever made it (the
 single-instance lock may have); on Windows the platform sets no mode and the profile's
@@ -1222,8 +1225,9 @@ inherited ACL stands (M8). It keeps other users out, not the user's own
 processes. `Discovery`'s `Debug` withholds the bearer, and the daemon's log
 never holds it. Addressing at the daemon (owner, after step 3/4): the
 target session travels ONCE, as the command's Cover root, and a command's
-`requester` is its own field, set by the client (the hidden verbs and the
-hooks from `CTXLOOM_SESSION`) and taken as sent. No run is sent to the
+`requester` is its own field, set by the client (a session's MCP tools
+and its hooks from `CTXLOOM_SESSION`; the user's child verbs name none,
+D25) and taken as sent. No run is sent to the
 daemon, and the daemon does NOT check a fact's session against a run: the
 session aggregate records nothing on a session that is not live. Accepted
 cost: a buggy client could write to the wrong live session unnoticed. The
@@ -1258,12 +1262,75 @@ calling the running program (ruling 163), claude over her own
 and over her config, each read AT EVERY LAUNCH (T21): a hosted engine is
 composed anew for each launch (`HostedEngine::for_launch`, the wiring's
 `daemon::launch_engines_for`), under the account's home, where the LAUNCHER
-finds her settings: `daemon launch` hands off its caller's
+finds her settings: a launch's hand-off keeps its caller's
 `daemon::SETTINGS_PLACES` (`CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME`,
 `XDG_DATA_HOME`, `XDG_STATE_HOME`) beside the child's environment
-(`daemon_application::HandOff`'s `launcher`, the hand-off file's format 2,
-a `@NAME=value` line each), never into it, and never the daemon's own
-environment. A hosted child's session home is prepared with its agent's
+(`daemon_application::HandOff`'s `launcher`, a `@NAME=value` line each of
+the hand-off file, format 3, which adds the `!agent=<agent>` line; format 2
+reads as the default agent), never in it, and never the daemon's own
+environment.
+
+THE CHILD VERBS AND THE HAND-OFF (slice 4 U3: S2, S19, T6, S10; owner
+rulings s4-Q1, s4-Q13). The user's `session launch <owner> [--name]
+[--agent] [--engine] ["<task>"]`, `session send <harp> {inform|wake|steer}
+<text> [--id]`, `session clear <harp>` and `session close <harp>`
+(`session-cli`'s `is_child`/`child`) are clients of the daemon, as the
+USER: `daemon_api::Caller::user` over the project the command resolved
+(`daemon::child_caller`; outside a project `daemon-api-project-unknown`,
+exit 20), each the session domain's command through `HandleSync`,
+`requester` none, keyed by an id minted once per call (`--id` is a
+message's), so its retry on a new daemon is a DUPLICATE; parsed before any
+daemon is reached (S14: a usage error starts none; the urgency is a
+required word). `--format json` is the target's `Session` (a launch's, the
+child's, as launched until its daemon mints it); text says `<harp>: <id>
+recorded` (`already recorded` for a duplicate), `closed` (`already
+closed`), `launched, a child of <owner>`. Their refusals are the domain's
+words (`daemon_api::rejection_of` maps the sessions and runs domains'
+typed refusals: `sessions-session-closed`, `sessions-session-unknown`,
+`runs-no-credential`, ...), exit 20. The hidden `daemon
+launch|send|close|clear` are gone (hard migrate); `daemon resolve` stays
+hidden. A launch (`Caller::launch`; the MCP tool `child_launch` too, its
+owner the calling session, its harp minted when it names none,
+`Caller::naming`) holds the child's LAUNCH LOCK (`Caller::holding`: the run
+lock `launch-<child>`, `daemon_api::launch_lock_name`, under
+`<home>/.ctxloom/runs/`, the platform's file lock taken at once or not at
+all, so a second launch of one child meanwhile is refused
+`daemon-api-launch-in-progress`) from before its `CreateHandOff` to after
+its `LaunchChild`; its `LaunchChild` (keyed `launch:<owner>:<child>`, the delegation limit
+`daemon_api::DELEGATION_LIMIT`, 4), and a refused `LaunchChild` is followed
+by `DeleteHandOff` (kept while an open session holds it). The child's
+engine is the one asked, else its AGENT's configured engine (an agent naming
+none, the config's default-engine rule): the daemon's plan resolves it, and
+`HandOff.engine` (field 2, additive) names it back for the `LaunchChild`. The daemon serves
+`CreateHandOff{parent, hand_off_id, owner, engine, agent, env}`
+(`daemon-api`'s `hand_off.rs`, the root's `daemon::files::ApiHandOffs`)
+checking BEFORE it writes anything, so a refused launch leaves nothing: the
+owner in the warm index (else the sessions domain's `SessionUnknown`,
+"there is no session named ..."), the child's plan (its project's dry run
+for the agent on the engine, its agent's when none is named, in the
+launch's environment; one that cannot be made is `ConfigUnreadable`), and
+its credential as its enqueue will judge it (the runs aggregate's own
+checks, `runs::pre_launch_refusal`, refused with the typed refusal the
+enqueue would answer, under its message's status); then the hand-off is written MARKED IN LAUNCH (`<id>.launching` beside it,
+written first, so no launch's hand-off is ever there unmarked) and 0600 (in the 0700 `~/.ctxloom/daemon/launch/`, named by the child's
+stable id; what the child may be given of the environment is
+`engine_claude::launcher_environment`'s). The hand-off lives as long as the
+child is open (T6): READ at each of its starts (`HandOffs::read`, a start
+after a daemon restart included; there is no `take`), planned for the agent
+it names, deleted at the child's close (`Step::End`), and swept at each
+tick once the board has caught up (`Daemon::sweep_hand_offs`, owner's ruling
+on U3: tied to the launch, no timer and no pid): a file whose session the
+board holds closed is deleted; one no session knows of (neither a session
+nor an owner's child) is deleted at once unless it is marked and its
+creator still holds the launch lock (`Kept::creator_holds`, a probe of the
+lock: a crash mid-launch leaves a mark whose lock reads free, so it is
+cleared); a marked one a `LaunchChild` recorded (its owner holds the child)
+is CLAIMED, its mark cleared (`HandOffs::claim`); an open child's is kept.
+Accepted cost (T6): an API key lies at rest for the child's life. Not yet:
+a hosted child's workspace axis (s4-Q11), the root session's persisted
+launcher places for `child_launch` (s4-Q1; a session's call sends its
+engine's environment, whose settings places are its session home's), and
+the stop of a running interactive session's TUI on its close (U5). A hosted child's session home is prepared with its agent's
 permissions document for the engine, verbatim (rulings 133-137,
 `run_application::HostedChild::permissions`). A hosted child is made by the
 one launch (`launch_of`, T10) like every other: its permits applied (the
@@ -1458,8 +1525,8 @@ VERSION SKEW (M3): a client whose stamp is not the serving daemon's asks it
 (`GetDaemon`); hosting nothing, it is stopped (`StopDaemon`), waited out and
 the client starts its own; hosting live runs, the command is refused,
 `daemon-api-version-skew-busy` (exit 20, naming both stamps and the harps,
-fix `ctxloom daemon stop --even-if-live`). Today the hidden write verbs
-(`daemon send|close|clear|launch`) and `daemon resolve` reconcile first;
+fix `ctxloom daemon stop --even-if-live`). `daemon resolve` reconciles
+first, and the child verbs as every client reaching through `Reach` does;
 under `test-support`, `CTXLOOM_TEST_STAMP` names the client's stamp.
 
 PROJECT REGISTRATION (owner, 2026-11-12). `ResolveProject` is
@@ -2154,6 +2221,44 @@ SIGINT or SIGTERM stops its engine, records its end and stops the listener
 before it exits (ruling 114, above). A SIGKILL is not heard: the engine
 outlives it.
 
+A session's HOLD (s4-Q14, unit H1; built as a library, no hook or daemon
+uses it yet: H2 makes a hook hold, the flush is later) keeps capture facts
+in order for a ctxloom process of an up-to-date version to deliver (owner:
+the client side pushes a hold over the API; the daemon reads no hold file).
+"Up to date" is semver not older, `run_ports::up_to_date(daemon, fact) =
+!newer(fact, daemon)`, over the ONE `run_ports::newer` the skew rule uses
+too (`daemon_api::newer` re-exports it). The port is run-ports'
+`HeldFacts` (`hold`, `is_empty`, `sessions`, `take`, `discard`, `survey`;
+`Batch::cut`/`settle`); the adapter is `adapters/driven/fact-spool`'s
+`Spool`: `<home>/.ctxloom/held/<session root>.held` (`run_ports::HELD_DIR`),
+the directory made and tightened 0700 and each hold 0600 at every use (on
+Windows no mode: the ACL, M8), a mode not set failing the call
+(`run-ports-hold-restrict`). A hold is the magic `CTXHELD\x01`, then records
+of a u32-LE length, a u32-LE CRC-32 (crc32fast) and one `ctxloom.v1.HeldRecord`
+(`proto/ctxloom/v1/held.proto`: a `HeldFact`, the hook's stamp, the session's
+name, the external id and the `CommandBook`'s exact bytes, or a `HeldGap`);
+`HeldFact`'s `Debug` withholds the book. Bound: 32 MiB a session and 256 MiB
+a home (`SESSION_BOUND`, `HOME_BOUND`); past either the NEWEST fact is
+dropped (`Held::Full`, for the caller to say on stderr) and a gap record
+written in its place, gaps allowed `GAP_SLACK` (64 KiB) past the bound;
+earlier facts are kept. Two `file-lock` locks a session: `<root>.lock`, the
+short append lock (a hook's wait `APPEND_WAIT`, 1 s; the wait, or its
+pause, is `Spool::waiting`/`pausing`, the seam tests force a held lock
+through), and `<root>.flush.lock`, held by a `take` until its batch is
+settled or dropped and NEVER waited for, so of several processes taking one
+hold exactly one gets the batch and the others `None`. A settle rewrites
+the hold to what was kept plus what was appended since its snapshot, only
+while the hold still begins with the snapshot's bytes (a discard
+meanwhile: `Settled::Replaced`, left alone); a batch dropped unsettled (a
+crash between delivering and cutting) changes nothing, and its facts are
+delivered again, each a DUPLICATE. A torn tail is cut by the next append or
+take, never set aside; corruption (a length past the longest record, a bad
+CRC, a payload that is no record) keeps the valid prefix and sets the rest
+aside as `<root>.held.corrupt-<n>` (0600, never parsed again); a hold of
+another format is never touched (`run-ports-hold-format`). No record is
+fsync'd. The property tests use a seeded generator of the test's own (no
+property crate is in the lock).
+
 ## No path dependency leaves the repository
 
 A tracked `Cargo.toml` or `.cargo/*.toml` never holds a dependency, `[patch]`
@@ -2188,13 +2293,16 @@ reach no daemon. The command line holds stdout locked, so the server's
 lines reach it through a channel and are written on the command's thread
 (`mcp_server::serve(server, out)`). Its tools (`mcp_server::TOOL_NAMES`)
 are `session_list`, `session_show`, `transcript_show`, `context_assemble`
-(its `bundles` argument is `AssembleContext`'s `fragments`), `child_send`,
-`child_close` and `child_clear`, each described in the owner's approved
-words (2026-11-14), one Markdown file per tool beside the crate
-(`mcp-server/tools/<tool>.md`), embedded by `include_str!` at compile time
-and offered without the file's closing newline (nothing is read at run
-time). `child_launch` (step 8) and
-`approval_prompt` (OD-1) are not offered until they are built. Each tool is
+(its `bundles` argument is `AssembleContext`'s `fragments`), `child_launch`
+(slice 4 U3, s4-Q1: `name`, `agent`, `task`, all optional; the session's
+own child, as `session launch` is the user's; its description the owner's
+approved text, which tells the engine to give a child its task and to
+prefer such children to its own subagents), `child_send`, `child_close` and `child_clear`, each
+described in the owner's approved words (2026-11-14), one Markdown file per
+tool beside the crate (`mcp-server/tools/<tool>.md`), embedded by
+`include_str!` at compile time and offered without the file's closing
+newline (nothing is read at run time). `approval_prompt` (OD-1) is not
+offered until it is built. Each tool is
 a call of `daemon_api::Caller`, a SESSION as the daemon's client. Its
 project is its name's (`projects/{p}`, OD-2), never resolved from a cwd.
 Its reads are the service's (`GetTranscript` and `AssembleContext` are now

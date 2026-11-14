@@ -1073,3 +1073,52 @@ fn the_enqueue_judges_no_posture() {
     );
     assert_eq!(said(&rejection).1["count"], "2");
 }
+
+// ---- the pre-launch checks judged before anything is recorded (S10, U3)
+
+/// NEW-DESIGN (daemon slice 4 §3.4): a launch every check passes is judged
+/// so, and nothing is recorded.
+#[test]
+fn a_launch_every_check_passes_has_no_pre_launch_refusal() {
+    assert!(crate::pre_launch_refusal(&one_shot()).is_none());
+}
+
+/// NEW-DESIGN (§3.4): a child with no credential set is refused before its
+/// hand-off is written, with the typed refusal the enqueue would answer and
+/// the status its message declares.
+#[test]
+fn a_child_with_no_credential_is_refused_as_its_enqueue_would_be() {
+    let child = EnqueueRun {
+        mode: RunMode::Structured,
+        credential: accepting(false),
+        ..enqueue()
+    };
+    let (refusal, status) = crate::pre_launch_refusal(&child).expect("refused");
+    assert_eq!(
+        RunRejection::try_from(&refusal),
+        Ok(RunRejection::NoCredential {
+            engine: "claude-code".to_string(),
+            variables: "CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY".to_string(),
+        })
+    );
+    assert_eq!(
+        status,
+        <crate::NoCredential as crate::Refusal>::REFUSAL_STATUS
+    );
+}
+
+/// NEW-DESIGN (§3.4): a file-only source refuses a child as its enqueue
+/// does.
+#[test]
+fn a_child_on_a_file_only_source_is_refused_as_its_enqueue_would_be() {
+    let child = EnqueueRun {
+        mode: RunMode::Structured,
+        credential: file_only(),
+        ..enqueue()
+    };
+    let (refusal, _) = crate::pre_launch_refusal(&child).expect("refused");
+    assert!(matches!(
+        RunRejection::try_from(&refusal),
+        Ok(RunRejection::FileOnlyCredential { .. })
+    ));
+}

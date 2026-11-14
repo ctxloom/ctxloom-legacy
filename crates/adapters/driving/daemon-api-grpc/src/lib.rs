@@ -283,12 +283,32 @@ impl Ctxloom for Served {
         .await
     }
 
+    async fn create_hand_off(
+        &self,
+        request: Request<v1::CreateHandOffRequest>,
+    ) -> Result<Response<v1::HandOff>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.create_hand_off(message).await
+        })
+        .await
+    }
+
     async fn get_run(
         &self,
         request: Request<v1::GetRunRequest>,
     ) -> Result<Response<v1::Run>, Status> {
         self.answer(request, |calls, message| async move {
             calls.get_run(message).await
+        })
+        .await
+    }
+
+    async fn delete_hand_off(
+        &self,
+        request: Request<v1::DeleteHandOffRequest>,
+    ) -> Result<Response<v1::HandOff>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.delete_hand_off(message).await
         })
         .await
     }
