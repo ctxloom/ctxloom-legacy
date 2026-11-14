@@ -19,16 +19,15 @@
 //! as it is: the launcher a turn or the terminal (`RunnerLauncher::start`),
 //! the daemon a child (`ChildEngine::start`).
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use isolation_ports::Workspaces;
 use run_ports::{
     ChildEngine, ChildPermissions, ChildSpec, Engine, EngineSettings, Ignored, Launch, LaunchAt,
-    LaunchKind, LeftOut, ProgramNotFound, SessionRecords, Stdio, StopPolicy, TurnCommand,
+    LaunchKind, LeftOut, ProgramNotFound, SessionRecords, Stdio, TurnCommand, TurnRequest,
 };
 
-use crate::home::{set_up_launch, LaunchSetup};
+use crate::home::{set_up_launch, LaunchSetUp, LaunchSetup};
 use crate::workspace::Placement;
 
 /// What a launch is made from: which run it starts and how, its setup, and
@@ -159,14 +158,115 @@ pub fn launch_of(
     request: &LaunchRequest,
     os: &str,
 ) -> Result<LaunchMade, Box<Unprepared>> {
-    let _ = (engines, find, records, workspaces, request, os);
-    let _ = (
-        set_up_launch,
-        StopPolicy::of,
-        Stdio::Piped,
-        BTreeMap::<u8, u8>::new,
-    );
-    Err(Unprepared::at_setup("not built".to_string()))
+    // 1. Set up: the one session-setup path (owner, 2026-11-12).
+    let set_up = set_up_launch(engines.engine, records, workspaces, &request.setup)
+        .map_err(Unprepared::at_setup)?;
+    let mut said = Unprepared {
+        why: NotLaunched::Failed(String::new()),
+        placed: set_up.placed.clone(),
+        left_out: set_up.home.left_out.clone(),
+        ignored: Vec::new(),
+    };
+    let refused = |mut said: Unprepared, why| {
+        said.why = why;
+        Box::new(said)
+    };
+    // 2. The engine's command, as the kind is driven.
+    let (mut command, stdio, child) = match drive(engines, request, &set_up) {
+        Ok(driven) => driven,
+        Err(detail) => return Err(refused(said, NotLaunched::Failed(detail))),
+    };
+    // 3. The caller's CTXLOOM_PERMIT_<NAME> reaches every engine's command as
+    // <NAME>, over what the engine chose (ruling 78), never over a name
+    // ctxloom set for it (ruling 78b): the adapter's computed names, derived
+    // from the command, and the run's own.
+    said.ignored = run_ports::apply_permits(&request.setup.env, &mut command.env, &set_up.owned);
+    // 4. The program is found on the command's own PATH, by the names the
+    // host looks it up by (PATHEXT's on Windows, which std's spawn does not
+    // try), and the file found is what is spawned.
+    command.program = match find(&command) {
+        Ok(program) => program,
+        Err(missing) => return Err(refused(said, NotLaunched::ProgramNotFound(missing))),
+    };
+    // 5. A batch file (an npm `claude.cmd`) is run through cmd.exe, which std
+    // will not hand an argument of more than one line.
+    if let Err(refusal) = run_ports::check_batch_arguments(os, &command) {
+        return Err(refused(said, NotLaunched::BatchArguments(refusal)));
+    }
+    // 6. The command is complete: measured against the platform's command
+    // line (the terminal's opening prompt is on it).
+    if let Err(refusal) = run_ports::check_command_line(os, &command) {
+        return Err(refused(said, NotLaunched::TooLong(refusal)));
+    }
+    let Unprepared {
+        left_out, ignored, ..
+    } = said;
+    let launch = Launch {
+        at: request.at.clone(),
+        session_home: set_up.home.home.clone(),
+        session_lock: request.session_lock.clone(),
+        ignored,
+        left_out,
+        ..Launch::new(request.kind, engines.engine.name(), stdio, command)
+    };
+    Ok(LaunchMade {
+        launch,
+        placed: set_up.placed,
+        child,
+    })
+}
+
+/// Step 2: the engine's command for `request`'s kind, the protocol it
+/// speaks, and a child's spec; or why the engine would not build it.
+fn drive(
+    engines: LaunchEngines<'_>,
+    request: &LaunchRequest,
+    set_up: &LaunchSetUp,
+) -> Result<(TurnCommand, Stdio, Option<ChildSpec>), String> {
+    let turn = || TurnRequest {
+        prompt: request.prompt.clone(),
+        home: set_up.home.home.clone(),
+        context_path: set_up.home.context_path.clone(),
+        resume: request.resume.clone(),
+        env: set_up.env.clone(),
+        user_home: request.user_home.clone(),
+        cwd: set_up.cwd.clone(),
+        model: request.model.clone(),
+        effort: request.effort.clone(),
+        settings: request.settings.clone(),
+    };
+    let engine = engines.engine;
+    match request.kind {
+        LaunchKind::Terminal => engine
+            .drive_interactive(&turn())
+            .map(|command| (command, Stdio::Inherit, None))
+            .map_err(|e| e.to_string()),
+        LaunchKind::OneShot => engine
+            .drive_turn(&turn())
+            .map(|command| (command, Stdio::Piped, None))
+            .map_err(|e| e.to_string()),
+        LaunchKind::Child => {
+            let child = engines
+                .child
+                .ok_or_else(|| format!("{} hosts no child", engine.name()))?;
+            let spec = ChildSpec {
+                home: set_up.home.home.clone(),
+                context_path: set_up.home.context_path.clone(),
+                env: set_up.env.clone(),
+                user_home: request.user_home.clone(),
+                cwd: set_up.cwd.clone(),
+                model: request.model.clone(),
+                effort: request.effort.clone(),
+                settings: request.settings.clone(),
+                resume: request.resume.clone(),
+                session_id: request.session_id.clone(),
+                permissions: request.child_permissions,
+            };
+            let command = child.command(&spec).map_err(|e| e.to_string())?;
+            Ok((command, child.stdio(), Some(spec)))
+        }
+        LaunchKind::Editor => Err(format!("{} launches no editor", engine.name())),
+    }
 }
 
 #[cfg(test)]

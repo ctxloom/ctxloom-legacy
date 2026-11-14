@@ -285,6 +285,15 @@ fn a_host_home_with_no_home_starts_nothing() {
 }
 
 #[test]
+fn a_child_speaks_acp_and_its_command_mints_its_password() {
+    assert_eq!(Opencode::new().stdio(), Stdio::Acp);
+    let first = Opencode::new().command(&spec("")).unwrap();
+    let second = Opencode::new().command(&spec("")).unwrap();
+    assert_eq!(first.env[PASSWORD_VARIABLE].len(), 64);
+    assert_ne!(first.env[PASSWORD_VARIABLE], second.env[PASSWORD_VARIABLE]);
+}
+
+#[test]
 fn every_child_gets_a_password_of_its_own() {
     let first = super::password().unwrap();
     let second = super::password().unwrap();

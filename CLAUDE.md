@@ -372,10 +372,29 @@ no token set). The library asks the plan's engine in
 (`Library::with_engines`, the wiring's real engines;
 `Notice::Engine`), so a dry run and a launch, which plans through the same
 dry run, say them alike, text and json.
-A command's program is FOUND before it is spawned, a child's turn and the
-terminal's alike, in the one launch path (`Launcher::prepare` asks
+Every engine process is made by THE ONE LAUNCH (T10):
+`run_launcher::launch_of` makes a `run_ports::Launch` (the domain value of
+`ctxloom.v1.Launch`: its run, kind, engine, found program, args, whole env,
+cwd, session home and lock, stdio and stop; beside it, never on the wire,
+its input and what it said: the ignored permits and the settings left out)
+in one order, set up (`set_up_launch`), the engine's command (the
+terminal's `drive_interactive`, a one-shot's `drive_turn`, owner ruling
+s4-Q8, or a child's `ChildEngine::command`), the permits, the program
+found, the batch check, the length check, each refusing at its step
+(`Unprepared`, carrying what the steps before said). `Launcher::prepare`
+only calls it, and so does the daemon's `Daemon::spawn_child`; the
+launcher starts what it made through `RunnerLauncher::start` (a one-shot's
+as a turn, a terminal's or an editor's on the terminal, a child refused),
+and a child is started by its engine as made (`ChildEngine::start(&spec,
+&launch)`, which only spawns it and speaks the protocol: engine-claude's
+child applies no permit of its own any more). daemon-api's `launch`
+converts it to and from the wire. The old turn answer enum is
+`run_ports::TurnLaunch`.
+A command's program is FOUND before it is spawned, a child's turn, the
+terminal's and a hosted child's alike, in the one launch (`launch_of` asks
 `RunnerLauncher::find_program`; `host-launcher`'s `find`, given the wiring's
-filesystem by `HostLauncher::searching`): on the command's own `PATH` (the
+filesystem by `HostLauncher::searching`, the daemon's by
+`Daemon::finding`): on the command's own `PATH` (the
 engine's, led by the program's directory), by `os::Flavor::candidates` (on
 Windows PATHEXT's, the command's own or cmd.exe's default), an executable
 preferred to a batch file wherever each is on the PATH; the file found is
@@ -467,8 +486,8 @@ secret). Cost: her hooks fire in the session too, and an invalid value of
 hers disables the agent's permissions with them (one file, ruling 145's
 caveat). Every command is measured against the platform's command line
 once it is complete and before it is spawned (owner ruling, 2026-11-12;
-`run_ports::check_command_line`, called in one place, the launcher's
-prepare, `Launcher::on_os(wiring.os_name())`): the terminal session's
+`run_ports::check_command_line`, called in one place, `launch_of`, on
+`Launcher::on_os(wiring.os_name())` or the daemon's `Place::os`): the terminal session's
 opening prompt is the one piece of content on an engine's command line
 (claude's positional prompt, opencode's `--prompt`; a child's turn has it on
 stdin, which is not measured). One table of constants, no libc call:
@@ -873,8 +892,9 @@ ruling 51, always the run's own). The escape hatch is `CTXLOOM_PERMIT_<NAME>`
 (owner rulings 78, 78a): `CTXLOOM_PERMIT_<NAME>=v` in the caller's
 environment reaches the engine as `<NAME>=v`, every engine, a child's turn
 and the terminal alike, over whatever the allowlist, a block (opencode's
-`OPENCODE_*`) or the config said; it is applied in one place, the launcher,
-after the engine built the command (`run_ports::apply_permits`). The
+`OPENCODE_*`) or the config said; it is applied in one place, the one
+launch (`run_launcher::launch_of`, a hosted child's too), after the engine
+built the command (`run_ports::apply_permits`). The
 `CTXLOOM_PERMIT_*` variable is never passed on; a permit for a `CTXLOOM_*`
 name is ignored and the run says so as a notice (by the permit's name, never
 its value); no value renders in a `Debug` (every environment value is
@@ -1194,10 +1214,11 @@ finds her settings: `daemon launch` hands off its caller's
 a `@NAME=value` line each), never into it, and never the daemon's own
 environment. A hosted child's session home is prepared with its agent's
 permissions document for the engine, verbatim (rulings 133-137,
-`run_application::HostedChild::permissions`). Not yet:
-`run_ports::check_command_line` does not measure a hosted child's command:
-it carries no prompt (its turns are fed over the child's stream), only
-paths, model and effort.
+`run_application::HostedChild::permissions`). A hosted child is made by the
+one launch (`launch_of`, T10) like every other: its permits applied (the
+`HOME` and `PATH` the daemon sets owned), its program found, its command
+measured (it carries no prompt: its turns are fed over the child's
+stream).
 
 A daemon is LIVE when it answers the standard `grpc.health.v1.Health`
 Check SERVING (T16, M11: `hook-sink-grpc`'s `serving`, tonic-health's

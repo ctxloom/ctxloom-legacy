@@ -561,3 +561,47 @@ fn a_terminal_session_reads_the_callers_stdin_and_writes_the_callers_stdout_and_
     assert!(stdout.contains("got:hello\n"), "{stdout}");
     assert!(stderr.contains("err\n"), "{stderr}");
 }
+
+// --- the one launch (T10)
+
+// A launch is started as its kind is: a one-shot as a turn (fed its input,
+// its output captured), a terminal's and an editor's on this process's
+// terminal (nothing captured), and a child is its engine's to start:
+// refused, nothing spawned.
+#[test]
+fn a_launch_is_started_as_its_kind_is() {
+    if !runs_scripts() {
+        return;
+    }
+    use run_ports::{Launch, LaunchKind, Stdio};
+    let started = |kind, stdio, command: &TurnCommand| {
+        let launch = Launch::new(kind, "fake", stdio, command.clone());
+        answer(HostLauncher::default().start(&launch, &limits()))
+    };
+    let (_turn_dir, mut turn) = program("#!/bin/sh\nread line\necho \"$line\"\nexit 4\n");
+    turn.stdin = b"fed\n".to_vec();
+    let (pid, answered) = started(LaunchKind::OneShot, Stdio::Piped, &turn);
+    assert!(pid.is_some());
+    let output = over(answered);
+    assert_eq!(output.stdout, b"fed\n", "a turn is fed and captured");
+    assert_eq!(output.exit.code, Some(4));
+    // Reads nothing: its stdin is the caller's.
+    let (dir, terminal) =
+        program("#!/bin/sh\necho started > \"$(dirname \"$0\")/ran\"\necho not-captured\nexit 4\n");
+    for kind in [LaunchKind::Terminal, LaunchKind::Editor] {
+        let output = over(started(kind, Stdio::Inherit, &terminal).1);
+        assert!(output.stdout.is_empty(), "{kind:?}: nothing captured");
+        assert_eq!(output.exit.code, Some(4), "{kind:?}");
+    }
+    dir.remove_file(&os::fixture("/ran")).unwrap();
+    let (pid, child) = started(LaunchKind::Child, Stdio::StreamJson, &terminal);
+    let TurnLaunch::NotStarted(failure) = child else {
+        panic!("a child is its engine's: {child:?}");
+    };
+    assert!(failure.deterministic);
+    assert_eq!(pid, None);
+    assert!(
+        !dir.exists(&os::fixture("/ran")).unwrap(),
+        "nothing spawned"
+    );
+}

@@ -415,6 +415,10 @@ fn launcher(
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })
+    // A child's program found on its own PATH, as every launch's (T10).
+    .finding(Arc::new(
+        host_launcher::HostLauncher::default().searching(Arc::clone(fs)),
+    ))
 }
 
 /// Tick until the daemon is asked to stop, its single-instance lock file

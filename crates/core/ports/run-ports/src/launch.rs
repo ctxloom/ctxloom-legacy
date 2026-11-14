@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
 
+use crate::hook::RedactedEnv;
 use crate::{Ignored, LeftOut, TurnCommand};
 
 /// The signal a launch is asked to stop with (SIGTERM).
@@ -168,8 +169,8 @@ impl fmt::Debug for Launch {
             .field("engine", &self.engine)
             .field("program", &self.program)
             .field("args", &self.args)
-            .field("env", &self.env)
-            .field("stdin", &self.stdin)
+            .field("env", &RedactedEnv(&self.env))
+            .field("stdin_bytes", &self.stdin.len())
             .field("cwd", &self.cwd)
             .field("session_home", &self.session_home)
             .field("session_lock", &self.session_lock)

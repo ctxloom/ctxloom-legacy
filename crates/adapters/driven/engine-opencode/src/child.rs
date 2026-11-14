@@ -8,7 +8,11 @@
 //! with a random per-child `OPENCODE_SERVER_PASSWORD` (D24: `acp` opens its
 //! own loopback HTTP listener, unauthenticated without one; ctxloom never
 //! talks to it). Never `--mdns` (it would bind every address) nor `--pure`
-//! (it would skip the plugin, and capture with it).
+//! (it would skip the plugin, and capture with it). The command is half of
+//! the child's start (T10): the one launch (`run_launcher::launch_of`)
+//! applies the permits to it and finds its program, and
+//! [`ChildEngine::start`] spawns that launch exactly as it is, opening the
+//! ACP session from the child's spec.
 //!
 //! [`crate::conversation`] says what to ask and what an answer means; this
 //! module is its process and its connection. The connection is the crate's

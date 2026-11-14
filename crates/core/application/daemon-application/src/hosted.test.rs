@@ -673,6 +673,88 @@ async fn a_childs_path_is_joined_as_its_platform_joins_it_and_it_is_told_her_hom
     assert_eq!(spec.user_home.as_deref(), Some(r"C:\Users\her"));
 }
 
+/// A finder that finds every program at `/found/<name>`; it starts nothing.
+struct Finds;
+
+impl run_ports::RunnerLauncher for Finds {
+    fn launch(
+        &self,
+        _: &TurnCommand,
+        _: &run_ports::Limits,
+    ) -> Result<Box<dyn run_ports::Running>, run_ports::LaunchFailure> {
+        unreachable!("a child is started by its engine")
+    }
+
+    fn launch_terminal(
+        &self,
+        _: &TurnCommand,
+    ) -> Result<Box<dyn run_ports::Running>, run_ports::LaunchFailure> {
+        unreachable!("a child is started by its engine")
+    }
+
+    fn find_program(&self, command: &TurnCommand) -> Result<String, run_ports::ProgramNotFound> {
+        Ok(format!("/found/{}", command.program))
+    }
+}
+
+// T10: a hosted child is made by the one launch: its engine's command with
+// the launcher's permits applied (never over the HOME and PATH the daemon
+// sets), its program found, and it is started as made.
+#[tokio::test]
+async fn a_hosted_childs_launch_has_its_program_found_and_its_permits_applied() {
+    let mut world = World::new(Box::new(Plans));
+    world.daemon = Daemon::new(Ports {
+        edge: Arc::clone(&world.edge),
+        tokens: Arc::new(Counting::default()),
+        engines: vec![HostedEngine {
+            engine: world.engine.clone(),
+            child: world.engine.clone(),
+            transcripts: Arc::new(|_| None),
+            for_launch: None,
+        }],
+        plans: Box::new(Plans),
+        hand_offs: Box::new(Handed::of(BTreeMap::from([
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("CTXLOOM_PERMIT_ACME_TOKEN".to_string(), "acme".to_string()),
+            ("CTXLOOM_PERMIT_PATH".to_string(), "/evil".to_string()),
+        ]))),
+        homes: Box::new(Homes::default()),
+        ears: Box::new(Listening::default()),
+        run_locks: Arc::new(Locks(LockProbe::Unproven)),
+        place: Place {
+            home: "/home/u".to_string(),
+            program_dir: Some("/opt/ctx".to_string()),
+            os: "linux".to_string(),
+            user_home: None,
+            endpoint: "https://127.0.0.1:1".to_string(),
+            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
+        },
+        folds: Folds::default(),
+        say: Box::new(|_| {}),
+    })
+    .finding(Arc::new(Finds));
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    let launches = world.engine.launches.lock().unwrap().clone();
+    let [launch] = launches.as_slice() else {
+        panic!("one start: {launches:?}");
+    };
+    assert_eq!(launch.kind, run_ports::LaunchKind::Child);
+    assert_eq!(launch.program, format!("/found/{ENGINE}"));
+    assert_eq!(
+        launch.env.get("ACME_TOKEN").map(String::as_str),
+        Some("acme")
+    );
+    assert_eq!(
+        launch.env.get("PATH").map(String::as_str),
+        Some("/opt/ctx:/usr/bin")
+    );
+    assert!(launch.env.keys().all(|n| !n.starts_with("CTXLOOM_PERMIT_")));
+    assert_eq!(launch.session_home, "/work/.ctxloom/sessions/kid/home");
+    assert_eq!(launch.at.harp, "kid");
+}
+
 /// A plan of the child whose agent wrote a permissions document.
 struct Permitted;
 
