@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 
 use super::World;
 use crate::tests::files;
+use crate::tests::gherkin_common::CommonWorld;
 
 /// The variable a client gives the daemon it spawns as its idle time.
 const IDLE_VARIABLE: &str = "CTXLOOM_DAEMON_IDLE_SECONDS";
@@ -245,12 +246,20 @@ fn red(step: &str) -> ! {
 /// it here): whether it is one. The ones the existing harness can run (her
 /// own commands, typed) are left to it.
 pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
-    let _ = w;
     let text = step.value.as_str();
-    let stubbed = text.contains("presses Ctrl-C while it works")
-        || text.contains("in both projects at once")
-        || text.contains("which her daemon runs")
-        || text.contains("and ctxloom is sent a ")
+    if text.contains("which her daemon runs") {
+        hosted_one_shot(w, step);
+        return true;
+    }
+    if text.contains("presses Ctrl-C while it works") {
+        stopped_one_shot(w, step, "INT");
+        return true;
+    }
+    if let Some(signal) = sent_signal(text) {
+        stopped_one_shot(w, step, signal);
+        return true;
+    }
+    let stubbed = text.contains("in both projects at once")
         || text.contains("through her daemon")
         || text.contains("its daemon is killed outright while it works")
         || text.contains("at her terminal, and answers yes when asked")
@@ -259,6 +268,217 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         red(text);
     }
     false
+}
+
+/// The signal a `... ctxloom is sent a <SIG> while the assistant works:`
+/// step names, as `kill` names it.
+fn sent_signal(text: &str) -> Option<&'static str> {
+    let rest = text.split("and ctxloom is sent a ").nth(1)?;
+    ["HUP", "INT", "TERM"]
+        .into_iter()
+        .find(|signal| rest.starts_with(&format!("SIG{signal} ")))
+}
+
+/// Where the scenario's stub assistant is, and writes what it saw: the
+/// directory on the scenario's PATH ("Alice's assistant is Claude Code").
+fn assistant_dir(w: &World) -> PathBuf {
+    w.adopt_scratch().join("bin")
+}
+
+/// What the stub assistant of a hosted one-shot records of itself before
+/// it answers or works: its parent (the process that started it), and
+/// whether its session's lock was held by another process while it ran
+/// (`held`; `unknown` where no `flock` is there to ask).
+const RECORDS_ITSELF: &str = r#"here="$(dirname "$0")"
+echo "$PPID" > "$here/ppid"
+echo "${CTXLOOM_SESSION##*/}" > "$here/watched-harp"
+lock="${CTXLOOM_ROOT}/.ctxloom/sessions/${CTXLOOM_SESSION##*/}.lock"
+if command -v flock >/dev/null 2>&1; then
+  if flock -n "$lock" true 2>/dev/null; then echo free > "$here/lock-probe"; else echo held > "$here/lock-probe"; fi
+else
+  echo unknown > "$here/lock-probe"
+fi
+"#;
+
+/// A hosted one-shot's stub turn: it records itself, takes its prompt from
+/// its input, and answers (engine-claude's stream).
+fn answering_stub() -> String {
+    format!(
+        r#"{RECORDS_ITSELF}cat > /dev/null
+echo '{{"type":"system","subtype":"init","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
+echo '{{"type":"result","subtype":"success","is_error":false,"result":"J001000-CHILD-REPLY","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
+"#
+    )
+}
+
+/// A hosted one-shot's stub turn that works until it is asked to stop: it
+/// records itself and its pid (once it works), and on a SIGTERM says it was
+/// asked and exits.
+fn working_stub() -> String {
+    format!(
+        r#"{RECORDS_ITSELF}trap 'echo asked > "$here/asked"; exit 0' TERM
+echo "$$" > "$here/pid.tmp" && mv "$here/pid.tmp" "$here/pid"
+sleep 30 &
+wait
+"#
+    )
+}
+
+/// `w`'s environment as `run_with` takes it.
+fn env_pairs(env: &[(String, String)]) -> Vec<(&str, &str)> {
+    env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
+}
+
+/// The ctxloom line of a step's doc string, as its words.
+fn line_words(step: &cucumber::gherkin::Step) -> Vec<String> {
+    let lines = crate::tests::gherkin_common::doc(step);
+    crate::tests::gherkin_common::split(
+        lines
+            .trim()
+            .strip_prefix("ctxloom ")
+            .expect("a ctxloom line"),
+    )
+}
+
+/// The one-shot of the step, its assistant the answering stub, run to its
+/// end: the daemon the command starts hosts it.
+fn hosted_one_shot(w: &mut World, step: &cucumber::gherkin::Step) {
+    files::put_program(assistant_dir(w).join("claude"), &answering_stub());
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    w.before_run();
+    let words = line_words(step);
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    let env = env_of(w);
+    w.common.ran = Some(w.common.project.run_with(&env_pairs(&env), &args));
+}
+
+/// The one-shot of the step, its assistant the working stub: once the stub
+/// says it works (forced: its pid file, never a wait for a race), the
+/// command is sent `signal`, and waited for.
+fn stopped_one_shot(w: &mut World, step: &cucumber::gherkin::Step, signal: &str) {
+    let dir = assistant_dir(w);
+    files::put_program(dir.join("claude"), &working_stub());
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    w.before_run();
+    let words = line_words(step);
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    let env = env_of(w);
+    let child = w.common.project.start_with(&env_pairs(&env), &args);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !files::exists(dir.join("pid")) {
+        assert!(
+            Instant::now() < deadline,
+            "the stub never said it works; the daemon's log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let sent = std::process::Command::new("kill")
+        .args([&format!("-{signal}"), &child.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success(), "the SIG{signal} was sent");
+    w.common.ran = Some(crate::tests::Ran::of(
+        child.wait_with_output().expect("ctxloom finishes"),
+    ));
+}
+
+/// What the stub assistant wrote of itself, by name.
+fn recorded(w: &World, name: &str) -> String {
+    files::read(assistant_dir(w).join(name))
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// The daemon that logged it serves last, by its pid (a daemon that has
+/// idled out since is still the one that ran it).
+fn daemon_pid(w: &World) -> u32 {
+    let log = daemon_log_text(w);
+    let serving = log
+        .lines()
+        .filter(|line| line.contains(" serving at "))
+        .count();
+    assert!(serving > 0, "no daemon logged that it served:\n{log}");
+    match files::read_bytes(discovery_path(w)) {
+        Ok(bytes) => {
+            run_ports::Discovery::decode(&bytes)
+                .expect("a discovery file it can read")
+                .pid
+        }
+        Err(e) => panic!("no discovery file ({e}); the daemon's log:\n{log}"),
+    }
+}
+
+/// The stub assistant was started by the daemon (its parent the daemon's
+/// pid), not by the command typed.
+fn ran_under_the_daemon(w: &World) {
+    let parent = recorded(w, "ppid");
+    assert!(!parent.is_empty(), "the assistant ran: {}", w.ran().said());
+    assert_eq!(
+        parent,
+        daemon_pid(w).to_string(),
+        "the assistant's parent is the daemon; its log:\n{}",
+        daemon_log_text(w)
+    );
+}
+
+/// The stub assistant was asked to stop (its trap ran) and is gone.
+fn asked_and_gone(w: &World) {
+    assert_eq!(
+        recorded(w, "asked"),
+        "asked",
+        "the assistant was not asked to stop: {}\n{}",
+        w.ran().said(),
+        daemon_log_text(w)
+    );
+    let pid = recorded(w, "pid");
+    let alive = std::process::Command::new("kill")
+        .args(["-0", &pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("kill runs");
+    assert!(
+        !alive.success(),
+        "the assistant ({pid}) outlived the command"
+    );
+    ran_under_the_daemon(w);
+}
+
+/// The command exited `code`, saying the run was stopped by `signal`.
+fn exited_stopped(w: &World, code: i32, signal: &str) {
+    let ran = w.ran();
+    assert_eq!(ran.code, code, "{}", ran.said());
+    assert!(
+        ran.stderr.contains(&format!("stopped by {signal}")),
+        "{}",
+        ran.said()
+    );
+}
+
+/// A one-shot the daemon hosts and that works until the scenario ends: its
+/// stub released by the World's end.
+fn hosted_working_one_shot(w: &mut World) {
+    let dir = stub_claude(w, INTERACTIVE_STUB);
+    w.daemon_spec.release = Some(dir.join("release"));
+    let mut env = env_of(w);
+    env.push(("ANTHROPIC_API_KEY".to_string(), "a-key".to_string())); // gitleaks:allow
+    w.daemon_spec.run = Some(
+        w.common
+            .project
+            .start_with(&env_pairs(&env), &["run", "--one-shot", "work"]),
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !files::exists(dir.join("started")) {
+        assert!(
+            Instant::now() < deadline,
+            "the one-shot's engine never started; the daemon's log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 // ------------------------------------------------------------------ given
@@ -383,6 +603,10 @@ fn serving_busy(w: &mut World, busy: String) {
         "a child it hosts" => {
             start_daemon(w);
             hosted_child(w);
+        }
+        "a one-shot it hosts" => {
+            start_daemon(w);
+            hosted_working_one_shot(w);
         }
         _ => red("a ctxloom daemon is serving for this home, with something to do"),
     }
@@ -567,18 +791,18 @@ fn transcript_via_daemon(_: &mut World) {
 }
 
 #[then("her assistant ran under her daemon, not under the command she typed")]
-fn ran_under_daemon(_: &mut World) {
-    red("her assistant ran under her daemon")
+fn ran_under_daemon(w: &mut World) {
+    ran_under_the_daemon(w);
 }
 
 #[then("her daemon stopped her assistant, and it was gone before the command exited")]
-fn daemon_stopped_it(_: &mut World) {
-    red("her daemon stopped her assistant")
+fn daemon_stopped_it(w: &mut World) {
+    asked_and_gone(w);
 }
 
 #[then("ctxloom exited 130, saying the run was stopped by SIGINT")]
-fn exited_sigint(_: &mut World) {
-    red("ctxloom exited 130, saying the run was stopped by SIGINT")
+fn exited_sigint(w: &mut World) {
+    exited_stopped(w, 130, "SIGINT");
 }
 
 #[then(regex = r#"^"([^"]+)" is listed as a child of "([^"]+)", run by her daemon$"#)]
@@ -932,20 +1156,27 @@ fn child_ended(_: &mut World, _child: String) {
 // ------------------------------------------------- then: cli/run's Rule
 
 #[then("the assistant was a child of the daemon, and its session's lock was the daemon's")]
-fn one_shot_hosted(_: &mut World) {
-    red("the one-shot's assistant was the daemon's child")
+fn one_shot_hosted(w: &mut World) {
+    ran_under_the_daemon(w);
+    // The command typed is gone: whoever held the lock while the assistant
+    // ran was the daemon, its parent.
+    let probe = recorded(w, "lock-probe");
+    assert!(
+        probe == "held" || probe == "unknown",
+        "the session's lock was not held while the assistant ran: {probe}"
+    );
 }
 
 #[then("the daemon asked the assistant to stop, and it was gone before the command exited")]
-fn daemon_asked_stop(_: &mut World) {
-    red("the daemon asked the assistant to stop")
+fn daemon_asked_stop(w: &mut World) {
+    asked_and_gone(w);
 }
 
 #[then(
     regex = r"^the command exits 128 plus the signal's number, (\d+), saying the run was stopped by (SIG[A-Z]+)$"
 )]
-fn exits_by_signal(_: &mut World, _code: String, _signal: String) {
-    red("the command exits 128 plus the signal's number")
+fn exits_by_signal(w: &mut World, code: String, signal: String) {
+    exited_stopped(w, code.parse().expect("a code"), &signal);
 }
 
 #[then(
@@ -968,8 +1199,15 @@ fn start_and_exit(_: &mut World) {
 }
 
 #[then("no session was minted")]
-fn no_mint(_: &mut World) {
-    red("no session was minted")
+fn no_mint(w: &mut World) {
+    assert!(
+        !files::exists(w.common.project.dir().join(".ctxloom/sessions")),
+        "no session directory was made"
+    );
+    assert!(
+        !files::exists(w.common.project.home().join(".ctxloom/ctxloom.db")),
+        "the store was never opened, so nothing was minted in it"
+    );
 }
 
 #[then("the assistant was never stopped")]
