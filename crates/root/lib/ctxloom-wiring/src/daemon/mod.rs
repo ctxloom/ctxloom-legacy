@@ -53,14 +53,14 @@ const DAEMON_ENV: [&str; 4] = ["PATH", "TMPDIR", "LANG", "LC_ALL"];
 
 /// S16: how long a hook spends, in all, reaching a daemon (rediscovering
 /// it, or spawning one and waiting) and delivering, before it fails open.
-const HOOK_BOUND: Duration = Duration::from_secs(10);
+pub(crate) const HOOK_BOUND: Duration = Duration::from_secs(10);
 
 /// What a delivery is left of [`HOOK_BOUND`] after the longest spawn wait.
-const DELIVERY_MARGIN: Duration = Duration::from_secs(2);
+pub(crate) const DELIVERY_MARGIN: Duration = Duration::from_secs(2);
 
 /// How long a client waits for a daemon it spawned to answer its health
 /// check: what [`HOOK_BOUND`] leaves once a delivery has its margin.
-const SPAWN_WAIT: Duration = HOOK_BOUND.saturating_sub(DELIVERY_MARGIN);
+pub(crate) const SPAWN_WAIT: Duration = HOOK_BOUND.saturating_sub(DELIVERY_MARGIN);
 
 /// How long one health check of a daemon may take (a loopback TLS
 /// handshake and one call; a stale port refuses at once).

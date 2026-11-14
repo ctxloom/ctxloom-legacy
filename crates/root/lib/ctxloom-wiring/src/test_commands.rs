@@ -58,6 +58,12 @@ enum TestVerb {
     /// Print where the library's resource names are rooted: the cwd's
     /// project as the daemon names it (`projects/<harp>`), or `users/me`
     ProjectName,
+    /// Print the resource name of the cwd's project's session, the project
+    /// named in process, as a seed names it (no daemon reached)
+    SessionName {
+        /// The session's harp
+        harp: String,
+    },
     /// Print the events of the cwd's project's session, as json: each one's
     /// type, and a message's id and text
     SessionEvents {
@@ -218,6 +224,11 @@ pub(crate) fn run(
             let wiring = wiring().map_err(failed)?;
             let parent = crate::daemon::library_parent(&wiring, version, crate::Minting::AtRoot)?;
             output(writeln!(out, "{parent}"))
+        }
+        TestVerb::SessionName { harp } => {
+            let wiring = wiring().map_err(failed)?;
+            let name = wiring.session_resource(&harp).map_err(failed)?;
+            output(writeln!(out, "{name}"))
         }
         TestVerb::SessionEvents { harp } => {
             let wiring = wiring().map_err(failed)?;

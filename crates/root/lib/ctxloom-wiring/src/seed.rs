@@ -121,6 +121,32 @@ impl Wiring {
         Ok(events)
     }
 
+    /// The resource name of the cwd's project's session `harp`, the project
+    /// named in process as [`Wiring::seed_session`] names it (s4-Q14's hook
+    /// scenarios: a hook's `CTXLOOM_SESSION` without a daemon reached).
+    pub fn session_resource(&self, harp: &str) -> Result<String, TestError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(seed_error)?;
+        runtime.block_on(async {
+            let mut sessions = self.sessions();
+            let named = sessions
+                .use_cases
+                .name_project(sessions_application::NameProjectRequest {
+                    project: None,
+                    harps: crate::fresh_project_harps(),
+                })
+                .await
+                .map_err(|e| seed_error(angzarr_diagnostic::Diagnostic::code(&e)));
+            let closed = sessions.use_cases.stores.close().await.map_err(seed_error);
+            let named = named?;
+            closed?;
+            let name = sessions::SessionName::new(&named.harp, harp).map_err(seed_error)?;
+            Ok(name.to_string())
+        })
+    }
+
     /// Plant `seed`; its stable id.
     pub fn seed_session(&self, seed: &Seed) -> Result<String, TestError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
