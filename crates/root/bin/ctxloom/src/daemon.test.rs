@@ -723,6 +723,41 @@ fn a_daemon_whose_lock_file_is_replaced_exits() {
     );
 }
 
+// j000100's exit (leaving is deleting `~/.ctxloom`, and nothing more): a
+// daemon still serving when its whole ctxloom home is removed exits, and its
+// exit makes nothing there again (no `daemon/daemon.log` saying why). The
+// exit is waited for, so the daemon has had its say before the home is read:
+// the journey's step reads at once and so passes only when it wins the race.
+#[test]
+fn a_daemon_whose_home_is_removed_exits_and_writes_nothing_there_again() {
+    let world = World::new();
+    let (mut daemon, _) = served(&world);
+    let home = world.project.home().join(".ctxloom");
+    files::remove_tree(&home);
+    let code = exited_within(&mut daemon, Duration::from_secs(20));
+    assert_eq!(code, Some(0), "it exits once its home is gone");
+    let left: Vec<String> = if files::is_dir(&home) {
+        let mut out = Vec::new();
+        let mut todo = vec![home.clone()];
+        while let Some(dir) = todo.pop() {
+            for child in files::children(&dir) {
+                out.push(child.display().to_string());
+                if files::is_dir(&child) {
+                    todo.push(child);
+                }
+            }
+        }
+        out
+    } else {
+        Vec::new()
+    };
+    assert!(
+        !files::exists(&home),
+        "the daemon made its removed home again: {left:?}; its log:\n{}",
+        world.log()
+    );
+}
+
 // Ruling 131: a store is closed, never dropped. A daemon's exit lets go of
 // everything that holds its store (the listener's tasks, the launcher, the
 // read models it registered) before it closes it, so its log never says it
