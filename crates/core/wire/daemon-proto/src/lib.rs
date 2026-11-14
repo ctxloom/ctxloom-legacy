@@ -47,6 +47,9 @@ pub mod google {
 
 mod wkt;
 
+mod names;
+pub use names::with_unresolved_names;
+
 /// `ctxloom.v1`.
 pub use ctxloom::v1;
 
