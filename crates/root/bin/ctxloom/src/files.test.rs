@@ -174,6 +174,11 @@ pub(crate) fn children(path: impl AsRef<Path>) -> Vec<PathBuf> {
         .collect()
 }
 
+/// A file opened to append to (its times set, say).
+pub(crate) fn open_append(path: impl AsRef<Path>) -> std::io::Result<File> {
+    fs().open(path.as_ref(), Open::Append(Mode::FILE))
+}
+
 /// A file opened for reading.
 pub(crate) fn open_read(path: impl AsRef<Path>) -> std::io::Result<File> {
     fs().open(path.as_ref(), Open::Read)

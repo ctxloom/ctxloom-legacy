@@ -107,6 +107,22 @@ fn the_user_may_send_everything_the_session_domain_handles_to_any_session() {
     assert!(gate.owns(&User, &any));
 }
 
+// U4: the user may stop a run (a hosted one-shot's command, on a signal),
+// and send the runs domain nothing else.
+#[test]
+fn the_user_may_ask_a_run_to_stop_and_nothing_else_of_the_runs_domain() {
+    let list = user_allowlist();
+    assert!(list
+        .permits_body(BodyKind::Command, &url::<runs::RequestStop>())
+        .is_ok());
+    assert!(list
+        .permits_body(BodyKind::Command, &url::<runs::QueueTurn>())
+        .is_err());
+    assert!(list
+        .permits_body(BodyKind::Fact, &url::<runs::RequestStop>())
+        .is_err());
+}
+
 // The gate keeps the digest alone: nothing it renders is the bearer.
 #[test]
 fn the_gate_shows_no_bearer() {

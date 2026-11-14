@@ -2019,3 +2019,237 @@ fn only_remove_and_sweep_are_destroys() {
         assert!(crate::is_destroy(&parsed(&words)), "{words:?}");
     }
 }
+
+// ---- the child verbs (slice 4 U3, S2, S19)
+
+/// The user's writes a test scripts: each answers with the target's
+/// session, applied unless `duplicate`, and records what it was asked.
+#[derive(Default)]
+struct Writes {
+    asked: std::sync::Mutex<Vec<String>>,
+    duplicate: bool,
+}
+
+impl Writes {
+    fn written(&self, harp: &str, id: &str) -> daemon_api::Written {
+        daemon_api::Written {
+            session: session(harp, v1::session::State::Live),
+            id: id.to_string(),
+            applied: !self.duplicate,
+        }
+    }
+}
+
+impl daemon_api::ChildWrites for Writes {
+    async fn launch(
+        &self,
+        launch: &daemon_api::Launch,
+    ) -> Result<daemon_api::Written, daemon_api::CallError> {
+        self.asked.lock().unwrap().push(format!("{launch:?}"));
+        Ok(self.written(launch.harp.as_deref().unwrap_or("minted-name-here"), "c1"))
+    }
+
+    async fn send_as(
+        &self,
+        target: &str,
+        urgency: sessions_application::Urgency,
+        text: &str,
+        id: Option<&str>,
+    ) -> Result<daemon_api::Written, daemon_api::CallError> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push(format!("send {target} {urgency:?} {text} {id:?}"));
+        Ok(self.written(target, id.unwrap_or("minted")))
+    }
+
+    async fn clear(&self, target: &str) -> Result<daemon_api::Written, daemon_api::CallError> {
+        self.asked.lock().unwrap().push(format!("clear {target}"));
+        Ok(self.written(target, "k1"))
+    }
+
+    async fn close(&self, target: &str) -> Result<daemon_api::Written, daemon_api::CallError> {
+        self.asked.lock().unwrap().push(format!("close {target}"));
+        Ok(self.written(target, "uid"))
+    }
+}
+
+fn child_go(writes: &Writes, format: Format, words: &[&str]) -> Ran {
+    let command = parsed(words);
+    assert!(crate::is_child(&command), "{words:?} is a child verb");
+    let mut out = Vec::new();
+    let result = crate::child(&command, writes, format, &mut out);
+    Ran {
+        out: String::from_utf8(out).unwrap(),
+        result,
+    }
+}
+
+#[test]
+fn a_launch_names_its_owner_child_agent_engine_and_task() {
+    let writes = Writes::default();
+    let ran = child_go(
+        &writes,
+        Format::Text,
+        &[
+            "launch",
+            "amber-quiet-heron",
+            "--name",
+            "brisk-copper-moth",
+            "--agent",
+            "reviewer",
+            "--engine",
+            "claude-code",
+            "review the change",
+        ],
+    );
+    assert!(ran.result.is_ok());
+    assert_eq!(
+        ran.out,
+        "brisk-copper-moth: launched, a child of amber-quiet-heron\n"
+    );
+    let asked = writes.asked.lock().unwrap().clone();
+    assert_eq!(
+        asked,
+        [format!(
+            "{:?}",
+            daemon_api::Launch {
+                owner: Some("amber-quiet-heron".to_string()),
+                harp: Some("brisk-copper-moth".to_string()),
+                engine: "claude-code".to_string(),
+                agent: "reviewer".to_string(),
+                task: "review the change".to_string(),
+            }
+        )]
+    );
+}
+
+#[test]
+fn a_launch_in_json_is_the_childs_session() {
+    let writes = Writes::default();
+    let ran = child_go(
+        &writes,
+        Format::Json,
+        &["launch", "amber-quiet-heron", "--name", "brisk-copper-moth"],
+    );
+    assert!(ran.result.is_ok());
+    assert_eq!(
+        json_of(&ran)["name"],
+        "projects/calm-otter/sessions/brisk-copper-moth"
+    );
+}
+
+#[test]
+fn a_send_carries_its_urgency_text_and_id_and_says_a_duplicate() {
+    let writes = Writes::default();
+    let ran = child_go(
+        &writes,
+        Format::Text,
+        &[
+            "send",
+            "brisk-copper-moth",
+            "steer",
+            "look at main.rs",
+            "--id",
+            "m1",
+        ],
+    );
+    assert!(ran.result.is_ok());
+    assert_eq!(ran.out, "brisk-copper-moth: m1 recorded\n");
+    assert_eq!(
+        *writes.asked.lock().unwrap(),
+        ["send brisk-copper-moth Steer look at main.rs Some(\"m1\")".to_string()]
+    );
+    let again = Writes {
+        duplicate: true,
+        ..Writes::default()
+    };
+    let ran = child_go(
+        &again,
+        Format::Text,
+        &["send", "brisk-copper-moth", "wake", "x", "--id", "m1"],
+    );
+    assert_eq!(ran.out, "brisk-copper-moth: m1 already recorded\n");
+}
+
+#[test]
+fn a_send_with_no_urgency_is_a_usage_error_naming_the_three() {
+    let command = Session::augment_args(Command::new("session")).no_binary_name(true);
+    let refused = command
+        .try_get_matches_from(["send", "brisk-copper-moth", "check the tests"])
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("inform, wake, steer"), "{refused}");
+}
+
+#[test]
+fn a_clear_and_a_close_say_what_they_did_and_a_second_close_says_so() {
+    let writes = Writes::default();
+    let ran = child_go(&writes, Format::Text, &["clear", "brisk-copper-moth"]);
+    assert_eq!(ran.out, "brisk-copper-moth: k1 recorded\n");
+    let ran = child_go(&writes, Format::Text, &["close", "brisk-copper-moth"]);
+    assert_eq!(ran.out, "brisk-copper-moth: closed\n");
+    let again = Writes {
+        duplicate: true,
+        ..Writes::default()
+    };
+    let ran = child_go(&again, Format::Text, &["close", "brisk-copper-moth"]);
+    assert_eq!(ran.out, "brisk-copper-moth: already closed\n");
+    assert!(ran.result.unwrap().notices.is_empty(), "said on its line");
+    let ran = child_go(&again, Format::Json, &["close", "brisk-copper-moth"]);
+    let notices = ran.result.unwrap().notices;
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].code(), "session-cli-already-closed");
+    let ran = child_go(&writes, Format::Json, &["close", "brisk-copper-moth"]);
+    assert!(ran.result.unwrap().notices.is_empty(), "closed now");
+    let ran = child_go(
+        &again,
+        Format::Json,
+        &["send", "brisk-copper-moth", "wake", "x"],
+    );
+    assert!(ran.result.unwrap().notices.is_empty(), "no close");
+}
+
+#[test]
+fn a_refused_child_verb_fails_as_its_refusal_says() {
+    struct Refusing;
+    impl daemon_api::ChildWrites for Refusing {
+        async fn launch(
+            &self,
+            _: &daemon_api::Launch,
+        ) -> Result<daemon_api::Written, daemon_api::CallError> {
+            unreachable!()
+        }
+        async fn send_as(
+            &self,
+            _: &str,
+            _: sessions_application::Urgency,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<daemon_api::Written, daemon_api::CallError> {
+            Err(daemon_api::CallError::Refused(daemon_api::Rejection::Api(
+                daemon_api::ApiRejection::SessionNotFound {
+                    name: "brisk-copper-moth".to_string(),
+                },
+            )))
+        }
+        async fn clear(&self, _: &str) -> Result<daemon_api::Written, daemon_api::CallError> {
+            unreachable!()
+        }
+        async fn close(&self, _: &str) -> Result<daemon_api::Written, daemon_api::CallError> {
+            unreachable!()
+        }
+    }
+    let command = parsed(&["send", "brisk-copper-moth", "wake", "one more thing"]);
+    let mut out = Vec::new();
+    let failed = crate::child(&command, &Refusing, Format::Text, &mut out).unwrap_err();
+    assert_eq!(failed.failure.exit, Exit::REFUSED);
+    assert_eq!(failed.failure.cause.code(), "daemon-api-session-not-found");
+}
+
+#[test]
+fn only_the_four_child_verbs_are_child_verbs() {
+    assert!(!crate::is_child(&parsed(&["list"])));
+    assert!(!crate::is_child(&parsed(&["show", "x"])));
+    assert!(crate::is_child(&parsed(&["close", "x"])));
+}

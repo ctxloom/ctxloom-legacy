@@ -15,7 +15,9 @@
 //! - A refusal is answered under the gRPC code its `(refusal_status)`
 //!   declares, the typed refusal message packed in `google.rpc.Status.
 //!   details` (S11); a failure is INTERNAL.
-//! - `GetTranscript` and `AssembleContext` are served (slice 3).
+//! - `GetTranscript` and `AssembleContext` are served (slice 3), and
+//!   `CreateRun`, `GetRun` and `WatchRun` (U4): a watch's events pumped from
+//!   a blocking thread into its stream.
 //! - `DeleteSession` and `SweepSessions` are served only in a
 //!   `session-destroy` build (M5, the feature of the same name); every other
 //!   RPC is the generated default, UNIMPLEMENTED, to the user bearer alone
@@ -34,10 +36,14 @@ use daemon_proto::v1;
 use prost::Message;
 use runs_application::UserGate;
 use tonic::body::Body;
-use tonic::codegen::{http, BoxFuture, Bytes, Service};
+use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
+use tonic::codegen::{http, BoxFuture, BoxStream, Bytes, Service};
 use tonic::metadata::MetadataMap;
 use tonic::server::NamedService;
 use tonic::{Code, Request, Response, Status};
+
+/// How many of a watched run's events wait for its caller to read them.
+const WATCH_BUFFER: usize = 16;
 
 /// The service's own name, as a router routes it.
 pub use daemon_proto::service::ctxloom_server::SERVICE_NAME;
@@ -147,6 +153,9 @@ fn status_of_error(error: ApiError) -> Status {
             Status::with_details(code, message, Bytes::from(details.encode_to_vec()))
         }
         ApiError::Failed { detail } => Status::internal(detail),
+        ApiError::Unimplemented { method } => {
+            Status::unimplemented(format!("{method} is not served yet"))
+        }
     }
 }
 
@@ -262,6 +271,71 @@ impl Ctxloom for Served {
             calls.assemble_context(message).await
         })
         .await
+    }
+
+    async fn create_run(
+        &self,
+        request: Request<v1::CreateRunRequest>,
+    ) -> Result<Response<v1::Run>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.create_run(message).await
+        })
+        .await
+    }
+
+    async fn create_hand_off(
+        &self,
+        request: Request<v1::CreateHandOffRequest>,
+    ) -> Result<Response<v1::HandOff>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.create_hand_off(message).await
+        })
+        .await
+    }
+
+    async fn get_run(
+        &self,
+        request: Request<v1::GetRunRequest>,
+    ) -> Result<Response<v1::Run>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.get_run(message).await
+        })
+        .await
+    }
+
+    async fn delete_hand_off(
+        &self,
+        request: Request<v1::DeleteHandOffRequest>,
+    ) -> Result<Response<v1::HandOff>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.delete_hand_off(message).await
+        })
+        .await
+    }
+
+    /// The run's events, pumped from a blocking thread (each waited for
+    /// there, M10) into the response stream, until its end or until the
+    /// caller is gone; a caller that goes changes nothing of the run (owner
+    /// s4-Q7).
+    async fn watch_run(
+        &self,
+        request: Request<v1::WatchRunRequest>,
+    ) -> Result<Response<BoxStream<v1::RunEvent>>, Status> {
+        let events = self
+            .answer(request, |calls, message| async move {
+                calls.watch_run(message).await
+            })
+            .await?
+            .into_inner();
+        let (tell, heard) = tokio::sync::mpsc::channel(WATCH_BUFFER);
+        tokio::task::spawn_blocking(move || {
+            for event in events {
+                if tell.blocking_send(Ok(event)).is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(heard))))
     }
 
     #[cfg(feature = "session-destroy")]

@@ -12,7 +12,13 @@
 //!   claimed and minted, a child started (planned by its project's dry
 //!   run, enqueued judged on its launcher's environment, its session home
 //!   prepared and its engine started), a turn fed, a clear handed, an end
-//!   asked; what a child said is recorded as its run's facts.
+//!   asked; what a child said is recorded as its run's facts. A child's
+//!   hand-off is read at each of its starts, deleted at its end, and a
+//!   hand-off no open session holds is swept (T6, slice 4 U3).
+//! - The one-shots it hosts ([`OneShots`], U4, T7): each is the run use
+//!   case's one-shot run in the daemon over its one store, in its client's
+//!   environment (the engine's TURN command, owner s4-Q8), its engine
+//!   stopped by the tick's stop step once its run's stream asks.
 //! - The interactive sessions it prepares ([`Terminals`], U5, T9): each is
 //!   the run use case's interactive session run in the daemon, its one
 //!   launch handed to the frontend that asked ([`Frontended`]), which starts
@@ -26,12 +32,17 @@
 //! idle exit from [`Daemon::hosting`].
 
 mod daemon;
+mod one_shot;
 mod ports;
 mod terminal;
 
 pub use daemon::{Daemon, Folds, Place, Ports, Taken};
+pub use one_shot::{
+    Created, HostProject, HostRequest, Hosted, OneShotControl, OneShotHost, OneShots, Told, Watch,
+    STOP_GRACE_MS,
+};
 pub use ports::{
-    ChildHomes, ChildPlans, Ears, ForLaunch, HandOff, HandOffs, HostedEngine, Transcripts,
+    ChildHomes, ChildPlans, Ears, ForLaunch, HandOff, HandOffs, HostedEngine, Kept, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
 pub use terminal::{

@@ -413,40 +413,15 @@ async fn a_sessions_call_not_newer_than_the_daemon_asks_it_nothing() {
     }
 }
 
-// "Newer" is the VERSION's semver precedence alone (the hash and a dirty
-// build's time order nothing): its numbers, then a release above its
-// pre-releases, which compare identifier by identifier (numbers by value
-// and below words; a longer list above its prefix).
+// The skew rule's `newer` is run-ports' one function (s4-Q14, H-Q1), the
+// hook's hold judging by the same: re-exported here, where it was named.
 #[test]
-fn newer_is_the_versions_semver_precedence() {
-    for (own, daemon) in [
-        ("v0.2.0-aaaaaaa", "v0.1.0-bbbbbbb"),
-        ("v1.0.0-aaaaaaa", "v0.9.9-bbbbbbb"),
-        ("v0.1.10-aaaaaaa", "v0.1.9-bbbbbbb"),
-        ("v0.10.0-aaaaaaa", "v0.9.0-bbbbbbb"),
-        ("v1.0.0-aaaaaaa", "v1.0.0-rc.1-bbbbbbb"),
-        ("v1.0.0-rc.2-aaaaaaa", "v1.0.0-rc.1-bbbbbbb"),
-        ("v1.0.0-rc.10-aaaaaaa", "v1.0.0-rc.9-bbbbbbb"),
-        ("v1.0.0-rc-aaaaaaa", "v1.0.0-9-bbbbbbb"),
-        ("v1.0.0-rc.1.1-aaaaaaa", "v1.0.0-rc.1-bbbbbbb"),
-        ("v0.2.0-aaaaaaa-20261114T101010-dirty", "v0.1.0-bbbbbbb"),
-        ("v0.2.0-aaaaaaa", "v0.1.0-bbbbbbb-20261114T101010-dirty"),
-    ] {
-        assert!(newer(own, daemon), "{own} is newer than {daemon}");
-        assert!(!newer(daemon, own), "{daemon} is not newer than {own}");
-    }
+fn newer_is_run_ports_one_function() {
     for (a, b) in [
-        ("v0.2.0-aaaaaaa", "v0.2.0-bbbbbbb"),
-        (
-            "v0.2.0-aaaaaaa-20261114T101010-dirty",
-            "v0.2.0-aaaaaaa-20261115T101010-dirty",
-        ),
-        ("v0.2.0-aaaaaaa", "0.2.0-aaaaaaa"),
-        ("v0.2.0-aaaaaaa", "v0.2-aaaaaaa"),
-        ("v0.2.0", "v0.1.0-aaaaaaa"),
-        ("", "v0.1.0-aaaaaaa"),
+        ("v0.2.0-aaaaaaa", "v0.1.0-bbbbbbb"),
+        ("v0.1.0-a", "v0.1.0-b"),
     ] {
-        assert!(!newer(a, b), "{a} vs {b}");
-        assert!(!newer(b, a), "{b} vs {a}");
+        assert_eq!(newer(a, b), run_ports::newer(a, b), "{a} vs {b}");
     }
+    assert!(newer("v0.2.0-aaaaaaa", "v0.1.0-bbbbbbb"));
 }

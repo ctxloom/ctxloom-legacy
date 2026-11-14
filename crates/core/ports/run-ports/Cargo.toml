@@ -17,6 +17,8 @@ session-ports.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 surface-ports.workspace = true
+# A hold is named by its session's root (s4-Q14, H1).
+uuid.workspace = true
 
 [dev-dependencies]
 mutants.workspace = true

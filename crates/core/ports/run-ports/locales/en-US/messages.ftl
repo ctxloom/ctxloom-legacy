@@ -41,3 +41,9 @@ run-ports-program-not-found-no-path = the engine was not started: { $program } w
 run-ports-program-not-found-no-path-fix = set PATH to the directories your programs are in, then run again
 run-ports-batch-arguments = { $program } is a batch file, which cannot be handed an argument holding a line break or a NUL (cmd.exe would end the command there), and the session's opening prompt holds one
 run-ports-batch-arguments-fix = install claude's native build (claude.exe; `irm https://claude.ai/install.ps1 | iex` in PowerShell), or start the session without the opening prompt and paste it in once it is open
+
+run-ports-hold-io = could not use the hold { $path }: { $ext_err_txt }
+run-ports-hold-restrict = could not make the hold { $path } its owner's alone: { $ext_err_txt }
+run-ports-hold-lock = could not take the hold's lock { $path }: { $ext_err_txt }
+run-ports-hold-format = the hold { $path } is in a format this ctxloom cannot read; it is left as it is
+run-ports-hold-format-fix = run a ctxloom at least as new as the one that wrote it

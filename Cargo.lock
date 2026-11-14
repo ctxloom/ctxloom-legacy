@@ -1168,16 +1168,19 @@ version = "0.1.0"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
+ "daemon-application",
  "daemon-board",
  "daemon-ports",
  "daemon-proto",
  "exit-code",
  "isolation-application",
+ "library-application",
  "mutants",
  "pending-messages",
  "prost",
  "prost-types",
  "reclaim-application",
+ "run-application",
  "run-ports",
  "runs",
  "session-index",
@@ -1677,6 +1680,21 @@ dependencies = [
 name = "exit-code"
 version = "0.1.0"
 source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
+
+[[package]]
+name = "fact-spool"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "daemon-proto",
+ "file-lock",
+ "file-system",
+ "mutants",
+ "os",
+ "prost",
+ "run-ports",
+ "uuid",
+]
 
 [[package]]
 name = "fastrand"
@@ -3846,6 +3864,8 @@ version = "0.1.0"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
+ "daemon-ports",
+ "daemon-proto",
  "exit-code",
  "isolation-ports",
  "library-application",
@@ -3910,6 +3930,7 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "surface-ports",
+ "uuid",
 ]
 
 [[package]]

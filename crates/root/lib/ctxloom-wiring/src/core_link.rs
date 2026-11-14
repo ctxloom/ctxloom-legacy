@@ -304,6 +304,58 @@ where
     pub fn catalog(&self) -> &Catalog {
         self.app.registry().catalog()
     }
+
+    /// The core, shared: what a one-shot the daemon hosts runs over (U4),
+    /// on a thread of its own, beside the daemon's own use of it. Each copy
+    /// holds the store, so every one is let go before the core is closed
+    /// (ruling 131: the daemon waits for its one-shots to end first).
+    pub fn share(&self) -> SharedCore<S> {
+        SharedCore {
+            app: Arc::clone(&self.app),
+            edge: Arc::clone(&self.edge),
+            store: Arc::clone(&self.store),
+        }
+    }
+}
+
+/// A copy of an [`InProcessCore`]: its application, edge and store, shared.
+pub struct SharedCore<S>
+where
+    S: Store + Processed + ListStreams + Send + Sync,
+{
+    app: Arc<App<CoreStores<S>>>,
+    edge: Arc<EmbeddedEdge<CoreStores<S>>>,
+    store: Arc<S>,
+}
+
+impl<S> Clone for SharedCore<S>
+where
+    S: Store + Processed + ListStreams + Send + Sync,
+{
+    fn clone(&self) -> SharedCore<S> {
+        SharedCore {
+            app: Arc::clone(&self.app),
+            edge: Arc::clone(&self.edge),
+            store: Arc::clone(&self.store),
+        }
+    }
+}
+
+impl<S> SharedCore<S>
+where
+    S: Store + Processed + ListStreams + Send + Sync + 'static,
+{
+    pub fn edge(&self) -> Arc<EmbeddedEdge<CoreStores<S>>> {
+        Arc::clone(&self.edge)
+    }
+
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    pub fn catalog(&self) -> &Catalog {
+        self.app.registry().catalog()
+    }
 }
 
 #[cfg(test)]

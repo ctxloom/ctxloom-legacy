@@ -48,6 +48,10 @@ fn the_daemons_own_refusals_are_told_in_its_words() {
             Any::from_msg(&v1::ProjectUnknown::default()).unwrap(),
             "daemon-api-project-unknown",
         ),
+        (
+            Any::from_msg(&v1::RunNotFound::default()).unwrap(),
+            "daemon-api-run-not-found",
+        ),
     ] {
         assert_eq!(code_of(&refusal), code);
     }
@@ -190,6 +194,12 @@ fn the_diagnostics_display_their_code_and_args() {
                 name: "p".to_string(),
             },
             "daemon-api-project-not-found name=p",
+        ),
+        (
+            ApiRejection::RunNotFound {
+                name: "r".to_string(),
+            },
+            "daemon-api-run-not-found name=r",
         ),
         (
             ApiRejection::ProjectUnknown {

@@ -1,25 +1,39 @@
-//! A SESSION as the daemon's client (slice 3, T20): what ctxloom's MCP
-//! server asks of the daemon for the session whose engine started it. Its
-//! identity is the session's resource name, as the engine's environment
-//! carries it (`CTXLOOM_SESSION`, s3-Q3); its project is that name's
-//! (`projects/{p}`, OD-2: never resolved from a working directory, which may
-//! be a checkout).
+//! A SESSION, or the USER, as the daemon's client (slice 3, T20; slice 4
+//! U3, S2, S19): what ctxloom's MCP server asks of the daemon for the
+//! session whose engine started it, and what the user's child verbs
+//! (`session launch|send|clear|close`) ask of it. A session's identity is its
+//! resource name, as the engine's environment carries it (`CTXLOOM_SESSION`,
+//! s3-Q3); its project is that name's (`projects/{p}`, OD-2: never resolved
+//! from a working directory, which may be a checkout). The user's project is
+//! the one her command resolved, and she names no requester (D25: the user's
+//! authority).
 //!
 //! The reads are the service's (`ListSessions`, `GetSession`,
 //! `GetTranscript`, `AssembleContext`). A write is the domain's command sent
 //! through the coordinator's `HandleSync` (S1 amended): its cover the
 //! target's stream (the UUIDv5 of its name, B3), its `requester` the caller
 //! session (an address, taken as sent: the session tree's owner rule
-//! decides), its evidence computed here from the target as the daemon has
-//! it (s3-Q4: `sessions_application::urgencies_of`), and its command id
-//! keyed by an id minted ONCE per call, so its one retry on a new daemon
-//! (S8) is a DUPLICATE. The answer is the target's session as the
-//! session index projected it after the write, or, where the projection
-//! did not come back (a duplicate), as `GetSession` reads it.
+//! decides; none for the user), its evidence computed here from the target
+//! as the daemon has it (s3-Q4: `sessions_application::urgencies_of`), and
+//! its command id keyed by an id minted ONCE per call, so its one retry on a
+//! new daemon (S8) is a DUPLICATE. The answer is the target's session as the
+//! session index projected it after the write, or, where the projection did
+//! not come back (a duplicate), as `GetSession` reads it.
+//!
+//! A launch (T6, S10) is `CreateHandOff` first, which the daemon refuses
+//! before it writes anything (an owner nobody recorded, a child with no
+//! credential), then the owner's `LaunchChild`; a refused `LaunchChild` is
+//! followed by `DeleteHandOff`, so a refused launch leaves nothing.
+
+use std::sync::Arc;
 
 use daemon_ports::{Called, DaemonApi, Daemons};
 use daemon_proto::v1;
-use sessions::{ClearChild, CloseSession, SendMessage, SessionName, SessionRef, Urgency};
+use run_ports::RunLocks;
+use sessions::{
+    ClearChild, CloseSession, LaunchChild, ProjectName, SendMessage, SessionName, SessionRef,
+    TargetTrust, Urgency,
+};
 
 use crate::client::CallError;
 use crate::refusal::{ApiRejection, Rejection};
@@ -33,6 +47,13 @@ const SESSION_INDEX: &str = "session-index";
 
 /// The cause a close from a tool is recorded with.
 const TOOL_CLOSE: &str = "closed by its owner";
+
+/// The cause a close from the user's own command is recorded with.
+const USER_CLOSE: &str = "closed by the user";
+
+/// How many open children an owner may hold when nothing says (the
+/// delegation limit's evidence, D-N14; no config key yet).
+pub const DELEGATION_LIMIT: u32 = 4;
 
 /// `$body` (an `async` expression of `$api`, a daemon's API) on a reached
 /// daemon, once more on the daemon reached again if this one could not be
@@ -56,21 +77,54 @@ macro_rules! on_daemon {
     }};
 }
 
-/// A session, as the daemon's client.
+/// A session, or the user, as the daemon's client.
 pub struct Caller<D> {
     daemons: D,
-    session: SessionName,
+    /// The project a target harp is of.
+    project: ProjectName,
+    /// The session this caller is; none: the user.
+    me: Option<SessionName>,
     env: v1::EnvVars,
     ids: RequestIds,
+    /// Mints a child's harp where a launch names none.
+    names: Option<RequestIds>,
+    /// The launch locks a launch holds from before its `CreateHandOff` to
+    /// after its `LaunchChild` (T6); none, a launch holds none.
+    locks: Option<Arc<dyn RunLocks>>,
 }
 
-/// What a write came to: the target as the daemon has it after, and the
-/// id the write was sent under (a message's, a clear's; a close's is its
-/// session's).
+/// The name of the launch lock of the child `child` (its stable id), among
+/// the run locks: what a launch holds while it is made, and the daemon's
+/// sweep probes for a hand-off still marked in launch.
+pub fn launch_lock_name(child: &str) -> String {
+    format!("launch-{child}")
+}
+
+/// What a write came to: the target as the daemon has it after, the id the
+/// write was sent under (a message's, a clear's; a close's and a launch's
+/// are the session's), and whether this call applied it (false: it was
+/// applied before, its command a DUPLICATE).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Written {
     pub session: v1::Session,
     pub id: String,
+    pub applied: bool,
+}
+
+/// A child's launch, as asked.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Launch {
+    /// The owner: a session's harp in this project, or its full name; none,
+    /// the caller itself (a session launching its own child).
+    pub owner: Option<String>,
+    /// The child's harp; none, one minted.
+    pub harp: Option<String>,
+    /// The child's engine; empty, the one a child is hosted on.
+    pub engine: String,
+    /// The agent it is planned for; empty, the project's default.
+    pub agent: String,
+    /// Its first task; empty, none.
+    pub task: String,
 }
 
 /// `name`, refused as no session's name.
@@ -87,6 +141,40 @@ fn reason_of(rejection: &sessions::SessionRejection) -> String {
         sessions::SessionRejection::NameMalformed { reason, .. } => reason.clone(),
         sessions::SessionRejection::HarpInvalid { reason, .. } => reason.clone(),
         _ => "shape".to_string(),
+    }
+}
+
+/// A launch lock that could not be taken: one held is another launch of
+/// the same child, under way (refused); any other, failed.
+fn launch_unheld(harp: &str, error: session_ports::LockError) -> CallError {
+    match error {
+        session_ports::LockError::Held(_) => {
+            CallError::Refused(Rejection::Api(ApiRejection::LaunchInProgress {
+                harp: harp.to_string(),
+            }))
+        }
+        session_ports::LockError::Failed(report) => CallError::LaunchLock {
+            detail: report.to_string(),
+        },
+    }
+}
+
+/// The sessions domain's refusal of a message or a clear to the closed
+/// session `target`, as the daemon would refuse it. Said here from the
+/// target as the daemon has it: the coordinator's status carries a typed
+/// refusal's type and not its object, so the domain's own refusal would
+/// reach this client without the session it names.
+fn closed_refusal(target: &SessionName) -> Called {
+    let closed = sessions::SessionIsClosed {
+        harp: target.harp().to_string(),
+    };
+    let refusal = crate::ApiRefusal::typed(
+        &angzarr_embedded::markup::TypedRefusal::of(&closed),
+        <sessions::SessionIsClosed as sessions::Refusal>::REFUSAL_STATUS,
+    );
+    Called::Refused {
+        code: refusal.code,
+        refusal: refusal.refusal,
     }
 }
 
@@ -114,15 +202,60 @@ impl<D: Daemons> Caller<D> {
             .map_err(|rejection| not_a_name(session, &reason_of(&rejection)))?;
         Ok(Caller {
             daemons,
-            session,
+            project: session.project(),
+            me: Some(session),
             env,
             ids,
+            names: None,
+            locks: None,
         })
     }
 
-    /// The session this caller is.
-    pub fn session(&self) -> &SessionName {
-        &self.session
+    /// The USER in the project `project` names (`projects/{p}`, as her
+    /// command resolved it): her commands name no requester (D25).
+    pub fn user(
+        daemons: D,
+        project: &str,
+        env: v1::EnvVars,
+        ids: RequestIds,
+    ) -> Result<Caller<D>, CallError> {
+        let project = ProjectName::parse(project)
+            .map_err(|rejection| not_a_name(project, &reason_of(&rejection)))?;
+        Ok(Caller {
+            daemons,
+            project,
+            me: None,
+            env,
+            ids,
+            names: None,
+            locks: None,
+        })
+    }
+
+    /// This caller, each launch holding its launch lock among `locks` (T6:
+    /// taken at once or not at all, so a second launch of one child while the
+    /// first is made is refused).
+    #[must_use]
+    pub fn holding(self, locks: Arc<dyn RunLocks>) -> Caller<D> {
+        Caller {
+            locks: Some(locks),
+            ..self
+        }
+    }
+
+    /// This caller, a launch that names no child's harp minting one with
+    /// `names`.
+    #[must_use]
+    pub fn naming(self, names: RequestIds) -> Caller<D> {
+        Caller {
+            names: Some(names),
+            ..self
+        }
+    }
+
+    /// The session this caller is; none, the user.
+    pub fn session(&self) -> Option<&SessionName> {
+        self.me.as_ref()
     }
 
     /// `target`: a session of this caller's project by its harp, or any
@@ -130,7 +263,7 @@ impl<D: Daemons> Caller<D> {
     pub fn target(&self, target: &str) -> Result<SessionName, CallError> {
         let parsed = match target.contains('/') {
             true => SessionName::parse(target),
-            false => self.session.project().session(target),
+            false => self.project.session(target),
         };
         parsed.map_err(|rejection| not_a_name(target, &reason_of(&rejection)))
     }
@@ -139,7 +272,7 @@ impl<D: Daemons> Caller<D> {
     pub async fn list_sessions(&self, all: bool) -> Result<v1::ListSessionsResponse, CallError> {
         let parent = match all {
             true => EVERY_PROJECT.to_string(),
-            false => self.session.project().to_string(),
+            false => self.project.to_string(),
         };
         let request = v1::ListSessionsRequest {
             parent,
@@ -181,7 +314,7 @@ impl<D: Daemons> Caller<D> {
         tags: Vec<String>,
     ) -> Result<v1::AssembledContext, CallError> {
         let request = v1::AssembleContextRequest {
-            name: self.session.project().to_string(),
+            name: self.project.to_string(),
             fragments,
             tags,
             env: Some(self.env.clone()),
@@ -191,29 +324,38 @@ impl<D: Daemons> Caller<D> {
     }
 
     /// The caller, as the `requester` of its commands: its project's id
-    /// (the daemon's `GetProject`) and its own stable id.
-    async fn requester(&self, api: &D::Api) -> Result<SessionRef, Called> {
-        let project = api
-            .get_project(v1::GetProjectRequest {
-                name: self.session.project().to_string(),
-            })
-            .await?;
-        Ok(SessionRef {
+    /// (the daemon's `GetProject`) and its own stable id; none for the user,
+    /// who names none (D25).
+    async fn requester(&self, api: &D::Api) -> Result<Option<SessionRef>, Called> {
+        let Some(me) = &self.me else {
+            return Ok(None);
+        };
+        let project = self.project_of(api).await?;
+        Ok(Some(SessionRef {
             project_id: project.uid,
-            session: self.session.uid(),
+            session: me.uid(),
+        }))
+    }
+
+    /// This caller's project, as the daemon has it.
+    async fn project_of(&self, api: &D::Api) -> Result<v1::Project, Called> {
+        api.get_project(v1::GetProjectRequest {
+            name: self.project.to_string(),
         })
+        .await
     }
 
     /// `command` to `target`'s stream through the coordinator, keyed `key`,
     /// answered with the target as the index projected it (as `GetSession`
-    /// reads it when no projection came back).
+    /// reads it when no projection came back), and whether it was applied
+    /// now.
     async fn write<M: angzarr_embedded::markup::DomainMessage>(
         &self,
         api: &D::Api,
         target: &SessionName,
         command: &M,
         key: &str,
-    ) -> Result<v1::Session, Called> {
+    ) -> Result<(v1::Session, bool), Called> {
         let cover = angzarr_embedded::v1::Cover {
             domain: sessions::SESSION_DOMAIN.to_string(),
             root: Some(target.root()),
@@ -223,10 +365,11 @@ impl<D: Daemons> Caller<D> {
         let synced = api
             .handle_sync(book, vec![SESSION_INDEX.to_string()])
             .await?;
-        match synced.projection::<v1::Session>(SESSION_INDEX) {
-            Some(session) => Ok(session),
-            None => self.read(api, target).await,
-        }
+        let session = match synced.projection::<v1::Session>(SESSION_INDEX) {
+            Some(session) => session,
+            None => self.read(api, target).await?,
+        };
+        Ok((session, synced.applied))
     }
 
     /// One send of `message_id` to `target` on `api`: its evidence the
@@ -238,13 +381,16 @@ impl<D: Daemons> Caller<D> {
         message_id: &str,
         urgency: Urgency,
         text: &str,
-    ) -> Result<v1::Session, Called> {
+    ) -> Result<(v1::Session, bool), Called> {
         let held = self.read(api, target).await?;
+        if held.closed {
+            return Err(closed_refusal(target));
+        }
         let command = SendMessage {
             message_id: message_id.to_string(),
             urgency,
             text: text.to_string(),
-            requester: Some(self.requester(api).await?),
+            requester: self.requester(api).await?,
             supported: sessions_application::urgencies_of(!held.owner.is_empty(), &held.engine),
         };
         self.write(api, target, &command, message_id).await
@@ -258,14 +404,31 @@ impl<D: Daemons> Caller<D> {
         urgency: Urgency,
         text: &str,
     ) -> Result<Written, CallError> {
+        self.send_as(target, urgency, text, None).await
+    }
+
+    /// `session send`: `text` to `target`, at `urgency`, under `id` (none:
+    /// one minted here, the same on the retry), so the same id sent again is
+    /// one message.
+    pub async fn send_as(
+        &self,
+        target: &str,
+        urgency: Urgency,
+        text: &str,
+        id: Option<&str>,
+    ) -> Result<Written, CallError> {
         let name = self.target(target)?;
-        let message_id = (self.ids)();
-        let session: v1::Session = on_daemon!(self, |api| self
+        let message_id = match id.filter(|id| !id.is_empty()) {
+            Some(id) => id.to_string(),
+            None => (self.ids)(),
+        };
+        let (session, applied) = on_daemon!(self, |api| self
             .sent(api, &name, &message_id, urgency, text)
             .await)?;
         Ok(Written {
             session,
             id: message_id,
+            applied,
         })
     }
 
@@ -274,23 +437,32 @@ impl<D: Daemons> Caller<D> {
         api: &D::Api,
         target: &SessionName,
         key: &str,
-    ) -> Result<v1::Session, Called> {
-        let command = CloseSession {
-            cause: TOOL_CLOSE.to_string(),
-            requester: Some(self.requester(api).await?),
+    ) -> Result<(v1::Session, bool), Called> {
+        let cause = match self.me {
+            Some(_) => TOOL_CLOSE,
+            None => USER_CLOSE,
         };
-        self.write(api, target, &command, key).await
+        // A session closed already is told so, whoever closed it (the
+        // close records nothing on it).
+        let was_closed = self.read(api, target).await?.closed;
+        let command = CloseSession {
+            cause: cause.to_string(),
+            requester: self.requester(api).await?,
+        };
+        let (session, applied) = self.write(api, target, &command, key).await?;
+        Ok((session, applied && !was_closed))
     }
 
-    /// `child_close`: the child `target` closed, keyed by its session, so
-    /// a second close is the first's duplicate.
+    /// `child_close`, `session close`: `target` closed, keyed by its
+    /// session, so a second close is the first's duplicate.
     pub async fn close(&self, target: &str) -> Result<Written, CallError> {
         let name = self.target(target)?;
         let key = format!("close:{}", name.uid());
-        let session: v1::Session = on_daemon!(self, |api| self.closed(api, &name, &key).await)?;
+        let (session, applied) = on_daemon!(self, |api| self.closed(api, &name, &key).await)?;
         Ok(Written {
             session,
             id: name.uid(),
+            applied,
         })
     }
 
@@ -299,25 +471,214 @@ impl<D: Daemons> Caller<D> {
         api: &D::Api,
         target: &SessionName,
         clear_id: &str,
-    ) -> Result<v1::Session, Called> {
+    ) -> Result<(v1::Session, bool), Called> {
+        if self.read(api, target).await?.closed {
+            return Err(closed_refusal(target));
+        }
         let command = ClearChild {
             clear_id: clear_id.to_string(),
-            requester: Some(self.requester(api).await?),
+            requester: self.requester(api).await?,
         };
         self.write(api, target, &command, clear_id).await
     }
 
-    /// `child_clear`: the child `target`'s conversation cleared, under an
-    /// id minted here.
+    /// `child_clear`, `session clear`: the child `target`'s conversation
+    /// cleared, under an id minted here.
     pub async fn clear(&self, target: &str) -> Result<Written, CallError> {
         let name = self.target(target)?;
         let clear_id = (self.ids)();
-        let session: v1::Session =
-            on_daemon!(self, |api| self.cleared(api, &name, &clear_id).await)?;
+        let (session, applied) = on_daemon!(self, |api| self.cleared(api, &name, &clear_id).await)?;
         Ok(Written {
             session,
             id: clear_id,
+            applied,
         })
+    }
+
+    /// `child_launch`, `session launch` (T6, S10): a child of `launch`'s
+    /// owner (none: this caller), its launch lock held (a second launch of
+    /// it meanwhile refused), its environment handed to the daemon first
+    /// (`CreateHandOff`, refused before anything is written), then the
+    /// owner's `LaunchChild` on the engine the daemon planned it on, keyed
+    /// by the owner and the child, so its retry on a new daemon is one
+    /// launch. A refused `LaunchChild` takes its hand-off back
+    /// (`DeleteHandOff`). Answered with the child as the
+    /// daemon has it (as launched, until its daemon has minted it).
+    pub async fn launch(&self, launch: &Launch) -> Result<Written, CallError> {
+        let owner = match (&launch.owner, &self.me) {
+            (Some(owner), _) => self.target(owner)?,
+            (None, Some(me)) => me.clone(),
+            (None, None) => return Err(not_a_name("", "shape")),
+        };
+        let harp = match (&launch.harp, &self.names) {
+            (Some(harp), _) => harp.clone(),
+            (None, Some(names)) => names(),
+            (None, None) => String::new(),
+        };
+        let project = owner.project();
+        let child = project
+            .session(&harp)
+            .map_err(|rejection| not_a_name(&harp, &reason_of(&rejection)))?;
+        // Held for the launch's whole life, its retry on a new daemon too,
+        // and let go once its `LaunchChild` is answered.
+        let _held = match &self.locks {
+            Some(locks) => Some(
+                locks
+                    .hold_run(&launch_lock_name(&child.uid()))
+                    .map_err(|error| launch_unheld(&harp, error))?,
+            ),
+            None => None,
+        };
+        let request_id = (self.ids)();
+        let (session, applied) = on_daemon!(self, |api| self
+            .launched(api, &owner, &child, &launch.engine, launch, &request_id)
+            .await)?;
+        Ok(Written {
+            session,
+            id: child.uid(),
+            applied,
+        })
+    }
+
+    /// One launch of `child` for `owner` on `api`.
+    async fn launched(
+        &self,
+        api: &D::Api,
+        owner: &SessionName,
+        child: &SessionName,
+        engine: &str,
+        launch: &Launch,
+        request_id: &str,
+    ) -> Result<(v1::Session, bool), Called> {
+        let parent = owner.project().to_string();
+        let hand_off = api
+            .create_hand_off(v1::CreateHandOffRequest {
+                parent: parent.clone(),
+                hand_off_id: child.uid(),
+                owner: owner.harp().to_string(),
+                engine: engine.to_string(),
+                agent: launch.agent.clone(),
+                request_id: request_id.to_string(),
+                env: Some(self.env.clone()),
+            })
+            .await?;
+        // The engine it is planned on: asked, else its agent's (the
+        // daemon's answer names it).
+        let engine = match (hand_off.engine.is_empty(), engine.is_empty()) {
+            (false, _) => hand_off.engine.clone(),
+            (true, false) => engine.to_string(),
+            (true, true) => session_policies::CHILD_ENGINE.to_string(),
+        };
+        let launched = self
+            .launch_child(api, owner, child, &engine, &launch.task)
+            .await;
+        let applied = match launched {
+            Ok(applied) => applied,
+            Err(refused @ Called::Refused { .. }) => {
+                let _ = api
+                    .delete_hand_off(v1::DeleteHandOffRequest {
+                        name: hand_off.name,
+                        request_id: request_id.to_string(),
+                    })
+                    .await;
+                return Err(refused);
+            }
+            Err(other) => return Err(other),
+        };
+        let session = match self.read(api, child).await {
+            Ok(session) => session,
+            // Not minted yet: the child as launched.
+            Err(Called::Refused { .. }) => v1::Session {
+                name: child.to_string(),
+                uid: child.uid(),
+                engine,
+                owner: owner.to_string(),
+                ..v1::Session::default()
+            },
+            Err(other) => return Err(other),
+        };
+        Ok((session, applied))
+    }
+
+    /// The owner's `LaunchChild` of `child`: whether it was applied now.
+    async fn launch_child(
+        &self,
+        api: &D::Api,
+        owner: &SessionName,
+        child: &SessionName,
+        engine: &str,
+        task: &str,
+    ) -> Result<bool, Called> {
+        let project = api
+            .get_project(v1::GetProjectRequest {
+                name: owner.project().to_string(),
+            })
+            .await?;
+        let held = self.read(api, owner).await?;
+        let command = LaunchChild {
+            child_project_id: project.uid,
+            child_session: child.uid(),
+            child_root: held.project_root,
+            harp: child.harp().to_string(),
+            engine: engine.to_string(),
+            trust: TargetTrust {
+                same_project: true,
+                trusted: true,
+            },
+            delegation_limit: DELEGATION_LIMIT,
+            requester: self.requester(api).await?,
+            prompt: task.to_string(),
+        };
+        let key = format!("launch:{}:{}", owner.uid(), child.uid());
+        Ok(self.write(api, owner, &command, &key).await?.1)
+    }
+}
+
+/// The child verbs a command sends as the user (`session launch|send|clear|
+/// close`, S2, S19), as the CLI calls them.
+#[allow(async_fn_in_trait)]
+pub trait ChildWrites {
+    /// `session launch`: a child of `launch`'s owner.
+    async fn launch(&self, launch: &Launch) -> Result<Written, CallError>;
+
+    /// `session send`: `text` to `target` at `urgency`, under `id` (none:
+    /// one minted).
+    async fn send_as(
+        &self,
+        target: &str,
+        urgency: Urgency,
+        text: &str,
+        id: Option<&str>,
+    ) -> Result<Written, CallError>;
+
+    /// `session clear`: `target`'s conversation started again.
+    async fn clear(&self, target: &str) -> Result<Written, CallError>;
+
+    /// `session close`: `target` closed, with its children.
+    async fn close(&self, target: &str) -> Result<Written, CallError>;
+}
+
+impl<D: Daemons> ChildWrites for Caller<D> {
+    async fn launch(&self, launch: &Launch) -> Result<Written, CallError> {
+        Caller::launch(self, launch).await
+    }
+
+    async fn send_as(
+        &self,
+        target: &str,
+        urgency: Urgency,
+        text: &str,
+        id: Option<&str>,
+    ) -> Result<Written, CallError> {
+        Caller::send_as(self, target, urgency, text, id).await
+    }
+
+    async fn clear(&self, target: &str) -> Result<Written, CallError> {
+        Caller::clear(self, target).await
+    }
+
+    async fn close(&self, target: &str) -> Result<Written, CallError> {
+        Caller::close(self, target).await
     }
 }
 

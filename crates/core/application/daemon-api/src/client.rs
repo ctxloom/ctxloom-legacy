@@ -9,6 +9,9 @@ use std::fmt;
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 use daemon_ports::{Called, DaemonApi};
 use exit_code::{Exit, ExitClass};
+/// The one semver "newer" (run-ports'), which the hook's hold judges by
+/// too (s4-Q14, H-Q1): re-exported where the skew rule always named it.
+pub use run_ports::newer;
 
 /// What the client does with the daemon it found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,87 +109,6 @@ pub async fn reconcile_session<A: DaemonApi>(
     }
 }
 
-/// Whether stamp `own` names a newer VERSION than stamp `daemon`: semver
-/// precedence of the `MAJOR.MINOR.PATCH[-pre]` each stamp
-/// (`v<version>-<hash>[-<time>-dirty]`) carries. The hash and a dirty
-/// build's time order nothing, so two builds of one version are neither;
-/// a stamp not of the shape is never newer, nor older.
-pub fn newer(own: &str, daemon: &str) -> bool {
-    match (Version::of_stamp(own), Version::of_stamp(daemon)) {
-        (Some(own), Some(daemon)) => own.precedes(&daemon) == std::cmp::Ordering::Greater,
-        _ => false,
-    }
-}
-
-/// A stamp's version, as semver orders it.
-struct Version<'a> {
-    numbers: [u64; 3],
-    /// The pre-release identifiers; none, a release.
-    pre: Vec<&'a str>,
-}
-
-impl<'a> Version<'a> {
-    /// The version of `stamp`, or none when it is not a stamp's shape.
-    fn of_stamp(stamp: &'a str) -> Option<Version<'a>> {
-        let rest = stamp.strip_prefix('v')?;
-        let rest = match rest.strip_suffix("-dirty") {
-            Some(dirty) => dirty.rsplit_once('-')?.0,
-            None => rest,
-        };
-        let (version, hash) = rest.rsplit_once('-')?;
-        if hash.is_empty() || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return None;
-        }
-        let (core, pre) = match version.split_once('-') {
-            Some((core, pre)) => (core, pre.split('.').collect()),
-            None => (version, Vec::new()),
-        };
-        let parsed: Vec<u64> = core
-            .split('.')
-            .map(|n| {
-                n.bytes()
-                    .all(|b| b.is_ascii_digit())
-                    .then(|| n.parse().ok())
-                    .flatten()
-            })
-            .collect::<Option<_>>()?;
-        let numbers: [u64; 3] = parsed.try_into().ok()?;
-        if pre.iter().any(|id: &&str| id.is_empty()) {
-            return None;
-        }
-        Some(Version { numbers, pre })
-    }
-
-    /// Semver precedence: the numbers; then a release above any of its
-    /// pre-releases; then identifier by identifier, numbers by value and
-    /// below words, a longer list above its prefix.
-    fn precedes(&self, other: &Version<'_>) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        let by_numbers = self.numbers.cmp(&other.numbers);
-        if by_numbers != Ordering::Equal {
-            return by_numbers;
-        }
-        match (self.pre.is_empty(), other.pre.is_empty()) {
-            (true, true) => return Ordering::Equal,
-            (true, false) => return Ordering::Greater,
-            (false, true) => return Ordering::Less,
-            (false, false) => {}
-        }
-        for (a, b) in self.pre.iter().zip(&other.pre) {
-            let order = match (a.parse::<u64>(), b.parse::<u64>()) {
-                (Ok(a), Ok(b)) => a.cmp(&b),
-                (Ok(_), Err(_)) => Ordering::Less,
-                (Err(_), Ok(_)) => Ordering::Greater,
-                (Err(_), Err(_)) => a.cmp(b),
-            };
-            if order != Ordering::Equal {
-                return order;
-            }
-        }
-        self.pre.len().cmp(&other.pre.len())
-    }
-}
-
 impl fmt::Display for SkewError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         angzarr_diagnostic::display(self, f)
@@ -239,6 +161,10 @@ pub enum CallError {
     Call(Called),
     /// No daemon could be called: none started, or the one serving declined.
     Unreached(daemon_ports::Unreached),
+    /// A launch's lock could not be made or opened (T6).
+    LaunchLock {
+        detail: String,
+    },
 }
 
 impl From<Called> for CallError {
@@ -268,8 +194,10 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Api(api)) => api.code(),
             CallError::Refused(crate::refusal::Rejection::Sessions(ours)) => ours.code(),
             CallError::Refused(crate::refusal::Rejection::Removal(removal)) => removal.code(),
+            CallError::Refused(crate::refusal::Rejection::Runs(ran)) => ran.code(),
             CallError::Call(called) => called.code(),
             CallError::Unreached(unreached) => unreached.code(),
+            CallError::LaunchLock { .. } => code!("launch-lock"),
         }
     }
 
@@ -278,8 +206,10 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Api(api)) => api.args(),
             CallError::Refused(crate::refusal::Rejection::Sessions(ours)) => ours.args(),
             CallError::Refused(crate::refusal::Rejection::Removal(removal)) => removal.args(),
+            CallError::Refused(crate::refusal::Rejection::Runs(ran)) => ran.args(),
             CallError::Call(called) => called.args(),
             CallError::Unreached(unreached) => unreached.args(),
+            CallError::LaunchLock { detail } => vec![("ext_err_txt", detail.as_str().into())],
         }
     }
 }
@@ -293,6 +223,7 @@ impl ExitClass for CallError {
                 Exit::REFUSED
             }
             CallError::Call(_)
+            | CallError::LaunchLock { .. }
             | CallError::Unreached(daemon_ports::Unreached::NotStarted { .. }) => Exit::FAILED,
         }
     }
@@ -333,6 +264,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(SkewError::Mismatch {
             own: "0.2.0+b".to_string(),
             daemon: "0.1.0+a".to_string(),
+        }),
+        Box::new(CallError::LaunchLock {
+            detail: "permission denied".to_string(),
         }),
     ]
 }

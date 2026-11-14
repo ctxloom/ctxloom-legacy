@@ -42,12 +42,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &[
             "ctxloom/v1/daemon.proto",
             "ctxloom/v1/discovery.proto",
+            "ctxloom/v1/held.proto",
             "ctxloom/v1/launch.proto",
             "ctxloom/v1/needs.proto",
         ],
         &["../../../../proto"],
     )?;
-    // The files the four import are compiled too, but only the four are
+    // The files the five import are compiled too, but only the five are
     // watched by `wire`: a change to library.proto (imported by
     // daemon.proto) must rebuild the types as well.
     for imported in IMPORTED {
