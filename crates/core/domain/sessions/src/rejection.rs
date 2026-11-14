@@ -76,6 +76,13 @@ pub enum SessionRejection {
         workspace: String,
         asked: String,
     },
+    /// A re-host of a child re-hosted `limit` times or more in the last
+    /// hour (S47): `recent` is how many.
+    RehostBudgetSpent {
+        harp: String,
+        limit: u32,
+        recent: u32,
+    },
 }
 
 /// Its key and args, never English (angzarr decision 14.37).
@@ -113,6 +120,7 @@ impl Diagnostic for SessionRejection {
             SessionRejection::NoNativeSession { .. } => code!("no-native-session"),
             SessionRejection::EngineMismatch { .. } => code!("engine-mismatch"),
             SessionRejection::WorkspaceMismatch { .. } => code!("workspace-mismatch"),
+            SessionRejection::RehostBudgetSpent { .. } => code!("rehost-budget-spent"),
         }
     }
 
@@ -156,6 +164,15 @@ impl Diagnostic for SessionRejection {
                 ("harp", harp.as_str().into()),
                 ("workspace", workspace.as_str().into()),
                 ("asked", asked.as_str().into()),
+            ],
+            SessionRejection::RehostBudgetSpent {
+                harp,
+                limit,
+                recent,
+            } => vec![
+                ("harp", harp.as_str().into()),
+                ("limit", u64::from(*limit).into()),
+                ("recent", u64::from(*recent).into()),
             ],
             SessionRejection::HarpInvalid { harp, reason } => vec![
                 ("harp", harp.as_str().into()),
@@ -255,6 +272,11 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
             harp: harp(),
             workspace: "worktree".to_string(),
             asked: "none".to_string(),
+        }),
+        Box::new(SessionRejection::RehostBudgetSpent {
+            harp: harp(),
+            limit: 60,
+            recent: 60,
         }),
     ]
 }

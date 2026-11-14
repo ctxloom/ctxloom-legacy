@@ -302,6 +302,9 @@ async fn the_start_sweeps_a_killed_daemons_child_and_ends_it_once() {
             session: CHILD.to_string(),
             incarnation: 1,
             started: true,
+            project_dir: "/work".to_string(),
+            workspace: "/work".to_string(),
+            released: run_launcher::Released::Nothing,
         }]
     );
     let run = Cover {

@@ -67,6 +67,9 @@ enum TurnFailureClass {
   TURN_FAILURE_CLASS_CREDENTIAL_REFUSED = 2;
   TURN_FAILURE_CLASS_ENGINE_ERROR = 3;
   TURN_FAILURE_CLASS_INTERRUPTED = 4;
+  // Its host was lost while the turn was in flight (a killed daemon), as
+  // the next start's sweep ends it (S18).
+  TURN_FAILURE_CLASS_RUNNER_LOST = 5;
 }
 
 // region commands
