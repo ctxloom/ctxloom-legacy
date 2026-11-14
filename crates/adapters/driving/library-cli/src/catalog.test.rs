@@ -120,3 +120,23 @@ fn test_a_distilled_form_s_state_is_the_api_s() {
         v1::DistilledState::None as i32
     );
 }
+
+// A reference whose bundle is empty names nothing, whatever its path; a
+// bundle text that is empty, or carries a version (`@`), or another scheme
+// (`host:x`) keeps its text; a companion's loadout is named.
+#[test]
+fn test_a_reference_that_names_no_bundle_keeps_its_text() {
+    assert_eq!(reference_name(P, "#fragments/x"), None);
+    assert_eq!(bundle_ref(P, "#fragments/x"), "#fragments/x");
+    assert_eq!(bundle_ref(P, ""), "");
+    assert_eq!(bundle_ref(P, "kit@v1"), "kit@v1");
+    assert_eq!(bundle_ref(P, "host:kit"), "host:kit");
+    assert_eq!(
+        bundle_ref(P, "ctxloom+companion:taskloom"),
+        "projects/calm-otter/companions/taskloom/bundles/loadout"
+    );
+    assert_eq!(
+        bundle_ref(P, "ctxloom+local:demo"),
+        "projects/calm-otter/bundles/demo"
+    );
+}
