@@ -192,6 +192,11 @@ impl<D: Daemons> Client<D> {
             .await
     }
 
+    /// A dry run's parent (owner ruling 2026-11-14).
+    pub async fn named_parent(&self) -> Result<Option<String>, CallError> {
+        self.library_parent().await.map(Some)
+    }
+
     /// `call` on a reached daemon, once more on the daemon reached again if
     /// this one could not be reached (S8).
     async fn on_daemon<T>(
