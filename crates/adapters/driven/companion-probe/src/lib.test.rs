@@ -334,3 +334,32 @@ fn test_the_program_runs_in_the_sites_directory() {
         CompanionLoadout::Loaded(format!("{}\n", project.display()))
     );
 }
+
+// A file of the program's name that is not executable is no program: the
+// search passes over it (a candidate must be a file AND executable).
+#[test]
+fn test_a_file_of_the_name_that_is_not_executable_is_not_found() {
+    if os::host().flavor() != os::Flavor::Unix {
+        eprintln!(
+            "SKIP {}: every file is executable off unix",
+            std::thread::current().name().unwrap_or("a test")
+        );
+        return;
+    }
+    let dir = Rooted::temp().unwrap();
+    dir.create_dir_all(&os::fixture("/bin"), os::Mode::DIR)
+        .unwrap();
+    dir.write_atomic(
+        &os::fixture("/bin/ctxloom-companion-x"),
+        b"#!/bin/sh\necho x\n",
+        file_system::Perms::Exact(os::Mode::FILE),
+    )
+    .unwrap();
+    let bin = dir.root().join("bin").to_str().unwrap().to_string();
+    let site = ProbeSite {
+        env: vec![("PATH".to_string(), bin)],
+        cwd: String::new(),
+    };
+    assert_eq!(probe().find(X, &site), None);
+    assert_eq!(probe().loadout(X, &site), CompanionLoadout::Absent);
+}
