@@ -674,25 +674,32 @@ pub(crate) fn library_parent(
     resolved_parent(wiring, stamp, registration)
 }
 
-/// [`library_parent`], or none where the project is a ctxloom project
-/// nothing has named and `minting` is a dry run's `Never`: its names are
-/// then unresolved (owner rulings 2026-11-14: a dry run never mints, and
-/// prints an unresolved name as null). The daemon is asked otherwise.
+/// A dry run's parent (owner rulings 2026-11-14: every dry run calls the
+/// daemon, spawning it if needed; it never mints, and prints an unresolved
+/// name as null): [`library_parent`]'s, or none where the project is a
+/// ctxloom project nothing has named and `minting` is a dry run's `Never`.
+/// The daemon is reached in every case, asked `GetDaemon` where there is
+/// nothing to resolve (`daemon_api::Client::named_parent`), so one that
+/// cannot be started fails the dry run as it fails every client's command.
 pub(crate) fn library_parent_if_named(
     wiring: &Wiring,
     stamp: &str,
     minting: crate::Minting,
 ) -> Result<Option<String>, Failure> {
-    match wiring.library_registration(minting) {
-        Err(LibError::ProjectUnnamed { .. }) if minting == crate::Minting::Never => Ok(None),
-        registration => {
-            let registration = registration.map_err(|e| {
+    let client = match wiring.library_registration(minting) {
+        Err(LibError::ProjectUnnamed { .. }) if minting == crate::Minting::Never => {
+            client_for(wiring, stamp, None).unnamed()
+        }
+        registration => client_for(
+            wiring,
+            stamp,
+            registration.map_err(|e| {
                 let exit = e.exit();
                 Failure::new(e, exit)
-            })?;
-            resolved_parent(wiring, stamp, registration).map(Some)
-        }
-    }
+            })?,
+        ),
+    };
+    block_on(client.named_parent())?.map_err(called)
 }
 
 /// The parent the daemon names for `registration` (`users/me` for none).
@@ -701,20 +708,7 @@ fn resolved_parent(
     stamp: &str,
     registration: Option<daemon_proto::v1::ResolveProjectRequest>,
 ) -> Result<String, Failure> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| {
-            failed(LibError::NoRuntime {
-                detail: e.to_string(),
-            })
-        })?;
-    runtime
-        .block_on(client_for(wiring, stamp, registration).library_parent())
-        .map_err(|e| {
-            let exit = e.exit();
-            Failure::new(e, exit)
-        })
+    block_on(client_for(wiring, stamp, registration).library_parent())?.map_err(called)
 }
 
 /// The USER's client of the daemon for her child verbs (`session

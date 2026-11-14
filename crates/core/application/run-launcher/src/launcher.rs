@@ -3,10 +3,12 @@
 //! [`RunnerLauncher`], and records what came of it as the run's facts.
 //!
 //! The order of a launch, and why:
-//! 1. the session home is written and the turn's command is built; a launch
-//!    that fails here has started nothing, and is a `LaunchFailed`;
-//! 2. `RunnerAttached` is recorded, then the command is SPAWNED
-//!    ([`RunnerLauncher::launch`]), and only then are `RunnerStarted` (with the
+//! 1. the launch is made ([`crate::launch_of`], T10: the session home
+//!    written, the engine's command built, the permits applied, the program
+//!    found, the command checked); a launch that fails here has started
+//!    nothing, and is a `LaunchFailed`;
+//! 2. `RunnerAttached` is recorded, then the launch is SPAWNED
+//!    ([`RunnerLauncher::start`]), and only then are `RunnerStarted` (with the
 //!    pid the spawn gave) and `TurnStarted` recorded, while the command runs:
 //!    the pending launches clear on `RunnerStarted` (not on a runner's first
 //!    word, which a spawned and silent turn never says), so a catch-up that
@@ -46,12 +48,13 @@ use angzarr_embedded::v1::Uuid;
 use angzarr_embedded::{Catalog, CatchUp, Processed, ReadStore, Store};
 use pending_launches::{catch_up, PendingLaunch, PendingModel, StartedRun};
 use run_ports::{
-    Edge, Engine, FailureClass, Limits, RunnerLauncher, SessionRecords, TurnCommand, TurnOutcome,
-    TurnRequest,
+    Edge, Engine, FailureClass, Launch, LaunchAt, LaunchKind, Limits, RunnerLauncher,
+    SessionRecords, TurnOutcome,
 };
 use runs_application::{Facts, Identity, Observation, RunnerFact};
 
 use crate::error::LaunchError;
+use crate::launch::{LaunchEngines, LaunchRequest, NotLaunched, Unprepared};
 use crate::orders::{Order, Orders};
 use crate::workspace::Placement;
 
@@ -100,25 +103,6 @@ pub enum Outcome {
     /// Nothing was started: the engine's program is on no directory of its
     /// PATH, by any name the host looks it up by; what was searched is said.
     ProgramNotFound(run_ports::ProgramNotFound),
-}
-
-/// Why a launch's preparation started nothing.
-enum Unprepared {
-    /// Its words: no engine, a home that could not be written, a command the
-    /// engine would not build.
-    Failed(String),
-    /// The command is too long for the platform (`run_ports::check_command_line`).
-    TooLong(run_ports::CommandTooLong),
-    /// A batch file's argument std will not pass (`run_ports::check_batch_arguments`).
-    BatchArguments(run_ports::BatchArguments),
-    /// The program is on no directory of the command's PATH.
-    ProgramNotFound(run_ports::ProgramNotFound),
-}
-
-impl From<String> for Unprepared {
-    fn from(detail: String) -> Unprepared {
-        Unprepared::Failed(detail)
-    }
 }
 
 /// A run launched, and its turn's outcome.
@@ -303,7 +287,16 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         let mut ignored = Vec::new();
         let mut left_out = Vec::new();
         let mut placed = None;
-        let prepared = self.prepare(&order, &mut ignored, &mut left_out, &mut placed);
+        let at = LaunchAt {
+            project_id: String::new(),
+            session: launch.session.clone(),
+            harp: order.harp.clone(),
+            run: uuid::Uuid::from_slice(&launch.run.value)
+                .map(|id| id.hyphenated().to_string())
+                .unwrap_or_default(),
+            incarnation: launch.incarnation,
+        };
+        let prepared = self.prepare(at, &order, &mut ignored, &mut left_out, &mut placed);
         let checkout = placed.as_ref().and_then(|p: &Placement| p.checkout.clone());
         let workspace_warning = placed.as_ref().and_then(|p| p.warning.clone());
         let checkout_files = placed.as_ref().map(|p| p.files.clone()).unwrap_or_default();
@@ -320,7 +313,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             checkout_files: checkout_files.clone(),
             workspace_warning: workspace_warning.clone(),
         };
-        let (engine, command) = match prepared {
+        let (engine, made) = match prepared {
             Ok(prepared) => prepared,
             Err(unprepared) => {
                 let outcome = self.unprepared(&who, &launch, unprepared).await?;
@@ -333,13 +326,13 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             // is its hooks' to record (the engine submits it and its prompt
             // hook fires): the launcher records the run's own facts only.
             return self
-                .terminal(&who, &order, cwd.as_deref(), &command, done)
+                .terminal(&who, &order, cwd.as_deref(), &made, done)
                 .await;
         }
         // A child's turn is heard through its hooks alone (owner rulings 26
         // and 51): its prompt and its words are theirs to record, and the
         // stream is read below for the reply and the turn's outcome only.
-        let running = match self.runner.launch(&command, &self.limits) {
+        let running = match self.runner.start(&made, &self.limits) {
             Ok(running) => running,
             Err(failure) => return self.never_started(&who, failure, done).await,
         };
@@ -422,10 +415,10 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         who: &Identity,
         order: &Order,
         cwd: Option<&str>,
-        command: &TurnCommand,
+        made: &Launch,
         done: impl Fn(Outcome) -> Launched,
     ) -> Result<Launched, LaunchError> {
-        let running = match self.runner.launch_terminal(command) {
+        let running = match self.runner.start(made, &self.limits) {
             Ok(running) => running,
             Err(failure) => return self.never_started(who, failure, done).await,
         };
@@ -498,15 +491,15 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         &self,
         who: &Identity,
         launch: &PendingLaunch,
-        unprepared: Unprepared,
+        unprepared: NotLaunched,
     ) -> Result<Outcome, LaunchError> {
         let (detail, outcome) = match unprepared {
-            Unprepared::Failed(detail) => (detail.clone(), Outcome::NotStarted { detail }),
-            Unprepared::TooLong(refusal) => (refusal.to_string(), Outcome::TooLong(refusal)),
-            Unprepared::BatchArguments(refusal) => {
+            NotLaunched::Failed(detail) => (detail.clone(), Outcome::NotStarted { detail }),
+            NotLaunched::TooLong(refusal) => (refusal.to_string(), Outcome::TooLong(refusal)),
+            NotLaunched::BatchArguments(refusal) => {
                 (refusal.to_string(), Outcome::BatchArguments(refusal))
             }
-            Unprepared::ProgramNotFound(missing) => {
+            NotLaunched::ProgramNotFound(missing) => {
                 (missing.to_string(), Outcome::ProgramNotFound(missing))
             }
         };
@@ -534,29 +527,29 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         self.engines.iter().find(|e| e.name() == name).cloned()
     }
 
-    /// Everything a launch does before it records a sign of life, for every
-    /// launch path alike (the one place a launch is set up): the engine, the
-    /// workspace it works in (`placed`), the session home, the user's line,
-    /// the command. Its error is why nothing was started.
+    /// Everything a launch does before it records a sign of life: the
+    /// engine, then the one launch ([`crate::launch_of`], the one place a
+    /// launch is made, every launch path alike). What its steps said is kept
+    /// (`ignored`, `left_out`, the workspace it `placed` the engine in),
+    /// whether it was made or not; its error is why nothing was started.
     fn prepare(
         &mut self,
+        at: LaunchAt,
         order: &Order,
         ignored: &mut Vec<run_ports::Ignored>,
         left_out: &mut Vec<run_ports::LeftOut>,
         placed: &mut Option<Placement>,
-    ) -> Result<(Arc<dyn Engine>, TurnCommand), Unprepared> {
+    ) -> Result<(Arc<dyn Engine>, Launch), NotLaunched> {
         let engine = self
             .engine(&order.engine)
-            .ok_or_else(|| format!("no engine named {}", order.engine))?;
-        // The one session-setup path (owner, 2026-11-12): the daemon's
-        // hosted children are set up by the same function.
-        let set_up = crate::home::set_up_launch(
-            &*engine,
-            &mut self.records,
-            self.workspaces
-                .as_deref()
-                .map(|w| w as &dyn isolation_ports::Workspaces),
-            &crate::home::LaunchSetup {
+            .ok_or_else(|| NotLaunched::Failed(format!("no engine named {}", order.engine)))?;
+        let request = LaunchRequest {
+            at,
+            kind: match order.interactive {
+                true => LaunchKind::Terminal,
+                false => LaunchKind::OneShot,
+            },
+            setup: crate::home::LaunchSetup {
                 home: crate::home::HomeSetup {
                     harp: order.harp.clone(),
                     context: order.context.clone(),
@@ -571,51 +564,52 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
                 env: order.env.clone(),
                 owned: order.owned.clone(),
             },
-        )?;
-        left_out.clone_from(&set_up.home.left_out);
-        *placed = set_up.placed;
-        let (env, owned, cwd) = (set_up.env, set_up.owned, set_up.cwd);
-        let request = TurnRequest {
             prompt: order.prompt.clone(),
-            home: set_up.home.home,
-            context_path: set_up.home.context_path,
             resume: order.resume.clone(),
-            env,
+            session_id: None,
             user_home: order.user_home.clone(),
-            cwd,
             model: order.model.clone(),
             effort: order.effort.clone(),
             settings: order.settings.clone(),
+            child_permissions: run_ports::ChildPermissions::default(),
+            // The run's session lock is its caller's (run-application holds
+            // it); the launcher takes none.
+            session_lock: String::new(),
         };
-        let mut command = if order.interactive {
-            engine.drive_interactive(&request)
-        } else {
-            engine.drive_turn(&request)
+        let runner = &self.runner;
+        let made = crate::launch_of(
+            LaunchEngines {
+                engine: &*engine,
+                child: None,
+            },
+            &|command| runner.find_program(command),
+            &mut self.records,
+            self.workspaces
+                .as_deref()
+                .map(|w| w as &dyn isolation_ports::Workspaces),
+            &request,
+            &self.os,
+        );
+        match made {
+            Ok(made) => {
+                ignored.clone_from(&made.launch.ignored);
+                left_out.clone_from(&made.launch.left_out);
+                *placed = made.placed;
+                Ok((engine, made.launch))
+            }
+            Err(unprepared) => {
+                let Unprepared {
+                    why,
+                    placed: was,
+                    left_out: said,
+                    ignored: not_followed,
+                } = *unprepared;
+                *ignored = not_followed;
+                *left_out = said;
+                *placed = was;
+                Err(why)
+            }
         }
-        .map_err(|e| e.to_string())?;
-        // The caller's CTXLOOM_PERMIT_<NAME> reaches every engine's command as
-        // <NAME>, over what the engine chose (owner ruling 78): the one place
-        // every command, a child's turn and the terminal's, passes.
-        // Never over a name ctxloom set for the engine (ruling 78b): the
-        // adapter's computed names, derived from the command, and the run's.
-        *ignored = run_ports::apply_permits(&order.env, &mut command.env, &owned);
-        // The program is found on the command's own PATH, by the names the
-        // host looks it up by (PATHEXT's on Windows, which std's spawn does
-        // not try), and the file found is what is spawned: the one place a
-        // child's turn and the terminal's are both found. Found nowhere, it
-        // is not started, naming what was searched.
-        command.program = self
-            .runner
-            .find_program(&command)
-            .map_err(Unprepared::ProgramNotFound)?;
-        // A batch file (an npm `claude.cmd`) is run through cmd.exe, which
-        // std will not hand an argument of more than one line: refused in
-        // words before the spawn.
-        run_ports::check_batch_arguments(&self.os, &command).map_err(Unprepared::BatchArguments)?;
-        // The command is complete: measured against the platform's command
-        // line before it is spawned (the terminal's opening prompt is on it).
-        run_ports::check_command_line(&self.os, &command).map_err(Unprepared::TooLong)?;
-        Ok((engine, command))
     }
 
     /// Let go of the checkout a launch placed its engine in, once the engine

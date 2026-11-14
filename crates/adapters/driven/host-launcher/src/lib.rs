@@ -12,12 +12,21 @@
 //! that drops the [`Running`] without finishing it leaves the command to its
 //! deadline (a turn) or to the human (a terminal session).
 //!
+//! A [`run_ports::Launch`] (T10, the one launch `run_launcher::launch_of`
+//! makes) is started as its kind is, through the port's
+//! [`RunnerLauncher::start`]: a one-shot's turn as a turn, a terminal's (and
+//! an editor's) as the terminal session below, each exactly as the launch
+//! says (its program as found, its whole environment); a child is its
+//! engine's to start, and is refused.
+//!
 //! The human's terminal session is `run_within::run_terminal`: the command
 //! has this process's stdin, stdout and stderr, stays in this process's
 //! process group (so a Ctrl-C at the terminal reaches it as it reaches any
 //! program she started), and has no deadline. A [`Stop`] given at
-//! [`HostLauncher::stopped_by`] ends it: only the DIRECT child is killed, not
-//! its descendants. Unix is what is tested; macOS and Windows are not.
+//! [`HostLauncher::stopped_by`] ends it: only the DIRECT child, not its
+//! descendants, is asked to stop (SIGTERM to that one process; none on
+//! Windows), given `run-within`'s `Terminal::STOP_GRACE` (five seconds), then
+//! killed. Unix is what is tested; macOS and Windows are not.
 //!
 //! The same [`Stop`] ends a turn (ruling 114): its whole process tree is
 //! asked to stop (SIGTERM to its group), given `run-within`'s stop grace
@@ -55,7 +64,8 @@ pub struct HostLauncher {
 impl HostLauncher {
     /// A launcher whose turns and terminal sessions end when `stop` is
     /// requested: a turn's tree asked to stop, then killed after the grace; a
-    /// terminal session's direct child killed.
+    /// terminal session's direct child asked to stop, then killed after the
+    /// grace.
     pub fn stopped_by(stop: Stop) -> HostLauncher {
         HostLauncher { stop, fs: None }
     }

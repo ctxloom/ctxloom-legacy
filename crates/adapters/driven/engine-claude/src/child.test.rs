@@ -11,7 +11,8 @@ use std::time::Duration;
 use file_system::{Fs, Rooted};
 use run_ports::{
     ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions, ChildSpec,
-    EngineSettings, Exit, FailureClass, Queued, StartedChild, TurnOutcome, Urgency,
+    EngineSettings, Exit, FailureClass, Launch, LaunchKind, Queued, StartedChild, Stdio,
+    TurnOutcome, Urgency,
 };
 
 use crate::child::{child_command, detail_of};
@@ -89,12 +90,17 @@ fn spec(program: &str) -> ChildSpec {
     }
 }
 
+/// Start the child `spec` plans as its launch would: its command as it is.
+fn launched(spec: &ChildSpec) -> Result<StartedChild, ChildError> {
+    let command = Claude::new().command(spec)?;
+    let launch = Launch::new(LaunchKind::Child, "claude-code", Stdio::StreamJson, command);
+    Claude::new().start(spec, &launch)
+}
+
 fn run(body: &str) -> Running {
     let dir = Rooted::temp().unwrap();
     let path = fixture_program::install_program(&dir, &os::fixture("/claude"), body).unwrap();
-    let child = Claude::new()
-        .start(&spec(path.to_str().unwrap()))
-        .expect("the fake claude starts");
+    let child = launched(&spec(path.to_str().unwrap())).expect("the fake claude starts");
     Running { dir, child }
 }
 
@@ -225,42 +231,36 @@ fn the_child_command_takes_a_childs_environment_and_its_model() {
     assert_eq!(command.args[model + 1], "haiku");
     asked.effort = "extreme".to_string();
     assert!(matches!(
-        Claude::new().start(&asked),
+        Claude::new().command(&asked),
         Err(ChildError::Engine(_))
     ));
 }
 
-// Ruling 78 on a daemon's child (S6): the launcher's CTXLOOM_PERMIT_<NAME>
-// reaches the child as <NAME>, never over a name ctxloom sets for it.
+// Ruling 78 on a daemon's child (S6) is the one launch's (T10,
+// `run_launcher::launch_of`): the child's own command applies no permit, and
+// passes none of the launcher's `CTXLOOM_PERMIT_*` variables on.
 #[test]
-fn a_childs_command_follows_its_launchers_permits() {
+fn a_childs_command_applies_no_permit_of_its_own() {
     let mut asked = spec("");
     for (name, value) in [
         ("CTXLOOM_PERMIT_ACME_TOKEN", "acme"),
         ("CTXLOOM_PERMIT_PATH", "/evil"),
         ("CTXLOOM_PERMIT_HOME", "/evil"),
-        ("CTXLOOM_PERMIT_CLAUDE_CONFIG_DIR", "/evil"),
-        ("CTXLOOM_PERMIT_CTXLOOM_RUN", "forged"),
     ] {
         asked.env.insert(name.to_string(), value.to_string());
     }
-    let command = child_command(&asked).unwrap();
-    assert_eq!(
-        command.env.get("ACME_TOKEN").map(String::as_str),
-        Some("acme")
+    let command = Claude::new().command(&asked).unwrap();
+    assert!(
+        !command.env.contains_key("ACME_TOKEN"),
+        "the launch's to apply"
     );
     assert_eq!(
         command.env.get("PATH").map(String::as_str),
         Some("/usr/bin:/bin")
     );
-    // HOME is the session home (ruling 112), never the permit's.
+    // HOME is the session home (ruling 112).
     assert_eq!(
         command.env.get("HOME").map(String::as_str),
-        Some("/nowhere/home")
-    );
-    assert!(!command.env.contains_key("CTXLOOM_RUN"));
-    assert_eq!(
-        command.env.get("CLAUDE_CONFIG_DIR").map(String::as_str),
         Some("/nowhere/home")
     );
     assert!(
@@ -271,6 +271,29 @@ fn a_childs_command_follows_its_launchers_permits() {
         "{:?}",
         command.env.keys().collect::<Vec<_>>()
     );
+}
+
+// The child's launch is started exactly as it is: what `launch_of` found and
+// set is what runs, never the command rebuilt.
+#[test]
+fn a_child_starts_its_launch_as_it_is() {
+    let dir = Rooted::temp().unwrap();
+    let path = fixture_program::install_program(&dir, &os::fixture("/claude"), STUB).unwrap();
+    let asked = spec("claude-as-configured");
+    let mut command = Claude::new().command(&asked).unwrap();
+    command.program = path.to_str().unwrap().to_string();
+    let launch = Launch::new(
+        LaunchKind::Child,
+        "claude-code",
+        Claude::new().stdio(),
+        command,
+    );
+    let child = Claude::new()
+        .start(&asked, &launch)
+        .expect("the found program starts");
+    let ended = child.control.end(Duration::from_secs(5)).unwrap();
+    assert_eq!(ended.exit.code, Some(0));
+    assert_eq!(Claude::new().stdio(), Stdio::StreamJson);
 }
 
 // S6: what a launching client sends the daemon for a child is what a child
@@ -598,9 +621,7 @@ fn a_missing_program_starts_nothing() {
     let missing = fixture_program::install_program(&dir, &os::fixture("/claude"), "")
         .unwrap()
         .with_file_name("no-claude");
-    let error = Claude::new()
-        .start(&spec(missing.to_str().unwrap()))
-        .unwrap_err();
+    let error = launched(&spec(missing.to_str().unwrap())).unwrap_err();
     assert!(
         matches!(&error, ChildError::NotStarted { deterministic: true, program, .. }
             if program.ends_with("no-claude")),

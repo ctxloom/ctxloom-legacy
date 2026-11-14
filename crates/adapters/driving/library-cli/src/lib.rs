@@ -83,7 +83,8 @@ pub(crate) fn failed(error: AppError) -> Failure {
 /// Where a library resource's name is rooted (OD-40; OQ-2, OQ-3): the
 /// project as the daemon's `ResolveProject` names it, `projects/{harp}`, or
 /// `users/me` outside a project. Asked only when a name is printed (a json
-/// answer), so a text answer reaches no daemon.
+/// answer), so a text answer reaches no daemon; `run --dry-run` alone asks
+/// [`Names::named_parent`] always, text too (owner ruling 2026-11-14).
 pub trait Names {
     /// The parent of this command's resources.
     fn parent(&self) -> Result<String, Failure>;
@@ -91,6 +92,8 @@ pub trait Names {
     /// The parent, or none where this command's project is a ctxloom
     /// project nothing has named and the command may not name it (a dry run
     /// never mints, owner ruling 2026-11-14): its names are then unresolved.
+    /// The wiring's reaches the daemon whatever it answers, starting it if
+    /// none serves (every dry run calls the daemon, owner ruling 2026-11-14).
     fn named_parent(&self) -> Result<Option<String>, Failure> {
         self.parent().map(Some)
     }

@@ -372,10 +372,29 @@ no token set). The library asks the plan's engine in
 (`Library::with_engines`, the wiring's real engines;
 `Notice::Engine`), so a dry run and a launch, which plans through the same
 dry run, say them alike, text and json.
-A command's program is FOUND before it is spawned, a child's turn and the
-terminal's alike, in the one launch path (`Launcher::prepare` asks
+Every engine process is made by THE ONE LAUNCH (T10):
+`run_launcher::launch_of` makes a `run_ports::Launch` (the domain value of
+`ctxloom.v1.Launch`: its run, kind, engine, found program, args, whole env,
+cwd, session home and lock, stdio and stop; beside it, never on the wire,
+its input and what it said: the ignored permits and the settings left out)
+in one order, set up (`set_up_launch`), the engine's command (the
+terminal's `drive_interactive`, a one-shot's `drive_turn`, owner ruling
+s4-Q8, or a child's `ChildEngine::command`), the permits, the program
+found, the batch check, the length check, each refusing at its step
+(`Unprepared`, carrying what the steps before said). `Launcher::prepare`
+only calls it, and so does the daemon's `Daemon::spawn_child`; the
+launcher starts what it made through `RunnerLauncher::start` (a one-shot's
+as a turn, a terminal's or an editor's on the terminal, a child refused),
+and a child is started by its engine as made (`ChildEngine::start(&spec,
+&launch)`, which only spawns it and speaks the protocol: engine-claude's
+child applies no permit of its own any more). daemon-api's `launch`
+converts it to and from the wire. The old turn answer enum is
+`run_ports::TurnLaunch`.
+A command's program is FOUND before it is spawned, a child's turn, the
+terminal's and a hosted child's alike, in the one launch (`launch_of` asks
 `RunnerLauncher::find_program`; `host-launcher`'s `find`, given the wiring's
-filesystem by `HostLauncher::searching`): on the command's own `PATH` (the
+filesystem by `HostLauncher::searching`, the daemon's by
+`Daemon::finding`): on the command's own `PATH` (the
 engine's, led by the program's directory), by `os::Flavor::candidates` (on
 Windows PATHEXT's, the command's own or cmd.exe's default), an executable
 preferred to a batch file wherever each is on the PATH; the file found is
@@ -467,8 +486,8 @@ secret). Cost: her hooks fire in the session too, and an invalid value of
 hers disables the agent's permissions with them (one file, ruling 145's
 caveat). Every command is measured against the platform's command line
 once it is complete and before it is spawned (owner ruling, 2026-11-12;
-`run_ports::check_command_line`, called in one place, the launcher's
-prepare, `Launcher::on_os(wiring.os_name())`): the terminal session's
+`run_ports::check_command_line`, called in one place, `launch_of`, on
+`Launcher::on_os(wiring.os_name())` or the daemon's `Place::os`): the terminal session's
 opening prompt is the one piece of content on an engine's command line
 (claude's positional prompt, opencode's `--prompt`; a child's turn has it on
 stdin, which is not measured). One table of constants, no libc call:
@@ -577,7 +596,8 @@ SIGHUP or SIGTERM only (a SIGINT is the terminal's Ctrl-C, which reaches the
 engine itself, and is let pass). The stop is `HostLauncher::stopped_by(Stop)`'s
 `Stop`: a turn's tree is asked to stop (SIGTERM to its group, run-within's
 `run_within_stopped_by`), given `Within::stop_grace` (five seconds), then
-killed; a terminal session's direct child is killed. The run then ends as any
+killed; a terminal session's direct child is asked to stop (SIGTERM), given
+`Terminal::STOP_GRACE` (5 s), then killed. The run then ends as any
 run whose engine exited (its end facts, the listener stopped, the locks
 released), and the command exits 128 plus the signal's number, the error
 `run-application-stopped` (`RunError::Stopped`) naming the signal. A second
@@ -873,8 +893,9 @@ ruling 51, always the run's own). The escape hatch is `CTXLOOM_PERMIT_<NAME>`
 (owner rulings 78, 78a): `CTXLOOM_PERMIT_<NAME>=v` in the caller's
 environment reaches the engine as `<NAME>=v`, every engine, a child's turn
 and the terminal alike, over whatever the allowlist, a block (opencode's
-`OPENCODE_*`) or the config said; it is applied in one place, the launcher,
-after the engine built the command (`run_ports::apply_permits`). The
+`OPENCODE_*`) or the config said; it is applied in one place, the one
+launch (`run_launcher::launch_of`, a hosted child's too), after the engine
+built the command (`run_ports::apply_permits`). The
 `CTXLOOM_PERMIT_*` variable is never passed on; a permit for a `CTXLOOM_*`
 name is ignored and the run says so as a notice (by the permit's name, never
 its value); no value renders in a `Debug` (every environment value is
@@ -997,8 +1018,8 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `94f630a3` on angzarr-router `bec0c2bf`;
 - angzarr-build `7547415e` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `a35789ef`;
-- taskloom's crates `7af05807` and ctxloom-lib's `fb8e8212`, built on the
+- angzarr-platform `5f39b330`;
+- taskloom's crates `2db3ddf7` and ctxloom-lib's `2486af2a`, built on the
   same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
@@ -1055,8 +1076,10 @@ then killed; the outcome `stopped`).
 (never on a spawn failure). `run_terminal(spec, &Stop, started)` is the mode
 for a program that owns the terminal: inherited stdio, NOT a process group of
 its own (a Ctrl-C reaches it), no deadline, and a `Stop` (a cloneable flag the
-caller sets, e.g. from `Os::signals`) that kills only the DIRECT child, not
-its descendants. Tested on unix; macOS and Windows are not. No adapter bypasses
+caller sets, e.g. from `Os::signals`) that asks only the DIRECT child to stop,
+not its descendants (SIGTERM to that one process, `os::process::request_stop`;
+none on Windows), gives it `Terminal::STOP_GRACE` (5 s; `run_terminal_with`
+takes a `Terminal` of another), then kills it. Tested on unix; macOS and Windows are not. No adapter bypasses
 `run-within` any more.
 All of ctxloom-lib's crates are pinned at one rev (`cli-support`,
 `process-env`, `project-dir`, `run-within`), and so is each family above.
@@ -1247,10 +1270,11 @@ launcher places for `child_launch` (s4-Q1; a session's call sends its
 engine's environment, whose settings places are its session home's), and
 the stop of a running interactive session's TUI on its close (U5). A hosted child's session home is prepared with its agent's
 permissions document for the engine, verbatim (rulings 133-137,
-`run_application::HostedChild::permissions`). Not yet:
-`run_ports::check_command_line` does not measure a hosted child's command:
-it carries no prompt (its turns are fed over the child's stream), only
-paths, model and effort.
+`run_application::HostedChild::permissions`). A hosted child is made by the
+one launch (`launch_of`, T10) like every other: its permits applied (the
+`HOME` and `PATH` the daemon sets owned), its program found, its command
+measured (it carries no prompt: its turns are fed over the child's
+stream).
 
 A daemon is LIVE when it answers the standard `grpc.health.v1.Health`
 Check SERVING (T16, M11: `hook-sink-grpc`'s `serving`, tonic-health's
@@ -1701,7 +1725,8 @@ ones (`lib.rs`'s dispatch and prelude, `api.rs`, `write.rs`'s helpers,
 `text.rs`, `commands.rs`, the harnesses `lib.test.rs`, `write.test.rs` and
 `library_cli.test.rs`) are not a noun's. A resource
 name's parent comes from `library_cli::Names`, asked only when a json
-answer prints one (text reaches no daemon): the wiring's is the daemon's
+answer prints one (text reaches no daemon; `run --dry-run`, below, asks
+always): the wiring's is the daemon's
 `ResolveProject` (`daemon_api::Client::library_parent`, the wiring's
 `daemon::library_parent`; OQ-2, so a json answer may start the daemon), or
 `users/me` outside a project, where no daemon is asked (OQ-3). ONE
@@ -1730,7 +1755,8 @@ written. A DRY RUN NEVER MINTS (owner: "dry run should *not* mint"): its
 names source is `Minting::Never` (`library::minting`: the library's `run`
 noun is the dry run alone), which in a project nothing has named is
 refused, `ctxloom-wiring-project-unnamed` (exit 20, its fix `ctxloom
-init`), though the dry run's json names nothing and so never asks. A
+init`), though the dry run asks `Names::named_parent`, which answers none
+there. A
 session listing or search in a project with no id (or wherever no id is
 bound) names no project and lists nothing, asking no daemon
 (`daemon_api::Client::unnamed`), and a `session show|remove` of one is
@@ -1852,9 +1878,15 @@ only. `run --dry-run` is `CreateRun` with `validate_only`, its json the
 `Run` it would create (daemon.proto's `Run`, amended per design §5.9:
 `settings` an `AgentSettings`, `tokens` uint32, and `workspace`,
 `runtime`, `prompt` and `fragments` added; the draft's `Setting` is gone),
-named under the project the daemon names, which a json dry run asks (owner
-ruling 2026-11-14: "dry run *absolutely* calls (and spawns, if necessary) a
-daemon"; a text one prints no name and asks none): `<parent>/runs/-` (no
+named under the project the daemon names. EVERY dry run asks the daemon
+(owner rulings 2026-11-14: "dry run *absolutely* calls (and spawns, if
+necessary) a daemon", then text or json, named project or not), before it
+plans: `daemon_api::Client::named_parent` resolves a project's parent, and
+where there is nothing to resolve (outside a project, or one nothing has
+named) reaches the daemon and asks `GetDaemon`, so a daemon not running is
+started, and one that cannot be is the client's `daemon-ports-not-started`
+(exit 10, naming the log), as for every daemon client's command; a text
+dry run prints no name. Its json is `<parent>/runs/-` (no
 run ID is given, nothing being created), its agent, engine and profiles
 resource names. It never mints the project's id (`Minting::Never`; library-
 cli's `Names::named_parent`, the wiring's `library_parent_if_named`): in a

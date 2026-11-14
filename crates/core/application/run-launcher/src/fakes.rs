@@ -16,8 +16,8 @@ use angzarr_embedded::{
     StoreError, StreamRef,
 };
 use run_ports::{
-    check_rel, Edge, Engine, EngineError, Exit, HomeFile, Launch, LaunchFailure, Limits,
-    PrepareRequest, Prepared, RecordsError, RunnerLauncher, Running, SessionRecords, TurnCommand,
+    check_rel, Edge, Engine, EngineError, Exit, HomeFile, LaunchFailure, Limits, PrepareRequest,
+    Prepared, RecordsError, RunnerLauncher, Running, SessionRecords, TurnCommand, TurnLaunch,
     TurnOutcome, TurnOutput, TurnRequest, Unserved,
 };
 use runs::{RunEvent, RunMode};
@@ -271,7 +271,7 @@ pub type Window = Arc<dyn Fn() + Send + Sync>;
 /// A command run that answers as scripted, and remembers what it was given.
 #[derive(Clone)]
 pub struct ScriptedRunner {
-    pub answer: Launch,
+    pub answer: TurnLaunch,
     pub seen: Arc<Mutex<Vec<TurnCommand>>>,
     /// The commands given a terminal.
     pub seen_terminal: Arc<Mutex<Vec<TurnCommand>>>,
@@ -293,7 +293,7 @@ pub const SCRIPTED_PID: u32 = 4242;
 /// A scripted command, spawned and running.
 struct ScriptedRunning {
     pid: u32,
-    answer: Launch,
+    answer: TurnLaunch,
     during: Option<Window>,
 }
 
@@ -307,15 +307,15 @@ impl Running for ScriptedRunning {
             during();
         }
         match self.answer {
-            Launch::Over(output) => Ok(output),
-            Launch::NotStarted(failure) => Err(failure),
+            TurnLaunch::Over(output) => Ok(output),
+            TurnLaunch::NotStarted(failure) => Err(failure),
         }
     }
 }
 
 impl ScriptedRunner {
     pub fn exits(code: i32) -> ScriptedRunner {
-        ScriptedRunner::answering(Launch::Over(TurnOutput {
+        ScriptedRunner::answering(TurnLaunch::Over(TurnOutput {
             exit: Exit {
                 code: Some(code),
                 signal: None,
@@ -328,7 +328,7 @@ impl ScriptedRunner {
         }))
     }
 
-    pub fn answering(answer: Launch) -> ScriptedRunner {
+    pub fn answering(answer: TurnLaunch) -> ScriptedRunner {
         ScriptedRunner {
             answer,
             seen: Arc::default(),
@@ -354,7 +354,7 @@ impl ScriptedRunner {
         if let Some(at_spawn) = at_spawn {
             at_spawn();
         }
-        if let Launch::NotStarted(failure) = &self.answer {
+        if let TurnLaunch::NotStarted(failure) = &self.answer {
             return Err(failure.clone());
         }
         Ok(Box::new(ScriptedRunning {

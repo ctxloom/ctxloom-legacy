@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use run_ports::{FailureClass, Launch, LaunchFailure, Limits, TurnOutcome};
+use run_ports::{FailureClass, LaunchFailure, Limits, TurnLaunch, TurnOutcome};
 use runs::{EndCause, RunEvent};
 use sessions::SessionEvent;
 
@@ -592,7 +592,7 @@ async fn each_failure_class_is_the_runs_own() {
 // aggregate gives a failed launch, and the reason is its detail.
 #[tokio::test]
 async fn a_command_that_could_not_start_ends_the_run_as_a_failed_launch() {
-    let runner = ScriptedRunner::answering(Launch::NotStarted(LaunchFailure {
+    let runner = ScriptedRunner::answering(TurnLaunch::NotStarted(LaunchFailure {
         deterministic: true,
         detail: "claude: not found".to_string(),
     }));
@@ -668,7 +668,7 @@ async fn an_interactive_command_that_could_not_start_records_no_runner_start() {
     interactive.interactive = true;
     let mut rig = rig(
         ScriptedEngine::answering("", None),
-        ScriptedRunner::answering(Launch::NotStarted(LaunchFailure {
+        ScriptedRunner::answering(TurnLaunch::NotStarted(LaunchFailure {
             deterministic: true,
             detail: "no claude".to_string(),
         })),
@@ -874,7 +874,7 @@ async fn an_interactive_command_that_cannot_start_is_not_started() {
     interactive.interactive = true;
     let mut rig = rig(
         ScriptedEngine::answering("", None),
-        ScriptedRunner::answering(Launch::NotStarted(LaunchFailure {
+        ScriptedRunner::answering(TurnLaunch::NotStarted(LaunchFailure {
             deterministic: true,
             detail: "no claude".to_string(),
         })),
@@ -1163,7 +1163,7 @@ async fn an_engine_whose_session_ends_with_its_exit_has_the_end_recorded_at_the_
     for (interactive, runner) in [
         (
             true,
-            ScriptedRunner::answering(Launch::NotStarted(LaunchFailure {
+            ScriptedRunner::answering(TurnLaunch::NotStarted(LaunchFailure {
                 deterministic: true,
                 detail: "no opencode".to_string(),
             })),
@@ -1692,7 +1692,7 @@ async fn a_launch_that_never_started_lets_its_run_lock_go() {
         let edge = Arc::new(TestEdge::new());
         let mut launcher = Launcher::new(
             Arc::clone(&edge),
-            ScriptedRunner::answering(Launch::NotStarted(LaunchFailure {
+            ScriptedRunner::answering(TurnLaunch::NotStarted(LaunchFailure {
                 deterministic: true,
                 detail: "no program".to_string(),
             })),

@@ -219,16 +219,26 @@ mod read {
         assert_eq!(run["profiles"], serde_json::json!(["dev"]));
     }
 
-    // The daemon is asked for a json dry run's names, and its failure is the
-    // command's; a text dry run prints no name and asks none.
+    // Owner ruling 2026-11-14: every dry run calls the daemon, text or json
+    // (a text one prints no name, but asks all the same), before it plans,
+    // and its failure is the command's.
     #[test]
-    fn test_a_json_dry_run_asks_the_daemon_and_a_text_one_does_not() {
+    fn test_every_dry_run_asks_the_daemon_text_or_json() {
         let line = ["run", "--dry-run", "--agent", "dev", "hello"];
         let layers = [ENGINE_HOME, ENGINE_PROJECT];
+        for how in [JSON, TEXT] {
+            assert_eq!(
+                go_in(&line, how, &layers, &Unreachable).refused(),
+                "daemon-api-unreached:10"
+            );
+        }
+        // Asked first: a plan the library refuses reaches it all the same.
+        let refused = ["run", "--dry-run", "--agent", "nobody", "hello"];
         assert_eq!(
-            go_in(&line, JSON, &layers, &Unreachable).refused(),
+            go_in(&refused, TEXT, &layers, &Unreachable).refused(),
             "daemon-api-unreached:10"
         );
-        assert_eq!(go_in(&line, TEXT, &layers, &Unreachable).code(), 1);
+        let text = go_in(&line, TEXT, &layers, &Unnamed);
+        assert_eq!(text.code(), 1, "{}", text.err);
     }
 }

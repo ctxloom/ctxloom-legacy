@@ -18,6 +18,7 @@ mod engine;
 mod git;
 mod hook;
 mod host;
+mod launch;
 mod launcher;
 mod locks;
 mod login;
@@ -56,8 +57,9 @@ pub use host::{
     is_absolute, search_path_led_by, search_path_separator, session_profile, WINDOWS,
     WINDOWS_PROFILE_VARIABLES, WINDOWS_STARTUP_VARIABLES,
 };
+pub use launch::{Launch, LaunchAt, LaunchKind, Stdio, StopPolicy, STOP_GRACE, STOP_SIGNAL};
 pub use launcher::{
-    Exit, Launch, LaunchEvent, LaunchFailure, Limits, RunnerLauncher, Running, TurnCommand,
+    Exit, LaunchEvent, LaunchFailure, Limits, RunnerLauncher, Running, TurnCommand, TurnLaunch,
     TurnOutput,
 };
 pub use locks::{HeldLock, LockError, LockProbe, RunLocks};

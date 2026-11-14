@@ -545,15 +545,10 @@ fn test_run_without_one_shot_is_the_session() {
     assert_eq!(failure.cause.code(), "runs-unknown-engine");
 }
 
-// `--dry-run` stays the library's: the plan is printed, nothing is run; it
-// would launch, so its detailed code is 1 (ruling 153).
-#[test]
-fn test_a_dry_run_is_the_librarys_plan_and_runs_nothing() {
-    let world = world_without_programs("dry-run");
-    let (code, out, _) = run_line(&mut world.commands(), &["run", "--dry-run", "hello"]);
-    assert_eq!(code, 1);
-    assert!(out.contains("hello"), "{out}");
-}
+// `--dry-run` stays the library's (the plan printed, nothing run, its
+// detailed code 1) is held by the binary's `library_cli_run.test.rs`: every
+// dry run reaches the daemon (owner ruling 2026-11-14), which an in-process
+// test cannot spawn (its program is the test harness).
 
 // T17, S48: a command in a project that still has a store of its own is
 // refused, exit 20, before it runs; the store is named for its removal.
