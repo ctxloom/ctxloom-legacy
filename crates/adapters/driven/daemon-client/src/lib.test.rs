@@ -3,6 +3,13 @@
 
 use std::time::Duration;
 
+use angzarr_embedded::v1::DeliveryOutcome;
+use angzarr_proto_transport_distributed::v1::command_handler_coordinator_service_server::{
+    CommandHandlerCoordinatorService, CommandHandlerCoordinatorServiceServer,
+};
+use angzarr_proto_transport_distributed::v1::{
+    CommandResult, CommandSyncResult, HandleSyncRequest,
+};
 use daemon_ports::{Called, DaemonApi};
 use daemon_proto::service::ctxloom_server::{Ctxloom, CtxloomServer};
 use daemon_proto::v1;
@@ -153,6 +160,90 @@ impl Ctxloom for Fake {
             ..v1::SweepSessionsResponse::default()
         }))
     }
+
+    /// The transcript of the session asked: one line naming it.
+    async fn get_transcript(
+        &self,
+        request: Request<v1::GetTranscriptRequest>,
+    ) -> Result<Response<v1::Transcript>, Status> {
+        self.admit(&request)?;
+        let name = request.into_inner().name;
+        Ok(Response::new(v1::Transcript {
+            lines: vec![v1::TranscriptLine {
+                json: format!("{{\"of\":\"{name}\"}}"),
+            }],
+            name,
+        }))
+    }
+
+    /// The context of the agent asked.
+    async fn assemble_context(
+        &self,
+        request: Request<v1::AssembleContextRequest>,
+    ) -> Result<Response<v1::AssembledContext>, Status> {
+        self.admit(&request)?;
+        Ok(Response::new(v1::AssembledContext {
+            context: format!("context of {}", request.into_inner().agent),
+            tokens: 7,
+            ..v1::AssembledContext::default()
+        }))
+    }
+}
+
+/// The coordinator beside the service: a sync answers each projector named,
+/// a DUPLICATE when the first is `again`.
+struct Coordinator {
+    bearer: String,
+}
+
+#[tonic::async_trait]
+impl CommandHandlerCoordinatorService for Coordinator {
+    async fn handle(
+        &self,
+        _request: Request<angzarr_embedded::v1::CommandBook>,
+    ) -> Result<Response<CommandResult>, Status> {
+        Err(Status::unimplemented("handle"))
+    }
+
+    async fn handle_async(
+        &self,
+        _request: Request<angzarr_embedded::v1::CommandBook>,
+    ) -> Result<Response<()>, Status> {
+        Err(Status::unimplemented("handle_async"))
+    }
+
+    async fn handle_sync(
+        &self,
+        request: Request<HandleSyncRequest>,
+    ) -> Result<Response<CommandSyncResult>, Status> {
+        Fake {
+            bearer: self.bearer.clone(),
+        }
+        .admit(&request)?;
+        let projectors = request.into_inner().projectors;
+        let delivery = match projectors.first().map(String::as_str) {
+            Some("again") => DeliveryOutcome::Duplicate,
+            _ => DeliveryOutcome::Applied,
+        };
+        Ok(Response::new(CommandSyncResult {
+            delivery: delivery as i32,
+            projections: projectors
+                .into_iter()
+                .map(|projector| angzarr_embedded::v1::Projection {
+                    projector,
+                    ..angzarr_embedded::v1::Projection::default()
+                })
+                .collect(),
+            ..CommandSyncResult::default()
+        }))
+    }
+
+    async fn deliver(
+        &self,
+        _request: Request<angzarr_embedded::v1::ReactionDelivery>,
+    ) -> Result<Response<CommandResult>, Status> {
+        Err(Status::unimplemented("deliver"))
+    }
 }
 
 /// How long the fake's destroys take.
@@ -176,6 +267,9 @@ async fn serve(certificate: &HookCertificate, bearer: &Token) -> Discovery {
         .tls_config(ServerTlsConfig::new().identity(identity))
         .unwrap()
         .add_service(CtxloomServer::new(Fake {
+            bearer: bearer.to_text(),
+        }))
+        .add_service(CommandHandlerCoordinatorServiceServer::new(Coordinator {
             bearer: bearer.to_text(),
         }))
         .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener));
@@ -431,4 +525,49 @@ fn an_error_is_told_with_its_causes() {
         "transport error: connection reset: broken pipe"
     );
     assert_eq!(super::chain(&Wrapped("alone", None)), "alone");
+}
+
+// A transcript and an assembly come back as the daemon answered them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_transcript_and_an_assembly_are_answered() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let client = DaemonClient::new(&found, WITHIN);
+    let transcript = client
+        .get_transcript(v1::GetTranscriptRequest {
+            name: "projects/p/sessions/s".to_string(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(transcript.name, "projects/p/sessions/s");
+    assert_eq!(transcript.lines.len(), 1);
+    let assembled = client
+        .assemble_context(v1::AssembleContextRequest {
+            agent: "reviewer".to_string(),
+            ..v1::AssembleContextRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(assembled.context, "context of reviewer");
+    assert_eq!(assembled.tokens, 7);
+}
+
+// A sync is applied unless the coordinator found it a DUPLICATE, and carries
+// each projector's projection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_sync_says_applied_or_duplicate_with_its_projections() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let client = DaemonClient::new(&found, WITHIN);
+    let book = angzarr_embedded::v1::CommandBook::default();
+    let applied = client
+        .handle_sync(book.clone(), vec!["session-index".to_string()])
+        .await
+        .unwrap();
+    assert!(applied.applied);
+    assert_eq!(applied.projections.len(), 1);
+    assert_eq!(applied.projections[0].projector, "session-index");
+    let again = client
+        .handle_sync(book, vec!["again".to_string()])
+        .await
+        .unwrap();
+    assert!(!again.applied);
 }
