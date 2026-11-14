@@ -268,6 +268,7 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Api(api)) => api.code(),
             CallError::Refused(crate::refusal::Rejection::Sessions(ours)) => ours.code(),
             CallError::Refused(crate::refusal::Rejection::Removal(removal)) => removal.code(),
+            CallError::Refused(crate::refusal::Rejection::Runs(ran)) => ran.code(),
             CallError::Call(called) => called.code(),
             CallError::Unreached(unreached) => unreached.code(),
         }
@@ -278,6 +279,7 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Api(api)) => api.args(),
             CallError::Refused(crate::refusal::Rejection::Sessions(ours)) => ours.args(),
             CallError::Refused(crate::refusal::Rejection::Removal(removal)) => removal.args(),
+            CallError::Refused(crate::refusal::Rejection::Runs(ran)) => ran.args(),
             CallError::Call(called) => called.args(),
             CallError::Unreached(unreached) => unreached.args(),
         }

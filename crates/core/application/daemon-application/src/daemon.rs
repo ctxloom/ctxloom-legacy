@@ -316,6 +316,10 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
         }
+        // Once the board has caught up, so a child just launched is known.
+        if board.is_ok() {
+            self.sweep_hand_offs();
+        }
         for (project_id, step) in self.plan() {
             if draining && matches!(step, Step::Start { .. }) {
                 continue;
@@ -429,7 +433,10 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 None => Taken::Again,
             },
             Step::End { at, .. } => {
+                // The child is closed for good (T6): what it was launched
+                // with is let go, at rest too.
                 self.envs.remove(&at.session);
+                self.hand_offs.delete(&at.session);
                 if let Some(hosted) = self.hosted.get(&at.run()) {
                     let _ = hosted.control.end(END_GRACE);
                 }
@@ -488,7 +495,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         };
         let handed = self.child_env(&at.session);
         let env = handed.env.clone();
-        let child = match self.plan_child(&hosted_engine, project_dir, &env) {
+        let child = match self.plan_child(&hosted_engine, &handed.agent, project_dir, &env) {
             Ok(child) => child,
             Err(code) => {
                 (self.say)(&format!("{harp}: not planned: {code}"));
@@ -609,10 +616,11 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     fn plan_child(
         &self,
         engine: &HostedEngine,
+        agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<run_application::HostedChild, String> {
-        let previewed = self.plans.preview(engine.name(), project_dir, env)?;
+        let previewed = self.plans.preview(engine.name(), agent, project_dir, env)?;
         Ok(run_application::hosted_child(
             &previewed,
             engine.name(),
@@ -622,16 +630,36 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         ))
     }
 
-    /// The environment the child `session` is started with: the one held,
-    /// else its launcher's hand-off (taken, D-N45), else none at all (a
-    /// child no launcher handed anything is judged with no credential).
+    /// The environment the child `session` is started with: its hand-off,
+    /// READ at each start (T6: it lives as long as the child is open, so a
+    /// start after a daemon restart reads it too), else the one held, else
+    /// none at all (a child no launcher handed anything is judged with no
+    /// credential).
     fn child_env(&mut self, session: &str) -> HandOff {
-        if let Some(handed) = self.envs.get(session) {
-            return handed.clone();
-        }
-        let handed = self.hand_offs.take(session).unwrap_or_default();
+        let handed = match self.hand_offs.read(session) {
+            Some(handed) => handed,
+            None => self.envs.get(session).cloned().unwrap_or_default(),
+        };
         self.envs.insert(session.to_string(), handed.clone());
         handed
+    }
+
+    /// Every hand-off no open session holds, deleted (T6): its child's
+    /// session closed, or (settled past the root's grace) one the board
+    /// knows nothing of, its launch refused or never recorded.
+    fn sweep_hand_offs(&mut self) {
+        let board = self.board.projector().board();
+        for kept in self.hand_offs.list() {
+            let gone = match board.session(&kept.session) {
+                Some(session) => session.closed,
+                None => kept.settled,
+            };
+            if gone && !self.hosted.values().any(|h| h.at.session == kept.session) {
+                self.hand_offs.delete(&kept.session);
+                self.envs.remove(&kept.session);
+                (self.say)(&format!("{}: its hand-off swept", kept.session));
+            }
+        }
     }
 
     /// A child that could not be started (`code`, a refusal's or a plan's):

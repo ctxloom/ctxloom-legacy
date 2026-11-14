@@ -1143,7 +1143,7 @@ a file naming none is unreadable). A client whose ctxloom home is not the
 serving daemon's is refused before it does anything, `ctxloom-wiring-daemon-
 other-home` (exit 20, naming both homes, its fix the daemon's home or a
 `daemon stop` from it), and never served by a second daemon (`daemon
-status`, `daemon stop` and the hidden verbs; a hook's rediscovery passes
+status`, `daemon stop`, `daemon resolve` and the child verbs; a hook's rediscovery passes
 such a daemon over and delivers to its run's listener). The file is 0600
 and its directory 0700, tightened on each publish whoever made it (the
 single-instance lock may have); on Windows the platform sets no mode and the profile's
@@ -1151,8 +1151,9 @@ inherited ACL stands (M8). It keeps other users out, not the user's own
 processes. `Discovery`'s `Debug` withholds the bearer, and the daemon's log
 never holds it. Addressing at the daemon (owner, after step 3/4): the
 target session travels ONCE, as the command's Cover root, and a command's
-`requester` is its own field, set by the client (the hidden verbs and the
-hooks from `CTXLOOM_SESSION`) and taken as sent. No run is sent to the
+`requester` is its own field, set by the client (a session's MCP tools
+and its hooks from `CTXLOOM_SESSION`; the user's child verbs name none,
+D25) and taken as sent. No run is sent to the
 daemon, and the daemon does NOT check a fact's session against a run: the
 session aggregate records nothing on a session that is not live. Accepted
 cost: a buggy client could write to the wrong live session unnoticed. The
@@ -1187,12 +1188,64 @@ calling the running program (ruling 163), claude over her own
 and over her config, each read AT EVERY LAUNCH (T21): a hosted engine is
 composed anew for each launch (`HostedEngine::for_launch`, the wiring's
 `daemon::launch_engines_for`), under the account's home, where the LAUNCHER
-finds her settings: `daemon launch` hands off its caller's
+finds her settings: a launch's hand-off keeps its caller's
 `daemon::SETTINGS_PLACES` (`CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME`,
 `XDG_DATA_HOME`, `XDG_STATE_HOME`) beside the child's environment
-(`daemon_application::HandOff`'s `launcher`, the hand-off file's format 2,
-a `@NAME=value` line each), never into it, and never the daemon's own
-environment. A hosted child's session home is prepared with its agent's
+(`daemon_application::HandOff`'s `launcher`, a `@NAME=value` line each of
+the hand-off file, format 3, which adds the `!agent=<agent>` line; format 2
+reads as the default agent), never in it, and never the daemon's own
+environment.
+
+THE CHILD VERBS AND THE HAND-OFF (slice 4 U3: S2, S19, T6, S10; owner
+rulings s4-Q1, s4-Q13). The user's `session launch <owner> [--name]
+[--agent] [--engine] ["<task>"]`, `session send <harp> {inform|wake|steer}
+<text> [--id]`, `session clear <harp>` and `session close <harp>`
+(`session-cli`'s `is_child`/`child`) are clients of the daemon, as the
+USER: `daemon_api::Caller::user` over the project the command resolved
+(`daemon::child_caller`; outside a project `daemon-api-project-unknown`,
+exit 20), each the session domain's command through `HandleSync`,
+`requester` none, keyed by an id minted once per call (`--id` is a
+message's), so its retry on a new daemon is a DUPLICATE; parsed before any
+daemon is reached (S14: a usage error starts none; the urgency is a
+required word). `--format json` is the target's `Session` (a launch's, the
+child's, as launched until its daemon mints it); text says `<harp>: <id>
+recorded` (`already recorded` for a duplicate), `closed` (`already
+closed`), `launched, a child of <owner>`. Their refusals are the domain's
+words (`daemon_api::rejection_of` maps the sessions and runs domains'
+typed refusals: `sessions-session-closed`, `sessions-session-unknown`,
+`runs-no-credential`, ...), exit 20. The hidden `daemon
+launch|send|close|clear` are gone (hard migrate); `daemon resolve` stays
+hidden. A launch (`Caller::launch`; the MCP tool `child_launch` too, its
+owner the calling session, its harp minted when it names none,
+`Caller::naming`) is `CreateHandOff` first, then the owner's `LaunchChild`
+(keyed `launch:<owner>:<child>`, the delegation limit
+`daemon_api::DELEGATION_LIMIT`, 4), and a refused `LaunchChild` is followed
+by `DeleteHandOff` (kept while an open session holds it). The daemon serves
+`CreateHandOff{parent, hand_off_id, owner, engine, agent, env}`
+(`daemon-api`'s `hand_off.rs`, the root's `daemon::files::ApiHandOffs`)
+checking BEFORE it writes anything, so a refused launch leaves nothing: the
+owner in the warm index (else the sessions domain's `SessionUnknown`,
+"there is no session named ..."), the child's plan (its project's dry run
+for the agent on the engine, `claude-code` when none is named, in the
+launch's environment; one that cannot be made is `ConfigUnreadable`), and
+its credential as its enqueue will judge it (the runs aggregate's own
+checks, `runs::pre_launch_refusal`, refused with the typed refusal the
+enqueue would answer, under its message's status); then the 0600 hand-off
+is written (in the 0700 `~/.ctxloom/daemon/launch/`, named by the child's
+stable id; what the child may be given of the environment is
+`engine_claude::launcher_environment`'s). The hand-off lives as long as the
+child is open (T6): READ at each of its starts (`HandOffs::read`, a start
+after a daemon restart included; there is no `take`), planned for the agent
+it names, deleted at the child's close (`Step::End`), and swept at each
+tick once the board has caught up (`Daemon::sweep_hand_offs`): a file whose
+session the board holds closed, or one the board knows nothing of settled
+past `daemon::files::HAND_OFF_GRACE` (60 s, so a launch between its
+hand-off and its `LaunchChild` keeps its own); an open child's is kept.
+Accepted cost (T6): an API key lies at rest for the child's life. Not yet:
+a hosted child's workspace axis (s4-Q11), the root session's persisted
+launcher places for `child_launch` (s4-Q1; a session's call sends its
+engine's environment, whose settings places are its session home's), and
+the stop of a running interactive session's TUI on its close (U5). A hosted child's session home is prepared with its agent's
 permissions document for the engine, verbatim (rulings 133-137,
 `run_application::HostedChild::permissions`). Not yet:
 `run_ports::check_command_line` does not measure a hosted child's command:
@@ -1386,8 +1439,8 @@ VERSION SKEW (M3): a client whose stamp is not the serving daemon's asks it
 (`GetDaemon`); hosting nothing, it is stopped (`StopDaemon`), waited out and
 the client starts its own; hosting live runs, the command is refused,
 `daemon-api-version-skew-busy` (exit 20, naming both stamps and the harps,
-fix `ctxloom daemon stop --even-if-live`). Today the hidden write verbs
-(`daemon send|close|clear|launch`) and `daemon resolve` reconcile first;
+fix `ctxloom daemon stop --even-if-live`). `daemon resolve` reconciles
+first, and the child verbs as every client reaching through `Reach` does;
 under `test-support`, `CTXLOOM_TEST_STAMP` names the client's stamp.
 
 PROJECT REGISTRATION (owner, 2026-11-12). `ResolveProject` is
@@ -2107,13 +2160,15 @@ reach no daemon. The command line holds stdout locked, so the server's
 lines reach it through a channel and are written on the command's thread
 (`mcp_server::serve(server, out)`). Its tools (`mcp_server::TOOL_NAMES`)
 are `session_list`, `session_show`, `transcript_show`, `context_assemble`
-(its `bundles` argument is `AssembleContext`'s `fragments`), `child_send`,
-`child_close` and `child_clear`, each described in the owner's approved
-words (2026-11-14), one Markdown file per tool beside the crate
-(`mcp-server/tools/<tool>.md`), embedded by `include_str!` at compile time
-and offered without the file's closing newline (nothing is read at run
-time). `child_launch` (step 8) and
-`approval_prompt` (OD-1) are not offered until they are built. Each tool is
+(its `bundles` argument is `AssembleContext`'s `fragments`), `child_launch`
+(slice 4 U3, s4-Q1: `name`, `agent`, `task`, all optional; the session's
+own child, as `session launch` is the user's; its description a DRAFT for
+the owner's approval), `child_send`, `child_close` and `child_clear`, each
+described in the owner's approved words (2026-11-14), one Markdown file per
+tool beside the crate (`mcp-server/tools/<tool>.md`), embedded by
+`include_str!` at compile time and offered without the file's closing
+newline (nothing is read at run time). `approval_prompt` (OD-1) is not
+offered until it is built. Each tool is
 a call of `daemon_api::Caller`, a SESSION as the daemon's client. Its
 project is its name's (`projects/{p}`, OD-2), never resolved from a cwd.
 Its reads are the service's (`GetTranscript` and `AssembleContext` are now

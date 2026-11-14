@@ -5,8 +5,9 @@ syntax = "proto3";
 // service's stubs). Served so far (slice 2 steps 5, 6): GetDaemon, StopDaemon,
 // ResolveProject, GetProject, GetSession, ListSessions, SearchSessions, and
 // in a `session-destroy` build DeleteSession and SweepSessions; slice 3 adds
-// GetTranscript and AssembleContext (its fragments and tags); every other
-// method answers UNIMPLEMENTED.
+// GetTranscript and AssembleContext (its fragments and tags); slice 4 adds
+// CreateHandOff and DeleteHandOff (a child's launch); every other method
+// answers UNIMPLEMENTED.
 //
 // THE USER'S DAEMON'S API (T1-T30; the owner's API rulings Q1-Q13; rulings
 // 146, 147). It MIRRORS THE COMMAND LINE (T22): the CLI's nouns are AIP
@@ -165,8 +166,12 @@ service Ctxloom {
   rpc WatchTranscript(WatchTranscriptRequest) returns (stream TranscriptLine);
   rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse);
   // A child's hand-off (T6, S10): `projects/{project}/handOffs/{child}`,
-  // created before `LaunchChild`.
+  // created before `LaunchChild`: the daemon checks the owner, plans the
+  // child and judges its credential BEFORE it writes anything, so a refused
+  // launch leaves nothing.
   rpc CreateHandOff(CreateHandOffRequest) returns (HandOff);
+  // A hand-off withdrawn: the `LaunchChild` it was created for was refused.
+  rpc DeleteHandOff(DeleteHandOffRequest) returns (HandOff);
   // endregion
 
   // region runs: `projects/{project}/runs/{run}`
@@ -754,9 +759,23 @@ message CreateHandOffRequest {
   string parent = 1;
   // The child's stable id, minted by the client; `LaunchChild` names it.
   string hand_off_id = 2;
+  // The owner session's harp in `parent`: a session nobody recorded is
+  // refused (`sessions.SessionUnknown`), and nothing is written.
+  string owner = 3;
+  // The child's engine (empty: claude-code, the one engine a child is
+  // hosted on).
+  string engine = 4;
+  // The agent the child is planned for (empty: the project's default).
+  string agent = 5;
   string request_id = 90;
   // The child's environment (S7, S10).
   EnvVars env = 94;
+}
+
+message DeleteHandOffRequest {
+  // `projects/{project}/handOffs/{child}`.
+  string name = 1;
+  string request_id = 90;
 }
 
 // The hand-off, by name only: its content never leaves the daemon.

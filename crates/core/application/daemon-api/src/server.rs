@@ -141,6 +141,16 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("GetTranscript")) })
     }
+    /// `CreateHandOff` (slice 4 U3); as `GetTranscript`.
+    fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
+        let _ = request;
+        Box::pin(async { Err(not_served("CreateHandOff")) })
+    }
+    /// `DeleteHandOff` (slice 4 U3); as `GetTranscript`.
+    fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
+        let _ = request;
+        Box::pin(async { Err(not_served("DeleteHandOff")) })
+    }
     /// `AssembleContext` (slice 3 step 6); as `GetTranscript`.
     fn assemble_context(
         &self,
@@ -217,6 +227,14 @@ impl<E: Edge + 'static> Calls for Api<E> {
     ) -> Answer<'_, v1::AssembledContext> {
         Box::pin(Api::assemble_context(self, request))
     }
+
+    fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
+        Box::pin(Api::create_hand_off(self, request))
+    }
+
+    fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
+        Box::pin(Api::delete_hand_off(self, request))
+    }
 }
 
 /// The use cases of the daemon's API.
@@ -226,6 +244,9 @@ pub struct Api<E> {
     pub(crate) applied: crate::destroy::Applied,
     /// Where an assembly is made; none, `AssembleContext` fails.
     assemblies: Option<Arc<dyn Assemblies>>,
+    /// Where a child's hand-off is planned and kept; none, `CreateHandOff`
+    /// and `DeleteHandOff` fail.
+    pub(crate) hand_offs: Option<Arc<dyn crate::HandOffs>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -234,6 +255,16 @@ impl<E: Edge> Api<E> {
             parts,
             applied: crate::destroy::Applied::default(),
             assemblies: None,
+            hand_offs: None,
+        }
+    }
+
+    /// The API, its children's hand-offs planned and kept by `hand_offs`.
+    #[must_use]
+    pub fn handing_off(self, hand_offs: Arc<dyn crate::HandOffs>) -> Api<E> {
+        Api {
+            hand_offs: Some(hand_offs),
+            ..self
         }
     }
 

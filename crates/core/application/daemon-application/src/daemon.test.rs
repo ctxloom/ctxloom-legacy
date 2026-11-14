@@ -73,6 +73,7 @@ impl ChildPlans for Plans {
     fn preview(
         &self,
         engine: &str,
+        _agent: &str,
         _: &str,
         _: &BTreeMap<String, String>,
     ) -> Result<Previewed, String> {
@@ -88,8 +89,14 @@ impl ChildPlans for Plans {
 struct NoHandOffs;
 
 impl HandOffs for NoHandOffs {
-    fn take(&self, _: &str) -> Option<crate::HandOff> {
+    fn read(&self, _: &str) -> Option<crate::HandOff> {
         None
+    }
+
+    fn delete(&self, _: &str) {}
+
+    fn list(&self) -> Vec<crate::Kept> {
+        Vec::new()
     }
 }
 

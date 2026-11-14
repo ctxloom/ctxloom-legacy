@@ -30,6 +30,19 @@ impl ApiRefusal {
         }
     }
 
+    /// A domain's typed refusal `refusal`, made here before any command is
+    /// sent (a hand-off's checks, S10), under `status`, the status its
+    /// message declares.
+    pub fn typed(
+        refusal: &angzarr_embedded::markup::TypedRefusal,
+        status: angzarr_embedded::markup::BusinessStatus,
+    ) -> ApiRefusal {
+        ApiRefusal {
+            code: angzarr_embedded::angzarr_router::error::GrpcCode::from(status) as i32,
+            refusal: refusal.packed().clone(),
+        }
+    }
+
     /// A domain's refusal, as the kernel rejected the command.
     pub fn rejected(rejected: &Rejected) -> ApiRefusal {
         ApiRefusal {
@@ -194,6 +207,9 @@ pub enum Rejection {
     /// A removal's (`DeleteSession`'s `RemovalRefused`), in the words of
     /// the use case that refused it.
     Removal(RemovalRejection),
+    /// The runs domain's (a child's launch judged before its hand-off is
+    /// written, S10).
+    Runs(runs::RunRejection),
 }
 
 impl Rejection {
@@ -203,6 +219,7 @@ impl Rejection {
             Rejection::Api(api) => Report::of(api),
             Rejection::Sessions(sessions) => Report::of(sessions),
             Rejection::Removal(removal) => Report::of(removal),
+            Rejection::Runs(runs) => Report::of(runs),
         }
     }
 }
@@ -368,8 +385,59 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 })
             })
         }
-        _ => None,
+        _ => domain_rejection(refusal),
     }
+}
+
+/// `refusal`, as the domain message its type names, typed: the first of
+/// `types` it is.
+macro_rules! typed_as {
+    ($refusal:expr, [$($t:ty),* $(,)?]) => {{
+        let refusal = $refusal;
+        None
+            $(.or_else(|| {
+                angzarr_embedded::markup::decode_message::<$t>(refusal)
+                    .ok()
+                    .flatten()
+                    .map(|message| angzarr_embedded::markup::TypedRefusal::of(&message))
+            }))*
+    }};
+}
+
+/// A refusal of the sessions or the runs domain's commands a client's write
+/// (a child verb's, S2) or a hand-off's checks (S10) was answered with, as
+/// that domain's own rejection; none for any other.
+fn domain_rejection(refusal: &Any) -> Option<Rejection> {
+    let sessions: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
+        refusal,
+        [
+            sessions::SessionUnknown,
+            sessions::NoSession,
+            sessions::SessionIsClosed,
+            sessions::OwnerClosed,
+            sessions::NotOwner,
+            sessions::NoOpenIncarnation,
+            sessions::DelegationLimit,
+            sessions::UntrustedTarget,
+            sessions::UrgencyUnsupported,
+        ]
+    );
+    if let Some(typed) = sessions {
+        return sessions::SessionRejection::try_from(&typed)
+            .ok()
+            .map(Rejection::Sessions);
+    }
+    let ran: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
+        refusal,
+        [
+            runs::NoCredential,
+            runs::FileOnlyCredential,
+            runs::UnknownEngine,
+            runs::LaunchRefused,
+        ]
+    );
+    ran.and_then(|typed| runs::RunRejection::try_from(&typed).ok())
+        .map(Rejection::Runs)
 }
 
 fn decode<T: Message + Default>(refusal: &Any) -> Option<T> {

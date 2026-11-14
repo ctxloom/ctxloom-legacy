@@ -52,23 +52,36 @@ impl HostedEngine {
 }
 
 /// What a child's launcher handed the daemon (D-N45, S7): the environment
-/// the child may be given, and where the launcher finds its user's own
-/// settings (the variables that place them: `CLAUDE_CONFIG_DIR`, the XDG
-/// bases), which the launch reads her settings from and never hands the
-/// child.
+/// the child may be given, where the launcher finds its user's own settings
+/// (the variables that place them: `CLAUDE_CONFIG_DIR`, the XDG bases),
+/// which the launch reads her settings from and never hands the child, and
+/// the agent it is planned for (empty: the project's default).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandOff {
     pub env: BTreeMap<String, String>,
     pub launcher: BTreeMap<String, String>,
+    pub agent: String,
+}
+
+/// A hand-off file there is, by its child's stable id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Kept {
+    pub session: String,
+    /// Whether it was written longer ago than a launch takes to record its
+    /// child (the root's grace): one no session holds is swept only then,
+    /// so a launch between its hand-off and its `LaunchChild` keeps it.
+    pub settled: bool,
 }
 
 /// A child's plan: its project's dry run, as a ctxloom process in that
 /// project would make it, on `engine`, with `env` (its launcher's
 /// environment). The error is the plan's code.
 pub trait ChildPlans: Send + Sync {
+    /// The plan for `agent` (empty: the project's default).
     fn preview(
         &self,
         engine: &str,
+        agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Previewed, String>;
@@ -80,10 +93,21 @@ pub trait ChildPlans: Send + Sync {
     fn git_user(&self, project_dir: &str, env: &BTreeMap<String, String>) -> Option<GitUser>;
 }
 
-/// The hand-off files a launcher leaves a child's environment in (the 0600
-/// files of `~/.ctxloom/daemon/launch/`): taken at the child's first start.
+/// The hand-off files a child's environment is kept in for its life (T6;
+/// the 0600 files of `~/.ctxloom/daemon/launch/`, written by the daemon's
+/// `CreateHandOff`): READ at each start of the child, a start after a
+/// daemon restart included, deleted at its close, and swept when no open
+/// session holds one.
 pub trait HandOffs: Send + Sync {
-    fn take(&self, session: &str) -> Option<HandOff>;
+    /// The hand-off of `session`; none when there is none, or it does not
+    /// read.
+    fn read(&self, session: &str) -> Option<HandOff>;
+
+    /// The hand-off of `session` deleted, if there is one.
+    fn delete(&self, session: &str);
+
+    /// Every hand-off file there is.
+    fn list(&self) -> Vec<Kept>;
 }
 
 /// The session directories of a child's project: the same port the one

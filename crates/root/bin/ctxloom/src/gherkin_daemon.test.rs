@@ -318,8 +318,8 @@ pub(super) fn before_line(w: &mut World, line: &str) {
     }
 }
 
-/// A child the daemon hosts: launched by the user for a seeded owner, and
-/// seen to take its first turn.
+/// A child the daemon hosts: launched by the user for a seeded owner
+/// (`session launch`), and seen to take its first turn.
 fn hosted_child(w: &mut World) {
     let dir = stub_claude(w, CHILD_STUB);
     let seeded = run_now(w, &["test", "seed-session", "amber-quiet-heron"]);
@@ -330,13 +330,11 @@ fn hosted_child(w: &mut World) {
     let launched = w.common.project.run_with(
         &env,
         &[
-            "daemon",
+            "session",
             "launch",
-            "--owner",
             "amber-quiet-heron",
             "--name",
             "brisk-copper-moth",
-            "--prompt",
             "a task",
         ],
     );
@@ -1335,7 +1333,14 @@ fn retried_once(w: &mut World) {
 fn applied_once(w: &mut World) {
     let kind = session_write(w);
     let events = session_events(w, "brisk-copper-moth");
-    assert_eq!(count_of(&events, kind), 1, "{events:?}");
+    // The write the command sent: a send's by its text (the launch's own
+    // first message is another).
+    let applied = events
+        .iter()
+        .filter(|e| e["type"] == kind)
+        .filter(|e| kind != "MessageSent" || e["text"] == "check the tests")
+        .count();
+    assert_eq!(applied, 1, "{events:?}");
 }
 
 #[then("the daemon's confirmation was asked at her terminal, and the session is gone")]

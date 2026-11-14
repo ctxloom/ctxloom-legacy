@@ -34,6 +34,9 @@ struct Fake {
     seen: Arc<Mutex<Seen>>,
     dying: Arc<Mutex<Vec<usize>>>,
     projecting: bool,
+    /// Whether every write is refused.
+    refusing: Arc<Mutex<bool>>,
+    closed: Arc<Mutex<bool>>,
 }
 
 impl Fake {
@@ -76,6 +79,7 @@ impl DaemonApi for Fake {
             owner: ME.to_string(),
             engine: "claude-code".to_string(),
             summary: "read".to_string(),
+            closed: *self.closed.lock().unwrap(),
             ..v1::Session::default()
         })
     }
@@ -120,12 +124,35 @@ impl DaemonApi for Fake {
         })
     }
 
+    async fn create_hand_off(&self, r: v1::CreateHandOffRequest) -> Result<v1::HandOff, Called> {
+        self.ask(&format!(
+            "hand-off {} {} {} {} {}",
+            r.parent, r.hand_off_id, r.owner, r.engine, r.agent
+        ));
+        assert!(r.env.is_some(), "the caller's environment is sent");
+        Ok(v1::HandOff {
+            name: format!("{}/handOffs/{}", r.parent, r.hand_off_id),
+        })
+    }
+
+    async fn delete_hand_off(&self, r: v1::DeleteHandOffRequest) -> Result<v1::HandOff, Called> {
+        self.ask(&format!("withdraw {}", r.name));
+        Ok(v1::HandOff { name: r.name })
+    }
+
     async fn handle_sync(
         &self,
         book: CommandBook,
         projectors: Vec<String>,
     ) -> Result<Synced, Called> {
         self.ask("write");
+        if *self.refusing.lock().unwrap() {
+            return Err(Called::Refused {
+                code: 9,
+                refusal: prost_types::Any::from_msg(&wire::DelegationLimit { limit: 4, open: 4 })
+                    .unwrap(),
+            });
+        }
         let target = book
             .cover
             .as_ref()
@@ -174,6 +201,8 @@ struct Reached {
     seen: Arc<Mutex<Seen>>,
     dying: Arc<Mutex<Vec<usize>>>,
     projecting: bool,
+    refusing: Arc<Mutex<bool>>,
+    closed: Arc<Mutex<bool>>,
 }
 
 impl Daemons for Reached {
@@ -191,6 +220,8 @@ impl Daemons for Reached {
             seen: Arc::clone(&self.seen),
             dying: Arc::clone(&self.dying),
             projecting: self.projecting,
+            refusing: Arc::clone(&self.refusing),
+            closed: Arc::clone(&self.closed),
         })
     }
 }
@@ -198,6 +229,9 @@ impl Daemons for Reached {
 struct World {
     seen: Arc<Mutex<Seen>>,
     dying: Arc<Mutex<Vec<usize>>>,
+    refusing: Arc<Mutex<bool>>,
+    /// Whether every session the daemon has is closed.
+    closed: Arc<Mutex<bool>>,
 }
 
 impl World {
@@ -205,7 +239,36 @@ impl World {
         World {
             seen: Arc::default(),
             dying: Arc::default(),
+            refusing: Arc::default(),
+            closed: Arc::default(),
         }
+    }
+
+    fn reached(&self, projecting: bool) -> Reached {
+        Reached {
+            next: Mutex::new(0),
+            seen: Arc::clone(&self.seen),
+            dying: Arc::clone(&self.dying),
+            projecting,
+            refusing: Arc::clone(&self.refusing),
+            closed: Arc::clone(&self.closed),
+        }
+    }
+
+    /// The USER in the caller's project.
+    fn user(&self, projecting: bool) -> Caller<Reached> {
+        let ids = Arc::new(Mutex::new(0));
+        Caller::user(
+            self.reached(projecting),
+            "projects/calm-quiet-heron",
+            v1::EnvVars::default(),
+            Box::new(move || {
+                let mut n = ids.lock().unwrap();
+                *n += 1;
+                format!("id-{n}")
+            }),
+        )
+        .unwrap()
     }
 
     fn caller(&self, projecting: bool) -> Caller<Reached> {
@@ -216,6 +279,8 @@ impl World {
                 seen: Arc::clone(&self.seen),
                 dying: Arc::clone(&self.dying),
                 projecting,
+                refusing: Arc::clone(&self.refusing),
+                closed: Arc::clone(&self.closed),
             },
             ME,
             v1::EnvVars::default(),
@@ -269,6 +334,8 @@ fn a_caller_is_a_sessions_resource_name_and_nothing_else() {
             seen: Arc::default(),
             dying: Arc::default(),
             projecting: false,
+            refusing: Arc::default(),
+            closed: Arc::default(),
         },
         "brisk-copper-moth",
         v1::EnvVars::default(),
@@ -287,7 +354,7 @@ fn a_caller_is_a_sessions_resource_name_and_nothing_else() {
 fn a_target_is_a_harp_of_the_callers_project_or_a_full_name() {
     let world = World::new();
     let caller = world.caller(false);
-    assert_eq!(caller.session().to_string(), ME);
+    assert_eq!(caller.session().unwrap().to_string(), ME);
     assert_eq!(
         caller.target("brisk-copper-moth").unwrap().to_string(),
         CHILD
@@ -408,8 +475,10 @@ async fn a_write_whose_daemon_dies_is_sent_once_more_under_the_same_id() {
         [sessions::command_id(&key), sessions::command_id(&key)]
     );
     let expected = [
+        format!("1:session {CHILD}"),
         "1:project projects/calm-quiet-heron".to_string(),
         "1:write".to_string(),
+        format!("2:session {CHILD}"),
         "2:project projects/calm-quiet-heron".to_string(),
         "2:write".to_string(),
         format!("2:session {CHILD}"),
@@ -437,4 +506,177 @@ async fn a_clear_is_keyed_by_the_id_minted_for_it() {
     let clear = wire::ClearChild::decode(packed.value.as_slice()).unwrap();
     assert_eq!(clear.clear_id, "id-1");
     assert_eq!(world.command_ids(), [sessions::command_id("id-1")]);
+}
+
+// Slice 4 U3 (S2, D25): the user's writes name no requester, a close is
+// recorded as hers, and a message is keyed by the id she gave, so the same
+// id again is one message.
+#[tokio::test]
+async fn the_users_writes_name_no_requester_and_keep_the_id_she_gave() {
+    let world = World::new();
+    let caller = world.user(true);
+    assert!(caller.session().is_none());
+    let written = caller
+        .send_as(
+            "brisk-copper-moth",
+            sessions::Urgency::Wake,
+            "check the tests",
+            Some("m1"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(written.id, "m1");
+    assert!(written.applied);
+    let closed = caller.close("brisk-copper-moth").await.unwrap();
+    assert!(closed.applied);
+    let commands = world.commands();
+    let [sent, close] = commands.as_slice() else {
+        panic!("a send and a close: {commands:?}");
+    };
+    let sent = wire::SendMessage::decode(sent.value.as_slice()).unwrap();
+    assert_eq!(sent.requester, None);
+    let close = wire::CloseSession::decode(close.value.as_slice()).unwrap();
+    assert_eq!(close.requester, None);
+    assert_eq!(close.cause, "closed by the user");
+    assert_eq!(world.command_ids()[0], sessions::command_id("m1"));
+    assert!(
+        !world.asked().iter().any(|asked| asked.contains("project ")),
+        "the user names no requester, so no project is asked: {:?}",
+        world.asked()
+    );
+}
+
+// Slice 4 U3 (T6, S10): a launch hands the daemon its environment first,
+// then sends the owner's LaunchChild, keyed by the owner and the child; the
+// answer is the child as the daemon has it.
+#[tokio::test]
+async fn a_launch_is_the_hand_off_then_the_owners_launch_child() {
+    let world = World::new();
+    let caller = world.user(false);
+    let written = caller
+        .launch(&super::Launch {
+            owner: Some("amber-quiet-heron".to_string()),
+            harp: Some("brisk-copper-moth".to_string()),
+            task: "review the change".to_string(),
+            agent: "dev".to_string(),
+            ..super::Launch::default()
+        })
+        .await
+        .unwrap();
+    let child = sessions::SessionName::parse(CHILD).unwrap();
+    assert_eq!(written.id, child.uid());
+    assert_eq!(written.session.name, CHILD);
+    let asked = world.asked();
+    assert_eq!(
+        asked[0],
+        format!(
+            "1:hand-off projects/calm-quiet-heron {} amber-quiet-heron claude-code dev",
+            child.uid()
+        )
+    );
+    assert!(asked.contains(&"1:write".to_string()), "{asked:?}");
+    let commands = world.commands();
+    let [launched] = commands.as_slice() else {
+        panic!("one launch: {commands:?}");
+    };
+    assert!(launched
+        .type_url
+        .ends_with("/ctxloom.sessions.v1.LaunchChild"));
+    let launched = wire::LaunchChild::decode(launched.value.as_slice()).unwrap();
+    assert_eq!(launched.child_session, child.uid());
+    assert_eq!(launched.harp, "brisk-copper-moth");
+    assert_eq!(launched.prompt, "review the change");
+    assert_eq!(launched.requester, None);
+    assert_eq!(launched.delegation_limit, super::DELEGATION_LIMIT);
+    let owner =
+        sessions::SessionName::parse("projects/calm-quiet-heron/sessions/amber-quiet-heron")
+            .unwrap();
+    assert_eq!(
+        world.command_ids(),
+        [sessions::command_id(&format!(
+            "launch:{}:{}",
+            owner.uid(),
+            child.uid()
+        ))]
+    );
+}
+
+// A refused LaunchChild takes its hand-off back: a refused launch leaves
+// nothing.
+#[tokio::test]
+async fn a_refused_launch_takes_its_hand_off_back() {
+    let world = World::new();
+    *world.refusing.lock().unwrap() = true;
+    let caller = world.user(false);
+    let refused = caller
+        .launch(&super::Launch {
+            owner: Some("amber-quiet-heron".to_string()),
+            harp: Some("brisk-copper-moth".to_string()),
+            ..super::Launch::default()
+        })
+        .await;
+    let Err(CallError::Refused(crate::Rejection::Sessions(rejection))) = refused else {
+        panic!("refused in the sessions domain's words: {refused:?}");
+    };
+    assert_eq!(
+        rejection,
+        sessions::SessionRejection::DelegationLimit { limit: 4, open: 4 }
+    );
+    let child = sessions::SessionName::parse(CHILD).unwrap();
+    assert!(
+        world.asked().contains(&format!(
+            "1:withdraw projects/calm-quiet-heron/handOffs/{}",
+            child.uid()
+        )),
+        "{:?}",
+        world.asked()
+    );
+}
+
+// A session's own launch is its child's (the owner itself, its requester),
+// its harp minted where none is named.
+#[tokio::test]
+async fn a_sessions_launch_is_of_its_own_child_named_when_unnamed() {
+    let world = World::new();
+    let caller = world
+        .caller(false)
+        .naming(Box::new(|| "brisk-copper-moth".to_string()));
+    let written = caller.launch(&super::Launch::default()).await.unwrap();
+    let child = sessions::SessionName::parse(CHILD).unwrap();
+    assert_eq!(written.id, child.uid());
+    let commands = world.commands();
+    let launched = wire::LaunchChild::decode(commands[0].value.as_slice()).unwrap();
+    let me = sessions::SessionName::parse(ME).unwrap();
+    assert_eq!(
+        launched.requester,
+        Some(wire::SessionRef {
+            project_id: "calm-otter".to_string(),
+            session: me.uid(),
+        })
+    );
+}
+
+// A message, a clear and a close to a closed session: the first two are
+// refused in the domain's words, naming it, and nothing is written; a
+// close of one says it was closed already.
+#[tokio::test]
+async fn a_closed_session_takes_no_message_or_clear_and_its_close_says_so() {
+    let world = World::new();
+    *world.closed.lock().unwrap() = true;
+    let caller = world.user(false);
+    let refused = caller
+        .send_as("brisk-copper-moth", sessions::Urgency::Wake, "x", None)
+        .await;
+    assert_eq!(
+        refused,
+        Err(CallError::Refused(crate::Rejection::Sessions(
+            sessions::SessionRejection::SessionClosed {
+                harp: "brisk-copper-moth".to_string()
+            }
+        )))
+    );
+    assert!(caller.clear("brisk-copper-moth").await.is_err());
+    assert!(world.commands().is_empty(), "nothing written");
+    let closed = caller.close("brisk-copper-moth").await.unwrap();
+    assert!(!closed.applied, "closed already");
 }

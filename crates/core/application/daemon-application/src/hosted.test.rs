@@ -179,6 +179,7 @@ impl ChildPlans for Plans {
     fn preview(
         &self,
         engine: &str,
+        _agent: &str,
         _: &str,
         _: &BTreeMap<String, String>,
     ) -> Result<Previewed, String> {
@@ -221,7 +222,7 @@ impl ChildPlans for Plans {
     }
 }
 
-/// The launcher's hand-off: one, taken once.
+/// The child's hand-off (T6): read at each start, until it is deleted.
 struct Handed(Mutex<Option<crate::HandOff>>);
 
 impl Handed {
@@ -232,13 +233,25 @@ impl Handed {
     }
 
     fn with(env: BTreeMap<String, String>, launcher: BTreeMap<String, String>) -> Handed {
-        Handed(Mutex::new(Some(crate::HandOff { env, launcher })))
+        Handed(Mutex::new(Some(crate::HandOff {
+            env,
+            launcher,
+            agent: String::new(),
+        })))
     }
 }
 
 impl HandOffs for Handed {
-    fn take(&self, _: &str) -> Option<crate::HandOff> {
-        self.0.lock().unwrap().take()
+    fn read(&self, _: &str) -> Option<crate::HandOff> {
+        self.0.lock().unwrap().clone()
+    }
+
+    fn delete(&self, _: &str) {
+        self.0.lock().unwrap().take();
+    }
+
+    fn list(&self) -> Vec<crate::Kept> {
+        Vec::new()
     }
 }
 
@@ -401,6 +414,18 @@ impl World {
 
     /// A world whose every lock probes as `locks`.
     fn probing(plans: Box<dyn ChildPlans>, locks: LockProbe) -> World {
+        World::built(
+            plans,
+            locks,
+            Box::new(Handed::of(BTreeMap::from([
+                ("PATH".to_string(), "/usr/bin".to_string()),
+                ("SECRET".to_string(), "v".to_string()),
+            ]))),
+        )
+    }
+
+    /// A world whose children's hand-offs are `hand_offs`.
+    fn built(plans: Box<dyn ChildPlans>, locks: LockProbe, hand_offs: Box<dyn HandOffs>) -> World {
         let edge = Arc::new(TestEdge::new());
         let engine = Arc::new(Scripted::default());
         let homes = Homes::default();
@@ -414,10 +439,7 @@ impl World {
                 for_launch: None,
             }],
             plans,
-            hand_offs: Box::new(Handed::of(BTreeMap::from([
-                ("PATH".to_string(), "/usr/bin".to_string()),
-                ("SECRET".to_string(), "v".to_string()),
-            ]))),
+            hand_offs,
             homes: Box::new(homes.clone()),
             ears: Box::new(Listening::default()),
             run_locks: Arc::new(Locks(locks)),
@@ -664,10 +686,11 @@ impl ChildPlans for Permitted {
     fn preview(
         &self,
         engine: &str,
+        _agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Previewed, String> {
-        let mut previewed = Plans.preview(engine, project_dir, env)?;
+        let mut previewed = Plans.preview(engine, "", project_dir, env)?;
         previewed.plan.permissions = Some(DOCUMENT.to_string());
         Ok(previewed)
     }
@@ -713,10 +736,11 @@ impl ChildPlans for Surfaced {
     fn preview(
         &self,
         engine: &str,
+        _agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<Previewed, String> {
-        let mut previewed = Plans.preview(engine, project_dir, env)?;
+        let mut previewed = Plans.preview(engine, "", project_dir, env)?;
         previewed.plan.surfaces.deny_tools = vec!["Bash".to_string()];
         Ok(previewed)
     }
@@ -958,6 +982,7 @@ async fn an_owner_is_told_its_childs_launch_failed() {
             &self,
             _: &str,
             _: &str,
+            _: &str,
             _: &BTreeMap<String, String>,
         ) -> Result<Previewed, String> {
             Err("library-application-no-agent".to_string())
@@ -1047,4 +1072,171 @@ async fn a_hosted_child_is_live_and_never_swept_as_another_processs() {
         .await;
     assert_eq!(live, Ok(1));
     assert_eq!(world.daemon.hosting(), 1, "still hosted");
+}
+
+// ---- the hand-off for the child's life (slice 4 U3, T6)
+
+/// Hand-off files, in memory: each read and delete recorded, `listed`
+/// what a listing answers.
+#[derive(Clone, Default)]
+struct Files {
+    kept: Arc<Mutex<BTreeMap<String, crate::HandOff>>>,
+    reads: Arc<Mutex<Vec<String>>>,
+    deleted: Arc<Mutex<Vec<String>>>,
+    listed: Arc<Mutex<Vec<crate::Kept>>>,
+}
+
+impl HandOffs for Files {
+    fn read(&self, session: &str) -> Option<crate::HandOff> {
+        self.reads.lock().unwrap().push(session.to_string());
+        self.kept.lock().unwrap().get(session).cloned()
+    }
+
+    fn delete(&self, session: &str) {
+        self.deleted.lock().unwrap().push(session.to_string());
+        self.kept.lock().unwrap().remove(session);
+    }
+
+    fn list(&self) -> Vec<crate::Kept> {
+        self.listed.lock().unwrap().clone()
+    }
+}
+
+/// `Plans`, recording the agent each plan was asked for.
+#[derive(Clone, Default)]
+struct ForAgent(Arc<Mutex<Vec<String>>>);
+
+impl ChildPlans for ForAgent {
+    fn preview(
+        &self,
+        engine: &str,
+        agent: &str,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<Previewed, String> {
+        self.0.lock().unwrap().push(agent.to_string());
+        Plans.preview(engine, agent, project_dir, env)
+    }
+
+    fn git_user(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Option<run_ports::GitUser> {
+        Plans.git_user(project_dir, env)
+    }
+}
+
+/// A world whose child `kid` has a hand-off in `files`, for the agent
+/// `reviewer`, hosted.
+async fn hosting_from(files: &Files, plans: &ForAgent) -> World {
+    files.kept.lock().unwrap().insert(
+        CHILD.to_string(),
+        crate::HandOff {
+            env: BTreeMap::from([("SECRET".to_string(), "v".to_string())]),
+            launcher: BTreeMap::new(),
+            agent: "reviewer".to_string(),
+        },
+    );
+    let mut world = World::built(
+        Box::new(plans.clone()),
+        LockProbe::Unproven,
+        Box::new(files.clone()),
+    );
+    world.name_project().await;
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    assert_eq!(world.daemon.hosting(), 1, "hosted");
+    world
+}
+
+// T6: a child's start READS its hand-off and leaves it for its life (a
+// start after a daemon restart reads it again); the child is planned for
+// the agent the hand-off names.
+#[tokio::test]
+async fn a_childs_start_reads_its_hand_off_and_leaves_it() {
+    let files = Files::default();
+    let plans = ForAgent::default();
+    let world = hosting_from(&files, &plans).await;
+    assert_eq!(*files.reads.lock().unwrap(), [CHILD.to_string()]);
+    assert!(files.deleted.lock().unwrap().is_empty(), "kept");
+    assert!(files.kept.lock().unwrap().contains_key(CHILD));
+    assert_eq!(*plans.0.lock().unwrap(), ["reviewer".to_string()]);
+    let started = world.engine.started.lock().unwrap().clone();
+    assert_eq!(
+        started[0].env.get("SECRET").map(String::as_str),
+        Some("v"),
+        "started with what it was handed"
+    );
+}
+
+// T6: a child closed for good has its hand-off deleted.
+#[tokio::test]
+async fn a_closed_childs_hand_off_is_deleted() {
+    let files = Files::default();
+    let plans = ForAgent::default();
+    let mut world = hosting_from(&files, &plans).await;
+    world
+        .handle(
+            CHILD,
+            sessions::CloseSession {
+                cause: "closed by the user".to_string(),
+                requester: None,
+            },
+        )
+        .await;
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert!(
+        files.deleted.lock().unwrap().contains(&CHILD.to_string()),
+        "{:?}",
+        files.deleted.lock().unwrap()
+    );
+    assert!(!files.kept.lock().unwrap().contains_key(CHILD));
+}
+
+// T6: a hand-off no open session holds is swept once the board has caught
+// up: its child's session closed, or, settled past the root's grace, one
+// the board knows nothing of. An open child's, and an unsettled one (a
+// launch between its hand-off and its `LaunchChild`), are kept.
+#[tokio::test]
+async fn a_hand_off_no_open_session_holds_is_swept() {
+    let files = Files::default();
+    let plans = ForAgent::default();
+    let mut world = hosting_from(&files, &plans).await;
+    let closed = "5f0c7a52-1111-5111-8111-0000000000c1";
+    world.mint(closed, "gone", Some(OWNER)).await;
+    world
+        .handle(
+            closed,
+            sessions::CloseSession {
+                cause: "done".to_string(),
+                requester: None,
+            },
+        )
+        .await;
+    let kept = |session: &str, settled| crate::Kept {
+        session: session.to_string(),
+        settled,
+    };
+    *files.listed.lock().unwrap() = vec![
+        kept(CHILD, true),
+        kept(closed, false),
+        kept("5f0c7a52-1111-5111-8111-0000000000d1", true),
+        kept("5f0c7a52-1111-5111-8111-0000000000d2", false),
+    ];
+    world.tick().await;
+    let deleted = files.deleted.lock().unwrap().clone();
+    assert!(deleted.contains(&closed.to_string()), "{deleted:?}");
+    assert!(
+        deleted.contains(&"5f0c7a52-1111-5111-8111-0000000000d1".to_string()),
+        "{deleted:?}"
+    );
+    assert!(!deleted.contains(&CHILD.to_string()), "open: {deleted:?}");
+    assert!(
+        !deleted.contains(&"5f0c7a52-1111-5111-8111-0000000000d2".to_string()),
+        "unsettled: {deleted:?}"
+    );
 }

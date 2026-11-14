@@ -2,24 +2,26 @@
 //! session's client use cases. A tool's arguments are read here; its answer
 //! is the daemon's resource as proto3 JSON text.
 //!
-//! `child_launch` is not offered until it is built (slice 3 step 8, the
-//! root session's places), nor `approval_prompt` until approvals are
-//! (OD-1): a tool that always refuses would be a lie.
+//! `child_launch` (slice 4 U3, owner ruling s4-Q1) is the session's own
+//! child's launch over the daemon's `CreateHandOff`, as `session launch` is
+//! the user's. `approval_prompt` is not offered until approvals are (OD-1):
+//! a tool that always refuses would be a lie.
 
 use std::fmt;
 use std::sync::Arc;
 
 use angzarr_diagnostic::{code, Arg, Diagnostic};
-use daemon_api::{CallError, Caller, Daemons};
+use daemon_api::{CallError, Caller, Daemons, Launch};
 use rmcp::model::{JsonObject, Tool};
 use serde_json::{json, Value};
 
 /// The names of the tools offered, in the order listed.
-pub const TOOL_NAMES: [&str; 7] = [
+pub const TOOL_NAMES: [&str; 8] = [
     "session_list",
     "session_show",
     "transcript_show",
     "context_assemble",
+    "child_launch",
     "child_send",
     "child_close",
     "child_clear",
@@ -54,6 +56,8 @@ const SESSION_LIST: &str = include_str!("../tools/session_list.md");
 const SESSION_SHOW: &str = include_str!("../tools/session_show.md");
 const TRANSCRIPT_SHOW: &str = include_str!("../tools/transcript_show.md");
 const CONTEXT_ASSEMBLE: &str = include_str!("../tools/context_assemble.md");
+// DRAFT for the owner's approval (slice 4 U3): the engine-facing text.
+const CHILD_LAUNCH: &str = include_str!("../tools/child_launch.md");
 const CHILD_SEND: &str = include_str!("../tools/child_send.md");
 const CHILD_CLOSE: &str = include_str!("../tools/child_close.md");
 const CHILD_CLEAR: &str = include_str!("../tools/child_clear.md");
@@ -100,6 +104,18 @@ pub fn tools() -> Vec<Tool> {
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags whose fragments to load too"}
                 }),
                 &["bundles"],
+            ),
+        ),
+        Tool::new(
+            "child_launch",
+            describe(CHILD_LAUNCH),
+            schema(
+                json!({
+                    "name": {"type": "string", "description": "The child's name, a harp (default: one minted)"},
+                    "agent": {"type": "string", "description": "The agent it is planned for (default: the project's)"},
+                    "task": {"type": "string", "description": "Its first task (default: none; it waits for its first message)"}
+                }),
+                &[],
             ),
         ),
         Tool::new(
@@ -236,6 +252,18 @@ pub(crate) async fn dispatch<D: Daemons>(
             let tags = texts(tool, args, "tags", false).map_err(refused)?;
             let assembled = caller.assemble(fragments, tags).await.map_err(failed)?;
             Ok(vec![json_text(&assembled)])
+        }
+        "child_launch" => {
+            let optional = |name: &str| args.get(name).and_then(Value::as_str);
+            let launch = Launch {
+                owner: None,
+                harp: optional("name").map(str::to_string),
+                engine: String::new(),
+                agent: optional("agent").unwrap_or_default().to_string(),
+                task: optional("task").unwrap_or_default().to_string(),
+            };
+            let written = caller.launch(&launch).await.map_err(failed)?;
+            Ok(vec![json_text(&written.session)])
         }
         "child_send" => {
             let child = text(tool, args, "child").map_err(refused)?;

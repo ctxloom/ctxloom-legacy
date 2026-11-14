@@ -255,6 +255,28 @@ impl DaemonApi for DaemonClient {
         )
     }
 
+    async fn create_hand_off(
+        &self,
+        request: v1::CreateHandOffRequest,
+    ) -> Result<v1::HandOff, Called> {
+        // A hand-off plans the child in the daemon, which may ask its
+        // companions: a destroy's deadline.
+        call!(
+            self,
+            create_hand_off,
+            "CreateHandOff",
+            request,
+            self.destroying
+        )
+    }
+
+    async fn delete_hand_off(
+        &self,
+        request: v1::DeleteHandOffRequest,
+    ) -> Result<v1::HandOff, Called> {
+        call!(self, delete_hand_off, "DeleteHandOff", request)
+    }
+
     async fn handle_sync(
         &self,
         book: CommandBook,

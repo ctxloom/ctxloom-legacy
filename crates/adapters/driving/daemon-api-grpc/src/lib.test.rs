@@ -112,6 +112,18 @@ impl Calls for Scripted {
         })
     }
 
+    fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
+        Box::pin(async move {
+            Ok(v1::HandOff {
+                name: format!("{}/handOffs/{}", request.parent, request.hand_off_id),
+            })
+        })
+    }
+
+    fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
+        Box::pin(async move { Ok(v1::HandOff { name: request.name }) })
+    }
+
     fn search_sessions(
         &self,
         request: v1::SearchSessionsRequest,
@@ -489,4 +501,36 @@ fn the_gate_is_ready_when_its_service_is() {
         gated(true).poll_ready(&mut cx),
         std::task::Poll::Ready(Ok(()))
     ));
+}
+
+// Slice 4 (U3, S10): CreateHandOff and DeleteHandOff are served, each its
+// use case's answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn the_hand_offs_are_served() {
+    let mut client = CtxloomClient::new(serve(Arc::default()).await);
+    let created = client
+        .create_hand_off(with_bearer(
+            v1::CreateHandOffRequest {
+                parent: "projects/calm-otter".to_string(),
+                hand_off_id: "c1".to_string(),
+                ..v1::CreateHandOffRequest::default()
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(created.name, "projects/calm-otter/handOffs/c1");
+    let deleted = client
+        .delete_hand_off(with_bearer(
+            v1::DeleteHandOffRequest {
+                name: "projects/calm-otter/handOffs/c1".to_string(),
+                ..v1::DeleteHandOffRequest::default()
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(deleted.name, "projects/calm-otter/handOffs/c1");
 }

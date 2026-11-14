@@ -125,7 +125,8 @@ fn env(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
 }
 
 // D-N45: a launcher's hand-off reads back whole, values with lines,
-// backslashes and `=` alike.
+// backslashes and `=` alike, with the agent its child is planned for; one
+// an older daemon wrote (format 2) reads as one for the default agent.
 #[test]
 fn a_hand_off_reads_back_what_was_written() {
     let sent = env(&[
@@ -136,40 +137,58 @@ fn a_hand_off_reads_back_what_was_written() {
     let handed = HandOff {
         env: sent,
         launcher: env(&[("CLAUDE_CONFIG_DIR", "/home/alice/.claude-work")]),
+        agent: "reviewer".to_string(),
     };
     let text = super::encode_hand_off(&handed);
-    assert!(text.starts_with("ctxloom-launch-env 2\n"), "{text}");
-    assert_eq!(text.lines().count(), 5, "one line a variable: {text}");
+    assert!(text.starts_with("ctxloom-launch-env 3\n"), "{text}");
+    assert_eq!(text.lines().count(), 6, "one line a variable: {text}");
     assert!(
         text.contains("\n@CLAUDE_CONFIG_DIR=/home/alice/.claude-work\n"),
         "{text}"
     );
+    assert!(text.ends_with("\n!agent=reviewer\n"), "{text}");
     assert_eq!(super::decode_hand_off(&text), Some(handed));
+    assert_eq!(
+        super::decode_hand_off("ctxloom-launch-env 2\nA=b\n"),
+        Some(HandOff {
+            env: env(&[("A", "b")]),
+            ..HandOff::default()
+        })
+    );
+    let unnamed = HandOff {
+        env: env(&[("A", "b")]),
+        ..HandOff::default()
+    };
+    assert!(
+        !super::encode_hand_off(&unnamed).contains("!agent"),
+        "no agent, no line"
+    );
     assert_eq!(super::decode_hand_off("other 1\nA=b\n"), None);
     assert_eq!(super::decode_hand_off("ctxloom-launch-env 1\nA=b\n"), None);
     assert_eq!(
-        super::decode_hand_off("ctxloom-launch-env 2\nnoequals\n"),
+        super::decode_hand_off("ctxloom-launch-env 3\nnoequals\n"),
         None
     );
     assert_eq!(
-        super::decode_hand_off("ctxloom-launch-env 2\nA=bad\\q\n"),
+        super::decode_hand_off("ctxloom-launch-env 3\nA=bad\\q\n"),
         None
     );
     assert_eq!(
-        super::decode_hand_off("ctxloom-launch-env 2\nA=end\\\n"),
+        super::decode_hand_off("ctxloom-launch-env 3\nA=end\\\n"),
         None
     );
 }
 
-// D-N45: the hand-off is the user's alone, taken once (nothing left at
-// rest), withdrawn on a refusal, and only ever named by a child's UUID.
+// T6: the hand-off is the user's alone (0600 in the 0700 launch
+// directory), READ and left for the child's life, deleted, and only ever
+// named by a child's UUID.
 #[test]
-fn a_hand_off_is_the_users_alone_and_taken_once() {
+fn a_hand_off_is_the_users_alone_and_read_for_the_childs_life() {
     let (root, home) = home();
     let files = files(&root, &home);
     let sent = HandOff {
         env: env(&[("ANTHROPIC_API_KEY", "k")]), // gitleaks:allow
-        launcher: std::collections::BTreeMap::new(),
+        ..HandOff::default()
     };
     files.hand_off(CHILD, &sent).unwrap();
     let path = files.dir().join("launch").join(CHILD);
@@ -177,14 +196,45 @@ fn a_hand_off_is_the_users_alone_and_taken_once() {
         fixtures::fs().metadata(&path).unwrap().mode.unwrap().bits(),
         0o600
     );
-    assert_eq!(files.take_hand_off(CHILD), Some(sent.clone()));
+    assert_eq!(
+        fixtures::fs()
+            .metadata(&files.dir().join("launch"))
+            .unwrap()
+            .mode
+            .unwrap()
+            .bits(),
+        0o700
+    );
+    assert_eq!(files.read_hand_off(CHILD), Some(sent.clone()));
+    assert_eq!(files.read_hand_off(CHILD), Some(sent.clone()), "read again");
+    files.delete_hand_off(CHILD);
+    assert_eq!(files.read_hand_off(CHILD), None, "deleted");
     assert!(!fixtures::fs().exists(&path).unwrap());
-    assert_eq!(files.take_hand_off(CHILD), None, "taken once");
-    files.hand_off(CHILD, &sent).unwrap();
-    files.withdraw_hand_off(CHILD);
-    assert_eq!(files.take_hand_off(CHILD), None, "withdrawn");
     assert!(files.hand_off("../escape", &sent).is_err());
-    assert_eq!(files.take_hand_off("../escape"), None);
+    assert_eq!(files.read_hand_off("../escape"), None);
+}
+
+// T6: the hand-offs are listed by their child's id, each settled once it is
+// older than the grace a launch takes to record its child; a file no UUID
+// names is none.
+#[test]
+fn the_hand_offs_are_listed_each_settled_past_its_grace() {
+    let (root, home) = home();
+    let files = files(&root, &home);
+    assert!(files.hand_offs(std::time::SystemTime::now()).is_empty());
+    files.hand_off(CHILD, &HandOff::default()).unwrap();
+    fixtures::put_mode(files.dir().join("launch").join("not-a-child"), "x", 0o600);
+    let now = std::time::SystemTime::now();
+    let listed = files.hand_offs(now);
+    assert_eq!(
+        listed,
+        [daemon_application::Kept {
+            session: CHILD.to_string(),
+            settled: false,
+        }]
+    );
+    let later = now + super::HAND_OFF_GRACE + Duration::from_secs(1);
+    assert!(files.hand_offs(later)[0].settled);
 }
 
 // One daemon per OS account: the single-instance lock is where

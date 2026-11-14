@@ -51,6 +51,8 @@ pub(crate) fn serve(
         crate::daemon::env_vars(env),
         Box::new(crate::daemon::request_id),
     )
+    // `child_launch` names a child that names none (slice 4 U3).
+    .map(|caller| caller.naming(Box::new(crate::session_name)))
     .map_err(|e| {
         let exit = cli_support::ExitClass::exit(&e);
         Failure::new(e, exit)

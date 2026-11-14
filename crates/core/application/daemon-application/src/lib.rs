@@ -12,7 +12,9 @@
 //!   claimed and minted, a child started (planned by its project's dry
 //!   run, enqueued judged on its launcher's environment, its session home
 //!   prepared and its engine started), a turn fed, a clear handed, an end
-//!   asked; what a child said is recorded as its run's facts.
+//!   asked; what a child said is recorded as its run's facts. A child's
+//!   hand-off is read at each of its starts, deleted at its end, and a
+//!   hand-off no open session holds is swept (T6, slice 4 U3).
 //! - Engines are resolved by NAME through the registry the root composes
 //!   ([`HostedEngine`]: an `Engine` beside its `ChildEngine`), never one
 //!   adapter named in code.
@@ -26,7 +28,7 @@ mod ports;
 
 pub use daemon::{Daemon, Folds, Place, Ports, Taken};
 pub use ports::{
-    ChildHomes, ChildPlans, Ears, ForLaunch, HandOff, HandOffs, HostedEngine, Transcripts,
+    ChildHomes, ChildPlans, Ears, ForLaunch, HandOff, HandOffs, HostedEngine, Kept, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
 

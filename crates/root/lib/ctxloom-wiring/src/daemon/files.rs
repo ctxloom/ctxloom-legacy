@@ -1,9 +1,10 @@
 //! The user daemon's files (D-N23): at the OS account's place
 //! ([`instance_lock_path`]), the single-instance lock and the discovery file
-//! (0600) beside it; under the ctxloom home, the stop request, the log and a
-//! launching client's hand-off of a child's environment (0600, D-N45: taken
-//! by the daemon at the child's start). Every one through the file-system
-//! seam, so a test's temporary home is the only place touched.
+//! (0600) beside it; under the ctxloom home, the stop request, the log and
+//! each child's hand-off of its environment (0600; T6, S10: written by the
+//! daemon's `CreateHandOff`, read at each of the child's starts, deleted at
+//! its close, swept when no open session holds it). Every one through the
+//! file-system seam, so a test's temporary home is the only place touched.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -23,11 +24,23 @@ pub(crate) const LOG_FILE: &str = "daemon.log";
 const LAUNCH_DIR: &str = "launch";
 
 /// The first line of a hand-off.
-const HAND_OFF_HEADER: &str = "ctxloom-launch-env 2";
+const HAND_OFF_HEADER: &str = "ctxloom-launch-env 3";
+
+/// The first line of a hand-off an older daemon wrote (no agent line): read
+/// as one for the project's default agent.
+const HAND_OFF_HEADER_2: &str = "ctxloom-launch-env 2";
 
 /// What marks a line of a hand-off as its launcher's place (no variable
 /// name starts with it).
 const LAUNCHER_MARK: char = '@';
+
+/// What marks a hand-off's line naming the agent its child is planned for.
+const AGENT_LINE: &str = "!agent";
+
+/// How long a hand-off no session holds is kept before it is swept (T6): a
+/// launch records its child's `LaunchChild` within it, so a launch between
+/// its hand-off and its record keeps its own.
+pub(crate) const HAND_OFF_GRACE: Duration = Duration::from_secs(60);
 
 /// The daemon's directory: the user's alone.
 const DIR_MODE: u32 = 0o700;
@@ -196,15 +209,16 @@ impl DaemonFiles {
         Some(self.dir.join(LAUNCH_DIR).join(id.hyphenated().to_string()))
     }
 
-    /// Hand the daemon `handed`, the environment the child `session` is to
-    /// be started with and where its launcher finds its user's settings
-    /// (S6, S7): 0600, in the 0700 daemon directory, written whole.
+    /// Keep `handed`, the environment the child `session` is started with
+    /// and where its launcher finds its user's settings (S6, S7, T6): 0600,
+    /// in the 0700 daemon directory, written whole.
     pub(crate) fn hand_off(&self, session: &str, handed: &HandOff) -> std::io::Result<()> {
         let path = self
             .hand_off_path(session)
             .ok_or_else(|| std::io::Error::other("a child's id is a UUID"))?;
         let dir = self.dir.join(LAUNCH_DIR);
-        self.fs.create_dir_all(&dir, Mode::from_bits(DIR_MODE))?;
+        self.private_dir(&self.dir)?;
+        self.private_dir(&dir)?;
         self.fs.write_atomic(
             &path,
             encode_hand_off(handed).as_bytes(),
@@ -212,21 +226,44 @@ impl DaemonFiles {
         )
     }
 
-    /// Take the hand-off of `session`: read, then removed at once (nothing
-    /// is left at rest once the daemon holds it). None when there is none,
-    /// or it does not read.
-    pub(crate) fn take_hand_off(&self, session: &str) -> Option<HandOff> {
+    /// The hand-off of `session`, read and left where it is (T6: it lives as
+    /// long as the child is open). None when there is none, or it does not
+    /// read.
+    pub(crate) fn read_hand_off(&self, session: &str) -> Option<HandOff> {
         let path = self.hand_off_path(session)?;
-        let text = self.fs.read_to_string(&path).ok();
-        let _ = self.fs.remove_file(&path);
-        decode_hand_off(&text?)
+        decode_hand_off(&self.fs.read_to_string(&path).ok()?)
     }
 
-    /// Withdraw the hand-off of `session` (a launch that was refused).
-    pub(crate) fn withdraw_hand_off(&self, session: &str) {
+    /// Delete the hand-off of `session` (its child closed, its launch
+    /// refused, or swept).
+    pub(crate) fn delete_hand_off(&self, session: &str) {
         if let Some(path) = self.hand_off_path(session) {
             let _ = self.fs.remove_file(&path);
         }
+    }
+
+    /// Every hand-off there is, by its child's stable id, each settled when
+    /// it was written longer than [`HAND_OFF_GRACE`] before `now`. A file
+    /// not named by a UUID is no hand-off.
+    pub(crate) fn hand_offs(&self, now: std::time::SystemTime) -> Vec<daemon_application::Kept> {
+        let dir = self.dir.join(LAUNCH_DIR);
+        let Ok(entries) = self.fs.read_dir(&dir) else {
+            return Vec::new();
+        };
+        entries
+            .into_iter()
+            .filter_map(|entry| {
+                let name = entry.name.to_str()?.to_string();
+                let id = uuid::Uuid::parse_str(&name).ok()?.hyphenated().to_string();
+                (id == name).then_some(())?;
+                let modified = self.fs.metadata(&dir.join(&name)).ok()?.modified;
+                let age = now.duration_since(modified).unwrap_or_default();
+                Some(daemon_application::Kept {
+                    session: name,
+                    settled: age > HAND_OFF_GRACE,
+                })
+            })
+            .collect()
     }
 
     /// The log file's path.
@@ -243,32 +280,135 @@ impl DaemonFiles {
     }
 }
 
+/// The daemon's hand-offs, as its API makes them (`CreateHandOff`, S10):
+/// each child planned by its project's dry run in the environment its
+/// launch sent, judged on the evidence the plan gives (by name only), and
+/// its hand-off written through [`DaemonFiles`]. What a child may be given
+/// of that environment is its engine's allowlist, its engine block's `env`,
+/// its credential source's variables and the permits
+/// (`engine_claude::launcher_environment`); where its launcher finds its
+/// user's settings is the launch's [`super::SETTINGS_PLACES`].
+pub(crate) struct ApiHandOffs {
+    files: DaemonFiles,
+    home: PathBuf,
+    temp: PathBuf,
+    /// The engines a child is hosted on: their names and credentials.
+    engines: Vec<daemon_application::HostedEngine>,
+}
+
+/// The daemon's hand-offs (slice 4 U3: a child's hand-off planned, judged
+/// and kept here), over `home`'s daemon files, planning with `temp` and the
+/// `engines` children are hosted on.
+pub(crate) fn api_hand_offs(
+    fs: &Arc<dyn Fs>,
+    (home, temp): (&Path, &Path),
+    engines: &[daemon_application::HostedEngine],
+) -> Arc<dyn daemon_api::HandOffs> {
+    Arc::new(ApiHandOffs {
+        files: DaemonFiles::new(Arc::clone(fs), home),
+        home: home.to_path_buf(),
+        temp: temp.to_path_buf(),
+        engines: engines.to_vec(),
+    })
+}
+
+impl daemon_api::HandOffs for ApiHandOffs {
+    fn plan(&self, request: &daemon_api::HandingOff) -> Result<daemon_api::Planned, String> {
+        // Keyed as the platform compares names (uppercase on Windows), as a
+        // run's environment is (`os::Flavor::env_key`).
+        let flavor = os::host().flavor();
+        let caller: std::collections::BTreeMap<String, String> = request
+            .env
+            .iter()
+            .map(|(name, value)| (flavor.env_key(name), value.clone()))
+            .collect();
+        let previewed = super::child_plan(
+            &self.home,
+            &self.temp,
+            &request.engine,
+            &request.agent,
+            &request.root,
+            &caller,
+        )?;
+        let drivable: Vec<String> = self
+            .engines
+            .iter()
+            .map(|engine| engine.name().to_string())
+            .collect();
+        let base = self
+            .engines
+            .iter()
+            .find(|engine| engine.name() == request.engine)
+            .map_or(run_ports::Credentials::NONE, |engine| {
+                engine.engine.credentials()
+            });
+        let child =
+            run_application::hosted_child(&previewed, &request.engine, &drivable, base, &caller);
+        let credential = child.evidence.credential.clone().unwrap_or_default();
+        Ok(daemon_api::Planned {
+            drivable_engines: child.evidence.drivable_engines.clone(),
+            credential: runs::CredentialEvidence {
+                file_only: credential.file_only,
+                builtin_variables: credential.builtin_variables,
+                accepted_variables: credential.accepted_variables,
+                accepted_set: credential.accepted_set,
+            },
+            fatal_findings: child.evidence.fatal_findings,
+            content: daemon_api::HandOffContent {
+                env: engine_claude::launcher_environment(&child.settings, &caller),
+                launcher: super::settings_places(&caller),
+                agent: request.agent.clone(),
+            },
+        })
+    }
+
+    fn write(&self, child: &str, content: &daemon_api::HandOffContent) -> Result<(), String> {
+        let handed = HandOff {
+            env: content.env.clone(),
+            launcher: content.launcher.clone(),
+            agent: content.agent.clone(),
+        };
+        self.files
+            .hand_off(child, &handed)
+            .map_err(|e| e.to_string())
+    }
+
+    fn delete(&self, child: &str) -> Result<(), String> {
+        self.files.delete_hand_off(child);
+        Ok(())
+    }
+}
+
 /// The kill switch's file, in the daemon's directory.
 #[cfg(feature = "test-support")]
 const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 
 /// A hand-off's text: its header, then a `NAME=value` line per variable of
-/// the child's environment and a `@NAME=value` line per place of its
-/// launcher's, each value's backslashes, newlines and carriage returns
-/// escaped.
+/// the child's environment, a `@NAME=value` line per place of its
+/// launcher's and, for an agent named, a `!agent=<agent>` line, each value's
+/// backslashes, newlines and carriage returns escaped.
 pub(crate) fn encode_hand_off(handed: &HandOff) -> String {
     let mut text = format!("{HAND_OFF_HEADER}\n");
-    let lines = handed
+    let mut lines: Vec<(String, &str)> = handed
         .env
         .iter()
-        .map(|(name, value)| (String::new(), name, value))
-        .chain(
-            handed
-                .launcher
-                .iter()
-                .map(|(name, value)| (LAUNCHER_MARK.to_string(), name, value)),
-        );
-    for (mark, name, value) in lines {
+        .map(|(name, value)| (name.clone(), value.as_str()))
+        .collect();
+    lines.extend(
+        handed
+            .launcher
+            .iter()
+            .map(|(name, value)| (format!("{LAUNCHER_MARK}{name}"), value.as_str())),
+    );
+    if !handed.agent.is_empty() {
+        lines.push((AGENT_LINE.to_string(), handed.agent.as_str()));
+    }
+    for (name, value) in lines {
         let escaped = value
             .replace('\\', "\\\\")
             .replace('\n', "\\n")
             .replace('\r', "\\r");
-        text.push_str(&format!("{mark}{name}={escaped}\n"));
+        text.push_str(&format!("{name}={escaped}\n"));
     }
     text
 }
@@ -276,7 +416,7 @@ pub(crate) fn encode_hand_off(handed: &HandOff) -> String {
 /// What [`encode_hand_off`] wrote; none for anything else.
 pub(crate) fn decode_hand_off(text: &str) -> Option<HandOff> {
     let mut lines = text.lines();
-    if lines.next()? != HAND_OFF_HEADER {
+    if !matches!(lines.next()?, HAND_OFF_HEADER | HAND_OFF_HEADER_2) {
         return None;
     }
     let mut handed = HandOff::default();
@@ -294,6 +434,10 @@ pub(crate) fn decode_hand_off(text: &str) -> Option<HandOff> {
                 },
                 (c, false) => value.push(c),
             }
+        }
+        if name == AGENT_LINE {
+            handed.agent = value;
+            continue;
         }
         match name.strip_prefix(LAUNCHER_MARK) {
             Some(place) => handed.launcher.insert(place.to_string(), value),

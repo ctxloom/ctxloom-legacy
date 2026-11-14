@@ -224,7 +224,7 @@ async fn start(
     let started_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-    let calls: Arc<dyn daemon_api::Calls> = Arc::new(
+    let calls = served(
         daemon_api::Api::new(daemon_api::Parts {
             edge: Arc::clone(&edge),
             index: kept.index.clone().unwrap_or_default(),
@@ -248,13 +248,10 @@ async fn start(
                 },
                 idle_limit_seconds: pace.idle.as_secs(),
             },
-        })
-        // A project's context, assembled here from its registered root
-        // (slice 3 step 6).
-        .assembling(Arc::new(super::places::ProjectAssemblies {
-            home: home.to_path_buf(),
-            temp: temp.to_path_buf(),
-        })),
+        }),
+        fs,
+        (home, temp),
+        &engines,
     );
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
@@ -305,6 +302,25 @@ async fn start(
         return Err(format!("the discovery file cannot be written: {e}"));
     }
     Ok((listener, launcher, own))
+}
+
+/// The API the daemon serves: `api`, a project's context assembled from its
+/// registered root (slice 3 step 6), and a child's hand-off planned, judged
+/// and kept here (slice 4 U3), over `home`, `temp` and the `engines` its
+/// children are hosted on.
+fn served(
+    api: daemon_api::Api<CoreEdge>,
+    fs: &Arc<dyn Fs>,
+    (home, temp): (&Path, &Path),
+    engines: &[daemon_application::HostedEngine],
+) -> Arc<dyn daemon_api::Calls> {
+    Arc::new(
+        api.assembling(Arc::new(super::places::ProjectAssemblies {
+            home: home.to_path_buf(),
+            temp: temp.to_path_buf(),
+        }))
+        .handing_off(super::files::api_hand_offs(fs, (home, temp), engines)),
+    )
 }
 
 /// The edge of the daemon's core, which the launcher writes through.
@@ -692,10 +708,11 @@ impl ChildPlans for Plans {
     fn preview(
         &self,
         engine: &str,
+        agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<library_application::Previewed, String> {
-        super::child_plan(&self.home, &self.temp, engine, project_dir, env)
+        super::child_plan(&self.home, &self.temp, engine, agent, project_dir, env)
     }
 
     fn git_user(
@@ -707,13 +724,21 @@ impl ChildPlans for Plans {
     }
 }
 
-/// The hand-off files under the daemon's directory (taken at the child's
-/// first start, D-N45).
+/// The hand-off files under the daemon's directory (T6: read at each of
+/// the child's starts, deleted at its close, swept).
 struct HandOffFiles(DaemonFiles);
 
 impl HandOffs for HandOffFiles {
-    fn take(&self, session: &str) -> Option<daemon_application::HandOff> {
-        self.0.take_hand_off(session)
+    fn read(&self, session: &str) -> Option<daemon_application::HandOff> {
+        self.0.read_hand_off(session)
+    }
+
+    fn delete(&self, session: &str) {
+        self.0.delete_hand_off(session);
+    }
+
+    fn list(&self) -> Vec<daemon_application::Kept> {
+        self.0.hand_offs(std::time::SystemTime::now())
     }
 }
 
