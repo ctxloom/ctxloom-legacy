@@ -87,6 +87,8 @@ struct Scripted {
     asked: Arc<Mutex<Asked>>,
     said: Arc<Mutex<VecDeque<ChildObservation>>>,
     started: Mutex<Vec<ChildSpec>>,
+    /// The launch each start was handed (T10).
+    launches: Mutex<Vec<run_ports::Launch>>,
 }
 
 impl Engine for Scripted {
@@ -163,8 +165,25 @@ impl Engine for Scripted {
 }
 
 impl ChildEngine for Scripted {
-    fn start(&self, spec: &ChildSpec) -> Result<StartedChild, ChildError> {
+    /// Its spec's environment as it is, under the configured program.
+    fn command(&self, spec: &ChildSpec) -> Result<TurnCommand, ChildError> {
+        let mut command = TurnCommand::new(ENGINE);
+        command.env = spec.env.clone();
+        command.cwd = spec.cwd.clone();
+        Ok(command)
+    }
+
+    fn stdio(&self) -> run_ports::Stdio {
+        run_ports::Stdio::StreamJson
+    }
+
+    fn start(
+        &self,
+        spec: &ChildSpec,
+        launch: &run_ports::Launch,
+    ) -> Result<StartedChild, ChildError> {
         self.started.lock().unwrap().push(spec.clone());
+        self.launches.lock().unwrap().push(launch.clone());
         Ok(StartedChild {
             control: Box::new(Control(Arc::clone(&self.asked))),
             observations: Box::new(Said(Arc::clone(&self.said))),

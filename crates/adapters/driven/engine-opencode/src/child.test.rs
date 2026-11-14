@@ -19,7 +19,8 @@ use agent_client_protocol::v1::schema::{
 use file_system::{Fs, Rooted};
 use run_ports::{
     ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions, ChildSpec,
-    EngineSettings, Exit, FailureClass, Queued, StartedChild, TurnOutcome, Urgency,
+    EngineSettings, Exit, FailureClass, Launch, LaunchKind, Queued, StartedChild, Stdio,
+    TurnOutcome, Urgency,
 };
 
 use crate::child::{
@@ -114,14 +115,19 @@ fn spec(program: &str) -> ChildSpec {
     }
 }
 
+/// Start the child `spec` plans as its launch would: its command as it is.
+fn launched(spec: &ChildSpec) -> Result<StartedChild, ChildError> {
+    let command = Opencode::new().command(spec)?;
+    let launch = Launch::new(LaunchKind::Child, "opencode", Stdio::Acp, command);
+    Opencode::new().start(spec, &launch)
+}
+
 fn run_with(body: &str, adjust: impl FnOnce(&mut ChildSpec)) -> Running {
     let dir = Rooted::temp().unwrap();
     let path = fixture_program::install_program(&dir, &os::fixture("/opencode"), body).unwrap();
     let mut spec = spec(path.to_str().unwrap());
     adjust(&mut spec);
-    let child = Opencode::new()
-        .start(&spec)
-        .expect("the fake opencode starts");
+    let child = launched(&spec).expect("the fake opencode starts");
     Running { dir, child }
 }
 
@@ -273,7 +279,7 @@ fn a_host_home_with_no_home_starts_nothing() {
     let mut asked = spec("");
     asked.settings.session_home = run_ports::SessionHome::Host;
     assert!(matches!(
-        Opencode::new().start(&asked),
+        Opencode::new().command(&asked),
         Err(ChildError::Engine(_))
     ));
 }
@@ -644,9 +650,7 @@ fn a_missing_program_starts_nothing() {
     let missing = fixture_program::install_program(&dir, &os::fixture("/opencode"), "")
         .unwrap()
         .with_file_name("no-opencode");
-    let error = Opencode::new()
-        .start(&spec(missing.to_str().unwrap()))
-        .unwrap_err();
+    let error = launched(&spec(missing.to_str().unwrap())).unwrap_err();
     assert!(
         matches!(&error, ChildError::NotStarted { deterministic: true, program, .. }
             if program.ends_with("no-opencode")),

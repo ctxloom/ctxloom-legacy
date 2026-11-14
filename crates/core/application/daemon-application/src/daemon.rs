@@ -729,7 +729,14 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             // claude asks no permission over its stream: unused here.
             permissions: run_ports::ChildPermissions::default(),
         };
-        let started = starts.start(&spec).map_err(|e| e.to_string())?;
+        let command = starts.command(&spec).map_err(|e| e.to_string())?;
+        let launch = run_ports::Launch::new(
+            run_ports::LaunchKind::Child,
+            engine.name(),
+            starts.stdio(),
+            command,
+        );
+        let started = starts.start(&spec, &launch).map_err(|e| e.to_string())?;
         Ok((started, (engine.transcripts)(&spec)))
     }
 

@@ -1193,11 +1193,12 @@ async fn a_credential_the_engine_refused_is_that_error() {
 
 #[tokio::test]
 async fn a_command_that_never_started_is_that_error() {
-    let runner =
-        ScriptedRunner::answering(run_ports::Launch::NotStarted(run_ports::LaunchFailure {
+    let runner = ScriptedRunner::answering(run_ports::TurnLaunch::NotStarted(
+        run_ports::LaunchFailure {
             deterministic: true,
             detail: "claude: not found".to_string(),
-        }));
+        },
+    ));
     let mut rig = rig(Script {
         runner,
         ..Script::answering()
@@ -1333,11 +1334,12 @@ async fn an_interactive_run_gives_her_terminal_to_the_engine_and_ends_by_its_exi
 #[tokio::test]
 async fn an_interactive_run_that_cannot_start_its_engine_says_so() {
     let mut script = Script::answering();
-    script.runner =
-        ScriptedRunner::answering(run_ports::Launch::NotStarted(run_ports::LaunchFailure {
+    script.runner = ScriptedRunner::answering(run_ports::TurnLaunch::NotStarted(
+        run_ports::LaunchFailure {
             deterministic: true,
             detail: "no claude".to_string(),
-        }));
+        },
+    ));
     let mut rig = rig(script);
     let done = rig.runs.interactive(&Flags::default(), &ask()).await;
     assert!(matches!(done.result, Err(RunError::NotStarted { .. })));
@@ -1790,11 +1792,12 @@ async fn an_inherited_bearer_is_replaced_by_the_runs_own() {
 async fn the_bearer_is_in_no_debug_or_error_rendering() {
     let mut script = Script::answering();
     script.env = vec![("CTXLOOM_HOME", "/home/u")];
-    script.runner =
-        ScriptedRunner::answering(run_ports::Launch::NotStarted(run_ports::LaunchFailure {
+    script.runner = ScriptedRunner::answering(run_ports::TurnLaunch::NotStarted(
+        run_ports::LaunchFailure {
             deterministic: true,
             detail: "no claude".to_string(),
-        }));
+        },
+    ));
     let mut rig = rig(script);
     let error = rig
         .runs
@@ -1839,11 +1842,12 @@ async fn the_bearer_is_in_no_debug_or_error_rendering() {
 #[tokio::test]
 async fn a_launch_that_fails_still_stops_the_listener() {
     let mut script = Script::answering();
-    script.runner =
-        ScriptedRunner::answering(run_ports::Launch::NotStarted(run_ports::LaunchFailure {
+    script.runner = ScriptedRunner::answering(run_ports::TurnLaunch::NotStarted(
+        run_ports::LaunchFailure {
             deterministic: true,
             detail: "no claude".to_string(),
-        }));
+        },
+    ));
     let mut rig = rig(script);
     let done = rig.runs.interactive(&Flags::default(), &ask()).await;
     assert!(matches!(done.result, Err(RunError::NotStarted { .. })));
@@ -1919,11 +1923,12 @@ async fn a_one_shot_whose_listener_cannot_start_launches_no_child() {
 #[tokio::test]
 async fn a_one_shot_that_does_not_run_still_stops_its_listener() {
     let mut never = Script::answering();
-    never.runner =
-        ScriptedRunner::answering(run_ports::Launch::NotStarted(run_ports::LaunchFailure {
+    never.runner = ScriptedRunner::answering(run_ports::TurnLaunch::NotStarted(
+        run_ports::LaunchFailure {
             deterministic: true,
             detail: "no claude".to_string(),
-        }));
+        },
+    ));
     let mut silent = Script::answering();
     silent.prompt = "";
     for (script, served) in [
@@ -3198,11 +3203,12 @@ async fn a_refused_run_lets_its_run_lock_go() {
 #[tokio::test]
 async fn a_run_whose_command_never_started_closes_its_incarnation_as_launch_failed() {
     let mut script = Script::answering();
-    script.runner =
-        ScriptedRunner::answering(run_ports::Launch::NotStarted(run_ports::LaunchFailure {
+    script.runner = ScriptedRunner::answering(run_ports::TurnLaunch::NotStarted(
+        run_ports::LaunchFailure {
             deterministic: true,
             detail: "no claude".to_string(),
-        }));
+        },
+    ));
     let mut rig = rig(script);
     let _ = rig.runs.one_shot(&Flags::default(), &ask()).await;
     let session = enqueued_session(&rig);

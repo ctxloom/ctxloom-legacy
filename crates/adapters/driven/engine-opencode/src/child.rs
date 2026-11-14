@@ -51,8 +51,8 @@ use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{FutureExt, StreamExt};
 use run_ports::{
     ChildControl, ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions,
-    ChildSpec, Ended, EngineError, Exit, Queued, StartedChild, Token, TurnCommand, TurnRequest,
-    Urgency,
+    ChildSpec, Ended, EngineError, Exit, Launch, Queued, StartedChild, Stdio, Token, TurnCommand,
+    TurnRequest, Urgency,
 };
 use run_within::{run_piped, Piped, RunError, Spec};
 use serde::{Deserialize, Serialize};
@@ -79,8 +79,16 @@ const POLL: Duration = Duration::from_millis(10);
 const STDERR_KEPT: usize = 4096;
 
 impl ChildEngine for Opencode {
-    fn start(&self, spec: &ChildSpec) -> Result<StartedChild, ChildError> {
-        let command = child_command(spec, &password()?)?;
+    fn command(&self, spec: &ChildSpec) -> Result<TurnCommand, ChildError> {
+        Ok(child_command(spec, &password()?)?)
+    }
+
+    fn stdio(&self) -> Stdio {
+        Stdio::Acp
+    }
+
+    fn start(&self, spec: &ChildSpec, launch: &Launch) -> Result<StartedChild, ChildError> {
+        let command = launch.command();
         let opening = Opening {
             cwd: workdir(spec).to_string(),
             model: spec.model.clone(),

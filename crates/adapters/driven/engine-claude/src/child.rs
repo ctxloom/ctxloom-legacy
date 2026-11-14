@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use run_ports::{
     ChildControl, ChildEngine, ChildError, ChildMessage, ChildSpec, Ended, EngineError, Exit,
-    Queued, StartedChild, TurnCommand, TurnRequest, Urgency,
+    Launch, Queued, StartedChild, Stdio, TurnCommand, TurnRequest, Urgency,
 };
 use run_within::{run_piped, Piped, RunError, Spec};
 
@@ -45,8 +45,16 @@ const OWNED: [&str; 2] = ["HOME", "PATH"];
 const STDERR_KEPT: usize = 4096;
 
 impl ChildEngine for Claude {
-    fn start(&self, spec: &ChildSpec) -> Result<StartedChild, ChildError> {
-        start(&child_command(spec)?)
+    fn command(&self, spec: &ChildSpec) -> Result<TurnCommand, ChildError> {
+        Ok(child_command(spec)?)
+    }
+
+    fn stdio(&self) -> Stdio {
+        Stdio::StreamJson
+    }
+
+    fn start(&self, _: &ChildSpec, launch: &Launch) -> Result<StartedChild, ChildError> {
+        start(&launch.command())
     }
 }
 

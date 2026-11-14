@@ -50,7 +50,15 @@ impl Engine for Named {
 }
 
 impl ChildEngine for Named {
-    fn start(&self, _: &ChildSpec) -> Result<StartedChild, ChildError> {
+    fn command(&self, _: &ChildSpec) -> Result<TurnCommand, ChildError> {
+        unreachable!("no child is started in these tests")
+    }
+
+    fn stdio(&self) -> run_ports::Stdio {
+        run_ports::Stdio::StreamJson
+    }
+
+    fn start(&self, _: &ChildSpec, _: &run_ports::Launch) -> Result<StartedChild, ChildError> {
         unreachable!("no child is started in these tests")
     }
 }
