@@ -1355,9 +1355,16 @@ client's `ensure` all ask the health check, never the lock, so a daemon that
 holds the lock and does not answer (stopped, hung) is not serving, and a
 stale port another process took is never handed anything. A serving daemon
 looks at its discovery file each tick: gone, it publishes it again (it still
-holds the single-instance lock); naming another daemon (its lock file was replaced, and
+holds the single-instance lock) where its directory still is
+(`DaemonFiles::republish`); naming another daemon (its lock file was replaced, and
 another took it), it exits, and withdraws only its OWN advertisement
-(`DaemonFiles::withdraw_own`), never the other's. A client with no live
+(`DaemonFiles::withdraw_own`), never the other's. Once started, a daemon never
+makes its own directory again (owner, 2026-11-14; j000100's exit is deleting
+`~/.ctxloom`): its log's directory is made as it starts (`logger`) and a line
+said once it is gone is dropped, and a discovery file whose directory is gone
+is not published again; so a daemon whose home was deleted exits on its lock
+and leaves nothing there. A replaced lock (its directory still there) is
+logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
 within `SPAWN_WAIT`, eight seconds: S16's ten (`HOOK_BOUND`) less a

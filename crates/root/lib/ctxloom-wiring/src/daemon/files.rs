@@ -184,6 +184,27 @@ impl DaemonFiles {
         )
     }
 
+    /// Advertise `discovery` again, as [`publish`](Self::publish) does, but
+    /// only where its directory still is: whether it was written. A daemon
+    /// whose directory was removed (its home deleted, j000100's exit) makes
+    /// nothing again; it exits on the lock it no longer holds.
+    pub(crate) fn republish(&self, discovery: &Discovery) -> std::io::Result<bool> {
+        // No directory is made: one removed between a look and a write is
+        // the write's NotFound, the same answer.
+        if !self.fs.exists(self.instance_dir())? {
+            return Ok(false);
+        }
+        match self.fs.write_atomic(
+            &self.discovery_path(),
+            &discovery.encode(),
+            Perms::Exact(Mode::from_bits(FILE_MODE)),
+        ) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     /// What the discovery file says, if it says it.
     pub(crate) fn discovery(&self) -> Option<Discovery> {
         let bytes = self.fs.read(&self.discovery_path()).ok()?;
