@@ -8,10 +8,13 @@
 //! given to the engine. A saved session's resume and the dry run are not here:
 //! the library answers the last, and the other arrives with its step.
 //! [`hosted_child`] is how the user daemon plans and judges a child it hosts,
-//! the same way a one-shot child is (D18, rulings 53, 73e).
+//! the same way a one-shot child is (D18, rulings 53, 73e). [`frontend`] is
+//! the interactive session's frontend (U5, T9): the daemon's launch started
+//! on the user's terminal, its start and exit reported to the daemon.
 
 mod credential;
 mod error;
+pub mod frontend;
 mod hosted;
 mod one_shot;
 

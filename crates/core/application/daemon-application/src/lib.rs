@@ -13,6 +13,10 @@
 //!   run, enqueued judged on its launcher's environment, its session home
 //!   prepared and its engine started), a turn fed, a clear handed, an end
 //!   asked; what a child said is recorded as its run's facts.
+//! - The interactive sessions it prepares ([`Terminals`], U5, T9): each is
+//!   the run use case's interactive session run in the daemon, its one
+//!   launch handed to the frontend that asked ([`Frontended`]), which starts
+//!   it on the user's terminal and reports its start and exit.
 //! - Engines are resolved by NAME through the registry the root composes
 //!   ([`HostedEngine`]: an `Engine` beside its `ChildEngine`), never one
 //!   adapter named in code.
@@ -23,12 +27,18 @@
 
 mod daemon;
 mod ports;
+mod terminal;
 
 pub use daemon::{Daemon, Folds, Place, Ports, Taken};
 pub use ports::{
     ChildHomes, ChildPlans, Ears, ForLaunch, HandOff, HandOffs, HostedEngine, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
+pub use terminal::{
+    Created as TerminalCreated, FrontendReports, Frontended, Placed as TerminalPlaced, Seen,
+    TerminalHost, TerminalProject, TerminalRequest, Terminals, Told as TerminalTold, Waits,
+    Watch as TerminalWatch, POLL, START_WITHIN,
+};
 
 #[cfg(test)]
 #[path = "daemon.test.rs"]

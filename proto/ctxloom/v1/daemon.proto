@@ -5,8 +5,9 @@ syntax = "proto3";
 // service's stubs). Served so far (slice 2 steps 5, 6): GetDaemon, StopDaemon,
 // ResolveProject, GetProject, GetSession, ListSessions, SearchSessions, and
 // in a `session-destroy` build DeleteSession and SweepSessions; slice 3 adds
-// GetTranscript and AssembleContext (its fragments and tags); every other
-// method answers UNIMPLEMENTED.
+// GetTranscript and AssembleContext (its fragments and tags); slice 4 (U4)
+// CreateRun for a ONE_SHOT run (a TERMINAL one answers UNIMPLEMENTED until
+// U5), GetRun and WatchRun; every other method answers UNIMPLEMENTED.
 //
 // THE USER'S DAEMON'S API (T1-T30; the owner's API rulings Q1-Q13; rulings
 // 146, 147). It MIRRORS THE COMMAND LINE (T22): the CLI's nouns are AIP
@@ -51,8 +52,9 @@ syntax = "proto3";
 // `HandleSync` projection IS the resource message the matching `Get` returns
 // (one renderer per resource).
 //
-// WHAT GOES WITH THEM (T16): the frontend follows its session with angzarr's
-// `EventStreamService.Subscribe` and holds the session lock; liveness is
+// WHAT GOES WITH THEM (T16, s4-Q2): a run's client follows it with
+// `WatchRun` (daemon-folded, S44; its `stop` event tells a frontend to stop
+// its TUI), and a frontend holds the session lock; liveness is
 // `grpc.health.v1.Health`. There is no hold stream and no routing: one
 // per-user store (T14), so a stream reference is its root alone.
 //
@@ -812,6 +814,11 @@ message Run {
   string prompt = 15;
   // The fragments the context composes, by canonical reference.
   repeated string fragments = 16;
+  // A one-shot that ended before the daemon hosted it (U4: its plan, its
+  // resume or its enqueue refused, or its session not made): its end, said
+  // as `WatchRun` would have said it. Its `name` is `<parent>/runs/-`, as
+  // nothing is left to watch.
+  RunEnd end = 17;
   repeated Need needs = 90;
   string etag = 91;
   repeated Notice notices = 92;
@@ -826,6 +833,18 @@ message CreateRunRequest {
   repeated string profiles = 6;
   // `run --session <harp>`: resume.
   string session = 7;
+  // What else the line selects the context by (U4: the whole of
+  // `RunRequest`, so the daemon plans the run the command asked for).
+  repeated string fragments = 8;
+  repeated string tags = 9;
+  // `--command`: a saved command, its text the prompt.
+  string command = 10;
+  string workspace = 11;
+  // `--no-context`.
+  bool no_context = 12;
+  // The client's working directory: where the run is planned from, as a
+  // process there would plan it (with `env`).
+  string cwd = 13;
   string request_id = 90;
   bool validate_only = 92;
   repeated Answer answers = 93;
@@ -843,12 +862,28 @@ message WatchRunRequest {
 }
 
 // A one-shot's end. Stopped by `RequestStop`: exit 128 plus the signal's
-// number, `run-application-stopped`.
+// number, `run-application-stopped`. A run that answered ends with exit 0
+// and no code. `args` are the diagnostic's, flattened as angzarr flattens a
+// cause on its wire (a wrapped cause is its code under the arg's name, and
+// each of its own args under `<name>.<arg>`), so a client renders the text
+// itself; `text` is the end as a log line says it (its code and args,
+// never English: decision 14.37).
 message RunEnd {
   int32 exit = 1;
   string code = 2;
   repeated NeedArg args = 3;
   string text = 4;
+  // An aggregate refusal's refusals, in check order (rulings 73b, 73i),
+  // each said as the run's single refusal would be.
+  repeated RunEnd refusals = 5;
+}
+
+// The daemon is stopping the run's engine (s4-Q2): a one-shot's, asked by
+// `RequestStop` (its tree asked to stop, then killed after `grace_ms`); a
+// TERMINAL run's frontend is told to stop its TUI (U5).
+message RunStop {
+  string reason = 1;
+  uint32 grace_ms = 2;
 }
 
 message RunEvent {
@@ -856,6 +891,7 @@ message RunEvent {
     Notice notice = 1;
     string reply = 2;
     RunEnd end = 3;
+    RunStop stop = 4;
   }
 }
 
@@ -1010,6 +1046,14 @@ message TranscriptEmpty {
 
 // A session's resource name no session holds.
 message SessionNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+
+  string name = 1;
+}
+
+// A run's resource name the daemon hosts no run under (U4: `GetRun`,
+// `WatchRun` of a one-shot it does not host, or no longer keeps).
+message RunNotFound {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
 
   string name = 1;

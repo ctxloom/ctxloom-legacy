@@ -1216,6 +1216,7 @@ dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
  "daemon-board",
+ "daemon-proto",
  "library-application",
  "mutants",
  "pending-launches",
