@@ -130,3 +130,171 @@ mod write {
         assert_eq!(doc["skill"]["file_count"], 1);
     }
 }
+
+// Each view's mapping to its message, field by field (OD-40): what the
+// binary's tests alone reached.
+mod mapping {
+    use super::super::*;
+    use library_application::{Preview, SkillFileRow, SkillRow};
+    use serde_json::json;
+
+    const PARENT: &str = "projects/p";
+
+    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
+        let mut out = Vec::new();
+        crate::api::print(&mut out, message).unwrap();
+        serde_json::from_slice(&out).unwrap()
+    }
+
+    #[test]
+    fn test_a_count_is_the_number_it_counts() {
+        assert_eq!(count(0), 0);
+        assert_eq!(count(3), 3);
+    }
+
+    #[test]
+    fn test_a_listed_skill_keeps_its_tags_and_file_count() {
+        let list = SkillList {
+            rows: vec![SkillRow {
+                name: "demo/reviewer".to_string(),
+                description: "Reviews".to_string(),
+                tags: vec!["review".to_string()],
+                source: "demo".to_string(),
+                file_count: 3,
+            }],
+            bundle_filter: String::new(),
+            total: 1,
+        };
+        assert_eq!(
+            json_of(&listed(PARENT, &list)),
+            json!({"skills": [{
+                "name": "projects/p/bundles/demo/skills/reviewer",
+                "description": "Reviews",
+                "tags": ["review"],
+                "file_count": 3,
+            }]})
+        );
+    }
+
+    #[test]
+    fn test_a_shown_skill_is_its_whole_resource() {
+        let file = |path: &str, mode: &str| SkillFileRow {
+            path: path.to_string(),
+            sha256: "ab".to_string(),
+            mode: mode.to_string(),
+        };
+        let show = SkillShow {
+            name: "reviewer".to_string(),
+            bundle: "demo".to_string(),
+            description: "Reviews".to_string(),
+            license: "MIT".to_string(),
+            compatibility: "claude".to_string(),
+            allowed_tools: vec!["Read".to_string()],
+            body: "BODY".to_string(),
+            files: vec![file("SKILL.md", "0644"), file("run.sh", "0755")],
+        };
+        assert_eq!(
+            json_of(&shown(PARENT, &show)),
+            json!({
+                "name": "projects/p/bundles/demo/skills/reviewer",
+                "description": "Reviews",
+                "license": "MIT",
+                "compatibility": "claude",
+                "allowed_tools": ["Read"],
+                "body": "BODY",
+                "file_count": 2,
+                "files": [
+                    {"path": "SKILL.md", "sha256": "ab"},
+                    {"path": "run.sh", "sha256": "ab", "executable": true},
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_created_skill_answers_its_directory() {
+        let made = SkillCreated {
+            status: "created".to_string(),
+            bundle: "demo".to_string(),
+            name: "reviewer".to_string(),
+            dir: "skills/reviewer".to_string(),
+        };
+        assert_eq!(
+            json_of(&created(PARENT, &made)),
+            json!({
+                "skill": {
+                    "name": "projects/p/bundles/demo/skills/reviewer",
+                    "path": "skills/reviewer",
+                },
+                "path": "skills/reviewer",
+                "applied": true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_removed_skill_answers_its_removal_or_its_preview() {
+        let preview = Removal::Preview(Preview::of(
+            "reviewer".to_string(),
+            vec!["skills/reviewer".to_string()],
+            "ctxloom skill remove demo#skills/reviewer --yes".to_string(),
+        ));
+        assert_eq!(
+            json_of(&removed(PARENT, "demo#skills/reviewer", &preview)),
+            json!({
+                "skill": {"name": "projects/p/bundles/demo/skills/reviewer"},
+                "applied": false,
+                "detail": ["skills/reviewer"],
+                "apply_command": "ctxloom skill remove demo#skills/reviewer --yes",
+            })
+        );
+        let done = Removal::Done(SkillRemoved {
+            status: "removed".to_string(),
+            bundle: "demo".to_string(),
+            name: "reviewer".to_string(),
+            dir: "skills/reviewer".to_string(),
+        });
+        assert_eq!(
+            json_of(&removed(PARENT, "demo#skills/reviewer", &done)),
+            json!({
+                "skill": {
+                    "name": "projects/p/bundles/demo/skills/reviewer",
+                    "path": "skills/reviewer",
+                },
+                "path": "skills/reviewer",
+                "applied": true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_an_exported_or_imported_skill_answers_its_files() {
+        let out = SkillExported {
+            name: "reviewer".to_string(),
+            zip_path: "/tmp/reviewer.zip".to_string(),
+            bytes: 12,
+        };
+        let sent = json_of(&exported(PARENT, "demo#skills/reviewer", &out));
+        assert_eq!(sent["applied"], true, "{sent}");
+        assert_eq!(sent["skill"], "projects/p/bundles/demo/skills/reviewer");
+        let came = SkillImported {
+            status: "imported".to_string(),
+            bundle: "demo".to_string(),
+            name: "reviewer".to_string(),
+            dir: "skills/reviewer".to_string(),
+            file_count: 3,
+        };
+        assert_eq!(
+            json_of(&imported(PARENT, &came)),
+            json!({
+                "skill": {
+                    "name": "projects/p/bundles/demo/skills/reviewer",
+                    "path": "skills/reviewer",
+                    "file_count": 3,
+                },
+                "path": "skills/reviewer",
+                "applied": true,
+            })
+        );
+    }
+}
