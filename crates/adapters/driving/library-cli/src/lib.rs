@@ -87,6 +87,13 @@ pub(crate) fn failed(error: AppError) -> Failure {
 pub trait Names {
     /// The parent of this command's resources.
     fn parent(&self) -> Result<String, Failure>;
+
+    /// The parent, or none where this command's project is a ctxloom
+    /// project nothing has named and the command may not name it (a dry run
+    /// never mints, owner ruling 2026-11-14): its names are then unresolved.
+    fn named_parent(&self) -> Result<Option<String>, Failure> {
+        self.parent().map(Some)
+    }
 }
 
 /// Everything a command needs to answer.

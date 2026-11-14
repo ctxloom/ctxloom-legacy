@@ -9,8 +9,9 @@
 #   itself (no `definition` level), a write answers the agent under `agent` with `applied` and
 #   `apply_command`, and an env key says `variable` (AIP-122 reserves `name`).
 # Design §2 (B2's references): an agent's `engine` and `profiles`, and `resolved.engine`, are
-#   resource names (`projects/{project}/engines/<e>`, a profile's name under its bundle); the
-#   dry run's `Run` still names its agent, engine and profiles by their configured text.
+#   resource names (`projects/{project}/engines/<e>`, a profile's name under its bundle); so
+#   are the dry run's `Run`'s agent, engine and profiles, which asks the daemon for them (owner
+#   ruling 2026-11-14: "dry run *absolutely* calls (and spawns, if necessary) a daemon").
 @doc
 Feature: agent — the bindings that decide what runs, on what context, and where
 
@@ -477,7 +478,8 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
       And the output reports "resolved.model.source" as "agent"
       When I run "ctxloom run --dry-run --agent reviewer --engine claude-code hello --format json"
       Then the command succeeds
-      And the output reports "engine" as "claude-code"
+      And the output reports "agent" as "projects/{project}/agents/reviewer"
+      And the output reports "engine" as "projects/{project}/engines/claude-code"
       And the output reports "settings.model.value" as "haiku"
       And the output reports "settings.model.source" as "agent"
       And the output reports "settings.effort.source" as "default"

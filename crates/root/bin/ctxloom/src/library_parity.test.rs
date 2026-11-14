@@ -187,6 +187,27 @@ fn json_without_index(mut got: Value) -> Value {
     got
 }
 
+/// A dry run's agent and profiles as Go printed them, their configured text:
+/// the `Run` names them (design §2, owner ruling 2026-11-14), each name's
+/// last segment the text it was resolved from (every parity fixture's agent
+/// and profile is the project's own, by a bare name).
+fn as_configured(mut got: Value) -> Value {
+    let last = |name: &Value| {
+        name.as_str()
+            .map(|name| Value::from(name.rsplit('/').next().unwrap_or(name)))
+            .unwrap_or_else(|| name.clone())
+    };
+    if let Some(agent) = got.get("agent").map(last) {
+        got["agent"] = agent;
+    }
+    if let Some(Value::Array(profiles)) = got.get_mut("profiles") {
+        for profile in profiles.iter_mut() {
+            *profile = last(profile);
+        }
+    }
+    got
+}
+
 /// A dry run's text without the premise index (the section's `---` and the
 /// index up to the next `=== Section ===`), and, where it had one, the
 /// context's token estimate in its heading unsaid (the JSON row holds it).
@@ -393,7 +414,7 @@ fn mismatch(row: &Row, project: &Project) -> Option<String> {
                 return Some(format!("stdout is not JSON: {got:?}"));
             };
             let got = if is_dry_run(&row.id) {
-                json_without_index(got)
+                as_configured(json_without_index(got))
             } else {
                 as_go_printed(row, got)
             };

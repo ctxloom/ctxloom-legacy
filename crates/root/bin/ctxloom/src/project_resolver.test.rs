@@ -299,6 +299,46 @@ fn test_a_dry_run_in_a_fresh_project_writes_nothing() {
     }
 }
 
+// Owner rulings 2026-11-14: a json dry run asks the daemon for its names
+// ("dry run *absolutely* calls (and spawns, if necessary) a daemon"), but
+// never mints: in a project nothing has named, its `Run.name` prints as null
+// and its references keep their configured text; once the project is named,
+// its run is named under it and its agent, engine and profiles are resource
+// names.
+#[test]
+fn test_a_json_dry_run_is_named_once_its_project_is_and_null_before() {
+    let project = Project::bare();
+    ctxloom_at(&project, "");
+    project.write(
+        ".ctxloom/config.yaml",
+        "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n    profiles: [dev]\ndefault_agent: dev\n",
+    );
+    let dry = ["run", "--dry-run", "--format", "json", "hello"];
+    let unnamed = project.run_in(project.dir(), &dry);
+    assert_eq!(unnamed.code, 0, "{}", unnamed.said());
+    let run = unnamed.json();
+    let name = run.as_object().and_then(|run| run.get("name"));
+    assert_eq!(name, Some(&Value::Null), "{run}");
+    assert_eq!(run["agent"], "dev", "{run}");
+    assert_eq!(run["engine"], "claude-code", "{run}");
+    assert_eq!(run["profiles"], serde_json::json!(["dev"]), "{run}");
+    assert!(!project.exists(".ctxloom/project-id"), "a dry run minted");
+    let named = library_names(&project, project.dir(), &[]);
+    let run = project.run_in(project.dir(), &dry).json();
+    assert_eq!(run["name"], format!("{named}/runs/-"), "{run}");
+    assert_eq!(run["agent"], format!("{named}/agents/dev"), "{run}");
+    assert_eq!(
+        run["engine"],
+        format!("{named}/engines/claude-code"),
+        "{run}"
+    );
+    assert_eq!(
+        run["profiles"],
+        serde_json::json!([format!("{named}/bundles/project/profiles/dev")]),
+        "{run}"
+    );
+}
+
 // Ruling 2: `init` mints the project's id at its root, after which a json
 // read names the project.
 #[test]
