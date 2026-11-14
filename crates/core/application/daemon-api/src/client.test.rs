@@ -7,13 +7,15 @@ use daemon_ports::{Any, Called, DaemonApi};
 use daemon_proto::v1;
 use exit_code::{Exit, ExitClass};
 
-use super::{reconcile, resolve, stop, CallError, Reconciled, SkewError};
+use super::{newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError};
 
 /// A daemon that hosts `hosted`, answers `stop` as told, and keeps what it
 /// was asked.
 #[derive(Default)]
 struct Daemon {
     hosted: Vec<&'static str>,
+    /// How `GetDaemon` is answered: none, the daemon as it is.
+    get: Option<Called>,
     stop: Option<Called>,
     asked: Mutex<Vec<&'static str>>,
     gets: Mutex<Vec<v1::GetDaemonRequest>>,
@@ -41,7 +43,10 @@ impl DaemonApi for Daemon {
     async fn get_daemon(&self, r: v1::GetDaemonRequest) -> Result<v1::Daemon, Called> {
         self.asked.lock().unwrap().push("get");
         self.gets.lock().unwrap().push(r);
-        Ok(self.about())
+        match &self.get {
+            Some(called) => Err(called.clone()),
+            None => Ok(self.about()),
+        }
     }
 
     async fn stop_daemon(&self, r: v1::StopDaemonRequest) -> Result<v1::Daemon, Called> {
@@ -283,4 +288,165 @@ fn the_errors_display_their_code_and_args() {
         refused.to_string(),
         "daemon-api-daemon-hosting runs=1 harps=brisk-copper-moth"
     );
+}
+
+// ---------------------------------------------------------------- OD-3: a session's call
+
+/// Two stamps of versionator's shape, of the versions given.
+const OLD: &str = "v0.1.0-abc1234";
+const NEW: &str = "v0.2.0-def5678";
+
+fn mismatch(own: &str, daemon: &str) -> SkewError {
+    SkewError::Mismatch {
+        own: own.to_string(),
+        daemon: daemon.to_string(),
+    }
+}
+
+// The same stamp: the daemon is used, and asked nothing.
+#[tokio::test]
+async fn a_sessions_call_uses_a_daemon_of_its_own_stamp() {
+    let daemon = Daemon::default();
+    assert_eq!(
+        reconcile_session(&daemon, NEW, NEW).await,
+        Ok(Reconciled::Same)
+    );
+    assert!(daemon.asked.lock().unwrap().is_empty());
+}
+
+// OD-3: a session's call of a NEWER version, meeting an idle older daemon,
+// asks it to drain (a stop that ends nothing: never `even_if_live`), so the
+// caller starts its own and its call goes there.
+#[tokio::test]
+async fn a_newer_sessions_call_drains_an_idle_older_daemon() {
+    let daemon = Daemon::default();
+    assert_eq!(
+        reconcile_session(&daemon, NEW, OLD).await,
+        Ok(Reconciled::Stopped)
+    );
+    assert_eq!(*daemon.asked.lock().unwrap(), ["get", "stop"]);
+    let stops = daemon.stops.lock().unwrap();
+    assert!(!stops[0].even_if_live, "a drain ends nothing it hosts");
+}
+
+// OD-3: an older daemon that hosts runs is never stopped by a session's
+// call: the call is refused, typed, naming both stamps (exit 20).
+#[tokio::test]
+async fn a_newer_sessions_call_is_refused_by_a_busy_older_daemon() {
+    let daemon = Daemon {
+        hosted: vec!["brisk-copper-moth"],
+        ..Daemon::default()
+    };
+    let refused = reconcile_session(&daemon, NEW, OLD).await.unwrap_err();
+    assert_eq!(refused, mismatch(NEW, OLD));
+    assert_eq!(refused.exit(), Exit::REFUSED);
+    assert_eq!(*daemon.asked.lock().unwrap(), ["get"], "no stop asked");
+}
+
+// The race, forced: the daemon was idle when asked, and a run started
+// before the drain was asked for, so the daemon refuses it (DaemonHosting):
+// the call is refused as by a busy daemon, and nothing it hosts is ended.
+#[tokio::test]
+async fn a_run_started_between_the_look_and_the_drain_refuses_the_call() {
+    let daemon = Daemon {
+        stop: Some(Called::Refused {
+            code: 9,
+            refusal: Any::from_msg(&v1::DaemonHosting {
+                runs: 1,
+                harps: vec!["brisk-copper-moth".to_string()],
+            })
+            .unwrap(),
+        }),
+        ..Daemon::default()
+    };
+    let refused = reconcile_session(&daemon, NEW, OLD).await.unwrap_err();
+    assert_eq!(refused, mismatch(NEW, OLD));
+    assert_eq!(*daemon.asked.lock().unwrap(), ["get", "stop"]);
+    assert!(!daemon.stops.lock().unwrap()[0].even_if_live);
+}
+
+// A daemon gone between the discovery and the look (it drained and exited,
+// or was killed) cannot be asked: a failed call, which the caller meets by
+// starting its own.
+#[tokio::test]
+async fn a_daemon_gone_before_it_is_asked_is_a_failed_call() {
+    let gone = Called::Failed {
+        code: 14,
+        detail: "connection refused".to_string(),
+    };
+    let daemon = Daemon {
+        get: Some(gone.clone()),
+        ..Daemon::default()
+    };
+    assert_eq!(
+        reconcile_session(&daemon, NEW, OLD).await,
+        Err(SkewError::Call(gone))
+    );
+    assert_eq!(*daemon.asked.lock().unwrap(), ["get"]);
+}
+
+// A session's call of an OLDER version, or of the same version built
+// otherwise, never drains the daemon (no ping-pong between two binaries):
+// it is refused, typed, and the daemon asked nothing.
+#[tokio::test]
+async fn a_sessions_call_not_newer_than_the_daemon_asks_it_nothing() {
+    for (own, daemon_stamp) in [
+        (OLD, NEW),
+        ("v0.2.0-aaaaaaa", "v0.2.0-bbbbbbb"),
+        ("v0.2.0-aaaaaaa-20261114T101010-dirty", "v0.2.0-aaaaaaa"),
+        ("not a stamp", OLD),
+        (NEW, "not a stamp"),
+    ] {
+        let daemon = Daemon::default();
+        let refused = reconcile_session(&daemon, own, daemon_stamp)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refused,
+            mismatch(own, daemon_stamp),
+            "{own} vs {daemon_stamp}"
+        );
+        assert!(
+            daemon.asked.lock().unwrap().is_empty(),
+            "{own} vs {daemon_stamp}"
+        );
+    }
+}
+
+// "Newer" is the VERSION's semver precedence alone (the hash and a dirty
+// build's time order nothing): its numbers, then a release above its
+// pre-releases, which compare identifier by identifier (numbers by value
+// and below words; a longer list above its prefix).
+#[test]
+fn newer_is_the_versions_semver_precedence() {
+    for (own, daemon) in [
+        ("v0.2.0-aaaaaaa", "v0.1.0-bbbbbbb"),
+        ("v1.0.0-aaaaaaa", "v0.9.9-bbbbbbb"),
+        ("v0.1.10-aaaaaaa", "v0.1.9-bbbbbbb"),
+        ("v0.10.0-aaaaaaa", "v0.9.0-bbbbbbb"),
+        ("v1.0.0-aaaaaaa", "v1.0.0-rc.1-bbbbbbb"),
+        ("v1.0.0-rc.2-aaaaaaa", "v1.0.0-rc.1-bbbbbbb"),
+        ("v1.0.0-rc.10-aaaaaaa", "v1.0.0-rc.9-bbbbbbb"),
+        ("v1.0.0-rc-aaaaaaa", "v1.0.0-9-bbbbbbb"),
+        ("v1.0.0-rc.1.1-aaaaaaa", "v1.0.0-rc.1-bbbbbbb"),
+        ("v0.2.0-aaaaaaa-20261114T101010-dirty", "v0.1.0-bbbbbbb"),
+        ("v0.2.0-aaaaaaa", "v0.1.0-bbbbbbb-20261114T101010-dirty"),
+    ] {
+        assert!(newer(own, daemon), "{own} is newer than {daemon}");
+        assert!(!newer(daemon, own), "{daemon} is not newer than {own}");
+    }
+    for (a, b) in [
+        ("v0.2.0-aaaaaaa", "v0.2.0-bbbbbbb"),
+        (
+            "v0.2.0-aaaaaaa-20261114T101010-dirty",
+            "v0.2.0-aaaaaaa-20261115T101010-dirty",
+        ),
+        ("v0.2.0-aaaaaaa", "0.2.0-aaaaaaa"),
+        ("v0.2.0-aaaaaaa", "v0.2-aaaaaaa"),
+        ("v0.2.0", "v0.1.0-aaaaaaa"),
+        ("", "v0.1.0-aaaaaaa"),
+    ] {
+        assert!(!newer(a, b), "{a} vs {b}");
+        assert!(!newer(b, a), "{b} vs {a}");
+    }
 }

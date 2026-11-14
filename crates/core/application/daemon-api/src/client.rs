@@ -73,6 +73,26 @@ pub async fn reconcile<A: DaemonApi>(
     }
 }
 
+/// OD-3 (owner, 2026-11-13/14), as a session's call (its MCP server) meets
+/// the serving daemon.
+pub async fn reconcile_session<A: DaemonApi>(
+    api: &A,
+    own: &str,
+    daemon: &str,
+) -> Result<Reconciled, SkewError> {
+    let _ = (api, own, daemon);
+    Err(SkewError::Mismatch {
+        own: own.to_string(),
+        daemon: daemon.to_string(),
+    })
+}
+
+/// Whether stamp `own` names a newer version than stamp `daemon`.
+pub fn newer(own: &str, daemon: &str) -> bool {
+    let _ = (own, daemon);
+    false
+}
+
 impl fmt::Display for SkewError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         angzarr_diagnostic::display(self, f)

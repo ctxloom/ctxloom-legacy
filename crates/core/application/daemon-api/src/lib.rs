@@ -35,7 +35,9 @@ mod server;
 mod session_client;
 
 pub use caller::{urgency_of, Caller, Written};
-pub use client::{reconcile, resolve, stop, CallError, Reconciled, SkewError};
+pub use client::{
+    newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,
+};
 pub use destroy::{Places, Purges};
 pub use refusal::{rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection};
 pub use server::{About, Answer, Api, Assemblies, Calls, Harps, Hosting, Parts, SessionStates};
