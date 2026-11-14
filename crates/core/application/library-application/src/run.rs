@@ -44,6 +44,9 @@ pub struct AssembleRequest {
     pub profiles: Vec<String>,
     pub fragments: Vec<String>,
     pub tags: Vec<String>,
+    /// Where the assembly goes (s3-Q5): at rest for the CLI; a launch when
+    /// the daemon assembles for a session's `context_assemble` tool.
+    pub surface: library::premise::Surface,
 }
 
 /// A dry run: the plan, and the findings the startup gate refuses on.
@@ -227,6 +230,7 @@ impl Project {
         let options = Options {
             prefer_distilled: self.config.prefers_distilled(),
             premised: self.config.premised(),
+            ..Options::default()
         };
         // The registered companions' fragments follow the selected ones, and
         // are read from a catalog that holds their loadouts.

@@ -440,6 +440,9 @@ pub struct Options {
     pub prefer_distilled: bool,
     /// When the premised fragments load.
     pub premised: Premised,
+    /// Where the context goes, which words the premise index's last clause
+    /// (s3-Q5).
+    pub surface: premise::Surface,
 }
 
 /// A fragment as delivered or held back.

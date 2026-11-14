@@ -178,6 +178,7 @@ impl daemon_api::Assemblies for ProjectAssemblies {
             profiles: request.profiles.clone(),
             fragments: request.fragments.clone(),
             tags: request.tags.clone(),
+            ..library_application::AssembleRequest::default()
         };
         let assembled = library
             .assemble(&flags, &asked)

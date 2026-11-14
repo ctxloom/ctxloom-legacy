@@ -381,3 +381,55 @@ fn companions_are_assembled_even_when_nothing_else_is_selected() {
     let nothing = bare.assemble(&plain(), &AssembleRequest::default());
     assert_eq!(nothing.result.unwrap().context, "");
 }
+
+// s3-Q5 (owner-approved 2026-11-14): the premise index's last clause follows
+// the surface its context rides. A run's plan rides the launch, where
+// ctxloom's server is offered, so it names the `context_assemble` tool; a
+// `context assemble` is at rest unless its caller says it asks for a launch
+// (the daemon, for the tool itself); `--no-context` carries no index at all.
+#[test]
+fn the_premise_index_is_worded_for_the_surface_its_context_rides() {
+    use crate::RunRequest;
+    use library::premise::Surface;
+    const AGENT: &str = "schema_version: 9\ncompanions:\n  reprise: {}\nagents:\n  dev:\n    engine: claude-code\ndefault_agent: dev\n";
+    let companions = only_reprise(Loaded(LOADOUT.to_string()));
+    let (library, _) = setup(&[AGENT], &companions, &[]);
+    let tool = "call the ctxloom `context_assemble` tool";
+    let cli = "`ctxloom fragment show <name>`";
+    let plan = library
+        .dry_run(&plain(), &RunRequest::default())
+        .result
+        .expect("planned")
+        .plan;
+    assert!(plan.context.contains(tool), "{}", plan.context);
+    assert!(!plan.context.contains(cli), "{}", plan.context);
+    let (rest, _) = context(&library, &plain());
+    assert!(rest.contains(cli), "{rest}");
+    assert!(!rest.contains(tool), "{rest}");
+    let asked = library
+        .assemble(
+            &plain(),
+            &AssembleRequest {
+                fragments: vec!["own".to_string()],
+                surface: Surface::Launch,
+                ..AssembleRequest::default()
+            },
+        )
+        .result
+        .expect("assembled")
+        .context;
+    assert!(asked.contains(tool), "{asked}");
+    let bare = library
+        .dry_run(
+            &plain(),
+            &RunRequest {
+                no_context: true,
+                prompt: "hello".to_string(),
+                ..RunRequest::default()
+            },
+        )
+        .result
+        .expect("planned")
+        .plan;
+    assert_eq!(bare.context, "", "no context, no index");
+}

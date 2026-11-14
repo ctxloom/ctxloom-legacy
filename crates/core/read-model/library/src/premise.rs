@@ -25,8 +25,27 @@ pub struct Entry {
     pub premise: String,
 }
 
-/// The guidance an agent selects by, served the same on every surface.
+/// Where an index's context goes (s3-Q5): its instruction's last clause
+/// says how to load what was chosen, and that depends on what is offered
+/// there.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum Surface {
+    /// Context at rest (a materialized file, `context assemble`, `fragment
+    /// premises`): no server is offered, so the agent runs the CLI.
+    #[default]
+    AtRest,
+    /// Context that rides a launch, where ctxloom's own MCP server is
+    /// offered: the agent calls its `context_assemble` tool.
+    Launch,
+}
+
+/// The guidance an agent selects by, at rest.
 pub fn selection_instruction() -> String {
+    selection_instruction_on(Surface::AtRest)
+}
+
+/// The guidance an agent selects by, worded for `surface`.
+pub fn selection_instruction_on(_surface: Surface) -> String {
     INSTRUCTION.to_string()
 }
 
@@ -38,10 +57,15 @@ const INSTRUCTION: &str = "# Conditional guidance\n\nSome of this project's guid
 /// (`- <name>: <premise>`). Empty for no entries: an empty render keeps a
 /// premise-free corpus byte-identical to what it assembled before.
 pub fn render(entries: &[Entry]) -> String {
+    render_on(entries, Surface::AtRest)
+}
+
+/// [`render`], its instruction worded for `surface`.
+pub fn render_on(entries: &[Entry], surface: Surface) -> String {
     if entries.is_empty() {
         return String::new();
     }
-    let mut out = selection_instruction();
+    let mut out = selection_instruction_on(surface);
     for entry in entries {
         out.push_str(&format!("\n- {}: {}", entry.name, entry.premise));
     }

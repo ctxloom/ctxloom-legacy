@@ -844,6 +844,7 @@ fn test_a_stale_distilled_form_is_delivered_as_its_original_and_said_stale() {
         let options = Options {
             prefer_distilled,
             premised: Premised::Always,
+            ..Options::default()
         };
         assemble(&cat, &selection, &options)
             .fragments
