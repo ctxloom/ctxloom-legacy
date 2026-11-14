@@ -123,7 +123,11 @@ answers it for a bundle's tree, and nothing reads a mode from disk or git
 `deps_ports::RepoTree` are bytes alone). `skill show`'s mode column, an
 export, an import (the sidecar it brings), an installed bundle and a pin's
 disclosure take it from there; an install writes the declared files 0755 as
-a convenience for running them, never read back; a push commits them 100755
+a convenience for running them, never read back, and a launch, which
+carries a skill whole, writes them executable where it puts them (the
+session home's `skills/`, 0700, `SessionRecords::write_executable`; under
+`session_home: host` the checkout's, 0755, `isolation_ports::PlacedFile`;
+`run_ports::HomeFile::executable`); a push commits them 100755
 and every other file 100644 (`Remotes::publish`'s `executable`, `git add
 --chmod`; a pull request's `PullRequest::executable`). Visible change on
 unix: a file chmod'ed executable but not listed shows 0644 and is pushed

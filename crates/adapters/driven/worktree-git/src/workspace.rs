@@ -115,6 +115,17 @@ pub(crate) fn worktree_list(git: &Git, repo: &Path) -> Result<Vec<Listed>, GitEr
     ))
 }
 
+/// How a placed file is written: one that says it is executable (a skill's
+/// declared script) 0755, as an install writes it; any other as a new file
+/// is, or keeping the mode of one already there.
+fn perms(executable: bool) -> Perms {
+    if executable {
+        Perms::Exact(Mode::from_bits(0o755))
+    } else {
+        Perms::KeepOr(Mode::FILE)
+    }
+}
+
 /// The entries of `git worktree list --porcelain`'s output. Each path is
 /// git's spelling (on Windows `C:/a/b`, forward slashes), so it is only ever
 /// compared as a [`Path`], which on Windows reads `/` and `\` alike, never
@@ -428,7 +439,12 @@ impl Workspaces for GitWorkspaces {
                 }));
             }
         }
-        for PlacedFile { rel, bytes, .. } in files {
+        for PlacedFile {
+            rel,
+            bytes,
+            executable,
+        } in files
+        {
             let path = root.join(rel);
             let failed = |e: std::io::Error| -> Failure {
                 Box::new(WorktreeError::Unreadable {
@@ -442,7 +458,7 @@ impl Workspaces for GitWorkspaces {
                     .map_err(failed)?;
             }
             self.fs
-                .write_atomic(&path, bytes, Perms::KeepOr(Mode::FILE))
+                .write_atomic(&path, bytes, perms(*executable))
                 .map_err(failed)?;
         }
         Ok(())

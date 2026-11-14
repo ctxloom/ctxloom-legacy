@@ -753,7 +753,7 @@ pub struct MemoryRecords {
 }
 
 impl MemoryRecords {
-    /// Whether `rel` of `harp` was last written executable.
+    /// Whether `rel` of `harp` was ever written executable.
     pub fn is_executable(&self, harp: &str, rel: &str) -> bool {
         self.executable
             .lock()
@@ -814,10 +814,6 @@ impl SessionRecords for MemoryRecords {
             .lock()
             .unwrap()
             .insert((harp.to_string(), rel.to_string()), bytes.to_vec());
-        self.executable
-            .lock()
-            .unwrap()
-            .remove(&(harp.to_string(), rel.to_string()));
         Ok(())
     }
 

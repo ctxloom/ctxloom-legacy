@@ -209,7 +209,7 @@ impl Engine for Claude {
             SessionHome::Session => {
                 files.extend(items.into_iter().map(|file| {
                     HomeFile {
-                        executable: false,
+                        executable: file.executable,
                         rel: file
                             .rel
                             .strip_prefix(".claude/")
@@ -472,7 +472,8 @@ fn mcp_config(surfaces: &surface_ports::Inputs, program: &str) -> String {
 
 /// The commands and skills the launch carries, as the files a project's
 /// `.claude/commands/` and `.claude/skills/` hold: the session home's
-/// `commands/` and `skills/` take them without the `.claude/`.
+/// `commands/` and `skills/` take them without the `.claude/`. A skill rides
+/// whole, its sidecar-declared scripts executable (step 3).
 fn items(surfaces: &surface_ports::Inputs) -> Vec<HomeFile> {
     let mut planned = surface_ports::Planned::default();
     crate::commands::plan(&surfaces.commands, &mut planned);
@@ -481,8 +482,12 @@ fn items(surfaces: &surface_ports::Inputs) -> Vec<HomeFile> {
         .claims
         .into_iter()
         .filter_map(|claim| match claim {
-            surface_ports::Claim::Whole { path, bytes, .. } => Some(HomeFile {
-                executable: false,
+            surface_ports::Claim::Whole {
+                path,
+                bytes,
+                executable,
+            } => Some(HomeFile {
+                executable,
                 rel: path,
                 bytes,
             }),

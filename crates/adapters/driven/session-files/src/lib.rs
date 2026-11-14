@@ -214,20 +214,7 @@ impl SessionRecords for SessionDirs {
     }
 
     fn write(&mut self, harp: &str, rel: &str, bytes: &[u8]) -> Result<(), RecordsError> {
-        let path = self.record_path(harp, rel)?;
-        let io = |e: std::io::Error| RecordsError::Io {
-            harp: harp.to_string(),
-            rel: rel.to_string(),
-            ext_err_txt: e.to_string(),
-        };
-        if let Some(parent) = path.parent() {
-            self.fs
-                .create_dir_all(parent, Mode::from_bits(0o755))
-                .map_err(io)?;
-        }
-        self.fs
-            .write_atomic(&path, bytes, Perms::Exact(Mode::from_bits(0o600)))
-            .map_err(io)
+        self.write_mode(harp, rel, bytes, 0o600)
     }
 
     fn write_executable(
@@ -236,7 +223,7 @@ impl SessionRecords for SessionDirs {
         rel: &str,
         bytes: &[u8],
     ) -> Result<(), RecordsError> {
-        self.write(harp, rel, bytes)
+        self.write_mode(harp, rel, bytes, 0o700)
     }
 
     fn append(&mut self, harp: &str, rel: &str, bytes: &[u8]) -> Result<(), RecordsError> {
@@ -273,6 +260,32 @@ impl SessionRecords for SessionDirs {
 }
 
 impl SessionDirs {
+    /// Make `rel` of `harp` hold `bytes` with exactly `mode` (its owner's
+    /// alone: 0600, or 0700 for a file the engine runs), the directories
+    /// above it made.
+    fn write_mode(
+        &self,
+        harp: &str,
+        rel: &str,
+        bytes: &[u8],
+        mode: u32,
+    ) -> Result<(), RecordsError> {
+        let path = self.record_path(harp, rel)?;
+        let io = |e: std::io::Error| RecordsError::Io {
+            harp: harp.to_string(),
+            rel: rel.to_string(),
+            ext_err_txt: e.to_string(),
+        };
+        if let Some(parent) = path.parent() {
+            self.fs
+                .create_dir_all(parent, Mode::from_bits(0o755))
+                .map_err(io)?;
+        }
+        self.fs
+            .write_atomic(&path, bytes, Perms::Exact(Mode::from_bits(mode)))
+            .map_err(io)
+    }
+
     /// `rel` under `harp`'s directory, both checked: neither may leave it.
     fn record_path(&self, harp: &str, rel: &str) -> Result<PathBuf, RecordsError> {
         check_rel(harp)?;
