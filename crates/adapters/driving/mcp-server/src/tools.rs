@@ -47,13 +47,29 @@ fn session_property(what: &str) -> Value {
     })
 }
 
-/// The tools offered, each with its input schema (DRAFT descriptions: their
-/// wording is the owner's to settle).
+/// Each tool's description, the owner's approved text (2026-11-14), kept as
+/// Markdown beside the crate (`tools/<tool>.md`) and embedded when it is
+/// compiled: nothing is read at run time.
+const SESSION_LIST: &str = include_str!("../tools/session_list.md");
+const SESSION_SHOW: &str = include_str!("../tools/session_show.md");
+const TRANSCRIPT_SHOW: &str = include_str!("../tools/transcript_show.md");
+const CONTEXT_ASSEMBLE: &str = include_str!("../tools/context_assemble.md");
+const CHILD_SEND: &str = include_str!("../tools/child_send.md");
+const CHILD_CLOSE: &str = include_str!("../tools/child_close.md");
+const CHILD_CLEAR: &str = include_str!("../tools/child_clear.md");
+
+/// A description as offered: the file's text without the newline that ends
+/// it, so it is the approved text byte for byte.
+fn describe(markdown: &'static str) -> &'static str {
+    markdown.trim_end_matches(['\n', '\r'])
+}
+
+/// The tools offered, each with its input schema.
 pub fn tools() -> Vec<Tool> {
     vec![
         Tool::new(
             "session_list",
-            "List this project's sessions (all: every project's), as the daemon's session index has them.",
+            describe(SESSION_LIST),
             schema(
                 json!({"all": {"type": "boolean", "description": "Every project's sessions, not only this one's"}}),
                 &[],
@@ -61,17 +77,23 @@ pub fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "session_show",
-            "Show one session as the daemon has it: its state, owner, children and pending messages.",
-            schema(json!({"session": session_property("The session")}), &["session"]),
+            describe(SESSION_SHOW),
+            schema(
+                json!({"session": session_property("The session")}),
+                &["session"],
+            ),
         ),
         Tool::new(
             "transcript_show",
-            "Show a session's transcript, its lines as its hooks have delivered them so far.",
-            schema(json!({"session": session_property("The session")}), &["session"]),
+            describe(TRANSCRIPT_SHOW),
+            schema(
+                json!({"session": session_property("The session")}),
+                &["session"],
+            ),
         ),
         Tool::new(
             "context_assemble",
-            "Load the fragments you chose from this project's premise index, by the names it lists.",
+            describe(CONTEXT_ASSEMBLE),
             schema(
                 json!({
                     "bundles": {"type": "array", "items": {"type": "string"}, "description": "The fragment names the premise index lists"},
@@ -82,7 +104,7 @@ pub fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "child_send",
-            "Send one of your children a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn).",
+            describe(CHILD_SEND),
             schema(
                 json!({
                     "child": session_property("The child"),
@@ -94,12 +116,12 @@ pub fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "child_close",
-            "Close one of your children: its engine is ended, and it takes no more messages.",
+            describe(CHILD_CLOSE),
             schema(json!({"child": session_property("The child")}), &["child"]),
         ),
         Tool::new(
             "child_clear",
-            "Clear one of your children's conversation, as its engine's own /clear does.",
+            describe(CHILD_CLEAR),
             schema(json!({"child": session_property("The child")}), &["child"]),
         ),
     ]

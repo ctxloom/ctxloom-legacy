@@ -2070,7 +2070,11 @@ lines reach it through a channel and are written on the command's thread
 (`mcp_server::serve(server, out)`). Its tools (`mcp_server::TOOL_NAMES`)
 are `session_list`, `session_show`, `transcript_show`, `context_assemble`
 (its `bundles` argument is `AssembleContext`'s `fragments`), `child_send`,
-`child_close` and `child_clear`. `child_launch` (step 8) and
+`child_close` and `child_clear`, each described in the owner's approved
+words (2026-11-14), one Markdown file per tool beside the crate
+(`mcp-server/tools/<tool>.md`), embedded by `include_str!` at compile time
+and offered without the file's closing newline (nothing is read at run
+time). `child_launch` (step 8) and
 `approval_prompt` (OD-1) are not offered until they are built. Each tool is
 a call of `daemon_api::Caller`, a SESSION as the daemon's client. Its
 project is its name's (`projects/{p}`, OD-2), never resolved from a cwd.
