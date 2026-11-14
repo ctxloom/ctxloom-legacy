@@ -1243,34 +1243,40 @@ fn without_ours(mut settings: surface_ports::Json) -> surface_ports::Json {
     settings
 }
 
-// OD-4 (owner, 2026-11-13): ctxloom allows its own MCP server's tools
-// itself, beside the agent's document (a stated exception to rulings
-// 133-139's "never edits"): in its own `--settings` file, whose lists claude
-// merges with user scope's, so the document stays the user-scope
-// `permissions` as written; under `host`, after the document's own allow in
-// that same file, once.
+// OD-4 (owner, 2026-11-13; amended 2026-11-14): ctxloom allows its own MCP
+// server's tools by laying `permissions.allow: [mcp__ctxloom__*]` INTO the
+// agent's document, where the document lives and as `deny_tools` is laid
+// into its `deny`: merged after the document's own allow, once. In the
+// session home that is the user-scope `settings.json`, and ctxloom's hooks
+// file holds no permissions; under `host` it is the hooks file's.
 #[test]
-fn ctxloom_allows_its_own_tools_beside_the_document() {
-    let ours = || doc(r#"{"allow":["mcp__ctxloom__*"]}"#);
-    let with = prepare_home(false, Some(r#"{"allow":["Read"]}"#), BTreeMap::new());
-    assert_eq!(
-        home_settings(&with),
-        doc(r#"{"permissions":{"allow":["Read"]}}"#)
-    );
-    assert_eq!(hooks_doc(&with).get("permissions"), Some(&ours()));
-    let none = prepare_home(true, None, BTreeMap::new());
-    assert_eq!(hooks_doc(&none).get("permissions"), Some(&ours()));
-    for (document, allow) in [
+fn ctxloom_lays_its_own_allowance_into_the_document_where_it_lives() {
+    let cases = [
         (
-            r#"{"allow":["Read"],"defaultMode":"plan"}"#,
+            Some(r#"{"allow":["Read"],"defaultMode":"plan"}"#),
             r#"{"allow":["Read","mcp__ctxloom__*"],"defaultMode":"plan"}"#,
         ),
         (
-            r#"{"allow":["mcp__ctxloom__*"]}"#,
+            Some(r#"{"allow":["mcp__ctxloom__*"]}"#),
             r#"{"allow":["mcp__ctxloom__*"]}"#,
         ),
-        (r#"{"allow":"Read"}"#, r#"{"allow":["mcp__ctxloom__*"]}"#),
-    ] {
+        (
+            Some(r#"{"allow":"Read"}"#),
+            r#"{"allow":["mcp__ctxloom__*"]}"#,
+        ),
+        (None, r#"{"allow":["mcp__ctxloom__*"]}"#),
+    ];
+    for (document, laid) in cases {
+        for interactive in [false, true] {
+            let home = prepare_home(interactive, document, BTreeMap::new());
+            assert_eq!(
+                home_settings(&home).get("permissions"),
+                Some(&doc(laid)),
+                "{document:?}"
+            );
+            let hooks = hooks_doc(&home);
+            assert_eq!(hooks.get("permissions"), None, "{hooks:?}");
+        }
         let host = Claude::new()
             .prepare(&PrepareRequest {
                 home: "/h".to_string(),
@@ -1279,18 +1285,44 @@ fn ctxloom_allows_its_own_tools_beside_the_document() {
                 interactive: false,
                 cwd: None,
                 existing: Default::default(),
-                permissions: Some(document.to_string()),
+                permissions: document.map(str::to_string),
                 session_home: SessionHome::Host,
                 surfaces: Default::default(),
             })
             .unwrap();
         assert_eq!(
             hooks_doc(&host).get("permissions"),
-            Some(&doc(allow)),
-            "{document}"
+            Some(&doc(laid)),
+            "{document:?}"
         );
     }
     assert_eq!(OUR_TOOLS, "mcp__ctxloom__*");
+}
+
+// The allowance and `deny_tools` are laid into the one document together:
+// each list the document's own first, then ctxloom's.
+#[test]
+fn the_allowance_and_the_deny_list_are_laid_together() {
+    let with = prepare_carrying(
+        false,
+        SessionHome::Session,
+        Some(r#"{"allow":["Read"],"deny":["WebFetch"]}"#),
+        carried(),
+    );
+    assert_eq!(
+        home_settings(&with).get("permissions"),
+        Some(&doc(
+            r#"{"allow":["Read","mcp__ctxloom__*"],"deny":["WebFetch","Bash"]}"#
+        ))
+    );
+    assert_eq!(hooks_doc(&with).get("permissions"), None);
+    let host = prepare_carrying(false, SessionHome::Host, None, carried());
+    assert_eq!(
+        hooks_doc(&host).get("permissions"),
+        Some(&doc(
+            r#"{"deny":["Bash","WebFetch"],"allow":["mcp__ctxloom__*"]}"#
+        ))
+    );
 }
 
 fn doc(text: &str) -> surface_ports::Json {
@@ -1826,8 +1858,9 @@ fn the_servers_ride_an_mcp_config_the_command_names() {
 // OD-38 (owner, 2026-11-13): "no context, no mcp server (mcp instructions
 // are context)". A launch with no context lists no server in
 // `ctxloom-mcp.json`, ctxloom's own included, and so allows none of its
-// tools: the hooks file holds no `permissions` in the session home, and
-// under `host` the agent's document alone; the hooks stay.
+// tools: the agent's document stands as written where it lives (the
+// session home's `settings.json`, the hooks file under `host`); the hooks
+// stay.
 #[test]
 fn a_launch_with_no_context_registers_no_server_and_allows_none_of_ours() {
     let bare = || surface_ports::Inputs {
@@ -1843,6 +1876,17 @@ fn a_launch_with_no_context_registers_no_server_and_allows_none_of_ours() {
         let hooks = hooks_doc(&prepared);
         assert_eq!(hooks.get("permissions"), None, "{hooks:?}");
         assert!(hooks.get("hooks").is_some(), "{hooks:?}");
+        assert_eq!(home_settings(&prepared).get("permissions"), None);
+        let written = prepare_carrying(
+            interactive,
+            SessionHome::Session,
+            Some(r#"{"allow":["Read"]}"#),
+            bare(),
+        );
+        assert_eq!(
+            home_settings(&written).get("permissions"),
+            Some(&doc(r#"{"allow":["Read"]}"#))
+        );
     }
     let host = prepare_carrying(
         false,
