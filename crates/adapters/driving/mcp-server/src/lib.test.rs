@@ -183,3 +183,46 @@ async fn the_server_answers_the_handshake_and_its_list_over_its_transport() {
     drop(lines);
     running.await.unwrap();
 }
+
+// A server told how to say an error says a tool's error so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_saying_its_errors_says_them_so() {
+    use rmcp::ServiceExt;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let caller = daemon_api::Caller::new(
+        Nowhere,
+        "projects/calm-quiet-heron/sessions/amber-quiet-heron",
+        daemon_proto::v1::EnvVars::default(),
+        Box::new(String::new),
+    )
+    .unwrap_or_else(|_| panic!("a name"));
+    let server = super::Server::new(caller, "v0.1.0-abc")
+        .saying(Box::new(|d| format!("in words: {}", d.code())));
+    let (client, server_side) = tokio::io::duplex(1 << 16);
+    let (server_read, server_write) = tokio::io::split(server_side);
+    let running = tokio::spawn(async move {
+        let running = server.serve((server_read, server_write)).await.unwrap();
+        running.waiting().await.unwrap();
+    });
+    let (client_read, mut client_write) = tokio::io::split(client);
+    let mut lines = BufReader::new(client_read).lines();
+    client_write
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"0\"}}}\n")
+        .await
+        .unwrap();
+    lines.next_line().await.unwrap().unwrap();
+    client_write
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"approval_prompt\",\"arguments\":{}}}\n")
+        .await
+        .unwrap();
+    let unknown: serde_json::Value =
+        serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+    assert_eq!(
+        unknown["result"]["content"][0]["text"],
+        "mcp-server-unknown-tool: in words: mcp-server-unknown-tool",
+        "{unknown}"
+    );
+    drop(client_write);
+    drop(lines);
+    running.await.unwrap();
+}

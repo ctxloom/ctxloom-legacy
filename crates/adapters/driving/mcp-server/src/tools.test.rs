@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::{text, texts, tools, ToolArgs, TOOL_NAMES};
+use super::{json_text, text, texts, tools, ToolArgs, TOOL_NAMES};
 
 fn args(value: serde_json::Value) -> rmcp::model::JsonObject {
     match value {
@@ -143,4 +143,30 @@ fn a_description_is_its_file_without_the_closing_newline() {
     assert_eq!(super::describe("Words.\r\n"), "Words.");
     assert_eq!(super::describe("Words."), "Words.");
     assert_eq!(super::describe(" Words. \n"), " Words. ");
+}
+
+// A session argument is a string, said to be a harp or a full name.
+#[test]
+fn a_session_argument_is_a_string_naming_a_harp_or_a_full_name() {
+    let offered = tools();
+    let show = offered.iter().find(|t| t.name == "session_show").unwrap();
+    let session = &show.input_schema["properties"]["session"];
+    assert_eq!(session["type"], "string", "{session}");
+    let description = session["description"].as_str().unwrap();
+    assert!(
+        description.starts_with("The session: a session's harp in this project"),
+        "{description}"
+    );
+}
+
+// A message's text is its JSON.
+#[test]
+fn a_messages_text_is_its_json() {
+    let message = json!({"name": "x", "n": 1});
+    let text = json_text(&message);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text).ok(),
+        Some(message),
+        "{text}"
+    );
 }
