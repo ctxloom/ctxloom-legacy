@@ -26,7 +26,7 @@ use angzarr_diagnostic::Diagnostic;
 use clap::{Args, Command, Subcommand};
 
 pub use bind::{Binding, Outcome};
-pub use capture::{execute_recording, NotRecorded, Recording};
+pub use capture::{execute_recording, NotRecorded, Recording, Unrecorded};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{HookError, HookWarning, EN_US};

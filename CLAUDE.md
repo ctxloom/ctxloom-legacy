@@ -1218,7 +1218,7 @@ serving daemon's is refused before it does anything, `ctxloom-wiring-daemon-
 other-home` (exit 20, naming both homes, its fix the daemon's home or a
 `daemon stop` from it), and never served by a second daemon (`daemon
 status`, `daemon stop`, `daemon resolve` and the child verbs; a hook's rediscovery passes
-such a daemon over and delivers to its run's listener). The file is 0600
+such a daemon over and holds its facts). The file is 0600
 and its directory 0700, tightened on each publish whoever made it (the
 single-instance lock may have); on Windows the platform sets no mode and the profile's
 inherited ACL stands (M8). It keeps other users out, not the user's own
@@ -2166,8 +2166,8 @@ What the engine's hooks observe (a prompt, each MessageDisplay delta, a tool
 call as size and SHA-256 only, a turn's end without text, a session's end, a
 compaction) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
 capture.proto`; `runs-application::observe` makes them from the unified
-`HookEvent`, `Capture` delivers them through a `run-ports::FactSink`, failing
-open: a delivery that did not happen is dropped and said on stderr). The
+`HookEvent`; a hook delivers them through a `run-ports::FactSink`, or HOLDS
+them for later, below, and never fails its engine). The
 session aggregate records each on a live session, nothing on any other, and a
 redelivery is DUPLICATE. No file holds the transcript (owner ruling 87a):
 `session-index` folds it from the stream's pages on each read (a
@@ -2177,7 +2177,8 @@ hooks have delivered. A one-shot child's prompt and words come from its hooks AL
 rulings 26 and 51): the launcher records none of them, and reads the child's
 stream only for the reply it returns and the run's outcome facts (RunnerStarted,
 TurnCompleted/TurnFailed, LaunchFailed, RunExited). Accepted costs: a hook
-delivery that is dropped loses that part of the record, and a child whose hooks
+delivery that is dropped (on the environment's endpoint, or past the hold's
+bound) loses that part of the record, and a child whose hooks
 never reach the listener has no conversation in its transcript (its reply is
 still printed); a failing tool has no status from the hooks (claude gives no
 PostToolUse and no error flag; the stream's `is_error` is not recorded); every
@@ -2199,19 +2200,52 @@ Compaction (`PreCompact`, `PostCompact`) is registered and recorded: the fact
 holds the prompt, the phase, the `trigger` (`manual`/`auto`) and the summary's
 size and SHA-256 (never its text, ruling B). Not captured: thinking
 blocks, a tool's status (Claude's payload carries none) and a result's body.
-A hook is a separate process and delivers through the run's listener:
-`ctxloom-wiring`'s `HookSink` is `hook-sink-grpc`'s `GrpcSink` to
-`CTXLOOM_ENDPOINT` with `CTXLOOM_BEARER`, pinning `CTXLOOM_TLS_CERT` as its only
-root, when the endpoint and bearer are set and well formed (a missing or
-garbled certificate is `HookSink::Refused`, never plaintext), and
-fails open otherwise (and on any undelivered fact): it answers the engine as
-usual and warns `hook-cli-not-recorded` for each observation. Before that
-endpoint, a hook delivers to the user daemon its discovery file names, if
-one serves (`HookSink::rediscovered`, read at each hook), presenting the
-USER bearer that file holds (`run_ports::Bearer::user`), never its run's;
-one that does not answer is passed over for the environment's way. The
-`Unreachable` sink is that fallback; the in-process `EdgeSink` is for tests and the run's own
-facts. The session's end (`SessionEnd`) is captured like the rest.
+A hook is a separate process, and how it delivers is `ctxloom-wiring`'s
+hook arm (`sessions.rs`, slice 4 §3.8, S16, OD-13). (i) Its environment
+names an endpoint (`CTXLOOM_ENDPOINT`: a CLI run's per-run listener until
+U7 removes it, kept for M10b's containers): `HookSink` is `hook-sink-grpc`'s
+`GrpcSink` there with `CTXLOOM_BEARER`, pinning `CTXLOOM_TLS_CERT` as its
+only root, when they are set and well formed (a missing or garbled
+certificate is `HookSink::Refused`, never plaintext), else `Unreachable`;
+through `Capture`, failing open: a delivery that did not happen is dropped
+and said, `hook-cli-not-recorded` for each observation. Such a hook never
+spawns a daemon and never holds (a container's hold would sit in the
+container). (ii) Otherwise it is `HoldingRecording` (s4-Q14, unit H2): it
+reaches the user daemon its discovery file names, read at each hook, and
+starts one when none serves (`daemon::hook_daemon`, `ensure_within`), all
+within its bound, `HOOK_BOUND` (10 s) or the engine's `delivery_budget`
+where that is shorter (`capture::hook_bound`; the spawn wait is what the
+bound leaves `DELIVERY_MARGIN` of, at most `SPAWN_WAIT`, so a SessionEnd's
+1 s waits for none), presenting the USER bearer that file holds
+(`capture::daemon_sink`, `run_ports::Bearer::user`), never its run's; then
+`runs_application::Holding` decides, over fact-spool's `Spool` at its
+ctxloom home and the hook's `Deadline` (`HookClock`; the core reads no
+clock). It HOLDS every observation (`hook-cli-held`, its `why`) when no
+daemon was reached or started (H-Q2) or the daemon is older than the hook
+(`!run_ports::up_to_date(daemon, own)`, H-Q1; the hook's stamp is the
+binary's, a test's `CTXLOOM_TEST_STAMP` under test-support, and so is a
+`daemon serve`'s). Up to date, it first delivers what its session's hold
+holds (owner, H-Q5 revised: the client side flushes, never the daemon):
+`take` (none: another process is taking it), each record in held order the
+daemon is up to date for, through the same sink, each waiting only what is
+left of the bound, then the delivered prefix cut, again (at most
+`TAKE_ROUNDS`, 8) until nothing it can deliver is left; a record held by a
+newer hook is kept and passed over, a gap record goes, a record whose
+external id is not its book's origin or whose book is not this session's
+stream is dropped and said. Then its own facts are delivered. A hold
+another process is taking, a held delivery left unsettled, or the bound
+spent leaves the rest held and holds the hook's own facts BEHIND it
+(`hook-cli-held-behind`), so a session's facts reach its stream first-in,
+first-out; an own delivery left unsettled is held and the rest behind it.
+A final answer (`Refused`, `Parked`) is never held (said, not recorded).
+A hold at its bound, or one that cannot be used, drops the fact, said as
+`hook-cli-not-recorded`. The wording of `hook-cli-held` and
+`-held-behind` is a draft, the owner's to approve (H-Q10). Not yet built:
+the CLI's and the frontend's flush on the way in (H3), and the drain asked
+of an older daemon (H-Q6, U8); a hold of a session no hook fires again
+waits for them. The in-process `EdgeSink` is for tests and the run's own
+facts. A unit test's executable never spawns itself as the daemon
+(`SPAWNS_ITSELF`). The session's end (`SessionEnd`) is captured like the rest.
 A compaction's external id is `hook:compact:<session>:<prompt_id>:<trigger>:
 <phase>`, so two compactions of one turn (a manual and an auto) are two facts;
 two of the SAME trigger in one turn would still collide (the payload offers no
@@ -2221,8 +2255,8 @@ SIGINT or SIGTERM stops its engine, records its end and stops the listener
 before it exits (ruling 114, above). A SIGKILL is not heard: the engine
 outlives it.
 
-A session's HOLD (s4-Q14, unit H1; built as a library, no hook or daemon
-uses it yet: H2 makes a hook hold, the flush is later) keeps capture facts
+A session's HOLD (s4-Q14, unit H1; a hook holds there and flushes it since
+H2, above) keeps capture facts
 in order for a ctxloom process of an up-to-date version to deliver (owner:
 the client side pushes a hold over the API; the daemon reads no hold file).
 "Up to date" is semver not older, `run_ports::up_to_date(daemon, fact) =

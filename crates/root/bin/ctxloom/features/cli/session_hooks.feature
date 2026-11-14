@@ -24,9 +24,10 @@ Feature: The machine callbacks every session fires — do they deliver, and do t
   engine's own answer and the exit is 0 whether or not a fact was delivered.
   A hook delivers to the user's daemon (cli/daemon.feature): it finds the
   daemon, or starts one, and retries within a bound. A fact that cannot be
-  delivered within it is dropped (a hook is short-lived and keeps nothing),
-  and the hook says so on stderr: one `hook-cli-not-recorded`
-  warning for each observation the event holds. An event that observes
+  delivered within it is held in its session's hold (cli/daemon.feature),
+  and the hook says so on stderr: one `hook-cli-held` warning for each
+  observation the event holds; a hook whose environment names an endpoint
+  drops it and warns `hook-cli-not-recorded`. An event that observes
   nothing (a PostToolUse, a PostToolBatch with no calls), and a hook with no
   harp (there is no session to address), say nothing. This is tested in
   hook.test.rs.
