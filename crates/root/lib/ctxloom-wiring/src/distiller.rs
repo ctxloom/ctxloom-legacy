@@ -1,24 +1,25 @@
 //! Distill's model (plan step 5), wired: `library_application::Distiller`
-//! over a one-shot run on no context (`run --no-context`, owner OD-38), the
-//! way init's interview runs its session over [`OneShots`]. The run is built
-//! when it is asked, over the project as it is then; its session is an
-//! ordinary one-shot's (no provenance, owner 2026-11-13), recorded by its
-//! hooks like any other.
+//! over a one-shot run on no context (`run --no-context`, owner OD-38),
+//! HOSTED by the user's daemon as every one-shot is (U4, T7; owner s4-Q6:
+//! distill moves into the daemon with the one-shot), this command its
+//! client. Its session is an ordinary one-shot's (no provenance, owner
+//! 2026-11-13), recorded by its hooks like any other.
 
 use std::sync::Arc;
 
 use angzarr_diagnostic::Diagnostic;
 use library_application::{Distilled, Distiller, Flags, RunRequest};
 use process_env::EnvSnapshot;
-use run_application::{OneShot, RunService};
+use run_application::OneShot;
 
-use crate::oneshot::OneShots;
 use crate::Wiring;
 
 /// The distiller: a one-shot with no context, of the default agent (else
-/// the default engine).
+/// the default engine), hosted by a daemon of the stamp `stamp` (this
+/// binary's, M3).
 pub(crate) struct OneShotDistiller {
     pub(crate) env: Arc<EnvSnapshot>,
+    pub(crate) stamp: String,
 }
 
 /// What failed before the run could be asked.
@@ -39,11 +40,6 @@ impl Distiller for OneShotDistiller {
             Ok(wiring) => wiring,
             Err(e) => return failed(e),
         };
-        let library = match crate::library::build(&wiring, None) {
-            Ok(library) => library,
-            Err(e) => return failed(e),
-        };
-        let mut runs = OneShots::new(&wiring, library);
         let asked = OneShot {
             run: RunRequest {
                 prompt: request.to_string(),
@@ -53,7 +49,7 @@ impl Distiller for OneShotDistiller {
             engine: String::new(),
             session: String::new(),
         };
-        let done = runs.one_shot(flags, &asked);
+        let done = crate::oneshot::client_one_shot(&wiring, &self.stamp, flags, &asked);
         Distilled {
             answer: done
                 .result

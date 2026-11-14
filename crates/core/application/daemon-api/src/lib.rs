@@ -23,32 +23,46 @@
 //!   `daemon status|stop` and the session reads ([`SessionReads`]), each
 //!   reaching a daemon, resolving its project and sending its environment,
 //!   retried once on a new daemon (S8);
+//! - `CreateRun`, `GetRun` and `WatchRun` (U4, T7): a one-shot hosted by
+//!   the daemon's one-shots, answered once placed, its events streamed
+//!   ([`RunStream`]); a TERMINAL run is U5's;
 //! - [`launch`]: the one launch (T10, `run_ports::Launch`) to the wire
 //!   (`ctxloom.v1.Launch`) and back;
 //! - [`Caller`]: a SESSION as the daemon's client (slice 3, ctxloom's MCP
 //!   server's): its project its name's (OD-2), its reads, and its writes
-//!   through the coordinator's `HandleSync`, the requester itself.
+//!   through the coordinator's `HandleSync`, the requester itself; or the
+//!   USER's child verbs (slice 4 U3: `session launch|send|clear|close`),
+//!   naming no requester;
+//! - `CreateHandOff` and `DeleteHandOff` (slice 4 U3, T6, S10): a child's
+//!   launch environment kept by the daemon ([`HandOffs`]), its owner and
+//!   credential checked first, so a refused launch writes nothing.
 
 mod caller;
 mod client;
 mod destroy;
+mod hand_off;
 pub mod launch;
 mod refusal;
+mod runs;
 mod server;
 mod session_client;
 
-pub use caller::{urgency_of, Caller, Written};
+pub use caller::{
+    launch_lock_name, urgency_of, Caller, ChildWrites, Launch, Written, DELEGATION_LIMIT,
+};
 pub use client::{
     newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,
 };
 pub use destroy::{Places, Purges};
+pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
 pub use refusal::{rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection};
+pub use runs::RunStream;
 pub use server::{About, Answer, Api, Assemblies, Calls, Harps, Hosting, Parts, SessionStates};
 pub use session_client::{Client, Removed, RequestIds, SessionReads, SessionRemovals};
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).
-pub use daemon_ports::{Called, DaemonApi, Daemons, Unreached};
+pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Synced, Unreached};
 
 /// This crate's en-US messages, its name first.
 pub const EN_US: (&str, &str) = (

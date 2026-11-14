@@ -497,39 +497,11 @@ pub(crate) fn world_without_programs(name: &str) -> World {
     world
 }
 
-// `run --one-shot` is the run use case's: an engine nobody drives is refused
-// by it (exit 20), before anything is launched.
-#[test]
-fn test_a_one_shot_is_run_by_the_run_use_case() {
-    let world = world_without_programs("one-shot");
-    let failure = try_line(
-        &mut world.commands(),
-        Format::Json,
-        &["run", "--one-shot", "--engine", "nope", "hello"],
-    )
-    .unwrap_err();
-    assert_eq!(failure.cause.code(), "runs-unknown-engine");
-    assert_eq!(failure.exit, Exit::REFUSED);
-    assert!(
-        failure.refusals.is_empty(),
-        "one refusal is its own envelope"
-    );
-}
-
-// A one-shot with no prompt, argued or piped, is refused as that, not
-// started as a session; with no credential exported either, it is refused
-// for both at once, in check order, and the command line is handed both
-// (rulings 73, 73b).
-#[test]
-fn test_a_one_shot_with_no_prompt_is_not_a_session() {
-    let world = world_without_programs("one-shot-bare");
-    let failure =
-        try_line(&mut world.commands(), Format::Json, &["run", "--one-shot"]).unwrap_err();
-    assert_eq!(failure.cause.code(), "runs-launch-refused");
-    assert_eq!(failure.exit, Exit::REFUSED);
-    let codes: Vec<&str> = failure.refusals.iter().map(|r| r.code()).collect();
-    assert_eq!(codes, ["runs-no-prompt", "runs-no-credential"]);
-}
+// `run --one-shot` is the daemon's (U4, T7): its refusals (an engine nobody
+// drives, no prompt beside no credential, rulings 73, 73b) are held by the
+// binary's acceptance tests (run.feature), as a dry run's are: the command
+// reaches the daemon, which an in-process test cannot spawn (its program is
+// the test harness).
 
 // Without `--one-shot` it is the human's session, which is started on the
 // engine asked for, prompt or none.

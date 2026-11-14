@@ -68,7 +68,7 @@ pub(crate) fn build_deps(wiring: &Wiring) -> Result<Deps, LibError> {
 /// run use cases do it. A one-shot's prompt piped on standard input is read
 /// only where nothing else gave one; a session is given the terminal.
 fn one_shot(
-    env: &Arc<EnvSnapshot>,
+    (env, version): (&Arc<EnvSnapshot>, &str),
     deps: &Rc<Deps>,
     run: &clap::ArgMatches,
     call: &Call<'_>,
@@ -81,7 +81,8 @@ fn one_shot(
     let library =
         crate::library::build(&wiring, Some(remotes)).map_err(|e| Failure::new(e, Exit::FAILED))?;
     let mut uses = crate::oneshot::OneShots::new(&wiring, library)
-        .with_puller(Rc::new(DepsPuller(Rc::clone(deps))));
+        .with_puller(Rc::new(DepsPuller(Rc::clone(deps))))
+        .stamped(version);
     if !run_cli::is_one_shot(run) {
         return run_cli::session(&mut uses, run, call, catalog, out, err);
     }
@@ -533,6 +534,7 @@ impl Extension for Commands {
             .unwrap_or_default()
             .to_string();
         let env = Arc::clone(&self.env);
+        let version = self.version.clone();
         let names = crate::library::DaemonNames {
             env: Arc::clone(&self.env),
             version: self.version.clone(),
@@ -542,7 +544,7 @@ impl Extension for Commands {
         if noun == "run" {
             let run = call.matches.subcommand_matches("run");
             if let Some(run) = run.filter(|m| !cli_support::flag(m, "dry-run")) {
-                return one_shot(&env, &wired.deps, run, call, catalog, out, err);
+                return one_shot((&env, &version), &wired.deps, run, call, catalog, out, err);
             }
         }
         if SURFACE_NOUNS.contains(&noun) {

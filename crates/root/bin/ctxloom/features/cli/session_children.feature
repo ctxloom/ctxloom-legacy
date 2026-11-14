@@ -38,7 +38,7 @@ Feature: session launch, send, clear and close — a child of a session, run by 
   the command chose (a message's id is `--id`, or one the command mints),
   and rendered from the read models the coordinator waited for. A launch
   first hands the daemon the environment the child is launched with. Every
-  refusal exits 2.
+  refusal exits 20.
 
   Rule: A launch starts a child of the owner, with its task
 

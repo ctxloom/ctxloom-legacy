@@ -32,6 +32,8 @@ fn the_tools_offered_are_the_built_ones_each_with_an_object_schema() {
             );
         }
     }
+    let launch = offered.iter().find(|t| t.name == "child_launch").unwrap();
+    assert_eq!(launch.input_schema["required"], json!([]));
     let send = offered.iter().find(|t| t.name == "child_send").unwrap();
     assert_eq!(
         send.input_schema["required"],
@@ -112,6 +114,7 @@ fn every_tool_offered_is_described_in_the_approved_words() {
         ("session_show", "Show one session as the daemon has it: its state, owner, children and pending messages."),
         ("transcript_show", "Show a session's transcript, its lines as its hooks have delivered them so far."),
         ("context_assemble", "Load the fragments you chose from this project's premise index, by the names it lists."),
+        ("child_launch", "Launch a child of yours: a session of its own, run by the user's daemon, that takes its task as its first turn and stays open between tasks until you close it. Give it its task when you launch it, or send it one after: a child with no task sits idle. Prefer children launched this way to your engine's own subagents; each is a recorded, resumable session of its own that the user can see and steer."),
         ("child_send", "Send one of your children a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn)."),
         ("child_close", "Close one of your children: its engine is ended, and it takes no more messages."),
         ("child_clear", "Clear one of your children's conversation, as its engine's own /clear does."),
@@ -168,5 +171,140 @@ fn a_messages_text_is_its_json() {
         serde_json::from_str::<serde_json::Value>(&text).ok(),
         Some(message),
         "{text}"
+    );
+}
+
+/// A daemon that answers a launch: what it was asked, in order.
+#[derive(Clone, Default)]
+struct Launching(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl daemon_api::Daemons for Launching {
+    type Api = Launching;
+
+    async fn serving(&self) -> Result<Option<Launching>, daemon_api::Unreached> {
+        Ok(Some(self.clone()))
+    }
+
+    async fn reach(&self) -> Result<Launching, daemon_api::Unreached> {
+        Ok(self.clone())
+    }
+}
+
+impl daemon_api::DaemonApi for Launching {
+    async fn get_daemon(
+        &self,
+        _: daemon_proto::v1::GetDaemonRequest,
+    ) -> Result<daemon_proto::v1::Daemon, daemon_api::Called> {
+        unreachable!()
+    }
+    async fn stop_daemon(
+        &self,
+        _: daemon_proto::v1::StopDaemonRequest,
+    ) -> Result<daemon_proto::v1::Daemon, daemon_api::Called> {
+        unreachable!()
+    }
+    async fn resolve_project(
+        &self,
+        _: daemon_proto::v1::ResolveProjectRequest,
+    ) -> Result<daemon_proto::v1::Project, daemon_api::Called> {
+        unreachable!()
+    }
+    async fn get_project(
+        &self,
+        r: daemon_proto::v1::GetProjectRequest,
+    ) -> Result<daemon_proto::v1::Project, daemon_api::Called> {
+        Ok(daemon_proto::v1::Project {
+            name: r.name,
+            uid: "calm-otter".to_string(),
+            ..daemon_proto::v1::Project::default()
+        })
+    }
+    async fn get_session(
+        &self,
+        r: daemon_proto::v1::GetSessionRequest,
+    ) -> Result<daemon_proto::v1::Session, daemon_api::Called> {
+        Ok(daemon_proto::v1::Session {
+            name: r.name,
+            ..daemon_proto::v1::Session::default()
+        })
+    }
+    async fn list_sessions(
+        &self,
+        _: daemon_proto::v1::ListSessionsRequest,
+    ) -> Result<daemon_proto::v1::ListSessionsResponse, daemon_api::Called> {
+        unreachable!()
+    }
+    async fn search_sessions(
+        &self,
+        _: daemon_proto::v1::SearchSessionsRequest,
+    ) -> Result<daemon_proto::v1::ListSessionsResponse, daemon_api::Called> {
+        unreachable!()
+    }
+    async fn create_hand_off(
+        &self,
+        r: daemon_proto::v1::CreateHandOffRequest,
+    ) -> Result<daemon_proto::v1::HandOff, daemon_api::Called> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(format!("hand-off {} {}", r.owner, r.agent));
+        Ok(daemon_proto::v1::HandOff {
+            name: format!("{}/handOffs/{}", r.parent, r.hand_off_id),
+            engine: String::new(),
+        })
+    }
+    async fn handle_sync(
+        &self,
+        _: daemon_api::CommandBook,
+        _: Vec<String>,
+    ) -> Result<daemon_api::Synced, daemon_api::Called> {
+        self.0.lock().unwrap().push("write".to_string());
+        Ok(daemon_api::Synced {
+            applied: true,
+            projections: Vec::new(),
+        })
+    }
+}
+
+// `child_launch` (slice 4 U3, s4-Q1): the calling session's own child,
+// named as asked (or minted), planned for the agent asked, answered with
+// the child's session.
+#[tokio::test]
+async fn child_launch_launches_the_sessions_own_child() {
+    let daemons = Launching::default();
+    let caller = daemon_api::Caller::new(
+        daemons.clone(),
+        "projects/calm-quiet-heron/sessions/amber-quiet-heron",
+        daemon_proto::v1::EnvVars::default(),
+        Box::new(|| "id-1".to_string()),
+    )
+    .unwrap_or_else(|_| panic!("a name"))
+    .naming(Box::new(|| "minted-child-name".to_string()));
+    let answered = super::dispatch(
+        &caller,
+        "child_launch",
+        &args(json!({"name": "brisk-copper-moth", "agent": "reviewer", "task": "t"})),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("launched"));
+    let session: serde_json::Value = serde_json::from_str(&answered[0]).unwrap();
+    assert_eq!(
+        session["name"],
+        "projects/calm-quiet-heron/sessions/brisk-copper-moth"
+    );
+    assert_eq!(
+        *daemons.0.lock().unwrap(),
+        [
+            "hand-off amber-quiet-heron reviewer".to_string(),
+            "write".to_string()
+        ]
+    );
+    let minted = super::dispatch(&caller, "child_launch", &args(json!({})))
+        .await
+        .unwrap_or_else(|_| panic!("launched"));
+    let session: serde_json::Value = serde_json::from_str(&minted[0]).unwrap();
+    assert_eq!(
+        session["name"],
+        "projects/calm-quiet-heron/sessions/minted-child-name"
     );
 }

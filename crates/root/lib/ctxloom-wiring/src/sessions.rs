@@ -129,6 +129,12 @@ impl Commands {
             let wiring = Wiring::new(Arc::clone(&self.env)).map_err(|e| failed(Box::new(e)))?;
             let client = crate::daemon::client(&wiring, &self.version);
             session_cli::read(&command, &client, format, out)
+        } else if session_cli::is_child(&command) {
+            // The child verbs are the user's writes through the daemon's
+            // coordinator (slice 4 U3): this process opens no store for them.
+            let wiring = Wiring::new(Arc::clone(&self.env)).map_err(|e| failed(Box::new(e)))?;
+            let caller = crate::daemon::child_caller(&wiring, &self.version)?;
+            session_cli::child(&command, &caller, format, out)
         } else if session_cli::is_destroy(&command) {
             // The destroy is the daemon's (owner, 2026-11-12): this process
             // opens no store for it.

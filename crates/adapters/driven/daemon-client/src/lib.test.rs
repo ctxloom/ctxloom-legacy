@@ -149,6 +149,47 @@ impl Ctxloom for Fake {
         }))
     }
 
+    async fn create_run(
+        &self,
+        request: Request<v1::CreateRunRequest>,
+    ) -> Result<Response<v1::Run>, Status> {
+        self.admit(&request)?;
+        Ok(Response::new(v1::Run {
+            name: format!("{}/runs/r1", request.into_inner().parent),
+            ..v1::Run::default()
+        }))
+    }
+
+    async fn get_run(
+        &self,
+        request: Request<v1::GetRunRequest>,
+    ) -> Result<Response<v1::Run>, Status> {
+        self.admit(&request)?;
+        Ok(Response::new(v1::Run {
+            name: request.into_inner().name,
+            ..v1::Run::default()
+        }))
+    }
+
+    /// Two events, then (for a run named `broken`) the daemon's status
+    /// ending the stream early, else its end.
+    async fn watch_run(
+        &self,
+        request: Request<v1::WatchRunRequest>,
+    ) -> Result<Response<tonic::codegen::BoxStream<v1::RunEvent>>, Status> {
+        self.admit(&request)?;
+        let broken = request.into_inner().name == "broken";
+        let event = |event| Ok(v1::RunEvent { event: Some(event) });
+        let mut events = vec![
+            event(v1::run_event::Event::Reply("HELLO".to_string())),
+            event(v1::run_event::Event::End(v1::RunEnd::default())),
+        ];
+        if broken {
+            events[1] = Err(Status::internal("the run broke"));
+        }
+        Ok(Response::new(Box::pin(tokio_stream::iter(events))))
+    }
+
     async fn sweep_sessions(
         &self,
         request: Request<v1::SweepSessionsRequest>,
@@ -570,4 +611,66 @@ async fn a_sync_says_applied_or_duplicate_with_its_projections() {
         .await
         .unwrap();
     assert!(!again.applied);
+}
+
+// U4: a run is created and read as answered, and a watch gives each event
+// in order, then none; a status that ends the stream early is what it came
+// to, as any call's is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_run_is_created_read_and_watched() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let client = DaemonClient::new(&found, WITHIN);
+    let run = client
+        .create_run(v1::CreateRunRequest {
+            parent: "projects/calm-otter".to_string(),
+            ..v1::CreateRunRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(run.name, "projects/calm-otter/runs/r1");
+    let got = client
+        .get_run(v1::GetRunRequest {
+            name: run.name.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(got.name, run.name);
+    let mut events = client
+        .watch_run(v1::WatchRunRequest { name: run.name })
+        .await
+        .unwrap();
+    let first = events.next().await.unwrap().unwrap();
+    assert_eq!(
+        first.event,
+        Some(v1::run_event::Event::Reply("HELLO".to_string()))
+    );
+    let end = events.next().await.unwrap().unwrap();
+    assert!(matches!(end.event, Some(v1::run_event::Event::End(_))));
+    assert!(events.next().await.is_none(), "nothing after the end");
+    let mut broken = client
+        .watch_run(v1::WatchRunRequest {
+            name: "broken".to_string(),
+        })
+        .await
+        .unwrap();
+    assert!(broken.next().await.unwrap().is_ok());
+    assert!(matches!(
+        broken.next().await.unwrap(),
+        Err(Called::Failed { code, .. }) if code == Code::Internal as i32
+    ));
+}
+
+// U4: a one-shot's stop is the coordinator's `Handle`; a daemon that serves
+// no coordinator says so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_handle_to_a_daemon_with_no_coordinator_is_unimplemented() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let called = DaemonClient::new(&found, WITHIN)
+        .handle(daemon_ports::CommandBook::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&called, Called::Unimplemented { method } if method.ends_with("/Handle")),
+        "{called:?}"
+    );
 }

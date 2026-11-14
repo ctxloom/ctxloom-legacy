@@ -18,6 +18,7 @@ use session_index::SessionIndexes;
 use session_policies::{plan, Fed, RunAt, Scene, Sent, Step};
 use sessions::Urgency;
 
+use crate::one_shot::OneShots;
 use crate::ports::{ChildHomes, ChildPlans, Ears, HandOff, HandOffs, HostedEngine};
 use run_launcher::{Sweeper, Swept};
 
@@ -103,6 +104,9 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     /// Where a child's program is found (`RunnerLauncher::find_program`:
     /// PATHEXT's on Windows); none, it is started as named.
     finder: Option<Arc<dyn RunnerLauncher>>,
+    /// The one-shots it hosts (U4), shared with its API; none, it hosts
+    /// none.
+    one_shots: Option<Arc<OneShots>>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -195,7 +199,16 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             refused: BTreeSet::new(),
             complained: BTreeSet::new(),
             finder: None,
+            one_shots: None,
         }
+    }
+
+    /// The daemon, hosting the one-shots of `one_shots` (U4): counted as
+    /// what it hosts, stopped when their run's stream asks
+    /// ([`Daemon::tick`]'s stop step), and ended with its children.
+    pub fn hosting_one_shots(mut self, one_shots: Arc<OneShots>) -> Daemon<E, T> {
+        self.one_shots = Some(one_shots);
+        self
     }
 
     /// The daemon, finding each child's program through `finder` (the one
@@ -205,9 +218,24 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         self
     }
 
-    /// How many children it hosts now.
+    /// How many runs it hosts now: its children and its one-shots.
     pub fn hosting(&self) -> usize {
-        self.hosted.len()
+        self.hosted.len() + self.one_shots.as_ref().map_or(0, |o| o.hosting())
+    }
+
+    /// The one-shots it hosts, each as its session's stable id and its
+    /// run's root (text), in run order.
+    pub fn hosted_one_shots(&self) -> Vec<(String, String)> {
+        self.one_shots
+            .as_ref()
+            .map(|one_shots| {
+                one_shots
+                    .live()
+                    .into_iter()
+                    .map(|placed| (placed.session, placed.run))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The runs it hosts, each as its session's stable id and its run's
@@ -321,11 +349,16 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         draining: bool,
     ) -> bool {
         let mut busy = self.hear().await;
+        busy |= self.stop_one_shots().await;
         let board = self.board.step_if_changed(store, catalog).await;
         let pending = self.pending.step_if_changed(store, catalog).await;
         let _ = self.index.step_if_changed(store, catalog).await;
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
+        }
+        // Once the board has caught up, so a child just launched is known.
+        if board.is_ok() {
+            self.sweep_hand_offs();
         }
         for (project_id, step) in self.plan() {
             if draining && matches!(step, Step::Start { .. }) {
@@ -440,7 +473,10 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 None => Taken::Again,
             },
             Step::End { at, .. } => {
+                // The child is closed for good (T6): what it was launched
+                // with is let go, at rest too.
                 self.envs.remove(&at.session);
+                self.hand_offs.delete(&at.session);
                 if let Some(hosted) = self.hosted.get(&at.run()) {
                     let _ = hosted.control.end(END_GRACE);
                 }
@@ -499,7 +535,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         };
         let handed = self.child_env(&at.session);
         let env = handed.env.clone();
-        let child = match self.plan_child(&hosted_engine, project_dir, &env) {
+        let child = match self.plan_child(&hosted_engine, &handed.agent, project_dir, &env) {
             Ok(child) => child,
             Err(code) => {
                 (self.say)(&format!("{harp}: not planned: {code}"));
@@ -620,10 +656,11 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     fn plan_child(
         &self,
         engine: &HostedEngine,
+        agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
     ) -> Result<run_application::HostedChild, String> {
-        let previewed = self.plans.preview(engine.name(), project_dir, env)?;
+        let previewed = self.plans.preview(engine.name(), agent, project_dir, env)?;
         Ok(run_application::hosted_child(
             &previewed,
             engine.name(),
@@ -633,16 +670,53 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         ))
     }
 
-    /// The environment the child `session` is started with: the one held,
-    /// else its launcher's hand-off (taken, D-N45), else none at all (a
-    /// child no launcher handed anything is judged with no credential).
+    /// The environment the child `session` is started with: its hand-off,
+    /// READ at each start (T6: it lives as long as the child is open, so a
+    /// start after a daemon restart reads it too), else the one held, else
+    /// none at all (a child no launcher handed anything is judged with no
+    /// credential).
     fn child_env(&mut self, session: &str) -> HandOff {
-        if let Some(handed) = self.envs.get(session) {
-            return handed.clone();
-        }
-        let handed = self.hand_offs.take(session).unwrap_or_default();
+        let handed = match self.hand_offs.read(session) {
+            Some(handed) => handed,
+            None => self.envs.get(session).cloned().unwrap_or_default(),
+        };
         self.envs.insert(session.to_string(), handed.clone());
         handed
+    }
+
+    /// Every hand-off no open session holds, deleted (T6, the owner's ruling
+    /// on U3), the board caught up: its child's session closed; or, a
+    /// session the board knows nothing of (neither a session nor an owner's
+    /// child), unless it is marked in launch and its launch's creator still
+    /// holds the launch lock (between its `CreateHandOff` and its
+    /// `LaunchChild`). A marked one a `LaunchChild` has recorded (its owner
+    /// holds the child) is claimed: its mark cleared.
+    fn sweep_hand_offs(&mut self) {
+        let board = self.board.projector().board();
+        let launched = |id: &str| {
+            board.sessions().any(|(_, owner)| {
+                owner
+                    .children
+                    .iter()
+                    .any(|child| child.session.as_ref().is_some_and(|c| c.session == id))
+            })
+        };
+        for kept in self.hand_offs.list() {
+            let known = board.session(&kept.session);
+            let gone = match known {
+                Some(session) => session.closed,
+                None if launched(&kept.session) => false,
+                None => !(kept.marked && kept.creator_holds),
+            };
+            let hosted = self.hosted.values().any(|h| h.at.session == kept.session);
+            if gone && !hosted {
+                self.hand_offs.delete(&kept.session);
+                self.envs.remove(&kept.session);
+                (self.say)(&format!("{}: its hand-off swept", kept.session));
+            } else if !gone && kept.marked && (known.is_some() || launched(&kept.session)) {
+                self.hand_offs.claim(&kept.session);
+            }
+        }
     }
 
     /// A child that could not be started (`code`, a refusal's or a plan's):
@@ -906,10 +980,55 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// End every child still hosted (the daemon exits), each given its
-    /// grace.
+    /// grace, and stop every one-shot it hosts.
     pub fn end_all(&mut self) {
         for hosted in self.hosted.values() {
             let _ = hosted.control.end(END_GRACE);
         }
+        if let Some(one_shots) = &self.one_shots {
+            one_shots.stop_all();
+        }
+    }
+
+    /// The stop step (U4, T7): each hosted one-shot whose run's stream holds
+    /// a `StopRequested` (its client's `RequestStop`, on a signal) has its
+    /// engine stopped, for the reason recorded. Whether it stopped any.
+    async fn stop_one_shots(&mut self) -> bool {
+        let Some(one_shots) = self.one_shots.clone() else {
+            return false;
+        };
+        let mut stopped = false;
+        for run in one_shots.unstopped() {
+            let Some(reason) = self.stop_asked(&run).await else {
+                continue;
+            };
+            if one_shots.stop(&run, &reason) {
+                (self.say)(&format!(
+                    "{run}: asked to stop ({reason}): stopping its engine"
+                ));
+                stopped = true;
+            }
+        }
+        stopped
+    }
+
+    /// Why `run`'s stream asks it to stop, if it does.
+    async fn stop_asked(&self, run: &str) -> Option<String> {
+        use angzarr_embedded::Payload;
+        let cover = angzarr_embedded::v1::Cover {
+            domain: runs::RUN_DOMAIN.to_string(),
+            root: Some(root_of(run)),
+            edition: None,
+        };
+        let pages = self.edge.events(&cover, 0).await.ok()?;
+        pages.iter().find_map(|page| match &page.body {
+            Some(angzarr_embedded::v1::event_page::Body::Event(any)) => {
+                match runs::RunEvent::from_any(any) {
+                    Ok(runs::RunEvent::StopRequested(stop)) => Some(stop.reason),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
     }
 }

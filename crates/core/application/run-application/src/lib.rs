@@ -8,8 +8,11 @@
 //! given to the engine. A saved session's resume and the dry run are not here:
 //! the library answers the last, and the other arrives with its step.
 //! [`hosted_child`] is how the user daemon plans and judges a child it hosts,
-//! the same way a one-shot child is (D18, rulings 53, 73e).
+//! the same way a one-shot child is (D18, rulings 53, 73e). [`client`] is
+//! `run --one-shot` as the daemon's client (U4, T7): the daemon hosts the
+//! run (`Runs::one_shot` in its process), the command prints what it said.
 
+pub mod client;
 mod credential;
 mod error;
 mod hosted;
@@ -18,6 +21,8 @@ mod one_shot;
 pub use credential::{credential_evidence, links_on, share_login};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
-pub use error::{RunError, EN_US};
+pub use error::{HostedEnd, RunError, EN_US};
 pub use hosted::{hosted_child, HostedChild};
-pub use one_shot::{Answer, Core, Done, Ended, OneShot, Parts, Place, Planner, RunService, Runs};
+pub use one_shot::{
+    Answer, Core, Done, Ended, OneShot, Parts, Place, Placement, Planner, RunService, Runs, Telling,
+};

@@ -196,12 +196,14 @@ async fn an_unknown_domain_is_answered_the_way_the_kernel_answers_a_malformed_bo
 }
 
 #[tokio::test]
-async fn only_the_session_domain_is_reached_and_on_this_machine() {
+async fn only_the_session_and_run_domains_are_reached_and_on_this_machine() {
     let world = World::new().await;
     let commands = EdgeCommands::new(Arc::clone(&world.edge));
     use angzarr_coordinator::Reach;
     assert_eq!(commands.reach(sessions::SESSION_DOMAIN), Reach::Loopback);
-    assert_eq!(commands.reach(runs::RUN_DOMAIN), Reach::None);
+    // U4: a hosted one-shot's stop is its run's (the gate's allowlist says
+    // what reaches it).
+    assert_eq!(commands.reach(runs::RUN_DOMAIN), Reach::Loopback);
     assert_eq!(commands.reach(trees::TREE_DOMAIN), Reach::None);
 }
 

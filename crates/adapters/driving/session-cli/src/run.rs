@@ -8,7 +8,7 @@ use angzarr_diagnostic::Diagnostic;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use angzarr_presentation::{write_json, Format};
-use daemon_api::{CallError, SessionReads};
+use daemon_api::{CallError, ChildWrites, Launch, SessionReads, Written};
 #[cfg(feature = "session-destroy")]
 use daemon_api::{Removed, SessionRemovals};
 use daemon_proto::v1;
@@ -19,7 +19,7 @@ use reclaim_application::ReclaimError;
 use sessions_application::Timestamp;
 use sessions_application::{
     dead_letter_line, AppError, DeadLetter, ImportRequest, ImportService, KeepRequest,
-    RemovedNothing, SessionService, State, TitleRequest, TranscriptQuery, STATES,
+    RemovedNothing, SessionService, State, TitleRequest, TranscriptQuery, Urgency, STATES,
 };
 #[cfg(feature = "session-destroy")]
 use sessions_application::{DestroysAuthored, REMOVE_VERB};
@@ -35,7 +35,7 @@ use crate::{
 };
 use crate::{
     CliFault, ListArgs, RenameArgs, Session, SessionVerb, Transcript, TranscriptListArgs,
-    TranscriptVerb, Worktrees, WorktreesVerb,
+    TranscriptVerb, UrgencyWord, Worktrees, WorktreesVerb,
 };
 
 /// A command that completed: what it says on the diagnostic channel besides
@@ -148,6 +148,126 @@ pub fn destroy<R: SessionRemovals>(
             _ => unreachable!("only a destroy: session_cli::is_destroy"),
         }
     })
+}
+
+/// Whether `session`'s command is a child verb (`launch`, `send`, `clear`,
+/// `close`: slice 4 U3), which [`child`] runs as the user.
+pub fn is_child(session: &Session) -> bool {
+    matches!(
+        session.verb,
+        Some(
+            SessionVerb::Launch(_)
+                | SessionVerb::Send(_)
+                | SessionVerb::Clear(_)
+                | SessionVerb::Close(_)
+        )
+    )
+}
+
+/// Run `session`'s child verb ([`is_child`]) on the user's `writes`,
+/// writing its answer to `out`: the target as the daemon has it after
+/// (`--format json`: its `Session`), or in text what was done.
+pub fn child<W: ChildWrites>(
+    session: &Session,
+    writes: &W,
+    format: Format,
+    out: &mut dyn Write,
+) -> Result<Done, Failure> {
+    // Time and I/O: the daemon is called over the network.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| {
+            fault(CliFault::Runtime {
+                ext_err_txt: e.to_string(),
+            })
+        })?;
+    let (written, said) = runtime.block_on(async {
+        match &session.verb {
+            Some(SessionVerb::Launch(args)) => {
+                let launch = Launch {
+                    owner: Some(args.owner.clone()),
+                    harp: args.name.clone(),
+                    engine: args.engine.clone().unwrap_or_default(),
+                    agent: args.agent.clone().unwrap_or_default(),
+                    task: args.task.clone().unwrap_or_default(),
+                };
+                let written = writes.launch(&launch).await.map_err(call_failure)?;
+                let said = match written.applied {
+                    true => format!("launched, a child of {}", args.owner),
+                    false => format!("already launched, a child of {}", args.owner),
+                };
+                Ok::<_, Failure>((written, said))
+            }
+            Some(SessionVerb::Send(args)) => {
+                let written = writes
+                    .send_as(
+                        &args.harp,
+                        urgency(args.urgency),
+                        &args.text,
+                        args.id.as_deref(),
+                    )
+                    .await
+                    .map_err(call_failure)?;
+                let said = recorded(&written);
+                Ok((written, said))
+            }
+            Some(SessionVerb::Clear(args)) => {
+                let written = writes.clear(&args.harp).await.map_err(call_failure)?;
+                let said = recorded(&written);
+                Ok((written, said))
+            }
+            Some(SessionVerb::Close(args)) => {
+                let written = writes.close(&args.harp).await.map_err(call_failure)?;
+                let said = match written.applied {
+                    true => "closed".to_string(),
+                    false => "already closed".to_string(),
+                };
+                Ok((written, said))
+            }
+            _ => unreachable!("only a child verb: session_cli::is_child"),
+        }
+    })?;
+    let harp = harp_of(&written.session.name).to_string();
+    wrote(match format {
+        Format::Json => write_json(out, &written.session),
+        Format::Text => writeln!(out, "{harp}: {said}"),
+    })?;
+    let mut done = Done::default();
+    // A json answer is the session alone: a close that changed nothing is
+    // said beside it, as the text says it on its line.
+    if format == Format::Json && is_close(session) && !written.applied {
+        done.notices
+            .push(Box::new(crate::error::AlreadyClosed { harp }));
+    }
+    Ok(done)
+}
+
+/// Whether `session`'s command is `close`.
+fn is_close(session: &Session) -> bool {
+    matches!(session.verb, Some(SessionVerb::Close(_)))
+}
+
+/// What a message or a clear came to, said.
+fn recorded(written: &Written) -> String {
+    match written.applied {
+        true => format!("{} recorded", written.id),
+        false => format!("{} already recorded", written.id),
+    }
+}
+
+/// The harp a session's resource name ends with.
+fn harp_of(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
+}
+
+/// An urgency word, as the domain's.
+fn urgency(word: UrgencyWord) -> Urgency {
+    match word {
+        UrgencyWord::Inform => Urgency::Inform,
+        UrgencyWord::Wake => Urgency::Wake,
+        UrgencyWord::Steer => Urgency::Steer,
+    }
 }
 
 /// Run `session`'s read ([`is_read`]) on the daemon's client `reads`,
@@ -353,6 +473,13 @@ async fn execute<S: SessionService + ImportService + WorktreeUse>(
             transcripts(service, transcript, format, out).await
         }
         Some(SessionVerb::Worktrees(worktrees)) => worktree_verb(service, worktrees, format, out),
+        // The daemon's: `child` runs them.
+        Some(
+            SessionVerb::Launch(_)
+            | SessionVerb::Send(_)
+            | SessionVerb::Clear(_)
+            | SessionVerb::Close(_),
+        ) => unreachable!("a child verb is the daemon's: session_cli::child"),
     }
 }
 
