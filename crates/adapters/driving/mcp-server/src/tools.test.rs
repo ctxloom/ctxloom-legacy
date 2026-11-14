@@ -114,7 +114,7 @@ fn every_tool_offered_is_described_in_the_approved_words() {
         ("session_show", "Show one session as the daemon has it: its state, owner, children and pending messages."),
         ("transcript_show", "Show a session's transcript, its lines as its hooks have delivered them so far."),
         ("context_assemble", "Load the fragments you chose from this project's premise index, by the names it lists."),
-        ("child_launch", "Launch a child of yours: a session of its own, run by the user's daemon, that takes its task (if given) as its first turn and stays open between tasks until you close it."),
+        ("child_launch", "Launch a child of yours: a session of its own, run by the user's daemon, that takes its task as its first turn and stays open between tasks until you close it. Give it its task when you launch it, or send it one after: a child with no task sits idle. Prefer children launched this way to your engine's own subagents; each is a recorded, resumable session of its own that the user can see and steer."),
         ("child_send", "Send one of your children a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn)."),
         ("child_close", "Close one of your children: its engine is ended, and it takes no more messages."),
         ("child_clear", "Clear one of your children's conversation, as its engine's own /clear does."),
@@ -224,6 +224,7 @@ impl daemon_api::DaemonApi for Launching {
             .push(format!("hand-off {} {}", r.owner, r.agent));
         Ok(daemon_proto::v1::HandOff {
             name: format!("{}/handOffs/{}", r.parent, r.hand_off_id),
+            engine: String::new(),
         })
     }
     async fn handle_sync(

@@ -130,14 +130,23 @@ impl DaemonApi for Fake {
             r.parent, r.hand_off_id, r.owner, r.engine, r.agent
         ));
         assert!(r.env.is_some(), "the caller's environment is sent");
+        // The engine asked, else the agent's: here, opencode.
+        let engine = match r.engine.is_empty() {
+            true => "opencode".to_string(),
+            false => r.engine.clone(),
+        };
         Ok(v1::HandOff {
             name: format!("{}/handOffs/{}", r.parent, r.hand_off_id),
+            engine,
         })
     }
 
     async fn delete_hand_off(&self, r: v1::DeleteHandOffRequest) -> Result<v1::HandOff, Called> {
         self.ask(&format!("withdraw {}", r.name));
-        Ok(v1::HandOff { name: r.name })
+        Ok(v1::HandOff {
+            name: r.name,
+            ..v1::HandOff::default()
+        })
     }
 
     async fn handle_sync(
@@ -570,7 +579,7 @@ async fn a_launch_is_the_hand_off_then_the_owners_launch_child() {
     assert_eq!(
         asked[0],
         format!(
-            "1:hand-off projects/calm-quiet-heron {} amber-quiet-heron claude-code dev",
+            "1:hand-off projects/calm-quiet-heron {} amber-quiet-heron  dev",
             child.uid()
         )
     );
@@ -588,6 +597,9 @@ async fn a_launch_is_the_hand_off_then_the_owners_launch_child() {
     assert_eq!(launched.prompt, "review the change");
     assert_eq!(launched.requester, None);
     assert_eq!(launched.delegation_limit, super::DELEGATION_LIMIT);
+    // Ruling 4: none asked, the engine the daemon planned it on (its
+    // agent's).
+    assert_eq!(launched.engine, "opencode");
     let owner =
         sessions::SessionName::parse("projects/calm-quiet-heron/sessions/amber-quiet-heron")
             .unwrap();
@@ -679,4 +691,122 @@ async fn a_closed_session_takes_no_message_or_clear_and_its_close_says_so() {
     assert!(world.commands().is_empty(), "nothing written");
     let closed = caller.close("brisk-copper-moth").await.unwrap();
     assert!(!closed.applied, "closed already");
+}
+
+/// Launch locks in memory: each taken and let go recorded in `seen`'s
+/// asks; one held refuses a second taker.
+#[derive(Clone, Default)]
+struct Locks {
+    held: Arc<Mutex<std::collections::BTreeSet<String>>>,
+    seen: Arc<Mutex<Seen>>,
+}
+
+/// A held launch lock: let go, and said, when dropped.
+struct Holding {
+    name: String,
+    locks: Locks,
+}
+
+impl Drop for Holding {
+    fn drop(&mut self) {
+        self.locks.held.lock().unwrap().remove(&self.name);
+        self.locks
+            .seen
+            .lock()
+            .unwrap()
+            .asked
+            .push(format!("let go {}", self.name));
+    }
+}
+
+impl run_ports::RunLocks for Locks {
+    fn hold_run(&self, run: &str) -> Result<run_ports::HeldLock, run_ports::LockError> {
+        if !self.held.lock().unwrap().insert(run.to_string()) {
+            return Err(run_ports::LockError::Held(angzarr_diagnostic::Report::of(
+                &crate::ApiRejection::LaunchInProgress {
+                    harp: run.to_string(),
+                },
+            )));
+        }
+        self.seen.lock().unwrap().asked.push(format!("hold {run}"));
+        Ok(run_ports::HeldLock::new(
+            run.to_string(),
+            Holding {
+                name: run.to_string(),
+                locks: self.clone(),
+            },
+        ))
+    }
+
+    fn probe(&self, _: &str) -> run_ports::LockProbe {
+        unreachable!("a launch only holds")
+    }
+
+    fn session(&self, _: &str, _: &str) -> run_ports::LockProbe {
+        unreachable!("a launch only holds")
+    }
+}
+
+fn a_launch() -> super::Launch {
+    super::Launch {
+        owner: Some("amber-quiet-heron".to_string()),
+        harp: Some("brisk-copper-moth".to_string()),
+        ..super::Launch::default()
+    }
+}
+
+// T6 (owner ruling on U3): a launch holds its launch lock from before its
+// `CreateHandOff` to after its `LaunchChild`, and lets it go then.
+#[tokio::test]
+async fn a_launch_holds_its_lock_across_its_hand_off_and_its_launch_child() {
+    let world = World::new();
+    let locks = Locks {
+        seen: Arc::clone(&world.seen),
+        ..Locks::default()
+    };
+    let caller = world.user(false).holding(Arc::new(locks.clone()));
+    caller.launch(&a_launch()).await.unwrap();
+    let child = sessions::SessionName::parse(CHILD).unwrap();
+    let name = super::launch_lock_name(&child.uid());
+    let asked = world.asked();
+    let at = |what: &str| {
+        asked
+            .iter()
+            .position(|a| a.starts_with(what))
+            .unwrap_or_else(|| panic!("{what}: {asked:?}"))
+    };
+    assert!(at(&format!("hold {name}")) < at("1:hand-off"), "{asked:?}");
+    assert!(at("1:write") < at(&format!("let go {name}")), "{asked:?}");
+    assert!(locks.held.lock().unwrap().is_empty(), "let go");
+}
+
+// T6, the race of two launches of one child: while one is made, a second
+// is refused at once, before anything is asked of the daemon.
+#[tokio::test]
+async fn a_second_launch_of_a_child_while_the_first_is_made_is_refused() {
+    let world = World::new();
+    let locks = Locks {
+        seen: Arc::clone(&world.seen),
+        ..Locks::default()
+    };
+    let child = sessions::SessionName::parse(CHILD).unwrap();
+    let first =
+        run_ports::RunLocks::hold_run(&locks, &super::launch_lock_name(&child.uid())).unwrap();
+    let caller = world.user(false).holding(Arc::new(locks.clone()));
+    let refused = caller.launch(&a_launch()).await;
+    assert_eq!(
+        refused,
+        Err(CallError::Refused(crate::Rejection::Api(
+            crate::ApiRejection::LaunchInProgress {
+                harp: "brisk-copper-moth".to_string()
+            }
+        )))
+    );
+    assert!(
+        !world.asked().iter().any(|a| a.contains("hand-off")),
+        "nothing asked: {:?}",
+        world.asked()
+    );
+    drop(first);
+    caller.launch(&a_launch()).await.unwrap();
 }

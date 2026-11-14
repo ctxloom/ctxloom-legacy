@@ -30,8 +30,14 @@ impl HandOffs for Kept {
         if self.unplanned {
             return Err("library-application-config-unreadable".to_string());
         }
+        // None asked: the agent's configured engine, here opencode.
+        let engine = match request.engine.is_empty() {
+            true => "opencode".to_string(),
+            false => request.engine.clone(),
+        };
         Ok(Planned {
-            drivable_engines: vec!["claude-code".to_string()],
+            engine,
+            drivable_engines: vec!["claude-code".to_string(), "opencode".to_string()],
             credential: runs::CredentialEvidence {
                 file_only: false,
                 builtin_variables: vec!["CLAUDE_CODE_OAUTH_TOKEN".to_string()],
@@ -112,7 +118,9 @@ async fn a_hand_off_is_planned_judged_and_written() {
         panic!("planned once: {planned:?}");
     };
     assert_eq!(planned.root, crate::server::tests::ROOT);
-    assert_eq!(planned.engine, "claude-code");
+    assert_eq!(planned.engine, "", "none asked: the plan's to resolve");
+    // Ruling 4: the engine the child was planned on, its agent's, is named.
+    assert_eq!(made.engine, "opencode");
     assert_eq!(planned.agent, "dev");
     assert_eq!(planned.child, CHILD);
     assert_eq!(
@@ -167,7 +175,7 @@ async fn a_hand_off_whose_child_has_no_credential_is_refused_and_writes_nothing(
     assert_eq!(
         rejection,
         Some(crate::Rejection::Runs(runs::RunRejection::NoCredential {
-            engine: "claude-code".to_string(),
+            engine: "opencode".to_string(),
             variables: "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
         }))
     );
@@ -236,4 +244,24 @@ async fn a_hand_off_is_deleted_only_while_no_open_session_holds_it() {
         .await,
     );
     assert_eq!(invalid.reason, "shape");
+}
+
+// Ruling 4: an engine asked is the one the child is planned and judged on,
+// and named back.
+#[tokio::test]
+async fn a_hand_off_on_an_engine_asked_is_planned_on_it() {
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        ..Kept::default()
+    });
+    let (_f, api) = with_owner(&kept).await;
+    let made = api
+        .create_hand_off(v1::CreateHandOffRequest {
+            engine: "claude-code".to_string(),
+            ..create("amber-quiet-heron")
+        })
+        .await
+        .unwrap();
+    assert_eq!(made.engine, "claude-code");
+    assert_eq!(kept.planned.lock().unwrap()[0].engine, "claude-code");
 }

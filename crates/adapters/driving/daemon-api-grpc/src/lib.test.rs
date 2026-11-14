@@ -116,12 +116,18 @@ impl Calls for Scripted {
         Box::pin(async move {
             Ok(v1::HandOff {
                 name: format!("{}/handOffs/{}", request.parent, request.hand_off_id),
+                engine: String::new(),
             })
         })
     }
 
     fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
-        Box::pin(async move { Ok(v1::HandOff { name: request.name }) })
+        Box::pin(async move {
+            Ok(v1::HandOff {
+                name: request.name,
+                ..v1::HandOff::default()
+            })
+        })
     }
 
     fn search_sessions(

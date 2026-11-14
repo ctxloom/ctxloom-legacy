@@ -37,10 +37,8 @@ const LAUNCHER_MARK: char = '@';
 /// What marks a hand-off's line naming the agent its child is planned for.
 const AGENT_LINE: &str = "!agent";
 
-/// How long a hand-off no session holds is kept before it is swept (T6): a
-/// launch records its child's `LaunchChild` within it, so a launch between
-/// its hand-off and its record keeps its own.
-pub(crate) const HAND_OFF_GRACE: Duration = Duration::from_secs(60);
+/// The extension of a hand-off's mark in launch (`<id>.launching`).
+const LAUNCHING: &str = "launching";
 
 /// The daemon's directory: the user's alone.
 const DIR_MODE: u32 = 0o700;
@@ -85,6 +83,8 @@ pub(crate) struct Instance {
 #[derive(Clone)]
 pub(crate) struct DaemonFiles {
     fs: Arc<dyn Fs>,
+    /// ctxloom's home, whose run locks a launch's lock is among.
+    home: PathBuf,
     dir: PathBuf,
     lock: PathBuf,
 }
@@ -101,6 +101,7 @@ impl DaemonFiles {
     pub(crate) fn with_instance(fs: Arc<dyn Fs>, home: &Path, lock: PathBuf) -> DaemonFiles {
         DaemonFiles {
             fs,
+            home: home.to_path_buf(),
             dir: home.join(DAEMON_DIR),
             lock,
         }
@@ -226,6 +227,34 @@ impl DaemonFiles {
         )
     }
 
+    /// Where the mark of `session`'s hand-off is: beside it, `<id>.launching`.
+    fn mark_path(&self, session: &str) -> Option<PathBuf> {
+        let path = self.hand_off_path(session)?;
+        Some(path.with_extension(LAUNCHING))
+    }
+
+    /// Hand the daemon `handed` for the child `session`'s launch (T6, the
+    /// owner's ruling on U3): its mark first, then the hand-off, so no
+    /// hand-off of a launch is ever there unmarked.
+    pub(crate) fn launching(&self, session: &str, handed: &HandOff) -> std::io::Result<()> {
+        let mark = self
+            .mark_path(session)
+            .ok_or_else(|| std::io::Error::other("a child's id is a UUID"))?;
+        self.private_dir(&self.dir)?;
+        self.private_dir(&self.dir.join(LAUNCH_DIR))?;
+        self.fs
+            .write_atomic(&mark, b"", Perms::Exact(Mode::from_bits(FILE_MODE)))?;
+        self.hand_off(session, handed)
+    }
+
+    /// The hand-off of `session` claimed by its `LaunchChild`: its mark
+    /// cleared, the hand-off left.
+    pub(crate) fn claim_hand_off(&self, session: &str) {
+        if let Some(mark) = self.mark_path(session) {
+            let _ = self.fs.remove_file(&mark);
+        }
+    }
+
     /// The hand-off of `session`, read and left where it is (T6: it lives as
     /// long as the child is open). None when there is none, or it does not
     /// read.
@@ -240,12 +269,30 @@ impl DaemonFiles {
         if let Some(path) = self.hand_off_path(session) {
             let _ = self.fs.remove_file(&path);
         }
+        self.claim_hand_off(session);
     }
 
-    /// Every hand-off there is, by its child's stable id, each settled when
-    /// it was written longer than [`HAND_OFF_GRACE`] before `now`. A file
-    /// not named by a UUID is no hand-off.
-    pub(crate) fn hand_offs(&self, now: std::time::SystemTime) -> Vec<daemon_application::Kept> {
+    /// The run locks a launch's lock is among (`daemon_api::launch_lock_name`).
+    pub(crate) fn launch_locks(&self) -> liveness::RunLockFiles {
+        liveness::RunLockFiles::new(Arc::clone(&self.fs), self.home.clone())
+    }
+
+    /// Whether the creator of `session`'s launch still holds its launch
+    /// lock: its file there and not provably free (a probe never reads an
+    /// unreadable lock as free). None there: its creator let it go, or never
+    /// took one.
+    fn creator_holds(&self, session: &str) -> bool {
+        let locks = self.launch_locks();
+        let path = locks.path(&daemon_api::launch_lock_name(session));
+        self.fs.exists(&path).unwrap_or(true)
+            && run_ports::RunLocks::probe(&locks, &path.display().to_string())
+                != run_ports::LockProbe::Free
+    }
+
+    /// Every hand-off there is, by its child's stable id: whether it is
+    /// marked in launch, and whether its launch's creator still holds its
+    /// launch lock. A file not named by a UUID is no hand-off.
+    pub(crate) fn hand_offs(&self) -> Vec<daemon_application::Kept> {
         let dir = self.dir.join(LAUNCH_DIR);
         let Ok(entries) = self.fs.read_dir(&dir) else {
             return Vec::new();
@@ -256,11 +303,13 @@ impl DaemonFiles {
                 let name = entry.name.to_str()?.to_string();
                 let id = uuid::Uuid::parse_str(&name).ok()?.hyphenated().to_string();
                 (id == name).then_some(())?;
-                let modified = self.fs.metadata(&dir.join(&name)).ok()?.modified;
-                let age = now.duration_since(modified).unwrap_or_default();
+                let marked = self
+                    .mark_path(&name)
+                    .is_some_and(|mark| self.fs.exists(&mark).unwrap_or(false));
                 Some(daemon_application::Kept {
+                    marked,
+                    creator_holds: marked && self.creator_holds(&name),
                     session: name,
-                    settled: age > HAND_OFF_GRACE,
                 })
             })
             .collect()
@@ -330,6 +379,12 @@ impl daemon_api::HandOffs for ApiHandOffs {
             &request.root,
             &caller,
         )?;
+        // None asked: the engine the plan resolved for the agent (its own,
+        // else the config's default engine).
+        let engine = match request.engine.is_empty() {
+            true => previewed.plan.engine.clone(),
+            false => request.engine.clone(),
+        };
         let drivable: Vec<String> = self
             .engines
             .iter()
@@ -338,14 +393,14 @@ impl daemon_api::HandOffs for ApiHandOffs {
         let base = self
             .engines
             .iter()
-            .find(|engine| engine.name() == request.engine)
-            .map_or(run_ports::Credentials::NONE, |engine| {
-                engine.engine.credentials()
+            .find(|hosted| hosted.name() == engine)
+            .map_or(run_ports::Credentials::NONE, |hosted| {
+                hosted.engine.credentials()
             });
-        let child =
-            run_application::hosted_child(&previewed, &request.engine, &drivable, base, &caller);
+        let child = run_application::hosted_child(&previewed, &engine, &drivable, base, &caller);
         let credential = child.evidence.credential.clone().unwrap_or_default();
         Ok(daemon_api::Planned {
+            engine,
             drivable_engines: child.evidence.drivable_engines.clone(),
             credential: runs::CredentialEvidence {
                 file_only: credential.file_only,
@@ -369,7 +424,7 @@ impl daemon_api::HandOffs for ApiHandOffs {
             agent: content.agent.clone(),
         };
         self.files
-            .hand_off(child, &handed)
+            .launching(child, &handed)
             .map_err(|e| e.to_string())
     }
 

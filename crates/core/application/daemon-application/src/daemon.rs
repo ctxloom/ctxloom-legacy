@@ -655,20 +655,37 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         handed
     }
 
-    /// Every hand-off no open session holds, deleted (T6): its child's
-    /// session closed, or (settled past the root's grace) one the board
-    /// knows nothing of, its launch refused or never recorded.
+    /// Every hand-off no open session holds, deleted (T6, the owner's ruling
+    /// on U3), the board caught up: its child's session closed; or, a
+    /// session the board knows nothing of (neither a session nor an owner's
+    /// child), unless it is marked in launch and its launch's creator still
+    /// holds the launch lock (between its `CreateHandOff` and its
+    /// `LaunchChild`). A marked one a `LaunchChild` has recorded (its owner
+    /// holds the child) is claimed: its mark cleared.
     fn sweep_hand_offs(&mut self) {
         let board = self.board.projector().board();
+        let launched = |id: &str| {
+            board.sessions().any(|(_, owner)| {
+                owner
+                    .children
+                    .iter()
+                    .any(|child| child.session.as_ref().is_some_and(|c| c.session == id))
+            })
+        };
         for kept in self.hand_offs.list() {
-            let gone = match board.session(&kept.session) {
+            let known = board.session(&kept.session);
+            let gone = match known {
                 Some(session) => session.closed,
-                None => kept.settled,
+                None if launched(&kept.session) => false,
+                None => !(kept.marked && kept.creator_holds),
             };
-            if gone && !self.hosted.values().any(|h| h.at.session == kept.session) {
+            let hosted = self.hosted.values().any(|h| h.at.session == kept.session);
+            if gone && !hosted {
                 self.hand_offs.delete(&kept.session);
                 self.envs.remove(&kept.session);
                 (self.say)(&format!("{}: its hand-off swept", kept.session));
+            } else if !gone && kept.marked && (known.is_some() || launched(&kept.session)) {
+                self.hand_offs.claim(&kept.session);
             }
         }
     }

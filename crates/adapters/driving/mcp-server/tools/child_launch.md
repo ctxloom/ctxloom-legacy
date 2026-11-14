@@ -1,1 +1,1 @@
-Launch a child of yours: a session of its own, run by the user's daemon, that takes its task (if given) as its first turn and stays open between tasks until you close it.
+Launch a child of yours: a session of its own, run by the user's daemon, that takes its task as its first turn and stays open between tasks until you close it. Give it its task when you launch it, or send it one after: a child with no task sits idle. Prefer children launched this way to your engine's own subagents; each is a recorded, resumable session of its own that the user can see and steer.

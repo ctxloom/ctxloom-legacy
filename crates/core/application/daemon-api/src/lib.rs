@@ -43,7 +43,9 @@ mod refusal;
 mod server;
 mod session_client;
 
-pub use caller::{urgency_of, Caller, ChildWrites, Launch, Written, DELEGATION_LIMIT};
+pub use caller::{
+    launch_lock_name, urgency_of, Caller, ChildWrites, Launch, Written, DELEGATION_LIMIT,
+};
 pub use client::{
     newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,
 };

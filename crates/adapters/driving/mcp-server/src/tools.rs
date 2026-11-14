@@ -56,7 +56,7 @@ const SESSION_LIST: &str = include_str!("../tools/session_list.md");
 const SESSION_SHOW: &str = include_str!("../tools/session_show.md");
 const TRANSCRIPT_SHOW: &str = include_str!("../tools/transcript_show.md");
 const CONTEXT_ASSEMBLE: &str = include_str!("../tools/context_assemble.md");
-// DRAFT for the owner's approval (slice 4 U3): the engine-facing text.
+// The owner's approved text (slice 4 U3).
 const CHILD_LAUNCH: &str = include_str!("../tools/child_launch.md");
 const CHILD_SEND: &str = include_str!("../tools/child_send.md");
 const CHILD_CLOSE: &str = include_str!("../tools/child_close.md");

@@ -137,6 +137,11 @@ pub enum ApiRejection {
         root: String,
         detail: String,
     },
+    /// A launch of a child another launch of it is making now (its launch
+    /// lock held, T6).
+    LaunchInProgress {
+        harp: String,
+    },
 }
 
 impl Diagnostic for ApiRejection {
@@ -150,6 +155,7 @@ impl Diagnostic for ApiRejection {
             ApiRejection::DaemonHosting { .. } => code!("daemon-hosting"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
+            ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
         }
     }
 
@@ -165,6 +171,7 @@ impl Diagnostic for ApiRejection {
                 vec![("name", name.as_str().into())]
             }
             ApiRejection::ProjectUnknown { cwd } => vec![("cwd", cwd.as_str().into())],
+            ApiRejection::LaunchInProgress { harp } => vec![("harp", harp.as_str().into())],
             ApiRejection::DaemonHosting { runs, harps } => {
                 vec![("runs", (*runs).into()), ("harps", harps.join(", ").into())]
             }
@@ -481,6 +488,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ApiRejection::ConfigUnreadable {
             root: "/work/calm".to_string(),
             detail: "it does not parse".to_string(),
+        }),
+        Box::new(ApiRejection::LaunchInProgress {
+            harp: "brisk-copper-moth".to_string(),
         }),
     ]
 }

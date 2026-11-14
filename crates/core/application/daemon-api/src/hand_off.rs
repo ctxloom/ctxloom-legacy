@@ -7,14 +7,19 @@
 //!
 //! 1. the owner: a session its warm index holds in the project, else the
 //!    sessions domain's `SessionUnknown` ("there is no session named ...");
-//! 2. the child's plan: its project's dry run on its engine and agent, in
-//!    the environment the launch sent ([`HandOffs::plan`], the root's);
+//! 2. the child's plan: its project's dry run on its engine (none asked: its
+//!    agent's configured one, the config's default engine for an agent
+//!    naming none, which the answer names) and agent, in the environment
+//!    the launch sent ([`HandOffs::plan`], the root's);
 //! 3. its credential, as the child's enqueue will judge it: the runs
 //!    aggregate's own pre-launch checks (`runs::pre_launch_refusal`, rulings
 //!    53, 73e), refused with the typed refusal the enqueue would answer
 //!    (`runs-no-credential`, `runs-file-only-credential`, ...).
 //!
-//! Only then is the hand-off written (0600, the root's [`HandOffs::write`]).
+//! Only then is the hand-off written (0600, the root's [`HandOffs::write`]),
+//! marked in launch: the launch's creator holds its launch lock from before
+//! `CreateHandOff` to after its `LaunchChild`, which claims it, so the sweep
+//! keeps it meanwhile, and clears it once its creator is proven gone.
 //! A hand-off is withdrawn only while no open session holds it (a child its
 //! `LaunchChild` made is the daemon's to delete, at its close).
 
@@ -52,6 +57,8 @@ pub struct HandOffContent {
 /// What the child's plan says, as its start's enqueue is judged on it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Planned {
+    /// The engine it is planned on: the one asked, else its agent's.
+    pub engine: String,
     /// Every engine the daemon hosts a child on.
     pub drivable_engines: Vec<String>,
     /// Its credential evidence (ruling 53), by name only.
@@ -68,10 +75,12 @@ pub trait HandOffs: Send + Sync {
     /// it cannot be made.
     fn plan(&self, request: &HandingOff) -> Result<Planned, String>;
 
-    /// Write the hand-off of `child`, whole (0600).
+    /// Write the hand-off of `child`, whole (0600), and mark it in launch:
+    /// the sweep keeps a marked hand-off while its launch's creator holds
+    /// its launch lock, until the `LaunchChild` it was made for claims it.
     fn write(&self, child: &str, content: &HandOffContent) -> Result<(), String>;
 
-    /// Delete the hand-off of `child`, if there is one.
+    /// Delete the hand-off of `child`, and its mark, if there are any.
     fn delete(&self, child: &str) -> Result<(), String>;
 }
 
@@ -124,14 +133,10 @@ impl<E: run_ports::Edge> Api<E> {
             )
             .into());
         }
-        let engine = match request.engine.is_empty() {
-            true => session_policies::CHILD_ENGINE.to_string(),
-            false => request.engine.clone(),
-        };
         let handing = HandingOff {
             root: row.root.clone(),
             child: child.clone(),
-            engine: engine.clone(),
+            engine: request.engine.clone(),
             agent: request.agent.clone(),
             env: request
                 .env
@@ -153,7 +158,7 @@ impl<E: run_ports::Edge> Api<E> {
             mode: runs::RunMode::Structured,
             hook_credential_hash: Vec::new(),
             prompt_given: true,
-            engine,
+            engine: planned.engine.clone(),
             drivable_engines: planned.drivable_engines,
             credential: planned.credential,
             fatal_findings: planned.fatal_findings,
@@ -165,6 +170,7 @@ impl<E: run_ports::Edge> Api<E> {
         hand_offs.write(&child, &planned.content).map_err(failed)?;
         Ok(v1::HandOff {
             name: format!("{project}{HAND_OFFS}{child}"),
+            engine: planned.engine,
         })
     }
 
@@ -201,7 +207,10 @@ impl<E: run_ports::Edge> Api<E> {
         if !open {
             hand_offs.delete(&child).map_err(failed)?;
         }
-        Ok(v1::HandOff { name: request.name })
+        Ok(v1::HandOff {
+            name: request.name,
+            engine: String::new(),
+        })
     }
 }
 

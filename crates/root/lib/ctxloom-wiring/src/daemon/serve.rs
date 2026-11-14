@@ -741,8 +741,12 @@ impl HandOffs for HandOffFiles {
         self.0.delete_hand_off(session);
     }
 
+    fn claim(&self, session: &str) {
+        self.0.claim_hand_off(session);
+    }
+
     fn list(&self) -> Vec<daemon_application::Kept> {
-        self.0.hand_offs(std::time::SystemTime::now())
+        self.0.hand_offs()
     }
 }
 

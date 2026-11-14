@@ -67,10 +67,13 @@ pub struct HandOff {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Kept {
     pub session: String,
-    /// Whether it was written longer ago than a launch takes to record its
-    /// child (the root's grace): one no session holds is swept only then,
-    /// so a launch between its hand-off and its `LaunchChild` keeps it.
-    pub settled: bool,
+    /// Whether it is marked in launch: its `CreateHandOff` marked it, and no
+    /// `LaunchChild` has claimed it yet.
+    pub marked: bool,
+    /// Whether the creator of its launch is still there: it holds the
+    /// launch's lock (the platform's file lock, never a pid or a timer). A
+    /// mark whose creator is proven gone (a crash mid-launch) is cleared.
+    pub creator_holds: bool,
 }
 
 /// A child's plan: its project's dry run, as a ctxloom process in that
@@ -103,8 +106,12 @@ pub trait HandOffs: Send + Sync {
     /// read.
     fn read(&self, session: &str) -> Option<HandOff>;
 
-    /// The hand-off of `session` deleted, if there is one.
+    /// The hand-off of `session` deleted, and its mark, if there are any.
     fn delete(&self, session: &str);
+
+    /// The hand-off of `session` claimed by the `LaunchChild` it was made
+    /// for: its mark cleared, the hand-off kept.
+    fn claim(&self, session: &str);
 
     /// Every hand-off file there is.
     fn list(&self) -> Vec<Kept>;

@@ -762,8 +762,8 @@ message CreateHandOffRequest {
   // The owner session's harp in `parent`: a session nobody recorded is
   // refused (`sessions.SessionUnknown`), and nothing is written.
   string owner = 3;
-  // The child's engine (empty: claude-code, the one engine a child is
-  // hosted on).
+  // The child's engine (empty: its agent's configured engine, which the
+  // answer names).
   string engine = 4;
   // The agent the child is planned for (empty: the project's default).
   string agent = 5;
@@ -781,6 +781,10 @@ message DeleteHandOffRequest {
 // The hand-off, by name only: its content never leaves the daemon.
 message HandOff {
   string name = 1;
+  // The engine the child is planned on: the one asked, else its agent's
+  // configured engine (an agent naming none, the config's default engine).
+  // What its `LaunchChild` names.
+  string engine = 2;
 }
 
 // endregion

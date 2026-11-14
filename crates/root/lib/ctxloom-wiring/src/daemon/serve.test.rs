@@ -28,11 +28,13 @@ fn a_hand_off_is_read_as_it_was_left_listed_and_deleted() {
     files.hand_off(SESSION, &handed).unwrap();
     let hand_offs = HandOffFiles(DaemonFiles::new(fixtures::fs(), &home));
     assert_eq!(hand_offs.read(SESSION), Some(handed.clone()));
-    assert_eq!(hand_offs.read(SESSION), Some(handed), "read again");
+    assert_eq!(hand_offs.read(SESSION), Some(handed.clone()), "read again");
     let listed = hand_offs.list();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session, SESSION);
-    assert!(!listed[0].settled, "just written");
+    assert!(!listed[0].marked, "no launch's");
+    hand_offs.claim(SESSION);
+    assert_eq!(hand_offs.read(SESSION), Some(handed), "a claim keeps it");
     hand_offs.delete(SESSION);
     assert_eq!(hand_offs.read(SESSION), None, "deleted");
     assert!(hand_offs.list().is_empty());

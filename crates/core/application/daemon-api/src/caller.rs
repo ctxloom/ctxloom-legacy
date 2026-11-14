@@ -25,8 +25,11 @@
 //! credential), then the owner's `LaunchChild`; a refused `LaunchChild` is
 //! followed by `DeleteHandOff`, so a refused launch leaves nothing.
 
+use std::sync::Arc;
+
 use daemon_ports::{Called, DaemonApi, Daemons};
 use daemon_proto::v1;
+use run_ports::RunLocks;
 use sessions::{
     ClearChild, CloseSession, LaunchChild, ProjectName, SendMessage, SessionName, SessionRef,
     TargetTrust, Urgency,
@@ -85,6 +88,16 @@ pub struct Caller<D> {
     ids: RequestIds,
     /// Mints a child's harp where a launch names none.
     names: Option<RequestIds>,
+    /// The launch locks a launch holds from before its `CreateHandOff` to
+    /// after its `LaunchChild` (T6); none, a launch holds none.
+    locks: Option<Arc<dyn RunLocks>>,
+}
+
+/// The name of the launch lock of the child `child` (its stable id), among
+/// the run locks: what a launch holds while it is made, and the daemon's
+/// sweep probes for a hand-off still marked in launch.
+pub fn launch_lock_name(child: &str) -> String {
+    format!("launch-{child}")
 }
 
 /// What a write came to: the target as the daemon has it after, the id the
@@ -128,6 +141,21 @@ fn reason_of(rejection: &sessions::SessionRejection) -> String {
         sessions::SessionRejection::NameMalformed { reason, .. } => reason.clone(),
         sessions::SessionRejection::HarpInvalid { reason, .. } => reason.clone(),
         _ => "shape".to_string(),
+    }
+}
+
+/// A launch lock that could not be taken: one held is another launch of
+/// the same child, under way (refused); any other, failed.
+fn launch_unheld(harp: &str, error: session_ports::LockError) -> CallError {
+    match error {
+        session_ports::LockError::Held(_) => {
+            CallError::Refused(Rejection::Api(ApiRejection::LaunchInProgress {
+                harp: harp.to_string(),
+            }))
+        }
+        session_ports::LockError::Failed(report) => CallError::LaunchLock {
+            detail: report.to_string(),
+        },
     }
 }
 
@@ -179,6 +207,7 @@ impl<D: Daemons> Caller<D> {
             env,
             ids,
             names: None,
+            locks: None,
         })
     }
 
@@ -199,7 +228,19 @@ impl<D: Daemons> Caller<D> {
             env,
             ids,
             names: None,
+            locks: None,
         })
+    }
+
+    /// This caller, each launch holding its launch lock among `locks` (T6:
+    /// taken at once or not at all, so a second launch of one child while the
+    /// first is made is refused).
+    #[must_use]
+    pub fn holding(self, locks: Arc<dyn RunLocks>) -> Caller<D> {
+        Caller {
+            locks: Some(locks),
+            ..self
+        }
     }
 
     /// This caller, a launch that names no child's harp minting one with
@@ -455,11 +496,13 @@ impl<D: Daemons> Caller<D> {
     }
 
     /// `child_launch`, `session launch` (T6, S10): a child of `launch`'s
-    /// owner (none: this caller), its environment handed to the daemon
-    /// first (`CreateHandOff`, refused before anything is written), then
-    /// the owner's `LaunchChild`, keyed by the owner and the child, so its
-    /// retry on a new daemon is one launch. A refused `LaunchChild` takes
-    /// its hand-off back (`DeleteHandOff`). Answered with the child as the
+    /// owner (none: this caller), its launch lock held (a second launch of
+    /// it meanwhile refused), its environment handed to the daemon first
+    /// (`CreateHandOff`, refused before anything is written), then the
+    /// owner's `LaunchChild` on the engine the daemon planned it on, keyed
+    /// by the owner and the child, so its retry on a new daemon is one
+    /// launch. A refused `LaunchChild` takes its hand-off back
+    /// (`DeleteHandOff`). Answered with the child as the
     /// daemon has it (as launched, until its daemon has minted it).
     pub async fn launch(&self, launch: &Launch) -> Result<Written, CallError> {
         let owner = match (&launch.owner, &self.me) {
@@ -476,13 +519,19 @@ impl<D: Daemons> Caller<D> {
         let child = project
             .session(&harp)
             .map_err(|rejection| not_a_name(&harp, &reason_of(&rejection)))?;
-        let engine = match launch.engine.is_empty() {
-            true => session_policies::CHILD_ENGINE.to_string(),
-            false => launch.engine.clone(),
+        // Held for the launch's whole life, its retry on a new daemon too,
+        // and let go once its `LaunchChild` is answered.
+        let _held = match &self.locks {
+            Some(locks) => Some(
+                locks
+                    .hold_run(&launch_lock_name(&child.uid()))
+                    .map_err(|error| launch_unheld(&harp, error))?,
+            ),
+            None => None,
         };
         let request_id = (self.ids)();
         let (session, applied) = on_daemon!(self, |api| self
-            .launched(api, &owner, &child, &engine, launch, &request_id)
+            .launched(api, &owner, &child, &launch.engine, launch, &request_id)
             .await)?;
         Ok(Written {
             session,
@@ -513,8 +562,15 @@ impl<D: Daemons> Caller<D> {
                 env: Some(self.env.clone()),
             })
             .await?;
+        // The engine it is planned on: asked, else its agent's (the
+        // daemon's answer names it).
+        let engine = match (hand_off.engine.is_empty(), engine.is_empty()) {
+            (false, _) => hand_off.engine.clone(),
+            (true, false) => engine.to_string(),
+            (true, true) => session_policies::CHILD_ENGINE.to_string(),
+        };
         let launched = self
-            .launch_child(api, owner, child, engine, &launch.task)
+            .launch_child(api, owner, child, &engine, &launch.task)
             .await;
         let applied = match launched {
             Ok(applied) => applied,
@@ -535,7 +591,7 @@ impl<D: Daemons> Caller<D> {
             Err(Called::Refused { .. }) => v1::Session {
                 name: child.to_string(),
                 uid: child.uid(),
-                engine: engine.to_string(),
+                engine,
                 owner: owner.to_string(),
                 ..v1::Session::default()
             },

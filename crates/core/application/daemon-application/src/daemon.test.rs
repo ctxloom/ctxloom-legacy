@@ -103,6 +103,8 @@ impl HandOffs for NoHandOffs {
 
     fn delete(&self, _: &str) {}
 
+    fn claim(&self, _: &str) {}
+
     fn list(&self) -> Vec<crate::Kept> {
         Vec::new()
     }

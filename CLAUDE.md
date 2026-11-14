@@ -1240,30 +1240,41 @@ typed refusals: `sessions-session-closed`, `sessions-session-unknown`,
 launch|send|close|clear` are gone (hard migrate); `daemon resolve` stays
 hidden. A launch (`Caller::launch`; the MCP tool `child_launch` too, its
 owner the calling session, its harp minted when it names none,
-`Caller::naming`) is `CreateHandOff` first, then the owner's `LaunchChild`
-(keyed `launch:<owner>:<child>`, the delegation limit
+`Caller::naming`) holds the child's LAUNCH LOCK (`Caller::holding`: the run
+lock `launch-<child>`, `daemon_api::launch_lock_name`, under
+`<home>/.ctxloom/runs/`, the platform's file lock taken at once or not at
+all, so a second launch of one child meanwhile is refused
+`daemon-api-launch-in-progress`) from before its `CreateHandOff` to after
+its `LaunchChild`; its `LaunchChild` (keyed `launch:<owner>:<child>`, the delegation limit
 `daemon_api::DELEGATION_LIMIT`, 4), and a refused `LaunchChild` is followed
-by `DeleteHandOff` (kept while an open session holds it). The daemon serves
+by `DeleteHandOff` (kept while an open session holds it). The child's
+engine is the one asked, else its AGENT's configured engine (an agent naming
+none, the config's default-engine rule): the daemon's plan resolves it, and
+`HandOff.engine` (field 2, additive) names it back for the `LaunchChild`. The daemon serves
 `CreateHandOff{parent, hand_off_id, owner, engine, agent, env}`
 (`daemon-api`'s `hand_off.rs`, the root's `daemon::files::ApiHandOffs`)
 checking BEFORE it writes anything, so a refused launch leaves nothing: the
 owner in the warm index (else the sessions domain's `SessionUnknown`,
 "there is no session named ..."), the child's plan (its project's dry run
-for the agent on the engine, `claude-code` when none is named, in the
+for the agent on the engine, its agent's when none is named, in the
 launch's environment; one that cannot be made is `ConfigUnreadable`), and
 its credential as its enqueue will judge it (the runs aggregate's own
 checks, `runs::pre_launch_refusal`, refused with the typed refusal the
-enqueue would answer, under its message's status); then the 0600 hand-off
-is written (in the 0700 `~/.ctxloom/daemon/launch/`, named by the child's
+enqueue would answer, under its message's status); then the hand-off is written MARKED IN LAUNCH (`<id>.launching` beside it,
+written first, so no launch's hand-off is ever there unmarked) and 0600 (in the 0700 `~/.ctxloom/daemon/launch/`, named by the child's
 stable id; what the child may be given of the environment is
 `engine_claude::launcher_environment`'s). The hand-off lives as long as the
 child is open (T6): READ at each of its starts (`HandOffs::read`, a start
 after a daemon restart included; there is no `take`), planned for the agent
 it names, deleted at the child's close (`Step::End`), and swept at each
-tick once the board has caught up (`Daemon::sweep_hand_offs`): a file whose
-session the board holds closed, or one the board knows nothing of settled
-past `daemon::files::HAND_OFF_GRACE` (60 s, so a launch between its
-hand-off and its `LaunchChild` keeps its own); an open child's is kept.
+tick once the board has caught up (`Daemon::sweep_hand_offs`, owner's ruling
+on U3: tied to the launch, no timer and no pid): a file whose session the
+board holds closed is deleted; one no session knows of (neither a session
+nor an owner's child) is deleted at once unless it is marked and its
+creator still holds the launch lock (`Kept::creator_holds`, a probe of the
+lock: a crash mid-launch leaves a mark whose lock reads free, so it is
+cleared); a marked one a `LaunchChild` recorded (its owner holds the child)
+is CLAIMED, its mark cleared (`HandOffs::claim`); an open child's is kept.
 Accepted cost (T6): an API key lies at rest for the child's life. Not yet:
 a hosted child's workspace axis (s4-Q11), the root session's persisted
 launcher places for `child_launch` (s4-Q1; a session's call sends its
@@ -2194,8 +2205,9 @@ lines reach it through a channel and are written on the command's thread
 are `session_list`, `session_show`, `transcript_show`, `context_assemble`
 (its `bundles` argument is `AssembleContext`'s `fragments`), `child_launch`
 (slice 4 U3, s4-Q1: `name`, `agent`, `task`, all optional; the session's
-own child, as `session launch` is the user's; its description a DRAFT for
-the owner's approval), `child_send`, `child_close` and `child_clear`, each
+own child, as `session launch` is the user's; its description the owner's
+approved text, which tells the engine to give a child its task and to
+prefer such children to its own subagents), `child_send`, `child_close` and `child_clear`, each
 described in the owner's approved words (2026-11-14), one Markdown file per
 tool beside the crate (`mcp-server/tools/<tool>.md`), embedded by
 `include_str!` at compile time and offered without the file's closing

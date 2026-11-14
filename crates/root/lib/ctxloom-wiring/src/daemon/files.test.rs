@@ -214,27 +214,53 @@ fn a_hand_off_is_the_users_alone_and_read_for_the_childs_life() {
     assert_eq!(files.read_hand_off("../escape"), None);
 }
 
-// T6: the hand-offs are listed by their child's id, each settled once it is
-// older than the grace a launch takes to record its child; a file no UUID
-// names is none.
+// T6 (the owner's ruling on U3): a launch's hand-off is written marked in
+// launch, listed with whether its creator still holds its launch lock,
+// claimed (its mark cleared, the hand-off kept), and deleted with its mark;
+// a file no UUID names is none.
 #[test]
-fn the_hand_offs_are_listed_each_settled_past_its_grace() {
+fn a_launchs_hand_off_is_marked_listed_by_its_creators_lock_claimed_and_deleted() {
+    use run_ports::RunLocks;
     let (root, home) = home();
     let files = files(&root, &home);
-    assert!(files.hand_offs(std::time::SystemTime::now()).is_empty());
-    files.hand_off(CHILD, &HandOff::default()).unwrap();
+    assert!(files.hand_offs().is_empty());
+    files.launching(CHILD, &HandOff::default()).unwrap();
     fixtures::put_mode(files.dir().join("launch").join("not-a-child"), "x", 0o600);
-    let now = std::time::SystemTime::now();
-    let listed = files.hand_offs(now);
-    assert_eq!(
-        listed,
-        [daemon_application::Kept {
-            session: CHILD.to_string(),
-            settled: false,
-        }]
-    );
-    let later = now + super::HAND_OFF_GRACE + Duration::from_secs(1);
-    assert!(files.hand_offs(later)[0].settled);
+    let kept = |marked, creator_holds| daemon_application::Kept {
+        session: CHILD.to_string(),
+        marked,
+        creator_holds,
+    };
+    // No launch lock there: its creator let it go, or took none.
+    assert_eq!(files.hand_offs(), [kept(true, false)]);
+    // The sweep between Create and Launch: its creator holds the lock.
+    let held = files
+        .launch_locks()
+        .hold_run(&daemon_api::launch_lock_name(CHILD))
+        .unwrap();
+    assert_eq!(files.hand_offs(), [kept(true, true)]);
+    // Two launches of one child: the second cannot take the lock.
+    assert!(matches!(
+        files
+            .launch_locks()
+            .hold_run(&daemon_api::launch_lock_name(CHILD)),
+        Err(run_ports::LockError::Held(_))
+    ));
+    drop(held);
+    // A creator crashed mid-launch: its lock file is left, held by no one.
+    let lock = files
+        .launch_locks()
+        .path(&daemon_api::launch_lock_name(CHILD));
+    fixtures::put_mode(&lock, "", 0o600);
+    assert_eq!(files.hand_offs(), [kept(true, false)], "proven gone");
+    files.claim_hand_off(CHILD);
+    assert_eq!(files.hand_offs(), [kept(false, false)], "claimed");
+    assert!(files.read_hand_off(CHILD).is_some(), "kept");
+    files.launching(CHILD, &HandOff::default()).unwrap();
+    files.delete_hand_off(CHILD);
+    assert!(files.hand_offs().is_empty(), "deleted with its mark");
+    let left = fixtures::entries(files.dir().join("launch"));
+    assert_eq!(left, [("not-a-child".to_string(), false)], "{left:?}");
 }
 
 // One daemon per OS account: the single-instance lock is where

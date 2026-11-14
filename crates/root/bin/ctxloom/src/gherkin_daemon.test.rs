@@ -1109,7 +1109,11 @@ fn hand_off_private(w: &mut World) {
         (ran.code == 0).then(|| ran.json())
     });
     assert_ne!(child["closed"], Value::Bool(true), "open: {child}");
-    let kept = hand_offs(w);
+    // The hand-off itself, not its mark in launch (claimed by its launch).
+    let kept: Vec<PathBuf> = hand_offs(w)
+        .into_iter()
+        .filter(|path| path.extension().is_none())
+        .collect();
     let [path] = kept.as_slice() else {
         panic!("one hand-off: {kept:?}");
     };

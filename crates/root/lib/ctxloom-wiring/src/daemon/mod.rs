@@ -738,11 +738,21 @@ pub(crate) fn child_caller<'a>(
         env_vars(wiring.env()),
         Box::new(request_id),
     )
-    .map(|caller| caller.naming(Box::new(crate::session_name)))
+    .map(|caller| {
+        caller
+            .naming(Box::new(crate::session_name))
+            .holding(launch_locks(wiring))
+    })
     .map_err(|e| {
         let exit = e.exit();
         Failure::new(e, exit)
     })
+}
+
+/// The launch locks a launch from `wiring`'s home holds (T6): its daemon's
+/// run locks, which its sweep probes.
+pub(crate) fn launch_locks(wiring: &Wiring) -> Arc<dyn run_ports::RunLocks> {
+    Arc::new(files_of(wiring).launch_locks())
 }
 
 /// A write's request id (S8): a fresh UUIDv7, unique per call.

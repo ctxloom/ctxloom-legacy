@@ -269,6 +269,8 @@ impl HandOffs for Handed {
         self.0.lock().unwrap().take();
     }
 
+    fn claim(&self, _: &str) {}
+
     fn list(&self) -> Vec<crate::Kept> {
         Vec::new()
     }
@@ -1184,6 +1186,7 @@ struct Files {
     kept: Arc<Mutex<BTreeMap<String, crate::HandOff>>>,
     reads: Arc<Mutex<Vec<String>>>,
     deleted: Arc<Mutex<Vec<String>>>,
+    claimed: Arc<Mutex<Vec<String>>>,
     listed: Arc<Mutex<Vec<crate::Kept>>>,
 }
 
@@ -1196,6 +1199,10 @@ impl HandOffs for Files {
     fn delete(&self, session: &str) {
         self.deleted.lock().unwrap().push(session.to_string());
         self.kept.lock().unwrap().remove(session);
+    }
+
+    fn claim(&self, session: &str) {
+        self.claimed.lock().unwrap().push(session.to_string());
     }
 
     fn list(&self) -> Vec<crate::Kept> {
@@ -1298,12 +1305,99 @@ async fn a_closed_childs_hand_off_is_deleted() {
     assert!(!files.kept.lock().unwrap().contains_key(CHILD));
 }
 
-// T6: a hand-off no open session holds is swept once the board has caught
-// up: its child's session closed, or, settled past the root's grace, one
-// the board knows nothing of. An open child's, and an unsettled one (a
-// launch between its hand-off and its `LaunchChild`), are kept.
+/// A hand-off of `session` as a listing has it.
+fn kept(session: &str, marked: bool, creator_holds: bool) -> crate::Kept {
+    crate::Kept {
+        session: session.to_string(),
+        marked,
+        creator_holds,
+    }
+}
+
+/// A child nothing launched yet.
+const UNLAUNCHED: &str = "5f0c7a52-1111-5111-8111-0000000000d1";
+
+/// The sweep over `listed`, the child `kid` hosted: what it deleted and
+/// what it claimed.
+async fn swept(listed: Vec<crate::Kept>) -> (Vec<String>, Vec<String>) {
+    let files = Files::default();
+    let plans = ForAgent::default();
+    let mut world = hosting_from(&files, &plans).await;
+    *files.listed.lock().unwrap() = listed;
+    world.tick().await;
+    let deleted = files.deleted.lock().unwrap().clone();
+    let claimed = files.claimed.lock().unwrap().clone();
+    (deleted, claimed)
+}
+
+// T6 (owner's ruling on U3): a hand-off that is not marked in launch and
+// that no session knows of is swept at once; an open child's is kept.
 #[tokio::test]
-async fn a_hand_off_no_open_session_holds_is_swept() {
+async fn an_unmarked_hand_off_no_session_knows_is_swept_at_once() {
+    let (deleted, _) = swept(vec![
+        kept(UNLAUNCHED, false, false),
+        kept(CHILD, false, false),
+    ])
+    .await;
+    assert_eq!(deleted, [UNLAUNCHED.to_string()], "the open child's kept");
+}
+
+// The race of the sweep between `CreateHandOff` and `LaunchChild`, forced:
+// marked, its creator holding the launch lock, nothing recorded yet. Kept.
+#[tokio::test]
+async fn a_hand_off_in_launch_whose_creator_holds_it_is_kept() {
+    let (deleted, claimed) = swept(vec![kept(UNLAUNCHED, true, true)]).await;
+    assert!(deleted.is_empty(), "{deleted:?}");
+    assert!(claimed.is_empty(), "nothing launched it yet: {claimed:?}");
+}
+
+// The race of a creator crashing mid-launch, forced: marked, its launch
+// lock free. Its creator is proven gone, so it is swept.
+#[tokio::test]
+async fn a_hand_off_whose_creator_crashed_mid_launch_is_swept() {
+    let (deleted, _) = swept(vec![kept(UNLAUNCHED, true, false)]).await;
+    assert_eq!(deleted, [UNLAUNCHED.to_string()]);
+}
+
+// `LaunchChild` claims it: a marked hand-off of a child its owner holds
+// (launched, not minted yet) or of a session the board knows is claimed,
+// never swept, whatever its creator's lock says.
+#[tokio::test]
+async fn a_marked_hand_off_a_launch_recorded_is_claimed() {
+    let files = Files::default();
+    let plans = ForAgent::default();
+    let mut world = hosting_from(&files, &plans).await;
+    world
+        .handle(
+            OWNER,
+            sessions::LaunchChild {
+                child_project_id: "calm-otter".to_string(),
+                child_session: UNLAUNCHED.to_string(),
+                child_root: "/work".to_string(),
+                harp: "late-kid".to_string(),
+                engine: ENGINE.to_string(),
+                trust: sessions::TargetTrust {
+                    same_project: true,
+                    trusted: true,
+                },
+                delegation_limit: 4,
+                requester: None,
+                prompt: String::new(),
+            },
+        )
+        .await;
+    *files.listed.lock().unwrap() = vec![kept(UNLAUNCHED, true, false), kept(CHILD, true, false)];
+    world.tick().await;
+    let deleted = files.deleted.lock().unwrap().clone();
+    assert!(deleted.is_empty(), "{deleted:?}");
+    let claimed = files.claimed.lock().unwrap().clone();
+    assert!(claimed.contains(&UNLAUNCHED.to_string()), "{claimed:?}");
+    assert!(claimed.contains(&CHILD.to_string()), "{claimed:?}");
+}
+
+// A closed child's hand-off is swept whatever its mark.
+#[tokio::test]
+async fn a_closed_childs_hand_off_is_swept_whatever_its_mark() {
     let files = Files::default();
     let plans = ForAgent::default();
     let mut world = hosting_from(&files, &plans).await;
@@ -1318,26 +1412,7 @@ async fn a_hand_off_no_open_session_holds_is_swept() {
             },
         )
         .await;
-    let kept = |session: &str, settled| crate::Kept {
-        session: session.to_string(),
-        settled,
-    };
-    *files.listed.lock().unwrap() = vec![
-        kept(CHILD, true),
-        kept(closed, false),
-        kept("5f0c7a52-1111-5111-8111-0000000000d1", true),
-        kept("5f0c7a52-1111-5111-8111-0000000000d2", false),
-    ];
+    *files.listed.lock().unwrap() = vec![kept(closed, true, true)];
     world.tick().await;
-    let deleted = files.deleted.lock().unwrap().clone();
-    assert!(deleted.contains(&closed.to_string()), "{deleted:?}");
-    assert!(
-        deleted.contains(&"5f0c7a52-1111-5111-8111-0000000000d1".to_string()),
-        "{deleted:?}"
-    );
-    assert!(!deleted.contains(&CHILD.to_string()), "open: {deleted:?}");
-    assert!(
-        !deleted.contains(&"5f0c7a52-1111-5111-8111-0000000000d2".to_string()),
-        "unsettled: {deleted:?}"
-    );
+    assert_eq!(*files.deleted.lock().unwrap(), [closed.to_string()]);
 }

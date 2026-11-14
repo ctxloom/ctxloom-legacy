@@ -42,6 +42,7 @@ pub(crate) fn serve(
     };
     let session = session.to_string_lossy().into_owned();
     let wiring = Wiring::new(Arc::clone(env)).map_err(|e| Failure::new(e, Exit::FAILED))?;
+    let locks = crate::daemon::launch_locks(&wiring);
     let caller = Caller::new(
         SessionReach {
             wiring: Arc::new(wiring),
@@ -51,8 +52,9 @@ pub(crate) fn serve(
         crate::daemon::env_vars(env),
         Box::new(crate::daemon::request_id),
     )
-    // `child_launch` names a child that names none (slice 4 U3).
-    .map(|caller| caller.naming(Box::new(crate::session_name)))
+    // `child_launch` names a child that names none, and holds its launch
+    // lock while it is made (slice 4 U3).
+    .map(|caller| caller.naming(Box::new(crate::session_name)).holding(locks))
     .map_err(|e| {
         let exit = cli_support::ExitClass::exit(&e);
         Failure::new(e, exit)
