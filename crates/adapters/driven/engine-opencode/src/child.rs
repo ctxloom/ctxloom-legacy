@@ -8,7 +8,11 @@
 //! with a random per-child `OPENCODE_SERVER_PASSWORD` (D24: `acp` opens its
 //! own loopback HTTP listener, unauthenticated without one; ctxloom never
 //! talks to it). Never `--mdns` (it would bind every address) nor `--pure`
-//! (it would skip the plugin, and capture with it).
+//! (it would skip the plugin, and capture with it). The command is half of
+//! the child's start (T10): the one launch (`run_launcher::launch_of`)
+//! applies the permits to it and finds its program, and
+//! [`ChildEngine::start`] spawns that launch exactly as it is, opening the
+//! ACP session from the child's spec.
 //!
 //! [`crate::conversation`] says what to ask and what an answer means; this
 //! module is its process and its connection. The connection is the crate's
@@ -51,8 +55,8 @@ use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{FutureExt, StreamExt};
 use run_ports::{
     ChildControl, ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions,
-    ChildSpec, Ended, EngineError, Exit, Queued, StartedChild, Token, TurnCommand, TurnRequest,
-    Urgency,
+    ChildSpec, Ended, EngineError, Exit, Launch, Queued, StartedChild, Stdio, Token, TurnCommand,
+    TurnRequest, Urgency,
 };
 use run_within::{run_piped, Piped, RunError, Spec};
 use serde::{Deserialize, Serialize};
@@ -79,8 +83,16 @@ const POLL: Duration = Duration::from_millis(10);
 const STDERR_KEPT: usize = 4096;
 
 impl ChildEngine for Opencode {
-    fn start(&self, spec: &ChildSpec) -> Result<StartedChild, ChildError> {
-        let command = child_command(spec, &password()?)?;
+    fn command(&self, spec: &ChildSpec) -> Result<TurnCommand, ChildError> {
+        Ok(child_command(spec, &password()?)?)
+    }
+
+    fn stdio(&self) -> Stdio {
+        Stdio::Acp
+    }
+
+    fn start(&self, spec: &ChildSpec, launch: &Launch) -> Result<StartedChild, ChildError> {
+        let command = launch.command();
         let opening = Opening {
             cwd: workdir(spec).to_string(),
             model: spec.model.clone(),

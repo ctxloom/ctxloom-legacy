@@ -23,6 +23,8 @@
 //!   `daemon status|stop` and the session reads ([`SessionReads`]), each
 //!   reaching a daemon, resolving its project and sending its environment,
 //!   retried once on a new daemon (S8);
+//! - [`launch`]: the one launch (T10, `run_ports::Launch`) to the wire
+//!   (`ctxloom.v1.Launch`) and back;
 //! - [`Caller`]: a SESSION as the daemon's client (slice 3, ctxloom's MCP
 //!   server's): its project its name's (OD-2), its reads, and its writes
 //!   through the coordinator's `HandleSync`, the requester itself.
@@ -30,6 +32,7 @@
 mod caller;
 mod client;
 mod destroy;
+pub mod launch;
 mod refusal;
 mod server;
 mod session_client;

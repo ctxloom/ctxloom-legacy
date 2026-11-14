@@ -9,8 +9,8 @@ use daemon_board::Boards;
 use pending_launches::{PendingLaunch, PendingModel, StartedRun};
 use pending_messages::PendingMessages;
 use run_ports::{
-    ChildControl, ChildMessage, ChildObservation, ChildSpec, Edge, FailureClass, HeldLock,
-    PublicCert, RunLocks, TokenSource, TurnOutcome,
+    ChildControl, ChildMessage, ChildObservation, Edge, FailureClass, HeldLock, PublicCert,
+    RunLocks, RunnerLauncher, TokenSource, TurnOutcome,
 };
 use runs::{RunMode, TurnUrgency};
 use runs_application::{EnqueueError, EnqueueRequest, Enqueuer, Facts, Identity, RunnerFact};
@@ -100,6 +100,9 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     refused: BTreeSet<String>,
     /// The steps whose failure was said already (once, not each round).
     complained: BTreeSet<String>,
+    /// Where a child's program is found (`RunnerLauncher::find_program`:
+    /// PATHEXT's on Windows); none, it is started as named.
+    finder: Option<Arc<dyn RunnerLauncher>>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -191,7 +194,15 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             done: BTreeSet::new(),
             refused: BTreeSet::new(),
             complained: BTreeSet::new(),
+            finder: None,
         }
+    }
+
+    /// The daemon, finding each child's program through `finder` (the one
+    /// launch's step 4, T10) before it is started.
+    pub fn finding(mut self, finder: Arc<dyn RunnerLauncher>) -> Daemon<E, T> {
+        self.finder = Some(finder);
+        self
     }
 
     /// How many children it hosts now.
@@ -666,7 +677,9 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
 
     /// The child's session home prepared with its project's context and its
     /// engine started with its launcher's environment, told the daemon's
-    /// listener for its hooks.
+    /// listener for its hooks: made by the one launch (T10,
+    /// `run_launcher::launch_of`), its program found and its permits
+    /// applied there, then started exactly as made.
     #[allow(clippy::too_many_arguments)]
     fn spawn_child(
         &self,
@@ -689,13 +702,19 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         // its seeds, her git identity, and what the engine was composed
         // with: her own settings, the program its callbacks run).
         let mut records = self.homes.records(project_dir);
-        let set_up = run_launcher::set_up_launch(
-            &*prepares,
-            &mut *records,
-            // No workspaces: until a hosted child's request carries a
-            // workspace axis, it works in the live project.
-            None,
-            &run_launcher::LaunchSetup {
+        // The one launch (T10): set up, the child's command, the permits,
+        // its program found, the batch and length checks, as every launch's.
+        let request = run_launcher::LaunchRequest {
+            at: run_ports::LaunchAt {
+                // A hosted launch never leaves the daemon: no project id.
+                project_id: String::new(),
+                session: at.session.clone(),
+                harp: harp.to_string(),
+                run: at.run(),
+                incarnation: at.incarnation,
+            },
+            kind: run_ports::LaunchKind::Child,
+            setup: run_launcher::LaunchSetup {
                 home: run_launcher::HomeSetup {
                     harp: harp.to_string(),
                     context: child.context.clone(),
@@ -710,26 +729,50 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                     // launch's plan does.
                     surfaces: child.surfaces.clone(),
                 },
+                // No workspaces: until a hosted child's request carries a
+                // workspace axis, it works in the live project.
                 workspace: run_launcher::Workspace::default(),
                 env: self.child_environment(at, name, sent, hook_token),
-                owned: Vec::new(),
+                // What the daemon sets for the child, which no permit
+                // replaces (ruling 78b): its HOME (the session home) and the
+                // PATH led by the program's directory.
+                owned: vec!["HOME".to_string(), "PATH".to_string()],
             },
-        )?;
-        let spec = ChildSpec {
-            home: set_up.home.home,
-            context_path: set_up.home.context_path,
-            env: set_up.env,
+            prompt: String::new(),
+            resume: None,
+            session_id: None,
             user_home: self.place.user_home.clone(),
-            cwd: set_up.cwd,
             model: child.model.clone(),
             effort: child.effort.clone(),
             settings: child.settings.clone(),
-            resume: None,
-            session_id: None,
             // claude asks no permission over its stream: unused here.
-            permissions: run_ports::ChildPermissions::default(),
+            child_permissions: run_ports::ChildPermissions::default(),
+            session_lock: String::new(),
         };
-        let started = starts.start(&spec).map_err(|e| e.to_string())?;
+        let as_named = |command: &run_ports::TurnCommand| Ok(command.program.clone());
+        let finder = self.finder.as_deref();
+        let find = |command: &run_ports::TurnCommand| match finder {
+            Some(finder) => finder.find_program(command),
+            None => as_named(command),
+        };
+        let made = run_launcher::launch_of(
+            run_launcher::LaunchEngines {
+                engine: &*prepares,
+                child: Some(&*starts),
+            },
+            &find,
+            &mut *records,
+            None,
+            &request,
+            &self.place.os,
+        )
+        .map_err(|unprepared| unprepared.why.to_string())?;
+        let spec = made
+            .child
+            .ok_or_else(|| format!("{harp}: no child was planned"))?;
+        let started = starts
+            .start(&spec, &made.launch)
+            .map_err(|e| e.to_string())?;
         Ok((started, (engine.transcripts)(&spec)))
     }
 

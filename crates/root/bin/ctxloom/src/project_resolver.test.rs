@@ -347,6 +347,114 @@ fn test_a_json_dry_run_is_named_once_its_project_is_and_null_before() {
     );
 }
 
+/// The discovery file a daemon of `project`'s home advertises itself in.
+fn daemon_discovery(project: &Project) -> PathBuf {
+    project.home().join(".ctxloom/daemon/daemon.discovery")
+}
+
+/// A daemon a test's command starts idles out soon after.
+const IDLE_SOON: (&str, &str) = ("CTXLOOM_DAEMON_IDLE_SECONDS", "15");
+
+// Owner ruling 2026-11-14: EVERY dry run calls the daemon, spawning it if
+// needed, text or json alike. With none serving, a text dry run starts one.
+#[test]
+fn test_a_text_dry_run_with_no_daemon_starts_one() {
+    let project = Project::bare();
+    ctxloom_at(&project, "");
+    let project = project.named();
+    assert!(!files::exists(daemon_discovery(&project)), "a fresh home");
+    let ran = project.run_in_with(
+        project.dir(),
+        &[IDLE_SOON],
+        &[
+            "run",
+            "--dry-run",
+            "--profile",
+            "dev",
+            "--format",
+            "text",
+            "hello",
+        ],
+    );
+    assert!(ran.code <= 1, "{}", ran.said());
+    assert!(
+        files::exists(daemon_discovery(&project)),
+        "a text dry run started no daemon: {}",
+        ran.said()
+    );
+}
+
+// Owner ruling 2026-11-14: a dry run in a project nothing has named calls
+// the daemon too (it has nothing to resolve, so it is only reached), and
+// still mints nothing: the project's tree is as it was.
+#[test]
+fn test_an_unnamed_projects_dry_run_starts_a_daemon_and_writes_nothing() {
+    for format in ["json", "text"] {
+        let project = Project::bare();
+        ctxloom_at(&project, "");
+        let before = project.tree("");
+        let ran = project.run_in_with(
+            project.dir(),
+            &[IDLE_SOON],
+            &[
+                "run",
+                "--dry-run",
+                "--profile",
+                "dev",
+                "--format",
+                format,
+                "hello",
+            ],
+        );
+        assert!(ran.code <= 1, "{format}: {}", ran.said());
+        assert!(
+            files::exists(daemon_discovery(&project)),
+            "a {format} dry run started no daemon: {}",
+            ran.said()
+        );
+        assert_eq!(project.tree(""), before, "a {format} dry run wrote");
+        assert!(!project.exists(".ctxloom/project-id"), "{format}");
+    }
+}
+
+// A dry run whose daemon cannot be started fails as every daemon client's
+// command does: exit 10, the client's error naming the daemon's log. A
+// file where the daemon's directory goes: no daemon can start there.
+#[test]
+fn test_a_dry_run_whose_daemon_cannot_start_fails_with_the_clients_error() {
+    for named in [true, false] {
+        for format in ["json", "text"] {
+            let project = Project::bare();
+            ctxloom_at(&project, "");
+            let project = if named { project.named() } else { project };
+            project.write_home(".ctxloom/daemon", "not a directory");
+            let ran = project.run_in(
+                project.dir(),
+                &[
+                    "run",
+                    "--dry-run",
+                    "--profile",
+                    "dev",
+                    "--format",
+                    format,
+                    "hello",
+                ],
+            );
+            assert_eq!(ran.code, 10, "named {named}, {format}: {}", ran.said());
+            assert!(
+                ran.said().contains("no ctxloom daemon could be started"),
+                "named {named}, {format}: {}",
+                ran.said()
+            );
+            assert!(
+                ran.said().contains("~/.ctxloom/daemon/daemon.log"),
+                "named {named}, {format}: {}",
+                ran.said()
+            );
+        }
+    }
+}
+
 // Ruling 2: `init` mints the project's id at its root, after which a json
 // read names the project.
 #[test]

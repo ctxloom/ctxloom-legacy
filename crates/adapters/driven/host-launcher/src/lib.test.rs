@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use file_system::{Fs, Rooted};
-use run_ports::{Exit, Launch, LaunchEvent, Limits, RunnerLauncher, TurnCommand};
+use run_ports::{Exit, LaunchEvent, Limits, RunnerLauncher, TurnCommand, TurnLaunch};
 
 use crate::{HostLauncher, Stop};
 
@@ -26,26 +26,26 @@ pub(crate) fn runs_scripts() -> bool {
 }
 
 /// A turn run to its end, as one answer.
-fn launch(command: &TurnCommand, limits: &Limits) -> Launch {
+fn launch(command: &TurnCommand, limits: &Limits) -> TurnLaunch {
     answer(HostLauncher::default().launch(command, limits)).1
 }
 
 /// A terminal session run to its end, as one answer.
-fn terminal(command: &TurnCommand) -> Launch {
+fn terminal(command: &TurnCommand) -> TurnLaunch {
     answer(HostLauncher::default().launch_terminal(command)).1
 }
 
 /// The pid the spawn gave (none when nothing spawned), and the end.
 fn answer(
     started: Result<Box<dyn run_ports::Running>, run_ports::LaunchFailure>,
-) -> (Option<u32>, Launch) {
+) -> (Option<u32>, TurnLaunch) {
     match started {
-        Err(failure) => (None, Launch::NotStarted(failure)),
+        Err(failure) => (None, TurnLaunch::NotStarted(failure)),
         Ok(running) => {
             let pid = running.pid();
             match running.finish() {
-                Ok(output) => (Some(pid), Launch::Over(output)),
-                Err(failure) => (Some(pid), Launch::NotStarted(failure)),
+                Ok(output) => (Some(pid), TurnLaunch::Over(output)),
+                Err(failure) => (Some(pid), TurnLaunch::NotStarted(failure)),
             }
         }
     }
@@ -62,8 +62,8 @@ fn limits() -> Limits {
     Limits::new(Duration::from_secs(30))
 }
 
-fn over(launch: Launch) -> run_ports::TurnOutput {
-    let Launch::Over(output) = launch else {
+fn over(launch: TurnLaunch) -> run_ports::TurnOutput {
+    let TurnLaunch::Over(output) = launch else {
         panic!("it should have started: {launch:?}")
     };
     output
@@ -280,7 +280,7 @@ fn the_command_runs_in_exactly_the_environment_it_is_given() {
 fn a_program_that_is_not_there_never_started_and_will_not_next_time() {
     let missing = os::fixture("/no/such/program");
     let launch = launch(&TurnCommand::new(missing.to_str().unwrap()), &limits());
-    let Launch::NotStarted(failure) = &launch else {
+    let TurnLaunch::NotStarted(failure) = &launch else {
         panic!("{launch:?}")
     };
     assert!(failure.deterministic);
@@ -305,7 +305,7 @@ fn a_program_the_system_refuses_to_start_may_start_next_time() {
     // program's absence.
     let dir = Rooted::temp().unwrap();
     let launch = launch(&TurnCommand::new(dir.root().to_str().unwrap()), &limits());
-    let Launch::NotStarted(failure) = launch else {
+    let TurnLaunch::NotStarted(failure) = launch else {
         panic!()
     };
     assert!(!failure.deterministic);
@@ -333,7 +333,7 @@ fn a_terminal_session_runs_on_exactly_the_commands_environment_and_reports_its_e
 #[test]
 fn a_terminal_session_that_cannot_start_is_not_started() {
     let command = TurnCommand::new("/no/such/program");
-    let Launch::NotStarted(failure) = terminal(&command) else {
+    let TurnLaunch::NotStarted(failure) = terminal(&command) else {
         panic!("it cannot have started")
     };
     assert!(failure.deterministic);
@@ -398,11 +398,11 @@ fn a_program_that_is_not_there_gives_no_pid() {
     let (pid, launch) =
         answer(HostLauncher::default().launch(&TurnCommand::new("/no/such/program"), &limits()));
     assert_eq!(pid, None);
-    assert!(matches!(launch, Launch::NotStarted(_)));
+    assert!(matches!(launch, TurnLaunch::NotStarted(_)));
     let (pid, launch) =
         answer(HostLauncher::default().launch_terminal(&TurnCommand::new("/no/such/program")));
     assert_eq!(pid, None);
-    assert!(matches!(launch, Launch::NotStarted(_)));
+    assert!(matches!(launch, TurnLaunch::NotStarted(_)));
 }
 
 // --- the terminal session
@@ -605,4 +605,48 @@ fn a_terminal_session_reads_the_callers_stdin_and_writes_the_callers_stdout_and_
     assert!(stdout.contains("out\n"), "{stdout}");
     assert!(stdout.contains("got:hello\n"), "{stdout}");
     assert!(stderr.contains("err\n"), "{stderr}");
+}
+
+// --- the one launch (T10)
+
+// A launch is started as its kind is: a one-shot as a turn (fed its input,
+// its output captured), a terminal's and an editor's on this process's
+// terminal (nothing captured), and a child is its engine's to start:
+// refused, nothing spawned.
+#[test]
+fn a_launch_is_started_as_its_kind_is() {
+    if !runs_scripts() {
+        return;
+    }
+    use run_ports::{Launch, LaunchKind, Stdio};
+    let started = |kind, stdio, command: &TurnCommand| {
+        let launch = Launch::new(kind, "fake", stdio, command.clone());
+        answer(HostLauncher::default().start(&launch, &limits()))
+    };
+    let (_turn_dir, mut turn) = program("#!/bin/sh\nread line\necho \"$line\"\nexit 4\n");
+    turn.stdin = b"fed\n".to_vec();
+    let (pid, answered) = started(LaunchKind::OneShot, Stdio::Piped, &turn);
+    assert!(pid.is_some());
+    let output = over(answered);
+    assert_eq!(output.stdout, b"fed\n", "a turn is fed and captured");
+    assert_eq!(output.exit.code, Some(4));
+    // Reads nothing: its stdin is the caller's.
+    let (dir, terminal) =
+        program("#!/bin/sh\necho started > \"$(dirname \"$0\")/ran\"\necho not-captured\nexit 4\n");
+    for kind in [LaunchKind::Terminal, LaunchKind::Editor] {
+        let output = over(started(kind, Stdio::Inherit, &terminal).1);
+        assert!(output.stdout.is_empty(), "{kind:?}: nothing captured");
+        assert_eq!(output.exit.code, Some(4), "{kind:?}");
+    }
+    dir.remove_file(&os::fixture("/ran")).unwrap();
+    let (pid, child) = started(LaunchKind::Child, Stdio::StreamJson, &terminal);
+    let TurnLaunch::NotStarted(failure) = child else {
+        panic!("a child is its engine's: {child:?}");
+    };
+    assert!(failure.deterministic);
+    assert_eq!(pid, None);
+    assert!(
+        !dir.exists(&os::fixture("/ran")).unwrap(),
+        "nothing spawned"
+    );
 }
