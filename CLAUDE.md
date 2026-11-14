@@ -2073,6 +2073,44 @@ SIGINT or SIGTERM stops its engine, records its end and stops the listener
 before it exits (ruling 114, above). A SIGKILL is not heard: the engine
 outlives it.
 
+A session's HOLD (s4-Q14, unit H1; built as a library, no hook or daemon
+uses it yet: H2 makes a hook hold, the flush is later) keeps capture facts
+in order for a ctxloom process of an up-to-date version to deliver (owner:
+the client side pushes a hold over the API; the daemon reads no hold file).
+"Up to date" is semver not older, `run_ports::up_to_date(daemon, fact) =
+!newer(fact, daemon)`, over the ONE `run_ports::newer` the skew rule uses
+too (`daemon_api::newer` re-exports it). The port is run-ports'
+`HeldFacts` (`hold`, `is_empty`, `sessions`, `take`, `discard`, `survey`;
+`Batch::cut`/`settle`); the adapter is `adapters/driven/fact-spool`'s
+`Spool`: `<home>/.ctxloom/held/<session root>.held` (`run_ports::HELD_DIR`),
+the directory made and tightened 0700 and each hold 0600 at every use (on
+Windows no mode: the ACL, M8), a mode not set failing the call
+(`run-ports-hold-restrict`). A hold is the magic `CTXHELD\x01`, then records
+of a u32-LE length, a u32-LE CRC-32 (crc32fast) and one `ctxloom.v1.HeldRecord`
+(`proto/ctxloom/v1/held.proto`: a `HeldFact`, the hook's stamp, the session's
+name, the external id and the `CommandBook`'s exact bytes, or a `HeldGap`);
+`HeldFact`'s `Debug` withholds the book. Bound: 32 MiB a session and 256 MiB
+a home (`SESSION_BOUND`, `HOME_BOUND`); past either the NEWEST fact is
+dropped (`Held::Full`, for the caller to say on stderr) and a gap record
+written in its place, gaps allowed `GAP_SLACK` (64 KiB) past the bound;
+earlier facts are kept. Two `file-lock` locks a session: `<root>.lock`, the
+short append lock (a hook's wait `APPEND_WAIT`, 1 s; the wait, or its
+pause, is `Spool::waiting`/`pausing`, the seam tests force a held lock
+through), and `<root>.flush.lock`, held by a `take` until its batch is
+settled or dropped and NEVER waited for, so of several processes taking one
+hold exactly one gets the batch and the others `None`. A settle rewrites
+the hold to what was kept plus what was appended since its snapshot, only
+while the hold still begins with the snapshot's bytes (a discard
+meanwhile: `Settled::Replaced`, left alone); a batch dropped unsettled (a
+crash between delivering and cutting) changes nothing, and its facts are
+delivered again, each a DUPLICATE. A torn tail is cut by the next append or
+take, never set aside; corruption (a length past the longest record, a bad
+CRC, a payload that is no record) keeps the valid prefix and sets the rest
+aside as `<root>.held.corrupt-<n>` (0600, never parsed again); a hold of
+another format is never touched (`run-ports-hold-format`). No record is
+fsync'd. The property tests use a seeded generator of the test's own (no
+property crate is in the lock).
+
 ## No path dependency leaves the repository
 
 A tracked `Cargo.toml` or `.cargo/*.toml` never holds a dependency, `[patch]`

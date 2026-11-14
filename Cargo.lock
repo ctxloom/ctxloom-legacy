@@ -1678,6 +1678,21 @@ version = "0.1.0"
 source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
 
 [[package]]
+name = "fact-spool"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "daemon-proto",
+ "file-lock",
+ "file-system",
+ "mutants",
+ "os",
+ "prost",
+ "run-ports",
+ "uuid",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3909,6 +3924,7 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "surface-ports",
+ "uuid",
 ]
 
 [[package]]

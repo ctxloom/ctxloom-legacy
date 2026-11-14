@@ -112,6 +112,7 @@ sessions = { path = "crates/core/domain/sessions" }
 session-index = { path = "crates/core/read-model/session-index" }
 session-policies = { path = "crates/core/application/session-policies" }
 liveness = { path = "crates/adapters/driven/liveness" }
+fact-spool = { path = "crates/adapters/driven/fact-spool" }
 session-files = { path = "crates/adapters/driven/session-files" }
 session-cli = { path = "crates/adapters/driving/session-cli" }
 mcp-server = { path = "crates/adapters/driving/mcp-server" }
