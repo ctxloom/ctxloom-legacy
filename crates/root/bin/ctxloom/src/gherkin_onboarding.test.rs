@@ -568,11 +568,71 @@ fn reprise_guidance(w: &mut World, reaches: String) {
 }
 
 // ------------------------------------------------ j001800: Alice's guardrails
+//
+// Alice's companions are the stub companion, on her `PATH`; she adds them
+// and starts her session as she types it (`ctxloom run`, the terminal stood
+// in). Her assistant is a stub `claude` ([`ALICE_CLAUDE`]) that records the
+// session home it was given and its arguments, then does what an assistant
+// told "use the task runner" does out of habit: it reaches for a raw shell
+// command, and, as claude does, first runs every `PreToolUse` hook of the
+// settings file its command line names (`--settings`, the session's own
+// `ctxloom-hooks.json`) whose matcher takes its `Bash` tool, with the call
+// on stdin ([`FIRE`], under node), running the command only when no hook
+// blocked it (exit 2). The guard ltk's loadout declares is [`GUARD_COMMAND`],
+// a program on her `PATH` that records what it was asked. Both write one
+// log, so its order is the order things happened.
 
 const TASK_RUNNER_MARKER: &str = "J001800-TASK-RUNNER-GUIDANCE-MARKER";
 const REUSE_MARKER: &str = "J001800-REUSE-BEFORE-YOU-WRITE-MARKER";
 /// What the stub's `pre_tool` hooks run, in place of `ltk evaluate`.
 const GUARD_COMMAND: &str = "stub-guard evaluate";
+/// The raw shell command her assistant reaches for.
+const RAW_COMMAND: &str = "make test";
+
+/// Alice's assistant: records its session home and arguments, then
+/// reaches for a raw shell command through its hooks.
+const ALICE_CLAUDE: &str = r#"here="$(dirname "$0")"
+printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" > "$here/claude-home"
+: > "$here/claude-args"
+settings=""
+prev=""
+for a in "$@"; do
+  printf '%s\n' "$a" >> "$here/claude-args"
+  [ "$prev" = "--settings" ] && settings="$a"
+  prev="$a"
+done
+if [ -n "$settings" ]; then
+  node "$here/fire.mjs" "$settings" "$here/guard.log" "make test" > "$here/fire.out" 2>&1
+fi
+[ -t 0 ] || cat > /dev/null
+exit 0
+"#;
+
+/// What claude does before a tool call: each `PreToolUse` hook whose
+/// matcher takes the tool, run with the call on stdin; the call runs only
+/// when none exited 2.
+const FIRE: &str = r#"import { readFileSync, appendFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+const [settingsFile, log, command] = process.argv.slice(2)
+const settings = JSON.parse(readFileSync(settingsFile, "utf8"))
+const payload = JSON.stringify({ session_id: "j001800", hook_event_name: "PreToolUse", cwd: process.cwd(), tool_name: "Bash", tool_input: { command } })
+let blocked = false
+for (const group of (settings.hooks && settings.hooks.PreToolUse) || []) {
+  const matcher = group.matcher || ""
+  if (matcher && !new RegExp("^(?:" + matcher + ")$").test("Bash")) continue
+  for (const hook of group.hooks || []) {
+    if (hook.type !== "command") continue
+    const ran = spawnSync(hook.command, { shell: true, input: payload, env: process.env })
+    if (ran.status === 2) blocked = true
+  }
+}
+if (!blocked) appendFileSync(log, "ran " + command + "\n")
+"#;
+
+/// The guard: records the call it was asked about, and lets it run.
+const GUARD: &str = r#"printf 'asked %s\n' "$(cat)" >> "$(dirname "$0")/guard.log"
+exit 0
+"#;
 
 /// The tools of the shell and file-edit classes in claude, written out here
 /// rather than derived from the loadout (Go's `j001800LtkGuardedTools`): a
@@ -598,17 +658,77 @@ fn guard_loadout() -> String {
 /// The tool classes the guard loadout declares, one hook each.
 const DECLARED_CLASSES: usize = 2;
 
+/// Paths ctxloom's engines read in a project, none of which a session
+/// started by ctxloom may leave there.
+const ENGINE_FILES: [&str; 7] = [
+    ".claude",
+    "CLAUDE.md",
+    ".mcp.json",
+    "AGENTS.md",
+    "opencode.json",
+    ".opencode",
+    "ctxloom-hooks.json",
+];
+
+impl World {
+    /// Where Alice's assistant, its hook driver and her guard are.
+    fn alice_bin(&self) -> PathBuf {
+        self.scratch().join("alice-bin")
+    }
+
+    /// What Alice's assistant recorded, by file name.
+    fn alice_recorded(&self, name: &str) -> String {
+        let said = self
+            .onboarding
+            .last
+            .as_ref()
+            .map(Ran::said)
+            .unwrap_or_default();
+        files::read(self.alice_bin().join(name))
+            .unwrap_or_else(|_| panic!("Alice's assistant recorded no {name}: {said}"))
+    }
+
+    /// The session home her assistant was given.
+    fn alice_home(&self) -> PathBuf {
+        PathBuf::from(self.alice_recorded("claude-home").trim())
+    }
+
+    /// The settings file her assistant's command line named.
+    fn alice_settings(&self) -> serde_json::Value {
+        let args = self.alice_recorded("claude-args");
+        let lines: Vec<&str> = args.lines().collect();
+        let file = lines
+            .windows(2)
+            .find(|w| w[0] == "--settings")
+            .map(|w| w[1])
+            .unwrap_or_else(|| panic!("her assistant was named no --settings: {args}"));
+        let raw = files::read(file).unwrap_or_else(|e| panic!("{file}: {e}"));
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{file}: {e}: {raw}"))
+    }
+
+    /// The engine files of ctxloom's in Alice's project.
+    fn alice_engine_files(&self) -> Vec<String> {
+        ENGINE_FILES
+            .iter()
+            .filter(|rel| self.common.project.exists(rel))
+            .map(ToString::to_string)
+            .collect()
+    }
+}
+
 #[given("Alice's project exists")]
 fn alice_project(w: &mut World) {
     w.common.project = super::Project::initialized();
     super::j000200_scaffold(w, "claude-code");
 }
 
-/// Both companions are the stub: registered with the command that runs it,
-/// each answering a generic loadout (a fragment with a marker; for "ltk" also
-/// a `pre_tool` hook on the `shell` and the `file_edit` tool class). The stub
-/// stands in for ltk and reprise, so neither's own wording or command is
-/// asserted: only ctxloom's half, the delivery.
+/// Both companions are the stub, its program on her `PATH` under each
+/// one's name, each answering a generic loadout (a fragment with a marker;
+/// for "ltk" also a `pre_tool` hook on the `shell` and the `file_edit` tool
+/// class). The stub stands in for ltk and reprise, so neither's own wording
+/// or command is asserted: only ctxloom's half, the delivery. Her
+/// assistant and her guard are on her `PATH` too. Nothing is registered:
+/// she adds them herself.
 #[given("ltk and reprise are installed on Alice's machine")]
 fn alice_companions(w: &mut World) {
     let scratch = w.scratch();
@@ -624,27 +744,62 @@ fn alice_companions(w: &mut World) {
     for (name, loadout) in loadouts {
         let stub = Stub::install(&scratch.join("companions"), name, &loadout);
         w.common.project.put_on_path(stub.bin());
-        let args = stub.add_args(name);
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        w.common.project.run_with(&[], &args).succeeds();
     }
+    let bin = w.alice_bin();
+    files::put_program(bin.join("claude"), ALICE_CLAUDE);
+    files::put_program(bin.join("stub-guard"), GUARD);
+    files::put(bin.join("fire.mjs"), FIRE);
+    w.common.project.put_on_path(&bin);
 }
 
-/// Go's `materializeDefault`: the default profile for claude-code into `out`.
-fn alice_materialized(w: &mut World) {
-    w.common.run_lines(
-        "ctxloom materialize default --target out --backend claude-code",
-        "",
-    );
-    w.ran().succeeds();
+/// "Alice adds both companions and starts a session:" (the surfaces
+/// World's `Alice ...:` step hands it here): each command as she types it,
+/// in her project, at her terminal (stood in), with a token; the engine
+/// files of her project are looked at before her session starts.
+pub(super) fn alice_starts(w: &mut World, step: &Step) -> bool {
+    if step.value != "Alice adds both companions and starts a session:" {
+        return false;
+    }
+    let env = [
+        ("CTXLOOM_TEST_TERMINAL", "1"),
+        (
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "sk-ant-oat01-acceptance-fixture-not-real",
+        ), // gitleaks:allow
+    ];
+    let dir = w.common.project.dir().to_path_buf();
+    for line in doc(step).lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let words = super::super::gherkin_common::split(line);
+        assert_eq!(words.first().map(String::as_str), Some("ctxloom"), "{line}");
+        let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+        if args.first() == Some(&"run") {
+            let before = w.alice_engine_files();
+            assert!(
+                before.is_empty(),
+                "her project held engine files of ctxloom's before her session: {before:?}"
+            );
+        }
+        let ran = w.common.project.run_in_with(&dir, &env, &args);
+        let failed = ran.code != 0;
+        w.onboarding.last = Some(ran);
+        assert!(
+            !failed,
+            "{line}: {}",
+            w.onboarding.last.as_ref().expect("ran").said()
+        );
+    }
+    true
 }
 
+/// The context her session was handed: the context file in its home.
 fn alice_context(w: &mut World) -> String {
-    alice_materialized(w);
-    w.common
-        .project
-        .read("out/CLAUDE.md")
-        .unwrap_or_else(|| panic!("no out/CLAUDE.md: {}", w.ran().said()))
+    let home = w.alice_home();
+    files::read(home.join(CONTEXT_FILE)).unwrap_or_else(|_| {
+        panic!(
+            "her session home {} holds no {CONTEXT_FILE}",
+            home.display()
+        )
+    })
 }
 
 #[then("her assistant receives ltk's task-runner guidance")]
@@ -659,21 +814,15 @@ fn alice_has_reuse(w: &mut World) {
     assert!(body.contains(REUSE_MARKER), "{body}");
 }
 
-/// Each declared tool class reaches the engine's settings as its own
-/// PreToolUse entry, whose matcher covers the engine's tool names for it.
+/// Each declared tool class reaches the session's settings (the launch
+/// carries it: `LaunchSurfaces`) as its own PreToolUse entry, whose matcher
+/// covers the engine's tool names for it.
 #[then("her assistant's engine is configured to run ltk on every shell command and file edit")]
 fn alice_engine_guards(w: &mut World) {
-    alice_materialized(w);
-    let raw = w
-        .common
-        .project
-        .read("out/.claude/settings.json")
-        .unwrap_or_else(|| panic!("no out/.claude/settings.json: {}", w.ran().said()));
-    let settings: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("settings.json: {e}: {raw}"));
+    let settings = w.alice_settings();
     let entries = settings["hooks"]["PreToolUse"]
         .as_array()
-        .unwrap_or_else(|| panic!("no PreToolUse hooks: {raw}"));
+        .unwrap_or_else(|| panic!("no PreToolUse hooks: {settings}"));
     let matchers: Vec<&str> = entries
         .iter()
         .filter(|entry| {
@@ -687,7 +836,7 @@ fn alice_engine_guards(w: &mut World) {
         .collect();
     assert!(
         !matchers.is_empty(),
-        "no PreToolUse hook runs {GUARD_COMMAND:?}: {raw}"
+        "no PreToolUse hook runs {GUARD_COMMAND:?}: {settings}"
     );
     let covered: Vec<&str> = matchers.iter().flat_map(|m| m.split('|')).collect();
     let missing: Vec<&str> = GUARDED_TOOLS
@@ -697,11 +846,51 @@ fn alice_engine_guards(w: &mut World) {
         .collect();
     assert!(
         missing.is_empty(),
-        "the matchers {matchers:?} do not cover {missing:?}: {raw}"
+        "the matchers {matchers:?} do not cover {missing:?}: {settings}"
     );
     assert_eq!(
         matchers.len(),
         DECLARED_CLASSES,
         "one registration per declared tool class, neither adding nor dropping one: {matchers:?}"
+    );
+}
+
+/// Her assistant reached for it in her session (its stub does, through its
+/// hooks, as its first act): the session ran, and its hooks were fired.
+#[when("her assistant runs a raw shell command")]
+fn alice_raw_command(w: &mut World) {
+    let fired = w.alice_recorded("fire.out");
+    assert!(
+        fired.trim().is_empty(),
+        "her assistant's hooks could not be fired: {fired}"
+    );
+}
+
+/// The guard was asked about that very call, and was asked before the
+/// command ran.
+#[then("ltk was asked about the command before it ran")]
+fn alice_guard_asked(w: &mut World) {
+    let log = w.alice_recorded("guard.log");
+    let lines: Vec<&str> = log.lines().collect();
+    let asked = lines
+        .iter()
+        .position(|l| l.starts_with("asked ") && l.contains(RAW_COMMAND) && l.contains("\"Bash\""))
+        .unwrap_or_else(|| panic!("ltk was never asked about {RAW_COMMAND:?}: {log}"));
+    let ran = lines
+        .iter()
+        .position(|l| *l == format!("ran {RAW_COMMAND}"))
+        .unwrap_or_else(|| panic!("{RAW_COMMAND:?} never ran: {log}"));
+    assert!(
+        asked < ran,
+        "ltk was asked only after the command ran: {log}"
+    );
+}
+
+#[then("her project holds no engine files of ctxloom's")]
+fn alice_project_clean(w: &mut World) {
+    let after = w.alice_engine_files();
+    assert!(
+        after.is_empty(),
+        "her session left engine files of ctxloom's in her project: {after:?}"
     );
 }

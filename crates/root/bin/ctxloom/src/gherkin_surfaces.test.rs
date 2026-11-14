@@ -81,6 +81,13 @@ impl CommonWorld for World {
     fn common_mut(&mut self) -> &mut Common {
         &mut self.common
     }
+
+    fn alice_runs(&mut self, step: &Step) {
+        if onboarding::alice_starts(self, step) {
+            return;
+        }
+        self.common.run_lines(&doc(step), "");
+    }
 }
 
 impl World {
@@ -393,6 +400,84 @@ fn add_script(w: &mut World, marker: String, reference: String) {
     w.common.project.write(
         &sidecar,
         &format!("{held}executable:\n  - scripts/run.sh\n"),
+    );
+}
+
+/// Go's `a companion "ctxloom-companion-<name>" shipping a "<event>" hook is
+/// on PATH`: the stub companion's program on the `PATH`, answering a
+/// loadout with one hook on `event`. A companion is registered by name in
+/// this port (OD-10), so it is added too, as Alice would add it.
+#[given(
+    regex = r#"^a companion "ctxloom-companion-([^"]+)" shipping a "([^"]+)" hook is on PATH$"#
+)]
+fn companion_with_hook(w: &mut World, name: String, event: String) {
+    let loadout = format!(
+        "run:\n  version: 1.0.0\n  hooks:\n    {event}:\n      - command: echo COMPANION-HOOK-{name}\n        type: command\n"
+    );
+    let dir = w.scratch().join("companion-hooks");
+    let stub = crate::tests::companion_stub::Stub::install(&dir, &name, &loadout);
+    w.common.project.put_on_path(stub.bin());
+    let args = stub.add_args(&name);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    w.common.project.run(&args).succeeds();
+}
+
+/// A second directory-form bundle beside the project's first (Go's `a
+/// directory-form bundle "landed" exists`): the project stays as it is.
+#[given(expr = "a directory-form bundle {string} exists")]
+fn another_directory_bundle(w: &mut World, name: String) {
+    w.common.project.write(
+        &format!(".ctxloom/content/bundles/v2/{name}/bundle.yaml"),
+        "schema_version: 4\nversion: 1.0.0\n",
+    );
+}
+
+/// Every file of the landed skill is the authored one's, byte for byte, and
+/// none is missing or added; the modes travel by the sidecar, the ONLY word
+/// on a file's executability: the landed skill's declares what the
+/// authored one's does.
+#[then(
+    expr = "the imported files under {string} match the originally-authored {string}, byte for byte"
+)]
+fn imported_match(w: &mut World, landed: String, authored: String) {
+    let (landed_dir, authored_dir) = (skill_dir(&landed), skill_dir(&authored));
+    let got = w.common.project.tree(&landed_dir);
+    let want = w.common.project.tree(&authored_dir);
+    assert!(
+        !want.is_empty(),
+        "nothing was authored under {authored_dir}"
+    );
+    assert_eq!(
+        got.keys().collect::<Vec<_>>(),
+        want.keys().collect::<Vec<_>>(),
+        "the imported skill's files are not the authored ones: {}",
+        w.ran().said()
+    );
+    for (rel, bytes) in &want {
+        assert!(got.get(rel) == Some(bytes), "{rel} differs once imported");
+    }
+    let sidecar = |dir: &str| dir.replace("/skills/", "/skills/.") + ".meta.yaml";
+    let declared = |dir: &str| {
+        let text = w.common.project.read(&sidecar(dir)).unwrap_or_default();
+        // The sidecar's `executable:` list, one `  - <path>` line each.
+        let mut listed: Vec<String> = text
+            .lines()
+            .skip_while(|l| l.trim_end() != "executable:")
+            .skip(1)
+            .map_while(|l| l.trim().strip_prefix("- "))
+            .map(|p| p.trim_matches('"').to_string())
+            .collect();
+        listed.sort();
+        listed
+    };
+    assert_eq!(
+        declared(&landed_dir),
+        declared(&authored_dir),
+        "the imported skill does not declare the authored one's executables"
+    );
+    assert!(
+        declared(&landed_dir).contains(&"scripts/run.sh".to_string()),
+        "the imported skill declares no scripts/run.sh executable"
     );
 }
 
