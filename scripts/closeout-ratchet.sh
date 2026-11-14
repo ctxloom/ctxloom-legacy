@@ -14,7 +14,11 @@
 #      `just test` with GHERKIN_RATCHET naming target/logs/ratchet/slice.list:
 #      the feature runner writes its scenario list there and passes; every
 #      other test fails `test` as it always does. The list is then judged
-#      (the `ratchet` line). `mutants-batch` mutation-tests
+#      (the `ratchet` line), each scenario whose colour differs from the
+#      base's list first run again on the base, alone and in its feature
+#      (`ratchet-base.sh <base> --reconfirm`): a difference the base does not
+#      reproduce is FLAKY and fails the ratchet (scripts/ratchet-judge.sh).
+#      `mutants-batch` mutation-tests
 #      merge-base(<base>, HEAD)..HEAD with GHERKIN_RATCHET set too, so the
 #      base's red scenarios do not make its baseline red.
 #   3. A summary line: `ok   closeout-ratchet (6 gates; base 1a2b3c4: 136 red,
@@ -35,8 +39,10 @@
 # usage error.
 #
 # Environment: RATCHET_GATES (space-separated recipe names, default the six
-# above) and RATCHET_BASE_LIST (the base's list, instead of `ratchet-base`):
-# the self-test's seams; the mutants-batch variables.
+# above), RATCHET_BASE_LIST (the base's list, instead of `ratchet-base`) and
+# RATCHET_RECONFIRM (a command given `<base> <ids> <out>`, instead of
+# `ratchet-base.sh --reconfirm`): the self-test's seams; the mutants-batch
+# variables.
 set -uo pipefail
 top=$(git rev-parse --show-toplevel)
 here=$(cd "$(dirname "$0")" && pwd)
@@ -72,6 +78,38 @@ mkdir -p "$dir"
 slice_list=$dir/slice.list
 rm -f "$slice_list" "$dir/mutants.list"
 
+# The ratchet's verdict, each difference from the base's list re-confirmed
+# on the base first (owner, 2026-11-14): `ratchet-base.sh --reconfirm`, or
+# RATCHET_RECONFIRM (the self-test's seam, given the same arguments); with
+# RATCHET_BASE_LIST and no RATCHET_RECONFIRM nothing is re-confirmed.
+judge_ratchet() {
+    local ids=$dir/differ.ids reconfirmed=$dir/reconfirmed.list
+    rm -f "$reconfirmed" "$reconfirmed.failures"
+    if [ -s "$slice_list" ]; then
+        { LC_ALL=C comm -12 <(sed -n 's/^red\t//p' "$slice_list" | LC_ALL=C sort -u) \
+              <(sed -n 's/^green\t//p' "$base_list" | LC_ALL=C sort -u)
+          LC_ALL=C comm -12 <(sed -n 's/^green\t//p' "$slice_list" | LC_ALL=C sort -u) \
+              <(sed -n 's/^red\t//p' "$base_list" | LC_ALL=C sort -u); } | LC_ALL=C sort -u > "$ids"
+    else
+        : > "$ids"
+    fi
+    local reconfirm=${RATCHET_RECONFIRM:-}
+    if [ -z "$reconfirm" ] && [ -n "${RATCHET_BASE_LIST:-}" ]; then
+        "$here/ratchet-judge.sh" "$base_list" "$slice_list" 2>&1
+        return
+    fi
+    : > "$reconfirmed"
+    if [ -s "$ids" ]; then
+        local run=("$here/ratchet-base.sh" "$base_sha" --reconfirm)
+        [ -z "$reconfirm" ] || run=("$reconfirm" "$base_sha")
+        if ! "${run[@]}" "$ids" "$reconfirmed" 2>&1; then
+            echo "FAIL ratchet: the base could not re-confirm the $(grep -c '' "$ids") scenarios whose colour differs (full log: target/logs/ratchet-base.log)" >&2
+            return 1
+        fi
+    fi
+    "$here/ratchet-judge.sh" "$base_list" "$slice_list" "$reconfirmed" 2>&1
+}
+
 failed=()
 for gate in "${gates[@]}"; do
     case "$gate" in
@@ -82,7 +120,7 @@ for gate in "${gates[@]}"; do
             # A run that did not build lists nothing: its failure is the test
             # gate's alone.
             if [ "$rc" -eq 0 ] || [ -e "$slice_list" ]; then
-                "$here/ratchet-judge.sh" "$base_list" "$slice_list" 2>&1 || failed+=(ratchet)
+                judge_ratchet || failed+=(ratchet)
             fi
             ;;
         mutants-batch)

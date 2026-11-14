@@ -563,13 +563,14 @@ pub(crate) fn outside_id(feature: &str) -> String {
     format!("{feature} :: (outside a scenario)")
 }
 
-/// Run one feature file with the World `W`, its pending scenarios left out:
+/// Run one feature file with the World `W`, its pending scenarios left out
+/// (and, when `only` names a scenario id, every other scenario too):
 /// whether it passed, and each scenario's outcome. A failure no scenario
 /// owns is the feature's [`outside_id`]. A scenario whose step found the host
 /// cannot run a fake program (`files::put_program`'s [`files::UNSUPPORTED`]
 /// panic, off unix) is skipped, said `SKIP <scenario>: <why>` on stderr, and
 /// fails nothing; on unix no step panics so.
-pub(crate) fn run_feature<W>(file: &Path) -> FeatureRun
+pub(crate) fn run_feature<W>(file: &Path, only: Option<&str>) -> FeatureRun
 where
     W: cucumber::World + cucumber::codegen::WorldInventory + fmt::Debug,
 {
@@ -585,6 +586,8 @@ where
     let unsupported = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let skips = std::sync::Arc::clone(&unsupported);
     let named = feature.clone();
+    let chosen = feature.clone();
+    let only = only.map(str::to_string);
     let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorder = StepFailures {
         feature: feature.clone(),
@@ -626,8 +629,11 @@ where
             .with_cli(cucumber::cli::Opts::<_, _, _, cucumber::cli::Empty>::default())
             .max_concurrent_scenarios(4)
             .fail_on_skipped()
-            .filter_run(file, |feature, rule, scenario| {
+            .filter_run(file, move |feature, rule, scenario| {
                 !is_pending(feature, rule, scenario)
+                    && only
+                        .as_deref()
+                        .is_none_or(|id| scenario_id(&chosen, rule, scenario) == id)
             }),
     );
     // Each skipped scenario failed the one step that found the host unable.

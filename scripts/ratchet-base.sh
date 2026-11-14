@@ -14,6 +14,14 @@
 # so; one it does not apply to fails. Only that test runs, so nothing but the
 # list is judged on the base.
 #
+# `ratchet-base <base> --reconfirm <ids> <out>` (owner, 2026-11-14) runs each
+# scenario id of the file <ids> again on the base, in the same worktree:
+# ALONE (GHERKIN_SCENARIO), then in its feature file (GHERKIN_ONLY), and
+# writes `<alone><TAB><in its feature><TAB><id>` per id to <out>, each colour
+# `red`, `green` or `none`, and the re-runs' failures to <out>.failures. A
+# base whose runner cannot run one scenario gets the commit that taught it
+# applied, as above. Exit 0 with <out> written, 1 otherwise.
+#
 # The worktree is removed once the list is cached; an interrupted run leaves
 # it, at the same sha, so the next run resumes the build where it stopped
 # (cargo fingerprints by mtime). Exit 0 with the list cached, 1 otherwise.
@@ -24,7 +32,12 @@ while IFS= read -r var; do scrub+=(-u "$var"); done < <(git rev-parse --local-en
 g() { "${scrub[@]}" git "$@"; }
 
 top=$(g rev-parse --show-toplevel)
-[ -n "${1:-}" ] || { echo "FAIL ratchet-base: usage: ratchet-base <base>" >&2; exit 1; }
+[ -n "${1:-}" ] || { echo "FAIL ratchet-base: usage: ratchet-base <base> [--reconfirm <ids> <out>]" >&2; exit 1; }
+ids= out=
+if [ "${2:-}" = --reconfirm ]; then
+    ids=${3:?usage: ratchet-base <base> --reconfirm <ids> <out>}
+    out=${4:?usage: ratchet-base <base> --reconfirm <ids> <out>}
+fi
 base_sha=$(g -C "$top" rev-parse --verify --quiet "$1^{commit}") || { echo "FAIL ratchet-base: $1 is not a commit" >&2; exit 1; }
 short=${base_sha:0:7}
 cache_dir=$top/target/ratchet
@@ -32,7 +45,7 @@ cache=$cache_dir/$base_sha.list
 mkdir -p "$cache_dir" "$top/target/logs"
 log=$top/target/logs/ratchet-base.log
 summary() { printf 'ok   ratchet-base (%s: %d red of %d)%s\n' "$short" "$(grep -c '^red' "$cache" || true)" "$(grep -c '' "$cache")" "$1"; }
-if [ -s "$cache" ]; then
+if [ -z "$ids" ] && [ -s "$cache" ]; then
     summary " cached"
     exit 0
 fi
@@ -54,7 +67,17 @@ if ! g -C "$top" grep -q GHERKIN_RATCHET "$base_sha" -- "$runner"; then
         exit 1
     fi
 fi
-want="$base_sha ${emitter:-none}"
+# A re-confirmation runs one scenario alone: a base whose runner cannot is
+# taught by the commit that taught HEAD's.
+chooser=
+if [ -n "$ids" ] && ! g -C "$top" grep -q GHERKIN_SCENARIO "$base_sha" -- "$runner"; then
+    chooser=$(g -C "$top" log --reverse --format=%H -S GHERKIN_SCENARIO HEAD -- "$runner" | head -n 1)
+    if [ -z "$chooser" ]; then
+        echo "FAIL ratchet-base: $short cannot run one scenario alone, and HEAD has no commit that teaches it (GHERKIN_SCENARIO)" >&2
+        exit 1
+    fi
+fi
+want="$base_sha ${emitter:-none} ${chooser:-none}"
 remove_tree() {
     # The base's tree and its own record only, never a repository-wide prune
     # (in a container that mounts only this checkout it deletes every other
@@ -67,27 +90,58 @@ if [ ! -d "$wt" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$want" ] \
     remove_tree
     g -C "$top" worktree add --quiet --detach --no-checkout "$wt" "$base_sha"
     g -C "$wt" read-tree -u --reset HEAD
-    if [ -n "$emitter" ]; then
-        g -C "$top" diff --binary --no-color --no-ext-diff "$emitter^" "$emitter" \
-            -- 'crates/root/bin/ctxloom/src/gherkin*.test.rs' > "$work/emitter.patch"
-        if ! g -C "$wt" apply --whitespace=nowarn "$work/emitter.patch" 2> "$work/apply.err"; then
-            echo "FAIL ratchet-base: $short predates the scenario list, and its commit ${emitter:0:7} does not apply to it; merge main into the base first" >&2
+    for teacher in $emitter $chooser; do
+        g -C "$top" diff --binary --no-color --no-ext-diff "$teacher^" "$teacher" \
+            -- 'crates/root/bin/ctxloom/src/gherkin*.test.rs' > "$work/teacher.patch"
+        if ! g -C "$wt" apply --whitespace=nowarn "$work/teacher.patch" 2> "$work/apply.err"; then
+            echo "FAIL ratchet-base: $short predates the runner HEAD's ratchet needs, and its commit ${teacher:0:7} does not apply to it; merge the base's line into it first" >&2
             head -n 10 "$work/apply.err" >&2
             remove_tree
             exit 1
         fi
-    fi
+    done
     echo "$want" > "$stamp"
 fi
 [ -z "$emitter" ] || echo "note ratchet-base: $short predates the scenario list; ${emitter:0:7}'s runner change was applied on it"
+[ -z "$chooser" ] || echo "note ratchet-base: $short cannot run one scenario alone; ${chooser:0:7}'s runner change was applied on it"
+
+# The feature runner on the base, its list to $1, the rest of the arguments
+# its environment; its output appended to the log.
+run_features() {
+    local list=$1
+    shift
+    (cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" "GHERKIN_RATCHET=$list" "$@" \
+        cargo nextest run --manifest-path "$wt/Cargo.toml" --package ctxloom --no-fail-fast --no-tests=fail \
+        --status-level fail --final-status-level fail --success-output never --failure-output final \
+        --hide-progress-bar --cargo-quiet -E 'test(=tests::gherkin_features::every_feature_runs)') \
+        >> "$log" 2>&1 7>&-
+}
 
 start=$(date +%s)
+: > "$log"
+if [ -n "$ids" ]; then
+    colour() { awk -F'\t' -v want="$2" '$2 == want { print $1; found = 1; exit } END { if (!found) print "none" }' "$1" 2>/dev/null || echo none; }
+    : > "$work/out"
+    : > "$work/out.failures"
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        feature=${id%% :: *}
+        rm -f "$work/alone" "$work/alone.failures" "$work/feature" "$work/feature.failures"
+        if ! run_features "$work/alone" "GHERKIN_SCENARIO=$id" || ! run_features "$work/feature" "GHERKIN_ONLY=$feature"; then
+            echo "FAIL ratchet-base: the feature runner did not re-run '$id' on $short (full log: target/logs/ratchet-base.log)" >&2
+            exit 1
+        fi
+        printf '%s\t%s\t%s\n' "$(colour "$work/alone" "$id")" "$(colour "$work/feature" "$id")" "$id" >> "$work/out"
+        cat "$work/alone.failures" "$work/feature.failures" >> "$work/out.failures" 2>/dev/null || true
+    done < "$ids"
+    mv "$work/out" "$out"
+    mv "$work/out.failures" "$out.failures"
+    remove_tree
+    printf 'ok   ratchet-base (%s: %d re-confirmed) %ds\n' "$short" "$(grep -c '' "$out")" "$(($(date +%s) - start))"
+    exit 0
+fi
 rc=0
-(cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" "GHERKIN_RATCHET=$work/list" \
-    cargo nextest run --manifest-path "$wt/Cargo.toml" --package ctxloom --no-fail-fast --no-tests=fail \
-    --status-level fail --final-status-level fail --success-output never --failure-output final \
-    --hide-progress-bar --cargo-quiet -E 'test(=tests::gherkin_features::every_feature_runs)') \
-    > "$log" 2>&1 7>&- || rc=$?
+run_features "$work/list" || rc=$?
 secs=$(($(date +%s) - start))
 if [ "$rc" -ne 0 ] || [ ! -s "$work/list" ]; then
     echo "FAIL ratchet-base: the feature runner did not list $short's scenarios (nextest exit $rc) (full log: target/logs/ratchet-base.log)" >&2

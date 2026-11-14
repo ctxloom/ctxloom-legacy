@@ -82,6 +82,56 @@ rc=0; out=$(judge) || rc=$?
 [ "$rc" -eq 1 ] || fail "a missing list passed"
 grep -q '^FAIL ratchet: no scenario list ' <<< "$out" || fail "missing list line: $out"
 
+# Re-confirmation (owner, 2026-11-14): each scenario whose colour differs
+# from the base's list was run again on the base, alone and in its feature
+# (`<alone><TAB><in its feature><TAB><id>`, the judge's third argument).
+rjudge() { "$here/ratchet-judge.sh" "$tmp/base.list" "$tmp/slice.list" "$tmp/re.list" 2>&1; }
+list "$tmp/base.list" "red:f/a.feature :: one" "red:f/a.feature :: two" "green:f/b.feature :: three"
+# A new red the base reproduces green, alone and in its feature, is a new red.
+list "$tmp/slice.list" "red:f/a.feature :: one" "red:f/a.feature :: two" "red:f/b.feature :: three"
+printf 'green\tgreen\tf/b.feature :: three\n' > "$tmp/re.list"
+rc=0; out=$(rjudge) || rc=$?
+[ "$rc" -eq 1 ] || fail "a reproduced new red passed ($rc): $out"
+grep -q '^FAIL ratchet: 1 new red scenarios: 1 broke green, 0 added red (' <<< "$out" || fail "reproduced new red line: $out"
+! grep -q 'FLAKY' <<< "$out" || fail "a reproduced difference called flaky: $out"
+# A turned green the base reproduces red keeps the base's red: it passes.
+list "$tmp/slice.list" "red:f/a.feature :: one" "green:f/a.feature :: two" "green:f/b.feature :: three"
+printf 'red\tred\tf/a.feature :: two\n' > "$tmp/re.list"
+rc=0; out=$(rjudge) || rc=$?
+[ "$rc" -eq 0 ] || fail "a reproduced turned green failed ($rc): $out"
+grep -qx 'ok   ratchet (base 2 red; here 1 red, 1 turned green)' <<< "$out" || fail "reproduced turned green line: $out"
+# A new red the base does not reproduce (red alone on the base, green listed)
+# is FLAKY, with its reason, and fails: it never passes.
+list "$tmp/slice.list" "red:f/a.feature :: one" "red:f/a.feature :: two" "red:f/b.feature :: three"
+printf 'red\tgreen\tf/b.feature :: three\n' > "$tmp/re.list"
+printf 'red\tf/b.feature :: three\n  step: Then it holds\n  it did not\n\n' > "$tmp/slice.list.failures"
+rc=0; out=$(rjudge) || rc=$?
+[ "$rc" -eq 1 ] || fail "a flaky new red passed ($rc): $out"
+grep -q '^FAIL ratchet: 0 new red scenarios: 0 broke green, 0 added red, 1 flaky (' <<< "$out" || fail "flaky line: $out"
+grep -qx 'FLAKY f/b.feature :: three (base: alone red, in its feature green, listed green; here red)' <<< "$out" \
+    || fail "flaky not named: $out"
+grep -qx '  why: Then it holds: it did not' <<< "$out" || fail "flaky reason: $out"
+rm -f "$tmp/slice.list.failures"
+# A turned green the base does not reproduce (its listed red is green on
+# both re-runs) is FLAKY too, and fails.
+list "$tmp/slice.list" "red:f/a.feature :: one" "green:f/a.feature :: two" "green:f/b.feature :: three"
+printf 'green\tgreen\tf/a.feature :: two\n' > "$tmp/re.list"
+rc=0; out=$(rjudge) || rc=$?
+[ "$rc" -eq 1 ] || fail "a flaky turned green passed ($rc): $out"
+grep -qx 'FLAKY f/a.feature :: two (base: alone green, in its feature green, listed red; here green)' <<< "$out" \
+    || fail "flaky turned green not named: $out"
+# A difference the re-confirmation did not run is FLAKY: nothing confirmed it.
+: > "$tmp/re.list"
+rc=0; out=$(rjudge) || rc=$?
+[ "$rc" -eq 1 ] || fail "an unconfirmed difference passed ($rc): $out"
+grep -qx 'FLAKY f/a.feature :: two (base: alone none, in its feature none, listed red; here green)' <<< "$out" \
+    || fail "unconfirmed difference not named: $out"
+# A slice with no difference needs no re-confirmation.
+list "$tmp/slice.list" "red:f/a.feature :: one" "red:f/a.feature :: two" "green:f/b.feature :: three"
+rc=0; out=$(rjudge) || rc=$?
+[ "$rc" -eq 0 ] || fail "an equal set failed beside an empty re-confirmation ($rc): $out"
+rm -f "$tmp/re.list"
+
 # The closeout, in a fixture repository: base is a commit, HEAD a slice on it.
 r=$tmp/r
 git init -q "$r"
@@ -134,6 +184,33 @@ list "$tmp/slice.list" "red:f/a.feature :: one" "red:f/b.feature :: three"
 rc=0; out=$(closeout) || rc=$?
 [ "$rc" -eq 1 ] || fail "closeout with a broken green passed: $out"
 grep -q '^FAIL closeout-ratchet: 1 failed: ratchet ' <<< "$out" || fail "summary of a new red: $out"
+
+# The closeout re-confirms each difference on the base (RATCHET_RECONFIRM, the
+# seam for `ratchet-base.sh --reconfirm`: given the base, the ids, the
+# output) and judges by what it found.
+cat > "$tmp/reconfirm" <<'R'
+#!/usr/bin/env bash
+cp "$2" "$STUB_IDS_SEEN"
+cp "$STUB_RECONFIRMED" "$3"
+R
+chmod +x "$tmp/reconfirm"
+list "$tmp/slice.list" "red:f/a.feature :: one" "red:f/a.feature :: two" "red:f/b.feature :: three"
+printf 'red\tgreen\tf/b.feature :: three\n' > "$tmp/reconfirmed"
+rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm" STUB_IDS_SEEN="$tmp/ids" STUB_RECONFIRMED="$tmp/reconfirmed") || rc=$?
+[ "$rc" -eq 1 ] || fail "closeout of a flaky difference passed: $out"
+grep -qx 'f/b.feature :: three' "$tmp/ids" || fail "the difference was not re-confirmed: $(cat "$tmp/ids")"
+[ "$(grep -c '' "$tmp/ids")" -eq 1 ] || fail "more than the difference re-confirmed: $(cat "$tmp/ids")"
+grep -q '^FLAKY f/b.feature :: three ' <<< "$out" || fail "closeout: flaky not named: $out"
+printf 'green\tgreen\tf/b.feature :: three\n' > "$tmp/reconfirmed"
+rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm" STUB_IDS_SEEN="$tmp/ids" STUB_RECONFIRMED="$tmp/reconfirmed") || rc=$?
+[ "$rc" -eq 1 ] || fail "closeout of a reproduced new red passed: $out"
+grep -q '^FAIL ratchet: 1 new red scenarios: 1 broke green, 0 added red (' <<< "$out" || fail "closeout reproduced: $out"
+# A re-confirmation that cannot run fails the ratchet, saying so.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/reconfirm-fails"
+chmod +x "$tmp/reconfirm-fails"
+rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm-fails") || rc=$?
+[ "$rc" -eq 1 ] || fail "a failed re-confirmation passed: $out"
+grep -q '^FAIL ratchet: the base could not re-confirm' <<< "$out" || fail "failed re-confirmation line: $out"
 
 # On main, the base has no red scenario: the ratchet is the plain closeout.
 list "$tmp/base.list" "green:f/a.feature :: one" "green:f/b.feature :: three"

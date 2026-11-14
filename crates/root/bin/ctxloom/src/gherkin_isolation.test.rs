@@ -239,7 +239,8 @@ fn tree_unchanged(w: &mut World) {
 common_steps!();
 
 /// Run one feature file with this World: whether it passed, and each
-/// scenario's outcome.
-pub(super) fn run(file: &Path) -> super::gherkin_common::FeatureRun {
-    super::gherkin_common::run_feature::<World>(file)
+/// scenario's outcome; only the scenario whose id is `only` when one is
+/// named.
+pub(super) fn run_only(file: &Path, only: Option<&str>) -> super::gherkin_common::FeatureRun {
+    super::gherkin_common::run_feature::<World>(file, only)
 }
