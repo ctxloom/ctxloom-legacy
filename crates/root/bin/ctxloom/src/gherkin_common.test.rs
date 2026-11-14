@@ -363,9 +363,19 @@ macro_rules! common_steps {
                 w.common().project.profile(&name, &bundle);
             }
 
+            /// A file of the project's own bundle lands in that bundle as an
+            /// initialized project has it, its manifest there (as `init` and
+            /// `profile create` write it; `Project::profile` does the same).
             #[given(expr = "the project already has the file {string}:")]
             fn project_file(w: &mut World, step: &Step, rel: String) {
-                w.common().project.write(&rel, &format!("{}\n", doc(step)));
+                let manifest = ".ctxloom/content/bundles/v2/project/bundle.yaml";
+                let project = &w.common().project;
+                if rel.starts_with(".ctxloom/content/bundles/v2/project/")
+                    && !project.exists(manifest)
+                {
+                    project.write(manifest, "schema_version: 4\nversion: 1.0.0\n");
+                }
+                project.write(&rel, &format!("{}\n", doc(step)));
             }
 
             #[given(expr = "I run {string}")]

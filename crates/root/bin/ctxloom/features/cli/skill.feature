@@ -1,7 +1,6 @@
 # world: surfaces
 # Ported from cli/skill.feature (rev f36e8dfb2)
-# NOT ported: the Rule tagged @pending: the export and import round trip (the
-#   zip import of a skill package).
+# NOT ported: nothing.
 @doc
 Feature: skill — authoring an Agent Skill package, curating it, and shipping it
 
@@ -76,7 +75,6 @@ Feature: skill — authoring an Agent Skill package, curating it, and shipping i
       Then "out-curated/.claude/skills/reviewer/SKILL.md" carries the marker "SKILL-MARKER-reviewer-9f3c21"
       And "out-curated/.claude/skills/planner" does not exist
 
-  @pending
   Rule: A package round-trips through export and import byte for byte
 
     Export packs the package's tree into an archive and import lands it in

@@ -400,6 +400,11 @@ fn profile() -> Command {
                         .action(ArgAction::Append)
                         .help("Bundle(s) the profile includes"),
                 )
+                .arg(list_flag("add-bundle", "Bundle(s) the profile includes"))
+                .arg(list_flag(
+                    "add-skill",
+                    "Skill(s) the profile curates (<bundle>#skills/<name>)",
+                ))
                 .arg(description("Description of the profile"))
                 .arg(named(
                     "bundle",

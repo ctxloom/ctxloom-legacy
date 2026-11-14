@@ -134,6 +134,27 @@ fn test_create_can_target_another_local_bundle() {
     assert!(err(out).contains("BundleNotFound"));
 }
 
+// The vocabulary's `--add-skill` (step 3, j000600): the skills a profile is
+// created with are curated in its definition.
+#[test]
+fn test_create_curates_the_skills_it_is_given() {
+    let (library, mem) = world();
+    library
+        .profile_create(
+            &plain(),
+            &ProfileCreateRequest {
+                skills: vec!["demo#skills/reviewer".to_string()],
+                ..create("curated")
+            },
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        mem.text("project", "profiles/curated.yaml").as_deref(),
+        Some("bundles:\n  - demo\nskills:\n  - demo#skills/reviewer\n")
+    );
+}
+
 // profile.feature: A profile that names neither a bundle nor a parent is refused
 #[test]
 fn test_create_refuses_what_composes_nothing_and_what_it_cannot_name() {

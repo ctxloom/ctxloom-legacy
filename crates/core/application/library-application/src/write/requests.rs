@@ -25,6 +25,8 @@ pub struct ProfileCreateRequest {
     pub description: String,
     pub parents: Vec<String>,
     pub bundles: Vec<String>,
+    /// The skills it curates (`--add-skill`).
+    pub skills: Vec<String>,
     /// The local bundle the profile is written into; the project's own when
     /// empty.
     pub target: String,

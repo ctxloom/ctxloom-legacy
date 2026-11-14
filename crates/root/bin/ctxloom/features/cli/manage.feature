@@ -4,8 +4,6 @@
 #   - "Every engine gets ctxloom's shipped commands in its own idiom": it reads
 #     the body of the `discover` command, which names `search_library`, an MCP
 #     tool the D8 cut list has not ruled on (D24).
-#   - "The hook list names the specific place each hook was declared": needs a
-#     companion's loadout read (S6).
 #   - "After an uninstall, a run delivers into its session ...": needs a
 #     running mock engine (S6).
 #   The mock rows of "Check", "A team's hook" etc. are as Go wrote them; only
@@ -376,7 +374,6 @@ Feature: manage — wiring ctxloom into a project, and taking it back out
     # binary found on PATH. Naming the profile is not enough on its own — the
     # label has to carry the KIND, since "which file do I open" and "which
     # profile is it" are different questions.
-    @pending
     Scenario Outline: The hook list names the specific place each hook was declared
       Given an initialized ctxloom project
       And a companion "ctxloom-companion-hooky" shipping a "pre_tool" hook is on PATH

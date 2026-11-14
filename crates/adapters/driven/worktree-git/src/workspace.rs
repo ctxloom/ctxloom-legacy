@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use file_system::{Fs, Kind, Perms};
 use isolation_ports::{
-    Checkout, Failure, Prepared, Removal, Request, Safety, Scratch, Standing, Workspaces,
+    Checkout, Failure, PlacedFile, Prepared, Removal, Request, Safety, Scratch, Standing,
+    Workspaces,
 };
 use os::Mode;
 use process_env::EnvSnapshot;
@@ -112,6 +113,17 @@ pub(crate) fn worktree_list(git: &Git, repo: &Path) -> Result<Vec<Listed>, GitEr
     Ok(parse_worktree_list(
         &git.run(repo, &["worktree", "list", "--porcelain"])?,
     ))
+}
+
+/// How a placed file is written: one that says it is executable (a skill's
+/// declared script) 0755, as an install writes it; any other as a new file
+/// is, or keeping the mode of one already there.
+fn perms(executable: bool) -> Perms {
+    if executable {
+        Perms::Exact(Mode::from_bits(0o755))
+    } else {
+        Perms::KeepOr(Mode::FILE)
+    }
 }
 
 /// The entries of `git worktree list --porcelain`'s output. Each path is
@@ -417,9 +429,9 @@ impl Workspaces for GitWorkspaces {
         }))
     }
 
-    fn place_files(&self, checkout: &str, files: &[(String, Vec<u8>)]) -> Result<(), Failure> {
+    fn place_files(&self, checkout: &str, files: &[PlacedFile]) -> Result<(), Failure> {
         let root = Path::new(checkout);
-        for (rel, _) in files {
+        for PlacedFile { rel, .. } in files {
             if !plainly_inside(rel) {
                 return Err(Box::new(WorktreeError::Unreadable {
                     path: root.join(rel).display().to_string(),
@@ -427,7 +439,12 @@ impl Workspaces for GitWorkspaces {
                 }));
             }
         }
-        for (rel, bytes) in files {
+        for PlacedFile {
+            rel,
+            bytes,
+            executable,
+        } in files
+        {
             let path = root.join(rel);
             let failed = |e: std::io::Error| -> Failure {
                 Box::new(WorktreeError::Unreadable {
@@ -441,7 +458,7 @@ impl Workspaces for GitWorkspaces {
                     .map_err(failed)?;
             }
             self.fs
-                .write_atomic(&path, bytes, Perms::KeepOr(Mode::FILE))
+                .write_atomic(&path, bytes, perms(*executable))
                 .map_err(failed)?;
         }
         Ok(())

@@ -183,6 +183,32 @@ fn test_create_says_what_it_wrote_and_refuses_what_it_must() {
     project.file_contains(&format!("{PROFILES}/dev9.yaml"), "- demo");
 }
 
+// The vocabulary's spelling (docs/reviews/2026-11-06-vocabulary.md, §3):
+// `profile create` attaches a bundle with `--add-bundle` and curates a skill
+// with `--add-skill` (step 3, j000600), as `--include` attaches one.
+#[test]
+fn test_create_attaches_bundles_and_curates_skills_by_the_vocabularys_flags() {
+    let project = Project::initialized().on_gos_catalog();
+    project.bundle("ops");
+    project
+        .run(&[
+            "profile",
+            "create",
+            "clinic",
+            "--add-bundle",
+            "ops",
+            "--add-skill",
+            "ops#skills/deploy-doctor",
+        ])
+        .succeeds();
+    assert_eq!(
+        project
+            .read(&format!("{PROFILES}/clinic.yaml"))
+            .expect("the profile"),
+        "bundles:\n  - ops\nskills:\n  - ops#skills/deploy-doctor\n"
+    );
+}
+
 // profile.feature: Scenario: A profile that names neither a bundle nor a
 // parent is refused
 #[test]

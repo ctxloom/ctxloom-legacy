@@ -117,12 +117,13 @@ fn an_engine_that_says_nothing_advises_nothing() {
 #[test]
 fn a_home_file_renders_its_path_and_never_its_bytes() {
     let file = HomeFile {
+        executable: false,
         rel: "settings.json".to_string(),
         bytes: br#"{"env":{"TOKEN":"TOPSECRET"}}"#.to_vec(),
     };
     assert_eq!(
         format!("{file:?}"),
-        r#"HomeFile { rel: "settings.json", bytes: "<29 bytes>" }"#
+        r#"HomeFile { rel: "settings.json", bytes: "<29 bytes>", executable: false }"#
     );
 }
 

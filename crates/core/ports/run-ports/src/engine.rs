@@ -41,6 +41,11 @@ pub struct HomeFile {
     /// Slash-separated, relative to the home.
     pub rel: String,
     pub bytes: Vec<u8>,
+    /// Whether it is written executable: a skill's file its sidecar declares
+    /// (`skills/.<n>.meta.yaml`'s `executable:`, the ONLY word on a file's
+    /// executability), so a script a skill ships runs where the launch put
+    /// it, as an install writes it.
+    pub executable: bool,
 }
 
 impl fmt::Debug for HomeFile {
@@ -50,6 +55,7 @@ impl fmt::Debug for HomeFile {
         f.debug_struct("HomeFile")
             .field("rel", &self.rel)
             .field("bytes", &format!("<{} bytes>", self.bytes.len()))
+            .field("executable", &self.executable)
             .finish()
     }
 }

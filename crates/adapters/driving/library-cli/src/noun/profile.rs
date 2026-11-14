@@ -158,7 +158,9 @@ fn create(
         name,
         description: text_arg(sub, "description"),
         parents: many(sub, "parent"),
-        bundles: many(sub, "include"),
+        // `--include`, and the vocabulary's `--add-bundle`, in that order.
+        bundles: [many(sub, "include"), many(sub, "add-bundle")].concat(),
+        skills: many(sub, "add-skill"),
         target: text_arg(sub, "bundle"),
     };
     let outcome = cx.library.profile_create(&cx.flags, &request);

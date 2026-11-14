@@ -193,6 +193,7 @@ impl Engine for Opencode {
                 // The bundles' authored hooks ride the launch, for the
                 // plugin to run (owner ruling 2026-11-12).
                 files.push(HomeFile {
+                    executable: false,
                     rel: crate::authored::AUTHORED_FILE.to_string(),
                     bytes: crate::authored::authored(&carried.hooks).into_bytes(),
                 });
@@ -208,6 +209,7 @@ impl Engine for Opencode {
             // home the state directory is her own.
             seeds: match (&self.model, request.session_home) {
                 (Some(bytes), SessionHome::Session) => vec![HomeFile {
+                    executable: false,
                     rel: home::MODEL_SEED.to_string(),
                     bytes: bytes.clone(),
                 }],

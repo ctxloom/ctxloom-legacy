@@ -1916,6 +1916,40 @@ fn the_commands_and_skills_ride_the_session_home() {
     assert!(file_of(&prepared, "skills/reviewer/SKILL.md").is_some());
 }
 
+// A skill rides the launch whole (step 3, M5): its script, which its sidecar
+// declares executable, is written executable where the launch puts it, the
+// session home's `skills/` and, under `host`, the checkout's; every other
+// file of it is not.
+#[test]
+fn a_skills_declared_script_rides_the_launch_executable() {
+    let mut surfaces = carried();
+    surfaces.skills[0].files.push(surface_ports::SkillFile {
+        path: "scripts/run.sh".to_string(),
+        bytes: b"#!/bin/sh\necho ran\n".to_vec(),
+        executable: true,
+    });
+    let executable = |files: &[run_ports::HomeFile], rel: &str| {
+        files
+            .iter()
+            .find(|f| f.rel == rel)
+            .unwrap_or_else(|| panic!("no {rel}: {files:?}"))
+            .executable
+    };
+    let session = prepare_carrying(true, SessionHome::Session, None, surfaces.clone());
+    assert!(executable(&session.files, "skills/reviewer/scripts/run.sh"));
+    assert!(!executable(&session.files, "skills/reviewer/SKILL.md"));
+    assert!(!executable(&session.files, "commands/demo-example.md"));
+    let host = prepare_carrying(true, SessionHome::Host, None, surfaces);
+    assert!(executable(
+        &host.workspace_files,
+        ".claude/skills/reviewer/scripts/run.sh"
+    ));
+    assert!(!executable(
+        &host.workspace_files,
+        ".claude/skills/reviewer/SKILL.md"
+    ));
+}
+
 // Owner ruling 2026-11-12 (Q3): under `session_home: host` the config dir is
 // the user's own `~/.claude`, never written, so the commands and skills the
 // launch carries are written into the checkout the engine works in (the

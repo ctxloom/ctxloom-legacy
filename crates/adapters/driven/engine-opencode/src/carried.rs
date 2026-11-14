@@ -26,6 +26,7 @@ pub(crate) fn command_files(commands: &[Command]) -> Vec<HomeFile> {
             }
             text.push_str(&c.body);
             HomeFile {
+                executable: false,
                 rel: format!("commands/{}.md", c.name.replace('/', "-")),
                 bytes: text.into_bytes(),
             }

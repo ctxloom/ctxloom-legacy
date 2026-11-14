@@ -185,14 +185,17 @@ impl Engine for Claude {
         // alike (owner ruling 51); a child registers the per-turn events only.
         let mut files = vec![
             HomeFile {
+                executable: false,
                 rel: CONTEXT_PROMPT_FILE.to_string(),
                 bytes: request.context.clone().into_bytes(),
             },
             HomeFile {
+                executable: false,
                 rel: HOOKS_FILE.to_string(),
                 bytes: hooks_settings(request, &self.program)?.into_bytes(),
             },
             HomeFile {
+                executable: false,
                 rel: MCP_CONFIG_FILE.to_string(),
                 bytes: mcp_config(&request.surfaces.0, &self.program).into_bytes(),
             },
@@ -206,6 +209,7 @@ impl Engine for Claude {
             SessionHome::Session => {
                 files.extend(items.into_iter().map(|file| {
                     HomeFile {
+                        executable: file.executable,
                         rel: file
                             .rel
                             .strip_prefix(".claude/")
@@ -223,6 +227,7 @@ impl Engine for Claude {
             let (base, skipped) = user_base(self.user_settings.as_ref());
             left_out.extend(skipped);
             files.push(HomeFile {
+                executable: false,
                 rel: USER_SETTINGS_FILE.to_string(),
                 bytes: user_settings(request, base)?.into_bytes(),
             });
@@ -230,6 +235,7 @@ impl Engine for Claude {
         let existing = request.existing.get(STATE_FILE).map(Vec::as_slice);
         if let Some(bytes) = seeded_state(existing, request.cwd.as_deref()) {
             files.push(HomeFile {
+                executable: false,
                 rel: STATE_FILE.to_string(),
                 bytes,
             });
@@ -478,7 +484,8 @@ fn mcp_config(surfaces: &surface_ports::Inputs, program: &str) -> String {
 
 /// The commands and skills the launch carries, as the files a project's
 /// `.claude/commands/` and `.claude/skills/` hold: the session home's
-/// `commands/` and `skills/` take them without the `.claude/`.
+/// `commands/` and `skills/` take them without the `.claude/`. A skill rides
+/// whole, its sidecar-declared scripts executable (step 3).
 fn items(surfaces: &surface_ports::Inputs) -> Vec<HomeFile> {
     let mut planned = surface_ports::Planned::default();
     crate::commands::plan(&surfaces.commands, &mut planned);
@@ -487,7 +494,15 @@ fn items(surfaces: &surface_ports::Inputs) -> Vec<HomeFile> {
         .claims
         .into_iter()
         .filter_map(|claim| match claim {
-            surface_ports::Claim::Whole { path, bytes, .. } => Some(HomeFile { rel: path, bytes }),
+            surface_ports::Claim::Whole {
+                path,
+                bytes,
+                executable,
+            } => Some(HomeFile {
+                executable,
+                rel: path,
+                bytes,
+            }),
             _ => None,
         })
         .collect()

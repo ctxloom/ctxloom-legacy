@@ -104,21 +104,25 @@ impl Engine for Scripted {
             .unwrap_or_default();
         state.extend_from_slice(b"+merged");
         let seed = |rel: &str| HomeFile {
+            executable: false,
             rel: rel.to_string(),
             bytes: b"seeded".to_vec(),
         };
         let mut files = vec![
             HomeFile {
+                executable: false,
                 rel: "settings.json".to_string(),
                 bytes: request.context.as_bytes().to_vec(),
             },
             HomeFile {
+                executable: false,
                 rel: "state.json".to_string(),
                 bytes: state,
             },
         ];
         if let Some(permissions) = &request.permissions {
             files.push(HomeFile {
+                executable: false,
                 rel: "permissions.json".to_string(),
                 bytes: permissions.as_bytes().to_vec(),
             });
@@ -126,6 +130,7 @@ impl Engine for Scripted {
         let denied = &request.surfaces.0.deny_tools;
         if !denied.is_empty() {
             files.push(HomeFile {
+                executable: false,
                 rel: "denied.txt".to_string(),
                 bytes: denied.join(",").into_bytes(),
             });
@@ -281,6 +286,15 @@ impl run_ports::SessionRecords for ProjectHomes {
     ) -> Result<(), run_ports::RecordsError> {
         self.0.put(&self.1, harp, rel, bytes);
         Ok(())
+    }
+
+    fn write_executable(
+        &mut self,
+        harp: &str,
+        rel: &str,
+        bytes: &[u8],
+    ) -> Result<(), run_ports::RecordsError> {
+        self.write(harp, rel, bytes)
     }
 
     fn append(

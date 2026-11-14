@@ -88,9 +88,13 @@ pub fn set_up_home(
         })
         .map_err(|e| e.to_string())?;
     for file in &prepared.files {
-        records
-            .write(harp, &format!("home/{}", file.rel), &file.bytes)
-            .map_err(|e| e.to_string())?;
+        let rel = format!("home/{}", file.rel);
+        let written = if file.executable {
+            records.write_executable(harp, &rel, &file.bytes)
+        } else {
+            records.write(harp, &rel, &file.bytes)
+        };
+        written.map_err(|e| e.to_string())?;
     }
     for seed in &prepared.seeds {
         seed_once(records, harp, &format!("home/{}", seed.rel), &seed.bytes)?;
@@ -230,9 +234,12 @@ fn place_files(
     if files.is_empty() {
         return Ok(());
     }
-    let pairs: Vec<(String, Vec<u8>)> = files
+    let pairs: Vec<isolation_ports::PlacedFile> = files
         .iter()
-        .map(|f| (f.rel.clone(), f.bytes.clone()))
+        .map(|f| isolation_ports::PlacedFile {
+            executable: f.executable,
+            ..isolation_ports::PlacedFile::plain(&f.rel, &f.bytes)
+        })
         .collect();
     workspaces
         .place_files(&checkout.path, &pairs)
