@@ -288,8 +288,9 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
     alone), and answers its engine as usual. A daemon is up to date for a
     hook when its version is not older than the hook's. The session's next
     hook that finds such a daemon serving delivers what the session holds,
-    each fact once, in the order held, before its own; while anything is
-    left held, the session's later facts wait behind it.
+    each fact once, in the order held, before its own; while anything it
+    can deliver is left held, the session's later facts wait behind it. A
+    fact held by a newer hook than the daemon is kept, and skipped.
 
     Scenario: A hook whose daemon is of an older version holds its fact, and answers the engine as usual
       # new: s4-Q14.
