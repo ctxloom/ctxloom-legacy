@@ -192,9 +192,27 @@ impl<D: Daemons> Client<D> {
             .await
     }
 
-    /// A dry run's parent (owner ruling 2026-11-14).
+    /// A dry run's parent (owner ruling 2026-11-14: every dry run calls the
+    /// daemon, spawning it if needed, and never mints): this client's
+    /// project as the daemon names it, `users/me` outside a project, or
+    /// none in a project nothing has named ([`Client::unnamed`]). Where
+    /// there is nothing to resolve, the daemon is reached all the same and
+    /// asked `GetDaemon`, so the call proves it answers; one that cannot be
+    /// had fails it.
     pub async fn named_parent(&self) -> Result<Option<String>, CallError> {
-        self.library_parent().await.map(Some)
+        if self.project.is_some() {
+            return self
+                .on_daemon(async |api: &D::Api| self.project(api).await)
+                .await
+                .map(Some);
+        }
+        let request = v1::GetDaemonRequest {
+            name: "daemon".to_string(),
+            env: Some(self.env.clone()),
+        };
+        self.on_daemon(async |api: &D::Api| api.get_daemon(request.clone()).await)
+            .await?;
+        Ok((!self.unnamed).then(|| HOME_PARENT.to_string()))
     }
 
     /// `call` on a reached daemon, once more on the daemon reached again if
