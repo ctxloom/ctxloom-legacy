@@ -230,9 +230,9 @@ fn place_files(
     if files.is_empty() {
         return Ok(());
     }
-    let pairs: Vec<(String, Vec<u8>)> = files
+    let pairs: Vec<isolation_ports::PlacedFile> = files
         .iter()
-        .map(|f| (f.rel.clone(), f.bytes.clone()))
+        .map(|f| isolation_ports::PlacedFile::plain(&f.rel, &f.bytes))
         .collect();
     workspaces
         .place_files(&checkout.path, &pairs)

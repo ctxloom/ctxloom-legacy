@@ -230,6 +230,15 @@ impl SessionRecords for SessionDirs {
             .map_err(io)
     }
 
+    fn write_executable(
+        &mut self,
+        harp: &str,
+        rel: &str,
+        bytes: &[u8],
+    ) -> Result<(), RecordsError> {
+        self.write(harp, rel, bytes)
+    }
+
     fn append(&mut self, harp: &str, rel: &str, bytes: &[u8]) -> Result<(), RecordsError> {
         let path = self.record_path(harp, rel)?;
         let io = |e: std::io::Error| RecordsError::Io {

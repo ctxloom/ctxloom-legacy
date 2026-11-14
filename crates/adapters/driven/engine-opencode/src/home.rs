@@ -162,6 +162,7 @@ pub(crate) fn user_base(
 /// turn and the human's session (each is heard through the plugin).
 pub(crate) fn files(context: &str, config: &str, program: &str) -> Vec<HomeFile> {
     let file = |rel: String, bytes: &[u8]| HomeFile {
+        executable: false,
         rel,
         bytes: bytes.to_vec(),
     };

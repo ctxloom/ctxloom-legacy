@@ -447,12 +447,14 @@ impl Engine for ScriptedEngine {
     fn prepare(&self, request: &PrepareRequest) -> Result<Prepared, EngineError> {
         self.prepared.lock().unwrap().push(request.clone());
         let mut files = vec![HomeFile {
+            executable: false,
             rel: "ctx.md".to_string(),
             bytes: request.context.clone().into_bytes(),
         }];
         // The permissions document, where this engine reads it: as given.
         if let Some(document) = &request.permissions {
             files.push(HomeFile {
+                executable: false,
                 rel: "permissions.json".to_string(),
                 bytes: document.clone().into_bytes(),
             });
@@ -632,6 +634,7 @@ impl Engine for Merging {
             .unwrap_or_default();
         bytes.extend_from_slice(format!("+{}", request.cwd.clone().unwrap_or_default()).as_bytes());
         prepared.files.push(HomeFile {
+            executable: false,
             rel: "state.json".to_string(),
             bytes,
         });
@@ -659,6 +662,10 @@ pub struct Placing(pub ScriptedEngine);
 /// What [`Placing`] carries into the directory it works in.
 pub const PLACED: &str = ".placed/command.md";
 
+/// The script [`Placing`] carries, executable, into the directory it works
+/// in and into its home (as a skill's declared script).
+pub const PLACED_SCRIPT: &str = ".placed/run.sh";
+
 // A test double shipped for tests only; its tests are the callers' own.
 #[cfg_attr(test, mutants::skip)]
 impl Engine for Placing {
@@ -668,9 +675,17 @@ impl Engine for Placing {
     fn prepare(&self, request: &PrepareRequest) -> Result<Prepared, EngineError> {
         let mut prepared = self.0.prepare(request)?;
         prepared.workspace_files.push(HomeFile {
+            executable: false,
             rel: PLACED.to_string(),
             bytes: b"PLACED".to_vec(),
         });
+        let script = HomeFile {
+            executable: true,
+            rel: PLACED_SCRIPT.to_string(),
+            bytes: b"#!/bin/sh\n".to_vec(),
+        };
+        prepared.workspace_files.push(script.clone());
+        prepared.files.push(script);
         Ok(prepared)
     }
     fn drive_turn(&self, request: &TurnRequest) -> Result<TurnCommand, EngineError> {
@@ -703,6 +718,7 @@ impl Engine for Seeding {
     fn prepare(&self, request: &PrepareRequest) -> Result<Prepared, EngineError> {
         let mut prepared = self.0.prepare(request)?;
         prepared.seeds.push(HomeFile {
+            executable: false,
             rel: "seed.json".to_string(),
             bytes: SEED.to_vec(),
         });
@@ -730,11 +746,21 @@ type Files = BTreeMap<(String, String), Vec<u8>>;
 #[derive(Clone, Default)]
 pub struct MemoryRecords {
     files: Arc<Mutex<Files>>,
+    /// The files written executable, by harp and path.
+    executable: Arc<Mutex<std::collections::BTreeSet<(String, String)>>>,
     /// A path prefix whose writes the system refuses.
     pub refuses: Arc<Mutex<Option<String>>>,
 }
 
 impl MemoryRecords {
+    /// Whether `rel` of `harp` was last written executable.
+    pub fn is_executable(&self, harp: &str, rel: &str) -> bool {
+        self.executable
+            .lock()
+            .unwrap()
+            .contains(&(harp.to_string(), rel.to_string()))
+    }
+
     pub fn text(&self, harp: &str, rel: &str) -> Option<String> {
         self.files
             .lock()
@@ -788,6 +814,24 @@ impl SessionRecords for MemoryRecords {
             .lock()
             .unwrap()
             .insert((harp.to_string(), rel.to_string()), bytes.to_vec());
+        self.executable
+            .lock()
+            .unwrap()
+            .remove(&(harp.to_string(), rel.to_string()));
+        Ok(())
+    }
+
+    fn write_executable(
+        &mut self,
+        harp: &str,
+        rel: &str,
+        bytes: &[u8],
+    ) -> Result<(), RecordsError> {
+        self.write(harp, rel, bytes)?;
+        self.executable
+            .lock()
+            .unwrap()
+            .insert((harp.to_string(), rel.to_string()));
         Ok(())
     }
 
@@ -910,10 +954,13 @@ impl isolation_ports::Workspaces for ScriptedWorkspaces {
     fn place_files(
         &self,
         checkout: &str,
-        files: &[(String, Vec<u8>)],
+        files: &[isolation_ports::PlacedFile],
     ) -> Result<(), isolation_ports::Failure> {
         let mut placed = self.files.lock().unwrap();
-        placed.extend(files.iter().map(|(rel, _)| format!("{checkout}/{rel}")));
+        placed.extend(files.iter().map(|f| {
+            let mark = if f.executable { " (executable)" } else { "" };
+            format!("{checkout}/{}{mark}", f.rel)
+        }));
         Ok(())
     }
     fn remove_files(&self, checkout: &str, rels: &[String]) {

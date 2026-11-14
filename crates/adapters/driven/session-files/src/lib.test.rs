@@ -385,6 +385,23 @@ fn a_records_write_makes_the_directories_above_it() {
     );
 }
 
+// A session home's file is its owner's alone (0600); one written executable
+// (a skill's declared script, step 3) is 0700, and written over plainly it
+// is 0600 again.
+#[test]
+fn a_records_executable_write_is_its_owners_to_run_alone() {
+    use run_ports::SessionRecords;
+    let (fs, mut dirs) = dirs();
+    let rel = "home/skills/reviewer/scripts/run.sh";
+    let path = dirs.dir(HARP).join(rel);
+    let mode = |fs: &Rooted| fs.metadata(&path).unwrap().mode.map(|m| m.bits() & 0o777);
+    SessionRecords::write_executable(&mut dirs, HARP, rel, b"#!/bin/sh\n").unwrap();
+    assert_eq!(fs.read(&path).unwrap(), b"#!/bin/sh\n");
+    assert_eq!(mode(&fs), kept(0o700));
+    SessionRecords::write(&mut dirs, HARP, rel, b"plain").unwrap();
+    assert_eq!(mode(&fs), kept(0o600));
+}
+
 #[test]
 fn a_records_write_replaces_what_was_there() {
     use run_ports::SessionRecords;

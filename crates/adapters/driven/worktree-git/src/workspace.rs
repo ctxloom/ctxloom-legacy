@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use file_system::{Fs, Kind, Perms};
 use isolation_ports::{
-    Checkout, Failure, Prepared, Removal, Request, Safety, Scratch, Standing, Workspaces,
+    Checkout, Failure, PlacedFile, Prepared, Removal, Request, Safety, Scratch, Standing,
+    Workspaces,
 };
 use os::Mode;
 use process_env::EnvSnapshot;
@@ -417,9 +418,9 @@ impl Workspaces for GitWorkspaces {
         }))
     }
 
-    fn place_files(&self, checkout: &str, files: &[(String, Vec<u8>)]) -> Result<(), Failure> {
+    fn place_files(&self, checkout: &str, files: &[PlacedFile]) -> Result<(), Failure> {
         let root = Path::new(checkout);
-        for (rel, _) in files {
+        for PlacedFile { rel, .. } in files {
             if !plainly_inside(rel) {
                 return Err(Box::new(WorktreeError::Unreadable {
                     path: root.join(rel).display().to_string(),
@@ -427,7 +428,7 @@ impl Workspaces for GitWorkspaces {
                 }));
             }
         }
-        for (rel, bytes) in files {
+        for PlacedFile { rel, bytes, .. } in files {
             let path = root.join(rel);
             let failed = |e: std::io::Error| -> Failure {
                 Box::new(WorktreeError::Unreadable {

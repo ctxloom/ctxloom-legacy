@@ -2105,7 +2105,8 @@ async fn the_engine_is_prepared_with_the_launchs_surfaces() {
 #[tokio::test]
 async fn files_the_engine_reads_where_it_works_go_into_its_checkout_and_out_at_release() {
     use crate::fakes::{
-        worktree_checkout, worktree_order, Placing, ScriptedWorkspaces, PLACED, WORK_DIR,
+        worktree_checkout, worktree_order, Placing, ScriptedWorkspaces, PLACED, PLACED_SCRIPT,
+        WORK_DIR,
     };
     let workspaces = Arc::new(ScriptedWorkspaces::new(worktree_checkout));
     let mut rig = rig(
@@ -2123,19 +2124,45 @@ async fn files_the_engine_reads_where_it_works_go_into_its_checkout_and_out_at_r
     );
     assert_eq!(
         *workspaces.files.lock().unwrap(),
-        [format!("{path}/{PLACED}")]
+        [
+            format!("{path}/{PLACED}"),
+            format!("{path}/{PLACED_SCRIPT} (executable)")
+        ]
     );
-    assert_eq!(launched[0].checkout_files, [PLACED]);
+    assert_eq!(launched[0].checkout_files, [PLACED, PLACED_SCRIPT]);
     let checkout = launched[0].checkout.clone().unwrap();
     rig.launcher.release(&checkout, &launched[0].checkout_files);
     assert_eq!(
         *workspaces.files.lock().unwrap(),
         [
             format!("{path}/{PLACED}"),
+            format!("{path}/{PLACED_SCRIPT} (executable)"),
             format!("-{path}/{PLACED}"),
+            format!("-{path}/{PLACED_SCRIPT}"),
             format!("remove {path}")
         ]
     );
+}
+
+// A file the engine says is executable (a skill's declared script, step 3)
+// is written executable in its home; every other one is not.
+#[tokio::test]
+async fn a_home_file_the_engine_says_is_executable_is_written_executable() {
+    use crate::fakes::{Placing, PLACED_SCRIPT};
+    let mut rig = rig(
+        Placing(ScriptedEngine::answering("A", None)),
+        ScriptedRunner::exits(0),
+        orders_with(order("fake")),
+    );
+    enqueued(&rig.edge, SESSION, HARP).await;
+    rig.step().await;
+    let script = format!("home/{PLACED_SCRIPT}");
+    assert_eq!(
+        rig.records.text(HARP, &script).as_deref(),
+        Some("#!/bin/sh\n")
+    );
+    assert!(rig.records.is_executable(HARP, &script));
+    assert!(!rig.records.is_executable(HARP, "home/ctx.md"));
 }
 
 // In the live project nothing of it is written: the project is not the

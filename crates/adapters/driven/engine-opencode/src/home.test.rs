@@ -210,6 +210,7 @@ fn test_her_model_json_seeds_the_relocated_state_directory_as_read() {
     assert_eq!(
         home.seeds,
         [run_ports::HomeFile {
+            executable: false,
             rel: MODEL_SEED.to_string(),
             bytes: HERS.to_vec(),
         }]
