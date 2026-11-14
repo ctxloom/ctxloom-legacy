@@ -100,6 +100,16 @@ fn put_in_block(entry: &mut Value, engine: &str, key: &str, value: Option<Value>
     put(entry, "engines", keep);
 }
 
+/// The config layer an agent write goes to: the project's, unless it is
+/// sent home (`--home`, vocabulary §4).
+fn layer(request: &AgentRequest) -> Scope {
+    if request.home {
+        Scope::Home
+    } else {
+        Scope::Project
+    }
+}
+
 fn some_text(value: &str) -> Option<Value> {
     (!value.is_empty()).then(|| text(value))
 }
@@ -173,6 +183,9 @@ fn apply_command(name: &str, request: &AgentRequest) -> String {
             flag("--env", variable);
         }
     }
+    if request.home {
+        words.push("--home".to_string());
+    }
     words.push("--yes".to_string());
     words.join(" ")
 }
@@ -212,10 +225,12 @@ impl Project {
 
     /// The axes of a request, judged before anything is written. An engine's
     /// permissions are never among them: they are the engine's own document,
-    /// written in the config by hand (owner ruling 138).
+    /// written in the config by hand (owner ruling 138). `verb` is the
+    /// write's, for a refusal's fix.
     fn check_agent(
         &self,
         name: &str,
+        verb: &str,
         request: &AgentRequest,
         held: &Value,
     ) -> Result<(), AppError> {
@@ -243,6 +258,16 @@ impl Project {
                 return Err(WriteError::UnknownSessionHome {
                     name: name.to_string(),
                     value: home.to_string(),
+                }
+                .into());
+            }
+            // Owner ruling of 2026-11-14: each layer takes the values valid
+            // for it; her home is hers to hand an agent, from her home
+            // config alone (ruling 46), so a project write refuses `host`.
+            if home == "host" && !request.home {
+                return Err(WriteError::SessionHomeHostInProject {
+                    name: name.to_string(),
+                    verb: verb.to_string(),
                 }
                 .into());
             }
@@ -362,9 +387,10 @@ impl Project {
         };
         // The checks need the entry the layer holds; the layer is read inside
         // the update, where it is held, so they are made there.
-        self.update_config(Scope::Project, "agents", |current| {
+        let verb = if must_exist { "edit" } else { "create" };
+        self.update_config(layer(request), "agents", |current| {
             let held = layer_held(&current);
-            self.check_agent(name, request, &held)?;
+            self.check_agent(name, verb, request, &held)?;
             let entry = self.agent_entry(name, request, held)?;
             written = Some(Agent::of(name, &entry).row());
             if request.runtime.as_deref().is_some_and(|r| !r.is_empty()) {
@@ -426,8 +452,8 @@ impl Project {
             return Ok(None);
         }
         self.require_project()?;
-        let held = self.held_agent(name)?;
-        self.check_agent(name, request, &held)?;
+        let held = self.held_agent(name, layer(request))?;
+        self.check_agent(name, "edit", request, &held)?;
         self.agent_entry(name, request, held)?;
         Ok(Some(SwapPreview::of(
             name,
@@ -438,18 +464,18 @@ impl Project {
         )))
     }
 
-    /// The entry the project's config holds for `name`; an empty mapping for
+    /// The entry the `scope` config holds for `name`; an empty mapping for
     /// none.
-    fn held_agent(&self, name: &str) -> Result<Value, AppError> {
+    fn held_agent(&self, name: &str, scope: Scope) -> Result<Value, AppError> {
         let text = self
             .files
-            .layer(Scope::Project)
+            .layer(scope)
             .map_err(AppError::Cause)?
             .map(|layer| layer.text)
             .unwrap_or_default();
         let agents = library::write::section::section(&text, "agents").map_err(|e| {
             WriteError::ConfigCorrupt {
-                path: self.files.layer_path(Scope::Project),
+                path: self.files.layer_path(scope),
                 cause: e.to_string(),
             }
         })?;

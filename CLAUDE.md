@@ -2202,9 +2202,14 @@ the dry run's `settings.session_home` and Settings row, `agent show`'s
 `session_home` (the binding's word); `agent create|edit --session-home
 <session|host>` writes it (empty clears it; another word is
 `library-application-write-unknown-session-home`). Agent writes go to the
-project config, where ruling 46 strips `host`, and a binding replaces a
-lower layer's whole, so an agent says `host` only when it is bound in the
-home config. `auth` is THE auth setting: `none`, `login` (the
+project config unless `--home` (vocabulary §4's spelling) sends them to the
+home config, and each layer takes the values valid for it (owner ruling of
+2026-11-14): `session` anywhere, `host` only on a home write, where it
+takes effect; a project write of `host` is refused,
+`library-application-write-session-home-host-in-project` (exit 20, its fix
+the same write with `--home`), and writes nothing. A binding replaces a
+lower layer's whole, so an agent the project also binds says `host` only
+once the project's binding is gone. `auth` is THE auth setting: `none`, `login` (the
 human's own login shared in place), `token` (the engine's built-in variables),
 or a source `{env: NAME|[NAMES], file: PATH}`; a name that is not a variable
 name is refused without being repeated; a file is only a primary session's.
