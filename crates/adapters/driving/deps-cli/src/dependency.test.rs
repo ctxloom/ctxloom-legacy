@@ -191,3 +191,101 @@ fn test_an_applied_upgrade_names_no_apply_command() {
         "ctxloom deps upgrade origin/kit --yes"
     );
 }
+
+fn row(reference: &str) -> DepRow {
+    DepRow {
+        name: reference.to_string(),
+        reference: reference.to_string(),
+        sha: "abc".to_string(),
+        constraint: String::new(),
+        held: true,
+        origin: String::new(),
+        url: String::new(),
+    }
+}
+
+// A hold answers the Dependency the write named, never another row.
+#[test]
+fn test_a_hold_answers_the_dependency_it_named() {
+    let listing = DepsListing {
+        deps: vec![row("first"), row("second")],
+        count: 2,
+    };
+    let held_one = |identity: &str| {
+        held(
+            "projects/p",
+            &HoldResult {
+                status: "held",
+                name: identity.to_string(),
+                identity: identity.to_string(),
+            },
+            &listing,
+        )
+    };
+    assert_eq!(held_one("second").reference, "second");
+    assert_eq!(held_one("absent"), v1::Dependency::default());
+}
+
+// A check lists the outdated entries with what was asked and resolved, then
+// the unchecked ones with why; every refresh that failed is said.
+#[test]
+fn test_a_check_carries_each_entrys_fields_and_the_failed_refreshes() {
+    use deps_application::{RefreshFailure, UncheckedRow, UpdateRow};
+    use v1::dependency_check::State;
+    let failures = vec![RefreshFailure {
+        url: "file:///r.git".to_string(),
+        error: "unreachable".to_string(),
+    }];
+    let report = CheckReport {
+        entries: 2,
+        updates: vec![UpdateRow {
+            reference: "old".to_string(),
+            kind: "fragment",
+            current_sha: "a".to_string(),
+            latest_sha: "b".to_string(),
+            selector: "tag".to_string(),
+            requested: "v1".to_string(),
+            resolved: "v1.2".to_string(),
+        }],
+        unchecked: vec![UncheckedRow {
+            reference: "lost".to_string(),
+            url: "file:///l.git".to_string(),
+            constraint: "v2".to_string(),
+            reason: "unresolvable",
+            error: "no such tag".to_string(),
+        }],
+        refresh_failures: failures.clone(),
+        skipped_empty: 0,
+        missing_default_profiles: Vec::new(),
+        missing_defaults_error: String::new(),
+    };
+    let message = checked("projects/p", &report);
+    let [outdated, unchecked] = &message.checks[..] else {
+        panic!("two checks: {message:?}");
+    };
+    assert_eq!(outdated.state, State::Outdated as i32);
+    assert_eq!(outdated.constraint, "v1");
+    assert_eq!(outdated.resolved_version, "v1.2");
+    assert_eq!(unchecked.state, State::Unchecked as i32);
+    assert_eq!(unchecked.dependency, dependency_name("projects/p", "lost"));
+    assert!(!unchecked.dependency.is_empty());
+    assert_eq!(unchecked.reference, "lost");
+    assert_eq!(unchecked.kind, v1::ItemKind::Bundle as i32);
+    assert_eq!(unchecked.error, "no such tag");
+    assert_eq!(message.refresh_failures.len(), 1);
+    assert_eq!(message.refresh_failures[0].url, "file:///r.git");
+    let one = checked_one(
+        "projects/p",
+        &CheckedRef {
+            reference: "old".to_string(),
+            identity: "old".to_string(),
+            in_lockfile: true,
+            current_sha: "a".to_string(),
+            latest_sha: "a".to_string(),
+            up_to_date: true,
+            refresh_failures: failures,
+        },
+    );
+    assert_eq!(one.refresh_failures.len(), 1);
+    assert_eq!(one.refresh_failures[0].error, "unreachable");
+}
