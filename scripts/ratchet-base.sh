@@ -95,5 +95,7 @@ if [ "$rc" -ne 0 ] || [ ! -s "$work/list" ]; then
     exit 1
 fi
 mv "$work/list" "$cache"
+# Why each of the base's red scenarios is red, cached beside its list.
+if [ -e "$work/list.failures" ]; then mv "$work/list.failures" "$cache.failures"; else rm -f "$cache.failures"; fi
 remove_tree
 summary " ${secs}.0s"

@@ -7,9 +7,12 @@
 # the base passes).
 #
 #   ok   ratchet (base 136 red; here 130 red, 6 turned green)
-#   FAIL ratchet: 2 new red scenarios: 1 broke green, 1 added red (full list: <slice list>)
+#   FAIL ratchet: 2 new red scenarios: 1 broke green, 1 added red (full list: <slice list>; why: <slice list>.failures)
 #     broke green  cli/x.feature :: s
 #     added red    journeys/y.feature :: t
+#
+# The `why:` file is the feature runner's, beside its list: each red
+# scenario's failed step and what it said. It is named when it is there.
 #
 # At most RATCHET_LIST_MAX (default 30) scenarios are named, then a `+K more`
 # line. Exit 0 on a pass, 1 on a new red or a list that is missing or empty
@@ -43,8 +46,10 @@ if [ "$new" -eq 0 ]; then
     printf 'ok   ratchet (base %d red; here %d red, %d turned green)\n' "$base_red" "$slice_red" "$fixed"
     exit 0
 fi
-printf 'FAIL ratchet: %d new red scenarios: %d broke green, %d added red (full list: %s)\n' \
-    "$new" "$(count "$work/broke")" "$(count "$work/added")" "$slice" >&2
+why=
+[ -e "$slice.failures" ] && why="; why: $slice.failures"
+printf 'FAIL ratchet: %d new red scenarios: %d broke green, %d added red (full list: %s%s)\n' \
+    "$new" "$(count "$work/broke")" "$(count "$work/added")" "$slice" "$why" >&2
 { sed 's/^/  broke green  /' "$work/broke"; sed 's/^/  added red    /' "$work/added"; } > "$work/named"
 head -n "$cap" "$work/named" >&2
 [ "$new" -le "$cap" ] || echo "  +$((new - cap)) more: grep '^red' $slice" >&2

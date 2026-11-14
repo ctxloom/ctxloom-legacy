@@ -57,6 +57,15 @@ rc=0; out=$(judge) || rc=$?
 [ "$rc" -eq 1 ] || fail "a broken green passed ($rc): $out"
 grep -q '^FAIL ratchet: 1 new red scenarios: 1 broke green, 0 added red ' <<< "$out" || fail "broken green line: $out"
 grep -qx '  broke green  f/b.feature :: three' <<< "$out" || fail "broken green not named: $out"
+grep -q '(full list: [^;]*)$' <<< "$(grep '^FAIL' <<< "$out")" || fail "a why with no failures file: $out"
+
+# The feature runner's failures file, beside the list, is named on the FAIL line.
+printf 'red\tf/b.feature :: three\n  step: Then it holds\n  it did not\n\n' > "$tmp/slice.list.failures"
+rc=0; out=$(judge) || rc=$?
+[ "$rc" -eq 1 ] || fail "a broken green passed beside its failures ($rc): $out"
+grep -q "^FAIL ratchet: .*(full list: $tmp/slice.list; why: $tmp/slice.list.failures)\$" <<< "$out" \
+    || fail "the failures file is not named: $out"
+rm -f "$tmp/slice.list.failures"
 
 # The names are capped, with a tail.
 reds=()

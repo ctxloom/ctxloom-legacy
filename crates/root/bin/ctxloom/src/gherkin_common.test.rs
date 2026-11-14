@@ -502,7 +502,59 @@ pub(crate) use common_steps;
 pub(crate) struct FeatureRun {
     pub(crate) passed: bool,
     pub(crate) scenarios: Vec<(String, bool)>,
+    /// Each step that failed, in the order they failed: what the ratchet's
+    /// `<list>.failures` says of a red scenario.
+    pub(crate) failures: Vec<Failure>,
 }
+
+/// A step that failed: its scenario's id ([`scenario_id`]), the step as the
+/// feature writes it (its keyword and text), and what it said.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Failure {
+    pub(crate) scenario: String,
+    pub(crate) step: String,
+    pub(crate) message: String,
+}
+
+/// A cucumber writer beside the console's that keeps each failed step
+/// ([`Failure`]) of one feature, whatever the console shows.
+struct StepFailures {
+    feature: String,
+    kept: std::sync::Arc<std::sync::Mutex<Vec<Failure>>>,
+}
+
+impl<W: cucumber::World> cucumber::Writer<W> for StepFailures {
+    type Cli = cucumber::cli::Empty;
+
+    async fn handle_event(
+        &mut self,
+        event: cucumber::parser::Result<cucumber::Event<cucumber::event::Cucumber<W>>>,
+        _: &Self::Cli,
+    ) {
+        use cucumber::event::{Cucumber, Feature as F, Rule as R, Scenario as S, Step};
+        let Ok(event) = event else { return };
+        let Cucumber::Feature(_, feature) = event.value else {
+            return;
+        };
+        let (rule, scenario, event) = match feature {
+            F::Scenario(scenario, event) => (None, scenario, event),
+            F::Rule(rule, R::Scenario(scenario, event)) => (Some(rule), scenario, event),
+            _ => return,
+        };
+        let (S::Step(step, Step::Failed(_, _, _, error))
+        | S::Background(step, Step::Failed(_, _, _, error))) = event.event
+        else {
+            return;
+        };
+        self.kept.lock().expect("not poisoned").push(Failure {
+            scenario: scenario_id(&self.feature, rule.as_deref(), &scenario),
+            step: format!("{} {}", step.keyword.trim(), step.value),
+            message: error.to_string(),
+        });
+    }
+}
+
+impl cucumber::writer::Normalized for StepFailures {}
 
 /// The id of what failed in a feature outside any scenario (it did not
 /// parse, a hook failed, it has no World): `<feature> :: (outside a
@@ -533,8 +585,19 @@ where
     let unsupported = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let skips = std::sync::Arc::clone(&unsupported);
     let named = feature.clone();
+    let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorder = StepFailures {
+        feature: feature.clone(),
+        kept: std::sync::Arc::clone(&failures),
+    };
     let writer = futures::executor::block_on(
         W::cucumber::<&Path>()
+            .with_writer({
+                use cucumber::WriterExt as _;
+                cucumber::writer::Basic::stdout()
+                    .summarized()
+                    .tee::<W, _>(recorder.discard_arbitrary_writes().discard_stats_writes())
+            })
             .with_parser(SpacedPlaceholders)
             .after(move |feature, rule, scenario, finished, _| {
                 let id = scenario_id(&named, rule, scenario);
@@ -579,7 +642,12 @@ where
     if !passed && scenarios.iter().all(|(_, ok)| *ok) {
         scenarios.push((outside_id(&feature), false));
     }
-    FeatureRun { passed, scenarios }
+    let failures = std::mem::take(&mut *failures.lock().expect("not poisoned"));
+    FeatureRun {
+        passed,
+        scenarios,
+        failures,
+    }
 }
 
 /// cucumber 0.21's parser for one feature file, except that an outline's

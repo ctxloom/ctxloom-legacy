@@ -2928,7 +2928,12 @@ the feature runner's: `GHERKIN_RATCHET=<absolute file>` makes
 `green<TAB><id>` (the id `<feature path under features/> :: [<rule> ::
 ]<scenario>[ :: | <example row> |]`; a failure no scenario owns is `<feature>
 :: (outside a scenario)`), and pass whatever failed, so only the ratchet's
-judge (`scripts/ratchet-judge.sh`) decides. The base's list is `just
+judge (`scripts/ratchet-judge.sh`) decides. Beside the list it writes
+`<list>.failures`, why each red scenario is red (a record per failed step:
+`red<TAB><id>`, `  step: <keyword> <text>`, its message indented, capped at
+2000 bytes), since a passing test's console output is never shown; the
+judge's FAIL line names it (`why: <list>.failures`), and the base's is cached
+beside its list. The base's list is `just
 ratchet-base <base>` (`scripts/ratchet-base.sh`): only that test, on the
 base's tip, in a throwaway worktree `.<checkout>.ratchet-base` beside the
 checkout (target dir `target/ratchet-base`), cached by sha at

@@ -13,7 +13,9 @@
 //! verdict: every scenario run, one line each, sorted, `red\t<id>` or
 //! `green\t<id>` (the id is `gherkin_common::scenario_id`'s, a failure no
 //! scenario owns the feature's `outside_id`), is written to the file, and the
-//! test passes whatever failed. `just closeout-ratchet` (scripts/
+//! test passes whatever failed. Beside it, `<file>.failures` says why each
+//! red scenario is red: its failed step and what it said (capped), which the
+//! console's output, hidden on a pass, no longer does. `just closeout-ratchet` (scripts/
 //! closeout-ratchet.sh) judges that list against its base branch's; nothing
 //! else sets it.
 
@@ -36,6 +38,7 @@ fn run_one(rel: &str) -> Result<FeatureRun, String> {
         return Ok(FeatureRun {
             passed: true,
             scenarios: Vec::new(),
+            failures: Vec::new(),
         });
     }
     match world_of(&text).map_err(|e| format!("{rel}: {e}"))? {
@@ -66,6 +69,47 @@ fn scenario_list(outcomes: &[(String, bool)]) -> String {
         .collect()
 }
 
+/// How much of a failure's message the failures file keeps.
+const FAILURE_MESSAGE_MAX: usize = 2_000;
+
+/// The failures file beside the `GHERKIN_RATCHET` list (`<list>.failures`):
+/// a record per failed step, sorted by scenario id, blank-line separated:
+/// `red\t<id>`, `  step: <keyword> <text>`, then the message, each line
+/// indented, capped at [`FAILURE_MESSAGE_MAX`] bytes (`[+N bytes]` after).
+fn failures_file(failures: &[super::gherkin_common::Failure]) -> String {
+    let mut sorted: Vec<&super::gherkin_common::Failure> = failures.iter().collect();
+    sorted.sort_by(|a, b| a.scenario.cmp(&b.scenario));
+    sorted
+        .into_iter()
+        .map(|failed| {
+            let mut message = failed.message.clone();
+            if message.len() > FAILURE_MESSAGE_MAX {
+                let mut cut = FAILURE_MESSAGE_MAX;
+                while !message.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                let more = message.len() - cut;
+                message.truncate(cut);
+                message.push_str(&format!(" [+{more} bytes]"));
+            }
+            let body: Vec<String> = message.lines().map(|l| format!("  {l}")).collect();
+            format!(
+                "red\t{}\n  step: {}\n{}\n\n",
+                failed.scenario,
+                failed.step,
+                body.join("\n")
+            )
+        })
+        .collect()
+}
+
+/// Where the failures file of the list `file` is: beside it.
+fn failures_path(file: &std::path::Path) -> std::path::PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(".failures");
+    std::path::PathBuf::from(name)
+}
+
 #[test]
 fn every_feature_runs() {
     let only = host_var("GHERKIN_ONLY")
@@ -80,6 +124,7 @@ fn every_feature_runs() {
     let next = AtomicUsize::new(0);
     let failures = Mutex::new(Vec::new());
     let outcomes = Mutex::new(Vec::new());
+    let steps_failed = Mutex::new(Vec::new());
     let threads = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(4)
@@ -91,10 +136,16 @@ fn every_feature_runs() {
                 let Some(rel) = features.get(i) else { break };
                 let (failed, seen) = match run_one(rel) {
                     Ok(run) if run.passed => (None, run.scenarios),
-                    Ok(run) => (
-                        Some(format!("{rel}: a scenario failed (its output is above)")),
-                        run.scenarios,
-                    ),
+                    Ok(run) => {
+                        steps_failed
+                            .lock()
+                            .expect("not poisoned")
+                            .extend(run.failures);
+                        (
+                            Some(format!("{rel}: a scenario failed (its output is above)")),
+                            run.scenarios,
+                        )
+                    }
                     Err(e) => (Some(e), vec![(outside_id(rel), false)]),
                 };
                 outcomes.lock().expect("not poisoned").extend(seen);
@@ -111,6 +162,8 @@ fn every_feature_runs() {
         );
         let outcomes = outcomes.into_inner().expect("not poisoned");
         files::put(&file, scenario_list(&outcomes));
+        let steps_failed = steps_failed.into_inner().expect("not poisoned");
+        files::put(failures_path(&file), failures_file(&steps_failed));
         return;
     }
     let mut failures = failures.into_inner().expect("not poisoned");
@@ -306,6 +359,68 @@ fn the_skill_list_step_finds_a_skill_of_its_bundle_alone() {
     ];
     expected.sort();
     assert_eq!(got, expected);
+}
+
+/// Each red scenario's failure is kept: its id, the step that failed (its
+/// keyword and text) and what it said, so a red ratchet run can be read
+/// afterwards (`<list>.failures`); a green scenario has none.
+#[test]
+fn a_red_scenarios_failing_step_and_its_message_are_kept() {
+    let project = super::library::Project::bare();
+    let path = project.dir().join("why.feature");
+    files::put(
+        &path,
+        "Feature: f\n  Scenario: green\n    When I run \"ctxloom version\"\n    Then the command succeeds\n\n  Scenario: red\n    When I run \"ctxloom no-such-verb\"\n    Then the command succeeds\n",
+    );
+    let run = super::gherkin::run(&path);
+    assert!(!run.passed);
+    let feature = path.display().to_string();
+    assert_eq!(run.failures.len(), 1, "{:?}", run.failures);
+    let failed = &run.failures[0];
+    assert_eq!(failed.scenario, format!("{feature} :: red"));
+    assert_eq!(failed.step, "Then the command succeeds");
+    assert!(
+        failed.message.contains("no-such-verb"),
+        "{}",
+        failed.message
+    );
+}
+
+/// The failures file: a record per red scenario, its message capped, in the
+/// order of the ids.
+#[test]
+fn the_failures_file_names_each_red_scenario_its_step_and_its_capped_message() {
+    use super::gherkin_common::Failure;
+    let long = "x".repeat(5_000);
+    let failures = vec![
+        Failure {
+            scenario: "b :: s".to_string(),
+            step: "Then it holds".to_string(),
+            message: "line one\nline two".to_string(),
+        },
+        Failure {
+            scenario: "a :: t".to_string(),
+            step: "Given a start".to_string(),
+            message: long,
+        },
+    ];
+    let text = failures_file(&failures);
+    let records: Vec<&str> = text.split("\n\n").filter(|r| !r.is_empty()).collect();
+    assert_eq!(records.len(), 2, "{text}");
+    assert!(
+        records[0].starts_with("red\ta :: t\n  step: Given a start\n  "),
+        "{text}"
+    );
+    assert!(records[0].len() < FAILURE_MESSAGE_MAX + 200, "not capped");
+    assert!(
+        records[0].contains("[+"),
+        "no cap marker: {}",
+        &records[0][..80]
+    );
+    assert_eq!(
+        records[1],
+        "red\tb :: s\n  step: Then it holds\n  line one\n  line two"
+    );
 }
 
 /// A feature that cannot run is red outside its scenarios.
