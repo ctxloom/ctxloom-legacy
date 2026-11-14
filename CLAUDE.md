@@ -577,7 +577,8 @@ SIGHUP or SIGTERM only (a SIGINT is the terminal's Ctrl-C, which reaches the
 engine itself, and is let pass). The stop is `HostLauncher::stopped_by(Stop)`'s
 `Stop`: a turn's tree is asked to stop (SIGTERM to its group, run-within's
 `run_within_stopped_by`), given `Within::stop_grace` (five seconds), then
-killed; a terminal session's direct child is killed. The run then ends as any
+killed; a terminal session's direct child is asked to stop (SIGTERM), given
+`Terminal::STOP_GRACE` (5 s), then killed. The run then ends as any
 run whose engine exited (its end facts, the listener stopped, the locks
 released), and the command exits 128 plus the signal's number, the error
 `run-application-stopped` (`RunError::Stopped`) naming the signal. A second
@@ -997,8 +998,8 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `94f630a3` on angzarr-router `bec0c2bf`;
 - angzarr-build `7547415e` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `a35789ef`;
-- taskloom's crates `7af05807` and ctxloom-lib's `fb8e8212`, built on the
+- angzarr-platform `5f39b330`;
+- taskloom's crates `2db3ddf7` and ctxloom-lib's `2486af2a`, built on the
   same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
@@ -1055,8 +1056,10 @@ then killed; the outcome `stopped`).
 (never on a spawn failure). `run_terminal(spec, &Stop, started)` is the mode
 for a program that owns the terminal: inherited stdio, NOT a process group of
 its own (a Ctrl-C reaches it), no deadline, and a `Stop` (a cloneable flag the
-caller sets, e.g. from `Os::signals`) that kills only the DIRECT child, not
-its descendants. Tested on unix; macOS and Windows are not. No adapter bypasses
+caller sets, e.g. from `Os::signals`) that asks only the DIRECT child to stop,
+not its descendants (SIGTERM to that one process, `os::process::request_stop`;
+none on Windows), gives it `Terminal::STOP_GRACE` (5 s; `run_terminal_with`
+takes a `Terminal` of another), then kills it. Tested on unix; macOS and Windows are not. No adapter bypasses
 `run-within` any more.
 All of ctxloom-lib's crates are pinned at one rev (`cli-support`,
 `process-env`, `project-dir`, `run-within`), and so is each family above.

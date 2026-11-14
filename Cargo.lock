@@ -676,7 +676,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "cli-support"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-presentation",
@@ -1542,7 +1542,7 @@ checksum = "669a445ee724c5c69b1b06fe0b63e70a1c84bc9bb7d9696cd4f4e3ec45050408"
 [[package]]
 name = "duration-text"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 dependencies = [
  "angzarr-diagnostic",
 ]
@@ -1675,7 +1675,7 @@ dependencies = [
 [[package]]
 name = "exit-code"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 
 [[package]]
 name = "fastrand"
@@ -1686,7 +1686,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 [[package]]
 name = "file-lock"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-platform?rev=a35789efcc041bf6e697cae4a8971381e891aca3#a35789efcc041bf6e697cae4a8971381e891aca3"
+source = "git+https://github.com/angzarr-io/angzarr-platform?rev=5f39b330f4ef19a27b8a4ac533402b07c3221ac5#5f39b330f4ef19a27b8a4ac533402b07c3221ac5"
 dependencies = [
  "angzarr-diagnostic",
  "file-system",
@@ -1696,7 +1696,7 @@ dependencies = [
 [[package]]
 name = "file-system"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-platform?rev=a35789efcc041bf6e697cae4a8971381e891aca3#a35789efcc041bf6e697cae4a8971381e891aca3"
+source = "git+https://github.com/angzarr-io/angzarr-platform?rev=5f39b330f4ef19a27b8a4ac533402b07c3221ac5#5f39b330f4ef19a27b8a4ac533402b07c3221ac5"
 dependencies = [
  "angzarr-diagnostic",
  "os",
@@ -1718,7 +1718,7 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 [[package]]
 name = "fixture-program"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 dependencies = [
  "file-system",
  "os",
@@ -2076,7 +2076,7 @@ dependencies = [
 [[package]]
 name = "harp-names"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=7af058076b301c7f754c0258bed90dce4d956375#7af058076b301c7f754c0258bed90dce4d956375"
+source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
 dependencies = [
  "harp-core",
  "ports",
@@ -3139,7 +3139,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 [[package]]
 name = "os"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-platform?rev=a35789efcc041bf6e697cae4a8971381e891aca3#a35789efcc041bf6e697cae4a8971381e891aca3"
+source = "git+https://github.com/angzarr-io/angzarr-platform?rev=5f39b330f4ef19a27b8a4ac533402b07c3221ac5#5f39b330f4ef19a27b8a4ac533402b07c3221ac5"
 dependencies = [
  "fs4",
  "junction",
@@ -3382,7 +3382,7 @@ dependencies = [
 [[package]]
 name = "ports"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=7af058076b301c7f754c0258bed90dce4d956375#7af058076b301c7f754c0258bed90dce4d956375"
+source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-ports",
@@ -3447,7 +3447,7 @@ dependencies = [
 [[package]]
 name = "process-env"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 dependencies = [
  "os",
 ]
@@ -3466,7 +3466,7 @@ dependencies = [
 [[package]]
 name = "project-dir"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 dependencies = [
  "angzarr-diagnostic",
  "file-system",
@@ -3475,7 +3475,7 @@ dependencies = [
 [[package]]
 name = "project-registry"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=7af058076b301c7f754c0258bed90dce4d956375#7af058076b301c7f754c0258bed90dce4d956375"
+source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-yaml",
@@ -3914,7 +3914,7 @@ dependencies = [
 [[package]]
 name = "run-within"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 dependencies = [
  "angzarr-diagnostic",
  "file-system",
@@ -4672,7 +4672,7 @@ dependencies = [
 [[package]]
 name = "sqlite-store-opener"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=fb8e821250b3c1935a25323a830de04bf2f844f9#fb8e821250b3c1935a25323a830de04bf2f844f9"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=2486af2a0a832191bbbc212c62f153e8c92693e0#2486af2a0a832191bbbc212c62f153e8c92693e0"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
@@ -5040,7 +5040,7 @@ dependencies = [
 [[package]]
 name = "system"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=7af058076b301c7f754c0258bed90dce4d956375#7af058076b301c7f754c0258bed90dce4d956375"
+source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
 dependencies = [
  "ports",
  "prost-types",
