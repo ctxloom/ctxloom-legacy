@@ -32,6 +32,32 @@ pub enum Observation {
     TurnEnded(sessions::RecordTurnEnded),
     SessionEnded(sessions::RecordSessionEnded),
     Compaction(sessions::RecordCompaction),
+    /// A fact a hook dropped (its hold could not keep it), recorded in its
+    /// place (s4-Q14, H3). [`observe`] never makes one: a flush makes it
+    /// from the hold's gap record ([`Observation::gap`]).
+    CaptureGap(sessions::RecordCaptureGap),
+}
+
+impl Observation {
+    /// The gap fact of a hold's gap record: which fact was dropped, why,
+    /// when (the dropping hook's clock; none read as the epoch) and by
+    /// which hook.
+    pub fn gap(gap: &run_ports::HeldGap) -> Observation {
+        let dropped_at = gap
+            .held_at
+            .map_or_else(angzarr_embedded::Timestamp::default, |at| {
+                angzarr_embedded::Timestamp {
+                    seconds: at.seconds,
+                    nanos: at.nanos,
+                }
+            });
+        Observation::CaptureGap(sessions::RecordCaptureGap {
+            dropped: gap.external_id.clone(),
+            why: gap.why.clone(),
+            dropped_at,
+            stamp: gap.stamp.clone(),
+        })
+    }
 }
 
 /// The observations `event` holds, in the order they happened. Pure.
@@ -145,6 +171,7 @@ impl Observation {
                 };
                 format!("hook:compact:{session}:{}:{trigger}:{phase}", f.prompt_id)
             }
+            Observation::CaptureGap(f) => format!("hook:gap:{}", f.dropped),
         }
     }
 
@@ -164,6 +191,7 @@ impl Observation {
             Observation::TurnEnded(f) => any(f),
             Observation::SessionEnded(f) => any(f),
             Observation::Compaction(f) => any(f),
+            Observation::CaptureGap(f) => any(f),
         }
     }
 

@@ -11,6 +11,7 @@
 //! migrate).
 
 mod files;
+pub(crate) mod flush;
 mod places;
 mod serve;
 
@@ -249,13 +250,17 @@ pub(crate) fn run(
         }
         // Clients of the daemon (slice 2 step 6), answered here when none
         // serves (S14): neither starts one.
+        // They look at the daemon and change nothing: no hold is delivered
+        // on their way in (H3).
         DaemonVerb::Status => {
-            let found = block_on(client(&wiring, stamp).status())?.map_err(called)?;
+            let reach = Reach::new(&wiring, stamp).observing();
+            let found = block_on(client_reaching(&wiring, reach).status())?.map_err(called)?;
             output(render(out, format, &Status(found)))?;
             Ok(Exit::OK)
         }
         DaemonVerb::Stop { even_if_live } => {
-            block_on(client(&wiring, stamp).stop(even_if_live))?.map_err(called)?;
+            let reach = Reach::new(&wiring, stamp).observing();
+            block_on(client_reaching(&wiring, reach).stop(even_if_live))?.map_err(called)?;
             Ok(Exit::OK)
         }
         DaemonVerb::Resolve => {
@@ -524,6 +529,10 @@ pub(crate) struct Reach<'a> {
     /// MCP server's calls): an idle daemon of an older version is asked to
     /// drain, and any other of another stamp refuses the call.
     never_stops: bool,
+    /// Whether reaching the daemon delivers the home's holds first, once a
+    /// process (s4-Q14, H3): every command's but the `daemon` noun's own,
+    /// which look at the daemon and change nothing.
+    flushes: bool,
 }
 
 impl<'a> Reach<'a> {
@@ -534,7 +543,26 @@ impl<'a> Reach<'a> {
             wiring,
             stamp: own_stamp(wiring.env(), stamp).to_string(),
             never_stops: false,
+            flushes: true,
         }
+    }
+
+    /// This reach as the `daemon` noun's own verbs make it (`status`,
+    /// `stop`, `resolve`): it delivers no hold on its way in.
+    pub(crate) fn observing(self) -> Reach<'a> {
+        Reach {
+            flushes: false,
+            ..self
+        }
+    }
+
+    /// The daemon `found` names, reached: the home's holds delivered to it
+    /// first, the first time this process reaches it (H3).
+    fn reached(&self, found: &run_ports::Discovery) -> daemon_client::DaemonClient {
+        if self.flushes {
+            flush::on_the_way_in(self.wiring, &self.stamp, found);
+        }
+        client_of(found)
     }
 
     /// This reach as a session's call makes it (OD-3,
@@ -574,7 +602,7 @@ impl Daemons for Reach<'_> {
         let files = files_of(self.wiring);
         Ok(serving_here(self.wiring, &files)
             .map_err(declined)?
-            .map(|found| client_of(&found)))
+            .map(|found| self.reached(&found)))
     }
 
     async fn reach(&self) -> Result<daemon_client::DaemonClient, Unreached> {
@@ -589,7 +617,7 @@ impl Daemons for Reach<'_> {
                 daemon_api::reconcile(&api, &self.stamp, &found.stamp).await
             };
             match reconciled {
-                Ok(daemon_api::Reconciled::Same) => return Ok(api),
+                Ok(daemon_api::Reconciled::Same) => return Ok(self.reached(&found)),
                 Ok(daemon_api::Reconciled::Stopped) => {
                     let deadline = Instant::now() + STOPPED_WAIT;
                     while Instant::now() < deadline && files.discovery().is_some_and(|d| live(&d)) {
@@ -602,7 +630,7 @@ impl Daemons for Reach<'_> {
         }
         ensure(self.wiring, self.wiring.env());
         match serving_here(self.wiring, &files).map_err(declined)? {
-            Some(found) => Ok(client_of(&found)),
+            Some(found) => Ok(self.reached(&found)),
             None => Err(Unreached::NotStarted {
                 log: self.log(&files),
             }),
@@ -628,12 +656,17 @@ pub(crate) fn env_vars(env: &EnvSnapshot) -> daemon_proto::v1::EnvVars {
 /// that cannot be told is
 /// outside a project, as before.
 pub(crate) fn client<'a>(wiring: &'a Wiring, stamp: &str) -> daemon_api::Client<Reach<'a>> {
+    client_reaching(wiring, Reach::new(wiring, stamp))
+}
+
+/// [`client`], reaching the daemon through `reach`.
+fn client_reaching<'a>(wiring: &'a Wiring, reach: Reach<'a>) -> daemon_api::Client<Reach<'a>> {
     match wiring.registration() {
-        Ok(Some(project)) => client_for(wiring, stamp, Some(project)),
+        Ok(Some(project)) => client_through(wiring, reach, Some(project)),
         Ok(None) | Err(LibError::ProjectUnnamed { .. }) => {
-            client_for(wiring, stamp, None).unnamed()
+            client_through(wiring, reach, None).unnamed()
         }
-        Err(_) => client_for(wiring, stamp, None),
+        Err(_) => client_through(wiring, reach, None),
     }
 }
 
@@ -643,18 +676,22 @@ fn client_for<'a>(
     stamp: &str,
     registration: Option<daemon_proto::v1::ResolveProjectRequest>,
 ) -> daemon_api::Client<Reach<'a>> {
+    client_through(wiring, Reach::new(wiring, stamp), registration)
+}
+
+/// [`client_for`], reaching the daemon through `reach`.
+fn client_through<'a>(
+    wiring: &'a Wiring,
+    reach: Reach<'a>,
+    registration: Option<daemon_proto::v1::ResolveProjectRequest>,
+) -> daemon_api::Client<Reach<'a>> {
     let cwd = wiring
         .env()
         .cwd()
         .map(|cwd| cwd.display().to_string())
         .unwrap_or_default();
-    daemon_api::Client::new(
-        Reach::new(wiring, stamp),
-        registration,
-        cwd,
-        env_vars(wiring.env()),
-    )
-    .with_request_ids(Box::new(request_id))
+    daemon_api::Client::new(reach, registration, cwd, env_vars(wiring.env()))
+        .with_request_ids(Box::new(request_id))
 }
 
 /// Where this process's library resource names are rooted (OD-40, OQ-2,

@@ -45,7 +45,10 @@ pub use error::{AppError, EN_US};
 pub use facts::{Fact, Facts, ModelFact, Recorded, RunnerFact};
 pub use feeds::{Cursor, Feeds, Follow};
 pub use gate::owns;
-pub use hold::{HoldReport, Holding, HookClock, Kept, NotHeld, Outcome, Serving, Why, TAKE_ROUNDS};
+pub use hold::{
+    command_flushes, Flush, HoldReport, Holding, HookClock, Kept, Left, NotHeld, Outcome, Serving,
+    SessionFlush, Why, TAKE_ROUNDS,
+};
 pub use hook_commands::{EdgeCommands, EdgeFailure};
 pub use hook_gate::{HookGate, HookIdentity};
 pub use identity::{Identity, Role};

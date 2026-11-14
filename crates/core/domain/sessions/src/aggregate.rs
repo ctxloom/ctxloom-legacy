@@ -33,9 +33,9 @@ use crate::{
     SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
 };
 use crate::{
-    AssistantTextShown, Compacted, PromptSubmitted, RecordAssistantText, RecordCompaction,
-    RecordPromptSubmitted, RecordSessionEnded, RecordToolCall, RecordTurnEnded, SessionEnded,
-    ToolCalled, TurnEnded,
+    AssistantTextShown, CaptureGapped, Compacted, PromptSubmitted, RecordAssistantText,
+    RecordCaptureGap, RecordCompaction, RecordPromptSubmitted, RecordSessionEnded, RecordToolCall,
+    RecordTurnEnded, SessionEnded, ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -459,6 +459,27 @@ impl SessionAggregate {
             summary_bytes: fact.summary_bytes,
             summary_sha256: fact.summary_sha256,
         }))
+    }
+
+    /// RecordCaptureGap (s4-Q14, H3): a FACT (a hook dropped what it
+    /// observed), so never refused; recorded as its event on a live session,
+    /// nothing on a stream with none.
+    #[handles_fact(RecordCaptureGap)]
+    fn hook_capture_gap(
+        &self,
+        fact: RecordCaptureGap,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = (ctx, fact);
+        record(None::<CaptureGapped>)
+    }
+
+    // Equivalent: the capture events carry no aggregate state; projectors fold them
+    // (`crate::apply` has no arm that changes the state for them).
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(CaptureGapped)]
+    fn applied_capturegapped(&mut self, event: CaptureGapped, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
     }
 
     // Equivalent: the capture events carry no aggregate state; projectors fold them

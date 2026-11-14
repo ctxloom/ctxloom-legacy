@@ -1,0 +1,363 @@
+//! A command's flush of its home's holds on the way in (s4-Q14, H3), over
+//! the real hold (fact-spool on a temporary file system, its flock) and the
+//! in-process kernel. A race is forced, never waited for: the second
+//! command runs INSIDE the first one's delivery.
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use angzarr_embedded::testing::MemoryStore;
+use angzarr_embedded::v1::{CommandBook, Cover, Uuid};
+use angzarr_embedded::CommandBookExt;
+use run_ports::{Delivery, Edge, FactSink, Held, HeldEntry, HeldFact, HeldFacts};
+use runs_application::{observe, Left};
+use surface_ports::HookEvent;
+
+use super::*;
+use crate::capture::EdgeSink;
+use crate::InProcessCore;
+
+type TheEdge = embedded_edge::EmbeddedEdge<crate::CoreStores<MemoryStore>>;
+
+const OWN: &str = "v0.2.0-aaaaaaa";
+const OLDER: &str = "v0.1.0-bbbbbbb";
+
+/// Two sessions of the home, by resource name.
+const ONE: &str = "projects/amber-quiet-heron/sessions/amber-swift-owl";
+const TWO: &str = "projects/calm-otter/sessions/brisk-copper-moth";
+
+fn id_of(name: &str) -> Uuid {
+    Uuid::from_bytes(*sessions::SessionName::parse(name).unwrap().id().as_bytes())
+}
+
+fn root_of(name: &str) -> uuid::Uuid {
+    sessions::SessionName::parse(name).unwrap().id()
+}
+
+fn cover_of(name: &str) -> Cover {
+    Cover {
+        domain: sessions::SESSION_DOMAIN.to_string(),
+        root: Some(id_of(name)),
+        edition: None,
+    }
+}
+
+/// A kernel with both sessions minted.
+async fn kernel() -> Arc<TheEdge> {
+    let core = InProcessCore::start(MemoryStore::default()).await;
+    let edge = core.edge();
+    for name in [ONE, TWO] {
+        let parsed = sessions::SessionName::parse(name).unwrap();
+        let mint = sessions::MintSession {
+            harp: parsed.harp().to_string(),
+            project_id: "calm-otter".to_string(),
+            project_dir: "/w".to_string(),
+            output_dir: "/o".to_string(),
+            engine: "claude-code".to_string(),
+            origin: sessions::Origin::Session,
+            started_at: None,
+            depth: 0,
+            owner: None,
+            workspace: None,
+        };
+        edge.handle(CommandBook::command_of(
+            cover_of(name),
+            &sessions::SessionCommand::from(mint),
+        ))
+        .await
+        .unwrap();
+    }
+    edge
+}
+
+/// A home's holds on a temporary file system.
+fn spool() -> fact_spool::Spool {
+    let fs = Arc::new(file_system::Rooted::temp().unwrap());
+    let home = std::path::PathBuf::from(os::host().flavor().from_top("/home/a"));
+    fact_spool::Spool::at_home(fs, &home)
+}
+
+fn prompt(id: &str) -> HookEvent {
+    HookEvent {
+        event: "turn_start".to_string(),
+        prompt_id: id.to_string(),
+        prompt: format!("prompt {id}"),
+        ..HookEvent::default()
+    }
+}
+
+fn turn_end(id: &str) -> HookEvent {
+    HookEvent {
+        event: "turn_end".to_string(),
+        prompt_id: id.to_string(),
+        ..HookEvent::default()
+    }
+}
+
+/// `event`'s fact, held for `name` by a hook of `OWN`.
+fn hold(held: &fact_spool::Spool, name: &str, event: &HookEvent) -> Held {
+    let observation = &observe(event)[0];
+    let fact = HeldFact::of_book(
+        OWN,
+        name,
+        observation.external_id(&id_of(name)),
+        &observation.book(&id_of(name)),
+        None,
+    );
+    held.hold(&root_of(name), fact).unwrap()
+}
+
+fn id(name: &str, event: &HookEvent) -> String {
+    observe(event)[0].external_id(&id_of(name))
+}
+
+/// The external ids of the facts `name`'s stream recorded, in order.
+async fn recorded(edge: &TheEdge, name: &str) -> Vec<String> {
+    edge.events(&cover_of(name), 0)
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|page| match page.meta.as_ref()?.causation.as_ref()? {
+            angzarr_embedded::v1::event_meta::Causation::Fact(fact) => {
+                Some(fact.origin.as_ref()?.external_id.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// What `name`'s hold holds, by external id, in order.
+fn held_ids(held: &fact_spool::Spool, name: &str) -> Vec<String> {
+    let batch = held.take(&root_of(name)).unwrap().expect("no other taker");
+    batch
+        .entries()
+        .iter()
+        .map(|entry| match entry {
+            HeldEntry::Fact(fact) => fact.external_id.clone(),
+            HeldEntry::Gap(gap) => format!("gap:{}", gap.external_id),
+        })
+        .collect()
+}
+
+/// The in-process sink, running `during` inside its first delivery.
+struct Racing {
+    sink: EdgeSink<TheEdge>,
+    during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Racing {
+    fn over(edge: &Arc<TheEdge>) -> Racing {
+        Racing {
+            sink: EdgeSink::new(Arc::clone(edge)),
+            during: Mutex::new(None),
+        }
+    }
+}
+
+impl FactSink for Racing {
+    fn deliver(&self, book: CommandBook, within: Duration) -> Delivery {
+        let during = self.during.lock().unwrap().take();
+        if let Some(during) = during {
+            during();
+        }
+        self.sink.deliver(book, within)
+    }
+}
+
+fn soon() -> Deadline {
+    Deadline(Instant::now() + FLUSH_BOUND)
+}
+
+fn lefts(flushed: &Flushed) -> Vec<(uuid::Uuid, Left)> {
+    let Flushed::Done(done) = flushed else {
+        panic!("a flush: {flushed:?}")
+    };
+    done.iter().map(|d| (d.root, d.left.clone())).collect()
+}
+
+/// The two sessions' roots in the order the hold lists them.
+fn sorted_roots() -> Vec<uuid::Uuid> {
+    let mut roots = vec![root_of(ONE), root_of(TWO)];
+    roots.sort();
+    roots
+}
+
+// A command on its way in delivers what every session of its home holds,
+// each in its own order, and leaves no hold behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_command_delivers_every_sessions_hold_in_held_order() {
+    let edge = kernel().await;
+    let held = spool();
+    hold(&held, ONE, &prompt("p1"));
+    hold(&held, ONE, &turn_end("p1"));
+    hold(&held, TWO, &prompt("q1"));
+    let (h, e) = (held.clone(), Arc::clone(&edge));
+    let flushed =
+        tokio::task::spawn_blocking(move || flush_with(&h, &soon(), OWN, OWN, &Racing::over(&e)))
+            .await
+            .unwrap();
+    assert_eq!(
+        lefts(&flushed),
+        sorted_roots()
+            .into_iter()
+            .map(|r| (r, Left::Nothing))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        recorded(&edge, ONE).await,
+        vec![id(ONE, &prompt("p1")), id(ONE, &turn_end("p1"))]
+    );
+    assert_eq!(recorded(&edge, TWO).await, vec![id(TWO, &prompt("q1"))]);
+    assert!(held.sessions().unwrap().is_empty(), "no hold is left");
+}
+
+// A fact the hold dropped past its bound is delivered as the gap fact, in
+// its place: after what was held before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_gap_is_delivered_in_its_place() {
+    let edge = kernel().await;
+    let held = spool();
+    assert_eq!(hold(&held, ONE, &prompt("p1")), Held::Kept);
+    // At its bound now: the next fact is dropped and a gap kept for it.
+    let full = held.clone().bounded(1, 256 << 20);
+    assert!(matches!(
+        hold(&full, ONE, &turn_end("p1")),
+        Held::Full { gap: true, .. }
+    ));
+    assert_eq!(
+        held_ids(&held, ONE),
+        vec![
+            id(ONE, &prompt("p1")),
+            format!("gap:{}", id(ONE, &turn_end("p1")))
+        ]
+    );
+    let (h, e) = (held.clone(), Arc::clone(&edge));
+    tokio::task::spawn_blocking(move || flush_with(&h, &soon(), OWN, OWN, &Racing::over(&e)))
+        .await
+        .unwrap();
+    assert_eq!(
+        recorded(&edge, ONE).await,
+        vec![
+            id(ONE, &prompt("p1")),
+            format!("hook:gap:{}", id(ONE, &turn_end("p1")))
+        ]
+    );
+}
+
+// A command older than the serving daemon delivers nothing, and leaves
+// every hold as it was.
+#[test]
+fn an_older_command_delivers_nothing() {
+    let held = spool();
+    hold(&held, ONE, &prompt("p1"));
+    struct Never;
+    impl FactSink for Never {
+        fn deliver(&self, _: CommandBook, _: Duration) -> Delivery {
+            panic!("nothing is delivered")
+        }
+    }
+    assert_eq!(
+        flush_with(&held, &soon(), OLDER, OWN, &Never),
+        Flushed::Older {
+            daemon: OWN.to_string()
+        }
+    );
+    assert_eq!(held_ids(&held, ONE), vec![id(ONE, &prompt("p1"))]);
+}
+
+// A flush whose bound is already spent delivers nothing more and leaves
+// every hold as it was, so a command never stalls on it.
+#[test]
+fn a_spent_bound_delivers_nothing() {
+    let held = spool();
+    hold(&held, ONE, &prompt("p1"));
+    struct Never;
+    impl FactSink for Never {
+        fn deliver(&self, _: CommandBook, _: Duration) -> Delivery {
+            panic!("nothing is delivered")
+        }
+    }
+    let spent = Deadline(Instant::now());
+    let flushed = flush_with(&held, &spent, OWN, OWN, &Never);
+    assert_eq!(lefts(&flushed), vec![(root_of(ONE), Left::OutOfTime)]);
+    assert_eq!(held_ids(&held, ONE), vec![id(ONE, &prompt("p1"))]);
+}
+
+// Two commands at once over the real hold and its flock, forced: the
+// second runs INSIDE the first one's first delivery. It cannot take the
+// hold the first is delivering (its flush lock), so it skips it and never
+// waits; it delivers the other session's. Every fact is recorded once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_commands_at_once_one_flushes_a_hold_the_other_skips_it() {
+    let edge = kernel().await;
+    let held = spool();
+    let roots = sorted_roots();
+    let name = |root: &uuid::Uuid| if *root == root_of(ONE) { ONE } else { TWO };
+    let (first, second) = (name(&roots[0]), name(&roots[1]));
+    hold(&held, first, &prompt("p1"));
+    hold(&held, second, &prompt("q1"));
+    let (told, heard) = std::sync::mpsc::channel();
+    let sink = Racing::over(&edge);
+    {
+        let (held, edge) = (held.clone(), Arc::clone(&edge));
+        *sink.during.lock().unwrap() = Some(Box::new(move || {
+            let started = Instant::now();
+            let flushed = flush_with(&held, &soon(), OWN, OWN, &Racing::over(&edge));
+            told.send((flushed, started.elapsed())).unwrap();
+        }));
+    }
+    let h = held.clone();
+    let flushed = tokio::task::spawn_blocking(move || flush_with(&h, &soon(), OWN, OWN, &sink))
+        .await
+        .unwrap();
+    let (other, took) = heard.recv().unwrap();
+    assert_eq!(
+        lefts(&other),
+        vec![(roots[0], Left::Taken), (roots[1], Left::Nothing)],
+        "the second skips the hold being taken, and flushes the other"
+    );
+    assert!(took < FLUSH_BOUND, "it never waited: {took:?}");
+    assert_eq!(
+        lefts(&flushed),
+        vec![(roots[0], Left::Nothing), (roots[1], Left::Nothing)]
+    );
+    assert_eq!(recorded(&edge, first).await, vec![id(first, &prompt("p1"))]);
+    assert_eq!(
+        recorded(&edge, second).await,
+        vec![id(second, &prompt("q1"))]
+    );
+    assert!(held.sessions().unwrap().is_empty());
+}
+
+// The way in is once a process: the first ask is the first, never again.
+#[test]
+fn the_way_in_is_once() {
+    let way_in = WayIn::new();
+    assert!(way_in.first());
+    assert!(!way_in.first());
+    assert!(!way_in.first());
+}
+
+// With no daemon serving the home, the frontend's flush (U5's call) starts
+// none and delivers nothing.
+#[test]
+fn with_no_daemon_serving_nothing_is_flushed() {
+    let temp = crate::fixtures::root();
+    let home = temp.root().join("home");
+    crate::fixtures::mkdirs(&home);
+    let base = crate::tests::host_snapshot();
+    let env = process_env::EnvSnapshot::from_parts(
+        base.flavor(),
+        Ok(home.clone()),
+        base.temp_dir().to_path_buf(),
+        vec![
+            (
+                crate::fixtures::home_var().into(),
+                home.clone().into_os_string(),
+            ),
+            (run_ports::HOME_VARIABLE.into(), home.into_os_string()),
+        ],
+    );
+    let wiring = crate::Wiring::new(Arc::new(env)).unwrap();
+    assert_eq!(flush_holds(&wiring, OWN), Flushed::NotServing);
+}

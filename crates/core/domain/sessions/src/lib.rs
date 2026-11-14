@@ -131,7 +131,8 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         | SessionEvent::ToolCalled(_)
         | SessionEvent::TurnEnded(_)
         | SessionEvent::SessionEnded(_)
-        | SessionEvent::Compacted(_) => {}
+        | SessionEvent::Compacted(_)
+        | SessionEvent::CaptureGapped(_) => {}
         // A run's end is when the session's last run ended (the proto's
         // RecordEnd: IncarnationEnded supersedes it), at its page's instant.
         SessionEvent::IncarnationEnded(_) => {

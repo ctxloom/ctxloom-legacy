@@ -792,6 +792,44 @@ fn holds_at_bound(w: &mut World) {
     file.set_len(256 << 20).expect("a sparse hold");
 }
 
+#[given("the session's hooks held its prompt and its turn's end while an older daemon served")]
+fn held_prompt_and_turn_end(w: &mut World) {
+    start_daemon_stamped(w, OLDER_STAMP);
+    fire(w, "UserPromptSubmit", USER_PROMPT_SUBMIT);
+    warned_for_prompt(w, "hook-cli-held");
+    fire(w, "Stop", STOP);
+    let harp = fired(w).harp.clone();
+    let held = holds(w);
+    assert_eq!(held.len(), 1, "the session's hold: {held:?}");
+    let text = String::from_utf8_lossy(&files::read_bytes(&held[0]).expect("the hold")).to_string();
+    assert!(
+        text.contains("hook:prompt:") && text.contains("hook:turn-end:"),
+        "{harp}'s prompt and turn's end are held"
+    );
+}
+
+#[given(
+    "the session's hooks held its prompt, then dropped its turn's end past the hold's bound, while an older daemon served"
+)]
+fn held_then_dropped(w: &mut World) {
+    start_daemon_stamped(w, OLDER_STAMP);
+    fire(w, "UserPromptSubmit", USER_PROMPT_SUBMIT);
+    warned_for_prompt(w, "hook-cli-held");
+    holds_at_bound(w);
+    fire(w, "Stop", STOP);
+    let warnings = hook_warnings(w);
+    assert!(
+        warnings.iter().any(|w| w["code"] == "hook-cli-not-recorded"
+            && w["args"]["why"]
+                .as_str()
+                .is_some_and(|why| why.contains("is at its bound"))),
+        "the turn's end was dropped at the bound: {warnings:#?}"
+    );
+    // The home is no longer at its bound: only the session's hold is left,
+    // its prompt and the gap where its turn's end was dropped.
+    files::remove(held_dir(w).join(format!("{FULL_HOME_HOLD}.held")));
+}
+
 #[given(expr = "a ctxloom daemon is serving for this home, hosting a child {string}")]
 fn serving_hosting(w: &mut World, child: String) {
     assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
@@ -985,6 +1023,8 @@ fn restarted(w: &mut World) {
 const USER_PROMPT_SUBMIT: &str =
     include_str!("../../../../adapters/driven/engine-claude/src/fixtures/user_prompt_submit.json");
 const STOP: &str = include_str!("../../../../adapters/driven/engine-claude/src/fixtures/stop.json");
+const MESSAGE_DISPLAY: &str =
+    include_str!("../../../../adapters/driven/engine-claude/src/fixtures/message_display.json");
 
 /// What the fixture's prompt says.
 const PROMPT: &str = "Run the shell command: echo hi";
@@ -1057,6 +1097,53 @@ fn hook_fires(w: &mut World) {
 #[when("the session's assistant fires its Stop hook")]
 fn stop_hook_fires(w: &mut World) {
     fire(w, "Stop", STOP);
+}
+
+/// The fixture's MessageDisplay, as piece `index` of ten of one message.
+fn piece(index: u32) -> String {
+    let mut payload: Value = serde_json::from_str(MESSAGE_DISPLAY).expect("the fixture");
+    payload["index"] = json!(index);
+    payload["final"] = json!(index == 9);
+    payload["delta"] = json!(format!("piece {index}"));
+    payload.to_string()
+}
+
+#[when("the session's assistant fires ten MessageDisplay hooks at once")]
+fn ten_hooks_at_once(w: &mut World) {
+    w.seed();
+    let harp = w.seeded_harps.last().cloned().expect("a session");
+    let named = run_now(w, &["test", "session-name", &harp]);
+    assert_eq!(named.code, 0, "{}", named.said());
+    let name = named.stdout.trim().to_string();
+    let events_before = session_events(w, &harp).len();
+    let mut env = env_of(w);
+    env.push(("CTXLOOM_SESSION".to_string(), name));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let started = Instant::now();
+    // All ten started before any is waited for.
+    let children: Vec<Child> = (0..10)
+        .map(|index| {
+            let mut child = w
+                .common
+                .project
+                .start_talking(&env, &["hook", "claude-code", "execute", "MessageDisplay"]);
+            crate::tests::feed(child.stdin.take().expect("stdin"), &piece(index));
+            child
+        })
+        .collect();
+    let mut last = None;
+    for child in children {
+        let ran = crate::tests::Ran::of(child.wait_with_output().expect("the hook finishes"));
+        assert_eq!(ran.code, 0, "{}", ran.said());
+        last = Some(ran);
+    }
+    w.daemon_spec.fired = Some(Fired {
+        ran: last.expect("ten hooks"),
+        took: started.elapsed(),
+        harp,
+        events_before,
+        unrecorded_answer: String::new(),
+    });
 }
 
 #[when("Alice asks her assistant one thing, which the killed daemon leaves unfinished")]
@@ -1509,6 +1596,93 @@ fn prompt_then_turn_end(w: &mut World) {
         .filter(|l| l["kind"] == "turn_end")
         .count();
     assert_eq!(ends, 1, "the turn's end after the prompt: {lines:#?}");
+}
+
+#[then("the session's transcript holds each of the ten pieces, once")]
+fn ten_pieces_once(w: &mut World) {
+    let harp = fired(w).harp.clone();
+    let lines = transcript_lines(w, &harp);
+    for index in 0..10 {
+        let found = lines
+            .iter()
+            .filter(|l| {
+                l["kind"] == "assistant_delta"
+                    && l["delta"]["index"] == index
+                    && l["delta"]["text"] == format!("piece {index}")
+            })
+            .count();
+        assert_eq!(found, 1, "piece {index}: {lines:#?}");
+    }
+}
+
+/// The lines of the last command's stdout, each a JSON value.
+fn ran_lines(w: &World) -> Vec<Value> {
+    w.common
+        .ran()
+        .stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{l:?}: {e}")))
+        .collect()
+}
+
+/// The one gap line of `lines`, after the prompt's.
+fn the_gap(lines: &[Value]) -> Value {
+    let prompts = prompt_lines(lines);
+    assert_eq!(prompts.len(), 1, "the prompt, once: {lines:#?}");
+    let gaps: Vec<usize> = (0..lines.len())
+        .filter(|n| lines[*n]["kind"] == "gap")
+        .collect();
+    assert_eq!(gaps.len(), 1, "one gap: {lines:#?}");
+    assert!(gaps[0] > prompts[0], "the gap after the prompt: {lines:#?}");
+    lines[gaps[0]].clone()
+}
+
+#[then("the transcript holds the prompt, then a gap where the turn's end was dropped, each once")]
+fn prompt_then_gap(w: &mut World) {
+    let lines = ran_lines(w);
+    let gap = the_gap(&lines);
+    assert_eq!(gap["gap"]["facts"], 1, "{gap}");
+    assert!(
+        gap["gap"]["dropped"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("hook:turn-end:")),
+        "the turn's end was dropped: {gap}"
+    );
+    assert!(
+        !lines.iter().any(|l| l["kind"] == "turn_end"),
+        "the turn's end itself was never recorded: {lines:#?}"
+    );
+}
+
+#[then("the gap says when the turn's end was dropped, and that the hold was at its bound")]
+fn gap_says_when_and_why(w: &mut World) {
+    let gap = the_gap(&ran_lines(w));
+    assert_eq!(gap["gap"]["why"], "bound", "{gap}");
+    let at = gap["gap"]["dropped_at"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    // The hook's clock when it dropped it: an RFC 3339 instant, never the
+    // epoch, no later than the gap was recorded.
+    assert!(at.ends_with('Z') && at.len() == 20, "{at}");
+    let year: u64 = at[..4].parse().expect("a year");
+    assert!(year >= 2026, "{at}");
+    let recorded = gap["ts"].as_str().unwrap_or_default();
+    assert!(at.as_str() <= recorded, "dropped {at}, recorded {recorded}");
+}
+
+#[then(
+    "once a ctxloom daemon can be started and serves, the next command records the prompt in the session's transcript, once"
+)]
+fn once_startable_next_command_records(w: &mut World) {
+    files::remove(daemon_dir(w));
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    let harp = fired(w).harp.clone();
+    let lines = transcript_lines(w, &harp);
+    assert_eq!(prompt_lines(&lines).len(), 1, "{lines:#?}");
+    assert!(holds(w).is_empty(), "{:?}", holds(w));
 }
 
 #[then("the hook exits 0, and its answer to the engine is unchanged")]
