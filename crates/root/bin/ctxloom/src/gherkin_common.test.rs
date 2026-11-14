@@ -247,6 +247,13 @@ pub(crate) trait CommonWorld {
     /// What a World does before each command (plants its sessions).
     fn before_run(&mut self) {}
 
+    /// What a World does before the command `line` a step names runs, ahead
+    /// of [`CommonWorld::before_run`] (a harness the command needs: a stub
+    /// engine, a daemon the scenario owns).
+    fn before_line(&mut self, line: &str) {
+        let _ = line;
+    }
+
     /// An `Alice ...:` step: its docstring's commands, run. A World whose
     /// step is told in stages (it needs the rest of the scenario before it
     /// can run) takes the step over.
@@ -381,6 +388,7 @@ macro_rules! common_steps {
             #[given(expr = "I run {string}")]
             #[when(expr = "I run {string}")]
             fn run(w: &mut World, line: String) {
+                w.before_line(&line);
                 w.before_run();
                 w.common_mut().run_lines(&line, "");
             }
@@ -388,6 +396,7 @@ macro_rules! common_steps {
             #[given(expr = "I run {string} with input:")]
             #[when(expr = "I run {string} with input:")]
             fn run_with_input(w: &mut World, step: &Step, line: String) {
+                w.before_line(&line);
                 w.before_run();
                 w.common_mut().run_lines(&line, &doc(step));
             }

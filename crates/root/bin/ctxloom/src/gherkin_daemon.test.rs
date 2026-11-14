@@ -190,16 +190,133 @@ fn interactive_session(w: &mut World) {
     }
 }
 
-/// A hosted child's stub (engine-claude's streaming child): an init, a
-/// result for each message, until its input ends.
+/// A hosted child's stub (engine-claude's streaming child): its
+/// environment written once, an init, then for each message given a line
+/// of `turns` (its conversation's id, then the message) and a result; a
+/// turn begun while `hold` is there is left in flight until the interrupt
+/// (`interrupted`), which ends it aborted; `/clear` starts a new
+/// conversation (a new id), as claude's own does. It ends when its input
+/// does.
 const CHILD_STUB: &str = r#"here=$(dirname "$0")
-printf '{"type":"system","subtype":"init","cwd":"/work","session_id":"S1","tools":[]}\n'
+env > "$here/child-env"
+n=1
+sid=S1
+busy=
+printf '{"type":"system","subtype":"init","cwd":"/work","session_id":"%s","tools":[]}\n' "$sid"
 while IFS= read -r line; do
+  case "$line" in
+    *'"control_request"'*)
+      : > "$here/interrupted"
+      printf '{"type":"control_response","response":{"subtype":"success"}}\n'
+      if [ -n "$busy" ]; then
+        busy=
+        printf '{"type":"result","subtype":"error_during_execution","is_error":false,"terminal_reason":"aborted_streaming","result":"","session_id":"%s"}\n' "$sid"
+      fi
+      continue ;;
+    *'"/clear"'*)
+      n=$((n+1))
+      sid="S$n"
+      printf '{"type":"conversation_reset","session_id":"%s"}\n' "$sid"
+      printf '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"%s"}\n' "$sid"
+      continue ;;
+  esac
+  printf '%s %s\n' "$sid" "$line" >> "$here/turns"
   : > "$here/child-turn"
-  printf '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"S1"}\n'
+  if [ -e "$here/hold" ]; then
+    rm -f "$here/hold"
+    busy=1
+    continue
+  fi
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"%s"}\n' "$sid"
 done
 : > "$here/child-exited"
 "#;
+
+/// The stub child's directory.
+fn stub_dir(w: &World) -> PathBuf {
+    w.common.project.home().join("fake-claude")
+}
+
+/// The lines of `turns` the stub child wrote: `(conversation, message)`.
+fn turns(w: &World) -> Vec<(String, String)> {
+    files::read(stub_dir(w).join("turns"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .map(|(sid, rest)| (sid.to_string(), rest.to_string()))
+        .collect()
+}
+
+/// Wait, at most `limit`, for `ready` to answer.
+fn until<T>(
+    w: &World,
+    what: &str,
+    limit: Duration,
+    mut ready: impl FnMut(&World) -> Option<T>,
+) -> T {
+    let deadline = Instant::now() + limit;
+    loop {
+        if let Some(found) = ready(w) {
+            return found;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}; the daemon's log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// How long a scenario waits for what its daemon does.
+const DAEMON_WAIT: Duration = Duration::from_secs(30);
+
+/// The turn whose message holds `text`, once the stub has taken one.
+fn turn_on(w: &World, text: &str) -> (String, String) {
+    until(w, &format!("a turn on {text:?}"), DAEMON_WAIT, |w| {
+        turns(w).into_iter().find(|(_, line)| line.contains(text))
+    })
+}
+
+/// The session `harp` as `session show` has it.
+fn shown(w: &World, harp: &str) -> Value {
+    let ran = run_now(w, &["session", "show", harp, "--format", "json"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    ran.json()
+}
+
+/// The daemon's hand-off directory of the scenario's home.
+fn launch_dir(w: &World) -> PathBuf {
+    daemon_dir(w).join("launch")
+}
+
+/// The hand-off files there are.
+fn hand_offs(w: &World) -> Vec<PathBuf> {
+    files::children(launch_dir(w))
+}
+
+/// The child stub's claude and a daemon this scenario owns (it hosts the
+/// children for the scenario's life, so its default idle time), for a
+/// scenario whose own command launches its first child; every daemon a
+/// command spawns idles out soon.
+fn hosting_daemon(w: &mut World) {
+    if w.daemon_spec.daemon.is_some() {
+        return;
+    }
+    stub_claude(w, CHILD_STUB);
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+}
+
+/// Before a scenario's command: one that launches a child is given the
+/// stub child and a daemon the scenario owns, when its steps set up none
+/// (no engine on the host's `PATH` is ever started).
+pub(super) fn before_line(w: &mut World, line: &str) {
+    if line.trim_start().starts_with("ctxloom session launch") {
+        hosting_daemon(w);
+    }
+}
 
 /// A child the daemon hosts: launched by the user for a seeded owner, and
 /// seen to take its first turn.
@@ -233,6 +350,27 @@ fn hosted_child(w: &mut World) {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// A hosted child whose first turn has ended: its owner was told so.
+fn idle_child(w: &mut World) {
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+    hosted_child(w);
+    until(w, "the child's first turn to end", DAEMON_WAIT, |w| {
+        let owner = shown(w, "amber-quiet-heron");
+        owner["pending"]
+            .as_array()
+            .is_some_and(|pending| {
+                pending.iter().any(|m| {
+                    m["text"]
+                        .as_str()
+                        .is_some_and(|t| t.contains("finished its turn"))
+                })
+            })
+            .then_some(())
+    });
 }
 
 /// A step of the daemon's spec that nothing implements yet.
@@ -274,8 +412,13 @@ fn second_project(_: &mut World, _name: String) {
 }
 
 #[given(regex = r#"^Alice's session "([^"]+)" is running$"#)]
-fn alices_session_running(_: &mut World, _harp: String) {
-    red("Alice's session is running")
+fn alices_session_running(w: &mut World, harp: String) {
+    // Her session: recorded and running; her daemon serves, and her
+    // environment holds a credential a child of claude takes.
+    hosting_daemon(w);
+    let seeded = run_now(w, &["test", "seed-session", &harp]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    w.common.set_env("ANTHROPIC_API_KEY", "a-key".to_string()); // gitleaks:allow
 }
 
 #[given(regex = r#"^Alice's session "([^"]+)" is running, with a child "([^"]+)" working for it$"#)]
@@ -406,18 +549,31 @@ fn killed_at(w: &mut World, when: String) {
 const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 
 #[given(expr = "a child {string} that is open and idle")]
-fn child_idle(_: &mut World, _child: String) {
-    red("a child that is open and idle")
+fn child_idle(w: &mut World, child: String) {
+    assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
+    idle_child(w);
 }
 
 #[given(expr = "a child {string} that is in the middle of a turn")]
-fn child_mid_turn(_: &mut World, _child: String) {
-    red("a child that is in the middle of a turn")
+fn child_mid_turn(w: &mut World, child: String) {
+    assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+    // Its first turn is taken and left in flight.
+    files::put(stub_dir(w).join("hold"), "once");
+    hosted_child(w);
 }
 
 #[given(expr = "a child {string} that has been closed")]
-fn child_closed(_: &mut World, _child: String) {
-    red("a child that has been closed")
+fn child_closed(w: &mut World, child: String) {
+    assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
+    idle_child(w);
+    let closed = run_now(w, &["session", "close", &child]);
+    assert_eq!(closed.code, 0, "{}", closed.said());
+    until(w, "the child closed", DAEMON_WAIT, |w| {
+        (shown(w, "brisk-copper-moth")["closed"] == Value::Bool(true)).then_some(())
+    });
 }
 
 #[given(expr = "a child {string} of {string} that is open and idle")]
@@ -427,14 +583,28 @@ fn child_of_idle(w: &mut World, child: String, owner: String) {
         ("brisk-copper-moth", "amber-quiet-heron"),
         "the child and owner the harness hosts"
     );
-    // Its default idle time: a daemon that hosts a child never idles out.
-    start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
-    hosted_child(w);
+    idle_child(w);
 }
 
+/// A child no session holds open: one nothing launched.
+const STALE_CHILD: &str = "0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b";
+
 #[given("a hand-off file is left for a child that is no longer open")]
-fn stale_hand_off(_: &mut World) {
-    red("a hand-off file is left for a child that is no longer open")
+fn stale_hand_off(w: &mut World) {
+    // Left by a launch whose child was never recorded, longer ago than a
+    // launch takes to record its child.
+    let path = launch_dir(w).join(STALE_CHILD);
+    files::put_mode(
+        &path,
+        "ctxloom-launch-env 3\nANTHROPIC_API_KEY=left\n",
+        0o600,
+    ); // gitleaks:allow
+    let old = std::time::SystemTime::now() - Duration::from_secs(3_600);
+    files::open_append(&path)
+        .and_then(|file| file.set_modified(old))
+        .expect("the hand-off is made old");
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
 }
 
 // ------------------------------------------------------------------- when
@@ -582,28 +752,63 @@ fn exited_sigint(_: &mut World) {
 }
 
 #[then(regex = r#"^"([^"]+)" is listed as a child of "([^"]+)", run by her daemon$"#)]
-fn listed_child(_: &mut World, _child: String, _owner: String) {
-    red("the child is listed under its owner, run by her daemon")
+fn listed_child(w: &mut World, child: String, owner: String) {
+    let shown_child = until(w, "the child minted", DAEMON_WAIT, |w| {
+        let ran = run_now(w, &["session", "show", &child, "--format", "json"]);
+        (ran.code == 0).then(|| ran.json())
+    });
+    assert_eq!(
+        shown_child["owner"],
+        shown(w, &owner)["name"],
+        "{shown_child}"
+    );
+    until(w, "the child hosted by her daemon", DAEMON_WAIT, |w| {
+        let status = run_now(w, &["daemon", "status", "--format", "json"]);
+        status.stdout.contains(&child).then_some(())
+    });
 }
 
 #[then(regex = r#"^"([^"]+)"'s first turn was "([^"]*)"$"#)]
-fn first_turn(_: &mut World, _child: String, _text: String) {
-    red("the child's first turn")
+fn first_turn(w: &mut World, _child: String, text: String) {
+    turn_on(w, &text);
+    assert!(
+        turns(w)[0].1.contains(&text),
+        "its first turn: {:?}",
+        turns(w)
+    );
 }
 
 #[then(regex = r#"^"([^"]+)"'s next turn was "([^"]*)"$"#)]
-fn next_turn(_: &mut World, _child: String, _text: String) {
-    red("the child's next turn")
+fn next_turn(w: &mut World, _child: String, text: String) {
+    turn_on(w, &text);
 }
 
 #[then(regex = r#"^"([^"]+)" is listed as closed, and its assistant has exited$"#)]
-fn listed_closed(_: &mut World, _child: String) {
-    red("the child is listed as closed, and its assistant has exited")
+fn listed_closed(w: &mut World, child: String) {
+    child_is_gone(w, &child, false);
 }
 
 #[then(regex = r#"^nothing "([^"]+)" was launched with is left at rest$"#)]
-fn nothing_at_rest(_: &mut World, _child: String) {
-    red("nothing the child was launched with is left at rest")
+fn nothing_at_rest(w: &mut World, _child: String) {
+    until(w, "the child's hand-off gone", DAEMON_WAIT, |w| {
+        hand_offs(w).is_empty().then_some(())
+    });
+}
+
+/// The child `child` is closed and its engine exited; with `hand_off`, its
+/// hand-off gone as well.
+fn child_is_gone(w: &World, child: &str, hand_off: bool) {
+    until(w, "the child closed", DAEMON_WAIT, |w| {
+        (shown(w, child)["closed"] == Value::Bool(true)).then_some(())
+    });
+    until(w, "the child's engine exited", DAEMON_WAIT, |w| {
+        files::exists(stub_dir(w).join("child-exited")).then_some(())
+    });
+    if hand_off {
+        until(w, "the child's hand-off gone", DAEMON_WAIT, |w| {
+            hand_offs(w).is_empty().then_some(())
+        });
+    }
 }
 
 #[then("a new ctxloom daemon is serving for Alice")]
@@ -883,53 +1088,136 @@ fn record_whole(_: &mut World) {
 // ------------------------------------------- then: cli/session_children
 
 #[then(expr = "the child {string} of {string} ran its first turn on {string}")]
-fn child_first_turn(_: &mut World, _child: String, _owner: String, _text: String) {
-    red("the child ran its first turn on its task")
+fn child_first_turn(w: &mut World, child: String, owner: String, text: String) {
+    turn_on(w, &text);
+    let shown_child = until(w, "the child minted", DAEMON_WAIT, |w| {
+        let ran = run_now(w, &["session", "show", &child, "--format", "json"]);
+        (ran.code == 0).then(|| ran.json())
+    });
+    assert_eq!(
+        shown_child["owner"],
+        shown(w, &owner)["name"],
+        "{shown_child}"
+    );
 }
 
 #[then("the child's hand-off file is readable by its owner alone while the child is open")]
-fn hand_off_private(_: &mut World) {
-    red("the child's hand-off file is 0600 while the child is open")
+fn hand_off_private(w: &mut World) {
+    let child = until(w, "the child minted", DAEMON_WAIT, |w| {
+        let ran = run_now(
+            w,
+            &["session", "show", "brisk-copper-moth", "--format", "json"],
+        );
+        (ran.code == 0).then(|| ran.json())
+    });
+    assert_ne!(child["closed"], Value::Bool(true), "open: {child}");
+    let kept = hand_offs(w);
+    let [path] = kept.as_slice() else {
+        panic!("one hand-off: {kept:?}");
+    };
+    assert_eq!(
+        path.file_name().and_then(|n| n.to_str()),
+        child["uid"].as_str(),
+        "named by the child's stable id"
+    );
+    if let Some(mode) = files::mode_of(path) {
+        assert_eq!(mode, 0o600, "{}", path.display());
+    }
 }
 
 #[then("no hand-off file was left behind")]
-fn no_hand_off(_: &mut World) {
-    red("no hand-off file was left behind")
+fn no_hand_off(w: &mut World) {
+    until(w, "no hand-off left", DAEMON_WAIT, |w| {
+        hand_offs(w).is_empty().then_some(())
+    });
 }
 
 #[then(regex = r#"^the child ran a turn on "([^"]*)"$"#)]
-fn child_ran_turn(_: &mut World, _text: String) {
-    red("the child ran a turn on the message")
+fn child_ran_turn(w: &mut World, text: String) {
+    turn_on(w, &text);
 }
 
 #[then(regex = r#"^the child ran no turn, and lists "([^"]*)" as waiting for one$"#)]
-fn child_waits(_: &mut World, _text: String) {
-    red("the child ran no turn, and lists the message as pending")
+fn child_waits(w: &mut World, text: String) {
+    let child = shown(w, "brisk-copper-moth");
+    let pending: Vec<&str> = child["pending"]
+        .as_array()
+        .map(|pending| pending.iter().filter_map(|m| m["text"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(pending.contains(&text.as_str()), "pending: {child}");
+    assert!(
+        !turns(w).iter().any(|(_, line)| line.contains(&text)),
+        "no turn ran on it: {:?}",
+        turns(w)
+    );
 }
 
 #[then(expr = "the child's turn in flight was interrupted, and its next turn was {string}")]
-fn child_steered(_: &mut World, _text: String) {
-    red("the child's turn in flight was interrupted by the steer")
+fn child_steered(w: &mut World, text: String) {
+    until(w, "the turn in flight interrupted", DAEMON_WAIT, |w| {
+        files::exists(stub_dir(w).join("interrupted")).then_some(())
+    });
+    turn_on(w, &text);
+    let taken = turns(w);
+    assert!(
+        taken.last().is_some_and(|(_, line)| line.contains(&text)),
+        "its next turn: {taken:?}"
+    );
 }
 
 #[then(expr = "the child ran one turn on {string}")]
-fn child_one_turn(_: &mut World, _text: String) {
-    red("the child ran one turn on the message")
+fn child_one_turn(w: &mut World, text: String) {
+    turn_on(w, &text);
+    let events = session_events(w, "brisk-copper-moth");
+    let sent: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "MessageSent" && e["text"] == text.as_str())
+        .collect();
+    assert_eq!(sent.len(), 1, "one message: {events:?}");
+    let on: Vec<_> = turns(w)
+        .into_iter()
+        .filter(|(_, line)| line.contains(&text))
+        .collect();
+    assert_eq!(on.len(), 1, "one turn: {on:?}");
 }
 
 #[then("the child's next turn runs in a new conversation of the same session")]
-fn child_cleared(_: &mut World) {
-    red("the child's next turn runs in a new conversation of the same session")
+fn child_cleared(w: &mut World) {
+    let before = turns(w)
+        .first()
+        .map(|(sid, _)| sid.clone())
+        .expect("its first turn");
+    let uid = shown(w, "brisk-copper-moth")["uid"].clone();
+    until(w, "the clear's new conversation bound", DAEMON_WAIT, |w| {
+        let native = shown(w, "brisk-copper-moth")["native_session"].clone();
+        (native.as_str().is_some_and(|n| n != before)).then_some(())
+    });
+    let sent = run_now(
+        w,
+        &[
+            "session",
+            "send",
+            "brisk-copper-moth",
+            "wake",
+            "after the clear",
+        ],
+    );
+    assert_eq!(sent.code, 0, "{}", sent.said());
+    let (sid, _) = turn_on(w, "after the clear");
+    assert_ne!(sid, before, "a new conversation: {:?}", turns(w));
+    assert_eq!(
+        shown(w, "brisk-copper-moth")["uid"],
+        uid,
+        "the same session"
+    );
 }
 
 #[then(
-    expr = "the child {string} is listed as closed, its engine has exited and its hand-off file is gone"
+    regex = r#"^the child "([^"]+)" is listed as closed, its engine has exited and its hand-off file is gone$"#
 )]
-fn child_ended(_: &mut World, _child: String) {
-    red("the child is closed, its engine exited and its hand-off file gone")
+fn child_ended(w: &mut World, child: String) {
+    child_is_gone(w, &child, true);
 }
-
-// ------------------------------------------------- then: cli/run's Rule
 
 #[then("the assistant was a child of the daemon, and its session's lock was the daemon's")]
 fn one_shot_hosted(_: &mut World) {
@@ -1014,14 +1302,40 @@ fn next_incarnation(_: &mut World, _child: String) {
     red("the child runs again as its session's next incarnation")
 }
 
+/// The session write the last command was (the daemon spec's retry rows),
+/// as its event's type; a library write is not built yet (T13).
+fn session_write(w: &World) -> &'static str {
+    let line = w.common.line.clone();
+    if line.contains("session send") {
+        "MessageSent"
+    } else if line.contains("session close") {
+        "SessionClosed"
+    } else {
+        red("a library write retried on a new daemon (T13)")
+    }
+}
+
 #[then("the command started a new daemon and sent the write once more, under the same id")]
-fn retried_once(_: &mut World) {
-    red("the command retried its write once on a new daemon, under the same id")
+fn retried_once(w: &mut World) {
+    let _ = session_write(w);
+    let old = w
+        .daemon_spec
+        .before_kill
+        .clone()
+        .expect("a daemon was killed");
+    let now = discovery_now(w);
+    assert_ne!(now.pid, old.pid, "the retry was answered by a new daemon");
+    assert!(
+        !files::exists(daemon_dir(w).join(DIE_AFTER_APPLY)),
+        "the switch was taken"
+    );
 }
 
 #[then("the write was applied once, and its second delivery was a duplicate")]
-fn applied_once(_: &mut World) {
-    red("the write was applied once, and its retry was a duplicate")
+fn applied_once(w: &mut World) {
+    let kind = session_write(w);
+    let events = session_events(w, "brisk-copper-moth");
+    assert_eq!(count_of(&events, kind), 1, "{events:?}");
 }
 
 #[then("the daemon's confirmation was asked at her terminal, and the session is gone")]
@@ -1059,23 +1373,69 @@ fn closed_listed(_: &mut World, _harp: String) {
 #[given(
     expr = "a session {string} whose engine environment names ANTHROPIC_API_KEY through its engine block"
 )]
-fn owner_curated_env(_: &mut World, _harp: String) {
-    red("a session whose engine environment names ANTHROPIC_API_KEY")
+fn owner_curated_env(w: &mut World, harp: String) {
+    let dir = stub_claude(w, CHILD_STUB);
+    // Its engine block names the key, so its engine's environment holds it
+    // (what its MCP server runs in).
+    w.common.project.write_home(
+        ".ctxloom/config.yaml",
+        &format!(
+            "schema_version: 9\neditor:\n  command: \"true\"\nengines:\n  claude-code:\n    command: {}\n    env: [ANTHROPIC_API_KEY]\n",
+            dir.join("claude").display()
+        ),
+    );
+    let seeded = run_now(w, &["test", "seed-session", &harp]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    w.common
+        .set_env("ANTHROPIC_API_KEY", "the-owners-key".to_string()); // gitleaks:allow
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
 }
 
 #[given("the daemon was started from a shell holding CLAUDE_CODE_OAUTH_TOKEN")]
-fn daemon_env_token(_: &mut World) {
-    red("the daemon was started from a shell holding CLAUDE_CODE_OAUTH_TOKEN")
+fn daemon_env_token(w: &mut World) {
+    let mut env = env_of(w);
+    env.retain(|(name, _)| name != "ANTHROPIC_API_KEY");
+    env.push((
+        "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+        "the-daemons-token".to_string(), // gitleaks:allow
+    ));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let idle = DEFAULT_IDLE_SECONDS.to_string();
+    let daemon = w
+        .common
+        .project
+        .start_with(&env, &["daemon", "serve", "--idle-seconds", &idle]);
+    w.daemon_spec.daemon = Some(daemon);
+    until(w, "the daemon to serve", DAEMON_WAIT, |w| {
+        serving_now(w).then_some(())
+    });
 }
 
 #[when(expr = "its orchestrator launches a child {string}")]
-fn orchestrator_launches(_: &mut World, _child: String) {
-    red("its orchestrator launches a child")
+fn orchestrator_launches(w: &mut World, child: String) {
+    engine_calls(
+        w,
+        "amber-quiet-heron",
+        "child_launch",
+        json!({"name": child, "task": "a task"}),
+    );
+    let launched = tool_session(w);
+    assert!(
+        launched["name"]
+            .as_str()
+            .is_some_and(|name| name.ends_with(&format!("/sessions/{child}"))),
+        "{launched}"
+    );
 }
 
 #[then(expr = "the child {string} was given ANTHROPIC_API_KEY, and not CLAUDE_CODE_OAUTH_TOKEN")]
-fn child_given_curated(_: &mut World, _child: String) {
-    red("the child was given the owner's curated credential only")
+fn child_given_curated(w: &mut World, _child: String) {
+    let env = until(w, "the child to start", DAEMON_WAIT, |w| {
+        files::read(stub_dir(w).join("child-env")).ok()
+    });
+    assert!(env.contains("ANTHROPIC_API_KEY=the-owners-key\n"), "{env}"); // gitleaks:allow
+    assert!(!env.contains("CLAUDE_CODE_OAUTH_TOKEN"), "{env}");
 }
 
 // ------------------------------------------------------ trust (ruling 142)
