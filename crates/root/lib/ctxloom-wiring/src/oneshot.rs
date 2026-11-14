@@ -19,7 +19,6 @@ use angzarr_diagnostic::Report;
 use angzarr_embedded::angzarr_store_sqlite::SqliteStore;
 use angzarr_embedded::Catalog;
 use credentials::OsTokenSource;
-use ctxloom_store_sqlite::Stores;
 use daemon_ports::Daemons;
 use embedded_edge::EmbeddedEdge;
 use file_system::Fs;
@@ -38,15 +37,12 @@ use run_ports::{BoxFuture, Edge, Engine, HookCertificate, HookServer, Limits, Se
 use runs_application::{AppError as CoreError, Enqueuer};
 use session_files::SessionDirs;
 
-use crate::signals::{self, Heard};
+use crate::signals;
 use crate::{InProcessCore, Wiring};
 
 /// How long one turn has before its command, and everything it started, is
 /// killed.
 pub(crate) const TURN_DEADLINE: Duration = Duration::from_secs(30 * 60);
-
-/// The run use cases as this process wires them.
-type TheRuns = Runs<InProcessCore<SqliteStore>, OsTokenSource, HostLauncher, SessionDirs>;
 
 impl Core for InProcessCore<SqliteStore> {
     type Edge = EmbeddedEdge<CoreStores<SqliteStore>>;
@@ -103,25 +99,20 @@ impl ProjectIdentity for Told {
     }
 }
 
-/// The run use cases, built when the one-shot is asked: the library plans, and
-/// the rest is made for the project the run is in.
+/// The runs as this command asks them of the user's daemon: a one-shot as
+/// its client (U4), a session as its frontend (U5). The daemon plans each
+/// (its dependencies pulled when `sync.on_run` asks) and records it.
 pub(crate) struct OneShots<'a> {
     wiring: &'a Wiring,
-    library: Option<Library>,
-    /// The pull a run's start makes when `sync.on_run` asks (rulings 59, 60);
-    /// none, nothing is pulled.
-    puller: Option<std::rc::Rc<dyn setup_application::Puller>>,
     /// This binary's stamp, which the daemon that hosts a one-shot must
     /// share (M3).
     stamp: String,
 }
 
 impl<'a> OneShots<'a> {
-    pub(crate) fn new(wiring: &'a Wiring, library: Library) -> OneShots<'a> {
+    pub(crate) fn new(wiring: &'a Wiring) -> OneShots<'a> {
         OneShots {
             wiring,
-            library: Some(library),
-            puller: None,
             stamp: String::new(),
         }
     }
@@ -132,53 +123,6 @@ impl<'a> OneShots<'a> {
         self.stamp = stamp.to_string();
         self
     }
-
-    /// The same, pulling the missing dependencies at a run's start through
-    /// `puller` when `sync.on_run` asks.
-    pub(crate) fn with_puller(
-        mut self,
-        puller: std::rc::Rc<dyn setup_application::Puller>,
-    ) -> OneShots<'a> {
-        self.puller = Some(puller);
-        self
-    }
-
-    /// The use case over the project the process is in (an interactive
-    /// session's, still the command's own until U5): the project told and
-    /// named, the one store opened and its core served in this process.
-    async fn assemble(
-        &self,
-        library: Library,
-        output_dir: &str,
-        stop: host_launcher::Stop,
-    ) -> Result<TheRuns, RunError> {
-        let wiring = self.wiring;
-        // The one project resolution (owner ruling 2026-11-13): the run's
-        // project is the nearest `.ctxloom` up, as a library read's is, its
-        // id minted at that root when none is bound yet.
-        let project = tell_project(wiring.fs(), wiring.environment(), HarpNames)
-            .map_err(RunError::Project)?;
-        // Named at its resolution, before any session of it is minted (slice
-        // 2 M1): a session's name, and so its stable id, holds its harp.
-        let project_harp = wiring
-            .named_project()
-            .await
-            .map_err(|e| RunError::Project(angzarr_diagnostic::Report::of(&e)))?
-            .harp;
-        let store = Stores::new(wiring.fs(), wiring.home())
-            .open_for(&project.id)
-            .await
-            .map_err(|e| unmade(&e))?;
-        let core = InProcessCore::start(store).await;
-        Ok(runs_over(
-            wiring,
-            library,
-            output_dir,
-            stop,
-            core,
-            (project, project_harp),
-        ))
-    }
 }
 
 /// A run's session that could not be made, for `cause`.
@@ -188,20 +132,42 @@ fn unmade(cause: &dyn std::fmt::Display) -> RunError {
     })
 }
 
+/// How a run's engine is started and its session's lock held: by this
+/// host (a hosted one-shot's, the daemon's own), or by the frontend that
+/// asked (a terminal session's, U5: its runner hands the launch over, and
+/// the frontend takes the lock).
+pub(crate) struct Driven<L> {
+    pub(crate) runner: L,
+    pub(crate) locks: Box<dyn session_ports::SessionLock>,
+}
+
+impl Driven<HostLauncher> {
+    /// The engine started on this host, stopped by `stop`, each program
+    /// found on its own PATH by the host's rules (PATHEXT on Windows); the
+    /// session's lock taken here.
+    pub(crate) fn here(wiring: &Wiring, stop: host_launcher::Stop) -> Driven<HostLauncher> {
+        Driven {
+            runner: HostLauncher::stopped_by(stop).searching(wiring.fs()),
+            locks: Box::new(liveness::LockFiles::new(wiring.fs(), wiring.project_dir())),
+        }
+    }
+}
+
 /// The run use cases over `core`, for the run `wiring` is in: the project
-/// `project` (named `project_harp`), its launcher driving the engine on
-/// this host, stopped by `stop`.
-fn runs_over<K: Core>(
+/// `project` (named `project_harp`), its engine started and its session's
+/// lock held as `driven` says.
+pub(crate) fn runs_over<K: Core, L: run_ports::RunnerLauncher>(
     wiring: &Wiring,
     library: Library,
     output_dir: &str,
-    stop: host_launcher::Stop,
+    driven: Driven<L>,
     core: K,
     (project, project_harp): (Project, String),
-) -> Runs<K, OsTokenSource, HostLauncher, SessionDirs>
+) -> Runs<K, OsTokenSource, L, SessionDirs>
 where
     K::Edge: 'static,
 {
+    let Driven { runner, locks } = driven;
     let project_dir = wiring.project_dir();
     let orders = Arc::new(Orders::new());
     // The engines' callbacks run this binary, by its file name, and its
@@ -223,9 +189,7 @@ where
     ));
     let launcher = Launcher::new(
         core.edge(),
-        // Each command's program found on its own PATH, by the host's
-        // rules (PATHEXT on Windows), before it is spawned.
-        HostLauncher::stopped_by(stop).searching(wiring.fs()),
+        runner,
         SessionDirs::new(wiring.fs(), project_dir.clone()),
         vec![claude as Arc<dyn Engine>, opencode as Arc<dyn Engine>],
         Arc::clone(&orders),
@@ -261,7 +225,7 @@ where
         os: wiring.os_name().to_string(),
         hooks,
         certs: Box::new(hook_tls::Minter::new(hook_tls::SystemClock)),
-        locks: Box::new(liveness::LockFiles::new(wiring.fs(), project_dir.clone())),
+        locks,
         run_locks,
         git_user: git_user(wiring, &project_dir),
     })
@@ -500,106 +464,6 @@ fn path_text(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// The runtime a run is driven on: multi-thread, so a task spawned on it (the
-/// run's listener, which serves TCP) keeps making progress while
-/// the use case's own future blocks the thread that drives it. The run waits
-/// for its engine in a blocking call ([`run_ports::Running::finish`]); on a
-/// current-thread runtime that wait would starve every other task. One worker
-/// is enough for the listener beside the thread that drives the run.
-fn run_runtime() -> std::io::Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-}
-
-impl OneShots<'_> {
-    /// The run use cases over the project, on a runtime of their own, for
-    /// `use_case` to drive, hearing the signals that ask ctxloom to stop for
-    /// the whole run and stopping the engine on one of `stop_on`
-    /// ([`crate::signals`]).
-    fn with_runs<T>(
-        &mut self,
-        flags: &Flags,
-        stop_on: &'static [os::Signal],
-        use_case: impl AsyncFnOnce(&mut TheRuns) -> Done<T>,
-    ) -> Done<T> {
-        let refused = |reason: String| Done {
-            result: Err(RunError::Session(CoreError::Failed { reason })),
-            notices: Vec::new(),
-        };
-        let Some(library) = self.library.take() else {
-            return refused("the run use cases are made for one run".to_string());
-        };
-        let settings = library.run_settings(flags);
-        let output_dir = settings
-            .as_ref()
-            .map_or_else(|| OUTPUT_DIR_DEFAULT.to_string(), |s| s.output_dir.clone());
-        // Before the run is planned, so the plan sees what was installed.
-        let synced = match (&settings, &self.puller) {
-            (Some(settings), Some(puller)) => sync_at_start(settings.on_run, || puller.pull()),
-            _ => Vec::new(),
-        };
-        let runtime = match run_runtime() {
-            Ok(runtime) => runtime,
-            Err(e) => return refused(e.to_string()),
-        };
-        let (stop, heard) = (host_launcher::Stop::new(), Heard::default());
-        let mut notices = synced;
-        let mut done = runtime.block_on(async {
-            // Made on the runtime, before anything is launched.
-            let hearing = match self.wiring.fs().os().signals(&signals::HEARD) {
-                Ok(signals) => Some(tokio::spawn(signals::forward(
-                    signals,
-                    stop_on,
-                    stop.clone(),
-                    heard.clone(),
-                ))),
-                Err(e) => {
-                    notices.push(library_application::Notice::text(format!(
-                        "cannot listen for signals ({e}): a signal ends ctxloom without stopping the engine"
-                    )));
-                    None
-                }
-            };
-            let done = match self.assemble(library, &output_dir, stop).await {
-                Ok(mut runs) => {
-                    let mut done = use_case(&mut runs).await;
-                    // The store closed, not dropped, before the process exits
-                    // (rulings 131, 140): every part but the core let go with
-                    // their edges (the listener was stopped by the use case,
-                    // its connections ended and its service released), then
-                    // the core consumed and the store taken by value. A close
-                    // that fails fails the run.
-                    if let Err(unclosed) = runs.into_core().close().await {
-                        let reason = unclosed.to_string();
-                        match &done.result {
-                            Ok(_) => {
-                                done.result =
-                                    Err(RunError::Session(CoreError::Failed { reason }));
-                            }
-                            Err(_) => done.notices.push(library_application::Notice::text(reason)),
-                        }
-                    }
-                    done
-                }
-                Err(error) => Done {
-                    result: Err(error),
-                    notices: Vec::new(),
-                },
-            };
-            if let Some(hearing) = hearing {
-                hearing.abort();
-            }
-            done
-        });
-        heard.overrule(&mut done.result);
-        notices.append(&mut done.notices);
-        done.notices = notices;
-        done
-    }
-}
-
 impl RunService for OneShots<'_> {
     /// `run --one-shot`: hosted by the user's daemon (U4, T7), this
     /// command its client; nothing of the run is in this process.
@@ -607,10 +471,12 @@ impl RunService for OneShots<'_> {
         client_one_shot(self.wiring, &self.stamp, flags, request)
     }
 
+    /// `run`: the session prepared by the user's daemon (U5, T9), this
+    /// command its frontend: the TUI started on this terminal exactly as the
+    /// daemon's launch says, its start and exit reported. Nothing of the
+    /// run is recorded in this process.
     fn interactive(&mut self, flags: &Flags, request: &OneShot) -> Done<Ended> {
-        self.with_runs(flags, &signals::STOP_SESSION, async |runs| {
-            runs.interactive(flags, request).await
-        })
+        crate::frontend::client_terminal(self.wiring, &self.stamp, flags, request)
     }
 }
 
@@ -672,7 +538,7 @@ pub(crate) fn client_one_shot(
 
 /// A command's failure, as the run's error: its diagnostic, exit and
 /// refusals, said as they were.
-fn failed(failure: cli_support::Failure) -> RunError {
+pub(crate) fn failed(failure: cli_support::Failure) -> RunError {
     RunError::Hosted(Box::new(run_application::HostedEnd {
         report: Report::of(&*failure.cause),
         exit: failure.exit,
@@ -826,29 +692,35 @@ pub(crate) fn hosted_wiring(
     Wiring::at(Arc::new(snapshot), home.to_path_buf())
 }
 
-/// One hosted one-shot, start to end (`Runs::one_shot` over the daemon's
-/// core, in its client's wiring): the dependencies pulled first when
-/// `sync.on_run` asks, its placement told as soon as it is placed.
-async fn host_one_shot(
-    core: crate::SharedCore<SqliteStore>,
+/// What a run the daemon hosts is planned and driven in (a hosted
+/// one-shot's and a prepared session's alike): its client's wiring (S7), the
+/// library over it, where its outputs go, what the start's pull said, and
+/// its project, told and named.
+pub(crate) struct Hosted {
+    pub(crate) wiring: Wiring,
+    pub(crate) library: Library,
+    pub(crate) output_dir: String,
+    /// What the dependencies' pull at the run's start said (`sync.on_run`).
+    pub(crate) synced: Vec<library_application::Notice>,
+    pub(crate) project: (Project, String),
+}
+
+/// The set-up of a run the daemon hosts for `request`: the dependencies
+/// pulled first when `sync.on_run` asks. What failed, and what was said
+/// before it did, otherwise.
+pub(crate) async fn hosted_setup(
     (home, temp): (&Path, &Path),
-    request: daemon_application::HostRequest,
-    stop: host_launcher::Stop,
-    told: daemon_application::Told,
-) -> Done<Answer> {
-    let refused = |error: RunError, notices| Done {
-        result: Err(error),
-        notices,
-    };
-    let wiring = hosted_wiring(home, temp, &request);
+    request: &daemon_application::HostRequest,
+) -> Result<Hosted, (RunError, Vec<library_application::Notice>)> {
+    let wiring = hosted_wiring(home, temp, request);
     let deps = match crate::commands::build_deps(&wiring) {
         Ok(deps) => std::rc::Rc::new(deps),
-        Err(e) => return refused(RunError::Project(Report::of(&e)), Vec::new()),
+        Err(e) => return Err((RunError::Project(Report::of(&e)), Vec::new())),
     };
     let remotes: std::rc::Rc<dyn deps_ports::RemoteLibrary> = deps.clone();
     let library = match crate::library::build(&wiring, Some(remotes)) {
         Ok(library) => library,
-        Err(e) => return refused(RunError::Project(Report::of(&e)), Vec::new()),
+        Err(e) => return Err((RunError::Project(Report::of(&e)), Vec::new())),
     };
     let settings = library.run_settings(&request.flags);
     let output_dir = settings
@@ -864,7 +736,7 @@ async fn host_one_shot(
     };
     let project = match tell_project(wiring.fs(), wiring.environment(), HarpNames) {
         Ok(project) => project,
-        Err(e) => return refused(RunError::Project(e), synced),
+        Err(e) => return Err((RunError::Project(e), synced)),
     };
     // Named by the daemon at its client's resolution; a client outside a
     // project's (its parent `users/me`) is named here.
@@ -872,16 +744,51 @@ async fn host_one_shot(
         Some(named) => named.harp.clone(),
         None => match wiring.named_project().await {
             Ok(named) => named.harp,
-            Err(e) => return refused(RunError::Project(Report::of(&e)), synced),
+            Err(e) => return Err((RunError::Project(Report::of(&e)), synced)),
         },
     };
+    Ok(Hosted {
+        wiring,
+        library,
+        output_dir,
+        synced,
+        project: (project, project_harp),
+    })
+}
+
+/// One hosted one-shot, start to end (`Runs::one_shot` over the daemon's
+/// core, in its client's wiring): the dependencies pulled first when
+/// `sync.on_run` asks, its placement told as soon as it is placed.
+async fn host_one_shot(
+    core: crate::SharedCore<SqliteStore>,
+    places: (&Path, &Path),
+    request: daemon_application::HostRequest,
+    stop: host_launcher::Stop,
+    told: daemon_application::Told,
+) -> Done<Answer> {
+    let hosted = match hosted_setup(places, &request).await {
+        Ok(hosted) => hosted,
+        Err((error, notices)) => {
+            return Done {
+                result: Err(error),
+                notices,
+            }
+        }
+    };
+    let Hosted {
+        wiring,
+        library,
+        output_dir,
+        synced,
+        project,
+    } = hosted;
     let mut runs = runs_over(
         &wiring,
         library,
         &output_dir,
-        stop,
+        Driven::here(&wiring, stop),
         core,
-        (project, project_harp),
+        project,
     )
     .telling(Box::new(move |placed| told.placed(placed)));
     let mut done = runs.one_shot(&request.flags, &request.request).await;

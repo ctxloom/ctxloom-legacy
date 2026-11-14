@@ -33,8 +33,6 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use daemon_proto::v1;
-use library_application::Flags;
-use run_application::OneShot;
 use run_ports::{
     Exit, Launch, LaunchAt, LaunchFailure, LaunchKind, Limits, LockProbe, ProgramNotFound,
     RunLocks, RunnerLauncher, Running, TurnCommand, TurnOutput,
@@ -53,24 +51,10 @@ const KILLED: i32 = 9;
 /// How many ended sessions are kept for a late watch.
 const ENDED_KEPT: usize = 16;
 
-/// The project a prepared session is in, as the daemon's index knows it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TerminalProject {
-    pub id: String,
-    pub harp: String,
-    pub root: String,
-}
-
-/// A session to prepare: its project (none: its client named none), where
-/// and in what its client runs (S7), and what it asks.
-#[derive(Clone, Debug, Default)]
-pub struct TerminalRequest {
-    pub project: Option<TerminalProject>,
-    pub cwd: String,
-    pub env: BTreeMap<String, String>,
-    pub flags: Flags,
-    pub request: OneShot,
-}
+/// A session to prepare: what a hosted one-shot is asked (its project,
+/// where and in what its client runs, S7, and what it asks), the run
+/// interactive.
+pub type TerminalRequest = crate::HostRequest;
 
 /// What prepares a session: the root's, which runs it on a thread of its
 /// own over the daemon's store with a [`Frontended`] launcher telling
@@ -329,15 +313,17 @@ impl Terminals {
 /// program is found as `finder` finds it.
 pub struct Frontended {
     pub told: Told,
-    /// The session's resource name its project names it by.
-    pub name: String,
+    /// The harp of the project the session is in, which its resource name
+    /// is rooted on.
+    pub project_harp: String,
     pub reports: Arc<dyn FrontendReports>,
     pub waits: Arc<dyn Waits>,
     pub locks: Arc<dyn RunLocks>,
     /// The project the session's lock is in.
     pub project_dir: String,
-    /// The path of the session's lock its frontend takes.
-    pub session_lock: String,
+    /// The path of the lock of the session of a harp, which its frontend
+    /// takes.
+    pub lock_path: Arc<dyn Fn(&str) -> String + Send + Sync>,
     pub finder: Arc<dyn RunnerLauncher>,
 }
 
@@ -368,10 +354,13 @@ impl RunnerLauncher for Frontended {
             return Err(not_this("child or turn"));
         }
         let mut launch = launch.clone();
-        launch.session_lock.clone_from(&self.session_lock);
+        launch.session_lock = (self.lock_path)(&launch.at.harp);
+        let name = sessions::SessionName::new(&self.project_harp, &launch.at.harp)
+            .map(|name| name.to_string())
+            .unwrap_or_default();
         let placed = Placed {
             run: launch.at.run.clone(),
-            name: self.name.clone(),
+            name,
             engine: launch.engine.clone(),
         };
         let at = launch.at.clone();

@@ -339,7 +339,8 @@ Slice M1 (run) adds `ctxloom run`: `--one-shot <prompt>` and the bare interactiv
 session. A turn is a command. A child agent on claude runs one `claude -p
 --output-format stream-json` command per turn (`--resume <native id>` on later
 ones); the primary agent keeps the human's terminal, handed to the engine by
-inheritance. Both are heard through hooks (a child since owner ruling 51).
+inheritance (by the command, the session's frontend, from the launch the
+daemon prepared: U5, below). Both are heard through hooks (a child since owner ruling 51).
 Crates:
 
 - `core/ports/run-ports` (`RunnerLauncher`, `Engine`, `SessionRecords`,
@@ -620,13 +621,57 @@ aggregate refusal's refusals, and the exit crosses as its code
 to its end under the daemon (owner s4-Q7: the tokens are spent for nobody;
 its reply is in the run's facts, its words in the transcript); a daemon
 killed mid-turn fails the command (10, the stream broken: S8(a), a one-shot
-is not run again). `CreateRun` for a TERMINAL run answers UNIMPLEMENTED until
-U5 (its arm in `daemon_api`'s `runs.rs`); `GetRun` and `WatchRun` of a run
-the daemon does not host are `RunNotFound`. The daemon counts its one-shots
-as what it hosts (idle, `GetDaemon`'s `runs` as ONE_SHOT, a `StopDaemon`
-refusal), stops them with its children (`end_all`, as a SIGTERM) and waits
-for each to end before its store is closed. The interactive session (and
-init's interview) is still the command's own, in process, until U5.
+is not run again). `GetRun` and `WatchRun` of a run the daemon does not
+host are `RunNotFound`. The daemon counts its one-shots as what it hosts
+(idle, `GetDaemon`'s `runs` as ONE_SHOT, a `StopDaemon` refusal), stops
+them with its children (`end_all`, as a SIGTERM) and waits for each to end
+before its store is closed.
+THE INTERACTIVE SESSION IS PREPARED BY THE DAEMON, ITS TUI STARTED BY THE
+COMMAND (U5: T9, S3, S17, S20; owner s4-Q6 for init's interview, which is
+the same frontend). `run` (and init's interview, `interview::SetupSessions`)
+is the session's FRONTEND (`run_application::frontend`, wired by
+`frontend::client_terminal`; the in-process interactive path is gone): its
+project resolved by the daemon, the daemon reached (none can be:
+`daemon-ports-not-started`, exit 10, nothing planned or minted), and
+`CreateRun{TERMINAL}` sent as a one-shot's is. The daemon prepares it
+(`daemon_application::Terminals`, its root's `frontend::HostedTerminals`):
+on a thread of its own (a 16 MiB stack: the whole run is driven on it),
+`Runs::interactive` over the ONE store in the client's wiring, planned,
+enqueued, named, minted and set up exactly as before, its runner
+`daemon_application::Frontended`: the one `Launch` (with the session lock's
+path, `Launch.session_lock`) handed to the client in `Run.launch` (the
+user's environment crosses to her own client in that answer alone; a read,
+`GetRun`, carries none), then the run's stream read (`frontend::
+StoreReports`, every `POLL`) for the frontend's start report (at most
+`START_WITHIN`, 60 s, else the launch failed) and its exit report. The
+session's lock is the FRONTEND's (the daemon's `Runs` takes none): taken
+before the TUI starts (held by another: refused, `LaunchFailed` reported,
+nothing started), held for its life, let go only after its exit is
+reported. The frontend starts the launch on this terminal through
+`run_terminal` (exactly its program, arguments, WHOLE environment and
+directory), reports `RunnerStarted{pid}` after the spawn and `RunExited`
+after the exit (or `LaunchFailed`) as the run's facts through the
+coordinator's `Handle`, keyed as the launcher keys its own (`started:<run>`,
+`exit:<run>`, `launch-failed:<run>`, `runs_application::launch_failed_book`),
+so the daemon's own record of each is a DUPLICATE; the user gate admits
+these three facts. Each report is retried on whichever daemon serves (found,
+or started) for up to `frontend::REPORT_FOR` (60 s, S17), then said. The
+daemon, once the exit is in the stream, does what the CLI's launcher did:
+the native session bound from the hooks' end, opencode's end at its exit
+(`session_ends_with_exit`), the checkout released WIP-safe, the
+incarnation ended (`runner-exit`); a frontend gone without reporting (its
+session's lock free, no exit recorded) is ended as a kill. While the TUI
+runs the frontend follows `WatchRun` (reopened on the next daemon when one
+dies): a `stop` (the session CLOSED, S20: `Frontended` sees `SessionClosed`
+in the session's stream) asks the TUI to stop, then kills it after
+`Terminal::STOP_GRACE`; once the TUI is over the run's last notices (said
+after the TUI, as before) and its end are read for up to 10 s. A daemon
+killed mid-session does not end the TUI; its reports reach the next daemon.
+The daemon counts a session it prepares as a client it serves (idle). Not
+built: after a daemon death, the next daemon has no thread for the session,
+so its checkout's release and its incarnation's end at the exit are left
+(the incarnation stays open; the T18 sweep's, U6); a frontend killed
+between the plan and its start report leaves the run to `START_WITHIN`.
 
 A run asked to stop stops its engine first (ruling 114): for the whole run
 `ctxloom-wiring`'s `signals` hears SIGHUP, SIGINT and SIGTERM
@@ -673,7 +718,8 @@ The runner's and the model's tokens are gone (`EnqueueRun` and
 authenticated caller is the user, with the user's allowlist
 (`runs_application::user_allowlist`, every command and fact the session
 domain handles, read from the aggregate, since angzarr's unrestricted
-allowlist is its own, and the runs domain's `RequestStop`, U4; the
+allowlist is its own, the runs domain's `RequestStop`, U4, and the
+frontend's `RunnerStarted`, `RunExited` and `LaunchFailed` facts, U5; the
 coordinator's command half reaches the session and run domains alone,
 `EdgeCommands::reach`). The run's `HookGate` (the CLI run's own listener's,
 kept while the CLI serves its own runs) identifies the run its bearer names
@@ -800,8 +846,9 @@ as `RunEnqueued.launcher_lock` (field 12, as in `EnqueueRun`), held in the
 its file is removed as it is let go, so only a dead holder's is ever left (a
 refused run leaves nothing in the project). The SESSION's lock,
 `<project>/.ctxloom/sessions/<harp>.lock`, is taken once the session is
-minted and held until after its engine exits and the listener stops, so a
-live session reads live (and `session remove` refuses it without
+minted and held until after its engine exits and the listener stops (an
+interactive session's by its frontend, from before its TUI starts until its
+exit is reported, U5), so a live session reads live (and `session remove` refuses it without
 `--even-if-live`). A launcher's step sweeps other processes' runs: one still
 owed a runner whose own lock is free, and one started whose session's lock
 is free, have lost their owner; it probes, re-reads the run's stream (an
@@ -1329,8 +1376,8 @@ is CLAIMED, its mark cleared (`HandOffs::claim`); an open child's is kept.
 Accepted cost (T6): an API key lies at rest for the child's life. Not yet:
 a hosted child's workspace axis (s4-Q11), the root session's persisted
 launcher places for `child_launch` (s4-Q1; a session's call sends its
-engine's environment, whose settings places are its session home's), and
-the stop of a running interactive session's TUI on its close (U5). A hosted child's session home is prepared with its agent's
+engine's environment, whose settings places are its session home's). A
+running interactive session closed stops its TUI (U5, above). A hosted child's session home is prepared with its agent's
 permissions document for the engine, verbatim (rulings 133-137,
 `run_application::HostedChild::permissions`). A hosted child is made by the
 one launch (`launch_of`, T10) like every other: its permits applied (the

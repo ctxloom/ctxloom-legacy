@@ -452,6 +452,31 @@ async fn a_launch_that_never_started_ends_the_run_once() {
     assert_eq!(world.edge.pages(&who.run_cover()).await.len(), pages.len());
 }
 
+// U5: a frontend reports a launch it never started with the same book the
+// core's own launcher records it with, so the two are one fact.
+#[tokio::test]
+async fn a_launch_failed_book_is_the_one_the_core_records() {
+    use angzarr_embedded::v1::command_page::Body;
+    let world = World::new().await;
+    let who = &world.me.identity;
+    let book = crate::launch_failed_book(&who.run, true, "no claude");
+    assert_eq!(book.cover, Some(who.run_cover()));
+    let Some(Body::Fact(fact)) = book.page.clone().and_then(|page| page.body) else {
+        panic!("a fact body")
+    };
+    let run = uuid::Uuid::from_slice(&who.run.value).unwrap().hyphenated();
+    assert_eq!(
+        fact.origin.expect("an origin").external_id,
+        format!("launch-failed:{run}")
+    );
+    assert!(world.edge.handle(book).await.is_ok());
+    let facts = Facts::new(Arc::clone(&world.edge));
+    assert_eq!(
+        facts.launch_failed(&who.run, true, "no claude").await,
+        Ok(Recorded::Duplicate)
+    );
+}
+
 // Hook capture: the runner's observation lands on its own session's stream,
 // once; the model's credential cannot record one and nothing is sent.
 #[tokio::test]

@@ -9,7 +9,8 @@
 //! Authenticated means the user: the principal may send every command and
 //! fact the session domain handles (angzarr's allowlist is a closed list, so
 //! it is that domain's whole list, read from the aggregate) and the runs
-//! domain's `RequestStop` (U4: a hosted one-shot's stop), and owns every
+//! domain's `RequestStop` (U4: a hosted one-shot's stop) and the frontend's
+//! reports of its terminal session (U5), and owns every
 //! stream the daemon reaches. The bearer keeps NON-USER callers off the
 //! socket (other users, web pages, containers, machines); it separates
 //! nothing among the user's own processes, which can all read the file.
@@ -20,6 +21,7 @@ use angzarr_coordinator::{
 };
 use angzarr_embedded::v1::Cover;
 use angzarr_embedded::{Domain, Payload};
+
 use run_ports::{Token, TokenHash};
 
 /// Who the daemon's gate admits: the user, the one principal.
@@ -42,21 +44,35 @@ impl UserGate {
     }
 }
 
+/// The type URL of a domain message's wire form.
+fn url<M: angzarr_embedded::markup::DomainMessage>() -> String {
+    <M::Wire as prost::Name>::type_url()
+}
+
 /// What the user may send: every command and fact of the session domain,
-/// and the runs domain's `RequestStop` (U4: a hosted one-shot's command
-/// stops its run on a signal, API Q11).
+/// the runs domain's `RequestStop` (U4: a hosted one-shot's command stops
+/// its run on a signal, API Q11), and the facts a frontend reports of the
+/// terminal session it started (U5, S17: `RunnerStarted`, `RunExited`,
+/// `LaunchFailed`).
 pub fn user_allowlist() -> Allowlist {
     let commands = <sessions::SessionAggregate as Domain>::Command::type_urls();
     let facts = <sessions::SessionAggregate as Domain>::Fact::type_urls();
     let commands = commands.into_iter().map(|url| (BodyKind::Command, url));
     let facts = facts.into_iter().map(|url| (BodyKind::Fact, url));
-    let stop = (
-        BodyKind::Command,
-        <<runs::RequestStop as angzarr_embedded::markup::DomainMessage>::Wire as prost::Name>::type_url(),
-    );
+    let stop = (BodyKind::Command, url::<runs::RequestStop>());
+    // U5: a frontend's reports of the terminal session it started, keyed
+    // by their run (a stray one is a DUPLICATE, or names no run).
+    let reports = [
+        url::<runs::RunnerStarted>(),
+        url::<runs::RunExited>(),
+        url::<runs::LaunchFailed>(),
+    ]
+    .into_iter()
+    .map(|url| (BodyKind::Fact, url));
     commands
         .chain(facts)
         .chain(std::iter::once(stop))
+        .chain(reports)
         .fold(Allowlist::none(), |list, (kind, url)| list.send(kind, url))
 }
 

@@ -47,8 +47,8 @@ pub use ports::{
 pub use run_launcher::{Sweeper, Swept};
 pub use terminal::{
     Created as TerminalCreated, FrontendReports, Frontended, Placed as TerminalPlaced, Seen,
-    TerminalHost, TerminalProject, TerminalRequest, Terminals, Told as TerminalTold, Waits,
-    Watch as TerminalWatch, POLL, START_WITHIN,
+    TerminalHost, TerminalRequest, Terminals, Told as TerminalTold, Waits, Watch as TerminalWatch,
+    POLL, START_WITHIN,
 };
 
 #[cfg(test)]

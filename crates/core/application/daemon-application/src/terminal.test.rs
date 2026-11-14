@@ -137,12 +137,12 @@ fn frontended(told: Told, reports: Arc<Script>, lock: LockProbe) -> (Frontended,
     let clock = Arc::new(Clock::default());
     let frontended = Frontended {
         told,
-        name: "projects/p/sessions/amber-quiet-heron".to_string(),
+        project_harp: "calm-quiet-otter".to_string(),
         reports,
         waits: Arc::clone(&clock) as Arc<dyn Waits>,
         locks: Arc::new(Locks(lock)),
         project_dir: "/work".to_string(),
-        session_lock: "/work/.ctxloom/sessions/amber-quiet-heron.lock".to_string(),
+        lock_path: Arc::new(|harp: &str| format!("/work/.ctxloom/sessions/{harp}.lock")),
         finder: Arc::new(Finder),
     };
     (frontended, clock)
@@ -189,7 +189,7 @@ fn test_the_launch_is_handed_over_with_the_session_lock_and_its_start_is_the_fro
         placed,
         Placed {
             run: "run-1".to_string(),
-            name: "projects/p/sessions/amber-quiet-heron".to_string(),
+            name: "projects/calm-quiet-otter/sessions/amber-quiet-heron".to_string(),
             engine: "claude-code".to_string(),
         }
     );

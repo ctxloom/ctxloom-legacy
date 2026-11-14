@@ -59,6 +59,12 @@ pub(super) struct State {
     tool: Option<Value>,
     /// The daemon a tool's call found before it was killed.
     before_kill: Option<run_ports::Discovery>,
+    /// A second project's directory (U5: two sessions, two projects).
+    second: Option<PathBuf>,
+    /// The daemon a step killed outright, by its pid.
+    killed: Option<u32>,
+    /// Where the TUI stub records itself, when not on the scenario's PATH.
+    tui_dir: Option<PathBuf>,
 }
 
 impl Drop for State {
@@ -172,8 +178,9 @@ while [ ! -e "$here/release" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); do
 "#;
 
 /// An interactive session the CLI runs (`ctxloom run` at a terminal, the
-/// test's stand-in for one), started and not ended: its run is in the one
-/// store, and its locks are held by the command (M9).
+/// test's stand-in for one), started and not ended: prepared by the daemon
+/// serving (U5), its run in the one store, its session's lock held by the
+/// command.
 fn interactive_session(w: &mut World) {
     let dir = stub_claude(w, INTERACTIVE_STUB);
     w.daemon_spec.release = Some(dir.join("release"));
@@ -395,10 +402,19 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         stopped_one_shot(w, step, signal);
         return true;
     }
-    let stubbed = text.contains("in both projects at once")
-        || text.contains("through her daemon")
-        || text.contains("its daemon is killed outright while it works")
-        || text.contains("at her terminal, and answers yes when asked")
+    if text.contains("through her daemon") {
+        tui_session(w, step, false);
+        return true;
+    }
+    if text.contains("its daemon is killed outright while it works") {
+        tui_session(w, step, true);
+        return true;
+    }
+    if text.contains("in both projects at once") {
+        tui_in_both(w, step);
+        return true;
+    }
+    let stubbed = text.contains("at her terminal, and answers yes when asked")
         || text.contains("says yes at her terminal");
     if stubbed {
         red(text);
@@ -617,6 +633,271 @@ fn hosted_working_one_shot(w: &mut World) {
     }
 }
 
+// ------------------------------------------------- the TUI frontend (U5)
+
+/// The interactive session's stub assistant: it records itself (its
+/// arguments, its whole environment, its directory, whether its session's
+/// lock was held), says it started, and runs until released; a SIGTERM is
+/// said, never obeyed (the scenario that asks for a stop wants the kill).
+/// Its records are named by its project's directory, so two projects'
+/// sessions keep their own.
+fn tui_stub() -> String {
+    format!(
+        r#"{RECORDS_ITSELF}p="$here/$(basename "$CTXLOOM_ROOT")"
+mkdir -p "$p"
+printf '%s\n' "$@" > "$p/tui-args"
+env -0 > "$p/tui-env"
+pwd -P > "$p/tui-cwd"
+echo "${{CTXLOOM_SESSION##*/}}" > "$p/tui-harp"
+trap 'echo asked > "$p/asked"' TERM
+: > "$p/tui-started"
+i=0
+while [ ! -e "$here/release" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+"#
+    )
+}
+
+/// Where the stub assistant recorded itself for `project`'s session.
+fn tui_record(w: &World, project: &std::path::Path, name: &str) -> String {
+    let dir = project.file_name().expect("a project directory");
+    let stub = w
+        .daemon_spec
+        .tui_dir
+        .clone()
+        .unwrap_or_else(|| assistant_dir(w));
+    files::read(stub.join(dir).join(name)).unwrap_or_default()
+}
+
+/// The scenario's environment for a session on a stood-in terminal.
+fn tui_env(w: &mut World) -> Vec<(String, String)> {
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    w.common.set_env("CTXLOOM_TEST_TERMINAL", "1".to_string());
+    env_of(w)
+}
+
+/// Wait, bounded, for `ready`; `what` names it when it never comes.
+fn wait_for(w: &World, what: &str, ready: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !ready() {
+        assert!(
+            Instant::now() < deadline,
+            "{what} never came; the daemon's log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The session of the step (`ctxloom run` on a stood-in terminal), its
+/// assistant the TUI stub. Unless `kill`, the stub is released at once and
+/// the command waited for; with `kill`, once the daemon has recorded the
+/// TUI's start and let its own run lock go (forced: its run's stream and
+/// its lock file, never a wait for a race), the daemon is killed outright,
+/// THEN the TUI is released, and the command waited for.
+fn tui_session(w: &mut World, step: &cucumber::gherkin::Step, kill: bool) {
+    files::put_program(assistant_dir(w).join("claude"), &tui_stub());
+    let release = assistant_dir(w).join("release");
+    if !kill {
+        files::put(&release, "go");
+    }
+    let env = tui_env(w);
+    w.before_run();
+    let words = line_words(step);
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    let child = w.common.project.start_with(&env_pairs(&env), &args);
+    if kill {
+        let project = w.common.project.dir().to_path_buf();
+        wait_for(w, "the TUI's start", || {
+            files::exists(
+                assistant_dir(w)
+                    .join(project.file_name().unwrap())
+                    .join("tui-started"),
+            )
+        });
+        let harp = tui_record(w, &project, "tui-harp").trim().to_string();
+        wait_for(w, "the daemon's record of the start", || {
+            run_events(w, &harp).contains(&"RunnerStartedRecorded".to_string())
+                && files::children(w.common.project.home().join(".ctxloom/runs")).is_empty()
+        });
+        let pid = discovery_now(w).pid;
+        let killed = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+            .expect("kill runs");
+        assert!(killed.success(), "the daemon was killed");
+        wait_for(w, "the killed daemon's end", || !alive(pid));
+        w.daemon_spec.killed = Some(pid);
+        files::put(&release, "go");
+    }
+    w.common.ran = Some(crate::tests::Ran::of(
+        child.wait_with_output().expect("ctxloom finishes"),
+    ));
+}
+
+/// Whether the process `pid` is there, and not a zombie (a daemon the
+/// command typed spawned is its child until that command exits, and is
+/// reaped only then).
+fn alive(pid: u32) -> bool {
+    if let Ok(stat) = files::read(format!("/proc/{pid}/stat")) {
+        let state = stat
+            .rfind(')')
+            .and_then(|end| stat[end + 1..].split_whitespace().next());
+        return state.is_some_and(|state| state != "Z");
+    }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// The types of the events of `harp`'s first run, as the store holds them.
+fn run_events(w: &World, harp: &str) -> Vec<String> {
+    let ran = run_now(w, &["test", "session-events", harp, "--run", "1"]);
+    if ran.code != 0 {
+        return Vec::new();
+    }
+    ran.json()
+        .as_array()
+        .map(|events| {
+            events
+                .iter()
+                .filter_map(|e| e["type"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The launch the frontend was handed (test-support's record of it).
+fn frontend_launch(w: &World) -> Value {
+    let path = w
+        .common
+        .project
+        .home()
+        .join(".ctxloom/test-frontend-launch.json");
+    let text = files::read(&path)
+        .unwrap_or_else(|e| panic!("no launch was recorded ({e}): {}", w.ran().said()));
+    serde_json::from_str(&text).expect("a launch record")
+}
+
+/// The variables a shell sets of its own, which no launch names.
+const SHELL_OWN: [&str; 4] = ["PWD", "OLDPWD", "SHLVL", "_"];
+
+/// The TUI of `project` was started exactly as the frontend's launch says:
+/// its arguments, its whole environment (nothing else, but what the shell
+/// sets of its own) and its directory.
+fn started_exactly_as_launched(w: &World, project: &std::path::Path) {
+    let launch = frontend_launch(w);
+    let args: Vec<String> = tui_record(w, project, "tui-args")
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let launched: Vec<String> = launch["args"]
+        .as_array()
+        .expect("its args")
+        .iter()
+        .map(|a| a.as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(args, launched, "the TUI's arguments are the launch's");
+    let env: std::collections::BTreeMap<String, String> = tui_record(w, project, "tui-env")
+        .split('\0')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(name, _)| !SHELL_OWN.contains(name))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+    let launched: std::collections::BTreeMap<String, String> = launch["env"]
+        .as_object()
+        .expect("its env")
+        .iter()
+        .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_string()))
+        .collect();
+    let extra: Vec<&String> = env.keys().filter(|k| !launched.contains_key(*k)).collect();
+    let missing: Vec<&String> = launched.keys().filter(|k| !env.contains_key(*k)).collect();
+    assert!(
+        extra.is_empty() && missing.is_empty(),
+        "the TUI's environment is the launch's: extra {extra:?}, missing {missing:?}"
+    );
+    for (name, value) in &launched {
+        assert_eq!(env.get(name), Some(value), "{name} is the launch's");
+    }
+    let cwd = tui_record(w, project, "tui-cwd");
+    let want = launch["cwd"].as_str().expect("its directory");
+    assert_eq!(
+        files::canonical(cwd.trim()),
+        files::canonical(want),
+        "the TUI's directory"
+    );
+}
+
+/// Two sessions at once, one in each project, each its TUI stub's: both
+/// seen started (forced, never waited for a race), then released.
+fn tui_in_both(w: &mut World, step: &cucumber::gherkin::Step) {
+    files::put_program(assistant_dir(w).join("claude"), &tui_stub());
+    let env = tui_env(w);
+    w.before_run();
+    let words = line_words(step);
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    let first = w.common.project.dir().to_path_buf();
+    let second = w.daemon_spec.second.clone().expect("a second project");
+    let started: Vec<Child> = [&first, &second]
+        .iter()
+        .map(|dir| {
+            let mut env = env.clone();
+            env.push(("CTXLOOM_ROOT".to_string(), dir.display().to_string()));
+            w.common.project.start_in_with(dir, &env_pairs(&env), &args)
+        })
+        .collect();
+    for dir in [&first, &second] {
+        wait_for(w, "both TUIs' start", || {
+            files::exists(
+                assistant_dir(w)
+                    .join(dir.file_name().unwrap())
+                    .join("tui-started"),
+            )
+        });
+    }
+    files::put(assistant_dir(w).join("release"), "go");
+    w.daemon_spec.both = started
+        .into_iter()
+        .map(|child| crate::tests::Ran::of(child.wait_with_output().expect("it ran")))
+        .collect();
+}
+
+/// Whether no project of the home keeps a store of its own (T14: the one
+/// store is the daemon's, `~/.ctxloom/ctxloom.db`).
+fn no_project_store(w: &World) -> bool {
+    files::children(w.common.project.home().join(".ctxloom/projects"))
+        .iter()
+        .all(|project| !files::exists(project.join("ctxloom.db")))
+}
+
+/// The sessions `dir`'s project lists, by their names.
+fn listed_in(w: &World, dir: &std::path::Path) -> Vec<String> {
+    let env = env_of(w);
+    let ran = w.common.project.run_in_with(
+        dir,
+        &env_pairs(&env),
+        &["session", "list", "--format", "json"],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    let listed = ran.json();
+    let rows = listed
+        .get("sessions")
+        .and_then(Value::as_array)
+        .or_else(|| listed.as_array())
+        .cloned()
+        .unwrap_or_default();
+    rows.iter()
+        .filter_map(|row| {
+            row.get("name")
+                .or_else(|| row.get("harp"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------ given
 
 #[given("no ctxloom daemon is serving for Alice")]
@@ -625,8 +906,22 @@ fn none_serving_for_alice(w: &mut World) {
 }
 
 #[given(regex = r#"^Alice has a second project, "([^"]+)", set up with ctxloom$"#)]
-fn second_project(_: &mut World, _name: String) {
-    red("Alice has a second project, set up with ctxloom")
+fn second_project(w: &mut World, name: String) {
+    let dir = w.adopt_scratch().join(&name);
+    files::mkdirs(&dir);
+    let env = env_of(w);
+    let git = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&dir)
+        .status()
+        .expect("git runs");
+    assert!(git.success(), "the second project is a repository");
+    let ran = w
+        .common
+        .project
+        .run_in_with(&dir, &env_pairs(&env), &["init"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    w.daemon_spec.second = Some(dir);
 }
 
 #[given(regex = r#"^Alice's session "([^"]+)" is running$"#)]
@@ -737,9 +1032,11 @@ fn serving_idle(w: &mut World) {
 #[given(regex = r"^a ctxloom daemon is serving for this home, with (.+)$")]
 fn serving_busy(w: &mut World, busy: String) {
     match busy.as_str() {
+        // The session's daemon is the one serving (U5: a `run` prepares
+        // its session through it), so it is started first.
         "an interactive session running" => {
-            interactive_session(w);
             start_daemon(w);
+            interactive_session(w);
         }
         "a child it hosts" => {
             start_daemon(w);
@@ -748,6 +1045,10 @@ fn serving_busy(w: &mut World, busy: String) {
         "a one-shot it hosts" => {
             start_daemon(w);
             hosted_working_one_shot(w);
+        }
+        "a session's frontend subscribed" => {
+            start_daemon(w);
+            interactive_session(w);
         }
         _ => red("a ctxloom daemon is serving for this home, with something to do"),
     }
@@ -925,37 +1226,120 @@ fn same_daemon(w: &mut World) {
 }
 
 #[then("both sessions were served by the one daemon")]
-fn one_daemon(_: &mut World) {
-    red("both sessions were served by the one daemon")
+fn one_daemon(w: &mut World) {
+    for ran in &w.daemon_spec.both {
+        assert_eq!(ran.code, 0, "{}", ran.said());
+    }
+    assert_eq!(daemons_logged(w), 1, "{}", daemon_log_text(w));
 }
 
 #[then("each session's record is its own project's, in the one store her daemon keeps")]
-fn records_in_one_store(_: &mut World) {
-    red("each session's record is its own project's, in the one store")
+fn records_in_one_store(w: &mut World) {
+    let home = w.common.project.home().join(".ctxloom");
+    assert!(
+        files::exists(home.join("ctxloom.db")),
+        "the one store is the daemon's"
+    );
+    assert!(no_project_store(w), "no project keeps a store of its own");
+    let first = w.common.project.dir().to_path_buf();
+    let second = w.daemon_spec.second.clone().expect("a second project");
+    for dir in [&first, &second] {
+        let harp = tui_record(w, dir, "tui-harp").trim().to_string();
+        assert!(
+            files::is_dir(dir.join(".ctxloom/sessions").join(&harp)),
+            "{harp}'s directory is its own project's"
+        );
+    }
 }
 
 #[then("each project lists its own session, and not the other's")]
-fn own_listing(_: &mut World) {
-    red("each project lists its own session, and not the other's")
+fn own_listing(w: &mut World) {
+    let first = w.common.project.dir().to_path_buf();
+    let second = w.daemon_spec.second.clone().expect("a second project");
+    let (a, b) = (listed_in(w, &first), listed_in(w, &second));
+    let harp = |dir: &std::path::Path| tui_record(w, dir, "tui-harp").trim().to_string();
+    let (harp_a, harp_b) = (harp(&first), harp(&second));
+    assert!(
+        a.iter().any(|n| n.ends_with(&harp_a)),
+        "{a:?} lists {harp_a}"
+    );
+    assert!(
+        !a.iter().any(|n| n.ends_with(&harp_b)),
+        "{a:?} lists {harp_b}"
+    );
+    assert!(
+        b.iter().any(|n| n.ends_with(&harp_b)),
+        "{b:?} lists {harp_b}"
+    );
+    assert!(
+        !b.iter().any(|n| n.ends_with(&harp_a)),
+        "{b:?} lists {harp_a}"
+    );
 }
 
 #[then("her assistant ran on her terminal exactly as her daemon prepared it")]
-fn ran_as_prepared(_: &mut World) {
-    red("her assistant ran on her terminal exactly as her daemon prepared it")
+fn ran_as_prepared(w: &mut World) {
+    w.ran().succeeds();
+    // The capture stub records what its hooks need: each is the launch's.
+    let launch = frontend_launch(w);
+    let recorded = files::read(assistant_dir(w).join("engine-env")).unwrap_or_default();
+    assert!(
+        !recorded.is_empty(),
+        "the assistant ran: {}",
+        w.ran().said()
+    );
+    for line in recorded.lines() {
+        let (name, value) = line.split_once('=').expect("a variable");
+        assert_eq!(
+            launch["env"][name].as_str(),
+            Some(value),
+            "{name} is the launch's"
+        );
+    }
+    let cwd = files::read(assistant_dir(w).join("engine-cwd")).unwrap_or_default();
+    assert_eq!(Some(cwd.trim()), launch["cwd"].as_str(), "its directory");
 }
 
 #[then(
     "the command she typed recorded nothing itself: her daemon recorded the session and prepared its session home"
 )]
-fn frontend_recorded_nothing(_: &mut World) {
-    red("the command she typed recorded nothing itself")
+fn frontend_recorded_nothing(w: &mut World) {
+    let launch = frontend_launch(w);
+    let home = launch["session_home"].as_str().expect("its session home");
+    assert!(files::is_dir(home), "the daemon prepared {home}");
+    assert!(
+        files::exists(PathBuf::from(home).join(".claude.json")),
+        "its session home holds what the daemon seeded"
+    );
+    // The session is the daemon's record: listed through it, by its name.
+    let harp = w.harp();
+    let names = listed_in(w, w.common.project.dir());
+    assert!(names.iter().any(|n| n.ends_with(&harp)), "{names:?}");
+    assert!(
+        no_project_store(w),
+        "the command opened no store of its own"
+    );
 }
 
 #[then(
     "the session's transcript holds what her assistant's hooks delivered to her daemon, each once"
 )]
-fn transcript_via_daemon(_: &mut World) {
-    red("the session's transcript holds what the hooks delivered to her daemon")
+fn transcript_via_daemon(w: &mut World) {
+    let harp = w.harp();
+    let shown = run_now(
+        w,
+        &["session", "transcript", "show", &harp, "--format", "json"],
+    );
+    assert_eq!(shown.code, 0, "{}", shown.said());
+    let prompts = shown
+        .stdout
+        .matches("Run the shell command: echo hi")
+        .count();
+    assert_eq!(
+        prompts, 1,
+        "the prompt is in the transcript once: {}",
+        shown.stdout
+    );
 }
 
 #[then("her assistant ran under her daemon, not under the command she typed")]
@@ -1472,20 +1856,42 @@ fn exits_by_signal(w: &mut World, code: String, signal: String) {
 #[then(
     "the assistant was started with the program, arguments, environment and directory of the daemon's launch, and nothing else"
 )]
-fn started_as_launched(_: &mut World) {
-    red("the TUI was started exactly as the daemon's launch says")
+fn started_as_launched(w: &mut World) {
+    let project = w.common.project.dir().to_path_buf();
+    started_exactly_as_launched(w, &project);
 }
 
 #[then(
     "the command took the session's lock before the assistant started and let it go after it exited"
 )]
-fn frontend_lock(_: &mut World) {
-    red("the command held the session's lock around the TUI")
+fn frontend_lock(w: &mut World) {
+    // The command typed held it while the TUI ran (the stub probed it), and
+    // let it go: the session no longer reads live.
+    let probe = recorded(w, "lock-probe");
+    assert!(
+        probe == "held" || probe == "unknown",
+        "the session's lock was not held while the TUI ran: {probe}"
+    );
+    let launch = frontend_launch(w);
+    let lock = launch["session_lock"].as_str().expect("its lock");
+    assert!(
+        lock.ends_with(&format!("/{}.lock", w.harp())),
+        "the launch names the session's lock: {lock}"
+    );
+    if let Ok(free) = std::process::Command::new("flock")
+        .args(["-n", lock, "true"])
+        .status()
+    {
+        assert!(free.success(), "the lock was let go after the TUI exited");
+    }
 }
 
 #[then("the daemon recorded the assistant's start and its exit, each once")]
-fn start_and_exit(_: &mut World) {
-    red("the daemon recorded the TUI's start and exit, each once")
+fn start_and_exit(w: &mut World) {
+    let events = run_events(w, &w.harp());
+    let count = |kind: &str| events.iter().filter(|e| *e == kind).count();
+    assert_eq!(count("RunnerStartedRecorded"), 1, "{events:?}");
+    assert_eq!(count("RunEnded"), 1, "{events:?}");
 }
 
 #[then("no session was minted")]
@@ -1501,13 +1907,35 @@ fn no_mint(w: &mut World) {
 }
 
 #[then("the assistant was never stopped")]
-fn never_stopped(_: &mut World) {
-    red("the assistant was never stopped")
+fn never_stopped(w: &mut World) {
+    let project = w.common.project.dir().to_path_buf();
+    assert_eq!(
+        tui_record(w, &project, "asked"),
+        "",
+        "the TUI was asked to stop"
+    );
+    assert!(
+        files::exists(
+            assistant_dir(w)
+                .join(project.file_name().unwrap())
+                .join("tui-started")
+        ),
+        "the TUI ran"
+    );
 }
 
 #[then("the command started a new daemon, and reported the assistant's exit to it once")]
-fn reported_to_new(_: &mut World) {
-    red("the command reported the TUI's exit to a new daemon, once")
+fn reported_to_new(w: &mut World) {
+    let killed = w.daemon_spec.killed.expect("a daemon was killed");
+    let now = discovery_now(w);
+    assert_ne!(now.pid, killed, "another daemon advertises itself");
+    let events = run_events(w, &w.harp());
+    let ended = events.iter().filter(|e| *e == "RunEnded").count();
+    assert_eq!(ended, 1, "the exit was recorded once: {events:?}");
+    assert!(
+        !events.iter().any(|e| e == "RunnerLostRecorded"),
+        "the run was not swept as lost: {events:?}"
+    );
 }
 
 // ---------------------------------------- the owner's rulings S8 to S20
@@ -1603,18 +2031,84 @@ fn elicited(_: &mut World) {
 }
 
 #[given(expr = "an interactive session {string} whose assistant is running on its terminal")]
-fn primary_running(_: &mut World, _harp: String) {
-    red("an interactive session whose assistant is running on its terminal")
+fn primary_running(w: &mut World, harp: String) {
+    // Its session recorded, its engine's own session bound, and resumed on
+    // this terminal (`run --session`), the TUI stub left running.
+    let dir = stub_claude(w, &tui_stub());
+    w.daemon_spec.tui_dir = Some(dir.clone());
+    let seeded = run_now(
+        w,
+        &[
+            "test",
+            "seed-session",
+            &harp,
+            "--ended-ago",
+            "60",
+            "--native-id",
+            "native-1",
+            "--resumable",
+        ],
+    );
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let env = tui_env(w);
+    let mut child = w
+        .common
+        .project
+        .start_with(&env_pairs(&env), &["run", "--session", &harp]);
+    let project = w.common.project.dir().to_path_buf();
+    let started = dir.join(project.file_name().unwrap()).join("tui-started");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !files::exists(&started) {
+        if let Ok(Some(_)) = child.try_wait() {
+            let ran = crate::tests::Ran::of(child.wait_with_output().expect("it ran"));
+            panic!("the session ended before its TUI started: {}", ran.said());
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the TUI's start never came; the daemon's log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    w.daemon_spec.run = Some(child);
 }
 
 #[then("the assistant on its terminal was asked to stop, then killed once its grace had passed")]
-fn terminal_stopped(_: &mut World) {
-    red("the assistant on its terminal was stopped, gracefully, then killed")
+fn terminal_stopped(w: &mut World) {
+    w.ran().succeeds();
+    // The frontend was told to stop its TUI: it asked (the stub said so,
+    // and went on), then killed it once the grace had passed; the command
+    // that ran the session then ended.
+    let child = w.daemon_spec.run.take().expect("the session's command");
+    let ran = crate::tests::Ran::of(child.wait_with_output().expect("it ends"));
+    let project = w.common.project.dir().to_path_buf();
+    assert_eq!(
+        tui_record(w, &project, "asked").trim(),
+        "asked",
+        "the TUI was asked to stop: {}\n{}",
+        ran.said(),
+        daemon_log_text(w)
+    );
+    let stub = w
+        .daemon_spec
+        .tui_dir
+        .clone()
+        .unwrap_or_else(|| assistant_dir(w));
+    assert!(
+        !files::exists(stub.join("release")),
+        "nothing released the TUI: it was killed"
+    );
 }
 
 #[then(regex = r#"^"([^"]+)" is listed as closed$"#)]
-fn closed_listed(_: &mut World, _harp: String) {
-    red("the session is listed as closed")
+fn closed_listed(w: &mut World, harp: String) {
+    let shown = run_now(w, &["session", "show", &harp, "--format", "json"]);
+    assert_eq!(shown.code, 0, "{}", shown.said());
+    assert!(
+        shown.stdout.contains("closed"),
+        "{harp} is listed as closed: {}",
+        shown.stdout
+    );
 }
 
 #[given(

@@ -126,13 +126,14 @@ pub(crate) fn serve(
         // What the loop shares with the API's use cases (slice 2 step 5).
         let shared = Arc::new(Shared::new(kept.index.clone().unwrap_or_default()));
         let one_shots = one_shots_over(&core, home, &temp);
+        let terminals = terminals_over(&core, home, &temp);
         let started = start(
             &fs,
             (home, &temp),
             &core,
             &kept,
             (os, user_home, stamp, pace, engines),
-            (&files, &shared, &one_shots),
+            (&files, &shared, &one_shots, &terminals),
             &say,
         )
         .await;
@@ -144,6 +145,7 @@ pub(crate) fn serve(
                 drop(shared);
                 drop(kept);
                 drop(one_shots);
+                drop(terminals);
                 said(&say, &format!("the start failed: {detail}"));
                 match core.close().await {
                     Ok(()) => said(&say, "the store is closed"),
@@ -163,7 +165,7 @@ pub(crate) fn serve(
             &mut launcher,
             &core,
             (&files, &own, &held),
-            (pace, &shared),
+            (pace, &shared, &terminals),
             &say,
         )
         .await;
@@ -190,6 +192,10 @@ pub(crate) fn serve(
         drop(shared);
         drop(kept);
         drop(one_shots);
+        // A session a frontend still runs keeps its thread (and its copy of
+        // the core) until its frontend reports: the store's close then says
+        // so, and the frontend reports to the next daemon (S17).
+        drop(terminals);
         said(&say, "exited");
         // Closed, not dropped (ruling 131).
         if let Err(unclosed) = core.close().await {
@@ -224,6 +230,23 @@ fn one_shots_over(
     )))
 }
 
+/// The interactive sessions the daemon prepares (U5), each over `core`
+/// shared, on the daemon's runtime: the API creates and watches them.
+fn terminals_over(
+    core: &InProcessCore<SqliteStore>,
+    home: &Path,
+    temp: &Path,
+) -> Arc<daemon_application::Terminals> {
+    Arc::new(daemon_application::Terminals::new(Box::new(
+        crate::frontend::HostedTerminals {
+            core: core.share(),
+            runtime: tokio::runtime::Handle::current(),
+            home: home.to_path_buf(),
+            temp: temp.to_path_buf(),
+        },
+    )))
+}
+
 /// The daemon started (its bearer and certificate minted, its listener
 /// serving the coordinator and the `Ctxloom` service, the launcher
 /// composed, the discovery file published): the listener, the launcher and
@@ -241,7 +264,12 @@ async fn start(
         Pace,
         Vec<daemon_application::HostedEngine>,
     ),
-    (files, shared, one_shots): (&DaemonFiles, &Arc<Shared>, &Arc<OneShots>),
+    (files, shared, one_shots, terminals): (
+        &DaemonFiles,
+        &Arc<Shared>,
+        &Arc<OneShots>,
+        &Arc<daemon_application::Terminals>,
+    ),
     say: &Say,
 ) -> Result<(HookListener, Daemon<CoreEdge, OsTokenSource>, Discovery), String> {
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
@@ -288,8 +316,9 @@ async fn start(
                 idle_limit_seconds: pace.idle.as_secs(),
             },
         })
-        // The one-shots it hosts (U4).
-        .hosting_one_shots(Arc::clone(one_shots)),
+        // The one-shots it hosts (U4), and the sessions it prepares (U5).
+        .hosting_one_shots(Arc::clone(one_shots))
+        .preparing_terminals(Arc::clone(terminals)),
         fs,
         (home, temp),
         &engines,
@@ -488,7 +517,7 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
     launcher: &mut Daemon<E, T>,
     core: &InProcessCore<SqliteStore>,
     (files, own, held): (&DaemonFiles, &Discovery, &Instance),
-    (pace, shared): (Pace, &Arc<Shared>),
+    (pace, shared, terminals): (Pace, &Arc<Shared>, &daemon_application::Terminals),
     say: &Say,
 ) -> Result<(), String> {
     let mut quiet_since = Instant::now();
@@ -542,7 +571,9 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
         let round = shared.round_starts();
         let busy = launcher.tick(core.store(), core.catalog(), draining).await;
         shared.round_done(round);
-        if busy || launcher.hosting() > 0 {
+        // A session it prepares (asked for, or its frontend's TUI running)
+        // keeps it: its frontend is a client it serves (U5).
+        if busy || launcher.hosting() > 0 || terminals.hosting() > 0 {
             quiet_since = Instant::now();
         } else if quiet_since.elapsed() >= pace.idle {
             // M9: a run any process started and has not ended (an

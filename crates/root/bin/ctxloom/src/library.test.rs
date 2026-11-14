@@ -366,6 +366,22 @@ impl Project {
             .expect("ctxloom starts")
     }
 
+    /// As [`start_with`](Project::start_with), from `dir` with no
+    /// `CTXLOOM_ROOT` (the project found by walking up from it).
+    pub(crate) fn start_in_with(
+        &self,
+        dir: &Path,
+        env: &[(&str, &str)],
+        args: &[&str],
+    ) -> std::process::Child {
+        self.process(dir, env, args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("ctxloom starts")
+    }
+
     /// As [`start_with`](Project::start_with), its stdin piped too: a
     /// process the test talks to (ctxloom's MCP server, line by line).
     pub(crate) fn start_talking(&self, env: &[(&str, &str)], args: &[&str]) -> std::process::Child {
