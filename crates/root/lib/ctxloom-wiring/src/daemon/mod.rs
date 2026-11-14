@@ -758,8 +758,9 @@ fn serving_here(
 pub(crate) struct Reach<'a> {
     wiring: &'a Wiring,
     stamp: String,
-    /// Whether a daemon of another version is refused, never stopped (OD-3:
-    /// a session's MCP server's calls).
+    /// Whether this reach never ends what a daemon hosts (OD-3: a session's
+    /// MCP server's calls): an idle daemon of an older version is asked to
+    /// drain, and any other of another stamp refuses the call.
     never_stops: bool,
 }
 
@@ -774,8 +775,10 @@ impl<'a> Reach<'a> {
         }
     }
 
-    /// This reach, a daemon of another version refused with a typed
-    /// mismatch, never stopped (OD-3: an MCP call never stops a daemon).
+    /// This reach as a session's call makes it (OD-3,
+    /// [`daemon_api::reconcile_session`]): an idle daemon of an older
+    /// version drained and replaced by this binary's, any other daemon of
+    /// another stamp a typed mismatch, and nothing a daemon hosts ended.
     pub(crate) fn never_stopping(self) -> Reach<'a> {
         Reach {
             never_stops: true,
@@ -815,17 +818,16 @@ impl Daemons for Reach<'_> {
     async fn reach(&self) -> Result<daemon_client::DaemonClient, Unreached> {
         let files = files_of(self.wiring);
         if let Some(found) = serving_here(self.wiring, &files).map_err(declined)? {
-            if self.never_stops {
-                return match found.stamp == self.stamp {
-                    true => Ok(client_of(&found)),
-                    false => Err(declined(daemon_api::SkewError::Mismatch {
-                        own: self.stamp.clone(),
-                        daemon: found.stamp,
-                    })),
-                };
-            }
-            match daemon_api::reconcile(&client_of(&found), &self.stamp, &found.stamp).await {
-                Ok(daemon_api::Reconciled::Same) => return Ok(client_of(&found)),
+            let api = client_of(&found);
+            // OD-3: a session's call drains an idle older daemon, and is
+            // refused by any other of another stamp.
+            let reconciled = if self.never_stops {
+                daemon_api::reconcile_session(&api, &self.stamp, &found.stamp).await
+            } else {
+                daemon_api::reconcile(&api, &self.stamp, &found.stamp).await
+            };
+            match reconciled {
+                Ok(daemon_api::Reconciled::Same) => return Ok(api),
                 Ok(daemon_api::Reconciled::Stopped) => {
                     let deadline = Instant::now() + STOPPED_WAIT;
                     while Instant::now() < deadline && files.discovery().is_some_and(|d| live(&d)) {

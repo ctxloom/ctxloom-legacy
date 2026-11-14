@@ -364,11 +364,12 @@ fn document(request: &PrepareRequest) -> Result<Option<Json>, EngineError> {
 /// the lists of every scope merge (claude's settings docs, "Settings
 /// precedence", "Lists merge instead of overriding"). It is also the scope
 /// whose `defaultMode` may be `auto` or `bypassPermissions` (those "don't take
-/// effect from project or local settings"). A profile's `deny_tools` stays the
-/// project file's `permissions.deny` (surface apply), merged by claude.
+/// effect from project or local settings"). A profile's `deny_tools` and
+/// ctxloom's allowance of its own tools are laid into the document here
+/// ([`laid`]).
 fn user_settings(request: &PrepareRequest, base: Json) -> Result<String, EngineError> {
     let mut doc = base;
-    match with_deny(document(request)?, &request.surfaces.0.deny_tools) {
+    match laid(request)? {
         Some(permissions) => {
             doc.set("permissions", permissions);
         }
@@ -380,17 +381,28 @@ fn user_settings(request: &PrepareRequest, base: Json) -> Result<String, EngineE
 }
 
 /// The tools of ctxloom's own MCP server, as claude names them: allowed by
-/// ctxloom itself (OD-4, owner 2026-11-13, a stated exception to "ctxloom
-/// never edits the document", rulings 133-139), so a session can call its
-/// daemon whatever its agent's document says. The allowance is in
-/// ctxloom's own `--settings` file (the hooks file), whose lists claude
-/// merges with user scope's: the agent's document stays the user-scope
-/// `permissions` exactly as written.
+/// ctxloom itself (OD-4, owner 2026-11-13, amended 2026-11-14: a stated
+/// exception to rulings 133-139's "verbatim"), so a session can call its
+/// daemon whatever its agent's document says. The allowance is laid INTO the
+/// agent's document, as `deny_tools` is, where the document lives (the
+/// session home's `settings.json`, or the hooks file under `host`).
 pub const OUR_TOOLS: &str = "mcp__ctxloom__*";
 
-/// `permissions` (in the session home, none; under `host`, the agent's
-/// document, its deny list laid over it) with [`OUR_TOOLS`] in its `allow`
-/// once, after the document's own.
+/// The agent's permissions document as the launch writes it: the selection's
+/// `deny_tools` laid into its `deny`, and, where ctxloom's server is offered
+/// (any launch with context; none without, OD-38), [`OUR_TOOLS`] into its
+/// `allow`. None only for no document, no deny list and no server.
+fn laid(request: &PrepareRequest) -> Result<Option<Json>, EngineError> {
+    let surfaces = &request.surfaces.0;
+    let permissions = with_deny(document(request)?, &surfaces.deny_tools);
+    if surfaces.no_context {
+        return Ok(permissions);
+    }
+    Ok(Some(with_ours(permissions)))
+}
+
+/// `permissions` (the agent's document, its deny list laid over it) with
+/// [`OUR_TOOLS`] in its `allow` once, after the document's own.
 fn with_ours(permissions: Option<Json>) -> Json {
     let mut permissions = match permissions {
         Some(doc @ Json::Object(_)) => doc,
@@ -506,14 +518,13 @@ fn user_base(user: Option<&run_ports::UserSettings>) -> (Json, Option<LeftOut>) 
 }
 
 /// ctxloom's hooks file, which the command names with `--settings`: the
-/// hooks (the terminal's events or a child's turn's) and, in the session
-/// home, nothing else but ctxloom's allowance of its own tools
-/// ([`OUR_TOOLS`], OD-4; none for a launch with no context, which offers
-/// no server, OD-38). Under `session_home: host` the config dir is the
-/// user's own `~/.claude`, whose `settings.json` ctxloom never writes, so the
-/// agent's permissions are this file's `permissions` there (the one key, so
-/// it never overwrites the hooks), with the cost ruling 145 avoids in the
-/// session home: one invalid value in them disables the hooks too.
+/// hooks (the terminal's events or a child's turn's) and the statusline, and
+/// in the session home no permissions. Under `session_home: host` the config
+/// dir is the user's own `~/.claude`, whose `settings.json` ctxloom never
+/// writes, so the agent's permissions, as the launch lays them ([`laid`]),
+/// are this file's `permissions` there (the one key, so it never overwrites
+/// the hooks), with the cost ruling 145 avoids in the session home: one
+/// invalid value in them disables the hooks too.
 fn hooks_settings(request: &PrepareRequest, program: &str) -> Result<String, EngineError> {
     let hooks = crate::hooks::home_settings(request.interactive, program);
     let mut settings = Json::parse(&hooks).map_err(|ext_err_txt| EngineError::BadPermissions {
@@ -542,17 +553,10 @@ fn hooks_settings(request: &PrepareRequest, program: &str) -> Result<String, Eng
             ]),
         );
     }
-    let permissions = match request.session_home {
-        SessionHome::Host => with_deny(document(request)?, &surfaces.deny_tools),
-        SessionHome::Session => None,
-    };
-    // No context, no server (OD-38): none of ctxloom's tools to allow.
-    if surfaces.no_context {
-        if let Some(permissions) = permissions {
+    if request.session_home == SessionHome::Host {
+        if let Some(permissions) = laid(request)? {
             settings.set("permissions", permissions);
         }
-    } else {
-        settings.set("permissions", with_ours(permissions));
     }
     Ok(format!("{}\n", settings.pretty()))
 }

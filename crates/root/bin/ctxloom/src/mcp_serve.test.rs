@@ -371,3 +371,73 @@ fn test_context_assemble_loads_the_fragments_the_agent_chose() {
     let (code, err) = mcp.finish();
     assert_eq!(code, 0, "{err}");
 }
+
+/// The serving daemon as its discovery file names it.
+fn discovered(project: &Project) -> run_ports::Discovery {
+    let path = project.home().join(".ctxloom/daemon/daemon.discovery");
+    let bytes = super::files::read_bytes(&path).expect("a daemon serves");
+    run_ports::Discovery::decode(&bytes).expect("a discovery file")
+}
+
+/// Whether process `pid` is gone, waited for (bounded). Linux: procfs.
+fn gone_within(pid: u32, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    while super::files::exists(format!("/proc/{pid}")) {
+        if Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
+}
+
+/// A stamp of a version above any this repository builds.
+const NEWER: &str = "v99.0.0-abcdef0";
+
+// OD-3 (owner, 2026-11-14): a session's call of a NEWER version meets an
+// idle daemon of an older one: the old daemon is asked to drain (it ends
+// nothing) and exits, this binary starts its own, and the call is answered
+// there.
+#[test]
+fn test_a_newer_sessions_call_drains_an_idle_older_daemon_and_is_answered_by_its_own() {
+    if !super::files::exists("/proc/self/stat") {
+        return;
+    }
+    let world = World::new();
+    world.seed("amber-quiet-heron", &[]);
+    let me = world.session("amber-quiet-heron");
+    let old = discovered(&world.project);
+    assert_ne!(old.stamp, NEWER);
+    let mut mcp = Mcp::for_session(&world.project, &me, &[("CTXLOOM_TEST_STAMP", NEWER)]);
+    let listed = answered_json(&mcp.call("session_list", json!({})));
+    assert_eq!(listed["sessions"][0]["name"], me.as_str(), "{listed}");
+    assert!(
+        gone_within(old.pid, Duration::from_secs(20)),
+        "the old daemon drained and exited"
+    );
+    let new = discovered(&world.project);
+    // The daemon this binary started (the test stamp is the client's
+    // alone: the daemon it starts serves with the binary's own).
+    assert_ne!(new.pid, old.pid, "another daemon serves");
+    let (code, err) = mcp.finish();
+    assert_eq!(code, 0, "{err}");
+}
+
+// OD-3: a session's call of an OLDER version never touches the daemon: it
+// is refused, typed, naming both stamps, and the daemon serves on.
+#[test]
+fn test_an_older_sessions_call_is_refused_and_the_daemon_serves_on() {
+    let world = World::new();
+    world.seed("amber-quiet-heron", &[]);
+    let me = world.session("amber-quiet-heron");
+    let old = discovered(&world.project);
+    let older = "v0.0.1-abcdef0";
+    let mut mcp = Mcp::for_session(&world.project, &me, &[("CTXLOOM_TEST_STAMP", older)]);
+    let refused = mcp.call("session_list", json!({}));
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused.to_string();
+    assert!(said.contains(older) && said.contains(&old.stamp), "{said}");
+    assert_eq!(discovered(&world.project).pid, old.pid, "the same daemon");
+    let (code, err) = mcp.finish();
+    assert_eq!(code, 0, "{err}");
+}

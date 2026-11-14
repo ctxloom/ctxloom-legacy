@@ -14,7 +14,14 @@
 # was started with, then execs `ctxloom mcp serve`. The turn asks for one
 # `session_list` call (a read: a daemon of ctxloom's home answers it, started
 # if none serves). The probe prints what the server received and whether the
-# tool answered; nothing it writes outlives it but that daemon.
+# tool answered.
+#
+# ctxloom's home is the probe's own: a temporary CTXLOOM_HOME (and HOME), and
+# a temporary project its CTXLOOM_ROOT, so the daemon the tool call starts
+# serves that home and never the user's ~/.ctxloom or ~/.ctxloom-rs (its
+# first run, 2026-11-14, set none, and its call started a daemon against the
+# Go-era ~/.ctxloom). That daemon is stopped before the home is removed, and
+# its idle time is short in any case. Held by scripts/mcp-env-probe.selftest.sh.
 set -euo pipefail
 
 if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
@@ -29,8 +36,17 @@ ctxloom=${1:-$top/target/debug/ctxloom}
 [ -x "$ctxloom" ] || { echo "mcp-env-probe: no ctxloom binary at $ctxloom (just build)" >&2; exit 2; }
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/mcp-env-probe.XXXXXX")
-trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/config" "$work/project"
+home=$work/home
+mkdir -p "$work/config" "$work/project/.ctxloom" "$home"
+# ctxloom's home, HOME and the project are the probe's alone, for claude, the
+# server it starts and the daemon the server's call starts.
+export CTXLOOM_HOME="$home" HOME="$home" CTXLOOM_ROOT="$work/project"
+export CTXLOOM_DAEMON_IDLE_SECONDS=30
+finish() {
+    "$ctxloom" daemon stop >/dev/null 2>&1 || true
+    rm -rf "$work"
+}
+trap finish EXIT
 
 # The server as an engine starts it, its environment recorded first.
 cat > "$work/server.sh" <<EOF

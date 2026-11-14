@@ -7,6 +7,7 @@
 use library::compose::{self, Options, Package, SelectRequest};
 use library::config::engines::{self, Drive, Effective};
 use library::findings::{Class, Finding};
+use library::premise::Surface;
 use library::profile::ResolvedProfile;
 use library::tokens;
 
@@ -44,6 +45,9 @@ pub struct AssembleRequest {
     pub profiles: Vec<String>,
     pub fragments: Vec<String>,
     pub tags: Vec<String>,
+    /// Where the assembly goes (s3-Q5): at rest for the CLI; a launch when
+    /// the daemon assembles for a session's `context_assemble` tool.
+    pub surface: library::premise::Surface,
 }
 
 /// A dry run: the plan, and the findings the startup gate refuses on.
@@ -211,12 +215,14 @@ impl Project {
     }
 
     /// The selection of `set` and the caller's asks, assembled. Whether the
-    /// premised fragments load or are indexed follows `config.premised`.
+    /// premised fragments load or are indexed follows `config.premised`; the
+    /// index is worded for `surface` (s3-Q5).
     pub(crate) fn assemble_set(
         &mut self,
         set: &[ResolvedProfile],
         fragments: &[String],
         tags: &[String],
+        surface: Surface,
         findings: &mut Vec<Finding>,
     ) -> Package {
         let request = SelectRequest {
@@ -227,6 +233,7 @@ impl Project {
         let options = Options {
             prefer_distilled: self.config.prefers_distilled(),
             premised: self.config.premised(),
+            surface,
         };
         // The registered companions' fragments follow the selected ones, and
         // are read from a catalog that holds their loadouts.
@@ -445,7 +452,9 @@ impl Project {
             return Ok((self.contextless(request)?, Package::default()));
         }
         let selection = self.selection(request)?;
-        let package = self.compose(&selection, findings)?;
+        // The plan's context rides the launch, where ctxloom's server is
+        // offered (s3-Q5).
+        let package = self.compose(&selection, Surface::Launch, findings)?;
         Ok((selection, package))
     }
 
@@ -475,6 +484,7 @@ impl Project {
     fn compose(
         &mut self,
         selection: &Selection,
+        surface: Surface,
         findings: &mut Vec<Finding>,
     ) -> Result<Package, AppError> {
         if selection.profiles.is_empty()
@@ -492,7 +502,13 @@ impl Project {
         }
         let set = self.resolve_profiles(&selection.profiles, findings)?;
         self.served(&set, findings);
-        let package = self.assemble_set(&set, &selection.fragments, &selection.tags, findings);
+        let package = self.assemble_set(
+            &set,
+            &selection.fragments,
+            &selection.tags,
+            surface,
+            findings,
+        );
         refuse_empty(selection, &package)?;
         self.say_stale(&package);
         Ok(package)
@@ -529,7 +545,7 @@ impl Project {
         } else {
             selection
         };
-        let package = self.compose(&selection, &mut findings)?;
+        let package = self.compose(&selection, request.surface, &mut findings)?;
         for finding in library::findings::said(&findings) {
             self.notices.push(Notice::finding(finding));
         }

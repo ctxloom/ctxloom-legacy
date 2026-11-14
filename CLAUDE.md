@@ -774,13 +774,7 @@ of the session home's user-scope `settings.json`, over the user's own
 settings (ruling 169, above; the home is the session's `CLAUDE_CONFIG_DIR`;
 none of either, `{}`), APART from
 ctxloom's hooks, which are `ctxloom-hooks.json`, the file `--settings` names
-(which also ALLOWS ctxloom's own MCP server's tools, `permissions.allow:
-["mcp__ctxloom__*"]`, OD-4, owner 2026-11-13: a stated exception to
-"ctxloom never edits the document", made beside it so the document stays
-as written, claude merging the lists of its scopes;
-`engine_claude::drive::OUR_TOOLS`; under `host`, appended once to the
-document's own `allow` there; a launch with no context, which offers no
-server, allows none)
+(which holds no permissions in the session home)
 (owner ruling 145: claude 2.1.322 refuses a settings file whole for one
 invalid value, hooks included, so a bad value disables the block alone; the
 probe is in the ruling-145 commits). User scope is claude's lowest: a single
@@ -790,7 +784,15 @@ Under `session_home: host` (the config dir is the user's own `~/.claude`,
 never written) the block stays the `permissions` of the hooks file, with the
 cost that a bad value there disables the hooks too. No `--permission-mode` is
 passed, claude's mode is the document's `defaultMode`. A profile's
-`deny_tools` rides the launch (above), laid into the same `permissions.deny`. engine-opencode writes the session home's `opencode.json`
+`deny_tools` rides the launch (above), laid into the same `permissions.deny`,
+and ctxloom ALLOWS its own MCP server's tools by laying `permissions.allow:
+["mcp__ctxloom__*"]` into the same document the same way (after its own
+`allow`, once; `engine_claude::drive::OUR_TOOLS` and `laid`; OD-4, owner
+2026-11-13, amended 2026-11-14: a stated exception to rulings 133-139's
+"verbatim", as `deny_tools` already was), where the document lives: the
+session home's `settings.json`, or the hooks file under `host`; never
+`ctxloom-hooks.json` in the session home. A launch with no context, which
+offers no server, lays none. engine-opencode writes the session home's `opencode.json`
 (`OPENCODE_CONFIG_DIR`, which opencode 1.18.4 reads after the project's) with
 the document as its `permission` object (none, no `permission`, so no earlier
 run's lingers; read from the 1.18.4 bundle, not run live), over the user's
@@ -1982,9 +1984,9 @@ plan composes nothing (no profile, fragment, premise index or companion
 guidance) and carries no surface of the profiles' and NO MCP server,
 ctxloom's own included (a server's instructions are context): the plan's
 surfaces say `no_context` (`surface_ports::Inputs::no_context`), so claude's
-`ctxloom-mcp.json` lists none (`--mcp-config` still names it) and its hooks
-file allows none of ctxloom's tools (OD-4's allowance is for a server
-offered), and opencode's `opencode.json` has no `mcp.ctxloom`. The capture hooks are the engine's and stay;
+`ctxloom-mcp.json` lists none (`--mcp-config` still names it) and none of
+ctxloom's tools is laid into the agent's permissions (OD-4's allowance is
+for a server offered), and opencode's `opencode.json` has no `mcp.ctxloom`. The capture hooks are the engine's and stay;
 the agent is `--agent`, else the default agent where there is one, else
 none (the default engine), and keeps its engine, model and permissions; the
 statusline stays as configured. Beside `--profile`, `--fragment` or `--tag`
@@ -2074,15 +2076,23 @@ Every session home registers it, but for a launch with no context (`run
 "serve"], enabled: true}` (`surface_ports::CTXLOOM_SERVER`; a carried server
 of that name is shadowed, OD-6). The entry holds no identity: the server is
 the session `CTXLOOM_SESSION` names in the environment it inherits from its
-engine (whether claude passes that environment to a stdio server is OD-7's
-live probe, `scripts/mcp-env-probe.sh`, not yet run), and with none it is
+engine (OD-7's live probe, `scripts/mcp-env-probe.sh`, run by the owner
+2026-11-14 on claude 2.1.322: claude passes its environment, withholding
+its own `CLAUDE_CODE_OAUTH_TOKEN`; the probe gives claude, the server and
+the daemon its call starts a temporary `CTXLOOM_HOME`, `HOME` and project
+of its own and stops that daemon before removing them, held by
+`scripts/mcp-env-probe.selftest.sh` in `just selftest`), and with none it is
 refused, `mcp-server-no-session` (exit 20). `initialize` and `tools/list`
 reach no daemon. The command line holds stdout locked, so the server's
 lines reach it through a channel and are written on the command's thread
 (`mcp_server::serve(server, out)`). Its tools (`mcp_server::TOOL_NAMES`)
 are `session_list`, `session_show`, `transcript_show`, `context_assemble`
 (its `bundles` argument is `AssembleContext`'s `fragments`), `child_send`,
-`child_close` and `child_clear`. `child_launch` (step 8) and
+`child_close` and `child_clear`, each described in the owner's approved
+words (2026-11-14), one Markdown file per tool beside the crate
+(`mcp-server/tools/<tool>.md`), embedded by `include_str!` at compile time
+and offered without the file's closing newline (nothing is read at run
+time). `child_launch` (step 8) and
 `approval_prompt` (OD-1) are not offered until they are built. Each tool is
 a call of `daemon_api::Caller`, a SESSION as the daemon's client. Its
 project is its name's (`projects/{p}`, OD-2), never resolved from a cwd.
@@ -2097,9 +2107,21 @@ coordinator client), its `requester` the caller (project uid from
 has it (s3-Q4), its command id keyed by an id minted once per call (a
 message's, a clear's; a close's `close:<uid>`), so the one retry on a new
 daemon is a DUPLICATE. The answer is the session-index projection, or
-`GetSession` when none came back. A daemon of another stamp is refused
-`daemon-api-version-skew` and never stopped (OD-3, `Reach::never_stopping`;
-the old daemon's drain is not built). Under test-support, a
+`GetSession` when none came back. A session's call never ends what a
+daemon hosts (OD-3, owner 2026-11-13/14; `Reach::never_stopping`,
+`daemon_api::reconcile_session`): meeting an IDLE daemon of an OLDER
+version (`daemon_api::newer`: the stamps' `MAJOR.MINOR.PATCH[-pre]` by
+semver precedence; the hash and a dirty build's time order nothing, so two
+builds of one version are neither), it asks it to drain (`StopDaemon`,
+never `even_if_live`: its loop ticks no new child, its discovery is
+withdrawn, and its listener's stop answers the calls in flight within
+`STOP_GRACE`), waits it out, starts its own and is answered there; a busy
+one (hosting runs, or a run started between the look and the drain,
+`DaemonHosting`), or one of an older or the same version, refuses the call
+`daemon-api-version-skew`, naming both stamps, and is asked nothing. Not
+built (a wire change, escalated): the daemon itself seeing a client's
+stamp, refusing new calls while it drains, and draining a daemon that hosts
+runs without ending them. Under test-support, a
 `test-die-after-apply` file in the daemon's directory kills the daemon once
 a client's `HandleSync` is applied and before it answers
 (`serve.rs`'s `Dying`, taken by the daemon that finds it), and `ctxloom test
@@ -2302,11 +2324,17 @@ assembled context with the premise index of what was held back
 (`library::premise::render`, each name once, sorted), so `context
 assemble`, the dry run, `run` and materialize carry the index; `always`
 loads every fragment with the rest and renders no index (the static
-assembly). The index's instruction (`library::premise::INSTRUCTION`) is the
-owner's Go text but for its last clause, which tells the agent to run
-`ctxloom fragment show <name>` for each name it chose, not Go's
-`assemble_context` MCP tool (not built: T20; the wording is pending the
-owner's approval); `fragment show` reads a companion's fragment
+assembly). The index's instruction (`library::premise::
+selection_instruction_on`) is the owner's Go text but for its last clause,
+which follows the surface the context rides (s3-Q5, owner-approved
+2026-11-14; `premise::Surface`, `compose::Options::surface`): on a LAUNCH
+(the run's plan, a dry run's too, and the daemon's assembly for a session's
+`context_assemble` tool, `AssembleRequest::surface`), where ctxloom's server
+is offered, "Then for each name you chose, call the ctxloom
+`context_assemble` tool with those names as its `bundles` argument."; AT
+REST (materialize, `context assemble`, `fragment premises`, `agent show`),
+"run `ctxloom fragment show <name>` for each name you chose" (a run with no
+context carries no index at all); `fragment show` reads a companion's fragment
 (`ctxloom+companion:<bin>#fragments/<name>`) by asking the companions for
 their loadouts. Divergence from Go: Go never put the index in the context
 (it served it over MCP); the parity tests compare a dry run without it, and

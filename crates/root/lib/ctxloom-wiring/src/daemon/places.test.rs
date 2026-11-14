@@ -131,3 +131,62 @@ fn a_sessions_checkout_under_the_account_home_is_found_and_spared() {
     assert_eq!(report.worktrees.len(), 1, "{report:?}");
     assert_eq!(report.spared, 1, "{report:?}");
 }
+
+// s3-Q5: the daemon assembles for a session's `context_assemble` tool, so
+// the context rides a launch where ctxloom's server is offered: a premise
+// index in it names the tool, never the CLI.
+#[test]
+fn an_assembly_for_a_session_words_its_index_for_the_launch() {
+    use daemon_api::Assemblies;
+    let root = fixtures::root();
+    let project = root.root().join("work/calm");
+    let bundle = project.join(".ctxloom/content/bundles/v2/demo");
+    fixtures::mkdirs(bundle.join("fragments"));
+    fixtures::put_mode(
+        bundle.join("bundle.yaml"),
+        "schema_version: 4\nversion: 1.0.0\n",
+        0o644,
+    );
+    fixtures::put_mode(
+        bundle.join("fragments/later.md"),
+        "---\ndescription: about to do the later thing\n---\nLATER-BODY\n",
+        0o644,
+    );
+    fixtures::put_mode(bundle.join("fragments/rules.md"), "RULES-BODY\n", 0o644);
+    let profiles = project.join(".ctxloom/content/bundles/v2/project/profiles");
+    fixtures::mkdirs(&profiles);
+    fixtures::put_mode(
+        project.join(".ctxloom/content/bundles/v2/project/bundle.yaml"),
+        "schema_version: 4\nversion: 1.0.0\n",
+        0o644,
+    );
+    fixtures::put_mode(profiles.join("dev.yaml"), "bundles: [demo]\n", 0o644);
+    fixtures::put_mode(
+        project.join(".ctxloom/config.yaml"),
+        "schema_version: 9\n",
+        0o644,
+    );
+    fixtures::mkdirs(root.root().join("home"));
+    fixtures::mkdirs(root.root().join("tmp"));
+    let assemblies = super::ProjectAssemblies {
+        home: root.root().join("home"),
+        temp: root.root().join("tmp"),
+    };
+    let assembled = assemblies
+        .assemble(
+            &project.display().to_string(),
+            &daemon_proto::v1::AssembleContextRequest {
+                profiles: vec!["dev".to_string()],
+                ..daemon_proto::v1::AssembleContextRequest::default()
+            },
+        )
+        .expect("assembled");
+    let context = assembled.context;
+    assert!(context.contains("RULES-BODY"), "{context}");
+    assert!(!context.contains("LATER-BODY"), "held back: {context}");
+    assert!(
+        context.contains("the ctxloom `context_assemble` tool"),
+        "{context}"
+    );
+    assert!(!context.contains("ctxloom fragment show"), "{context}");
+}

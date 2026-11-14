@@ -101,3 +101,46 @@ fn each_argument_error_reports_its_args() {
         "mcp-server-urgency-invalid given=shout"
     );
 }
+
+// Every tool offered has a description, the owner's approved text
+// (2026-11-14) byte for byte: embedded from `tools/<tool>.md`, without the
+// file's closing newline. Written out here, so an edit to a file is seen.
+#[test]
+fn every_tool_offered_is_described_in_the_approved_words() {
+    let approved = [
+        ("session_list", "List this project's sessions (all: every project's), as the daemon's session index has them."),
+        ("session_show", "Show one session as the daemon has it: its state, owner, children and pending messages."),
+        ("transcript_show", "Show a session's transcript, its lines as its hooks have delivered them so far."),
+        ("context_assemble", "Load the fragments you chose from this project's premise index, by the names it lists."),
+        ("child_send", "Send one of your children a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn)."),
+        ("child_close", "Close one of your children: its engine is ended, and it takes no more messages."),
+        ("child_clear", "Clear one of your children's conversation, as its engine's own /clear does."),
+    ];
+    let offered = tools();
+    assert_eq!(offered.len(), approved.len());
+    for tool in &offered {
+        let said = tool.description.as_deref().unwrap_or_default();
+        assert!(!said.trim().is_empty(), "{} is described", tool.name);
+        assert_eq!(
+            said,
+            said.trim(),
+            "{}: no surrounding whitespace",
+            tool.name
+        );
+        let words = approved
+            .iter()
+            .find(|(name, _)| *name == tool.name)
+            .map(|(_, words)| *words);
+        assert_eq!(Some(said), words, "{}", tool.name);
+    }
+}
+
+// A description file's closing newline, in either convention, is not part
+// of the description; nothing else is taken off.
+#[test]
+fn a_description_is_its_file_without_the_closing_newline() {
+    assert_eq!(super::describe("Words.\n"), "Words.");
+    assert_eq!(super::describe("Words.\r\n"), "Words.");
+    assert_eq!(super::describe("Words."), "Words.");
+    assert_eq!(super::describe(" Words. \n"), " Words. ");
+}

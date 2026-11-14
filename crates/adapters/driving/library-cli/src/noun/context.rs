@@ -16,6 +16,7 @@ pub(crate) fn read(
         profiles: many(sub, "profile"),
         fragments: many(sub, "fragment"),
         tags: many(sub, "tag"),
+        ..AssembleRequest::default()
     };
     let outcome = cx.library.assemble(&cx.flags, &request);
     resource(cx, outcome, out, err, assembled, |out, assembled| {

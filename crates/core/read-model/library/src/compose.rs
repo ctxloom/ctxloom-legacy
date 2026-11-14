@@ -440,6 +440,9 @@ pub struct Options {
     pub prefer_distilled: bool,
     /// When the premised fragments load.
     pub premised: Premised,
+    /// Where the context goes, which words the premise index's last clause
+    /// (s3-Q5).
+    pub surface: premise::Surface,
 }
 
 /// A fragment as delivered or held back.
@@ -533,7 +536,7 @@ pub fn assemble(catalog: &Catalog, selection: &Selection, options: &Options) -> 
     package.context = ingest.join();
     // On demand, what was held back is offered in the premise index, which
     // ends the context; nothing held back renders nothing.
-    let index = premise::render(&index_of(&package.premised));
+    let index = premise::render_on(&index_of(&package.premised), options.surface);
     if !index.is_empty() {
         if !package.context.is_empty() {
             package.context.push_str(SECTION_SEPARATOR);
