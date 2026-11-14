@@ -8,7 +8,8 @@
 //!
 //! Authenticated means the user: the principal may send every command and
 //! fact the session domain handles (angzarr's allowlist is a closed list, so
-//! it is that domain's whole list, read from the aggregate), and owns every
+//! it is that domain's whole list, read from the aggregate) and the runs
+//! domain's `RequestStop` (U4: a hosted one-shot's stop), and owns every
 //! stream the daemon reaches. The bearer keeps NON-USER callers off the
 //! socket (other users, web pages, containers, machines); it separates
 //! nothing among the user's own processes, which can all read the file.
@@ -41,14 +42,21 @@ impl UserGate {
     }
 }
 
-/// What the user may send: every command and fact of the session domain.
+/// What the user may send: every command and fact of the session domain,
+/// and the runs domain's `RequestStop` (U4: a hosted one-shot's command
+/// stops its run on a signal, API Q11).
 pub fn user_allowlist() -> Allowlist {
     let commands = <sessions::SessionAggregate as Domain>::Command::type_urls();
     let facts = <sessions::SessionAggregate as Domain>::Fact::type_urls();
     let commands = commands.into_iter().map(|url| (BodyKind::Command, url));
     let facts = facts.into_iter().map(|url| (BodyKind::Fact, url));
+    let stop = (
+        BodyKind::Command,
+        <<runs::RequestStop as angzarr_embedded::markup::DomainMessage>::Wire as prost::Name>::type_url(),
+    );
     commands
         .chain(facts)
+        .chain(std::iter::once(stop))
         .fold(Allowlist::none(), |list, (kind, url)| list.send(kind, url))
 }
 

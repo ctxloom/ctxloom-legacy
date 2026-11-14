@@ -30,6 +30,19 @@ impl ApiRefusal {
         }
     }
 
+    /// A domain's typed refusal `refusal`, made here before any command is
+    /// sent (a hand-off's checks, S10), under `status`, the status its
+    /// message declares.
+    pub fn typed(
+        refusal: &angzarr_embedded::markup::TypedRefusal,
+        status: angzarr_embedded::markup::BusinessStatus,
+    ) -> ApiRefusal {
+        ApiRefusal {
+            code: angzarr_embedded::angzarr_router::error::GrpcCode::from(status) as i32,
+            refusal: refusal.packed().clone(),
+        }
+    }
+
     /// A domain's refusal, as the kernel rejected the command.
     pub fn rejected(rejected: &Rejected) -> ApiRefusal {
         ApiRefusal {
@@ -46,6 +59,9 @@ pub enum ApiError {
     Refused(ApiRefusal),
     /// Something broke (the store, the kernel): an internal failure.
     Failed { detail: String },
+    /// Not served by this daemon (yet): `CreateRun` for a TERMINAL run until
+    /// U5 builds it; answered UNIMPLEMENTED.
+    Unimplemented { method: String },
 }
 
 impl ApiError {
@@ -76,6 +92,7 @@ impl Diagnostic for ApiError {
         match self {
             ApiError::Refused(_) => code!("refused"),
             ApiError::Failed { .. } => code!("failed"),
+            ApiError::Unimplemented { .. } => code!("unimplemented"),
         }
     }
 
@@ -85,6 +102,7 @@ impl Diagnostic for ApiError {
                 vec![("ext_err_txt", refused.refusal.type_url.as_str().into())]
             }
             ApiError::Failed { detail } => vec![("ext_err_txt", detail.as_str().into())],
+            ApiError::Unimplemented { method } => vec![("method", method.as_str().into())],
         }
     }
 }
@@ -106,6 +124,10 @@ pub enum ApiRejection {
     ProjectNotFound {
         name: String,
     },
+    /// A run the daemon hosts no run under (U4).
+    RunNotFound {
+        name: String,
+    },
     ProjectUnknown {
         cwd: String,
     },
@@ -124,6 +146,11 @@ pub enum ApiRejection {
         root: String,
         detail: String,
     },
+    /// A launch of a child another launch of it is making now (its launch
+    /// lock held, T6).
+    LaunchInProgress {
+        harp: String,
+    },
 }
 
 impl Diagnostic for ApiRejection {
@@ -133,10 +160,12 @@ impl Diagnostic for ApiRejection {
             ApiRejection::SessionNotFound { .. } => code!("session-not-found"),
             ApiRejection::TranscriptEmpty { .. } => code!("transcript-empty"),
             ApiRejection::ProjectNotFound { .. } => code!("project-not-found"),
+            ApiRejection::RunNotFound { .. } => code!("run-not-found"),
             ApiRejection::ProjectUnknown { .. } => code!("project-unknown"),
             ApiRejection::DaemonHosting { .. } => code!("daemon-hosting"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
+            ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
         }
     }
 
@@ -148,10 +177,12 @@ impl Diagnostic for ApiRejection {
             ],
             ApiRejection::SessionNotFound { name }
             | ApiRejection::TranscriptEmpty { name }
-            | ApiRejection::ProjectNotFound { name } => {
+            | ApiRejection::ProjectNotFound { name }
+            | ApiRejection::RunNotFound { name } => {
                 vec![("name", name.as_str().into())]
             }
             ApiRejection::ProjectUnknown { cwd } => vec![("cwd", cwd.as_str().into())],
+            ApiRejection::LaunchInProgress { harp } => vec![("harp", harp.as_str().into())],
             ApiRejection::DaemonHosting { runs, harps } => {
                 vec![("runs", (*runs).into()), ("harps", harps.join(", ").into())]
             }
@@ -194,6 +225,9 @@ pub enum Rejection {
     /// A removal's (`DeleteSession`'s `RemovalRefused`), in the words of
     /// the use case that refused it.
     Removal(RemovalRejection),
+    /// The runs domain's (a child's launch judged before its hand-off is
+    /// written, S10).
+    Runs(runs::RunRejection),
 }
 
 impl Rejection {
@@ -203,6 +237,7 @@ impl Rejection {
             Rejection::Api(api) => Report::of(api),
             Rejection::Sessions(sessions) => Report::of(sessions),
             Rejection::Removal(removal) => Report::of(removal),
+            Rejection::Runs(runs) => Report::of(runs),
         }
     }
 }
@@ -315,6 +350,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
             .and_then(|r| api(ApiRejection::TranscriptEmpty { name: r.name })),
         "ctxloom.v1.ProjectNotFound" => decode::<v1::ProjectNotFound>(refusal)
             .and_then(|r| api(ApiRejection::ProjectNotFound { name: r.name })),
+        "ctxloom.v1.RunNotFound" => decode::<v1::RunNotFound>(refusal)
+            .and_then(|r| api(ApiRejection::RunNotFound { name: r.name })),
         "ctxloom.v1.ProjectUnknown" => decode::<v1::ProjectUnknown>(refusal)
             .and_then(|r| api(ApiRejection::ProjectUnknown { cwd: r.cwd })),
         "ctxloom.v1.DaemonHosting" => decode::<v1::DaemonHosting>(refusal).and_then(|r| {
@@ -368,8 +405,59 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 })
             })
         }
-        _ => None,
+        _ => domain_rejection(refusal),
     }
+}
+
+/// `refusal`, as the domain message its type names, typed: the first of
+/// `types` it is.
+macro_rules! typed_as {
+    ($refusal:expr, [$($t:ty),* $(,)?]) => {{
+        let refusal = $refusal;
+        None
+            $(.or_else(|| {
+                angzarr_embedded::markup::decode_message::<$t>(refusal)
+                    .ok()
+                    .flatten()
+                    .map(|message| angzarr_embedded::markup::TypedRefusal::of(&message))
+            }))*
+    }};
+}
+
+/// A refusal of the sessions or the runs domain's commands a client's write
+/// (a child verb's, S2) or a hand-off's checks (S10) was answered with, as
+/// that domain's own rejection; none for any other.
+fn domain_rejection(refusal: &Any) -> Option<Rejection> {
+    let sessions: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
+        refusal,
+        [
+            sessions::SessionUnknown,
+            sessions::NoSession,
+            sessions::SessionIsClosed,
+            sessions::OwnerClosed,
+            sessions::NotOwner,
+            sessions::NoOpenIncarnation,
+            sessions::DelegationLimit,
+            sessions::UntrustedTarget,
+            sessions::UrgencyUnsupported,
+        ]
+    );
+    if let Some(typed) = sessions {
+        return sessions::SessionRejection::try_from(&typed)
+            .ok()
+            .map(Rejection::Sessions);
+    }
+    let ran: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
+        refusal,
+        [
+            runs::NoCredential,
+            runs::FileOnlyCredential,
+            runs::UnknownEngine,
+            runs::LaunchRefused,
+        ]
+    );
+    ran.and_then(|typed| runs::RunRejection::try_from(&typed).ok())
+        .map(Rejection::Runs)
 }
 
 fn decode<T: Message + Default>(refusal: &Any) -> Option<T> {
@@ -396,6 +484,12 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ApiRejection::ProjectNotFound {
             name: "projects/calm-otter".to_string(),
         }),
+        Box::new(ApiRejection::RunNotFound {
+            name: "projects/calm-otter/runs/0195f0a4-7b1e-7000-8000-000000000001".to_string(),
+        }),
+        Box::new(ApiError::Unimplemented {
+            method: "CreateRun(TERMINAL)".to_string(),
+        }),
         Box::new(ApiRejection::TranscriptEmpty {
             name: "projects/calm-otter/sessions/amber-swift-owl".to_string(),
         }),
@@ -413,6 +507,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ApiRejection::ConfigUnreadable {
             root: "/work/calm".to_string(),
             detail: "it does not parse".to_string(),
+        }),
+        Box::new(ApiRejection::LaunchInProgress {
+            harp: "brisk-copper-moth".to_string(),
         }),
     ]
 }

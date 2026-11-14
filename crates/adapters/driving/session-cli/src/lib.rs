@@ -18,7 +18,18 @@
 //! ctxloom session worktrees                (bare: lists)
 //! ctxloom session worktrees list [<harp>]
 //! ctxloom session worktrees purge <harp> [--yes]
+//! ctxloom session launch <owner> [--name <harp>] [--agent <a>] [--engine <e>] ["<task>"]
+//! ctxloom session send <harp> {inform|wake|steer} "<text>" [--id <id>]
+//! ctxloom session clear <harp>
+//! ctxloom session close <harp>
 //! ```
+//!
+//! The child verbs (slice 4 U3, S2, S19) are the user's: each is the session
+//! domain's command sent through the daemon's coordinator under an id the
+//! command chose ([`daemon_api::ChildWrites`]); a launch hands the daemon
+//! its environment first (`CreateHandOff`, T6, S10). Each is parsed here
+//! before any daemon is reached (S14), so a usage error starts none; their
+//! `--format json` is the target's `Session` as the daemon projected it.
 //!
 //! `session remove` DESTROYS a session (owner ruling 98): a plain build has
 //! no deleting verb, and `session purge` is gone. Go's `session adopt` and
@@ -52,7 +63,7 @@ pub use error::diagnostic_samples;
 pub use error::{CliFault, EN_US};
 #[cfg(feature = "session-destroy")]
 pub use run::destroy;
-pub use run::{is_destroy, is_read, read, run, Done, Failure};
+pub use run::{child, is_child, is_destroy, is_read, read, run, Done, Failure};
 
 /// The `session` noun, shaped for mounting on the command line.
 pub fn noun() -> Command {
@@ -112,6 +123,68 @@ pub enum SessionVerb {
     /// Import Go ctxloom's sessions (~/.ctxloom/sessions) into each project's store, once
     #[command(after_help = "Examples:\n  ctxloom session import")]
     Import,
+    /// Launch a child of a session: run by your daemon, kept open between tasks until it is closed
+    #[command(
+        after_help = "Examples:\n  ctxloom session launch amber-quiet-heron \"review the change\"\n  ctxloom session launch amber-quiet-heron --name brisk-copper-moth --agent reviewer"
+    )]
+    Launch(LaunchArgs),
+    /// Send a session a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn)
+    #[command(
+        after_help = "Examples:\n  ctxloom session send brisk-copper-moth wake \"now check the tests too\"\n  ctxloom session send brisk-copper-moth inform \"main moved\" --id m1"
+    )]
+    Send(SendArgs),
+    /// Start a child's conversation again, in the same session
+    #[command(after_help = "Examples:\n  ctxloom session clear brisk-copper-moth")]
+    Clear(HarpArgs),
+    /// Close a session for good: its engine ends, and so do the children it holds
+    #[command(after_help = "Examples:\n  ctxloom session close brisk-copper-moth")]
+    Close(HarpArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct LaunchArgs {
+    /// The owner session's name
+    #[arg(value_name = "OWNER")]
+    pub owner: String,
+    /// The child's first task (default: none; it waits for its first message)
+    #[arg(value_name = "TASK")]
+    pub task: Option<String>,
+    /// The child's name (default: one minted)
+    #[arg(long, value_name = "SESSION-NAME")]
+    pub name: Option<String>,
+    /// The agent the child is planned for (default: the project's)
+    #[arg(long, value_name = "AGENT")]
+    pub agent: Option<String>,
+    /// The child's engine (default: claude-code)
+    #[arg(long, value_name = "ENGINE")]
+    pub engine: Option<String>,
+}
+
+/// How a message is acted on.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UrgencyWord {
+    /// Read at the session's next turn, whoever starts it
+    Inform,
+    /// Start a turn when the session is idle
+    Wake,
+    /// Interrupt the turn in flight, and run next
+    Steer,
+}
+
+#[derive(Args, Debug)]
+pub struct SendArgs {
+    /// The session's name
+    #[arg(value_name = "SESSION-NAME")]
+    pub harp: String,
+    /// How it is acted on: inform, wake or steer
+    #[arg(value_name = "URGENCY", value_enum)]
+    pub urgency: UrgencyWord,
+    /// The message
+    #[arg(value_name = "TEXT")]
+    pub text: String,
+    /// The message's id: the same id sent again is one message (default: one minted)
+    #[arg(long, value_name = "ID")]
+    pub id: Option<String>,
 }
 
 #[derive(Args, Debug, Default)]

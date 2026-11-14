@@ -208,6 +208,27 @@ pub struct Runs<K: Core, T: run_ports::TokenSource, L: RunnerLauncher, R: Sessio
     pub(crate) locks: Box<dyn session_ports::SessionLock>,
     pub(crate) run_locks: Arc<dyn run_ports::RunLocks>,
     pub(crate) git_user: Option<run_ports::GitUser>,
+    /// Told once the run is placed (U4: the daemon that hosts a one-shot
+    /// answers its client then); none, nobody is told.
+    pub(crate) told: Option<Telling>,
+}
+
+/// What is told where each run was placed ([`Runs::telling`]).
+pub type Telling = Box<dyn FnMut(&Placement) + Send>;
+
+/// Where a run was placed, once its run is enqueued, its session made and
+/// its order placed, before its engine is launched: what the daemon that
+/// hosts it tells its client (U4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placement {
+    /// The run's root, as text.
+    pub run: String,
+    /// The session's stable id.
+    pub session: String,
+    /// The session's resource name (`projects/{project}/sessions/{harp}`).
+    pub name: String,
+    pub harp: String,
+    pub engine: String,
 }
 
 /// What an engine is told of the run's listener: its URL and the public part
@@ -355,7 +376,16 @@ where
             locks: parts.locks,
             run_locks: parts.run_locks,
             git_user: parts.git_user,
+            told: None,
         }
+    }
+
+    /// The use cases, telling `told` where each run was placed, once it is
+    /// (U4: a hosted one-shot's daemon answers its client then).
+    #[must_use]
+    pub fn telling(mut self, told: Telling) -> Runs<K, T, L, R> {
+        self.told = Some(told);
+        self
     }
 
     /// The core, every other part let go: the enqueuer's, the launcher's and
@@ -684,6 +714,19 @@ where
             &enqueued,
             lock,
         );
+        let placement = Placement {
+            run: text(&started.run),
+            session: started.session.clone(),
+            name: self
+                .name_of(&started.harp)
+                .map(|name| name.to_string())
+                .unwrap_or_default(),
+            harp: started.harp.clone(),
+            engine: started.engine.clone(),
+        };
+        if let Some(told) = self.told.as_mut() {
+            told(&placement);
+        }
         // The primary is handed her login before her engine starts.
         if interactive {
             notices.extend(self.sign_in(&settings, &started));

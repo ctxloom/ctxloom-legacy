@@ -192,7 +192,7 @@ fn spawn_then_launch(world: &World) -> String {
             ("DAEMON_ONLY", "spawner"),
             ("ANTHROPIC_API_KEY", "spawners-key"), // gitleaks:allow
         ],
-        &["daemon", "send", OWNER, "hello", "--urgency", "inform"],
+        &["session", "send", OWNER, "inform", "hello"],
     );
     assert_eq!(spawned.code, 0, "{}", spawned.said());
     assert!(world.serving(), "the send spawned the daemon");
@@ -205,23 +205,26 @@ fn spawn_then_launch(world: &World) -> String {
             ("CTXLOOM_PERMIT_ACME_TOKEN", "permitted"),
         ],
         &[
-            "daemon",
+            "session",
             "launch",
-            "--owner",
             OWNER,
             "--name",
             CHILD,
-            "--prompt",
             "first task",
             "--format",
             "json",
         ],
     );
     assert_eq!(launched.code, 0, "{}\n{}", launched.said(), world.log());
+    // The child, as the daemon has it (its `Session`).
     let launched = launched.json();
-    assert_eq!(launched["harp"], OWNER);
-    assert_eq!(launched["recorded"], Value::Bool(true));
-    launched["id"].as_str().unwrap().to_string()
+    assert!(
+        launched["name"]
+            .as_str()
+            .is_some_and(|name| name.ends_with(&format!("/sessions/{CHILD}"))),
+        "{launched}"
+    );
+    launched["uid"].as_str().unwrap().to_string()
 }
 
 /// S6 and D18: what the child started with.
@@ -236,9 +239,10 @@ fn sees_its_launchers_environment_and_its_projects_context(world: &World) {
     for never in ["spawner", "spawners-key", "SECRET_ELSE", "CTXLOOM_PERMIT_"] {
         assert!(!env.contains(never), "{never}: {env}");
     }
-    // Nothing the launcher sent is left at rest for the daemon to read.
+    // T6: what the launcher sent is kept for the child's life, the user's
+    // alone, until its close.
     let handed = world.project.home().join(".ctxloom/daemon/launch");
-    assert!(files::children(&handed).is_empty(), "the hand-off is taken");
+    assert_eq!(files::children(&handed).len(), 1, "the hand-off is kept");
     // D18: the child's context is its project's, as a one-shot child's.
     let context = world.of("context", CHILD).expect("the child had a context");
     assert!(context.contains("FRAGMENT-BODY-testing"), "{context}");
@@ -248,14 +252,15 @@ fn sees_its_launchers_environment_and_its_projects_context(world: &World) {
 fn clears_and_runs_on_the_new_conversation(world: &World) {
     // M1, D17: a clear is the engine's own `/clear`; its rotation is bound
     // to the session, and the next wake runs on the new conversation.
-    world.ok(&["daemon", "clear", CHILD, "--format", "json"]);
+    world.ok(&["session", "clear", CHILD, "--format", "json"]);
     world.until("the clear's rotation bound", |w| {
         (w.show(CHILD)["native_session"] == "S2").then_some(())
     });
     world.ok(&[
-        "daemon",
+        "session",
         "send",
         CHILD,
+        "wake",
         "third task",
         "--id",
         "m3",
@@ -318,18 +323,22 @@ fn an_owners_child_runs_its_turns_tells_its_owner_and_ends_with_the_owners_close
 
     // D12: a wake to the child is its second turn, in the same process.
     let sent = world.ok(&[
-        "daemon",
+        "session",
         "send",
         CHILD,
-        "second task",
-        "--urgency",
         "wake",
+        "second task",
         "--id",
         "m2",
         "--format",
         "json",
     ]);
-    assert_eq!(sent["recorded"], Value::Bool(true));
+    assert!(
+        sent["name"]
+            .as_str()
+            .is_some_and(|name| name.ends_with(&format!("/sessions/{CHILD}"))),
+        "{sent}"
+    );
     let second = world.until("the second notice", |w| {
         let notices = w.notices();
         (notices.len() == 2).then(|| notices[1].clone())
@@ -344,7 +353,7 @@ fn an_owners_child_runs_its_turns_tells_its_owner_and_ends_with_the_owners_close
 
     // D29: the owner's close cascades: the child is closed, the daemon ends
     // it, and the owner holds it no more.
-    world.ok(&["daemon", "close", OWNER, "--format", "json"]);
+    world.ok(&["session", "close", OWNER, "--format", "json"]);
     world.until("the child closed and released", |w| {
         let closed = w.show(CHILD)["closed"] == Value::Bool(true);
         let released = w.show(OWNER).get("children").is_none();
@@ -354,7 +363,15 @@ fn an_owners_child_runs_its_turns_tells_its_owner_and_ends_with_the_owners_close
         files::exists(w.stub_dir.join("exited")).then_some(())
     });
     assert_eq!(world.show(OWNER)["closed"], Value::Bool(true));
-    let refused = world.run(&["daemon", "send", CHILD, "too late", "--format", "json"]);
+    // T6: the closed child's hand-off is gone.
+    world.until("the child's hand-off gone", |w| {
+        files::children(w.project.home().join(".ctxloom/daemon/launch"))
+            .is_empty()
+            .then_some(())
+    });
+    let refused = world.run(&[
+        "session", "send", CHILD, "wake", "too late", "--format", "json",
+    ]);
     // A refusal against state exits 20, as every session command's does
     // (ruling 152).
     assert_eq!(refused.code, 20, "{}", refused.said());
@@ -369,23 +386,27 @@ fn an_owners_child_runs_its_turns_tells_its_owner_and_ends_with_the_owners_close
     world.until("the daemon gone", |w| (!w.serving()).then_some(()));
 }
 
-// Rulings 53, 69, 88: a child the daemon hosts is judged at its enqueue on
-// the credential its launcher sent, as any child is: with none, the run is
-// refused (`runs-no-credential`), nothing is started, and its owner holds it
-// no longer (K2's compensation, naming the refusal).
+// Rulings 53, 69, 88; S10: a child is judged on the credential its
+// launcher sent, as its enqueue will judge it, when its hand-off is made:
+// with none, the launch is refused (`runs-no-credential`, exit 20) before
+// anything is written: no hand-off, no child, nothing started.
 #[test]
-fn a_child_launched_with_no_credential_is_refused_and_its_owner_released() {
+fn a_child_launched_with_no_credential_is_refused_and_leaves_nothing() {
     let world = World::new();
     let seeded = world.run(&["test", "seed-session", OWNER]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
-    world.ok(&[
-        "daemon", "launch", "--owner", OWNER, "--name", CHILD, "--prompt", "a task", "--format",
-        "json",
+    let refused = world.run(&[
+        "session", "launch", OWNER, "--name", CHILD, "a task", "--format", "json",
     ]);
-    world.until("the launch refused", |w| {
-        let released = w.show(OWNER).get("children").is_none();
-        (released && w.log().contains("runs-no-credential")).then_some(())
-    });
+    assert_eq!(refused.code, 20, "{}\n{}", refused.said(), world.log());
+    assert!(
+        refused.stderr.contains("runs-no-credential"),
+        "{}",
+        refused.said()
+    );
+    assert!(world.show(OWNER).get("children").is_none(), "no child");
+    let handed = world.project.home().join(".ctxloom/daemon/launch");
+    assert!(files::children(&handed).is_empty(), "no hand-off");
     assert!(world.of("env", CHILD).is_none(), "nothing was started");
     assert!(world.input().is_empty(), "{}", world.input());
 }
@@ -399,9 +420,15 @@ fn the_daemon_noun_is_hidden_and_a_stop_with_no_daemon_does_nothing() {
     assert!(!world.serving());
     let status = world.run(&["daemon", "status", "--format", "text"]);
     assert_eq!(status.stdout.trim(), "no ctxloom daemon is serving");
-    let bad = world.run(&["daemon", "send", OWNER, "x", "--urgency", "shout"]);
-    // A usage error is refused, 20 (ruling 152).
+    let bad = world.run(&["session", "send", OWNER, "shout", "x"]);
+    // A usage error is refused, 20 (ruling 152), and starts no daemon.
     assert_eq!(bad.code, 20, "{}", bad.said());
+    assert!(!world.serving());
+    // s4-Q13: the hidden orchestration verbs are gone; `resolve` stays.
+    for verb in ["launch", "send", "close", "clear"] {
+        let gone = world.run(&["daemon", verb, OWNER]);
+        assert_eq!(gone.code, 20, "daemon {verb}: {}", gone.said());
+    }
 }
 
 /// A protobuf varint at `at`: its value and the index after it.
@@ -1031,7 +1058,7 @@ fn a_hosted_childs_settings_are_read_at_its_launch_from_its_launchers_place() {
     );
     let seeded = world.run(&["test", "seed-session", OWNER]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
-    let spawned = world.run(&["daemon", "send", OWNER, "hello", "--urgency", "inform"]);
+    let spawned = world.run(&["session", "send", OWNER, "inform", "hello"]);
     assert_eq!(spawned.code, 0, "{}", spawned.said());
     assert!(world.serving(), "the send spawned the daemon");
     // Written after the daemon started, in a place only the launcher names.
@@ -1046,16 +1073,7 @@ fn a_hosted_childs_settings_are_read_at_its_launch_from_its_launchers_place() {
             ("ANTHROPIC_API_KEY", "launchers-key"), // gitleaks:allow
             ("CLAUDE_CONFIG_DIR", place.as_str()),
         ],
-        &[
-            "daemon",
-            "launch",
-            "--owner",
-            OWNER,
-            "--name",
-            CHILD,
-            "--prompt",
-            "first task",
-        ],
+        &["session", "launch", OWNER, "--name", CHILD, "first task"],
     );
     assert_eq!(launched.code, 0, "{}\n{}", launched.said(), world.log());
     world.until("the first notice", |w| {

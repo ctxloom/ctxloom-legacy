@@ -1,9 +1,13 @@
-//! `run --one-shot` wired (Plan step 1b-ii): the run use cases over the
-//! default adapters, in this process. The project is told, its store opened
-//! and the core served in process over it; the launcher runs the engine's
-//! command on this host (`claude`, found on the caller's `PATH`), and the
-//! session's directory is written under the project's `.ctxloom/sessions`.
-//! Nothing here starts a second process of ctxloom: the runner is this one.
+//! `run` wired (Plan step 1b-ii): the run use cases over the default
+//! adapters. A ONE-SHOT is the user's daemon's (U4, T7): the command is its
+//! client ([`client_one_shot`]), and the daemon hosts it
+//! ([`HostedOneShots`]: `Runs::one_shot` over the daemon's one store, in
+//! the wiring of its client's environment and directory, [`hosted_wiring`]).
+//! The interactive session is still the command's own until U5: the project
+//! told, its store opened and the core served in this process; the launcher
+//! runs the engine's command on this host (`claude`, found on the caller's
+//! `PATH`), and the session's directory is written under the project's
+//! `.ctxloom/sessions`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,6 +20,7 @@ use angzarr_embedded::angzarr_store_sqlite::SqliteStore;
 use angzarr_embedded::Catalog;
 use credentials::OsTokenSource;
 use ctxloom_store_sqlite::Stores;
+use daemon_ports::Daemons;
 use embedded_edge::EmbeddedEdge;
 use file_system::Fs;
 use harp_names::HarpNames;
@@ -60,6 +65,23 @@ impl Core for InProcessCore<SqliteStore> {
     }
 }
 
+impl Core for crate::SharedCore<SqliteStore> {
+    type Edge = EmbeddedEdge<CoreStores<SqliteStore>>;
+    type Store = SqliteStore;
+
+    fn edge(&self) -> Arc<Self::Edge> {
+        crate::SharedCore::edge(self)
+    }
+
+    fn store(&self) -> &SqliteStore {
+        crate::SharedCore::store(self)
+    }
+
+    fn catalog(&self) -> &Catalog {
+        crate::SharedCore::catalog(self)
+    }
+}
+
 /// The project, already told: the identity the use case asks again.
 struct Told(Project);
 
@@ -89,6 +111,9 @@ pub(crate) struct OneShots<'a> {
     /// The pull a run's start makes when `sync.on_run` asks (rulings 59, 60);
     /// none, nothing is pulled.
     puller: Option<std::rc::Rc<dyn setup_application::Puller>>,
+    /// This binary's stamp, which the daemon that hosts a one-shot must
+    /// share (M3).
+    stamp: String,
 }
 
 impl<'a> OneShots<'a> {
@@ -97,7 +122,15 @@ impl<'a> OneShots<'a> {
             wiring,
             library: Some(library),
             puller: None,
+            stamp: String::new(),
         }
+    }
+
+    /// The same, a one-shot hosted by a daemon of the stamp `stamp` (this
+    /// binary's, M3).
+    pub(crate) fn stamped(mut self, stamp: &str) -> OneShots<'a> {
+        self.stamp = stamp.to_string();
+        self
     }
 
     /// The same, pulling the missing dependencies at a run's start through
@@ -110,7 +143,9 @@ impl<'a> OneShots<'a> {
         self
     }
 
-    /// The use case over the project the process is in.
+    /// The use case over the project the process is in (an interactive
+    /// session's, still the command's own until U5): the project told and
+    /// named, the one store opened and its core served in this process.
     async fn assemble(
         &self,
         library: Library,
@@ -130,80 +165,106 @@ impl<'a> OneShots<'a> {
             .await
             .map_err(|e| RunError::Project(angzarr_diagnostic::Report::of(&e)))?
             .harp;
-        let unmade = |cause: &dyn std::fmt::Display| {
-            RunError::Session(CoreError::Failed {
-                reason: cause.to_string(),
-            })
-        };
         let store = Stores::new(wiring.fs(), wiring.home())
             .open_for(&project.id)
             .await
             .map_err(|e| unmade(&e))?;
         let core = InProcessCore::start(store).await;
-        let project_dir = wiring.project_dir();
-        let orders = Arc::new(Orders::new());
-        // The engines' callbacks run this binary, by its file name, and its
-        // directory leads their PATH (owner ruling 163).
-        let program = crate::program::running();
-        let LaunchEngines { claude, opencode } = launch_engines(wiring, &program.name);
-        // The run locks: this run's own, and those another process's runs
-        // are judged by (rulings 86, 92, 93).
-        let run_locks: Arc<dyn run_ports::RunLocks> =
-            Arc::new(liveness::RunLockFiles::new(wiring.fs(), wiring.home()));
-        // The project's checkouts, under ctxloom's home (owner ruling
-        // 2026-11-12, Q1), which the launcher makes a worktree run's in.
-        let worktrees = isolation_ports::worktrees_root(wiring.home(), &project.id);
-        let workspaces = Arc::new(worktree_git::GitWorkspaces::new(
-            wiring.fs(),
-            project_dir.clone(),
-            Some(worktrees.clone()),
-            Arc::clone(wiring.env()),
-        ));
-        let launcher = Launcher::new(
-            core.edge(),
-            // Each command's program found on its own PATH, by the host's
-            // rules (PATHEXT on Windows), before it is spawned.
-            HostLauncher::stopped_by(stop).searching(wiring.fs()),
-            SessionDirs::new(wiring.fs(), project_dir.clone()),
-            vec![claude as Arc<dyn Engine>, opencode as Arc<dyn Engine>],
-            Arc::clone(&orders),
-            Limits::new(TURN_DEADLINE),
-        )
-        .with_locks(Arc::clone(&run_locks))
-        .with_workspaces(workspaces)
-        // Each command measured against this platform's command line before
-        // it is spawned (a terminal session's opening prompt is on it).
-        .on_os(wiring.os_name());
-        let hooks = Box::new(Hooks { edge: core.edge() });
-        let enqueuer = Enqueuer::new(core.edge(), Arc::new(OsTokenSource));
-        let output_root = output_root(&project_dir, output_dir);
-        Ok(Runs::new(Parts {
+        Ok(runs_over(
+            wiring,
+            library,
+            output_dir,
+            stop,
             core,
-            planner: Box::new(library),
-            identity: Box::new(Told(project)),
-            names: Box::new(HarpNames),
-            enqueuer,
-            launcher,
-            dirs: Box::new(SessionDirs::new(wiring.fs(), project_dir.clone())),
-            orders,
-            place: Place {
-                project_dir: path_text(&project_dir),
-                project_harp,
-                output_root: path_text(&output_root),
-                program_dir: program.dir.clone(),
-                user_home: wiring.user_home().map(|home| path_text(&home)),
-                worktrees: path_text(&worktrees),
-            },
-            env: run_env(wiring.env(), wiring.home()),
-            links: Box::new(SessionDirs::new(wiring.fs(), project_dir.clone())),
-            os: wiring.os_name().to_string(),
-            hooks,
-            certs: Box::new(hook_tls::Minter::new(hook_tls::SystemClock)),
-            locks: Box::new(liveness::LockFiles::new(wiring.fs(), project_dir.clone())),
-            run_locks,
-            git_user: git_user(wiring, &project_dir),
-        }))
+            (project, project_harp),
+        ))
     }
+}
+
+/// A run's session that could not be made, for `cause`.
+fn unmade(cause: &dyn std::fmt::Display) -> RunError {
+    RunError::Session(CoreError::Failed {
+        reason: cause.to_string(),
+    })
+}
+
+/// The run use cases over `core`, for the run `wiring` is in: the project
+/// `project` (named `project_harp`), its launcher driving the engine on
+/// this host, stopped by `stop`.
+fn runs_over<K: Core>(
+    wiring: &Wiring,
+    library: Library,
+    output_dir: &str,
+    stop: host_launcher::Stop,
+    core: K,
+    (project, project_harp): (Project, String),
+) -> Runs<K, OsTokenSource, HostLauncher, SessionDirs>
+where
+    K::Edge: 'static,
+{
+    let project_dir = wiring.project_dir();
+    let orders = Arc::new(Orders::new());
+    // The engines' callbacks run this binary, by its file name, and its
+    // directory leads their PATH (owner ruling 163).
+    let program = crate::program::running();
+    let LaunchEngines { claude, opencode } = launch_engines(wiring, &program.name);
+    // The run locks: this run's own, and those another process's runs
+    // are judged by (rulings 86, 92, 93).
+    let run_locks: Arc<dyn run_ports::RunLocks> =
+        Arc::new(liveness::RunLockFiles::new(wiring.fs(), wiring.home()));
+    // The project's checkouts, under ctxloom's home (owner ruling
+    // 2026-11-12, Q1), which the launcher makes a worktree run's in.
+    let worktrees = isolation_ports::worktrees_root(wiring.home(), &project.id);
+    let workspaces = Arc::new(worktree_git::GitWorkspaces::new(
+        wiring.fs(),
+        project_dir.clone(),
+        Some(worktrees.clone()),
+        Arc::clone(wiring.env()),
+    ));
+    let launcher = Launcher::new(
+        core.edge(),
+        // Each command's program found on its own PATH, by the host's
+        // rules (PATHEXT on Windows), before it is spawned.
+        HostLauncher::stopped_by(stop).searching(wiring.fs()),
+        SessionDirs::new(wiring.fs(), project_dir.clone()),
+        vec![claude as Arc<dyn Engine>, opencode as Arc<dyn Engine>],
+        Arc::clone(&orders),
+        Limits::new(TURN_DEADLINE),
+    )
+    .with_locks(Arc::clone(&run_locks))
+    .with_workspaces(workspaces)
+    // Each command measured against this platform's command line before
+    // it is spawned (a terminal session's opening prompt is on it).
+    .on_os(wiring.os_name());
+    let hooks = Box::new(Hooks { edge: core.edge() });
+    let enqueuer = Enqueuer::new(core.edge(), Arc::new(OsTokenSource));
+    let output_root = output_root(&project_dir, output_dir);
+    Runs::new(Parts {
+        core,
+        planner: Box::new(library),
+        identity: Box::new(Told(project)),
+        names: Box::new(HarpNames),
+        enqueuer,
+        launcher,
+        dirs: Box::new(SessionDirs::new(wiring.fs(), project_dir.clone())),
+        orders,
+        place: Place {
+            project_dir: path_text(&project_dir),
+            project_harp,
+            output_root: path_text(&output_root),
+            program_dir: program.dir.clone(),
+            user_home: wiring.user_home().map(|home| path_text(&home)),
+            worktrees: path_text(&worktrees),
+        },
+        env: run_env(wiring.env(), wiring.home()),
+        links: Box::new(SessionDirs::new(wiring.fs(), project_dir.clone())),
+        os: wiring.os_name().to_string(),
+        hooks,
+        certs: Box::new(hook_tls::Minter::new(hook_tls::SystemClock)),
+        locks: Box::new(liveness::LockFiles::new(wiring.fs(), project_dir.clone())),
+        run_locks,
+        git_user: git_user(wiring, &project_dir),
+    })
 }
 
 /// The engines a launch is driven on, as the composition root builds them
@@ -540,10 +601,10 @@ impl OneShots<'_> {
 }
 
 impl RunService for OneShots<'_> {
+    /// `run --one-shot`: hosted by the user's daemon (U4, T7), this
+    /// command its client; nothing of the run is in this process.
     fn one_shot(&mut self, flags: &Flags, request: &OneShot) -> Done<Answer> {
-        self.with_runs(flags, &signals::STOP_ONE_SHOT, async |runs| {
-            runs.one_shot(flags, request).await
-        })
+        client_one_shot(self.wiring, &self.stamp, flags, request)
     }
 
     fn interactive(&mut self, flags: &Flags, request: &OneShot) -> Done<Ended> {
@@ -551,6 +612,286 @@ impl RunService for OneShots<'_> {
             runs.interactive(flags, request).await
         })
     }
+}
+
+/// `run --one-shot` as the daemon's client (U4, T7): its project resolved
+/// and named by the daemon (its id minted at its root where nothing has),
+/// the daemon reached (started if none serves, S16), the run created and
+/// followed (`run_application::client`), and each of SIGHUP, SIGINT and
+/// SIGTERM sent to the daemon as the run's stop (ruling 114). Nothing here
+/// opens the store or starts an engine (T1).
+pub(crate) fn client_one_shot(
+    wiring: &Wiring,
+    stamp: &str,
+    flags: &Flags,
+    request: &OneShot,
+) -> Done<Answer> {
+    let refused = |error: RunError| Done {
+        result: Err(error),
+        notices: Vec::new(),
+    };
+    // Resolved before the run's runtime starts: the resolution blocks on a
+    // runtime of its own.
+    let parent = match crate::daemon::library_parent(wiring, stamp, crate::Minting::AtRoot) {
+        Ok(parent) => parent,
+        Err(failure) => return refused(failed(failure)),
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => return refused(unmade(&e)),
+    };
+    runtime.block_on(async {
+        let api = match crate::daemon::Reach::new(wiring, stamp).reach().await {
+            Ok(api) => api,
+            Err(unreached) => return refused(RunError::Unreached(unreached)),
+        };
+        let asked = run_application::client::Asked {
+            parent,
+            cwd: wiring
+                .env()
+                .cwd()
+                .map(|cwd| cwd.display().to_string())
+                .unwrap_or_default(),
+            env: wiring.env().vars_utf8().into_iter().collect(),
+            flags: flags.clone(),
+            request: request.clone(),
+            request_id: crate::daemon::request_id(),
+        };
+        let (heard, hearing, unheard) = heard_stops(wiring);
+        let mut done = run_application::client::one_shot(&api, &asked, heard).await;
+        if let Some(hearing) = hearing {
+            hearing.abort();
+        }
+        done.notices.splice(0..0, unheard);
+        done
+    })
+}
+
+/// A command's failure, as the run's error: its diagnostic, exit and
+/// refusals, said as they were.
+fn failed(failure: cli_support::Failure) -> RunError {
+    RunError::Hosted(Box::new(run_application::HostedEnd {
+        report: Report::of(&*failure.cause),
+        exit: failure.exit,
+        refusals: failure
+            .refusals
+            .iter()
+            .map(|refusal| Report::of(&**refusal))
+            .collect(),
+    }))
+}
+
+/// The first of the signals that stop a one-shot (all three), once heard,
+/// by its name; the task that hears them for the command's whole run (so
+/// none ends it by its default, and a second changes nothing); and the
+/// notice that none can be heard, when none can.
+fn heard_stops(
+    wiring: &Wiring,
+) -> (
+    run_application::client::Heard<'static>,
+    Option<tokio::task::JoinHandle<()>>,
+    Vec<library_application::Notice>,
+) {
+    let mut signals = match wiring.fs().os().signals(&signals::HEARD) {
+        Ok(signals) => signals,
+        Err(e) => {
+            return (
+                Box::pin(std::future::pending()),
+                None,
+                vec![library_application::Notice::text(format!(
+                    "cannot listen for signals ({e}): a signal ends ctxloom without asking the daemon to stop the engine"
+                ))],
+            )
+        }
+    };
+    let (tell, heard) = tokio::sync::oneshot::channel::<&'static str>();
+    let hearing = tokio::spawn(async move {
+        let mut tell = Some(tell);
+        loop {
+            let signal = signals.recv().await;
+            if signals::STOP_ONE_SHOT.contains(&signal) {
+                if let Some(tell) = tell.take() {
+                    let _ = tell.send(signal.name());
+                }
+            }
+        }
+    });
+    let heard = Box::pin(async move {
+        match heard.await {
+            Ok(name) => name.to_string(),
+            Err(_) => std::future::pending().await,
+        }
+    });
+    (heard, Some(hearing), Vec::new())
+}
+
+/// What hosts the daemon's one-shots (U4, T7; owner s4-Q8): each on a
+/// thread of its own, the run use case's one-shot over the daemon's ONE
+/// store (its core shared), in the environment and working directory its
+/// client sent (S7), so it is planned, its dependencies pulled and its
+/// engine set up and driven exactly as a process there would. Its engine
+/// runs under the daemon; its session's lock and its run's are the
+/// daemon's.
+pub(crate) struct HostedOneShots {
+    pub(crate) core: crate::SharedCore<SqliteStore>,
+    /// The daemon's runtime, which each one-shot is driven on.
+    pub(crate) runtime: tokio::runtime::Handle,
+    /// ctxloom's home, the daemon's (a client's is the same, M11).
+    pub(crate) home: std::path::PathBuf,
+    pub(crate) temp: std::path::PathBuf,
+}
+
+/// A hosted one-shot's engine, stopped through its launcher's [`Stop`]
+/// (its tree asked to stop, killed after the grace).
+///
+/// [`Stop`]: host_launcher::Stop
+struct Stopping(host_launcher::Stop);
+
+impl daemon_application::OneShotControl for Stopping {
+    fn stop(&self) {
+        self.0.request();
+    }
+}
+
+impl daemon_application::OneShotHost for HostedOneShots {
+    // Spawns the thread a hosted one-shot runs on; the acceptance tests
+    // drive it (run.feature's daemon Rule, j002700).
+    #[cfg_attr(test, mutants::skip)]
+    fn host(
+        &self,
+        request: daemon_application::HostRequest,
+        told: daemon_application::Told,
+    ) -> Box<dyn daemon_application::OneShotControl> {
+        let stop = host_launcher::Stop::new();
+        let control = Box::new(Stopping(stop.clone()));
+        let core = self.core.clone();
+        let runtime = self.runtime.clone();
+        let (home, temp) = (self.home.clone(), self.temp.clone());
+        let spawned = std::thread::Builder::new()
+            .name("ctxloom-one-shot".to_string())
+            .spawn({
+                let told = told.clone();
+                move || {
+                    let hosted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        runtime.block_on(host_one_shot(
+                            core,
+                            (&home, &temp),
+                            request,
+                            stop,
+                            told.clone(),
+                        ))
+                    }));
+                    let done = hosted.unwrap_or_else(|_| Done {
+                        result: Err(RunError::NotStarted {
+                            detail: "the daemon's one-shot panicked".to_string(),
+                        }),
+                        notices: Vec::new(),
+                    });
+                    told.done(done);
+                }
+            });
+        if let Err(e) = spawned {
+            told.done(Done {
+                result: Err(RunError::NotStarted {
+                    detail: format!("no thread for the one-shot: {e}"),
+                }),
+                notices: Vec::new(),
+            });
+        }
+        control
+    }
+}
+
+/// The wiring a hosted one-shot is planned and driven in: its client's
+/// environment and working directory (S7), with ctxloom's `home`.
+pub(crate) fn hosted_wiring(
+    home: &Path,
+    temp: &Path,
+    request: &daemon_application::HostRequest,
+) -> Wiring {
+    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = request
+        .env
+        .iter()
+        .map(|(name, value)| (name.into(), value.into()))
+        .collect();
+    let snapshot = EnvSnapshot::from_parts(
+        os::host().flavor(),
+        Ok(std::path::PathBuf::from(&request.cwd)),
+        temp.to_path_buf(),
+        vars,
+    );
+    Wiring::at(Arc::new(snapshot), home.to_path_buf())
+}
+
+/// One hosted one-shot, start to end (`Runs::one_shot` over the daemon's
+/// core, in its client's wiring): the dependencies pulled first when
+/// `sync.on_run` asks, its placement told as soon as it is placed.
+async fn host_one_shot(
+    core: crate::SharedCore<SqliteStore>,
+    (home, temp): (&Path, &Path),
+    request: daemon_application::HostRequest,
+    stop: host_launcher::Stop,
+    told: daemon_application::Told,
+) -> Done<Answer> {
+    let refused = |error: RunError, notices| Done {
+        result: Err(error),
+        notices,
+    };
+    let wiring = hosted_wiring(home, temp, &request);
+    let deps = match crate::commands::build_deps(&wiring) {
+        Ok(deps) => std::rc::Rc::new(deps),
+        Err(e) => return refused(RunError::Project(Report::of(&e)), Vec::new()),
+    };
+    let remotes: std::rc::Rc<dyn deps_ports::RemoteLibrary> = deps.clone();
+    let library = match crate::library::build(&wiring, Some(remotes)) {
+        Ok(library) => library,
+        Err(e) => return refused(RunError::Project(Report::of(&e)), Vec::new()),
+    };
+    let settings = library.run_settings(&request.flags);
+    let output_dir = settings
+        .as_ref()
+        .map_or_else(|| OUTPUT_DIR_DEFAULT.to_string(), |s| s.output_dir.clone());
+    // Before the run is planned, so the plan sees what was installed.
+    let synced = match &settings {
+        Some(settings) => {
+            let puller = crate::commands::DepsPuller(deps);
+            sync_at_start(settings.on_run, || setup_application::Puller::pull(&puller))
+        }
+        None => Vec::new(),
+    };
+    let project = match tell_project(wiring.fs(), wiring.environment(), HarpNames) {
+        Ok(project) => project,
+        Err(e) => return refused(RunError::Project(e), synced),
+    };
+    // Named by the daemon at its client's resolution; a client outside a
+    // project's (its parent `users/me`) is named here.
+    let project_harp = match &request.project {
+        Some(named) => named.harp.clone(),
+        None => match wiring.named_project().await {
+            Ok(named) => named.harp,
+            Err(e) => return refused(RunError::Project(Report::of(&e)), synced),
+        },
+    };
+    let mut runs = runs_over(
+        &wiring,
+        library,
+        &output_dir,
+        stop,
+        core,
+        (project, project_harp),
+    )
+    .telling(Box::new(move |placed| told.placed(placed)));
+    let mut done = runs.one_shot(&request.flags, &request.request).await;
+    // Every part of the run let go (its edges, its listener's) before it is
+    // told over: the daemon closes its store once its one-shots have ended.
+    drop(runs);
+    let mut notices = synced;
+    notices.append(&mut done.notices);
+    done.notices = notices;
+    done
 }
 
 #[cfg(test)]

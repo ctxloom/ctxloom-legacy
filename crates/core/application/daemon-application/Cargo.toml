@@ -11,6 +11,8 @@ publish.workspace = true
 angzarr-diagnostic.workspace = true
 angzarr-embedded.workspace = true
 daemon-board.workspace = true
+# A hosted one-shot's events, as `WatchRun` streams them (U4).
+daemon-proto.workspace = true
 library-application.workspace = true
 pending-launches.workspace = true
 pending-messages.workspace = true

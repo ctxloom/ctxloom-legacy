@@ -15,6 +15,9 @@
 //! - Stdout is the protocol's alone; nothing else is written there.
 //! - A call refused or failed is the tool's error (`isError`), its text
 //!   the diagnostic's code and words; never a protocol error.
+//! - `child_launch` launches the session's own child through the daemon's
+//!   `CreateHandOff` (slice 4 U3, s4-Q1), its harp minted when it names
+//!   none ([`daemon_api::Caller::naming`]);
 //! - `approval_prompt` is not offered until approvals are built (OD-1).
 
 mod tools;

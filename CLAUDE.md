@@ -350,8 +350,9 @@ Crates:
   `CatchUp` over `pending-launches` that drives the engine for one turn and
   records the outcome as facts, and sweeps what other processes left (below);
   `Runs` plans the run through the library's dry-run, enqueues, mints,
-  launches, returns the reply. Nothing writes the session's directory but the
-  launcher's session home (ruling 87a);
+  launches, returns the reply (a one-shot's in the daemon that hosts it, U4;
+  `run_application::client` is the command's side). Nothing writes the
+  session's directory but the launcher's session home (ruling 87a);
 - `adapters/driven/host-launcher` (a turn's command through `run_within_started`,
   the interactive launch through `run_terminal`: inherited stdio, the caller's
   process group, no deadline; each on a thread of its own, returning at the
@@ -588,6 +589,45 @@ it, not on the runner's first word; a command that cannot spawn is a
 `LaunchFailed` and never a `RunnerStarted`. An interactive run's terminal
 session is ended by the human (the terminal delivers Ctrl-C to the shared
 process group, so it cancels a generation inside claude).
+A ONE-SHOT IS HOSTED BY THE USER'S DAEMON (U4, T7; owner s4-Q8): `run
+--one-shot` is its client (`run_application::client`, wired by
+`oneshot::client_one_shot`). The command resolves its project through the
+daemon (its id minted at its root where nothing has), reaches the daemon
+(started if none serves; none can be: `daemon-ports-not-started`, exit 10,
+nothing minted or started), and calls `CreateRun{ONE_SHOT}` with the line's
+whole request (`CreateRunRequest`'s prompt, agent, engine, profile,
+fragments, tags, command, workspace, `no_context`, session), its whole
+environment (S7) and its working directory (`cwd`). The daemon hosts it
+(`daemon_application::OneShots`, its root's `oneshot::HostedOneShots`): on
+a thread of its own, `Runs::one_shot` over the daemon's ONE store (its core
+shared, `InProcessCore::share`), in a wiring built from the client's
+environment and directory (`oneshot::hosted_wiring`), so it is planned, its
+dependencies pulled (`sync.on_run`), enqueued (ruling 73), named, minted,
+locked (the session's lock and the run's are the DAEMON's), placed and its
+engine's TURN command (`claude -p`, `opencode run`) driven through the one
+launcher, exactly as before, its engine the daemon's child. `CreateRun` is
+answered once the run is placed (`Runs::telling`, `run_application::
+Placement`), or with its `end` (`Run.end`, its name `<parent>/runs/-`) when
+it ended before that; the client then follows `WatchRun` (s4-Q2: its
+notices, its reply, a `stop`, its `end`) and prints them. A diagnostic
+crosses as its code and args flattened as angzarr flattens a cause
+(`client::flat_args`), rebuilt by the client (`client::report_of`: an
+integer-looking arg as an integer, a dotted name as the cause it wrapped)
+for its own catalog, so text output is as before; in json an arg that
+reads as an integer prints as a number. `RunEnd.refusals` carries an
+aggregate refusal's refusals, and the exit crosses as its code
+(`client::exit_of`). A command that vanishes without a signal leaves the run
+to its end under the daemon (owner s4-Q7: the tokens are spent for nobody;
+its reply is in the run's facts, its words in the transcript); a daemon
+killed mid-turn fails the command (10, the stream broken: S8(a), a one-shot
+is not run again). `CreateRun` for a TERMINAL run answers UNIMPLEMENTED until
+U5 (its arm in `daemon_api`'s `runs.rs`); `GetRun` and `WatchRun` of a run
+the daemon does not host are `RunNotFound`. The daemon counts its one-shots
+as what it hosts (idle, `GetDaemon`'s `runs` as ONE_SHOT, a `StopDaemon`
+refusal), stops them with its children (`end_all`, as a SIGTERM) and waits
+for each to end before its store is closed. The interactive session (and
+init's interview) is still the command's own, in process, until U5.
+
 A run asked to stop stops its engine first (ruling 114): for the whole run
 `ctxloom-wiring`'s `signals` hears SIGHUP, SIGINT and SIGTERM
 (`os::Os::signals`, each named), so none ends ctxloom by its default and
@@ -604,7 +644,16 @@ released), and the command exits 128 plus the signal's number, the error
 signal during the grace is heard and changes nothing; a signal that cannot be
 listened for is said as a notice and the run goes on unforwarded. Tested with
 the platform's fake (`os::Signals::fake`) and, for a one-shot's SIGTERM, end
-to end in j001000.
+to end in j001000. A HOSTED one-shot's stop crosses to its daemon (U4): the
+command sends the run's `runs.RequestStop{reason: <signal>}` through the
+coordinator (keyed `stop:<run>`, so a second is a DUPLICATE; one heard
+before the run is placed is sent once it is; the user gate admits
+`RequestStop`), the daemon's tick finds the `StopRequested` in the run's
+stream (`Daemon`'s stop step) and requests the run's `Stop`, says `stop` on
+`WatchRun`, and ends the run `run-application-stopped` for that signal; the
+command keeps reading to the end and exits 128 plus the signal's number. A
+stop that cannot reach the daemon is said as a notice; the engine then runs
+on under the daemon to its turn's end.
 ONE PRINCIPAL, THE USER (the separation model, owner 2026-11-12, slice 2;
 separation-analysis.md). On the host there are no principals but the user:
 a process of the user, the model included, can do anything the user can
@@ -624,7 +673,9 @@ The runner's and the model's tokens are gone (`EnqueueRun` and
 authenticated caller is the user, with the user's allowlist
 (`runs_application::user_allowlist`, every command and fact the session
 domain handles, read from the aggregate, since angzarr's unrestricted
-allowlist is its own). The run's `HookGate` (the CLI run's own listener's,
+allowlist is its own, and the runs domain's `RequestStop`, U4; the
+coordinator's command half reaches the session and run domains alone,
+`EdgeCommands::reach`). The run's `HookGate` (the CLI run's own listener's,
 kept while the CLI serves its own runs) identifies the run its bearer names
 and `owns` that run's session stream alone: an addressing check (a fact's
 session must be its run's), not a permission. What
@@ -1131,8 +1182,8 @@ certificate, and serves its listener behind `runs-application`'s
 constant time (`TokenHash::matches`), and answers anything else (no
 credential, another bearer, a run's hook bearer, another scheme) with a
 bare UNAUTHENTICATED that says nothing of why (S11); an admitted caller is
-the user, with `user_allowlist` (every session command and fact) on every
-stream the daemon reaches. There is ONE daemon per OS USER, ever (owner,
+the user, with `user_allowlist` (every session command and fact, and a
+run's `RequestStop`) on every stream the daemon reaches. There is ONE daemon per OS USER, ever (owner,
 after step 3/4: no clustering): its single-instance lock, `daemon.lock`,
 is keyed to the account, never to `CTXLOOM_HOME` or `HOME`, at the place
 ONE function says (`daemon::files::instance_lock_path`):
@@ -1166,7 +1217,7 @@ a file naming none is unreadable). A client whose ctxloom home is not the
 serving daemon's is refused before it does anything, `ctxloom-wiring-daemon-
 other-home` (exit 20, naming both homes, its fix the daemon's home or a
 `daemon stop` from it), and never served by a second daemon (`daemon
-status`, `daemon stop` and the hidden verbs; a hook's rediscovery passes
+status`, `daemon stop`, `daemon resolve` and the child verbs; a hook's rediscovery passes
 such a daemon over and delivers to its run's listener). The file is 0600
 and its directory 0700, tightened on each publish whoever made it (the
 single-instance lock may have); on Windows the platform sets no mode and the profile's
@@ -1174,8 +1225,9 @@ inherited ACL stands (M8). It keeps other users out, not the user's own
 processes. `Discovery`'s `Debug` withholds the bearer, and the daemon's log
 never holds it. Addressing at the daemon (owner, after step 3/4): the
 target session travels ONCE, as the command's Cover root, and a command's
-`requester` is its own field, set by the client (the hidden verbs and the
-hooks from `CTXLOOM_SESSION`) and taken as sent. No run is sent to the
+`requester` is its own field, set by the client (a session's MCP tools
+and its hooks from `CTXLOOM_SESSION`; the user's child verbs name none,
+D25) and taken as sent. No run is sent to the
 daemon, and the daemon does NOT check a fact's session against a run: the
 session aggregate records nothing on a session that is not live. Accepted
 cost: a buggy client could write to the wrong live session unnoticed. The
@@ -1210,12 +1262,75 @@ calling the running program (ruling 163), claude over her own
 and over her config, each read AT EVERY LAUNCH (T21): a hosted engine is
 composed anew for each launch (`HostedEngine::for_launch`, the wiring's
 `daemon::launch_engines_for`), under the account's home, where the LAUNCHER
-finds her settings: `daemon launch` hands off its caller's
+finds her settings: a launch's hand-off keeps its caller's
 `daemon::SETTINGS_PLACES` (`CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME`,
 `XDG_DATA_HOME`, `XDG_STATE_HOME`) beside the child's environment
-(`daemon_application::HandOff`'s `launcher`, the hand-off file's format 2,
-a `@NAME=value` line each), never into it, and never the daemon's own
-environment. A hosted child's session home is prepared with its agent's
+(`daemon_application::HandOff`'s `launcher`, a `@NAME=value` line each of
+the hand-off file, format 3, which adds the `!agent=<agent>` line; format 2
+reads as the default agent), never in it, and never the daemon's own
+environment.
+
+THE CHILD VERBS AND THE HAND-OFF (slice 4 U3: S2, S19, T6, S10; owner
+rulings s4-Q1, s4-Q13). The user's `session launch <owner> [--name]
+[--agent] [--engine] ["<task>"]`, `session send <harp> {inform|wake|steer}
+<text> [--id]`, `session clear <harp>` and `session close <harp>`
+(`session-cli`'s `is_child`/`child`) are clients of the daemon, as the
+USER: `daemon_api::Caller::user` over the project the command resolved
+(`daemon::child_caller`; outside a project `daemon-api-project-unknown`,
+exit 20), each the session domain's command through `HandleSync`,
+`requester` none, keyed by an id minted once per call (`--id` is a
+message's), so its retry on a new daemon is a DUPLICATE; parsed before any
+daemon is reached (S14: a usage error starts none; the urgency is a
+required word). `--format json` is the target's `Session` (a launch's, the
+child's, as launched until its daemon mints it); text says `<harp>: <id>
+recorded` (`already recorded` for a duplicate), `closed` (`already
+closed`), `launched, a child of <owner>`. Their refusals are the domain's
+words (`daemon_api::rejection_of` maps the sessions and runs domains'
+typed refusals: `sessions-session-closed`, `sessions-session-unknown`,
+`runs-no-credential`, ...), exit 20. The hidden `daemon
+launch|send|close|clear` are gone (hard migrate); `daemon resolve` stays
+hidden. A launch (`Caller::launch`; the MCP tool `child_launch` too, its
+owner the calling session, its harp minted when it names none,
+`Caller::naming`) holds the child's LAUNCH LOCK (`Caller::holding`: the run
+lock `launch-<child>`, `daemon_api::launch_lock_name`, under
+`<home>/.ctxloom/runs/`, the platform's file lock taken at once or not at
+all, so a second launch of one child meanwhile is refused
+`daemon-api-launch-in-progress`) from before its `CreateHandOff` to after
+its `LaunchChild`; its `LaunchChild` (keyed `launch:<owner>:<child>`, the delegation limit
+`daemon_api::DELEGATION_LIMIT`, 4), and a refused `LaunchChild` is followed
+by `DeleteHandOff` (kept while an open session holds it). The child's
+engine is the one asked, else its AGENT's configured engine (an agent naming
+none, the config's default-engine rule): the daemon's plan resolves it, and
+`HandOff.engine` (field 2, additive) names it back for the `LaunchChild`. The daemon serves
+`CreateHandOff{parent, hand_off_id, owner, engine, agent, env}`
+(`daemon-api`'s `hand_off.rs`, the root's `daemon::files::ApiHandOffs`)
+checking BEFORE it writes anything, so a refused launch leaves nothing: the
+owner in the warm index (else the sessions domain's `SessionUnknown`,
+"there is no session named ..."), the child's plan (its project's dry run
+for the agent on the engine, its agent's when none is named, in the
+launch's environment; one that cannot be made is `ConfigUnreadable`), and
+its credential as its enqueue will judge it (the runs aggregate's own
+checks, `runs::pre_launch_refusal`, refused with the typed refusal the
+enqueue would answer, under its message's status); then the hand-off is written MARKED IN LAUNCH (`<id>.launching` beside it,
+written first, so no launch's hand-off is ever there unmarked) and 0600 (in the 0700 `~/.ctxloom/daemon/launch/`, named by the child's
+stable id; what the child may be given of the environment is
+`engine_claude::launcher_environment`'s). The hand-off lives as long as the
+child is open (T6): READ at each of its starts (`HandOffs::read`, a start
+after a daemon restart included; there is no `take`), planned for the agent
+it names, deleted at the child's close (`Step::End`), and swept at each
+tick once the board has caught up (`Daemon::sweep_hand_offs`, owner's ruling
+on U3: tied to the launch, no timer and no pid): a file whose session the
+board holds closed is deleted; one no session knows of (neither a session
+nor an owner's child) is deleted at once unless it is marked and its
+creator still holds the launch lock (`Kept::creator_holds`, a probe of the
+lock: a crash mid-launch leaves a mark whose lock reads free, so it is
+cleared); a marked one a `LaunchChild` recorded (its owner holds the child)
+is CLAIMED, its mark cleared (`HandOffs::claim`); an open child's is kept.
+Accepted cost (T6): an API key lies at rest for the child's life. Not yet:
+a hosted child's workspace axis (s4-Q11), the root session's persisted
+launcher places for `child_launch` (s4-Q1; a session's call sends its
+engine's environment, whose settings places are its session home's), and
+the stop of a running interactive session's TUI on its close (U5). A hosted child's session home is prepared with its agent's
 permissions document for the engine, verbatim (rulings 133-137,
 `run_application::HostedChild::permissions`). A hosted child is made by the
 one launch (`launch_of`, T10) like every other: its permits applied (the
@@ -1410,8 +1525,8 @@ VERSION SKEW (M3): a client whose stamp is not the serving daemon's asks it
 (`GetDaemon`); hosting nothing, it is stopped (`StopDaemon`), waited out and
 the client starts its own; hosting live runs, the command is refused,
 `daemon-api-version-skew-busy` (exit 20, naming both stamps and the harps,
-fix `ctxloom daemon stop --even-if-live`). Today the hidden write verbs
-(`daemon send|close|clear|launch`) and `daemon resolve` reconcile first;
+fix `ctxloom daemon stop --even-if-live`). `daemon resolve` reconciles
+first, and the child verbs as every client reaching through `Reach` does;
 under `test-support`, `CTXLOOM_TEST_STAMP` names the client's stamp.
 
 PROJECT REGISTRATION (owner, 2026-11-12). `ResolveProject` is
@@ -2024,11 +2139,12 @@ written, so the form there before is kept. A good answer is the
 `DistillFragmentResponse`/`DistillCommandResponse` (`applied` false and
 `detail` `fresh`/`no_distill` when nothing was asked), and `bundle distill`
 the `Bundle` with each item's state. The wiring's `OneShotDistiller` is a
-one-shot run on NO CONTEXT, the way init's interview runs its session
-(`OneShots`); its session is an ordinary one-shot's. There is no `work`
-domain and no provenance (owner, 2026-11-13: no `distilled_in`, no
-`activity` label). Once the daemon hosts one-shots (step 6) the port is its
-`DistillFragment`, the use case unchanged.
+one-shot run on NO CONTEXT, HOSTED by the user's daemon as every one-shot is
+(U4, owner s4-Q6; `oneshot::client_one_shot`, of the binary's stamp, so it
+is set on the library `LibraryCommands` builds, and a library built
+elsewhere has no distiller); its session is an ordinary one-shot's. There is
+no `work` domain and no provenance (owner, 2026-11-13: no `distilled_in`, no
+`activity` label). `DistillFragment` (the RPC) is still not served.
 
 `run --no-context` (owner OD-38) is the user-visible context-free run, the
 one-shot, the session and the dry run alike (`RunRequest::no_context`): the
@@ -2177,13 +2293,16 @@ reach no daemon. The command line holds stdout locked, so the server's
 lines reach it through a channel and are written on the command's thread
 (`mcp_server::serve(server, out)`). Its tools (`mcp_server::TOOL_NAMES`)
 are `session_list`, `session_show`, `transcript_show`, `context_assemble`
-(its `bundles` argument is `AssembleContext`'s `fragments`), `child_send`,
-`child_close` and `child_clear`, each described in the owner's approved
-words (2026-11-14), one Markdown file per tool beside the crate
-(`mcp-server/tools/<tool>.md`), embedded by `include_str!` at compile time
-and offered without the file's closing newline (nothing is read at run
-time). `child_launch` (step 8) and
-`approval_prompt` (OD-1) are not offered until they are built. Each tool is
+(its `bundles` argument is `AssembleContext`'s `fragments`), `child_launch`
+(slice 4 U3, s4-Q1: `name`, `agent`, `task`, all optional; the session's
+own child, as `session launch` is the user's; its description the owner's
+approved text, which tells the engine to give a child its task and to
+prefer such children to its own subagents), `child_send`, `child_close` and `child_clear`, each
+described in the owner's approved words (2026-11-14), one Markdown file per
+tool beside the crate (`mcp-server/tools/<tool>.md`), embedded by
+`include_str!` at compile time and offered without the file's closing
+newline (nothing is read at run time). `approval_prompt` (OD-1) is not
+offered until it is built. Each tool is
 a call of `daemon_api::Caller`, a SESSION as the daemon's client. Its
 project is its name's (`projects/{p}`, OD-2), never resolved from a cwd.
 Its reads are the service's (`GetTranscript` and `AssembleContext` are now

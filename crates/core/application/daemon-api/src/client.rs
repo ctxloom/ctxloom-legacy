@@ -161,6 +161,10 @@ pub enum CallError {
     Call(Called),
     /// No daemon could be called: none started, or the one serving declined.
     Unreached(daemon_ports::Unreached),
+    /// A launch's lock could not be made or opened (T6).
+    LaunchLock {
+        detail: String,
+    },
 }
 
 impl From<Called> for CallError {
@@ -190,8 +194,10 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Api(api)) => api.code(),
             CallError::Refused(crate::refusal::Rejection::Sessions(ours)) => ours.code(),
             CallError::Refused(crate::refusal::Rejection::Removal(removal)) => removal.code(),
+            CallError::Refused(crate::refusal::Rejection::Runs(ran)) => ran.code(),
             CallError::Call(called) => called.code(),
             CallError::Unreached(unreached) => unreached.code(),
+            CallError::LaunchLock { .. } => code!("launch-lock"),
         }
     }
 
@@ -200,8 +206,10 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Api(api)) => api.args(),
             CallError::Refused(crate::refusal::Rejection::Sessions(ours)) => ours.args(),
             CallError::Refused(crate::refusal::Rejection::Removal(removal)) => removal.args(),
+            CallError::Refused(crate::refusal::Rejection::Runs(ran)) => ran.args(),
             CallError::Call(called) => called.args(),
             CallError::Unreached(unreached) => unreached.args(),
+            CallError::LaunchLock { detail } => vec![("ext_err_txt", detail.as_str().into())],
         }
     }
 }
@@ -215,6 +223,7 @@ impl ExitClass for CallError {
                 Exit::REFUSED
             }
             CallError::Call(_)
+            | CallError::LaunchLock { .. }
             | CallError::Unreached(daemon_ports::Unreached::NotStarted { .. }) => Exit::FAILED,
         }
     }
@@ -255,6 +264,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(SkewError::Mismatch {
             own: "0.2.0+b".to_string(),
             daemon: "0.1.0+a".to_string(),
+        }),
+        Box::new(CallError::LaunchLock {
+            detail: "permission denied".to_string(),
         }),
     ]
 }

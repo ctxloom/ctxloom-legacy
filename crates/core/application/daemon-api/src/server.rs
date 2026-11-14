@@ -141,6 +141,16 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("GetTranscript")) })
     }
+    /// `CreateHandOff` (slice 4 U3); as `GetTranscript`.
+    fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
+        let _ = request;
+        Box::pin(async { Err(not_served("CreateHandOff")) })
+    }
+    /// `DeleteHandOff` (slice 4 U3); as `GetTranscript`.
+    fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
+        let _ = request;
+        Box::pin(async { Err(not_served("DeleteHandOff")) })
+    }
     /// `AssembleContext` (slice 3 step 6); as `GetTranscript`.
     fn assemble_context(
         &self,
@@ -148,6 +158,22 @@ pub trait Calls: Send + Sync {
     ) -> Answer<'_, v1::AssembledContext> {
         let _ = request;
         Box::pin(async { Err(not_served("AssembleContext")) })
+    }
+    /// `CreateRun` (U4); as `GetTranscript`.
+    fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
+        let _ = request;
+        Box::pin(async { Err(not_served("CreateRun")) })
+    }
+    /// `GetRun` (U4); as `GetTranscript`.
+    fn get_run(&self, request: v1::GetRunRequest) -> Answer<'_, v1::Run> {
+        let _ = request;
+        Box::pin(async { Err(not_served("GetRun")) })
+    }
+    /// `WatchRun` (U4): the run's events, a stream the edge pumps from a
+    /// blocking thread; as `GetTranscript`.
+    fn watch_run(&self, request: v1::WatchRunRequest) -> Answer<'_, crate::RunStream> {
+        let _ = request;
+        Box::pin(async { Err(not_served("WatchRun")) })
     }
 }
 
@@ -217,6 +243,26 @@ impl<E: Edge + 'static> Calls for Api<E> {
     ) -> Answer<'_, v1::AssembledContext> {
         Box::pin(Api::assemble_context(self, request))
     }
+
+    fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
+        Box::pin(Api::create_run(self, request))
+    }
+
+    fn get_run(&self, request: v1::GetRunRequest) -> Answer<'_, v1::Run> {
+        Box::pin(Api::get_run(self, request))
+    }
+
+    fn watch_run(&self, request: v1::WatchRunRequest) -> Answer<'_, crate::RunStream> {
+        Box::pin(Api::watch_run(self, request))
+    }
+
+    fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
+        Box::pin(Api::create_hand_off(self, request))
+    }
+
+    fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
+        Box::pin(Api::delete_hand_off(self, request))
+    }
 }
 
 /// The use cases of the daemon's API.
@@ -226,6 +272,11 @@ pub struct Api<E> {
     pub(crate) applied: crate::destroy::Applied,
     /// Where an assembly is made; none, `AssembleContext` fails.
     assemblies: Option<Arc<dyn Assemblies>>,
+    /// The one-shots the daemon hosts (U4); none, `CreateRun` fails.
+    pub(crate) one_shots: Option<Arc<daemon_application::OneShots>>,
+    /// Where a child's hand-off is planned and kept; none, `CreateHandOff`
+    /// and `DeleteHandOff` fail.
+    pub(crate) hand_offs: Option<Arc<dyn crate::HandOffs>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -234,6 +285,27 @@ impl<E: Edge> Api<E> {
             parts,
             applied: crate::destroy::Applied::default(),
             assemblies: None,
+            one_shots: None,
+            hand_offs: None,
+        }
+    }
+
+    /// The API, its one-shots hosted by `one_shots` (U4), the same the
+    /// daemon's launcher stops.
+    #[must_use]
+    pub fn hosting_one_shots(self, one_shots: Arc<daemon_application::OneShots>) -> Api<E> {
+        Api {
+            one_shots: Some(one_shots),
+            ..self
+        }
+    }
+
+    /// The API, its children's hand-offs planned and kept by `hand_offs`.
+    #[must_use]
+    pub fn handing_off(self, hand_offs: Arc<dyn crate::HandOffs>) -> Api<E> {
+        Api {
+            hand_offs: Some(hand_offs),
+            ..self
         }
     }
 

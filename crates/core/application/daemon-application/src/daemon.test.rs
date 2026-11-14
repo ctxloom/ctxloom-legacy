@@ -81,6 +81,7 @@ impl ChildPlans for Plans {
     fn preview(
         &self,
         engine: &str,
+        _agent: &str,
         _: &str,
         _: &BTreeMap<String, String>,
     ) -> Result<Previewed, String> {
@@ -96,8 +97,16 @@ impl ChildPlans for Plans {
 struct NoHandOffs;
 
 impl HandOffs for NoHandOffs {
-    fn take(&self, _: &str) -> Option<crate::HandOff> {
+    fn read(&self, _: &str) -> Option<crate::HandOff> {
         None
+    }
+
+    fn delete(&self, _: &str) {}
+
+    fn claim(&self, _: &str) {}
+
+    fn list(&self) -> Vec<crate::Kept> {
+        Vec::new()
     }
 }
 
@@ -590,4 +599,120 @@ async fn a_refused_step_is_retried_once_the_store_changed() {
     .await;
     assert!(daemon.tick(&edge.store, edge.catalog(), false).await);
     assert_eq!(refusals(&said), 2, "retried");
+}
+
+/// A one-shot host whose one-shot is placed as `CHILD`'s first run and
+/// runs until told otherwise; the stops its control was asked.
+struct PlacedHost(Arc<std::sync::atomic::AtomicUsize>);
+
+struct Stops(Arc<std::sync::atomic::AtomicUsize>);
+
+impl crate::OneShotControl for Stops {
+    fn stop(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// `CHILD`'s first run's root, as text.
+fn child_run() -> String {
+    uuid::Uuid::from_slice(&runs::run_root(CHILD, 1).value)
+        .unwrap()
+        .to_string()
+}
+
+impl crate::OneShotHost for PlacedHost {
+    fn host(&self, _: crate::HostRequest, told: crate::Told) -> Box<dyn crate::OneShotControl> {
+        told.placed(&run_application::Placement {
+            run: child_run(),
+            session: CHILD.to_string(),
+            name: "projects/calm-otter/sessions/kid".to_string(),
+            harp: "kid".to_string(),
+            engine: "claude-code".to_string(),
+        });
+        Box::new(Stops(Arc::clone(&self.0)))
+    }
+}
+
+// U4, T7: a hosted one-shot is what the daemon hosts until it ends, and the
+// stop step stops its engine once its run's stream holds a `StopRequested`
+// (its client's, on a signal), once, for the reason recorded; a one-shot
+// whose run asks nothing is left to run.
+#[tokio::test]
+async fn a_hosted_one_shot_is_stopped_once_its_run_asks() {
+    let edge = Arc::new(TestEdge::new());
+    a_run(&edge, true).await;
+    let stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let one_shots = Arc::new(crate::OneShots::new(Box::new(PlacedHost(Arc::clone(
+        &stops,
+    )))));
+    let said = Arc::new(Mutex::new(Vec::<String>::new()));
+    let log = Arc::clone(&said);
+    let mut daemon = daemon_saying(
+        &edge,
+        Vec::new(),
+        Plans::default(),
+        LockProbe::Held,
+        Box::new(move |line| log.lock().unwrap().push(line.to_string())),
+    )
+    .hosting_one_shots(Arc::clone(&one_shots));
+    let _ = one_shots.create(crate::HostRequest::default());
+    assert_eq!(daemon.hosting(), 1, "the one-shot is hosted");
+    assert_eq!(
+        daemon.hosted_one_shots(),
+        vec![(CHILD.to_string(), child_run())]
+    );
+    assert!(!daemon.tick(&edge.store, edge.catalog(), false).await);
+    assert_eq!(
+        stops.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "not asked"
+    );
+    let run = Cover {
+        domain: runs::RUN_DOMAIN.to_string(),
+        root: Some(runs::run_root(CHILD, 1)),
+        edition: None,
+    };
+    edge.handle(CommandBook::command_of(
+        run,
+        &runs::RunCommand::from(runs::RequestStop {
+            reason: "SIGHUP".to_string(),
+        }),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        daemon.tick(&edge.store, edge.catalog(), false).await,
+        "busy"
+    );
+    assert!(!daemon.tick(&edge.store, edge.catalog(), false).await);
+    assert_eq!(stops.load(std::sync::atomic::Ordering::SeqCst), 1, "once");
+    let events: Vec<daemon_proto::v1::RunEvent> =
+        one_shots.watch(&child_run()).unwrap().take(1).collect();
+    match &events[0].event {
+        Some(daemon_proto::v1::run_event::Event::Stop(stop)) => assert_eq!(stop.reason, "SIGHUP"),
+        other => panic!("a stop: {other:?}"),
+    }
+    assert!(said.lock().unwrap().iter().any(|l| l.contains("SIGHUP")));
+    daemon.end_all();
+    assert_eq!(
+        stops.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "stopping already: the end asks nothing more"
+    );
+}
+
+// The daemon's end stops every one-shot it hosts.
+#[tokio::test]
+async fn the_daemons_end_stops_its_one_shots() {
+    let edge = Arc::new(TestEdge::new());
+    a_run(&edge, true).await;
+    let stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let one_shots = Arc::new(crate::OneShots::new(Box::new(PlacedHost(Arc::clone(
+        &stops,
+    )))));
+    let mut daemon = daemon(&edge, Vec::new(), Plans::default(), LockProbe::Held)
+        .hosting_one_shots(Arc::clone(&one_shots));
+    let _ = one_shots.create(crate::HostRequest::default());
+    daemon.end_all();
+    assert_eq!(stops.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

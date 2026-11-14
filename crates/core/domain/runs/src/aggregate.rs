@@ -158,6 +158,24 @@ fn launchable(cmd: &EnqueueRun) -> Result<(), RunRejection> {
     }
 }
 
+/// The pre-launch checks of `cmd` as its enqueue decides them (rulings 73,
+/// 73a-73h), judged on its evidence alone and before anything is recorded:
+/// a child's launch is judged so when its hand-off is made (S10), so a
+/// refused launch leaves nothing. The typed refusal the enqueue would answer,
+/// and the status its message declares; none when every check passes.
+pub fn pre_launch_refusal(
+    cmd: &EnqueueRun,
+) -> Option<(
+    angzarr_embedded::markup::TypedRefusal,
+    angzarr_embedded::markup::BusinessStatus,
+)> {
+    match enqueue_refusal(launchable(cmd).err()?) {
+        Failed::Rejected { rejection, status } => Some((rejection.into(), status)),
+        // The checks raise refusals alone.
+        _ => None,
+    }
+}
+
 /// A child's credential refusal, if it has one: a source that is a file
 /// alone serves no child (ruling 53); otherwise one of the variables it
 /// would be given one by must be set, unless its engine asks for none.
