@@ -178,7 +178,9 @@ impl daemon_api::Assemblies for ProjectAssemblies {
             profiles: request.profiles.clone(),
             fragments: request.fragments.clone(),
             tags: request.tags.clone(),
-            ..library_application::AssembleRequest::default()
+            // For a session's `context_assemble` tool: its context rides the
+            // launch, where the server is offered (s3-Q5).
+            surface: library::premise::Surface::Launch,
         };
         let assembled = library
             .assemble(&flags, &asked)

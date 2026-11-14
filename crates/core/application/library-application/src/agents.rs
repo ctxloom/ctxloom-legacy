@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use angzarr_diagnostic::Diagnostic;
 use library::config::engines::{self, AuthError, Effective, EngineError};
 use library::model::McpServer;
+use library::premise::Surface;
 use library::profile::ResolvedProfile;
 
 use crate::config::{mcp_row, Agent};
@@ -272,7 +273,7 @@ impl Project {
             agent.profiles.clone()
         };
         let set = self.resolve_profiles(&names, &mut findings)?;
-        let assembled = self.assemble_set(&set, &[], &[], &mut findings);
+        let assembled = self.assemble_set(&set, &[], &[], Surface::AtRest, &mut findings);
         let effective = self.effective_of(agent)?;
         let resolved = ResolvedAgent {
             name: agent.name.clone(),

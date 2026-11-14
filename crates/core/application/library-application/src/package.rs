@@ -12,6 +12,7 @@ use library::document;
 use library::findings::{Class, Finding};
 use library::frontmatter::split_front_matter;
 use library::model::Hook;
+use library::premise::Surface;
 use library::refs;
 
 use crate::agents::ENGINES;
@@ -238,7 +239,7 @@ impl Project {
         };
         let mut findings: Vec<Finding> = Vec::new();
         let set = self.resolve_profiles(&names, &mut findings)?;
-        let assembled = self.assemble_set(&set, &[], &[], &mut findings);
+        let assembled = self.assemble_set(&set, &[], &[], Surface::AtRest, &mut findings);
         self.say_stale(&assembled);
         let mut package = self.carried(&set, &assembled.selection, &mut findings);
         package.profiles = assembled.selection.profiles.clone();
@@ -324,7 +325,7 @@ impl Project {
         let Ok(set) = self.resolve_profiles(profiles, &mut findings) else {
             return Vec::new();
         };
-        let assembled = self.assemble_set(&set, &[], &[], &mut findings);
+        let assembled = self.assemble_set(&set, &[], &[], Surface::AtRest, &mut findings);
         let catalog = self.catalog_with_companions();
         self.hooks_of(&catalog, &set, &assembled.selection)
     }

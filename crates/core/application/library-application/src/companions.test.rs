@@ -339,8 +339,20 @@ fn a_command_that_assembles_twice_asks_each_companion_once_and_warns_once() {
     let (library, mem) = setup(&[CONFIG_WITH], &only_reprise(Absent), &[]);
     let outcome = library.run(&plain(), |p| {
         let mut findings = Vec::new();
-        p.assemble_set(&[], &["own".to_string()], &[], &mut findings);
-        p.assemble_set(&[], &["own".to_string()], &[], &mut findings);
+        p.assemble_set(
+            &[],
+            &["own".to_string()],
+            &[],
+            Default::default(),
+            &mut findings,
+        );
+        p.assemble_set(
+            &[],
+            &["own".to_string()],
+            &[],
+            Default::default(),
+            &mut findings,
+        );
         Ok::<(), AppError>(())
     });
     assert!(outcome.result.is_ok());
@@ -394,7 +406,7 @@ fn the_premise_index_is_worded_for_the_surface_its_context_rides() {
     const AGENT: &str = "schema_version: 9\ncompanions:\n  reprise: {}\nagents:\n  dev:\n    engine: claude-code\ndefault_agent: dev\n";
     let companions = only_reprise(Loaded(LOADOUT.to_string()));
     let (library, _) = setup(&[AGENT], &companions, &[]);
-    let tool = "call the ctxloom `context_assemble` tool";
+    let tool = "the ctxloom `context_assemble` tool";
     let cli = "`ctxloom fragment show <name>`";
     let plan = library
         .dry_run(&plain(), &RunRequest::default())

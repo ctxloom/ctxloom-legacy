@@ -185,7 +185,7 @@ fn an_assembly_for_a_session_words_its_index_for_the_launch() {
     assert!(context.contains("RULES-BODY"), "{context}");
     assert!(!context.contains("LATER-BODY"), "held back: {context}");
     assert!(
-        context.contains("call the ctxloom `context_assemble` tool"),
+        context.contains("the ctxloom `context_assemble` tool"),
         "{context}"
     );
     assert!(!context.contains("ctxloom fragment show"), "{context}");

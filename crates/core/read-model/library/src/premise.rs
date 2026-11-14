@@ -7,13 +7,15 @@
 //! `internal/adapters/operations/premise.go` at release/0.7 (860336c4e, which
 //! is ca14d6046 or later), but for its last clause.
 //!
-//! NOTE for the owner (owner ruling of 2026-11-12, the wording pending the
-//! owner's approval): Go's instruction ended "call the ctxloom
-//! `assemble_context` tool with the names you chose (the `bundles`
-//! argument)", an MCP tool not built here. Until T20 builds it, the clause
-//! points at the CLI instead: "run `ctxloom fragment show <name>` for each
-//! name you chose"; every other word is Go's. A name the index gives is one
-//! `fragment show` shows (a companion's too).
+//! Go's instruction ended "call the ctxloom `assemble_context` tool with the
+//! names you chose (the `bundles` argument)". Here the last clause follows
+//! the surface (s3-Q5, owner-approved 2026-11-14): context that rides a
+//! launch, where ctxloom's own MCP server is offered, names its
+//! `context_assemble` tool and its `bundles` argument; context at rest (no
+//! server) says "run `ctxloom fragment show <name>` for each name you
+//! chose" (owner ruling of 2026-11-12). Every other word is Go's. A name the
+//! index gives is one `fragment show` shows (a companion's too), and one
+//! `context_assemble` loads.
 
 use crate::catalog::Catalog;
 
@@ -45,13 +47,23 @@ pub fn selection_instruction() -> String {
 }
 
 /// The guidance an agent selects by, worded for `surface`.
-pub fn selection_instruction_on(_surface: Surface) -> String {
-    INSTRUCTION.to_string()
+pub fn selection_instruction_on(surface: Surface) -> String {
+    let clause = match surface {
+        Surface::AtRest => AT_REST,
+        Surface::Launch => ON_LAUNCH,
+    };
+    format!("{PREAMBLE}{clause}")
 }
 
 /// `PremiseSelectionInstruction()` of Go ctxloom, byte for byte, but for its
-/// last clause (owner ruling of 2026-11-12: the CLI, not the MCP tool).
-const INSTRUCTION: &str = "# Conditional guidance\n\nSome of this project's guidance applies CONDITIONALLY. Each entry gives a\nfragment's NAME and the PREMISE under which it applies. Load any your\ncontext does not already carry.\n\nMatch against WHAT YOU ARE ABOUT TO DO -- the next action, not the whole\nconversation behind you. Take each premise ON ITS OWN and ask whether it\ndescribes that action; you are not picking the single best match, and\nseveral premises often apply at once.\n\nWhen it is a BORDERLINE call, include it. An unnecessary fragment costs a\nlittle context; one you withhold is never learned to exist and cannot be\nasked for.\n\nSelect on the premise, not on the name. Then run\n`ctxloom fragment show <name>` for each name you chose and follow what it\nreturns.\n";
+/// last clause, which follows the surface (s3-Q5).
+const PREAMBLE: &str = "# Conditional guidance\n\nSome of this project's guidance applies CONDITIONALLY. Each entry gives a\nfragment's NAME and the PREMISE under which it applies. Load any your\ncontext does not already carry.\n\nMatch against WHAT YOU ARE ABOUT TO DO -- the next action, not the whole\nconversation behind you. Take each premise ON ITS OWN and ask whether it\ndescribes that action; you are not picking the single best match, and\nseveral premises often apply at once.\n\nWhen it is a BORDERLINE call, include it. An unnecessary fragment costs a\nlittle context; one you withhold is never learned to exist and cannot be\nasked for.\n\nSelect on the premise, not on the name. ";
+
+/// The last clause at rest (owner ruling of 2026-11-12: the CLI).
+const AT_REST: &str = "Then run\n`ctxloom fragment show <name>` for each name you chose and follow what it\nreturns.\n";
+
+/// The last clause on a launch (s3-Q5, owner-approved 2026-11-14).
+const ON_LAUNCH: &str = "Then for each name you chose, call\nthe ctxloom `context_assemble` tool with those names as its `bundles`\nargument.\n";
 
 /// The index an agent selects from: the instruction, then one line per entry
 /// (`- <name>: <premise>`). Empty for no entries: an empty render keeps a
