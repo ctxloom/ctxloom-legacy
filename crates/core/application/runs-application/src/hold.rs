@@ -33,10 +33,14 @@
 
 use std::time::Duration;
 
-use angzarr_embedded::v1::Uuid;
+use angzarr_embedded::v1::{command_page, CommandBook, Uuid};
 use daemon_proto::google::protobuf::Timestamp;
-use run_ports::{Bound, Delivery, FactSink, HeldFacts, HoldError};
+use run_ports::{
+    up_to_date, Bound, Delivery, FactSink, Held, HeldEntry, HeldFact, HeldFacts, HoldError,
+};
 use surface_ports::HookEvent;
+
+use crate::capture::{observe, Observation};
 
 /// How many times one hook takes its session's hold before it gives up and
 /// holds its own facts behind what is left: facts held by other hooks while
@@ -156,24 +160,225 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
     }
 
     /// Deliver or hold `event`'s observations for `session` (the stream
-    /// root), as `serving` allows. Infallible by type. RED: not built.
+    /// root), as `serving` allows. Infallible by type.
     pub fn record<S: FactSink + ?Sized>(
         &self,
         session: &Uuid,
         event: &HookEvent,
         serving: Serving<'_, S>,
     ) -> HoldReport {
-        let _ = (
-            self.held,
-            self.clock,
+        let observed = observe(event);
+        let mut report = HoldReport::default();
+        if observed.is_empty() {
+            return report;
+        }
+        let Some(root) = root_of(session) else {
+            return report;
+        };
+        let (stamp, sink) = match serving {
+            Serving::Unreached { why } => {
+                report.own = self.hold_all(&root, session, &observed, &Why::Unreached { why });
+                return report;
+            }
+            Serving::Daemon { stamp, sink } => (stamp, sink),
+        };
+        if !up_to_date(stamp, self.own) {
+            let why = Why::Older {
+                daemon: stamp.to_string(),
+                own: self.own.to_string(),
+            };
+            report.own = self.hold_all(&root, session, &observed, &why);
+            return report;
+        }
+        let clear = self.flush(&root, session, stamp, sink, &mut report.flushed);
+        report.own = if clear {
+            self.deliver_own(&root, session, &observed, sink)
+        } else {
+            self.hold_behind(&root, session, &observed)
+        };
+        report
+    }
+
+    /// Deliver what `root`'s hold holds that `daemon` is up to date for, in
+    /// order: whether nothing it can deliver is left.
+    fn flush<S: FactSink + ?Sized>(
+        &self,
+        root: &uuid::Uuid,
+        session: &Uuid,
+        daemon: &str,
+        sink: &S,
+        flushed: &mut Vec<Kept>,
+    ) -> bool {
+        for _ in 0..TAKE_ROUNDS {
+            match self.held.is_empty(root) {
+                Ok(true) => return true,
+                Ok(false) => {}
+                Err(_) => return false,
+            }
+            let batch = match self.held.take(root) {
+                Ok(Some(batch)) => batch,
+                Ok(None) | Err(_) => return false,
+            };
+            let mut keep = vec![true; batch.entries().len()];
+            let mut removed = false;
+            let mut stopped = false;
+            for (i, entry) in batch.entries().iter().enumerate() {
+                let HeldEntry::Fact(fact) = entry else {
+                    keep[i] = false;
+                    removed = true;
+                    continue;
+                };
+                if !up_to_date(daemon, &fact.stamp) {
+                    continue;
+                }
+                let Some(book) = own_book(fact, session) else {
+                    keep[i] = false;
+                    removed = true;
+                    flushed.push(Kept {
+                        external_id: fact.external_id.clone(),
+                        outcome: Outcome::NotHeld(NotHeld::Foreign),
+                    });
+                    continue;
+                };
+                let within = self.clock.remaining();
+                if within.is_zero() {
+                    stopped = true;
+                    break;
+                }
+                let delivery = sink.deliver(book, within);
+                if !delivery.settled() {
+                    stopped = true;
+                    break;
+                }
+                keep[i] = false;
+                removed = true;
+                flushed.push(Kept {
+                    external_id: fact.external_id.clone(),
+                    outcome: Outcome::Delivered(delivery),
+                });
+            }
+            if batch.settle(|i| keep[i]).is_err() || stopped {
+                return false;
+            }
+            if !removed {
+                // What is left is held for a daemon newer than this one.
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Deliver the hook's own observations; one left unsettled is held, and
+    /// every later one behind it.
+    fn deliver_own<S: FactSink + ?Sized>(
+        &self,
+        root: &uuid::Uuid,
+        session: &Uuid,
+        observed: &[Observation],
+        sink: &S,
+    ) -> Vec<Kept> {
+        let mut kept = Vec::new();
+        let mut holding = false;
+        for observation in observed {
+            if holding {
+                kept.push(self.hold_one(root, session, observation, Outcome::HeldBehind));
+                continue;
+            }
+            let within = self.clock.remaining();
+            if within.is_zero() {
+                holding = true;
+                kept.push(self.hold_one(root, session, observation, Outcome::Held(Why::OutOfTime)));
+                continue;
+            }
+            let delivery = sink.deliver(observation.book(session), within);
+            if delivery.settled() {
+                kept.push(Kept {
+                    external_id: observation.external_id(session),
+                    outcome: Outcome::Delivered(delivery),
+                });
+            } else {
+                holding = true;
+                kept.push(self.hold_one(
+                    root,
+                    session,
+                    observation,
+                    Outcome::Held(Why::Unsettled(delivery)),
+                ));
+            }
+        }
+        kept
+    }
+
+    fn hold_all(
+        &self,
+        root: &uuid::Uuid,
+        session: &Uuid,
+        observed: &[Observation],
+        why: &Why,
+    ) -> Vec<Kept> {
+        observed
+            .iter()
+            .map(|o| self.hold_one(root, session, o, Outcome::Held(why.clone())))
+            .collect()
+    }
+
+    fn hold_behind(
+        &self,
+        root: &uuid::Uuid,
+        session: &Uuid,
+        observed: &[Observation],
+    ) -> Vec<Kept> {
+        observed
+            .iter()
+            .map(|o| self.hold_one(root, session, o, Outcome::HeldBehind))
+            .collect()
+    }
+
+    /// `observation` appended to the hold: `held` when it was kept.
+    fn hold_one(
+        &self,
+        root: &uuid::Uuid,
+        session: &Uuid,
+        observation: &Observation,
+        held: Outcome,
+    ) -> Kept {
+        let external_id = observation.external_id(session);
+        let fact = HeldFact::of_book(
             self.own,
             self.session,
-            session,
-            event,
-            serving,
+            external_id.clone(),
+            &observation.book(session),
+            self.clock.now(),
         );
-        HoldReport::default()
+        let outcome = match self.held.hold(root, fact) {
+            Ok(Held::Kept) => held,
+            Ok(Held::Full { bound, .. }) => Outcome::NotHeld(NotHeld::Full(bound)),
+            Err(error) => Outcome::NotHeld(NotHeld::Failed(error)),
+        };
+        Kept {
+            external_id,
+            outcome,
+        }
     }
+}
+
+/// The hold's name for the stream root `session`.
+fn root_of(session: &Uuid) -> Option<uuid::Uuid> {
+    uuid::Uuid::from_slice(&session.value).ok()
+}
+
+/// `fact`'s book, when it is a fact of `session`'s stream whose origin is
+/// the external id it was held by; none otherwise.
+fn own_book(fact: &HeldFact, session: &Uuid) -> Option<CommandBook> {
+    let book = fact.decode_book().ok()?;
+    let cover = book.cover.as_ref()?;
+    if cover.domain != sessions::SESSION_DOMAIN || cover.root.as_ref() != Some(session) {
+        return None;
+    }
+    let Some(command_page::Body::Fact(body)) = book.page.as_ref()?.body.as_ref() else {
+        return None;
+    };
+    (body.origin.as_ref()?.external_id == fact.external_id).then_some(book)
 }
 
 #[cfg(test)]

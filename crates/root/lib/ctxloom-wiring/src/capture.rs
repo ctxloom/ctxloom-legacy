@@ -38,9 +38,11 @@ use angzarr_embedded::{Failure, KernelError};
 use hook_cli::{NotRecorded, Recording, Unrecorded};
 use hook_sink_grpc::GrpcSink;
 use run_ports::{
-    Arrival, Bearer, CertError, Delivery, Edge, FactSink, HeldFacts, PublicCert, Unserved,
+    Arrival, Bearer, Bound, CertError, Delivery, Edge, FactSink, HeldFacts, PublicCert, Unserved,
 };
-use runs_application::{delivery_budget, Capture, HookClock};
+use runs_application::{
+    delivery_budget, Capture, HoldReport, Holding, HookClock, Kept, NotHeld, Outcome, Serving, Why,
+};
 use setup_application::HookAnswer;
 
 /// A sink over an in-process edge.
@@ -129,27 +131,9 @@ pub enum HookSink {
     /// nothing is sent (never plaintext, never the system's roots).
     Refused(CertError),
     Unreachable(Unreachable),
-    /// The user daemon's listener, as its discovery file names it (B1,
-    /// D27), with the user bearer it holds: a delivery it could not take
-    /// goes the environment's way.
-    Rediscovered {
-        daemon: GrpcSink,
-        fallback: Box<HookSink>,
-    },
 }
 
 impl HookSink {
-    /// The sink of a hook process when the user daemon may serve.
-    pub fn rediscovered(discovery: Option<run_ports::Discovery>, fallback: HookSink) -> HookSink {
-        match discovery {
-            None => fallback,
-            Some(discovery) => HookSink::Rediscovered {
-                daemon: daemon_sink(discovery),
-                fallback: Box::new(fallback),
-            },
-        }
-    }
-
     /// The sink the hook environment makes: the endpoint (a URL, `https://<host>:<port>`), the certificate (`CTXLOOM_TLS_CERT`)
     /// and the bearer (`<run>.<token>`). A missing, empty or malformed one
     /// gives [`Unreachable`]: the hook fails open.
@@ -206,14 +190,6 @@ impl FactSink for HookSink {
                 detail: refusal_text(error),
             },
             HookSink::Unreachable(sink) => sink.deliver(book, within),
-            HookSink::Rediscovered { daemon, fallback } => {
-                match daemon.deliver(book.clone(), within) {
-                    Delivery::Unavailable { .. } | Delivery::TimedOut => {
-                        fallback.deliver(book, within)
-                    }
-                    delivered => delivered,
-                }
-            }
         }
     }
 }
@@ -346,6 +322,19 @@ pub trait HookReach {
     fn reach(&self, wait: Duration) -> Option<(String, Self::Sink)>;
 }
 
+/// The user's daemon as its discovery file names it, spawned when none
+/// serves ([`crate::daemon::hook_daemon`]).
+pub struct DaemonReach(pub(crate) Arc<process_env::EnvSnapshot>);
+
+impl HookReach for DaemonReach {
+    type Sink = GrpcSink;
+
+    fn reach(&self, wait: Duration) -> Option<(String, GrpcSink)> {
+        let found = crate::daemon::hook_daemon(&self.0, wait)?;
+        Some((found.stamp.clone(), daemon_sink(found)))
+    }
+}
+
 /// A hook's time: its bound's end, as the clock reads it.
 pub struct Deadline(pub Instant);
 
@@ -416,7 +405,6 @@ pub(crate) fn spawn_wait(clock: &Deadline) -> Duration {
 }
 
 impl<R: HookReach, H: HeldFacts, I: SessionIds> Recording for HoldingRecording<R, H, I> {
-    // RED: not built; it fails open, as before the hold.
     fn record(&self, native: &str, harp: &str, answer: &HookAnswer) -> Vec<Unrecorded> {
         let Some(event) = &answer.event else {
             return Vec::new();
@@ -425,22 +413,83 @@ impl<R: HookReach, H: HeldFacts, I: SessionIds> Recording for HoldingRecording<R
             return no_session(harp, event);
         };
         let clock = Deadline(self.started + hook_bound(native));
-        let _ = (
-            &self.reach,
-            &self.held,
-            &self.own,
-            &self.session,
-            spawn_wait(&clock),
-        );
-        runs_application::observe(event)
-            .iter()
-            .map(|o| {
-                Unrecorded::from(NotRecorded {
-                    what: o.external_id(&session),
-                    why: "RED: the hold is not built".to_string(),
-                })
-            })
-            .collect()
+        let reached = self.reach.reach(spawn_wait(&clock));
+        let holding = Holding::new(&self.held, &clock, &self.own, &self.session);
+        let report = match &reached {
+            Some((stamp, sink)) => holding.record(
+                &session,
+                event,
+                Serving::Daemon {
+                    stamp: stamp.as_str(),
+                    sink,
+                },
+            ),
+            None => holding.record::<R::Sink>(
+                &session,
+                event,
+                Serving::Unreached {
+                    why: format!(
+                        "no ctxloom daemon could be reached or started within {} s",
+                        hook_bound(native).as_secs()
+                    ),
+                },
+            ),
+        };
+        said(&report, harp)
+    }
+}
+
+/// What a hook says of what its holding did: each fact that was not
+/// recorded now.
+fn said(report: &HoldReport, harp: &str) -> Vec<Unrecorded> {
+    report
+        .said()
+        .into_iter()
+        .map(|kept| unrecorded(kept, harp))
+        .collect()
+}
+
+fn unrecorded(kept: &Kept, harp: &str) -> Unrecorded {
+    let what = kept.external_id.clone();
+    let why = match &kept.outcome {
+        Outcome::Held(why) => {
+            return Unrecorded::Held {
+                what,
+                harp: harp.to_string(),
+                why: held_text(why),
+            }
+        }
+        Outcome::HeldBehind => {
+            return Unrecorded::HeldBehind {
+                what,
+                harp: harp.to_string(),
+            }
+        }
+        Outcome::Delivered(delivery) => delivery_text(delivery),
+        Outcome::NotHeld(NotHeld::Full(Bound::Session(bytes))) => {
+            format!("the hold for {harp} is at its bound ({} MiB)", bytes >> 20)
+        }
+        Outcome::NotHeld(NotHeld::Full(Bound::Home(bytes))) => format!(
+            "the hold for {harp} is at its bound: this home's holds are at theirs ({} MiB)",
+            bytes >> 20
+        ),
+        Outcome::NotHeld(NotHeld::Failed(error)) => format!("it could not be held: {error}"),
+        Outcome::NotHeld(NotHeld::Foreign) => {
+            format!("a held record that is not a fact of {harp}'s stream was dropped")
+        }
+    };
+    Unrecorded::from(NotRecorded { what, why })
+}
+
+/// Why a fact was held, as the hook says it.
+fn held_text(why: &Why) -> String {
+    match why {
+        Why::Older { daemon, own } => {
+            format!("the serving daemon is ctxloom {daemon}, older than this hook's ctxloom {own}")
+        }
+        Why::Unreached { why } => why.clone(),
+        Why::Unsettled(delivery) => delivery_text(delivery),
+        Why::OutOfTime => "the hook's time ran out before it was delivered".to_string(),
     }
 }
 

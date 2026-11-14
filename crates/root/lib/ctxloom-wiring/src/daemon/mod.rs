@@ -480,14 +480,14 @@ fn called(error: daemon_api::CallError) -> Failure {
 /// The stamp this client compares with the daemon's (M3): the binary's,
 /// or, under test-support, the one a test names.
 #[cfg(feature = "test-support")]
-fn own_stamp<'a>(env: &'a EnvSnapshot, stamp: &'a str) -> &'a str {
+pub(crate) fn own_stamp<'a>(env: &'a EnvSnapshot, stamp: &'a str) -> &'a str {
     env.utf8(STAMP_VARIABLE)
         .filter(|s| !s.is_empty())
         .unwrap_or(stamp)
 }
 
 #[cfg(not(feature = "test-support"))]
-fn own_stamp<'a>(_: &'a EnvSnapshot, stamp: &'a str) -> &'a str {
+pub(crate) fn own_stamp<'a>(_: &'a EnvSnapshot, stamp: &'a str) -> &'a str {
     stamp
 }
 
@@ -680,7 +680,9 @@ fn be_the_daemon(
 ) -> Result<Exit, Failure> {
     let say = logger(wiring.fs(), files.log_path());
     let place = serve::Place {
-        stamp: stamp.to_string(),
+        // The binary's; under test-support a test's own (a daemon of an
+        // older or newer version, s4-Q14's hold scenarios).
+        stamp: own_stamp(env, stamp).to_string(),
         home: wiring.home().to_path_buf(),
         instance_lock: instance_lock(wiring),
         temp: env.temp_dir().to_path_buf(),
@@ -1000,14 +1002,27 @@ fn live(found: &run_ports::Discovery) -> bool {
     hook_sink_grpc::serving(&found.endpoint, &found.cert, HEALTH_WAIT)
 }
 
-/// What the user daemon's discovery file says, under the home of `env`
-/// (none where there is no home, no file, or no live daemon at what it
-/// names: a stale file names a port nobody serves).
-pub(crate) fn discovery(env: &Arc<EnvSnapshot>) -> Option<run_ports::Discovery> {
+/// The daemon a HOOK delivers to (S16, slice 4 §3.8 (ii)): the live one of
+/// this home its discovery file names, else one spawned and waited for, at
+/// most `wait`; none when none serves this home within it (none could be
+/// started, or the one serving serves another home).
+pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_ports::Discovery> {
     let wiring = Wiring::new(Arc::clone(env)).ok()?;
     let files = files_of(&wiring);
+    if let Some(found) = serving(&wiring, &files).ok()? {
+        return Some(found);
+    }
+    ensure_within(&wiring, env, wait);
     serving(&wiring, &files).ok().flatten()
 }
+
+/// Whether this executable may spawn itself as the daemon: a unit test's is
+/// its harness, never a ctxloom binary (spawned, it would run its tests
+/// detached), so it never does.
+#[cfg(not(test))]
+const SPAWNS_ITSELF: bool = true;
+#[cfg(test)]
+const SPAWNS_ITSELF: bool = false;
 
 /// Make sure the user's daemon serves: spawn one when none is live, and
 /// wait, within [`SPAWN_WAIT`], for a live one to advertise itself (the one
@@ -1016,10 +1031,19 @@ pub(crate) fn discovery(env: &Arc<EnvSnapshot>) -> Option<run_ports::Discovery> 
 /// spawned is not this command's failure (what it recorded stands; the next
 /// client spawns one).
 fn ensure(wiring: &Wiring, env: &EnvSnapshot) {
+    ensure_within(wiring, env, SPAWN_WAIT);
+}
+
+/// [`ensure`], waiting at most `wait` for a live daemon (a hook's is what
+/// its bound leaves).
+fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     let files = files_of(wiring);
     // A live daemon, this home's or (refused before the command ran)
     // another's: never a second.
     if files.discovery().is_some_and(|found| live(&found)) {
+        return;
+    }
+    if !SPAWNS_ITSELF {
         return;
     }
     let Ok(exe) = std::env::current_exe() else {
@@ -1058,7 +1082,7 @@ fn ensure(wiring: &Wiring, env: &EnvSnapshot) {
     if os::process::spawn_detached(command).is_err() {
         return;
     }
-    let deadline = Instant::now() + SPAWN_WAIT;
+    let deadline = Instant::now() + wait;
     while Instant::now() < deadline {
         if files.discovery().is_some_and(|found| live(&found)) {
             return;

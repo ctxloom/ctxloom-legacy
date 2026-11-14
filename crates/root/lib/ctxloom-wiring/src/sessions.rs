@@ -14,7 +14,8 @@ use ctxloom_cli::{shaped, Call, CliError, Failure, PROG};
 use hook_cli::Binding;
 use sessions_application::{BindRequest, SessionService};
 
-use crate::{Commands, HookRecording, HookSink, RunIds, Sessions, Wiring};
+use crate::capture::DaemonReach;
+use crate::{Commands, HoldingRecording, HookRecording, HookSink, RunIds, Sessions, Wiring};
 
 /// The nouns these commands own.
 pub(crate) const NOUNS: [&str; 2] = ["session", "hook"];
@@ -173,6 +174,8 @@ impl Commands {
         out: &mut dyn Write,
         err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
+        // The hook's bound (S16) runs from its start.
+        let started = std::time::Instant::now();
         let hook = hook_cli::Hook::from_arg_matches(matches_of(call, "hook"))
             .unwrap_or_else(|e| unreachable!("clap parsed it: {e}"));
         let format: Format = call.format();
@@ -193,21 +196,42 @@ impl Commands {
                 &mut asked,
             )
         } else {
-            // A hook is a process of its own: it delivers to the run's
-            // listener, named by its environment. With none to reach it fails
-            // open (stderr says each observation was not recorded).
-            let spawned = HookSink::from_environment(
-                self.env.utf8(run_ports::ENDPOINT_VARIABLE),
-                self.env.utf8(run_ports::BEARER_VARIABLE),
-                self.env.utf8(run_ports::TLS_CERT_VARIABLE),
-            );
-            // The user daemon, rediscovered at each hook (B1, D27), before
-            // the endpoint the run was spawned with: its discovery file
-            // names the user bearer the hook presents there.
-            let sink = HookSink::rediscovered(crate::daemon::discovery(&self.env), spawned);
+            // A hook is a process of its own. One whose environment names an
+            // endpoint (M10b's container arrival, OD-13) delivers there alone,
+            // never spawning a daemon and never holding. Any other delivers to
+            // the user's daemon, rediscovered at each hook (B1, D27) and
+            // started if none serves, within its bound (S16), or holds its
+            // facts in its session's hold (s4-Q14, H2).
+            let endpoint = self
+                .env
+                .utf8(run_ports::ENDPOINT_VARIABLE)
+                .filter(|e| !e.is_empty());
             // The run names its session, by id, in the engine's environment.
             let ids = RunIds::from_environment(self.env.utf8(run_ports::SESSION_VARIABLE));
-            let recording = HookRecording::new(sink, ids);
+            let recording: Box<dyn hook_cli::Recording> = match endpoint {
+                Some(endpoint) => Box::new(HookRecording::new(
+                    HookSink::from_environment(
+                        Some(endpoint),
+                        self.env.utf8(run_ports::BEARER_VARIABLE),
+                        self.env.utf8(run_ports::TLS_CERT_VARIABLE),
+                    ),
+                    ids,
+                )),
+                None => {
+                    let wiring =
+                        Wiring::new(Arc::clone(&self.env)).map_err(|e| failed(Box::new(e)))?;
+                    Box::new(HoldingRecording::new(
+                        DaemonReach(Arc::clone(&self.env)),
+                        fact_spool::Spool::at_home(wiring.fs(), wiring.home()),
+                        ids,
+                        crate::daemon::own_stamp(&self.env, &self.version),
+                        self.env
+                            .utf8(run_ports::SESSION_VARIABLE)
+                            .unwrap_or_default(),
+                        started,
+                    ))
+                }
+            };
             let setup = self.hooks().map_err(|e| failed(Box::new(e)))?;
             hook_cli::execute_recording(
                 &hook.engine,
@@ -216,7 +240,7 @@ impl Commands {
                 &harp,
                 &setup,
                 &mut asked,
-                &recording,
+                &*recording,
             )
         }
         .map_err(declined)?;
