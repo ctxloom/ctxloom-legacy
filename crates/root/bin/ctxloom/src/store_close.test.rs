@@ -131,8 +131,10 @@ echo '{"type":"system","subtype":"init","session_id":"9d764b45-a56a-48d7-ac9d-c2
 echo '{"type":"result","subtype":"success","is_error":false,"result":"STORE-CLOSE-REPLY","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}'
 "#;
 
+// U4, T7: a one-shot is the daemon's, and the command opens no store (T1);
+// the daemon that hosted it closes its one store as it exits.
 #[test]
-fn test_a_one_shot_closes_its_store_before_it_exits() {
+fn test_a_one_shot_opens_no_store_and_its_daemon_closes_the_store_at_its_exit() {
     if !files::runs_scripts() {
         return;
     }
@@ -164,14 +166,33 @@ fn test_a_one_shot_closes_its_store_before_it_exits() {
     assert!(ran.stdout.contains("STORE-CLOSE-REPLY"), "{}", ran.said());
     assert!(
         !ran.stderr.contains("was not closed") && !ran.stderr.contains("did not close"),
-        "the run's store closed, not left to its drop: {}",
+        "nothing of the run's store is the command's: {}",
         ran.said()
     );
     let store = store_under(project.home());
-    assert_eq!(
-        beside(&store),
-        Vec::<&str>::new(),
-        "the run's store closed: nothing beside ({})",
-        ran.said()
-    );
+    let stopped = project.run(&["daemon", "stop"]);
+    ok(&stopped, "daemon stop");
+    // Its exit is waited for (bounded): the daemon says it exited only
+    // once it has closed its store.
+    let log = project.home().join(".ctxloom/daemon/daemon.log");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !files::read(&log).unwrap_or_default().contains(" exited") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the daemon never exited: {}",
+            files::read(&log).unwrap_or_default()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !beside(&store).is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the daemon's store closed: nothing beside ({:?}; {})",
+            beside(&store),
+            files::read(&log).unwrap_or_default()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(!logged(&store), "its log holds nothing");
 }

@@ -23,7 +23,7 @@ use crate::{ApiError, ApiRefusal};
 pub(crate) const PROJECT: &str = "calm-otter";
 pub(crate) const ROOT: &str = "/work/calm";
 const COMMON: &str = "/work/calm/.git";
-const COMMIT: &str = "1111111111111111111111111111111111111111";
+pub(crate) const COMMIT: &str = "1111111111111111111111111111111111111111";
 
 /// The kernel over an in-memory store, with the projects and sessions
 /// aggregates.
@@ -285,7 +285,7 @@ impl Fixture {
     }
 }
 
-fn resolve(commit: &str, name: &str) -> v1::ResolveProjectRequest {
+pub(crate) fn resolve(commit: &str, name: &str) -> v1::ResolveProjectRequest {
     v1::ResolveProjectRequest {
         name: name.to_string(),
         cwd: ROOT.to_string(),

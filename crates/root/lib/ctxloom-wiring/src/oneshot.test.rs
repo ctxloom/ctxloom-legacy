@@ -609,7 +609,9 @@ fn a_run_installs_the_missing_dependencies_at_its_start_unless_on_run_is_none() 
 }
 
 // Rulings 59, 60: a run's start pulls through its puller unless
-// `sync.on_run: none`, and what the pull did is said with the run's notices.
+// `sync.on_run: none`, and what the pull did is said with the run's notices
+// (the interactive session's, in this process; a one-shot's start pulls in
+// the daemon that hosts it, U4).
 mod start_sync {
     use std::cell::Cell;
     use std::rc::Rc;
@@ -652,7 +654,7 @@ mod start_sync {
             engine: "nope".to_string(),
             session: String::new(),
         };
-        let done = runs.one_shot(&Flags::default(), &request);
+        let done = runs.interactive(&Flags::default(), &request);
         assert!(done.result.is_err());
         let said = done.notices.iter().any(|n| {
             matches!(n, library_application::Notice::Finding { text, .. }

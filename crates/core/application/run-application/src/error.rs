@@ -61,10 +61,29 @@ pub enum RunError {
     EmptyAnswer,
     /// The launch ended with no end to the run in the stream.
     NotEnded { run: String },
+    /// The run the daemon hosted ended in this (U4, T7): its diagnostic as
+    /// the daemon said it (code and args), the exit it ends the command
+    /// with, and an aggregate refusal's refusals, in check order.
+    Hosted(Box<HostedEnd>),
+    /// No daemon could be called to host the run (S16): none could be
+    /// started, or the one serving is not this client's to use.
+    Unreached(daemon_ports::Unreached),
+    /// The daemon hosting the run did not answer as it should (the stream
+    /// broke: the daemon is gone, S8(a): a one-shot is not run again).
+    Called(Box<daemon_ports::Called>),
     /// A signal asked ctxloom to stop while the run went on (ruling 114): the
     /// engine was stopped, the run's end recorded, and the process exits with
     /// `status`, the one a shell gives a process `signal` ended.
     Stopped { signal: String, status: u8 },
+}
+
+/// How a hosted run ended, as its daemon said it (U4): the diagnostic, the
+/// exit, and the refusals an aggregate refusal holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostedEnd {
+    pub report: Report,
+    pub exit: Exit,
+    pub refusals: Vec<Report>,
 }
 
 impl ExitClass for RunError {
@@ -77,6 +96,13 @@ impl ExitClass for RunError {
     fn exit(&self) -> Exit {
         match self {
             RunError::Plan(error) => error.exit(),
+            RunError::Hosted(hosted) => hosted.exit,
+            RunError::Unreached(daemon_ports::Unreached::Declined(_)) => Exit::REFUSED,
+            RunError::Called(called)
+                if matches!(**called, daemon_ports::Called::Refused { .. }) =>
+            {
+                Exit::REFUSED
+            }
             RunError::Stopped { status, .. } => Exit::signal(signal_number(*status)),
             RunError::Refused(RunRejection::LaunchRefused { fatal_findings, .. })
                 if *fatal_findings > 0 =>
@@ -113,6 +139,11 @@ impl RunError {
                 .iter()
                 .map(|refusal| Box::new(refusal.clone()) as Box<dyn Diagnostic>)
                 .collect(),
+            RunError::Hosted(hosted) => hosted
+                .refusals
+                .iter()
+                .map(|refusal| Box::new(refusal.clone()) as Box<dyn Diagnostic>)
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -138,6 +169,9 @@ impl Diagnostic for RunError {
     fn code(&self) -> &str {
         match self {
             RunError::Plan(error) => error.code(),
+            RunError::Hosted(hosted) => hosted.report.code(),
+            RunError::Unreached(unreached) => unreached.code(),
+            RunError::Called(called) => called.code(),
             RunError::Refused(rejection) => rejection.code(),
             RunError::Resume(rejection) => rejection.code(),
             RunError::Bind(error) => error.code(),
@@ -165,6 +199,9 @@ impl Diagnostic for RunError {
     fn args(&self) -> Vec<(&str, Arg)> {
         match self {
             RunError::Plan(error) => error.args(),
+            RunError::Hosted(hosted) => hosted.report.args(),
+            RunError::Unreached(unreached) => unreached.args(),
+            RunError::Called(called) => called.args(),
             RunError::EmptyAnswer => Vec::new(),
             RunError::Refused(rejection) => rejection.args(),
             RunError::Resume(rejection) => rejection.args(),

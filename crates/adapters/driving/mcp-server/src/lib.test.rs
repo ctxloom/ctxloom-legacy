@@ -167,7 +167,7 @@ async fn the_server_answers_the_handshake_and_its_list_over_its_transport() {
     let listed = &answers[&2];
     assert_eq!(
         listed["result"]["tools"].as_array().map(Vec::len),
-        Some(7),
+        Some(crate::TOOL_NAMES.len()),
         "{listed}"
     );
     let unknown = &answers[&3];

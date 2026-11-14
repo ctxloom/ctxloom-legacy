@@ -93,7 +93,15 @@ impl LibraryCommands {
     fn wired(&mut self) -> Result<&Library, LibError> {
         if self.library.is_none() {
             let wiring = Wiring::new(Arc::clone(&self.env))?;
-            self.library = Some(build(&wiring, self.remotes.clone())?);
+            // Distill's model: a one-shot on no context (plan step 5,
+            // OD-38), hosted by a daemon of this binary's stamp (U4).
+            let library = build(&wiring, self.remotes.clone())?.with_distiller(Rc::new(
+                crate::distiller::OneShotDistiller {
+                    env: Arc::clone(wiring.env()),
+                    stamp: self.version.clone(),
+                },
+            ));
+            self.library = Some(library);
         }
         Ok(self
             .library
@@ -134,11 +142,7 @@ pub(crate) fn build(
         .with_engines(advising_engines())
         // What each engine cannot carry, in its own word (its surface half): the
         // capability-loss report and the swap preview read it.
-        .with_hook_losses(hook_losses())
-        // Distill's model: a one-shot on no context (plan step 5, OD-38).
-        .with_distiller(Rc::new(crate::distiller::OneShotDistiller {
-            env: Arc::clone(wiring.env()),
-        }));
+        .with_hook_losses(hook_losses());
     // ctxloom's default content, built in (owner rulings 110, 111).
     let library = if builtins_withheld(wiring.env()) {
         library

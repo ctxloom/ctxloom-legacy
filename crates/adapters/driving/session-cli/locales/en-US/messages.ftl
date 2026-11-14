@@ -5,3 +5,4 @@ session-cli-bad-state = --state { $value }: a session's state is one of { $state
 session-cli-runtime = could not start the runtime: { $ext_err_txt }
 session-cli-output = could not write the answer: { $ext_err_txt }
 session-cli-sweep-failed = { $count } sweep action(s) failed; the report says which
+session-cli-already-closed = { $harp } was already closed: the close changed nothing

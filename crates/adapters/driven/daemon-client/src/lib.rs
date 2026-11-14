@@ -12,7 +12,7 @@ use std::time::Duration;
 use angzarr_embedded::v1::{CommandBook, DeliveryOutcome};
 use angzarr_proto_transport_distributed::v1::command_handler_coordinator_service_client::CommandHandlerCoordinatorServiceClient;
 use angzarr_proto_transport_distributed::v1::HandleSyncRequest;
-use daemon_ports::{Called, DaemonApi, Synced};
+use daemon_ports::{Called, DaemonApi, RunEvents, Synced};
 use daemon_proto::service::ctxloom_client::CtxloomClient;
 use daemon_proto::v1;
 use prost::Message;
@@ -255,6 +255,52 @@ impl DaemonApi for DaemonClient {
         )
     }
 
+    async fn create_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Called> {
+        // A run is planned (its dependencies pulled, when `sync.on_run`
+        // asks), enqueued and placed before it is answered: a destroy's
+        // deadline.
+        call!(self, create_run, "CreateRun", request, self.destroying)
+    }
+
+    async fn get_run(&self, request: v1::GetRunRequest) -> Result<v1::Run, Called> {
+        call!(self, get_run, "GetRun", request)
+    }
+
+    async fn watch_run(&self, request: v1::WatchRunRequest) -> Result<Box<dyn RunEvents>, Called> {
+        // The stream is answered within the read's deadline; its events
+        // come as the run goes, unbounded (a turn has its own deadline).
+        let streaming = call!(self, watch_run, "WatchRun", request)?;
+        Ok(Box::new(Watching(streaming)))
+    }
+
+    async fn handle(&self, book: CommandBook) -> Result<bool, Called> {
+        let result: angzarr_proto_transport_distributed::v1::CommandResult =
+            call!(self, coordinator, handle, "Handle", book, self.within)?;
+        Ok(result.delivery != DeliveryOutcome::Duplicate as i32)
+    }
+
+    async fn create_hand_off(
+        &self,
+        request: v1::CreateHandOffRequest,
+    ) -> Result<v1::HandOff, Called> {
+        // A hand-off plans the child in the daemon, which may ask its
+        // companions: a destroy's deadline.
+        call!(
+            self,
+            create_hand_off,
+            "CreateHandOff",
+            request,
+            self.destroying
+        )
+    }
+
+    async fn delete_hand_off(
+        &self,
+        request: v1::DeleteHandOffRequest,
+    ) -> Result<v1::HandOff, Called> {
+        call!(self, delete_hand_off, "DeleteHandOff", request)
+    }
+
     async fn handle_sync(
         &self,
         book: CommandBook,
@@ -302,6 +348,22 @@ impl DaemonApi for DaemonClient {
             request,
             self.destroying
         )
+    }
+}
+
+/// A run's events as `WatchRun` streams them: a status that ends the
+/// stream early (the daemon gone) is what it came to.
+struct Watching(tonic::codec::Streaming<v1::RunEvent>);
+
+impl RunEvents for Watching {
+    fn next(&mut self) -> daemon_ports::NextEvent<'_> {
+        Box::pin(async move {
+            match self.0.message().await {
+                Ok(Some(event)) => Some(Ok(event)),
+                Ok(None) => None,
+                Err(status) => Some(Err(came_to("WatchRun", &status))),
+            }
+        })
     }
 }
 

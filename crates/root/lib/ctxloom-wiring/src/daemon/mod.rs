@@ -1,14 +1,14 @@
-//! The user daemon (D18) and the orchestrator's commands, as the hidden
-//! `ctxloom daemon` noun:
+//! The user daemon (D18), as the hidden `ctxloom daemon` noun:
 //!
 //! - `serve`: be the daemon ([`serve`]); a client spawns it ([`ensure`]);
 //! - `status`, `stop`: whether one serves, and ask it to drain and exit;
-//! - `send`, `close`, `clear`, `launch`: the orchestrator's commands as the
-//!   USER sends them (D25: the human acts through the CLI as the user), each
-//!   recorded in the project's store in this process (the sessions use
-//!   cases), then the daemon made sure of, which hears them through the
-//!   store (its plan reads owed state, D-N27). No user credential crosses the
-//!   wire (review B2): the listener serves run credentials alone.
+//! - `resolve`: register this project with it, or recheck it (tests and
+//!   diagnosis).
+//!
+//! The user's child verbs are `session launch|send|clear|close` (slice 4
+//! U3, S2, S19), clients of the daemon ([`child_caller`]); the hidden
+//! `daemon launch|send|close|clear` are gone (owner ruling s4-Q13, hard
+//! migrate).
 
 mod files;
 mod places;
@@ -30,17 +30,13 @@ use file_system::{Fs, Open};
 use os::Mode;
 use process_env::EnvSnapshot;
 use serde::Serialize;
-use sessions_application::{ClearRequest, CloseRequest, LaunchRequest, Ordered, SendRequest};
+use sessions::ProjectName;
 
 use crate::{LibError, Wiring};
 use files::{instance_lock_path, DaemonFiles};
 
 /// The noun.
 pub(crate) const NOUN: &str = "daemon";
-
-/// How many open children an owner may hold when nothing says (the
-/// delegation limit's evidence, D-N14; no config key yet).
-const DELEGATION_LIMIT: u32 = 4;
 
 /// The variables a spawned daemon is given of its spawner's (D-N45), as
 /// the platform compares names: how to find programs, temp space and locale,
@@ -161,90 +157,16 @@ enum DaemonVerb {
     },
     /// Register this project with the daemon, or recheck it
     Resolve,
-    /// Send a session a message
-    Send {
-        /// The session's name
-        harp: String,
-        /// The message
-        text: String,
-        /// inform, wake or steer
-        #[arg(long, default_value = "wake")]
-        urgency: String,
-        /// The message's id (minted when not given)
-        #[arg(long, default_value = "")]
-        id: String,
-    },
-    /// Close a session; its children are closed with it
-    Close {
-        /// The session's name
-        harp: String,
-        /// Why
-        #[arg(long, default_value = "closed by the user")]
-        cause: String,
-    },
-    /// Ask a child to clear its conversation
-    Clear {
-        /// The session's name
-        harp: String,
-    },
-    /// Launch a child of a session
-    Launch {
-        /// The owner's name
-        #[arg(long)]
-        owner: String,
-        /// The child's first task
-        #[arg(long, default_value = "")]
-        prompt: String,
-        /// The child's engine
-        #[arg(long, default_value = "claude-code")]
-        engine: String,
-        /// The child's name (minted when not given)
-        #[arg(long)]
-        name: Option<String>,
-    },
 }
 
 /// The noun, hidden from the help.
 pub(crate) fn noun() -> Command {
     shaped(DaemonVerb::augment_subcommands(
         Command::new(NOUN)
-            .about("The user's daemon and the orchestrator's commands")
+            .about("The user's daemon")
             .hide(true)
             .subcommand_required(true),
     ))
-}
-
-/// What an orchestration command answers.
-#[derive(Serialize)]
-struct Done {
-    harp: String,
-    id: String,
-    recorded: bool,
-}
-
-impl From<Ordered> for Done {
-    fn from(ordered: Ordered) -> Done {
-        Done {
-            harp: ordered.harp,
-            id: ordered.id,
-            recorded: ordered.recorded,
-        }
-    }
-}
-
-impl Render for Done {
-    fn json(&self) -> impl Serialize + '_ {
-        self
-    }
-
-    fn text(&self, out: &mut dyn Write) -> std::io::Result<()> {
-        let how = if self.recorded {
-            "recorded"
-        } else {
-            "already recorded"
-        };
-        writeln!(out, "{}: {} {how}", self.harp, self.id)
-    }
 }
 
 /// What `status` answers: the daemon as it says itself (`GetDaemon`), or
@@ -291,28 +213,6 @@ fn output(written: std::io::Result<()>) -> Result<(), Failure> {
     })
 }
 
-/// A sessions use case's failure as the command line's, with its own exit
-/// (a refusal 2).
-fn refused(error: sessions_application::AppError) -> Failure {
-    let exit = error.exit();
-    Failure::new(error, exit)
-}
-
-/// The urgency `word` names.
-fn urgency_of(word: &str) -> Result<sessions::Urgency, Failure> {
-    match word {
-        "inform" => Ok(sessions::Urgency::Inform),
-        "wake" => Ok(sessions::Urgency::Wake),
-        "steer" => Ok(sessions::Urgency::Steer),
-        other => Err(Failure::new(
-            CliError::Usage {
-                detail: format!("--urgency is inform, wake or steer, not {other}"),
-            },
-            Exit::REFUSED,
-        )),
-    }
-}
-
 /// Run the `daemon` noun's verb.
 pub(crate) fn run(
     env: &Arc<EnvSnapshot>,
@@ -336,25 +236,7 @@ pub(crate) fn run(
         _ => Wiring::new(Arc::clone(env)).map_err(failed)?,
     };
     let files = files_of(&wiring);
-    // One daemon per OS user: a command whose ctxloom home is not the
-    // serving daemon's is refused before it does anything (`serve` itself
-    // finds the lock held, and exits).
-    let serving = match verb {
-        DaemonVerb::Serve { .. } | DaemonVerb::Status | DaemonVerb::Stop { .. } => None,
-        _ => serving(&wiring, &files)?,
-    };
-    // M3: a daemon of another version is stopped, idle, or refuses this
-    // command, busy, before it writes anything.
-    if matches!(
-        verb,
-        DaemonVerb::Send { .. }
-            | DaemonVerb::Close { .. }
-            | DaemonVerb::Clear { .. }
-            | DaemonVerb::Launch { .. }
-    ) {
-        reconciled(&files, serving.as_ref(), own_stamp(env, stamp))?;
-    }
-    let ordered = match verb {
+    match verb {
         DaemonVerb::Serve {
             idle_seconds,
             poll_ms,
@@ -363,71 +245,25 @@ pub(crate) fn run(
                 idle: Duration::from_secs(idle_seconds),
                 poll: Duration::from_millis(poll_ms.max(1)),
             };
-            return be_the_daemon(&wiring, env, stamp, &files, pace);
+            be_the_daemon(&wiring, env, stamp, &files, pace)
         }
         // Clients of the daemon (slice 2 step 6), answered here when none
         // serves (S14): neither starts one.
         DaemonVerb::Status => {
             let found = block_on(client(&wiring, stamp).status())?.map_err(called)?;
             output(render(out, format, &Status(found)))?;
-            return Ok(Exit::OK);
+            Ok(Exit::OK)
         }
         DaemonVerb::Stop { even_if_live } => {
             block_on(client(&wiring, stamp).stop(even_if_live))?.map_err(called)?;
-            return Ok(Exit::OK);
+            Ok(Exit::OK)
         }
         DaemonVerb::Resolve => {
             let project = resolve(&wiring, env, stamp)?;
             output(render(out, format, &Resolved(project)))?;
-            return Ok(Exit::OK);
+            Ok(Exit::OK)
         }
-        DaemonVerb::Send {
-            harp,
-            text,
-            urgency,
-            id,
-        } => {
-            let urgency = urgency_of(&urgency)?;
-            orchestrate(&wiring, async |sessions| {
-                sessions
-                    .send(SendRequest {
-                        project: None,
-                        harp,
-                        message_id: id,
-                        urgency,
-                        text,
-                    })
-                    .await
-            })?
-        }
-        DaemonVerb::Close { harp, cause } => orchestrate(&wiring, async |sessions| {
-            sessions
-                .close(CloseRequest {
-                    project: None,
-                    harp,
-                    cause,
-                })
-                .await
-        })?,
-        DaemonVerb::Clear { harp } => orchestrate(&wiring, async |sessions| {
-            sessions
-                .clear(ClearRequest {
-                    project: None,
-                    harp,
-                    clear_id: String::new(),
-                })
-                .await
-        })?,
-        DaemonVerb::Launch {
-            owner,
-            prompt,
-            engine,
-            name,
-        } => launch(&wiring, env, &files, owner, prompt, engine, name)?,
-    };
-    ensure(&wiring, env);
-    output(render(out, format, &Done::from(ordered)))?;
-    Ok(Exit::OK)
+    }
 }
 
 /// How long one call to the daemon may take.
@@ -581,82 +417,6 @@ impl Render for Resolved {
     fn text(&self, out: &mut dyn Write) -> std::io::Result<()> {
         writeln!(out, "{} ({})", self.0.name, self.0.root)
     }
-}
-
-/// `launch`: the child's id minted here, the environment a child may be
-/// given handed off to the daemon under it (S6, D-N45) BEFORE the launch is
-/// recorded, and withdrawn if the launch is refused.
-fn launch(
-    wiring: &Wiring,
-    env: &EnvSnapshot,
-    files: &DaemonFiles,
-    owner: String,
-    prompt: String,
-    engine: String,
-    name: Option<String>,
-) -> Result<Ordered, Failure> {
-    // The child's stable id is the UUIDv5 of its name (slice 2 B3), its
-    // owner's project named first (M1): the hand-off is keyed by it.
-    let harp = name.unwrap_or_else(crate::session_name);
-    let project_harp = wiring.name_project().map_err(failed)?.harp;
-    let session = sessions::SessionName::new(&project_harp, &harp)
-        .map_err(|rejection| {
-            failed(CliError::Output {
-                detail: angzarr_diagnostic::Diagnostic::code(&rejection).to_string(),
-            })
-        })?
-        .uid();
-    // Keyed as the platform compares names (uppercase on Windows), as a
-    // run's environment is (`os::Flavor::env_key`).
-    let flavor = env.flavor();
-    let caller: BTreeMap<String, String> = env
-        .vars_utf8()
-        .into_iter()
-        .map(|(name, value)| (flavor.env_key(&name), value))
-        .collect();
-    let settings = child_plan(
-        wiring.home(),
-        env.temp_dir(),
-        &engine,
-        &wiring.project_dir().to_string_lossy(),
-        &caller,
-    )
-    .map(|previewed| {
-        run_application::hosted_child(
-            &previewed,
-            &engine,
-            &[],
-            run_ports::Credentials::NONE,
-            &BTreeMap::new(),
-        )
-        .settings
-    })
-    .unwrap_or_default();
-    let sent = daemon_application::HandOff {
-        env: engine_claude::launcher_environment(&settings, &caller),
-        launcher: settings_places(&caller),
-    };
-    files.hand_off(&session, &sent).map_err(|e| {
-        failed(CliError::Output {
-            detail: e.to_string(),
-        })
-    })?;
-    let launched = orchestrate(wiring, async |sessions| {
-        sessions
-            .launch_child(LaunchRequest {
-                project: None,
-                owner,
-                harp,
-                engine,
-                prompt,
-                delegation_limit: DELEGATION_LIMIT,
-            })
-            .await
-    });
-    if launched.is_err() {
-        files.withdraw_hand_off(&session);
-    }
-    launched
 }
 
 /// The daemon's wiring: its home [`daemon_home`]'s; refused, as any command
@@ -953,30 +713,53 @@ fn resolved_parent(
     block_on(client_for(wiring, stamp, registration).library_parent())?.map_err(called)
 }
 
+/// The USER's client of the daemon for her child verbs (`session
+/// launch|send|clear|close`, slice 4 U3): her project as the daemon names it
+/// (registered or rechecked, a daemon reached or started), each write's id
+/// minted per call, a launch that names no child minting its harp. Outside a
+/// project it is refused (exit 20).
+pub(crate) fn child_caller<'a>(
+    wiring: &'a Wiring,
+    stamp: &str,
+) -> Result<daemon_api::Caller<Reach<'a>>, Failure> {
+    let parent = library_parent(wiring, stamp, crate::Minting::AtRoot)?;
+    if ProjectName::parse(&parent).is_err() {
+        let cwd = wiring
+            .env()
+            .cwd()
+            .map(|cwd| cwd.display().to_string())
+            .unwrap_or_default();
+        return Err(Failure::new(
+            daemon_api::ApiRejection::ProjectUnknown { cwd },
+            Exit::REFUSED,
+        ));
+    }
+    daemon_api::Caller::user(
+        Reach::new(wiring, stamp),
+        &parent,
+        env_vars(wiring.env()),
+        Box::new(request_id),
+    )
+    .map(|caller| {
+        caller
+            .naming(Box::new(crate::session_name))
+            .holding(launch_locks(wiring))
+    })
+    .map_err(|e| {
+        let exit = e.exit();
+        Failure::new(e, exit)
+    })
+}
+
+/// The launch locks a launch from `wiring`'s home holds (T6): its daemon's
+/// run locks, which its sweep probes.
+pub(crate) fn launch_locks(wiring: &Wiring) -> Arc<dyn run_ports::RunLocks> {
+    Arc::new(files_of(wiring).launch_locks())
+}
+
 /// A write's request id (S8): a fresh UUIDv7, unique per call.
 pub(crate) fn request_id() -> String {
     uuid::Uuid::now_v7().to_string()
-}
-
-/// Run `use_case` on the sessions use cases, on a runtime of its own.
-fn orchestrate(
-    wiring: &Wiring,
-    use_case: impl AsyncFnOnce(
-        &mut crate::SessionUseCases,
-    ) -> Result<Ordered, sessions_application::AppError>,
-) -> Result<Ordered, Failure> {
-    let mut sessions = wiring.sessions();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| {
-            failed(LibError::NoRuntime {
-                detail: e.to_string(),
-            })
-        })?;
-    runtime
-        .block_on(use_case(&mut sessions.use_cases))
-        .map_err(refused)
 }
 
 /// A log line writer: each line appended to `path` with its time, through
@@ -1177,7 +960,8 @@ pub(crate) fn child_git_user(
 }
 
 /// The plan of a child of the project at `project_dir` (D18, D-N46): that
-/// project's dry run, for its default agent on the child's engine, read as a
+/// project's dry run, for `agent` (empty: its default) on the child's
+/// engine, read as a
 /// process in that project would, with `env` (the environment its launcher
 /// sent, S6) and ctxloom's `home`. Where it cannot be planned, the error's
 /// code.
@@ -1185,6 +969,7 @@ pub(crate) fn child_plan(
     home: &Path,
     temp: &Path,
     engine: &str,
+    agent: &str,
     project_dir: &str,
     env: &BTreeMap<String, String>,
 ) -> Result<library_application::Previewed, String> {
@@ -1205,6 +990,7 @@ pub(crate) fn child_plan(
     let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| code(&e))?;
     let library = crate::library::build(&wiring, None).map_err(|e| code(&e))?;
     let request = library_application::RunRequest {
+        agent: agent.to_string(),
         engine: engine.to_string(),
         ..library_application::RunRequest::default()
     };
