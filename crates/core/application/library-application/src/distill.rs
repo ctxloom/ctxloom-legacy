@@ -273,6 +273,8 @@ impl Diagnostic for NoDistiller {
         angzarr_diagnostic::code!("no-distiller")
     }
 
+    // `vec![]` is the same value as `Vec::new()`: the mutant is equivalent.
+    #[cfg_attr(test, mutants::skip)]
     fn args(&self) -> Vec<(&str, angzarr_diagnostic::Arg)> {
         Vec::new()
     }
