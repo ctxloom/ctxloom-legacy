@@ -500,3 +500,10 @@ mod error {
         }
     }
 }
+
+// A catalog that names no companion's guidance carries none.
+#[test]
+fn test_a_catalog_carries_no_companion_guidance_by_default() {
+    let catalog = Catalog(Some("interview"), RefCell::new(0));
+    assert!(catalog.companion_guidance().is_empty());
+}
