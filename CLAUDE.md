@@ -494,8 +494,10 @@ application's `launch_surfaces` over `Project::carried`, the same as
 `package`; `Order.surfaces` -> `PrepareRequest.surfaces`, a
 `run_ports::LaunchSurfaces` whose `Debug` names what it carries and withholds
 every value), in every working directory: claude lays the bundles' authored
-hooks and ctxloom's own callbacks (session-start, skill-mates) into
-`ctxloom-hooks.json` beside the capture events, each once (a child: no
+hooks (the registered companions' loadouts' too: j001800's guard is ltk's
+`pre_tool` hook, never at rest in the project) and ctxloom's own callbacks
+(session-start, skill-mates) into `ctxloom-hooks.json` beside the capture
+events, each once (a child: no
 `SessionStart`/`SessionEnd`), and the statusline (`statusLine`) there too;
 `deny_tools` is `permissions.deny` laid over the agent's document where it
 lives (the session home's `settings.json`, or the hooks file under `host`);
