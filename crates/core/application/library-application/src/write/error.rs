@@ -100,6 +100,10 @@ write_errors! {
     UnknownRuntime { name, value } = "write-unknown-runtime";
     /// A session_home that is neither word (owner ruling of 2026-11-13).
     UnknownSessionHome { name, value } = "write-unknown-session-home";
+    /// `session_home: host` asked of a project write: her home is hers to
+    /// hand an agent, from her home config alone (owner ruling of
+    /// 2026-11-14, ruling 46); `verb` is the write's (`create`, `edit`).
+    SessionHomeHostInProject { name, verb } = "write-session-home-host-in-project";
     /// An agent that binds nothing.
     AgentWithoutEngine { name } = "write-agent-without-engine";
     /// An env declaration that would not do what it says.

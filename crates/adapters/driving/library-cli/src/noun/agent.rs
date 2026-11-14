@@ -309,6 +309,7 @@ fn agent_request(sub: &ArgMatches) -> Result<AgentRequest, Failure> {
         roots: given_pairs(sub, "root")?,
         env: given_list(sub, "env"),
         session_home: given(sub, "session-home"),
+        home: flag(sub, "home"),
     })
 }
 

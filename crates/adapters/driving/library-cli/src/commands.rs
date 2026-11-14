@@ -517,8 +517,14 @@ fn agent_write(name: &'static str, about: &'static str) -> Command {
         ))
         .arg(named(
             "session-home",
-            "Whose home the engine runs on: session|host (empty = the engine block's, else session)",
+            "Whose home the engine runs on: session|host (host only with --home; empty = the engine block's, else session)",
         ))
+        .arg(
+            Arg::new("home")
+                .long("home")
+                .action(ArgAction::SetTrue)
+                .help("Write the binding to your home config instead of the project's"),
+        )
         .arg(each(
             "surface",
             "Delivery preference: kind=approach (repeatable)",
