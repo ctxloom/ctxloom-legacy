@@ -203,6 +203,7 @@ impl Project {
             description: request.description.clone(),
             parents: request.parents.clone(),
             bundles: request.bundles.clone(),
+            skills: Vec::new(),
         });
         plan.write(&profile_path(&request.name), text);
         self.commit_profile(&target, plan, claim)?;

@@ -24,6 +24,8 @@ pub struct NewProfile {
     pub description: String,
     pub parents: Vec<String>,
     pub bundles: Vec<String>,
+    /// The skills it curates, by reference (`<bundle>#skills/<name>`).
+    pub skills: Vec<String>,
 }
 
 fn list(items: &[String]) -> Value {

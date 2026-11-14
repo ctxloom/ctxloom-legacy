@@ -159,6 +159,7 @@ fn create(
         description: text_arg(sub, "description"),
         parents: many(sub, "parent"),
         bundles: many(sub, "include"),
+        skills: Vec::new(),
         target: text_arg(sub, "bundle"),
     };
     let outcome = cx.library.profile_create(&cx.flags, &request);
