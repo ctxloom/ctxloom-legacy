@@ -10,17 +10,7 @@ use cucumber::{given, then};
 use super::World;
 use crate::tests::files;
 use crate::tests::gherkin_common::CommonWorld;
-
-/// The stub claude: each turn's working directory appended to `cwds`, a
-/// note written where it works, and a reply.
-const STUB: &str = r#"here="$(dirname "$0")"
-pwd -P >> "$here/cwds"
-printf '%s\t%s\n' "$HOME" "$CLAUDE_CONFIG_DIR" >> "$here/homes"
-cat > /dev/null
-echo "a short note" > note.txt
-echo '{"type":"system","subtype":"init","session_id":"0c3f2c1e-7b9a-4d1e-9a51-2f6c1d0e8b7a"}'
-echo '{"type":"result","subtype":"success","is_error":false,"result":"J002200-NOTE-WRITTEN","session_id":"0c3f2c1e-7b9a-4d1e-9a51-2f6c1d0e8b7a"}'
-"#;
+use crate::tests::gherkin_spy::{self as spy, resolved};
 
 /// The project's config: the agent, on claude-code.
 fn config(agent: &str) -> String {
@@ -56,28 +46,11 @@ impl World {
     }
 }
 
-/// A path as the host resolves it (the stub prints `pwd -P`).
-fn resolved(path: &Path) -> PathBuf {
-    if files::exists(path) {
-        files::canonical(path)
-    } else {
-        path.to_path_buf()
-    }
-}
-
 #[given(expr = "Alice has a git-backed project with a mock agent {string}")]
 fn git_backed_with_mock(w: &mut World, agent: String) {
     let bin = w.workspace_bin();
-    files::put_program(bin.join("claude"), STUB);
-    let host = crate::tests::host_var("PATH").unwrap_or_default();
-    w.common.set_env(
-        "PATH",
-        format!("{}:{}", bin.display(), host.to_string_lossy()),
-    );
-    w.common.set_env(
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "sk-ant-oat01-acceptance-fixture-not-real".to_string(), // gitleaks:allow
-    );
+    spy::install(&mut w.common, &bin);
+    spy::authenticate(&mut w.common);
     let project = &w.common.project;
     project.write(".ctxloom/config.yaml", &config(&agent));
     project.write(
@@ -97,7 +70,7 @@ fn not_git(w: &mut World) {
 
 #[then("what the agent wrote is in the project")]
 fn wrote_in_project(w: &mut World) {
-    w.ran().succeeds().contains("J002200-NOTE-WRITTEN");
+    w.ran().succeeds().contains(spy::REPLY);
     let project = resolved(w.common.project.dir());
     assert_eq!(w.turn_dirs(), std::slice::from_ref(&project));
     assert!(files::exists(project.join("note.txt")));
@@ -106,7 +79,7 @@ fn wrote_in_project(w: &mut World) {
 #[then("what the agent wrote is in a checkout its session owns, under ctxloom's home")]
 fn wrote_in_checkout(w: &mut World) {
     let ran = w.ran();
-    ran.succeeds().contains("J002200-NOTE-WRITTEN");
+    ran.succeeds().contains(spy::REPLY);
     let harp = w.json()["harp"]
         .as_str()
         .expect("the run's harp")
@@ -173,38 +146,10 @@ fn isolated_config(session_home: Option<&str>) -> String {
 }
 
 impl World {
-    /// Each turn's `HOME` and `CLAUDE_CONFIG_DIR`, in order, as the stub saw
-    /// them.
-    fn turn_homes(&self) -> Vec<(PathBuf, PathBuf)> {
-        files::read(self.workspace_bin().join("homes"))
-            .unwrap_or_default()
-            .lines()
-            .map(|line| {
-                let (home, config) = line.split_once('\t').expect("HOME\tCLAUDE_CONFIG_DIR");
-                (PathBuf::from(home), PathBuf::from(config))
-            })
-            .collect()
-    }
-
     /// The one turn's `HOME` and `CLAUDE_CONFIG_DIR`, the run having
     /// succeeded.
     fn one_turn_home(&self) -> (PathBuf, PathBuf) {
-        self.ran().succeeds().contains("J002200-NOTE-WRITTEN");
-        match self.turn_homes().as_slice() {
-            [one] => one.clone(),
-            other => panic!("one turn, not {other:?}"),
-        }
-    }
-
-    /// The codes of the json documents the run said on its error stream.
-    fn said_codes(&self) -> Vec<String> {
-        serde_json::Deserializer::from_str(&self.ran().stderr)
-            .into_iter::<serde_json::Value>()
-            .map(|doc| {
-                let doc = doc.unwrap_or_else(|e| panic!("{e}: {}", self.ran().said()));
-                doc["code"].as_str().unwrap_or_default().to_string()
-            })
-            .collect()
+        spy::one_turn_home(self.ran(), &self.workspace_bin())
     }
 
     /// Her own claude setup is exactly what was put there.
@@ -252,10 +197,7 @@ fn credentials_for(w: &mut World, engine: String) {
     );
     // A child authenticates by its token (the Background's); her own login
     // and setup are in her home, as for anyone who uses claude herself.
-    w.common.set_env(
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "sk-ant-oat01-acceptance-fixture-not-real".to_string(), // gitleaks:allow
-    );
+    spy::authenticate(&mut w.common);
     for (rel, body) in HER_CLAUDE {
         w.common.project.write_home(rel, body);
     }
@@ -309,8 +251,8 @@ fn declares_no_session_home(w: &mut World) {
 #[then("the run reports no isolation finding")]
 fn no_isolation_finding(w: &mut World) {
     let ran = w.ran();
-    ran.succeeds().contains("J002200-NOTE-WRITTEN");
-    let codes = w.said_codes();
+    ran.succeeds().contains(spy::REPLY);
+    let codes = spy::said_codes(w.ran());
     assert!(
         codes.iter().all(|code| !code.starts_with("isolation-")),
         "{codes:?}"
@@ -320,18 +262,7 @@ fn no_isolation_finding(w: &mut World) {
 #[then("the agent ran from its own session home")]
 fn ran_from_session_home(w: &mut World) {
     let (home, config) = w.one_turn_home();
-    let harp = w.json()["harp"]
-        .as_str()
-        .expect("the run's harp")
-        .to_string();
-    let expected = resolved(
-        &w.common
-            .project
-            .dir()
-            .join(".ctxloom/sessions")
-            .join(&harp)
-            .join("home"),
-    );
+    let expected = spy::session_home(&w.common);
     assert_eq!(resolved(&home), expected);
     assert_eq!(resolved(&config), expected);
 }
@@ -347,20 +278,8 @@ fn her_setup_untouched(w: &mut World, engine: String) {
 
 #[then("the run tells Alice it is running on her own engine setup, which is unsafe")]
 fn says_her_own_setup(w: &mut World) {
-    let codes = w.said_codes();
-    assert!(
-        codes
-            .iter()
-            .any(|code| code == "library-application-notice-session-home-host"),
-        "{codes:?}: {}",
-        w.ran().said()
-    );
-    w.ran()
-        .contains("runs in your own home")
-        // the agent's own key said it (owner ruling of 2026-11-13)
-        .contains("(agents.isolated.session_home: host)")
-        .contains("reads and changes your own memory")
-        .contains("a relocation, not confinement");
+    // the agent's own key said it (owner ruling of 2026-11-13)
+    spy::says_her_own_home(w.ran(), "agents.isolated");
 }
 
 #[then("the agent ran with no session home of its own")]

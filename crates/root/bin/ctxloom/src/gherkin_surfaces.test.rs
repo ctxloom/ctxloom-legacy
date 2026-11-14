@@ -110,6 +110,9 @@ impl World {
 #[path = "gherkin_onboarding.test.rs"]
 mod onboarding;
 
+#[path = "gherkin_session_home.test.rs"]
+mod session_home;
+
 // ------------------------------------------------------------------ given
 
 /// Go's `a git remote "<name>" serving a ctxloom bundle`: a bare repository

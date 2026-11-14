@@ -285,6 +285,9 @@ mod gherkin_common;
 #[path = "gherkin_features.test.rs"]
 mod gherkin_features;
 
+#[path = "gherkin_spy.test.rs"]
+mod gherkin_spy;
+
 #[path = "hook.test.rs"]
 mod hook;
 

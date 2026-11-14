@@ -350,20 +350,21 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
       Then the command fails
       And the output contains "unknown key `agents.developer.auth`"
 
-  @pending
   Rule: --session-home decides WHOSE engine configuration this binding's runs get
 
     The other axes above pick what runs. `--session-home` picks whose engine
-    configuration (~/.claude, say) it runs against — the directory the engine
-    reads its hooks, MCP registrations, prompts and skills from, and writes its session
-    state back into. `host` (and leaving it unsaid) keeps the human's own;
-    `session` gives this binding's runs a disposable PER-SESSION home under
-    `.ctxloom/sessions/<harp>/home` instead, so a ctxloom agent is not handed the
-    human's memory, plugins and personal registrations by default.
+    configuration (~/.claude, say) it runs against: the directory the engine
+    reads its hooks, MCP registrations, prompts and skills from, and writes its
+    session state back into. `session`, and leaving it unsaid, gives this
+    binding's runs a disposable PER-SESSION home under
+    `.ctxloom/sessions/<harp>/home`, so a ctxloom agent is not handed the
+    human's memory, plugins and personal registrations by default. `host` keeps
+    the human's own, and only from her home config: a project cannot hand her
+    home to an agent.
 
     # THE EFFECT, MEASURED WHERE IT LANDS. Every other scenario in this file
     # can stop at the binding, because the binding is all their axis is: no
-    # engine is launched, so there is nothing further to look at. This one
+    # engine is launched, so there is nothing further to look at. These
     # cannot, because a `--session-home` that persisted perfectly and changed no
     # engine's environment is precisely the silent no-op the flag exists to
     # prevent — and `agent list`/`agent show` would report it as a success.
@@ -371,14 +372,14 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
     # So this borrows J002200's PATH-sandboxed recording spy (see
     # j002200_isolation.feature) rather than a real engine binary, and reads
     # CLAUDE_CONFIG_DIR back out of the spawned process's OWN environment. The
-    # difference from the sibling scenario there is the only thing under test
-    # here: that fixture writes `session_home: session` into config.yaml itself,
-    # while this one renders NO session_home at all and makes `ctxloom agent
-    # edit --session-home` the sole writer. Both halves are asserted, because
+    # difference from the sibling scenarios there is the only thing under test
+    # here: that fixture writes `session_home` into config.yaml itself,
+    # while these render NO session_home at all and make `ctxloom agent
+    # create|edit --session-home` the sole writer. Both halves are asserted, because
     # they fail apart — a flag dropped before the binding leaves the file
     # without the key, and a consumer that ignores the key leaves the engine on
-    # Alice's own home.
-    Scenario: --session-home session moves the engine off Alice's own home onto a per-session one
+    # the wrong home.
+    Scenario: --session-home session keeps the engine on a per-session home
       # new: this port's own.
       Given Alice has a git-backed project
       And Alice has whatever credentials "claude-code" needs to authenticate
@@ -387,6 +388,23 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
       Then the file ".ctxloom/config.yaml" contains "session_home: session"
       And the spy "claude-code" process's "CLAUDE_CONFIG_DIR" env var points at this session's config-home instance
       And Alice's own "claude-code" home directory was never created by the run
+
+    Scenario: --session-home host written to her home config keeps Alice's own home
+      # new: owner ruling of 2026-11-14 (each layer takes the values valid for it).
+      Given Alice has a git-backed project
+      And Alice has whatever credentials "claude-code" needs to authenticate
+      And Alice declares session_home "host" on her agent in her home config with the ctxloom CLI
+      When Alice runs the isolated "claude-code" agent under workspace "none"
+      Then the spy "claude-code" process's "CLAUDE_CONFIG_DIR" env var points at Alice's own "claude-code" home
+      And the run says it runs in her own home
+
+    Scenario: --session-home host is refused for the project config
+      # new: owner ruling of 2026-11-14 (a project cannot hand her home to an agent).
+      Given Alice has a git-backed project
+      When I run "ctxloom agent edit developer --session-home host"
+      Then the command fails
+      And the output contains "home config"
+      And the file ".ctxloom/config.yaml" does not contain "session_home: host"
 
   @pending
   Rule: --env declares which host environment variables a binding's runs see
