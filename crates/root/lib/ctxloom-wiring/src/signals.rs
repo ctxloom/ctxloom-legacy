@@ -3,8 +3,8 @@
 //! (`os::Os::signals`), so none of them ends ctxloom by its default
 //! disposition and leaves the engine orphaned. A signal that stops the run
 //! requests the launcher's [`Stop`]: a turn's tree is asked to stop and killed
-//! after the grace, a terminal session's direct child is killed
-//! (`host-launcher`). The run then ends as any run whose engine exited does
+//! after the grace, a terminal session's direct child is asked to stop and
+//! killed after its grace (`host-launcher`). The run then ends as any run whose engine exited does
 //! (its end facts recorded, its listener stopped, its locks released), and the
 //! command exits with the signal's status (128 plus its number), said as
 //! [`RunError::Stopped`].

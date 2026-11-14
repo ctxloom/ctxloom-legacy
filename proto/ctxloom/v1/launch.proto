@@ -1,7 +1,10 @@
 syntax = "proto3";
 
-// DRAFT for the owner's review (ruling 132, design-by-test). No build.rs
-// lists this file, so nothing is generated from it yet.
+// Compiled by daemon-proto's build.rs with the rest of `ctxloom.v1`. Its
+// domain value is run-ports' `Launch`, made by run-launcher's `launch_of`
+// (the one launch: set up, the engine's command, the permits, the program
+// found, the batch and length checks) and converted to and from this
+// message by daemon-api's `launch`.
 //
 // THE LAUNCH (T10): everything needed to start one engine process, computed
 // by the daemon alone, as ONE message. Both consumers take this same type:
@@ -11,7 +14,7 @@ syntax = "proto3";
 // the lock the launch names, starts `program` with `args`, exactly `env`, in
 // `cwd`, with the stdio the launch says, and reports the start and the exit.
 //
-// A launch CARRIES SECRETS (the run's hook bearer, an engine credential):
+// A launch CARRIES SECRETS (an engine credential in its environment):
 // it is never journaled, logged or written to a file, and the Debug of every
 // type built from it withholds every environment value (run-ports'
 // `RedactedEnv`). It crosses the wire only on the TLS stream of the client
@@ -38,7 +41,7 @@ message StopPolicy {
 }
 
 // Which run the launch starts: the streams the frontend's facts and its
-// `Subscribe` name. One store holds them all (T14): nothing routes by the
+// `WatchRun` name (owner ruling s4-Q2). One store holds them all (T14): nothing routes by the
 // project id, which names the project the session belongs to.
 message LaunchAt {
   string project_id = 1;
@@ -53,6 +56,9 @@ message LaunchAt {
 message Launch {
   // The protocol on a hosted launch's stdin and stdout.
   enum Stdio {
+    // Also a one-shot's turn command's own pipes (its input fed, its output
+    // captured), which have no value of their own: that launch never
+    // crosses the wire.
     STDIO_UNSPECIFIED = 0;
     // The user's terminal (TERMINAL, EDITOR).
     INHERIT = 1;
@@ -73,8 +79,10 @@ message Launch {
     // engine's own protocol (claude's stream-json, opencode's ACP), its own
     // process group, no deadline. Ended by its close (T6).
     CHILD = 2;
-    // A one-shot (T7): a hosted child that ends after its one turn, its reply
-    // streamed back to the CLI that asked.
+    // A one-shot (T7): hosted by the daemon as the engine's TURN command
+    // (`claude -p`, `opencode run`; owner ruling s4-Q8), its prompt on its
+    // stdin (which this message does not carry: a one-shot's launch never
+    // leaves the daemon), its reply streamed back to the CLI that asked.
     ONE_SHOT = 3;
     // `$EDITOR` on a file, for a command's editor round trip, started by the
     // frontend on the user's terminal as a TERMINAL launch is (owner, S9).
@@ -86,8 +94,9 @@ message Launch {
   // The engine's name (claude-code, opencode; under test-support, mock).
   string engine = 3;
 
-  // The program, resolved by the daemon to an absolute path (the configured
-  // `engines.<e>.command` looked up on the PATH the launch gives).
+  // The program, as the launch found it (the configured
+  // `engines.<e>.command` looked up on the PATH the launch gives, by the
+  // file names the host looks a command up by: PATHEXT's on Windows).
   string program = 4;
   // Its arguments, after the program.
   repeated string args = 5;
@@ -96,8 +105,10 @@ message Launch {
   // launching client sent (an interactive run's, a one-shot's) or a child's
   // hand-off file (T6), through the engine's allowlists, the engine block,
   // the permits (ruling 78) and what ctxloom sets (HOME, CTXLOOM_HOME, PATH,
-  // the CTXLOOM_* hook variables naming the DAEMON's endpoint and the run's
-  // own hook bearer).
+  // CTXLOOM_ROOT, and the session's CTXLOOM_SESSION). The per-run hook
+  // variables (CTXLOOM_ENDPOINT, CTXLOOM_BEARER, CTXLOOM_TLS_CERT) ride it
+  // only until the hook credential is no longer minted (owner ruling s4-Q3),
+  // after which a hook delivers to the daemon with the user's own bearer.
   repeated EnvVar env = 6;
   // Where it runs (the project, or the session's worktree).
   string cwd = 7;

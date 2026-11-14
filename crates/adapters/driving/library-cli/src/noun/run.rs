@@ -2,8 +2,9 @@
 //! §5.9: `CreateRun` with `validate_only`), named under the project the
 //! daemon names (owner ruling 2026-11-14: "dry run *absolutely* calls (and
 //! spawns, if necessary) a daemon"), its references resource names (design
-//! §2). It never mints the project's id: in a project nothing has named,
-//! its name prints as null and its references keep their configured text.
+//! §2). Every dry run, text or json, asks the daemon before it plans. It
+//! never mints the project's id: in a project nothing has named, its name
+//! prints as null and its references keep their configured text.
 
 use library_application::{DryRun, FindingRow};
 
@@ -18,6 +19,9 @@ pub(crate) fn read(
     if !flag(sub, "dry-run") {
         return Err(AppError::RunNeedsDryRun.into_failure());
     }
+    // Every dry run calls the daemon first, text or json alike, starting it
+    // if none serves (owner ruling 2026-11-14); only json prints the name.
+    let parent = cx.names.named_parent()?;
     let mut prompt = text_arg(sub, "prompt");
     if prompt.is_empty() {
         prompt = many(sub, "prompt_words").join(" ");
@@ -37,7 +41,6 @@ pub(crate) fn read(
     say_notices(&outcome.notices, PROG, cx.format, cx.catalog, err);
     let previewed = outcome.result.map_err(failed)?;
     if cx.format == Format::Json {
-        let parent = cx.names.named_parent()?;
         let run = planned(parent.as_deref(), &previewed.plan);
         // Unresolved, the name is null, never left out (owner 2026-11-14).
         daemon_proto::with_unresolved_names(&run, &["name"])

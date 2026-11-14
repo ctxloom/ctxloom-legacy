@@ -16,6 +16,7 @@
 
 mod error;
 mod home;
+mod launch;
 mod launcher;
 mod orders;
 mod workspace;
@@ -24,6 +25,9 @@ mod workspace;
 pub use error::diagnostic_samples;
 pub use error::{LaunchError, EN_US};
 pub use home::{set_up_home, set_up_launch, HomeSetUp, HomeSetup, LaunchSetUp, LaunchSetup};
+pub use launch::{
+    launch_of, FindProgram, LaunchEngines, LaunchMade, LaunchRequest, NotLaunched, Unprepared,
+};
 pub use launcher::{Launched, Launcher, Outcome, Sweeper, Swept};
 pub use orders::{Order, Orders};
 pub use workspace::{place_workspace, Axis, Placement, Workspace};

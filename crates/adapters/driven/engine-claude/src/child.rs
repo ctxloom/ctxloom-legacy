@@ -5,6 +5,9 @@
 //! The command is a turn's ([`crate::drive`]: the context file, the session
 //! home's `--settings` and its hooks, the model and effort, a child's
 //! environment), with streaming input and the echo of each message given.
+//! It is half of the child's start (T10): the one launch
+//! (`run_launcher::launch_of`) applies the permits to it and finds its
+//! program, and [`ChildEngine::start`] spawns that launch exactly as it is.
 //! [`crate::conversation`] says what to write and what a line means; this
 //! module is its process: the control writes under one lock, a reader thread
 //! reads stdout, writes what a line asks (the next held turn) and passes the
@@ -24,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use run_ports::{
     ChildControl, ChildEngine, ChildError, ChildMessage, ChildSpec, Ended, EngineError, Exit,
-    Queued, StartedChild, TurnCommand, TurnRequest, Urgency,
+    Launch, Queued, StartedChild, Stdio, TurnCommand, TurnRequest, Urgency,
 };
 use run_within::{run_piped, Piped, RunError, Spec};
 
@@ -38,15 +41,20 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 /// How often [`ChildControl::end`] looks whether the engine has exited.
 const POLL: Duration = Duration::from_millis(10);
 
-/// The names a child's host sets for it, which no permit replaces.
-const OWNED: [&str; 2] = ["HOME", "PATH"];
-
 /// The most of stderr kept for the exit's detail.
 const STDERR_KEPT: usize = 4096;
 
 impl ChildEngine for Claude {
-    fn start(&self, spec: &ChildSpec) -> Result<StartedChild, ChildError> {
-        start(&child_command(spec)?)
+    fn command(&self, spec: &ChildSpec) -> Result<TurnCommand, ChildError> {
+        Ok(child_command(spec)?)
+    }
+
+    fn stdio(&self) -> Stdio {
+        Stdio::StreamJson
+    }
+
+    fn start(&self, _: &ChildSpec, launch: &Launch) -> Result<StartedChild, ChildError> {
+        start(&launch.command())
     }
 }
 
@@ -89,12 +97,9 @@ pub(crate) fn child_command(spec: &ChildSpec) -> Result<TurnCommand, EngineError
         command.args.push("--session-id".to_string());
         command.args.push(session_id.clone());
     }
+    // The launcher's permits are the one launch's to apply (T10,
+    // `run_launcher::launch_of`), as a turn's and the terminal's are.
     command.env = drive::environment(&Claude::new(), false, &request)?;
-    // The launcher's permits reach the child as a turn's do (ruling 78),
-    // never over a name ctxloom sets: the adapter's, and the HOME and PATH
-    // its host sets (the one-shot's own).
-    let owned: Vec<String> = OWNED.map(String::from).to_vec();
-    let _ = run_ports::apply_permits(&spec.env, &mut command.env, &owned);
     command.cwd = request.cwd.clone();
     Ok(command)
 }

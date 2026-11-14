@@ -27,7 +27,8 @@ use std::time::Duration;
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 
 use crate::engine::{EngineError, TurnOutcome};
-use crate::launcher::Exit;
+use crate::launch::{Launch, Stdio};
+use crate::launcher::{Exit, TurnCommand};
 
 /// How a message reaches a child (D12: one message type, with an urgency).
 /// The same urgency means the same outcome on every engine (D20).
@@ -220,9 +221,27 @@ impl fmt::Debug for StartedChild {
 }
 
 /// An engine that runs long-lived children.
+///
+/// A child is started in two halves (T10): its engine's [`command`]
+/// (`ChildEngine::command`), which the one launch (`run_launcher::launch_of`)
+/// makes into a [`Launch`] (the permits applied, the program found, the
+/// command measured), and the [`start`](ChildEngine::start) of that launch,
+/// which only spawns it and speaks the engine's protocol.
+///
+/// [`command`]: ChildEngine::command
 pub trait ChildEngine: Send + Sync {
-    /// Start a child. An `Err` started nothing.
-    fn start(&self, spec: &ChildSpec) -> Result<StartedChild, ChildError>;
+    /// The child's command, as the engine builds it from `spec`: no permit
+    /// applied, its program as configured. An `Err` is why it cannot be
+    /// planned.
+    fn command(&self, spec: &ChildSpec) -> Result<TurnCommand, ChildError>;
+
+    /// The protocol the child speaks on its stdin and stdout.
+    fn stdio(&self) -> Stdio;
+
+    /// Start `launch`, the child `spec` planned, exactly as it is (its
+    /// program, arguments, environment and directory), conversed with as
+    /// `spec` says. An `Err` started nothing.
+    fn start(&self, spec: &ChildSpec, launch: &Launch) -> Result<StartedChild, ChildError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

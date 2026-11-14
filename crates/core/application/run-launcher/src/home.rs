@@ -1,7 +1,8 @@
 //! THE one session-setup path (owner, 2026-11-12, "One session-setup
 //! path"): everything that sets up a launch, the interactive terminal's, a
 //! one-shot child's and the daemon's hosted children alike
-//! ([`set_up_launch`]): the workspace its engine is placed in, its session
+//! ([`set_up_launch`], the first step of the one launch,
+//! `crate::launch_of`): the workspace its engine is placed in, its session
 //! home, what it reads only from where it works, and the live project named
 //! to it. The engine prepares the home from what it holds of the
 //! files it merges into (ruling 113); its files are written whole, its seeds
@@ -111,7 +112,7 @@ pub fn set_up_home(
 /// What a launch is set up from: its home's setup, whose `cwd` is the live
 /// project (none: no project), the workspace axis it asks for, and the
 /// environment it hands the engine with the names it owns there.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct LaunchSetup {
     pub home: HomeSetup,
     pub workspace: Workspace,
@@ -119,16 +120,41 @@ pub struct LaunchSetup {
     pub owned: Vec<String>,
 }
 
+impl std::fmt::Debug for LaunchSetup {
+    /// The environment's names alone: no value of it renders.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LaunchSetup")
+            .field("home", &self.home)
+            .field("workspace", &self.workspace)
+            .field("env", &run_ports::RedactedEnv(&self.env))
+            .field("owned", &self.owned)
+            .finish()
+    }
+}
+
 /// A launch set up: its home, where its engine works (`cwd`, and the
 /// placement that put it there), and the environment and owned names the
 /// engine is handed, the live project named in them.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LaunchSetUp {
     pub home: HomeSetUp,
     pub placed: Option<Placement>,
     pub cwd: Option<String>,
     pub env: std::collections::BTreeMap<String, String>,
     pub owned: Vec<String>,
+}
+
+impl std::fmt::Debug for LaunchSetUp {
+    /// The environment's names alone: no value of it renders.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LaunchSetUp")
+            .field("home", &self.home)
+            .field("placed", &self.placed)
+            .field("cwd", &self.cwd)
+            .field("env", &run_ports::RedactedEnv(&self.env))
+            .field("owned", &self.owned)
+            .finish()
+    }
 }
 
 /// Set up a launch: THE one session-setup path (owner, 2026-11-12), the
