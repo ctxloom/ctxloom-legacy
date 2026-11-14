@@ -17,7 +17,10 @@ mod read {
     fn test_a_dry_run_carries_its_arguments_into_the_plan() {
         let plan = json_of(&["run", "--dry-run", "hello", "big", "world"]);
         assert_eq!(plan["prompt"], "hello big world");
-        assert_eq!(plan["profiles"], serde_json::json!(["dev"]));
+        assert_eq!(
+            plan["profiles"],
+            serde_json::json!(["projects/calm-otter/bundles/project/profiles/dev"])
+        );
         assert_eq!(
             json_of(&["run", "--dry-run", "--prompt", "pp", "hello"])["prompt"],
             "pp"
@@ -36,7 +39,7 @@ mod read {
         ]);
         assert_eq!(
             (agent["agent"].as_str(), agent["workspace"].as_str()),
-            (Some("dev"), Some("worktree"))
+            (Some("projects/calm-otter/agents/dev"), Some("worktree"))
         );
         let only = json_of(&[
             "run",
@@ -134,11 +137,13 @@ mod read {
     }
 
     // OD-40 (design §5.9): `run --dry-run` is `CreateRun(validate_only)`, its
-    // json the `Run` it would create: no name (nothing is created), the plan's
-    // engine, profiles and context, the token estimate a number (uint32,
-    // OQ-12), and the agent's `settings` an `AgentSettings`, each value with
-    // the layer that said it, an unset one no `value`, an env key's name
-    // `variable` (AIP-122).
+    // json the `Run` it would create, named under the project the daemon
+    // names (owner ruling 2026-11-14: "dry run *absolutely* calls (and
+    // spawns, if necessary) a daemon"), its ID not yet given (`-`: nothing is
+    // created); its agent, engine and profiles resource names (design §2);
+    // the token estimate a number (uint32, OQ-12), and the agent's
+    // `settings` an `AgentSettings`, each value with the layer that said it,
+    // an unset one no `value`, an env key's name `variable` (AIP-122).
     #[test]
     fn test_a_dry_run_is_the_run_it_would_create() {
         let plan = go(
@@ -148,11 +153,14 @@ mod read {
         );
         assert_eq!(plan.code(), 1, "{}", plan.err);
         let run = plan.json();
-        assert!(run.get("name").is_none(), "{run}");
-        assert_eq!(run["agent"], "dev");
-        assert_eq!(run["engine"], "claude-code");
+        assert_eq!(run["name"], "projects/calm-otter/runs/-", "{run}");
+        assert_eq!(run["agent"], "projects/calm-otter/agents/dev");
+        assert_eq!(run["engine"], "projects/calm-otter/engines/claude-code");
         assert_eq!(run["runtime"], "host");
-        assert_eq!(run["profiles"], serde_json::json!(["dev"]));
+        assert_eq!(
+            run["profiles"],
+            serde_json::json!(["projects/calm-otter/bundles/project/profiles/dev"])
+        );
         assert_eq!(run["prompt"], "hello");
         assert!(run["tokens"].as_u64().is_some_and(|n| n > 0), "{run}");
         assert!(run["context"].is_string(), "{run}");
@@ -188,5 +196,39 @@ mod read {
         let run = bare.json();
         assert!(run.get("settings").is_none(), "{run}");
         assert!(run.get("profiles").is_none(), "{run}");
+    }
+
+    // Owner rulings 2026-11-14: a dry run never mints a project id, so in a
+    // project nothing has named its `Run.name` is unresolved and prints as
+    // null, never left out, and its references keep their configured text
+    // (ruling: "its references print as configured text"; OQ-16).
+    #[test]
+    fn test_an_unnamed_projects_dry_run_prints_a_null_name_and_configured_references() {
+        let plan = go_in(
+            &["run", "--dry-run", "--agent", "dev", "hello"],
+            JSON,
+            &[ENGINE_HOME, ENGINE_PROJECT],
+            &Unnamed,
+        );
+        assert_eq!(plan.code(), 1, "{}", plan.err);
+        let run = plan.json();
+        let name = run.as_object().and_then(|run| run.get("name"));
+        assert_eq!(name, Some(&serde_json::Value::Null), "{run}");
+        assert_eq!(run["agent"], "dev");
+        assert_eq!(run["engine"], "claude-code");
+        assert_eq!(run["profiles"], serde_json::json!(["dev"]));
+    }
+
+    // The daemon is asked for a json dry run's names, and its failure is the
+    // command's; a text dry run prints no name and asks none.
+    #[test]
+    fn test_a_json_dry_run_asks_the_daemon_and_a_text_one_does_not() {
+        let line = ["run", "--dry-run", "--agent", "dev", "hello"];
+        let layers = [ENGINE_HOME, ENGINE_PROJECT];
+        assert_eq!(
+            go_in(&line, JSON, &layers, &Unreachable).refused(),
+            "daemon-api-unreached:10"
+        );
+        assert_eq!(go_in(&line, TEXT, &layers, &Unreachable).code(), 1);
     }
 }

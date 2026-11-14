@@ -212,16 +212,24 @@ pub(crate) fn minting(noun: &str) -> crate::Minting {
 }
 
 impl DaemonNames {
+    fn wiring(&self) -> Result<Wiring, Failure> {
+        Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))
+    }
+
     fn parent(&self) -> Result<String, Failure> {
-        let wiring =
-            Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))?;
-        crate::daemon::library_parent(&wiring, &self.version, self.minting)
+        crate::daemon::library_parent(&self.wiring()?, &self.version, self.minting)
     }
 }
 
 impl library_cli::Names for DaemonNames {
     fn parent(&self) -> Result<String, Failure> {
         DaemonNames::parent(self)
+    }
+
+    /// A dry run's: the daemon asked, but a project nothing has named is
+    /// not named for it (owner rulings 2026-11-14).
+    fn named_parent(&self) -> Result<Option<String>, Failure> {
+        crate::daemon::library_parent_if_named(&self.wiring()?, &self.version, self.minting)
     }
 }
 

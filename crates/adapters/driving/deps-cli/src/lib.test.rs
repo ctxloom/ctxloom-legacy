@@ -1199,9 +1199,10 @@ fn test_hold_and_unhold_say_what_they_did() {
     let local = go(&fx, &["deps", "hold", "mine"], TEXT);
     assert_eq!(local.ok().out, "");
     assert!(local.err.contains("nothing to hold"), "{}", local.err);
-    // A local bundle is no dependency: nothing to answer but the notice.
+    // A local bundle is no dependency: its name is unresolved, and prints
+    // as null, never left out (owner ruling 2026-11-14).
     let local = go(&fx, &["deps", "hold", "mine"], JSON);
-    assert_eq!(local.ok().json(), serde_json::json!({}));
+    assert_eq!(local.ok().json(), serde_json::json!({"name": null}));
     assert_eq!(
         go(&fx, &["deps", "hold", "typo"], TEXT).refused(),
         ("deps-application-nothing-to-hold", 20)
@@ -1326,9 +1327,12 @@ fn test_bundle_move_json_names_where_the_bundle_went() {
         JSON,
     )
     .json();
+    // The other project's name this project cannot give: null, never left
+    // out (owner ruling 2026-11-14).
     assert_eq!(
         json,
         serde_json::json!({
+            "bundle": {"name": null},
             "path": "other-project/.ctxloom/content/bundles/v2/fourth",
             "applied": true,
         })

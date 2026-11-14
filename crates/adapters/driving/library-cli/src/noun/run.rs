@@ -1,6 +1,9 @@
 //! `run --dry-run` (B2): its json the `Run` it would create (OD-40, design
-//! §5.9: `CreateRun` with `validate_only`), named nothing, since nothing is
-//! created, so it asks no daemon for a name.
+//! §5.9: `CreateRun` with `validate_only`), named under the project the
+//! daemon names (owner ruling 2026-11-14: "dry run *absolutely* calls (and
+//! spawns, if necessary) a daemon"), its references resource names (design
+//! §2). It never mints the project's id: in a project nothing has named,
+//! its name prints as null and its references keep their configured text.
 
 use library_application::{DryRun, FindingRow};
 
@@ -34,7 +37,12 @@ pub(crate) fn read(
     say_notices(&outcome.notices, PROG, cx.format, cx.catalog, err);
     let previewed = outcome.result.map_err(failed)?;
     if cx.format == Format::Json {
-        api::print(out, &planned(&previewed.plan))
+        let parent = cx.names.named_parent()?;
+        let run = planned(parent.as_deref(), &previewed.plan);
+        // Unresolved, the name is null, never left out (owner 2026-11-14).
+        daemon_proto::with_unresolved_names(&run, &["name"])
+            .map_err(io::Error::other)
+            .and_then(|printed| api::print(out, &printed))
     } else {
         text::dry_run(out, &previewed.plan)
     }
@@ -47,14 +55,27 @@ pub(crate) fn read(
     Err(AppError::aborted(&previewed.fatal).into_failure())
 }
 
-/// The `Run` a dry run would create: the plan's agent, engine, workspace,
-/// runtime, profiles, fragments, context and its token estimate, the prompt,
-/// the findings, and the agent's settings on the engine.
-pub(crate) fn planned(plan: &DryRun) -> v1::Run {
+/// The `Run` a dry run would create, under `parent` (none: the project is
+/// not named): the plan's agent, engine, workspace, runtime, profiles,
+/// fragments, context and its token estimate, the prompt, the findings, and
+/// the agent's settings on the engine. Its name is `<parent>/runs/-`, as
+/// nothing is created and no run ID is given; its agent, engine and
+/// profiles are resource names (design §2), their configured text where
+/// the project has no name.
+pub(crate) fn planned(parent: Option<&str>, plan: &DryRun) -> v1::Run {
+    let named = |name: &dyn Fn(&str, &str) -> String, text: &str| match parent {
+        Some(parent) if !text.is_empty() => name(parent, text),
+        _ => text.to_string(),
+    };
     v1::Run {
-        agent: plan.agent.clone(),
-        engine: plan.engine.clone(),
-        profiles: plan.profiles.clone(),
+        name: parent.map_or_else(String::new, |parent| format!("{parent}/runs/-")),
+        agent: named(&|p, a| format!("{p}/agents/{a}"), &plan.agent),
+        engine: named(&crate::noun::engine::engine_name, &plan.engine),
+        profiles: plan
+            .profiles
+            .iter()
+            .map(|profile| named(&crate::catalog::profile_ref, profile))
+            .collect(),
         context: plan.context.clone(),
         // A count (OQ-12); no context holds 2^32 tokens.
         tokens: u32::try_from(plan.tokens).unwrap_or(u32::MAX),

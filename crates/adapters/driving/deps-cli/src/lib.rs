@@ -148,6 +148,30 @@ fn respond<M: Serialize>(
     }
 }
 
+/// [`respond`], with a name at each of `names` always printed, `null` where
+/// it is unresolved (owner ruling 2026-11-14: "list the name as undefined
+/// -- don't outright skip the output"; `daemon_proto::with_unresolved_names`).
+fn respond_naming<M: Serialize>(
+    cx: &Context<'_>,
+    out: &mut dyn Write,
+    names: &[&str],
+    message: impl FnOnce(&str) -> M,
+    text: impl FnOnce(&mut dyn Write) -> io::Result<()>,
+) -> Result<(), Failure> {
+    if cx.format != Format::Json {
+        return emit(cx.format, out, &(), text);
+    }
+    let parent = cx.names.parent()?;
+    let printed = daemon_proto::with_unresolved_names(&message(&parent), names).map_err(|e| {
+        AppError::File {
+            what: "the answer".to_string(),
+            detail: e.to_string(),
+        }
+        .into_failure()
+    })?;
+    emit(cx.format, out, &printed, text)
+}
+
 fn text_arg(matches: &ArgMatches, name: &str) -> String {
     one(matches, name).unwrap_or_default()
 }
@@ -363,9 +387,12 @@ fn dependencies(
         verb => {
             let held = verb == "hold" && !flag(args, "undo");
             let result = answer(cx, deps.hold(&text_arg(args, "name"), held), err)?;
-            respond(
+            // A local bundle is no dependency: its name is null (owner
+            // 2026-11-14).
+            respond_naming(
                 cx,
                 out,
+                &["name"],
                 |parent| {
                     // The Dependency after the write, read from the lock.
                     let listing = deps.list().result.unwrap_or(deps_application::DepsListing {
@@ -471,9 +498,12 @@ fn bundle(
             }),
             err,
         )?;
-        respond(
+        // Into another project's directory the bundle's name is that
+        // project's, which this one cannot give: null (owner 2026-11-14).
+        respond_naming(
             cx,
             out,
+            &["bundle.name"],
             |parent| bundle::moved(parent, &moved),
             |out| text::moved(out, &moved),
         )?;

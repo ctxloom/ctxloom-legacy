@@ -46,5 +46,9 @@ pub struct AgentRequest {
     pub roots: Option<Vec<(String, String)>>,
     pub env: Option<Vec<String>>,
     /// `session` | `host` (owner ruling of 2026-11-13); empty clears it.
+    /// `host` only on a home write (owner ruling of 2026-11-14).
     pub session_home: Option<String>,
+    /// `--home`: the write goes to the home config, not the project's
+    /// (vocabulary §4: every write defaults to the project).
+    pub home: bool,
 }

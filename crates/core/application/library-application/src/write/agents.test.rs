@@ -28,6 +28,22 @@ fn world() -> (Library, Arc<Mem>) {
     world_with(CONFIG)
 }
 
+/// A project with a home config beside it (the first layer is the home's).
+fn world_with_home(home: &'static str) -> (Library, Arc<Mem>) {
+    Setup {
+        bundles: &[(
+            "project",
+            &[
+                ENVELOPE,
+                ("profiles/dev.yaml", "bundles: []\nparents: [x]\n"),
+            ],
+        )],
+        layers: &[home, CONFIG],
+        ..Setup::default()
+    }
+    .fixture()
+}
+
 fn err<T>(out: crate::Outcome<T>) -> String {
     format!("{:?}", out.result.err().expect("an error"))
 }
@@ -133,6 +149,105 @@ fn test_session_home_is_written_to_the_binding_in_its_words_only() {
             }
         ),
         "ctxloom agent edit dev2 --session-home host --yes"
+    );
+}
+
+// Owner ruling of 2026-11-14 ("accept session home for anything that's
+// valid for projects and home config writes and honor the selection"): a
+// project write takes `session` and refuses `host`, naming the home write,
+// and writes nothing.
+#[test]
+fn test_session_home_host_is_refused_for_the_project_config_and_nothing_is_written() {
+    let (library, mem) = world();
+    let host = AgentRequest {
+        session_home: Some("host".to_string()),
+        ..dev()
+    };
+    let refused = write(&library, "dev2", &host, false);
+    assert!(
+        err(refused).contains("SessionHomeHostInProject"),
+        "host from a project write is refused"
+    );
+    assert_eq!(mem.writes(), 0);
+    let session = AgentRequest {
+        session_home: Some("session".to_string()),
+        ..dev()
+    };
+    write(&library, "dev2", &session, false).result.unwrap();
+    assert!(mem
+        .config(Scope::Project)
+        .unwrap()
+        .contains("    session_home: session\n"));
+}
+
+// The same ruling: a home write (`--home`) takes either word and writes the
+// home config alone, where `host` takes effect (ruling 46 honours it there).
+#[test]
+fn test_a_home_write_takes_host_into_the_home_config_alone() {
+    let (library, mem) = world_with_home("schema_version: 9\n");
+    let row = write(
+        &library,
+        "dev2",
+        &AgentRequest {
+            session_home: Some("host".to_string()),
+            home: true,
+            ..dev()
+        },
+        false,
+    )
+    .result
+    .unwrap();
+    assert_eq!(row.session_home, "host");
+    assert!(mem
+        .config(Scope::Home)
+        .unwrap()
+        .contains("  dev2:\n    engine: claude-code\n"));
+    assert!(mem
+        .config(Scope::Home)
+        .unwrap()
+        .contains("    session_home: host\n"));
+    assert!(!mem.config(Scope::Project).unwrap().contains("dev2"));
+    // the edit of it reads the home's entry, and keeps its engine
+    let edited = write(
+        &library,
+        "dev2",
+        &AgentRequest {
+            session_home: Some("session".to_string()),
+            home: true,
+            ..AgentRequest::default()
+        },
+        true,
+    )
+    .result
+    .unwrap();
+    assert_eq!(edited.engine, "claude-code");
+    assert_eq!(edited.session_home, "session");
+    assert!(!mem.config(Scope::Project).unwrap().contains("dev2"));
+}
+
+// The refusal's fix is the same write, sent home; the swap preview's apply
+// command keeps a home write home.
+#[test]
+fn test_the_refusal_names_the_home_write_and_the_apply_command_keeps_home() {
+    use angzarr_diagnostic::Diagnostic as _;
+    let refusal = crate::WriteError::SessionHomeHostInProject {
+        name: "dev2".to_string(),
+        verb: "edit".to_string(),
+    };
+    assert_eq!(
+        refusal.code(),
+        "library-application-write-session-home-host-in-project"
+    );
+    assert_eq!(
+        super::apply_command(
+            "dev2",
+            &AgentRequest {
+                session_home: Some("host".to_string()),
+                home: true,
+                ..AgentRequest::default()
+            }
+        ),
+        "ctxloom agent edit dev2 --session-home host --home --yes"
     );
 }
 

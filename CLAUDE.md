@@ -1799,11 +1799,19 @@ only. `run --dry-run` is `CreateRun` with `validate_only`, its json the
 `Run` it would create (daemon.proto's `Run`, amended per design §5.9:
 `settings` an `AgentSettings`, `tokens` uint32, and `workspace`,
 `runtime`, `prompt` and `fragments` added; the draft's `Setting` is gone),
-named nothing, so it asks no daemon; a finding's false `fatal` is left out. Go parity ends for these nouns' JSON (design §8.1): their JSON rows
+named under the project the daemon names, which a json dry run asks (owner
+ruling 2026-11-14: "dry run *absolutely* calls (and spawns, if necessary) a
+daemon"; a text one prints no name and asks none): `<parent>/runs/-` (no
+run ID is given, nothing being created), its agent, engine and profiles
+resource names. It never mints the project's id (`Minting::Never`; library-
+cli's `Names::named_parent`, the wiring's `library_parent_if_named`): in a
+project nothing has named, its `name` prints as `null` and its references
+keep their configured text. A finding's false `fatal` is left out. Go parity ends for these nouns' JSON (design §8.1): their JSON rows
 are retired from `fixtures/parity/`, the text rows stay; `config show`'s
 JSON rows still compare Go's answer, the resource's `document`
 (`library_parity`'s `as_go_printed`), and the dry run's compared keys
-read a default proto3 JSON leaves out as Go's printed one (`printed`).
+read a default proto3 JSON leaves out as Go's printed one (`printed`), its
+agent and profiles each name's last segment (`as_configured`).
 
 The feature steps read proto3 JSON (design §8.1, the binary's
 `library.test.rs` and `gherkin_common.test.rs`): a selector `[key$=suffix]`
@@ -1873,9 +1881,15 @@ library's `bundle` noun and owns `remote` and `deps`.
   `{}`), `deps check [ref]` one `CheckDependenciesResponse` (rows by
   `DependencyCheck.State`; a whole check lists outdated and unchecked only),
   `deps upgrade` `UpgradeDependenciesResponse`, `deps hold|unhold` the
-  Dependency, `bundle push` `PushBundleResponse` (`State` COMMITTED or
-  PULL_REQUEST_OPENED) and `bundle move` `MoveBundleResponse` (a directory
-  move gives its `path` alone). A pin change is the shared `PinChange`
+  Dependency (a local bundle, no dependency, `{"name": null}`), `bundle
+  push` `PushBundleResponse` (`State` COMMITTED or PULL_REQUEST_OPENED) and
+  `bundle move` `MoveBundleResponse` (a directory move gives its `path`, the
+  bundle there `{"name": null}`: that project's name is not this one's to
+  give). An unresolved name prints as JSON `null`, never left out (owner
+  ruling 2026-11-14): pbjson-build prints nothing for an unset field, so the
+  answer names the paths whose name always prints and
+  `daemon_proto::with_unresolved_names` puts `null` (first, a name being
+  field 1) where one is absent. A pin change is the shared `PinChange`
   (`old_`/`new_`, `ChangeKind`, `PinChange.Compatibility`, ItemKind's `HOOK`).
   Text output is unchanged.
 - Evidence rule: content is removed upstream only on a not-found from a
@@ -2234,9 +2248,14 @@ the dry run's `settings.session_home` and Settings row, `agent show`'s
 `session_home` (the binding's word); `agent create|edit --session-home
 <session|host>` writes it (empty clears it; another word is
 `library-application-write-unknown-session-home`). Agent writes go to the
-project config, where ruling 46 strips `host`, and a binding replaces a
-lower layer's whole, so an agent says `host` only when it is bound in the
-home config. `auth` is THE auth setting: `none`, `login` (the
+project config unless `--home` (vocabulary §4's spelling) sends them to the
+home config, and each layer takes the values valid for it (owner ruling of
+2026-11-14): `session` anywhere, `host` only on a home write, where it
+takes effect; a project write of `host` is refused,
+`library-application-write-session-home-host-in-project` (exit 20, its fix
+the same write with `--home`), and writes nothing. A binding replaces a
+lower layer's whole, so an agent the project also binds says `host` only
+once the project's binding is gone. `auth` is THE auth setting: `none`, `login` (the
 human's own login shared in place), `token` (the engine's built-in variables),
 or a source `{env: NAME|[NAMES], file: PATH}`; a name that is not a variable
 name is refused without being repeated; a file is only a primary session's.
@@ -2285,9 +2304,9 @@ taken out with a warning (`strip_project_only`, ruling 46).
 An agent's references are resource names (design §2, B2's references): its
 `engine` `<parent>/engines/<e>`, each of its `profiles` B1's profile name
 (`library-cli`'s `catalog::profile_ref`; one that names no place keeps its
-text, OQ-16), and `resolved.engine` the engine's. The dry run's `Run` keeps
-its agent, engine and profiles as configured text: naming them would ask
-the daemon for the project in `--dry-run`.
+text, OQ-16), and `resolved.engine` the engine's. So are the dry run's
+`Run`'s agent (`<parent>/agents/<a>`), engine and profiles, their
+configured text where the project has no name yet.
 `auth status` and doctor read the effective source (`auth-application`; any
 one variable authenticates, `via` names it). A source that is a FILE alone
 (owner ruling 53) authenticates no child: a child launch (`claude -p`,

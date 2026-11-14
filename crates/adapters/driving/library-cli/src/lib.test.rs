@@ -116,6 +116,20 @@ impl Names for Home {
     }
 }
 
+/// A ctxloom project nothing has named, asked by a command that may not
+/// name it (a dry run, owner ruling 2026-11-14).
+pub(crate) struct Unnamed;
+
+impl Names for Unnamed {
+    fn parent(&self) -> Result<String, Failure> {
+        panic!("an unnamed project's command asks whether it is named")
+    }
+
+    fn named_parent(&self) -> Result<Option<String>, Failure> {
+        Ok(None)
+    }
+}
+
 /// No daemon to name the project: the call fails, as one unreached does.
 pub(crate) struct Unreachable;
 
