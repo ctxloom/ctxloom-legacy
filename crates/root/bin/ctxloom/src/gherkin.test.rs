@@ -108,6 +108,7 @@ impl CommonWorld for World {
             || capture_opencode::reports_login(self, step)
             || daemon_spec::claims(self, step)
             || engines::starts(self, step)
+            || engines::authors(self, step)
             || diagnosis::runs(self, step)
             || init_companions::runs(self, step)
         {
