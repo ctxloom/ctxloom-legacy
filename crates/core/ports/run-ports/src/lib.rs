@@ -16,6 +16,7 @@ mod discovery;
 mod edge;
 mod engine;
 mod git;
+mod held;
 mod hook;
 mod host;
 mod launch;
@@ -30,6 +31,7 @@ mod settings;
 mod sink;
 mod tls;
 mod token;
+mod version;
 
 pub use argv::{check_command_line, CommandTooLong, Measure, MAX_ARG_STRLEN, WINDOWS_COMMAND_LINE};
 pub use bind::{bind_for, BindPlan, BindRefusal, ContainerRuntime, PlatformFacts, Probe, Runtime};
@@ -48,6 +50,10 @@ pub use engine::{
     HOME_VARIABLE, ROOT_VARIABLE,
 };
 pub use git::{git_config, GitUser, GIT_CONFIG_FILE};
+pub use held::{
+    up_to_date, Batch, Bound, GapWhy, Held, HeldEntry, HeldFact, HeldFacts, HeldGap, HoldError,
+    HoldSummary, Settle, Settled, APPEND_WAIT, GAP_SLACK, HELD_DIR, HOME_BOUND, SESSION_BOUND,
+};
 pub use hook::{
     endpoint_url, hook_environment, parse_endpoint, Bearer, BearerError, Dial, EndpointError,
     RedactedEnv, BEARER_VARIABLE, ENDPOINT_VARIABLE, HOOK_VARIABLES, RUN_VARIABLE,
@@ -72,11 +78,13 @@ pub use settings::{AuthSetting, CredentialPolicy, EngineSettings, SessionHome};
 pub use sink::{Delivery, FactSink};
 pub use tls::{CertError, CertMint, CertNames, HookCertificate, PublicCert};
 pub use token::{Token, TokenError, TokenHash, TokenSource, EN_US};
+pub use version::newer;
 
 /// One value of every error, for the catalog test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn diagnostic_samples() -> Vec<Box<dyn angzarr_diagnostic::Diagnostic>> {
     let mut samples = token::diagnostic_samples();
+    samples.extend(held::diagnostic_samples());
     samples.extend(hook::diagnostic_samples());
     samples.extend(bind::diagnostic_samples());
     samples.push(Box::new(CommandTooLong {
