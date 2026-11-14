@@ -241,3 +241,199 @@ mod write {
         assert!(said.ends_with("Modified profile \"dev\"\n"), "{said}");
     }
 }
+
+// Each view's mapping to its message, field by field (OD-40): what the
+// binary's tests alone reached.
+mod mapping {
+    use super::super::*;
+    use library_application::{Preview, ProfileEdited};
+    use serde_json::json;
+
+    const PARENT: &str = "projects/p";
+
+    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
+        let mut out = Vec::new();
+        crate::api::print(&mut out, message).unwrap();
+        serde_json::from_slice(&out).unwrap()
+    }
+
+    fn strings(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_string()).collect()
+    }
+
+    #[test]
+    fn test_a_listed_profile_is_its_whole_row() {
+        let list = ProfileList {
+            rows: vec![ProfileRow {
+                name: "dev".to_string(),
+                display_name: "dev".to_string(),
+                description: "the dev one".to_string(),
+                parents: strings(&["base", "lean"]),
+                tags: strings(&["team"]),
+                bundles: strings(&["demo"]),
+                default: true,
+                path: "profiles/dev.yaml".to_string(),
+                is_remote: false,
+                bundle: String::new(),
+                entry: String::new(),
+            }],
+            hint: String::new(),
+        };
+        assert_eq!(
+            json_of(&listed(PARENT, &list)),
+            json!({"profiles": [{
+                "name": "projects/p/bundles/project/profiles/dev",
+                "description": "the dev one",
+                "parents": [
+                    "projects/p/bundles/project/profiles/base",
+                    "projects/p/bundles/project/profiles/lean",
+                ],
+                "tags": ["team"],
+                "bundles": ["projects/p/bundles/demo"],
+                "default": true,
+                "path": "profiles/dev.yaml",
+            }]})
+        );
+    }
+
+    fn show() -> ProfileShow {
+        ProfileShow {
+            name: "dev".to_string(),
+            description: "the dev one".to_string(),
+            parents: strings(&["base"]),
+            tags: strings(&["team"]),
+            bundles: strings(&["demo"]),
+            variables: [("lang".to_string(), "go".to_string())].into(),
+            exclude_fragments: strings(&["demo#fragments/ctl"]),
+            exclude_mcp: strings(&["tree-sitter"]),
+            path: "profiles/dev.yaml".to_string(),
+            default: false,
+            ..ProfileShow::default()
+        }
+    }
+
+    #[test]
+    fn test_a_shown_profile_is_its_whole_resource() {
+        assert_eq!(
+            json_of(&shown(PARENT, &show())),
+            json!({
+                "name": "projects/p/bundles/project/profiles/dev",
+                "description": "the dev one",
+                "parents": ["projects/p/bundles/project/profiles/base"],
+                "tags": ["team"],
+                "bundles": ["projects/p/bundles/demo"],
+                "variables": {"lang": "go"},
+                "exclude_fragments": ["demo#fragments/ctl"],
+                "exclude_mcp_servers": ["tree-sitter"],
+                "path": "profiles/dev.yaml",
+                "default": false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_created_profile_answers_what_it_was_made_of() {
+        let request = ProfileCreateRequest {
+            name: "dev".to_string(),
+            description: "the dev one".to_string(),
+            parents: Vec::new(),
+            bundles: Vec::new(),
+            skills: Vec::new(),
+            target: String::new(),
+        };
+        let made = ProfileCreated {
+            name: "dev".to_string(),
+            parents: strings(&["base"]),
+            bundles: strings(&["demo"]),
+            path: "profiles/dev.yaml".to_string(),
+        };
+        assert_eq!(
+            json_of(&created(PARENT, &request, &made)),
+            json!({
+                "profile": {
+                    "name": "projects/p/bundles/project/profiles/dev",
+                    "description": "the dev one",
+                    "parents": ["projects/p/bundles/project/profiles/base"],
+                    "bundles": ["projects/p/bundles/demo"],
+                    "path": "profiles/dev.yaml",
+                },
+                "path": "profiles/dev.yaml",
+                "applied": true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_modified_or_edited_profile_names_it() {
+        let done = ProfileModified {
+            name: "dev".to_string(),
+            changes: strings(&["description"]),
+        };
+        assert_eq!(
+            json_of(&modified(PARENT, "dev", &done)),
+            json!({
+                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
+                "applied": true,
+                "changes": ["description"],
+            })
+        );
+        let updated = ProfileEdited::Updated {
+            path: "profiles/dev.yaml".to_string(),
+        };
+        assert_eq!(
+            json_of(&edited(PARENT, "dev", &updated)),
+            json!({
+                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
+                "path": "profiles/dev.yaml",
+                "applied": true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_an_exported_or_imported_profile_answers_its_files() {
+        let out = ProfileExported {
+            source: "profiles/dev.yaml".to_string(),
+            dest: "/tmp/dev.yaml".to_string(),
+        };
+        assert_eq!(
+            json_of(&exported(PARENT, "dev", &out)),
+            json!({
+                "profile": "projects/p/bundles/project/profiles/dev",
+                "source": "profiles/dev.yaml",
+                "destination": "/tmp/dev.yaml",
+                "applied": true,
+            })
+        );
+        let came = ProfileImported {
+            source: "/tmp/dev.yaml".to_string(),
+            dest: "profiles/dev.yaml".to_string(),
+        };
+        assert_eq!(
+            json_of(&imported(PARENT, "", &came)),
+            json!({
+                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
+                "path": "profiles/dev.yaml",
+                "applied": true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_removed_profile_s_preview_says_what_would_go() {
+        let preview = Removal::Preview(Preview::of(
+            "dev".to_string(),
+            strings(&["profiles/dev.yaml"]),
+            "ctxloom profile remove dev --yes".to_string(),
+        ));
+        assert_eq!(
+            json_of(&removed(PARENT, "dev", &preview)),
+            json!({
+                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
+                "applied": false,
+                "detail": ["profiles/dev.yaml"],
+                "apply_command": "ctxloom profile remove dev --yes",
+            })
+        );
+    }
+}

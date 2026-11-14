@@ -392,3 +392,108 @@ mod write {
         assert_eq!(mem.config(Scope::Project), before, "nothing is written");
     }
 }
+
+// Each view's mapping to its message, field by field (OD-40): what the
+// binary's tests alone reached.
+mod mapping {
+    use super::super::*;
+    use library_application::{
+        AgentRow, AgentShow, NotCarried, Preview, Removal, Requirement, RequirementSource,
+    };
+    use serde_json::json;
+
+    const PARENT: &str = "projects/p";
+
+    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
+        let mut out = Vec::new();
+        crate::api::print(&mut out, message).unwrap();
+        serde_json::from_slice(&out).unwrap()
+    }
+
+    fn row() -> AgentRow {
+        AgentRow {
+            name: "dev".to_string(),
+            engine: String::new(),
+            profiles: Vec::new(),
+            runtime: String::new(),
+            driving: "tasks".to_string(),
+            env: vec!["HTTPS_PROXY".to_string()],
+            session_home: String::new(),
+            engines: serde_json::Value::Null,
+            engine_lines: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_an_agent_keeps_its_driving_and_its_env() {
+        assert_eq!(
+            json_of(&agent(PARENT, &row(), "")),
+            json!({
+                "name": "projects/p/agents/dev",
+                "driving": "tasks",
+                "env": ["HTTPS_PROXY"],
+                "default": false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_shown_agent_carries_what_it_needs_and_what_it_loses() {
+        let show = AgentShow {
+            definition: row(),
+            resolved: None,
+            resolution_error: "no such profile".to_string(),
+            requirements: vec![Requirement {
+                command: "gopls".to_string(),
+                sources: vec![RequirementSource {
+                    kind: "mcp".to_string(),
+                    reference: "demo#mcp/go".to_string(),
+                }],
+            }],
+            requirements_error: "unreadable".to_string(),
+            not_carried: vec![NotCarried {
+                engine: "opencode".to_string(),
+                surface: "hooks".to_string(),
+                event: "session_end".to_string(),
+                reason: "none native".to_string(),
+            }],
+        };
+        let shown = json_of(&agent_show(PARENT, &show, ""));
+        assert_eq!(shown["resolution_error"], "no such profile", "{shown}");
+        assert_eq!(
+            shown["requirements"],
+            json!([{
+                "command": "gopls",
+                "sources": [{"kind": "mcp", "reference": "demo#mcp/go"}],
+            }])
+        );
+        assert_eq!(shown["requirements_error"], "unreadable");
+        assert_eq!(
+            shown["not_carried"],
+            json!([{
+                "engine": "opencode",
+                "surface": "hooks",
+                "event": "session_end",
+                "reason": "none native",
+            }])
+        );
+    }
+
+    #[test]
+    fn test_a_removed_agent_s_preview_says_what_would_go() {
+        let preview: Removal<()> = Removal::Preview(Preview::of(
+            "dev".to_string(),
+            vec!["agents.dev".to_string()],
+            "ctxloom agent remove dev --yes".to_string(),
+        ));
+        assert_eq!(
+            json_of(&removed(PARENT, "dev", &preview)),
+            json!({
+                "agent": {"name": "projects/p/agents/dev"},
+                "applied": false,
+                "detail": ["agents.dev"],
+                "apply_command": "ctxloom agent remove dev --yes",
+            })
+        );
+    }
+}
