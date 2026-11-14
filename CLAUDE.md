@@ -2164,7 +2164,7 @@ it is `library-application-no-context-exclusive` (exit 20).
 
 What the engine's hooks observe (a prompt, each MessageDisplay delta, a tool
 call as size and SHA-256 only, a turn's end without text, a session's end, a
-compaction) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
+compaction, and a gap where a hook dropped one) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
 capture.proto`; `runs-application::observe` makes them from the unified
 `HookEvent`; a hook delivers them through a `run-ports::FactSink`, or HOLDS
 them for later, below, and never fails its engine). The
@@ -2230,7 +2230,8 @@ holds (owner, H-Q5 revised: the client side flushes, never the daemon):
 daemon is up to date for, through the same sink, each waiting only what is
 left of the bound, then the delivered prefix cut, again (at most
 `TAKE_ROUNDS`, 8) until nothing it can deliver is left; a record held by a
-newer hook is kept and passed over, a gap record goes, a record whose
+newer hook is kept and passed over, a gap record is delivered as the gap
+fact in its place (below), a record whose
 external id is not its book's origin or whose book is not this session's
 stream is dropped and said. Then its own facts are delivered. A hold
 another process is taking, a held delivery left unsettled, or the bound
@@ -2240,10 +2241,35 @@ first-out; an own delivery left unsettled is held and the rest behind it.
 A final answer (`Refused`, `Parked`) is never held (said, not recorded).
 A hold at its bound, or one that cannot be used, drops the fact, said as
 `hook-cli-not-recorded`. The wording of `hook-cli-held` and
-`-held-behind` is a draft, the owner's to approve (H-Q10). Not yet built:
-the CLI's and the frontend's flush on the way in (H3), and the drain asked
-of an older daemon (H-Q6, U8); a hold of a session no hook fires again
-waits for them. The in-process `EdgeSink` is for tests and the run's own
+`-held-behind` is a draft, the owner's to approve (H-Q10). A COMMAND
+flushes too (unit H3, `ctxloom-wiring`'s `daemon::flush`): any ctxloom
+command that reaches the daemon (`daemon::Reach`, its `serving` and
+`reach`) first delivers what EVERY session's hold under its home holds,
+once a process (`on_the_way_in`), through the daemon's listener with the
+user bearer (`capture::daemon_sink`), the same `runs_application::Flush`
+as a hook's (`Flush::every`, sessions in the order `HeldFacts::sessions`
+lists them): only when the command is not older than the daemon
+(`runs_application::command_flushes`), each hold taken at once or skipped
+(`Left::Taken`, never waited for), within `FLUSH_BOUND` (2 s) for the whole
+flush, a hold the bound did not reach left untouched (`Left::OutOfTime`);
+it says nothing, and what it could not deliver stays held. Every
+session's, not only its project's: the daemon and its one store serve the
+home, and a hold names its session only inside its records. The `daemon`
+noun's own `status`, `stop` and `resolve` deliver none (`Reach::observing`:
+they look and change nothing). The frontend (slice 4 U5) is to call
+`daemon::flush::flush_holds(&wiring, stamp)` at its start and its exit
+report (the daemon serving the home, none started). The daemon never reads
+a hold. Not yet built: the drain asked of an older daemon (H-Q6, U8).
+A GAP (the owner: a gap is delivered into the transcript) is a fact a
+hold dropped past its bound: its gap record is delivered, in its place in
+the order, as `RecordCaptureGap` (`capture.proto`: the dropped fact's
+external id, `why`, `dropped_at` the hook's clock, the hook's stamp;
+external id `hook:gap:<the dropped fact's external id>`,
+`Observation::gap`), recorded as `CaptureGapped` on a live session, so the
+session's record says for good which fact is missing there, and when; the
+transcript's line is `kind: gap`, `gap: {facts: 1, dropped, why,
+dropped_at}`, and its text `gap: 1 fact not recorded (<id>, dropped at
+<time>: <why>)` (the wording a draft, the owner's to approve). The in-process `EdgeSink` is for tests and the run's own
 facts. A unit test's executable never spawns itself as the daemon
 (`SPAWNS_ITSELF`). The session's end (`SessionEnd`) is captured like the rest.
 A compaction's external id is `hook:compact:<session>:<prompt_id>:<trigger>:

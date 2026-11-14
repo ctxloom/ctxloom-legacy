@@ -86,10 +86,8 @@ where
             daemon: daemon.to_string(),
         };
     }
-    // RED: nothing is delivered yet.
-    let _ = (Flush::new(held, clock), sink);
-    match held.sessions() {
-        Ok(_) => Flushed::Done(Vec::new()),
+    match Flush::new(held, clock).every(daemon, sink) {
+        Ok(done) => Flushed::Done(done),
         Err(error) => Flushed::Failed(error),
     }
 }

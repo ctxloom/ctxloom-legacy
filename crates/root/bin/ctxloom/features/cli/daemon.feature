@@ -372,9 +372,9 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       Given an initialized ctxloom project
       And a session "brisk-copper-moth" that is still running
       And the session's hooks held its prompt, then dropped its turn's end past the hold's bound, while an older daemon served
-      When I run "ctxloom session transcript show brisk-copper-moth --format json"
+      When I run "ctxloom session list --format json"
       Then the command succeeds
-      And the transcript holds the prompt, then a gap where the turn's end was dropped, each once
+      And the session's transcript holds the prompt, then a gap where the turn's end was dropped, each once
       And the gap says when the turn's end was dropped, and that the hold was at its bound
       And nothing is held for "brisk-copper-moth"
 

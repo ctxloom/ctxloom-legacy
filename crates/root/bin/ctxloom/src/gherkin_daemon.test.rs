@@ -1615,17 +1615,6 @@ fn ten_pieces_once(w: &mut World) {
     }
 }
 
-/// The lines of the last command's stdout, each a JSON value.
-fn ran_lines(w: &World) -> Vec<Value> {
-    w.common
-        .ran()
-        .stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{l:?}: {e}")))
-        .collect()
-}
-
 /// The one gap line of `lines`, after the prompt's.
 fn the_gap(lines: &[Value]) -> Value {
     let prompts = prompt_lines(lines);
@@ -1638,9 +1627,12 @@ fn the_gap(lines: &[Value]) -> Value {
     lines[gaps[0]].clone()
 }
 
-#[then("the transcript holds the prompt, then a gap where the turn's end was dropped, each once")]
+#[then(
+    "the session's transcript holds the prompt, then a gap where the turn's end was dropped, each once"
+)]
 fn prompt_then_gap(w: &mut World) {
-    let lines = ran_lines(w);
+    let harp = fired(w).harp.clone();
+    let lines = transcript_lines(w, &harp);
     let gap = the_gap(&lines);
     assert_eq!(gap["gap"]["facts"], 1, "{gap}");
     assert!(
@@ -1657,7 +1649,8 @@ fn prompt_then_gap(w: &mut World) {
 
 #[then("the gap says when the turn's end was dropped, and that the hold was at its bound")]
 fn gap_says_when_and_why(w: &mut World) {
-    let gap = the_gap(&ran_lines(w));
+    let harp = fired(w).harp.clone();
+    let gap = the_gap(&transcript_lines(w, &harp));
     assert_eq!(gap["gap"]["why"], "bound", "{gap}");
     let at = gap["gap"]["dropped_at"]
         .as_str()
@@ -1679,10 +1672,14 @@ fn once_startable_next_command_records(w: &mut World) {
     files::remove(daemon_dir(w));
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    // The next command: one that reaches the daemon (the transcript is read
+    // in process, and reaches none).
+    let next = run_now(w, &["session", "list", "--format", "json"]);
+    assert_eq!(next.code, 0, "{}", next.said());
+    assert!(holds(w).is_empty(), "{:?}", holds(w));
     let harp = fired(w).harp.clone();
     let lines = transcript_lines(w, &harp);
     assert_eq!(prompt_lines(&lines).len(), 1, "{lines:#?}");
-    assert!(holds(w).is_empty(), "{:?}", holds(w));
 }
 
 #[then("the hook exits 0, and its answer to the engine is unchanged")]

@@ -390,8 +390,9 @@ pub(crate) fn worktrees_text(
 }
 
 /// A transcript read as a conversation: `user: ...`, `assistant: ...`, for
-/// each entry; the records that are not the conversation (the session's id, a
-/// completion, a tool call) say nothing a reader wants. The assistant's words
+/// each entry, and `gap: ...` where a hook dropped a fact (s4-Q14, H3); the
+/// records that are not the conversation (the session's id, a completion, a
+/// tool call) say nothing a reader wants. The assistant's words
 /// are coalesced here: a message's `assistant_delta` lines are joined by their
 /// `index`, and the message is one `assistant:` line.
 ///
@@ -490,10 +491,31 @@ pub(crate) fn conversation_text(transcript: &str, out: &mut dyn Write) -> io::Re
                     writeln!(out, "assistant: {text}")?;
                 }
             }
+            Some("gap") => {
+                let gap = &record["gap"];
+                writeln!(
+                    out,
+                    "gap: {} fact not recorded ({}, dropped at {}: {})",
+                    gap["facts"].as_u64().unwrap_or(1),
+                    gap["dropped"].as_str().unwrap_or_default(),
+                    gap["dropped_at"].as_str().unwrap_or_default(),
+                    gap_why(gap["why"].as_str().unwrap_or_default()),
+                )?;
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+/// Why a fact was dropped, as a gap line says it (PROPOSAL, s4-Q14 H3: the
+/// owner's to word); a word this ctxloom does not know, as it is.
+fn gap_why(word: &str) -> &str {
+    match word {
+        "bound" => "the session's hold was at its bound",
+        "disk" => "the disk refused it",
+        other => other,
+    }
 }
 
 /// `session import`'s answer.

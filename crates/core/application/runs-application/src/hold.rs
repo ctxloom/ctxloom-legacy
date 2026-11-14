@@ -25,11 +25,16 @@
 //! A final answer (`Refused`, `Parked`) is never held: a retry would be
 //! answered the same. A held record the daemon is not up to date for (a
 //! downgrade) is kept and passed over, so it blocks nothing after it; a gap
-//! record goes (it was said when the fact was dropped); a record that is not
+//! record is delivered as the gap fact in its place (`RecordCaptureGap`,
+//! H3), so the session's record says what is missing; a record that is not
 //! a fact of this session (its external id is not its book's, or its book is
 //! another stream's) is dropped and said. The hook's time is the
 //! [`HookClock`]'s: the core reads no clock. Nothing here fails: whatever
 //! went wrong is a [`Kept`] in the [`HoldReport`], for the hook to say.
+//!
+//! [`Flush`] is the delivery itself, the hook's of its own session and a
+//! ctxloom command's of every session of its home on its way in (H3,
+//! [`Flush::every`], when [`command_flushes`]).
 
 use std::time::Duration;
 
@@ -368,8 +373,19 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
         daemon: &str,
         sink: &S,
     ) -> Result<Vec<SessionFlush>, HoldError> {
-        let _ = (daemon, sink);
-        Ok(Vec::new())
+        let mut flushes = Vec::new();
+        for root in self.held.sessions()? {
+            if self.clock.remaining().is_zero() {
+                flushes.push(SessionFlush {
+                    root,
+                    flushed: Vec::new(),
+                    left: Left::OutOfTime,
+                });
+                continue;
+            }
+            flushes.push(self.session(&root, daemon, sink));
+        }
+        Ok(flushes)
     }
 
     /// Deliver, through `sink` to a daemon of stamp `daemon`, what `root`'s
@@ -423,11 +439,15 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
                         fact.external_id.clone(),
                         own_book(fact, session),
                     ),
-                    HeldEntry::Gap(_) => {
-                        // RED: a gap is not delivered yet.
-                        keep[i] = false;
-                        removed = true;
-                        continue;
+                    // A fact the hold dropped: recorded in its place, on the
+                    // hold's own stream (H3).
+                    HeldEntry::Gap(gap) => {
+                        let observation = Observation::gap(gap);
+                        (
+                            &gap.stamp,
+                            observation.external_id(session),
+                            Some(observation.book(session)),
+                        )
                     }
                 };
                 if !up_to_date(daemon, stamp) {

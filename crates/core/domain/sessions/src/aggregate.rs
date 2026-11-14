@@ -470,8 +470,13 @@ impl SessionAggregate {
         fact: RecordCaptureGap,
         ctx: &Context,
     ) -> Result<FactEmit<Self>, Bug> {
-        let _ = (ctx, fact);
-        record(None::<CaptureGapped>)
+        let _ = ctx;
+        record(live(&self.session).ok().map(|_| CaptureGapped {
+            dropped: fact.dropped,
+            why: fact.why,
+            dropped_at: fact.dropped_at,
+            stamp: fact.stamp,
+        }))
     }
 
     // Equivalent: the capture events carry no aggregate state; projectors fold them
