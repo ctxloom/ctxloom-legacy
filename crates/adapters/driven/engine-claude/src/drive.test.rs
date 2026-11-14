@@ -603,9 +603,10 @@ fn the_permissions_document_is_the_user_settings_and_never_the_hooks_file() {
         let prepared = prepare_home(interactive, Some(DOCUMENT), BTreeMap::new());
         let text = file_of(&prepared, "settings.json").expect("settings.json in the home");
         let doc = surface_ports::Json::parse(&text).unwrap();
-        // The file is the document as its `permissions`, and nothing else.
+        // The file is the document as its `permissions`, ctxloom's own
+        // allowance laid into its `allow` (OD-4), and nothing else.
         assert_eq!(
-            doc,
+            without_ours(doc.clone()),
             surface_ports::Json::object([(
                 "permissions",
                 surface_ports::Json::parse(DOCUMENT).unwrap()
@@ -630,8 +631,7 @@ fn the_permissions_document_is_the_user_settings_and_never_the_hooks_file() {
                 "n"
             ]
         );
-        // The hooks file holds ctxloom's hooks (and its own tools'
-        // allowance, OD-4) alone, as with no document.
+        // The hooks file holds ctxloom's hooks alone, as with no document.
         let hooks = file_of(&prepared, HOOKS_FILE).expect("the hooks file");
         assert_eq!(
             Some(hooks.clone()),
@@ -641,11 +641,7 @@ fn the_permissions_document_is_the_user_settings_and_never_the_hooks_file() {
             )
         );
         let hooks = surface_ports::Json::parse(&hooks).unwrap();
-        assert_eq!(
-            without_ours(hooks.clone()).get("permissions"),
-            None,
-            "{hooks:?}"
-        );
+        assert_eq!(hooks.get("permissions"), None, "{hooks:?}");
         assert!(crate::hooks::has_callback(&hooks, "ctxloom"), "{hooks:?}");
     }
 }
@@ -685,22 +681,21 @@ fn the_settings_are_regenerated_whatever_the_home_holds() {
     }
 }
 
-// No document: the user-scope settings are empty (so nothing an agent wrote
-// there lingers), and the hooks file holds no permissions.
+// No document: the user-scope settings hold ctxloom's own allowance alone
+// (OD-4; so nothing an agent wrote there lingers), and the hooks file holds
+// no permissions.
 #[test]
-fn with_no_document_the_settings_hold_no_permissions() {
+fn with_no_document_the_settings_hold_ctxlooms_allowance_alone() {
     for interactive in [false, true] {
         let prepared = prepare_home(interactive, None, BTreeMap::new());
-        assert_eq!(file_of(&prepared, "settings.json").as_deref(), Some("{}\n"));
-        let hooks = file_of(&prepared, HOOKS_FILE).expect("the hooks file");
-        let doc = surface_ports::Json::parse(&hooks).unwrap();
-        // ctxloom's own allowance alone (OD-4).
         assert_eq!(
-            without_ours(doc.clone()).get("permissions"),
-            None,
-            "{hooks}"
+            home_settings(&prepared),
+            doc(r#"{"permissions":{"allow":["mcp__ctxloom__*"]}}"#)
         );
-        assert!(crate::hooks::has_callback(&doc, "ctxloom"), "{hooks}");
+        let hooks = file_of(&prepared, HOOKS_FILE).expect("the hooks file");
+        let hooks = surface_ports::Json::parse(&hooks).unwrap();
+        assert_eq!(hooks.get("permissions"), None, "{hooks:?}");
+        assert!(crate::hooks::has_callback(&hooks, "ctxloom"), "{hooks:?}");
     }
 }
 
@@ -1330,7 +1325,8 @@ fn doc(text: &str) -> surface_ports::Json {
 }
 
 // Owner ruling 169: the session home's user-scope settings are the user's
-// own, ctxloom's values laid over them: her attribution (and model, env,
+// own, ctxloom's values laid over them (its own tools' allowance, OD-4,
+// taken out here: `ctxloom_lays_its_own_allowance_...` holds it): her attribution (and model, env,
 // plugins, hooks, statusline, ...) reach the session as she wrote them.
 #[test]
 fn the_users_own_settings_are_the_session_homes_base() {
@@ -1342,7 +1338,7 @@ fn the_users_own_settings_are_the_session_homes_base() {
         run_ports::SessionHome::Session,
     );
     assert_eq!(
-        home_settings(&prepared),
+        without_ours(home_settings(&prepared)),
         doc(
             r#"{"attribution":{"commit":"","pr":""},"model":"opus","env":{"K":"v"},"permissions":{"defaultMode":"acceptEdits"}}"#
         )
@@ -1361,11 +1357,11 @@ fn the_agents_permissions_replace_the_users_whole() {
         run_ports::SessionHome::Session,
     );
     assert_eq!(
-        home_settings(&prepared),
+        without_ours(home_settings(&prepared)),
         doc(r#"{"permissions":{"deny":["WebFetch"]},"x":1}"#)
     );
     let none = prepare_over(Some(users(hers)), None, run_ports::SessionHome::Session);
-    assert_eq!(home_settings(&none), doc(r#"{"x":1}"#));
+    assert_eq!(without_ours(home_settings(&none)), doc(r#"{"x":1}"#));
 }
 
 // Ruling 169 (and 166, now a case of it): her acceptance of claude's
@@ -1379,7 +1375,7 @@ fn the_users_acceptance_of_the_bypass_warning_crosses_with_her_settings() {
         run_ports::SessionHome::Session,
     );
     assert_eq!(
-        home_settings(&prepared),
+        without_ours(home_settings(&prepared)),
         doc(
             r#"{"skipDangerousModePermissionPrompt":true,"permissions":{"defaultMode":"bypassPermissions"}}"#
         )
@@ -1401,7 +1397,7 @@ fn a_users_file_that_is_no_object_is_left_out_and_named() {
             run_ports::SessionHome::Session,
         );
         assert_eq!(
-            home_settings(&prepared),
+            without_ours(home_settings(&prepared)),
             doc(r#"{"permissions":{"defaultMode":"acceptEdits"}}"#),
             "{user:?}"
         );
@@ -1425,12 +1421,12 @@ fn a_missing_users_file_is_a_start_from_nothing() {
         run_ports::SessionHome::Session,
     );
     assert_eq!(
-        home_settings(&prepared),
+        without_ours(home_settings(&prepared)),
         doc(r#"{"permissions":{"defaultMode":"acceptEdits"}}"#)
     );
     assert!(prepared.left_out.is_empty());
     let bare = prepare_over(None, None, run_ports::SessionHome::Session);
-    assert_eq!(file_of(&bare, "settings.json").as_deref(), Some("{}\n"));
+    assert_eq!(without_ours(home_settings(&bare)), doc("{}"));
 }
 
 // T21 and ruling 169: the home's settings are rewritten whole from hers at
@@ -1450,8 +1446,14 @@ fn the_users_settings_are_copied_afresh_at_every_launch() {
         None,
         run_ports::SessionHome::Session,
     );
-    assert_eq!(home_settings(&first), doc(r#"{"model":"opus"}"#));
-    assert_eq!(home_settings(&second), doc(r#"{"model":"sonnet"}"#));
+    assert_eq!(
+        without_ours(home_settings(&first)),
+        doc(r#"{"model":"opus"}"#)
+    );
+    assert_eq!(
+        without_ours(home_settings(&second)),
+        doc(r#"{"model":"sonnet"}"#)
+    );
 }
 
 // Ruling 169: under `session_home: host` the config dir IS hers, never

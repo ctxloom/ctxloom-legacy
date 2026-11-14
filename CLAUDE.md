@@ -770,13 +770,7 @@ of the session home's user-scope `settings.json`, over the user's own
 settings (ruling 169, above; the home is the session's `CLAUDE_CONFIG_DIR`;
 none of either, `{}`), APART from
 ctxloom's hooks, which are `ctxloom-hooks.json`, the file `--settings` names
-(which also ALLOWS ctxloom's own MCP server's tools, `permissions.allow:
-["mcp__ctxloom__*"]`, OD-4, owner 2026-11-13: a stated exception to
-"ctxloom never edits the document", made beside it so the document stays
-as written, claude merging the lists of its scopes;
-`engine_claude::drive::OUR_TOOLS`; under `host`, appended once to the
-document's own `allow` there; a launch with no context, which offers no
-server, allows none)
+(which holds no permissions in the session home)
 (owner ruling 145: claude 2.1.322 refuses a settings file whole for one
 invalid value, hooks included, so a bad value disables the block alone; the
 probe is in the ruling-145 commits). User scope is claude's lowest: a single
@@ -786,7 +780,15 @@ Under `session_home: host` (the config dir is the user's own `~/.claude`,
 never written) the block stays the `permissions` of the hooks file, with the
 cost that a bad value there disables the hooks too. No `--permission-mode` is
 passed, claude's mode is the document's `defaultMode`. A profile's
-`deny_tools` rides the launch (above), laid into the same `permissions.deny`. engine-opencode writes the session home's `opencode.json`
+`deny_tools` rides the launch (above), laid into the same `permissions.deny`,
+and ctxloom ALLOWS its own MCP server's tools by laying `permissions.allow:
+["mcp__ctxloom__*"]` into the same document the same way (after its own
+`allow`, once; `engine_claude::drive::OUR_TOOLS` and `laid`; OD-4, owner
+2026-11-13, amended 2026-11-14: a stated exception to rulings 133-139's
+"verbatim", as `deny_tools` already was), where the document lives: the
+session home's `settings.json`, or the hooks file under `host`; never
+`ctxloom-hooks.json` in the session home. A launch with no context, which
+offers no server, lays none. engine-opencode writes the session home's `opencode.json`
 (`OPENCODE_CONFIG_DIR`, which opencode 1.18.4 reads after the project's) with
 the document as its `permission` object (none, no `permission`, so no earlier
 run's lingers; read from the 1.18.4 bundle, not run live), over the user's
@@ -1970,9 +1972,9 @@ plan composes nothing (no profile, fragment, premise index or companion
 guidance) and carries no surface of the profiles' and NO MCP server,
 ctxloom's own included (a server's instructions are context): the plan's
 surfaces say `no_context` (`surface_ports::Inputs::no_context`), so claude's
-`ctxloom-mcp.json` lists none (`--mcp-config` still names it) and its hooks
-file allows none of ctxloom's tools (OD-4's allowance is for a server
-offered), and opencode's `opencode.json` has no `mcp.ctxloom`. The capture hooks are the engine's and stay;
+`ctxloom-mcp.json` lists none (`--mcp-config` still names it) and none of
+ctxloom's tools is laid into the agent's permissions (OD-4's allowance is
+for a server offered), and opencode's `opencode.json` has no `mcp.ctxloom`. The capture hooks are the engine's and stay;
 the agent is `--agent`, else the default agent where there is one, else
 none (the default engine), and keeps its engine, model and permissions; the
 statusline stays as configured. Beside `--profile`, `--fragment` or `--tag`

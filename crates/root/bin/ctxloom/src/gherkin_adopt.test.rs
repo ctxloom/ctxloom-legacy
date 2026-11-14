@@ -296,12 +296,22 @@ fn user_settings_path(w: &World) -> String {
 /// exactly, the `permissions` of the user-scope settings of the session's
 /// config dir, the rest of that file is the user's own claude settings as she
 /// wrote them (none of hers, nothing), and the `--settings` file (ctxloom's
-/// hooks) holds none of the block: a bad value in the block disables the
-/// block, never the hooks. That file's permissions are ctxloom's own
-/// allowance of its MCP server's tools alone (OD-4, owner 2026-11-13).
+/// hooks) holds no permissions: a bad value in the block disables the block,
+/// never the hooks. Where ctxloom's server is offered, its own tools'
+/// allowance is laid into the document's `allow`, after its own (OD-4 as
+/// amended by the owner, 2026-11-14); a launch with no context offers none,
+/// so lays none (OD-38).
 #[then(expr = "the assistant's settings hold the permissions {string}")]
 fn settings_hold_permissions(w: &mut World, want: String) {
-    let want: serde_json::Value = serde_json::from_str(&want).expect("the step's JSON");
+    let mut want: serde_json::Value = serde_json::from_str(&want).expect("the step's JSON");
+    if handed_servers(w).contains_key("ctxloom") {
+        let ours = serde_json::json!("mcp__ctxloom__*");
+        match want["allow"].as_array_mut() {
+            Some(allow) if allow.contains(&ours) => {}
+            Some(allow) => allow.push(ours),
+            None => want["allow"] = serde_json::json!([ours]),
+        }
+    }
     let path = user_settings_path(w);
     let text = files::read(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
     let user: serde_json::Value =
@@ -314,13 +324,8 @@ fn settings_hold_permissions(w: &mut World, want: String) {
         .unwrap_or_else(|| serde_json::json!({}));
     expected["permissions"] = want;
     assert_eq!(user, expected, "{path}");
-    // ctxloom's own tools are allowed (OD-4) where its server is offered:
-    // a launch with no context offers none, so allows none (OD-38).
     let handed = handed_settings(w);
-    let ours = handed_servers(w)
-        .contains_key("ctxloom")
-        .then(|| serde_json::json!({"allow": ["mcp__ctxloom__*"]}));
-    assert_eq!(handed.get("permissions"), ours.as_ref(), "{handed}");
+    assert!(handed.get("permissions").is_none(), "{handed}");
 }
 
 /// Owner T21: the agent edits the settings files it was given (they are in

@@ -8,14 +8,17 @@ engine that accepts, warns about or ignores it (owner rulings 133-139).
 
 **One exception: ctxloom allows its own tools.** Every session's engine is
 given ctxloom's own MCP server (`ctxloom mcp serve`), so the agent can call
-its daemon. On claude-code ctxloom allows `mcp__ctxloom__*` itself, in
-its own `ctxloom-hooks.json` (the `--settings` file), whose permission lists
-claude merges with your block's, so those calls are never asked for and your
-block reaches claude as you wrote it. Under `session_home: host`, where your
-block is in that same file, the allowance is appended to its `allow` once.
-That is the only permission ctxloom adds (owner ruling OD-4, 2026-11-13). To
-hold one of the tools back, `deny` it: in claude's rules a deny wins over an
-allow.
+its daemon. On claude-code ctxloom lays `permissions.allow:
+["mcp__ctxloom__*"]` into your block, after the block's own `allow` and
+once, in the same place and the same way it lays a profile's `deny_tools`
+into the block's `deny`: the session home's `settings.json`, or
+`ctxloom-hooks.json` under `session_home: host`, where your block lives
+there. So those calls are never asked for, and every other word of your
+block reaches claude as you wrote it. A run with no context (`run
+--no-context`) is offered no server, so nothing is allowed for it. That is
+the only permission ctxloom adds of its own (owner ruling OD-4, 2026-11-13,
+amended 2026-11-14). To hold one of the tools back, `deny` it: in claude's
+rules a deny wins over an allow.
 
 ## Where the block goes
 
