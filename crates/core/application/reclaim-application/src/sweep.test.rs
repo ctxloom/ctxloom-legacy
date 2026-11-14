@@ -689,6 +689,10 @@ fn kept_session_keeps_every_checkout(
             row.reason.contains("kept") && row.reason.contains(why),
             "{case}: the row says why the checkout stayed ({why}): {row:?}"
         );
+        assert!(
+            !row.reason.contains("purge failed"),
+            "{case}: no purge failed: {row:?}"
+        );
     }
     assert_eq!(report.counts["done"], 0, "{case}: {report:?}");
 }
@@ -805,4 +809,43 @@ fn a_checkout_of_a_session_whose_purge_failed_is_held() {
         checkout.reason.contains("kept") && checkout.reason.contains("purge failed"),
         "{checkout:?}"
     );
+}
+
+// A purge planned clean that the apply then refuses (something changed in
+// between) is held with the refusal's words, never done.
+#[test]
+fn a_purge_the_apply_refuses_is_held_not_done() {
+    struct Changed(Fake);
+    impl Removals for Changed {
+        fn worktrees(
+            &mut self,
+            project: Option<&str>,
+            harp: &str,
+            apply: bool,
+        ) -> Result<Report, IsolationError> {
+            self.0.worktrees(project, harp, apply)
+        }
+        async fn remove(&mut self, request: RemoveRequest) -> Result<Removal, AppError> {
+            let yes = request.yes;
+            let mut removal = self.0.remove(request).await?;
+            if yes {
+                removal.applied = false;
+                removal.refusal = Some(Refusal::Retained {
+                    harp: removal.harp.clone(),
+                    detail: "it ran again".to_string(),
+                });
+            }
+            Ok(removal)
+        }
+    }
+    let mut changed = Changed(Fake {
+        views: vec![view("amber-quiet-heron", State::Ended, 120, false)],
+        ..Fake::default()
+    });
+    let views = changed.0.views.clone();
+    let report = ready(crate::sweep(&mut changed, &views, &request(true))).unwrap();
+    let row = report.rows.last().unwrap();
+    assert_eq!(row.verdict, Verdict::Held, "{row:?}");
+    assert!(row.reason.contains("it ran again"), "{row:?}");
+    assert_eq!(report.counts["done"], 0, "{report:?}");
 }
