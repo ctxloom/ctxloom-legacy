@@ -88,3 +88,17 @@ fn a_gap_reads_as_a_line_of_its_own_in_its_place() {
          user: Again\n"
     );
 }
+
+// A gap whose why this ctxloom does not know (a later word) says it as it
+// is, and one that counts no facts is still one dropped fact.
+#[test]
+fn a_gap_of_an_unknown_why_says_the_word() {
+    let transcript =
+        r#"{"kind":"gap","gap":{"dropped":"x","why":"quota","dropped_at":"2023-11-14T22:14:10Z"}}"#;
+    let mut out = Vec::new();
+    super::conversation_text(transcript, &mut out).unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "gap: 1 fact not recorded (x, dropped at 2023-11-14T22:14:10Z: quota)\n"
+    );
+}
