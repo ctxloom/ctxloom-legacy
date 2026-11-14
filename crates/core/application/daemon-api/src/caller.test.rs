@@ -9,7 +9,7 @@ use daemon_proto::v1;
 use prost::Message;
 use sessions_proto::v1 as wire;
 
-use super::{urgency_of, Caller};
+use super::{reason_of, urgency_of, Caller};
 use crate::CallError;
 
 const ME: &str = "projects/calm-quiet-heron/sessions/amber-quiet-heron";
@@ -85,6 +85,7 @@ impl DaemonApi for Fake {
         r: v1::ListSessionsRequest,
     ) -> Result<v1::ListSessionsResponse, Called> {
         self.ask(&format!("list {}", r.parent));
+        assert!(r.env.is_some(), "the caller's environment is sent");
         Ok(v1::ListSessionsResponse::default())
     }
 
@@ -437,4 +438,20 @@ async fn a_clear_is_keyed_by_the_id_minted_for_it() {
     let clear = wire::ClearChild::decode(packed.value.as_slice()).unwrap();
     assert_eq!(clear.clear_id, "id-1");
     assert_eq!(world.command_ids(), [sessions::command_id("id-1")]);
+}
+
+// A refused name says why: the harp grammar's reason, or its shape.
+#[test]
+fn a_refused_names_reason_is_the_one_it_was_refused_for() {
+    let malformed = sessions::SessionRejection::NameMalformed {
+        name: "projects/a:b".to_string(),
+        reason: "separator".to_string(),
+    };
+    assert_eq!(reason_of(&malformed), "separator");
+    let invalid = sessions::SessionRejection::HarpInvalid {
+        harp: String::new(),
+        reason: "empty".to_string(),
+    };
+    assert_eq!(reason_of(&invalid), "empty");
+    assert_eq!(reason_of(&sessions::SessionRejection::NoSession), "shape");
 }

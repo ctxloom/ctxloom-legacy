@@ -41,6 +41,10 @@ fn the_daemons_own_refusals_are_told_in_its_words() {
             "daemon-api-session-not-found",
         ),
         (
+            Any::from_msg(&v1::TranscriptEmpty::default()).unwrap(),
+            "daemon-api-transcript-empty",
+        ),
+        (
             Any::from_msg(&v1::ProjectNotFound::default()).unwrap(),
             "daemon-api-project-not-found",
         ),
