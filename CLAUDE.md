@@ -1669,7 +1669,8 @@ ones (`lib.rs`'s dispatch and prelude, `api.rs`, `write.rs`'s helpers,
 `text.rs`, `commands.rs`, the harnesses `lib.test.rs`, `write.test.rs` and
 `library_cli.test.rs`) are not a noun's. A resource
 name's parent comes from `library_cli::Names`, asked only when a json
-answer prints one (text reaches no daemon): the wiring's is the daemon's
+answer prints one (text reaches no daemon; `run --dry-run`, below, asks
+always): the wiring's is the daemon's
 `ResolveProject` (`daemon_api::Client::library_parent`, the wiring's
 `daemon::library_parent`; OQ-2, so a json answer may start the daemon), or
 `users/me` outside a project, where no daemon is asked (OQ-3). ONE
@@ -1698,7 +1699,8 @@ written. A DRY RUN NEVER MINTS (owner: "dry run should *not* mint"): its
 names source is `Minting::Never` (`library::minting`: the library's `run`
 noun is the dry run alone), which in a project nothing has named is
 refused, `ctxloom-wiring-project-unnamed` (exit 20, its fix `ctxloom
-init`), though the dry run's json names nothing and so never asks. A
+init`), though the dry run asks `Names::named_parent`, which answers none
+there. A
 session listing or search in a project with no id (or wherever no id is
 bound) names no project and lists nothing, asking no daemon
 (`daemon_api::Client::unnamed`), and a `session show|remove` of one is
@@ -1820,9 +1822,15 @@ only. `run --dry-run` is `CreateRun` with `validate_only`, its json the
 `Run` it would create (daemon.proto's `Run`, amended per design §5.9:
 `settings` an `AgentSettings`, `tokens` uint32, and `workspace`,
 `runtime`, `prompt` and `fragments` added; the draft's `Setting` is gone),
-named under the project the daemon names, which a json dry run asks (owner
-ruling 2026-11-14: "dry run *absolutely* calls (and spawns, if necessary) a
-daemon"; a text one prints no name and asks none): `<parent>/runs/-` (no
+named under the project the daemon names. EVERY dry run asks the daemon
+(owner rulings 2026-11-14: "dry run *absolutely* calls (and spawns, if
+necessary) a daemon", then text or json, named project or not), before it
+plans: `daemon_api::Client::named_parent` resolves a project's parent, and
+where there is nothing to resolve (outside a project, or one nothing has
+named) reaches the daemon and asks `GetDaemon`, so a daemon not running is
+started, and one that cannot be is the client's `daemon-ports-not-started`
+(exit 10, naming the log), as for every daemon client's command; a text
+dry run prints no name. Its json is `<parent>/runs/-` (no
 run ID is given, nothing being created), its agent, engine and profiles
 resource names. It never mints the project's id (`Minting::Never`; library-
 cli's `Names::named_parent`, the wiring's `library_parent_if_named`): in a

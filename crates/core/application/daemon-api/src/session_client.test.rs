@@ -581,3 +581,46 @@ async fn a_library_verbs_parent_is_the_resolved_project_or_the_home() {
     assert_eq!(home, "users/me");
     assert!(outside_daemons.asked().is_empty());
 }
+
+// Owner ruling 2026-11-14: every dry run calls the daemon, spawning it if
+// needed. Its parent is the resolved project's, `users/me` outside one, and
+// none in a project nothing has named (a dry run never mints); where there
+// is nothing to resolve, the daemon is reached and asked `GetDaemon`, so a
+// daemon that answers is proven, and one that cannot be had fails the call.
+#[tokio::test]
+async fn a_dry_runs_parent_reaches_the_daemon_even_with_nothing_to_resolve() {
+    let daemons = Fakes::new();
+    let parent = in_project(&daemons).named_parent().await.unwrap();
+    assert_eq!(parent.as_deref(), Some("projects/calm-otter"));
+    assert_eq!(daemons.asked(), ["1:resolve"]);
+    let home_daemons = Fakes::new();
+    let home = outside(&home_daemons).named_parent().await.unwrap();
+    assert_eq!(home.as_deref(), Some("users/me"));
+    assert_eq!(home_daemons.asked(), ["1:get"]);
+    assert_eq!(home_daemons.reaches(), 1, "reached, so started if none");
+    let unnamed_daemons = Fakes::new();
+    let unnamed = outside(&unnamed_daemons).unnamed().named_parent().await;
+    assert_eq!(unnamed.unwrap(), None);
+    assert_eq!(unnamed_daemons.asked(), ["1:get"]);
+    let envs = unnamed_daemons.template.envs.lock().unwrap().clone();
+    assert_eq!(envs, vec![Some(env())], "the caller's environment sent");
+    // A daemon gone mid-call: asked once more, on the daemon reached again.
+    let dying = Fakes::new();
+    dying.template.dying.lock().unwrap().push(1);
+    outside(&dying).unnamed().named_parent().await.unwrap();
+    assert_eq!(dying.asked(), ["1:get", "2:get"]);
+    let mut unstartable = Fakes::new();
+    unstartable.unreached = Some(Unreached::NotStarted {
+        log: "~/.ctxloom/daemon/daemon.log".to_string(),
+    });
+    let failed = outside(&unstartable)
+        .unnamed()
+        .named_parent()
+        .await
+        .unwrap_err();
+    assert_eq!(
+        angzarr_diagnostic::Diagnostic::code(&failed),
+        "daemon-ports-not-started"
+    );
+    assert_eq!(failed.exit(), Exit::FAILED);
+}
