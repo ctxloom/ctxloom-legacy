@@ -313,7 +313,15 @@ fn test_a_json_dry_run_is_named_once_its_project_is_and_null_before() {
         ".ctxloom/config.yaml",
         "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n    profiles: [dev]\ndefault_agent: dev\n",
     );
-    let dry = ["run", "--dry-run", "--format", "json", "hello"];
+    let dry = [
+        "run",
+        "--dry-run",
+        "--agent",
+        "dev",
+        "--format",
+        "json",
+        "hello",
+    ];
     let unnamed = project.run_in(project.dir(), &dry);
     assert_eq!(unnamed.code, 0, "{}", unnamed.said());
     let run = unnamed.json();

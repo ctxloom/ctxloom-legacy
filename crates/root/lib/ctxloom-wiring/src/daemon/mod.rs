@@ -905,6 +905,40 @@ pub(crate) fn library_parent(
     stamp: &str,
     minting: crate::Minting,
 ) -> Result<String, Failure> {
+    let registration = wiring.library_registration(minting).map_err(|e| {
+        let exit = e.exit();
+        Failure::new(e, exit)
+    })?;
+    resolved_parent(wiring, stamp, registration)
+}
+
+/// [`library_parent`], or none where the project is a ctxloom project
+/// nothing has named and `minting` is a dry run's `Never`: its names are
+/// then unresolved (owner rulings 2026-11-14: a dry run never mints, and
+/// prints an unresolved name as null). The daemon is asked otherwise.
+pub(crate) fn library_parent_if_named(
+    wiring: &Wiring,
+    stamp: &str,
+    minting: crate::Minting,
+) -> Result<Option<String>, Failure> {
+    match wiring.library_registration(minting) {
+        Err(LibError::ProjectUnnamed { .. }) if minting == crate::Minting::Never => Ok(None),
+        registration => {
+            let registration = registration.map_err(|e| {
+                let exit = e.exit();
+                Failure::new(e, exit)
+            })?;
+            resolved_parent(wiring, stamp, registration).map(Some)
+        }
+    }
+}
+
+/// The parent the daemon names for `registration` (`users/me` for none).
+fn resolved_parent(
+    wiring: &Wiring,
+    stamp: &str,
+    registration: Option<daemon_proto::v1::ResolveProjectRequest>,
+) -> Result<String, Failure> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -913,10 +947,6 @@ pub(crate) fn library_parent(
                 detail: e.to_string(),
             })
         })?;
-    let registration = wiring.library_registration(minting).map_err(|e| {
-        let exit = e.exit();
-        Failure::new(e, exit)
-    })?;
     runtime
         .block_on(client_for(wiring, stamp, registration).library_parent())
         .map_err(|e| {

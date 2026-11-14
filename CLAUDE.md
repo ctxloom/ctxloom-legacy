@@ -1787,11 +1787,19 @@ only. `run --dry-run` is `CreateRun` with `validate_only`, its json the
 `Run` it would create (daemon.proto's `Run`, amended per design §5.9:
 `settings` an `AgentSettings`, `tokens` uint32, and `workspace`,
 `runtime`, `prompt` and `fragments` added; the draft's `Setting` is gone),
-named nothing, so it asks no daemon; a finding's false `fatal` is left out. Go parity ends for these nouns' JSON (design §8.1): their JSON rows
+named under the project the daemon names, which a json dry run asks (owner
+ruling 2026-11-14: "dry run *absolutely* calls (and spawns, if necessary) a
+daemon"; a text one prints no name and asks none): `<parent>/runs/-` (no
+run ID is given, nothing being created), its agent, engine and profiles
+resource names. It never mints the project's id (`Minting::Never`; library-
+cli's `Names::named_parent`, the wiring's `library_parent_if_named`): in a
+project nothing has named, its `name` prints as `null` and its references
+keep their configured text. A finding's false `fatal` is left out. Go parity ends for these nouns' JSON (design §8.1): their JSON rows
 are retired from `fixtures/parity/`, the text rows stay; `config show`'s
 JSON rows still compare Go's answer, the resource's `document`
 (`library_parity`'s `as_go_printed`), and the dry run's compared keys
-read a default proto3 JSON leaves out as Go's printed one (`printed`).
+read a default proto3 JSON leaves out as Go's printed one (`printed`), its
+agent and profiles each name's last segment (`as_configured`).
 
 The feature steps read proto3 JSON (design §8.1, the binary's
 `library.test.rs` and `gherkin_common.test.rs`): a selector `[key$=suffix]`
@@ -2264,9 +2272,9 @@ taken out with a warning (`strip_project_only`, ruling 46).
 An agent's references are resource names (design §2, B2's references): its
 `engine` `<parent>/engines/<e>`, each of its `profiles` B1's profile name
 (`library-cli`'s `catalog::profile_ref`; one that names no place keeps its
-text, OQ-16), and `resolved.engine` the engine's. The dry run's `Run` keeps
-its agent, engine and profiles as configured text: naming them would ask
-the daemon for the project in `--dry-run`.
+text, OQ-16), and `resolved.engine` the engine's. So are the dry run's
+`Run`'s agent (`<parent>/agents/<a>`), engine and profiles, their
+configured text where the project has no name yet.
 `auth status` and doctor read the effective source (`auth-application`; any
 one variable authenticates, `via` names it). A source that is a FILE alone
 (owner ruling 53) authenticates no child: a child launch (`claude -p`,

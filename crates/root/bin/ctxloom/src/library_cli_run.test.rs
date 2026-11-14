@@ -58,7 +58,12 @@ fn test_a_dry_run_shows_the_composed_context_without_launching_a_model() {
     let ran = project.run(&["run", "--dry-run", "--profile", "dev", "hello"]);
     ran.succeeds();
     let doc = ran.json();
-    assert_eq!(doc["profiles"], serde_json::json!(["dev"]));
+    // the profile by its resource name (design §2, owner ruling 2026-11-14)
+    let profile = doc["profiles"][0].as_str().unwrap_or_default();
+    assert!(
+        profile.starts_with("projects/") && profile.ends_with("/bundles/project/profiles/dev"),
+        "{doc}"
+    );
     assert!(
         contains_value(&doc, "fragments", "ctxloom+local:demo#fragments/testing"),
         "{doc}"
