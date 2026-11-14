@@ -60,7 +60,7 @@ use worktree_git::GitWorkspaces;
 
 pub use capture::{EdgeSink, HookRecording, HookSink, RunIds, SessionIds, Unreachable};
 pub use commands::{engines, Commands, Hooks};
-pub use core_link::{CoreStores, InProcessCore, Projectors, Unclosed};
+pub use core_link::{CoreStores, InProcessCore, Projectors, SharedCore, Unclosed};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{LibError, EN_US};

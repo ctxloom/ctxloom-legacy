@@ -149,6 +149,22 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("AssembleContext")) })
     }
+    /// `CreateRun` (U4); as `GetTranscript`.
+    fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
+        let _ = request;
+        Box::pin(async { Err(not_served("CreateRun")) })
+    }
+    /// `GetRun` (U4); as `GetTranscript`.
+    fn get_run(&self, request: v1::GetRunRequest) -> Answer<'_, v1::Run> {
+        let _ = request;
+        Box::pin(async { Err(not_served("GetRun")) })
+    }
+    /// `WatchRun` (U4): the run's events, a stream the edge pumps from a
+    /// blocking thread; as `GetTranscript`.
+    fn watch_run(&self, request: v1::WatchRunRequest) -> Answer<'_, crate::RunStream> {
+        let _ = request;
+        Box::pin(async { Err(not_served("WatchRun")) })
+    }
 }
 
 /// A call this edge does not serve, failed.
@@ -217,6 +233,18 @@ impl<E: Edge + 'static> Calls for Api<E> {
     ) -> Answer<'_, v1::AssembledContext> {
         Box::pin(Api::assemble_context(self, request))
     }
+
+    fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
+        Box::pin(Api::create_run(self, request))
+    }
+
+    fn get_run(&self, request: v1::GetRunRequest) -> Answer<'_, v1::Run> {
+        Box::pin(Api::get_run(self, request))
+    }
+
+    fn watch_run(&self, request: v1::WatchRunRequest) -> Answer<'_, crate::RunStream> {
+        Box::pin(Api::watch_run(self, request))
+    }
 }
 
 /// The use cases of the daemon's API.
@@ -226,6 +254,8 @@ pub struct Api<E> {
     pub(crate) applied: crate::destroy::Applied,
     /// Where an assembly is made; none, `AssembleContext` fails.
     assemblies: Option<Arc<dyn Assemblies>>,
+    /// The one-shots the daemon hosts (U4); none, `CreateRun` fails.
+    pub(crate) one_shots: Option<Arc<daemon_application::OneShots>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -234,6 +264,17 @@ impl<E: Edge> Api<E> {
             parts,
             applied: crate::destroy::Applied::default(),
             assemblies: None,
+            one_shots: None,
+        }
+    }
+
+    /// The API, its one-shots hosted by `one_shots` (U4), the same the
+    /// daemon's launcher stops.
+    #[must_use]
+    pub fn hosting_one_shots(self, one_shots: Arc<daemon_application::OneShots>) -> Api<E> {
+        Api {
+            one_shots: Some(one_shots),
+            ..self
         }
     }
 

@@ -91,6 +91,23 @@ impl Calls for Scripted {
         })
     }
 
+    fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
+        Box::pin(async move { Scripted::create(request) })
+    }
+
+    fn get_run(&self, request: v1::GetRunRequest) -> Answer<'_, v1::Run> {
+        Box::pin(async move {
+            Ok(v1::Run {
+                name: request.name,
+                ..v1::Run::default()
+            })
+        })
+    }
+
+    fn watch_run(&self, _: v1::WatchRunRequest) -> Answer<'_, daemon_api::RunStream> {
+        Box::pin(async { Ok(Box::new(run_events().into_iter()) as daemon_api::RunStream) })
+    }
+
     fn get_transcript(&self, request: v1::GetTranscriptRequest) -> Answer<'_, v1::Transcript> {
         Box::pin(async move {
             Ok(v1::Transcript {
@@ -158,6 +175,36 @@ impl Calls for Scripted {
                 ..v1::SweepSessionsResponse::default()
             })
         })
+    }
+}
+
+/// A run's events as the scripted `WatchRun` streams them: two, then its
+/// end, each as the stream is read.
+fn run_events() -> Vec<v1::RunEvent> {
+    let event = |event| v1::RunEvent { event: Some(event) };
+    vec![
+        event(v1::run_event::Event::Notice(v1::Notice {
+            code: "n".to_string(),
+            ..v1::Notice::default()
+        })),
+        event(v1::run_event::Event::Reply("HELLO".to_string())),
+        event(v1::run_event::Event::End(v1::RunEnd::default())),
+    ]
+}
+
+/// The run RPCs' use cases (U4): a run created as asked, read, and watched;
+/// a TERMINAL run not served yet.
+impl Scripted {
+    fn create(request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
+        match v1::run::Mode::try_from(request.mode) {
+            Ok(v1::run::Mode::OneShot) => Ok(v1::Run {
+                name: format!("{}/runs/r1", request.parent),
+                ..v1::Run::default()
+            }),
+            _ => Err(ApiError::Unimplemented {
+                method: "CreateRun(TERMINAL)".to_string(),
+            }),
+        }
     }
 }
 
@@ -489,4 +536,69 @@ fn the_gate_is_ready_when_its_service_is() {
         gated(true).poll_ready(&mut cx),
         std::task::Poll::Ready(Ok(()))
     ));
+}
+
+// U4: CreateRun and GetRun are their use cases' answers, a TERMINAL run is
+// UNIMPLEMENTED until U5, and WatchRun streams every event its use case
+// gives, in order, then ends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn the_runs_are_served_and_a_watch_streams_every_event() {
+    let mut client = CtxloomClient::new(serve(Arc::default()).await);
+    let run = client
+        .create_run(with_bearer(
+            v1::CreateRunRequest {
+                parent: "projects/calm-otter".to_string(),
+                mode: v1::run::Mode::OneShot as i32,
+                ..v1::CreateRunRequest::default()
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(run.name, "projects/calm-otter/runs/r1");
+    let terminal = client
+        .create_run(with_bearer(
+            v1::CreateRunRequest {
+                mode: v1::run::Mode::Terminal as i32,
+                ..v1::CreateRunRequest::default()
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(terminal.code(), Code::Unimplemented);
+    let got = client
+        .get_run(with_bearer(
+            v1::GetRunRequest {
+                name: run.name.clone(),
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(got.name, run.name);
+    let mut stream = client
+        .watch_run(with_bearer(v1::WatchRunRequest { name: run.name }, BEARER))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut events = Vec::new();
+    while let Some(event) = stream.message().await.unwrap() {
+        events.push(event);
+    }
+    assert_eq!(events, run_events());
+}
+
+// A watch is gated as every call is: without the user bearer, a bare
+// UNAUTHENTICATED, never a stream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_watch_without_the_user_bearer_is_unauthenticated() {
+    let mut client = CtxloomClient::new(serve(Arc::default()).await);
+    let status = client
+        .watch_run(Request::new(v1::WatchRunRequest::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(status.code(), Code::Unauthenticated);
 }

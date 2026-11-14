@@ -350,8 +350,9 @@ Crates:
   `CatchUp` over `pending-launches` that drives the engine for one turn and
   records the outcome as facts, and sweeps what other processes left (below);
   `Runs` plans the run through the library's dry-run, enqueues, mints,
-  launches, returns the reply. Nothing writes the session's directory but the
-  launcher's session home (ruling 87a);
+  launches, returns the reply (a one-shot's in the daemon that hosts it, U4;
+  `run_application::client` is the command's side). Nothing writes the
+  session's directory but the launcher's session home (ruling 87a);
 - `adapters/driven/host-launcher` (a turn's command through `run_within_started`,
   the interactive launch through `run_terminal`: inherited stdio, the caller's
   process group, no deadline; each on a thread of its own, returning at the
@@ -588,6 +589,45 @@ it, not on the runner's first word; a command that cannot spawn is a
 `LaunchFailed` and never a `RunnerStarted`. An interactive run's terminal
 session is ended by the human (the terminal delivers Ctrl-C to the shared
 process group, so it cancels a generation inside claude).
+A ONE-SHOT IS HOSTED BY THE USER'S DAEMON (U4, T7; owner s4-Q8): `run
+--one-shot` is its client (`run_application::client`, wired by
+`oneshot::client_one_shot`). The command resolves its project through the
+daemon (its id minted at its root where nothing has), reaches the daemon
+(started if none serves; none can be: `daemon-ports-not-started`, exit 10,
+nothing minted or started), and calls `CreateRun{ONE_SHOT}` with the line's
+whole request (`CreateRunRequest`'s prompt, agent, engine, profile,
+fragments, tags, command, workspace, `no_context`, session), its whole
+environment (S7) and its working directory (`cwd`). The daemon hosts it
+(`daemon_application::OneShots`, its root's `oneshot::HostedOneShots`): on
+a thread of its own, `Runs::one_shot` over the daemon's ONE store (its core
+shared, `InProcessCore::share`), in a wiring built from the client's
+environment and directory (`oneshot::hosted_wiring`), so it is planned, its
+dependencies pulled (`sync.on_run`), enqueued (ruling 73), named, minted,
+locked (the session's lock and the run's are the DAEMON's), placed and its
+engine's TURN command (`claude -p`, `opencode run`) driven through the one
+launcher, exactly as before, its engine the daemon's child. `CreateRun` is
+answered once the run is placed (`Runs::telling`, `run_application::
+Placement`), or with its `end` (`Run.end`, its name `<parent>/runs/-`) when
+it ended before that; the client then follows `WatchRun` (s4-Q2: its
+notices, its reply, a `stop`, its `end`) and prints them. A diagnostic
+crosses as its code and args flattened as angzarr flattens a cause
+(`client::flat_args`), rebuilt by the client (`client::report_of`: an
+integer-looking arg as an integer, a dotted name as the cause it wrapped)
+for its own catalog, so text output is as before; in json an arg that
+reads as an integer prints as a number. `RunEnd.refusals` carries an
+aggregate refusal's refusals, and the exit crosses as its code
+(`client::exit_of`). A command that vanishes without a signal leaves the run
+to its end under the daemon (owner s4-Q7: the tokens are spent for nobody;
+its reply is in the run's facts, its words in the transcript); a daemon
+killed mid-turn fails the command (10, the stream broken: S8(a), a one-shot
+is not run again). `CreateRun` for a TERMINAL run answers UNIMPLEMENTED until
+U5 (its arm in `daemon_api`'s `runs.rs`); `GetRun` and `WatchRun` of a run
+the daemon does not host are `RunNotFound`. The daemon counts its one-shots
+as what it hosts (idle, `GetDaemon`'s `runs` as ONE_SHOT, a `StopDaemon`
+refusal), stops them with its children (`end_all`, as a SIGTERM) and waits
+for each to end before its store is closed. The interactive session (and
+init's interview) is still the command's own, in process, until U5.
+
 A run asked to stop stops its engine first (ruling 114): for the whole run
 `ctxloom-wiring`'s `signals` hears SIGHUP, SIGINT and SIGTERM
 (`os::Os::signals`, each named), so none ends ctxloom by its default and
@@ -603,7 +643,16 @@ released), and the command exits 128 plus the signal's number, the error
 signal during the grace is heard and changes nothing; a signal that cannot be
 listened for is said as a notice and the run goes on unforwarded. Tested with
 the platform's fake (`os::Signals::fake`) and, for a one-shot's SIGTERM, end
-to end in j001000.
+to end in j001000. A HOSTED one-shot's stop crosses to its daemon (U4): the
+command sends the run's `runs.RequestStop{reason: <signal>}` through the
+coordinator (keyed `stop:<run>`, so a second is a DUPLICATE; one heard
+before the run is placed is sent once it is; the user gate admits
+`RequestStop`), the daemon's tick finds the `StopRequested` in the run's
+stream (`Daemon`'s stop step) and requests the run's `Stop`, says `stop` on
+`WatchRun`, and ends the run `run-application-stopped` for that signal; the
+command keeps reading to the end and exits 128 plus the signal's number. A
+stop that cannot reach the daemon is said as a notice; the engine then runs
+on under the daemon to its turn's end.
 ONE PRINCIPAL, THE USER (the separation model, owner 2026-11-12, slice 2;
 separation-analysis.md). On the host there are no principals but the user:
 a process of the user, the model included, can do anything the user can
@@ -623,7 +672,9 @@ The runner's and the model's tokens are gone (`EnqueueRun` and
 authenticated caller is the user, with the user's allowlist
 (`runs_application::user_allowlist`, every command and fact the session
 domain handles, read from the aggregate, since angzarr's unrestricted
-allowlist is its own). The run's `HookGate` (the CLI run's own listener's,
+allowlist is its own, and the runs domain's `RequestStop`, U4; the
+coordinator's command half reaches the session and run domains alone,
+`EdgeCommands::reach`). The run's `HookGate` (the CLI run's own listener's,
 kept while the CLI serves its own runs) identifies the run its bearer names
 and `owns` that run's session stream alone: an addressing check (a fact's
 session must be its run's), not a permission. What
@@ -1128,8 +1179,8 @@ certificate, and serves its listener behind `runs-application`'s
 constant time (`TokenHash::matches`), and answers anything else (no
 credential, another bearer, a run's hook bearer, another scheme) with a
 bare UNAUTHENTICATED that says nothing of why (S11); an admitted caller is
-the user, with `user_allowlist` (every session command and fact) on every
-stream the daemon reaches. There is ONE daemon per OS USER, ever (owner,
+the user, with `user_allowlist` (every session command and fact, and a
+run's `RequestStop`) on every stream the daemon reaches. There is ONE daemon per OS USER, ever (owner,
 after step 3/4: no clustering): its single-instance lock, `daemon.lock`,
 is keyed to the account, never to `CTXLOOM_HOME` or `HOME`, at the place
 ONE function says (`daemon::files::instance_lock_path`):
@@ -2021,11 +2072,12 @@ written, so the form there before is kept. A good answer is the
 `DistillFragmentResponse`/`DistillCommandResponse` (`applied` false and
 `detail` `fresh`/`no_distill` when nothing was asked), and `bundle distill`
 the `Bundle` with each item's state. The wiring's `OneShotDistiller` is a
-one-shot run on NO CONTEXT, the way init's interview runs its session
-(`OneShots`); its session is an ordinary one-shot's. There is no `work`
-domain and no provenance (owner, 2026-11-13: no `distilled_in`, no
-`activity` label). Once the daemon hosts one-shots (step 6) the port is its
-`DistillFragment`, the use case unchanged.
+one-shot run on NO CONTEXT, HOSTED by the user's daemon as every one-shot is
+(U4, owner s4-Q6; `oneshot::client_one_shot`, of the binary's stamp, so it
+is set on the library `LibraryCommands` builds, and a library built
+elsewhere has no distiller); its session is an ordinary one-shot's. There is
+no `work` domain and no provenance (owner, 2026-11-13: no `distilled_in`, no
+`activity` label). `DistillFragment` (the RPC) is still not served.
 
 `run --no-context` (owner OD-38) is the user-visible context-free run, the
 one-shot, the session and the dry run alike (`RunRequest::no_context`): the

@@ -15,7 +15,7 @@ daemon-proto = { workspace = true, features = ["server"] }
 prost.workspace = true
 prost-types.workspace = true
 runs-application.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 tonic = { version = "0.14", default-features = false, features = ["codegen"] }
 
 [dev-dependencies]

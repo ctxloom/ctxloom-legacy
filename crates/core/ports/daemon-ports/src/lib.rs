@@ -95,6 +95,54 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("AssembleContext")) }
     }
 
+    /// `CreateRun` (U4, T7): a ONE_SHOT run hosted by the daemon, answered
+    /// once it is placed (its run and session made, its engine about to
+    /// start) or ended before that (its `end`). The default is a daemon
+    /// that does not serve it.
+    fn create_run(
+        &self,
+        request: v1::CreateRunRequest,
+    ) -> impl Future<Output = Result<v1::Run, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("CreateRun")) }
+    }
+
+    /// `GetRun`: a run the daemon hosts, by its resource name. The default
+    /// is a daemon that does not serve it.
+    fn get_run(
+        &self,
+        request: v1::GetRunRequest,
+    ) -> impl Future<Output = Result<v1::Run, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("GetRun")) }
+    }
+
+    /// `WatchRun`: a hosted run's notices, its reply, a stop and its end,
+    /// in order, as they come, until its end; unbounded in time (a turn may
+    /// take as long as its deadline). The default is a daemon that does not
+    /// serve it.
+    fn watch_run(
+        &self,
+        request: v1::WatchRunRequest,
+    ) -> impl Future<Output = Result<Box<dyn RunEvents>, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("WatchRun")) }
+    }
+
+    /// The coordinator's `Handle` (T16, API Q11): `book`, a domain command
+    /// under the id its page names, applied (or found applied: a
+    /// DUPLICATE); whether this delivery applied it. Nothing waits for a
+    /// projection (a one-shot's `RequestStop`). The default is a daemon that
+    /// serves no writes.
+    fn handle(&self, book: CommandBook) -> impl Future<Output = Result<bool, Called>> + Send {
+        let _ = book;
+        async {
+            Err(Called::Unimplemented {
+                method: HANDLE.to_string(),
+            })
+        }
+    }
+
     /// The coordinator's `HandleSync` (T16): `book`, a domain command under
     /// the id its page names, applied (or found applied: a DUPLICATE), and
     /// answered once each of `projectors` has projected its events, with
@@ -133,6 +181,21 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("SweepSessions")) }
     }
 }
+
+/// A hosted run's events as `WatchRun` streams them (U4): each in order,
+/// none once the stream has ended (its `end` was the last), or what broke
+/// it (the daemon gone: unreachable).
+pub trait RunEvents: Send {
+    fn next(&mut self) -> NextEvent<'_>;
+}
+
+/// A hosted run's next event, as [`RunEvents::next`] answers it.
+pub type NextEvent<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Option<Result<v1::RunEvent, Called>>> + Send + 'a>>;
+
+/// The coordinator's `Handle`, as a status names it.
+pub const HANDLE: &str =
+    "/io.angzarr.transport.distributed.v1.CommandHandlerCoordinatorService/Handle";
 
 /// The coordinator's `HandleSync`, as a status names it.
 pub const HANDLE_SYNC: &str =

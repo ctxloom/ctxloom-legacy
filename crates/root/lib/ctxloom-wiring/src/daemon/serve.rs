@@ -30,7 +30,7 @@ use angzarr_embedded::angzarr_store_sqlite::SqliteStore;
 use credentials::OsTokenSource;
 use ctxloom_store_sqlite::Stores;
 use daemon_application::{
-    ChildHomes, ChildPlans, Daemon, Ears, Folds, HandOffs, Place as Told, Ports,
+    ChildHomes, ChildPlans, Daemon, Ears, Folds, HandOffs, OneShots, Place as Told, Ports,
 };
 use file_system::Fs;
 use hook_listener::{HookListener, TlsIdentity};
@@ -43,6 +43,10 @@ use crate::{InProcessCore, Projectors};
 
 /// How long a daemon starting waits for the single-instance lock.
 const INSTANCE_WAIT: Duration = Duration::from_secs(5);
+
+/// How long a daemon exiting waits for each one-shot it stopped to end:
+/// the stop's grace (five seconds), and its end's recording.
+const ONE_SHOT_END_WAIT: Duration = Duration::from_secs(10);
 
 /// Where the daemon is: the ctxloom home, the temporary root, the
 /// operating system's name, the user's own home (`Wiring::user_home`) and
@@ -121,13 +125,14 @@ pub(crate) fn serve(
         .await;
         // What the loop shares with the API's use cases (slice 2 step 5).
         let shared = Arc::new(Shared::new(kept.index.clone().unwrap_or_default()));
+        let one_shots = one_shots_over(&core, home, &temp);
         let started = start(
             &fs,
             (home, &temp),
             &core,
             &kept,
             (os, user_home, stamp, pace, engines),
-            (&files, &shared),
+            (&files, &shared, &one_shots),
             &say,
         )
         .await;
@@ -138,6 +143,7 @@ pub(crate) fn serve(
                 // every exit does (ruling 131): what holds it is let go first.
                 drop(shared);
                 drop(kept);
+                drop(one_shots);
                 said(&say, &format!("the start failed: {detail}"));
                 match core.close().await {
                     Ok(()) => said(&say, "the store is closed"),
@@ -170,10 +176,20 @@ pub(crate) fn serve(
         // long as any copy of it lives; the kernel's copies go with the
         // core.
         launcher.end_all();
+        // The one-shots it hosts were stopped with its children: each is
+        // waited for, so its run's end is recorded and its copy of the core
+        // let go before the store closes.
+        if !one_shots.wait_ended(ONE_SHOT_END_WAIT) {
+            said(
+                &say,
+                "a one-shot did not end in time: its run is left to the next sweep",
+            );
+        }
         drop(launcher);
         let _ = listener.stop().await;
         drop(shared);
         drop(kept);
+        drop(one_shots);
         said(&say, "exited");
         // Closed, not dropped (ruling 131).
         if let Err(unclosed) = core.close().await {
@@ -181,6 +197,31 @@ pub(crate) fn serve(
         }
         result
     })
+}
+
+/// The clock's seconds since the epoch, as the daemon's start says it.
+fn seconds_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// The one-shots the daemon hosts (U4), each over `core` shared, on the
+/// daemon's runtime (the one this is called on): the API creates and
+/// watches them, the launcher stops them.
+fn one_shots_over(
+    core: &InProcessCore<SqliteStore>,
+    home: &Path,
+    temp: &Path,
+) -> Arc<daemon_application::OneShots> {
+    Arc::new(daemon_application::OneShots::new(Box::new(
+        crate::oneshot::HostedOneShots {
+            core: core.share(),
+            runtime: tokio::runtime::Handle::current(),
+            home: home.to_path_buf(),
+            temp: temp.to_path_buf(),
+        },
+    )))
 }
 
 /// The daemon started (its bearer and certificate minted, its listener
@@ -200,7 +241,7 @@ async fn start(
         Pace,
         Vec<daemon_application::HostedEngine>,
     ),
-    (files, shared): (&DaemonFiles, &Arc<Shared>),
+    (files, shared, one_shots): (&DaemonFiles, &Arc<Shared>, &Arc<OneShots>),
     say: &Say,
 ) -> Result<(HookListener, Daemon<CoreEdge, OsTokenSource>, Discovery), String> {
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
@@ -221,9 +262,7 @@ async fn start(
     )
     .mint(&names)
     .map_err(|e| code(&e))?;
-    let started_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+    let started_at = seconds_now();
     let calls: Arc<dyn daemon_api::Calls> = Arc::new(
         daemon_api::Api::new(daemon_api::Parts {
             edge: Arc::clone(&edge),
@@ -254,7 +293,8 @@ async fn start(
         .assembling(Arc::new(super::places::ProjectAssemblies {
             home: home.to_path_buf(),
             temp: temp.to_path_buf(),
-        })),
+        }))
+        .hosting_one_shots(Arc::clone(one_shots)),
     );
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
@@ -290,7 +330,8 @@ async fn start(
             cert: certificate.public().clone(),
         },
         Arc::clone(say),
-    );
+    )
+    .hosting_one_shots(Arc::clone(one_shots));
     let own = Discovery {
         stamp,
         pid: std::process::id(),
@@ -438,7 +479,11 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
     // engines ended first when asked `even_if_live` (S12).
     let mut stopping = false;
     loop {
-        shared.tell(launcher.hosted_runs(), quiet_since);
+        shared.tell(
+            launcher.hosted_runs(),
+            launcher.hosted_one_shots(),
+            quiet_since,
+        );
         if !files.still_holds(held) {
             said(
                 say,
@@ -542,8 +587,8 @@ struct Shared {
 #[derive(Default)]
 struct Round {
     endpoint: String,
-    /// Each hosted run's session id and run root.
-    hosted: Vec<(String, String)>,
+    /// Each hosted run's session id, run root and kind.
+    hosted: Vec<(String, String, daemon_proto::v1::hosted_run::Kind)>,
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
@@ -580,9 +625,25 @@ impl Shared {
         self.round().endpoint = endpoint.to_string();
     }
 
-    fn tell(&self, hosted: Vec<(String, String)>, quiet_since: Instant) {
+    /// What the round found it hosts: its children (`children`) and its
+    /// one-shots, each its session id and run root.
+    fn tell(
+        &self,
+        children: Vec<(String, String)>,
+        one_shots: Vec<(String, String)>,
+        quiet_since: Instant,
+    ) {
+        use daemon_proto::v1::hosted_run::Kind;
         let mut round = self.round();
-        round.hosted = hosted;
+        round.hosted = children
+            .into_iter()
+            .map(|(session, run)| (session, run, Kind::Child))
+            .chain(
+                one_shots
+                    .into_iter()
+                    .map(|(session, run)| (session, run, Kind::OneShot)),
+            )
+            .collect();
         round.quiet_since = Some(quiet_since);
     }
 
@@ -601,14 +662,14 @@ impl daemon_api::Hosting for Shared {
         let index = self.index.index();
         hosted
             .into_iter()
-            .map(|(session, run)| {
+            .map(|(session, run, kind)| {
                 let record = index.find_by_id(&session).unwrap_or_default();
                 let project = index.project_harp(&record.project_id).unwrap_or_default();
                 daemon_proto::v1::HostedRun {
                     session: index.name_of(&record),
                     harp: record.harp,
                     run: format!("projects/{project}/runs/{run}"),
-                    kind: daemon_proto::v1::hosted_run::Kind::Child as i32,
+                    kind: kind as i32,
                 }
             })
             .collect()

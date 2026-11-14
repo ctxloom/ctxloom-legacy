@@ -46,6 +46,9 @@ pub enum ApiError {
     Refused(ApiRefusal),
     /// Something broke (the store, the kernel): an internal failure.
     Failed { detail: String },
+    /// Not served by this daemon (yet): `CreateRun` for a TERMINAL run until
+    /// U5 builds it; answered UNIMPLEMENTED.
+    Unimplemented { method: String },
 }
 
 impl ApiError {
@@ -76,6 +79,7 @@ impl Diagnostic for ApiError {
         match self {
             ApiError::Refused(_) => code!("refused"),
             ApiError::Failed { .. } => code!("failed"),
+            ApiError::Unimplemented { .. } => code!("unimplemented"),
         }
     }
 
@@ -85,6 +89,7 @@ impl Diagnostic for ApiError {
                 vec![("ext_err_txt", refused.refusal.type_url.as_str().into())]
             }
             ApiError::Failed { detail } => vec![("ext_err_txt", detail.as_str().into())],
+            ApiError::Unimplemented { method } => vec![("method", method.as_str().into())],
         }
     }
 }
@@ -104,6 +109,10 @@ pub enum ApiRejection {
         name: String,
     },
     ProjectNotFound {
+        name: String,
+    },
+    /// A run the daemon hosts no run under (U4).
+    RunNotFound {
         name: String,
     },
     ProjectUnknown {
@@ -133,6 +142,7 @@ impl Diagnostic for ApiRejection {
             ApiRejection::SessionNotFound { .. } => code!("session-not-found"),
             ApiRejection::TranscriptEmpty { .. } => code!("transcript-empty"),
             ApiRejection::ProjectNotFound { .. } => code!("project-not-found"),
+            ApiRejection::RunNotFound { .. } => code!("run-not-found"),
             ApiRejection::ProjectUnknown { .. } => code!("project-unknown"),
             ApiRejection::DaemonHosting { .. } => code!("daemon-hosting"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
@@ -148,7 +158,8 @@ impl Diagnostic for ApiRejection {
             ],
             ApiRejection::SessionNotFound { name }
             | ApiRejection::TranscriptEmpty { name }
-            | ApiRejection::ProjectNotFound { name } => {
+            | ApiRejection::ProjectNotFound { name }
+            | ApiRejection::RunNotFound { name } => {
                 vec![("name", name.as_str().into())]
             }
             ApiRejection::ProjectUnknown { cwd } => vec![("cwd", cwd.as_str().into())],
@@ -315,6 +326,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
             .and_then(|r| api(ApiRejection::TranscriptEmpty { name: r.name })),
         "ctxloom.v1.ProjectNotFound" => decode::<v1::ProjectNotFound>(refusal)
             .and_then(|r| api(ApiRejection::ProjectNotFound { name: r.name })),
+        "ctxloom.v1.RunNotFound" => decode::<v1::RunNotFound>(refusal)
+            .and_then(|r| api(ApiRejection::RunNotFound { name: r.name })),
         "ctxloom.v1.ProjectUnknown" => decode::<v1::ProjectUnknown>(refusal)
             .and_then(|r| api(ApiRejection::ProjectUnknown { cwd: r.cwd })),
         "ctxloom.v1.DaemonHosting" => decode::<v1::DaemonHosting>(refusal).and_then(|r| {
@@ -395,6 +408,12 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(ApiRejection::ProjectNotFound {
             name: "projects/calm-otter".to_string(),
+        }),
+        Box::new(ApiRejection::RunNotFound {
+            name: "projects/calm-otter/runs/0195f0a4-7b1e-7000-8000-000000000001".to_string(),
+        }),
+        Box::new(ApiError::Unimplemented {
+            method: "CreateRun(TERMINAL)".to_string(),
         }),
         Box::new(ApiRejection::TranscriptEmpty {
             name: "projects/calm-otter/sessions/amber-swift-owl".to_string(),

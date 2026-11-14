@@ -18,6 +18,7 @@ use session_index::SessionIndexes;
 use session_policies::{plan, Fed, RunAt, Scene, Sent, Step};
 use sessions::Urgency;
 
+use crate::one_shot::OneShots;
 use crate::ports::{ChildHomes, ChildPlans, Ears, HandOff, HandOffs, HostedEngine};
 use run_launcher::{Sweeper, Swept};
 
@@ -103,6 +104,9 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     /// Where a child's program is found (`RunnerLauncher::find_program`:
     /// PATHEXT's on Windows); none, it is started as named.
     finder: Option<Arc<dyn RunnerLauncher>>,
+    /// The one-shots it hosts (U4), shared with its API; none, it hosts
+    /// none.
+    one_shots: Option<Arc<OneShots>>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -195,7 +199,16 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             refused: BTreeSet::new(),
             complained: BTreeSet::new(),
             finder: None,
+            one_shots: None,
         }
+    }
+
+    /// The daemon, hosting the one-shots of `one_shots` (U4): counted as
+    /// what it hosts, stopped when their run's stream asks
+    /// ([`Daemon::tick`]'s stop step), and ended with its children.
+    pub fn hosting_one_shots(mut self, one_shots: Arc<OneShots>) -> Daemon<E, T> {
+        self.one_shots = Some(one_shots);
+        self
     }
 
     /// The daemon, finding each child's program through `finder` (the one
@@ -205,9 +218,24 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         self
     }
 
-    /// How many children it hosts now.
+    /// How many runs it hosts now: its children and its one-shots.
     pub fn hosting(&self) -> usize {
-        self.hosted.len()
+        self.hosted.len() + self.one_shots.as_ref().map_or(0, |o| o.hosting())
+    }
+
+    /// The one-shots it hosts, each as its session's stable id and its
+    /// run's root (text), in run order.
+    pub fn hosted_one_shots(&self) -> Vec<(String, String)> {
+        self.one_shots
+            .as_ref()
+            .map(|one_shots| {
+                one_shots
+                    .live()
+                    .into_iter()
+                    .map(|placed| (placed.session, placed.run))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The runs it hosts, each as its session's stable id and its run's
@@ -321,6 +349,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         draining: bool,
     ) -> bool {
         let mut busy = self.hear().await;
+        busy |= self.stop_one_shots().await;
         let board = self.board.step_if_changed(store, catalog).await;
         let pending = self.pending.step_if_changed(store, catalog).await;
         let _ = self.index.step_if_changed(store, catalog).await;
@@ -906,10 +935,55 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// End every child still hosted (the daemon exits), each given its
-    /// grace.
+    /// grace, and stop every one-shot it hosts.
     pub fn end_all(&mut self) {
         for hosted in self.hosted.values() {
             let _ = hosted.control.end(END_GRACE);
         }
+        if let Some(one_shots) = &self.one_shots {
+            one_shots.stop_all();
+        }
+    }
+
+    /// The stop step (U4, T7): each hosted one-shot whose run's stream holds
+    /// a `StopRequested` (its client's `RequestStop`, on a signal) has its
+    /// engine stopped, for the reason recorded. Whether it stopped any.
+    async fn stop_one_shots(&mut self) -> bool {
+        let Some(one_shots) = self.one_shots.clone() else {
+            return false;
+        };
+        let mut stopped = false;
+        for run in one_shots.unstopped() {
+            let Some(reason) = self.stop_asked(&run).await else {
+                continue;
+            };
+            if one_shots.stop(&run, &reason) {
+                (self.say)(&format!(
+                    "{run}: asked to stop ({reason}): stopping its engine"
+                ));
+                stopped = true;
+            }
+        }
+        stopped
+    }
+
+    /// Why `run`'s stream asks it to stop, if it does.
+    async fn stop_asked(&self, run: &str) -> Option<String> {
+        use angzarr_embedded::Payload;
+        let cover = angzarr_embedded::v1::Cover {
+            domain: runs::RUN_DOMAIN.to_string(),
+            root: Some(root_of(run)),
+            edition: None,
+        };
+        let pages = self.edge.events(&cover, 0).await.ok()?;
+        pages.iter().find_map(|page| match &page.body {
+            Some(angzarr_embedded::v1::event_page::Body::Event(any)) => {
+                match runs::RunEvent::from_any(any) {
+                    Ok(runs::RunEvent::StopRequested(stop)) => Some(stop.reason),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
     }
 }
