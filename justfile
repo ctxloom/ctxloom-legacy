@@ -471,7 +471,7 @@ clean-target:
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, closeout, closeout-ratchet, ltk rules, output budget, tests exit, test-staged, exec-mode check, path deps")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, closeout, closeout-ratchet, ltk rules, output budget, tests exit, test-staged, exec-mode check, path deps, mcp-env probe")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -488,6 +488,7 @@ selftest:
     @{{TOP}}/scripts/path-deps-check.selftest.sh
     @{{TOP}}/scripts/commit-msg.selftest.sh
     @{{TOP}}/scripts/release-package.selftest.sh
+    @{{TOP}}/scripts/mcp-env-probe.selftest.sh
 
 # Run the ctxloom binary (cargo run, quiet) with the given arguments.
 [group('dev')]

@@ -2064,8 +2064,12 @@ Every session home registers it, but for a launch with no context (`run
 "serve"], enabled: true}` (`surface_ports::CTXLOOM_SERVER`; a carried server
 of that name is shadowed, OD-6). The entry holds no identity: the server is
 the session `CTXLOOM_SESSION` names in the environment it inherits from its
-engine (whether claude passes that environment to a stdio server is OD-7's
-live probe, `scripts/mcp-env-probe.sh`, not yet run), and with none it is
+engine (OD-7's live probe, `scripts/mcp-env-probe.sh`, run by the owner
+2026-11-14 on claude 2.1.322: claude passes its environment, withholding
+its own `CLAUDE_CODE_OAUTH_TOKEN`; the probe gives claude, the server and
+the daemon its call starts a temporary `CTXLOOM_HOME`, `HOME` and project
+of its own and stops that daemon before removing them, held by
+`scripts/mcp-env-probe.selftest.sh` in `just selftest`), and with none it is
 refused, `mcp-server-no-session` (exit 20). `initialize` and `tools/list`
 reach no daemon. The command line holds stdout locked, so the server's
 lines reach it through a channel and are written on the command's thread
