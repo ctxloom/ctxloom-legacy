@@ -242,3 +242,19 @@ mod read {
         assert_eq!(text.code(), 1, "{}", text.err);
     }
 }
+
+// A named project's dry run with no `--agent` names none (its plan's agent
+// is the one asked for): an empty reference stays empty, never a name below
+// the parent.
+mod unset {
+    use crate::tests::*;
+
+    #[test]
+    fn test_a_dry_run_asking_no_agent_names_no_agent() {
+        let plan = go(&["run", "--dry-run", "hello"], JSON, BARE);
+        assert_eq!(plan.code(), 1, "{}", plan.err);
+        let run = plan.json();
+        assert_eq!(run["name"], "projects/calm-otter/runs/-", "{run}");
+        assert!(run.get("agent").is_none(), "{run}");
+    }
+}
