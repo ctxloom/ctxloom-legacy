@@ -98,13 +98,6 @@ fn a_turn_request_renders_its_env_keys_and_never_the_bearer() {
     );
 }
 
-// Ruling 58: an engine says its session ends with its exit only by saying so;
-// one that does not (claude, whose SessionEnd hook says it) leaves it to hooks.
-#[test]
-fn an_engine_that_says_nothing_does_not_end_its_session_by_its_exit() {
-    assert!(!Plain.session_ends_with_exit());
-}
-
 // Ruling 168: an engine with nothing to say of a plan advises nothing, a plan
 // with no model included.
 #[test]

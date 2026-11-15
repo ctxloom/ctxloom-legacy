@@ -350,7 +350,7 @@ fn transcript_holds(w: &mut World) {
     let kinds: Vec<&str> = lines.iter().map(|l| l["kind"].as_str().unwrap()).collect();
     assert_eq!(
         kinds,
-        // PROPOSED (U7b, 2026-11-15): no `session_end` at the exit.
+        // No `session_end` at the exit (owner 2026-11-15).
         ["entry", "tool", "assistant_delta", "turn_end"],
         "each once, the turn ended twice (its completion and its idle): {lines:#?}"
     );
@@ -373,7 +373,6 @@ fn transcript_holds(w: &mut World) {
     assert_eq!(words["delta"]["text"], WORDS);
     assert_eq!(words["delta"]["final"], true);
     assert_eq!(lines[3]["prompt_id"], PROMPT_ID);
-    assert_eq!(lines[4]["reason"], "exit");
     let whole = serde_json::to_string(&lines).unwrap();
     assert!(!whole.contains(TOOL_BODY), "the tool's output was kept");
     assert!(

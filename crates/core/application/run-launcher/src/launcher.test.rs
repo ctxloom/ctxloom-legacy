@@ -1112,100 +1112,36 @@ async fn the_orders_engine_settings_reach_the_engines_request() {
     }
 }
 
-// Ruling 58: an engine with no hook for its session's end (opencode) has it
-// recorded by the launcher at its terminal command's exit, once, before the
-// run ends; an engine whose hooks say it (claude) does not, and neither does a
-// command that never started, nor a child's turn.
+// Owner 2026-11-15 (SessionEnded is lost): a terminal session's exit
+// records only its run's facts, for every engine: no session end (opencode's
+// once was the launcher's) and no bind (claude's once came from its hooks'
+// end; its conversation is the one its SessionStart bound, delivered like
+// any capture fact).
 #[tokio::test]
-async fn an_engine_whose_session_ends_with_its_exit_has_the_end_recorded_at_the_exit() {
-    use crate::fakes::EndsByExit;
-    let launch = |interactive: bool, runner: ScriptedRunner| {
-        let mut asked = order("fake");
-        asked.interactive = interactive;
-        asked.prompt = String::new();
-        let edge = Arc::new(TestEdge::new());
-        let records = MemoryRecords::default();
-        let launcher = Launcher::new(
-            Arc::clone(&edge),
-            runner,
-            records.clone(),
-            vec![Arc::new(EndsByExit(ScriptedEngine::answering("ok", None)))
-                as Arc<dyn run_ports::Engine>],
-            orders_with(asked),
-            limits(),
-        );
-        (edge, launcher, records)
-    };
-    let (edge, mut launcher, records) = launch(true, ScriptedRunner::exits(0));
-    enqueued(&edge, SESSION, HARP).await;
-    launcher.step(&edge.store, edge.catalog()).await.unwrap();
-    let ended: Vec<_> = session_events(&edge, SESSION)
-        .await
-        .into_iter()
-        .filter_map(|e| match e {
-            SessionEvent::SessionEnded(ended) => Some(ended),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        ended,
-        [sessions::SessionEnded {
-            native_session: String::new(),
-            reason: "exit".to_string(),
-        }]
-    );
-    assert!(records.text(HARP, "transcripts/transcript.jsonl").is_none());
-    assert_eq!(
-        names(&run_events(&edge, SESSION).await),
-        ["RunEnqueued", "RunnerAttached", "RunnerStarted", "RunEnded"]
-    );
-
-    for (interactive, runner) in [
-        (
-            true,
-            ScriptedRunner::answering(TurnLaunch::NotStarted(LaunchFailure {
-                deterministic: true,
-                detail: "no opencode".to_string(),
-            })),
-        ),
-        (false, ScriptedRunner::exits(0)),
-    ] {
-        let (edge, mut launcher, _) = launch(interactive, runner);
-        enqueued(&edge, SESSION, HARP).await;
-        launcher.step(&edge.store, edge.catalog()).await.unwrap();
-        assert!(
-            !session_events(&edge, SESSION)
-                .await
-                .iter()
-                .any(|e| matches!(e, SessionEvent::SessionEnded(_))),
-            "interactive {interactive}: no end recorded"
-        );
-    }
-}
-
-// PROPOSED (U7b, 2026-11-15; owner: SessionEnded is lost): a terminal
-// session's conversation is the one its SessionStart bound, delivered like
-// any capture fact; its exit binds nothing, whatever a session end in its
-// stream named (an older home's, recorded before the fact was retired; the
-// green unit seeds it as a stored event once the fact type is gone).
-#[tokio::test]
-async fn a_terminal_sessions_exit_binds_nothing() {
+async fn a_terminal_sessions_exit_records_its_runs_end_and_nothing_of_the_session() {
     let mut asked = order("fake");
     asked.interactive = true;
-    let mut named = rig(
+    asked.prompt = String::new();
+    let mut rig = rig(
         ScriptedEngine::answering("ok", None),
         ScriptedRunner::exits(0),
         orders_with(asked),
     );
-    enqueued(&named.edge, SESSION, HARP).await;
-    crate::fakes::hook_session_ended(&named.edge, SESSION, "native-term-1").await;
-    named.step().await;
+    enqueued(&rig.edge, SESSION, HARP).await;
+    rig.step().await;
     assert!(
-        !session_events(&named.edge, SESSION)
+        !session_events(&rig.edge, SESSION)
             .await
             .iter()
-            .any(|e| matches!(e, SessionEvent::EngineSessionBound(_))),
-        "the exit bound a conversation"
+            .any(|e| matches!(
+                e,
+                SessionEvent::EngineSessionBound(_) | SessionEvent::SessionEnded(_)
+            )),
+        "the exit recorded something of the session"
+    );
+    assert_eq!(
+        names(&run_events(&rig.edge, SESSION).await),
+        ["RunEnqueued", "RunnerAttached", "RunnerStarted", "RunEnded"]
     );
 }
 

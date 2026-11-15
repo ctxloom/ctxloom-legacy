@@ -14,7 +14,8 @@ use angzarr_embedded::markup::{pack_message, Bug, FactEmit};
 
 use crate::{
     live, IncarnationEnded, IncarnationOwed, RecordIncarnationEnded, RehostSession, ResumeSession,
-    SessionAggregate, SessionEvent, SessionRejection, SessionState, StopOrdered, StopSession,
+    SessionAggregate, SessionEvent, SessionRejection, SessionReopened, SessionState, StopOrdered,
+    StopSession,
 };
 
 /// The incarnation a mint owes: the first (owner ruling 2026-11-04, S5
@@ -30,14 +31,16 @@ pub(crate) fn first_owed() -> IncarnationOwed {
 pub(crate) const RESUMED: &str = "resume";
 
 /// What a resume records (owner ruling 115): the session's next incarnation
-/// owed. Refused for a stream holding no session (a destroyed one: the
+/// owed, after its reopen when it was closed (owner 2026-11-15: an explicit
+/// resume reopens a closed session; a close is ctxloom's control of its
+/// sessions, not the engine's conversation). Refused for a stream holding no session (a destroyed one: the
 /// caller asks only for a claimed name), while an incarnation is open, before
 /// the engine bound a native session, for another engine, and for another
 /// workspace axis than the one it was minted on (none recorded: `none`).
 pub(crate) fn resumed(
     held: &SessionState,
     resume: &ResumeSession,
-) -> Result<IncarnationOwed, SessionRejection> {
+) -> Result<(Option<SessionReopened>, IncarnationOwed), SessionRejection> {
     let harp = || resume.harp.clone();
     if live(held).is_err() {
         return Err(SessionRejection::SessionDestroyed { harp: harp() });
@@ -64,10 +67,16 @@ pub(crate) fn resumed(
     if held.native_id.is_empty() {
         return Err(SessionRejection::NoNativeSession { harp: harp() });
     }
-    Ok(IncarnationOwed {
-        incarnation: held.incarnation + 1,
-        reason: RESUMED.to_string(),
-    })
+    let reopened = held.closed.then(|| SessionReopened {
+        cause: RESUMED.to_string(),
+    });
+    Ok((
+        reopened,
+        IncarnationOwed {
+            incarnation: held.incarnation + 1,
+            reason: RESUMED.to_string(),
+        },
+    ))
 }
 
 /// Why an incarnation a re-host owes is owed, after its host was lost: the

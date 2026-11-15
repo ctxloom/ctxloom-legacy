@@ -21,8 +21,6 @@ use super::{Env, Ran};
 use crate::tests::files;
 
 const HARP: &str = "amber-swift-owl";
-/// The session's resource name, as `CTXLOOM_SESSION` carries it (s3-Q3).
-const NAMED: &str = "projects/amber-quiet-heron/sessions/amber-swift-owl";
 
 /// The one store under `home` (T14).
 fn store_under(home: &Path) -> PathBuf {
@@ -85,11 +83,16 @@ fn test_the_store_a_test_command_opens_is_closed_before_it_exits() {
     assert_eq!(beside(&store), Vec::<&str>::new(), "made, migrated, closed");
 }
 
+// A session start's hook opens no store of its own (owner 2026-11-15, H-Q9):
+// its bind is delivered to the user's daemon, which holds the store from
+// then on, as every capture fact is.
 #[test]
-fn test_a_hook_that_binds_its_session_closes_the_store_before_it_answers() {
+fn test_a_session_starts_hook_has_the_daemon_bind_its_session() {
     let env = Env::new();
     ok(&env.run(&["test", "seed-session", HARP]), "seed");
-    let store = store_under(env.home());
+    let named = env.run(&["session", "show", HARP, "--format", "json"]);
+    ok(&named, "show");
+    let named = named.json()["name"].as_str().expect("a name").to_string();
     let transcript = env.home().join("native.jsonl");
     let payload = serde_json::json!({
         "session_id": "vendor-session-42",
@@ -101,11 +104,9 @@ fn test_a_hook_that_binds_its_session_closes_the_store_before_it_answers() {
     let ran = env.run_hook(
         &["hook", "claude-code", "execute", "SessionStart"],
         &payload,
-        &[("CTXLOOM_SESSION", NAMED)],
+        &[("CTXLOOM_SESSION", named.as_str())],
     );
     ok(&ran, "SessionStart");
-    assert!(!logged(&store), "the log holds nothing");
-    // Read by the daemon, which holds the store from here on.
     let shown = env.run(&["session", "show", HARP, "--format", "json"]);
     ok(&shown, "show");
     assert!(

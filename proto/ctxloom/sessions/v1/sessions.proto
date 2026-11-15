@@ -330,8 +330,8 @@ message RecordIncarnationEnded {
 // for a harp whose name is claimed, so a stream holding no session is one
 // `session remove` destroyed. Refused while an incarnation is open (its run
 // has not ended), before the engine bound a native session, for another
-// engine than the session's, and for another workspace axis. PROPOSED (U7b,
-// 2026-11-15): a CLOSED session is reopened (`SessionReopened`, then the
+// engine than the session's, and for another workspace axis. A CLOSED session
+// is reopened (owner 2026-11-15) (`SessionReopened`, then the
 // incarnation owed), never refused for its close.
 message ResumeSession {
   option (io.angzarr.v1.command) = {

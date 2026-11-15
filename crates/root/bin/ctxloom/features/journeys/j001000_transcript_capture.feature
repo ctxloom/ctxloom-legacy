@@ -48,8 +48,6 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
   # stub opencode loads that plugin (under node, as opencode loads it under
   # Bun) and feeds it the events a real opencode emits for a prompt, a tool
   # call and a reply; its turn also idles, which ends the turn a second time.
-  # # PROPOSED (U7b, 2026-11-15): was "opencode says nothing of a session's end: ctxloom
-  # records it at the exit."
   # opencode says nothing of a session's end, and ctxloom records none: a
   # session's end is its run's end, which its listing says.
   Scenario: The events an interactive opencode session emits become the session's transcript
@@ -62,7 +60,6 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
       """
     Then opencode ran in its session home, with what its plugin's hooks need to reach ctxloom and without OPENCODE_PURE
     And every hook the plugin ran left nothing unrecorded
-    # # PROPOSED (U7b, 2026-11-15): was "..., the turn's end and the session's end at the exit, each once".
     And the session's transcript holds her prompt, the tool call with its status, the assistant's words and the turn's end, each once
 
   # The interactive engine reports what happens through the hooks its session
@@ -79,18 +76,13 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
       """
     Then the assistant's environment held what its hooks need to reach ctxloom
     And every hook it fired answered, said nothing was left unrecorded, and exited 0
-    # # PROPOSED (U7b, 2026-11-15): was "..., the turn's end and the session's end, each once".
     And the session's transcript holds her prompt, the assistant's words in order, the tool call as a digest and the turn's end, each once
     And while the engine ran, its session's transcript already held what its hooks had delivered
     And the session's directory holds its session home and nothing projected from its events
-    # # PROPOSED (U7b, 2026-11-15), replacing U7's PROPOSED line ("a hook fired after
-    # the run has ended is answered without failing, and adds nothing to the
-    # transcript"; was "is refused without failing" before U7): a late hook
-    # reaches the user's daemon, and what it repeats adds nothing. A late hook
-    # with something new is recorded (the scenario below).
+    # A late hook reaches the user's daemon, and what it repeats adds nothing;
+    # a late hook with something new is recorded (the scenario below).
     And a hook fired again after the run has ended is answered without failing, and adds nothing a second time
 
-  # # PROPOSED (U7b, 2026-11-15)
   # A hook is a separate process: one can still be delivering after its
   # engine has exited and the run has ended. What it observed is recorded in
   # its session like anything else; only a repeat of what is already there
@@ -108,7 +100,6 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
     And the session's transcript ends with that turn's end, once
     And the session is listed as ended under its own name
 
-  # # PROPOSED (U7b, 2026-11-15)
   # claude's /clear starts a new conversation in the same session: its
   # SessionStart hook says `clear` and names the new conversation. The
   # session's record keeps the clear as its own line, binds the new
@@ -128,7 +119,6 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
     When Alice takes another turn on that session with "and then?"
     Then the assistant was resumed on the conversation after the clear
 
-  # # PROPOSED (U7b, 2026-11-15)
   # The engine names its own conversation when the session starts (claude's
   # SessionStart); that is what `run --session` resumes. Nothing waits for
   # the session's end to learn it. The SessionStart hook delivers that bind
@@ -142,7 +132,6 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
     Then the command succeeds
     And the assistant was resumed on its own session "00000000-0000-4000-8000-0000000000bb"
 
-  # # PROPOSED (U7b, 2026-11-15)
   # A compaction is in the session's record, typed: before and after, with
   # what set it off, and of the summary the engine wrote only its size and
   # digest, never its text.
@@ -171,7 +160,6 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
       """
     Then the assistant's environment held what its hooks need to reach ctxloom
     And every hook it fired answered, said nothing was left unrecorded, and exited 0
-    # # PROPOSED (U7b, 2026-11-15): was "..., the turn's end and the session's end, each once".
     And the session's transcript holds her prompt, the assistant's words in order, the tool call as a digest and the turn's end, each once
 
   # A one-shot's assistant is a child turn (`claude -p`), heard through the
@@ -208,8 +196,6 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
     Then the assistant's reply is printed
     And the session's transcript holds no prompt and no words of the assistant's
 
-  # # PROPOSED (U7b, 2026-11-15): "records the session's end" below was the run's end;
-  # it now says so.
   # Ruling 114: a ctxloom asked to stop while its assistant works (a SIGTERM,
   # a SIGHUP, or a SIGINT for a one-shot) passes the stop on to the assistant,
   # gives it a bounded grace to exit, records its run's end and exits as

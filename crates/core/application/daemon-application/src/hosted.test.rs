@@ -1046,6 +1046,33 @@ async fn what_a_child_says_is_recorded_and_its_exit_ends_it() {
     assert_eq!(world.daemon.hosting(), 0, "let go");
 }
 
+// Owner 2026-11-15 (clears captured, typed): a child's clear is in its
+// session's record, then the bind of the conversation after it; a clear
+// that names no conversation records neither.
+#[tokio::test]
+async fn a_childs_clear_is_recorded_before_the_bind_of_its_new_conversation() {
+    let mut world = World::hosting().await;
+    world.say(ChildObservation::Cleared {
+        native_id: Some("n2".to_string()),
+    });
+    world.say(ChildObservation::Cleared { native_id: None });
+    world.tick().await;
+    let said: Vec<String> = world
+        .session_events(CHILD)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::ConversationCleared(cleared) => Some(format!(
+                "clear {} {}",
+                cleared.native_session, cleared.trigger
+            )),
+            SessionEvent::EngineSessionBound(bound) => Some(format!("bind {}", bound.native_id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, ["clear n2 clear", "bind n2"]);
+}
+
 // A turn queued on the hosted run is fed to its child once, the informs it
 // carries riding before the message that starts it.
 #[tokio::test]

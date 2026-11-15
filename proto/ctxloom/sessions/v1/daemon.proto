@@ -204,8 +204,8 @@ message SessionClosed {
   string cause = 1;
 }
 
-// PROPOSED (U7b, 2026-11-15; owner: an explicit resume reopens a closed
-// session): a closed session was reopened, so it takes work again. A close
+// A closed session was reopened (owner 2026-11-15: an explicit resume
+// reopens a closed session), so it takes work again. A close
 // is ctxloom's control of its sessions, not the engine's conversation; only
 // an explicit resume (`ResumeSession`, `run --session`) reopens one, and it
 // records this before the incarnation it owes. Nothing else reopens a

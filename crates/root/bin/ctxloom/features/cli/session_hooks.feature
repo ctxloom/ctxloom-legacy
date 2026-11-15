@@ -5,10 +5,6 @@
 #     `... statusline`) and the retired turn-changed: S4's, tested in
 #     hook.test.rs.
 #   - stamp-plan: taskloom's (D17).
-# PROPOSED (U7b, 2026-11-15): the description's "A hook also RECORDS"
-#   paragraph; it was "(a prompt, a piece of the assistant's text, a tool
-#   call, a turn's end, a session's end, a compaction) as facts of its
-#   session."
 
 
 Feature: The machine callbacks every session fires — do they deliver, and do they stay on their channel?

@@ -152,52 +152,35 @@ fn a_name_already_claimed_is_refused_as_a_seed_error() {
     }
 }
 
-// The bind hook records the engine's session and transcript against the
-// harp: the session then shows them.
+// The sessions service binds a seeded session to the engine's session and
+// transcript: the session then shows them, and a repeat records nothing.
+// (The hook's bind is delivered to the daemon as capture is:
+// `capture.test.rs`.)
 #[test]
-fn the_bind_hook_binds_the_session_it_names() {
-    use ctxloom_cli::Extension;
-    let mut world = World::new("seed-bind");
+fn the_sessions_service_binds_a_seeded_session() {
+    let world = World::new("seed-bind");
     let wiring = world.wiring();
     let unbound = Seed {
         native: None,
         ..seed()
     };
     wiring.seed_session(&unbound).unwrap();
-    world.set(
-        "CTXLOOM_SESSION",
-        format!("projects/calm-quiet-heron/sessions/{HARP}"),
-    );
-    let payload = r#"{"session_id":"native-9","transcript_path":"/t/native-9.jsonl"}"#;
-    let mut commands = world.commands();
-    let program = clap::Command::new("ctxloom").subcommands(commands.nouns());
-    let matches = program
-        .try_get_matches_from(["ctxloom", "hook", "claude-code", "execute", "SessionStart"])
-        .unwrap();
-    let call = ctxloom_cli::Call::with_globals(
-        &matches,
-        Some(angzarr_presentation::Format::Text),
-        angzarr_presentation::Format::Text,
-        library_application::Flags::default(),
-    );
-    let catalog = angzarr_presentation::Catalog::en_us(&[crate::EN_US]).unwrap();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    commands
-        .hook(payload, &call, &catalog, &mut out, &mut err)
-        .ok()
-        .unwrap();
     let mut sessions = world.wiring().sessions();
-    let views = block(sessions.list(ListQuery::default())).unwrap();
-    assert_eq!(views[0].record.native_id, "native-9");
-    assert_eq!(views[0].record.transcript_path, "/t/native-9.jsonl");
-    // And the service itself binds: a repeat of the same binding records nothing.
-    let again = block(sessions.bind(BindRequest {
+    let bind = || BindRequest {
         project: None,
         harp: HARP.to_string(),
         native_id: "native-9".to_string(),
         transcript_path: "/t/native-9.jsonl".to_string(),
-    }))
-    .unwrap();
+    };
+    let first = block(sessions.bind(bind())).unwrap();
+    assert!(
+        !matches!(first, sessions_application::Bound::Unchanged),
+        "{first:?}"
+    );
+    let views = block(sessions.list(ListQuery::default())).unwrap();
+    assert_eq!(views[0].record.native_id, "native-9");
+    assert_eq!(views[0].record.transcript_path, "/t/native-9.jsonl");
+    let again = block(sessions.bind(bind())).unwrap();
     assert!(
         matches!(again, sessions_application::Bound::Unchanged),
         "{again:?}"

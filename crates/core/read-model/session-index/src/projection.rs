@@ -108,11 +108,11 @@ impl Projection {
                 "turn_end",
                 json!({"prompt_id": ended.prompt_id}),
             ),
-            SessionEvent::SessionEnded(ended) => self.line(
+            SessionEvent::ConversationCleared(cleared) => self.line(
                 seq,
                 recorded_at,
-                "session_end",
-                json!({"native_session": ended.native_session, "reason": ended.reason}),
+                "clear",
+                json!({"native_session": cleared.native_session, "trigger": cleared.trigger}),
             ),
             SessionEvent::Compacted(compacted) => self.line(
                 seq,

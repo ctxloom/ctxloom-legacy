@@ -33,8 +33,8 @@ const MESSAGE_DISPLAY: &str =
 const POST_TOOL_BATCH: &str =
     include_str!("../../../../adapters/driven/engine-claude/src/fixtures/post_tool_batch.json");
 const STOP: &str = include_str!("../../../../adapters/driven/engine-claude/src/fixtures/stop.json");
-const SESSION_END: &str =
-    include_str!("../../../../adapters/driven/engine-claude/src/fixtures/session_end.json");
+const SESSION_START: &str =
+    include_str!("../../../../adapters/driven/engine-claude/src/fixtures/session_start.json");
 
 /// What the prompt says.
 const PROMPT: &str = "Run the shell command: echo hi";
@@ -43,7 +43,7 @@ const DELTAS: [&str; 3] = ["The command `echo hi` ", "ran and ", "printed `hi`."
 /// The tool's response: a body no record may keep.
 const TOOL_BODY: &str = "TOOL-RESPONSE-BODY-THAT-MUST-NOT-BE-KEPT";
 
-/// The summary a compaction writes: text no record may keep (U7b).
+/// The summary a compaction writes: text no record may keep.
 const SUMMARY: &str = "SUMMARY-TEXT-THAT-MUST-NOT-BE-KEPT";
 
 /// The digest of [`SUMMARY`] (`sha256sum`).
@@ -52,6 +52,10 @@ const SUMMARY_DIGEST: &str = "cef013b74ea1e85fb9c2ea4637fdba548c47af461e939b7c7e
 /// The prompt a compaction is under: claude gives each its own (the live
 /// probe: the same on PreCompact, PostCompact and its SessionStart).
 const COMPACT_PROMPT: &str = "c0c0c0c0-0000-4000-8000-00000000c0c0";
+
+/// The conversation before a clear, and the one after it.
+const BEFORE_CLEAR: &str = "1111aaaa-0000-4000-8000-000000000001";
+const AFTER_CLEAR: &str = "2222bbbb-0000-4000-8000-000000000002";
 
 /// The prompt a late hook's turn's end names: one no hook had reported.
 const LATE_PROMPT: &str = "1a7e1a7e-0000-4000-8000-0000001a7e00";
@@ -151,7 +155,7 @@ pub(super) struct State {
     ended: Vec<Value>,
     /// How many hook processes the stub was to fire.
     firings: usize,
-    /// What a hook fired after the run said (U7b).
+    /// What a hook fired after the run said.
     late: Option<Ran>,
 }
 
@@ -296,7 +300,7 @@ pub(super) fn fires(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         .value
         .contains("clears its conversation between two prompts")
     {
-        red("a stub engine whose SessionStart says `clear` between two prompts");
+        run_clearing(w, step);
     } else {
         return false;
     }
@@ -488,7 +492,6 @@ fn run_firing_hooks(w: &mut World, step: &cucumber::gherkin::Step) {
     payloads.push(payload(STOP, |v| {
         v["last_assistant_message"] = json!(DELTAS.concat());
     }));
-    payloads.push(payload(SESSION_END, |_| {}));
     let events = [
         "UserPromptSubmit",
         "MessageDisplay",
@@ -496,7 +499,6 @@ fn run_firing_hooks(w: &mut World, step: &cucumber::gherkin::Step) {
         "MessageDisplay",
         "PostToolBatch",
         "Stop",
-        "SessionEnd",
     ];
     for (n, (text, event)) in payloads.iter().zip(events).enumerate() {
         files::put(bin.join(format!("payloads/{n:02}-{event}.json")), text);
@@ -533,7 +535,7 @@ fn environment_reached(w: &mut World) {
 fn hooks_delivered(w: &mut World) {
     let fired = w.fired();
     let firings = match w.capture.firings {
-        0 => 14,
+        0 => 12,
         n => n,
     };
     assert_eq!(fired.len(), firings, "each hook twice: {fired:?}");
@@ -616,7 +618,7 @@ fn fire_late(w: &World, event: &str, payload: &str) -> Ran {
     Ran::of(child.wait_with_output().expect("ctxloom finishes"))
 }
 
-// PROPOSED (U7b, 2026-11-15): a late hook with something new is recorded.
+// Owner 2026-11-15: a late hook with something new is recorded.
 #[when("after the run has ended, a hook of her session reports a turn's end it had not reported")]
 fn late_new_turn_end(w: &mut World) {
     w.ran().succeeds();
@@ -664,9 +666,6 @@ fn listed_ended_by_harp(w: &mut World) {
 /// (`/compact`): a prompt, then PreCompact and PostCompact under the
 /// compaction's own prompt, the summary's text in PostCompact's payload.
 fn run_compacting(w: &mut World, step: &cucumber::gherkin::Step) {
-    let bin = w.engine_dir();
-    let ctxloom = crate::tests::binary().display().to_string();
-    files::put_program(bin.join("ctxloom"), &format!("exec '{ctxloom}' \"$@\"\n"));
     let compact = |event: &str, summary: Option<&str>| {
         let mut value = json!({
             "session_id": "9d764b45-a56a-48d7-ac9d-c2a16c5669f1",
@@ -687,15 +686,8 @@ fn run_compacting(w: &mut World, step: &cucumber::gherkin::Step) {
         (compact("PreCompact", None), "PreCompact"),
         (compact("PostCompact", Some(SUMMARY)), "PostCompact"),
     ];
-    for (n, (text, event)) in payloads.iter().enumerate() {
-        files::put(bin.join(format!("payloads/{n:02}-{event}.json")), text);
-    }
-    w.capture.firings = 2 * payloads.len();
-    files::put_program(bin.join("claude"), STUB);
-    w.common.set_env("CTXLOOM_TEST_TERMINAL", "1".to_string());
-    w.before_run();
     let lines = crate::tests::gherkin_common::doc(step);
-    w.common_mut().run_lines(&lines, "");
+    run_interactive_firing(w, &payloads, &lines);
 }
 
 #[then(
@@ -721,34 +713,116 @@ fn compaction_recorded(w: &mut World, trigger: String) {
     assert!(!whole.contains(SUMMARY), "the summary's text was kept");
 }
 
-/// A step of U7b's spec whose harness is not built (ruling 132: red until the
-/// owner approves the Gherkin and the unit is built).
-fn red(step: &str) -> ! {
-    panic!("RED (ruling 132, U7b): not built yet: {step}")
+/// An interactive run whose stub engine fires `payloads` (each its text and
+/// its native event, in order) as its hooks, twice each, running `lines`.
+fn run_interactive_firing(w: &mut World, payloads: &[(String, &str)], lines: &str) {
+    let bin = w.engine_dir();
+    let ctxloom = crate::tests::binary().display().to_string();
+    files::put_program(bin.join("ctxloom"), &format!("exec '{ctxloom}' \"$@\"\n"));
+    for (n, (text, event)) in payloads.iter().enumerate() {
+        files::put(bin.join(format!("payloads/{n:02}-{event}.json")), text);
+    }
+    w.capture.firings = 2 * payloads.len();
+    files::put_program(bin.join("claude"), STUB);
+    w.common.set_env("CTXLOOM_TEST_TERMINAL", "1".to_string());
+    w.before_run();
+    w.common_mut().run_lines(lines, "");
+}
+
+/// Once the interactive run is over, the session a later turn is taken on
+/// is its own, and the engine a later turn runs records its launch as
+/// j000100's does.
+fn interactive_run_over(w: &mut World) {
+    w.ran().succeeds();
+    w.adopt.harp = Some(w.harp());
+    files::put_program(w.engine_dir().join("claude"), super::adopt::CLAUDE_STUB);
+}
+
+/// A SessionStart of `source` naming the conversation `native`.
+fn session_start(source: &str, native: &str) -> String {
+    payload(SESSION_START, |v| {
+        v["source"] = json!(source);
+        v["session_id"] = json!(native);
+        v["transcript_path"] = json!(format!("/claude/projects/p/{native}.jsonl"));
+    })
+}
+
+/// A prompt `n` and its turn's end, each under the prompt's own id.
+fn prompt_and_end(n: u32) -> [(String, &'static str); 2] {
+    let id = format!("00000000-0000-4000-8000-00000000000{n}");
+    [
+        (
+            payload(USER_PROMPT_SUBMIT, |v| {
+                v["prompt"] = json!(format!("prompt {n}"));
+                v["prompt_id"] = json!(id);
+            }),
+            "UserPromptSubmit",
+        ),
+        (payload(STOP, |v| v["prompt_id"] = json!(id)), "Stop"),
+    ]
+}
+
+/// An interactive run whose engine starts a conversation, takes a prompt,
+/// clears it (`/clear`: SessionStart `clear`, naming the new one), and takes
+/// a second.
+fn run_clearing(w: &mut World, step: &cucumber::gherkin::Step) {
+    let mut payloads = vec![(session_start("startup", BEFORE_CLEAR), "SessionStart")];
+    payloads.extend(prompt_and_end(1));
+    payloads.push((session_start("clear", AFTER_CLEAR), "SessionStart"));
+    payloads.extend(prompt_and_end(2));
+    let lines = crate::tests::gherkin_common::doc(step);
+    run_interactive_firing(w, &payloads, &lines);
+    interactive_run_over(w);
 }
 
 #[given(
     expr = "Alice has run her assistant interactively, and its engine named its conversation {string} when it started"
 )]
-fn ran_naming_conversation(_w: &mut World, native: String) {
-    red(&format!(
-        "an interactive run whose SessionStart named {native}, its bind delivered to the daemon"
-    ))
+fn ran_naming_conversation(w: &mut World, native: String) {
+    run_interactive_firing(
+        w,
+        &[(session_start("startup", &native), "SessionStart")],
+        "ctxloom run",
+    );
+    interactive_run_over(w);
 }
 
 #[then("the session's transcript holds her first prompt, its turn's end, the clear, her second prompt and its turn's end, each once")]
-fn transcript_holds_the_clear(_w: &mut World) {
-    red("the transcript's clear line")
+fn transcript_holds_the_clear(w: &mut World) {
+    let lines = w.transcript();
+    let kinds: Vec<&str> = lines.iter().map(|l| l["kind"].as_str().unwrap()).collect();
+    assert_eq!(
+        kinds,
+        ["entry", "turn_end", "clear", "entry", "turn_end"],
+        "{lines:#?}"
+    );
+    assert_eq!(lines[0]["entry"]["content"], "prompt 1");
+    assert_eq!(lines[2]["native_session"], AFTER_CLEAR);
+    assert_eq!(lines[2]["trigger"], "clear");
+    assert_eq!(lines[3]["entry"]["content"], "prompt 2");
 }
 
 #[then("the session's record keeps the conversation before the clear in its lineage")]
-fn clear_kept_in_lineage(_w: &mut World) {
-    red("the record's lineage after a clear")
+fn clear_kept_in_lineage(w: &mut World) {
+    let harp = w.harp();
+    let shown = w.run_now(&["session", "show", &harp, "--format", "json"]);
+    assert_eq!(shown.code, 0, "{}", shown.said());
+    let shown: Value = serde_json::from_str(&shown.stdout).expect("json");
+    assert_eq!(shown["native_session"], AFTER_CLEAR, "{shown}");
+    let lineage: Vec<&str> = shown["rotations"]
+        .as_array()
+        .map(|r| r.iter().filter_map(|r| r["native_id"].as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(lineage, [BEFORE_CLEAR], "{shown}");
 }
 
 #[then("the assistant was resumed on the conversation after the clear")]
-fn resumed_after_clear(_w: &mut World) {
-    red("a resume after a clear")
+fn resumed_after_clear(w: &mut World) {
+    let record = w.launch_record();
+    assert!(
+        record.contains(&format!("--resume\n{AFTER_CLEAR}\n")),
+        "no resume of {AFTER_CLEAR}: {record}"
+    );
 }
 
 // ------------------------------------------- a live session (defects 1, 2)

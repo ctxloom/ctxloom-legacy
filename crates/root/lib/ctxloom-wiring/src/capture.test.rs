@@ -655,6 +655,31 @@ async fn recorded(edge: &TheEdge) -> Vec<String> {
         .collect()
 }
 
+// Owner 2026-11-15 (H-Q9 folded in): a SessionStart's bind of the engine's
+// conversation reaches the daemon as every capture fact does, and the
+// session is bound to it; none is written in the hook's own process.
+#[tokio::test]
+async fn a_session_starts_bind_is_delivered_to_the_daemon_and_binds_the_session() {
+    let (_, edge) = world().await;
+    let start = HookEvent {
+        event: "session_start".to_string(),
+        native_session: "native-9".to_string(),
+        transcript: "/t/native-9.jsonl".to_string(),
+        source: "startup".to_string(),
+        ..HookEvent::default()
+    };
+    let said = holding(Reaching::daemon(OWN, &edge), &spool()).record(
+        "SessionStart",
+        HARP,
+        &answer(start),
+    );
+    assert!(said.is_empty(), "{said:?}");
+    assert_eq!(
+        recorded(&edge).await,
+        [format!("bind:{}:native-9", session_uid())]
+    );
+}
+
 // A hook whose daemon is older than it (H-Q1) holds its facts, delivers
 // nothing, and says each held, naming both versions.
 #[tokio::test]
@@ -734,11 +759,11 @@ fn a_hook_that_reaches_no_daemon_holds_and_says_why() {
 
 // The spawn wait is what the hook's bound leaves a delivery's margin of:
 // S16's ten seconds, or the engine's own budget where it is shorter
-// (SessionEnd's one second leaves no wait at all).
+// (MessageDisplay's five); a bound no longer than the margin leaves no wait.
 #[test]
 fn a_hooks_spawn_wait_is_what_its_bound_leaves() {
     assert_eq!(hook_bound("UserPromptSubmit"), crate::daemon::HOOK_BOUND);
-    assert_eq!(hook_bound("SessionEnd"), Duration::from_secs(1));
+    assert_eq!(hook_bound("MessageDisplay"), Duration::from_secs(5));
     let start = std::time::Instant::now();
     let wait = spawn_wait(&Deadline(start + hook_bound("UserPromptSubmit")));
     assert!(
@@ -746,7 +771,7 @@ fn a_hooks_spawn_wait_is_what_its_bound_leaves() {
         "{wait:?}"
     );
     assert_eq!(
-        spawn_wait(&Deadline(start + hook_bound("SessionEnd"))),
+        spawn_wait(&Deadline(start + crate::daemon::DELIVERY_MARGIN)),
         Duration::ZERO
     );
 }

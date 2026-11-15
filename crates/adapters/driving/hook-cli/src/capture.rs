@@ -13,7 +13,7 @@
 use angzarr_diagnostic::Diagnostic;
 use setup_application::HookAnswer;
 
-use crate::{Binding, HookService, HookWarning, Outcome};
+use crate::{HookService, HookWarning, Outcome};
 
 /// One observation that was not recorded.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -75,11 +75,9 @@ pub fn execute_recording(
     input: &str,
     harp: &str,
     service: &dyn HookService,
-    binding: &mut impl Binding,
     recording: &dyn Recording,
 ) -> Result<Outcome, Box<dyn Diagnostic>> {
-    let (mut outcome, answered) =
-        crate::execute::answer(engine, hook_name, input, harp, service, binding)?;
+    let (mut outcome, answered) = crate::execute::answer(engine, hook_name, input, harp, service)?;
     // With no harp there is no session to address: nothing is attempted.
     if let Some(answered) = answered.filter(|_| !harp.is_empty()) {
         outcome.warnings.extend(

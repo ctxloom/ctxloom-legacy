@@ -7,19 +7,25 @@
 use angzarr_diagnostic::Diagnostic;
 use setup_application::HookAnswer;
 
-use crate::{hud, Binding, HookService, HookWarning, Outcome};
+use crate::{hud, HookService, HookWarning};
 
 /// The hook name every engine's statusline command is installed as.
 pub const STATUSLINE: &str = "statusline";
+
+/// What the hook answered: the engine's input, and what it warned of.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Outcome {
+    pub stdout: String,
+    pub warnings: Vec<HookWarning>,
+}
 
 /// Run the callback. `input` is stdin, `harp` the session the hook runs in
 /// (may be empty).
 ///
 /// - `statusline` renders the statusline and records nothing (the service is
 ///   not asked);
-/// - any other name is the service's answer, and a bind it asks for is made
-///   through `binding`; a session with no usable harp is the
-///   `NoUsableHarp` warning and empty stdout;
+/// - any other name is the service's answer; a session with no usable harp
+///   is the `NoUsableHarp` warning and empty stdout;
 /// - the service's refusal (an engine the registry does not know, a payload
 ///   the codec cannot read) is returned as it is.
 pub fn execute(
@@ -28,9 +34,8 @@ pub fn execute(
     input: &str,
     harp: &str,
     service: &dyn HookService,
-    binding: &mut impl Binding,
 ) -> Result<Outcome, Box<dyn Diagnostic>> {
-    answer(engine, hook_name, input, harp, service, binding).map(|(outcome, _)| outcome)
+    answer(engine, hook_name, input, harp, service).map(|(outcome, _)| outcome)
 }
 
 /// [`execute`], and with the outcome the application's answer when there is
@@ -41,7 +46,6 @@ pub(crate) fn answer(
     input: &str,
     harp: &str,
     service: &dyn HookService,
-    binding: &mut impl Binding,
 ) -> Result<(Outcome, Option<HookAnswer>), Box<dyn Diagnostic>> {
     if hook_name == STATUSLINE {
         return Ok((
@@ -63,9 +67,6 @@ pub(crate) fn answer(
             },
             None,
         ));
-    }
-    if let Some(bind) = &answer.bind {
-        binding.bind(&bind.harp, &bind.native_id, &bind.transcript)?;
     }
     let outcome = Outcome {
         stdout: answer.stdout.clone(),

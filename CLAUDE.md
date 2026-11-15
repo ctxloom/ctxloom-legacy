@@ -197,8 +197,9 @@ the store grows without bound (ruling 90; compaction is taskloom
   angzarr-yaml; the importer's types);
 - `adapters/driven/{liveness, session-files}` and, behind `ProjectStores`,
   `ctxloom-store-sqlite`;
-- `adapters/driving/{session-cli, hook-cli}` (`hook` is hidden: `session-bind`
-  and `hud`).
+- `adapters/driving/{session-cli, hook-cli}` (`hook` is hidden: `hook
+  <engine> execute <native>` and the statusline; a session start's bind is
+  one of its capture facts, below).
 
 A session's state is its lock's verdict, never its end stamp; its title is the
 one `session rename` set (S55), else the first prompt of its transcript; `hud` renders and records nothing. The
@@ -508,8 +509,10 @@ stdin. The terminal session (claude's and opencode's TUI) is
 also given `TERM` and `COLORTERM`, without which it draws in no colour, and
 `NO_COLOR`, her choice to have none (no-color.org); a
 child's turn is given none of the three. The session home's `ctxloom-hooks.json` calls `ctxloom
-hook claude-code execute <Event>`. The interactive home registers the session,
-turn, message, tool-batch and compaction (`PreCompact`, `PostCompact`) events.
+hook claude-code execute <Event>`. The interactive home registers the session's
+start (`SessionStart`; not its end, owner 2026-11-15: nothing of ctxloom's is
+in it), turn, message, tool-batch and compaction (`PreCompact`, `PostCompact`)
+events.
 A one-shot CHILD's home (owner ruling 51) registers the per-turn ones only:
 `UserPromptSubmit`, `PostToolBatch`, `MessageDisplay`, `Stop`, `PreCompact`,
 `PostCompact`; never `SessionStart` or `SessionEnd`, which `claude -p` fires
@@ -658,8 +661,7 @@ so the daemon's own record of each is a DUPLICATE; the user gate admits
 these three facts. Each report is retried on whichever daemon serves (found,
 or started) for up to `frontend::REPORT_FOR` (60 s, S17), then said. The
 daemon, once the exit is in the stream, does what the CLI's launcher did:
-the native session bound from the hooks' end, opencode's end at its exit
-(`session_ends_with_exit`), the checkout released WIP-safe, the
+the checkout released WIP-safe, the
 incarnation ended (`runner-exit`); a frontend gone without reporting (its
 session's lock free, no exit recorded) is ended as a kill. While the TUI
 runs the frontend follows `WatchRun` (reopened on the next daemon when one
@@ -817,10 +819,20 @@ incarnation (`launch-failed`). The run is planned on the session's engine,
 reuses its harp, directory and session home (no mint, no claim), and the
 `Order`'s `resume` (the native id) reaches the engine as
 `TurnRequest::resume` (claude `--resume`, opencode `--session`). A child's
-native id is bound from its turn's stream; a terminal session's is bound by
-the launcher at the terminal's exit, from the last `SessionEnded.native_session`
-its hooks recorded (claude's SessionEnd; opencode's end is the launcher's own,
-with no native id, so an interactive opencode session cannot be resumed yet).
+native id is bound from its turn's stream (a daemon child's clear, its
+stream's `conversation_reset`, recorded as the clear then the new one's
+bind); a terminal session's is the one its SessionStart hook bound (owner
+2026-11-15, H-Q9 folded in: an observation of the event, `bind:<session>:
+<native_id>`, delivered and held like every capture fact, never written in
+the hook's own process; a clear's SessionStart rotates it, the conversation
+before kept in the session's `rotations`), and nothing is bound at the exit
+(opencode binds none from its hooks yet, so an interactive opencode session
+cannot be resumed). A CLOSED session is REOPENED by its resume (owner
+2026-11-15: a close is ctxloom's control of its sessions, not the engine's
+conversation): `ResumeSession` records `SessionReopened{cause: resume}`
+before the incarnation it owes, which clears `closed` and `closed_cause`, so
+the session takes work again; nothing else reopens one (a re-host, a
+message and a clear of a closed one stay refused).
 Not built:
 the hidden runner subcommand.
 
@@ -1294,7 +1306,10 @@ taken out, then the port's `remove`; one holding work left and said with
 its branch). Under `test-support` a daemon is killed outright at a step by
 the switch file `~/.ctxloom/daemon/test-die-at` (its word: `enqueued`,
 `minted`, `started`, `turn`, `hook`, `discovery`; taken by the daemon that
-finds it): the core's edge tells each book it applied
+finds it; `hook` is any capture fact's, `RecordPromptSubmitted`,
+`RecordAssistantText`, `RecordToolCall`, `RecordTurnEnded`,
+`RecordCompaction` or `RecordConversationCleared`, the daemon's
+`serve::step_of` table, never a bind): the core's edge tells each book it applied
 (`EmbeddedEdge::telling`) and the daemon aborts once one of the step's is
 applied, before it is answered; `turn` is also taken by the loop while a
 hosted child's turn is in flight (`Daemon::in_flight`), and `discovery`
@@ -1776,7 +1791,7 @@ the last close's checkpoint and the log's removal are over when it returns
 (dropped, they are left to sqlx's detached thread, which an exiting process
 need not let run). `SqliteStores` holds the one store, closes a read's before
 it reopens it to write, and `SqliteStores::close` closes the one it holds; the wiring closes the sessions use cases' stores after every `session`
-command and a hook's bind (`Sessions::close`; a failed close fails a command
+command (`Sessions::close`; a failed close fails a command
 that had not), the seed's and `test open-store`'s, a run's at its end, and
 the daemon's at its exit (after the launcher, the edge and the listener,
 the read models it kept of those its kernel registers are let go too: each
@@ -2332,8 +2347,9 @@ it is `library-application-no-context-exclusive` (exit 20).
 ## Hook capture: the transcript is the session's events
 
 What the engine's hooks observe (a prompt, each MessageDisplay delta, a tool
-call as size and SHA-256 only, a turn's end without text, a session's end, a
-compaction, and a gap where a hook dropped one) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
+call as size and SHA-256 only, a turn's end without text, a compaction, a
+clear, the conversation a session start names, and a gap where a hook
+dropped one) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
 capture.proto`; `runs-application::observe` makes them from the unified
 `HookEvent`; a hook delivers them through a `run-ports::FactSink`, or HOLDS
 them for later, below, and never fails its engine). The
@@ -2384,8 +2400,7 @@ reaches the user daemon its discovery file names, read at each hook, and
 starts one when none serves (`daemon::hook_daemon`, `ensure_within`), all
 within its bound, `HOOK_BOUND` (10 s) or the engine's `delivery_budget`
 where that is shorter (`capture::hook_bound`; the spawn wait is what the
-bound leaves `DELIVERY_MARGIN` of, at most `SPAWN_WAIT`, so a SessionEnd's
-1 s waits for none), presenting the USER bearer that file holds
+bound leaves `DELIVERY_MARGIN` of, at most `SPAWN_WAIT`), presenting the USER bearer that file holds
 (`capture::daemon_sink`, `run_ports::Bearer::user`), never its run's; then
 `runs_application::Holding` decides, over fact-spool's `Spool` at its
 ctxloom home and the hook's `Deadline` (`HookClock`; the core reads no
@@ -2464,7 +2479,20 @@ transcript's line is `kind: gap`, `gap: {facts: 1, dropped, why,
 dropped_at}`, and its text `gap: 1 fact not recorded (<id>, dropped at
 <time>: <why>)` (the wording a draft, the owner's to approve). The in-process `EdgeSink` is for tests and the run's own
 facts. A unit test's executable never spawns itself as the daemon
-(`SPAWNS_ITSELF`). The session's end (`SessionEnd`) is captured like the rest.
+(`SPAWNS_ITSELF`). The session's end is NOT captured (owner 2026-11-15):
+it is its run's end (`IncarnationEnded`) and its lock's verdict.
+`RecordSessionEnded` is gone; `SessionEnded`, in every interactive stream
+recorded before, is RETIRED in place (angzarr refuses an unknown stored
+type): never emitted, folded to nothing and rendered nothing (no line, no
+`seq`). A SessionEnd an older home still fires is answered and observes
+nothing. A clear (claude's `/clear`: SessionStart `source: clear`) is
+`RecordConversationCleared{native_session, trigger}` (`ConversationCleared`,
+no content; `hook:clear:<session>:<the new conversation>`, so a daemon
+child's driver reporting the same clear is one fact), then the new
+conversation's bind; its transcript line is `kind: clear` (`native_session`,
+`trigger`), the text transcript showing neither a clear nor a compaction.
+The bind is not a capture fact to `no_such_session` (it records nothing on a
+session already bound to it).
 A compaction's external id is `hook:compact:<session>:<prompt_id>:<trigger>:
 <phase>`, so two compactions of one turn (a manual and an auto) are two facts;
 two of the SAME trigger in one turn would still collide (the payload offers no
@@ -2615,9 +2643,9 @@ errored), never a `summary: true` one, and `session.idle` for the last prompt
 the compaction part (before; `auto` -> trigger) and the summary message
 (after, size and SHA-256 only), keyed by the compaction's own message.
 `observe` matches the unified kinds only (`compaction_before|after`; claude's
-codec maps `PreCompact|PostCompact` onto them). The session's end is recorded
-by the LAUNCHER at the TUI's exit (`Engine::session_ends_with_exit`; reason
-`exit`, no native id, so a second run of the same session would collide).
+codec maps `PreCompact|PostCompact` onto them). opencode says nothing of a
+session's end, and nothing records one (owner 2026-11-15: its end is its
+run's); its `/new` (a clear) is not captured yet (unprobed).
 A child turn is `opencode run --format json [--session <id>] [-m <model>]` with
 the prompt on STDIN (an argv prompt with a space reaches the model quoted, and
 `run` reads stdin to EOF); the stream is read for the reply (the final step's

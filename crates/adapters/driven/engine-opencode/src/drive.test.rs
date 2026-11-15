@@ -390,13 +390,6 @@ fn test_a_host_home_keeps_the_users_own_dirs_and_still_loads_the_plugin() {
     );
 }
 
-// Ruling 58: opencode has no native "session ended"; the launcher records it
-// at the TUI's exit.
-#[test]
-fn test_its_session_ends_with_its_exit() {
-    assert!(Opencode::new().session_ends_with_exit());
-}
-
 #[test]
 fn test_its_name_as_an_engine_is_opencode() {
     assert_eq!(Engine::name(&Opencode::new()), "opencode");

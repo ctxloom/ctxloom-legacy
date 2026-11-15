@@ -291,7 +291,7 @@ fn test_the_hooks_answer_through_the_engines_codec() {
     let hooks = commands.hooks().ok().unwrap();
     for native in ["SessionStart", "PostToolUse", "Stop"] {
         let answer = hooks.execute("claude-code", native, "{}", "").ok().unwrap();
-        assert_eq!(answer.bind, None, "{native}");
+        assert!(answer.event.is_some() || answer.harp_missing, "{native}");
     }
     assert_eq!(
         hooks

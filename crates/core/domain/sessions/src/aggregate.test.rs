@@ -825,8 +825,8 @@ fn event_any(page: &angzarr_embedded::v1::EventPage) -> &angzarr_embedded::Any {
 use crate::{
     AssistantTextShown, CaptureGapped, Compacted, CompactionPhase, ConversationCleared,
     PromptSubmitted, RecordAssistantText, RecordCaptureGap, RecordCompaction,
-    RecordConversationCleared, RecordPromptSubmitted, RecordSessionEnded, RecordToolCall,
-    RecordTurnEnded, SessionEnded, ToolCallStatus, ToolCalled, TurnEnded,
+    RecordConversationCleared, RecordPromptSubmitted, RecordToolCall, RecordTurnEnded,
+    SessionEnded, ToolCallStatus, ToolCalled, TurnEnded,
 };
 
 fn cleared_fact() -> RecordConversationCleared {
@@ -836,7 +836,7 @@ fn cleared_fact() -> RecordConversationCleared {
     }
 }
 
-// PROPOSED (U7b, 2026-11-15; owner: clears captured, typed): a clear is a
+// Owner 2026-11-15 (clears captured, typed): a clear is a
 // capture fact like the rest: recorded on a live session as its event,
 // once (a redelivery, the hook's and the driver's report of one clear, is
 // DUPLICATE), nothing on a stream with no session.
@@ -855,7 +855,7 @@ fn a_clear_is_recorded_on_a_live_session_once() {
     assert!(none.fact(cleared_fact(), "hook:clear:x").is_empty());
 }
 
-// PROPOSED (U7b, 2026-11-15; owner: SessionEnded retired in place): a stream
+// Owner 2026-11-15 (SessionEnded retired in place): a stream
 // that holds a SessionEnded (every interactive session recorded before)
 // still folds, and the session reads as it would without it.
 #[test]
@@ -1022,19 +1022,6 @@ fn every_observation_records_its_event_on_a_live_session() {
             trigger: "manual".to_string(),
             summary_bytes: 12,
             summary_sha256: "ab".to_string(),
-        })]
-    );
-    assert_eq!(
-        session.fact(
-            RecordSessionEnded {
-                native_session: "n1".to_string(),
-                reason: "prompt_input_exit".to_string(),
-            },
-            "hook:session-end:s:n1"
-        ),
-        [SessionEvent::SessionEnded(SessionEnded {
-            native_session: "n1".to_string(),
-            reason: "prompt_input_exit".to_string(),
         })]
     );
 }

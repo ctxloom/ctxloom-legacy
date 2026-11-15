@@ -438,11 +438,11 @@ fn a_rehost_of_a_closed_child_is_refused() {
 
 // ------------------------------------- a resume reopens a closed session
 //
-// PROPOSED (U7b, 2026-11-15; owner: an explicit resume REOPENS a closed
-// session). A close is ctxloom's control lifecycle of its sessions, apart
-// from the engine's conversation: `run --session` on a closed session records
-// that it was reopened, then owes its next incarnation, and the session
-// takes work again.
+// Owner 2026-11-15: an explicit resume REOPENS a closed session. A close is
+// ctxloom's control lifecycle of its sessions, apart from the engine's
+// conversation: `run --session` on a closed session records that it was
+// reopened, then owes its next incarnation, and the session takes work again
+// with its close's cause cleared.
 
 /// The bound session, its run ended, then closed by a human.
 fn bound_ended_and_closed() -> Session {
@@ -475,6 +475,7 @@ fn a_resume_of_a_closed_session_reopens_it_then_owes_the_next_incarnation() {
     );
     let state = session.state();
     assert!(!state.closed, "reopened: {state:?}");
+    assert_eq!(state.closed_cause, "", "its close's cause cleared");
     assert_eq!(state.open_incarnation, Some(2));
 }
 

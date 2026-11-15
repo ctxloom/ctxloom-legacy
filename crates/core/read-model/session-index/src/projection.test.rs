@@ -1,7 +1,7 @@
 //! The transcript folded from the session stream (PROPOSAL,
 //! design/hook-capture). The envelope is D27's: `v, harp, session_id, engine,
 //! seq, ts, kind`. The kinds beyond `entry` are proposed here: `assistant_delta`,
-//! `tool`, `turn_end`, `compaction`, `gap`, and (U7b, PROPOSED) `clear`; a
+//! `tool`, `turn_end`, `compaction`, `gap` and `clear`; a
 //! retired `SessionEnded` renders none.
 
 use serde_json::{json, Value};
@@ -172,7 +172,7 @@ fn the_other_observations_have_their_own_kinds() {
     assert_eq!(compaction[0]["summary_sha256"], "ab");
 }
 
-// PROPOSED (U7b, 2026-11-15; owner: SessionEnded retired in place): a
+// Owner 2026-11-15 (SessionEnded retired in place): a
 // stream's SessionEnded renders no line and takes no seq, so the lines after
 // it number on as if it were not there.
 #[test]
@@ -199,7 +199,7 @@ fn a_retired_session_end_renders_no_line_and_takes_no_seq() {
     assert_eq!(p.lines(), 2);
 }
 
-// PROPOSED (U7b, 2026-11-15; owner: clears captured, typed): a clear is a
+// Owner 2026-11-15 (clears captured, typed): a clear is a
 // line of its own kind, `clear`, naming the conversation after it and what
 // the engine said set it off. It carries no content.
 #[test]

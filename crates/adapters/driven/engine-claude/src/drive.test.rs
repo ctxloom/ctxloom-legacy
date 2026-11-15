@@ -335,9 +335,9 @@ fn a_childs_home_registers_the_per_turn_events_and_not_the_per_process_ones() {
     );
 }
 
-// The terminal session's set: it also hears the session begin. PROPOSED (U7b,
-// 2026-11-15; owner: SessionEnded is lost): ctxloom registers no SessionEnd
-// of its own (a bundle's authored session_end hook still rides the launch).
+// The terminal session's set: it also hears the session begin. Owner
+// 2026-11-15 (SessionEnded is lost): ctxloom registers no SessionEnd of its
+// own (a bundle's authored session_end hook still rides the launch).
 #[test]
 fn an_interactive_home_registers_the_session_start_too() {
     assert_eq!(
@@ -974,12 +974,6 @@ fn a_childs_turn_reads_the_session_dirs_settings_in_both_home_modes() {
             );
         }
     }
-}
-
-// Ruling 58: claude's SessionEnd hook says a session ended; its exit does not.
-#[test]
-fn test_its_session_end_is_its_hooks_not_its_exit() {
-    assert!(!Claude::new().session_ends_with_exit());
 }
 
 /// claude's own state file, `prepare`d for a home whose `.claude.json` holds

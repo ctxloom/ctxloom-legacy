@@ -166,14 +166,15 @@ fn test_a_session_command_is_run_on_the_sessions_use_cases() {
     assert_eq!(out, "(no sessions)\n");
 }
 
-// The hook that binds a session answers the engine with the harp the process
-// names (`CTXLOOM_SESSION`, the session's resource name: s3-Q3) on stdout,
-// and nothing on stderr.
+// The session-start hook answers the engine with the harp the process names
+// (`CTXLOOM_SESSION`, the session's resource name: s3-Q3) on stdout, and
+// nothing on stderr. (A start that names a conversation also binds it,
+// delivered as capture is: `capture.test.rs`.)
 #[test]
-fn test_the_bind_hook_answers_with_the_harp_the_environment_names() {
+fn test_the_session_start_hook_answers_with_the_harp_the_environment_names() {
     let mut world = World::new("session-bind");
     world.set("CTXLOOM_SESSION", NAMED);
-    let payload = r#"{"session_id":"s1","transcript_path":"/tmp/t.jsonl"}"#;
+    let payload = "{}";
     let (code, out, err) = run_with(
         &mut world.commands(),
         payload,

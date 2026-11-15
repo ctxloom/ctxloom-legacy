@@ -35,8 +35,8 @@ use crate::{
 use crate::{
     AssistantTextShown, CaptureGapped, Compacted, ConversationCleared, PromptSubmitted,
     RecordAssistantText, RecordCaptureGap, RecordCompaction, RecordConversationCleared,
-    RecordPromptSubmitted, RecordSessionEnded, RecordToolCall, RecordTurnEnded, SessionEnded,
-    SessionReopened, ToolCalled, TurnEnded,
+    RecordPromptSubmitted, RecordToolCall, RecordTurnEnded, SessionEnded, SessionReopened,
+    ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -298,15 +298,21 @@ impl SessionAggregate {
         &self,
         cmd: ResumeSession,
         ctx: &Context,
-    ) -> Result<IncarnationOwed, Failed<Refuses<Self, ResumeSession>>> {
+    ) -> Result<Emit<Self>, Failed<Refuses<Self, ResumeSession>>> {
         let _ = ctx;
-        lifeline::resumed(&self.session, &cmd).map_err(|rejection| {
+        let (reopened, owed) = lifeline::resumed(&self.session, &cmd).map_err(|rejection| {
             refuse!(
                 SessionRejection,
                 rejection,
                 Refuses<Self, ResumeSession>,
                 [SessionUnknown{harp} => SessionUnknown, SessionDestroyed{harp} => SessionDestroyed, SessionRunning{harp} => SessionRunning, NoNativeSession{harp} => NoNativeSession, EngineMismatch{harp, engine, asked} => EngineMismatch, WorkspaceMismatch{harp, workspace, asked} => WorkspaceMismatch]
             )
+        })?;
+        Ok(match reopened {
+            Some(reopened) => Emit::of(reopened).then(move |_: &Self, _: &Context| {
+                Ok::<_, Failed<Refuses<Self, ResumeSession>>>(owed)
+            }),
+            None => Emit::of(owed),
         })
     }
 
@@ -456,21 +462,6 @@ impl SessionAggregate {
         }))
     }
 
-    /// RecordSessionEnded: a FACT (it already happened in the engine), so never refused;
-    /// recorded as its event on a live session, nothing on a stream with none.
-    #[handles_fact(RecordSessionEnded)]
-    fn hook_session_ended(
-        &self,
-        fact: RecordSessionEnded,
-        ctx: &Context,
-    ) -> Result<FactEmit<Self>, Bug> {
-        let _ = ctx;
-        record(live(&self.session).ok().map(|_| SessionEnded {
-            native_session: fact.native_session,
-            reason: fact.reason,
-        }))
-    }
-
     /// RecordCompaction: a FACT (it already happened in the engine), so never refused;
     /// recorded as its event on a live session, nothing on a stream with none.
     #[handles_fact(RecordCompaction)]
@@ -507,16 +498,20 @@ impl SessionAggregate {
         }))
     }
 
-    /// RecordConversationCleared (PROPOSED, U7b): a FACT (the engine started
-    /// a new conversation), so never refused. RED: records nothing yet.
+    /// RecordConversationCleared: a FACT (the engine started a new
+    /// conversation), so never refused; recorded as its event on a live
+    /// session, nothing on a stream with none.
     #[handles_fact(RecordConversationCleared)]
     fn hook_conversation_cleared(
         &self,
         fact: RecordConversationCleared,
         ctx: &Context,
     ) -> Result<FactEmit<Self>, Bug> {
-        let _ = (ctx, fact);
-        record(None::<ConversationCleared>)
+        let _ = ctx;
+        record(live(&self.session).ok().map(|_| ConversationCleared {
+            native_session: fact.native_session,
+            trigger: fact.trigger,
+        }))
     }
 
     // Equivalent: the capture events carry no aggregate state; projectors fold them
@@ -527,7 +522,6 @@ impl SessionAggregate {
         fold(&mut self.session, event.into(), page);
     }
 
-    // RED (U7b): a reopen is folded as nothing yet.
     #[applies(SessionReopened)]
     fn applied_sessionreopened(&mut self, event: SessionReopened, page: &PageContext) {
         fold(&mut self.session, event.into(), page);

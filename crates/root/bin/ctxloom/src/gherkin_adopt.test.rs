@@ -34,7 +34,7 @@ const OPERATIONAL_MARKERS: [&str; 2] = [
 /// The stub engine: records its launch beside itself, and replies as claude
 /// does under `--output-format stream-json`: its session's `init` and a
 /// `result` carrying the answer.
-const CLAUDE_STUB: &str = r#"rec="$(dirname "$0")/claude-launch"
+pub(super) const CLAUDE_STUB: &str = r#"rec="$(dirname "$0")/claude-launch"
 for a in "$@"; do
   printf '%s\n' "$a" >> "$rec"
   [ -f "$a" ] && cat "$a" >> "$rec"
@@ -66,7 +66,7 @@ pub(super) struct State {
     /// Every file of her home, then.
     home_before: Option<BTreeMap<String, Vec<u8>>>,
     /// The session the last turn was taken on, by its harp.
-    harp: Option<String>,
+    pub(super) harp: Option<String>,
 }
 
 /// Every file below `path` (or `path` itself, a file), by its path.
@@ -212,7 +212,7 @@ fn started_through_ctxloom(w: &mut World) {
 /// (its reply, json off a terminal, names it), by `run --session`.
 #[when(expr = "Alice takes another turn on that session with {string}")]
 fn another_turn(w: &mut World, prompt: String) {
-    // The session a step already named (a close of it, U7b), else the one
+    // The session a step already named (a close of it), else the one
     // the last reply names.
     let harp = match w.adopt.harp.clone() {
         Some(harp) => harp,
@@ -229,7 +229,7 @@ fn another_turn(w: &mut World, prompt: String) {
     );
 }
 
-/// PROPOSED (U7b, 2026-11-15): Alice closes the session the last one-shot
+/// Alice closes the session the last one-shot
 /// made (its reply names it), as `session close` does.
 #[given("Alice has closed that session")]
 fn closed_that_session(w: &mut World) {
@@ -245,7 +245,7 @@ fn closed_that_session(w: &mut World) {
     assert!(session_shown(w, &harp)["closed"] == serde_json::Value::Bool(true));
 }
 
-/// PROPOSED (U7b, 2026-11-15): the session the turn was taken on is open
+/// The session the turn was taken on is open
 /// again (`session show`'s `closed`).
 #[then("the session is no longer closed")]
 fn no_longer_closed(w: &mut World) {

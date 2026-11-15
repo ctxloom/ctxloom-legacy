@@ -249,6 +249,12 @@ pub(crate) fn apply(state: &mut SessionState, event: &SessionEvent) {
             state.closed = true;
             state.closed_cause = closed.cause.clone();
         }
+        // An explicit resume reopened it (owner 2026-11-15): it takes work
+        // again, and its close's cause is cleared.
+        SessionEvent::SessionReopened(_) => {
+            state.closed = false;
+            state.closed_cause.clear();
+        }
         SessionEvent::ChildLaunched(launched) => {
             if !holds(state, launched.child.as_ref()) {
                 state.children.push(Child {

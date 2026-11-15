@@ -517,7 +517,6 @@ Feature: run — assembling a project's context and handing it to an engine
       And the reply names the same session
       And the assistant was resumed on its own session "00000000-0000-4000-8000-0000000000aa"
 
-    # PROPOSED (U7b, 2026-11-15)
     # A close is ctxloom's control of its sessions (it takes no more work),
     # not the engine's conversation: an explicit resume of a closed session
     # reopens it, and the session takes work again.
