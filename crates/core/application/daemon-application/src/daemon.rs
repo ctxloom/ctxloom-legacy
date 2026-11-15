@@ -519,7 +519,7 @@ impl<E: Edge> Daemon<E> {
         let left = |run: &Uuid| !swept.iter().any(|s| &s.run == run);
         let owed: Vec<PendingLaunch> = owed.into_iter().filter(|l| left(&l.run)).collect();
         let started: Vec<StartedRun> = started.into_iter().filter(|r| left(&r.run)).collect();
-        self.adopt(&owed[..0], &started[..0]);
+        self.adopt(&owed, &started);
         Ok(swept)
     }
 

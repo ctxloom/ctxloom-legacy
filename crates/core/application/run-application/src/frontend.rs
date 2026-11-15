@@ -150,7 +150,11 @@ impl Frontend<'_> {
             Err(failure) => return Err(self.not_started(launch, failure, lock, notices).await),
         };
         let started = Report::Started { pid: running.pid() };
-        let _recorded = self.report(launch, &started, notices).await;
+        if self.report(launch, &started, notices).await {
+            // Its start is recorded: the session's lock alone says its
+            // owner is alive from here on.
+            self.run_lock.take();
+        }
         let output = match self.terminal.wait(running).await {
             Ok(output) => output,
             Err(failure) => return Err(self.not_started(launch, failure, lock, notices).await),

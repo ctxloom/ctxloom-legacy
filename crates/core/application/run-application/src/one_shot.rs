@@ -369,7 +369,7 @@ where
     /// held; one that does not (none, or an older frontend's) is passed
     /// over and their own is taken, as before.
     pub fn held_by_frontend(&mut self, lock: Option<String>) {
-        self.frontend_lock = lock.filter(|path| path.is_empty());
+        self.frontend_lock = lock.filter(|path| !path.is_empty());
     }
 
     /// The use cases, telling `told` where each run was placed, once it is
