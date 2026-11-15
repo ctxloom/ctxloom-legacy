@@ -326,6 +326,11 @@ pub trait HookReach {
     /// at most `wait`): its versionator stamp and the sink to it; none when
     /// none could be reached or started.
     fn reach(&self, wait: Duration) -> Option<(String, Self::Sink)>;
+
+    /// Ask the serving daemon, once, to drain for the hook's stamp `own`
+    /// (H-Q6 (b), s4-Q4): fire and forget, within `within`; never
+    /// `even_if_live`, and it starts none.
+    fn ask_to_drain(&self, own: &str, within: Duration);
 }
 
 /// The user's daemon as its discovery file names it, spawned when none
@@ -338,6 +343,10 @@ impl HookReach for DaemonReach {
     fn reach(&self, wait: Duration) -> Option<(String, GrpcSink)> {
         let found = crate::daemon::hook_daemon(&self.0, wait)?;
         Some((found.stamp.clone(), daemon_sink(found)))
+    }
+
+    fn ask_to_drain(&self, own: &str, within: Duration) {
+        crate::daemon::ask_to_drain(&self.0, own, within);
     }
 }
 
@@ -441,6 +450,16 @@ impl<R: HookReach, H: HeldFacts, I: SessionIds> Recording for HoldingRecording<R
                 },
             ),
         };
+        // H-Q6 (b): held because the daemon is older, it is asked, once a
+        // hook, to hand over to a daemon of the hook's version.
+        let older = report
+            .own
+            .iter()
+            .any(|kept| matches!(kept.outcome, Outcome::Held(Why::Older { .. })));
+        if older {
+            self.reach
+                .ask_to_drain(&self.own, clock.remaining().min(crate::daemon::HEALTH_WAIT));
+        }
         said(&report, harp)
     }
 }

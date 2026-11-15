@@ -24,7 +24,7 @@
 
 mod plan;
 
-pub use plan::{plan, supported, Fed, RunAt, Scene, Sent, Step, CHILD_ENGINE};
+pub use plan::{plan, supported, Fed, RunAt, Scene, Sent, Step, CHILD_ENGINE, ENDED_DRAINED};
 
 use angzarr_embedded::markup::DomainMessage;
 use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Cover, Fact, FactOrigin, Uuid};
@@ -131,6 +131,9 @@ pub fn turn_urgency(urgency: Urgency) -> TurnUrgency {
     }
 }
 
+/// What a delivery's key starts with: `send:<message_id>`.
+pub(crate) const DELIVERY_KEY: &str = "send:";
+
 /// The delivery policy (S-a), run on a `MessageSent` and on a turn's end or
 /// a run's start: what the next turn carries, if one is to start now.
 ///
@@ -162,7 +165,7 @@ pub fn deliver(gate: &RunGate, pending: &[PendingMessage]) -> Option<Keyed<Queue
     Some(Keyed {
         project_id: gate.session.project_id.clone(),
         cover: run_cover(&gate.session.session, gate.incarnation),
-        key: format!("send:{}", trigger.message_id),
+        key: format!("{DELIVERY_KEY}{}", trigger.message_id),
         command: QueueTurn {
             prompt_ref: String::new(),
             resume: true,

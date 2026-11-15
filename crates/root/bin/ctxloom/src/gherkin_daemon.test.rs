@@ -1157,11 +1157,27 @@ fn holds_at_bound(w: &mut World) {
     file.set_len(256 << 20).expect("a sparse hold");
 }
 
+/// The older daemon serving again for a second hook: the first hook that
+/// held for it asked it to drain (H-Q6 (b)), and, hosting nothing, it
+/// exited; a hook finding none would start one of its own version.
+fn older_still_serving(w: &mut World) {
+    if let Some(mut gone) = w.daemon_spec.daemon.take() {
+        let deadline = Instant::now() + DAEMON_WAIT;
+        while matches!(gone.try_wait(), Ok(None)) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = gone.kill();
+        let _ = gone.wait();
+    }
+    start_daemon_stamped(w, OLDER_STAMP);
+}
+
 #[given("the session's hooks held its prompt and its turn's end while an older daemon served")]
 fn held_prompt_and_turn_end(w: &mut World) {
     start_daemon_stamped(w, OLDER_STAMP);
     fire(w, "UserPromptSubmit", USER_PROMPT_SUBMIT);
     warned_for_prompt(w, "hook-cli-held");
+    older_still_serving(w);
     fire(w, "Stop", STOP);
     let harp = fired(w).harp.clone();
     let held = holds(w);
@@ -1181,6 +1197,7 @@ fn held_then_dropped(w: &mut World) {
     fire(w, "UserPromptSubmit", USER_PROMPT_SUBMIT);
     warned_for_prompt(w, "hook-cli-held");
     holds_at_bound(w);
+    older_still_serving(w);
     fire(w, "Stop", STOP);
     let warnings = hook_warnings(w);
     assert!(

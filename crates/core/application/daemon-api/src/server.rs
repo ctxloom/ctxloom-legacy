@@ -46,6 +46,11 @@ pub trait Hosting: Send + Sync {
     fn idle_seconds(&self) -> u64;
     /// Ask it to stop: drain, or end what it hosts first (`end_hosted`).
     fn stop(&self, end_hosted: bool);
+    /// Ask it to hand what it hosts over to the daemon of the stamp
+    /// `successor` and exit (OD-3 extended, s4-Q4).
+    fn drain(&self, successor: &str);
+    /// The stamp it hands over to, once it was asked to drain.
+    fn draining(&self) -> Option<String>;
     /// Wait for its next round, which catches its read models up with what
     /// other processes committed, so a read answers what was committed
     /// before it was asked (bounded: a round that does not come is waited
@@ -184,6 +189,8 @@ fn not_served(method: &str) -> ApiError {
     }
 }
 
+/// Every call but `GetDaemon` and `StopDaemon` is taken only while the
+/// daemon is open ([`Api::open`]): a draining one refuses it.
 impl<E: Edge + 'static> Calls for Api<E> {
     fn get_daemon(&self) -> Answer<'_, v1::Daemon> {
         Box::pin(Api::get_daemon(self))
@@ -194,74 +201,116 @@ impl<E: Edge + 'static> Calls for Api<E> {
     }
 
     fn resolve_project(&self, request: v1::ResolveProjectRequest) -> Answer<'_, v1::Project> {
-        Box::pin(Api::resolve_project(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::resolve_project(self, request).await
+        })
     }
 
     fn get_project(&self, request: v1::GetProjectRequest) -> Answer<'_, v1::Project> {
-        Box::pin(Api::get_project(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::get_project(self, request).await
+        })
     }
 
     fn get_session(&self, request: v1::GetSessionRequest) -> Answer<'_, v1::Session> {
-        Box::pin(Api::get_session(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::get_session(self, request).await
+        })
     }
 
     fn list_sessions(
         &self,
         request: v1::ListSessionsRequest,
     ) -> Answer<'_, v1::ListSessionsResponse> {
-        Box::pin(Api::list_sessions(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::list_sessions(self, request).await
+        })
     }
 
     fn search_sessions(
         &self,
         request: v1::SearchSessionsRequest,
     ) -> Answer<'_, v1::ListSessionsResponse> {
-        Box::pin(Api::search_sessions(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::search_sessions(self, request).await
+        })
     }
 
     fn delete_session(
         &self,
         request: v1::DeleteSessionRequest,
     ) -> Answer<'_, v1::DeleteSessionResponse> {
-        Box::pin(Api::delete_session(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::delete_session(self, request).await
+        })
     }
 
     fn sweep_sessions(
         &self,
         request: v1::SweepSessionsRequest,
     ) -> Answer<'_, v1::SweepSessionsResponse> {
-        Box::pin(Api::sweep_sessions(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::sweep_sessions(self, request).await
+        })
     }
 
     fn get_transcript(&self, request: v1::GetTranscriptRequest) -> Answer<'_, v1::Transcript> {
-        Box::pin(Api::get_transcript(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::get_transcript(self, request).await
+        })
     }
 
     fn assemble_context(
         &self,
         request: v1::AssembleContextRequest,
     ) -> Answer<'_, v1::AssembledContext> {
-        Box::pin(Api::assemble_context(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::assemble_context(self, request).await
+        })
     }
 
     fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
-        Box::pin(Api::create_run(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::create_run(self, request).await
+        })
     }
 
     fn get_run(&self, request: v1::GetRunRequest) -> Answer<'_, v1::Run> {
-        Box::pin(Api::get_run(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::get_run(self, request).await
+        })
     }
 
     fn watch_run(&self, request: v1::WatchRunRequest) -> Answer<'_, crate::RunStream> {
-        Box::pin(Api::watch_run(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::watch_run(self, request).await
+        })
     }
 
     fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
-        Box::pin(Api::create_hand_off(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::create_hand_off(self, request).await
+        })
     }
 
     fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
-        Box::pin(Api::delete_hand_off(self, request))
+        Box::pin(async move {
+            self.open()?;
+            Api::delete_hand_off(self, request).await
+        })
     }
 }
 
@@ -409,16 +458,44 @@ impl<E: Edge> Api<E> {
             clients: 0,
             idle_seconds: self.parts.hosting.idle_seconds(),
             idle_limit_seconds: about.idle_limit_seconds,
+            draining_for: self.parts.hosting.draining().unwrap_or_default(),
         }
     }
 
+    /// Whether the daemon takes a new call: not once it was asked to drain
+    /// (s4-Q4), when every call but `GetDaemon` and `StopDaemon` is refused
+    /// `DaemonDraining`, naming both stamps and what it still hosts.
+    pub(crate) fn open(&self) -> Result<(), ApiError> {
+        let Some(successor) = self.parts.hosting.draining() else {
+            return Ok(());
+        };
+        Err(ApiRefusal::of(&v1::DaemonDraining {
+            version: self.parts.about.version.clone(),
+            successor,
+            harps: self
+                .parts
+                .hosting
+                .hosted()
+                .into_iter()
+                .map(|run| run.harp)
+                .collect(),
+        })
+        .into())
+    }
+
     /// `StopDaemon`: refused `DaemonHosting` while it hosts live runs,
-    /// unless `even_if_live`, which ends them first (S12). Answers the
-    /// daemon as it was asked to stop.
+    /// unless `even_if_live`, which ends them first (S12), or `drain`
+    /// (s4-Q4), which hands them over to the daemon of the asking
+    /// `version`, never refused for them. Answers the daemon as it was
+    /// asked to stop.
     pub async fn stop_daemon(
         &self,
         request: v1::StopDaemonRequest,
     ) -> Result<v1::Daemon, ApiError> {
+        if request.drain && !request.even_if_live {
+            self.parts.hosting.drain(&request.version);
+            return Ok(self.daemon());
+        }
         let daemon = self.daemon();
         if !daemon.runs.is_empty() && !request.even_if_live {
             return Err(ApiRefusal::of(&v1::DaemonHosting {

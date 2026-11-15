@@ -610,8 +610,10 @@ async fn run<E: run_ports::Edge>(
 ) -> Result<(), String> {
     let mut quiet_since = Instant::now();
     // Asked to stop through its API (`StopDaemon`): drain, its hosted
-    // engines ended first when asked `even_if_live` (S12).
+    // engines ended first when asked `even_if_live` (S12), or handed over
+    // when asked to drain (s4-Q4).
     let mut stopping = false;
+    let mut handing_over = false;
     loop {
         shared.tell(launcher.hosted_runs(), quiet_since);
         if !files.still_holds(held) {
@@ -648,6 +650,20 @@ async fn run<E: run_ports::Edge>(
                 launcher.end_all();
             }
             stopping = true;
+        }
+        // Asked to drain by a client of a newer version (s4-Q4): it hands
+        // what it hosts over to that version's daemon, and exits once it
+        // hosts nothing.
+        if !handing_over {
+            if let Some(successor) = daemon_api::Hosting::draining(shared.as_ref()) {
+                said(
+                    say,
+                    &format!("asked to drain for ctxloom {successor}: handing what it hosts over"),
+                );
+                launcher.hand_over();
+                handing_over = true;
+                stopping = true;
+            }
         }
         let draining = stopping;
         if draining && launcher.hosting() == 0 {
@@ -738,6 +754,9 @@ struct Round {
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
+    /// Asked to drain (s4-Q4): the stamp it hands what it hosts over to,
+    /// the first it was asked for.
+    drain: Option<String>,
 }
 
 impl Shared {
@@ -828,6 +847,17 @@ impl daemon_api::Hosting for Shared {
     fn stop(&self, end_hosted: bool) {
         let mut round = self.round();
         round.stop = Some(end_hosted || round.stop.unwrap_or(false));
+    }
+
+    fn drain(&self, successor: &str) {
+        let mut round = self.round();
+        if round.drain.is_none() {
+            round.drain = Some(successor.to_string());
+        }
+    }
+
+    fn draining(&self) -> Option<String> {
+        self.round().drain.clone()
     }
 
     /// The next round to START after this call (so its catch-up reads what

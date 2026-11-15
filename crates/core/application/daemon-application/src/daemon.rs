@@ -220,6 +220,12 @@ pub struct Daemon<E: Edge> {
     one_shots: Option<Arc<OneShots>>,
     /// Where a child works (s4-Q11); none, every child in its project.
     workspaces: Option<Arc<dyn ChildWorkspaces>>,
+    /// Whether it hands what it hosts over to the next daemon (OD-3
+    /// extended, s4-Q4): asked to drain ([`Daemon::hand_over`]).
+    handing_over: bool,
+    /// The runs of the children it ended to hand them over: each one's
+    /// incarnation ends `drained` at its exit.
+    drained: BTreeSet<String>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -311,6 +317,8 @@ impl<E: Edge> Daemon<E> {
             finder: None,
             one_shots: None,
             workspaces: None,
+            handing_over: false,
+            drained: BTreeSet::new(),
         }
     }
 
@@ -335,6 +343,16 @@ impl<E: Edge> Daemon<E> {
     pub fn finding(mut self, finder: Arc<dyn RunnerLauncher>) -> Daemon<E> {
         self.finder = Some(finder);
         self
+    }
+
+    /// Hand what it hosts over to the next daemon (OD-3 extended, s4-Q4):
+    /// from its next round on it starts no child and delivers no message,
+    /// and each child it hosts with no turn in flight is ended, its
+    /// incarnation ended `drained` and its hand-off kept, so the next
+    /// daemon re-hosts it (cause `drain`) resuming its conversation; a busy
+    /// child is ended at its turn's end. Its one-shots finish their turn.
+    pub fn hand_over(&mut self) {
+        self.handing_over = true;
     }
 
     /// How many runs it hosts now: its children and its one-shots.
@@ -516,14 +534,52 @@ impl<E: Edge> Daemon<E> {
         Ok(swept)
     }
 
+    /// The hand-over's step (s4-Q4): each child it hosts that is bound to
+    /// its engine's session (so the next daemon can resume it) and has no
+    /// turn in flight, as the board caught up says, is ended, once; its
+    /// exit ends its incarnation `drained`. Whether it ended any.
+    fn end_the_idle(&mut self) -> bool {
+        let board = self.board.projector().board();
+        let idle: Vec<String> = self
+            .hosted
+            .iter()
+            .filter(|(run, _)| !self.drained.contains(*run))
+            .filter(|(_, hosted)| {
+                let at = &hosted.at;
+                let bound = board
+                    .session(&at.session)
+                    .is_some_and(|session| !session.native_id.is_empty());
+                let quiet = board
+                    .run(&at.session, at.incarnation)
+                    .is_none_or(|run| run.state.turns.is_empty());
+                bound && quiet
+            })
+            .map(|(run, _)| run.clone())
+            .collect();
+        drop(board);
+        for run in &idle {
+            self.drained.insert(run.clone());
+            if let Some(hosted) = self.hosted.get(run) {
+                (self.say)(&format!(
+                    "{}: no turn in flight: ended, to be handed over",
+                    hosted.who.harp
+                ));
+                let _ = hosted.control.end(END_GRACE);
+            }
+        }
+        !idle.is_empty()
+    }
+
     /// One round: hear the children, catch up, plan, act. Whether it did
-    /// anything. While `draining`, no child is started.
+    /// anything. While `draining` (or handing over), no child is started
+    /// and no message delivered.
     pub async fn tick<S: ReadStore + Store + Processed + Watch>(
         &mut self,
         store: &S,
         catalog: &Catalog,
         draining: bool,
     ) -> bool {
+        let draining = draining || self.handing_over;
         let mut busy = self.hear().await;
         busy |= self.stop_one_shots().await;
         let board = self.board.step_if_changed(store, catalog).await;
@@ -536,8 +592,13 @@ impl<E: Edge> Daemon<E> {
         if board.is_ok() {
             self.sweep_hand_offs();
         }
+        if self.handing_over {
+            busy |= self.end_the_idle();
+        }
         for (project_id, step) in self.plan() {
-            if draining && matches!(step, Step::Start { .. }) {
+            // Draining, it starts no child and gives none a turn: what is
+            // pending is the next daemon's to deliver.
+            if draining && (matches!(step, Step::Start { .. }) || step.delivers()) {
                 continue;
             }
             let key = step.key().to_string();
@@ -649,8 +710,12 @@ impl<E: Edge> Daemon<E> {
                 self.start(project_id, at, &child).await
             }
             Step::Rehost {
-                at, harp, owner, ..
-            } => self.rehost(project_id, &at, &harp, &owner).await,
+                at,
+                harp,
+                owner,
+                cause,
+                ..
+            } => self.rehost(project_id, &at, &harp, &owner, &cause).await,
             Step::Feed {
                 at,
                 turn,
@@ -1315,8 +1380,13 @@ impl<E: Edge> Daemon<E> {
                         }),
                     )
                     .await;
+                // Ended to be handed over (s4-Q4): the next daemon re-hosts it.
+                let cause = match self.drained.remove(run) {
+                    true => session_policies::ENDED_DRAINED,
+                    false => "runner-exit",
+                };
                 let _ = facts
-                    .incarnation_ended(&at.session, at.incarnation, "runner-exit")
+                    .incarnation_ended(&at.session, at.incarnation, cause)
                     .await;
                 (self.say)(&format!("{}: exited {exit:?}", who.harp));
                 if let Some(gone) = self.hosted.remove(run) {

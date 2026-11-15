@@ -61,7 +61,7 @@ pub(crate) const SPAWN_WAIT: Duration = HOOK_BOUND.saturating_sub(DELIVERY_MARGI
 
 /// How long one health check of a daemon may take (a loopback TLS
 /// handshake and one call; a stale port refuses at once).
-const HEALTH_WAIT: Duration = Duration::from_secs(1);
+pub(crate) const HEALTH_WAIT: Duration = Duration::from_secs(1);
 
 /// The environment a spawned daemon is given of its spawner's `vars`
 /// (D-N45): what it needs to run, named as `flavor` compares names (so
@@ -200,6 +200,13 @@ impl Render for Status {
             "idle {}s of {}s",
             daemon.idle_seconds, daemon.idle_limit_seconds
         )?;
+        if !daemon.draining_for.is_empty() {
+            writeln!(
+                out,
+                "draining: handing what it hosts over to ctxloom {}",
+                daemon.draining_for
+            )?;
+        }
         for run in &daemon.runs {
             writeln!(out, "hosting {} ({})", run.harp, run.session)?;
         }
@@ -850,6 +857,38 @@ pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_
     }
     ensure_within(&wiring, env, wait);
     serving(&wiring, &files).ok().flatten()
+}
+
+/// H-Q6 (b), s4-Q4: ask the daemon serving for `env`'s home, if one is
+/// live, to drain for the stamp `own`, waiting `within` at most (never more
+/// than a health check's wait). Fire and forget: whatever it answers, or
+/// fails, is not the asker's; it starts no daemon and ends nothing.
+pub(crate) fn ask_to_drain(env: &Arc<EnvSnapshot>, own: &str, within: Duration) {
+    use daemon_ports::DaemonApi;
+    let Ok(wiring) = Wiring::new(Arc::clone(env)) else {
+        return;
+    };
+    let files = files_of(&wiring);
+    let Ok(Some(found)) = serving(&wiring, &files) else {
+        return;
+    };
+    let request = daemon_proto::v1::StopDaemonRequest {
+        name: "daemon".to_string(),
+        drain: true,
+        version: own.to_string(),
+        ..daemon_proto::v1::StopDaemonRequest::default()
+    };
+    let wait = within.min(HEALTH_WAIT);
+    // A runtime of its own, on a thread of its own: a hook may be inside
+    // another runtime's thread.
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let client = client_of(&found);
+            // The deadline made on the runtime it is awaited on.
+            let _ =
+                block_on(async { tokio::time::timeout(wait, client.stop_daemon(request)).await });
+        });
+    });
 }
 
 /// Whether this executable may spawn itself as the daemon: a unit test's is

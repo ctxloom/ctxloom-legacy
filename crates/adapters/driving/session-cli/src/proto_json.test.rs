@@ -272,6 +272,7 @@ fn test_the_generated_proto3_json_is_byte_identical_to_the_hand_written() {
         clients: 3,
         idle_seconds: 1,
         idle_limit_seconds: 600,
+        draining_for: "v0.2.0-def5678".to_string(),
     };
     let removal = every_field_of_a_removal();
     // A plan: `applied` has presence (OQ-7), so its `false` is printed.
