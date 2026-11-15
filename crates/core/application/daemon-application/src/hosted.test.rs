@@ -2222,11 +2222,18 @@ async fn a_draining_daemon_steers_a_busy_child_and_ends_it_once_its_guidance_tur
         0,
         "its guidance's turn is in flight"
     );
+    // A wake sent meanwhile is the next daemon's: never a turn here.
+    world.handle(CHILD, wake("m-late")).await;
     world.say(answered(&[&guidance_id()]));
-    for _ in 0..2 {
+    for _ in 0..3 {
         world.tick().await;
     }
     assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "at its end");
+    let late = world.run_events().await.into_iter().any(|event| {
+        matches!(event, RunEvent::TurnQueued(queued)
+            if queued.message_ids.contains(&"m-late".to_string()))
+    });
+    assert!(!late, "the late wake stays pending");
     world.say(exited());
     world.tick().await;
     assert_eq!(ended(&world, CHILD).await, [(1, "drained".to_string())]);
@@ -2367,13 +2374,15 @@ async fn a_draining_daemon_warns_at_once_of_each_busy_child() {
     let mut world = hosting_from(&files, &ForAgent::default()).await;
     busy_child(&mut world).await;
     world.daemon.hand_over();
-    world.tick().await;
-    let log = world.said.lock().unwrap().join("\n");
-    assert!(
-        log.contains(
-            "kid: a turn in flight: steered to end it; handed over within 300s, its turn cut"
-        ),
-        "{log}"
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    let warned = "kid: a turn in flight: steered to end it; handed over within 300s, its turn cut";
+    let said = world.said.lock().unwrap().clone();
+    assert_eq!(
+        said.iter().filter(|line| line.as_str() == warned).count(),
+        1,
+        "warned once: {said:?}"
     );
 }
 

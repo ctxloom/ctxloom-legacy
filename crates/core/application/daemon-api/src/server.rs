@@ -471,8 +471,34 @@ impl<E: Edge> Api<E> {
                 .start_up_failed()
                 .map(|why| crate::StartUpIncomplete { why }.notice())
                 .into_iter()
+                .chain(self.handing_over())
                 .collect(),
         }
+    }
+
+    /// The drain's warning (OD-54), while it drains and hosts anything:
+    /// what it hands over, to whom, and within how long a busy child.
+    fn handing_over(&self) -> Option<v1::Notice> {
+        let successor = self.parts.hosting.draining()?;
+        let harps: Vec<String> = self
+            .parts
+            .hosting
+            .hosted()
+            .into_iter()
+            .map(|run| run.harp)
+            .collect();
+        if harps.is_empty() {
+            return None;
+        }
+        Some(
+            crate::HandingOver {
+                daemon: self.parts.about.version.clone(),
+                successor,
+                harps,
+                seconds: self.parts.about.hand_over_seconds,
+            }
+            .notice(),
+        )
     }
 
     /// Whether the daemon takes a new call: not once it was asked to drain

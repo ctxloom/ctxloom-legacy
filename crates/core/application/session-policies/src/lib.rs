@@ -282,8 +282,22 @@ pub fn drain_guidance(
     incarnation: u32,
     supported: &[Urgency],
 ) -> Option<Keyed<SendMessage>> {
-    let _ = (child, incarnation, supported);
-    None
+    if !supported.contains(&Urgency::Steer) {
+        return None;
+    }
+    let key = format!("drain:{}:{incarnation}", child.session);
+    Some(Keyed {
+        project_id: child.project_id.clone(),
+        cover: session_cover(&child.session)?,
+        key: key.clone(),
+        command: SendMessage {
+            message_id: key,
+            urgency: Urgency::Steer,
+            text: DRAIN_GUIDANCE.to_string(),
+            requester: None,
+            supported: supported.to_vec(),
+        },
+    })
 }
 
 // ----------------------------------------------------------------- launch

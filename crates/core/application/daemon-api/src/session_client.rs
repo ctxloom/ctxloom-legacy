@@ -189,8 +189,20 @@ impl<D: Daemons> Client<D> {
     /// and exit, as a newer client's drain does; none serving, nothing.
     /// Its answer carries the drain's warning (`Daemon.warnings`).
     pub async fn drain(&self, version: &str) -> Result<Option<v1::Daemon>, CallError> {
-        let _ = version;
-        self.stop(false).await
+        let Some(api) = self.daemons.serving().await.map_err(CallError::Unreached)? else {
+            return Ok(None);
+        };
+        let request = v1::StopDaemonRequest {
+            name: "daemon".to_string(),
+            drain: true,
+            version: version.to_string(),
+            env: Some(self.env.clone()),
+            ..v1::StopDaemonRequest::default()
+        };
+        match api.stop_daemon(request).await {
+            Err(Called::Unreachable { .. }) => Ok(None),
+            answered => Ok(Some(answered?)),
+        }
     }
 
     /// Where a library verb's resource names are rooted (OD-40; OQ-2, OQ-3):

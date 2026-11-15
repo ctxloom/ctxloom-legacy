@@ -97,7 +97,7 @@ pub async fn reconcile<A: DaemonApi>(
             own: own.to_string(),
             daemon: daemon.to_string(),
             harps: answered.runs.into_iter().map(|run| run.harp).collect(),
-            warnings: Vec::new(),
+            warnings: answered.warnings,
         }),
         // A run started between the two calls (or, asked to drain, a daemon
         // of a ctxloom before the drain, which takes it for a stop).

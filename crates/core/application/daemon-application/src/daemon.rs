@@ -240,6 +240,13 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     clock: Option<Arc<dyn Monotonic>>,
     /// How long a hand-over waits for a busy child ([`HAND_OVER_PERIOD`]).
     hand_over_period: std::time::Duration,
+    /// When its hand-over began, on its clock.
+    hand_over_began: Option<std::time::Duration>,
+    /// Whether the busy children were given the drain's guidance (once, at
+    /// the hand-over's first round).
+    guided_once: bool,
+    /// The guidance given each busy child, by its run: its message's id.
+    guided: BTreeMap<String, String>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -338,6 +345,9 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             drained: BTreeSet::new(),
             clock: None,
             hand_over_period: HAND_OVER_PERIOD,
+            hand_over_began: None,
+            guided_once: false,
+            guided: BTreeMap::new(),
         }
     }
 
@@ -378,13 +388,17 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// Hand what it hosts over to the next daemon (OD-3 extended, s4-Q4):
-    /// from its next round on it starts no child and delivers no message,
-    /// and each child it hosts with no turn in flight is ended, its
-    /// incarnation ended `drained` and its hand-off kept, so the next
-    /// daemon re-hosts it (cause `drain`) resuming its conversation; a busy
-    /// child is ended at its turn's end. Its one-shots finish their turn.
+    /// from its next round on it starts no child and delivers no message
+    /// but the drain's guidance, and each child it hosts with no turn in
+    /// flight is ended, its incarnation ended `drained` and its hand-off
+    /// kept, so the next daemon re-hosts it (cause `drain`) resuming its
+    /// conversation. A busy child is steered with the guidance (OD-54) and
+    /// ended at its turn's end, or, still busy once the hand-over's period
+    /// has passed on its clock, ended anyway, its turn cut. Its one-shots
+    /// finish their turn.
     pub fn hand_over(&mut self) {
         self.handing_over = true;
+        self.hand_over_began = self.clock.as_ref().map(|clock| clock.now());
     }
 
     /// How many runs it hosts now: its children and its one-shots.
@@ -567,15 +581,17 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// The hand-over's step (s4-Q4): each child it hosts that is bound to
-    /// its engine's session (so the next daemon can resume it) and has no
-    /// turn in flight, as the board caught up says, is ended, once; its
-    /// exit ends its incarnation `drained`. Whether it ended any.
+    /// its engine's session (so the next daemon can resume it), has no
+    /// turn in flight, as the board caught up says, and no guidance of its
+    /// own still pending (OD-54), is ended, once; its exit ends its
+    /// incarnation `drained`. Whether it ended any.
     fn end_the_idle(&mut self) -> bool {
         let board = self.board.projector().board();
         let idle: Vec<String> = self
             .hosted
             .iter()
             .filter(|(run, _)| !self.drained.contains(*run))
+            .filter(|(run, _)| !self.guidance_pending(run))
             .filter(|(_, hosted)| {
                 let at = &hosted.at;
                 let bound = board
@@ -602,6 +618,119 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         !idle.is_empty()
     }
 
+    /// Whether the guidance given the child of `run` is still pending (not
+    /// yet a turn of its run).
+    fn guidance_pending(&self, run: &str) -> bool {
+        let (Some(id), Some(hosted)) = (self.guided.get(run), self.hosted.get(run)) else {
+            return false;
+        };
+        self.pending
+            .projector()
+            .pending()
+            .pending(&hosted.at.session)
+            .iter()
+            .any(|message| &message.message_id == id)
+    }
+
+    /// Whether `step` (a delivery) is to a run whose drain's guidance is
+    /// still pending: the one delivery a draining daemon makes.
+    fn guides(&self, step: &Step) -> bool {
+        let Step::Send(sent) = step else {
+            return false;
+        };
+        self.guided.keys().any(|run| {
+            self.hosted.get(run).is_some_and(|hosted| {
+                let cover = session_policies::run_cover(&hosted.at.session, hosted.at.incarnation);
+                sent.book.cover.as_ref() == Some(&cover)
+            }) && self.guidance_pending(run)
+        })
+    }
+
+    /// The drain's guidance (OD-54), once, at the hand-over's first round:
+    /// each hosted child with a turn in flight is sent the approved
+    /// guidance as its session's own steer (the one delivery path), and the
+    /// log says so at once. Whether it sent any.
+    async fn guide_the_busy(&mut self) -> bool {
+        if self.guided_once {
+            return false;
+        }
+        self.guided_once = true;
+        let board = self.board.projector().board();
+        let mut guidance = Vec::new();
+        for (run, hosted) in &self.hosted {
+            let at = &hosted.at;
+            let Some(session) = board.session(&at.session) else {
+                continue;
+            };
+            let busy = board
+                .run(&at.session, at.incarnation)
+                .is_some_and(|run| !run.state.turns.is_empty());
+            let child = sessions::SessionRef {
+                project_id: session.project_id.clone(),
+                session: at.session.clone(),
+            };
+            // A child it hosts takes every urgency over its engine's
+            // stream (D15), whatever engine it is on.
+            let supported = [Urgency::Inform, Urgency::Wake, Urgency::Steer];
+            if let Some(keyed) = busy
+                .then(|| session_policies::drain_guidance(&child, at.incarnation, &supported))
+                .flatten()
+            {
+                guidance.push((run.clone(), hosted.who.harp.clone(), keyed));
+            }
+        }
+        drop(board);
+        let within = match self.hand_over_began {
+            Some(_) => format!(
+                "handed over within {}s, its turn cut",
+                self.hand_over_period.as_secs()
+            ),
+            None => "handed over at its turn's end".to_string(),
+        };
+        let any = !guidance.is_empty();
+        for (run, harp, keyed) in guidance {
+            (self.say)(&format!(
+                "{harp}: a turn in flight: steered to end it; {within}"
+            ));
+            let id = keyed.command.message_id.clone();
+            if matches!(self.send(&Sent::from(keyed)).await, Taken::Done) {
+                self.guided.insert(run, id);
+            }
+        }
+        any
+    }
+
+    /// The hand-over's period (OD-54): once it has passed on the daemon's
+    /// clock, each child still hosted and not yet ended is ended anyway, its
+    /// turn in flight cut, its incarnation to end `drained`. Whether it
+    /// ended any.
+    fn hand_over_the_overdue(&mut self) -> bool {
+        let (Some(clock), Some(began)) = (&self.clock, self.hand_over_began) else {
+            return false;
+        };
+        if clock.now().saturating_sub(began) < self.hand_over_period {
+            return false;
+        }
+        let overdue: Vec<String> = self
+            .hosted
+            .keys()
+            .filter(|run| !self.drained.contains(*run))
+            .cloned()
+            .collect();
+        for run in &overdue {
+            self.drained.insert(run.clone());
+            if let Some(hosted) = self.hosted.get(run) {
+                (self.say)(&format!(
+                    "{}: still busy after {}s: its turn in flight cut, handed over",
+                    hosted.who.harp,
+                    self.hand_over_period.as_secs()
+                ));
+                let _ = hosted.control.end(END_GRACE);
+            }
+        }
+        !overdue.is_empty()
+    }
+
     /// One round: hear the children, catch up, plan, act. Whether it did
     /// anything. While `draining` (or handing over), no child is started
     /// and no message delivered.
@@ -625,12 +754,16 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             self.sweep_hand_offs();
         }
         if self.handing_over {
+            busy |= self.guide_the_busy().await;
             busy |= self.end_the_idle();
+            busy |= self.hand_over_the_overdue();
         }
         for (project_id, step) in self.plan() {
-            // Draining, it starts no child and gives none a turn: what is
-            // pending is the next daemon's to deliver.
-            if draining && (matches!(step, Step::Start { .. }) || step.delivers()) {
+            // Draining, it starts no child and gives none a turn but the
+            // drain's guidance: what is pending is the next daemon's to
+            // deliver.
+            let held = step.delivers() && !self.guides(&step);
+            if draining && (matches!(step, Step::Start { .. }) || held) {
                 continue;
             }
             let key = step.key().to_string();
