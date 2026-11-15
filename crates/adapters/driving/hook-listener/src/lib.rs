@@ -1,21 +1,20 @@
-//! The run's hook listener (owner rulings 2026-11-09, items 7, 9, 16, 17 and
-//! 31-33, 51): while a run is live (interactive or one-shot), this process serves the standard
-//! angzarr `CommandHandlerCoordinatorService.Handle` on TCP, so the hook
-//! processes of the run's engine can deliver capture facts.
+//! The user daemon's hook listener (owner rulings 2026-11-09, items 7, 9,
+//! 16, 17 and 31-33): the daemon serves the standard angzarr
+//! `CommandHandlerCoordinatorService.Handle` on TCP, so the hook processes of
+//! every engine it hosts or prepares can deliver capture facts. No run
+//! serves one of its own any more (slice 4 U7, owner ruling s4-Q3).
 //!
 //! Nothing here is ctxloom's own ingress service: the wire is angzarr's
 //! generic coordinator (`angzarr-coordinator-grpc`'s server on a
 //! `Listener::tcp`, port 0, never an unspecified address, the arrival declared
 //! from the bind). What is ctxloom's is the admission gate in front of it
-//! ([`runs_application::HookGate`]: the run the bearer names, its session's
-//! stream as the one a fact may address, validity until the run ends; the
-//! user daemon's is [`runs_application::UserGate`], the user bearer) and the
-//! command half behind it ([`runs_application::EdgeCommands`]: the kernel).
+//! (the caller's: the user daemon's is [`runs_application::UserGate`], the
+//! user bearer) and the command half behind it ([`runs_application::EdgeCommands`]: the kernel).
 //! `Handle` is the only operation served: the other operations of the service
 //! answer UNIMPLEMENTED, and the query service is not mounted at all (a hook
 //! never reads). A request over [`MAX_REQUEST_BYTES`] is refused undecoded.
 //!
-//! The listener is TLS only (rulings 35-37): the run's self-signed
+//! The listener is TLS only (rulings 35-37): the daemon's self-signed
 //! certificate ([`TlsIdentity`]) authenticates the SERVER to the child, which
 //! pins it as its sole root, and the bearer keeps non-user callers off the
 //! socket. There is no mutual TLS and no plaintext: a client that does not
@@ -29,7 +28,7 @@
 //! is no limit on the number of connections.
 //!
 //! A listener spawns its tasks on the runtime that awaits
-//! [`HookListener::serve_tcp`] and needs it to be a multi-thread runtime (or
+//! [`HookListener::serve_tcp_gated`] and needs it to be a multi-thread runtime (or
 //! its own): the run's engine is waited for in a blocking call, and a
 //! current-thread runtime blocked in it would serve nothing.
 
@@ -41,7 +40,7 @@ use std::time::Duration;
 use angzarr_coordinator::{Coordinator, Gate};
 use angzarr_coordinator_grpc::{BoundEndpoint, Edge as Served, Listener, Running, Server};
 use angzarr_proto_transport_distributed::v1::command_handler_coordinator_service_server::CommandHandlerCoordinatorServiceServer;
-use runs_application::{Edge, EdgeCommands, HookGate};
+use runs_application::{Edge, EdgeCommands};
 use tonic::transport::{Identity, ServerTlsConfig};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -63,7 +62,7 @@ pub fn reach_of(ip: std::net::IpAddr) -> Reach {
     angzarr_coordinator_grpc::arrival_for_bind(std::net::SocketAddr::new(ip, 0))
 }
 
-/// The server's identity: the run's certificate and its private key, as PEM.
+/// The server's identity: its certificate and its private key, as PEM.
 /// The key is a secret: `Debug` withholds it.
 #[derive(Clone)]
 pub struct TlsIdentity {
@@ -98,22 +97,12 @@ pub struct HookListener {
 }
 
 impl HookListener {
-    /// Serve the hooks of one run on TCP at `addr` (port 0: the system gives
-    /// a free one, [`HookListener::local_addr`] says which), through `edge`.
-    /// An unspecified address is refused. The listener declares the arrival of
-    /// its bind: loopback for a loopback address, otherwise an IP's.
-    pub async fn serve_tcp<E: Edge + 'static>(
-        edge: Arc<E>,
-        addr: std::net::SocketAddr,
-        identity: TlsIdentity,
-    ) -> Result<HookListener, ListenerError> {
-        let gate = HookGate::new(Arc::clone(&edge));
-        HookListener::serve_tcp_gated(edge, gate, addr, identity).await
-    }
-
-    /// [`HookListener::serve_tcp`] behind `gate` in place of the run's hook
-    /// gate: the user daemon's listener serves its one principal, the user
-    /// ([`runs_application::UserGate`]), this way.
+    /// Serve hooks on TCP at `addr` (port 0: the system gives a free one,
+    /// [`HookListener::local_addr`] says which), through `edge`, behind
+    /// `gate`: the user daemon's listener serves its one principal, the
+    /// user ([`runs_application::UserGate`]), this way. An unspecified
+    /// address is refused. The listener declares the arrival of its bind:
+    /// loopback for a loopback address, otherwise an IP's.
     pub async fn serve_tcp_gated<E, G>(
         edge: Arc<E>,
         gate: G,

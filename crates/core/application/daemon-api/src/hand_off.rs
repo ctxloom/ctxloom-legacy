@@ -156,7 +156,6 @@ impl<E: run_ports::Edge> Api<E> {
             session: child.clone(),
             incarnation: 1,
             mode: runs::RunMode::Structured,
-            hook_credential_hash: Vec::new(),
             prompt_given: true,
             engine: planned.engine.clone(),
             drivable_engines: planned.drivable_engines,

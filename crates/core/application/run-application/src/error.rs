@@ -6,7 +6,7 @@ use angzarr_diagnostic::{code, Arg, Diagnostic, Report};
 use exit_code::{Exit, ExitClass};
 use library_application::AppError as PlanError;
 use run_launcher::LaunchError;
-use run_ports::{BindRefusal, FailureClass, LockError};
+use run_ports::{FailureClass, LockError};
 use runs::RunRejection;
 use runs_application::AppError as CoreError;
 use sessions::SessionRejection;
@@ -22,14 +22,8 @@ pub enum RunError {
     /// (a one-shot with no prompt, an engine nobody drives, a child that
     /// cannot authenticate, or several of them at once: ruling 73).
     Refused(RunRejection),
-    /// The run's listener has no address to bind (the bind table refused).
-    /// Refused before anything is made.
-    Bind(Box<BindRefusal>),
     /// The project could not be told.
     Project(Report),
-    /// The run's hook listener could not be started: no hook could reach the
-    /// run, so the engine is not launched.
-    Listener(Report),
     /// The run's own lock, or its session's, could not be taken (rulings 86,
     /// 92, defect 1): another process holds it, or the file cannot be made.
     Lock(LockError),
@@ -110,7 +104,6 @@ impl ExitClass for RunError {
                 Exit::FATAL_FINDINGS
             }
             RunError::Refused(_)
-            | RunError::Bind(_)
             | RunError::Resume(_)
             | RunError::TooLong(_)
             | RunError::BatchArguments(_) => Exit::REFUSED,
@@ -174,12 +167,10 @@ impl Diagnostic for RunError {
             RunError::Called(called) => called.code(),
             RunError::Refused(rejection) => rejection.code(),
             RunError::Resume(rejection) => rejection.code(),
-            RunError::Bind(error) => error.code(),
             RunError::TooLong(refusal) => refusal.code(),
             RunError::BatchArguments(refusal) => refusal.code(),
             RunError::ProgramNotFound(missing) => missing.code(),
             RunError::Project(_) => code!("project"),
-            RunError::Listener(_) => code!("listener"),
             RunError::Lock(_) => code!("lock"),
             RunError::Session(_) => code!("session"),
             RunError::Launch(_) => code!("launch"),
@@ -205,12 +196,10 @@ impl Diagnostic for RunError {
             RunError::EmptyAnswer => Vec::new(),
             RunError::Refused(rejection) => rejection.args(),
             RunError::Resume(rejection) => rejection.args(),
-            RunError::Bind(error) => error.args(),
             RunError::TooLong(refusal) => refusal.args(),
             RunError::BatchArguments(refusal) => refusal.args(),
             RunError::ProgramNotFound(missing) => missing.args(),
             RunError::Project(report) => vec![("reason", report.code().into())],
-            RunError::Listener(report) => vec![("reason", report.code().into())],
             RunError::Lock(error) => vec![("reason", error.report().code().into())],
             RunError::Session(error) => vec![("reason", why(error).into())],
             RunError::Launch(error) => vec![("reason", error.code().into())],
@@ -238,7 +227,6 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
     };
     vec![
         Box::new(RunError::Project(Report::new("ports-registry"))),
-        Box::new(RunError::Listener(Report::new("hook-listener-bind"))),
         Box::new(RunError::Lock(LockError::Held(Report::new(
             "file-lock-timeout",
         )))),

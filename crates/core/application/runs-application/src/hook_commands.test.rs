@@ -1,6 +1,7 @@
-//! The command half over the fixtures' kernel, behind the hook gate: the
-//! coordinator's own order (identify, allowlist, reach, owns, serve), the
-//! kernel's own dedupe, and how a failure is answered.
+//! The command half over the fixtures' kernel, behind the user daemon's gate
+//! (the per-run listener's `HookGate` is gone: slice 4 U7, owner ruling
+//! s4-Q3): the coordinator's own order (identify, allowlist, reach, owns,
+//! serve), the kernel's own dedupe, and how a failure is answered.
 
 use std::sync::Arc;
 
@@ -10,25 +11,26 @@ use angzarr_embedded::v1::{Cover, DeliveryOutcome, Uuid};
 use run_ports::{Bearer, Edge, Token};
 
 use crate::fakes::{command_book, fact_book, KernelEdge, World};
-use crate::{EdgeCommands, EdgeFailure, HookGate};
+use crate::{EdgeCommands, EdgeFailure, UserGate};
 
-type Hooks = Coordinator<EdgeCommands<KernelEdge>, (), HookGate<KernelEdge>>;
+type Hooks = Coordinator<EdgeCommands<KernelEdge>, (), UserGate>;
+
+/// The user bearer's token the fixtures' daemon minted.
+fn user_token() -> Token {
+    Token::from_bytes([7; 32])
+}
 
 fn coordinator(world: &World) -> Hooks {
     Coordinator::new(
         EdgeCommands::new(Arc::clone(&world.edge)),
         (),
-        HookGate::new(Arc::clone(&world.edge)),
+        UserGate::new(&user_token()),
     )
 }
 
-fn credential(run: &Uuid, token: &Token) -> Credential {
-    let run = uuid::Uuid::from_slice(&run.value).unwrap().to_string();
-    Credential::bearer(Bearer::compose(&run, token).expose().as_bytes())
-}
-
-fn mine(world: &World) -> Credential {
-    credential(&world.me.identity.run, &world.me.hook_token)
+/// The user bearer, as a hook presents it.
+fn mine(_: &World) -> Credential {
+    Credential::bearer(Bearer::user(&user_token()).expose().as_bytes())
 }
 
 fn session_cover(session: &Uuid) -> Cover {
@@ -96,7 +98,7 @@ async fn the_same_origin_is_a_duplicate_and_writes_no_page() {
 }
 
 #[tokio::test]
-async fn what_the_gate_forbids_is_answered_as_an_unknown_domain_and_writes_nothing() {
+async fn what_the_users_allowlist_forbids_is_answered_as_an_unknown_domain_and_writes_nothing() {
     let world = World::new().await;
     let coordinator = coordinator(&world);
     let credential = mine(&world);
@@ -105,16 +107,9 @@ async fn what_the_gate_forbids_is_answered_as_an_unknown_domain_and_writes_nothi
         .await
         .unwrap();
     let mine_cover = session_cover(&world.me.identity.session);
-    let theirs = session_cover(&world.other.identity.session);
     let served = world.edge.served();
-    let before = pages(&world, &theirs).await;
+    let before = pages(&world, &mine_cover).await;
     let hidden = |domain: &str| coordinator.commands().unknown_domain(domain).coded();
-    // Another session's stream.
-    let other = session
-        .handle(turn_ended(theirs.clone(), "hook:turn-end:o:p1"))
-        .await
-        .unwrap_err();
-    assert_eq!(other.coded(), hidden(sessions::SESSION_DOMAIN));
     // A command body, of a type a fact could have been.
     let command = session
         .handle(command_book(
@@ -126,39 +121,34 @@ async fn what_the_gate_forbids_is_answered_as_an_unknown_domain_and_writes_nothi
         .await
         .unwrap_err();
     assert_eq!(command.coded(), hidden(sessions::SESSION_DOMAIN));
-    // A runner-lifecycle fact, on the run's own stream.
+    // A runner-lifecycle fact the user's processes never report.
     let lifecycle = session
         .handle(fact_book(
             world.me.identity.run_cover(),
-            runs::RunExited { code: 0, signal: 0 },
-            "exit:forged",
+            runs::RunnerLost {},
+            "runner-lost:forged",
         ))
         .await
         .unwrap_err();
     assert_eq!(lifecycle.coded(), hidden(runs::RUN_DOMAIN));
     assert_eq!(world.edge.served(), served, "nothing reached the kernel");
-    assert_eq!(pages(&world, &theirs).await, before);
+    assert_eq!(pages(&world, &mine_cover).await, before);
 }
 
 #[tokio::test]
-async fn a_run_that_has_ended_is_unauthenticated_on_its_very_next_request() {
+async fn a_bearer_that_is_not_the_users_is_unauthenticated() {
     let world = World::new().await;
     let coordinator = coordinator(&world);
-    let cover = session_cover(&world.me.identity.session);
-    let credential = mine(&world);
-    let session = coordinator
-        .open(angzarr_coordinator::Arrival::Loopback, Some(&credential))
+    let other = Credential::bearer(
+        Bearer::user(&Token::from_bytes([8; 32]))
+            .expose()
+            .as_bytes(),
+    );
+    let refused = coordinator
+        .open(angzarr_coordinator::Arrival::Loopback, Some(&other))
         .await
-        .unwrap();
-    session
-        .handle(turn_ended(cover.clone(), "hook:turn-end:s:p1"))
-        .await
-        .unwrap();
-    world.end(&world.me).await;
-    let refused = session
-        .handle(turn_ended(cover, "hook:turn-end:s:p2"))
-        .await
-        .unwrap_err();
+        .err()
+        .expect("refused");
     assert_eq!(refused.coded().code, Code::Unauthenticated);
 }
 

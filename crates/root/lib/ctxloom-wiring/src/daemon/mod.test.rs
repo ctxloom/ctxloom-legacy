@@ -154,6 +154,24 @@ fn the_accounts_home_is_the_tests_override_first() {
     );
     let env = snapshot(&[("HOME", "/moved")]);
     assert_eq!(account_home(&env), Some(std::path::PathBuf::from("/moved")));
+    // An engine's hook process: its HOME the session home, ctxloom's home
+    // the test's (slice 4 U7).
+    let env = snapshot(&[
+        ("HOME", "/session-home"),
+        (run_ports::HOME_VARIABLE, "/ctxloom-rs"),
+    ]);
+    assert_eq!(
+        account_home(&env),
+        Some(std::path::PathBuf::from("/ctxloom-rs"))
+    );
+    let env = snapshot(&[
+        (ACCOUNT_HOME_VARIABLE, "/account"),
+        (run_ports::HOME_VARIABLE, "/ctxloom-rs"),
+    ]);
+    assert_eq!(
+        account_home(&env),
+        Some(std::path::PathBuf::from("/account"))
+    );
 }
 
 // The daemon's home (M4) is its CTXLOOM_HOME when it was given one, else the

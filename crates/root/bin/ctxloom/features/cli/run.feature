@@ -833,16 +833,16 @@ Feature: run — assembling a project's context and handing it to an engine
       # new: owner ruling 78 (2026-11-10).
       Given Alice has a project that has never used ctxloom
       And Alice has set ctxloom up in her project
-      And the environment variable "CTXLOOM_PERMIT_CTXLOOM_BEARER" is set to "forged-bearer-not-real"
+      And the environment variable "CTXLOOM_PERMIT_CTXLOOM_RUN" is set to "forged-run-not-real"
       When Alice runs her assistant on opencode interactively, and it reports its environment:
         """
         ctxloom run --engine opencode
         """
       Then the command succeeds
-      And the output contains "CTXLOOM_PERMIT_CTXLOOM_BEARER"
+      And the output contains "CTXLOOM_PERMIT_CTXLOOM_RUN"
       And the output contains "never replaced"
-      And the output does not contain "forged-bearer-not-real"
-      And opencode's "CTXLOOM_BEARER" was the run's own, not "forged-bearer-not-real"
+      And the output does not contain "forged-run-not-real"
+      And opencode's "CTXLOOM_RUN" was the run's own, not "forged-run-not-real"
 
     # A permit never replaces what ctxloom itself sets for the engine: the
     # session home it relocates the engine into, and the PATH it builds for

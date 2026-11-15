@@ -80,7 +80,6 @@ fn run_events() -> Vec<Any> {
             session: ID.to_string(),
             incarnation: 1,
             mode: RunMode::Structured,
-            hook_credential_hash: vec![3; 32],
             launcher_lock: String::new(),
         })
         .to_any(),

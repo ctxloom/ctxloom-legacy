@@ -11,14 +11,6 @@ pub struct RunState {
     pub session: String,
     pub incarnation: u32,
     pub mode: Option<RunMode>,
-    /// SHA-256 of the hook bearer's token (owner ruling 2026-11-09): the
-    /// engine's hook processes (interactive or one-shot) present it to the
-    /// CLI run's own listener; the token itself is never journaled (D29).
-    /// Empty on a run enqueued before it existed, which no token matches.
-    pub hook_credential_hash: Vec<u8>,
-    /// Set by the fold of `RunEnded`, whatever the cause (D29): the hook
-    /// bearer dies with its run.
-    pub credential_revoked: bool,
     pub runner_attached: bool,
     /// What the launcher said of the runner it started (runtime, workspace,
     /// pid), once it did.
@@ -35,7 +27,7 @@ pub struct RunState {
     /// transition (owner ruling 2026-11-04, item 16).
     pub summaries: u32,
     /// The turn of the model's final claim, if it made one. A CLAIM: the run
-    /// stays live, its credentials valid and its next turn queueable.
+    /// stays live and its next turn queueable.
     pub final_reported: Option<u64>,
     pub ended: Option<EndCause>,
 }
@@ -54,7 +46,7 @@ pub struct OpenTurn {
 
 /// Fold `event`, the page at `sequence` of the run's stream, into `state`:
 /// what the aggregate's appliers do, one place, so a reader of the stream
-/// (the credential check) folds as the aggregate does. Pure.
+/// (a launcher's, the daemon's) folds as the aggregate does. Pure.
 pub fn apply(state: &mut RunState, event: &RunEvent, sequence: u64) {
     fold(state, event, sequence);
     state.turn_in_flight = state.turns.first().map(|open| open.turn);
@@ -66,7 +58,6 @@ fn fold(state: &mut RunState, event: &RunEvent, sequence: u64) {
             state.session = enqueued.session.clone();
             state.incarnation = enqueued.incarnation;
             state.mode = Some(enqueued.mode);
-            state.hook_credential_hash = enqueued.hook_credential_hash.clone();
         }
         RunEvent::RunnerAttachedRecorded(_) => state.runner_attached = true,
         RunEvent::RunnerStartedRecorded(started) => state.runner_started = Some(started.clone()),
@@ -92,12 +83,7 @@ fn fold(state: &mut RunState, event: &RunEvent, sequence: u64) {
         RunEvent::StopRequested(_) => state.stop_requested = true,
         RunEvent::SummaryReportedRecorded(_) => state.summaries += 1,
         RunEvent::FinalReportedRecorded(reported) => state.final_reported = Some(reported.turn),
-        // The end revokes every credential, the owner's included, whatever the
-        // cause (D29).
-        RunEvent::RunEnded(ended) => {
-            state.ended = Some(ended.cause);
-            state.credential_revoked = true;
-        }
+        RunEvent::RunEnded(ended) => state.ended = Some(ended.cause),
     }
 }
 

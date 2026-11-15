@@ -60,9 +60,10 @@ const PROGRAM: &str = "claude";
 /// network needs, the two ways claude is handed a credential, and what the
 /// turn's hook processes need (owner ruling 51): ctxloom's home by name (their
 /// `HOME` is the session home, ruling 112), the live project's root
-/// (`CTXLOOM_ROOT`: the engine may work in a checkout), the session's harp, and the run's
-/// listener (the endpoint, the bearer, the hook bearer, the run
-/// and the listener's public certificate). On Windows,
+/// (`CTXLOOM_ROOT`: the engine may work in a checkout), the run and its
+/// session, and the env-named arrival's endpoint, bearer and certificate,
+/// which no host run sets (slice 4 U7) and which are kept for M10b's
+/// container arrival (OD-13). On Windows,
 /// what a program needs to start (`run_ports::WINDOWS_STARTUP_VARIABLES`) and
 /// the user's profile directories (`run_ports::WINDOWS_PROFILE_VARIABLES`),
 /// relocated into the session home as `HOME` is; none of them is set on

@@ -1,14 +1,15 @@
-//! The run's enqueue, which mints its hook bearer's token (D29): returned
-//! once, only its SHA-256 journaled. It is the CLI run's own listener's
-//! authentication (slice 2, the separation model: one principal, the user,
-//! so no runner's or model's token).
+//! The run's enqueue. It mints no credential: the runner's and the model's
+//! tokens went with the separation model (slice 2: one principal, the
+//! user), and the hook bearer's with the per-run listener (slice 4 U7, owner
+//! ruling s4-Q3: a hook delivers to the user's daemon with the user
+//! bearer).
 
 use std::sync::Arc;
 
 use angzarr_embedded::markup::TypedRefusal;
 use angzarr_embedded::v1::{CommandBook, Cover, Uuid};
 use angzarr_embedded::{CommandBookExt, Failure, Rejected};
-use run_ports::{Edge, Token, TokenSource};
+use run_ports::Edge;
 
 use runs::RunRejection;
 
@@ -83,41 +84,32 @@ pub enum EnqueueError {
     Failed(AppError),
 }
 
-/// What the enqueue gives back: the run's root and its hook token, shown
-/// once. It goes into the engine's environment (the terminal session's or a
-/// one-shot child's) and nowhere else (owner rulings 2026-11-09, items 16 and
-/// 51); it is held by the launching code alone, and `Token`'s `Debug` is
-/// redacted.
+/// What the enqueue gives back: the run's root.
 #[derive(Debug)]
 pub struct Enqueued {
     pub run: Uuid,
-    pub hook_token: Token,
 }
 
-pub struct Enqueuer<E: Edge, T: TokenSource> {
+pub struct Enqueuer<E: Edge> {
     edge: Arc<E>,
-    source: Arc<T>,
 }
 
-impl<E: Edge, T: TokenSource> Enqueuer<E, T> {
-    pub fn new(edge: Arc<E>, source: Arc<T>) -> Enqueuer<E, T> {
-        Enqueuer { edge, source }
+impl<E: Edge> Enqueuer<E> {
+    pub fn new(edge: Arc<E>) -> Enqueuer<E> {
+        Enqueuer { edge }
     }
 
     pub async fn enqueue(&self, request: EnqueueRequest) -> Result<Enqueued, EnqueueError> {
-        let hook_token = self.source.mint();
         let run = runs::run_root(&request.session, request.incarnation);
         let cover = Cover {
             domain: runs::RUN_DOMAIN.to_string(),
             root: Some(run.clone()),
             edition: None,
         };
-        // Only the digest is journaled (D29).
         let enqueue = runs::EnqueueRun {
             session: request.session,
             incarnation: request.incarnation,
             mode: request.mode,
-            hook_credential_hash: hook_token.hash().as_bytes().to_vec(),
             prompt_given: request.evidence.prompt_given,
             engine: request.evidence.engine,
             drivable_engines: request.evidence.drivable_engines,
@@ -127,7 +119,7 @@ impl<E: Edge, T: TokenSource> Enqueuer<E, T> {
         };
         let book = CommandBook::command_of(cover, &runs::RunCommand::from(enqueue));
         self.edge.handle(book).await.map_err(refused)?;
-        Ok(Enqueued { run, hook_token })
+        Ok(Enqueued { run })
     }
 }
 

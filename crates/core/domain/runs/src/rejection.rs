@@ -14,8 +14,6 @@ pub enum RunRejection {
     TurnInFlight { turn: u64 },
     /// A command to a run that has ended (the end fence).
     Ended,
-    /// A credential hash that is not a SHA-256 digest (32 bytes).
-    CredentialHashInvalid { length: u64 },
     /// A stream whose root is not the run's derived root.
     NotItsStream,
     /// A child agent's run asked for with none of the environment
@@ -66,7 +64,6 @@ impl Diagnostic for RunRejection {
             RunRejection::NoRun => code!("no-run"),
             RunRejection::TurnInFlight { .. } => code!("turn-in-flight"),
             RunRejection::Ended => code!("ended"),
-            RunRejection::CredentialHashInvalid { .. } => code!("credential-hash-invalid"),
             RunRejection::NotItsStream => code!("not-its-stream"),
             RunRejection::NoCredential { .. } => code!("no-credential"),
             RunRejection::FileOnlyCredential { .. } => code!("file-only-credential"),
@@ -79,7 +76,6 @@ impl Diagnostic for RunRejection {
     fn args(&self) -> Vec<(&str, Arg)> {
         match self {
             RunRejection::TurnInFlight { turn } => vec![("turn", (*turn).into())],
-            RunRejection::CredentialHashInvalid { length } => vec![("length", (*length).into())],
             RunRejection::NoCredential { engine, variables }
             | RunRejection::FileOnlyCredential { engine, variables } => vec![
                 ("engine", engine.as_str().into()),
@@ -119,7 +115,6 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(RunRejection::NoRun),
         Box::new(RunRejection::TurnInFlight { turn: 1 }),
         Box::new(RunRejection::Ended),
-        Box::new(RunRejection::CredentialHashInvalid { length: 7 }),
         Box::new(RunRejection::NotItsStream),
         Box::new(RunRejection::NoCredential {
             engine: "claude-code".to_string(),

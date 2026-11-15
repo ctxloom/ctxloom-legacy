@@ -23,8 +23,7 @@ use angzarr_embedded::{
     Answered, Any, Failure, Handled, Kernel, OnRetryable, Registry, Rejected, Sampled, StoreError,
     StreamRef,
 };
-use run_ports::{Arrival, Edge, Token, TokenSource, Unserved};
-use sha2::{Digest, Sha256};
+use run_ports::{Arrival, Edge, Unserved};
 
 use crate::Identity;
 
@@ -175,17 +174,6 @@ impl Edge for KernelEdge {
     }
 }
 
-/// Tokens `[1; 32]`, `[2; 32]`, ...
-#[derive(Default)]
-pub(crate) struct CountingSource(AtomicU32);
-
-impl TokenSource for CountingSource {
-    fn mint(&self) -> Token {
-        let n = self.0.fetch_add(1, Ordering::SeqCst) + 1;
-        Token::from_bytes([n as u8; 32])
-    }
-}
-
 pub(crate) const SESSION_ME: &str = "5f0c7a52-1111-5111-8111-000000000001";
 pub(crate) const SESSION_OTHER: &str = "5f0c7a52-2222-5222-8222-000000000002";
 
@@ -230,11 +218,9 @@ pub(crate) fn fact_book(
     }
 }
 
-/// One caller: a session with one live run and its hook bearer's token.
+/// One caller: a session with one live run.
 pub(crate) struct Party {
     pub(crate) identity: Identity,
-    /// The hook bearer's secret (journaled as a hash).
-    pub(crate) hook_token: Token,
 }
 
 pub(crate) struct World {
@@ -244,12 +230,12 @@ pub(crate) struct World {
 }
 
 impl World {
-    /// Two sessions, each with its first run enqueued and its token minted: `me`
+    /// Two sessions, each with its first run enqueued: `me`
     /// an owner (depth 0), `other` another session's owner.
     pub(crate) async fn new() -> World {
         let edge = Arc::new(KernelEdge::new());
-        let me = World::party(&edge, SESSION_ME, "amber-swift-owl", 0, 1).await;
-        let other = World::party(&edge, SESSION_OTHER, "calm-otter-dawn", 0, 2).await;
+        let me = World::party(&edge, SESSION_ME, "amber-swift-owl", 0).await;
+        let other = World::party(&edge, SESSION_OTHER, "calm-otter-dawn", 0).await;
         World { edge, me, other }
     }
 
@@ -260,12 +246,11 @@ impl World {
             "5f0c7a52-3333-5333-8333-000000000003",
             "lone-wolf-pup",
             2,
-            3,
         )
         .await
     }
 
-    async fn party(edge: &Arc<KernelEdge>, session: &str, harp: &str, depth: u32, n: u8) -> Party {
+    async fn party(edge: &Arc<KernelEdge>, session: &str, harp: &str, depth: u32) -> Party {
         let session_root = uuid(session);
         let session_cover = Cover {
             domain: sessions::SESSION_DOMAIN.to_string(),
@@ -289,7 +274,6 @@ impl World {
         ))
         .await
         .unwrap();
-        let hook_token = Token::from_bytes([n + 200; 32]);
         let run_root = runs::run_root(session, 1);
         let run_cover = Cover {
             domain: runs::RUN_DOMAIN.to_string(),
@@ -302,7 +286,6 @@ impl World {
                 session: session.to_string(),
                 incarnation: 1,
                 mode: runs::RunMode::Interactive,
-                hook_credential_hash: Sha256::digest(hook_token.as_bytes()).to_vec(),
                 prompt_given: true,
                 engine: "claude-code".to_string(),
                 drivable_engines: vec!["claude-code".to_string()],
@@ -325,10 +308,7 @@ impl World {
             harp: harp.to_string(),
             depth,
         };
-        Party {
-            identity,
-            hook_token,
-        }
+        Party { identity }
     }
 
     /// End `party`'s run, as its runner exiting would.

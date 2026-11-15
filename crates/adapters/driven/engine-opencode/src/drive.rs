@@ -61,8 +61,9 @@ pub const SIGN_IN: &str = "run `opencode auth login`, then start the session aga
 /// find programs, locale and temp space, the proxy and certificate settings a
 /// network needs, the optional provider keys of opencode's built-in source,
 /// and what the plugin's hook
-/// processes need (ctxloom's home by name, the session's harp, the run's
-/// listener), and on Windows what a program needs to start
+/// processes need (ctxloom's home by name, the run and its session, and the
+/// env-named arrival's variables, which no host run sets, slice 4 U7, kept
+/// for M10b's container arrival, OD-13), and on Windows what a program needs to start
 /// (`run_ports::WINDOWS_STARTUP_VARIABLES`) and the user's profile
 /// directories (`run_ports::WINDOWS_PROFILE_VARIABLES`, relocated into the
 /// session home as `HOME` is; none is set on unix). Never `HOME`, an XDG base

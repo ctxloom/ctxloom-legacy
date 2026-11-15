@@ -78,7 +78,11 @@ Feature: Cross-engine transcript capture — every engine's conversation becomes
     And the session's transcript holds her prompt, the assistant's words in order, the tool call as a digest, the turn's end and the session's end, each once
     And while the engine ran, its session's transcript already held what its hooks had delivered
     And the session's directory holds its session home and nothing projected from its events
-    And a hook fired after the run has ended is refused without failing, and adds nothing to the transcript
+    # U7 (owner ruling s4-Q3), PROPOSED for the owner's approval: was "is
+    # refused without failing". No run mints a hook credential any more, so
+    # nothing refuses a late hook: it reaches the user's daemon with the user
+    # bearer, and the session records nothing more.
+    And a hook fired after the run has ended is answered without failing, and adds nothing to the transcript
 
   # A session opened with a prompt on its command line: the engine submits it
   # as its first prompt, and its UserPromptSubmit hook records it. Hooks are

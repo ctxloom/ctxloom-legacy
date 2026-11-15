@@ -23,10 +23,6 @@ fn table() -> Vec<(TypedRefusal, RunRejection)> {
         ),
         (TypedRefusal::of(&Ended {}), RunRejection::Ended),
         (
-            TypedRefusal::of(&CredentialHashInvalid { length: 5 }),
-            RunRejection::CredentialHashInvalid { length: 5 },
-        ),
-        (
             TypedRefusal::of(&NotItsStream {}),
             RunRejection::NotItsStream,
         ),
@@ -197,7 +193,7 @@ fn enqueue_refuses(rejection: RunRejection) -> Failed<Refuses<RunAggregate, Enqu
 // compared here with another message's of the same meaning, never spelled.
 #[test]
 fn the_enqueue_refuses_each_pre_launch_check_with_its_message_under_its_status() {
-    let invalid = <CredentialHashInvalid as Refusal>::REFUSAL_STATUS;
+    let invalid = <NotItsStream as Refusal>::REFUSAL_STATUS;
     let precondition = <NoCredential as Refusal>::REFUSAL_STATUS;
     assert_eq!(<NoPrompt as Refusal>::REFUSAL_STATUS, invalid);
     assert_eq!(<UnknownEngine as Refusal>::REFUSAL_STATUS, invalid);

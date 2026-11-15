@@ -369,6 +369,9 @@ mod library_write_profile;
 #[path = "library_write_skill.test.rs"]
 mod library_write_skill;
 
+#[path = "no_listener.test.rs"]
+mod no_listener;
+
 #[path = "project_resolver.test.rs"]
 mod project_resolver;
 
