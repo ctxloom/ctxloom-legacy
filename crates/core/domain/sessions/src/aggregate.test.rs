@@ -197,6 +197,11 @@ impl Session {
     pub(crate) fn state(&self) -> SessionState {
         self.harness.state().state().clone()
     }
+
+    /// The stream holds `events` already (stored before: a retired event).
+    pub(crate) fn given<const N: usize>(&mut self, events: [SessionEvent; N]) {
+        self.harness.given(events);
+    }
 }
 
 pub(crate) fn mint(harp: &str) -> MintSession {

@@ -280,7 +280,7 @@ fn a_wake_to_a_session_with_no_run_open_owes_the_next_incarnation() {
 // D30, M2: an inform owes nothing; a wake to a session with its run open
 // owes nothing; nor does a wake to a stopped session.
 #[test]
-fn only_a_wake_to_an_idle_unstopped_session_owes_an_incarnation() {
+fn only_a_wake_to_an_idle_session_owes_an_incarnation() {
     let mut open = Session::minted();
     assert_eq!(open.run(send("m1", Urgency::Wake, None)).unwrap().len(), 1);
 
@@ -295,18 +295,17 @@ fn only_a_wake_to_an_idle_unstopped_session_owes_an_incarnation() {
     );
     assert_eq!(informed.state().open_incarnation, None);
 
+    // Owner 2026-11-15: no stop latch. A stream holding a stop order (a
+    // retired event, recorded before) is woken like any idle session.
     let mut stopped = Session::minted();
-    stopped
-        .run(StopSession {
-            requester_depth: 0,
-            reason: "u".to_string(),
-            requester: None,
-        })
-        .unwrap();
+    stopped.given([SessionEvent::StopOrdered(crate::StopOrdered {
+        reason: "u".to_string(),
+    })]);
     stopped.fact(ended(1), "end:s:1");
     assert_eq!(
         stopped.run(send("m1", Urgency::Wake, None)).unwrap().len(),
-        1
+        2,
+        "the wake owes its next incarnation"
     );
 }
 

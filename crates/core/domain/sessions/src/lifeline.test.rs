@@ -507,3 +507,15 @@ fn a_resume_of_an_open_session_records_no_reopen() {
 
 // Only an explicit resume reopens: a re-host of a closed child stays refused
 // (`a_rehost_of_a_closed_child_is_refused`, above).
+
+// Owner 2026-11-15: the stop latch is removed. `StopOrdered`, in streams
+// recorded before, is retired in place: it still reads, and folds to nothing.
+#[test]
+fn a_stream_holding_a_retired_stop_order_folds_as_before() {
+    let mut session = first_run_ended("runner-exit");
+    let before = session.state();
+    session.given([SessionEvent::StopOrdered(StopOrdered {
+        reason: "user".to_string(),
+    })]);
+    assert_eq!(session.state(), before);
+}
