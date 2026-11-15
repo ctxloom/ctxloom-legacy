@@ -249,14 +249,13 @@ fn opencode_env_held(w: &mut World, name: String, value: String) {
     );
 }
 
-/// The permit's value never reached opencode: the run's own value is there
-/// instead, or none where the run sets the variable to nothing (slice 4 U7:
-/// no host run names a listener, so `CTXLOOM_BEARER` is the run's by being
-/// unset).
 #[cucumber::then(expr = "opencode's {string} was the run's own, not {string}")]
 fn opencode_env_runs_own(w: &mut World, name: String, value: String) {
     let env = opencode_env(w);
-    assert_ne!(env.get(&name), Some(&value), "{name}");
+    let held = env
+        .get(&name)
+        .unwrap_or_else(|| panic!("{name} is the run's"));
+    assert_ne!(held, &value);
 }
 
 #[cucumber::then(
