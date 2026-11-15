@@ -339,7 +339,9 @@ impl HookReach for DaemonReach {
         Some((found.stamp.clone(), daemon_sink(found)))
     }
 
-    fn ask_to_drain(&self, _own: &str, _within: Duration) {}
+    fn ask_to_drain(&self, own: &str, within: Duration) {
+        crate::daemon::ask_to_drain(&self.0, own, within);
+    }
 }
 
 /// A hook's time: its bound's end, as the clock reads it.
@@ -442,6 +444,16 @@ impl<R: HookReach, H: HeldFacts, I: SessionIds> Recording for HoldingRecording<R
                 },
             ),
         };
+        // H-Q6 (b): held because the daemon is older, it is asked, once a
+        // hook, to hand over to a daemon of the hook's version.
+        let older = report
+            .own
+            .iter()
+            .any(|kept| matches!(kept.outcome, Outcome::Held(Why::Older { .. })));
+        if older {
+            self.reach
+                .ask_to_drain(&self.own, clock.remaining().min(crate::daemon::HEALTH_WAIT));
+        }
         said(&report, harp)
     }
 }

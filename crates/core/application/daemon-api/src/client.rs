@@ -2,7 +2,10 @@
 //! full versionator stamp is not the serving daemon's asks the daemon
 //! (`GetDaemon`) whether it hosts live runs. None: it stops that daemon
 //! (`StopDaemon`) and starts its own. Some: it is refused, a decline whose
-//! fix is `ctxloom daemon stop --even-if-live`.
+//! fix is `ctxloom daemon stop --even-if-live`, unless the client is of a
+//! NEWER version (OD-3 extended, s4-Q4): then it asks the daemon to drain
+//! (`StopDaemon{drain}`), which hands its runs over to the client's daemon
+//! and exits, and the call is refused meanwhile (`daemon-api-draining`).
 
 use std::fmt;
 
@@ -67,16 +70,33 @@ pub async fn reconcile<A: DaemonApi>(
         ..daemon_proto::v1::GetDaemonRequest::default()
     };
     let found = api.get_daemon(request).await.map_err(SkewError::Call)?;
-    if !found.runs.is_empty() {
+    // s4-Q4: a newer client hands an older daemon's runs over to its own,
+    // busy or idle (an idle one exits at once); any other is stopped only
+    // when idle.
+    let drains = newer(own, daemon);
+    if !found.runs.is_empty() && !drains {
         return Err(busy(found.runs.into_iter().map(|run| run.harp).collect()));
     }
     let stop = daemon_proto::v1::StopDaemonRequest {
         name: found.name,
+        drain: drains,
+        version: if drains {
+            own.to_string()
+        } else {
+            String::new()
+        },
         ..daemon_proto::v1::StopDaemonRequest::default()
     };
     match api.stop_daemon(stop).await {
-        Ok(_) => Ok(Reconciled::Stopped),
-        // A run started between the two calls.
+        Ok(answered) if answered.runs.is_empty() => Ok(Reconciled::Stopped),
+        // It drains: this call is refused meanwhile.
+        Ok(answered) => Err(SkewError::Draining {
+            own: own.to_string(),
+            daemon: daemon.to_string(),
+            harps: answered.runs.into_iter().map(|run| run.harp).collect(),
+        }),
+        // A run started between the two calls (or, asked to drain, a daemon
+        // of a ctxloom before the drain, which takes it for a stop).
         Err(called) => match called.refusal::<daemon_proto::v1::DaemonHosting>() {
             Some(hosting) => Err(busy(hosting.harps)),
             None => Err(SkewError::Call(called)),
@@ -89,13 +109,13 @@ pub async fn reconcile<A: DaemonApi>(
 /// old daemon should drain and shut down, to be started by the new
 /// binary"), as a session's call (its MCP server) meets the serving daemon.
 /// It never ends what a daemon hosts. Of the same stamp, it is used. Of an
-/// OLDER version ([`newer`]) and idle, it is asked to drain (`StopDaemon`,
-/// never `even_if_live`: it starts nothing more and exits once its calls in
-/// flight are answered), so the caller starts its own and its call goes
-/// there. Busy (it hosts runs, or a run started between the look and the
-/// drain), or not older (an older or equal version: two binaries never
-/// drain each other's daemon in turn), the call is refused
-/// ([`SkewError::Mismatch`]), the daemon asked nothing it could end.
+/// OLDER version ([`newer`]), it is asked to drain (`StopDaemon{drain}`,
+/// never `even_if_live`): idle, it exits at once, so the caller starts its
+/// own and its call goes there; busy, it hands its runs over (s4-Q4) and the
+/// call is refused meanwhile ([`SkewError::Draining`]). A daemon that
+/// refuses the drain for its runs (one of a ctxloom before it), or one not
+/// older (an older or equal version: two binaries never drain each other's
+/// daemon in turn), refuses the call ([`SkewError::Mismatch`]).
 pub async fn reconcile_session<A: DaemonApi>(
     api: &A,
     own: &str,

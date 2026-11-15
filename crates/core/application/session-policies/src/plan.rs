@@ -19,7 +19,8 @@
 //! - re-host (T19, s4-Q9): a child whose last incarnation was lost (ended
 //!   `orphaned`: its host, a killed daemon, was lost) is owed its next
 //!   incarnation, `rehost:<child>:<n+1>`, the daemon counting its recent
-//!   re-hosts as the evidence;
+//!   re-hosts as the evidence; one a draining daemon handed over (ended
+//!   `drained`, s4-Q4) likewise, for the cause `drain`, never counted;
 //! - start (D2): a child with an incarnation owed and no run enqueued for it
 //!   is started, a long-lived child the daemon hosts, resuming its engine's
 //!   own conversation from its second incarnation on;
@@ -380,17 +381,22 @@ const ORPHANED: &str = "orphaned";
 /// hand it over to the next (OD-3 extended, s4-Q4).
 pub const ENDED_DRAINED: &str = "drained";
 
-/// Each child of this project whose last incarnation was lost, and is
-/// neither closed nor stopped, nor owed another: its re-host. A child with
+/// Each child of this project whose last incarnation was lost (cause
+/// `rehost`) or handed over by a draining daemon (cause `drain`, s4-Q5), and
+/// is neither closed nor stopped, nor owed another: its re-host. A child with
 /// no native session has no conversation to resume, and is left ended.
 fn rehosts(scene: &Scene<'_>, steps: &mut Vec<Step>) {
     for (id, session) in scene.sessions() {
         let Some(owner) = session.owner.clone() else {
             continue;
         };
-        let lost = scene.board.last_end(id) == Some((session.incarnation, ORPHANED));
+        let cause = match scene.board.last_end(id) {
+            Some((n, ORPHANED)) if n == session.incarnation => sessions::REHOSTED,
+            Some((n, ENDED_DRAINED)) if n == session.incarnation => sessions::DRAINED,
+            _ => continue,
+        };
         let open = session.open_incarnation.is_some() || session.closed || session.stopped;
-        if !lost || open || session.native_id.is_empty() {
+        if open || session.native_id.is_empty() {
             continue;
         }
         let at = RunAt {
@@ -402,7 +408,7 @@ fn rehosts(scene: &Scene<'_>, steps: &mut Vec<Step>) {
             at,
             harp: session.harp.clone(),
             owner,
-            cause: sessions::REHOSTED.to_string(),
+            cause: cause.to_string(),
         });
     }
 }

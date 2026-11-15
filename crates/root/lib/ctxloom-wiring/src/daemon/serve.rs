@@ -613,8 +613,10 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
 ) -> Result<(), String> {
     let mut quiet_since = Instant::now();
     // Asked to stop through its API (`StopDaemon`): drain, its hosted
-    // engines ended first when asked `even_if_live` (S12).
+    // engines ended first when asked `even_if_live` (S12), or handed over
+    // when asked to drain (s4-Q4).
     let mut stopping = false;
+    let mut handing_over = false;
     loop {
         shared.tell(launcher.hosted_runs(), quiet_since);
         if !files.still_holds(held) {
@@ -651,6 +653,20 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
                 launcher.end_all();
             }
             stopping = true;
+        }
+        // Asked to drain by a client of a newer version (s4-Q4): it hands
+        // what it hosts over to that version's daemon, and exits once it
+        // hosts nothing.
+        if !handing_over {
+            if let Some(successor) = daemon_api::Hosting::draining(shared.as_ref()) {
+                said(
+                    say,
+                    &format!("asked to drain for ctxloom {successor}: handing what it hosts over"),
+                );
+                launcher.hand_over();
+                handing_over = true;
+                stopping = true;
+            }
         }
         let draining = stopping;
         if draining && launcher.hosting() == 0 {

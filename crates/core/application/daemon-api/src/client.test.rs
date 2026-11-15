@@ -423,9 +423,9 @@ async fn a_newer_sessions_call_asks_a_busy_older_daemon_to_drain() {
     assert_eq!(stops[0].version, NEW);
 }
 
-// The race, forced: the daemon was idle when asked, and a run started
-// before the drain was asked for, so the daemon refuses it (DaemonHosting):
-// the call is refused as by a busy daemon, and nothing it hosts is ended.
+// A daemon that refuses the drain for its runs (DaemonHosting: one of a
+// ctxloom from before the drain, which takes it for a plain stop): the call
+// is refused as by a busy daemon, and nothing it hosts is ended.
 #[tokio::test]
 async fn a_run_started_between_the_look_and_the_drain_refuses_the_call() {
     let daemon = Daemon {

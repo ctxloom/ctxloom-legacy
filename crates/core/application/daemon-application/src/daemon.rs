@@ -521,8 +521,45 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         Ok(swept)
     }
 
+    /// The hand-over's step (s4-Q4): each child it hosts that is bound to
+    /// its engine's session (so the next daemon can resume it) and has no
+    /// turn in flight, as the board caught up says, is ended, once; its
+    /// exit ends its incarnation `drained`. Whether it ended any.
+    fn end_the_idle(&mut self) -> bool {
+        let board = self.board.projector().board();
+        let idle: Vec<String> = self
+            .hosted
+            .iter()
+            .filter(|(run, _)| !self.drained.contains(*run))
+            .filter(|(_, hosted)| {
+                let at = &hosted.at;
+                let bound = board
+                    .session(&at.session)
+                    .is_some_and(|session| !session.native_id.is_empty());
+                let quiet = board
+                    .run(&at.session, at.incarnation)
+                    .is_none_or(|run| run.state.turns.is_empty());
+                bound && quiet
+            })
+            .map(|(run, _)| run.clone())
+            .collect();
+        drop(board);
+        for run in &idle {
+            self.drained.insert(run.clone());
+            if let Some(hosted) = self.hosted.get(run) {
+                (self.say)(&format!(
+                    "{}: no turn in flight: ended, to be handed over",
+                    hosted.who.harp
+                ));
+                let _ = hosted.control.end(END_GRACE);
+            }
+        }
+        !idle.is_empty()
+    }
+
     /// One round: hear the children, catch up, plan, act. Whether it did
-    /// anything. While `draining`, no child is started.
+    /// anything. While `draining` (or handing over), no child is started
+    /// and no message delivered.
     pub async fn tick<S: ReadStore + Store + Processed + Watch>(
         &mut self,
         store: &S,
@@ -542,8 +579,13 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         if board.is_ok() {
             self.sweep_hand_offs();
         }
+        if self.handing_over {
+            busy |= self.end_the_idle();
+        }
         for (project_id, step) in self.plan() {
-            if draining && matches!(step, Step::Start { .. }) {
+            // Draining, it starts no child and gives none a turn: what is
+            // pending is the next daemon's to deliver.
+            if draining && (matches!(step, Step::Start { .. }) || step.delivers()) {
                 continue;
             }
             let key = step.key().to_string();

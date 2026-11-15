@@ -466,16 +466,36 @@ impl<E: Edge> Api<E> {
     /// (s4-Q4), when every call but `GetDaemon` and `StopDaemon` is refused
     /// `DaemonDraining`, naming both stamps and what it still hosts.
     pub(crate) fn open(&self) -> Result<(), ApiError> {
-        Ok(())
+        let Some(successor) = self.parts.hosting.draining() else {
+            return Ok(());
+        };
+        Err(ApiRefusal::of(&v1::DaemonDraining {
+            version: self.parts.about.version.clone(),
+            successor,
+            harps: self
+                .parts
+                .hosting
+                .hosted()
+                .into_iter()
+                .map(|run| run.harp)
+                .collect(),
+        })
+        .into())
     }
 
     /// `StopDaemon`: refused `DaemonHosting` while it hosts live runs,
-    /// unless `even_if_live`, which ends them first (S12). Answers the
-    /// daemon as it was asked to stop.
+    /// unless `even_if_live`, which ends them first (S12), or `drain`
+    /// (s4-Q4), which hands them over to the daemon of the asking
+    /// `version`, never refused for them. Answers the daemon as it was
+    /// asked to stop.
     pub async fn stop_daemon(
         &self,
         request: v1::StopDaemonRequest,
     ) -> Result<v1::Daemon, ApiError> {
+        if request.drain && !request.even_if_live {
+            self.parts.hosting.drain(&request.version);
+            return Ok(self.daemon());
+        }
         let daemon = self.daemon();
         if !daemon.runs.is_empty() && !request.even_if_live {
             return Err(ApiRefusal::of(&v1::DaemonHosting {

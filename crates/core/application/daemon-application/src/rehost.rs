@@ -1,7 +1,8 @@
 //! The re-host (T19, S18, S47; owner s4-Q9): a child whose host was lost (a
 //! killed daemon's, ended `orphaned` by the next start's sweep) is owed its
-//! next incarnation, cause `rehost`, and started again by the plan's start
-//! step, resuming its own conversation in its own session home, its
+//! next incarnation, cause `rehost` (or, handed over by a draining daemon,
+//! cause `drain`, s4-Q5: never counted, never refused for the budget), and
+//! started again by the plan's start step, resuming its own conversation in its own session home, its
 //! settings written again from the user's config (T21).
 //!
 //! The budget's evidence is counted here, never in decide (S47: decide
