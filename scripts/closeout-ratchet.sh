@@ -2,10 +2,11 @@
 # The close-out of a slice landing on an integration branch that carries a red
 # spec on purpose (owner ruling 165): `just closeout-ratchet <base>`. The
 # gates of `just closeout` (build, lint, lint-deps, test, lint-os,
-# mutants-batch), each as usual, but for one thing: the feature runner
-# (`every_feature_runs`) may fail, so long as the scenarios red on the slice
-# are a SUBSET of those red on the base. A slice may turn red green; it may
-# never add a red scenario or break a green one (scripts/ratchet-judge.sh).
+# mutants-batch), each as usual, but for one thing: the feature runner (its
+# cluster tests, `tests::gherkin_features::clusters::*`) may fail, so long
+# as the scenarios red on the slice are a SUBSET of those red on the base.
+# A slice may turn red green; it may never add a red scenario or break a
+# green one (scripts/ratchet-judge.sh).
 #
 #   1. The base's list: `just ratchet-base <base>` (scripts/ratchet-base.sh,
 #      the feature runner on the base's tip in a throwaway worktree, cached by

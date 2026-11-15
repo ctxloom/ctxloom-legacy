@@ -419,6 +419,9 @@ mod init_companions;
 #[path = "gherkin_distill.test.rs"]
 mod distill;
 
+#[path = "gherkin_separation.test.rs"]
+mod separation;
+
 // ------------------------------------------------------------------ given
 
 #[given(expr = "the environment variable {string} is set to {string}")]

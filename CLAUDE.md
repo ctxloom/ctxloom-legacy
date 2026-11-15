@@ -2899,7 +2899,8 @@ rest; `VERBOSE=1 just <gate>` shows the full output.
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each
 test in a process of its own; SLOW at 30 s and killed at 120 s
-(`terminate-after`; the longest test takes about 5 s); a test that leaves a
+(`terminate-after`; the longest unit test takes about 5 s), except the
+feature runner's clusters, below; a test that leaves a
 child holding its stdout or stderr past 200 ms FAILS (`leak-timeout`
 `result = "fail"`); retries 0 (a retry would pass a flake, and a flake is a
 finding); the `ports` test group runs the tests that bind a port, or free
@@ -2922,6 +2923,46 @@ is "cargo metadata failed"): 0 passed, 100 a test failed, 101 not built, 120
 a doc test failed, 121 nextest failed otherwise (`nextest exited <code>` in
 the log); 100 and 120 are red tests, 101 and 121 are refused on every
 branch (`scripts/tests-exit.selftest.sh`).
+
+The feature runner is split into CLUSTERS of feature files by area (owner
+ruling of 2026-11-14: one test of all ~580 scenarios outgrew 120 s once
+slice 4 made every one-shot start a daemon): `gherkin_features.test.rs`'s
+`CLUSTERS`, one test each, `tests::gherkin_features::clusters::<name>`:
+`journeys` (journeys/), `daemon` (daemon, session_children, mcp_serve,
+trust, session_approvals, atomic_writes, the daemon spec's files, and
+run.feature whole: since slice 4 every one-shot starts a daemon, so no Rule
+of it is apart), `sessions` (session, session_hooks, session_remove,
+session_worktrees, post_tool_hooks), `library` (bundle, fragment,
+fragment_draft_premise, command, profile, skill, mcp, mcp_resources,
+mcp_tools, search, materialize, read_extras, context_status,
+content_distill, companion, agent), `remotes` (remote, deps), `setup`
+(init, doctor, manage, auth, config, engine, clean, version, completion)
+and `other` (fault_tolerance, probes/, container, coordination_contract,
+startup_boundaries, editing, util). Every feature file is in exactly one
+(`every_feature_file_is_in_exactly_one_cluster`, which also refuses an
+entry naming no file and a cluster with no test). nextest runs them at
+once; each runs its features `cluster_threads()` at a time (the cores
+shared among the clusters, at least 2), and a feature's scenarios take
+turns (their steps block cucumber's one executor thread), so a cluster
+lasts at least its slowest feature (`daemon`: cli/daemon.feature, about
+100 s). Each cluster's `terminate-after` is an override naming it in
+`.config/nextest.toml`, about 2.4 times its longest measured run
+(2026-11-14, 20 cores, alone, beside the binary's tests, beside 12
+crates' and in the whole workspace; the table is there), whole slow periods, at least 60 s: `daemon`
+300 s, `journeys` 150 s, `library` 90 s, `remotes`, `setup`, `sessions`
+and `other` 60 s; every other test keeps 120 s. A host of fewer cores was
+not measured. Separation: each scenario has a temporary root of its own,
+so its own ctxloom home, daemon, single-instance lock, store, holds and
+stubs; ports are the system's (port 0), and the clusters are not in the
+`ports` group (they share no port).
+`two_clusters_at_once_never_see_each_others_daemon_or_files` is the forcing
+test: two clusters at once, four scenarios each starting a daemon through a
+command and holding it until all four serve, each answered by its own
+alone, four pids, homes and endpoints (its steps are
+`gherkin_separation.test.rs`; a home shared between scenarios fails it).
+After a run the runner puts back the default panic hook: two cucumber runs
+at once can leave cucumber's quiet one, which swallowed the test's own
+assertion message.
 
 ## CI (`.github/workflows/ci.yml`)
 
@@ -3157,7 +3198,7 @@ tip's. It may turn red green, never add a red scenario or break a green one
 (`FAIL ratchet: N new red scenarios: B broke green, A added red`, each named,
 capped). Every other test failure fails `test` as ever. The scenario list is
 the feature runner's: `GHERKIN_RATCHET=<absolute file>` makes
-`every_feature_runs` write a line per scenario, sorted, `red<TAB><id>` or
+its clusters write a line per scenario, sorted, `red<TAB><id>` or
 `green<TAB><id>` (the id `<feature path under features/> :: [<rule> ::
 ]<scenario>[ :: | <example row> |]`; a failure no scenario owns is `<feature>
 :: (outside a scenario)`), and pass whatever failed, so only the ratchet's
@@ -3166,7 +3207,14 @@ judge (`scripts/ratchet-judge.sh`) decides. Beside the list it writes
 `red<TAB><id>`, `  step: <keyword> <text>`, its message indented, capped at
 2000 bytes), since a passing test's console output is never shown; the
 judge's FAIL line names it (`why: <list>.failures`), and the base's is cached
-beside its list. `GHERKIN_SCENARIO=<id>` runs that one scenario alone. A
+beside its list. The clusters of one nextest run assemble that one list,
+and its failures file, between them: each, holding `<list>.lock`, replaces
+the lines and records of the features it ran and keeps the rest, sorted as
+one; `<list>.run` names the run that wrote it (`NEXTEST_RUN_ID`), so what
+an earlier run left is dropped and the file is exactly the run's scenarios.
+`GHERKIN_SCENARIO=<id>` runs that one scenario alone, `GHERKIN_ONLY=<text>`
+the features whose path holds it; a cluster holding none passes having run
+nothing, and when no feature matches at all every cluster fails. A
 cached base list can freeze a flaky scenario's colour, so every scenario
 whose colour on the branch differs from the base's list is RE-CONFIRMED on
 the base before it is judged (owner, 2026-11-14; `ratchet-base.sh <base>
@@ -3176,7 +3224,8 @@ is reproduced and judged as ever (a new red stays one, a turned green
 passes); one that is not, or was not re-run, is `FLAKY <id>`, named with its
 colours and its failures-file reason, and FAILS the ratchet whichever way it
 went: a flake is a finding, never a pass. The base's list is `just
-ratchet-base <base>` (`scripts/ratchet-base.sh`): only that test, on the
+ratchet-base <base>` (`scripts/ratchet-base.sh`): only the runner's tests
+(its clusters, or a base's `every_feature_runs` from before them), on the
 base's tip, in a throwaway worktree `.<checkout>.ratchet-base` beside the
 checkout (target dir `target/ratchet-base`), cached by sha at
 `target/ratchet/<sha>.list`; a base from before the list gets the runner
