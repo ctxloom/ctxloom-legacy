@@ -7,7 +7,7 @@ use std::process::Command;
 use ctxloom_ports::{ForeignListing, ForeignWorktree, ForeignWorktrees};
 
 use super::GitForeignWorktrees;
-use crate::fixtures::{canonical, fs, mkdirs, put, root};
+use crate::fixtures::{canonical, fs, link, mkdirs, put, root, runs_scripts};
 
 /// git with a clean identity and none of the caller's environment.
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -172,4 +172,50 @@ fn a_directory_that_is_no_repository_is_said_so() {
         f.adapter().foreign(&plain.display().to_string()),
         ForeignListing::NotARepository
     );
+}
+
+// The git it is given is the git it runs: one that fails reads no repository,
+// where the PATH's git would have listed them.
+#[test]
+fn the_git_it_is_given_is_the_one_it_runs() {
+    if !runs_scripts() {
+        return;
+    }
+    let f = Fixture::new();
+    let path = f.top.join("bin/git");
+    mkdirs(f.top.join("bin"));
+    fixture_program::install_program(&*fs(), &path, "#!/bin/sh\necho broken >&2\nexit 7\n")
+        .unwrap();
+    let git = crate::git::Git::new(
+        fs(),
+        path,
+        std::time::Duration::from_secs(10),
+        crate::fixtures::env(),
+    );
+    let listing = f
+        .adapter()
+        .with_git(git)
+        .foreign(&f.project.display().to_string());
+    assert_eq!(listing, ForeignListing::NotARepository);
+}
+
+// ctxloom's home named through a symlink is the same tree: a scratch checkout
+// git lists by its resolved path is still ctxloom's, not foreign.
+#[test]
+fn a_scratch_checkout_under_a_symlinked_home_is_not_listed() {
+    let f = Fixture::new();
+    let linked = f.top.join("linked-home");
+    link(&f.home, &linked);
+    let scratch = isolation_ports::session_worktrees(&f.home, "calm-otter", "amber-quiet-heron")
+        .join("reviewer");
+    f.add("ctxloom/amber-quiet-heron/reviewer", &scratch);
+    let adapter = GitForeignWorktrees::new(
+        fs(),
+        isolation_ports::scratch_root(&linked),
+        crate::fixtures::env(),
+    );
+    match adapter.foreign(&f.project.display().to_string()) {
+        ForeignListing::Listed(listed) => assert!(listed.is_empty(), "{listed:?}"),
+        other => panic!("not listed: {other:?}"),
+    }
 }

@@ -445,3 +445,15 @@ fn the_premise_index_is_worded_for_the_surface_its_context_rides() {
         .plan;
     assert_eq!(bare.context, "", "no context, no index");
 }
+
+// init asks each enabled registered companion for its init section: what the
+// program answers from the moment it is set.
+#[test]
+fn the_companion_inits_are_each_registered_companions_init_section() {
+    let (library, mem) = setup(&[CONFIG_WITH], &[], &[]);
+    mem.set_companion_loadout("reprise", "init:\n  setup_guidance: ask first\n");
+    let inits = library.companion_inits(&plain()).result.unwrap();
+    assert_eq!(inits.len(), 1, "{inits:?}");
+    assert_eq!(inits[0].name, "reprise");
+    assert_eq!(inits[0].init.setup_guidance, "ask first");
+}

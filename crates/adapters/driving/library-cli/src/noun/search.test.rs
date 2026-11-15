@@ -132,3 +132,42 @@ mod names {
         assert_eq!(count(u64::from(u32::MAX) + 1), u32::MAX);
     }
 }
+
+// The remote hit's and the kinds' mapping to the message (OD-40): what the
+// binary's tests alone reached.
+mod mapping {
+    use super::super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_a_remote_bundle_found_is_its_whole_message() {
+        let found = RemoteFound {
+            remote: "acme".to_string(),
+            name: "rules".to_string(),
+            kind: "bundle".to_string(),
+            tags: vec!["go".to_string()],
+            description: "Go rules".to_string(),
+            author: "someone".to_string(),
+            pull_ref: "acme/rules".to_string(),
+        };
+        let mut out = Vec::new();
+        crate::api::print(&mut out, &remote(&found)).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&out).unwrap(),
+            json!({
+                "remote": "acme",
+                "item": "rules",
+                "kind": "BUNDLE",
+                "tags": ["go"],
+                "description": "Go rules",
+                "author": "someone",
+                "pull_reference": "acme/rules",
+            })
+        );
+    }
+
+    #[test]
+    fn test_a_bundle_is_its_kind_in_its_collection() {
+        assert_eq!(kind("bundle"), (v1::ItemKind::Bundle, "bundles"));
+    }
+}

@@ -131,8 +131,11 @@ pub(crate) fn serve(
         #[cfg(feature = "test-support")]
         dies_at_steps(&core.edge(), &files);
         // What the loop shares with the API's use cases (slice 2 step 5).
-        let shared = Arc::new(Shared::new(kept.index.clone().unwrap_or_default()));
         let one_shots = one_shots_over(&core, home, &temp);
+        let shared = Arc::new(Shared::new(
+            kept.index.clone().unwrap_or_default(),
+            Arc::clone(&one_shots),
+        ));
         let terminals = terminals_over(&core, home, &temp);
         let started = start(
             &fs,
@@ -613,11 +616,7 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
     // engines ended first when asked `even_if_live` (S12).
     let mut stopping = false;
     loop {
-        shared.tell(
-            launcher.hosted_runs(),
-            launcher.hosted_one_shots(),
-            quiet_since,
-        );
+        shared.tell(launcher.hosted_runs(), quiet_since);
         if !files.still_holds(held) {
             said(
                 say,
@@ -717,10 +716,14 @@ async fn either(a: impl std::future::Future, b: impl std::future::Future) {
 const FRESH_WAIT: Duration = Duration::from_secs(2);
 
 /// What the loop shares with its API's use cases (slice 2 step 5): where
-/// it serves, what it hosts and since when it has been quiet, as of its
-/// last round, and whether it was asked to stop.
+/// it serves, the children it hosts and since when it has been quiet, as of
+/// its last round, and whether it was asked to stop. Its one-shots are read
+/// as they are NOW (askew-glitter): one ends on its own thread, its client
+/// told its reply in the same change, so a copy of the last round would
+/// still count it for a stop asked at once.
 struct Shared {
     index: session_index::SessionIndexes,
+    one_shots: Arc<daemon_application::OneShots>,
     state: Mutex<Round>,
     /// The rounds the loop has started.
     started: Mutex<u64>,
@@ -733,17 +736,21 @@ struct Shared {
 #[derive(Default)]
 struct Round {
     endpoint: String,
-    /// Each hosted run's session id, run root and kind.
-    hosted: Vec<(String, String, daemon_proto::v1::hosted_run::Kind)>,
+    /// Each hosted child's session id and run root.
+    children: Vec<(String, String)>,
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
 }
 
 impl Shared {
-    fn new(index: session_index::SessionIndexes) -> Shared {
+    fn new(
+        index: session_index::SessionIndexes,
+        one_shots: Arc<daemon_application::OneShots>,
+    ) -> Shared {
         Shared {
             index,
+            one_shots,
             state: Mutex::new(Round::default()),
             started: Mutex::new(0),
             done: tokio::sync::watch::Sender::new(0),
@@ -771,25 +778,11 @@ impl Shared {
         self.round().endpoint = endpoint.to_string();
     }
 
-    /// What the round found it hosts: its children (`children`) and its
-    /// one-shots, each its session id and run root.
-    fn tell(
-        &self,
-        children: Vec<(String, String)>,
-        one_shots: Vec<(String, String)>,
-        quiet_since: Instant,
-    ) {
-        use daemon_proto::v1::hosted_run::Kind;
+    /// What the round found it hosts: its children, each its session id
+    /// and run root.
+    fn tell(&self, children: Vec<(String, String)>, quiet_since: Instant) {
         let mut round = self.round();
-        round.hosted = children
-            .into_iter()
-            .map(|(session, run)| (session, run, Kind::Child))
-            .chain(
-                one_shots
-                    .into_iter()
-                    .map(|(session, run)| (session, run, Kind::OneShot)),
-            )
-            .collect();
+        round.children = children;
         round.quiet_since = Some(quiet_since);
     }
 
@@ -804,10 +797,18 @@ impl daemon_api::Hosting for Shared {
     }
 
     fn hosted(&self) -> Vec<daemon_proto::v1::HostedRun> {
-        let hosted = self.round().hosted.clone();
-        let index = self.index.index();
-        hosted
+        use daemon_proto::v1::hosted_run::Kind;
+        let children = self.round().children.clone();
+        let one_shots = self
+            .one_shots
+            .live()
             .into_iter()
+            .map(|placed| (placed.session, placed.run, Kind::OneShot));
+        let index = self.index.index();
+        children
+            .into_iter()
+            .map(|(session, run)| (session, run, Kind::Child))
+            .chain(one_shots)
             .map(|(session, run, kind)| {
                 let record = index.find_by_id(&session).unwrap_or_default();
                 let project = index.project_harp(&record.project_id).unwrap_or_default();

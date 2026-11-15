@@ -275,3 +275,9 @@ fn test_the_built_in_bundle_is_not_distilled() {
     assert!(refused.result.is_err());
     assert!(canned.asked.borrow().is_empty());
 }
+
+// A library with no distiller says so by its code alone.
+#[test]
+fn test_no_distiller_is_shown_by_its_code() {
+    assert_eq!(NoDistiller.to_string(), "library-application-no-distiller");
+}
