@@ -116,6 +116,13 @@ impl ChildHomes for NoHomes {
     fn records(&self, _: &str) -> Box<dyn run_ports::SessionRecords> {
         Box::new(run_launcher::fakes::MemoryRecords::default())
     }
+
+    fn hold_session(&self, project_dir: &str, harp: &str) -> Result<run_ports::HeldLock, String> {
+        Ok(run_ports::HeldLock::new(
+            format!("{project_dir}/.ctxloom/sessions/{harp}.lock"),
+            (),
+        ))
+    }
 }
 
 struct Deaf;
