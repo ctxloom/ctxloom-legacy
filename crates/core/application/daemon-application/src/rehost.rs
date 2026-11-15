@@ -15,7 +15,7 @@
 use angzarr_embedded::markup::TypedRefusal;
 use angzarr_embedded::v1::event_page;
 use angzarr_embedded::{Failure, Payload};
-use run_ports::{Edge, TokenSource};
+use run_ports::Edge;
 use session_policies::{session_cover, supported, Keyed, RunAt, Sent};
 use sessions::{RehostSession, SendMessage, SessionEvent, SessionRef, SessionRejection, Urgency};
 
@@ -60,7 +60,7 @@ pub(crate) fn budget_notice(harp: &str, recent: u32) -> String {
     )
 }
 
-impl<E: Edge, T: TokenSource> Daemon<E, T> {
+impl<E: Edge> Daemon<E> {
     /// The re-host of the lost child `at` names (its next incarnation):
     /// `RehostSession` with its recent re-hosts, keyed by the incarnation it
     /// owes. Refused for the budget, its owner is told and the step is done

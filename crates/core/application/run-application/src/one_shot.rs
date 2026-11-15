@@ -5,12 +5,12 @@
 //! lock is taken (rulings 86, 92) and the run enqueued, its pre-launch checks
 //! judged by the run itself; the project is told, a name claimed (never one
 //! whose directory exists, defect 3) and the session minted; the session's
-//! lock is taken for the run's life (defect 1); the run's hook listener is
-//! served (a one-shot is its own owner: its child's hooks call back to it, to
-//! the session the engine is told by name, `CTXLOOM_SESSION`); the launcher,
-//! caught up on the store, finds it owed a runner, drives the engine for one
-//! turn and lets the run's lock go once the runner is started; the listener
-//! is stopped; the session is told its incarnation ended (ruling 85); the run
+//! lock is taken for the run's life (defect 1); the launcher, caught up on
+//! the store, finds it owed a runner, drives the engine for one turn (its
+//! hooks deliver to the user's daemon, to the session the engine is told by
+//! name, `CTXLOOM_SESSION`: no run serves a listener of its own, slice 4 U7)
+//! and lets the run's lock go once the runner is started; the session is
+//! told its incarnation ended (ruling 85); the run
 //! is checked to have ended, and the answer is returned. Nothing is written
 //! into the session's directory but its home (ruling 87a: the events are the
 //! record). A plan that is refused, or a session that cannot be made, has
@@ -26,7 +26,7 @@ use angzarr_embedded::{Catalog, CommandBookExt, Failure, Payload, Processed, Rea
 use library_application::{AppError as PlanError, Flags, Notice, Outcome, Previewed, RunRequest};
 use ports::{Names, Project, ProjectIdentity};
 use run_launcher::{Launched, Launcher, Order, Orders, Outcome as Turn};
-use run_ports::{CertMint, Edge, HookServer, LoginLinks, RunnerLauncher, SessionRecords};
+use run_ports::{Edge, LoginLinks, RunnerLauncher, SessionRecords};
 use runs_application::{
     AppError as CoreError, EnqueueError, EnqueueRequest, Enqueued, Enqueuer, Evidence,
 };
@@ -190,12 +190,12 @@ pub struct Place {
 }
 
 /// The run use cases over their ports.
-pub struct Runs<K: Core, T: run_ports::TokenSource, L: RunnerLauncher, R: SessionRecords> {
+pub struct Runs<K: Core, L: RunnerLauncher, R: SessionRecords> {
     pub(crate) core: K,
     pub(crate) planner: Box<dyn Planner>,
     pub(crate) identity: Box<dyn ProjectIdentity>,
     pub(crate) names: Box<dyn Names>,
-    pub(crate) enqueuer: Enqueuer<K::Edge, T>,
+    pub(crate) enqueuer: Enqueuer<K::Edge>,
     pub(crate) launcher: Launcher<K::Edge, L, R>,
     pub(crate) dirs: Box<dyn SessionRecords>,
     pub(crate) orders: Arc<Orders>,
@@ -203,8 +203,6 @@ pub struct Runs<K: Core, T: run_ports::TokenSource, L: RunnerLauncher, R: Sessio
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) links: Box<dyn LoginLinks>,
     pub(crate) os: String,
-    pub(crate) hooks: Box<dyn HookServer>,
-    pub(crate) certs: Box<dyn CertMint>,
     pub(crate) locks: Box<dyn session_ports::SessionLock>,
     pub(crate) run_locks: Arc<dyn run_ports::RunLocks>,
     pub(crate) git_user: Option<run_ports::GitUser>,
@@ -229,19 +227,6 @@ pub struct Placement {
     pub name: String,
     pub harp: String,
     pub engine: String,
-}
-
-/// What an engine is told of the run's listener: its URL and the public part
-/// of its certificate.
-struct Told {
-    endpoint: String,
-    cert: run_ports::PublicCert,
-}
-
-/// The run's listener, serving, and what the engine is told of it.
-struct Listening {
-    serving: Box<dyn run_ports::Serving>,
-    told: Told,
 }
 
 /// A run made and enqueued, its order placed: the session, its name, the
@@ -315,12 +300,12 @@ pub(crate) fn settings_of(
 }
 
 /// Everything [`Runs`] is made of.
-pub struct Parts<K: Core, T: run_ports::TokenSource, L: RunnerLauncher, R: SessionRecords> {
+pub struct Parts<K: Core, L: RunnerLauncher, R: SessionRecords> {
     pub core: K,
     pub planner: Box<dyn Planner>,
     pub identity: Box<dyn ProjectIdentity>,
     pub names: Box<dyn Names>,
-    pub enqueuer: Enqueuer<K::Edge, T>,
+    pub enqueuer: Enqueuer<K::Edge>,
     pub launcher: Launcher<K::Edge, L, R>,
     /// The session directories, asked whether a harp's exists (defect 3).
     pub dirs: Box<dyn SessionRecords>,
@@ -334,11 +319,6 @@ pub struct Parts<K: Core, T: run_ports::TokenSource, L: RunnerLauncher, R: Sessi
     /// The operating system's name (`std::env::consts::OS`), which says
     /// whether a login can be shared by a link at all.
     pub os: String,
-    /// Where a run's hook processes are served (the run's loopback port), the
-    /// terminal session's and a one-shot child's alike.
-    pub hooks: Box<dyn HookServer>,
-    /// What mints a run's listener certificate.
-    pub certs: Box<dyn CertMint>,
     /// The session's liveness lock, which the run holds for its life
     /// (defect 1), so the session reads live to every other process.
     pub locks: Box<dyn session_ports::SessionLock>,
@@ -350,14 +330,13 @@ pub struct Parts<K: Core, T: run_ports::TokenSource, L: RunnerLauncher, R: Sessi
     pub git_user: Option<run_ports::GitUser>,
 }
 
-impl<K, T, L, R> Runs<K, T, L, R>
+impl<K, L, R> Runs<K, L, R>
 where
     K: Core,
-    T: run_ports::TokenSource,
     L: RunnerLauncher,
     R: SessionRecords,
 {
-    pub fn new(parts: Parts<K, T, L, R>) -> Runs<K, T, L, R> {
+    pub fn new(parts: Parts<K, L, R>) -> Runs<K, L, R> {
         Runs {
             core: parts.core,
             planner: parts.planner,
@@ -371,8 +350,6 @@ where
             env: parts.env,
             links: parts.links,
             os: parts.os,
-            hooks: parts.hooks,
-            certs: parts.certs,
             locks: parts.locks,
             run_locks: parts.run_locks,
             git_user: parts.git_user,
@@ -383,13 +360,13 @@ where
     /// The use cases, telling `told` where each run was placed, once it is
     /// (U4: a hosted one-shot's daemon answers its client then).
     #[must_use]
-    pub fn telling(mut self, told: Telling) -> Runs<K, T, L, R> {
+    pub fn telling(mut self, told: Telling) -> Runs<K, L, R> {
         self.told = Some(told);
         self
     }
 
-    /// The core, every other part let go: the enqueuer's, the launcher's and
-    /// the listener's edges dropped with them, so what reaches the core's
+    /// The core, every other part let go: the enqueuer's and the launcher's
+    /// edges dropped with them, so what reaches the core's
     /// store afterwards is the core alone, and what its runtime still runs
     /// (ruling 131: the composition root closes the store once both are
     /// gone).
@@ -578,50 +555,13 @@ where
         self.planner.plan(flags, &run)
     }
 
-    /// The run's hook listener: bound before the run is minted (the port it
-    /// was given is part of what the engine is told), on loopback (the host
-    /// row of the bind table), with the run's freshly minted certificate. A
-    /// one-shot is its own owner (ruling 29), so it serves one as the
-    /// terminal session does. Its caller stops it if the run does not start.
-    async fn serve(&self) -> Result<Listening, RunError> {
-        let plan = run_ports::bind_for(run_ports::Runtime::Host, &run_ports::PlatformFacts::NONE)
-            .and_then(|plan| plan.check().map(|()| plan))
-            .map_err(|e| RunError::Bind(Box::new(e)))?;
-        // The run's certificate is minted for every address the child may
-        // dial, before anything is served or made; its private key goes to the
-        // listener alone, and the child is told the public part.
-        let identity = self
-            .certs
-            .mint(&run_ports::CertNames::for_plan(&plan))
-            .map_err(RunError::Listener)?;
-        let serving = self
-            .hooks
-            .serve_tcp(plan.bind_addr, &identity)
-            .await
-            .map_err(RunError::Listener)?;
-        match run_ports::endpoint_url(&plan.told_host, serving.port()) {
-            Ok(endpoint) => Ok(Listening {
-                serving,
-                told: Told {
-                    endpoint,
-                    cert: identity.public().clone(),
-                },
-            }),
-            Err(error) => {
-                serving.stop().await;
-                Err(RunError::Listener(angzarr_diagnostic::Report::of(&error)))
-            }
-        }
-    }
-
     /// Everything a run does before its engine is launched (owner rulings
     /// 73f, 73g, in this order): the run's lock taken and the run enqueued,
     /// its pre-launch checks judged by the run itself; the project told, a
-    /// name claimed, the session minted and its lock taken; the certificate
-    /// minted and the listener served; the order placed and the primary
-    /// handed her login. A refused run has made nothing (its run lock let
-    /// go); a failure after the enqueue ends the run it enqueued and its
-    /// session's incarnation, and the listener is stopped if it was served.
+    /// name claimed, the session minted and its lock taken; the order placed
+    /// and the primary handed her login. A refused run has made nothing (its
+    /// run lock let go); a failure after the enqueue ends the run it enqueued
+    /// and its session's incarnation.
     async fn ready(
         &mut self,
         previewed: Previewed,
@@ -629,7 +569,7 @@ where
         resume: Option<Resume>,
         interactive: bool,
         notices: &mut Vec<Notice>,
-    ) -> Result<(Box<dyn run_ports::Serving>, Started), RunError> {
+    ) -> Result<Started, RunError> {
         let engine = chosen_engine(&previewed.plan, request);
         let settings = settings_of(&previewed.plan, &engine);
         let axis = run_launcher::Axis::of(&previewed.plan.axes.0);
@@ -692,19 +632,10 @@ where
                     .await);
             }
         };
-        let Listening { serving, told } = match self.serve().await {
-            Ok(listening) => listening,
-            Err(error) => {
-                return Err(self
-                    .abandon(&enqueued.run, &session, incarnation, true, error)
-                    .await)
-            }
-        };
         let started = self.start(
             previewed,
             request,
             interactive,
-            &told,
             Placed {
                 session,
                 harp,
@@ -731,7 +662,7 @@ where
         if interactive {
             notices.extend(self.sign_in(&settings, &started));
         }
-        Ok((serving, started))
+        Ok(started)
     }
 
     /// What the primary's terminal session is told of how it is signed in,
@@ -768,22 +699,18 @@ where
         .collect()
     }
 
-    /// Launch what is owed, stop the listener (a hook still in flight as
-    /// the engine exits is delivered before it has drained), let go of the
-    /// engine's checkout, then tell the session its incarnation ended
+    /// Launch what is owed, let go of the engine's checkout, then tell the
+    /// session its incarnation ended
     /// (ruling 85). This run's launch, its
     /// run's end checked. The session's lock is let go by the caller, after.
     async fn drive(
         &mut self,
-        serving: Box<dyn run_ports::Serving>,
         started: &Started,
         notices: &mut Vec<Notice>,
     ) -> Result<Launched, RunError> {
-        let launched = self.launch().await;
-        serving.stop().await;
-        let launched = launched?;
+        let launched = self.launch().await?;
         let ours = ours(launched, &started.session).ok_or_else(|| not_ended(&started.session))?;
-        // The engine is over and its listener stopped: its checkout is let
+        // The engine is over: its checkout is let
         // go while the session's lock is still held (owner ruling
         // 2026-11-12, Q2), removed when clean, else left and said.
         if let Some(checkout) = &ours.checkout {
@@ -824,10 +751,10 @@ where
         resume: Option<Resume>,
         notices: &mut Vec<Notice>,
     ) -> Result<Ended, RunError> {
-        let (serving, started) = self
+        let started = self
             .ready(previewed, request, resume, true, notices)
             .await?;
-        let launched = self.drive(serving, &started, notices).await?;
+        let launched = self.drive(&started, notices).await?;
         said_permits(&launched, notices);
         let Started {
             session,
@@ -1055,15 +982,13 @@ where
         error
     }
 
-    /// The order placed for the run enqueued and its session minted, with
-    /// what the engine is told of the listener.
+    /// The order placed for the run enqueued and its session minted.
     #[allow(clippy::too_many_arguments)]
     fn start(
         &mut self,
         previewed: Previewed,
         request: &OneShot,
         interactive: bool,
-        told: &Told,
         placed: Placed,
         enqueued: &Enqueued,
         lock: session_ports::Held,
@@ -1078,11 +1003,11 @@ where
         let engine = chosen_engine(&plan, request);
         let settings = settings_of(&plan, &engine);
         let workspace = self.workspace(&plan, &harp);
-        // The order is placed once the run's tokens exist: the hook bearer
-        // reaches the engine's environment through it (the terminal session's
-        // and a one-shot child's alike, ruling 51), and the caller's own
-        // listener variables, from a session it was started inside, are
-        // replaced by this run's, never passed on.
+        // The engine's environment names its run and session (the terminal
+        // session's and a one-shot child's alike, ruling 51), and the
+        // caller's own hook variables, from a session it was started inside,
+        // are replaced by this run's, never passed on: no endpoint, bearer
+        // or certificate (slice 4 U7), so its hooks deliver to the daemon.
         let mut env = self.env.clone();
         // What the run itself sets for the engine, which no permit replaces
         // (ruling 78b): HOME, which the engine's adapter makes the session
@@ -1090,9 +1015,6 @@ where
         // processes' wiring reads first), and the PATH below; the CTXLOOM_*
         // names are the run's whatever this says.
         let mut owned = vec!["HOME".to_string()];
-        for name in run_ports::HOOK_VARIABLES {
-            env.remove(name);
-        }
         // The running binary's directory leads the engine's PATH, so a hook's
         // bare program (this binary's file name, ruling 163) is this binary
         // and not another one the user has; the inherited PATH follows it,
@@ -1116,13 +1038,7 @@ where
             .name_of(&harp)
             .map(|name| name.to_string())
             .unwrap_or_default();
-        env.extend(run_ports::hook_environment(
-            &told.endpoint,
-            &run_text,
-            &name,
-            &enqueued.hook_token,
-            &told.cert,
-        ));
+        run_ports::name_the_run(&mut env, &run_text, &name);
         self.orders.place(
             &session,
             incarnation,
@@ -1186,9 +1102,7 @@ where
             .map_err(RunError::Launch)
     }
 
-    /// The one-shot: its listener served for its child's hooks (a one-shot is
-    /// its own owner, ruling 29), one turn, and the reply the child's stream
-    /// gave.
+    /// The one-shot: one turn, and the reply the child's stream gave.
     async fn run(
         &mut self,
         previewed: Previewed,
@@ -1196,10 +1110,10 @@ where
         resume: Option<Resume>,
         notices: &mut Vec<Notice>,
     ) -> Result<Answer, RunError> {
-        let (serving, started) = self
+        let started = self
             .ready(previewed, request, resume, false, notices)
             .await?;
-        let ours = self.drive(serving, &started, notices).await?;
+        let ours = self.drive(&started, notices).await?;
         said_permits(&ours, notices);
         let Started {
             session,

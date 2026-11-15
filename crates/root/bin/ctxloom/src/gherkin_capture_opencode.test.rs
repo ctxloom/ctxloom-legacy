@@ -58,7 +58,7 @@ const TOOL_DIGEST: &str = "71ca0ef886ae43a96de885a15d913cc2cbe0553f553638a286018
 /// The stub opencode: records its environment, then runs the driver over the
 /// plugin its session home holds.
 const STUB: &str = r#"here="$(dirname "$0")"
-for v in CTXLOOM_ENDPOINT CTXLOOM_BEARER CTXLOOM_RUN CTXLOOM_HOME CTXLOOM_TLS_CERT CTXLOOM_SESSION OPENCODE_CONFIG_DIR; do
+for v in CTXLOOM_RUN CTXLOOM_HOME CTXLOOM_SESSION OPENCODE_CONFIG_DIR; do
   eval "[ -n \"\${$v:-}\" ]" || echo "$v" >> "$here/opencode-missing"
 done
 env | grep -E '^(CTXLOOM_|OPENCODE_|XDG_|HOME=)' > "$here/opencode-env"
@@ -249,13 +249,14 @@ fn opencode_env_held(w: &mut World, name: String, value: String) {
     );
 }
 
+/// The permit's value never reached opencode: the run's own value is there
+/// instead, or none where the run sets the variable to nothing (slice 4 U7:
+/// no host run names a listener, so `CTXLOOM_BEARER` is the run's by being
+/// unset).
 #[cucumber::then(expr = "opencode's {string} was the run's own, not {string}")]
 fn opencode_env_runs_own(w: &mut World, name: String, value: String) {
     let env = opencode_env(w);
-    let held = env
-        .get(&name)
-        .unwrap_or_else(|| panic!("{name} is the run's"));
-    assert_ne!(held, &value);
+    assert_ne!(env.get(&name), Some(&value), "{name}");
 }
 
 #[cucumber::then(
@@ -303,6 +304,11 @@ fn opencode_environment(w: &mut World) {
         "{env}"
     );
     assert_eq!(var("OPENCODE_PURE"), None, "{env}");
+    // Slice 4 U7: its plugin's hooks find the user's daemon themselves; no
+    // listener of the run's own is named to them.
+    for name in ["CTXLOOM_ENDPOINT", "CTXLOOM_BEARER", "CTXLOOM_TLS_CERT"] {
+        assert_eq!(var(name), None, "{name}: {env}");
+    }
     for file in [
         "plugins/ctxloom.js",
         "AGENTS.md",

@@ -9,16 +9,16 @@
 //!   identity-stamped (D7).
 //! - [`Feeds`]: per-stream catch-up from a resume point, no cross-stream
 //!   position anywhere (plan 6).
-//! - [`Enqueuer`]: the run's enqueue, which mints the hook bearer's token
-//!   (D29).
+//! - [`Enqueuer`]: the run's enqueue, which mints no credential (owner
+//!   ruling s4-Q3).
 //!
 //! On the host there is ONE principal, the user (slice 2, the separation
 //! model): the runner's observations and the model's claims are provenances,
 //! not permissions, and no token tells them apart. A decider role (S10, S14)
-//! turns a claim into a transition. The gates are angzarr's `Gate`:
-//! [`UserGate`], the user daemon's (the user bearer), and [`HookGate`], a CLI
-//! run's own listener's (its hook bearer, kept while the CLI serves its own
-//! runs).
+//! turns a claim into a transition. The gate is angzarr's `Gate`:
+//! [`UserGate`], the user daemon's (the user bearer). The CLI run's own
+//! listener and its `HookGate` are gone (slice 4 U7, owner ruling s4-Q3): a
+//! hook delivers to the daemon.
 //!
 //! RED (S5, design-by-test): every body is a stub; the tests propose the
 //! signatures and the behaviour.
@@ -31,7 +31,6 @@ mod feeds;
 mod gate;
 mod hold;
 mod hook_commands;
-mod hook_gate;
 mod identity;
 mod requests;
 mod stamp;
@@ -47,7 +46,6 @@ pub use feeds::{Cursor, Feeds, Follow};
 pub use gate::owns;
 pub use hold::{HoldReport, Holding, HookClock, Kept, NotHeld, Outcome, Serving, Why, TAKE_ROUNDS};
 pub use hook_commands::{EdgeCommands, EdgeFailure};
-pub use hook_gate::{HookGate, HookIdentity};
 pub use identity::{Identity, Role};
 pub use requests::{AgentRequest, AgentRequests, Requested};
 /// The edge port the listener serves the kernel through, for the driving adapter

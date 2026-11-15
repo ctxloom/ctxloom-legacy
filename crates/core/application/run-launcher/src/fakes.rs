@@ -196,7 +196,6 @@ pub async fn enqueued_by(edge: &TestEdge, session: &str, harp: &str, launcher_lo
         session: session.to_string(),
         incarnation: 1,
         mode: RunMode::OneShot,
-        hook_credential_hash: vec![3; 32],
         prompt_given: true,
         engine: "claude-code".to_string(),
         drivable_engines: vec!["claude-code".to_string()],

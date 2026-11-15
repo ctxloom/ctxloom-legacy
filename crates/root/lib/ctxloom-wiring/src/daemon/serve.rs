@@ -280,7 +280,7 @@ async fn start(
     ),
     (files, shared, one_shots, terminals): Hosts<'_>,
     (say, env): (&Say, &Arc<process_env::EnvSnapshot>),
-) -> Result<(HookListener, Daemon<CoreEdge, OsTokenSource>, Discovery), String> {
+) -> Result<(HookListener, Daemon<CoreEdge>, Discovery), String> {
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
     let edge = core.edge();
     // The user bearer (T12): minted at each start, advertised in the
@@ -361,8 +361,6 @@ async fn start(
                 .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
             os,
             user_home: user_home.map(|home| home.to_string_lossy().into_owned()),
-            endpoint: endpoint.clone(),
-            cert: certificate.public().clone(),
         },
         Arc::clone(say),
     )
@@ -390,12 +388,12 @@ async fn start(
 /// record whole; then `own` is published. On a failure to publish, the
 /// launcher is let go and why is answered.
 async fn swept_and_advertised(
-    mut launcher: Daemon<CoreEdge, OsTokenSource>,
+    mut launcher: Daemon<CoreEdge>,
     core: &InProcessCore<SqliteStore>,
     files: &DaemonFiles,
     own: &Discovery,
     say: &Say,
-) -> Result<Daemon<CoreEdge, OsTokenSource>, String> {
+) -> Result<Daemon<CoreEdge>, String> {
     if let Err(detail) = launcher.start_up(core.store(), core.catalog()).await {
         said(say, &format!("the start's sweep failed: {detail}"));
     }
@@ -560,10 +558,9 @@ fn launcher(
     ),
     told: Told,
     say: Say,
-) -> Daemon<CoreEdge, OsTokenSource> {
+) -> Daemon<CoreEdge> {
     Daemon::new(Ports {
         edge: Arc::clone(edge),
-        tokens: Arc::new(OsTokenSource),
         engines,
         plans: Box::new(Plans {
             home: home.to_path_buf(),
@@ -604,8 +601,8 @@ fn launcher(
 /// excludes nobody), another daemon's discovery replaced its own (`own`, in
 /// `files`), or it has had nothing to do for its idle time. A discovery file that is gone is published again: the daemon
 /// still holds the single-instance lock, and a client finds it by the file (M11).
-async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
-    launcher: &mut Daemon<E, T>,
+async fn run<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
     core: &InProcessCore<SqliteStore>,
     (files, own, held): (&DaemonFiles, &Discovery, &Instance),
     (pace, shared, terminals): (Pace, &Arc<Shared>, &daemon_application::Terminals),

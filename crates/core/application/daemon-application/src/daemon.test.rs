@@ -10,8 +10,8 @@ use library_application::Previewed;
 use run_launcher::fakes::{session_cover, uuid, TestEdge};
 use run_ports::{
     ChildEngine, ChildError, ChildObservation, ChildSpec, Edge, Engine, EngineError, LockProbe,
-    PrepareRequest, Prepared, PublicCert, RunLocks, StartedChild, Token, TokenSource, TurnCommand,
-    TurnOutcome, TurnOutput, TurnRequest,
+    PrepareRequest, Prepared, RunLocks, StartedChild, TurnCommand, TurnOutcome, TurnOutput,
+    TurnRequest,
 };
 use runs::RunEvent;
 use sessions::{SessionEvent, SessionRef};
@@ -155,22 +155,12 @@ impl RunLocks for Locks {
     }
 }
 
-#[derive(Default)]
-struct Counting(std::sync::atomic::AtomicU8);
-
-impl TokenSource for Counting {
-    fn mint(&self) -> Token {
-        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        Token::from_bytes([n; 32])
-    }
-}
-
 fn daemon(
     edge: &Arc<TestEdge>,
     engines: Vec<HostedEngine>,
     plans: Plans,
     locks: LockProbe,
-) -> Daemon<TestEdge, Counting> {
+) -> Daemon<TestEdge> {
     daemon_saying(edge, engines, plans, locks, Box::new(|_| {}))
 }
 
@@ -181,10 +171,9 @@ fn daemon_saying(
     plans: Plans,
     locks: LockProbe,
     say: Box<dyn FnMut(&str) + Send>,
-) -> Daemon<TestEdge, Counting> {
+) -> Daemon<TestEdge> {
     Daemon::new(Ports {
         edge: Arc::clone(edge),
-        tokens: Arc::new(Counting::default()),
         engines,
         plans: Box::new(plans),
         hand_offs: Box::new(NoHandOffs),
@@ -196,8 +185,6 @@ fn daemon_saying(
             program_dir: None,
             os: "linux".to_string(),
             user_home: None,
-            endpoint: "https://127.0.0.1:1".to_string(),
-            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
         },
         folds: Folds::default(),
         say,
@@ -265,17 +252,16 @@ fn ended(events: &[SessionEvent]) -> Vec<(u32, String)> {
 async fn the_start_sweeps_a_killed_daemons_child_and_ends_it_once() {
     let edge = Arc::new(TestEdge::new());
     mint(&edge, CHILD, "kid", "claude-code", None).await;
-    let enqueued =
-        runs_application::Enqueuer::new(Arc::clone(&edge), Arc::new(Counting::default()))
-            .enqueue(runs_application::EnqueueRequest {
-                session: CHILD.to_string(),
-                incarnation: 1,
-                mode: runs::RunMode::Structured,
-                evidence: runs_application::Evidence::passing("claude-code"),
-                launcher_lock: RUN_LOCK.to_string(),
-            })
-            .await
-            .unwrap();
+    let enqueued = runs_application::Enqueuer::new(Arc::clone(&edge))
+        .enqueue(runs_application::EnqueueRequest {
+            session: CHILD.to_string(),
+            incarnation: 1,
+            mode: runs::RunMode::Structured,
+            evidence: runs_application::Evidence::passing("claude-code"),
+            launcher_lock: RUN_LOCK.to_string(),
+        })
+        .await
+        .unwrap();
     let who = runs_application::Identity {
         run: runs::run_root(CHILD, 1),
         session: uuid(CHILD),
@@ -343,7 +329,7 @@ async fn the_start_sweeps_a_killed_daemons_child_and_ends_it_once() {
 /// `started`.
 async fn a_run(edge: &Arc<TestEdge>, started: bool) {
     mint(edge, CHILD, "kid", "claude-code", None).await;
-    runs_application::Enqueuer::new(Arc::clone(edge), Arc::new(Counting::default()))
+    runs_application::Enqueuer::new(Arc::clone(edge))
         .enqueue(runs_application::EnqueueRequest {
             session: CHILD.to_string(),
             incarnation: 1,
@@ -431,7 +417,7 @@ async fn a_run_not_started_is_not_live() {
 async fn the_start_leaves_a_child_whose_host_holds_its_lock() {
     let edge = Arc::new(TestEdge::new());
     mint(&edge, CHILD, "kid", "claude-code", None).await;
-    runs_application::Enqueuer::new(Arc::clone(&edge), Arc::new(Counting::default()))
+    runs_application::Enqueuer::new(Arc::clone(&edge))
         .enqueue(runs_application::EnqueueRequest {
             session: CHILD.to_string(),
             incarnation: 1,
@@ -525,9 +511,7 @@ async fn command(edge: &TestEdge, session: &str, command: sessions::SessionComma
 /// incarnation has ended) with a first task: the task is a WAKE, and a
 /// child off claude takes an inform alone, so the session refuses it each
 /// time it is sent. What the daemon logs.
-async fn a_refused_first_task(
-    edge: &Arc<TestEdge>,
-) -> (Daemon<TestEdge, Counting>, Arc<Mutex<Vec<String>>>) {
+async fn a_refused_first_task(edge: &Arc<TestEdge>) -> (Daemon<TestEdge>, Arc<Mutex<Vec<String>>>) {
     mint(edge, OWNER, "boss", "claude-code", None).await;
     mint(edge, CHILD, "kid", "opencode", Some(OWNER)).await;
     runs_application::Facts::new(Arc::clone(edge))

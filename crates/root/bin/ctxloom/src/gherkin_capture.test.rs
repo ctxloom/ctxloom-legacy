@@ -50,8 +50,11 @@ const TOOL_DIGEST: &str = "71ca0ef886ae43a96de885a15d913cc2cbe0553f553638a286018
 const STUB: &str = r#"here="$(dirname "$0")"
 fired="$here/fired"
 mkdir -p "$fired"
-for v in CTXLOOM_ENDPOINT CTXLOOM_BEARER CTXLOOM_RUN CTXLOOM_HOME CLAUDE_CONFIG_DIR; do
+for v in CTXLOOM_RUN CTXLOOM_HOME CTXLOOM_SESSION CLAUDE_CONFIG_DIR; do
   eval "[ -n \"\${$v:-}\" ]" || echo "$v" >> "$here/engine-missing"
+done
+for v in CTXLOOM_ENDPOINT CTXLOOM_BEARER CTXLOOM_TLS_CERT; do
+  eval "[ -z \"\${$v:-}\" ]" || echo "$v" >> "$here/engine-had"
 done
 [ "${HOME:-}" = "$CLAUDE_CONFIG_DIR" ] || echo "HOME" >> "$here/engine-had"
 env | grep -E '^(CTXLOOM_|CLAUDE_CONFIG_DIR=|PATH=)' > "$here/engine-env"
@@ -97,8 +100,11 @@ done
 echo "$seen" > "$here/settings-flags"
 jq -r '.hooks | keys[]' "$settings" > "$here/registered"
 prompt="$(cat)"
-for v in CTXLOOM_ENDPOINT CTXLOOM_BEARER CTXLOOM_RUN CTXLOOM_HOME CTXLOOM_SESSION CTXLOOM_TLS_CERT CLAUDE_CONFIG_DIR; do
+for v in CTXLOOM_RUN CTXLOOM_HOME CTXLOOM_SESSION CLAUDE_CONFIG_DIR; do
   eval "[ -n \"\${$v:-}\" ]" || echo "$v" >> "$here/engine-missing"
+done
+for v in CTXLOOM_ENDPOINT CTXLOOM_BEARER CTXLOOM_TLS_CERT; do
+  eval "[ -z \"\${$v:-}\" ]" || echo "$v" >> "$here/engine-had"
 done
 [ "${HOME:-}" = "$CLAUDE_CONFIG_DIR" ] || echo "HOME" >> "$here/engine-had"
 [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ] || echo "ANTHROPIC_AUTH_TOKEN" >> "$here/engine-had"
@@ -337,11 +343,10 @@ fn child_environment(w: &mut World) {
         "",
         "the turn's environment held what it must not"
     );
+    // Slice 4 U7: what its hooks need is its run and session (they find the
+    // user's daemon themselves); no endpoint, bearer or certificate, which
+    // `engine-had` would name.
     let engine_env = files::read(dir.join("engine-env")).expect("the turn ran");
-    assert!(
-        engine_env.contains("CTXLOOM_ENDPOINT=https://127.0.0.1:"),
-        "{engine_env}"
-    );
     assert!(
         !engine_env.contains("PRIVATE KEY"),
         "no key in the environment"
@@ -478,6 +483,12 @@ fn environment_reached(w: &mut World) {
         files::exists(dir.join("engine-env")),
         "the engine never ran"
     );
+    // Slice 4 U7: no listener of the run's own is named to it.
+    assert_eq!(
+        files::read(dir.join("engine-had")).unwrap_or_default(),
+        "",
+        "the engine's environment held what it must not"
+    );
 }
 
 #[then("every hook it fired answered, said nothing was left unrecorded, and exited 0")]
@@ -568,31 +579,15 @@ fn readable_while_running(w: &mut World) {
     );
 }
 
-#[then("a hook fired after the run has ended is refused without failing, and adds nothing to the transcript")]
+#[then("a hook fired after the run has ended is answered without failing, and adds nothing to the transcript")]
 fn late_hook(w: &mut World) {
-    // The environment the engine had, the run's bearer included, as a hook
-    // that outlived its engine would still have it.
+    // The environment the engine had, as a hook that outlived its engine
+    // would still have it: its run and session, no listener of the run's own
+    // (slice 4 U7), and nothing of a key.
     let engine_env = files::read(w.engine_dir().join("engine-env")).expect("the engine's env");
-    let endpoint = engine_env
-        .lines()
-        .find_map(|l| l.strip_prefix("CTXLOOM_ENDPOINT="))
-        .expect("the engine was told an endpoint");
     assert!(
-        endpoint.starts_with("https://127.0.0.1:")
-            && endpoint["https://127.0.0.1:".len()..]
-                .parse::<u16>()
-                .is_ok(),
-        "the endpoint is the loopback https URL of the listener's port: {endpoint}"
-    );
-    // The engine was told the listener's certificate (public, one line of
-    // base64 of a DER SEQUENCE) and nothing of its key.
-    let cert = engine_env
-        .lines()
-        .find_map(|l| l.strip_prefix("CTXLOOM_TLS_CERT="))
-        .expect("the engine was told the listener's certificate");
-    assert!(
-        cert.len() > 100 && cert.starts_with("MI") && !cert.contains(char::is_whitespace),
-        "a base64 DER certificate: {cert}"
+        !engine_env.contains("CTXLOOM_ENDPOINT="),
+        "no endpoint: {engine_env}"
     );
     assert!(
         !engine_env.contains("PRIVATE KEY"),
@@ -616,11 +611,9 @@ fn late_hook(w: &mut World) {
     let ran = Ran::of(child.wait_with_output().expect("ctxloom finishes"));
     assert_eq!(ran.code, 0, "{}", ran.said());
     assert_eq!(ran.stdout.trim(), "{}", "the engine is answered as usual");
-    assert!(
-        ran.stderr.contains("hook-cli-not-recorded"),
-        "the hook says it recorded nothing: {}",
-        ran.said()
-    );
+    // Slice 4 U7 (s4-Q3): no run credential dies with the run, so nothing
+    // refuses the hook; it reaches the user's daemon, and the session, its
+    // run ended, records nothing more.
     assert_eq!(w.transcript(), w.capture.ended, "nothing was appended");
 }
 

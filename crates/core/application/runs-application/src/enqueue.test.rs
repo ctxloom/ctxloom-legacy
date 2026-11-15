@@ -1,10 +1,11 @@
-//! The enqueue that mints a credential (D29). RED (S5): stubs.
+//! The run's enqueue, which mints no credential (owner ruling s4-Q3).
 
 use std::sync::Arc;
 
+use angzarr_embedded::Payload;
 use run_ports::Edge;
 
-use crate::fakes::{command_book, uuid, CountingSource, KernelEdge, SESSION_ME};
+use crate::fakes::{command_book, uuid, KernelEdge, SESSION_ME};
 use crate::{CredentialEvidence, EnqueueError, EnqueueRequest, Enqueuer, Evidence};
 
 fn request() -> EnqueueRequest {
@@ -45,62 +46,37 @@ async fn minted(edge: &KernelEdge) {
     .unwrap();
 }
 
-// NEW-DESIGN (D29, plan 5.3: "only its SHA-256 goes in the event"): the
-// run's stream holds the hook bearer's digest and no byte sequence equal to
-// its token, in bytes or in text. The enqueue mints that one token (the
-// separation model, slice 2: no runner's or model's token).
+// Owner ruling s4-Q3: the enqueue journals the run (its session, its
+// incarnation, its mode) and mints no credential; a repeat enqueue of the
+// same run is refused by the run and journals nothing more.
 #[tokio::test]
-async fn the_enqueue_journals_the_digest_and_never_the_token() {
+async fn the_enqueue_journals_the_run_once_and_no_credential() {
     let edge = Arc::new(KernelEdge::new());
     minted(&edge).await;
-    let enqueuer = Enqueuer::new(Arc::clone(&edge), Arc::new(CountingSource::default()));
+    let enqueuer = Enqueuer::new(Arc::clone(&edge));
     let enqueued = enqueuer.enqueue(request()).await.unwrap();
     assert_eq!(enqueued.run, runs::run_root(SESSION_ME, 1));
+    let repeat = enqueuer.enqueue(request()).await;
+    assert!(repeat.is_err(), "runs-already-enqueued");
     let cover = angzarr_embedded::v1::Cover {
         domain: runs::RUN_DOMAIN.to_string(),
         root: Some(enqueued.run.clone()),
         edition: None,
     };
-    let stored: Vec<u8> = edge
-        .pages(&cover)
-        .await
-        .into_iter()
-        .flat_map(|page| match page.body {
-            Some(angzarr_embedded::v1::event_page::Body::Event(any)) => any.value,
-            _ => Vec::new(),
-        })
-        .collect();
-    let contains = |needle: &[u8]| stored.windows(needle.len()).any(|w| w == needle);
-    assert!(contains(enqueued.hook_token.hash().as_bytes()));
-    assert!(!contains(enqueued.hook_token.as_bytes()));
-    assert!(!contains(enqueued.hook_token.to_text().as_bytes()));
-}
-
-// NEW-DESIGN (plan 5.3: a token PER RUN): two enqueues mint two different
-// tokens; a repeat enqueue of the same run is refused by the run, and mints a
-// token nobody can use (it does not replace the first).
-#[tokio::test]
-async fn each_enqueue_mints_its_own_token_and_a_repeat_changes_nothing() {
-    let edge = Arc::new(KernelEdge::new());
-    minted(&edge).await;
-    let enqueuer = Enqueuer::new(Arc::clone(&edge), Arc::new(CountingSource::default()));
-    let first = enqueuer.enqueue(request()).await.unwrap();
-    let repeat = enqueuer.enqueue(request()).await;
-    assert!(repeat.is_err(), "runs-already-enqueued");
-    assert_ne!(first.hook_token, run_ports::Token::from_bytes([0; 32]));
-}
-
-// NEW-DESIGN: the token's text never appears in how the enqueue renders
-// itself (Debug), the one place the secret could leak from the launching
-// code's value.
-#[tokio::test]
-async fn the_enqueued_value_never_renders_a_secret() {
-    let edge = Arc::new(KernelEdge::new());
-    minted(&edge).await;
-    let enqueuer = Enqueuer::new(Arc::clone(&edge), Arc::new(CountingSource::default()));
-    let enqueued = enqueuer.enqueue(request()).await.unwrap();
-    let shown = format!("{enqueued:?}");
-    assert!(!shown.contains(&enqueued.hook_token.to_text()));
+    let pages = edge.pages(&cover).await;
+    let [page] = pages.as_slice() else {
+        panic!("one page: {pages:?}");
+    };
+    let Some(angzarr_embedded::v1::event_page::Body::Event(any)) = &page.body else {
+        panic!("an event: {page:?}");
+    };
+    let Ok(runs::RunEvent::RunEnqueued(event)) = runs::RunEvent::from_any(any) else {
+        panic!("a RunEnqueued: {any:?}");
+    };
+    assert_eq!(
+        (event.session.as_str(), event.incarnation, event.mode),
+        (SESSION_ME, 1, request().mode)
+    );
 }
 
 // Rulings 73e, 73f: the evidence reaches the run's decision, and the refusal
@@ -109,7 +85,7 @@ async fn the_enqueued_value_never_renders_a_secret() {
 #[tokio::test]
 async fn the_evidence_reaches_the_runs_decision_and_its_refusal_comes_back_whole() {
     let edge = Arc::new(KernelEdge::new());
-    let enqueuer = Enqueuer::new(Arc::clone(&edge), Arc::new(CountingSource::default()));
+    let enqueuer = Enqueuer::new(Arc::clone(&edge));
     let request = EnqueueRequest {
         mode: runs::RunMode::OneShot,
         evidence: Evidence {
@@ -153,7 +129,7 @@ async fn the_evidence_reaches_the_runs_decision_and_its_refusal_comes_back_whole
 #[tokio::test]
 async fn a_run_is_enqueued_before_its_session_is_minted() {
     let edge = Arc::new(KernelEdge::new());
-    let enqueuer = Enqueuer::new(Arc::clone(&edge), Arc::new(CountingSource::default()));
+    let enqueuer = Enqueuer::new(Arc::clone(&edge));
     let enqueued = enqueuer.enqueue(request()).await.unwrap();
     assert_eq!(enqueued.run, runs::run_root(SESSION_ME, 1));
 }
@@ -164,7 +140,7 @@ async fn a_run_is_enqueued_before_its_session_is_minted() {
 async fn the_enqueue_journals_the_lock_its_launcher_holds() {
     let edge = Arc::new(KernelEdge::new());
     minted(&edge).await;
-    let enqueuer = Enqueuer::new(Arc::clone(&edge), Arc::new(CountingSource::default()));
+    let enqueuer = Enqueuer::new(Arc::clone(&edge));
     let enqueued = enqueuer.enqueue(request()).await.unwrap();
     let cover = angzarr_embedded::v1::Cover {
         domain: runs::RUN_DOMAIN.to_string(),
@@ -174,7 +150,6 @@ async fn the_enqueue_journals_the_lock_its_launcher_holds() {
     let pages = edge.events(&cover, 0).await.unwrap();
     let launcher = pages.iter().find_map(|page| match &page.body {
         Some(angzarr_embedded::v1::event_page::Body::Event(any)) => {
-            use angzarr_embedded::Payload;
             match runs::RunEvent::from_any(any) {
                 Ok(runs::RunEvent::RunEnqueued(enqueued)) => Some(enqueued.launcher_lock),
                 _ => None,

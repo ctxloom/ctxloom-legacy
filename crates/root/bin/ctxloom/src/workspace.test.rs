@@ -374,7 +374,14 @@ fn test_nothing_but_the_m10b_kept_list_calls_hook_environment() {
             .expect("under the repository")
             .to_string_lossy()
             .replace('\\', "/");
-        if text.contains(call) && !HOOK_ENVIRONMENT_CALLERS.contains(&relative.as_str()) {
+        // A call, not a longer name ending in it (this test's own name).
+        let calls = text.match_indices(call).any(|(at, _)| {
+            !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        });
+        if calls && !HOOK_ENVIRONMENT_CALLERS.contains(&relative.as_str()) {
             callers.push(relative);
         }
     }

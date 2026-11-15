@@ -3,11 +3,10 @@
 //! client ([`client_one_shot`]), and the daemon hosts it
 //! ([`HostedOneShots`]: `Runs::one_shot` over the daemon's one store, in
 //! the wiring of its client's environment and directory, [`hosted_wiring`]).
-//! The interactive session is still the command's own until U5: the project
-//! told, its store opened and the core served in this process; the launcher
-//! runs the engine's command on this host (`claude`, found on the caller's
-//! `PATH`), and the session's directory is written under the project's
-//! `.ctxloom/sessions`.
+//! The interactive session is the daemon's too (U5): the daemon prepares it
+//! and this command, its frontend, starts it (`frontend`). No run serves a
+//! listener of its own (slice 4 U7, owner ruling s4-Q3): its engine's hooks
+//! find the daemon by its discovery file and present the user bearer.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -18,12 +17,10 @@ use crate::CoreStores;
 use angzarr_diagnostic::Report;
 use angzarr_embedded::angzarr_store_sqlite::SqliteStore;
 use angzarr_embedded::Catalog;
-use credentials::OsTokenSource;
 use daemon_ports::Daemons;
 use embedded_edge::EmbeddedEdge;
 use file_system::Fs;
 use harp_names::HarpNames;
-use hook_listener::HookListener;
 use host_launcher::HostLauncher;
 use library_application::{Flags, Library, OUTPUT_DIR_DEFAULT};
 use ports::{Names, Project, ProjectIdentity};
@@ -33,7 +30,7 @@ use run_application::{
     Answer, Core, Done, Ended, OneShot, Parts, Place, RunError, RunService, Runs,
 };
 use run_launcher::{Launcher, Orders};
-use run_ports::{BoxFuture, Edge, Engine, HookCertificate, HookServer, Limits, Serving};
+use run_ports::{Engine, Limits};
 use runs_application::{AppError as CoreError, Enqueuer};
 use session_files::SessionDirs;
 
@@ -163,7 +160,7 @@ pub(crate) fn runs_over<K: Core, L: run_ports::RunnerLauncher>(
     driven: Driven<L>,
     core: K,
     (project, project_harp): (Project, String),
-) -> Runs<K, OsTokenSource, L, SessionDirs>
+) -> Runs<K, L, SessionDirs>
 where
     K::Edge: 'static,
 {
@@ -200,8 +197,7 @@ where
     // Each command measured against this platform's command line before
     // it is spawned (a terminal session's opening prompt is on it).
     .on_os(wiring.os_name());
-    let hooks = Box::new(Hooks { edge: core.edge() });
-    let enqueuer = Enqueuer::new(core.edge(), Arc::new(OsTokenSource));
+    let enqueuer = Enqueuer::new(core.edge());
     let output_root = output_root(&project_dir, output_dir);
     Runs::new(Parts {
         core,
@@ -223,8 +219,6 @@ where
         env: run_env(wiring.env(), wiring.home()),
         links: Box::new(SessionDirs::new(wiring.fs(), project_dir.clone())),
         os: wiring.os_name().to_string(),
-        hooks,
-        certs: Box::new(hook_tls::Minter::new(hook_tls::SystemClock)),
         locks,
         run_locks,
         git_user: git_user(wiring, &project_dir),
@@ -337,53 +331,6 @@ pub(crate) fn opencode_recent_models(wiring: &Wiring) -> Option<Vec<u8>> {
     let home = home.as_deref().and_then(Path::to_str);
     let file = engine_opencode::user_model_file(home, state, wiring.os_name())?;
     wiring.fs().read(Path::new(&file)).ok()
-}
-
-/// The run's hook listener over the core's edge: `Handle` on the run's loopback port
-/// behind the hook gate ([`hook_listener`]), started before an interactive
-/// engine launches and stopped after it exits.
-struct Hooks<E> {
-    edge: Arc<E>,
-}
-
-impl<E: Edge + 'static> HookServer for Hooks<E> {
-    fn serve_tcp<'a>(
-        &'a self,
-        bind: std::net::IpAddr,
-        identity: &'a HookCertificate,
-    ) -> BoxFuture<'a, Result<Box<dyn Serving>, Report>> {
-        Box::pin(async move {
-            // Port 0: each run gets a port of the system's choosing.
-            let listener = HookListener::serve_tcp(
-                Arc::clone(&self.edge),
-                std::net::SocketAddr::new(bind, 0),
-                hook_listener::TlsIdentity::from_pem(
-                    identity.public().to_pem(),
-                    identity.key_pem(),
-                ),
-            )
-            .await
-            .map_err(|e| Report::of(&e))?;
-            Ok(Box::new(Live(listener)) as Box<dyn Serving>)
-        })
-    }
-}
-
-/// A listener that is serving.
-struct Live(HookListener);
-
-impl Serving for Live {
-    fn port(&self) -> u16 {
-        self.0.local_addr().port()
-    }
-
-    fn stop(self: Box<Self>) -> BoxFuture<'static, ()> {
-        // A stop that failed has nothing to tell a run that is over; the
-        // listener is aborted as it drops either way.
-        Box::pin(async move {
-            let _ = self.0.stop().await;
-        })
-    }
 }
 
 /// The environment a run is given: the caller's, and ctxloom's home named by
@@ -792,8 +739,7 @@ async fn host_one_shot(
     )
     .telling(Box::new(move |placed| told.placed(placed)));
     let mut done = runs.one_shot(&request.flags, &request.request).await;
-    // Every part of the run let go (its edges, its listener's) before it is
-    // told over: the daemon closes its store once its one-shots have ended.
+    // Every part of the run let go (its edges) before it is told over: the daemon closes its store once its one-shots have ended.
     drop(runs);
     let mut notices = synced;
     notices.append(&mut done.notices);

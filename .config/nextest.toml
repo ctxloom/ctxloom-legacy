@@ -112,7 +112,7 @@ filter = '''
     | package(daemon-client)
     | package(daemon-api-grpc)
     | package(forge-github)
-    | (package(ctxloom-wiring) & test(/^(oneshot::tests::hooks::|capture::tests::)/))
+    | (package(ctxloom-wiring) & test(/^capture::tests::/))
     | (package(ctxloom) & test(/^tests::hook::/))
 '''
 test-group = 'ports'
