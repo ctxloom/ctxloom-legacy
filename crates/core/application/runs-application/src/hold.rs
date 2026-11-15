@@ -121,8 +121,9 @@ impl Kept {
     pub fn set_aside(&self) -> bool {
         matches!(
             self.outcome,
-            Outcome::Delivered(Delivery::Refused { .. } | Delivery::Parked)
-                | Outcome::NotHeld(NotHeld::Foreign)
+            Outcome::Delivered(
+                Delivery::Refused { .. } | Delivery::Parked | Delivery::NoSuchSession
+            ) | Outcome::NotHeld(NotHeld::Foreign)
         )
     }
 
@@ -511,7 +512,9 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
                 // A final answer that is no record (refused, parked) is set
                 // aside, never retried and never dropped (H3).
                 fates[i] = match delivery {
-                    Delivery::Refused { .. } | Delivery::Parked => Fate::SetAside,
+                    Delivery::Refused { .. } | Delivery::Parked | Delivery::NoSuchSession => {
+                        Fate::SetAside
+                    }
                     _ => Fate::Cut,
                 };
                 removed = true;

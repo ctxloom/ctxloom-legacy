@@ -2317,14 +2317,24 @@ lists them): only when the command is not older than the daemon
 flush, a hold the bound did not reach left untouched (`Left::OutOfTime`);
 what it could not deliver stays held. Nothing a flush meets is dropped
 silently (owner, H3 follow-up): a held record the daemon finally refuses or
-parks, or one that is no fact of its hold's session, goes to the hold's
-set-aside part, as corruption does (run-ports' `Fate::SetAside`,
+parks, or one addressed to a session the daemon has no record of, or one
+that is no fact of its hold's session, goes to the hold's set-aside part, as corruption does (run-ports' `Fate::SetAside`,
 `Batch::settle_fates`; fact-spool writes its frames as the next
 `<root>.held.corrupt-<n>`), a hook's flush and a command's alike; a command
 says it ONCE a session as it ends, `ctxloom-wiring-held-set-aside` (the
 session's harp, how many, each reason once; `daemon::flush::take_said`,
 said by `Commands::run`; the wording a draft, the owner's to approve).
-`session list|show|search` and `session transcript show` are daemon reads
+A capture fact addressed to a session the daemon has no record of (its
+stream holds none: never minted, or destroyed) records nothing, as ever,
+but is never answered "applied" (owner ruling, H3): the daemon's listener
+(`runs_application::EdgeCommands`, by `runs_application::no_such_session`:
+a capture fact applied with no event) answers it NOT_FOUND under the key
+`run_ports::NO_SUCH_SESSION`, the full name of capture.proto's
+`FactSessionUnknown` (a fact is never refused, so no `(refusal_status)`
+declares it), which hook-sink-grpc reads as `Delivery::NoSuchSession`
+(final; the in-process `EdgeSink` answers it alike); a hook says it, a
+flush sets it aside, its reason "the daemon has no record of this
+session". `session list|show|search` and `session transcript show` are daemon reads
 (`daemon_api::SessionReads`, `get_transcript` over `GetTranscript`), so a
 read includes what was held. Every
 session's, not only its project's: the daemon and its one store serve the

@@ -192,6 +192,9 @@ fn why_set_aside(outcome: &Outcome) -> String {
         Outcome::Delivered(Delivery::Parked) => {
             "the daemon parked it, as a fact it can never record".to_string()
         }
+        Outcome::Delivered(Delivery::NoSuchSession) => {
+            "the daemon has no record of this session".to_string()
+        }
         _ => "it is not a fact of this session's stream".to_string(),
     }
 }

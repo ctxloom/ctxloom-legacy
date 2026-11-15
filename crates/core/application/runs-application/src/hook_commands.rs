@@ -97,6 +97,26 @@ fn coded_of(failure: &Failure<Rejected>) -> Coded {
     }
 }
 
+/// The answer to a capture fact addressed to a session the daemon has no
+/// record of: capture.proto's `FactSessionUnknown`, its full name the key
+/// ([`run_ports::NO_SUCH_SESSION`]), the session's root its arg, under
+/// NOT_FOUND (a fact is never refused, so no `(refusal_status)` declares it:
+/// it is the listener's own answer, as the kernel's spec keys are).
+fn no_such_session_answer(book: &CommandBook) -> Coded {
+    let session = book
+        .cover
+        .as_ref()
+        .and_then(|cover| cover.root.as_ref())
+        .and_then(|root| uuid::Uuid::from_slice(&root.value).ok())
+        .map(|root| root.to_string())
+        .unwrap_or_default();
+    Coded::new(
+        Code::NotFound,
+        run_ports::NO_SUCH_SESSION,
+        [("session".to_string(), session)],
+    )
+}
+
 impl<E: Edge> Commands for EdgeCommands<E> {
     type Failure = EdgeFailure;
 
@@ -119,7 +139,13 @@ impl<E: Edge> Commands for EdgeCommands<E> {
         // A hook is a client; the framework caller has no business here.
         let _ = caller;
         Box::pin(async move {
+            let asked = book.clone();
             match self.edge.serve(book, Arrival::Loopback).await {
+                // A capture fact recorded nowhere: the session has no record
+                // (s4-Q14, H3 follow-up), a distinct answer, never "applied".
+                Ok(answered) if crate::no_such_session(&asked, &answered) => {
+                    Err(EdgeFailure::Coded(no_such_session_answer(&asked)))
+                }
                 Ok(answered) => Ok(Answered {
                     events: answered.events,
                     delivery: answered.delivery,

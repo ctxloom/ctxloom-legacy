@@ -237,6 +237,10 @@ fn delivery_of_code(code: Code, message: &str, reason: &str) -> Delivery {
     match code {
         Code::DeadlineExceeded => Delivery::TimedOut,
         Code::Internal if message == DEAD_LETTERED || reason == DEAD_LETTERED => Delivery::Parked,
+        // The daemon has no record of the fact's session (s4-Q14, H3).
+        _ if message == run_ports::NO_SUCH_SESSION || reason == run_ports::NO_SUCH_SESSION => {
+            Delivery::NoSuchSession
+        }
         Code::Unavailable
         | Code::Aborted
         | Code::ResourceExhausted

@@ -225,8 +225,43 @@ impl Observation {
 /// means the stream holds no session). Its distinct answer is
 /// [`run_ports::NO_SUCH_SESSION`] ([`run_ports::Delivery::NoSuchSession`]).
 pub fn no_such_session(book: &CommandBook, answered: &angzarr_embedded::Answered) -> bool {
-    let _ = (book, answered);
-    false
+    let recorded = answered
+        .events
+        .as_ref()
+        .is_some_and(|events| !events.pages.is_empty());
+    answered.delivery == angzarr_embedded::v1::DeliveryOutcome::Applied
+        && !recorded
+        && is_capture_fact(book)
+}
+
+/// Whether `book` is a capture fact of the session domain: one of the facts
+/// an [`Observation`] is.
+fn is_capture_fact(book: &CommandBook) -> bool {
+    fn url<M: DomainMessage>() -> String {
+        <M::Wire as prost::Name>::type_url()
+    }
+    let on_sessions = book
+        .cover
+        .as_ref()
+        .is_some_and(|cover| cover.domain == sessions::SESSION_DOMAIN);
+    let Some(command_page::Body::Fact(fact)) = book.page.as_ref().and_then(|p| p.body.as_ref())
+    else {
+        return false;
+    };
+    let Some(payload) = fact.payload.as_ref() else {
+        return false;
+    };
+    on_sessions
+        && [
+            url::<sessions::RecordPromptSubmitted>(),
+            url::<sessions::RecordAssistantText>(),
+            url::<sessions::RecordToolCall>(),
+            url::<sessions::RecordTurnEnded>(),
+            url::<sessions::RecordSessionEnded>(),
+            url::<sessions::RecordCompaction>(),
+            url::<sessions::RecordCaptureGap>(),
+        ]
+        .contains(&payload.type_url)
 }
 
 /// How long a hook may spend delivering, by the engine's native hook name:
