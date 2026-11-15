@@ -453,6 +453,8 @@ fn be_the_daemon(
         // Composed as every launch's engines are (the one session-setup
         // path): calling this binary, over her own settings.
         engines: crate::commands::hosted_engines(wiring, &crate::program::running().name),
+        // The environment its children's checkouts' git runs in.
+        env: Arc::clone(wiring.env()),
     };
     serve::serve(wiring.fs(), place, pace, say)
         .map_err(|detail| failed(LibError::NoRuntime { detail }))?;

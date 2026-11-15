@@ -16,8 +16,13 @@
 //! - notice: each turn a child's run ended is told to its owner, a message
 //!   `notice:<child>:<incarnation>:<turn>` (the owner's engine's urgency: an
 //!   inform to a primary, which has no wake yet; a wake to a daemon child);
+//! - re-host (T19, s4-Q9): a child whose last incarnation was lost (ended
+//!   `orphaned`: its host, a killed daemon, was lost) is owed its next
+//!   incarnation, `rehost:<child>:<n+1>`, the daemon counting its recent
+//!   re-hosts as the evidence;
 //! - start (D2): a child with an incarnation owed and no run enqueued for it
-//!   is started, a long-lived child the daemon hosts;
+//!   is started, a long-lived child the daemon hosts, resuming its engine's
+//!   own conversation from its second incarnation on;
 //! - delivery (S-a): a session the daemon hosts with messages pending is
 //!   given its next turn ([`crate::deliver`]);
 //! - feed: each turn queued on a hosted run is handed to its child once;
@@ -106,13 +111,25 @@ pub enum Step {
         mint: Box<Mint>,
         failed: Sent,
     },
-    /// Host a run for a child: enqueue it and start its engine.
+    /// Host a run for a child: enqueue it and start its engine, resuming
+    /// the engine's own session `resume` (its bound native id) when there
+    /// is one to resume (an incarnation after the first).
     Start {
         key: String,
         at: RunAt,
         harp: String,
         engine: String,
         project_dir: String,
+        resume: Option<String>,
+    },
+    /// Owe a lost child its next incarnation, `at` (T19): the daemon counts
+    /// its recent re-hosts and sends `RehostSession`; refused for the
+    /// budget, `owner` is told the child ended.
+    Rehost {
+        key: String,
+        at: RunAt,
+        harp: String,
+        owner: SessionRef,
     },
     /// Hand the turn `turn` (its messages, in order) to the hosted child.
     Feed {
@@ -135,6 +152,7 @@ impl Step {
             Step::Send(sent) => &sent.key,
             Step::Launch { key, .. }
             | Step::Start { key, .. }
+            | Step::Rehost { key, .. }
             | Step::Feed { key, .. }
             | Step::Clear { key, .. }
             | Step::End { key, .. } => key,
@@ -188,6 +206,7 @@ pub fn plan(scene: &Scene<'_>) -> Vec<Step> {
     launches(scene, &mut steps);
     closes(scene, &mut steps);
     notices(scene, &mut steps);
+    rehosts(scene, &mut steps);
     runs(scene, &mut steps);
     steps.retain(|step| !scene.done.contains(step.key()));
     steps
@@ -342,6 +361,35 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
     }
 }
 
+/// Why a run's incarnation ends when its owner (its host) was lost.
+const ORPHANED: &str = "orphaned";
+
+/// Each child of this project whose last incarnation was lost, and is
+/// neither closed nor stopped, nor owed another: its re-host. A child with
+/// no native session has no conversation to resume, and is left ended.
+fn rehosts(scene: &Scene<'_>, steps: &mut Vec<Step>) {
+    for (id, session) in scene.sessions() {
+        let Some(owner) = session.owner.clone() else {
+            continue;
+        };
+        let lost = scene.board.last_end(id) == Some((session.incarnation, ORPHANED));
+        let open = session.open_incarnation.is_some() || session.closed || session.stopped;
+        if !lost || open || session.native_id.is_empty() {
+            continue;
+        }
+        let at = RunAt {
+            session: id.to_string(),
+            incarnation: session.incarnation + 1,
+        };
+        steps.push(Step::Rehost {
+            key: format!("rehost:{id}:{}", at.incarnation),
+            at,
+            harp: session.harp.clone(),
+            owner,
+        });
+    }
+}
+
 /// The steps on the children's runs: start, deliver, feed, clear, end.
 fn runs(scene: &Scene<'_>, steps: &mut Vec<Step>) {
     for (id, session) in scene.sessions() {
@@ -366,6 +414,9 @@ fn runs(scene: &Scene<'_>, steps: &mut Vec<Step>) {
                     harp: session.harp.clone(),
                     engine: session.engine.clone(),
                     project_dir: session.project_dir.clone(),
+                    // Its own conversation, from its second incarnation on.
+                    resume: (incarnation > 1 && !session.native_id.is_empty())
+                        .then(|| session.native_id.clone()),
                 });
             }
             continue;

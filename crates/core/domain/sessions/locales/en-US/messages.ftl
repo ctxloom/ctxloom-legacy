@@ -36,3 +36,5 @@ sessions-engine-mismatch = session { $harp } runs on { $engine }, and cannot be 
 sessions-engine-mismatch-fix = resume it without `--engine`, or with `--engine { $engine }`
 sessions-workspace-mismatch = session { $harp } works in workspace { $workspace }, and cannot be resumed in { $asked }: its engine keeps its conversation by where it works
 sessions-workspace-mismatch-fix = resume it without `--workspace`, or with `--workspace { $workspace }`
+sessions-rehost-budget-spent = session { $harp } was re-hosted { $recent } times in the last hour, and its limit is { $limit }: it is left ended
+sessions-rehost-budget-spent-fix = find why its host keeps being lost, then resume it with `ctxloom run --session { $harp }`

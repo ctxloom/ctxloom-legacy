@@ -740,6 +740,7 @@ pub struct Sweeper<E: Edge> {
     edge: Arc<E>,
     facts: Facts<E>,
     locks: Arc<dyn run_ports::RunLocks>,
+    releases: Option<Arc<dyn Releases>>,
 }
 
 /// A run a sweep ended, and how.
@@ -751,6 +752,34 @@ pub struct Swept {
     /// It had been started (`RunnerLost`), not only owed a runner
     /// (`LaunchOrphaned`).
     pub started: bool,
+    /// The project it ran for (its session's), empty until its mint is seen.
+    pub project_dir: String,
+    /// Where its runner worked, as its `RunnerStarted` recorded it (its
+    /// checkout, or the project); empty when it never started.
+    pub workspace: String,
+    /// What became of what it held, once it was ended.
+    pub released: Released,
+}
+
+/// What a sweep let go of for a lost run (OD-19): its checkout, released
+/// WIP-safe (a clean one removed, one holding work left, never forced).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Released {
+    /// It held nothing to let go (it worked in the project, or never
+    /// started), or nothing was asked to release it.
+    #[default]
+    Nothing,
+    /// Its checkout at the path is removed.
+    Removed(String),
+    /// Its checkout at `path` is left, and why.
+    Left { path: String, why: String },
+}
+
+/// What a sweep lets go of for each run it ended (OD-19): the lost run's
+/// checkout now, and in M10b its container (`<runtime> stop`/`rm`, hook 3).
+pub trait Releases: Send + Sync {
+    /// Let go of what the lost run `swept` held.
+    fn release(&self, swept: &Swept) -> Released;
 }
 
 impl<E: Edge> Sweeper<E> {
@@ -759,7 +788,15 @@ impl<E: Edge> Sweeper<E> {
             facts: Facts::new(Arc::clone(&edge)),
             edge,
             locks,
+            releases: None,
         }
+    }
+
+    /// The sweeper, letting go through `releases` of what each run it ends
+    /// held (OD-19: the daemon's start).
+    pub fn releasing(mut self, releases: Arc<dyn Releases>) -> Sweeper<E> {
+        self.releases = Some(releases);
+        self
     }
 
     /// Sweep `owed` (runs owed a runner that this process does not launch)
@@ -772,32 +809,54 @@ impl<E: Edge> Sweeper<E> {
     ) -> Result<Vec<Swept>, LaunchError> {
         let mut swept = Vec::new();
         for launch in owed.iter().filter(|launch| self.launcher_lost(launch)) {
-            if self
-                .orphaned(&launch.run, &launch.session, launch.incarnation, false)
-                .await?
-            {
-                swept.push(Swept {
+            let lost = Lost {
+                run: &launch.run,
+                session: &launch.session,
+                incarnation: launch.incarnation,
+                harp: "",
+                started: false,
+            };
+            if let Some(workspace) = self.orphaned(&lost).await? {
+                swept.push(self.released(Swept {
                     run: launch.run.clone(),
                     session: launch.session.clone(),
                     incarnation: launch.incarnation,
                     started: false,
-                });
+                    project_dir: String::new(),
+                    workspace,
+                    released: Released::Nothing,
+                }));
             }
         }
         for run in started.iter().filter(|run| self.owner_lost(run)) {
-            if self
-                .orphaned(&run.run, &run.session, run.incarnation, true)
-                .await?
-            {
-                swept.push(Swept {
+            let lost = Lost {
+                run: &run.run,
+                session: &run.session,
+                incarnation: run.incarnation,
+                harp: &run.harp,
+                started: true,
+            };
+            if let Some(workspace) = self.orphaned(&lost).await? {
+                swept.push(self.released(Swept {
                     run: run.run.clone(),
                     session: run.session.clone(),
                     incarnation: run.incarnation,
                     started: true,
-                });
+                    project_dir: run.project_dir.clone(),
+                    workspace,
+                    released: Released::Nothing,
+                }));
             }
         }
         Ok(swept)
+    }
+
+    /// `swept`, with what its release came to.
+    fn released(&self, mut swept: Swept) -> Swept {
+        if let Some(releases) = &self.releases {
+            swept.released = releases.release(&swept);
+        }
+        swept
     }
 
     /// Whether the launcher of `launch` (another process's: this one holds no
@@ -819,20 +878,18 @@ impl<E: Edge> Sweeper<E> {
         session || host
     }
 
-    /// End the run `run` of `session`'s `incarnation`, whose owner was found
-    /// gone, unless its stream, read again after the probe, shows its owner
-    /// got there first: its start (for a run owed a runner, unless `started`)
-    /// or its end. Whether it was ended here.
-    async fn orphaned(
-        &self,
-        run: &Uuid,
-        session: &str,
-        incarnation: u32,
-        started: bool,
-    ) -> Result<bool, LaunchError> {
+    /// End the run `lost` names, whose owner was found gone, unless its
+    /// stream, read again after the probe, shows its owner got there first:
+    /// its start (for a run owed a runner, unless `started`) or its end. A
+    /// started run's turns still open (the one in flight, and any queued
+    /// behind it) are ended failed first, `runner-lost` (S18): the run's end
+    /// would leave them open for good, and its owner is told of each. Where
+    /// its runner worked (its `RunnerStarted`'s workspace) when it was ended
+    /// here; none when it was not.
+    async fn orphaned(&self, lost: &Lost<'_>) -> Result<Option<String>, LaunchError> {
         let cover = angzarr_embedded::v1::Cover {
             domain: runs::RUN_DOMAIN.to_string(),
-            root: Some(run.clone()),
+            root: Some(lost.run.clone()),
             edition: None,
         };
         let pages = self
@@ -845,27 +902,93 @@ impl<E: Edge> Sweeper<E> {
         let since = pages.iter().any(|page| match &page.body {
             Some(angzarr_embedded::v1::event_page::Body::Event(any)) => {
                 any.type_url.ends_with(".RunEnded")
-                    || (!started && any.type_url.ends_with(".RunnerStartedRecorded"))
+                    || (!lost.started && any.type_url.ends_with(".RunnerStartedRecorded"))
             }
             _ => false,
         });
         if since {
-            return Ok(false);
+            return Ok(None);
         }
+        let state = folded(&pages);
         let failed = |e: runs_application::AppError| LaunchError::Fact {
             reason: e.to_string(),
         };
-        let ended = match started {
-            true => self.facts.runner_lost(run).await,
-            false => self.facts.launch_orphaned(run).await,
+        if lost.started {
+            self.turns_lost(lost, &state).await.map_err(failed)?;
+        }
+        let ended = match lost.started {
+            true => self.facts.runner_lost(lost.run).await,
+            false => self.facts.launch_orphaned(lost.run).await,
         };
         ended.map_err(failed)?;
         self.facts
-            .incarnation_ended(session, incarnation, ORPHANED)
+            .incarnation_ended(lost.session, lost.incarnation, ORPHANED)
             .await
-            .map(|_| true)
-            .map_err(failed)
+            .map_err(failed)?;
+        Ok(Some(
+            state
+                .runner_started
+                .map(|started| started.workspace)
+                .unwrap_or_default(),
+        ))
     }
+
+    /// Each turn `state` holds open, ended failed for runner loss, keyed as
+    /// its runner would have failed it (`turn:<run>:<turn>:failed`).
+    async fn turns_lost(
+        &self,
+        lost: &Lost<'_>,
+        state: &runs::RunState,
+    ) -> Result<(), runs_application::AppError> {
+        let session = uuid::Uuid::parse_str(lost.session).unwrap_or_default();
+        let who = Identity {
+            run: lost.run.clone(),
+            session: Uuid::from_bytes(*session.as_bytes()),
+            incarnation: lost.incarnation,
+            harp: lost.harp.to_string(),
+            depth: 0,
+        };
+        for open in &state.turns {
+            self.facts
+                .record(
+                    &who,
+                    RunnerFact::TurnFailed(runs::TurnFailed {
+                        turn: open.turn,
+                        class: runs::TurnFailureClass::RunnerLost,
+                        detail: LOST_TURN.to_string(),
+                        message_ids: open.message_ids.clone(),
+                    }),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+/// What a turn its run's host lost is failed with.
+const LOST_TURN: &str = "its host was lost while the turn was in flight";
+
+/// A run a sweep found its owner gone of.
+struct Lost<'a> {
+    run: &'a Uuid,
+    session: &'a str,
+    incarnation: u32,
+    harp: &'a str,
+    started: bool,
+}
+
+/// The run's state, folded from its `pages` as its aggregate folds them.
+fn folded(pages: &[angzarr_embedded::v1::EventPage]) -> runs::RunState {
+    use angzarr_embedded::Payload;
+    let mut state = runs::RunState::default();
+    for page in pages {
+        if let Some(angzarr_embedded::v1::event_page::Body::Event(any)) = &page.body {
+            if let Ok(event) = runs::RunEvent::from_any(any) {
+                runs::apply(&mut state, &event, page.sequence);
+            }
+        }
+    }
+    state
 }
 
 #[cfg(test)]

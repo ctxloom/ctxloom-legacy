@@ -70,6 +70,17 @@ enum TestVerb {
         /// The session's harp
         harp: String,
     },
+    /// Print every stream of the one store, as json: each event's type,
+    /// its payload's bytes, and what the record's readers ask of it
+    Record,
+    /// Plant a child's past re-hosts in the one store, each recorded over
+    /// the last minutes, its last host lost again
+    SeedRehosts {
+        /// The session's harp
+        harp: String,
+        /// How many re-hosts
+        count: u32,
+    },
 }
 
 /// What `ctxloom test seed-session` plants (see the acceptance tests).
@@ -234,6 +245,15 @@ pub(crate) fn run(
             let wiring = wiring().map_err(failed)?;
             let events = wiring.session_events(&harp).map_err(failed)?;
             output(writeln!(out, "{events}"))
+        }
+        TestVerb::Record => {
+            let wiring = wiring().map_err(failed)?;
+            let record = wiring.record().map_err(failed)?;
+            output(writeln!(out, "{record}"))
+        }
+        TestVerb::SeedRehosts { harp, count } => {
+            let wiring = wiring().map_err(failed)?;
+            wiring.seed_rehosts(&harp, count).map_err(failed)
         }
         TestVerb::OpenStore { project } => {
             let path = wiring()

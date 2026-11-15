@@ -815,10 +815,23 @@ whose OWN lock (`RunEnqueued.launcher_lock`, which `pending-launches` keeps
 on a started run) is free has lost its owner too: a host that held it for
 the run's life, as the daemon does for a child it hosts, is gone (T3, T18);
 a primary removes its file once its runner started, which proves nothing.
-Then the session's incarnation ended (`orphaned`). The sweep is ONE
+A child the daemon hosts holds its SESSION's lock too, for its life
+(slice 4 U6, the owner's ruling on U4: `ChildHomes::hold_session`, the
+platform's file lock at `<project>/.ctxloom/sessions/<harp>.lock`, its
+directory made; one another holds starts nothing, tried again later), so
+another launcher's sweep (a hosted one-shot's `Launcher::step`, in the
+daemon's own process) never takes a live hosted child for lost where a
+session lock file was left free by an earlier run. A started run's turns
+still open (the one in flight, any queued behind it) are ended FIRST,
+`TurnFailed{class: TURN_FAILURE_CLASS_RUNNER_LOST}` keyed
+`turn:<run>:<turn>:failed` (S18: after the run's end it records no turn's
+end), so its owner is told of each through the notice policy. Then the
+session's incarnation ended (`orphaned`). The sweep is ONE
 implementation, `run_launcher::Sweeper`: `Launcher::step` runs it over the
 runs it holds no order for, and the daemon's launcher runs it as its first
-step (below). Every
+step (below), `releasing` what each lost run held (`Releases`, OD-19: its
+checkout now; a container in M10b): its `Swept` names the run's project and
+the workspace its `RunnerStarted` recorded, and `released` what came of it. Every
 run's end, or abandon after its mint, tells its session
 `RecordIncarnationEnded` (`runner-exit`, `launch-failed`; keyed
 `incarnation-ended:<session>:<n>`), so no incarnation stays open; nothing
@@ -1169,11 +1182,54 @@ run's facts. Its ports: the engine registry (`HostedEngine`, an `Engine`
 beside its `ChildEngine`, resolved by NAME; the wiring's `hosted_engines(wiring, program)`
 composes claude and opencode, and nothing in the launcher names an adapter),
 `ChildPlans` (the child's project's dry run on its own engine, and her git identity there), `HandOffs`,
-`ChildHomes`, `Ears` (the root pumps each child's observations off a thread:
+`ChildHomes` (its session directories, and its session's lock),
+`ChildWorkspaces` (`Daemon::placing`: the project's worktree-git
+workspaces), `Ears` (the root pumps each child's observations off a thread:
 no thread in the core), `RunLocks`, `TokenSource` and the edge.
 `ctxloom-wiring/src/daemon/serve.rs` only composes it, with the single-instance lock,
 the runtime, the store and its core, the listener, the discovery file and
-the pace.
+the pace. The start's sweep runs BEFORE the daemon is advertised (its
+discovery file published), so the first command that finds a new daemon
+finds the record whole (T18).
+
+SWEEP, RE-HOST AND T21 (slice 4 U6; T18, T19, S18, S47, OD-19). The start's
+sweep releases a lost run's checkout WIP-safe (`LostCheckouts`: only one
+under ctxloom's own `<home>/.ctxloom/worktrees/`, never the project; the
+port's never-forced `remove`, worktree-git's, never a prune; one holding
+work is left and said in the log). A CHILD whose last incarnation was lost
+(the board's `last_end` is `orphaned`), not closed, stopped or owed another,
+with a native session bound, is RE-HOSTED by the plan's step
+`rehost:<child>:<n+1>` (`daemon-application`'s `rehost.rs`): the sessions
+command `RehostSession{recent_rehosts, cause}` owes `IncarnationOwed{n+1,
+rehost}`, its evidence the daemon's count of the session's own `rehost`
+owes recorded in the hour before the loss (the last `IncarnationEnded`'s
+recorded instant: decide reads no clock), refused
+`sessions-rehost-budget-spent` (`RehostBudgetSpent`) at
+`sessions::REHOST_BUDGET` (60); then the child stays ended (its run
+runner-lost) and its owner is told, `notice:<child>:<n>:rehost-budget`. A
+drain's hand-over is `cause: drain` (s4-Q5), never counted nor refused for
+the budget (the drain itself is U8's). The re-hosted incarnation is the
+plan's ordinary start (`Step::Start.resume`, the session's bound native id
+from its second incarnation on: claude `--resume`), its environment read
+again from its hand-off (T6) and its settings written again from the
+user's config (T21). Never a one-shot (S8(a)) and never a primary. A hosted
+child FOLLOWS ITS AGENT'S `workspace` (owner s4-Q11): its axis is planned
+at its launch and recorded at its mint (`MintSession.workspace`), a re-host
+re-enters the axis its session was minted on, its checkout is
+`isolation_ports::session_worktrees` under ctxloom's home for its agent,
+placed by the one launch, `RunnerStarted.workspace` is where it works, and
+at its exit the checkout is let go WIP-safe (the files the launch placed
+taken out, then the port's `remove`; one holding work left and said with
+its branch). Under `test-support` a daemon is killed outright at a step by
+the switch file `~/.ctxloom/daemon/test-die-at` (its word: `enqueued`,
+`minted`, `started`, `turn`, `hook`, `discovery`; taken by the daemon that
+finds it): the core's edge tells each book it applied
+(`EmbeddedEdge::telling`) and the daemon aborts once one of the step's is
+applied, before it is answered; `turn` is also taken by the loop while a
+hosted child's turn is in flight (`Daemon::in_flight`), and `discovery`
+while its discovery file is written. `ctxloom test record` prints every
+stream of the one store, and `ctxloom test seed-rehosts <harp> <n>` plants
+a child's past re-hosts.
 
 The daemon has ONE principal, the user (slice 2). At each start it mints
 the user bearer (T12: 256 bits, `credentials`' `OsTokenSource`) and a new
