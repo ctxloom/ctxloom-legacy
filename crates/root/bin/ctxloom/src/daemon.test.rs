@@ -1269,6 +1269,22 @@ fn a_daemon_whose_start_up_catch_up_fails_serves_and_says_so_until_one_succeeds(
     let log = world.log();
     assert!(log.contains("the start-up catch-up failed"), "{log}");
     assert!(log.contains("the store is made to fail"), "{log}");
+    // OD-55: said from the answers the command already had, never asked
+    // for: the daemon served its calls and no `GetDaemon` among them.
+    assert!(log.contains("served /ctxloom.v1.Ctxloom/"), "{log}");
+    assert!(
+        !log.contains("served /ctxloom.v1.Ctxloom/GetDaemon"),
+        "the command asked GetDaemon:\n{log}"
+    );
+    assert_eq!(
+        listed
+            .stderr
+            .matches("the daemon's start-up catch-up failed")
+            .count(),
+        1,
+        "said once a process: {}",
+        listed.said()
+    );
     let status = world.ok(&["daemon", "status", "--format", "json"]);
     let warnings = status["warnings"].as_array().cloned().unwrap_or_default();
     assert_eq!(warnings.len(), 1, "{status}");

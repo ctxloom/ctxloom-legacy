@@ -21,9 +21,15 @@ const BEARER: &str = "1111111111111111111111111111111111111111111111111111111111
 #[derive(Default)]
 struct Scripted {
     release: Mutex<Option<mpsc::Receiver<()>>>,
+    /// The daemon's standing warnings (OD-55).
+    warnings: Vec<v1::Notice>,
 }
 
 impl Calls for Scripted {
+    fn warnings(&self) -> Vec<v1::Notice> {
+        self.warnings.clone()
+    }
+
     fn get_daemon(&self) -> Answer<'_, v1::Daemon> {
         let waiting = self.release.lock().unwrap().take();
         Box::pin(async move {
@@ -410,6 +416,7 @@ async fn a_blocked_use_case_holds_no_async_worker() {
     let (release, released) = mpsc::channel();
     let calls = Arc::new(Scripted {
         release: Mutex::new(Some(released)),
+        ..Scripted::default()
     });
     let channel = serve(calls).await;
     let mut blocked = CtxloomClient::new(channel.clone());
@@ -651,4 +658,137 @@ async fn the_hand_offs_are_served() {
         .unwrap()
         .into_inner();
     assert_eq!(deleted.name, "projects/calm-otter/handOffs/c1");
+}
+
+/// Scripted use cases whose daemon stands warning of `codes`, each a
+/// notice with one arg.
+fn warning(codes: &[&str]) -> Arc<Scripted> {
+    Arc::new(Scripted {
+        warnings: codes
+            .iter()
+            .map(|code| v1::Notice {
+                code: code.to_string(),
+                args: vec![v1::NeedArg {
+                    name: "why".to_string(),
+                    value: format!("{code} why"),
+                }],
+                text: String::new(),
+            })
+            .collect(),
+        ..Scripted::default()
+    })
+}
+
+/// The warnings `metadata` carries, decoded, in order.
+fn warnings_in(metadata: &tonic::metadata::MetadataMap) -> Vec<v1::Notice> {
+    metadata
+        .get_all_bin(daemon_proto::WARNING_METADATA)
+        .iter()
+        .map(|value| v1::Notice::decode(value.to_bytes().unwrap()).unwrap())
+        .collect()
+}
+
+// OD-55: every answer carries the daemon's standing warnings as response
+// metadata, in order, each its code and args: an answer, a refusal, a
+// failure and a watch alike, so no command calls again to learn them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn every_answer_carries_the_standing_warnings() {
+    let codes = ["daemon-api-start-up-incomplete", "daemon-api-handing-over"];
+    let mut client = CtxloomClient::new(serve(warning(&codes)).await);
+    let said = |notices: Vec<v1::Notice>| -> Vec<(String, String)> {
+        notices
+            .into_iter()
+            .map(|n| (n.code, n.args[0].value.clone()))
+            .collect()
+    };
+    let expected: Vec<(String, String)> = codes
+        .iter()
+        .map(|code| (code.to_string(), format!("{code} why")))
+        .collect();
+    let answered = client
+        .get_session(with_bearer(v1::GetSessionRequest::default(), BEARER))
+        .await
+        .unwrap();
+    assert_eq!(said(warnings_in(answered.metadata())), expected);
+    let refused = client
+        .stop_daemon(with_bearer(v1::StopDaemonRequest::default(), BEARER))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::FailedPrecondition);
+    assert_eq!(said(warnings_in(refused.metadata())), expected);
+    let failed = client
+        .resolve_project(with_bearer(v1::ResolveProjectRequest::default(), BEARER))
+        .await
+        .unwrap_err();
+    assert_eq!(said(warnings_in(failed.metadata())), expected);
+    let watched = client
+        .watch_run(with_bearer(v1::WatchRunRequest::default(), BEARER))
+        .await
+        .unwrap();
+    assert_eq!(said(warnings_in(watched.metadata())), expected);
+}
+
+// A daemon with no standing warning attaches nothing; a caller that is not
+// the user is told none of them (the gate answers first).
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn no_warning_or_no_user_bearer_carries_none() {
+    let mut client = CtxloomClient::new(serve(Arc::default()).await);
+    let answered = client
+        .get_session(with_bearer(v1::GetSessionRequest::default(), BEARER))
+        .await
+        .unwrap();
+    assert!(answered
+        .metadata()
+        .get_bin(daemon_proto::WARNING_METADATA)
+        .is_none());
+    let mut client = CtxloomClient::new(serve(warning(&["daemon-api-start-up-incomplete"])).await);
+    let status = client
+        .get_session(Request::new(v1::GetSessionRequest::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(status.code(), Code::Unauthenticated);
+    assert!(warnings_in(status.metadata()).is_empty());
+}
+
+// Under test-support the daemon tells its log each call made of it: the
+// path of each request, as it arrives, answered as ever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_told_service_tells_each_requests_path() {
+    let token = run_token();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let told = Arc::new(Mutex::new(Vec::<String>::new()));
+    let tell = Arc::clone(&told);
+    let service = crate::telling(
+        crate::service(Arc::<Scripted>::default(), UserGate::new(&token)),
+        Arc::new(move |path: &str| tell.lock().unwrap().push(path.to_string())),
+    );
+    tokio::spawn(
+        Server::builder()
+            .add_service(service)
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+    );
+    let channel = Channel::from_shared(format!("http://{addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let mut client = CtxloomClient::new(channel);
+    let daemon = client
+        .get_daemon(with_bearer(v1::GetDaemonRequest::default(), BEARER))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(daemon.pid, 7);
+    client
+        .get_session(with_bearer(v1::GetSessionRequest::default(), BEARER))
+        .await
+        .unwrap();
+    assert_eq!(
+        *told.lock().unwrap(),
+        [
+            "/ctxloom.v1.Ctxloom/GetDaemon",
+            "/ctxloom.v1.Ctxloom/GetSession"
+        ]
+    );
 }

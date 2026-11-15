@@ -186,6 +186,13 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("WatchRun")) })
     }
+    /// The daemon's standing warnings (OD-52's start-up, OD-54's
+    /// hand-over), as they stand now: what its edge attaches to every
+    /// answer it gives (owner ruling OD-55), so no command asks for them.
+    /// An edge with none, none.
+    fn warnings(&self) -> Vec<v1::Notice> {
+        Vec::new()
+    }
 }
 
 /// A call this edge does not serve, failed.

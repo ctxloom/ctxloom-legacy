@@ -235,6 +235,19 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       And the hosted engines were ended cleanly before the daemon exited
       And the daemon has exited, and nothing says it serves
 
+    Scenario: A daemon whose start-up catch-up fails still serves, and says so until a catch-up succeeds
+      # new: OD-52 (2026-11-15)
+      Given an initialized ctxloom project
+      And the daemon's start-up catch-up will fail with "the store is made to fail"
+      When I run "ctxloom session list"
+      Then the command succeeds
+      And the output contains "the daemon's start-up catch-up failed: the store is made to fail"
+      And the output contains "may be missing events"
+      And "ctxloom daemon status --format json" has a warning with code "daemon-api-start-up-incomplete"
+      When the cause of the failure is gone
+      Then within a few seconds "ctxloom daemon status" has no warning
+      And "ctxloom session list" says nothing of the start-up
+
   Rule: An idle daemon exits by itself
 
     Scenario: A daemon with nothing to do exits after its idle time

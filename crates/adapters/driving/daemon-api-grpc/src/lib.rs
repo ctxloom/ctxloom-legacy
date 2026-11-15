@@ -38,7 +38,7 @@ use runs_application::UserGate;
 use tonic::body::Body;
 use tonic::codegen::tokio_stream::wrappers::ReceiverStream;
 use tonic::codegen::{http, BoxFuture, BoxStream, Bytes, Service};
-use tonic::metadata::MetadataMap;
+use tonic::metadata::{MetadataMap, MetadataValue};
 use tonic::server::NamedService;
 use tonic::{Code, Request, Response, Status};
 
@@ -51,11 +51,112 @@ pub use daemon_proto::service::ctxloom_server::SERVICE_NAME;
 /// The service, ready to be added to a server: `calls` behind `gate`,
 /// every request admitted before it reaches a handler or the generated
 /// UNIMPLEMENTED.
-pub fn service(calls: Arc<dyn Calls>, gate: UserGate) -> Gated<CtxloomServer<Served>> {
+pub fn service(calls: Arc<dyn Calls>, gate: UserGate) -> Gated<Warned<CtxloomServer<Served>>> {
     Gated {
-        inner: CtxloomServer::new(Served { calls }),
+        inner: Warned {
+            inner: CtxloomServer::new(Served {
+                calls: Arc::clone(&calls),
+            }),
+            calls,
+        },
         gate: Arc::new(gate),
     }
+}
+
+/// A gRPC service `inner` whose every answer carries the daemon's standing
+/// warnings (owner ruling OD-55) as response metadata
+/// ([`daemon_proto::WARNING_METADATA`], one prost-encoded `Notice` per
+/// value), a refusal's or failure's status too: a command learns them from
+/// the answer it already has, never by a call of its own. Behind [`Gated`],
+/// so a caller that is not the user is told none. The warnings are read
+/// once the answer is made, so a drain's answer carries its hand-over.
+#[derive(Clone)]
+pub struct Warned<S> {
+    inner: S,
+    calls: Arc<dyn Calls>,
+}
+
+impl<S: NamedService> NamedService for Warned<S> {
+    const NAME: &'static str = S::NAME;
+}
+
+impl<S> Service<http::Request<Body>> for Warned<S>
+where
+    S: Service<http::Request<Body>, Response = http::Response<Body>, Error = Infallible>
+        + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = http::Response<Body>;
+    type Error = Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: http::Request<Body>) -> Self::Future {
+        let calls = Arc::clone(&self.calls);
+        // As [`Gated`]: the clone made ready is the one called.
+        let fresh = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, fresh);
+        Box::pin(async move {
+            let mut response = inner.call(request).await?;
+            warn(response.headers_mut(), &calls.warnings());
+            Ok(response)
+        })
+    }
+}
+
+/// A gRPC service `inner` that tells `tell` each request's path (its
+/// method, `/ctxloom.v1.Ctxloom/GetDaemon`) as it arrives: the daemon's
+/// own record of the calls made of it, for a test under test-support to
+/// count them (OD-55: no command asks `GetDaemon` for the warnings).
+#[derive(Clone)]
+pub struct Told<S> {
+    inner: S,
+    tell: Arc<dyn Fn(&str) + Send + Sync>,
+}
+
+/// `inner`, each request's path told to `tell` ([`Told`]).
+pub fn telling<S>(inner: S, tell: Arc<dyn Fn(&str) + Send + Sync>) -> Told<S> {
+    Told { inner, tell }
+}
+
+impl<S: NamedService> NamedService for Told<S> {
+    const NAME: &'static str = S::NAME;
+}
+
+impl<S> Service<http::Request<Body>> for Told<S>
+where
+    S: Service<http::Request<Body>, Response = http::Response<Body>, Error = Infallible>,
+{
+    type Response = http::Response<Body>;
+    type Error = Infallible;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: http::Request<Body>) -> Self::Future {
+        (self.tell)(request.uri().path());
+        self.inner.call(request)
+    }
+}
+
+/// `warnings` added to `headers`, one [`daemon_proto::WARNING_METADATA`]
+/// value each, in order.
+pub fn warn(headers: &mut http::HeaderMap, warnings: &[v1::Notice]) {
+    let mut metadata = MetadataMap::new();
+    for warning in warnings {
+        metadata.append_bin(
+            daemon_proto::WARNING_METADATA,
+            MetadataValue::from_bytes(&warning.encode_to_vec()),
+        );
+    }
+    let _ = (headers, metadata);
 }
 
 /// The `Ctxloom` service's handlers.

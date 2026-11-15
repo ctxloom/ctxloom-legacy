@@ -16,7 +16,7 @@ use run_ports::{Edge, Unserved};
 use session_index::{SessionIndex, SessionIndexes, State};
 use sessions::{MintSession, Origin};
 
-use super::{About, Api, Harps, Hosting, Parts, SessionStates};
+use super::{About, Api, Calls, Harps, Hosting, Parts, SessionStates};
 pub(crate) use crate::destroy::tests::FakePlaces;
 use crate::{ApiError, ApiRefusal};
 
@@ -368,6 +368,28 @@ async fn get_daemon_warns_while_its_start_up_catch_up_has_failed() {
     // Cleared once a later catch-up succeeded.
     *f.hosting.start_up.lock().unwrap() = None;
     assert!(f.api.get_daemon().await.unwrap().warnings.is_empty());
+}
+
+// OD-55: what the edge attaches to every answer is the daemon's standing
+// warnings as GetDaemon says them: the start-up's and the hand-over's, in
+// that order, and none once neither stands.
+#[tokio::test]
+async fn the_calls_warnings_are_the_daemons_standing_ones() {
+    let f = hosting_a_child();
+    assert!(Calls::warnings(&f.api).is_empty());
+    let why = "the board's catch-up: the store is locked".to_string();
+    *f.hosting.start_up.lock().unwrap() = Some(why.clone());
+    f.api.stop_daemon(drain_for("v0.2.0-b")).await.unwrap();
+    let standing = Calls::warnings(&f.api);
+    assert_eq!(standing, f.api.get_daemon().await.unwrap().warnings);
+    let codes: Vec<&str> = standing.iter().map(|n| n.code.as_str()).collect();
+    assert_eq!(
+        codes,
+        ["daemon-api-start-up-incomplete", "daemon-api-handing-over"]
+    );
+    *f.hosting.start_up.lock().unwrap() = None;
+    f.hosting.hosted.lock().unwrap().clear();
+    assert!(Calls::warnings(&f.api).is_empty());
 }
 
 // StopDaemon with nothing hosted: asked to drain.
