@@ -61,7 +61,7 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
   Surfaces covered here:
 
     ctxloom daemon status            (whether one serves, where, and what it hosts)
-    ctxloom daemon stop [--even-if-live]
+    ctxloom daemon stop [--even-if-live | --drain]
 
   `ctxloom daemon serve` is what a client starts; it is hidden, as the hook
   commands are, because nobody types it.
@@ -234,6 +234,45 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       Then the command succeeds
       And the hosted engines were ended cleanly before the daemon exited
       And the daemon has exited, and nothing says it serves
+
+  Rule: A daemon asked to drain hands what it hosts over, and the next daemon resumes it
+
+    Scenario: A command of a newer version drains an older daemon, which hands its children over
+      # new: U8 (s4-Q4, OD-3 extended): a newer client drains an older daemon.
+      Given an initialized ctxloom project
+      And a ctxloom daemon of an older version is serving for this home, hosting a child "brisk-copper-moth"
+      And a child "brisk-copper-moth" that is open and idle
+      When I run "ctxloom session list --format json"
+      Then the command exits with code 20
+      And the error names "daemon-api-draining", both versions, and "brisk-copper-moth"
+      And the older daemon has exited, and the child's hand-off is kept
+      When I run "ctxloom session send brisk-copper-moth wake 'next task'"
+      Then the command succeeds
+      And the child was re-hosted resuming its own conversation, and takes the turn
+
+    Scenario: Stopping with --drain hands what the daemon hosts over, and the next daemon resumes it
+      # new: U8b (OD-54 (1), (3)): `daemon stop --drain`, a busy child steered.
+      Given an initialized ctxloom project
+      And a ctxloom daemon is serving for this home, hosting a child "brisk-copper-moth" with a turn in flight
+      When I run "ctxloom daemon stop --drain"
+      Then the command succeeds
+      And it warns "daemon-api-handing-over", naming "brisk-copper-moth"
+      And the child was steered with "ctxloom is being upgraded: finish the step you are on and end your turn; you will be resumed in this conversation."
+      And once its turn ended the daemon has exited, and nothing says it serves
+      When I run "ctxloom session show brisk-copper-moth"
+      Then the child is hosted again, resuming its own conversation
+
+    Scenario: A child still busy after the hand-over period is handed over anyway, its turn cut
+      # new: U8b (OD-54 (2)): the hand-over's five minutes.
+      Given a ctxloom daemon is serving for this home, hosting a child "brisk-copper-moth" that does not end its turn
+      When I run "ctxloom daemon stop --drain"
+      Then after five minutes the child's turn in flight was cut and the daemon has exited
+      And the next daemon hosts the child again, resuming its own conversation
+
+    Scenario: Stopping with both --drain and --even-if-live is refused
+      # new: U8b (OD-54 (3)): two ways of stopping, not both.
+      When I run "ctxloom daemon stop --drain --even-if-live"
+      Then the command exits with code 20
 
   Rule: An idle daemon exits by itself
 

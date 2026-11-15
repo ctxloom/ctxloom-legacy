@@ -1447,3 +1447,66 @@ fn a_stop_both_draining_and_even_if_live_is_refused() {
     let refused = world.run(&["daemon", "stop", "--drain", "--even-if-live"]);
     assert_eq!(refused.code, 20, "{}", refused.said());
 }
+
+/// A one-shot's turn that works until it is stopped (bounded, so a lost
+/// test ends anyway): `working` beside it once it works.
+const WORKING_ONE_SHOT: &str = r#"here=$(dirname "$0")
+: > "$here/working"
+i=0
+while [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+"#;
+
+// U8c (owner, 2026-11-15): a one-shot the draining daemon hosts, still
+// running once the hand-over's period has passed (here two seconds), is
+// stopped as `daemon stop --even-if-live` stops one: its engine asked to
+// stop (SIGTERM), its caller exiting 143 with `run-application-stopped`
+// naming SIGTERM; the daemon says so in its log and exits.
+#[test]
+fn a_one_shot_still_running_after_the_period_is_stopped() {
+    let world = World::new();
+    let dir = world.project.home().join("one-shot");
+    files::put_program(dir.join("claude"), WORKING_ONE_SHOT);
+    world.project.write_home(
+        ".ctxloom/config.yaml",
+        &format!(
+            "schema_version: 9\neditor:\n  command: \"true\"\nengines:\n  claude-code:\n    command: {}\n",
+            dir.join("claude").display()
+        ),
+    );
+    let mut daemon = Killed(world.project.start_with(
+        &ENV,
+        &[
+            "daemon",
+            "serve",
+            "--idle-seconds",
+            "60",
+            "--hand-over-seconds",
+            "2",
+        ],
+    ));
+    world.until("the daemon serving", |w| w.serving().then_some(()));
+    let mut env = ENV.to_vec();
+    env.push(("ANTHROPIC_API_KEY", "launchers-key")); // gitleaks:allow
+    let one_shot = world
+        .project
+        .start_with(&env, &["run", "--one-shot", "work"]);
+    world.until("the one-shot working", |_| {
+        files::exists(dir.join("working")).then_some(())
+    });
+    let drained = world.run(&["daemon", "stop", "--drain", "--format", "json"]);
+    assert_eq!(drained.code, 0, "{}\n{}", drained.said(), world.log());
+    let ran = super::Ran::of(one_shot.wait_with_output().expect("the one-shot ends"));
+    assert_eq!(ran.code, 143, "{}\n{}", ran.said(), world.log());
+    assert!(ran.stderr.contains("stopped by SIGTERM"), "{}", ran.said());
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "the daemon stopped its one-shot and exited; its log:\n{}",
+        world.log()
+    );
+    let log = world.log();
+    assert!(
+        log.contains("a one-shot still running after 2s: its engine stopped (SIGTERM)"),
+        "{log}"
+    );
+}
