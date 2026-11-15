@@ -648,6 +648,27 @@ fn a_child_whose_host_was_lost_is_rehosted_as_its_next_incarnation() {
     assert_eq!(owner, &at_owner());
 }
 
+// s4-Q4, s4-Q5: a child a draining daemon handed over (its incarnation
+// ended `drained`) is re-hosted as its next incarnation as a lost one is,
+// but for the cause `drain`, which its re-host budget never counts; a lost
+// one's cause is `rehost`.
+#[test]
+fn a_child_a_draining_daemon_handed_over_is_rehosted_for_the_cause_drain() {
+    let cause_of = |steps: &[Step]| match steps {
+        [Step::Rehost { cause, at, .. }] if at.incarnation == 2 => cause.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        cause_of(&ended_child(crate::ENDED_DRAINED).plan()),
+        sessions::DRAINED
+    );
+    assert_eq!(
+        cause_of(&ended_child("orphaned").plan()),
+        sessions::REHOSTED
+    );
+    assert_eq!(crate::ENDED_DRAINED, "drained");
+}
+
 fn at_owner() -> SessionRef {
     at(OWNER)
 }

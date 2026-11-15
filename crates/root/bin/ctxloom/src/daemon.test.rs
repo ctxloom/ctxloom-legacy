@@ -21,14 +21,15 @@ use super::library::Project;
 /// The fake claude (engine-claude's child stub): an init, the echo of each
 /// message given, a result; a `/clear` rotates its session id (S1, then S2)
 /// as claude's does. Beside it: every line it is given, after the session id
-/// it was given under, in `input.log`; its environment in `env-<harp>.log`
-/// and its context file in `context-<harp>.log`; `exited` once its input
+/// it was given under, in `input.log`; its environment in `env-<harp>.log`,
+/// each start's arguments a line of `args-<harp>.log`, and its context file in `context-<harp>.log`; `exited` once its input
 /// ends (the daemon's end closes it).
 const STUB: &str = r#"#!/bin/sh
 here=$(dirname "$0")
 harp=${CTXLOOM_SESSION##*/}
 sid=S1
 env | sort > "$here/env-$harp.log"
+printf '%s\n' "$*" >> "$here/args-$harp.log"
 ctx=""
 prev=""
 for a in "$@"; do
@@ -1124,4 +1125,96 @@ fn a_hosted_childs_settings_are_read_at_its_launch_from_its_launchers_place() {
     assert!(settings.contains("hers-at-launch"), "{settings}");
     assert!(!settings.contains("the-default-place"), "{settings}");
     let _ = world.run(&["daemon", "stop", "--even-if-live"]);
+}
+
+/// A stamp of an older ctxloom (test-support's `CTXLOOM_TEST_STAMP`): older
+/// than VERSION's, whatever this binary is built as.
+const OLDER_STAMP: &str = "v0.0.1-abc0";
+
+// s4-Q4 (OD-3 extended), end to end: a daemon of an older version hosting
+// an idle child is met by a command of this (newer) version. That command
+// asks it to drain and is refused meanwhile, `daemon-api-draining` (exit
+// 20), naming both stamps and the child; the old daemon ends the child
+// (its hand-off kept) and exits; the next command starts this version's
+// daemon, which re-hosts the child (cause `drain`) resuming its own
+// conversation, and the child takes its next turn there.
+#[test]
+fn a_newer_command_drains_an_older_daemon_which_hands_its_child_over() {
+    let world = World::new();
+    let older = [("CTXLOOM_TEST_STAMP", OLDER_STAMP)];
+    let seeded = world.run_also(&older, &["test", "seed-session", OWNER]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let mut env = ENV.to_vec();
+    env.extend_from_slice(&older);
+    let mut daemon = Killed(
+        world
+            .project
+            .start_with(&env, &["daemon", "serve", "--idle-seconds", "60"]),
+    );
+    let path = world
+        .project
+        .home()
+        .join(".ctxloom/daemon/daemon.discovery");
+    world.until("the older daemon serving", |_| {
+        let found = run_ports::Discovery::decode(&files::read_bytes(&path).ok()?)?;
+        (found.stamp == OLDER_STAMP).then_some(())
+    });
+    let launched = world.run_also(
+        &[older[0], ("ANTHROPIC_API_KEY", "launchers-key")], // gitleaks:allow
+        &["session", "launch", OWNER, "--name", CHILD, "first task"],
+    );
+    assert_eq!(launched.code, 0, "{}\n{}", launched.said(), world.log());
+    let shown_by_older = |harp: &str| {
+        let ran = world.run_also(&older, &["session", "show", harp, "--format", "json"]);
+        assert_eq!(ran.code, 0, "{}\n{}", ran.said(), world.log());
+        ran.json()
+    };
+    world.until("the child's first turn ended", |_| {
+        let idle = shown_by_older(OWNER)["pending"]
+            .as_array()
+            .is_some_and(|pending| !pending.is_empty());
+        let bound = shown_by_older(CHILD)["native_session"] == "S1";
+        (idle && bound).then_some(())
+    });
+
+    let refused = world.run(&["session", "show", CHILD, "--format", "json"]);
+    assert_eq!(refused.code, 20, "{}\n{}", refused.said(), world.log());
+    for part in ["daemon-api-draining", OLDER_STAMP, CHILD] {
+        assert!(refused.stderr.contains(part), "{part}: {}", refused.said());
+    }
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "the older daemon handed its child over and exited; its log:\n{}",
+        world.log()
+    );
+    assert!(
+        files::exists(world.stub_dir.join("exited")),
+        "the child ended"
+    );
+    let handed = world.project.home().join(".ctxloom/daemon/launch");
+    assert_eq!(files::children(&handed).len(), 1, "its hand-off is kept");
+
+    // The next command starts this version's daemon, which re-hosts the
+    // child, resuming its own conversation.
+    let started = world.until("the child re-hosted", |w| {
+        w.show(CHILD);
+        let args = w.of("args", CHILD)?;
+        let lines: Vec<String> = args.lines().map(str::to_string).collect();
+        (lines.len() == 2).then_some(lines)
+    });
+    assert!(!started[0].contains("--resume"), "{started:?}");
+    assert!(started[1].contains("--resume S1"), "{started:?}");
+    world.ok(&[
+        "session",
+        "send",
+        CHILD,
+        "wake",
+        "second task",
+        "--id",
+        "m2",
+    ]);
+    world.until("its next turn, on the new daemon", |w| {
+        w.input().contains("second task").then_some(())
+    });
 }

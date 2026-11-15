@@ -2004,3 +2004,175 @@ async fn a_hosted_childs_turn_is_in_flight_until_it_ends() {
     }
     assert!(world.daemon.in_flight(), "its turn is in flight");
 }
+
+// ---------------------------------------------------------------- the drain (s4-Q4)
+
+/// The incarnations `session` ended, with their causes.
+async fn ended(world: &World, session: &str) -> Vec<(u32, String)> {
+    world
+        .session_events(session)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::IncarnationEnded(ended) => Some((ended.incarnation, ended.cause)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A hosted child bound to its engine's session `n1`, its hand-off in
+/// `files`, with no turn in flight.
+async fn idle_bound_child(files: &Files) -> World {
+    let mut world = hosting_from(files, &ForAgent::default()).await;
+    world.say(ChildObservation::Started {
+        native_id: "n1".to_string(),
+    });
+    world.tick().await;
+    assert!(!world.daemon.in_flight(), "idle");
+    world
+}
+
+/// The child's exit, as its engine says it.
+fn exited() -> ChildObservation {
+    ChildObservation::Exited {
+        exit: Exit {
+            code: Some(0),
+            signal: None,
+        },
+        detail: String::new(),
+    }
+}
+
+/// A wake to the child.
+fn wake(id: &str) -> sessions::SendMessage {
+    sessions::SendMessage {
+        message_id: id.to_string(),
+        urgency: Urgency::Wake,
+        text: format!("text of {id}"),
+        requester: None,
+        supported: vec![Urgency::Inform, Urgency::Wake, Urgency::Steer],
+    }
+}
+
+// s4-Q4 (OD-3 extended): a daemon handing over ends an idle child at once;
+// at its exit its incarnation ends `drained` (not `runner-exit`), its
+// hand-off is KEPT for the daemon that re-hosts it, and, hosting nothing
+// more, it may exit.
+#[tokio::test]
+async fn a_draining_daemon_ends_an_idle_child_at_once_keeping_its_hand_off() {
+    let files = Files::default();
+    let mut world = idle_bound_child(&files).await;
+    world.daemon.hand_over();
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "ended at once");
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "ended once");
+    world.say(exited());
+    world.tick().await;
+    assert_eq!(ended(&world, CHILD).await, [(1, "drained".to_string())]);
+    assert_eq!(world.daemon.hosting(), 0, "it hosts nothing more");
+    assert!(
+        files.deleted.lock().unwrap().is_empty(),
+        "its hand-off kept"
+    );
+    assert!(files.kept.lock().unwrap().contains_key(CHILD));
+}
+
+// s4-Q4: a busy child is not cut: it is ended at its turn's end, and only
+// then.
+#[tokio::test]
+async fn a_draining_daemon_ends_a_busy_child_at_its_turns_end() {
+    let files = Files::default();
+    let mut world = idle_bound_child(&files).await;
+    world.handle(CHILD, wake("m-1")).await;
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert!(world.daemon.in_flight(), "its turn is in flight");
+    world.daemon.hand_over();
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 0, "not cut");
+    world.say(ChildObservation::TurnEnded {
+        message_ids: vec!["m-1".to_string()],
+        outcome: TurnOutcome::Answered {
+            answer: "done".to_string(),
+            native_id: Some("n1".to_string()),
+        },
+    });
+    for _ in 0..2 {
+        world.tick().await;
+    }
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "at its end");
+    world.say(exited());
+    world.tick().await;
+    assert_eq!(ended(&world, CHILD).await, [(1, "drained".to_string())]);
+}
+
+// s4-Q4: a daemon handing over delivers nothing more: a wake sent to an
+// idle child stays pending (the daemon that re-hosts it delivers it), and
+// the child is ended, not given a turn.
+#[tokio::test]
+async fn a_draining_daemon_delivers_no_message() {
+    let files = Files::default();
+    let mut world = idle_bound_child(&files).await;
+    world.daemon.hand_over();
+    world.handle(CHILD, wake("m-late")).await;
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert!(
+        world.engine.asked.lock().unwrap().sent.is_empty(),
+        "nothing fed"
+    );
+    let queued = world
+        .run_events()
+        .await
+        .into_iter()
+        .any(|event| matches!(event, RunEvent::TurnQueued(_)));
+    assert!(!queued, "no turn queued");
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1);
+}
+
+// s4-Q4, s4-Q5: the daemon after a drain re-hosts the child it handed
+// over as its next incarnation, cause `drain`, resuming its own
+// conversation.
+#[tokio::test]
+async fn the_next_daemon_rehosts_a_drained_child_resuming_its_conversation() {
+    let files = Files::default();
+    let mut world = idle_bound_child(&files).await;
+    world.daemon.hand_over();
+    world.tick().await;
+    world.say(exited());
+    world.tick().await;
+    world.daemon = restarted(&world, LockProbe::Free);
+    world
+        .daemon
+        .start_up(&world.edge.store, world.edge.catalog())
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert_eq!(
+        owed(&world).await,
+        [(1, "first".to_string()), (2, "drain".to_string())]
+    );
+    let started = world.engine.started.lock().unwrap().clone();
+    assert_eq!(started.len(), 2, "started again");
+    assert_eq!(started[1].resume.as_deref(), Some("n1"));
+    assert_eq!(world.daemon.hosting(), 1);
+}
+
+// `daemon stop --even-if-live` (the escalation) ends a child as before: its
+// incarnation ends `runner-exit`, and no daemon re-hosts it.
+#[tokio::test]
+async fn a_child_ended_by_an_escalation_is_not_handed_over() {
+    let files = Files::default();
+    let mut world = idle_bound_child(&files).await;
+    world.daemon.end_all();
+    world.say(exited());
+    world.tick().await;
+    assert_eq!(ended(&world, CHILD).await, [(1, "runner-exit".to_string())]);
+}

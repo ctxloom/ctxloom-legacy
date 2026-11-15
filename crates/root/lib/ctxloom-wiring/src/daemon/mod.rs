@@ -60,7 +60,7 @@ pub(crate) const SPAWN_WAIT: Duration = HOOK_BOUND.saturating_sub(DELIVERY_MARGI
 
 /// How long one health check of a daemon may take (a loopback TLS
 /// handshake and one call; a stale port refuses at once).
-const HEALTH_WAIT: Duration = Duration::from_secs(1);
+pub(crate) const HEALTH_WAIT: Duration = Duration::from_secs(1);
 
 /// The environment a spawned daemon is given of its spawner's `vars`
 /// (D-N45): what it needs to run, named as `flavor` compares names (so

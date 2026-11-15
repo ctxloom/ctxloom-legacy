@@ -320,6 +320,11 @@ pub trait HookReach {
     /// at most `wait`): its versionator stamp and the sink to it; none when
     /// none could be reached or started.
     fn reach(&self, wait: Duration) -> Option<(String, Self::Sink)>;
+
+    /// Ask the serving daemon, once, to drain for the hook's stamp `own`
+    /// (H-Q6 (b), s4-Q4): fire and forget, within `within`; never
+    /// `even_if_live`, and it starts none.
+    fn ask_to_drain(&self, own: &str, within: Duration);
 }
 
 /// The user's daemon as its discovery file names it, spawned when none
@@ -333,6 +338,8 @@ impl HookReach for DaemonReach {
         let found = crate::daemon::hook_daemon(&self.0, wait)?;
         Some((found.stamp.clone(), daemon_sink(found)))
     }
+
+    fn ask_to_drain(&self, _own: &str, _within: Duration) {}
 }
 
 /// A hook's time: its bound's end, as the clock reads it.

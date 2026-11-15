@@ -130,6 +130,10 @@ pub enum Step {
         at: RunAt,
         harp: String,
         owner: SessionRef,
+        /// Why it is owed: `rehost` (its host was lost, counted against
+        /// its budget) or `drain` (a draining daemon handed it over, s4-Q5,
+        /// never counted).
+        cause: String,
     },
     /// Hand the turn `turn` (its messages, in order) to the hosted child.
     Feed {
@@ -146,6 +150,14 @@ pub enum Step {
 }
 
 impl Step {
+    /// Whether it delivers a session's pending messages to its run as its
+    /// next turn ([`crate::deliver`], keyed `send:<message_id>`): what a
+    /// draining daemon no longer does (s4-Q4), the messages left pending
+    /// for the daemon that re-hosts the child.
+    pub fn delivers(&self) -> bool {
+        matches!(self, Step::Send(sent) if sent.key.starts_with(crate::DELIVERY_KEY))
+    }
+
     /// The step's key: what the daemon marks done.
     pub fn key(&self) -> &str {
         match self {
@@ -364,6 +376,10 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
 /// Why a run's incarnation ends when its owner (its host) was lost.
 const ORPHANED: &str = "orphaned";
 
+/// Why a hosted child's incarnation ends when a draining daemon ended it to
+/// hand it over to the next (OD-3 extended, s4-Q4).
+pub const ENDED_DRAINED: &str = "drained";
+
 /// Each child of this project whose last incarnation was lost, and is
 /// neither closed nor stopped, nor owed another: its re-host. A child with
 /// no native session has no conversation to resume, and is left ended.
@@ -386,6 +402,7 @@ fn rehosts(scene: &Scene<'_>, steps: &mut Vec<Step>) {
             at,
             harp: session.harp.clone(),
             owner,
+            cause: sessions::REHOSTED.to_string(),
         });
     }
 }

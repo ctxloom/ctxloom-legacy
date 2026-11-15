@@ -100,6 +100,8 @@ impl Edge for World {
 pub(crate) struct Loop {
     hosted: Mutex<Vec<v1::HostedRun>>,
     stopped: Mutex<Vec<bool>>,
+    /// The stamps it was asked to drain for, in order.
+    drained: Mutex<Vec<String>>,
     /// How many reads asked for a fresh round.
     freshened: Mutex<u32>,
 }
@@ -119,6 +121,14 @@ impl Hosting for Loop {
 
     fn stop(&self, end_hosted: bool) {
         self.stopped.lock().unwrap().push(end_hosted);
+    }
+
+    fn drain(&self, successor: &str) {
+        self.drained.lock().unwrap().push(successor.to_string());
+    }
+
+    fn draining(&self) -> Option<String> {
+        self.drained.lock().unwrap().first().cloned()
     }
 
     fn fresh(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
@@ -375,6 +385,127 @@ async fn stop_daemon_hosting_a_live_run_is_refused_unless_even_if_live() {
         .await
         .unwrap();
     assert_eq!(*f.hosting.stopped.lock().unwrap(), [true]);
+}
+
+/// The fixture's daemon hosting the child `brisk-copper-moth`.
+fn hosting_a_child() -> Fixture {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.hosting.hosted.lock().unwrap().push(v1::HostedRun {
+        harp: "brisk-copper-moth".to_string(),
+        ..v1::HostedRun::default()
+    });
+    f
+}
+
+/// A drain asked by a client of `version`.
+fn drain_for(version: &str) -> v1::StopDaemonRequest {
+    v1::StopDaemonRequest {
+        drain: true,
+        version: version.to_string(),
+        ..v1::StopDaemonRequest::default()
+    }
+}
+
+// s4-Q4 (OD-3 extended): asked to drain, a daemon that hosts live runs is
+// not refused, and ends none of them: it is told whom it hands them over
+// to, and answers itself draining for it, with what it still hosts.
+#[tokio::test]
+async fn stop_daemon_asked_to_drain_hands_over_what_it_hosts_and_ends_none() {
+    let f = hosting_a_child();
+    let daemon = f.api.stop_daemon(drain_for("v0.2.0-b")).await.unwrap();
+    assert_eq!(*f.hosting.drained.lock().unwrap(), ["v0.2.0-b"]);
+    assert!(
+        f.hosting.stopped.lock().unwrap().is_empty(),
+        "nothing ended"
+    );
+    assert_eq!(daemon.draining_for, "v0.2.0-b");
+    assert_eq!(daemon.runs.len(), 1, "it still hosts its child");
+}
+
+// `even_if_live` wins over a drain: what it hosts is ended, not handed over.
+#[tokio::test]
+async fn stop_daemon_even_if_live_wins_over_a_drain() {
+    let f = hosting_a_child();
+    f.api
+        .stop_daemon(v1::StopDaemonRequest {
+            even_if_live: true,
+            ..drain_for("v0.2.0-b")
+        })
+        .await
+        .unwrap();
+    assert_eq!(*f.hosting.stopped.lock().unwrap(), [true]);
+    assert!(f.hosting.drained.lock().unwrap().is_empty());
+}
+
+// s4-Q4: once asked to drain, every new call but GetDaemon and StopDaemon
+// is refused `DaemonDraining` (a precondition), naming the daemon's stamp,
+// the stamp it hands over to, and the sessions it still hosts; GetDaemon
+// answers, and StopDaemon judges as it always does (an escalation's
+// `even_if_live` still reaches it).
+#[tokio::test]
+async fn a_draining_daemon_refuses_every_new_call_but_its_own_two() {
+    use crate::Calls;
+    let f = hosting_a_child();
+    let calls: &dyn Calls = &f.api;
+    assert!(
+        calls.resolve_project(resolve(COMMIT, "")).await.is_ok(),
+        "open"
+    );
+    calls.stop_daemon(drain_for("v0.2.0-b")).await.unwrap();
+    let expected = v1::DaemonDraining {
+        version: "0.1.0+abc".to_string(),
+        successor: "v0.2.0-b".to_string(),
+        harps: vec!["brisk-copper-moth".to_string()],
+    };
+    let (code, draining): (_, v1::DaemonDraining) =
+        refused(calls.resolve_project(resolve(COMMIT, "")).await);
+    assert_eq!(
+        code,
+        <v1::DaemonDraining as daemon_proto::Refusal>::REFUSAL_STATUS
+    );
+    assert_eq!(draining, expected);
+    let listed = calls
+        .list_sessions(v1::ListSessionsRequest {
+            parent: "projects/-".to_string(),
+            ..v1::ListSessionsRequest::default()
+        })
+        .await;
+    assert_eq!(refused::<v1::DaemonDraining>(listed).1, expected);
+    let created = calls.create_run(v1::CreateRunRequest::default()).await;
+    assert_eq!(refused::<v1::DaemonDraining>(created).1, expected);
+    let handed = calls
+        .create_hand_off(v1::CreateHandOffRequest::default())
+        .await;
+    assert_eq!(refused::<v1::DaemonDraining>(handed).1, expected);
+    let about = calls.get_daemon().await.unwrap();
+    assert_eq!(about.draining_for, "v0.2.0-b");
+    let (_, hosting): (_, v1::DaemonHosting) =
+        refused(calls.stop_daemon(v1::StopDaemonRequest::default()).await);
+    assert_eq!(hosting.harps, ["brisk-copper-moth"]);
+}
+
+// A daemon's refusal of a call while it drains is told in this crate's
+// words (`daemon-api-draining`), a decline.
+#[test]
+fn a_draining_refusal_is_told_in_its_words() {
+    let refusal = ApiRefusal::of(&v1::DaemonDraining {
+        version: "v0.1.0-a".to_string(),
+        successor: "v0.2.0-b".to_string(),
+        harps: vec!["brisk-copper-moth".to_string()],
+    });
+    let rejection = crate::rejection_of(&refusal.refusal).expect("known");
+    assert_eq!(
+        rejection,
+        crate::Rejection::Api(crate::ApiRejection::Draining {
+            daemon: "v0.1.0-a".to_string(),
+            successor: "v0.2.0-b".to_string(),
+            harps: vec!["brisk-copper-moth".to_string()],
+        })
+    );
+    assert_eq!(
+        rejection.report().to_string(),
+        "daemon-api-draining daemon=v0.1.0-a successor=v0.2.0-b harps=brisk-copper-moth"
+    );
 }
 
 // Project registration: the first resolution names the project with the

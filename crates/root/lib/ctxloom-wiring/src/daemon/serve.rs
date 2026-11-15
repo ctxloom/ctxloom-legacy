@@ -741,6 +741,9 @@ struct Round {
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
+    /// Asked to drain (s4-Q4): the stamp it hands what it hosts over to,
+    /// the first it was asked for.
+    drain: Option<String>,
 }
 
 impl Shared {
@@ -831,6 +834,17 @@ impl daemon_api::Hosting for Shared {
     fn stop(&self, end_hosted: bool) {
         let mut round = self.round();
         round.stop = Some(end_hosted || round.stop.unwrap_or(false));
+    }
+
+    fn drain(&self, successor: &str) {
+        let mut round = self.round();
+        if round.drain.is_none() {
+            round.drain = Some(successor.to_string());
+        }
+    }
+
+    fn draining(&self) -> Option<String> {
+        self.round().drain.clone()
     }
 
     /// The next round to START after this call (so its catch-up reads what

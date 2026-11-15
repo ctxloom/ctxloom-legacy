@@ -37,6 +37,14 @@ pub enum SkewError {
     /// Another stamp, seen by a caller that never stops a daemon (OD-3, a
     /// session's MCP server): its call is refused, naming both.
     Mismatch { own: String, daemon: String },
+    /// An older version hosting live runs, asked to hand them over to this
+    /// client's (s4-Q4): this call is refused, and the next, once it has
+    /// exited, starts this client's daemon.
+    Draining {
+        own: String,
+        daemon: String,
+        harps: Vec<String>,
+    },
 }
 
 /// Reconcile the client's stamp `own` with the serving daemon's, `daemon`,
@@ -122,6 +130,7 @@ impl Diagnostic for SkewError {
         match self {
             SkewError::Busy { .. } => code!("version-skew-busy"),
             SkewError::Mismatch { .. } => code!("version-skew"),
+            SkewError::Draining { .. } => code!("draining"),
             SkewError::Call(called) => called.code(),
         }
     }
@@ -137,6 +146,9 @@ impl Diagnostic for SkewError {
                 ("own", own.as_str().into()),
                 ("daemon", daemon.as_str().into()),
             ],
+            SkewError::Draining { own, daemon, harps } => {
+                crate::refusal::draining_args(daemon, own, harps)
+            }
             SkewError::Call(called) => called.args(),
         }
     }
@@ -147,7 +159,9 @@ impl Diagnostic for SkewError {
 impl ExitClass for SkewError {
     fn exit(&self) -> Exit {
         match self {
-            SkewError::Busy { .. } | SkewError::Mismatch { .. } => Exit::REFUSED,
+            SkewError::Busy { .. } | SkewError::Mismatch { .. } | SkewError::Draining { .. } => {
+                Exit::REFUSED
+            }
             SkewError::Call(_) => Exit::FAILED,
         }
     }
@@ -264,6 +278,11 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(SkewError::Mismatch {
             own: "0.2.0+b".to_string(),
             daemon: "0.1.0+a".to_string(),
+        }),
+        Box::new(SkewError::Draining {
+            own: "v0.2.0-b".to_string(),
+            daemon: "v0.1.0-a".to_string(),
+            harps: vec!["brisk-copper-moth".to_string()],
         }),
         Box::new(CallError::LaunchLock {
             detail: "permission denied".to_string(),

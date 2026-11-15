@@ -168,6 +168,72 @@ async fn a_stop_refused_for_live_runs_is_a_busy_daemon() {
     );
 }
 
+/// Stamps of the versionator shape: an older and a newer version.
+const OLDER: &str = "v0.1.0-a1";
+const NEWER: &str = "v0.2.0-b2";
+
+/// A daemon that answers a drain as one that still hosts `hosted` does.
+fn hosting(hosted: Vec<&'static str>) -> Daemon {
+    Daemon {
+        hosted,
+        ..Daemon::default()
+    }
+}
+
+// s4-Q4 (OD-3 extended): a client of a NEWER version meeting a daemon that
+// hosts live runs asks it to drain for its own stamp (never
+// `even_if_live`), and its call is refused (exit 20), naming both stamps
+// and the sessions it still hosts; the next call, once it has exited,
+// starts the client's own.
+#[tokio::test]
+async fn a_newer_client_asks_a_busy_daemon_to_drain_and_is_refused_meanwhile() {
+    let daemon = hosting(vec!["brisk-copper-moth"]);
+    let refused = reconcile(&daemon, NEWER, OLDER).await.unwrap_err();
+    assert_eq!(
+        refused,
+        SkewError::Draining {
+            own: NEWER.to_string(),
+            daemon: OLDER.to_string(),
+            harps: vec!["brisk-copper-moth".to_string()],
+        }
+    );
+    assert_eq!(refused.exit(), Exit::REFUSED);
+    assert_eq!(
+        angzarr_diagnostic::Diagnostic::code(&refused),
+        "daemon-api-draining"
+    );
+    let stops = daemon.stops.lock().unwrap();
+    assert_eq!(stops.len(), 1, "asked once");
+    assert!(stops[0].drain, "asked to drain");
+    assert!(!stops[0].even_if_live, "nothing it hosts is ended");
+    assert_eq!(stops[0].version, NEWER, "for the client's own stamp");
+    assert_eq!(stops[0].name, "daemon");
+}
+
+// A newer client meeting an idle older daemon asks it to drain too: hosting
+// nothing, it exits at once, and the client starts its own.
+#[tokio::test]
+async fn a_newer_client_drains_an_idle_daemon_and_starts_its_own() {
+    let daemon = Daemon::default();
+    assert_eq!(
+        reconcile(&daemon, NEWER, OLDER).await,
+        Ok(Reconciled::Stopped)
+    );
+    let stops = daemon.stops.lock().unwrap();
+    assert!(stops.len() == 1 && stops[0].drain, "{stops:?}");
+}
+
+// Only a newer version drains (the semver-only "newer", confirmed): an
+// OLDER client meeting a busy newer daemon is refused as by any busy daemon
+// of another stamp, and asks nothing of it.
+#[tokio::test]
+async fn an_older_client_never_drains_a_newer_daemon() {
+    let daemon = hosting(vec!["brisk-copper-moth"]);
+    let refused = reconcile(&daemon, OLDER, NEWER).await.unwrap_err();
+    assert!(matches!(refused, SkewError::Busy { .. }), "{refused:?}");
+    assert!(daemon.stops.lock().unwrap().is_empty());
+}
+
 // A daemon that cannot be asked is a failure (exit 10).
 #[tokio::test]
 async fn a_daemon_that_cannot_be_asked_fails() {
@@ -327,20 +393,34 @@ async fn a_newer_sessions_call_drains_an_idle_older_daemon() {
     assert_eq!(*daemon.asked.lock().unwrap(), ["get", "stop"]);
     let stops = daemon.stops.lock().unwrap();
     assert!(!stops[0].even_if_live, "a drain ends nothing it hosts");
+    assert!(stops[0].drain, "asked to drain");
 }
 
-// OD-3: an older daemon that hosts runs is never stopped by a session's
-// call: the call is refused, typed, naming both stamps (exit 20).
+// OD-3 extended (s4-Q4): a session's call of a newer version, meeting an
+// older daemon that hosts runs, asks it to drain (never `even_if_live`: it
+// ends nothing of what it hosts, each child being handed over), as a hook
+// that holds for it does (H-Q6); the call is refused meanwhile, naming both
+// stamps and what it still hosts (exit 20).
 #[tokio::test]
-async fn a_newer_sessions_call_is_refused_by_a_busy_older_daemon() {
+async fn a_newer_sessions_call_asks_a_busy_older_daemon_to_drain() {
     let daemon = Daemon {
         hosted: vec!["brisk-copper-moth"],
         ..Daemon::default()
     };
     let refused = reconcile_session(&daemon, NEW, OLD).await.unwrap_err();
-    assert_eq!(refused, mismatch(NEW, OLD));
+    assert_eq!(
+        refused,
+        SkewError::Draining {
+            own: NEW.to_string(),
+            daemon: OLD.to_string(),
+            harps: vec!["brisk-copper-moth".to_string()],
+        }
+    );
     assert_eq!(refused.exit(), Exit::REFUSED);
-    assert_eq!(*daemon.asked.lock().unwrap(), ["get"], "no stop asked");
+    let stops = daemon.stops.lock().unwrap();
+    assert_eq!(stops.len(), 1);
+    assert!(stops[0].drain && !stops[0].even_if_live, "{stops:?}");
+    assert_eq!(stops[0].version, NEW);
 }
 
 // The race, forced: the daemon was idle when asked, and a run started

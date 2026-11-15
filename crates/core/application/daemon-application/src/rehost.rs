@@ -72,6 +72,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         at: &RunAt,
         harp: &str,
         owner: &SessionRef,
+        cause: &str,
     ) -> Taken {
         let Some(cover) = session_cover(&at.session) else {
             return Taken::Done;
@@ -93,7 +94,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             key: key.clone(),
             command: RehostSession {
                 recent_rehosts: recent,
-                cause: String::new(),
+                cause: cause.to_string(),
             },
         };
         match self.edge.handle(rehost.book()).await {

@@ -224,6 +224,12 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     one_shots: Option<Arc<OneShots>>,
     /// Where a child works (s4-Q11); none, every child in its project.
     workspaces: Option<Arc<dyn ChildWorkspaces>>,
+    /// Whether it hands what it hosts over to the next daemon (OD-3
+    /// extended, s4-Q4): asked to drain ([`Daemon::hand_over`]).
+    handing_over: bool,
+    /// The runs of the children it ended to hand them over: each one's
+    /// incarnation ends `drained` at its exit.
+    drained: BTreeSet<String>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -318,6 +324,8 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             finder: None,
             one_shots: None,
             workspaces: None,
+            handing_over: false,
+            drained: BTreeSet::new(),
         }
     }
 
@@ -342,6 +350,16 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     pub fn finding(mut self, finder: Arc<dyn RunnerLauncher>) -> Daemon<E, T> {
         self.finder = Some(finder);
         self
+    }
+
+    /// Hand what it hosts over to the next daemon (OD-3 extended, s4-Q4):
+    /// from its next round on it starts no child and delivers no message,
+    /// and each child it hosts with no turn in flight is ended, its
+    /// incarnation ended `drained` and its hand-off kept, so the next
+    /// daemon re-hosts it (cause `drain`) resuming its conversation; a busy
+    /// child is ended at its turn's end. Its one-shots finish their turn.
+    pub fn hand_over(&mut self) {
+        self.handing_over = true;
     }
 
     /// How many runs it hosts now: its children and its one-shots.
@@ -511,6 +529,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         catalog: &Catalog,
         draining: bool,
     ) -> bool {
+        let draining = draining || self.handing_over;
         let mut busy = self.hear().await;
         busy |= self.stop_one_shots().await;
         let board = self.board.step_if_changed(store, catalog).await;
@@ -636,8 +655,12 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 self.start(project_id, at, &child).await
             }
             Step::Rehost {
-                at, harp, owner, ..
-            } => self.rehost(project_id, &at, &harp, &owner).await,
+                at,
+                harp,
+                owner,
+                cause,
+                ..
+            } => self.rehost(project_id, &at, &harp, &owner, &cause).await,
             Step::Feed {
                 at,
                 turn,
@@ -1312,8 +1335,13 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                         }),
                     )
                     .await;
+                // Ended to be handed over (s4-Q4): the next daemon re-hosts it.
+                let cause = match self.drained.remove(run) {
+                    true => session_policies::ENDED_DRAINED,
+                    false => "runner-exit",
+                };
                 let _ = facts
-                    .incarnation_ended(&at.session, at.incarnation, "runner-exit")
+                    .incarnation_ended(&at.session, at.incarnation, cause)
                     .await;
                 (self.say)(&format!("{}: exited {exit:?}", who.harp));
                 if let Some(gone) = self.hosted.remove(run) {

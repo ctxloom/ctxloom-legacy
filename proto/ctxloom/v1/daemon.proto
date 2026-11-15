@@ -132,7 +132,10 @@ service Ctxloom {
   // client answers `daemon status|stop` itself (S14).
   rpc GetDaemon(GetDaemonRequest) returns (Daemon);
   // `daemon stop`: refused `DaemonHosting` while it hosts live runs, unless
-  // `even_if_live`, which ends the hosted engines cleanly first (S12).
+  // `even_if_live`, which ends the hosted engines cleanly first (S12), or
+  // `drain` (OD-3 extended, s4-Q4): it hands what it hosts over to the
+  // daemon of `version`, refusing every new call but this and GetDaemon
+  // (`DaemonDraining`) meanwhile, and exits once it hosts nothing.
   rpc StopDaemon(StopDaemonRequest) returns (Daemon);
   // endregion
 
@@ -369,11 +372,22 @@ message Daemon {
   uint32 clients = 7;
   uint64 idle_seconds = 8;
   uint64 idle_limit_seconds = 9;
+  // Once it was asked to drain (s4-Q4): the stamp of the daemon it hands
+  // what it hosts over to; empty while it serves.
+  string draining_for = 10;
 }
 
 message StopDaemonRequest {
   string name = 1;
   bool even_if_live = 2;
+  // Drain (OD-3 extended, s4-Q4): asked by a client of a newer version. It
+  // is never refused for what the daemon hosts: one-shots finish their
+  // turn, each child is ended once it has no turn in flight, its hand-off
+  // kept, and the next daemon re-hosts it (cause `drain`). `even_if_live`
+  // wins over it.
+  bool drain = 3;
+  // The asking client's versionator stamp: whom it drains for.
+  string version = 4;
   string request_id = 90;
   EnvVars env = 94;
 }
@@ -1096,6 +1110,17 @@ message DaemonHosting {
 
   uint64 runs = 1;
   repeated string harps = 2;
+}
+
+// Any call but `GetDaemon` and `StopDaemon` to a daemon asked to drain
+// (s4-Q4): its stamp, the stamp it hands over to, and the sessions of the
+// runs it still hosts.
+message DaemonDraining {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string version = 1;
+  string successor = 2;
+  repeated string harps = 3;
 }
 
 // `DeleteSession` refused: nothing was removed. It carries the PLAN (owner,
