@@ -18,6 +18,7 @@
 //! | `NOT-CARRIED-r8` | every agent's engine carries the hooks its profiles configure; one it cannot is a `warn` naming the agent, the engine and each (the capability-loss report `agent show` gives too) |
 //! | `STALE-DISTILLED-t1` | every distilled form matches its source (T30, S51); a stale one is a `warn` naming each (asked only where the library's listing is wired) |
 //! | `FOREIGN-WORKTREES-s9` | the project's worktrees ctxloom did not create (j001300), each with its merge and dirty state and the commands that remove it; ctxloom removes none (asked only where a worktrees port is wired) |
+//! | `HELD-FACTS-h1` | the capture facts this home's holds keep that no daemon has recorded (s4-Q14): `info` while a daemon of their version takes them, `warn` for a hold held over an hour, of a newer ctxloom, with gaps, set-aside parts, an unreadable format or a bad tail (asked only where the holds are wired) |
 //! | `INGESTION-q7` | the stated limit: whether the engine reads what ctxloom wrote |
 //!
 //! Left out here: the run-end and
@@ -29,6 +30,7 @@
 
 mod checks;
 mod doctor;
+mod held;
 mod hooks;
 
 pub use checks::{Check, Status};
@@ -39,6 +41,7 @@ pub use ctxloom_ports::{
     GitIdentity, LayerText, Put, Scope, Source, UserFiles,
 };
 pub use doctor::{CompanionsAsked, Doctor, Removed, Report};
+pub use held::{MARKER as HELD_FACTS_MARKER, STALE_AFTER_SECONDS};
 
 #[cfg(test)]
 #[path = "checks.test.rs"]
@@ -47,6 +50,10 @@ mod checks_tests;
 #[cfg(test)]
 #[path = "hooks.test.rs"]
 mod hooks_tests;
+
+#[cfg(test)]
+#[path = "held.test.rs"]
+mod held_tests;
 
 #[cfg(test)]
 #[path = "doctor.test.rs"]

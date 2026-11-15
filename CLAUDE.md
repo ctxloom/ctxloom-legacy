@@ -1265,8 +1265,26 @@ messages, the session index) with the store's log and then sweeps
 discovery file (`serve.rs`'s `swept_and_advertised`), so a fresh daemon
 serves nothing (no fact, command or read: the user bearer reaches no one
 before the publish) from folds older than the log (owner, s4-Q14 H3's
-condition; a failed catch-up is logged, and the first round's step is the
-retry); then `tick` catches up the read models,
+condition). A START-UP THAT FAILS (its catch-up or its sweep; owner ruling
+OD-52) still publishes the daemon, and is LOUD: the log says `WARNING: the
+start-up catch-up failed: <why>; serving anyway ...`, the root's `Shared`
+keeps why (`daemon_api::Hosting::start_up_failed`), `GetDaemon` answers it
+as `Daemon.warnings` (field 11, each a `Notice`: daemon-api's
+`StartUpIncomplete`, `daemon-api-start-up-incomplete`, arg `why`, with a
+`-fix`; wording a DRAFT for the owner), `daemon status` shows it (text
+`warning: ...` and its `  fix:` line; json `warnings`), and every command
+that reaches that daemon (not the `daemon` noun's own) asks `GetDaemon`
+once a process on its way in (`daemon::heard`, beside the hold flush; the
+cost, one call more a command) and
+says each warning on stderr as it ends, its answer unchanged. While it
+stands, each round first tries the whole start-up again
+(`started_up_again`); the first that succeeds CLEARS it (the folds resume
+from their positions, so a later whole catch-up leaves nothing missing)
+and the log says `the start-up catch-up, tried again, succeeded`. Under
+`test-support` the switch file `~/.ctxloom/daemon/test-start-up-fails`
+fails every start-up attempt while it is there, its line the why (never
+taken; a test removes it). Doctor has no daemon check, so it says
+nothing of it. Then `tick` catches up the read models,
 plans each project on the board (`session-policies`), and takes the steps
 (launch, start, feed, clear, end), recording what each child said as its
 run's facts. Its ports: the engine registry (`HostedEngine`, an `Engine`
@@ -1702,24 +1720,55 @@ hosts; `even_if_live` wins over it. Hosting nothing, the daemon exits at
 once and the client starts its own (`Reconciled::Stopped`); hosting runs,
 the client's call is refused `daemon-api-draining` (exit 20, naming both
 stamps and the harps it still hosts; `SkewError::Draining`), and the next
-command, once it has exited, starts the new daemon. The draining daemon
+command, once it has exited, starts the new daemon. `ctxloom daemon stop
+--drain` (OD-54 (3)) asks the same of the serving daemon, whatever its
+version, for the client's own stamp (`Client::drain`): answered at once,
+exit 0, the daemon handing over and exiting, the next command's daemon
+re-hosting; `--drain` with `--even-if-live` is a usage error (clap's
+`conflicts_with`, exit 20); nothing new under `--detailed-exitcode`. The
+drain WARNS AT ONCE (OD-54 (2)): while a daemon drains and hosts
+anything, its `Daemon.warnings` (StopDaemon's answer and GetDaemon's)
+carry `daemon-api-handing-over` (`daemon_api::HandingOver`: both stamps,
+the harps, the period in seconds, `About.hand_over_seconds`), which the
+asking command says on stderr as it ends (`heard::hear`, from the stop's
+answer or `SkewError::Draining.warnings`), and its log says each busy
+child as it is steered. The draining daemon
 (`Hosting::drain`/`draining`, `Daemon.draining_for`, said by `daemon
 status`) refuses every new call but `GetDaemon` and `StopDaemon` with the
 typed `DaemonDraining` (`Api::open`, the same code); the hooks' facts and the
 frontends' reports (the coordinator) still land. Its loop hands over
 (`Daemon::hand_over`): it starts no child and delivers no message
-(`Step::delivers`; what is pending is the next daemon's), each hosted child
-bound to its native session with no turn in flight is ended once, and a busy
-one at its turn's end; its exit ends its incarnation `drained`, its hand-off
-KEPT; one-shots finish their turn; it exits once it hosts nothing. The next
-daemon re-hosts each such child, cause `drain`, resuming its conversation.
-TUIs are untouched. Not built (owner's, s4-Q4's ruling): the guidance sent
-to a child to finish up, and the compliance timer (its default and its
-expiry); a busy child is waited for, bounded only by its turn's own
-deadline, and `daemon stop --even-if-live` is the escalation (its children
-end `runner-exit` and are not re-hosted). A daemon of a ctxloom from before
-the drain takes it for a plain stop and refuses it for its runs
-(`DaemonHosting`), which the client reads as a busy daemon, as before.
+(`Step::delivers`; what is pending is the next daemon's), but the guidance
+below; each hosted child bound to its native session with no turn in
+flight (and no guidance of its own still pending) is ended once; its exit
+ends its incarnation `drained`, its hand-off KEPT; one-shots finish their
+turn; it exits once it hosts nothing. A BUSY child (a turn in flight, at
+the hand-over's first round) is STEERED (OD-54 (1)) with the approved
+guidance, `session_policies::DRAIN_GUIDANCE` ("ctxloom is being upgraded:
+finish the step you are on and end your turn; you will be resumed in this
+conversation."), by the one steer path: the session's own `SendMessage`
+(`session_policies::drain_guidance`, a steer keyed and identified
+`drain:<child>:<incarnation>`), delivered by the plan's delivery (the one
+delivery a draining daemon lets through, to that run while the guidance is
+pending) and fed as any steer (the turn in flight interrupted, the guidance
+its next turn); the child is ended once that turn ends. A child still
+hosted once the hand-over's period has passed on the daemon's clock
+(`daemon_application::HAND_OVER_PERIOD`, five minutes; `Daemon::clocked`
+over the `Monotonic` port, the root's its process's `Instant`, a test's a
+fake; `daemon serve --hand-over-seconds`, hidden, a test's short one) is
+handed over AUTOMATICALLY (OD-54 (2)): ended once, its turn in flight cut,
+its incarnation `drained`, its hand-off kept, and said in the log
+(`<harp>: still busy after <n>s: its turn in flight cut, handed over`); no
+kill is offered. The next daemon re-hosts each such child, cause `drain`,
+resuming its conversation. TUIs are untouched. Accepted residuals: a child
+never bound to its engine's session is ended at the period too and,
+having no conversation, is not re-hosted; a guidance still pending when
+the period cuts its child (never delivered) is delivered by the next
+daemon, as a steer to the re-hosted child. `daemon stop --even-if-live` is
+the escalation (its children end `runner-exit` and are not re-hosted). A
+daemon of a ctxloom from before the drain takes it for a plain stop and
+refuses it for its runs (`DaemonHosting`), which the client reads as a busy
+daemon, as before.
 
 PROJECT REGISTRATION (owner, 2026-11-12). `ResolveProject` is
 register-or-recheck: the client sends what IT resolved (`Wiring::
@@ -2548,6 +2597,28 @@ aside as `<root>.held.corrupt-<n>` (0600, never parsed again); a hold of
 another format is never touched (`run-ports-hold-format`). No record is
 fsync'd. The property tests use a seeded generator of the test's own (no
 property crate is in the lock).
+
+What reclaims a hold (s4-Q14, unit H4; owner H-Q7 (a), H-Q8 (a)): a
+session's DESTROY, and nothing else. The hold is the client's, so the
+command that asked the daemon for the destroy (`session remove`, `session
+sweep`) reads this home's holds by the session's resource name
+(`reclaim_application::Holds` over the `Spool`, `SessionHolds`,
+`destroys_held`) once the daemon answers: each session it destroys or
+plans to that holds anything warns first, the notice
+`sessions-application-destroys-held` (its facts and set-aside parts; never
+a refusal), and an applied destroy then discards the hold and its
+set-aside parts; a refused removal touches no hold; a hold that cannot be
+read or discarded fails the command (10) after the daemon's answer is
+printed. A downgrade's facts (of a newer ctxloom) stay held until a
+reinstall or the destroy. Doctor reports every hold,
+`DOCTOR-CHECK-HELD-FACTS-h1` (doctor-checks' `held.rs`, wired by
+`Doctor::reporting_holds` with this binary's own stamp): `ok` when nothing
+is held, `info` for facts a daemon of their version takes held up to an
+hour (`STALE_AFTER_SECONDS`), `warn` for one held longer, of a newer
+ctxloom, with gaps, set-aside parts, an unreadable format or a bad tail,
+or holds that cannot be read; each hold named by its harp (else its root)
+with its count, size, stamps and oldest instant; `--fix` removes none.
+`ctxloom clean` never takes a hold (it is no cache).
 
 ## No path dependency leaves the repository
 

@@ -15,6 +15,7 @@
 mod age;
 mod clean;
 mod error;
+mod held;
 mod purge;
 mod remove;
 mod sweep;
@@ -27,8 +28,11 @@ pub use ctxloom_ports::{Failure, ProjectCache};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{ReclaimError, EN_US};
+pub use held::{destroys_held, HeldOf, Holds, SessionHolds};
 pub use purge::{purge_cutoff, SweepConfig};
 pub use remove::{remove, Removals, SessionRemoval};
+/// The hold's port, so a driving adapter names its error without linking it.
+pub use run_ports::{HeldFacts, HoldError};
 pub use sweep::{sweep, SweepReport, SweepRequest, SweepRow, Verdict};
 
 #[cfg(test)]

@@ -27,6 +27,8 @@ fn the_samples_hold_every_diagnostic_of_the_crate() {
             "daemon-api-version-skew",
             "daemon-api-draining",
             "daemon-api-launch-lock",
+            "daemon-api-start-up-incomplete",
+            "daemon-api-handing-over",
         ]
     );
 }

@@ -104,6 +104,8 @@ pub(crate) struct Loop {
     drained: Mutex<Vec<String>>,
     /// How many reads asked for a fresh round.
     freshened: Mutex<u32>,
+    /// Why its start-up catch-up failed, while it stands (OD-52).
+    start_up: Mutex<Option<String>>,
 }
 
 impl Hosting for Loop {
@@ -134,6 +136,10 @@ impl Hosting for Loop {
     fn fresh(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         *self.freshened.lock().unwrap() += 1;
         Box::pin(async {})
+    }
+
+    fn start_up_failed(&self) -> Option<String> {
+        self.start_up.lock().unwrap().clone()
     }
 }
 
@@ -196,6 +202,7 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
                 nanos: 0,
             },
             idle_limit_seconds: 600,
+            hand_over_seconds: 300,
         },
         places: Arc::new(Arc::clone(&places)) as Arc<dyn crate::Places>,
         purges: Arc::clone(&world) as Arc<dyn crate::Purges>,
@@ -346,6 +353,23 @@ async fn get_daemon_says_what_it_hosts_and_how_long_it_has_been_idle() {
     assert_eq!((daemon.idle_seconds, daemon.idle_limit_seconds), (42, 600));
 }
 
+// OD-52: a daemon whose start-up catch-up failed says so in GetDaemon, as
+// the notice `daemon-api-start-up-incomplete` naming why; one whole says
+// nothing.
+#[tokio::test]
+async fn get_daemon_warns_while_its_start_up_catch_up_has_failed() {
+    let f = fixture(vec![]);
+    assert!(f.api.get_daemon().await.unwrap().warnings.is_empty());
+    let why = "the board's catch-up: the store is locked".to_string();
+    *f.hosting.start_up.lock().unwrap() = Some(why.clone());
+    let daemon = f.api.get_daemon().await.unwrap();
+    assert_eq!(daemon.warnings, [crate::StartUpIncomplete { why }.notice()]);
+    assert_eq!(daemon.warnings[0].code, "daemon-api-start-up-incomplete");
+    // Cleared once a later catch-up succeeded.
+    *f.hosting.start_up.lock().unwrap() = None;
+    assert!(f.api.get_daemon().await.unwrap().warnings.is_empty());
+}
+
 // StopDaemon with nothing hosted: asked to drain.
 #[tokio::test]
 async fn stop_daemon_hosting_nothing_stops_it() {
@@ -420,6 +444,35 @@ async fn stop_daemon_asked_to_drain_hands_over_what_it_hosts_and_ends_none() {
     );
     assert_eq!(daemon.draining_for, "v0.2.0-b");
     assert_eq!(daemon.runs.len(), 1, "it still hosts its child");
+}
+
+// OD-54 (2): the drain warns AT ONCE: its answer (and GetDaemon's, while it
+// drains) carries the notice `daemon-api-handing-over`, naming both stamps,
+// what it hands over and the period a busy child is waited for.
+#[tokio::test]
+async fn a_drain_of_a_daemon_hosting_children_warns_at_once() {
+    let f = hosting_a_child();
+    let expected = crate::HandingOver {
+        daemon: "0.1.0+abc".to_string(),
+        successor: "v0.2.0-b".to_string(),
+        harps: vec!["brisk-copper-moth".to_string()],
+        seconds: 300,
+    }
+    .notice();
+    let daemon = f.api.stop_daemon(drain_for("v0.2.0-b")).await.unwrap();
+    assert_eq!(daemon.warnings, std::slice::from_ref(&expected));
+    assert_eq!(f.api.get_daemon().await.unwrap().warnings, [expected]);
+}
+
+// OD-54: a drain with nothing hosted (it exits at once) warns of nothing,
+// and a daemon not draining says no hand-over.
+#[tokio::test]
+async fn a_drain_hosting_nothing_warns_of_nothing() {
+    let f = hosting_a_child();
+    assert!(f.api.get_daemon().await.unwrap().warnings.is_empty());
+    let f = fixture(vec![]);
+    let daemon = f.api.stop_daemon(drain_for("v0.2.0-b")).await.unwrap();
+    assert!(daemon.warnings.is_empty(), "{:?}", daemon.warnings);
 }
 
 // `even_if_live` wins over a drain: what it hosts is ended, not handed over.

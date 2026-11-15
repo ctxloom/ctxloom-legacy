@@ -387,6 +387,17 @@ impl DaemonFiles {
             .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).trim() == step);
         named && self.fs.remove_file(&self.path(DIE_AT)).is_ok()
     }
+
+    /// The test-support switch that fails the daemon's start-up catch-up
+    /// (OD-52, `test-start-up-fails`): while it is there, every start-up
+    /// attempt (the start's, and each round's again) fails, its why the
+    /// file's one line. Never taken: a test removes it to see a later
+    /// catch-up succeed.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn start_up_fails(&self) -> Option<String> {
+        let bytes = self.fs.read(&self.path(START_UP_FAILS)).ok()?;
+        Some(String::from_utf8_lossy(&bytes).trim().to_string())
+    }
 }
 
 /// The daemon's hand-offs, as its API makes them (`CreateHandOff`, S10):
@@ -501,6 +512,10 @@ const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 /// The test-support switch that kills a daemon at a step (slice 4 U6).
 #[cfg(feature = "test-support")]
 const DIE_AT: &str = "test-die-at";
+
+/// The test-support switch that fails a daemon's start-up catch-up (OD-52).
+#[cfg(feature = "test-support")]
+const START_UP_FAILS: &str = "test-start-up-fails";
 
 /// A hand-off's text: its header, then a `NAME=value` line per variable of
 /// the child's environment, a `@NAME=value` line per place of its

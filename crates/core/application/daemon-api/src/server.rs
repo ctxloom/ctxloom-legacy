@@ -56,6 +56,9 @@ pub trait Hosting: Send + Sync {
     /// before it was asked (bounded: a round that does not come is waited
     /// for no longer than the loop's own pace allows).
     fn fresh(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    /// Why its start-up catch-up (or its sweep) failed, while no later
+    /// catch-up has succeeded (OD-52): it serves anyway, and says so.
+    fn start_up_failed(&self) -> Option<String>;
 }
 
 /// A project's context, assembled as a process in it would (slice 3 step
@@ -88,6 +91,9 @@ pub struct About {
     pub version: String,
     pub start_time: Timestamp,
     pub idle_limit_seconds: u64,
+    /// How long a drain waits for a busy child before it hands it over
+    /// anyway, its turn cut (OD-54), in seconds.
+    pub hand_over_seconds: u64,
 }
 
 /// The API's ports, composed by the root.
@@ -459,7 +465,40 @@ impl<E: Edge> Api<E> {
             idle_seconds: self.parts.hosting.idle_seconds(),
             idle_limit_seconds: about.idle_limit_seconds,
             draining_for: self.parts.hosting.draining().unwrap_or_default(),
+            warnings: self
+                .parts
+                .hosting
+                .start_up_failed()
+                .map(|why| crate::StartUpIncomplete { why }.notice())
+                .into_iter()
+                .chain(self.handing_over())
+                .collect(),
         }
+    }
+
+    /// The drain's warning (OD-54), while it drains and hosts anything:
+    /// what it hands over, to whom, and within how long a busy child.
+    fn handing_over(&self) -> Option<v1::Notice> {
+        let successor = self.parts.hosting.draining()?;
+        let harps: Vec<String> = self
+            .parts
+            .hosting
+            .hosted()
+            .into_iter()
+            .map(|run| run.harp)
+            .collect();
+        if harps.is_empty() {
+            return None;
+        }
+        Some(
+            crate::HandingOver {
+                daemon: self.parts.about.version.clone(),
+                successor,
+                harps,
+                seconds: self.parts.about.hand_over_seconds,
+            }
+            .notice(),
+        )
     }
 
     /// Whether the daemon takes a new call: not once it was asked to drain

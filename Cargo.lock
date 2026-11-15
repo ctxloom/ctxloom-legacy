@@ -927,6 +927,7 @@ dependencies = [
  "deps-application",
  "duration-text",
  "editor-process",
+ "fact-spool",
  "file-lock",
  "file-system",
  "fixture-program",
@@ -1526,11 +1527,16 @@ dependencies = [
  "angzarr-yaml",
  "auth-application",
  "ctxloom-ports",
+ "daemon-proto",
  "library",
  "library-application",
  "mutants",
+ "run-ports",
  "serde",
  "serde_json",
+ "session-index",
+ "sessions",
+ "uuid",
 ]
 
 [[package]]
@@ -3673,10 +3679,12 @@ dependencies = [
  "exit-code",
  "isolation-application",
  "mutants",
+ "run-ports",
  "serde",
  "session-index",
  "sessions",
  "sessions-application",
+ "uuid",
 ]
 
 [[package]]

@@ -467,6 +467,26 @@ struct World {
     engine: Arc<Scripted>,
     homes: Homes,
     daemon: Daemon<TestEdge>,
+    /// The daemon's clock, which a test moves (OD-54).
+    clock: Moving,
+    /// What the daemon said in its log.
+    said: Arc<Mutex<Vec<String>>>,
+}
+
+/// A clock a test moves by hand: never the time of day.
+#[derive(Clone, Default)]
+struct Moving(Arc<Mutex<std::time::Duration>>);
+
+impl Moving {
+    fn pass(&self, by: std::time::Duration) {
+        *self.0.lock().unwrap() += by;
+    }
+}
+
+impl crate::Monotonic for Moving {
+    fn now(&self) -> std::time::Duration {
+        *self.0.lock().unwrap()
+    }
 }
 
 impl World {
@@ -488,9 +508,22 @@ impl World {
 
     /// A world whose children's hand-offs are `hand_offs`.
     fn built(plans: Box<dyn ChildPlans>, locks: LockProbe, hand_offs: Box<dyn HandOffs>) -> World {
+        World::built_within(plans, locks, hand_offs, None)
+    }
+
+    /// [`World::built`], its hand-over's period `period` when one is given.
+    fn built_within(
+        plans: Box<dyn ChildPlans>,
+        locks: LockProbe,
+        hand_offs: Box<dyn HandOffs>,
+        period: Option<std::time::Duration>,
+    ) -> World {
         let edge = Arc::new(TestEdge::new());
         let engine = Arc::new(Scripted::default());
         let homes = Homes::default();
+        let clock = Moving::default();
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&said);
         let daemon = Daemon::new(Ports {
             edge: Arc::clone(&edge),
             engines: vec![HostedEngine {
@@ -511,13 +544,20 @@ impl World {
                 user_home: None,
             },
             folds: Folds::default(),
-            say: Box::new(|_| {}),
-        });
+            say: Box::new(move |line: &str| log.lock().unwrap().push(line.to_string())),
+        })
+        .clocked(Arc::new(clock.clone()));
+        let daemon = match period {
+            Some(period) => daemon.handing_over_within(period),
+            None => daemon,
+        };
         World {
             edge,
             engine,
             homes,
             daemon,
+            clock,
+            said,
         }
     }
 
@@ -1299,6 +1339,15 @@ impl ChildPlans for ForAgent {
 /// A world whose child `kid` has a hand-off in `files`, for the agent
 /// `reviewer`, hosted.
 async fn hosting_from(files: &Files, plans: &ForAgent) -> World {
+    hosting_from_within(files, plans, None).await
+}
+
+/// [`hosting_from`], its hand-over's period `period` when one is given.
+async fn hosting_from_within(
+    files: &Files,
+    plans: &ForAgent,
+    period: Option<std::time::Duration>,
+) -> World {
     files.kept.lock().unwrap().insert(
         CHILD.to_string(),
         crate::HandOff {
@@ -1307,10 +1356,11 @@ async fn hosting_from(files: &Files, plans: &ForAgent) -> World {
             agent: "reviewer".to_string(),
         },
     );
-    let mut world = World::built(
+    let mut world = World::built_within(
         Box::new(plans.clone()),
         LockProbe::Unproven,
         Box::new(files.clone()),
+        period,
     );
     world.name_project().await;
     world.mint(OWNER, "boss", None).await;
@@ -2078,36 +2128,262 @@ async fn a_draining_daemon_ends_an_idle_child_at_once_keeping_its_hand_off() {
     assert!(files.kept.lock().unwrap().contains_key(CHILD));
 }
 
-// s4-Q4: a busy child is not cut: it is ended at its turn's end, and only
-// then.
-#[tokio::test]
-async fn a_draining_daemon_ends_a_busy_child_at_its_turns_end() {
-    let files = Files::default();
-    let mut world = idle_bound_child(&files).await;
+/// The drain's guidance's id to the child's first run (OD-54).
+fn guidance_id() -> String {
+    format!("drain:{CHILD}:1")
+}
+
+/// A hosted child bound to its engine's session `n1` whose turn for `m-1`
+/// is in flight.
+async fn busy_child(world: &mut World) {
+    world.say(ChildObservation::Started {
+        native_id: "n1".to_string(),
+    });
+    world.tick().await;
     world.handle(CHILD, wake("m-1")).await;
     for _ in 0..3 {
         world.tick().await;
     }
     assert!(world.daemon.in_flight(), "its turn is in flight");
-    world.daemon.hand_over();
-    for _ in 0..3 {
-        world.tick().await;
-    }
-    assert_eq!(world.engine.asked.lock().unwrap().ends, 0, "not cut");
-    world.say(ChildObservation::TurnEnded {
-        message_ids: vec!["m-1".to_string()],
+}
+
+/// The turn that carried `ids` ended, answered.
+fn answered(ids: &[&str]) -> ChildObservation {
+    ChildObservation::TurnEnded {
+        message_ids: ids.iter().map(|id| id.to_string()).collect(),
         outcome: TurnOutcome::Answered {
             answer: "done".to_string(),
             native_id: Some("n1".to_string()),
         },
+    }
+}
+
+/// The messages sent to the child: their ids, urgencies and texts.
+async fn messages_sent(world: &World) -> Vec<(String, Urgency, String)> {
+    world
+        .session_events(CHILD)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::MessageSent(sent) => Some((sent.message_id, sent.urgency, sent.text)),
+            _ => None,
+        })
+        .collect()
+}
+
+// OD-54 (1): a busy child is STEERED with the approved guidance, the
+// session's own steer delivered as any is, interrupting its turn now; it is
+// ended once the guidance's turn ends, and only then.
+#[tokio::test]
+async fn a_draining_daemon_steers_a_busy_child_and_ends_it_once_its_guidance_turn_ends() {
+    let files = Files::default();
+    let mut world = hosting_from(&files, &ForAgent::default()).await;
+    busy_child(&mut world).await;
+    world.daemon.hand_over();
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    let guidance = (
+        guidance_id(),
+        Urgency::Steer,
+        session_policies::DRAIN_GUIDANCE.to_string(),
+    );
+    assert!(
+        messages_sent(&world).await.contains(&guidance),
+        "the guidance is the child's own steer"
+    );
+    assert!(
+        world
+            .engine
+            .asked
+            .lock()
+            .unwrap()
+            .sent
+            .contains(&(guidance_id(), ChildUrgency::Steer)),
+        "handed to the child as a steer, interrupting its turn"
+    );
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 0, "not cut");
+    world.say(ChildObservation::TurnEnded {
+        message_ids: vec!["m-1".to_string()],
+        outcome: TurnOutcome::Failed {
+            class: run_ports::FailureClass::Interrupted,
+            detail: "interrupted".to_string(),
+            native_id: Some("n1".to_string()),
+        },
+    });
+    world.say(ChildObservation::TurnStarted {
+        message_ids: vec![guidance_id()],
     });
     for _ in 0..2 {
         world.tick().await;
     }
+    assert_eq!(
+        world.engine.asked.lock().unwrap().ends,
+        0,
+        "its guidance's turn is in flight"
+    );
+    // A wake sent meanwhile is the next daemon's: never a turn here.
+    world.handle(CHILD, wake("m-late")).await;
+    world.say(answered(&[&guidance_id()]));
+    for _ in 0..3 {
+        world.tick().await;
+    }
     assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "at its end");
+    let late = world.run_events().await.into_iter().any(|event| {
+        matches!(event, RunEvent::TurnQueued(queued)
+            if queued.message_ids.contains(&"m-late".to_string()))
+    });
+    assert!(!late, "the late wake stays pending");
     world.say(exited());
     world.tick().await;
     assert_eq!(ended(&world, CHILD).await, [(1, "drained".to_string())]);
+}
+
+// OD-54 (1): an idle child is ended at once, given no guidance.
+#[tokio::test]
+async fn a_draining_daemon_gives_an_idle_child_no_guidance() {
+    let files = Files::default();
+    let mut world = idle_bound_child(&files).await;
+    world.daemon.hand_over();
+    for _ in 0..2 {
+        world.tick().await;
+    }
+    assert!(
+        !messages_sent(&world)
+            .await
+            .iter()
+            .any(|(id, ..)| id.starts_with("drain:")),
+        "no guidance"
+    );
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1);
+}
+
+// OD-54: a busy child whose turn ends before its guidance is delivered is
+// given the guidance first (its turn, as a wake to an idle child), and only
+// then ended, so no guidance is left pending for the next daemon.
+#[tokio::test]
+async fn a_child_idle_before_its_guidance_was_delivered_is_given_it_before_it_is_ended() {
+    let files = Files::default();
+    let mut world = hosting_from(&files, &ForAgent::default()).await;
+    busy_child(&mut world).await;
+    world.daemon.hand_over();
+    world.tick().await;
+    world.say(answered(&["m-1"]));
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 0, "not yet");
+    assert!(
+        world
+            .engine
+            .asked
+            .lock()
+            .unwrap()
+            .sent
+            .iter()
+            .any(|(id, _)| *id == guidance_id()),
+        "the guidance given"
+    );
+    world.say(answered(&[&guidance_id()]));
+    for _ in 0..2 {
+        world.tick().await;
+    }
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1);
+}
+
+// OD-54 (2): the hand-over's period is five minutes, a named constant.
+#[test]
+fn the_hand_over_period_is_five_minutes() {
+    assert_eq!(
+        crate::HAND_OVER_PERIOD,
+        std::time::Duration::from_secs(5 * 60)
+    );
+}
+
+// OD-54 (2): a child still busy once the hand-over's period has passed on
+// the daemon's clock is handed over automatically: ended once, its turn in
+// flight cut, its incarnation ended `drained`, its hand-off kept; the next
+// daemon re-hosts it on its own conversation.
+#[tokio::test]
+async fn a_child_still_busy_after_the_period_is_handed_over_its_turn_cut() {
+    let files = Files::default();
+    let mut world = hosting_from(&files, &ForAgent::default()).await;
+    busy_child(&mut world).await;
+    world.daemon.hand_over();
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    world
+        .clock
+        .pass(crate::HAND_OVER_PERIOD - std::time::Duration::from_millis(1));
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 0, "within it");
+    world.clock.pass(std::time::Duration::from_millis(1));
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "at its end");
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "once");
+    let log = world.said.lock().unwrap().join("\n");
+    assert!(
+        log.contains("kid: still busy after 300s: its turn in flight cut, handed over"),
+        "{log}"
+    );
+    world.say(exited());
+    world.tick().await;
+    assert_eq!(ended(&world, CHILD).await, [(1, "drained".to_string())]);
+    assert!(files.kept.lock().unwrap().contains_key(CHILD), "kept");
+    world.daemon = restarted(&world, LockProbe::Free);
+    world
+        .daemon
+        .start_up(&world.edge.store, world.edge.catalog())
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert_eq!(
+        owed(&world).await,
+        [(1, "first".to_string()), (2, "drain".to_string())]
+    );
+    let started = world.engine.started.lock().unwrap().clone();
+    assert_eq!(started[1].resume.as_deref(), Some("n1"));
+}
+
+// OD-54 (2): the period is the daemon's to be given (a test's is short),
+// timed from the hand-over's start, not the daemon's.
+#[tokio::test]
+async fn the_hand_over_period_is_the_one_given_timed_from_the_hand_over() {
+    let files = Files::default();
+    let period = std::time::Duration::from_secs(2);
+    let mut world = hosting_from_within(&files, &ForAgent::default(), Some(period)).await;
+    busy_child(&mut world).await;
+    world.clock.pass(std::time::Duration::from_secs(60));
+    world.daemon.hand_over();
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 0, "timed from now");
+    world.clock.pass(period);
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1);
+}
+
+// OD-54 (2): the drain warns at once, in the daemon's log: each busy
+// child steered, and when it is handed over at the latest.
+#[tokio::test]
+async fn a_draining_daemon_warns_at_once_of_each_busy_child() {
+    let files = Files::default();
+    let mut world = hosting_from(&files, &ForAgent::default()).await;
+    busy_child(&mut world).await;
+    world.daemon.hand_over();
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    let warned = "kid: a turn in flight: steered to end it; handed over within 300s, its turn cut";
+    let said = world.said.lock().unwrap().clone();
+    assert_eq!(
+        said.iter().filter(|line| line.as_str() == warned).count(),
+        1,
+        "warned once: {said:?}"
+    );
 }
 
 // s4-Q4: a daemon handing over delivers nothing more: a wake sent to an

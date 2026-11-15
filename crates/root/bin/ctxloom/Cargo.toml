@@ -114,6 +114,8 @@ os = { workspace = true, features = ["test-support"] }
 daemon-client.workspace = true
 daemon-proto.workspace = true
 run-ports.workspace = true
+# A session's hold, written as a hook writes it (s4-Q14, H4).
+fact-spool.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "net"] }
 
 [lints]

@@ -265,6 +265,41 @@ pub fn notice(
     })
 }
 
+// ------------------------------------------------------------ the drain
+
+/// The guidance a draining daemon steers a busy child with (owner ruling
+/// OD-54, the text approved): it interrupts the turn in flight, and is the
+/// child's next turn.
+pub const DRAIN_GUIDANCE: &str = "ctxloom is being upgraded: finish the step you are on and end your turn; you will be resumed in this conversation.";
+
+/// The drain's guidance to `child`'s run `incarnation` (OD-54): the
+/// session's own message, a STEER, as `session send <child> steer` records
+/// one, so it reaches the child by the one delivery path. Keyed
+/// `drain:<child>:<incarnation>`, its message id the same; none when the
+/// child's engine takes no steer (`supported`).
+pub fn drain_guidance(
+    child: &SessionRef,
+    incarnation: u32,
+    supported: &[Urgency],
+) -> Option<Keyed<SendMessage>> {
+    if !supported.contains(&Urgency::Steer) {
+        return None;
+    }
+    let key = format!("drain:{}:{incarnation}", child.session);
+    Some(Keyed {
+        project_id: child.project_id.clone(),
+        cover: session_cover(&child.session)?,
+        key: key.clone(),
+        command: SendMessage {
+            message_id: key,
+            urgency: Urgency::Steer,
+            text: DRAIN_GUIDANCE.to_string(),
+            requester: None,
+            supported: supported.to_vec(),
+        },
+    })
+}
+
 // ----------------------------------------------------------------- launch
 
 /// What the launch policy sends the target store for one `ChildLaunched`:

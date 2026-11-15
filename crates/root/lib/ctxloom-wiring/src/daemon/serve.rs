@@ -73,6 +73,9 @@ pub(crate) struct Pace {
     pub(crate) idle: Duration,
     /// How often it looks at the store.
     pub(crate) poll: Duration,
+    /// How long a drain waits for a busy child before it hands it over
+    /// anyway, its turn cut (OD-54; `daemon_application::HAND_OVER_PERIOD`).
+    pub(crate) hand_over: Duration,
 }
 
 /// The daemon's log, shared by the loop and the launcher.
@@ -210,6 +213,38 @@ pub(crate) fn serve(
     })
 }
 
+/// The daemon's monotonic clock (OD-54): the time since its process made it.
+struct ProcessClock(Instant);
+
+impl daemon_application::Monotonic for ProcessClock {
+    fn now(&self) -> Duration {
+        self.0.elapsed()
+    }
+}
+
+/// What the daemon says of itself, fixed at its start (`started_at` its
+/// seconds since the epoch).
+fn about(stamp: &str, started_at: i64, pace: Pace) -> daemon_api::About {
+    daemon_api::About {
+        pid: std::process::id(),
+        version: stamp.to_string(),
+        start_time: angzarr_embedded::Timestamp {
+            seconds: started_at,
+            nanos: 0,
+        },
+        idle_limit_seconds: pace.idle.as_secs(),
+        hand_over_seconds: pace.hand_over.as_secs(),
+    }
+}
+
+/// The launcher, its drain's period `pace.hand_over` timed by this process's
+/// clock (OD-54).
+fn timed<E: run_ports::Edge>(launcher: Daemon<E>, pace: Pace) -> Daemon<E> {
+    launcher
+        .clocked(Arc::new(ProcessClock(Instant::now())))
+        .handing_over_within(pace.hand_over)
+}
+
 /// The clock's seconds since the epoch, as the daemon's start says it.
 fn seconds_now() -> i64 {
     std::time::SystemTime::now()
@@ -315,15 +350,7 @@ async fn start(
                 temp: temp.to_path_buf(),
             }),
             purges: Arc::new(super::places::StorePurges(core.store_handle())),
-            about: daemon_api::About {
-                pid: std::process::id(),
-                version: stamp.clone(),
-                start_time: angzarr_embedded::Timestamp {
-                    seconds: started_at,
-                    nanos: 0,
-                },
-                idle_limit_seconds: pace.idle.as_secs(),
-            },
+            about: about(&stamp, started_at, pace),
         })
         // The one-shots it hosts (U4).
         .hosting_one_shots(Arc::clone(one_shots)),
@@ -365,6 +392,7 @@ async fn start(
         Arc::clone(say),
     )
     .hosting_one_shots(Arc::clone(one_shots));
+    let launcher = timed(launcher, pace);
     let own = Discovery {
         stamp,
         pid: std::process::id(),
@@ -373,7 +401,7 @@ async fn start(
         bearer,
         home: home.display().to_string(),
     };
-    match swept_and_advertised(launcher, core, files, &own, say).await {
+    match swept_and_advertised(launcher, core, (files, shared.as_ref()), &own, say).await {
         Ok(launcher) => Ok((listener, launcher, own)),
         Err(detail) => {
             let _ = listener.stop().await;
@@ -385,23 +413,86 @@ async fn start(
 /// The launcher's first step (T18), before the daemon is advertised: the
 /// runs other processes, and a killed daemon, left are swept (their
 /// checkouts let go, OD-19), so the first command that finds it finds the
-/// record whole; then `own` is published. On a failure to publish, the
-/// launcher is let go and why is answered.
+/// record whole; then `own` is published. A start-up that failed (its
+/// catch-up or its sweep) still publishes it (owner ruling OD-52), loud:
+/// the log says so and `shared` keeps why, which `GetDaemon` answers as a
+/// warning and every command that reaches it says. On a failure to
+/// publish, the launcher is let go and why is answered.
 async fn swept_and_advertised(
     mut launcher: Daemon<CoreEdge>,
     core: &InProcessCore<SqliteStore>,
-    files: &DaemonFiles,
+    (files, shared): (&DaemonFiles, &Shared),
     own: &Discovery,
     say: &Say,
 ) -> Result<Daemon<CoreEdge>, String> {
-    if let Err(detail) = launcher.start_up(core.store(), core.catalog()).await {
-        said(say, &format!("the start's sweep failed: {detail}"));
+    if let Err(detail) = started_up(&mut launcher, core, files).await {
+        said(say, &incomplete_line(&detail));
+        shared.start_up_failed_with(Some(detail));
     }
     if let Err(e) = files.publish(own) {
         drop(launcher);
         return Err(format!("the discovery file cannot be written: {e}"));
     }
     Ok(launcher)
+}
+
+/// What the log says of a start-up that failed (OD-52), `detail` its why.
+fn incomplete_line(detail: &str) -> String {
+    format!(
+        "WARNING: the start-up catch-up failed: {detail}; serving anyway, and \
+         what it answers may be missing events until a later catch-up \
+         succeeds (tried again each round)"
+    )
+}
+
+/// While the start-up has failed (OD-52), it is tried again (its catch-up
+/// and its sweep, as at the start): once it succeeds the warning is
+/// cleared and the log says so; failing again, its why is the latest.
+async fn started_up_again<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
+    core: &InProcessCore<SqliteStore>,
+    (files, shared): (&DaemonFiles, &Shared),
+    say: &Say,
+) {
+    if daemon_api::Hosting::start_up_failed(shared).is_none() {
+        return;
+    }
+    match started_up(launcher, core, files).await {
+        Ok(_) => {
+            shared.start_up_failed_with(None);
+            said(
+                say,
+                "the start-up catch-up, tried again, succeeded: its warning is cleared",
+            );
+        }
+        Err(detail) => shared.start_up_failed_with(Some(detail)),
+    }
+}
+
+/// The launcher's start-up (T18): its read models caught up with the
+/// store's log, then its sweep.
+#[cfg(not(feature = "test-support"))]
+async fn started_up<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
+    core: &InProcessCore<SqliteStore>,
+    _: &DaemonFiles,
+) -> Result<Vec<daemon_application::Swept>, String> {
+    launcher.start_up(core.store(), core.catalog()).await
+}
+
+/// Under test-support, failed while the switch
+/// ([`DaemonFiles::start_up_fails`]) is there, its why the switch's line
+/// (OD-52).
+#[cfg(feature = "test-support")]
+async fn started_up<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
+    core: &InProcessCore<SqliteStore>,
+    files: &DaemonFiles,
+) -> Result<Vec<daemon_application::Swept>, String> {
+    match files.start_up_fails() {
+        Some(why) => Err(why),
+        None => launcher.start_up(core.store(), core.catalog()).await,
+    }
 }
 
 /// The API the daemon serves: `api`, a project's context assembled from its
@@ -679,6 +770,8 @@ async fn run<E: run_ports::Edge>(
         }
         let commit = core.store().next_commit();
         let round = shared.round_starts();
+        // A start-up that failed is tried again first (OD-52).
+        started_up_again(launcher, core, (files, shared.as_ref()), say).await;
         let busy = launcher.tick(core.store(), core.catalog(), draining).await;
         shared.round_done(round);
         // A session it prepares (asked for, or its frontend's TUI running)
@@ -744,6 +837,9 @@ struct Shared {
     done: tokio::sync::watch::Sender<u64>,
     /// Wakes the loop for a round a read asked for.
     wake: tokio::sync::Notify,
+    /// Why its start-up catch-up (or its sweep) failed, while no later one
+    /// has succeeded (OD-52).
+    start_up: Mutex<Option<String>>,
 }
 
 #[derive(Default)]
@@ -771,6 +867,7 @@ impl Shared {
             started: Mutex::new(0),
             done: tokio::sync::watch::Sender::new(0),
             wake: tokio::sync::Notify::new(),
+            start_up: Mutex::new(None),
         }
     }
 
@@ -800,6 +897,11 @@ impl Shared {
         let mut round = self.round();
         round.children = children;
         round.quiet_since = Some(quiet_since);
+    }
+
+    /// Why the start-up failed (OD-52), or none once one succeeded.
+    fn start_up_failed_with(&self, why: Option<String>) {
+        *self.start_up.lock().unwrap_or_else(PoisonError::into_inner) = why;
     }
 
     fn take_stop(&self) -> Option<bool> {
@@ -869,6 +971,13 @@ impl daemon_api::Hosting for Shared {
             self.wake.notify_one();
             let _ = tokio::time::timeout(FRESH_WAIT, done.wait_for(|round| *round >= need)).await;
         })
+    }
+
+    fn start_up_failed(&self) -> Option<String> {
+        self.start_up
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 

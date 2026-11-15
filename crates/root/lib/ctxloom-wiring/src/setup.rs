@@ -147,7 +147,16 @@ impl SetupUseCases {
         .reporting_companions({
             let library = crate::library::build(wiring, None)?;
             Box::new(move || library.companion_inits(&library_application::Flags::default()))
-        });
+        })
+        // This home's holds (s4-Q14, H4), judged as this binary's commands
+        // flush them: by its own stamp (a test's under test-support).
+        .reporting_holds(
+            Arc::new(fact_spool::Spool::at_home(Arc::clone(&fs), &home)),
+            crate::daemon::own_stamp(wiring.env(), version),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX)),
+        );
         let init = Init::new(
             Arc::new(ScaffoldFs::new(Arc::clone(&fs), &around.cwd)),
             user,
