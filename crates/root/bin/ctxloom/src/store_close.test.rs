@@ -59,27 +59,17 @@ fn test_every_session_command_closes_its_store_before_it_exits() {
         Vec::<&str>::new(),
         "the seed: nothing beside"
     );
-    // `session list|show|search` open no store: they are the daemon's
-    // reads (slice 2 step 6), and the daemon, the store's one owner (T14),
-    // holds it open while it serves.
-    for (args, writes) in [
-        (&["session", "keep", HARP, "--format", "json"][..], true),
-        (
-            &["session", "transcript", "show", HARP, "--format", "json"],
-            false,
-        ),
-    ] {
-        let ran = env.run(args);
-        ok(&ran, &format!("{args:?}"));
-        assert!(!logged(&store), "{args:?}: the log holds nothing");
-        if writes {
-            assert_eq!(
-                beside(&store),
-                Vec::<&str>::new(),
-                "{args:?}: nothing beside"
-            );
-        }
-    }
+    // `session list|show|search` and `transcript show` open no store: they
+    // are the daemon's reads (slice 2 step 6; the transcript's since the
+    // owner's H3 follow-up), and the daemon, the store's one owner (T14),
+    // holds it open while it serves. So the write is checked first, while
+    // no daemon serves.
+    let kept = env.run(&["session", "keep", HARP, "--format", "json"]);
+    ok(&kept, "keep");
+    assert!(!logged(&store), "keep: the log holds nothing");
+    assert_eq!(beside(&store), Vec::<&str>::new(), "keep: nothing beside");
+    let shown = env.run(&["session", "transcript", "show", HARP, "--format", "json"]);
+    ok(&shown, "transcript show");
 }
 
 // Not forced red: `test open-store` closes the store it opened with

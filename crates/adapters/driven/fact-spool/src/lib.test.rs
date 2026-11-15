@@ -10,7 +10,7 @@ use std::thread;
 
 use file_system::{Fs, Open, Rooted};
 use os::Mode;
-use run_ports::{Bound, Held, HeldEntry, HeldFact, HeldFacts, HoldError, Settled};
+use run_ports::{Bound, Fate, Held, HeldEntry, HeldFact, HeldFacts, HoldError, Settled};
 use uuid::Uuid;
 
 use super::frame::{self, Tail, MAGIC};
@@ -124,6 +124,52 @@ fn a_settle_keeps_what_was_not_delivered_in_its_place() {
         Settled::Cut { kept: 2 }
     );
     assert_eq!(held(&spool, &s), ["b", "d"]);
+}
+
+// s4-Q14, H3 (no silent drop): a record the flusher sets aside leaves the
+// hold for its set-aside part, the same as corruption: its frame kept as the
+// first free `<root>.held.corrupt-<n>` (0600), never taken again, and
+// counted by the survey; what was kept stays in its place.
+#[test]
+fn a_record_set_aside_goes_to_the_holds_set_aside_part() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    hold_all(&spool, &s, &["a", "b", "c", "d"]);
+    let batch = spool.take(&s).unwrap().unwrap();
+    let fates = [Fate::Cut, Fate::SetAside, Fate::Keep, Fate::SetAside];
+    assert_eq!(
+        batch.settle_fates(|i| fates[i]).unwrap(),
+        Settled::Cut { kept: 1 }
+    );
+    assert_eq!(held(&spool, &s), ["c"]);
+    let aside = spool.dir().join(format!("{s}.held.corrupt-1"));
+    let bytes = fs.read(&aside).expect("the set-aside part");
+    // Its frames as they were, so a person (or doctor) can read them.
+    let scan = frame::scan(&[MAGIC, bytes.as_slice()].concat(), u64::MAX).unwrap();
+    let entries: Vec<HeldEntry> = scan.entries.into_iter().map(|(e, _)| e).collect();
+    assert_eq!(ids(&entries), ["b", "d"]);
+    assert!(!fs
+        .exists(&spool.dir().join(format!("{s}.held.corrupt-2")))
+        .unwrap());
+    if let Some(m) = mode(&fs, &aside) {
+        assert_eq!(m & 0o777, 0o600, "{m:o}");
+    }
+    let survey = spool.survey().unwrap();
+    assert_eq!(survey[0].set_aside, 1);
+    assert_eq!(survey[0].facts, 1);
+}
+
+// Nothing set aside, no set-aside part is made.
+#[test]
+fn a_settle_that_sets_nothing_aside_makes_no_set_aside_part() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    hold_all(&spool, &s, &["a", "b"]);
+    let batch = spool.take(&s).unwrap().unwrap();
+    batch.settle_fates(|_| Fate::Cut).unwrap();
+    assert!(!names(&fs, spool.dir())
+        .iter()
+        .any(|n| n.contains("corrupt")));
 }
 
 #[test]

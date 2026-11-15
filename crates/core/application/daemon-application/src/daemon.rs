@@ -406,7 +406,10 @@ impl<E: Edge> Daemon<E> {
         self.engines.iter().find(|e| e.name() == name).cloned()
     }
 
-    /// The daemon's FIRST step (T18): every run the store holds caught up,
+    /// The daemon's FIRST step (T18), before the root publishes it: every
+    /// read model it plans and answers from caught up with the store's log
+    /// (the board, the pending messages, the session index), then every run
+    /// the store holds caught up,
     /// and the ones whose owner is gone ended (the sweep every launcher
     /// runs: `LaunchOrphaned` for one owed a runner, `RunnerLost` for one
     /// started, its incarnation ended `orphaned`), before anything is
@@ -416,6 +419,23 @@ impl<E: Edge> Daemon<E> {
         store: &S,
         catalog: &Catalog,
     ) -> Result<Vec<Swept>, String> {
+        // A fresh daemon serves nothing before its read models hold the
+        // store's log (owner, s4-Q14 H3's condition): the board, the
+        // pending messages and the session index the API reads are caught
+        // up here, before the root publishes it; the first round's step
+        // then finds them current.
+        self.board
+            .step(store, catalog)
+            .await
+            .map_err(|e| format!("the board's catch-up: {e:?}"))?;
+        self.pending
+            .step(store, catalog)
+            .await
+            .map_err(|e| format!("the pending messages' catch-up: {e:?}"))?;
+        self.index
+            .step(store, catalog)
+            .await
+            .map_err(|e| format!("the session index's catch-up: {e:?}"))?;
         self.sweep(store, catalog).await
     }
 

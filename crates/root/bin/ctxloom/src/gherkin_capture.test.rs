@@ -193,8 +193,8 @@ impl World {
 }
 
 /// `harp`'s transcript, read by `ctxloom session transcript show --format
-/// json` in the project (owner ruling 87a): its lines; none when the session
-/// captured nothing.
+/// json` in the project (owner ruling 87a; a daemon read): its lines; none
+/// when the session captured nothing.
 pub(super) fn read_transcript(w: &World, harp: &str) -> Vec<Value> {
     let env: Vec<(&str, &str)> = w
         .common
@@ -207,8 +207,10 @@ pub(super) fn read_transcript(w: &World, harp: &str) -> Vec<Value> {
         &["session", "transcript", "show", harp, "--format", "json"],
     );
     if ran.code != 0 {
+        // The daemon's read (owner, H3 follow-up): a session with none is
+        // refused `daemon-api-transcript-empty`.
         assert!(
-            ran.stderr.contains("no-captured-transcript"),
+            ran.stderr.contains("daemon-api-transcript-empty"),
             "the transcript could not be read: {}",
             ran.said()
         );

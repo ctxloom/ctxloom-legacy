@@ -267,3 +267,47 @@ fn a_prompt_line_is_the_line_the_launcher_writes() {
         )
     );
 }
+
+// s4-Q14, H3 (PROPOSAL, the owner's to word): a fact a hook dropped is a
+// `gap` line in its place: how many facts are missing there (one a gap),
+// which, why, and when it was dropped (the hook's clock, not the line's
+// `ts`, which is when the gap was recorded).
+#[test]
+fn a_capture_gap_is_a_gap_line_in_its_place() {
+    let mut p = projection();
+    let mut lines = p.fold(1, 1_700_000_000, &prompt("hi"));
+    lines.extend(p.fold(
+        2,
+        1_700_000_100,
+        &SessionEvent::CaptureGapped(sessions::CaptureGapped {
+            dropped: "hook:turn-end:s:p1".to_string(),
+            why: "bound".to_string(),
+            dropped_at: angzarr_embedded::Timestamp {
+                seconds: 1_700_000_050,
+                nanos: 0,
+            },
+            stamp: "v0.2.0-aaaaaaa".to_string(),
+        }),
+    ));
+    let parsed = parse(&lines);
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(
+        parsed[1],
+        json!({
+            "v": 1,
+            "harp": "amber-swift-owl",
+            "session_id": SESSION,
+            "engine": "claude-code",
+            "seq": 1,
+            "ts": "2023-11-14T22:15:00Z",
+            "kind": "gap",
+            "gap": {
+                "facts": 1,
+                "dropped": "hook:turn-end:s:p1",
+                "why": "bound",
+                "dropped_at": "2023-11-14T22:14:10Z",
+            },
+        })
+    );
+    assert_eq!(p.lines(), 2);
+}

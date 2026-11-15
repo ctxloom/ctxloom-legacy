@@ -141,6 +141,7 @@ fn outcome(delivery: &Delivery) -> &'static str {
         Delivery::Duplicate => "duplicate",
         Delivery::Parked => "parked",
         Delivery::Refused { .. } => "refused",
+        Delivery::NoSuchSession => "no-such-session",
         Delivery::Unavailable { .. } | Delivery::TimedOut => "unreached",
     }
 }
@@ -412,4 +413,19 @@ async fn test_a_parked_report_is_said() {
     let done = run(&mut rig).await;
     assert_eq!(done.notices.len(), 1);
     assert!(format!("{:?}", done.notices[0]).contains("parked"));
+}
+
+// s4-Q14, H3 follow-up: a report the daemon answers no such session is
+// final, and said as such.
+#[test]
+fn a_report_to_a_session_with_no_record_is_said_so() {
+    let library_application::Notice::Finding { text, .. } =
+        super::undelivered(&Report::Started { pid: 1 }, &Delivery::NoSuchSession)
+    else {
+        panic!("a finding");
+    };
+    assert_eq!(
+        text,
+        "could not tell the daemon the session's start: the daemon has no record of this session"
+    );
 }

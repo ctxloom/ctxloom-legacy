@@ -823,10 +823,46 @@ fn event_any(page: &angzarr_embedded::v1::EventPage) -> &angzarr_embedded::Any {
 // the stream is the transcript's order.
 
 use crate::{
-    AssistantTextShown, Compacted, CompactionPhase, PromptSubmitted, RecordAssistantText,
-    RecordCompaction, RecordPromptSubmitted, RecordSessionEnded, RecordToolCall, RecordTurnEnded,
-    SessionEnded, ToolCallStatus, ToolCalled, TurnEnded,
+    AssistantTextShown, CaptureGapped, Compacted, CompactionPhase, PromptSubmitted,
+    RecordAssistantText, RecordCaptureGap, RecordCompaction, RecordPromptSubmitted,
+    RecordSessionEnded, RecordToolCall, RecordTurnEnded, SessionEnded, ToolCallStatus, ToolCalled,
+    TurnEnded,
 };
+
+fn gap_fact() -> RecordCaptureGap {
+    RecordCaptureGap {
+        dropped: "hook:turn-end:s:p1".to_string(),
+        why: "bound".to_string(),
+        dropped_at: angzarr_embedded::Timestamp {
+            seconds: 1_700_000_000,
+            nanos: 0,
+        },
+        stamp: "v0.2.0-aaaaaaa".to_string(),
+    }
+}
+
+// s4-Q14, H3: a fact a hook dropped is recorded as a gap, in its place, on a
+// live session: which fact, why, when and by which hook; redelivered, it is
+// a DUPLICATE; on a stream with no session it records nothing.
+#[test]
+fn a_capture_gap_is_recorded_on_a_live_session_once() {
+    let mut session = Session::minted();
+    let fact = gap_fact();
+    assert_eq!(
+        session.fact(fact.clone(), "hook:gap:hook:turn-end:s:p1"),
+        [SessionEvent::CaptureGapped(CaptureGapped {
+            dropped: fact.dropped.clone(),
+            why: fact.why.clone(),
+            dropped_at: fact.dropped_at,
+            stamp: fact.stamp.clone(),
+        })]
+    );
+    assert!(session
+        .fact(gap_fact(), "hook:gap:hook:turn-end:s:p1")
+        .is_empty());
+    let mut none = Session::new();
+    assert!(none.fact(gap_fact(), "hook:gap:x").is_empty());
+}
 
 fn prompt_fact() -> RecordPromptSubmitted {
     RecordPromptSubmitted {

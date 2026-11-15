@@ -710,3 +710,105 @@ async fn the_daemons_end_stops_its_one_shots() {
     daemon.end_all();
     assert_eq!(stops.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
+
+// The owner's condition on a FRESH daemon: every read model it plans and
+// answers from (the session index, its transcripts included, the board and
+// the pending messages) is caught up with the store's log at its start,
+// before it serves anything (the root publishes it only after `start_up`):
+// a new daemon over a store a previous daemon wrote answers its first read
+// from those events, with no round (`tick`) run first.
+#[tokio::test]
+async fn a_fresh_daemon_catches_every_read_model_up_before_its_first_round() {
+    let edge = Arc::new(TestEdge::new());
+    // What a previous daemon left: a session, a prompt its hook recorded,
+    // and a message to it.
+    mint(&edge, CHILD, "kid", "claude-code", None).await;
+    let prompt = CommandBook {
+        cover: Some(session_cover(CHILD)),
+        page: Some(angzarr_embedded::v1::CommandPage {
+            body: Some(angzarr_embedded::v1::command_page::Body::Fact(
+                angzarr_embedded::v1::Fact {
+                    payload: Some(
+                        angzarr_embedded::Any::from_msg(
+                            &angzarr_embedded::markup::DomainMessage::to_wire(
+                                &sessions::RecordPromptSubmitted {
+                                    prompt_id: "p1".to_string(),
+                                    prompt: "left by the previous daemon".to_string(),
+                                },
+                            ),
+                        )
+                        .unwrap(),
+                    ),
+                    origin: Some(angzarr_embedded::v1::FactOrigin {
+                        external_id: format!("hook:prompt:{CHILD}:p1"),
+                        description: String::new(),
+                    }),
+                },
+            )),
+            ..angzarr_embedded::v1::CommandPage::default()
+        }),
+    };
+    edge.serve(prompt, run_ports::Arrival::Loopback)
+        .await
+        .unwrap();
+    command(
+        &edge,
+        CHILD,
+        sessions::SessionCommand::from(sessions::SendMessage {
+            message_id: "m1".to_string(),
+            urgency: sessions::Urgency::Inform,
+            text: "an inform".to_string(),
+            requester: None,
+            supported: vec![sessions::Urgency::Inform],
+        }),
+    )
+    .await;
+    // The new daemon's folds, as its root hands them in and its API reads
+    // them: empty, none of them registered in this kernel.
+    let folds = Folds::default();
+    let mut daemon = Daemon::new(Ports {
+        edge: Arc::clone(&edge),
+        engines: vec![hosted("claude-code")],
+        plans: Box::new(Plans::default()),
+        hand_offs: Box::new(NoHandOffs),
+        homes: Box::new(NoHomes),
+        ears: Box::new(Deaf),
+        run_locks: Arc::new(Locks(LockProbe::Free)),
+        place: Place {
+            home: "/home/u".to_string(),
+            program_dir: None,
+            os: "linux".to_string(),
+            user_home: None,
+        },
+        folds: folds.clone(),
+        say: Box::new(|_| {}),
+    });
+    assert!(
+        folds.index.index().records().is_empty(),
+        "nothing folded yet"
+    );
+    daemon.start_up(&edge.store, edge.catalog()).await.unwrap();
+    // No tick has run.
+    let index = folds.index.index();
+    let record = index
+        .records()
+        .into_iter()
+        .find(|r| r.harp == "kid")
+        .expect("the session is indexed at the start");
+    assert!(
+        index
+            .transcript(&record.id)
+            .is_some_and(|t| t.contains("left by the previous daemon")),
+        "its transcript is folded at the start"
+    );
+    drop(index);
+    assert!(
+        folds.board.board().session(CHILD).is_some(),
+        "the board holds it at the start"
+    );
+    assert_eq!(
+        folds.pending.pending().pending(CHILD).len(),
+        1,
+        "its pending message is folded at the start"
+    );
+}

@@ -142,8 +142,8 @@ angzarr-store-sqlite"), every project's streams in it, each rooted on its
 resource name (below), every hook's fact an event when it is delivered. `session list`, `search` and `show`
 are the daemon's reads (slice 2 step 6, "The daemon's API"), from the session
 index it keeps warm, each waiting for the daemon's next round so it answers
-what was committed before it was asked; `transcript show` catches up from the
-store on each read; so a live session shows what was delivered so far; nothing projects the events into a file (no
+what was committed before it was asked; `transcript show` is one too
+(`GetTranscript`, owner's H3 follow-up); so a live session shows what was delivered so far; nothing projects the events into a file (no
 `transcripts/transcript.jsonl`, `records/*.jsonl`, position file or
 `metadata.json`). A session's directory, `.ctxloom/sessions/<harp>/` in the
 project, holds what its engine needs (the session home, its native
@@ -1080,6 +1080,36 @@ The rules:
 
 ## A refusal is a typed message; its status lives in the proto alone
 
+Two trees of answers that are not a success (owner ruling 2026-11-14), each
+with its root:
+
+- BUSINESS REFUSALS: commands only. A fact is never refused for a business
+  reason (it already happened: its handler records it, or records nothing,
+  and its one failure is a bug). The status is the refusal message's
+  `(refusal_status)` alone (below). Roots: each domain's `refuse!` macro
+  (`sessions`, `runs`, `trees` and `scheduler`'s `src/refusal.rs`), reading
+  the generated `Refusal::REFUSAL_STATUS`; at the edge `daemon_api::
+  ApiRefusal::of` (a daemon proto refusal's `REFUSAL_STATUS`) and
+  `ApiRefusal::rejected` (a domain's, as the kernel coded it), answered by
+  `daemon_api_grpc`'s `status_of_error`; and the hook listener's
+  `runs_application::hook_commands::coded_of` (its `Failure::Rejected`
+  arm, the status the refusal declared).
+- INFRASTRUCTURE ERRORS: what is wrong with the request's surroundings,
+  never a business decision: a session the daemon has no record of
+  (`run_ports::NO_SUCH_SESSION`, NOT_FOUND), an etag or expected-sequence
+  conflict's ABORTED (angzarr's own spec keys, their status the
+  `AngzarrReason` surface in angzarr's protos), a malformed book, a store or
+  kernel failure (INTERNAL), an unserved method (UNIMPLEMENTED). Their
+  status MAY be named in Rust, but only at a root of this tree. There is no
+  single root yet; the roots today are `runs_application::hook_commands::
+  coded_of` and `no_such_session_answer` (the hook listener: a kernel
+  failure's INVALID_ARGUMENT or INTERNAL, an unknown session's NOT_FOUND)
+  and `daemon_api_grpc`'s `status_of_error` (the daemon API: `ApiError::
+  Failed` INTERNAL, `Unimplemented`); clients read them back in one place
+  each (`hook_sink_grpc`'s `delivery_of_code`, `daemon_client::called`). PROPOSED, not built: one root, an `Infrastructure` enum in
+  run-ports naming each error and its code once, which both listeners
+  answer through.
+
 A command refuses with a typed refusal MESSAGE of ctxloom's own protos
 (`proto/ctxloom/...`, and the scheduler's under `proto/io/angzarr/scheduler`),
 one per rejection, listed in the `refuses` of the commands that raise it, each
@@ -1207,8 +1237,15 @@ mutation first), bump the revs in Cargo.toml, `just dev-local-off`.
 
 The user daemon (`ctxloom daemon serve`) hosts its children through ONE
 launcher in the application ring (owner T18): `core/application/
-daemon-application`'s `Daemon`. Its first step, `start_up`, is the sweep
-(`run_launcher::Sweeper`, above); then `tick` catches up the read models,
+daemon-application`'s `Daemon`. Its first step, `start_up`, catches up
+every read model it plans and its API answers from (the board, the pending
+messages, the session index) with the store's log and then sweeps
+(`run_launcher::Sweeper`, above), all before the root publishes the
+discovery file (`serve.rs`'s `swept_and_advertised`), so a fresh daemon
+serves nothing (no fact, command or read: the user bearer reaches no one
+before the publish) from folds older than the log (owner, s4-Q14 H3's
+condition; a failed catch-up is logged, and the first round's step is the
+retry); then `tick` catches up the read models,
 plans each project on the board (`session-policies`), and takes the steps
 (launch, start, feed, clear, end), recording what each child said as its
 run's facts. Its ports: the engine registry (`HostedEngine`, an `Engine`
@@ -2264,7 +2301,7 @@ it is `library-application-no-context-exclusive` (exit 20).
 
 What the engine's hooks observe (a prompt, each MessageDisplay delta, a tool
 call as size and SHA-256 only, a turn's end without text, a session's end, a
-compaction) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
+compaction, and a gap where a hook dropped one) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
 capture.proto`; `runs-application::observe` makes them from the unified
 `HookEvent`; a hook delivers them through a `run-ports::FactSink`, or HOLDS
 them for later, below, and never fails its engine). The
@@ -2330,7 +2367,8 @@ holds (owner, H-Q5 revised: the client side flushes, never the daemon):
 daemon is up to date for, through the same sink, each waiting only what is
 left of the bound, then the delivered prefix cut, again (at most
 `TAKE_ROUNDS`, 8) until nothing it can deliver is left; a record held by a
-newer hook is kept and passed over, a gap record goes, a record whose
+newer hook is kept and passed over, a gap record is delivered as the gap
+fact in its place (below), a record whose
 external id is not its book's origin or whose book is not this session's
 stream is dropped and said. Then its own facts are delivered. A hold
 another process is taking, a held delivery left unsettled, or the bound
@@ -2340,10 +2378,58 @@ first-out; an own delivery left unsettled is held and the rest behind it.
 A final answer (`Refused`, `Parked`) is never held (said, not recorded).
 A hold at its bound, or one that cannot be used, drops the fact, said as
 `hook-cli-not-recorded`. The wording of `hook-cli-held` and
-`-held-behind` is a draft, the owner's to approve (H-Q10). Not yet built:
-the CLI's and the frontend's flush on the way in (H3), and the drain asked
-of an older daemon (H-Q6, U8); a hold of a session no hook fires again
-waits for them. The in-process `EdgeSink` is for tests and the run's own
+`-held-behind` is a draft, the owner's to approve (H-Q10). A COMMAND
+flushes too (unit H3, `ctxloom-wiring`'s `daemon::flush`): any ctxloom
+command that reaches the daemon (`daemon::Reach`, its `serving` and
+`reach`) first delivers what EVERY session's hold under its home holds,
+once a process (`on_the_way_in`), through the daemon's listener with the
+user bearer (`capture::daemon_sink`), the same `runs_application::Flush`
+as a hook's (`Flush::every`, sessions in the order `HeldFacts::sessions`
+lists them): only when the command is not older than the daemon
+(`runs_application::command_flushes`), each hold taken at once or skipped
+(`Left::Taken`, never waited for), within `FLUSH_BOUND` (2 s) for the whole
+flush, a hold the bound did not reach left untouched (`Left::OutOfTime`);
+what it could not deliver stays held. Nothing a flush meets is dropped
+silently (owner, H3 follow-up): a held record the daemon finally refuses or
+parks, or one addressed to a session the daemon has no record of, or one
+that is no fact of its hold's session, goes to the hold's set-aside part, as corruption does (run-ports' `Fate::SetAside`,
+`Batch::settle_fates`; fact-spool writes its frames as the next
+`<root>.held.corrupt-<n>`), a hook's flush and a command's alike; a command
+says it ONCE a session as it ends, `ctxloom-wiring-held-set-aside` (the
+session's harp, how many, each reason once; `daemon::flush::take_said`,
+said by `Commands::run`; the wording a draft, the owner's to approve).
+A capture fact addressed to a session the daemon has no record of (its
+stream holds none: never minted, or destroyed) records nothing, as ever,
+but is never answered "applied" (owner ruling, H3): the daemon's listener
+(`runs_application::EdgeCommands`, by `runs_application::no_such_session`:
+a capture fact applied with no event) answers it NOT_FOUND under the key
+`run_ports::NO_SUCH_SESSION`, the full name of capture.proto's
+`FactSessionUnknown` (a fact is never refused, so no `(refusal_status)`
+declares it), which hook-sink-grpc reads as `Delivery::NoSuchSession`
+(final; the in-process `EdgeSink` answers it alike); a hook says it, a
+flush sets it aside, its reason "the daemon has no record of this
+session". `session list|show|search` and `session transcript show` are daemon reads
+(`daemon_api::SessionReads`, `get_transcript` over `GetTranscript`), so a
+read includes what was held. Every
+session's, not only its project's: the daemon and its one store serve the
+home, and a hold names its session only inside its records. The `daemon`
+noun's own `status`, `stop` and `resolve` deliver none (`Reach::observing`:
+they look and change nothing). The frontend (slice 4 U5, `ctxloom-wiring`'s
+`frontend.rs`) flushes at its start (its reach's flush on the way in) and
+again once its exit is reported (`daemon::flush::flush_holds(&wiring,
+stamp)`: the daemon serving the home, none started; what it set aside said
+as the command ends). The daemon never reads
+a hold. Not yet built: the drain asked of an older daemon (H-Q6, U8).
+A GAP (the owner: a gap is delivered into the transcript) is a fact a
+hold dropped past its bound: its gap record is delivered, in its place in
+the order, as `RecordCaptureGap` (`capture.proto`: the dropped fact's
+external id, `why`, `dropped_at` the hook's clock, the hook's stamp;
+external id `hook:gap:<the dropped fact's external id>`,
+`Observation::gap`), recorded as `CaptureGapped` on a live session, so the
+session's record says for good which fact is missing there, and when; the
+transcript's line is `kind: gap`, `gap: {facts: 1, dropped, why,
+dropped_at}`, and its text `gap: 1 fact not recorded (<id>, dropped at
+<time>: <why>)` (the wording a draft, the owner's to approve). The in-process `EdgeSink` is for tests and the run's own
 facts. A unit test's executable never spawns itself as the daemon
 (`SPAWNS_ITSELF`). The session's end (`SessionEnd`) is captured like the rest.
 A compaction's external id is `hook:compact:<session>:<prompt_id>:<trigger>:

@@ -52,8 +52,9 @@ pub use engine::{
 pub use future::BoxFuture;
 pub use git::{git_config, GitUser, GIT_CONFIG_FILE};
 pub use held::{
-    up_to_date, Batch, Bound, GapWhy, Held, HeldEntry, HeldFact, HeldFacts, HeldGap, HoldError,
-    HoldSummary, Settle, Settled, APPEND_WAIT, GAP_SLACK, HELD_DIR, HOME_BOUND, SESSION_BOUND,
+    up_to_date, Batch, Bound, Fate, GapWhy, Held, HeldEntry, HeldFact, HeldFacts, HeldGap,
+    HoldError, HoldSummary, Settle, Settled, APPEND_WAIT, GAP_SLACK, HELD_DIR, HOME_BOUND,
+    SESSION_BOUND,
 };
 pub use hook::{
     endpoint_url, hook_environment, name_the_run, parse_endpoint, Bearer, BearerError, Dial,
@@ -75,7 +76,7 @@ pub use permit::{apply_permits, permits, Ignored, Permits, PERMIT_PREFIX};
 pub use program::{check_batch_arguments, is_batch_file, BatchArguments, ProgramNotFound};
 pub use records::{check_rel, RecordsError, SessionRecords};
 pub use settings::{AuthSetting, CredentialPolicy, EngineSettings, SessionHome};
-pub use sink::{Delivery, FactSink};
+pub use sink::{Delivery, FactSink, NO_SUCH_SESSION};
 pub use tls::{CertError, CertMint, CertNames, HookCertificate, PublicCert};
 pub use token::{Token, TokenError, TokenHash, TokenSource, EN_US};
 pub use version::newer;

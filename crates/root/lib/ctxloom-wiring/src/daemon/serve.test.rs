@@ -204,6 +204,42 @@ fn the_kill_switch_is_taken_by_the_step_it_names_alone() {
     assert!(!files.take_die_at("turn"), "taken once");
 }
 
+// ---------------------- a read catches up first (owner, H3's condition)
+
+/// Whether `future` is ready on one poll (a waker that wakes nothing: the
+/// test drives the loop's rounds itself, never a timer).
+fn ready<F: std::future::Future + ?Sized>(future: &mut std::pin::Pin<Box<F>>) -> bool {
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    future.as_mut().poll(&mut cx).is_ready()
+}
+
+// A read of the API (`Hosting::fresh`, which every projection query the
+// daemon serves awaits first: GetSession, ListSessions, SearchSessions,
+// GetTranscript, GetProject, AssembleContext) answers only once a round
+// that STARTED after it was asked has finished, so its catch-up read what
+// was committed before the read; a round already running when it was asked
+// does not do. Forced: the rounds are the test's.
+#[tokio::test]
+async fn a_read_waits_for_a_round_started_after_it_was_asked() {
+    use daemon_api::Hosting;
+    let one_shots = Arc::new(daemon_application::OneShots::new(Box::new(Kept(
+        Arc::default(),
+    ))));
+    let shared = super::Shared::new(session_index::SessionIndexes::default(), one_shots);
+    let running = shared.round_starts();
+    let mut read = shared.fresh();
+    assert!(!ready(&mut read), "no round since it was asked");
+    shared.round_done(running);
+    assert!(
+        !ready(&mut read),
+        "the round running when it was asked is not enough"
+    );
+    let next = shared.round_starts();
+    assert!(!ready(&mut read), "a round started, not finished");
+    shared.round_done(next);
+    assert!(ready(&mut read), "the round after it finished: caught up");
+}
+
 /// A host whose one-shot is placed at once and ended when the test says,
 /// through the `Told` it keeps.
 struct Kept(Arc<Mutex<Vec<daemon_application::Told>>>);
