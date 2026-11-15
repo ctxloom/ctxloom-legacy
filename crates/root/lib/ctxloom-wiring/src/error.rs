@@ -118,6 +118,11 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
                 id: "../escape".to_string(),
             },
         ))),
+        Box::new(crate::daemon::flush::HeldSetAside {
+            session: "brisk-copper-moth".to_string(),
+            count: 2,
+            why: "the daemon refused it".to_string(),
+        }),
     ]
 }
 

@@ -32,6 +32,32 @@ pub enum Observation {
     TurnEnded(sessions::RecordTurnEnded),
     SessionEnded(sessions::RecordSessionEnded),
     Compaction(sessions::RecordCompaction),
+    /// A fact a hook dropped (its hold could not keep it), recorded in its
+    /// place (s4-Q14, H3). [`observe`] never makes one: a flush makes it
+    /// from the hold's gap record ([`Observation::gap`]).
+    CaptureGap(sessions::RecordCaptureGap),
+}
+
+impl Observation {
+    /// The gap fact of a hold's gap record: which fact was dropped, why,
+    /// when (the dropping hook's clock; none read as the epoch) and by
+    /// which hook.
+    pub fn gap(gap: &run_ports::HeldGap) -> Observation {
+        let dropped_at = gap
+            .held_at
+            .map_or_else(angzarr_embedded::Timestamp::default, |at| {
+                angzarr_embedded::Timestamp {
+                    seconds: at.seconds,
+                    nanos: at.nanos,
+                }
+            });
+        Observation::CaptureGap(sessions::RecordCaptureGap {
+            dropped: gap.external_id.clone(),
+            why: gap.why.clone(),
+            dropped_at,
+            stamp: gap.stamp.clone(),
+        })
+    }
 }
 
 /// The observations `event` holds, in the order they happened. Pure.
@@ -145,6 +171,7 @@ impl Observation {
                 };
                 format!("hook:compact:{session}:{}:{trigger}:{phase}", f.prompt_id)
             }
+            Observation::CaptureGap(f) => format!("hook:gap:{}", f.dropped),
         }
     }
 
@@ -164,6 +191,7 @@ impl Observation {
             Observation::TurnEnded(f) => any(f),
             Observation::SessionEnded(f) => any(f),
             Observation::Compaction(f) => any(f),
+            Observation::CaptureGap(f) => any(f),
         }
     }
 
@@ -188,6 +216,61 @@ impl Observation {
             }),
         }
     }
+}
+
+/// Whether `answered` to `book` says the daemon has no record of the session
+/// it is addressed to (s4-Q14, H3 follow-up): `book` is a capture fact of
+/// the session domain, and the kernel answered it applied with no event (a
+/// capture fact records its event on any live session, so none recorded
+/// means the stream holds no session). Its distinct answer is
+/// [`run_ports::NO_SUCH_SESSION`] ([`run_ports::Delivery::NoSuchSession`]).
+///
+/// INVARIANT (owner's condition on the answer): this is safe only because
+/// the kernel decides every fact on its aggregate's stream folded FRESH
+/// from the store (angzarr-embedded's step 3, `read_history`: the stream
+/// read from the store for each input; the session aggregate keeps no
+/// snapshot), so a session another process or daemon minted a moment
+/// earlier is in the fold. A kernel that decided on a cached or older fold
+/// would make "applied with no event" a lie; held by the wiring's
+/// `a_session_another_process_minted_a_moment_ago_is_seen_by_the_listener`.
+pub fn no_such_session(book: &CommandBook, answered: &angzarr_embedded::Answered) -> bool {
+    let recorded = answered
+        .events
+        .as_ref()
+        .is_some_and(|events| !events.pages.is_empty());
+    answered.delivery == angzarr_embedded::v1::DeliveryOutcome::Applied
+        && !recorded
+        && is_capture_fact(book)
+}
+
+/// Whether `book` is a capture fact of the session domain: one of the facts
+/// an [`Observation`] is.
+fn is_capture_fact(book: &CommandBook) -> bool {
+    fn url<M: DomainMessage>() -> String {
+        <M::Wire as prost::Name>::type_url()
+    }
+    let on_sessions = book
+        .cover
+        .as_ref()
+        .is_some_and(|cover| cover.domain == sessions::SESSION_DOMAIN);
+    let Some(command_page::Body::Fact(fact)) = book.page.as_ref().and_then(|p| p.body.as_ref())
+    else {
+        return false;
+    };
+    let Some(payload) = fact.payload.as_ref() else {
+        return false;
+    };
+    on_sessions
+        && [
+            url::<sessions::RecordPromptSubmitted>(),
+            url::<sessions::RecordAssistantText>(),
+            url::<sessions::RecordToolCall>(),
+            url::<sessions::RecordTurnEnded>(),
+            url::<sessions::RecordSessionEnded>(),
+            url::<sessions::RecordCompaction>(),
+            url::<sessions::RecordCaptureGap>(),
+        ]
+        .contains(&payload.type_url)
 }
 
 /// How long a hook may spend delivering, by the engine's native hook name:

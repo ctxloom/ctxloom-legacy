@@ -6,12 +6,15 @@ syntax = "proto3";
 //  - each fact is something that ALREADY HAPPENED in the engine, so it is
 //    never refused: a stream holding no live session records nothing, and a
 //    redelivery (same Fact.origin.external_id) is DUPLICATE;
-//  - a fact that could not be delivered is dropped: nothing queues or spools
-//    it, and the hook says so on stderr;
+//  - a fact that could not be delivered is HELD by its hook, in order, for a
+//    ctxloom process of an up-to-date version to deliver (s4-Q14); one the
+//    hold could not keep is dropped, said on stderr, and recorded in its
+//    place as a RecordCaptureGap (unit H3);
 //  - the stream order of the events is the transcript's order: no field here
 //    is a sequence, and the hook process assigns none.
 package ctxloom.sessions.v1;
 
+import "google/protobuf/timestamp.proto";
 import "io/angzarr/v1/options.proto";
 
 // The user submitted a prompt. external_id
@@ -122,6 +125,43 @@ message RecordCompaction {
   string summary_sha256 = 5;
 }
 
+// PROPOSAL (s4-Q14, unit H3; the owner's to approve): a fact a hook observed
+// was DROPPED, never recorded: the session's hold could not keep it (past
+// its bound, or the disk refused it). The hold kept a gap record in the
+// dropped fact's place, and a flush delivers it here in the hold's order,
+// so the session's record says, for good, that a fact is missing there,
+// which, and when. One gap is one dropped fact. external_id
+// `hook:gap:<the dropped fact's external_id>`.
+message RecordCaptureGap {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.CaptureGapped"]
+  };
+
+  // The dropped fact's external_id (its kind and the engine's ids; never
+  // its content).
+  string dropped = 1;
+  // Why it was dropped: `bound` (the hold was full) or `disk`.
+  string why = 2;
+  // The dropping hook's clock when it dropped the fact.
+  google.protobuf.Timestamp dropped_at = 3;
+  // The dropping hook's versionator stamp.
+  string stamp = 4;
+}
+
+// The answer (s4-Q14, H3 follow-up; owner: a DISTINCT, typed answer, never
+// "applied") to a capture fact addressed to a session the daemon has no
+// record of: its stream holds no session (never minted, or destroyed), so
+// the fact was recorded nowhere. Not a refusal (a fact is never refused,
+// and the markup holds `(refusal_status)` to a command's refusals): the
+// daemon's listener answers a capture fact that recorded nothing with this
+// message's full name as the reason key, under NOT_FOUND; a client sets the
+// fact aside, says so, and never retries it.
+message FactSessionUnknown {
+  // The session's stream root, as the fact's cover named it (UUID text).
+  string session = 1;
+}
+
 message PromptSubmitted {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
 
@@ -175,4 +215,13 @@ message Compacted {
   string trigger = 3;
   uint64 summary_bytes = 4;
   string summary_sha256 = 5;
+}
+
+message CaptureGapped {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  string dropped = 1;
+  string why = 2;
+  google.protobuf.Timestamp dropped_at = 3;
+  string stamp = 4;
 }

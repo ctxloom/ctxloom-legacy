@@ -62,6 +62,7 @@ impl<E: Edge + 'static> FactSink for EdgeSink<E> {
         // A runtime of its own, on a thread of its own: this may be called
         // from inside another runtime's thread, which cannot block on one.
         let edge = &self.edge;
+        let asked = book.clone();
         std::thread::scope(|scope| {
             let served = scope.spawn(move || {
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -77,6 +78,10 @@ impl<E: Edge + 'static> FactSink for EdgeSink<E> {
                 })
             });
             match served.join() {
+                // As the daemon's listener answers it (s4-Q14, H3).
+                Ok(Ok(Ok(answered))) if runs_application::no_such_session(&asked, &answered) => {
+                    Delivery::NoSuchSession
+                }
                 Ok(Ok(served)) => delivery_of(served),
                 Ok(Err(delivery)) => delivery,
                 Err(_) => Delivery::Unavailable {
@@ -307,6 +312,7 @@ fn delivery_text(delivery: &Delivery) -> String {
     match delivery {
         Delivery::Unavailable { detail } => detail.clone(),
         Delivery::TimedOut => "the delivery timed out".to_string(),
+        Delivery::NoSuchSession => "the daemon has no record of this session".to_string(),
         other => format!("{other:?}"),
     }
 }
@@ -494,7 +500,7 @@ fn unrecorded(kept: &Kept, harp: &str) -> Unrecorded {
         ),
         Outcome::NotHeld(NotHeld::Failed(error)) => format!("it could not be held: {error}"),
         Outcome::NotHeld(NotHeld::Foreign) => {
-            format!("a held record that is not a fact of {harp}'s stream was dropped")
+            format!("a held record that is not a fact of {harp}'s stream was set aside")
         }
     };
     Unrecorded::from(NotRecorded { what, why })

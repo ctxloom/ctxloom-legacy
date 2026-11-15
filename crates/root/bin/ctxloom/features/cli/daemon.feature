@@ -279,6 +279,7 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       Then the hook exits 0, and its answer to the engine is unchanged
       And the hook warns "hook-cli-held" for the prompt, within its bound
       And the prompt is held for "brisk-copper-moth", in a file only its owner can read
+      And once a ctxloom daemon can be started and serves, the next command records the prompt in the session's transcript, once
 
   Rule: A hook holds its facts until a daemon that is up to date serves, and its session's next hook delivers them first, in the order held
 
@@ -333,6 +334,49 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       When the session's assistant fires its UserPromptSubmit hook
       Then the hook exits 0, and its answer to the engine is unchanged
       And the hook warns "hook-cli-not-recorded" for the prompt, saying the hold is at its bound
+
+  Rule: A command of an up-to-date version delivers what this home's sessions hold on its way in, and a fact a hold dropped is a gap in its place
+
+    A hold is not left to its session's next hook alone: any ctxloom
+    command that reaches a daemon not older than itself first delivers what
+    every session of this home holds, each fact once, in the order held. It
+    never stalls for it: it spends at most a moment, skips a hold another
+    command is delivering, and leaves what it could not deliver held for
+    the next. The daemon never reads a hold. A fact a hold could not keep
+    (past its bound) is delivered as a gap in its place, so the session's
+    record says for good that a fact is missing there, which, and when it
+    was dropped.
+
+    Scenario: The next command delivers what a session held, each fact once, in the order held
+      # new: s4-Q14 (unit H3; H-Q5 revised: a command delivers a hold on its way in).
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And the session's hooks held its prompt and its turn's end while an older daemon served
+      When I run "ctxloom session list --format json"
+      Then the command succeeds
+      And nothing is held for "brisk-copper-moth"
+      And the session's transcript holds the prompt, then the turn's end, each once
+
+    Scenario: Hooks firing at once all hold, and the next command records each fact once
+      # new: s4-Q14 (unit H3).
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And a ctxloom daemon of an older version is serving for this home
+      When the session's assistant fires ten MessageDisplay hooks at once
+      And I run "ctxloom session list --format json"
+      Then nothing is held for "brisk-copper-moth"
+      And the session's transcript holds each of the ten pieces, once
+
+    Scenario: A fact a hook dropped past the hold's bound is recorded as a gap, in its place
+      # new: s4-Q14 (unit H3; the owner: a gap is delivered into the transcript).
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And the session's hooks held its prompt, then dropped its turn's end past the hold's bound, while an older daemon served
+      When I run "ctxloom session list --format json"
+      Then the command succeeds
+      And the session's transcript holds the prompt, then a gap where the turn's end was dropped, each once
+      And the gap says when the turn's end was dropped, and that the hold was at its bound
+      And nothing is held for "brisk-copper-moth"
 
   Rule: A daemon killed at any instant comes back on the next call, and the record is whole
 

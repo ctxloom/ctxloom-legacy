@@ -65,3 +65,40 @@ fn a_worktree_report_reads_each_owner_state_and_verdict() {
         ]
     );
 }
+
+// s4-Q14, H3 (PROPOSAL, the owner's to word): a gap line reads as a line of
+// its own, in its place in the conversation, saying how many facts are
+// missing, which, when they were dropped and why.
+#[test]
+fn a_gap_reads_as_a_line_of_its_own_in_its_place() {
+    let transcript = [
+        r#"{"kind":"entry","entry":{"type":"user","content":"Hi"}}"#,
+        r#"{"kind":"gap","gap":{"facts":1,"dropped":"hook:turn-end:s:p1","why":"bound","dropped_at":"2023-11-14T22:14:10Z"}}"#,
+        r#"{"kind":"gap","gap":{"facts":1,"dropped":"hook:text:s:m1:0","why":"disk","dropped_at":"2023-11-14T22:14:11Z"}}"#,
+        r#"{"kind":"entry","entry":{"type":"user","content":"Again"}}"#,
+    ]
+    .join("\n");
+    let mut out = Vec::new();
+    super::conversation_text(&transcript, &mut out).unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "user: Hi\n\
+         gap: 1 fact not recorded (hook:turn-end:s:p1, dropped at 2023-11-14T22:14:10Z: the session's hold was at its bound)\n\
+         gap: 1 fact not recorded (hook:text:s:m1:0, dropped at 2023-11-14T22:14:11Z: the disk refused it)\n\
+         user: Again\n"
+    );
+}
+
+// A gap whose why this ctxloom does not know (a later word) says it as it
+// is, and one that counts no facts is still one dropped fact.
+#[test]
+fn a_gap_of_an_unknown_why_says_the_word() {
+    let transcript =
+        r#"{"kind":"gap","gap":{"dropped":"x","why":"quota","dropped_at":"2023-11-14T22:14:10Z"}}"#;
+    let mut out = Vec::new();
+    super::conversation_text(transcript, &mut out).unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "gap: 1 fact not recorded (x, dropped at 2023-11-14T22:14:10Z: quota)\n"
+    );
+}

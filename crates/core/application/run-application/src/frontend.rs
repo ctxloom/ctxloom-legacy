@@ -185,7 +185,7 @@ impl Frontend<'_> {
             let delivery = self.reports.deliver(launch, report).await;
             match delivery {
                 Delivery::Applied | Delivery::Duplicate => return,
-                Delivery::Parked | Delivery::Refused { .. } => {
+                Delivery::Parked | Delivery::Refused { .. } | Delivery::NoSuchSession => {
                     notices.push(undelivered(report, &delivery));
                     return;
                 }
@@ -211,6 +211,7 @@ fn undelivered(report: &Report, delivery: &Delivery) -> Notice {
         Delivery::Refused { detail } | Delivery::Unavailable { detail } => detail.clone(),
         Delivery::Parked => "the daemon parked it".to_string(),
         Delivery::TimedOut => "no daemon answered in time".to_string(),
+        Delivery::NoSuchSession => "the daemon has no record of this session".to_string(),
         Delivery::Applied | Delivery::Duplicate => String::new(),
     };
     Notice::Finding {

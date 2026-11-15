@@ -390,8 +390,8 @@ async fn terminal(
         result: Err(error),
         notices,
     };
-    // H3: flush_holds(wiring, stamp) here, at the session's start (the hold
-    // flush of daemon/s4-flush, wired at its merge).
+    // H3: reaching the daemon delivers the home's holds first, at the
+    // session's start (`Reach`'s flush on the way in).
     let reach = Reach::new(wiring, stamp);
     let api = match reach.reach().await {
         Ok(api) => api,
@@ -447,8 +447,10 @@ async fn terminal(
     };
     let watched = follow(&reach, &run.name, stop, &over, &followed);
     let (mut done, ()) = both(session, watched).await;
-    // H3: flush_holds(wiring, stamp) here, once the exit is reported (the
-    // hold flush of daemon/s4-flush, wired at its merge).
+    // H3: once the exit is reported, what the session's hooks held is
+    // delivered too; what it set aside is said as the command ends.
+    let flushed = crate::daemon::flush::flush_holds(wiring, stamp);
+    crate::daemon::flush::to_say(crate::daemon::flush::notices(&flushed));
     let followed = followed.into_inner().unwrap_or_else(|e| e.into_inner());
     notices.extend(followed.notices);
     notices.append(&mut done.notices);

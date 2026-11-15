@@ -129,10 +129,30 @@ impl Projection {
                     "summary_sha256": compacted.summary_sha256,
                 }),
             ),
+            SessionEvent::CaptureGapped(gap) => self.gap_line(seq, recorded_at, gap),
             _ => return Vec::new(),
         };
         self.lines += 1;
         vec![line]
+    }
+
+    /// A fact a hook dropped (s4-Q14, H3; PROPOSAL, the owner's to word):
+    /// one gap is one fact missing here, dropped at the hook's clock, not
+    /// this line's `ts`.
+    fn gap_line(&self, seq: u64, recorded_at: i64, gap: &sessions::CaptureGapped) -> String {
+        self.line(
+            seq,
+            recorded_at,
+            "gap",
+            json!({
+                "gap": {
+                    "facts": 1,
+                    "dropped": gap.dropped,
+                    "why": gap.why,
+                    "dropped_at": rfc3339(gap.dropped_at.seconds),
+                },
+            }),
+        )
     }
 
     /// How many lines the transcript holds: the `seq` the next line takes.

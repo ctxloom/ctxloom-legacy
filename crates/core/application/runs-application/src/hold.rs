@@ -25,18 +25,24 @@
 //! A final answer (`Refused`, `Parked`) is never held: a retry would be
 //! answered the same. A held record the daemon is not up to date for (a
 //! downgrade) is kept and passed over, so it blocks nothing after it; a gap
-//! record goes (it was said when the fact was dropped); a record that is not
+//! record is delivered as the gap fact in its place (`RecordCaptureGap`,
+//! H3), so the session's record says what is missing; a record that is not
 //! a fact of this session (its external id is not its book's, or its book is
-//! another stream's) is dropped and said. The hook's time is the
+//! another stream's), and one the daemon finally refused or parked, goes to
+//! the hold's set-aside part (never a silent drop, H3) and is said. The hook's time is the
 //! [`HookClock`]'s: the core reads no clock. Nothing here fails: whatever
 //! went wrong is a [`Kept`] in the [`HoldReport`], for the hook to say.
+//!
+//! [`Flush`] is the delivery itself, the hook's of its own session and a
+//! ctxloom command's of every session of its home on its way in (H3,
+//! [`Flush::every`], when [`command_flushes`]).
 
 use std::time::Duration;
 
 use angzarr_embedded::v1::{command_page, CommandBook, Uuid};
 use daemon_proto::google::protobuf::Timestamp;
 use run_ports::{
-    up_to_date, Bound, Delivery, FactSink, Held, HeldEntry, HeldFact, HeldFacts, HoldError,
+    up_to_date, Bound, Delivery, FactSink, Fate, Held, HeldEntry, HeldFact, HeldFacts, HoldError,
 };
 use surface_ports::HookEvent;
 
@@ -85,7 +91,7 @@ pub enum NotHeld {
     Full(Bound),
     /// The hold could not be used.
     Failed(HoldError),
-    /// A held record that is not a fact of this session: dropped.
+    /// A held record that is not a fact of this session: set aside (H3).
     Foreign,
 }
 
@@ -110,6 +116,17 @@ pub struct Kept {
 }
 
 impl Kept {
+    /// Whether a flush set it aside (H3: no silent drop): the daemon
+    /// finally refused or parked it, or it is no fact of its hold's session.
+    pub fn set_aside(&self) -> bool {
+        matches!(
+            self.outcome,
+            Outcome::Delivered(
+                Delivery::Refused { .. } | Delivery::Parked | Delivery::NoSuchSession
+            ) | Outcome::NotHeld(NotHeld::Foreign)
+        )
+    }
+
     /// Whether the hook has something to say of it: anything but a fact
     /// the daemon has (applied, or a duplicate).
     pub fn said(&self) -> bool {
@@ -190,7 +207,7 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
             report.own = self.hold_all(&root, session, &observed, &why);
             return report;
         }
-        let clear = self.flush(&root, session, stamp, sink, &mut report.flushed);
+        let clear = self.flush(&root, stamp, sink, &mut report.flushed);
         report.own = if clear {
             self.deliver_own(&root, session, &observed, sink)
         } else {
@@ -204,68 +221,13 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
     fn flush<S: FactSink + ?Sized>(
         &self,
         root: &uuid::Uuid,
-        session: &Uuid,
         daemon: &str,
         sink: &S,
         flushed: &mut Vec<Kept>,
     ) -> bool {
-        for _ in 0..TAKE_ROUNDS {
-            match self.held.is_empty(root) {
-                Ok(true) => return true,
-                Ok(false) => {}
-                Err(_) => return false,
-            }
-            let batch = match self.held.take(root) {
-                Ok(Some(batch)) => batch,
-                Ok(None) | Err(_) => return false,
-            };
-            let mut keep = vec![true; batch.entries().len()];
-            let mut removed = false;
-            let mut stopped = false;
-            for (i, entry) in batch.entries().iter().enumerate() {
-                let HeldEntry::Fact(fact) = entry else {
-                    keep[i] = false;
-                    removed = true;
-                    continue;
-                };
-                if !up_to_date(daemon, &fact.stamp) {
-                    continue;
-                }
-                let Some(book) = own_book(fact, session) else {
-                    keep[i] = false;
-                    removed = true;
-                    flushed.push(Kept {
-                        external_id: fact.external_id.clone(),
-                        outcome: Outcome::NotHeld(NotHeld::Foreign),
-                    });
-                    continue;
-                };
-                let within = self.clock.remaining();
-                if within.is_zero() {
-                    stopped = true;
-                    break;
-                }
-                let delivery = sink.deliver(book, within);
-                if !delivery.settled() {
-                    stopped = true;
-                    break;
-                }
-                keep[i] = false;
-                removed = true;
-                flushed.push(Kept {
-                    external_id: fact.external_id.clone(),
-                    outcome: Outcome::Delivered(delivery),
-                });
-            }
-            if batch.settle(|i| keep[i]).is_err() || stopped {
-                return false;
-            }
-            if !removed {
-                // What is left is held for a daemon newer than this one.
-                return true;
-            }
-        }
-        false
+        let done = Flush::new(self.held, self.clock).session(root, daemon, sink);
+        flushed.extend(done.flushed);
+        done.left == Left::Nothing
     }
 
     /// Deliver the hook's own observations; one left unsettled is held, and
@@ -359,6 +321,220 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
             external_id,
             outcome,
         }
+    }
+}
+
+/// Whether a ctxloom command of stamp `own` delivers holds to a daemon of
+/// stamp `daemon` on its way in (s4-Q14, H3): when its version is not older
+/// than the daemon's ([`run_ports::newer`], the skew rule's own).
+pub fn command_flushes(own: &str, daemon: &str) -> bool {
+    !run_ports::newer(daemon, own)
+}
+
+/// Why a flush of one session's hold left something held, or nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Left {
+    /// Nothing the daemon is up to date for is left (what is left, if
+    /// anything, waits for a newer daemon).
+    Nothing,
+    /// Another process is taking the hold: skipped, never waited for.
+    Taken,
+    /// A delivery was not settled: it and everything after it stay.
+    Unsettled(Delivery),
+    /// The time was spent before everything could be delivered.
+    OutOfTime,
+    /// Facts kept arriving while it was delivered: [`TAKE_ROUNDS`] takes
+    /// were not enough.
+    Rounds,
+    /// The hold could not be used.
+    Failed(HoldError),
+}
+
+/// What a flush did to one session's hold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionFlush {
+    /// The session root the hold is named by.
+    pub root: uuid::Uuid,
+    /// The session's resource name, as the hold's first fact names it.
+    pub session: Option<String>,
+    /// Each record it delivered (or set aside), in held order.
+    pub flushed: Vec<Kept>,
+    /// What it left, and why.
+    pub left: Left,
+}
+
+impl SessionFlush {
+    /// The records it set aside, in held order: those the daemon finally
+    /// refused or parked, and those that are no fact of the hold's session.
+    pub fn set_aside(&self) -> Vec<&Kept> {
+        self.flushed
+            .iter()
+            .filter(|kept| kept.set_aside())
+            .collect()
+    }
+}
+
+/// The client side's flush of holds (owner, H-Q5 revised): a hook's of its
+/// own session, a command's of every session of its home on its way in
+/// (H3). Each hold is taken at once or skipped, delivered in held order
+/// within the clock's time, and its delivered records cut.
+pub struct Flush<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> {
+    held: &'a H,
+    clock: &'a C,
+}
+
+impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
+    /// A flush of the holds `held` keeps, within `clock`'s time.
+    pub fn new(held: &'a H, clock: &'a C) -> Flush<'a, H, C> {
+        Flush { held, clock }
+    }
+
+    /// Deliver, through `sink` to a daemon of stamp `daemon`, what every
+    /// session's hold holds, in the order [`HeldFacts::sessions`] lists
+    /// them, until the time is spent: one [`SessionFlush`] per hold (one
+    /// the time did not reach is [`Left::OutOfTime`], untouched).
+    pub fn every<S: FactSink + ?Sized>(
+        &self,
+        daemon: &str,
+        sink: &S,
+    ) -> Result<Vec<SessionFlush>, HoldError> {
+        let mut flushes = Vec::new();
+        for root in self.held.sessions()? {
+            if self.clock.remaining().is_zero() {
+                flushes.push(SessionFlush {
+                    root,
+                    session: None,
+                    flushed: Vec::new(),
+                    left: Left::OutOfTime,
+                });
+                continue;
+            }
+            flushes.push(self.session(&root, daemon, sink));
+        }
+        Ok(flushes)
+    }
+
+    /// Deliver, through `sink` to a daemon of stamp `daemon`, what `root`'s
+    /// hold holds that the daemon is up to date for, in order, then cut
+    /// what went; again, while records arrive meanwhile, at most
+    /// [`TAKE_ROUNDS`] times. A gap record is delivered as the gap fact in
+    /// its place; a record that is not a fact of `root`'s stream is dropped
+    /// ([`NotHeld::Foreign`]).
+    pub fn session<S: FactSink + ?Sized>(
+        &self,
+        root: &uuid::Uuid,
+        daemon: &str,
+        sink: &S,
+    ) -> SessionFlush {
+        let session = Uuid::from_bytes(*root.as_bytes());
+        let mut flushed = Vec::new();
+        let mut name = None;
+        let left = self.rounds(root, &session, daemon, sink, &mut flushed, &mut name);
+        SessionFlush {
+            root: *root,
+            session: name,
+            flushed,
+            left,
+        }
+    }
+
+    fn rounds<S: FactSink + ?Sized>(
+        &self,
+        root: &uuid::Uuid,
+        session: &Uuid,
+        daemon: &str,
+        sink: &S,
+        flushed: &mut Vec<Kept>,
+        name: &mut Option<String>,
+    ) -> Left {
+        for _ in 0..TAKE_ROUNDS {
+            match self.held.is_empty(root) {
+                Ok(true) => return Left::Nothing,
+                Ok(false) => {}
+                Err(error) => return Left::Failed(error),
+            }
+            let batch = match self.held.take(root) {
+                Ok(Some(batch)) => batch,
+                Ok(None) => return Left::Taken,
+                Err(error) => return Left::Failed(error),
+            };
+            if name.is_none() {
+                *name = batch.entries().iter().find_map(|entry| match entry {
+                    HeldEntry::Fact(fact) => Some(fact.session.clone()),
+                    HeldEntry::Gap(_) => None,
+                });
+            }
+            let mut fates = vec![Fate::Keep; batch.entries().len()];
+            let mut removed = false;
+            let mut stopped = None;
+            for (i, entry) in batch.entries().iter().enumerate() {
+                let (stamp, external_id, book) = match entry {
+                    HeldEntry::Fact(fact) => (
+                        &fact.stamp,
+                        fact.external_id.clone(),
+                        own_book(fact, session),
+                    ),
+                    // A fact the hold dropped: recorded in its place, on the
+                    // hold's own stream (H3).
+                    HeldEntry::Gap(gap) => {
+                        let observation = Observation::gap(gap);
+                        (
+                            &gap.stamp,
+                            observation.external_id(session),
+                            Some(observation.book(session)),
+                        )
+                    }
+                };
+                if !up_to_date(daemon, stamp) {
+                    continue;
+                }
+                // No fact of this session's stream: never delivered, never
+                // dropped either (H3), but set aside.
+                let Some(book) = book else {
+                    fates[i] = Fate::SetAside;
+                    removed = true;
+                    flushed.push(Kept {
+                        external_id,
+                        outcome: Outcome::NotHeld(NotHeld::Foreign),
+                    });
+                    continue;
+                };
+                let within = self.clock.remaining();
+                if within.is_zero() {
+                    stopped = Some(Left::OutOfTime);
+                    break;
+                }
+                let delivery = sink.deliver(book, within);
+                if !delivery.settled() {
+                    stopped = Some(Left::Unsettled(delivery));
+                    break;
+                }
+                // A final answer that is no record (refused, parked) is set
+                // aside, never retried and never dropped (H3).
+                fates[i] = match delivery {
+                    Delivery::Refused { .. } | Delivery::Parked | Delivery::NoSuchSession => {
+                        Fate::SetAside
+                    }
+                    _ => Fate::Cut,
+                };
+                removed = true;
+                flushed.push(Kept {
+                    external_id,
+                    outcome: Outcome::Delivered(delivery),
+                });
+            }
+            if let Err(error) = batch.settle_fates(|i| fates[i]) {
+                return Left::Failed(error);
+            }
+            if let Some(left) = stopped {
+                return left;
+            }
+            if !removed {
+                // What is left is held for a daemon newer than this one.
+                return Left::Nothing;
+            }
+        }
+        Left::Rounds
     }
 }
 

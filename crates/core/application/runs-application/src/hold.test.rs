@@ -11,14 +11,14 @@ use std::time::Duration;
 use angzarr_embedded::v1::{command_page, CommandBook, Uuid};
 use daemon_proto::google::protobuf::Timestamp;
 use run_ports::{
-    Batch, Bound, Delivery, FactSink, Held, HeldEntry, HeldFact, HeldFacts, HeldGap, HoldError,
-    HoldSummary, Settle, Settled,
+    Batch, Bound, Delivery, FactSink, Fate, Held, HeldEntry, HeldFact, HeldFacts, HeldGap,
+    HoldError, HoldSummary, Settle, Settled,
 };
 use surface_ports::{HookEvent, MessageDisplay};
 
 use super::*;
 use crate::fakes::{uuid, SESSION_ME, SESSION_OTHER};
-use crate::observe;
+use crate::{observe, Observation};
 
 const OWN: &str = "v0.2.0-aaaaaaa";
 const OLDER: &str = "v0.1.0-bbbbbbb";
@@ -86,6 +86,19 @@ fn held_of(event: &HookEvent, stamp: &str) -> HeldEntry {
     ))
 }
 
+/// A gap record: the fact `dropped` could not be kept by a hook of `stamp`.
+fn gap_of(dropped: &str, stamp: &str) -> HeldEntry {
+    HeldEntry::Gap(HeldGap {
+        stamp: stamp.to_string(),
+        external_id: dropped.to_string(),
+        held_at: Some(Timestamp {
+            seconds: 1_700_000_050,
+            nanos: 7,
+        }),
+        why: "bound".to_string(),
+    })
+}
+
 fn ids_held(memory: &Memory) -> Vec<String> {
     memory
         .entries()
@@ -108,6 +121,8 @@ struct Inner {
     refuse: Option<Result<Held, HoldError>>,
     /// Calls of the port, by name.
     calls: Vec<&'static str>,
+    /// What a settle set aside, in order.
+    aside: Vec<HeldEntry>,
 }
 
 /// One session's hold in memory, with the adapter's take and settle
@@ -129,6 +144,20 @@ impl Memory {
 
     fn calls(&self) -> Vec<&'static str> {
         self.0.lock().unwrap().calls.clone()
+    }
+
+    /// What was set aside, by external id.
+    fn aside(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .aside
+            .iter()
+            .map(|e| match e {
+                HeldEntry::Fact(f) => f.external_id.clone(),
+                HeldEntry::Gap(g) => format!("gap:{}", g.external_id),
+            })
+            .collect()
     }
 
     fn refusing(&self, answer: Result<Held, HoldError>) {
@@ -191,15 +220,17 @@ struct Settling {
 }
 
 impl Settle for Settling {
-    fn settle(self: Box<Self>, keep: &[bool]) -> Result<Settled, HoldError> {
+    fn settle(self: Box<Self>, fates: &[Fate]) -> Result<Settled, HoldError> {
         let mut inner = self.memory.0.lock().unwrap();
         let since = inner.entries.split_off(self.len);
-        let kept: Vec<HeldEntry> = std::mem::take(&mut inner.entries)
-            .into_iter()
-            .zip(keep)
-            .filter(|(_, k)| **k)
-            .map(|(e, _)| e)
-            .collect();
+        let mut kept = Vec::new();
+        for (entry, fate) in std::mem::take(&mut inner.entries).into_iter().zip(fates) {
+            match fate {
+                Fate::Keep => kept.push(entry),
+                Fate::SetAside => inner.aside.push(entry),
+                Fate::Cut => {}
+            }
+        }
         let count = kept.len();
         inner.entries = kept;
         inner.entries.extend(since);
@@ -248,6 +279,7 @@ impl HookClock for Clock {
 /// (`Applied` once it runs out), spending `cost` of the clock each time,
 /// and runs `during` (once) inside its first delivery.
 struct Sink<'c> {
+    books: RefCell<Vec<CommandBook>>,
     clock: Option<&'c Clock>,
     cost: Duration,
     answers: RefCell<VecDeque<Delivery>>,
@@ -259,6 +291,7 @@ struct Sink<'c> {
 impl<'c> Sink<'c> {
     fn new() -> Sink<'c> {
         Sink {
+            books: RefCell::new(Vec::new()),
             clock: None,
             cost: Duration::ZERO,
             answers: RefCell::new(VecDeque::new()),
@@ -296,6 +329,7 @@ fn external_id(book: &CommandBook) -> String {
 impl FactSink for Sink<'_> {
     fn deliver(&self, book: CommandBook, within: Duration) -> Delivery {
         self.delivered.borrow_mut().push(external_id(&book));
+        self.books.borrow_mut().push(book.clone());
         self.within.borrow_mut().push(within);
         if let Some(during) = self.during.borrow_mut().take() {
             during();
@@ -446,18 +480,14 @@ fn a_hook_older_than_its_daemon_delivers() {
 }
 
 // H-Q5 revised: an up-to-date hook that finds its session's hold non-empty
-// delivers it in held order, cuts it, then delivers its own facts.
+// delivers it in held order, cuts it, then delivers its own facts; a gap
+// record is delivered as the gap fact in its place (H3).
 #[test]
 fn an_up_to_date_hook_flushes_its_sessions_hold_in_order_then_delivers_its_own() {
     let memory = Memory::holding(vec![
         held_of(&prompt("p1"), OLDER),
         held_of(&pieces(1), OWN),
-        HeldEntry::Gap(HeldGap {
-            stamp: OWN.to_string(),
-            external_id: "dropped".to_string(),
-            held_at: None,
-            why: "bound".to_string(),
-        }),
+        gap_of("dropped", OWN),
     ]);
     let clock = long();
     let sink = Sink::new();
@@ -471,18 +501,16 @@ fn an_up_to_date_hook_flushes_its_sessions_hold_in_order_then_delivers_its_own()
         [
             ids_of(&prompt("p1")),
             ids_of(&pieces(1)),
+            vec!["hook:gap:dropped".to_string()],
             ids_of(&turn_end("p1"))
         ]
         .concat(),
-        "held first, in order; the gap is not a fact"
+        "held first, in order, the gap in its place"
     );
     assert!(memory.entries().is_empty(), "the hold is cut");
     assert_eq!(
         outcomes(&report.flushed),
-        vec![
-            Outcome::Delivered(Delivery::Applied),
-            Outcome::Delivered(Delivery::Applied)
-        ]
+        vec![Outcome::Delivered(Delivery::Applied); 3]
     );
     assert_eq!(
         outcomes(&report.own),
@@ -548,27 +576,48 @@ fn an_unsettled_held_delivery_keeps_it_and_holds_the_hook_behind() {
 }
 
 // A final answer to a held fact (refused, parked) is settled: it leaves the
-// hold and is said, never retried.
+// hold for its set-aside part (no silent drop, H3), is said, and is never
+// retried; what follows it is still delivered.
 #[test]
-fn a_refused_held_fact_leaves_the_hold_and_is_said() {
-    let memory = Memory::holding(vec![held_of(&prompt("p1"), OWN)]);
-    let clock = long();
-    let refused = Delivery::Refused {
-        detail: "no".to_string(),
-    };
-    let sink = Sink::new().answering([refused.clone()]);
-    let report = Holding::new(&memory, &clock, OWN, NAME).record(
-        &session(),
-        &turn_end("p1"),
-        daemon(OWN, &sink),
-    );
-    assert!(memory.entries().is_empty());
-    assert_eq!(outcomes(&report.flushed), vec![Outcome::Delivered(refused)]);
-    assert_eq!(
-        outcomes(&report.own),
-        vec![Outcome::Delivered(Delivery::Applied)]
-    );
-    assert_eq!(report.said().len(), 1);
+fn a_refused_or_parked_held_fact_is_set_aside_and_said() {
+    for answer in [
+        Delivery::Refused {
+            detail: "no".to_string(),
+        },
+        Delivery::Parked,
+        // A session the daemon has no record of (H3 follow-up).
+        Delivery::NoSuchSession,
+    ] {
+        let memory = Memory::holding(vec![
+            held_of(&prompt("p1"), OWN),
+            held_of(&prompt("p2"), OWN),
+        ]);
+        let clock = long();
+        let sink = Sink::new().answering([answer.clone()]);
+        let report = Holding::new(&memory, &clock, OWN, NAME).record(
+            &session(),
+            &turn_end("p2"),
+            daemon(OWN, &sink),
+        );
+        assert!(memory.entries().is_empty());
+        assert_eq!(
+            memory.aside(),
+            ids_of(&prompt("p1")),
+            "set aside, not dropped"
+        );
+        assert_eq!(
+            outcomes(&report.flushed),
+            vec![
+                Outcome::Delivered(answer.clone()),
+                Outcome::Delivered(Delivery::Applied)
+            ]
+        );
+        assert_eq!(
+            outcomes(&report.own),
+            vec![Outcome::Delivered(Delivery::Applied)]
+        );
+        assert_eq!(report.said().len(), 1);
+    }
 }
 
 // An own delivery left unsettled (the daemon died under the hook) is held,
@@ -739,6 +788,14 @@ fn a_held_record_of_another_stream_is_dropped_and_said() {
     assert_eq!(sink.delivered(), ids_of(&turn_end("p1")));
     assert!(memory.entries().is_empty());
     assert_eq!(
+        memory.aside(),
+        vec![
+            observation.external_id(&uuid(SESSION_OTHER)),
+            "hook:prompt:not-its-book".to_string()
+        ],
+        "set aside, never dropped (H3)"
+    );
+    assert_eq!(
         outcomes(&report.flushed),
         vec![
             Outcome::NotHeld(NotHeld::Foreign),
@@ -806,4 +863,348 @@ fn an_event_of_no_observation_touches_no_hold() {
     assert_eq!(report, HoldReport::default());
     assert!(memory.calls().is_empty());
     assert!(sink.delivered().is_empty());
+}
+
+// ------------------------------------------------- H3: the client's flush
+
+// A gap record is delivered as the gap fact, in its place in the order, on
+// the hold's own stream: which fact was dropped, why, when (the dropping
+// hook's clock) and by which hook (s4-Q14, H3).
+#[test]
+fn a_gap_is_delivered_as_the_gap_fact_in_its_place() {
+    let memory = Memory::holding(vec![
+        held_of(&prompt("p1"), OWN),
+        gap_of("hook:turn-end:s:p1", OWN),
+        held_of(&prompt("p2"), OWN),
+    ]);
+    let clock = long();
+    let sink = Sink::new();
+    let done = Flush::new(&memory, &clock).session(&root(), OWN, &sink);
+    assert_eq!(done.left, Left::Nothing);
+    assert_eq!(
+        sink.delivered(),
+        [
+            ids_of(&prompt("p1")),
+            vec!["hook:gap:hook:turn-end:s:p1".to_string()],
+            ids_of(&prompt("p2"))
+        ]
+        .concat()
+    );
+    let book = sink.books.borrow()[1].clone();
+    let cover = book.cover.clone().unwrap();
+    assert_eq!(cover.domain, sessions::SESSION_DOMAIN);
+    assert_eq!(cover.root, Some(session()), "the hold's own stream");
+    let HeldEntry::Gap(held) = gap_of("hook:turn-end:s:p1", OWN) else {
+        unreachable!()
+    };
+    let expected = Observation::gap(&held);
+    assert_eq!(book, expected.book(&session()));
+    let Observation::CaptureGap(gap) = expected else {
+        panic!("a gap");
+    };
+    assert_eq!(gap.dropped, "hook:turn-end:s:p1");
+    assert_eq!(gap.why, "bound");
+    assert_eq!(gap.stamp, OWN);
+    assert_eq!(
+        (gap.dropped_at.seconds, gap.dropped_at.nanos),
+        (1_700_000_050, 7)
+    );
+    assert!(memory.entries().is_empty());
+    assert_eq!(done.flushed.len(), 3);
+}
+
+// A gap held by a hook newer than the daemon waits, as a fact of it would.
+#[test]
+fn a_gap_held_by_a_newer_hook_is_kept() {
+    let memory = Memory::holding(vec![gap_of("x", NEWER), held_of(&prompt("p1"), OWN)]);
+    let clock = long();
+    let sink = Sink::new();
+    let done = Flush::new(&memory, &clock).session(&root(), OWN, &sink);
+    assert_eq!(sink.delivered(), ids_of(&prompt("p1")));
+    assert_eq!(ids_held(&memory), vec!["gap:x".to_string()]);
+    assert_eq!(done.left, Left::Nothing);
+}
+
+// A command flushes only when it is of an up-to-date version: not older than
+// the daemon's (semver; two builds of one version flush to each other).
+#[test]
+fn a_command_flushes_only_when_it_is_not_older_than_the_daemon() {
+    assert!(command_flushes(OWN, OWN));
+    assert!(command_flushes(NEWER, OWN));
+    assert!(command_flushes("v0.2.0-ddddddd", OWN));
+    assert!(!command_flushes(OLDER, OWN));
+}
+
+/// Holds of several sessions, each a [`Memory`], listed in root order.
+struct Many(Vec<(uuid::Uuid, Memory)>);
+
+impl Many {
+    fn of(&self, session: &uuid::Uuid) -> &Memory {
+        &self.0.iter().find(|(r, _)| r == session).expect("a hold").1
+    }
+}
+
+impl HeldFacts for Many {
+    fn hold(&self, _: &uuid::Uuid, _: HeldFact) -> Result<Held, HoldError> {
+        panic!("a flush holds nothing")
+    }
+
+    fn is_empty(&self, session: &uuid::Uuid) -> Result<bool, HoldError> {
+        self.of(session).is_empty(session)
+    }
+
+    fn sessions(&self) -> Result<Vec<uuid::Uuid>, HoldError> {
+        Ok(self.0.iter().map(|(r, _)| *r).collect())
+    }
+
+    fn take(&self, session: &uuid::Uuid) -> Result<Option<Batch>, HoldError> {
+        self.of(session).take(session)
+    }
+
+    fn discard(&self, _: &uuid::Uuid) -> Result<u64, HoldError> {
+        Ok(0)
+    }
+
+    fn survey(&self) -> Result<Vec<HoldSummary>, HoldError> {
+        Ok(Vec::new())
+    }
+}
+
+fn other_root() -> uuid::Uuid {
+    uuid::Uuid::parse_str(SESSION_OTHER).unwrap()
+}
+
+/// A held record of `event`'s first observation on the stream `on`.
+fn held_on(on: &str, event: &HookEvent) -> HeldEntry {
+    let observation = &observe(event)[0];
+    HeldEntry::Fact(HeldFact::of_book(
+        OWN,
+        NAME,
+        observation.external_id(&uuid(on)),
+        &observation.book(&uuid(on)),
+        None,
+    ))
+}
+
+fn ids_on(on: &str, event: &HookEvent) -> Vec<String> {
+    observe(event)
+        .iter()
+        .map(|o| o.external_id(&uuid(on)))
+        .collect()
+}
+
+// A command on its way in delivers what EVERY session's hold holds, each in
+// its own order, and leaves every hold it emptied empty.
+#[test]
+fn a_command_flushes_every_sessions_hold_in_order() {
+    let many = Many(vec![
+        (
+            root(),
+            Memory::holding(vec![
+                held_on(SESSION_ME, &prompt("p1")),
+                held_on(SESSION_ME, &turn_end("p1")),
+            ]),
+        ),
+        (
+            other_root(),
+            Memory::holding(vec![held_on(SESSION_OTHER, &prompt("q1"))]),
+        ),
+    ]);
+    let clock = long();
+    let sink = Sink::new();
+    let done = Flush::new(&many, &clock).every(OWN, &sink).unwrap();
+    assert_eq!(
+        sink.delivered(),
+        [
+            ids_on(SESSION_ME, &prompt("p1")),
+            ids_on(SESSION_ME, &turn_end("p1")),
+            ids_on(SESSION_OTHER, &prompt("q1"))
+        ]
+        .concat()
+    );
+    assert_eq!(
+        done.iter()
+            .map(|d| (d.root, d.left.clone()))
+            .collect::<Vec<_>>(),
+        vec![(root(), Left::Nothing), (other_root(), Left::Nothing)]
+    );
+    assert!(many.of(&root()).entries().is_empty());
+    assert!(many.of(&other_root()).entries().is_empty());
+}
+
+// The flush's time runs out mid-flush (forced: each delivery spends a
+// second of two): what was delivered is cut, the rest stays in order, and a
+// hold the time never reached is untouched and said so.
+#[test]
+fn a_bound_spent_mid_flush_cuts_what_went_and_leaves_the_rest() {
+    let many = Many(vec![
+        (
+            root(),
+            Memory::holding(vec![
+                held_on(SESSION_ME, &prompt("p1")),
+                held_on(SESSION_ME, &prompt("p2")),
+                held_on(SESSION_ME, &prompt("p3")),
+            ]),
+        ),
+        (
+            other_root(),
+            Memory::holding(vec![held_on(SESSION_OTHER, &prompt("q1"))]),
+        ),
+    ]);
+    let clock = Clock::with(Duration::from_secs(2));
+    let sink = Sink::spending(&clock, Duration::from_secs(1));
+    let done = Flush::new(&many, &clock).every(OWN, &sink).unwrap();
+    assert_eq!(
+        sink.delivered(),
+        [
+            ids_on(SESSION_ME, &prompt("p1")),
+            ids_on(SESSION_ME, &prompt("p2"))
+        ]
+        .concat()
+    );
+    assert_eq!(
+        ids_held(many.of(&root())),
+        ids_on(SESSION_ME, &prompt("p3"))
+    );
+    assert_eq!(ids_held(many.of(&other_root())).len(), 1, "untouched");
+    assert_eq!(
+        done.iter()
+            .map(|d| (d.root, d.left.clone()))
+            .collect::<Vec<_>>(),
+        vec![(root(), Left::OutOfTime), (other_root(), Left::OutOfTime)]
+    );
+    assert!(many.of(&other_root()).calls().is_empty(), "never taken");
+}
+
+// Two commands at once, forced: the second runs INSIDE the first's first
+// delivery. It finds the first's hold being taken and skips it (never
+// waits), and delivers the other hold; the first then finds that one empty.
+// Every fact is delivered once.
+#[test]
+fn two_commands_at_once_one_flushes_a_hold_the_other_skips_it() {
+    let many = Many(vec![
+        (
+            root(),
+            Memory::holding(vec![held_on(SESSION_ME, &prompt("p1"))]),
+        ),
+        (
+            other_root(),
+            Memory::holding(vec![held_on(SESSION_OTHER, &prompt("q1"))]),
+        ),
+    ]);
+    let second: RefCell<Option<(Vec<SessionFlush>, Vec<String>)>> = RefCell::new(None);
+    let clock = long();
+    let sink = Sink::new();
+    {
+        let many = &many;
+        let second = &second;
+        *sink.during.borrow_mut() = Some(Box::new(move || {
+            let clock = long();
+            let other = Sink::new();
+            let done = Flush::new(many, &clock).every(OWN, &other).unwrap();
+            *second.borrow_mut() = Some((done, other.delivered()));
+        }));
+    }
+    let first = Flush::new(&many, &clock).every(OWN, &sink).unwrap();
+    let (second, second_delivered) = second.borrow_mut().take().expect("the second ran");
+    assert_eq!(
+        second
+            .iter()
+            .map(|d| (d.root, d.left.clone()))
+            .collect::<Vec<_>>(),
+        vec![(root(), Left::Taken), (other_root(), Left::Nothing)]
+    );
+    assert_eq!(second_delivered, ids_on(SESSION_OTHER, &prompt("q1")));
+    assert_eq!(sink.delivered(), ids_on(SESSION_ME, &prompt("p1")));
+    assert_eq!(
+        first
+            .iter()
+            .map(|d| (d.root, d.left.clone()))
+            .collect::<Vec<_>>(),
+        vec![(root(), Left::Nothing), (other_root(), Left::Nothing)]
+    );
+    assert!(many.of(&root()).entries().is_empty());
+    assert!(many.of(&other_root()).entries().is_empty());
+}
+
+// A hold that cannot be used is said for itself, and the others still flush.
+#[test]
+fn a_hold_that_cannot_be_read_leaves_the_others_flushing() {
+    struct Broken(Many);
+    impl HeldFacts for Broken {
+        fn hold(&self, s: &uuid::Uuid, f: HeldFact) -> Result<Held, HoldError> {
+            self.0.hold(s, f)
+        }
+        fn is_empty(&self, s: &uuid::Uuid) -> Result<bool, HoldError> {
+            if *s == root() {
+                return Err(HoldError::Format {
+                    path: "x".to_string(),
+                });
+            }
+            self.0.is_empty(s)
+        }
+        fn sessions(&self) -> Result<Vec<uuid::Uuid>, HoldError> {
+            self.0.sessions()
+        }
+        fn take(&self, s: &uuid::Uuid) -> Result<Option<Batch>, HoldError> {
+            self.0.take(s)
+        }
+        fn discard(&self, s: &uuid::Uuid) -> Result<u64, HoldError> {
+            self.0.discard(s)
+        }
+        fn survey(&self) -> Result<Vec<HoldSummary>, HoldError> {
+            self.0.survey()
+        }
+    }
+    let broken = Broken(Many(vec![
+        (root(), Memory::default()),
+        (
+            other_root(),
+            Memory::holding(vec![held_on(SESSION_OTHER, &prompt("q1"))]),
+        ),
+    ]));
+    let clock = long();
+    let sink = Sink::new();
+    let done = Flush::new(&broken, &clock).every(OWN, &sink).unwrap();
+    assert_eq!(
+        done[0].left,
+        Left::Failed(HoldError::Format {
+            path: "x".to_string()
+        })
+    );
+    assert_eq!(done[1].left, Left::Nothing);
+    assert_eq!(sink.delivered(), ids_on(SESSION_OTHER, &prompt("q1")));
+}
+
+// A command's flush names each hold's session (its first fact's name) and
+// what it set aside, so it is said once, by session (H3: no silent drop).
+#[test]
+fn a_session_flush_names_its_session_and_what_it_set_aside() {
+    let memory = Memory::holding(vec![
+        held_of(&prompt("p1"), OWN),
+        held_of(&prompt("p2"), OWN),
+        held_of(&prompt("p3"), OWN),
+    ]);
+    let clock = long();
+    let sink = Sink::new().answering([
+        Delivery::Parked,
+        Delivery::Applied,
+        Delivery::Refused {
+            detail: "no".to_string(),
+        },
+    ]);
+    let done = Flush::new(&memory, &clock).session(&root(), OWN, &sink);
+    assert_eq!(done.session.as_deref(), Some(NAME));
+    assert_eq!(
+        done.set_aside()
+            .iter()
+            .map(|k| k.external_id.clone())
+            .collect::<Vec<_>>(),
+        [ids_of(&prompt("p1")), ids_of(&prompt("p3"))].concat()
+    );
+    assert_eq!(
+        memory.aside(),
+        [ids_of(&prompt("p1")), ids_of(&prompt("p3"))].concat()
+    );
+    assert_eq!(done.left, Left::Nothing);
 }

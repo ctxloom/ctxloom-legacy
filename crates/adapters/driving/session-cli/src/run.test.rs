@@ -199,6 +199,8 @@ struct Reads {
     asked: std::cell::RefCell<Vec<String>>,
     /// Answer every call with this, instead.
     refuse: Option<daemon_api::CallError>,
+    /// The transcript's lines `get_transcript` answers.
+    transcript: Vec<String>,
 }
 
 impl daemon_api::SessionReads for Reads {
@@ -246,6 +248,42 @@ impl daemon_api::SessionReads for Reads {
             .cloned()
             .ok_or(daemon_api::CallError::Call(daemon_ports_like_unreachable()))
     }
+
+    async fn get_transcript(&self, harp: &str) -> Result<v1::Transcript, daemon_api::CallError> {
+        self.asked.borrow_mut().push(format!("transcript {harp}"));
+        if let Some(refused) = &self.refuse {
+            return Err(refused.clone());
+        }
+        Ok(v1::Transcript {
+            name: format!("projects/calm-otter/sessions/{harp}/transcript"),
+            lines: self
+                .transcript
+                .iter()
+                .map(|json| v1::TranscriptLine { json: json.clone() })
+                .collect(),
+        })
+    }
+}
+
+/// `words` (a `transcript show`) read from the daemon, which answers the
+/// fake's transcript, its lines as the daemon keeps them (no empty one).
+fn shown(fake: &Fake, format: Format, words: &[&str]) -> Ran {
+    let reads = Reads {
+        transcript: fake
+            .transcript
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect(),
+        ..Reads::default()
+    };
+    let ran = read_go(&reads, format, words);
+    assert_eq!(
+        *reads.asked.borrow(),
+        vec![format!("transcript {}", words[2])],
+        "the daemon was asked for it"
+    );
+    ran
 }
 
 /// A call that came to nothing (no daemon answered).
@@ -598,17 +636,36 @@ fn a_failed_call_is_the_commands_failure_with_its_exit_code() {
     }
 }
 
-// Every verb but the reads runs on the sessions use cases.
+// Every verb but the reads runs on the sessions use cases; the reads are
+// list, search, show and `transcript show` (owner, H3 follow-up: a session
+// read reaches the daemon, so its flush runs first).
 #[test]
-fn only_list_search_and_show_are_the_daemons_reads() {
+fn only_list_search_show_and_transcript_show_are_the_daemons_reads() {
     for words in [
         &["keep", "a"][..],
         &["rename", "a", "b"],
         &["transcript"],
+        &["transcript", "list"],
         &["import"],
     ] {
         assert!(!crate::is_read(&parsed(words)), "{words:?}");
     }
+    for words in [&["list"][..], &["show", "a"], &["transcript", "show", "a"]] {
+        assert!(crate::is_read(&parsed(words)), "{words:?}");
+    }
+}
+
+// A transcript the daemon refuses (none recorded, no such session) fails the
+// read and writes nothing to stdout.
+#[test]
+fn a_transcript_the_daemon_refuses_writes_nothing() {
+    let reads = Reads {
+        refuse: Some(daemon_api::CallError::Call(daemon_ports_like_unreachable())),
+        ..Reads::default()
+    };
+    let ran = read_go(&reads, Format::Json, &["transcript", "show", "h"]);
+    assert!(ran.result.is_err());
+    assert_eq!(ran.out, "");
 }
 
 // ------------------------------------------------------------------------ keep
@@ -1131,12 +1188,12 @@ fn an_empty_transcript_listing_is_the_placeholder() {
 #[test]
 fn transcript_show_prints_the_records_as_they_are_stored() {
     let line = r#"{"v":1,"harp":"amber-swift-owl","engine":"claude-code","seq":0,"ts":"2026-01-01T00:00:00Z","kind":"entry","entry":{"type":"user","content":"Seeded prompt for amber-swift-owl."}}"#;
-    let mut fake = Fake {
+    let fake = Fake {
         transcript: format!("{line}\n"),
         ..Fake::default()
     };
-    let ran = go(
-        &mut fake,
+    let ran = shown(
+        &fake,
         Format::Json,
         &["transcript", "show", "amber-swift-owl"],
     );
@@ -1152,11 +1209,11 @@ fn transcript_show_in_text_reads_as_a_conversation() {
     let user = r#"{"v":1,"harp":"h","engine":"claude-code","seq":0,"ts":"2026-01-01T00:00:00Z","kind":"entry","entry":{"type":"user","content":"What now?"}}"#;
     let assistant = r#"{"v":1,"harp":"h","engine":"claude-code","seq":1,"ts":"2026-01-01T00:00:01Z","kind":"entry","entry":{"type":"assistant","content":"This."}}"#;
     let session = r#"{"v":1,"harp":"h","engine":"claude-code","seq":2,"ts":"2026-01-01T00:00:02Z","kind":"session","session":{"session_id":"s"}}"#;
-    let mut fake = Fake {
+    let fake = Fake {
         transcript: format!("{user}\n{assistant}\n{session}\n"),
         ..Fake::default()
     };
-    let ran = go(&mut fake, Format::Text, &["transcript", "show", "h"]);
+    let ran = shown(&fake, Format::Text, &["transcript", "show", "h"]);
     assert_eq!(ran.out, "user: What now?\nassistant: This.\n");
 }
 
@@ -1171,7 +1228,7 @@ fn transcript_show_in_text_joins_a_messages_deltas() {
     };
     let user = r#"{"v":1,"harp":"h","engine":"claude-code","seq":0,"ts":"2026-01-01T00:00:00Z","kind":"entry","entry":{"type":"user","content":"Hi"}}"#;
     let tool = r#"{"v":1,"harp":"h","engine":"claude-code","seq":2,"ts":"2026-01-01T00:00:00Z","kind":"tool","tool":{"id":"t","name":"Bash","input":"{}","response_bytes":1,"response_sha256":"00"}}"#;
-    let mut fake = Fake {
+    let fake = Fake {
         transcript: format!(
             "{user}\n{}\n{tool}\n{}\n{}\n",
             line(1, 1, "world"),
@@ -1180,7 +1237,7 @@ fn transcript_show_in_text_joins_a_messages_deltas() {
         ),
         ..Fake::default()
     };
-    let ran = go(&mut fake, Format::Text, &["transcript", "show", "h"]);
+    let ran = shown(&fake, Format::Text, &["transcript", "show", "h"]);
     assert_eq!(ran.out, "user: Hi\nassistant: Hello world\n");
 }
 
@@ -1292,12 +1349,12 @@ fn an_answer_that_cannot_be_written_fails_the_command() {
 // A transcript without a last newline still ends its last line, once.
 #[test]
 fn a_transcript_is_printed_with_one_closing_newline() {
-    let mut fake = Fake {
+    let fake = Fake {
         transcript: "{\"v\":1}".to_string(),
         ..Fake::default()
     };
     assert_eq!(
-        go(&mut fake, Format::Json, &["transcript", "show", "h"]).out,
+        shown(&fake, Format::Json, &["transcript", "show", "h"]).out,
         "{\"v\":1}\n"
     );
 }
@@ -1875,7 +1932,7 @@ fn transcript_show_in_text_keeps_two_messages_apart() {
             r#"{{"v":1,"harp":"h","engine":"claude-code","seq":{seq},"ts":"2026-01-01T00:00:00Z","kind":"assistant_delta","delta":{{"message_id":"{message}","index":{index},"final":false,"text":"{text}"}}}}"#
         )
     };
-    let mut fake = Fake {
+    let fake = Fake {
         transcript: format!(
             "{}\n{}\n{}\n{}\n",
             delta(0, "m1", 0, "One "),
@@ -1885,7 +1942,7 @@ fn transcript_show_in_text_keeps_two_messages_apart() {
         ),
         ..Fake::default()
     };
-    let ran = go(&mut fake, Format::Text, &["transcript", "show", "h"]);
+    let ran = shown(&fake, Format::Text, &["transcript", "show", "h"]);
     assert_eq!(ran.out, "assistant: One again\nassistant: Two too\n");
 }
 
@@ -1938,11 +1995,11 @@ fn transcript_show_in_text_places_a_message_under_its_own_prompt_whatever_arrive
         ],
     ];
     for lines in orders {
-        let mut fake = Fake {
+        let fake = Fake {
             transcript: format!("{}\n", lines.join("\n")),
             ..Fake::default()
         };
-        let ran = go(&mut fake, Format::Text, &["transcript", "show", "h"]);
+        let ran = shown(&fake, Format::Text, &["transcript", "show", "h"]);
         assert_eq!(
             ran.out, "user: q1\nassistant: a1\nuser: q2\nassistant: a2\n",
             "{lines:?}"

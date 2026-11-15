@@ -72,13 +72,19 @@ impl Failure {
 }
 
 /// Whether `session`'s command is one of the reads the daemon answers
-/// (`list`, the bare noun, `search`, `show`: slice 2 step 6), which
-/// [`read`] runs; a destroy ([`is_destroy`]) is the daemon's too, and every
-/// other runs on the sessions use cases ([`run`]).
+/// (`list`, the bare noun, `search`, `show`: slice 2 step 6; `transcript
+/// show`, owner's H3 follow-up, so the flush on the way in runs before it
+/// reads), which [`read`] runs; a destroy ([`is_destroy`]) is the daemon's
+/// too, and every other runs on the sessions use cases ([`run`]).
 pub fn is_read(session: &Session) -> bool {
     matches!(
-        session.verb,
+        &session.verb,
         None | Some(SessionVerb::List(_) | SessionVerb::Search(_) | SessionVerb::Show(_))
+    ) || matches!(
+        &session.verb,
+        Some(SessionVerb::Transcript(Transcript {
+            verb: Some(TranscriptVerb::Show(_))
+        }))
     )
 }
 
@@ -303,6 +309,20 @@ pub fn read<R: SessionReads>(
                 wrote(match format {
                     Format::Json => write_json(out, &shown),
                     Format::Text => session_text(&shown, out),
+                })?;
+                Ok(Done::default())
+            }
+            Some(SessionVerb::Transcript(Transcript {
+                verb: Some(TranscriptVerb::Show(args)),
+            })) => {
+                let read = reads
+                    .get_transcript(&args.harp)
+                    .await
+                    .map_err(call_failure)?;
+                let text: String = read.lines.iter().map(|l| format!("{}\n", l.json)).collect();
+                wrote(match format {
+                    Format::Json => write!(out, "{text}"),
+                    Format::Text => conversation_text(&text, out),
                 })?;
                 Ok(Done::default())
             }
@@ -725,15 +745,8 @@ async fn transcripts<S: SessionService + WorktreeUse>(
     match &transcript.verb {
         None => transcript_list(service, &TranscriptListArgs::default(), format, out).await,
         Some(TranscriptVerb::List(args)) => transcript_list(service, args, format, out).await,
-        Some(TranscriptVerb::Show(args)) => {
-            let text = service.transcript(&args.harp).await.map_err(failure)?;
-            wrote(match format {
-                Format::Json if text.ends_with('\n') => write!(out, "{text}"),
-                Format::Json => writeln!(out, "{text}"),
-                Format::Text => conversation_text(&text, out),
-            })?;
-            Ok(Done::default())
-        }
+        // A daemon read ([`is_read`]): [`read`] runs it.
+        Some(TranscriptVerb::Show(_)) => unreachable!("transcript show is a daemon read"),
     }
 }
 
