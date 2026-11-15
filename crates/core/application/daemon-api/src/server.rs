@@ -186,6 +186,13 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("WatchRun")) })
     }
+    /// The daemon's standing warnings (OD-52's start-up, OD-54's
+    /// hand-over), as they stand now: what its edge attaches to every
+    /// answer it gives (owner ruling OD-55), so no command asks for them.
+    /// An edge with none, none.
+    fn warnings(&self) -> Vec<v1::Notice> {
+        Vec::new()
+    }
 }
 
 /// A call this edge does not serve, failed.
@@ -198,6 +205,10 @@ fn not_served(method: &str) -> ApiError {
 /// Every call but `GetDaemon` and `StopDaemon` is taken only while the
 /// daemon is open ([`Api::open`]): a draining one refuses it.
 impl<E: Edge + 'static> Calls for Api<E> {
+    fn warnings(&self) -> Vec<v1::Notice> {
+        Api::warnings(self)
+    }
+
     fn get_daemon(&self) -> Answer<'_, v1::Daemon> {
         Box::pin(Api::get_daemon(self))
     }
@@ -465,15 +476,22 @@ impl<E: Edge> Api<E> {
             idle_seconds: self.parts.hosting.idle_seconds(),
             idle_limit_seconds: about.idle_limit_seconds,
             draining_for: self.parts.hosting.draining().unwrap_or_default(),
-            warnings: self
-                .parts
-                .hosting
-                .start_up_failed()
-                .map(|why| crate::StartUpIncomplete { why }.notice())
-                .into_iter()
-                .chain(self.handing_over())
-                .collect(),
+            warnings: self.warnings(),
         }
+    }
+
+    /// The daemon's standing warnings, as they stand now: its start-up
+    /// incomplete (OD-52), then its hand-over (OD-54). `GetDaemon` answers
+    /// them as `Daemon.warnings`, and the edge attaches them to every
+    /// answer (OD-55, [`Calls::warnings`]).
+    pub fn warnings(&self) -> Vec<v1::Notice> {
+        self.parts
+            .hosting
+            .start_up_failed()
+            .map(|why| crate::StartUpIncomplete { why }.notice())
+            .into_iter()
+            .chain(self.handing_over())
+            .collect()
     }
 
     /// The drain's warning (OD-54), while it drains and hosts anything:

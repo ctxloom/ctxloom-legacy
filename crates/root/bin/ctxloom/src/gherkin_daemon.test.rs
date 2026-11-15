@@ -1416,7 +1416,23 @@ fn stale_hand_off(w: &mut World) {
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
 }
 
+/// The test-support switch that fails the daemon's start-up catch-up
+/// (OD-52), its one line the why.
+const START_UP_FAILS: &str = "test-start-up-fails";
+
+#[given(expr = "the daemon's start-up catch-up will fail with {string}")]
+fn start_up_will_fail(w: &mut World, why: String) {
+    files::put(daemon_dir(w).join(START_UP_FAILS), format!("{why}\n"));
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+}
+
 // ------------------------------------------------------------------- when
+
+#[when("the cause of the failure is gone")]
+fn start_up_cause_gone(w: &mut World) {
+    files::remove(daemon_dir(w).join(START_UP_FAILS));
+}
 
 #[when(
     "Alice's daemon is killed outright while her assistant works, and her assistant goes on firing its hooks"
@@ -4045,4 +4061,39 @@ fn next_daemon_hosts_again(w: &mut World) {
     let shown = run_now(w, &["session", "show", CHILD, "--format", "json"]);
     assert_eq!(shown.code, 0, "{}", shown.said());
     rehosted_resuming(w);
+}
+
+/// The warnings `daemon status --format json` says the daemon stands by.
+fn status_warnings(w: &World) -> Vec<Value> {
+    let status = run_now(w, &["daemon", "status", "--format", "json"]);
+    assert_eq!(status.code, 0, "{}", status.said());
+    status.json()["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[then(expr = "\"ctxloom daemon status --format json\" has a warning with code {string}")]
+fn status_warns(w: &mut World, code: String) {
+    let warnings = status_warnings(w);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == code.as_str()),
+        "{warnings:?}"
+    );
+}
+
+#[then("within a few seconds \"ctxloom daemon status\" has no warning")]
+fn status_warns_no_more(w: &mut World) {
+    until(w, "the daemon's warning cleared", DAEMON_WAIT, |w| {
+        status_warnings(w).is_empty().then_some(())
+    });
+}
+
+#[then("\"ctxloom session list\" says nothing of the start-up")]
+fn listed_says_nothing_of_the_start_up(w: &mut World) {
+    let listed = run_now(w, &["session", "list"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    assert!(!listed.stderr.contains("start-up"), "{}", listed.said());
 }
