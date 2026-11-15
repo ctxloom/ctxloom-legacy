@@ -80,6 +80,9 @@ pub struct HeldFact {
     pub book: Vec<u8>,
     /// The hook's clock when it held the fact (an age; orders nothing).
     pub held_at: Option<Timestamp>,
+    /// A fact on the session's RUN stream (a frontend's report): the
+    /// incarnation whose run it is; 0, a fact of the session's own stream.
+    pub incarnation: u32,
 }
 
 impl HeldFact {
@@ -97,7 +100,16 @@ impl HeldFact {
             external_id: external_id.into(),
             book: book.encode_to_vec(),
             held_at,
+            incarnation: 0,
         }
+    }
+
+    /// The fact, as one on the run stream of the session's `incarnation`
+    /// (a frontend's report, held as a hook's fact is).
+    #[must_use]
+    pub fn of_run(mut self, incarnation: u32) -> HeldFact {
+        self.incarnation = incarnation;
+        self
     }
 
     /// The book as it was held; an error when its bytes do not decode.
@@ -111,6 +123,7 @@ impl fmt::Debug for HeldFact {
         f.debug_struct("HeldFact")
             .field("stamp", &self.stamp)
             .field("external_id", &self.external_id)
+            .field("incarnation", &self.incarnation)
             .field("book_bytes", &self.book.len())
             .finish_non_exhaustive()
     }

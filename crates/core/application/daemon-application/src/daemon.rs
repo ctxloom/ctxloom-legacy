@@ -200,7 +200,7 @@ pub struct Daemon<E: Edge> {
     hand_offs: Box<dyn HandOffs>,
     homes: Box<dyn ChildHomes>,
     ears: Box<dyn Ears>,
-    run_locks: Arc<dyn RunLocks>,
+    pub(crate) run_locks: Arc<dyn RunLocks>,
     place: Place,
     pub(crate) say: Box<dyn FnMut(&str) + Send>,
     pub(crate) board: CatchUp<Boards>,
@@ -243,6 +243,10 @@ pub struct Daemon<E: Edge> {
     guided_once: bool,
     /// The guidance given each busy child, by its run: its message's id.
     guided: BTreeMap<String, String>,
+    /// The runs it adopted at its start (a daemon dying under a live TUI,
+    /// owner 2026-11-14): another daemon's, their owner alive; their end
+    /// path is this daemon's ([`crate::adopt`]).
+    pub(crate) adopted: BTreeMap<String, crate::adopt::Adopted>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -341,6 +345,7 @@ impl<E: Edge> Daemon<E> {
             hand_over_began: None,
             guided_once: false,
             guided: BTreeMap::new(),
+            adopted: BTreeMap::new(),
         }
     }
 
@@ -445,9 +450,13 @@ impl<E: Edge> Daemon<E> {
         catalog: &Catalog,
     ) -> Result<usize, String> {
         let started = self.caught_up_launches(store, catalog).await?.1;
+        // Its adopted runs are their end path's ([`crate::adopt`]), never
+        // this sweep's.
+        let adopted = self.adopted_runs();
         let theirs: Vec<StartedRun> = started
             .iter()
             .filter(|run| !self.hosted.values().any(|hosted| hosted.who.run == run.run))
+            .filter(|run| !adopted.values().any(|a| a.run == run.run))
             .cloned()
             .collect();
         let swept = self.swept(&[], &theirs).await?;
@@ -470,7 +479,9 @@ impl<E: Edge> Daemon<E> {
     /// and the ones whose owner is gone ended (the sweep every launcher
     /// runs: `LaunchOrphaned` for one owed a runner, `RunnerLost` for one
     /// started, its incarnation ended `orphaned`), before anything is
-    /// hosted. What it ended.
+    /// hosted; every run the sweep leaves (its owner alive: a live TUI's
+    /// frontend) is ADOPTED, its end path this daemon's (owner
+    /// 2026-11-14, [`crate::adopt`]). What it ended.
     pub async fn start_up<S: ReadStore + Store + Processed>(
         &mut self,
         store: &S,
@@ -502,13 +513,20 @@ impl<E: Edge> Daemon<E> {
         catalog: &Catalog,
     ) -> Result<Vec<Swept>, String> {
         let (owed, started) = self.caught_up_launches(store, catalog).await?;
-        self.swept(&owed, &started).await
+        let swept = self.swept(&owed, &started).await?;
+        // What the sweep left is another process's, its owner alive: at the
+        // start nothing is this daemon's own.
+        let left = |run: &Uuid| !swept.iter().any(|s| &s.run == run);
+        let owed: Vec<PendingLaunch> = owed.into_iter().filter(|l| left(&l.run)).collect();
+        let started: Vec<StartedRun> = started.into_iter().filter(|r| left(&r.run)).collect();
+        self.adopt(&owed[..0], &started[..0]);
+        Ok(swept)
     }
 
     /// What lets a lost run's checkout go (OD-19): the project's workspaces,
     /// for a run that worked in a checkout of ctxloom's own (under its
     /// home's `worktrees`), never the project itself; none, nothing.
-    fn releases(&self) -> Option<Arc<dyn Releases>> {
+    pub(crate) fn releases(&self) -> Option<Arc<dyn Releases>> {
         let workspaces = Arc::clone(self.workspaces.as_ref()?);
         Some(Arc::new(LostCheckouts {
             workspaces,
@@ -520,7 +538,7 @@ impl<E: Edge> Daemon<E> {
 
     /// The runs owed a runner, and the runs started and not ended, as the
     /// store holds them now.
-    async fn caught_up_launches<S: ReadStore + Store + Processed>(
+    pub(crate) async fn caught_up_launches<S: ReadStore + Store + Processed>(
         &mut self,
         store: &S,
         catalog: &Catalog,
@@ -538,7 +556,7 @@ impl<E: Edge> Daemon<E> {
     }
 
     /// Of `owed` and `started`, the runs whose owner is gone, ended and said.
-    async fn swept(
+    pub(crate) async fn swept(
         &mut self,
         owed: &[PendingLaunch],
         started: &[StartedRun],
@@ -736,6 +754,7 @@ impl<E: Edge> Daemon<E> {
         let draining = draining || self.handing_over;
         let mut busy = self.hear().await;
         busy |= self.stop_one_shots().await;
+        busy |= self.end_the_adopted(store, catalog).await;
         let board = self.board.step_if_changed(store, catalog).await;
         let pending = self.pending.step_if_changed(store, catalog).await;
         let _ = self.index.step_if_changed(store, catalog).await;

@@ -388,8 +388,11 @@ impl run_ports::RunLocks for RunLocks {
         ))
     }
 
-    fn probe(&self, _: &str) -> run_ports::LockProbe {
-        run_ports::LockProbe::Unproven
+    fn probe(&self, path: &str) -> run_ports::LockProbe {
+        match path == FRONTEND_LOCK {
+            true => run_ports::LockProbe::Held,
+            false => run_ports::LockProbe::Unproven,
+        }
     }
 
     fn session(&self, _: &str, harp: &str) -> run_ports::LockProbe {
@@ -2712,6 +2715,40 @@ async fn the_run_lock_is_held_from_before_the_enqueue_until_the_runner_starts() 
             *rig.run_locks.released.lock().unwrap(),
             [1],
             "interactive={interactive}: let go once, after the engine's spawn"
+        );
+    }
+}
+
+/// The run lock a frontend took before it asked (U5's start-report race),
+/// which the fake reads held.
+const FRONTEND_LOCK: &str = "/home/u/.ctxloom/runs/0193a8f0-request.lock";
+
+// U5's start-report race (owner 2026-11-14): a terminal run whose FRONTEND
+// holds the run's own lock journals that lock as its launcher lock and takes
+// none of its own, so a daemon started before the start report reads the
+// frontend alive; one not held (an older frontend's, or a path given and
+// let go) is passed over, and the run's own taken as before.
+#[tokio::test]
+async fn a_lock_the_frontend_holds_is_journaled_and_none_of_its_own_taken() {
+    for (given, journaled, taken) in [
+        (FRONTEND_LOCK, FRONTEND_LOCK, false),
+        ("/home/u/.ctxloom/runs/let-go.lock", RUN_LOCK, true),
+        ("", RUN_LOCK, true),
+    ] {
+        let mut rig = rig(Script::answering());
+        rig.runs.held_by_frontend(Some(given.to_string()));
+        rig.runs
+            .interactive(&Flags::default(), &ask())
+            .await
+            .result
+            .unwrap();
+        let enqueued = rig.runs.core.0.enqueued.lock().unwrap().clone().unwrap();
+        assert_eq!(enqueued.launcher_lock, journaled, "given {given:?}");
+        let timeline = rig.timeline.lock().unwrap().clone();
+        assert_eq!(
+            timeline.iter().any(|t| t == "run-lock"),
+            taken,
+            "given {given:?}: {timeline:?}"
         );
     }
 }

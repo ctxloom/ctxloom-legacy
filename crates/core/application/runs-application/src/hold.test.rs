@@ -1208,3 +1208,148 @@ fn a_session_flush_names_its_session_and_what_it_set_aside() {
     );
     assert_eq!(done.left, Left::Nothing);
 }
+
+// ------------------------------------------- a frontend's reports (slice 4)
+
+/// A frontend's report of the session's run of `incarnation`: a
+/// `RunnerStarted` (`started`) or a `RunExited`, keyed as the frontend
+/// keys it.
+fn run_report(incarnation: u32, started: bool) -> RunReport {
+    let who = crate::Identity {
+        run: runs::run_root(SESSION_ME, incarnation),
+        session: session(),
+        incarnation,
+        harp: "brisk-copper-moth".to_string(),
+        depth: 0,
+    };
+    let fact = match started {
+        true => crate::RunnerFact::RunnerStarted(runs::RunnerStarted {
+            runtime: "claude-code".to_string(),
+            workspace: "/work".to_string(),
+            pid: 4242,
+        }),
+        false => crate::RunnerFact::RunExited(runs::RunExited { code: 0, signal: 0 }),
+    };
+    RunReport {
+        external_id: fact.external_id(&who),
+        book: fact.book(&who),
+        incarnation,
+    }
+}
+
+// A frontend's report no daemon takes is held in its session's hold, as a
+// hook's facts are, with the incarnation whose run it is.
+#[test]
+fn a_frontends_report_no_daemon_takes_is_held_with_its_incarnation() {
+    let memory = Memory::default();
+    let clock = long();
+    let started = run_report(2, true);
+    let report = Holding::new(&memory, &clock, OWN, NAME).report::<Sink>(
+        &session(),
+        std::slice::from_ref(&started),
+        Serving::Unreached {
+            why: "no daemon".to_string(),
+        },
+    );
+    assert_eq!(
+        outcomes(&report.own),
+        vec![Outcome::Held(Why::Unreached {
+            why: "no daemon".to_string()
+        })]
+    );
+    let HeldEntry::Fact(fact) = &memory.entries()[0] else {
+        panic!("a fact")
+    };
+    assert_eq!(fact.incarnation, 2);
+    assert_eq!(fact.external_id, started.external_id);
+    assert_eq!(fact.decode_book().unwrap(), started.book);
+}
+
+// The frontend's next attempt (its exit report) reaches an up-to-date
+// daemon: what the session's hold holds (its held start, behind a hook's
+// prompt) is delivered first, in order, then the exit.
+#[test]
+fn a_frontends_next_report_delivers_what_is_held_first_in_order() {
+    let started = run_report(1, true);
+    let memory = Memory::holding(vec![
+        held_of(&prompt("p1"), OWN),
+        HeldEntry::Fact(
+            HeldFact::of_book(OWN, NAME, started.external_id.clone(), &started.book, None)
+                .of_run(1),
+        ),
+    ]);
+    let clock = long();
+    let sink = Sink::new();
+    let exited = run_report(1, false);
+    let report = Holding::new(&memory, &clock, OWN, NAME).report(
+        &session(),
+        std::slice::from_ref(&exited),
+        daemon(OWN, &sink),
+    );
+    assert_eq!(
+        sink.delivered(),
+        [
+            ids_of(&prompt("p1")),
+            vec![started.external_id.clone(), exited.external_id.clone()]
+        ]
+        .concat()
+    );
+    assert!(memory.entries().is_empty(), "the hold is cut");
+    assert_eq!(
+        outcomes(&report.own),
+        vec![Outcome::Delivered(Delivery::Applied)]
+    );
+}
+
+// A held run fact is this session's only on the run of the incarnation it
+// was held with: another incarnation's root, or a run fact held as the
+// session's own, is set aside.
+#[test]
+fn a_held_run_fact_of_another_run_is_set_aside() {
+    let started = run_report(1, true);
+    let other_run = HeldEntry::Fact(
+        HeldFact::of_book(OWN, NAME, started.external_id.clone(), &started.book, None).of_run(2),
+    );
+    let not_marked = HeldEntry::Fact(HeldFact::of_book(
+        OWN,
+        NAME,
+        started.external_id.clone(),
+        &started.book,
+        None,
+    ));
+    let memory = Memory::holding(vec![other_run, not_marked]);
+    let clock = long();
+    let sink = Sink::new();
+    let report = Holding::new(&memory, &clock, OWN, NAME).report(
+        &session(),
+        &[run_report(1, false)],
+        daemon(OWN, &sink),
+    );
+    assert_eq!(sink.delivered(), [run_report(1, false).external_id]);
+    assert_eq!(
+        outcomes(&report.flushed),
+        vec![
+            Outcome::NotHeld(NotHeld::Foreign),
+            Outcome::NotHeld(NotHeld::Foreign)
+        ]
+    );
+}
+
+// An up-to-date daemon that leaves a report unsettled: it is held, for the
+// next attempt.
+#[test]
+fn a_frontends_report_left_unsettled_is_held() {
+    let memory = Memory::default();
+    let clock = long();
+    let sink = Sink::new().answering([Delivery::TimedOut]);
+    let report = Holding::new(&memory, &clock, OWN, NAME).report(
+        &session(),
+        &[run_report(1, false)],
+        daemon(OWN, &sink),
+    );
+    assert_eq!(
+        outcomes(&report.own),
+        vec![Outcome::Held(Why::Unsettled(Delivery::TimedOut))]
+    );
+    assert_eq!(ids_held(&memory), [run_report(1, false).external_id]);
+}

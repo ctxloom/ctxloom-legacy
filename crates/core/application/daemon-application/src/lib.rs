@@ -31,6 +31,7 @@
 //! [`Daemon::tick`] when a commit lands or the poll passes, and decides the
 //! idle exit from [`Daemon::hosting`].
 
+mod adopt;
 mod daemon;
 mod one_shot;
 mod ports;

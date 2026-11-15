@@ -47,6 +47,7 @@ impl Gen {
                 external_id: format!("hook:prompt:s:{}", self.next()),
                 book: self.bytes(300),
                 held_at,
+                incarnation: u32::try_from(self.below(3)).unwrap_or(0),
             })
         }
     }

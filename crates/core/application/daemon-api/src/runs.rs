@@ -100,6 +100,7 @@ impl<E: Edge> Api<E> {
             env,
             flags,
             request: one_shot,
+            launcher_lock: None,
         });
         let run = v1::Run {
             mode: v1::run::Mode::OneShot as i32,

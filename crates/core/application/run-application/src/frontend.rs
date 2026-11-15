@@ -16,31 +16,34 @@
 //!
 //! Each report is a runs fact keyed by its run (`started:<run>`,
 //! `exit:<run>`, `launch-failed:<run>`), so a report delivered twice, or one
-//! the daemon also records, is a DUPLICATE. Each is RETRIED for up to
-//! [`REPORT_FOR`] (S17): the adapter behind [`Reports`] finds the daemon
-//! serving, or starts one, on every attempt, so a report outlives the daemon
-//! it was meant for. A report that is never delivered within the bound is
-//! said, and changes nothing of the TUI.
+//! the daemon also records, is a DUPLICATE. Each is ONE attempt (slice 4, a
+//! daemon dying under a live TUI, owner 2026-11-14, replacing U5's 60 s
+//! retry): the adapter behind [`Reports`] finds the daemon serving, or
+//! starts one, and delivers it behind what the session's hold already holds,
+//! or HOLDS it there (as a hook's facts are) when no up-to-date daemon takes
+//! it; the frontend's next report, or any command's flush, delivers what is
+//! held, in order. A report held or not delivered is said, and changes
+//! nothing of the TUI.
+//!
+//! The start-report race (U5, owner 2026-11-14): the run's OWN lock (its
+//! launcher lock) is the frontend's, taken BEFORE it asked the daemon to
+//! plan ([`Frontend::run_lock`]), so a daemon started between the plan and
+//! the start report reads the run's owner alive and sweeps nothing; it is
+//! let go once the start report is recorded, or, when it never is, at the
+//! frontend's end.
 //!
 //! The concurrency (the TUI waited for while the daemon's watch is read for
 //! a stop) is the composition root's: this is the order of the steps, over
 //! ports, so a test forces each race it is about.
 
-use std::time::Duration;
-
 use library_application::Notice;
-use run_ports::{BoxFuture, Delivery, Launch, LaunchFailure, Limits, Running, TurnOutput};
+use run_ports::{
+    BoxFuture, Delivery, HeldLock, Launch, LaunchFailure, Limits, Running, TurnOutput,
+};
 use session_ports::{Held, SessionLock};
 
 use crate::error::RunError;
 use crate::one_shot::{Done, Ended};
-
-/// How long a report is retried for, on whichever daemon serves, before it
-/// is given up and said (S17: 60 s).
-pub const REPORT_FOR: Duration = Duration::from_secs(60);
-
-/// How long the frontend waits between two attempts at a report.
-pub const REPORT_PAUSE: Duration = Duration::from_millis(250);
 
 /// What the frontend tells the daemon of its run.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,19 +71,25 @@ pub struct Prepared {
     pub launch: Launch,
 }
 
-/// Where the frontend's reports go: ONE attempt at delivering `report` for
-/// the run `launch` starts, to the daemon serving now (found, or started
-/// when none serves). The answer is the delivery's: settled (applied, a
-/// duplicate, parked or refused) or not (nobody answered, in time).
-pub trait Reports: Send + Sync {
-    fn deliver<'a>(&'a self, launch: &'a Launch, report: &'a Report) -> BoxFuture<'a, Delivery>;
+/// What became of one report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reported {
+    /// The daemon answered it, finally: applied, a duplicate, parked or
+    /// refused.
+    Delivered(Delivery),
+    /// It is in the session's hold, for the next attempt (the frontend's
+    /// next report, or any command's flush) to deliver in order: why.
+    Held { why: String },
+    /// It is neither recorded nor held (the hold could not keep it): why.
+    Lost { why: String },
 }
 
-/// The frontend's time: how long it has been since it began, and a pause
-/// between two attempts. The root's is the clock; a test's is a counter.
-pub trait Pause: Send + Sync {
-    fn elapsed(&self) -> Duration;
-    fn pause(&self, pause: Duration) -> BoxFuture<'_, ()>;
+/// Where the frontend's reports go: ONE attempt at `report` for the run
+/// `launch` starts, to the daemon serving now (found, or started when none
+/// serves), behind what the session's hold holds; held when no up-to-date
+/// daemon takes it.
+pub trait Reports: Send + Sync {
+    fn deliver<'a>(&'a self, launch: &'a Launch, report: &'a Report) -> BoxFuture<'a, Reported>;
 }
 
 /// The terminal the launch is started on: spawned (an `Err` started
@@ -97,8 +106,12 @@ pub struct Frontend<'a> {
     pub locks: &'a mut dyn SessionLock,
     pub terminal: &'a dyn Terminal,
     pub reports: &'a dyn Reports,
-    pub pause: &'a dyn Pause,
     pub limits: Limits,
+    /// The run's own lock, which the frontend took before it asked the
+    /// daemon to plan (the start-report race, U5): let go once the start
+    /// report is recorded, else at the frontend's end. None: the daemon
+    /// holds its own.
+    pub run_lock: Option<HeldLock>,
 }
 
 /// What the TUI came to, before the daemon's last word: its end, and what the
@@ -128,6 +141,7 @@ impl Frontend<'_> {
                     detail: error.report().to_string(),
                 };
                 self.report(launch, &report, notices).await;
+                self.run_lock.take();
                 return Err(RunError::Lock(error));
             }
         };
@@ -136,7 +150,7 @@ impl Frontend<'_> {
             Err(failure) => return Err(self.not_started(launch, failure, lock, notices).await),
         };
         let started = Report::Started { pid: running.pid() };
-        self.report(launch, &started, notices).await;
+        let _recorded = self.report(launch, &started, notices).await;
         let output = match self.terminal.wait(running).await {
             Ok(output) => output,
             Err(failure) => return Err(self.not_started(launch, failure, lock, notices).await),
@@ -147,6 +161,7 @@ impl Frontend<'_> {
         };
         self.report(launch, &exited, notices).await;
         // Let go only now: the session reads live until its exit is known.
+        self.run_lock.take();
         drop(lock);
         Ok(Ended {
             harp: launch.at.harp.clone(),
@@ -157,9 +172,9 @@ impl Frontend<'_> {
     }
 
     /// The launch that did not start (or whose wait broke): reported, the
-    /// lock let go after.
+    /// locks let go after.
     async fn not_started(
-        &self,
+        &mut self,
         launch: &Launch,
         failure: LaunchFailure,
         lock: Held,
@@ -170,43 +185,63 @@ impl Frontend<'_> {
             detail: failure.detail.clone(),
         };
         self.report(launch, &report, notices).await;
+        self.run_lock.take();
         drop(lock);
         RunError::NotStarted {
             detail: failure.detail,
         }
     }
 
-    /// Deliver `report`, retried for up to [`REPORT_FOR`] from its first
-    /// attempt while nobody answers; one not delivered by then (or refused)
-    /// is said.
-    async fn report(&self, launch: &Launch, report: &Report, notices: &mut Vec<Notice>) {
-        let since = self.pause.elapsed();
-        loop {
-            let delivery = self.reports.deliver(launch, report).await;
-            match delivery {
-                Delivery::Applied | Delivery::Duplicate => return,
-                Delivery::Parked | Delivery::Refused { .. } | Delivery::NoSuchSession => {
-                    notices.push(undelivered(report, &delivery));
-                    return;
-                }
-                Delivery::Unavailable { .. } | Delivery::TimedOut => {}
-            }
-            if self.pause.elapsed().saturating_sub(since) >= REPORT_FOR {
+    /// One attempt at `report` (held when no up-to-date daemon takes it):
+    /// whether the daemon recorded it (applied, or a duplicate). Anything
+    /// else is said.
+    async fn report(&self, launch: &Launch, report: &Report, notices: &mut Vec<Notice>) -> bool {
+        match self.reports.deliver(launch, report).await {
+            Reported::Delivered(Delivery::Applied | Delivery::Duplicate) => true,
+            Reported::Delivered(delivery) => {
                 notices.push(undelivered(report, &delivery));
-                return;
+                false
             }
-            self.pause.pause(REPORT_PAUSE).await;
+            Reported::Held { why } => {
+                notices.push(held(report, &why));
+                false
+            }
+            Reported::Lost { why } => {
+                notices.push(Notice::Finding {
+                    text: format!(
+                        "could not tell the daemon {}, nor hold it: {why}",
+                        what(report)
+                    ),
+                    remedy: "the next daemon's start ends the session's run once its lock is free"
+                        .to_string(),
+                });
+                false
+            }
         }
+    }
+}
+
+/// What a report tells, as a notice names it.
+fn what(report: &Report) -> &'static str {
+    match report {
+        Report::Started { .. } => "the session's start",
+        Report::Exited { .. } => "the session's exit",
+        Report::NotStarted { .. } => "that the session never started",
+    }
+}
+
+/// What a report kept in the session's hold is said as (a DRAFT, the
+/// owner's to word, as `hook-cli-held` is).
+fn held(report: &Report, why: &str) -> Notice {
+    Notice::Finding {
+        text: format!("held {} for the next daemon: {why}", what(report)),
+        remedy: "the next ctxloom command delivers it, in order".to_string(),
     }
 }
 
 /// What a report that did not reach the daemon is said as.
 fn undelivered(report: &Report, delivery: &Delivery) -> Notice {
-    let what = match report {
-        Report::Started { .. } => "the session's start",
-        Report::Exited { .. } => "the session's exit",
-        Report::NotStarted { .. } => "that the session never started",
-    };
+    let what = what(report);
     let why = match delivery {
         Delivery::Refused { detail } | Delivery::Unavailable { detail } => detail.clone(),
         Delivery::Parked => "the daemon parked it".to_string(),

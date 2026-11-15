@@ -372,6 +372,9 @@ mod library_write_skill;
 #[path = "no_listener.test.rs"]
 mod no_listener;
 
+#[path = "tui_adopt.test.rs"]
+mod tui_adopt;
+
 #[path = "project_resolver.test.rs"]
 mod project_resolver;
 

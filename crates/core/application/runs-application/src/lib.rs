@@ -44,8 +44,8 @@ pub use facts::{launch_failed_book, Fact, Facts, ModelFact, Recorded, RunnerFact
 pub use feeds::{Cursor, Feeds, Follow};
 pub use gate::owns;
 pub use hold::{
-    command_flushes, Flush, HoldReport, Holding, HookClock, Kept, Left, NotHeld, Outcome, Serving,
-    SessionFlush, Why, TAKE_ROUNDS,
+    command_flushes, Flush, HoldReport, Holding, HookClock, Kept, Left, NotHeld, Outcome,
+    RunReport, Serving, SessionFlush, Why, TAKE_ROUNDS,
 };
 pub use hook_commands::{EdgeCommands, EdgeFailure};
 pub use identity::{Identity, Role};

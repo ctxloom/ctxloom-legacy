@@ -48,6 +48,7 @@ fn record_of(entry: &HeldEntry) -> v1::HeldRecord {
             external_id: fact.external_id.clone(),
             book: fact.book.clone(),
             held_at: fact.held_at,
+            incarnation: fact.incarnation,
         }),
         HeldEntry::Gap(gap) => Kind::Gap(v1::HeldGap {
             stamp: gap.stamp.clone(),
@@ -67,6 +68,7 @@ fn entry_of(record: v1::HeldRecord) -> Option<HeldEntry> {
             external_id: fact.external_id,
             book: fact.book,
             held_at: fact.held_at,
+            incarnation: fact.incarnation,
         }),
         Kind::Gap(gap) => HeldEntry::Gap(HeldGap {
             stamp: gap.stamp,

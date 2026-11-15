@@ -37,6 +37,7 @@ fn fact(id: &str) -> HeldFact {
         external_id: id.to_string(),
         book: id.as_bytes().repeat(4),
         held_at: None,
+        incarnation: 0,
     }
 }
 

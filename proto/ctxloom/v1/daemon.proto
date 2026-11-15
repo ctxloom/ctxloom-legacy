@@ -890,6 +890,14 @@ message CreateRunRequest {
   // The client's working directory: where the run is planned from, as a
   // process there would plan it (with `env`).
   string cwd = 13;
+  // A TERMINAL run's own lock (its launcher lock, `RunEnqueued.
+  // launcher_lock`), which the frontend took BEFORE it asked and holds
+  // until its start report is recorded (U5's start-report race, owner
+  // 2026-11-14): `<home>/.ctxloom/runs/<request id>.lock`. The daemon
+  // journals it instead of a lock of its own when it reads held, so a
+  // daemon started in the gap reads the run's owner alive. Empty: the
+  // daemon holds its own, as before.
+  string launcher_lock = 14;
   string request_id = 90;
   bool validate_only = 92;
   repeated Answer answers = 93;

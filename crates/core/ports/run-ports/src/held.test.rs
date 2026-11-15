@@ -72,6 +72,7 @@ fn a_held_facts_debug_never_shows_its_book() {
         external_id: "hook:prompt:s:p".to_string(),
         book: b"SECRET PROMPT TEXT".to_vec(),
         held_at: None,
+        incarnation: 0,
     };
     let shown = format!("{fact:?}");
     assert!(!shown.contains("SECRET"), "{shown}");

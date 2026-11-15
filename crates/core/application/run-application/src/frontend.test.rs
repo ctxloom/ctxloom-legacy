@@ -1,18 +1,20 @@
-//! The frontend's order of steps over scripted ports: the lock around the
-//! TUI, each report after the step it reports, and the reports retried
-//! across a daemon that is gone (S17), each race forced by the script.
+//! The frontend's order of steps over scripted ports: the locks around the
+//! TUI (the session's, and the run's own it took before it asked, U5's
+//! start-report race), each report after the step it reports, one attempt
+//! each, held when no daemon takes it (slice 4, a daemon dying under a live
+//! TUI), each race forced by the script.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use run_ports::{
-    BoxFuture, Delivery, Exit, Launch, LaunchFailure, LaunchKind, Limits, Running, Stdio,
+    BoxFuture, Delivery, Exit, HeldLock, Launch, LaunchFailure, LaunchKind, Limits, Running, Stdio,
     TurnCommand, TurnOutput,
 };
 use session_ports::{Held, LockError, SessionLock};
 
-use super::{Frontend, Pause, Prepared, Report, Reports, Terminal, REPORT_FOR, REPORT_PAUSE};
+use super::{Frontend, Prepared, Report, Reported, Reports, Terminal};
 use crate::RunError;
 
 /// Everything that happened, in order.
@@ -101,29 +103,25 @@ impl Terminal for Tty {
     }
 }
 
-/// A daemon that answers each attempt as scripted (then applies), and the
-/// time each attempt takes on the fake clock.
+/// A daemon that answers each attempt as scripted (then applies).
 struct Daemon {
     timeline: Timeline,
-    script: Mutex<VecDeque<Delivery>>,
-    clock: Arc<Clock>,
+    script: Mutex<VecDeque<Reported>>,
 }
 
 impl Reports for Daemon {
-    fn deliver<'a>(&'a self, _: &'a Launch, report: &'a Report) -> BoxFuture<'a, Delivery> {
-        let delivery = self
+    fn deliver<'a>(&'a self, _: &'a Launch, report: &'a Report) -> BoxFuture<'a, Reported> {
+        let reported = self
             .script
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or(Delivery::Applied);
+            .unwrap_or(Reported::Delivered(Delivery::Applied));
         said(
             &self.timeline,
-            format!("report {} {}", name(report), outcome(&delivery)),
+            format!("report {} {}", name(report), outcome(&reported)),
         );
-        // A delivery that found nobody took a second of the clock.
-        self.clock.advance(Duration::from_secs(1));
-        Box::pin(async move { delivery })
+        Box::pin(async move { reported })
     }
 }
 
@@ -135,43 +133,32 @@ fn name(report: &Report) -> &'static str {
     }
 }
 
-fn outcome(delivery: &Delivery) -> &'static str {
-    match delivery {
-        Delivery::Applied => "applied",
-        Delivery::Duplicate => "duplicate",
-        Delivery::Parked => "parked",
-        Delivery::Refused { .. } => "refused",
-        Delivery::NoSuchSession => "no-such-session",
-        Delivery::Unavailable { .. } | Delivery::TimedOut => "unreached",
+fn outcome(reported: &Reported) -> &'static str {
+    match reported {
+        Reported::Delivered(Delivery::Applied) => "applied",
+        Reported::Delivered(Delivery::Duplicate) => "duplicate",
+        Reported::Delivered(Delivery::Parked) => "parked",
+        Reported::Delivered(Delivery::Refused { .. }) => "refused",
+        Reported::Delivered(Delivery::NoSuchSession) => "no-such-session",
+        Reported::Delivered(Delivery::Unavailable { .. } | Delivery::TimedOut) => "unreached",
+        Reported::Held { .. } => "held",
+        Reported::Lost { .. } => "lost",
     }
 }
 
-#[derive(Default)]
-struct Clock {
-    now: Mutex<Duration>,
-}
-
-impl Clock {
-    fn advance(&self, by: Duration) {
-        *self.now.lock().unwrap() += by;
+fn held() -> Reported {
+    Reported::Held {
+        why: "no ctxloom daemon could be reached or started".to_string(),
     }
 }
 
-impl Pause for Clock {
-    fn elapsed(&self) -> Duration {
-        *self.now.lock().unwrap()
-    }
-
-    fn pause(&self, pause: Duration) -> BoxFuture<'_, ()> {
-        self.advance(pause);
-        Box::pin(async {})
-    }
-}
-
-fn unreached() -> Delivery {
-    Delivery::Unavailable {
-        detail: "no ctxloom daemon could be started".to_string(),
-    }
+/// The run's own lock the frontend took before it asked: says when it is
+/// let go.
+fn run_lock(timeline: &Timeline) -> HeldLock {
+    HeldLock::new(
+        "/home/u/.ctxloom/runs/request.lock".to_string(),
+        Guard(Arc::clone(timeline), "run".to_string()),
+    )
 }
 
 fn prepared() -> Prepared {
@@ -197,12 +184,12 @@ struct Rig {
     locks: Locks,
     tty: Tty,
     daemon: Daemon,
-    clock: Arc<Clock>,
+    /// Whether the frontend took the run's own lock before it asked.
+    run_lock: bool,
 }
 
-fn rig(script: Vec<Delivery>) -> Rig {
+fn rig(script: Vec<Reported>) -> Rig {
     let timeline = Timeline::default();
-    let clock = Arc::new(Clock::default());
     Rig {
         locks: Locks {
             timeline: Arc::clone(&timeline),
@@ -220,21 +207,20 @@ fn rig(script: Vec<Delivery>) -> Rig {
         daemon: Daemon {
             timeline: Arc::clone(&timeline),
             script: Mutex::new(script.into()),
-            clock: Arc::clone(&clock),
         },
-        clock,
+        run_lock: false,
         timeline,
     }
 }
 
 async fn run(rig: &mut Rig) -> super::Started {
-    let clock = Arc::clone(&rig.clock);
+    let run_lock = rig.run_lock.then(|| run_lock(&rig.timeline));
     let mut frontend = Frontend {
         locks: &mut rig.locks,
         terminal: &rig.tty,
         reports: &rig.daemon,
-        pause: &*clock,
         limits: Limits::new(Duration::from_secs(1)),
+        run_lock,
     };
     frontend.run(&prepared()).await
 }
@@ -315,22 +301,21 @@ async fn test_a_launch_that_does_not_start_is_reported_and_its_lock_let_go() {
     );
 }
 
+// U5's start-report race: the run's own lock, taken before the frontend
+// asked, is held until its start report is recorded, and no longer.
 #[tokio::test]
-async fn test_a_daemon_gone_between_the_plan_and_the_start_gets_the_start_from_the_next() {
-    // The daemon that prepared the session is gone when the start is
-    // reported: the next attempts find (or start) the next one.
-    let mut rig = rig(vec![unreached(), unreached()]);
+async fn test_the_runs_own_lock_is_let_go_once_the_start_is_recorded() {
+    let mut rig = rig(Vec::new());
+    rig.run_lock = true;
     let done = run(&mut rig).await;
     assert!(done.result.is_ok());
-    assert!(done.notices.is_empty());
     assert_eq!(
         timeline(&rig),
         [
             "lock amber-quiet-heron",
             "spawn",
-            "report started unreached",
-            "report started unreached",
             "report started applied",
+            "unlock run",
             "exited",
             "report exited applied",
             "unlock amber-quiet-heron",
@@ -338,60 +323,110 @@ async fn test_a_daemon_gone_between_the_plan_and_the_start_gets_the_start_from_t
     );
 }
 
+// A start the daemon already had (it recorded it too) is as recorded.
 #[tokio::test]
-async fn test_a_daemon_gone_between_the_start_and_the_exit_gets_the_exit_from_the_next() {
-    let mut rig = rig(vec![Delivery::Applied, unreached(), Delivery::Duplicate]);
+async fn test_a_duplicate_start_lets_the_runs_lock_go() {
+    let mut rig = rig(vec![Reported::Delivered(Delivery::Duplicate)]);
+    rig.run_lock = true;
+    let _ = run(&mut rig).await;
+    let line = timeline(&rig);
+    let at = |what: &str| line.iter().position(|t| t == what).unwrap();
+    assert!(at("unlock run") < at("exited"), "{line:?}");
+}
+
+// No daemon takes the start: it is HELD (one attempt, no retry), the run's
+// own lock kept, so a daemon started meanwhile reads the run's owner alive;
+// the exit's attempt delivers what is held first (the adapter's), and both
+// locks go once the exit is reported.
+#[tokio::test]
+async fn test_a_held_start_keeps_the_runs_lock_until_the_exit_is_reported() {
+    let mut rig = rig(vec![held()]);
+    rig.run_lock = true;
     let done = run(&mut rig).await;
     assert!(done.result.is_ok());
-    assert!(done.notices.is_empty());
     assert_eq!(
         timeline(&rig),
         [
             "lock amber-quiet-heron",
             "spawn",
-            "report started applied",
+            "report started held",
             "exited",
-            "report exited unreached",
-            "report exited duplicate",
+            "report exited applied",
+            "unlock run",
+            "unlock amber-quiet-heron",
+        ]
+    );
+    assert_eq!(done.notices.len(), 1, "{:?}", done.notices);
+    let said = format!("{:?}", done.notices[0]);
+    assert!(said.contains("held the session's start"), "{said}");
+}
+
+// A report is ONE attempt: one the daemon left unsettled is held by the
+// adapter, never retried here.
+#[tokio::test]
+async fn test_a_report_is_one_attempt() {
+    let mut rig = rig(vec![Reported::Delivered(Delivery::Applied), held()]);
+    let done = run(&mut rig).await;
+    assert!(done.result.is_ok());
+    assert_eq!(
+        timeline(&rig)
+            .iter()
+            .filter(|t| t.starts_with("report exited"))
+            .count(),
+        1
+    );
+    let said = format!("{:?}", done.notices);
+    assert!(said.contains("held the session's exit"), "{said}");
+}
+
+// A report neither recorded nor held is said, and changes nothing of the
+// TUI.
+#[tokio::test]
+async fn test_a_report_neither_recorded_nor_held_is_said() {
+    let mut rig = rig(vec![Reported::Lost {
+        why: "the hold is full".to_string(),
+    }]);
+    let done = run(&mut rig).await;
+    assert!(done.result.is_ok());
+    let said = format!("{:?}", done.notices);
+    assert!(said.contains("nor hold it: the hold is full"), "{said}");
+}
+
+// A launch refused its session's lock lets the run's own lock go after
+// reporting it.
+#[tokio::test]
+async fn test_a_lock_another_holds_lets_the_runs_lock_go_after_the_report() {
+    let mut rig = rig(Vec::new());
+    rig.run_lock = true;
+    rig.locks.held_by_another = true;
+    let _ = run(&mut rig).await;
+    assert_eq!(timeline(&rig), ["report not-started applied", "unlock run"]);
+}
+
+// A launch that does not start lets the run's own lock go after reporting
+// it, before the session's.
+#[tokio::test]
+async fn test_a_launch_that_does_not_start_lets_both_locks_go_after_the_report() {
+    let mut rig = rig(Vec::new());
+    rig.run_lock = true;
+    rig.tty.refuse = true;
+    let _ = run(&mut rig).await;
+    assert_eq!(
+        timeline(&rig),
+        [
+            "lock amber-quiet-heron",
+            "report not-started applied",
+            "unlock run",
             "unlock amber-quiet-heron",
         ]
     );
 }
 
 #[tokio::test]
-async fn test_a_report_is_retried_for_its_bound_then_said_and_the_lock_let_go() {
-    // Nobody answers the exit at all: it is tried until REPORT_FOR has
-    // passed since its first attempt, then said; the lock is let go after.
-    let mut rig = rig(Vec::new());
-    let attempts = 1 + (REPORT_FOR.as_millis() / (1000 + REPORT_PAUSE.as_millis())) as usize;
-    let mut script = vec![Delivery::Applied];
-    script.extend((0..attempts + 1).map(|_| unreached()));
-    rig.daemon.script = Mutex::new(script.into());
-    let done = run(&mut rig).await;
-    assert!(done.result.is_ok());
-    assert_eq!(done.notices.len(), 1, "{:?}", done.notices);
-    let said = format!("{:?}", done.notices[0]);
-    assert!(said.contains("the session's exit"), "{said}");
-    let tries = timeline(&rig)
-        .iter()
-        .filter(|t| *t == "report exited unreached")
-        .count();
-    assert_eq!(tries, attempts);
-    assert_eq!(
-        timeline(&rig).last().map(String::as_str),
-        Some("unlock amber-quiet-heron")
-    );
-    // The clock passed the bound, and not by more than one attempt.
-    let elapsed = rig.clock.elapsed();
-    assert!(elapsed >= REPORT_FOR, "{elapsed:?}");
-    assert!(elapsed < REPORT_FOR + Duration::from_secs(3), "{elapsed:?}");
-}
-
-#[tokio::test]
 async fn test_a_refused_report_is_said_at_once_and_not_retried() {
-    let mut rig = rig(vec![Delivery::Refused {
+    let mut rig = rig(vec![Reported::Delivered(Delivery::Refused {
         detail: "the run has ended".to_string(),
-    }]);
+    })]);
     let done = run(&mut rig).await;
     assert!(done.result.is_ok());
     assert_eq!(done.notices.len(), 1);
@@ -409,7 +444,10 @@ async fn test_a_refused_report_is_said_at_once_and_not_retried() {
 
 #[tokio::test]
 async fn test_a_parked_report_is_said() {
-    let mut rig = rig(vec![Delivery::Applied, Delivery::Parked]);
+    let mut rig = rig(vec![
+        Reported::Delivered(Delivery::Applied),
+        Reported::Delivered(Delivery::Parked),
+    ]);
     let done = run(&mut rig).await;
     assert_eq!(done.notices.len(), 1);
     assert!(format!("{:?}", done.notices[0]).contains("parked"));

@@ -13,11 +13,16 @@
 //! init's interview): its project resolved and named by the daemon, the
 //! daemon reached (started if none serves, S16; none, exit 10 before
 //! anything is planned), `CreateRun{TERMINAL}` answered with the launch,
-//! then `run_application::frontend` over this host: the session's lock
-//! taken, the TUI started on this terminal with exactly the launch's
+//! then `run_application::frontend` over this host: the run's own lock
+//! taken BEFORE the daemon is asked (U5's start-report race: a daemon
+//! started before the start report reads its owner alive), the session's
+//! lock taken, the TUI started on this terminal with exactly the launch's
 //! program, arguments, environment and directory (`run_terminal`), its
-//! start and exit reported as the run's facts through the coordinator's
-//! `Handle`, each retried on whichever daemon serves for up to 60 s (S17).
+//! start and exit reported as the run's facts to whichever daemon serves
+//! (found, or started), each ONE attempt behind what the session's hold
+//! holds, and HELD there (as a hook's facts are) when no up-to-date daemon
+//! takes it, for the next report or any command's flush to deliver in
+//! order (slice 4, a daemon dying under a live TUI; [`DaemonReports`]).
 //! While the TUI runs, the run's `WatchRun` is followed (reopened on the
 //! next daemon when one dies): a `stop` asks the TUI to stop, then kills it
 //! after the grace (S20), and once the TUI is over the run's last notices
@@ -43,9 +48,9 @@ use daemon_ports::{Called, DaemonApi, Daemons, RunEvents};
 use daemon_proto::v1;
 use host_launcher::HostLauncher;
 use library_application::{Flags, Notice};
-use run_application::frontend::{Frontend, Pause, Prepared, Report, Reports, Terminal};
+use run_application::frontend::{Frontend, Prepared, Report, Reported, Reports, Terminal};
 use run_application::{client, Done, Ended, OneShot, RunError};
-use run_ports::{BoxFuture, Delivery, Edge, Launch, LaunchAt, LaunchFailure, Limits, Running};
+use run_ports::{BoxFuture, Edge, Launch, LaunchAt, LaunchFailure, Limits, Running};
 use session_ports::{Held, LockError, SessionLock};
 
 use crate::daemon::Reach;
@@ -205,6 +210,8 @@ async fn host_terminal(
         locks: Box::new(Unheld),
     };
     let mut runs = runs_over(&wiring, library, &output_dir, driven, core, project);
+    // U5's start-report race: the run's own lock is its frontend's.
+    runs.held_by_frontend(request.launcher_lock.clone());
     let mut done = runs.interactive(&request.flags, &request.request).await;
     // Every part of the run let go before it is told over: the daemon
     // closes its store once nothing holds it.
@@ -397,8 +404,20 @@ async fn terminal(
         Ok(api) => api,
         Err(unreached) => return refused(RunError::Unreached(unreached), Vec::new()),
     };
+    // U5's start-report race (owner 2026-11-14): the run's own lock, taken
+    // before the daemon is asked to plan and journaled as the run's launcher
+    // lock, so a daemon started before the start report is recorded reads
+    // the run's owner alive; let go once it is.
+    let run_lock = match run_ports::RunLocks::hold_run(
+        &liveness::RunLockFiles::new(wiring.fs(), wiring.home()),
+        &asked.request_id,
+    ) {
+        Ok(lock) => lock,
+        Err(error) => return refused(RunError::Lock(error), Vec::new()),
+    };
     let mut create = client::create_request(asked);
     create.mode = v1::run::Mode::Terminal as i32;
+    create.launcher_lock = run_lock.path().to_string();
     let run = match api.create_run(create).await {
         Ok(run) => run,
         Err(called) => return refused(RunError::Called(Box::new(called)), Vec::new()),
@@ -420,17 +439,22 @@ async fn terminal(
     };
     #[cfg(feature = "test-support")]
     record_launch(wiring, &launch);
+    #[cfg(feature = "test-support")]
+    wait_at_the_gate(wiring);
     let prepared = Prepared {
         run: run.name.clone(),
         session: run.session.clone(),
         launch,
     };
     let reports = DaemonReports {
-        reach: Reach::new(wiring, stamp),
+        env: Arc::clone(wiring.env()),
+        fs: wiring.fs(),
+        home: wiring.home().to_path_buf(),
+        own: crate::daemon::own_stamp(wiring.env(), stamp).to_string(),
+        session: prepared.session.clone(),
     };
     let tty = Tty(HostLauncher::stopped_by(stop.clone()));
     let mut locks = liveness::LockFiles::new(wiring.fs(), project_of(&prepared.launch, wiring));
-    let clock = Clock(Instant::now());
     let over = Over::default();
     let followed = Mutex::new(Followed::default());
     let session = async {
@@ -438,8 +462,8 @@ async fn terminal(
             locks: &mut locks,
             terminal: &tty,
             reports: &reports,
-            pause: &clock,
             limits: Limits::new(crate::oneshot::TURN_DEADLINE),
+            run_lock: Some(run_lock),
         };
         let done = frontend.run(&prepared).await;
         over.set();
@@ -500,51 +524,182 @@ impl Terminal for Tty {
     }
 }
 
-/// The frontend's clock.
-struct Clock(Instant);
+/// How long one report may take in all: finding (or starting) the daemon
+/// and delivering, a hook's bound (S16).
+const REPORT_BOUND: Duration = crate::daemon::HOOK_BOUND;
 
-impl Pause for Clock {
-    fn elapsed(&self) -> Duration {
-        self.0.elapsed()
-    }
-
-    fn pause(&self, pause: Duration) -> BoxFuture<'_, ()> {
-        Box::pin(tokio::time::sleep(pause))
-    }
+/// The frontend's reports (slice 4, a daemon dying under a live TUI): each
+/// ONE attempt, as a hook delivers, to the daemon serving this home (found,
+/// or started and waited for), behind what the session's hold holds (it is
+/// delivered first, in order), and HELD in the session's hold when no
+/// up-to-date daemon takes it (`runs_application::Holding::report`).
+struct DaemonReports {
+    env: Arc<process_env::EnvSnapshot>,
+    fs: Arc<dyn file_system::Fs>,
+    home: PathBuf,
+    /// This binary's stamp (a test's under test-support).
+    own: String,
+    /// The session's resource name.
+    session: String,
 }
 
-/// The frontend's reports, each attempt to the daemon serving then (found,
-/// or started when none serves), through the coordinator's `Handle`.
-struct DaemonReports<'a> {
-    reach: Reach<'a>,
-}
-
-impl Reports for DaemonReports<'_> {
-    fn deliver<'a>(&'a self, launch: &'a Launch, report: &'a Report) -> BoxFuture<'a, Delivery> {
+impl Reports for DaemonReports {
+    fn deliver<'a>(&'a self, launch: &'a Launch, report: &'a Report) -> BoxFuture<'a, Reported> {
+        let (env, fs, home) = (
+            Arc::clone(&self.env),
+            Arc::clone(&self.fs),
+            self.home.clone(),
+        );
+        let (own, session) = (self.own.clone(), self.session.clone());
+        let book = report_book(launch, report);
+        let (root, incarnation) = (launch.at.session.clone(), launch.at.incarnation);
         Box::pin(async move {
-            let api = match self.reach.reach().await {
-                Ok(api) => api,
-                Err(unreached) => {
-                    return Delivery::Unavailable {
-                        detail: unreached.to_string(),
-                    }
+            // A delivery blocks (its sink has a runtime of its own), and the
+            // spawn wait sleeps: a blocking thread.
+            tokio::task::spawn_blocking(move || {
+                let held = fact_spool::Spool::at_home(fs, &home);
+                ReportAt {
+                    env: &env,
+                    held: &held,
+                    own: &own,
+                    session: &session,
+                    root: &root,
                 }
-            };
-            delivery_of(api.handle(report_book(launch, report)).await)
+                .deliver(book, incarnation)
+            })
+            .await
+            .unwrap_or_else(|e| Reported::Lost {
+                why: format!("the report's thread failed: {e}"),
+            })
         })
     }
 }
 
-/// What a report's `Handle` came to, as a delivery: applied, a duplicate, a
-/// daemon not there (worth another), or refused (final).
-fn delivery_of(handled: Result<bool, Called>) -> Delivery {
-    match handled {
-        Ok(true) => Delivery::Applied,
-        Ok(false) => Delivery::Duplicate,
-        Err(Called::Unreachable { detail }) => Delivery::Unavailable { detail },
-        Err(called) => Delivery::Refused {
-            detail: called.to_string(),
+/// One report's attempt, over the session's hold.
+struct ReportAt<'a, H: run_ports::HeldFacts> {
+    env: &'a Arc<process_env::EnvSnapshot>,
+    held: &'a H,
+    own: &'a str,
+    /// The session's resource name.
+    session: &'a str,
+    /// The session's stable id (text).
+    root: &'a str,
+}
+
+impl<H: run_ports::HeldFacts> ReportAt<'_, H> {
+    fn deliver(&self, book: CommandBook, incarnation: u32) -> Reported {
+        let clock = crate::capture::Deadline(Instant::now() + REPORT_BOUND);
+        let found = crate::daemon::hook_daemon(self.env, crate::capture::spawn_wait(&clock));
+        let item = runs_application::RunReport {
+            external_id: external_id_of(&book),
+            book,
+            incarnation,
+        };
+        let root = uuid::Uuid::parse_str(self.root).unwrap_or_default();
+        let session = Uuid::from_bytes(*root.as_bytes());
+        let holding = runs_application::Holding::new(self.held, &clock, self.own, self.session);
+        let report = match &found {
+            Some(found) => {
+                let sink = crate::capture::daemon_sink(found.clone());
+                holding.report(
+                    &session,
+                    std::slice::from_ref(&item),
+                    runs_application::Serving::Daemon {
+                        stamp: &found.stamp,
+                        sink: &sink,
+                    },
+                )
+            }
+            None => holding.report::<hook_sink_grpc::GrpcSink>(
+                &session,
+                std::slice::from_ref(&item),
+                runs_application::Serving::Unreached {
+                    why: format!(
+                        "no ctxloom daemon could be reached or started within {} s",
+                        REPORT_BOUND.as_secs()
+                    ),
+                },
+            ),
+        };
+        // What its flush of the session's hold set aside is said as the
+        // command ends, as a command's flush says it (H3).
+        let flushed = crate::daemon::flush::Flushed::Done(vec![runs_application::SessionFlush {
+            root,
+            session: Some(self.session.to_string()),
+            flushed: report.flushed.clone(),
+            left: runs_application::Left::Nothing,
+        }]);
+        crate::daemon::flush::to_say(crate::daemon::flush::notices(&flushed));
+        reported_of(report.own.first())
+    }
+}
+
+/// What became of the report, as the frontend is told it.
+fn reported_of(kept: Option<&runs_application::Kept>) -> Reported {
+    use runs_application::Outcome;
+    let Some(kept) = kept else {
+        return Reported::Lost {
+            why: "it was not made".to_string(),
+        };
+    };
+    match &kept.outcome {
+        Outcome::Delivered(delivery) => Reported::Delivered(delivery.clone()),
+        Outcome::Held(why) => Reported::Held { why: held_why(why) },
+        Outcome::HeldBehind => Reported::Held {
+            why: "behind what the session's hold already holds".to_string(),
         },
+        Outcome::NotHeld(not) => Reported::Lost {
+            why: not_held_why(not),
+        },
+    }
+}
+
+/// Why a report was held, as the frontend says it.
+fn held_why(why: &runs_application::Why) -> String {
+    use runs_application::Why;
+    match why {
+        Why::Older { daemon, own } => {
+            format!("the daemon serving ({daemon}) is older than this ctxloom ({own})")
+        }
+        Why::Unreached { why } => why.clone(),
+        Why::Unsettled(_) => "the daemon did not answer it".to_string(),
+        Why::OutOfTime => "its time was spent".to_string(),
+    }
+}
+
+/// Why a report was neither recorded nor held.
+fn not_held_why(not: &runs_application::NotHeld) -> String {
+    use runs_application::NotHeld;
+    match not {
+        NotHeld::Full(_) => "the session's hold is full".to_string(),
+        NotHeld::Failed(error) => error.to_string(),
+        NotHeld::Foreign => "it is not a fact of this session".to_string(),
+    }
+}
+
+/// The external id a fact's book carries.
+fn external_id_of(book: &CommandBook) -> String {
+    match book.page.as_ref().and_then(|page| page.body.as_ref()) {
+        Some(angzarr_embedded::v1::command_page::Body::Fact(fact)) => fact
+            .origin
+            .as_ref()
+            .map(|origin| origin.external_id.clone())
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// Under `test-support`, the frontend waits, before it takes the session's
+/// lock and starts the TUI, while `<ctxloom home>/.ctxloom/test-frontend-gate`
+/// is there (at most a minute): a test kills the daemon between the plan
+/// and the start report (U5's start-report race), forced, never timed.
+/// Compiled out of the shipped binary.
+#[cfg(feature = "test-support")]
+fn wait_at_the_gate(wiring: &Wiring) {
+    let gate = wiring.home().join(".ctxloom/test-frontend-gate");
+    let until = Instant::now() + Duration::from_secs(60);
+    while wiring.fs().exists(&gate).unwrap_or(false) && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

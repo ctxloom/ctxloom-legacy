@@ -52,6 +52,10 @@ pub struct HostRequest {
     pub env: BTreeMap<String, String>,
     pub flags: Flags,
     pub request: OneShot,
+    /// A terminal run's own lock, held by its frontend since before it
+    /// asked (U5's start-report race): the run journals it as its launcher
+    /// lock while it reads held. None: a one-shot, or an older frontend.
+    pub launcher_lock: Option<String>,
 }
 
 /// What hosts a one-shot: the root's, which runs it on a thread of its own

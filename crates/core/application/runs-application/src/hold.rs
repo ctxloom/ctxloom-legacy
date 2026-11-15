@@ -156,6 +156,24 @@ impl HoldReport {
     }
 }
 
+/// A frontend's report of its session's run, as [`Holding::report`] takes
+/// it: the fact's external id, its book (on the run stream of
+/// `incarnation`), and that incarnation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunReport {
+    pub external_id: String,
+    pub book: CommandBook,
+    pub incarnation: u32,
+}
+
+/// One fact to deliver or hold: a hook's observation (incarnation 0, the
+/// session's own stream) or a frontend's report (its run's).
+struct Item {
+    external_id: String,
+    book: CommandBook,
+    incarnation: u32,
+}
+
 /// The hook-side hold policy over a session's hold.
 pub struct Holding<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> {
     held: &'a H,
@@ -184,7 +202,48 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
         event: &HookEvent,
         serving: Serving<'_, S>,
     ) -> HoldReport {
-        let observed = observe(event);
+        let observed: Vec<Item> = observe(event)
+            .iter()
+            .map(|observation| Item {
+                external_id: observation.external_id(session),
+                book: observation.book(session),
+                incarnation: 0,
+            })
+            .collect();
+        self.items(session, &observed, serving)
+    }
+
+    /// Deliver or hold a FRONTEND's reports of the session's run (slice 4,
+    /// a daemon dying under a live TUI: `RunnerStarted`, `RunExited`,
+    /// `LaunchFailed`, each on the run stream of its incarnation), as a
+    /// hook's observations are: behind what the session's hold holds, held
+    /// when no up-to-date daemon takes them, so the next attempt (the
+    /// frontend's next report, or any command's flush) delivers them in
+    /// order. Infallible by type.
+    pub fn report<S: FactSink + ?Sized>(
+        &self,
+        session: &Uuid,
+        reports: &[RunReport],
+        serving: Serving<'_, S>,
+    ) -> HoldReport {
+        let items: Vec<Item> = reports
+            .iter()
+            .map(|report| Item {
+                external_id: report.external_id.clone(),
+                book: report.book.clone(),
+                incarnation: report.incarnation,
+            })
+            .collect();
+        self.items(session, &items, serving)
+    }
+
+    /// Deliver or hold `observed`, in order, as `serving` allows.
+    fn items<S: FactSink + ?Sized>(
+        &self,
+        session: &Uuid,
+        observed: &[Item],
+        serving: Serving<'_, S>,
+    ) -> HoldReport {
         let mut report = HoldReport::default();
         if observed.is_empty() {
             return report;
@@ -194,7 +253,7 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
         };
         let (stamp, sink) = match serving {
             Serving::Unreached { why } => {
-                report.own = self.hold_all(&root, session, &observed, &Why::Unreached { why });
+                report.own = self.hold_all(&root, observed, &Why::Unreached { why });
                 return report;
             }
             Serving::Daemon { stamp, sink } => (stamp, sink),
@@ -204,14 +263,14 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
                 daemon: stamp.to_string(),
                 own: self.own.to_string(),
             };
-            report.own = self.hold_all(&root, session, &observed, &why);
+            report.own = self.hold_all(&root, observed, &why);
             return report;
         }
         let clear = self.flush(&root, stamp, sink, &mut report.flushed);
         report.own = if clear {
-            self.deliver_own(&root, session, &observed, sink)
+            self.deliver_own(&root, observed, sink)
         } else {
-            self.hold_behind(&root, session, &observed)
+            self.hold_behind(&root, observed)
         };
         report
     }
@@ -235,34 +294,32 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
     fn deliver_own<S: FactSink + ?Sized>(
         &self,
         root: &uuid::Uuid,
-        session: &Uuid,
-        observed: &[Observation],
+        observed: &[Item],
         sink: &S,
     ) -> Vec<Kept> {
         let mut kept = Vec::new();
         let mut holding = false;
         for observation in observed {
             if holding {
-                kept.push(self.hold_one(root, session, observation, Outcome::HeldBehind));
+                kept.push(self.hold_one(root, observation, Outcome::HeldBehind));
                 continue;
             }
             let within = self.clock.remaining();
             if within.is_zero() {
                 holding = true;
-                kept.push(self.hold_one(root, session, observation, Outcome::Held(Why::OutOfTime)));
+                kept.push(self.hold_one(root, observation, Outcome::Held(Why::OutOfTime)));
                 continue;
             }
-            let delivery = sink.deliver(observation.book(session), within);
+            let delivery = sink.deliver(observation.book.clone(), within);
             if delivery.settled() {
                 kept.push(Kept {
-                    external_id: observation.external_id(session),
+                    external_id: observation.external_id.clone(),
                     outcome: Outcome::Delivered(delivery),
                 });
             } else {
                 holding = true;
                 kept.push(self.hold_one(
                     root,
-                    session,
                     observation,
                     Outcome::Held(Why::Unsettled(delivery)),
                 ));
@@ -271,47 +328,31 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
         kept
     }
 
-    fn hold_all(
-        &self,
-        root: &uuid::Uuid,
-        session: &Uuid,
-        observed: &[Observation],
-        why: &Why,
-    ) -> Vec<Kept> {
+    fn hold_all(&self, root: &uuid::Uuid, observed: &[Item], why: &Why) -> Vec<Kept> {
         observed
             .iter()
-            .map(|o| self.hold_one(root, session, o, Outcome::Held(why.clone())))
+            .map(|o| self.hold_one(root, o, Outcome::Held(why.clone())))
             .collect()
     }
 
-    fn hold_behind(
-        &self,
-        root: &uuid::Uuid,
-        session: &Uuid,
-        observed: &[Observation],
-    ) -> Vec<Kept> {
+    fn hold_behind(&self, root: &uuid::Uuid, observed: &[Item]) -> Vec<Kept> {
         observed
             .iter()
-            .map(|o| self.hold_one(root, session, o, Outcome::HeldBehind))
+            .map(|o| self.hold_one(root, o, Outcome::HeldBehind))
             .collect()
     }
 
     /// `observation` appended to the hold: `held` when it was kept.
-    fn hold_one(
-        &self,
-        root: &uuid::Uuid,
-        session: &Uuid,
-        observation: &Observation,
-        held: Outcome,
-    ) -> Kept {
-        let external_id = observation.external_id(session);
+    fn hold_one(&self, root: &uuid::Uuid, observation: &Item, held: Outcome) -> Kept {
+        let external_id = observation.external_id.clone();
         let fact = HeldFact::of_book(
             self.own,
             self.session,
             external_id.clone(),
-            &observation.book(session),
+            &observation.book,
             self.clock.now(),
-        );
+        )
+        .of_run(observation.incarnation);
         let outcome = match self.held.hold(root, fact) {
             Ok(Held::Kept) => held,
             Ok(Held::Full { bound, .. }) => Outcome::NotHeld(NotHeld::Full(bound)),
@@ -543,12 +584,21 @@ fn root_of(session: &Uuid) -> Option<uuid::Uuid> {
     uuid::Uuid::from_slice(&session.value).ok()
 }
 
-/// `fact`'s book, when it is a fact of `session`'s stream whose origin is
-/// the external id it was held by; none otherwise.
+/// `fact`'s book, when it is a fact of `session`'s stream (or, held with
+/// an incarnation, of the run stream of that incarnation of the session: a
+/// frontend's report) whose origin is the external id it was held by; none
+/// otherwise.
 fn own_book(fact: &HeldFact, session: &Uuid) -> Option<CommandBook> {
     let book = fact.decode_book().ok()?;
     let cover = book.cover.as_ref()?;
-    if cover.domain != sessions::SESSION_DOMAIN || cover.root.as_ref() != Some(session) {
+    let (domain, root) = match fact.incarnation {
+        0 => (sessions::SESSION_DOMAIN, session.clone()),
+        incarnation => {
+            let text = uuid::Uuid::from_slice(&session.value).ok()?.to_string();
+            (runs::RUN_DOMAIN, runs::run_root(&text, incarnation))
+        }
+    };
+    if cover.domain != domain || cover.root.as_ref() != Some(&root) {
         return None;
     }
     let Some(command_page::Body::Fact(body)) = book.page.as_ref()?.body.as_ref() else {

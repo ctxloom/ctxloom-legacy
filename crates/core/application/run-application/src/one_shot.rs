@@ -209,6 +209,11 @@ pub struct Runs<K: Core, L: RunnerLauncher, R: SessionRecords> {
     /// Told once the run is placed (U4: the daemon that hosts a one-shot
     /// answers its client then); none, nobody is told.
     pub(crate) told: Option<Telling>,
+    /// The run's own lock, held by its FRONTEND at this path since before
+    /// it asked (the start-report race, U5): journaled as the run's
+    /// launcher lock instead of one of the use cases' own, while it reads
+    /// held; none, they take their own.
+    pub(crate) frontend_lock: Option<String>,
 }
 
 /// What is told where each run was placed ([`Runs::telling`]).
@@ -354,7 +359,17 @@ where
             run_locks: parts.run_locks,
             git_user: parts.git_user,
             told: None,
+            frontend_lock: None,
         }
+    }
+
+    /// Journal `lock` (the path of the run lock its
+    /// FRONTEND took before it asked, U5's start-report race) as the run's
+    /// launcher lock, instead of taking one of their own, when it reads
+    /// held; one that does not (none, or an older frontend's) is passed
+    /// over and their own is taken, as before.
+    pub fn held_by_frontend(&mut self, lock: Option<String>) {
+        self.frontend_lock = lock.filter(|path| path.is_empty());
     }
 
     /// The use cases, telling `told` where each run was placed, once it is
@@ -810,17 +825,29 @@ where
         };
         // The run's own lock, taken before its enqueue is visible (ruling 92):
         // no other process ever sees it owed a runner with its lock free.
-        let run = text(&runs::run_root(session, incarnation));
-        let lock = self.run_locks.hold_run(&run).map_err(RunError::Lock)?;
+        // A frontend's, held since before it asked (U5): journaled, and
+        // let go by the frontend once its start report is recorded.
+        let frontend = self
+            .frontend_lock
+            .take()
+            .filter(|path| self.run_locks.probe(path) == run_ports::LockProbe::Held);
+        let (launcher_lock, own) = match frontend {
+            Some(path) => (path, None),
+            None => {
+                let run = text(&runs::run_root(session, incarnation));
+                let lock = self.run_locks.hold_run(&run).map_err(RunError::Lock)?;
+                (lock.path().to_string(), Some(lock))
+            }
+        };
         let request = EnqueueRequest {
             session: session.to_string(),
             incarnation,
             mode,
             evidence,
-            launcher_lock: lock.path().to_string(),
+            launcher_lock,
         };
         let enqueued = self.enqueuer.enqueue(request).await;
-        if enqueued.is_ok() {
+        if let (true, Some(lock)) = (enqueued.is_ok(), own) {
             // Held until the launcher has started the runner.
             self.orders.hold(session, incarnation, lock);
         }

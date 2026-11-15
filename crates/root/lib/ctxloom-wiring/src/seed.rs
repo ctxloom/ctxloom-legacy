@@ -130,6 +130,18 @@ impl Wiring {
                     row["message_id"] = sent.message_id.into();
                     row["text"] = sent.text.into();
                 }
+                // Why an incarnation or a run ended (a daemon dying under a
+                // live TUI: the adoption's end path, as recorded).
+                if let Ok(sessions::SessionEvent::IncarnationEnded(ended)) =
+                    <sessions::SessionEvent as Payload>::from_any(&event)
+                {
+                    row["cause"] = ended.cause.into();
+                }
+                if let Ok(runs::RunEvent::RunEnded(ended)) =
+                    <runs::RunEvent as Payload>::from_any(&event)
+                {
+                    row["cause"] = format!("{:?}", ended.cause).into();
+                }
                 events.push(row);
             }
             Ok::<_, TestError>(serde_json::Value::Array(events))

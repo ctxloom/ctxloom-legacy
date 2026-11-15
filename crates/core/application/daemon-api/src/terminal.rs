@@ -65,6 +65,7 @@ impl<E: Edge> Api<E> {
             env,
             flags,
             request: asked,
+            launcher_lock: Some(request.launcher_lock.clone()).filter(|lock| !lock.is_empty()),
         });
         let run = v1::Run {
             mode: v1::run::Mode::Terminal as i32,

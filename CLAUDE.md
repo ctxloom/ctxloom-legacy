@@ -658,8 +658,27 @@ after the exit (or `LaunchFailed`) as the run's facts through the
 coordinator's `Handle`, keyed as the launcher keys its own (`started:<run>`,
 `exit:<run>`, `launch-failed:<run>`, `runs_application::launch_failed_book`),
 so the daemon's own record of each is a DUPLICATE; the user gate admits
-these three facts. Each report is retried on whichever daemon serves (found,
-or started) for up to `frontend::REPORT_FOR` (60 s, S17), then said. The
+these three facts. Each report is ONE attempt (owner 2026-11-14, a daemon
+dying under a live TUI, replacing U5's 60 s retry): to the daemon serving
+(found, or started, as a hook's, `daemon::hook_daemon`, within
+`HOOK_BOUND`), behind what the session's hold holds (delivered first, in
+order), or HELD in the session's hold when no up-to-date daemon takes it
+(`runs_application::Holding::report`, the wiring's `DaemonReports`; a
+`HeldFact` with the run's `incarnation`, below), for the frontend's next
+report or any command's flush to deliver in order; a held report is said
+(`held the session's start for the next daemon: <why>`, a draft). The
+start-report race (owner 2026-11-14): the run's OWN lock is the
+FRONTEND's, taken (`<home>/.ctxloom/runs/<request id>.lock`) BEFORE it
+sends `CreateRun` (`CreateRunRequest.launcher_lock`, field 14;
+`HostRequest::launcher_lock`, `Runs::held_by_frontend`), journaled as the
+run's `launcher_lock` instead of one of the daemon's own while it probes
+held (an older frontend's request names none: the daemon takes its own, as
+before), and let go once the start report is recorded (applied or a
+duplicate), else at the frontend's end; so a daemon started between the
+plan and the start report reads the run's owner alive. Under
+`test-support` the frontend waits, before it takes the session's lock,
+while `~/.ctxloom/test-frontend-gate` is there (the forcing test,
+`tui_adopt.test.rs`). The
 daemon, once the exit is in the stream, does what the CLI's launcher did:
 the checkout released WIP-safe, the
 incarnation ended (`runner-exit`); a frontend gone without reporting (its
@@ -670,11 +689,28 @@ in the session's stream) asks the TUI to stop, then kills it after
 `Terminal::STOP_GRACE`; once the TUI is over the run's last notices (said
 after the TUI, as before) and its end are read for up to 10 s. A daemon
 killed mid-session does not end the TUI; its reports reach the next daemon.
-The daemon counts a session it prepares as a client it serves (idle). Not
-built: after a daemon death, the next daemon has no thread for the session,
-so its checkout's release and its incarnation's end at the exit are left
-(the incarnation stays open; the T18 sweep's, U6); a frontend killed
-between the plan and its start report leaves the run to `START_WITHIN`.
+The daemon counts a session it prepares as a client it serves (idle). A
+DAEMON DYING UNDER A LIVE TUI (owner 2026-11-14; `daemon-application`'s
+`adopt.rs`): a new daemon ADOPTS, at its start, every run its sweep leaves
+(owed a runner or started, its owner alive by its locks: the session's
+lock, or the run's own the frontend holds; at the start nothing is the
+daemon's own, so every survivor is another's), said in its log, and takes
+over its END PATH each round (`Daemon::end_the_adopted`): the run's end
+(the frontend's exit report, or its `LaunchFailed`) ends the incarnation
+(`runner-exit`, or `launch-failed` never started) and lets its checkout go
+WIP-safe (the sweep's `LostCheckouts`: only one under ctxloom's
+`worktrees`, never forced, one holding work left and said); a frontend
+gone without reporting (the session's lock free, the run's own not held,
+no end once that was seen) is a kill, `RunExited{signal: 9}` keyed
+`exit:<run>` (its late report a DUPLICATE), then the same end; one never
+started whose own lock is left free is the sweep's (`launch-orphaned`).
+The idle count's sweep (`live_runs`) leaves an adopted run to it. A
+draining daemon leaves TUIs untouched, so the daemon after it adopts them
+and the two never act on one run. Accepted residual: the checkout's files
+a `session_home: host` launch placed are not known to the adopter (none
+taken out first), so such a checkout is left, said. A frontend killed
+between the plan and its start report leaves its run lock FREE: the next
+sweep (or the adoption) ends the run `launch-orphaned`.
 
 A run asked to stop stops its engine first (ruling 114): for the whole run
 `ctxloom-wiring`'s `signals` hears SIGHUP, SIGINT and SIGTERM
@@ -851,6 +887,8 @@ at all, never a pid). The run's OWN lock, `<home>/.ctxloom/runs/<run>.lock`
 (`liveness::RunLockFiles`), is taken before its enqueue is visible, journaled
 as `RunEnqueued.launcher_lock` (field 12, as in `EnqueueRun`), held in the
 `Orders` and let go once `RunnerStarted` is recorded (or the launch failed);
+a terminal run's is its FRONTEND's instead (`runs/<request id>.lock`, taken
+before it asked; U5's start-report race, above);
 its file is removed as it is let go, so only a dead holder's is ever left (a
 refused run leaves nothing in the project). The SESSION's lock,
 `<project>/.ctxloom/sessions/<harp>.lock`, is taken once the session is
@@ -1261,7 +1299,9 @@ launcher in the application ring (owner T18): `core/application/
 daemon-application`'s `Daemon`. Its first step, `start_up`, catches up
 every read model it plans and its API answers from (the board, the pending
 messages, the session index) with the store's log and then sweeps
-(`run_launcher::Sweeper`, above), all before the root publishes the
+(`run_launcher::Sweeper`, above) and ADOPTS what the sweep leaves (a live
+TUI's run, its end path then the daemon's: U5's paragraph, "A DAEMON DYING
+UNDER A LIVE TUI"), all before the root publishes the
 discovery file (`serve.rs`'s `swept_and_advertised`), so a fresh daemon
 serves nothing (no fact, command or read: the user bearer reaches no one
 before the publish) from folds older than the log (owner, s4-Q14 H3's
@@ -2575,7 +2615,11 @@ Windows no mode: the ACL, M8), a mode not set failing the call
 (`run-ports-hold-restrict`). A hold is the magic `CTXHELD\x01`, then records
 of a u32-LE length, a u32-LE CRC-32 (crc32fast) and one `ctxloom.v1.HeldRecord`
 (`proto/ctxloom/v1/held.proto`: a `HeldFact`, the hook's stamp, the session's
-name, the external id and the `CommandBook`'s exact bytes, or a `HeldGap`);
+name, the external id and the `CommandBook`'s exact bytes, and (field 6,
+`incarnation`) for a frontend's report the incarnation whose RUN stream its
+book is on, 0 for the session's own stream; a flush delivers a run fact only
+on the run root `runs::run_root(session, incarnation)`, else sets it aside;
+or a `HeldGap`);
 `HeldFact`'s `Debug` withholds the book. Bound: 32 MiB a session and 256 MiB
 a home (`SESSION_BOUND`, `HOME_BOUND`); past either the NEWEST fact is
 dropped (`Held::Full`, for the caller to say on stderr) and a gap record

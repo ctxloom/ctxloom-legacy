@@ -81,6 +81,7 @@ fn hold(env: &Env, name: &str, count: usize) -> PathBuf {
                         seconds: i64::try_from(now).unwrap(),
                         nanos: 0,
                     }),
+                    incarnation: 0,
                 },
             )
             .expect("held");

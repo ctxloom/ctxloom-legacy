@@ -46,6 +46,13 @@ message HeldFact {
   // The hook's clock when it held the fact: an age to report, ordering
   // nothing (the file's order is the order held).
   google.protobuf.Timestamp held_at = 5;
+
+  // A fact on the session's RUN stream (the frontend's own reports,
+  // RunnerStarted, RunExited and LaunchFailed, held as hook facts are:
+  // slice 4, a daemon dying under a live TUI): the incarnation whose run
+  // it is, the book's root `runs::run_root(session, incarnation)`. 0: a
+  // fact of the session's own stream.
+  uint32 incarnation = 6;
 }
 
 // A fact the hold could not keep (past its bound): where the record has a

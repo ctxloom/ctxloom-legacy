@@ -1,17 +1,16 @@
 //! The frontend's wiring, its pure parts: what a report is on the wire,
-//! what a delivery came to, what the daemon reads back of the reports, and
+//! what its holding came to, what the daemon reads back of the reports, and
 //! what a prepared session's end says on its watch.
 
 use angzarr_embedded::v1::{command_page, event_page, EventPage};
 use angzarr_embedded::Any;
-use daemon_ports::Called;
 use daemon_proto::v1;
 use prost::Message;
 use run_application::frontend::Report;
 use run_application::{Done, Ended, RunError};
 use run_ports::{Delivery, Launch, LaunchKind, Stdio, TurnCommand};
 
-use super::{delivery_of, events_of, project_of, report_book, seen_in};
+use super::{events_of, external_id_of, project_of, report_book, reported_of, seen_in};
 
 const RUN: &str = "0195f0a4-7b1e-7000-8000-000000000001";
 const SESSION: &str = "0195f0a4-7b1e-7000-8000-000000000002";
@@ -82,24 +81,6 @@ fn each_report_is_its_run_s_fact_keyed_as_the_launcher_keys_its_own() {
     for book in [started, exited, failed] {
         assert_eq!(book.cover.expect("a cover").domain, runs::RUN_DOMAIN);
     }
-}
-
-#[test]
-fn a_delivery_is_what_the_handle_came_to() {
-    assert_eq!(delivery_of(Ok(true)), Delivery::Applied);
-    assert_eq!(delivery_of(Ok(false)), Delivery::Duplicate);
-    assert_eq!(
-        delivery_of(Err(Called::Unreachable {
-            detail: "gone".to_string()
-        })),
-        Delivery::Unavailable {
-            detail: "gone".to_string()
-        }
-    );
-    assert!(matches!(
-        delivery_of(Err(Called::Unauthenticated)),
-        Delivery::Refused { .. }
-    ));
 }
 
 #[test]
@@ -192,4 +173,56 @@ fn a_prepared_session_s_end_says_its_notices_then_its_end() {
         &events[0].event,
         Some(v1::run_event::Event::End(end)) if end.code == "run-application-not-ended"
     ));
+}
+
+// Slice 4: what a report's one attempt came to, as the frontend is told it.
+#[test]
+fn a_reports_holding_is_what_the_frontend_is_told() {
+    use run_application::frontend::Reported;
+    use runs_application::{Kept, NotHeld, Outcome, Why};
+    let kept = |outcome| Kept {
+        external_id: "started:r".to_string(),
+        outcome,
+    };
+    assert_eq!(
+        reported_of(Some(&kept(Outcome::Delivered(Delivery::Duplicate)))),
+        Reported::Delivered(Delivery::Duplicate)
+    );
+    assert_eq!(
+        reported_of(Some(&kept(Outcome::Held(Why::Unreached {
+            why: "no daemon".to_string()
+        })))),
+        Reported::Held {
+            why: "no daemon".to_string()
+        }
+    );
+    let Reported::Held { why } = reported_of(Some(&kept(Outcome::Held(Why::Older {
+        daemon: "v0.1.0-a".to_string(),
+        own: "v0.2.0-b".to_string(),
+    })))) else {
+        panic!("held");
+    };
+    assert!(
+        why.contains("v0.1.0-a") && why.contains("v0.2.0-b"),
+        "{why}"
+    );
+    assert!(matches!(
+        reported_of(Some(&kept(Outcome::HeldBehind))),
+        Reported::Held { .. }
+    ));
+    assert!(matches!(
+        reported_of(Some(&kept(Outcome::NotHeld(NotHeld::Foreign)))),
+        Reported::Lost { .. }
+    ));
+    assert!(matches!(reported_of(None), Reported::Lost { .. }));
+}
+
+#[test]
+fn a_reports_external_id_is_its_books() {
+    let book = report_book(&launch(), &Report::Started { pid: 7 });
+    assert_eq!(external_id_of(&book), format!("started:{RUN}"));
+    assert_eq!(
+        external_id_of(&angzarr_embedded::v1::CommandBook::default()),
+        ""
+    );
 }

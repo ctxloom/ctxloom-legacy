@@ -227,3 +227,26 @@ async fn a_watch_of_a_run_the_terminals_do_not_hold_is_not_theirs() {
         .watch_terminal("projects/calm-quiet-heron/runs/other")
         .is_none());
 }
+
+// U5's start-report race: the run lock the frontend took before it asked
+// reaches the daemon's session as its launcher lock; a request naming none
+// (an older frontend's) names none.
+#[tokio::test]
+async fn the_frontends_run_lock_reaches_the_session_it_asks_for() {
+    let f = resolved().await;
+    let rig = terminals(false);
+    let api = f
+        .restarted()
+        .await
+        .preparing_terminals(Arc::clone(&rig.terminals));
+    let lock = "/home/u/.ctxloom/runs/0195f0a4-request.lock";
+    let mut asked = terminal("projects/calm-quiet-heron");
+    asked.launcher_lock = lock.to_string();
+    api.create_run(asked).await.unwrap();
+    api.create_run(terminal("projects/calm-quiet-heron"))
+        .await
+        .unwrap();
+    let requests = rig.asked.lock().unwrap().clone();
+    assert_eq!(requests[0].launcher_lock.as_deref(), Some(lock));
+    assert_eq!(requests[1].launcher_lock, None);
+}

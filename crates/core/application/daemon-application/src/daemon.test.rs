@@ -75,7 +75,7 @@ fn hosted(name: &'static str) -> HostedEngine {
 
 /// A plan that fails, recording which engine it was asked for.
 #[derive(Clone, Default)]
-struct Plans(Arc<Mutex<Vec<String>>>);
+pub(crate) struct Plans(Arc<Mutex<Vec<String>>>);
 
 impl ChildPlans for Plans {
     fn preview(
@@ -94,7 +94,7 @@ impl ChildPlans for Plans {
     }
 }
 
-struct NoHandOffs;
+pub(crate) struct NoHandOffs;
 
 impl HandOffs for NoHandOffs {
     fn read(&self, _: &str) -> Option<crate::HandOff> {
@@ -110,7 +110,7 @@ impl HandOffs for NoHandOffs {
     }
 }
 
-struct NoHomes;
+pub(crate) struct NoHomes;
 
 impl ChildHomes for NoHomes {
     fn records(&self, _: &str) -> Box<dyn run_ports::SessionRecords> {
@@ -125,7 +125,7 @@ impl ChildHomes for NoHomes {
     }
 }
 
-struct Deaf;
+pub(crate) struct Deaf;
 
 impl Ears for Deaf {
     fn listen(&self, _: String, _: Box<dyn Iterator<Item = ChildObservation> + Send>) {}
@@ -192,7 +192,13 @@ fn daemon_saying(
 }
 
 /// Mint `session` in project calm-otter, owned by `owner` when given.
-async fn mint(edge: &TestEdge, session: &str, harp: &str, engine: &str, owner: Option<&str>) {
+pub(crate) async fn mint(
+    edge: &TestEdge,
+    session: &str,
+    harp: &str,
+    engine: &str,
+    owner: Option<&str>,
+) {
     let book = CommandBook::command_of(
         session_cover(session),
         &sessions::SessionCommand::from(sessions::MintSession {
@@ -214,7 +220,7 @@ async fn mint(edge: &TestEdge, session: &str, harp: &str, engine: &str, owner: O
     edge.handle(book).await.unwrap();
 }
 
-async fn session_events(edge: &TestEdge, session: &str) -> Vec<SessionEvent> {
+pub(crate) async fn session_events(edge: &TestEdge, session: &str) -> Vec<SessionEvent> {
     events(edge, &session_cover(session))
         .await
         .into_iter()
@@ -222,7 +228,7 @@ async fn session_events(edge: &TestEdge, session: &str) -> Vec<SessionEvent> {
         .collect()
 }
 
-async fn events(edge: &TestEdge, cover: &Cover) -> Vec<angzarr_embedded::Any> {
+pub(crate) async fn events(edge: &TestEdge, cover: &Cover) -> Vec<angzarr_embedded::Any> {
     edge.events(cover, 0)
         .await
         .unwrap()
@@ -234,7 +240,7 @@ async fn events(edge: &TestEdge, cover: &Cover) -> Vec<angzarr_embedded::Any> {
         .collect()
 }
 
-fn ended(events: &[SessionEvent]) -> Vec<(u32, String)> {
+pub(crate) fn ended(events: &[SessionEvent]) -> Vec<(u32, String)> {
     events
         .iter()
         .filter_map(|event| match event {
