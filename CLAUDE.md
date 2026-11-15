@@ -171,8 +171,8 @@ resolved path. `none` is the project; a checkout is
 its path; one that cannot be had (not a git repository, the add failed, no
 checkouts directory or no workspaces port) is the project and the notice
 `library-application-notice-workspace-unavailable`; one the port refuses
-fails the launch (`LaunchFailed`). Once the engine has exited and the
-listener stopped, and before the session's lock is let go, the run lets the
+fails the launch (`LaunchFailed`). Once the engine has exited, and before
+the session's lock is let go, the run lets the
 checkout go (`Launcher::release`, the port's WIP-safe `remove`, never
 forced; owner ruling 2026-11-12, Q2): a clean one is removed (`git worktree
 remove` drops its own record; never a repository-wide `git worktree prune`),
@@ -359,7 +359,8 @@ Crates:
   process group, no deadline; each on a thread of its own, returning at the
   spawn) and the drive half of
   `engine-claude`; `adapters/driving/run-cli`; and `adapters/driven/hook-tls` (the
-per-run listener certificate's mint, see the credentials paragraph below).
+user daemon's listener certificate's mint, see the credentials paragraph below;
+no run mints one of its own, slice 4 U7).
 
 An engine may advise on a plan (owner ruling 168): `Engine::advise(&Planned)
 -> Vec<Advice>` is shown what the plan resolved for it (`run_ports::Planned`:
@@ -683,8 +684,7 @@ engine itself, and is let pass). The stop is `HostLauncher::stopped_by(Stop)`'s
 `run_within_stopped_by`), given `Within::stop_grace` (five seconds), then
 killed; a terminal session's direct child is asked to stop (SIGTERM), given
 `Terminal::STOP_GRACE` (5 s), then killed. The run then ends as any
-run whose engine exited (its end facts, the listener stopped, the locks
-released), and the command exits 128 plus the signal's number, the error
+run whose engine exited (its end facts, the locks released), and the command exits 128 plus the signal's number, the error
 `run-application-stopped` (`RunError::Stopped`) naming the signal. A second
 signal during the grace is heard and changes nothing; a signal that cannot be
 listened for is said as a notice and the run goes on unforwarded. Tested with
@@ -703,89 +703,83 @@ ONE PRINCIPAL, THE USER (the separation model, owner 2026-11-12, slice 2;
 separation-analysis.md). On the host there are no principals but the user:
 a process of the user, the model included, can do anything the user can
 (read every credential, write the store, run every verb). ctxloom defends
-its TCP listeners against NON-USER callers (other users, web pages,
+its TCP listener (the user daemon's, the only one: no run serves one of its
+own, slice 4 U7) against NON-USER callers (other users, web pages,
 containers, machines) and promises nothing between the user's own
-processes. A run's listener takes one bearer; it keeps non-user callers off
-the socket, and nothing separates the user's own processes. That bearer is
-the run's hook bearer, minted at enqueue: a 256-bit token whose SHA-256
-alone is journaled in `RunEnqueued` (`hook_credential_hash`; `RunEnded`
-revokes it in the fold, a bound on how long a harvested bearer is good for).
-The runner's and the model's tokens are gone (`EnqueueRun` and
-`RunEnqueued` fields 4 and 5 reserved; `Allowlist::runner/model`,
-`RunsGate`, `Admission`, `CredentialsNotDistinct` and runs-application's
-`Principal` with them), and so are the scope tables (`Scope`,
-`hook_allowlist`, `orchestration_scope`, `OrchestratorGate`): an
-authenticated caller is the user, with the user's allowlist
-(`runs_application::user_allowlist`, every command and fact the session
-domain handles, read from the aggregate, since angzarr's unrestricted
-allowlist is its own, the runs domain's `RequestStop`, U4, and the
-frontend's `RunnerStarted`, `RunExited` and `LaunchFailed` facts, U5; the
-coordinator's command half reaches the session and run domains alone,
-`EdgeCommands::reach`). The run's `HookGate` (the CLI run's own listener's,
-kept while the CLI serves its own runs) identifies the run its bearer names
-and `owns` that run's session stream alone: an addressing check (a fact's
-session must be its run's), not a permission. What
-a hook process receives, through the engine env (like `CTXLOOM_HOME`; both of
+processes. A run mints NO credential (owner ruling s4-Q3): the hook
+bearer's token and its digest went with the per-run listener (`EnqueueRun`
+and `RunEnqueued` field 6, `hook_credential_hash`, reserved beside fields 4
+and 5, the runner's and the model's, gone in slice 2; `Enqueuer::new` takes
+no token source and `Enqueued` is the run alone; the `CredentialHashInvalid`
+refusal, `RunState`'s `hook_credential_hash` and `credential_revoked`, and
+`runs-application`'s `HookGate` and `HookIdentity` are deleted; M10b mints
+per-container bearers with a record of their own). The runner's and the
+model's tokens are gone too (`Allowlist::runner/model`, `RunsGate`,
+`Admission`, `CredentialsNotDistinct` and runs-application's `Principal`
+with them), and so are the scope tables (`Scope`, `hook_allowlist`,
+`orchestration_scope`, `OrchestratorGate`): an authenticated caller is the
+user, with the user's allowlist (`runs_application::user_allowlist`, every
+command and fact the session domain handles, read from the aggregate, since
+angzarr's unrestricted allowlist is its own, the runs domain's
+`RequestStop`, U4, and the frontend's `RunnerStarted`, `RunExited` and
+`LaunchFailed` facts, U5; the coordinator's command half reaches the session
+and run domains alone, `EdgeCommands::reach`). What a hook process
+receives, through the engine env (like `CTXLOOM_HOME`; both of
 `engine-claude`'s allowlists, `ENV_ALLOWLIST` for a child's turn since ruling
-51 and `INTERACTIVE_ENV_ALLOWLIST`; always the run's own values: an inherited
-one from an enclosing session is replaced, never passed on), with
+51 and `INTERACTIVE_ENV_ALLOWLIST`; always the run's own values, set by
+`run_ports::name_the_run` for a terminal, a one-shot turn and a hosted child
+alike, every inherited hook variable taken out first, never passed on), is
 `CTXLOOM_SESSION`, the session's resource name `projects/{p}/sessions/{s}`
-(slice 3, s3-Q3: the ONE session variable, a terminal's, a one-shot turn's and
-a hosted child's alike; `CTXLOOM_SESSION_HARP` is retired, hard migrate), whose
-last segment is the harp a statusline shows and whose UUIDv5
-(`sessions::SessionName::id`) is the stable id a hook addresses its facts to
-(review finding 6: the wiring's `RunIds`; a fact's session must be its run's,
-an addressing check; a hook also reads the user daemon's discovery file, to
-deliver there first with the user bearer it names): `CTXLOOM_ENDPOINT`, the URL of the run's TCP
-listener, `https://<host>:<port>` (TLS only: `http://` is the typed
-`run-ports-endpoint-plaintext` and is never dialed, and port 0, a request to
-bind and never a place to dial, is `run-ports-endpoint-port-zero`, for the
-builder and the parser both); the port is the system's (the listener
-binds port 0 once the run is enqueued and its session minted, and the bound
-port is told);
-`CTXLOOM_BEARER`, the composite `<run-id>.<64 hex>` (the gate splits it to look
-the run up, no upstream metadata needed); `CTXLOOM_RUN`, the run id;
-`CTXLOOM_TLS_CERT`, the run's listener certificate, PUBLIC (base64 of the DER on
-one line, safe in an environment and in `docker -e`; `run_ports::PublicCert`
-encodes, decodes and wraps it as PEM). The URL's build and parse, the
+(slice 3, s3-Q3: the ONE session variable; `CTXLOOM_SESSION_HARP` is retired,
+hard migrate), whose last segment is the harp a statusline shows and whose
+UUIDv5 (`sessions::SessionName::id`) is the stable id a hook addresses its
+facts to (review finding 6: the wiring's `RunIds`), and `CTXLOOM_RUN`, the run
+id. With `CTXLOOM_HOME` a hook finds the user's daemon by its discovery file
+and presents the user bearer it names (U2). No host run tells its engine
+`CTXLOOM_ENDPOINT`, `CTXLOOM_BEARER` or `CTXLOOM_TLS_CERT`
+(`run_ports::LISTENER_VARIABLES`; `no_listener.test.rs` runs a one-shot and a
+terminal session and finds none of them, and no ctxloom process listening but
+the daemon's endpoint). KEPT FOR M10b's container arrival (OD-13), each with a
+doc comment saying so, to be flagged as dead code if M10b lands without
+calling it: those three variables, `run_ports::hook_environment` (nothing on
+the host calls it: `workspace.test.rs`'s
+`test_nothing_but_the_m10b_kept_list_calls_hook_environment` holds its callers
+to run-ports' own module), `Bearer::compose|parse` (the composite
+`<run-id>.<64 hex>`), `PublicCert`'s environment form (base64 of the DER on
+one line), `CertNames::for_plan`, the bind table (`run_ports::bind_for`, its
+container rows ruling 33's tested table and typed refusals, no row wired to
+a launch) and the hook's env-named arrival (a hook that finds
+`CTXLOOM_ENDPOINT` set delivers there alone, `HookSink::from_environment`,
+never to the daemon and never spawning one; `https://` only: `http://` is the
+typed `run-ports-endpoint-plaintext` and is never dialed, and port 0 is
+`run-ports-endpoint-port-zero`, for the builder and the parser both; a missing
+or garbled certificate is `HookSink::Refused`, `hook-cli-not-recorded` naming
+`CTXLOOM_TLS_CERT`, and nothing is sent). The URL's build and parse, the
 variables, the certificate's codec and the bind table are pure functions in
-`run-ports` (`hook.rs`, `tls.rs`, `bind.rs`). The
-secret is returned once by `Enqueuer::enqueue` to the launching code, which
-puts it in the launch order's env; `Bearer`, `Token` and the `Debug` of
-`TurnCommand`, `TurnRequest` and `Order` never render it, and no error carries
-it. Credential values never render: the `Debug` of every type that carries an
-engine environment (those three, through `run_ports::RedactedEnv`; `Permits`)
-prints the variables' NAMES and withholds EVERY value, whatever the name, so
-there is no list of sensitive names to keep in sync (redaction keeps the
-user's secrets out of output the model and her transcripts read; it is not a
-separation). A process of the user, the model included, can do anything the
-user can: read every credential, write the store, run every verb (rulings
-37's "never forge", 38 and 27's residual are retired). The callback is TLS,
-server-auth only, no mutual TLS (ruling 36): the per-run certificate
-authenticates the SERVER to the client, which pins it as its SOLE trust
-root (no system roots, no fallback to plaintext), and the bearer keeps
-non-user callers off the socket. So the token never crosses loopback in the
-clear; what reaches the port can still try the token (a 256-bit secret,
-valid until the run ends; a failed attempt says nothing of the token or its
-digest), and a process of another user that binds the port first cannot
-present the certificate (the key never leaves the listener's process). The certificate is minted per run
-BEFORE the listener is served and the engine spawned, by `hook-tls`'s `Minter`
-behind `run_ports::CertMint` (rcgen on ring, ECDSA P-256, a non-CA
-`serverAuth` leaf); its window is explicit (rcgen's default starts in 1975):
-valid from five minutes before the clock (skew) to 24 hours after it, a cap
-that outlasts any run and bounds a leak; its names are every address the
-child may dial for the run (`CertNames::for_plan`: 127.0.0.1, ::1, the bind
-and the told host, so a runtime's host alias is a DNS name), and the client's
-`domain_name` is the URL's host. The private key lives in memory in
+`run-ports` (`hook.rs`, `tls.rs`, `bind.rs`). Credential values never render:
+the `Debug` of every type that carries an engine environment (`TurnCommand`,
+`TurnRequest` and `Order`, through `run_ports::RedactedEnv`; `Permits`) prints
+the variables' NAMES and withholds EVERY value, whatever the name, so there is
+no list of sensitive names to keep in sync, and `Bearer` and `Token` never
+render (redaction keeps the user's secrets out of output the model and her
+transcripts read; it is not a separation). A process of the user, the model
+included, can do anything the user can: read every credential, write the
+store, run every verb (rulings 37's "never forge", 38 and 27's residual are
+retired). The callback is TLS, server-auth only, no mutual TLS (ruling 36):
+the daemon's certificate authenticates the SERVER to the client, which pins
+it as its SOLE trust root (no system roots, no fallback to plaintext), and the
+user bearer keeps non-user callers off the socket. The certificate is minted
+at the daemon's start by `hook-tls`'s `Minter` behind `run_ports::CertMint`
+(rcgen on ring, ECDSA P-256, a non-CA `serverAuth` leaf; its window is
+explicit, rcgen's default starts in 1975), and the client's `domain_name` is
+the URL's host. The private key lives in memory in
 `run_ports::HookCertificate` (whose `Debug` withholds it) and goes to
 `hook-listener`'s `TlsIdentity` and nowhere else: never journaled, logged, in
-an environment or in an error. A hook that finds the listener named but the
-certificate missing or garbled refuses (`HookSink::Refused`, `hook-cli-not-recorded`
-naming `CTXLOOM_TLS_CERT`) and sends nothing. The listener's limits are
-angzarr's generic `Listener` defaults (core `f6fed5e5`; `hook-listener` sets
-none): a TLS handshake within 10 s, an HTTP/2 keepalive ping every 60 s
-answered within 20 s, a connection closed after 1 h plus a 30 s grace (never
-zero: a zero grace is `ListenError::ZeroConnectionAgeGrace` at bind, which
+an environment or in an error. The listener's limits are angzarr's generic
+`Listener` defaults (core `f6fed5e5`; `hook-listener` sets none): a TLS
+handshake within 10 s, an HTTP/2 keepalive ping every 60 s answered within
+20 s, a connection closed after 1 h plus a 30 s grace (never zero: a zero
+grace is `ListenError::ZeroConnectionAgeGrace` at bind, which
 `hook-listener` carries as its bind error's cause), at most 200 streams per
 connection, and no request timeout of the server's own. There is still no
 limit on the number of connections; a request is capped at `hook-listener`'s
@@ -795,24 +789,17 @@ scopes return there; angzarr's `Gate`/`Allowlist`/`Principal` seam and
 `bind_for` are kept for it). A one-shot child's model can read the same
 environment, so it can write any session.
 The run is driven on a multi-thread runtime (`ctxloom-wiring`'s `run_runtime`,
-one worker), because `Running::finish` blocks the driving thread and a task
-spawned on a current-thread runtime (the listener) would starve meanwhile.
-Every run serves its endpoint, an interactive one and a one-shot alike (a
-one-shot is its own owner: ruling 29; children of an interactive owner calling
-back into ITS listener are not built): `hook-listener`'s `HookListener` (angzarr's
-coordinator `Handle` on a TCP port, TLS only (`Listener::tls`, angzarr's `tls`
-feature: tonic's `tls-ring`, never aws-lc), port 0, never an unspecified address, the
-arrival declared from the bind (the bind table, `run_ports::bind_for`: the host
-runtime binds 127.0.0.1 and is told 127.0.0.1; the container rows of ruling 33
-are the tested table and its typed refusals, not yet wired to a container
-launch), behind `runs-application`'s `HookGate`) is started, with the run's freshly
-minted certificate, after the run is enqueued and its session minted and before
-its order is placed (the port and the certificate are part of what the engine is
-told; the hook credential's digest is journaled at the enqueue, so the gate
-already finds the run) and stopped if the run does not start; otherwise it is stopped, with a bounded grace, after the
-engine exits and before the run's end is last recorded
-(`ctxloom-wiring`'s `Hooks`; `run-application`'s `serve`, `ready` and `drive`,
-one path for both kinds of run). `run --session <harp>` (owner ruling 115,
+one worker), because `Running::finish` blocks the driving thread.
+No run serves an endpoint of its own (slice 4 U7, owner ruling s4-Q3): the
+per-run `HookListener`, its certificate's mint, its `HookGate`, the run
+use case's `serve` (with `run_ports`' `HookServer` and `Serving`, and
+`RunError`'s `Bind` and `Listener`, `run-application-listener`) and
+`ctxloom-wiring`'s `Hooks` are gone; the hooks of every run, a hosted
+one-shot's, a terminal session's and a hosted child's, deliver to the user
+daemon's one listener. Under `test-support` a hook process (its `HOME` the
+session home) finds that daemon through its `CTXLOOM_HOME`, which
+`daemon::account_home` takes for the account's home after the test's own
+override, as a shipped binary finds the account's real home. `run --session <harp>` (owner ruling 115,
 a one-shot or the terminal) resumes a session: the run application reads the
 name's claim (none: `sessions-session-unknown`), folds the session's stream
 (empty: `sessions-session-destroyed`, a removed session's claim being kept),
@@ -846,7 +833,7 @@ as `RunEnqueued.launcher_lock` (field 12, as in `EnqueueRun`), held in the
 its file is removed as it is let go, so only a dead holder's is ever left (a
 refused run leaves nothing in the project). The SESSION's lock,
 `<project>/.ctxloom/sessions/<harp>.lock`, is taken once the session is
-minted and held until after its engine exits and the listener stops (an
+minted and held until after its engine exits (an
 interactive session's by its frontend, from before its TUI starts until its
 exit is reported, U5), so a live session reads live (and `session remove` refuses it without
 `--even-if-live`). A launcher's step sweeps other processes' runs: one still
@@ -973,11 +960,10 @@ and `say_failure`). Fatal findings alone are the library's
 `library-application-startup-aborted`, as before; beside a refusal they are the
 plan's warnings, said beside it, and the exit is 21 (the most severe wins),
 else 20. The run is enqueued FIRST (73g): plan, evidence, `EnqueueRun`, the
-project told, a name claimed, `MintSession`, the certificate, the listener,
-the order. So a REFUSED run leaves nothing: no name, no session, no directory,
-no event, no open incarnation, no certificate, no listener. A failure after
-the enqueue (the project, the names, the mint, the certificate, the listener,
-the first catch-up) ends the run with a `LaunchFailed` fact, so no run stays
+project told, a name claimed, `MintSession`, the session's lock, the order.
+So a REFUSED run leaves nothing: no name, no session, no directory, no event,
+no open incarnation. A failure after the enqueue (the project, the names, the
+mint, the session's lock, the first catch-up) ends the run with a `LaunchFailed` fact, so no run stays
 owed a runner, and a session already minted has its directory written with
 the run's end in it.
 
@@ -1339,7 +1325,7 @@ the user bearer (T12: 256 bits, `credentials`' `OsTokenSource`) and a new
 certificate, and serves its listener behind `runs-application`'s
 `UserGate`, which keeps the bearer's SHA-256 alone, in memory, compares in
 constant time (`TokenHash::matches`), and answers anything else (no
-credential, another bearer, a run's hook bearer, another scheme) with a
+credential, another bearer, a run's composite bearer, another scheme) with a
 bare UNAUTHENTICATED that says nothing of why (S11); an admitted caller is
 the user, with `user_allowlist` (every session command and fact, and a
 run's `RequestStop`) on every stream the daemon reaches. There is ONE daemon per OS USER, ever (owner,
@@ -1389,9 +1375,9 @@ and its hooks from `CTXLOOM_SESSION`; the user's child verbs name none,
 D25) and taken as sent. No run is sent to the
 daemon, and the daemon does NOT check a fact's session against a run: the
 session aggregate records nothing on a session that is not live. Accepted
-cost: a buggy client could write to the wrong live session unnoticed. The
-CLI run's own listener keeps its `HookGate` header check (a fact's session
-must be its run's) until runs are hosted. A hosted child is told the user's home as a value
+cost: a buggy client could write to the wrong live session unnoticed (the
+per-run listener's `HookGate` header check is gone with it, slice 4 U7). A
+hosted child is told the user's home as a value
 (`ChildSpec::user_home`, the daemon's `Place::user_home`, the account's
 home, `daemon::account_home`), and its `PATH` is led by the program's directory as
 the platform joins it (`run_ports::search_path_led_by`, on the daemon's
@@ -1851,15 +1837,16 @@ holds the store through its gap fill, `StoreFill`), and on a start that
 fails before it serves (the certificate's mint, the bind, the discovery
 file's publish: what it started is let go, the log says "the start failed"
 then "the store is closed").
-A run's store has holders past the use case: the core's application and
-edge, the use cases' edges, and the hook listener's connection and stream
+A store has holders past its use cases: the core's application and edge,
+the use cases' edges, and the daemon's hook listener's connection and stream
 tasks, which tonic spawns itself, so a call still in the handler keeps the
 coordinator, its edge, the application and the store. `HookListener::stop`
 is angzarr's `Running::shutdown_within(STOP_GRACE)` (ruling 140): past the
 grace it ends every connection still open (the call is cut) and returns only
 once every copy of the service is released. So the end lets each go before
-the close: the listener stopped (by the run use case), `Runs::into_core`
-(every part but the core, with their edges), then `InProcessCore::close`,
+the close: the listener stopped (no run has one of its own since slice 4
+U7), `Runs::into_core` (every part but the core, with their edges), then
+`InProcessCore::close`,
 which consumes the core and only then takes the store by value (the core keeps
 it in `CoreStores`, not `OneStore`, to have it back) and closes it, on the
 run's own runtime, which is not shut down for it. A holder still there is
@@ -2437,8 +2424,8 @@ size and SHA-256 (never its text, ruling B). Not captured: thinking
 blocks, a tool's status (Claude's payload carries none) and a result's body.
 A hook is a separate process, and how it delivers is `ctxloom-wiring`'s
 hook arm (`sessions.rs`, slice 4 §3.8, S16, OD-13). (i) Its environment
-names an endpoint (`CTXLOOM_ENDPOINT`: a CLI run's per-run listener until
-U7 removes it, kept for M10b's containers): `HookSink` is `hook-sink-grpc`'s
+names an endpoint (`CTXLOOM_ENDPOINT`: no host run sets it since U7, kept
+for M10b's containers): `HookSink` is `hook-sink-grpc`'s
 `GrpcSink` there with `CTXLOOM_BEARER`, pinning `CTXLOOM_TLS_CERT` as its
 only root, when they are set and well formed (a missing or garbled
 certificate is `HookSink::Refused`, never plaintext), else `Unreachable`;
@@ -2534,10 +2521,10 @@ facts. A unit test's executable never spawns itself as the daemon
 A compaction's external id is `hook:compact:<session>:<prompt_id>:<trigger>:
 <phase>`, so two compactions of one turn (a manual and an auto) are two facts;
 two of the SAME trigger in one turn would still collide (the payload offers no
-further discriminator). The listener is a port, not a file: a run
-killed by a timeout leaves nothing behind, and one asked to stop by SIGHUP,
-SIGINT or SIGTERM stops its engine, records its end and stops the listener
-before it exits (ruling 114, above). A SIGKILL is not heard: the engine
+further discriminator). The listener is a port, not a file, and the
+daemon's (no run serves one, slice 4 U7): a run killed by a timeout leaves
+nothing behind, and one asked to stop by SIGHUP, SIGINT or SIGTERM stops its
+engine and records its end before it exits (ruling 114, above). A SIGKILL is not heard: the engine
 outlives it.
 
 A session's HOLD (s4-Q14, unit H1; a hook holds there and flushes it since
@@ -3012,7 +2999,7 @@ child holding its stdout or stderr past 200 ms FAILS (`leak-timeout`
 `result = "fail"`); retries 0 (a retry would pass a flake, and a flake is a
 finding); the `ports` test group runs the tests that bind a port, or free
 one and dial it, one at a time across binaries (hook-listener,
-hook-sink-grpc, forge-github, the wiring's `oneshot::tests::hooks` and
+hook-sink-grpc, daemon-client, daemon-api-grpc, forge-github, the wiring's
 `capture`, the binary's `tests::hook`); and the setup script above. A
 second setup script, `guard-homes` (`scripts/nextest-guard-homes.sh`, every
 test on every platform; OD-34: a test once kept the shell's CTXLOOM_HOME and

@@ -3,7 +3,8 @@
 //! Commands are refusable (enqueue, queue a turn, request a stop). Facts are
 //! what already happened and are never refused (owner ruling 2026-11-04, item
 //! 16, totality): a fact the run cannot use records nothing. A run ends exactly
-//! once; folding the end revokes every credential (D29).
+//! once. A run holds no credential (owner ruling s4-Q3: the hook bearer's
+//! digest went with the per-run listener).
 
 use angzarr_embedded::markup::{
     pack_message, Bug, Context, DomainMessage, Emit, FactEmit, Failed, PageContext, Refuses,
@@ -19,7 +20,7 @@ use crate::{
     TurnCompletedRecorded, TurnFailed, TurnFailedRecorded, TurnQueued, TurnStarted,
     TurnStartedRecorded,
 };
-use crate::{AlreadyEnqueued, CredentialHashInvalid, Ended, NoRun, NotItsStream, TurnInFlight};
+use crate::{AlreadyEnqueued, Ended, NoRun, NotItsStream, TurnInFlight};
 use crate::{
     CredentialEvidence, FileOnlyCredential, LaunchRefused, NoCredential, NoPrompt, Refusal,
     RunMode, UnknownEngine,
@@ -38,9 +39,6 @@ impl RunAggregate {
         &self.run
     }
 }
-
-/// A SHA-256 digest's length.
-const DIGEST_LEN: usize = 32;
 
 impl RunAggregate {
     /// Whether an enqueue has been folded.
@@ -105,13 +103,11 @@ impl RunAggregate {
     }
 }
 
-/// The enqueue: once, on its own derived stream, with the hook bearer's
-/// digest.
+/// The enqueue: once, on its own derived stream.
 fn decide_enqueue(ctx: &Context, cmd: EnqueueRun) -> Result<RunEnqueued, RunRejection> {
     if ctx.command.had_prior_events {
         return Err(RunRejection::AlreadyEnqueued);
     }
-    digest(&cmd.hook_credential_hash)?;
     if ctx.root() != Some(&run_root(&cmd.session, cmd.incarnation)) {
         return Err(RunRejection::NotItsStream);
     }
@@ -120,7 +116,6 @@ fn decide_enqueue(ctx: &Context, cmd: EnqueueRun) -> Result<RunEnqueued, RunReje
         session: cmd.session,
         incarnation: cmd.incarnation,
         mode: cmd.mode,
-        hook_credential_hash: cmd.hook_credential_hash,
         launcher_lock: cmd.launcher_lock,
     })
 }
@@ -199,16 +194,6 @@ fn recorded<E: DomainMessage>(event: Option<E>) -> Result<FactEmit<RunAggregate>
     Ok(FactEmit::of(event.map(|event| pack_message(&event))))
 }
 
-/// A credential hash must be a SHA-256 digest.
-fn digest(hash: &[u8]) -> Result<(), RunRejection> {
-    match hash.len() == DIGEST_LEN {
-        true => Ok(()),
-        false => Err(RunRejection::CredentialHashInvalid {
-            length: hash.len() as u64,
-        }),
-    }
-}
-
 /// What the enqueue refuses with for `rejection`: its typed message, under
 /// the status the message declares.
 pub(crate) fn enqueue_refusal(
@@ -233,7 +218,6 @@ pub(crate) fn enqueue_refusal(
         Refuses<RunAggregate, EnqueueRun>,
         [
             AlreadyEnqueued => AlreadyEnqueued,
-            CredentialHashInvalid{length} => CredentialHashInvalid,
             NotItsStream => NotItsStream,
             NoCredential{engine, variables} => NoCredential,
             FileOnlyCredential{engine, variables} => FileOnlyCredential,
@@ -276,13 +260,11 @@ fn launch_refused(refusals: Vec<RunRejection>, fatal_findings: u32) -> LaunchRef
 
 #[aggregate(domain = "runs", command = RunCommand, event = RunEvent)]
 impl RunAggregate {
-    /// Enqueue the run: once, on its own derived stream, with a distinct
-    /// SHA-256 digest for each principal's token.
+    /// Enqueue the run: once, on its own derived stream.
     #[handles_cmd(
         EnqueueRun,
         refuses(
             AlreadyEnqueued,
-            CredentialHashInvalid,
             NotItsStream,
             NoCredential,
             FileOnlyCredential,

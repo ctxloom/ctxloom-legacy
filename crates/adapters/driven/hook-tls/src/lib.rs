@@ -1,7 +1,9 @@
-//! The run's listener certificate (owner rulings 2026-11-09, items 35-37):
-//! minted here, per run, self-signed, ECDSA P-256 on ring, before the engine is
-//! spawned. The child pins it as its SOLE trust root; the private key stays in
-//! the listener's process.
+//! A hook listener's certificate (owner rulings 2026-11-09, items 35-37):
+//! minted here, self-signed, ECDSA P-256 on ring. The user daemon mints its
+//! own at each start ([`Minter::lasting`]); no host run mints one of its own
+//! since the per-run listener went (slice 4 U7, owner ruling s4-Q3). A client
+//! pins it as its SOLE trust root; the private key stays in the listener's
+//! process.
 //!
 //! The window is explicit (rcgen's default starts in 1975 and ends in 4096):
 //! it starts [`BACKDATE_SECONDS`] before the clock, for the skew between this
@@ -105,7 +107,10 @@ pub struct Minter<C> {
 }
 
 impl<C: Clock> Minter<C> {
-    /// A mint of run certificates, each lasting [`LIFETIME_SECONDS`].
+    /// A mint of run certificates, each lasting [`LIFETIME_SECONDS`]. Kept
+    /// for M10b's container arrival (OD-13: a per-container listener's
+    /// certificate); no host run calls it since slice 4 U7. Flag it as dead
+    /// code if M10b lands without calling it.
     pub fn new(clock: C) -> Minter<C> {
         Minter::lasting(clock, LIFETIME_SECONDS)
     }

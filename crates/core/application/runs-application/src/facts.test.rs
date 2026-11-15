@@ -329,10 +329,14 @@ async fn a_claim_is_recorded_and_ends_nothing() {
         );
         assert_eq!(facts.record(who, claim).await, Ok(Recorded::Duplicate));
     }
-    let run = crate::gate::run_state(&*world.edge, &who.run)
-        .await
-        .unwrap();
-    assert!(!run.credential_revoked, "the run is still live");
+    let pages = world.edge.events(&who.run_cover(), 0).await.unwrap();
+    let ended = pages.iter().any(|page| match &page.body {
+        Some(angzarr_embedded::v1::event_page::Body::Event(any)) => {
+            any.type_url.ends_with(".RunEnded")
+        }
+        _ => false,
+    });
+    assert!(!ended, "the run is still live");
 }
 
 // NEW-DESIGN, owner ruling 2026-11-04 (item 16, totality): every AgentFact

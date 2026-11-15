@@ -3,29 +3,18 @@
 //! checks of the task (scope 5) on the real exposure seam; the finer admission
 //! rules are `runs-application`'s, over a kernel double.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use angzarr_embedded::testing::{Fault, FaultyStore, MemoryStore};
 use angzarr_embedded::v1::{Cover, Uuid};
 use angzarr_embedded::{CommandBookExt, Failure, KernelError, Malformed};
 use embedded_edge::EmbeddedEdge;
-use run_ports::{Arrival, Edge, Token, TokenSource, Unserved};
+use run_ports::{Arrival, Edge, Unserved};
 use runs_application::{EnqueueRequest, Enqueuer, Facts, Identity, Recorded, RunnerFact};
 
 use crate::{run_id, InProcessCore, Projectors};
 
 const SESSION: &str = "5f0c7a52-1111-5111-8111-000000000001";
-
-#[derive(Default)]
-struct Counting(AtomicU32);
-
-impl TokenSource for Counting {
-    fn mint(&self) -> Token {
-        let n = self.0.fetch_add(1, Ordering::SeqCst) + 1;
-        Token::from_bytes([n as u8; 32])
-    }
-}
 
 type Core = InProcessCore<FaultyStore<MemoryStore>>;
 type TheEdge = EmbeddedEdge<crate::CoreStores<FaultyStore<MemoryStore>>>;
@@ -68,7 +57,7 @@ impl World {
         ))
         .await
         .unwrap();
-        let enqueued = Enqueuer::new(Arc::clone(&edge), Arc::new(Counting::default()))
+        let enqueued = Enqueuer::new(Arc::clone(&edge))
             .enqueue(EnqueueRequest {
                 session: SESSION.to_string(),
                 incarnation: 1,

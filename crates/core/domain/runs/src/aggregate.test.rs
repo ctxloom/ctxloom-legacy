@@ -20,7 +20,6 @@ use crate::{
 
 const SESSION: &str = "5f0c7a52-1111-5111-8111-000000000001";
 // Two principals per run (owner ruling 2026-11-04, item 16): a hash each.
-const HOOK_HASH: [u8; 32] = [0xef; 32];
 
 pub(crate) type Said = (String, BTreeMap<String, String>);
 
@@ -139,7 +138,6 @@ fn enqueue() -> EnqueueRun {
         session: SESSION.to_string(),
         incarnation: 1,
         mode: RunMode::Interactive,
-        hook_credential_hash: HOOK_HASH.to_vec(),
         prompt_given: true,
         engine: "claude-code".to_string(),
         drivable_engines: vec!["claude-code".to_string(), "opencode".to_string()],
@@ -212,10 +210,11 @@ fn exited(code: i32) -> RunExited {
     RunExited { code, signal: 0 }
 }
 
-// NEW-DESIGN (plan 3.3, D29): the event holds the hook bearer's hash and
-// nothing else of the credential; the fold keeps it for the run's listener.
+// NEW-DESIGN (plan 3.3), owner ruling s4-Q3: the event holds the session,
+// its incarnation and the mode, and no credential (the hook bearer's digest
+// went with the per-run listener).
 #[test]
-fn enqueue_records_the_session_incarnation_mode_and_the_hash_of_the_token() {
+fn enqueue_records_the_session_incarnation_and_mode() {
     let mut run = Run::new();
     let events = run.command(enqueue()).unwrap();
     let [RunEvent::RunEnqueued(enqueued)] = events.as_slice() else {
@@ -223,10 +222,13 @@ fn enqueue_records_the_session_incarnation_mode_and_the_hash_of_the_token() {
     };
     assert_eq!(enqueued.session, SESSION);
     assert_eq!(enqueued.incarnation, 1);
-    assert_eq!(enqueued.hook_credential_hash, HOOK_HASH.to_vec());
+    assert_eq!(enqueued.mode, RunMode::Interactive);
     let state = run.state();
-    assert_eq!(state.hook_credential_hash, HOOK_HASH.to_vec());
-    assert!(!state.credential_revoked);
+    assert_eq!(
+        (state.session.as_str(), state.incarnation, state.mode),
+        (SESSION, 1, Some(RunMode::Interactive))
+    );
+    assert_eq!(state.ended, None);
 }
 
 // Rulings 86, 92: the run journals its own lock, which its launcher holds
@@ -240,29 +242,6 @@ fn enqueue_journals_the_lock_its_launcher_holds() {
         panic!("one RunEnqueued, got {events:?}");
     };
     assert_eq!(enqueued.launcher_lock, launcher_lock());
-}
-
-// NEW-DESIGN (D29: "only its SHA-256 goes in the event"), for the hook
-// bearer's hash.
-#[test]
-fn enqueue_refuses_a_credential_hash_that_is_not_a_sha256_digest() {
-    let shorts = [
-        EnqueueRun {
-            hook_credential_hash: vec![1, 2, 3, 4, 5],
-            ..enqueue()
-        },
-        EnqueueRun {
-            hook_credential_hash: Vec::new(),
-            ..enqueue()
-        },
-    ];
-    for (short, length) in shorts.into_iter().zip(["5", "0"]) {
-        let mut run = Run::new();
-        let (code, args) = run.command(short).unwrap_err();
-        assert_eq!(code, "runs-credential-hash-invalid");
-        assert_eq!(args["length"], length);
-        assert_eq!(run.event_count(), 0);
-    }
 }
 
 // NEW-DESIGN (plan 3.3: a run is enqueued once).
@@ -469,7 +448,7 @@ fn runner_lost_ends_a_started_run_for_runner_loss_once() {
             detail: String::new(),
         })]
     );
-    assert!(run.state().credential_revoked);
+    assert_eq!(run.state().ended, Some(EndCause::RunnerLoss));
     let handled = run
         .harness
         .when_book(fact_book(RunnerLost {}, "runner-lost:r"))
@@ -491,7 +470,7 @@ fn launch_orphaned_ends_a_waiting_run_orphaned_and_claims_no_launch_failure() {
             detail: String::new(),
         })]
     );
-    assert!(run.state().credential_revoked);
+    assert_eq!(run.state().ended, Some(EndCause::LaunchOrphaned));
     let handled = run
         .harness
         .when_book(fact_book(LaunchOrphaned {}, "launch-orphaned:r"))
@@ -543,22 +522,22 @@ fn every_end_revokes_the_credential_whatever_the_cause() {
     };
     for end in [&exit as &dyn Fn(&mut Run), &launch_failed] {
         let mut run = Run::enqueued();
-        assert!(!run.state().credential_revoked);
+        assert_eq!(run.state().ended, None);
         end(&mut run);
-        assert!(run.state().credential_revoked);
+        assert!(run.state().ended.is_some());
     }
 }
 
 // PORTED-FROM-GO: internal/core/coord/session_owner_revoke_test.go
-// TestRevokeSessionOwner_RevocationSurvivesAdoption: the revocation is a
-// fact in the stream, so a fresh process replaying it still sees the token
-// revoked (`Harness::state` replays from the store, as the next process does).
+// TestRevokeSessionOwner_RevocationSurvivesAdoption: the end is a fact in the
+// stream, so a fresh process replaying it still sees the run ended
+// (`Harness::state` replays from the store, as the next process does).
 #[test]
-fn a_revocation_survives_a_restart() {
+fn an_end_survives_a_restart() {
     let mut run = Run::enqueued();
     run.fact(exited(0), "exit:r");
     let replayed = run.harness.state();
-    assert!(replayed.state().credential_revoked);
+    assert!(replayed.state().ended.is_some());
 }
 
 // NEW-DESIGN (plan 3.3: RequestStop from the policy session->run; the run
@@ -617,7 +596,6 @@ fn a_final_claim_is_recorded_and_ends_nothing() {
     let state = run.state();
     assert_eq!(state.final_reported, Some(1));
     assert_eq!(state.ended, None, "the run did not end");
-    assert!(!state.credential_revoked, "no credential was revoked");
     assert_eq!(
         state.turn_in_flight,
         Some(1),

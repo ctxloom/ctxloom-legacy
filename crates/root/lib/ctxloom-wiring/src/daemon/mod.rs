@@ -115,12 +115,17 @@ pub(crate) fn account_home(_: &EnvSnapshot) -> Option<PathBuf> {
 }
 
 /// Under `test-support` the account's home is the test's
-/// ([`ACCOUNT_HOME_VARIABLE`]), else the process's HOME (each test's
-/// temporary home), never the real account's: no test reaches the real
-/// account's lock or files.
+/// ([`ACCOUNT_HOME_VARIABLE`]), else the process's ctxloom home
+/// (`CTXLOOM_HOME`), else its HOME (each test's temporary home), never the
+/// real account's: no test reaches the real account's lock or files. The
+/// ctxloom home stands in before HOME because it is what an engine's hook
+/// processes carry (their HOME is the session home): as the account's real
+/// home does in a shipped binary, it finds them the daemon that started
+/// their engine (slice 4 U7: no run tells its hooks an endpoint of its own).
 #[cfg(feature = "test-support")]
 pub(crate) fn account_home(env: &EnvSnapshot) -> Option<PathBuf> {
     env.non_empty(ACCOUNT_HOME_VARIABLE)
+        .or_else(|| env.non_empty(run_ports::HOME_VARIABLE))
         .or_else(|| env.home())
         .map(PathBuf::from)
 }

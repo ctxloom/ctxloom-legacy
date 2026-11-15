@@ -2,8 +2,8 @@
 //! the user. A caller is admitted when it presents the user bearer the
 //! daemon minted at its start (T12, read from the 0600 discovery file);
 //! the daemon keeps only its SHA-256, in memory, and compares in constant
-//! time. Anything else (no credential, another bearer, a run's hook bearer,
-//! another scheme) is a bare UNAUTHENTICATED that says nothing of why
+//! time. Anything else (no credential, another bearer, a run's composite
+//! bearer, another scheme) is a bare UNAUTHENTICATED that says nothing of why
 //! (S11).
 //!
 //! Authenticated means the user: the principal may send every command and

@@ -4,8 +4,8 @@ syntax = "proto3";
 // owner's, a child's, or an internal one-shot's. Its root is
 // UUIDv5(session, incarnation). ONE run per incarnation, NOT per turn
 // (owner, settled): two turns of one runner are one RunEnqueued and one
-// RunEnded. It owns the credential hash, the turn gate, stop, and the
-// exactly-once end. S5 carries the in-process subset: enqueue, the runner's
+// RunEnded. It owns the turn gate, stop, and the exactly-once end (it mints
+// and holds no credential: owner ruling s4-Q3). S5 carries the in-process subset: enqueue, the runner's
 // start and attach, the turn gate, stop, and the two terminal facts. Pause,
 // resume, summaries and artifacts arrive with S6 and S10.
 package ctxloom.runs.v1;
@@ -74,19 +74,18 @@ enum TurnFailureClass {
 
 // region commands
 
-// Enqueue the run for `session`'s `incarnation`, with the SHA-256 of each of
-// the hook bearer's token the application minted (D29; owner ruling
-// 2026-11-09 item 16): the CLI run's own listener's authentication, which
-// keeps non-user callers off that socket. Only its hash is ever journaled.
-// The runner's and the model's tokens are gone (the separation model, slice
-// 2: one principal, the user; fields 4 and 5 are reserved). The policy session to run sends it on
-// `IncarnationOwed`.
+// Enqueue the run for `session`'s `incarnation`. A run carries no
+// credential: the runner's and the model's tokens went with the separation
+// model (slice 2: one principal, the user; fields 4 and 5 are reserved), and
+// the hook bearer's with the per-run listener (slice 4 U7, owner ruling
+// s4-Q3: a hook delivers to the user's daemon with the user bearer; field 6
+// is reserved; M10b mints per-container bearers with a record of their own).
+// The policy session to run sends it on `IncarnationOwed`.
 message EnqueueRun {
   option (io.angzarr.v1.command) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.RunEnqueued"]
     refuses: "ctxloom.runs.v1.AlreadyEnqueued"
-    refuses: "ctxloom.runs.v1.CredentialHashInvalid"
     refuses: "ctxloom.runs.v1.NotItsStream"
     refuses: "ctxloom.runs.v1.NoCredential"
     refuses: "ctxloom.runs.v1.FileOnlyCredential"
@@ -102,10 +101,10 @@ message EnqueueRun {
   // theatre, deleted).
   reserved 4, 5;
   reserved "runner_credential_hash", "model_credential_hash";
-  // SHA-256 of the hook bearer's token: what the run's engine's hook
-  // processes present to the CLI run's own listener. Required: a SHA-256
-  // digest.
-  bytes hook_credential_hash = 6;
+  // SHA-256 of the hook bearer's token, which the CLI run's own listener
+  // checked (deleted with that listener, s4-Q3).
+  reserved 6;
+  reserved "hook_credential_hash";
 
   // The EVIDENCE of the pre-launch checks (owner rulings 73e, 73f): what the
   // run application asked its ports (the plan, the engine registry, the
@@ -344,10 +343,11 @@ message RunEnqueued {
   // The runner's and the model's credential hashes (deleted, slice 2).
   reserved 4, 5;
   reserved "runner_credential_hash", "model_credential_hash";
-  // SHA-256 of the hook bearer's token, which the run's engine's hook
-  // processes present to the CLI run's own listener. Empty on a run enqueued
-  // before it existed.
-  bytes hook_credential_hash = 6;
+  // SHA-256 of the hook bearer's token (deleted with the per-run listener,
+  // s4-Q3): a run enqueued before then still holds it, and it is read by
+  // nothing.
+  reserved 6;
+  reserved "hook_credential_hash";
   // The run's lock file, which its launcher holds until the runner is started
   // (rulings 86, 92); empty on a run enqueued before it existed: never judged
   // an orphan. Numbered as in `EnqueueRun`, whose first six fields this
@@ -441,8 +441,7 @@ message FinalReportedRecorded {
   string text_ref = 2;
 }
 
-// The exactly-once end. Folding it revokes the credential, whatever the
-// cause, the owner's token included (D29).
+// The exactly-once end, whatever the cause.
 message RunEnded {
   option (io.angzarr.v1.event) = {component: "ctxloom.runs.v1.RunState"};
 
@@ -483,13 +482,6 @@ message Ended {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 }
 
-// A credential hash that is not a SHA-256 digest (32 bytes).
-message CredentialHashInvalid {
-  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
-
-  uint64 length = 1;
-}
-
 // An enqueue on a stream whose root is not the run's derived root.
 message NotItsStream {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
@@ -513,8 +505,8 @@ message NoCredential {
 // FILE and no environment variable (owner ruling 53, 2026-11-09): a file is
 // the human's primary interactive session's alone (ruling 8), so no child of
 // that engine can authenticate. Refused, like NoCredential, by EnqueueRun's
-// `decide` from the credential evidence, before the listener is served, a
-// session made or an engine started.
+// `decide` from the credential evidence, before a session is made or an
+// engine started.
 message FileOnlyCredential {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 

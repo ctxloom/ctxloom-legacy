@@ -12,9 +12,8 @@ use library_application::{AuthSource, DryRun, Previewed, Source, Sourced};
 use run_launcher::fakes::{session_cover, TestEdge};
 use run_ports::{
     ChildControl, ChildEngine, ChildError, ChildMessage, ChildObservation, ChildSpec, Edge, Ended,
-    Engine, EngineError, Exit, HomeFile, LockProbe, PrepareRequest, Prepared, PublicCert, Queued,
-    RunLocks, StartedChild, Token, TokenSource, TurnCommand, TurnOutcome, TurnOutput, TurnRequest,
-    Urgency as ChildUrgency,
+    Engine, EngineError, Exit, HomeFile, LockProbe, PrepareRequest, Prepared, Queued, RunLocks,
+    StartedChild, TurnCommand, TurnOutcome, TurnOutput, TurnRequest, Urgency as ChildUrgency,
 };
 use runs::{RunEvent, TurnUrgency};
 use sessions::{SessionEvent, SessionRef, Urgency};
@@ -463,21 +462,11 @@ impl RunLocks for Locks {
     }
 }
 
-#[derive(Default)]
-struct Counting(std::sync::atomic::AtomicU8);
-
-impl TokenSource for Counting {
-    fn mint(&self) -> Token {
-        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        Token::from_bytes([n; 32])
-    }
-}
-
 struct World {
     edge: Arc<TestEdge>,
     engine: Arc<Scripted>,
     homes: Homes,
-    daemon: Daemon<TestEdge, Counting>,
+    daemon: Daemon<TestEdge>,
     /// The daemon's clock, which a test moves (OD-54).
     clock: Moving,
     /// What the daemon said in its log.
@@ -537,7 +526,6 @@ impl World {
         let log = Arc::clone(&said);
         let daemon = Daemon::new(Ports {
             edge: Arc::clone(&edge),
-            tokens: Arc::new(Counting::default()),
             engines: vec![HostedEngine {
                 engine: engine.clone(),
                 child: engine.clone(),
@@ -554,8 +542,6 @@ impl World {
                 program_dir: Some("/opt/ctx".to_string()),
                 os: "linux".to_string(),
                 user_home: None,
-                endpoint: "https://127.0.0.1:1".to_string(),
-                cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
             },
             folds: Folds::default(),
             say: Box::new(move |line: &str| log.lock().unwrap().push(line.to_string())),
@@ -709,7 +695,12 @@ async fn a_child_is_started_with_its_launchers_environment_and_the_runs_hooks() 
             .map(String::as_str),
         Some(CHILD_NAME)
     );
-    assert!(spec.env.contains_key(run_ports::BEARER_VARIABLE));
+    // Slice 4 U7: its hooks are told its run, and no listener (they find
+    // the daemon by its discovery file, with the user bearer).
+    assert!(spec.env.contains_key(run_ports::RUN_VARIABLE));
+    for name in run_ports::LISTENER_VARIABLES {
+        assert!(!spec.env.contains_key(name), "{name}");
+    }
     assert_eq!(
         world
             .homes
@@ -735,7 +726,6 @@ async fn started_on(os: &str, path: &str, user_home: Option<&str>) -> run_ports:
     let mut world = World::new(Box::new(Plans));
     world.daemon = Daemon::new(Ports {
         edge: Arc::clone(&world.edge),
-        tokens: Arc::new(Counting::default()),
         engines: vec![HostedEngine {
             engine: world.engine.clone(),
             child: world.engine.clone(),
@@ -755,8 +745,6 @@ async fn started_on(os: &str, path: &str, user_home: Option<&str>) -> run_ports:
             program_dir: Some("/opt/ctx".to_string()),
             os: os.to_string(),
             user_home: user_home.map(str::to_string),
-            endpoint: "https://127.0.0.1:1".to_string(),
-            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
         },
         folds: Folds::default(),
         say: Box::new(|_| {}),
@@ -821,7 +809,6 @@ async fn a_hosted_childs_launch_has_its_program_found_and_its_permits_applied() 
     let mut world = World::new(Box::new(Plans));
     world.daemon = Daemon::new(Ports {
         edge: Arc::clone(&world.edge),
-        tokens: Arc::new(Counting::default()),
         engines: vec![HostedEngine {
             engine: world.engine.clone(),
             child: world.engine.clone(),
@@ -842,8 +829,6 @@ async fn a_hosted_childs_launch_has_its_program_found_and_its_permits_applied() 
             program_dir: Some("/opt/ctx".to_string()),
             os: "linux".to_string(),
             user_home: None,
-            endpoint: "https://127.0.0.1:1".to_string(),
-            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
         },
         folds: Folds::default(),
         say: Box::new(|_| {}),
@@ -1001,7 +986,6 @@ async fn each_launch_is_composed_from_its_launchers_places() {
     )]);
     world.daemon = Daemon::new(Ports {
         edge: Arc::clone(&world.edge),
-        tokens: Arc::new(Counting::default()),
         engines: vec![HostedEngine {
             engine: world.engine.clone(),
             child: world.engine.clone(),
@@ -1021,8 +1005,6 @@ async fn each_launch_is_composed_from_its_launchers_places() {
             program_dir: None,
             os: "linux".to_string(),
             user_home: None,
-            endpoint: "https://127.0.0.1:1".to_string(),
-            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
         },
         folds: Folds::default(),
         say: Box::new(|_| {}),
@@ -1721,7 +1703,6 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
     let log = Arc::clone(&said);
     world.daemon = Daemon::new(Ports {
         edge: Arc::clone(&world.edge),
-        tokens: Arc::new(Counting::default()),
         engines: vec![HostedEngine {
             engine: world.engine.clone(),
             child: world.engine.clone(),
@@ -1738,8 +1719,6 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
             program_dir: None,
             os: "linux".to_string(),
             user_home: None,
-            endpoint: "https://127.0.0.1:1".to_string(),
-            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
         },
         folds: Folds::default(),
         say: Box::new(move |line: &str| log.lock().unwrap().push(line.to_string())),
@@ -1861,7 +1840,6 @@ async fn the_starts_sweep_releases_a_lost_childs_checkout_and_never_the_project(
     // saying the child's run is lost.
     let mut next = Daemon::new(Ports {
         edge: Arc::clone(&edge),
-        tokens: Arc::new(Counting::default()),
         engines: Vec::new(),
         plans: Box::new(WorktreePlans),
         hand_offs: Box::new(Handed::of(BTreeMap::new())),
@@ -1873,8 +1851,6 @@ async fn the_starts_sweep_releases_a_lost_childs_checkout_and_never_the_project(
             program_dir: None,
             os: "linux".to_string(),
             user_home: None,
-            endpoint: "https://127.0.0.1:1".to_string(),
-            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
         },
         folds: Folds::default(),
         say: Box::new(|_| {}),
@@ -1894,10 +1870,9 @@ async fn the_starts_sweep_releases_a_lost_childs_checkout_and_never_the_project(
 
 /// A daemon started over `world`'s store, engine and session homes, after
 /// the world's own was killed, its locks probing as `locks`.
-fn restarted(world: &World, locks: LockProbe) -> Daemon<TestEdge, Counting> {
+fn restarted(world: &World, locks: LockProbe) -> Daemon<TestEdge> {
     Daemon::new(Ports {
         edge: Arc::clone(&world.edge),
-        tokens: Arc::new(Counting::default()),
         engines: vec![HostedEngine {
             engine: world.engine.clone(),
             child: world.engine.clone(),
@@ -1914,8 +1889,6 @@ fn restarted(world: &World, locks: LockProbe) -> Daemon<TestEdge, Counting> {
             program_dir: None,
             os: "linux".to_string(),
             user_home: None,
-            endpoint: "https://127.0.0.1:1".to_string(),
-            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
         },
         folds: Folds::default(),
         say: Box::new(|_| {}),

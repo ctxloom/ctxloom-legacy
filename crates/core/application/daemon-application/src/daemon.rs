@@ -9,8 +9,8 @@ use daemon_board::Boards;
 use pending_launches::{PendingLaunch, PendingModel, StartedRun};
 use pending_messages::PendingMessages;
 use run_ports::{
-    ChildControl, ChildMessage, ChildObservation, Edge, FailureClass, HeldLock, PublicCert,
-    RunLocks, RunnerLauncher, TokenSource, TurnOutcome,
+    ChildControl, ChildMessage, ChildObservation, Edge, FailureClass, HeldLock, RunLocks,
+    RunnerLauncher, TurnOutcome,
 };
 use runs::{RunMode, TurnUrgency};
 use runs_application::{EnqueueError, EnqueueRequest, Enqueuer, Facts, Identity, RunnerFact};
@@ -35,16 +35,15 @@ pub const HAND_OVER_PERIOD: std::time::Duration = std::time::Duration::from_secs
 /// Where the daemon is, as a child it hosts is told: ctxloom's home, the
 /// directory of the running program (its engine's `PATH` leads with it, so
 /// a hook's bare `ctxloom` resolves), the operating system's name (how that
-/// `PATH` is joined), the user's own home (what a `session_home: host`
-/// engine is given), and its listener.
+/// `PATH` is joined) and the user's own home (what a `session_home: host`
+/// engine is given). A child is told no listener: its hooks find the daemon
+/// by its discovery file and present the user bearer (slice 4 U7).
 #[derive(Clone, Debug)]
 pub struct Place {
     pub home: String,
     pub program_dir: Option<String>,
     pub os: String,
     pub user_home: Option<String>,
-    pub endpoint: String,
-    pub cert: PublicCert,
 }
 
 /// The read models the daemon plans from, each the same fold its kernel
@@ -142,13 +141,12 @@ impl std::ops::Deref for Planned {
     }
 }
 
-/// A child enqueued, to start: its engine, its plan, its hand-off, its
-/// run's hook token and the locks it holds.
+/// A child enqueued, to start: its engine, its plan, its hand-off and the
+/// locks it holds.
 struct Ready {
     engine: HostedEngine,
     child: Planned,
     handed: HandOff,
-    hook_token: run_ports::Token,
     run_lock: HeldLock,
     session_lock: HeldLock,
 }
@@ -194,11 +192,9 @@ impl Releases for LostCheckouts {
     }
 }
 
-/// The daemon's launcher over the one store's edge `E`, minting run tokens
-/// from `T`.
-pub struct Daemon<E: Edge, T: TokenSource> {
+/// The daemon's launcher over the one store's edge `E`.
+pub struct Daemon<E: Edge> {
     pub(crate) edge: Arc<E>,
-    tokens: Arc<T>,
     engines: Vec<HostedEngine>,
     plans: Box<dyn ChildPlans>,
     hand_offs: Box<dyn HandOffs>,
@@ -250,9 +246,8 @@ pub struct Daemon<E: Edge, T: TokenSource> {
 }
 
 /// The ports a [`Daemon`] is built over.
-pub struct Ports<E: Edge, T: TokenSource> {
+pub struct Ports<E: Edge> {
     pub edge: Arc<E>,
-    pub tokens: Arc<T>,
     pub engines: Vec<HostedEngine>,
     pub plans: Box<dyn ChildPlans>,
     pub hand_offs: Box<dyn HandOffs>,
@@ -303,11 +298,10 @@ fn failure_class(class: FailureClass) -> runs::TurnFailureClass {
     }
 }
 
-impl<E: Edge, T: TokenSource> Daemon<E, T> {
-    pub fn new(ports: Ports<E, T>) -> Daemon<E, T> {
+impl<E: Edge> Daemon<E> {
+    pub fn new(ports: Ports<E>) -> Daemon<E> {
         let Ports {
             edge,
-            tokens,
             engines,
             plans,
             hand_offs,
@@ -320,7 +314,6 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         } = ports;
         Daemon {
             edge,
-            tokens,
             engines,
             plans,
             hand_offs,
@@ -352,14 +345,14 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// The daemon, timing a hand-over's period by `clock` (OD-54).
-    pub fn clocked(mut self, clock: Arc<dyn Monotonic>) -> Daemon<E, T> {
+    pub fn clocked(mut self, clock: Arc<dyn Monotonic>) -> Daemon<E> {
         self.clock = Some(clock);
         self
     }
 
     /// The daemon, waiting `period` for a busy child before it hands it over
     /// anyway (default [`HAND_OVER_PERIOD`]; a test's is short).
-    pub fn handing_over_within(mut self, period: std::time::Duration) -> Daemon<E, T> {
+    pub fn handing_over_within(mut self, period: std::time::Duration) -> Daemon<E> {
         self.hand_over_period = period;
         self
     }
@@ -367,7 +360,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     /// The daemon, placing each child where its agent's `workspace` says
     /// (s4-Q11) through `workspaces`, and letting a lost child's checkout
     /// go at its start's sweep (OD-19).
-    pub fn placing(mut self, workspaces: Arc<dyn ChildWorkspaces>) -> Daemon<E, T> {
+    pub fn placing(mut self, workspaces: Arc<dyn ChildWorkspaces>) -> Daemon<E> {
         self.workspaces = Some(workspaces);
         self
     }
@@ -375,14 +368,14 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     /// The daemon, hosting the one-shots of `one_shots` (U4): counted as
     /// what it hosts, stopped when their run's stream asks
     /// ([`Daemon::tick`]'s stop step), and ended with its children.
-    pub fn hosting_one_shots(mut self, one_shots: Arc<OneShots>) -> Daemon<E, T> {
+    pub fn hosting_one_shots(mut self, one_shots: Arc<OneShots>) -> Daemon<E> {
         self.one_shots = Some(one_shots);
         self
     }
 
     /// The daemon, finding each child's program through `finder` (the one
     /// launch's step 4, T10) before it is started.
-    pub fn finding(mut self, finder: Arc<dyn RunnerLauncher>) -> Daemon<E, T> {
+    pub fn finding(mut self, finder: Arc<dyn RunnerLauncher>) -> Daemon<E> {
         self.finder = Some(finder);
         self
     }
@@ -957,8 +950,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// Host a run for the child `at` names: plan it by its project (D18),
-    /// enqueue it judged on its launcher's environment (its three tokens
-    /// minted; rulings 53, 73e), prepare its session home, start its engine
+    /// enqueue it judged on its launcher's environment (rulings 53, 73e), prepare its session home, start its engine
     /// and record the runner started. A child on an engine the daemon hosts
     /// none of, or that cannot be planned or is refused, ends its
     /// incarnation and is released by its owner (D-N47); one that cannot
@@ -1002,7 +994,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 return Taken::Again;
             }
         };
-        let enqueued = Enqueuer::new(Arc::clone(&self.edge), Arc::clone(&self.tokens))
+        let enqueued = Enqueuer::new(Arc::clone(&self.edge))
             .enqueue(EnqueueRequest {
                 session: at.session.clone(),
                 incarnation: at.incarnation,
@@ -1011,8 +1003,8 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 launcher_lock: lock.path().to_string(),
             })
             .await;
-        let enqueued = match enqueued {
-            Ok(enqueued) => enqueued,
+        match enqueued {
+            Ok(_) => {}
             // Judged as any child is (rulings 53, 73e): refused for good.
             Err(EnqueueError::Refused(rejection)) => {
                 let code = angzarr_diagnostic::Diagnostic::code(&rejection).to_string();
@@ -1031,7 +1023,6 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             engine: hosted_engine,
             child,
             handed,
-            hook_token: enqueued.hook_token,
             run_lock: lock,
             session_lock,
         };
@@ -1055,7 +1046,6 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             engine: hosted_engine,
             child,
             handed,
-            hook_token,
             run_lock: lock,
             session_lock,
         } = ready;
@@ -1087,7 +1077,6 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             },
             &child,
             &handed,
-            &hook_token,
         );
         let (child, transcripts, placed) = match started {
             Ok(started) => started,
@@ -1355,8 +1344,9 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// The child's session home prepared with its project's context and its
-    /// engine started with its launcher's environment, told the daemon's
-    /// listener for its hooks: made by the one launch (T10,
+    /// engine started with its launcher's environment, its hooks told its
+    /// run and session (they find the daemon themselves): made by the one
+    /// launch (T10,
     /// `run_launcher::launch_of`), its program found and its permits
     /// applied there, then started exactly as made.
     fn spawn_child(
@@ -1365,7 +1355,6 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         spawn: Spawn<'_>,
         child: &Planned,
         handed: &HandOff,
-        hook_token: &run_ports::Token,
     ) -> Result<
         (
             run_ports::StartedChild,
@@ -1421,7 +1410,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 // Its agent's `workspace` (s4-Q11): the project, or a
                 // checkout of its session's own.
                 workspace: spawn.workspace.clone(),
-                env: self.child_environment(at, name, sent, hook_token),
+                env: self.child_environment(at, name, sent),
                 // What the daemon sets for the child, which no permit
                 // replaces (ruling 78b): its HOME (the session home) and the
                 // PATH led by the program's directory.
@@ -1467,14 +1456,14 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// The environment a child's engine is started with: its launcher's,
-    /// ctxloom's home, `PATH` led by the program's directory, and the run's
-    /// hook variables (always the run's own).
+    /// ctxloom's home, `PATH` led by the program's directory, and its run and
+    /// session (always the run's own; no endpoint, bearer or certificate:
+    /// slice 4 U7).
     fn child_environment(
         &self,
         at: &RunAt,
         name: &str,
         sent: &BTreeMap<String, String>,
-        hook_token: &run_ports::Token,
     ) -> BTreeMap<String, String> {
         let mut env = sent.clone();
         env.insert(
@@ -1489,13 +1478,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             );
             env.insert("PATH".to_string(), path);
         }
-        env.extend(run_ports::hook_environment(
-            &self.place.endpoint,
-            &at.run(),
-            name,
-            hook_token,
-            &self.place.cert,
-        ));
+        run_ports::name_the_run(&mut env, &at.run(), name);
         env
     }
 

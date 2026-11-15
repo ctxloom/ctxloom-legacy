@@ -239,10 +239,7 @@ fn about(stamp: &str, started_at: i64, pace: Pace) -> daemon_api::About {
 
 /// The launcher, its drain's period `pace.hand_over` timed by this process's
 /// clock (OD-54).
-fn timed<E: run_ports::Edge, T: run_ports::TokenSource>(
-    launcher: Daemon<E, T>,
-    pace: Pace,
-) -> Daemon<E, T> {
+fn timed<E: run_ports::Edge>(launcher: Daemon<E>, pace: Pace) -> Daemon<E> {
     launcher
         .clocked(Arc::new(ProcessClock(Instant::now())))
         .handing_over_within(pace.hand_over)
@@ -318,7 +315,7 @@ async fn start(
     ),
     (files, shared, one_shots, terminals): Hosts<'_>,
     (say, env): (&Say, &Arc<process_env::EnvSnapshot>),
-) -> Result<(HookListener, Daemon<CoreEdge, OsTokenSource>, Discovery), String> {
+) -> Result<(HookListener, Daemon<CoreEdge>, Discovery), String> {
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
     let edge = core.edge();
     // The user bearer (T12): minted at each start, advertised in the
@@ -391,8 +388,6 @@ async fn start(
                 .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
             os,
             user_home: user_home.map(|home| home.to_string_lossy().into_owned()),
-            endpoint: endpoint.clone(),
-            cert: certificate.public().clone(),
         },
         Arc::clone(say),
     )
@@ -424,12 +419,12 @@ async fn start(
 /// warning and every command that reaches it says. On a failure to
 /// publish, the launcher is let go and why is answered.
 async fn swept_and_advertised(
-    mut launcher: Daemon<CoreEdge, OsTokenSource>,
+    mut launcher: Daemon<CoreEdge>,
     core: &InProcessCore<SqliteStore>,
     (files, shared): (&DaemonFiles, &Shared),
     own: &Discovery,
     say: &Say,
-) -> Result<Daemon<CoreEdge, OsTokenSource>, String> {
+) -> Result<Daemon<CoreEdge>, String> {
     if let Err(detail) = started_up(&mut launcher, core, files).await {
         said(say, &incomplete_line(&detail));
         shared.start_up_failed_with(Some(detail));
@@ -453,8 +448,8 @@ fn incomplete_line(detail: &str) -> String {
 /// While the start-up has failed (OD-52), it is tried again (its catch-up
 /// and its sweep, as at the start): once it succeeds the warning is
 /// cleared and the log says so; failing again, its why is the latest.
-async fn started_up_again<E: run_ports::Edge, T: run_ports::TokenSource>(
-    launcher: &mut Daemon<E, T>,
+async fn started_up_again<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
     core: &InProcessCore<SqliteStore>,
     (files, shared): (&DaemonFiles, &Shared),
     say: &Say,
@@ -477,8 +472,8 @@ async fn started_up_again<E: run_ports::Edge, T: run_ports::TokenSource>(
 /// The launcher's start-up (T18): its read models caught up with the
 /// store's log, then its sweep.
 #[cfg(not(feature = "test-support"))]
-async fn started_up<E: run_ports::Edge, T: run_ports::TokenSource>(
-    launcher: &mut Daemon<E, T>,
+async fn started_up<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
     core: &InProcessCore<SqliteStore>,
     _: &DaemonFiles,
 ) -> Result<Vec<daemon_application::Swept>, String> {
@@ -489,8 +484,8 @@ async fn started_up<E: run_ports::Edge, T: run_ports::TokenSource>(
 /// ([`DaemonFiles::start_up_fails`]) is there, its why the switch's line
 /// (OD-52).
 #[cfg(feature = "test-support")]
-async fn started_up<E: run_ports::Edge, T: run_ports::TokenSource>(
-    launcher: &mut Daemon<E, T>,
+async fn started_up<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
     core: &InProcessCore<SqliteStore>,
     files: &DaemonFiles,
 ) -> Result<Vec<daemon_application::Swept>, String> {
@@ -654,10 +649,9 @@ fn launcher(
     ),
     told: Told,
     say: Say,
-) -> Daemon<CoreEdge, OsTokenSource> {
+) -> Daemon<CoreEdge> {
     Daemon::new(Ports {
         edge: Arc::clone(edge),
-        tokens: Arc::new(OsTokenSource),
         engines,
         plans: Box::new(Plans {
             home: home.to_path_buf(),
@@ -698,8 +692,8 @@ fn launcher(
 /// excludes nobody), another daemon's discovery replaced its own (`own`, in
 /// `files`), or it has had nothing to do for its idle time. A discovery file that is gone is published again: the daemon
 /// still holds the single-instance lock, and a client finds it by the file (M11).
-async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
-    launcher: &mut Daemon<E, T>,
+async fn run<E: run_ports::Edge>(
+    launcher: &mut Daemon<E>,
     core: &InProcessCore<SqliteStore>,
     (files, own, held): (&DaemonFiles, &Discovery, &Instance),
     (pace, shared, terminals): (Pace, &Arc<Shared>, &daemon_application::Terminals),

@@ -225,7 +225,6 @@ async fn a_run_of(world: &World, session: &str, root: uuid::Uuid) {
         session: session.to_string(),
         incarnation: 1,
         mode: runs::RunMode::Structured,
-        hook_credential_hash: vec![3; 32],
         launcher_lock: String::new(),
     });
     let page = angzarr_embedded::v1::EventPage {
