@@ -26,3 +26,4 @@ daemon-api-launch-lock = a child's launch lock could not be taken: { $ext_err_tx
 # OD-52: DRAFT wording, the owner's to approve.
 daemon-api-start-up-incomplete = the daemon's start-up catch-up failed: { $why }; what it shows (sessions, transcripts, what it hosts) may be missing events until a later catch-up succeeds
 daemon-api-start-up-incomplete-fix = the daemon tries the catch-up again each round, and this warning clears once one succeeds; the daemon's log (daemon/daemon.log under ctxloom's home) says why it failed
+daemon-api-handing-over = the daemon, ctxloom { $daemon }, is handing { $harps } over to ctxloom { $successor }: a child busy in a turn has been steered to end it, and is handed over within { $seconds } seconds at the latest, its turn in flight cut; the next daemon resumes each in its own conversation

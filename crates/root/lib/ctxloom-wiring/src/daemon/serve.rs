@@ -73,6 +73,9 @@ pub(crate) struct Pace {
     pub(crate) idle: Duration,
     /// How often it looks at the store.
     pub(crate) poll: Duration,
+    /// How long a drain waits for a busy child before it hands it over
+    /// anyway, its turn cut (OD-54; `daemon_application::HAND_OVER_PERIOD`).
+    pub(crate) hand_over: Duration,
 }
 
 /// The daemon's log, shared by the loop and the launcher.
@@ -210,6 +213,38 @@ pub(crate) fn serve(
     })
 }
 
+/// The daemon's monotonic clock (OD-54): the time since its process made it.
+struct ProcessClock(Instant);
+
+impl daemon_application::Monotonic for ProcessClock {
+    fn now(&self) -> Duration {
+        self.0.elapsed()
+    }
+}
+
+/// What the daemon says of itself, fixed at its start (`started_at` its
+/// seconds since the epoch).
+fn about(stamp: &str, started_at: i64, pace: Pace) -> daemon_api::About {
+    daemon_api::About {
+        pid: std::process::id(),
+        version: stamp.to_string(),
+        start_time: angzarr_embedded::Timestamp {
+            seconds: started_at,
+            nanos: 0,
+        },
+        idle_limit_seconds: pace.idle.as_secs(),
+        hand_over_seconds: pace.hand_over.as_secs(),
+    }
+}
+
+/// The launcher, its drain's period `pace.hand_over` timed by this process's
+/// clock (OD-54).
+fn timed<E: run_ports::Edge>(launcher: Daemon<E>, pace: Pace) -> Daemon<E> {
+    launcher
+        .clocked(Arc::new(ProcessClock(Instant::now())))
+        .handing_over_within(pace.hand_over)
+}
+
 /// The clock's seconds since the epoch, as the daemon's start says it.
 fn seconds_now() -> i64 {
     std::time::SystemTime::now()
@@ -315,15 +350,7 @@ async fn start(
                 temp: temp.to_path_buf(),
             }),
             purges: Arc::new(super::places::StorePurges(core.store_handle())),
-            about: daemon_api::About {
-                pid: std::process::id(),
-                version: stamp.clone(),
-                start_time: angzarr_embedded::Timestamp {
-                    seconds: started_at,
-                    nanos: 0,
-                },
-                idle_limit_seconds: pace.idle.as_secs(),
-            },
+            about: about(&stamp, started_at, pace),
         })
         // The one-shots it hosts (U4).
         .hosting_one_shots(Arc::clone(one_shots)),
@@ -365,6 +392,7 @@ async fn start(
         Arc::clone(say),
     )
     .hosting_one_shots(Arc::clone(one_shots));
+    let launcher = timed(launcher, pace);
     let own = Discovery {
         stamp,
         pid: std::process::id(),

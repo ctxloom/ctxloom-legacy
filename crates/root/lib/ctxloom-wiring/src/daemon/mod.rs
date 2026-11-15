@@ -153,14 +153,22 @@ enum DaemonVerb {
         /// How often to look at the stores, in milliseconds
         #[arg(long, default_value_t = 100)]
         poll_ms: u64,
+        /// How long a drain waits for a busy child, in seconds, before it
+        /// hands it over anyway, its turn cut
+        #[arg(long, default_value_t = daemon_application::HAND_OVER_PERIOD.as_secs())]
+        hand_over_seconds: u64,
     },
     /// Say whether a daemon serves, and where
     Status,
     /// Ask the daemon to drain and exit
     Stop {
         /// Stop it even while it hosts live runs, ending them first
-        #[arg(long)]
+        #[arg(long, conflicts_with = "drain")]
         even_if_live: bool,
+        /// Hand what it hosts over to the next daemon, which resumes each
+        /// child in its own conversation, then exit
+        #[arg(long)]
+        drain: bool,
     },
     /// Register this project with the daemon, or recheck it
     Resolve,
@@ -274,10 +282,12 @@ pub(crate) fn run(
         DaemonVerb::Serve {
             idle_seconds,
             poll_ms,
+            hand_over_seconds,
         } => {
             let pace = serve::Pace {
                 idle: Duration::from_secs(idle_seconds),
                 poll: Duration::from_millis(poll_ms.max(1)),
+                hand_over: Duration::from_secs(hand_over_seconds),
             };
             be_the_daemon(&wiring, env, stamp, &files, pace)
         }
@@ -295,9 +305,20 @@ pub(crate) fn run(
             output(render(out, format, &Status(found, warnings)))?;
             Ok(Exit::OK)
         }
-        DaemonVerb::Stop { even_if_live } => {
+        DaemonVerb::Stop {
+            even_if_live,
+            drain,
+        } => {
             let reach = Reach::new(&wiring, stamp).observing();
-            block_on(client_reaching(&wiring, reach).stop(even_if_live))?.map_err(called)?;
+            let client = client_reaching(&wiring, reach);
+            let answered = match drain {
+                // OD-54 (3): handed over as a newer client's drain hands it,
+                // for this client's own stamp; its warning said at once.
+                true => block_on(client.drain(own_stamp(env, stamp)))?,
+                false => block_on(client.stop(even_if_live))?,
+            }
+            .map_err(called)?;
+            heard::hear(answered.map(|daemon| daemon.warnings).unwrap_or_default());
             Ok(Exit::OK)
         }
         DaemonVerb::Resolve => {
@@ -395,6 +416,7 @@ fn reconciled(
             Ok(())
         }
         Err(skew) => {
+            hear_drain(&skew);
             let exit = skew.exit();
             Err(Failure::new(skew, exit))
         }
@@ -632,6 +654,14 @@ impl<'a> Reach<'a> {
     }
 }
 
+/// A drain this command asked for (OD-54): its warning, as the draining
+/// daemon answered it, said as the command ends.
+fn hear_drain(skew: &daemon_api::SkewError) {
+    if let daemon_api::SkewError::Draining { warnings, .. } = skew {
+        heard::hear(warnings.clone());
+    }
+}
+
 /// A refusal of the wiring's, as the reach declines.
 fn declined(refused: impl angzarr_diagnostic::Diagnostic + Send + Sync + 'static) -> Unreached {
     Unreached::Declined(Arc::new(refused))
@@ -668,7 +698,10 @@ impl Daemons for Reach<'_> {
                     }
                 }
                 Err(daemon_api::SkewError::Call(_)) => {}
-                Err(busy) => return Err(declined(busy)),
+                Err(busy) => {
+                    hear_drain(&busy);
+                    return Err(declined(busy));
+                }
             }
         }
         ensure(self.wiring, self.wiring.env());

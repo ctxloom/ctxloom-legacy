@@ -52,7 +52,11 @@ impl DaemonApi for Fake {
     }
 
     async fn stop_daemon(&self, r: v1::StopDaemonRequest) -> Result<v1::Daemon, Called> {
-        self.ask(&format!("stop {}", r.even_if_live), r.env)?;
+        let rpc = match r.drain {
+            true => format!("drain {} {}", r.version, r.even_if_live),
+            false => format!("stop {}", r.even_if_live),
+        };
+        self.ask(&rpc, r.env)?;
         self.names.lock().unwrap().push(r.name);
         Ok(v1::Daemon::default())
     }
@@ -452,6 +456,22 @@ async fn status_and_stop_start_no_daemon() {
     let envs = daemons.template.envs.lock().unwrap().clone();
     assert_eq!(envs, vec![Some(env()); 2]);
     assert_eq!(daemons.reaches(), 0);
+}
+
+// OD-54 (3): `daemon stop --drain` asks the serving daemon to drain for this
+// client's stamp (never `even_if_live`), its environment sent; with none
+// serving it does nothing and starts none.
+#[tokio::test]
+async fn a_drain_asks_the_serving_daemon_to_hand_over_and_starts_none() {
+    let mut daemons = Fakes::new();
+    daemons.serving = false;
+    assert_eq!(outside(&daemons).drain("v0.2.0-b").await.unwrap(), None);
+    assert!(daemons.asked().is_empty());
+    daemons.serving = true;
+    assert!(outside(&daemons).drain("v0.2.0-b").await.unwrap().is_some());
+    assert_eq!(daemons.asked(), ["0:drain v0.2.0-b false"]);
+    assert_eq!(daemons.names(), ["daemon"]);
+    assert_eq!(daemons.reaches(), 0, "it starts no daemon");
 }
 
 // A daemon found serving that no longer answers serves no more: status
