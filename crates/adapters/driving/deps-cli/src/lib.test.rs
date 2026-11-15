@@ -195,6 +195,20 @@ fn test_remote_create_says_what_was_added_and_warns_of_a_clone_that_failed() {
         .as_str()
         .expect("words")
         .starts_with("gone: clone failed: "));
+    // The forge it was bound to, as asked.
+    let bound = go(
+        &fx,
+        &[
+            "remote",
+            "create",
+            "bound",
+            "file:///nonexistent/y.git",
+            "--forge",
+            "git",
+        ],
+        JSON,
+    );
+    assert_eq!(bound.ok().json()["remote"]["forge"], "git");
     let refused = go(&fx, &["remote", "create", "again", URL], TEXT);
     assert_eq!(refused.refused(), ("deps-same-repository", 20));
 }

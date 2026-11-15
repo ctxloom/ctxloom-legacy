@@ -129,3 +129,33 @@ fn a_call_that_came_to_nothing_is_shown_by_its_code_and_args() {
         "daemon-ports-unauthenticated"
     );
 }
+
+fn projected(projector: &str, name: &str) -> crate::Projection {
+    crate::Projection {
+        projector: projector.to_string(),
+        projection: Some(
+            Any::from_msg(&v1::Session {
+                name: name.to_string(),
+                ..v1::Session::default()
+            })
+            .unwrap(),
+        ),
+        ..crate::Projection::default()
+    }
+}
+
+// A sync's projection is the named projector's, decoded; one nobody answered
+// is none.
+#[test]
+fn a_synced_projection_is_the_named_projectors() {
+    let synced = crate::Synced {
+        applied: true,
+        projections: vec![
+            projected("other", "first"),
+            projected("session-index", "mine"),
+        ],
+    };
+    let session: Option<v1::Session> = synced.projection("session-index");
+    assert_eq!(session.map(|s| s.name), Some("mine".to_string()));
+    assert_eq!(synced.projection::<v1::Session>("absent"), None);
+}

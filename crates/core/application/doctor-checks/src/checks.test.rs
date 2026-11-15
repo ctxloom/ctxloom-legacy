@@ -502,12 +502,16 @@ fn test_the_registered_companions_are_named_and_one_that_gives_nothing_is_a_warn
                 name: "x".to_string(),
                 detail: "did not answer within 3000ms".to_string(),
             },
+            Notice::LoadoutUnparseable {
+                name: "garbled".to_string(),
+                cause: library::BundleError::LoadoutEmpty { bytes: 3 },
+            },
         ],
     });
     assert_eq!(warned.status, Status::Warn);
     assert_eq!(
         warned.detail,
-        "reprise: its program reprise is not on PATH; x: its loadout probe failed (did not answer within 3000ms)"
+        "reprise: its program reprise is not on PATH; x: its loadout probe failed (did not answer within 3000ms); garbled: its loadout does not parse"
     );
     assert!(warned.remedy.contains("ctxloom companion disable <name>"));
 }
