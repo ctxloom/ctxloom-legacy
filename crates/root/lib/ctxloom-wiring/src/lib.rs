@@ -23,6 +23,8 @@ mod oneshot;
 mod process_env;
 mod program;
 #[cfg(feature = "test-support")]
+mod record;
+#[cfg(feature = "test-support")]
 mod seed;
 mod sessions;
 mod setup;

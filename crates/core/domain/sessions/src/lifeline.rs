@@ -13,7 +13,7 @@
 use angzarr_embedded::markup::{pack_message, Bug, FactEmit};
 
 use crate::{
-    live, IncarnationEnded, IncarnationOwed, RecordIncarnationEnded, ResumeSession,
+    live, IncarnationEnded, IncarnationOwed, RecordIncarnationEnded, RehostSession, ResumeSession,
     SessionAggregate, SessionEvent, SessionRejection, SessionState, StopOrdered, StopSession,
 };
 
@@ -67,6 +67,54 @@ pub(crate) fn resumed(
     Ok(IncarnationOwed {
         incarnation: held.incarnation + 1,
         reason: RESUMED.to_string(),
+    })
+}
+
+/// Why an incarnation a re-host owes is owed, after its host was lost: the
+/// one reason the re-host budget counts.
+pub const REHOSTED: &str = "rehost";
+
+/// Why an incarnation a draining daemon's hand-over owes is owed (s4-Q5):
+/// never counted, never refused for the budget.
+pub const DRAINED: &str = "drain";
+
+/// How many re-hosts a child may have in the hour before a loss (S47).
+pub const REHOST_BUDGET: u32 = 60;
+
+/// What a re-host records (T19, s4-Q9): the child's next incarnation owed,
+/// for the cause it gives (`rehost`, the default, or `drain`). Refused for a
+/// stream holding no session, a closed one, one whose incarnation is open,
+/// one whose engine bound no native session, and, for a `rehost`, one with
+/// [`REHOST_BUDGET`] or more re-hosts in its recent hour.
+pub(crate) fn rehosted(
+    held: &SessionState,
+    rehost: &RehostSession,
+) -> Result<IncarnationOwed, SessionRejection> {
+    let held = live(held)?;
+    let harp = || held.harp.clone();
+    if held.closed {
+        return Err(SessionRejection::SessionClosed { harp: harp() });
+    }
+    if held.open_incarnation.is_some() {
+        return Err(SessionRejection::SessionRunning { harp: harp() });
+    }
+    if held.native_id.is_empty() {
+        return Err(SessionRejection::NoNativeSession { harp: harp() });
+    }
+    let cause = match rehost.cause.as_str() {
+        "" => REHOSTED,
+        cause => cause,
+    };
+    if cause != DRAINED && rehost.recent_rehosts >= REHOST_BUDGET {
+        return Err(SessionRejection::RehostBudgetSpent {
+            harp: harp(),
+            limit: REHOST_BUDGET,
+            recent: rehost.recent_rehosts,
+        });
+    }
+    Ok(IncarnationOwed {
+        incarnation: held.incarnation + 1,
+        reason: cause.to_string(),
     })
 }
 

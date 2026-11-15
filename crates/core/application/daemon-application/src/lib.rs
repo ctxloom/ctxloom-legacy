@@ -34,6 +34,7 @@
 mod daemon;
 mod one_shot;
 mod ports;
+mod rehost;
 mod terminal;
 
 pub use daemon::{Daemon, Folds, Place, Ports, Taken};
@@ -42,7 +43,8 @@ pub use one_shot::{
     STOP_GRACE_MS,
 };
 pub use ports::{
-    ChildHomes, ChildPlans, Ears, ForLaunch, HandOff, HandOffs, HostedEngine, Kept, Transcripts,
+    ChildHomes, ChildPlans, ChildWorkspaces, Ears, ForLaunch, HandOff, HandOffs, HostedEngine,
+    Kept, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
 pub use terminal::{

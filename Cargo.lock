@@ -1221,6 +1221,7 @@ dependencies = [
  "angzarr-embedded",
  "daemon-board",
  "daemon-proto",
+ "isolation-ports",
  "library-application",
  "mutants",
  "pending-launches",

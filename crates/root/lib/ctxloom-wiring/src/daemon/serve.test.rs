@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use daemon_application::{ChildHomes, Ears, HandOffs};
 use run_ports::{ChildObservation, Exit};
 
-use super::{advertised, said, Advertised, HandOffFiles, Homes, Pumps, Say};
+use super::{advertised, said, step_of, Advertised, HandOffFiles, Homes, Pumps, Say};
 use crate::daemon::files::DaemonFiles;
 use crate::fixtures;
 
@@ -125,4 +125,81 @@ fn a_daemon_keeps_its_advertisement_republishes_a_gone_one_and_yields_to_another
         ..own.clone()
     };
     assert_eq!(advertised(&own, Some(&moved)), Advertised::Replaced);
+}
+
+// U6: a hosted child's session lock is the platform's file lock at
+// `<project>/.ctxloom/sessions/<harp>.lock`, its directory made: held, a
+// second hold is refused; let go, it is free again.
+#[test]
+fn a_childs_session_lock_is_held_once_and_let_go_when_dropped() {
+    let root = fixtures::root();
+    let project = root.root().join("work");
+    fixtures::mkdirs(&project);
+    let homes = Homes(fixtures::fs());
+    let dir = project.display().to_string();
+    let held = homes.hold_session(&dir, "kid").unwrap();
+    assert_eq!(
+        held.path(),
+        project
+            .join(".ctxloom/sessions/kid.lock")
+            .display()
+            .to_string()
+    );
+    assert!(homes.hold_session(&dir, "kid").is_err(), "held already");
+    drop(held);
+    assert!(homes.hold_session(&dir, "kid").is_ok(), "free again");
+}
+
+// U6: the kill switch's steps, by the type of the book applied.
+#[test]
+fn each_kill_step_is_the_book_it_names() {
+    use angzarr_embedded::v1::{command_page, Command, CommandBook, CommandPage, Fact};
+    let book = |name: &str, fact: bool| {
+        let payload = Some(angzarr_embedded::Any {
+            type_url: format!("type.googleapis.com/ctxloom.x.v1.{name}"),
+            value: Vec::new(),
+        });
+        CommandBook {
+            cover: None,
+            page: Some(CommandPage {
+                body: Some(match fact {
+                    true => command_page::Body::Fact(Fact {
+                        payload,
+                        origin: None,
+                    }),
+                    false => command_page::Body::Command(Command {
+                        payload,
+                        handling: None,
+                    }),
+                }),
+                ..CommandPage::default()
+            }),
+        }
+    };
+    for (name, fact, step) in [
+        ("EnqueueRun", false, Some("enqueued")),
+        ("MintSession", false, Some("minted")),
+        ("RunnerStarted", true, Some("started")),
+        ("TurnStarted", true, Some("turn")),
+        ("RecordPromptSubmitted", true, Some("hook")),
+        ("RecordTurnEnded", true, Some("hook")),
+        ("SendMessage", false, None),
+    ] {
+        assert_eq!(step_of(&book(name, fact)), step, "{name}");
+    }
+    assert_eq!(step_of(&CommandBook::default()), None);
+}
+
+// U6: the switch names one step, and is taken only by it.
+#[test]
+fn the_kill_switch_is_taken_by_the_step_it_names_alone() {
+    let root = fixtures::root();
+    let home = root.root().join("home");
+    let files = DaemonFiles::new(fixtures::fs(), &home);
+    assert!(!files.take_die_at("turn"), "none there");
+    fixtures::mkdirs(home.join(".ctxloom/daemon"));
+    fixtures::put_mode(home.join(".ctxloom/daemon/test-die-at"), "turn\n", 0o600);
+    assert!(!files.take_die_at("hook"), "another step's");
+    assert!(files.take_die_at("turn"));
+    assert!(!files.take_die_at("turn"), "taken once");
 }
