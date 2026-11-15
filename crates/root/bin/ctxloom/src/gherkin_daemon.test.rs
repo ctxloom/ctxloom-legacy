@@ -65,6 +65,19 @@ pub(super) struct State {
     killed: Option<u32>,
     /// Where the TUI stub records itself, when not on the scenario's PATH.
     tui_dir: Option<PathBuf>,
+    /// The hook the session's assistant fired last.
+    fired: Option<Fired>,
+}
+
+/// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
+/// long it took, its session's events before it, and what the same hook
+/// answers the engine when it records nothing.
+pub(super) struct Fired {
+    ran: crate::tests::Ran,
+    took: Duration,
+    harp: String,
+    events_before: usize,
+    unrecorded_answer: String,
 }
 
 impl Drop for State {
@@ -995,6 +1008,85 @@ fn serving(w: &mut World) {
     start_daemon(w);
 }
 
+/// Start `ctxloom daemon serve` of the stamp `stamp` (test-support), with
+/// the scenario's short idle time; one a later command starts idles out too.
+fn start_daemon_stamped(w: &mut World, stamp: &str) {
+    let mut env = env_of(w);
+    env.push((STAMP_VARIABLE.to_string(), stamp.to_string()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let idle = SPAWNED_IDLE_SECONDS.to_string();
+    let daemon = w
+        .common
+        .project
+        .start_with(&env, &["daemon", "serve", "--idle-seconds", &idle]);
+    w.daemon_spec.daemon = Some(daemon);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !files::exists(discovery_path(w)) || discovery_now(w).stamp != stamp {
+        assert!(
+            Instant::now() < deadline,
+            "the daemon never served; its log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    while !serving_now(w) {
+        assert!(Instant::now() < deadline, "{}", daemon_log_text(w));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+}
+
+#[given("a ctxloom daemon of an older version is serving for this home")]
+fn serving_older(w: &mut World) {
+    start_daemon_stamped(w, OLDER_STAMP);
+}
+
+#[given("a ctxloom daemon of a newer version is serving for this home")]
+fn serving_newer(w: &mut World) {
+    start_daemon_stamped(w, NEWER_STAMP);
+}
+
+#[given("a ctxloom daemon of this version is serving for this home")]
+fn serving_this(w: &mut World) {
+    start_daemon(w);
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+}
+
+#[given("the session holds a prompt its hook held while an older daemon served")]
+fn holds_a_prompt(w: &mut World) {
+    start_daemon_stamped(w, OLDER_STAMP);
+    fire(w, "UserPromptSubmit", USER_PROMPT_SUBMIT);
+    let harp = fired(w).harp.clone();
+    warned_for_prompt(w, "hook-cli-held");
+    prompt_held(w, harp);
+    // The older daemon goes (killed outright: its discovery file is left,
+    // stale, for the next daemon to publish over).
+    let mut daemon = w.daemon_spec.daemon.take().expect("the daemon started");
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+}
+
+/// The stem of the hold that stands for every other session's of a full
+/// home: a session root no session has.
+const FULL_HOME_HOLD: &str = "00000000-0000-0000-0000-000000000000";
+
+#[given("the holds of this home are at their bound")]
+fn holds_at_bound(w: &mut World) {
+    // Another session's hold of the home's whole bound (256 MiB, H-Q4),
+    // sparse: the bound counts its size, and nothing reads it.
+    let path = held_dir(w).join(format!("{FULL_HOME_HOLD}.held"));
+    files::mkdirs(held_dir(w));
+    let file = files::fs()
+        .open(
+            &path,
+            file_system::Open::CreateNew(os::Mode::from_bits(0o600)),
+        )
+        .expect("a hold");
+    file.set_len(256 << 20).expect("a sparse hold");
+}
+
 #[given(expr = "a ctxloom daemon is serving for this home, hosting a child {string}")]
 fn serving_hosting(w: &mut World, child: String) {
     assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
@@ -1191,9 +1283,81 @@ fn restarted(w: &mut World) {
     w.daemon_spec.old = Some(old);
 }
 
+const USER_PROMPT_SUBMIT: &str =
+    include_str!("../../../../adapters/driven/engine-claude/src/fixtures/user_prompt_submit.json");
+const STOP: &str = include_str!("../../../../adapters/driven/engine-claude/src/fixtures/stop.json");
+
+/// What the fixture's prompt says.
+const PROMPT: &str = "Run the shell command: echo hi";
+
+/// The stamps of a daemon older and newer than any build of this one.
+const OLDER_STAMP: &str = "v0.0.1-0000000";
+const NEWER_STAMP: &str = "v999.0.0-0000000";
+
+/// The variable a test names a ctxloom's stamp by (test-support).
+const STAMP_VARIABLE: &str = "CTXLOOM_TEST_STAMP";
+
+/// S16's bound on a hook, and what a process's start and exit add to it.
+const HOOK_BOUND: Duration = Duration::from_secs(10);
+const PROCESS_SLACK: Duration = Duration::from_secs(1);
+
+/// `ctxloom hook claude-code execute <native>` as the session's engine runs
+/// it: the scenario's environment, the session's name when there is one
+/// (none: a hook with no session records nothing), `payload` on stdin.
+fn hook_run(
+    w: &World,
+    native: &str,
+    payload: &str,
+    session: Option<&str>,
+) -> (crate::tests::Ran, Duration) {
+    let mut env = env_of(w);
+    if let Some(session) = session {
+        env.push(("CTXLOOM_SESSION".to_string(), session.to_string()));
+    }
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let started = Instant::now();
+    let mut child = w
+        .common
+        .project
+        .start_talking(&env, &["hook", "claude-code", "execute", native]);
+    crate::tests::feed(child.stdin.take().expect("stdin"), payload);
+    let ran = crate::tests::Ran::of(child.wait_with_output().expect("the hook finishes"));
+    (ran, started.elapsed())
+}
+
+/// The session's assistant fires its `native` hook with `payload`.
+fn fire(w: &mut World, native: &str, payload: &str) {
+    w.seed();
+    let harp = w.seeded_harps.last().cloned().expect("a session");
+    // Named in process, as the seed named it: no daemon is reached for it
+    // (a command of this version would stop an older daemon, M3).
+    let named = run_now(w, &["test", "session-name", &harp]);
+    assert_eq!(named.code, 0, "{}", named.said());
+    let name = named.stdout.trim().to_string();
+    let events_before = session_events(w, &harp).len();
+    let (unrecorded, _) = hook_run(w, native, payload, None);
+    let (ran, took) = hook_run(w, native, payload, Some(&name));
+    w.daemon_spec.fired = Some(Fired {
+        ran,
+        took,
+        harp,
+        events_before,
+        unrecorded_answer: unrecorded.stdout,
+    });
+}
+
+fn fired(w: &World) -> &Fired {
+    w.daemon_spec.fired.as_ref().expect("a hook fired")
+}
+
 #[when("the session's assistant fires its UserPromptSubmit hook")]
-fn hook_fires(_: &mut World) {
-    red("the session's assistant fires its UserPromptSubmit hook")
+fn hook_fires(w: &mut World) {
+    fire(w, "UserPromptSubmit", USER_PROMPT_SUBMIT);
+}
+
+#[when("the session's assistant fires its Stop hook")]
+fn stop_hook_fires(w: &mut World) {
+    fire(w, "Stop", STOP);
 }
 
 #[when("Alice asks her assistant one thing, which the killed daemon leaves unfinished")]
@@ -1661,29 +1825,177 @@ fn still_serves(w: &mut World) {
     assert!(serving_now(w), "{}", daemon_log_text(w));
 }
 
+/// The warnings the hook said on stderr: one JSON envelope each.
+fn hook_warnings(w: &World) -> Vec<Value> {
+    serde_json::Deserializer::from_str(&fired(w).ran.stderr)
+        .into_iter::<Value>()
+        .map(|w| w.expect("stderr holds JSON warnings only"))
+        .collect()
+}
+
 #[then("the hook exits 0, and says nothing was left unrecorded")]
-fn hook_delivered(_: &mut World) {
-    red("the hook exits 0, and says nothing was left unrecorded")
+fn hook_delivered(w: &mut World) {
+    let fired = fired(w);
+    assert_eq!(fired.ran.code, 0, "{}", fired.ran.said());
+    assert!(
+        hook_warnings(w).is_empty(),
+        "{}; the daemon's log:\n{}",
+        fired.ran.said(),
+        daemon_log_text(w)
+    );
 }
 
 #[then("a ctxloom daemon serves for this home, started by that hook")]
-fn started_by_hook(_: &mut World) {
-    red("a ctxloom daemon serves, started by that hook")
+fn started_by_hook(w: &mut World) {
+    assert!(serving_now(w), "{}", daemon_log_text(w));
+    assert_eq!(daemons_logged(w), 1, "{}", daemon_log_text(w));
+}
+
+/// The session's transcript, as `session transcript show` gives it.
+fn transcript_lines(w: &World, harp: &str) -> Vec<Value> {
+    let ran = run_now(
+        w,
+        &["session", "transcript", "show", harp, "--format", "json"],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    ran.stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{l:?}: {e}")))
+        .collect()
+}
+
+/// Where in `lines` the fixture's prompt is, each place it is.
+fn prompt_lines(lines: &[Value]) -> Vec<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l["kind"] == "entry" && l["entry"]["content"] == PROMPT)
+        .map(|(n, _)| n)
+        .collect()
 }
 
 #[then("the session's transcript holds the prompt, once")]
-fn prompt_once(_: &mut World) {
-    red("the session's transcript holds the prompt, once")
+fn prompt_once(w: &mut World) {
+    let harp = fired(w).harp.clone();
+    let lines = transcript_lines(w, &harp);
+    assert_eq!(prompt_lines(&lines).len(), 1, "{lines:#?}");
+}
+
+#[then("the session's transcript holds the prompt, then the turn's end, each once")]
+fn prompt_then_turn_end(w: &mut World) {
+    let harp = fired(w).harp.clone();
+    let lines = transcript_lines(w, &harp);
+    let prompts = prompt_lines(&lines);
+    assert_eq!(prompts.len(), 1, "{lines:#?}");
+    let ends = lines[prompts[0]..]
+        .iter()
+        .filter(|l| l["kind"] == "turn_end")
+        .count();
+    assert_eq!(ends, 1, "the turn's end after the prompt: {lines:#?}");
 }
 
 #[then("the hook exits 0, and its answer to the engine is unchanged")]
-fn hook_fails_open(_: &mut World) {
-    red("the hook exits 0, and its answer to the engine is unchanged")
+fn hook_fails_open(w: &mut World) {
+    let fired = fired(w);
+    assert_eq!(fired.ran.code, 0, "{}", fired.ran.said());
+    assert_eq!(
+        fired.ran.stdout, fired.unrecorded_answer,
+        "the same answer as a hook that records nothing"
+    );
+}
+
+/// The hook warned `code` for the prompt: an envelope of that code whose
+/// fact is the prompt's.
+fn warned_for_prompt(w: &World, code: &str) -> Value {
+    let warnings = hook_warnings(w);
+    let found = warnings
+        .iter()
+        .find(|w| {
+            w["code"] == code
+                && w["args"]["what"]
+                    .as_str()
+                    .is_some_and(|what| what.starts_with("hook:prompt:"))
+        })
+        .unwrap_or_else(|| panic!("no {code} for the prompt: {warnings:#?}"));
+    assert_eq!(
+        warnings.len(),
+        1,
+        "one warning, the prompt's: {warnings:#?}"
+    );
+    found.clone()
 }
 
 #[then(expr = "the hook warns {string} for the prompt, within its bound")]
-fn hook_warns(_: &mut World, _code: String) {
-    red("the hook warns that the prompt was not recorded, within its bound")
+fn hook_warns(w: &mut World, code: String) {
+    warned_for_prompt(w, &code);
+    let took = fired(w).took;
+    assert!(
+        took <= HOOK_BOUND + PROCESS_SLACK,
+        "the hook took {took:?}, past its bound"
+    );
+}
+
+#[then(expr = "the hook warns {string} for the prompt")]
+fn hook_warns_for_prompt(w: &mut World, code: String) {
+    warned_for_prompt(w, &code);
+}
+
+#[then(expr = "the hook warns {string} for the prompt, saying the hold is at its bound")]
+fn hook_warns_bound(w: &mut World, code: String) {
+    let warning = warned_for_prompt(w, &code);
+    let why = warning["args"]["why"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(why.contains("is at its bound"), "{warning}");
+}
+
+/// The holds' directory of the scenario's home.
+fn held_dir(w: &World) -> PathBuf {
+    w.common.project.home().join(".ctxloom/held")
+}
+
+/// The holds in the scenario's home, but the placeholder of a full home.
+fn holds(w: &World) -> Vec<PathBuf> {
+    files::children(held_dir(w))
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "held"))
+        .filter(|p| p.file_stem().is_some_and(|s| s != FULL_HOME_HOLD))
+        .collect()
+}
+
+#[then(expr = "the prompt is held for {string}, in a file only its owner can read")]
+fn prompt_held(w: &mut World, harp: String) {
+    assert_eq!(fired(w).harp, harp);
+    let holds = holds(w);
+    assert_eq!(holds.len(), 1, "one hold, the session's: {holds:?}");
+    let bytes = files::read_bytes(&holds[0]).expect("the hold");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.contains("hook:prompt:") && text.contains(PROMPT),
+        "the prompt's fact is held"
+    );
+    if let Some(mode) = files::mode_of(&holds[0]) {
+        assert_eq!(mode & 0o777, 0o600, "{:o}", mode);
+        assert_eq!(files::mode_of(held_dir(w)).map(|m| m & 0o777), Some(0o700));
+    }
+}
+
+#[then(expr = "nothing is held for {string}")]
+fn nothing_held(w: &mut World, harp: String) {
+    assert_eq!(fired(w).harp, harp);
+    assert!(holds(w).is_empty(), "{:?}", holds(w));
+}
+
+#[then(expr = "nothing was recorded for {string}")]
+fn nothing_recorded(w: &mut World, harp: String) {
+    let before = fired(w).events_before;
+    assert_eq!(
+        session_events(w, &harp).len(),
+        before,
+        "the session's stream is as it was before the hook"
+    );
 }
 
 #[then("no run is left owed a runner, no incarnation is left open and no fact is recorded twice")]

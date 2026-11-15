@@ -204,9 +204,10 @@ fn test_the_hud_hook_shows_the_harp_the_environment_names() {
     assert!(out.contains("jolly-mute-magma"), "{out}");
 }
 
-// Hook capture, fail open: a hook that observes something it cannot deliver
-// (no listener yet) answers the engine exactly as before, exits 0, and says
-// on stderr, once per observation, what it did not record.
+// Hook capture: a hook that observes something it cannot deliver (no
+// daemon serves, and none could be started) answers the engine exactly as
+// before, exits 0, holds what it observed (s4-Q14, H-Q2) and says so on
+// stderr, once per observation.
 #[test]
 fn test_a_hook_that_cannot_record_still_answers_and_says_so_on_stderr() {
     let mut world = World::new("hook-not-recorded");
@@ -220,9 +221,9 @@ fn test_a_hook_that_cannot_record_still_answers_and_says_so_on_stderr() {
     .ok()
     .unwrap();
     assert_eq!((code, out.as_str()), (0, "{}\n"));
-    assert_eq!(err.matches("hook-cli-not-recorded").count(), 1, "{err}");
+    assert_eq!(err.matches("hook-cli-held").count(), 1, "{err}");
     assert!(
-        err.contains("jolly-mute-magma") || err.contains("hook:"),
+        err.contains("jolly-mute-magma") && err.contains("hook:prompt:"),
         "{err}"
     );
 }

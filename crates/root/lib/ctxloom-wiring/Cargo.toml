@@ -104,6 +104,8 @@ angzarr-embedded-host.workspace = true
 # The seed, and the daemon's API (a session's lock state).
 session-ports.workspace = true
 daemon-proto.workspace = true
+# Each session's hold of capture facts (s4-Q14, H2): a hook holds there.
+fact-spool.workspace = true
 # The test-only commands' sample list and the daemon's answers.
 serde.workspace = true
 serde_json.workspace = true

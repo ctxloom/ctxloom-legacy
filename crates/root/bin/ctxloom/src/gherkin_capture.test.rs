@@ -598,11 +598,6 @@ fn late_hook(w: &mut World) {
         !engine_env.contains("PRIVATE KEY"),
         "no key in the environment"
     );
-    // The daemon that prepared the session (U5) is let go first: what this
-    // asks is the run's own listener's answer, once the run has ended (the
-    // daemon's own answer to a late hook is U2's).
-    let stopped = w.common.project.run(&["daemon", "stop"]);
-    assert_eq!(stopped.code, 0, "{}", stopped.said());
     let mut command = Command::new(crate::tests::binary());
     command
         .args(["hook", "claude-code", "execute", "Stop"])

@@ -49,12 +49,12 @@ impl Binding for Bound {
 /// Records nothing and says what it was asked, or says everything failed.
 #[derive(Default)]
 struct Recorder {
-    fails: Vec<NotRecorded>,
+    fails: Vec<Unrecorded>,
     asked: RefCell<Vec<(String, String)>>,
 }
 
 impl Recording for Recorder {
-    fn record(&self, native: &str, harp: &str, _answer: &HookAnswer) -> Vec<NotRecorded> {
+    fn record(&self, native: &str, harp: &str, _answer: &HookAnswer) -> Vec<Unrecorded> {
         self.asked.borrow_mut().push((native.into(), harp.into()));
         self.fails.clone()
     }
@@ -70,11 +70,12 @@ fn answering(stdout: &str) -> Service {
     }
 }
 
-fn not_recorded(what: &str) -> NotRecorded {
+fn not_recorded(what: &str) -> Unrecorded {
     NotRecorded {
         what: what.into(),
         why: "the listener is not running".into(),
     }
+    .into()
 }
 
 #[test]
@@ -289,4 +290,53 @@ fn a_hook_with_an_empty_harp_is_not_recorded_and_warns_of_nothing() {
     assert!(recorder.asked.borrow().is_empty());
     assert!(out.warnings.is_empty());
     assert_eq!(out.stdout, "{}\n");
+}
+
+// s4-Q14 (H2): a fact held for later is said as held, and one held behind
+// its session's hold as held behind, each a warning on its own; the
+// engine's answer and the exit are what they were.
+#[test]
+fn a_held_fact_is_said_as_held_and_never_changes_the_answer() {
+    let service = answering("{}\n");
+    let recorder = Recorder {
+        fails: vec![
+            Unrecorded::Held {
+                what: "hook:prompt:s:p1".into(),
+                harp: "brisk-copper-moth".into(),
+                why: "no ctxloom daemon could be reached or started".into(),
+            },
+            Unrecorded::HeldBehind {
+                what: "hook:turn-end:s:p1".into(),
+                harp: "brisk-copper-moth".into(),
+            },
+        ],
+        ..Recorder::default()
+    };
+    let out = execute_recording(
+        "claude-code",
+        "Stop",
+        "{}",
+        "brisk-copper-moth",
+        &service,
+        &mut Bound::default(),
+        &recorder,
+    )
+    .unwrap();
+    assert_eq!(out.stdout, "{}\n");
+    assert_eq!(
+        out.warnings,
+        vec![
+            HookWarning::Held {
+                what: "hook:prompt:s:p1".into(),
+                harp: "brisk-copper-moth".into(),
+                why: "no ctxloom daemon could be reached or started".into(),
+            },
+            HookWarning::HeldBehind {
+                what: "hook:turn-end:s:p1".into(),
+                harp: "brisk-copper-moth".into(),
+            },
+        ]
+    );
+    assert_eq!(out.warnings[0].code(), "hook-cli-held");
+    assert_eq!(out.warnings[1].code(), "hook-cli-held-behind");
 }

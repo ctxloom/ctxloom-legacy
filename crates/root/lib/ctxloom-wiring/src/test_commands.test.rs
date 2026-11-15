@@ -44,6 +44,7 @@ fn the_noun_is_hidden_and_has_a_verb_for_each_test_command() {
             "open-store",
             "seed-session",
             "project-name",
+            "session-name",
             "session-events"
         ]
     );
