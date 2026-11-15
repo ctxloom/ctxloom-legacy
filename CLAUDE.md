@@ -1244,8 +1244,26 @@ messages, the session index) with the store's log and then sweeps
 discovery file (`serve.rs`'s `swept_and_advertised`), so a fresh daemon
 serves nothing (no fact, command or read: the user bearer reaches no one
 before the publish) from folds older than the log (owner, s4-Q14 H3's
-condition; a failed catch-up is logged, and the first round's step is the
-retry); then `tick` catches up the read models,
+condition). A START-UP THAT FAILS (its catch-up or its sweep; owner ruling
+OD-52) still publishes the daemon, and is LOUD: the log says `WARNING: the
+start-up catch-up failed: <why>; serving anyway ...`, the root's `Shared`
+keeps why (`daemon_api::Hosting::start_up_failed`), `GetDaemon` answers it
+as `Daemon.warnings` (field 11, each a `Notice`: daemon-api's
+`StartUpIncomplete`, `daemon-api-start-up-incomplete`, arg `why`, with a
+`-fix`; wording a DRAFT for the owner), `daemon status` shows it (text
+`warning: ...` and its `  fix:` line; json `warnings`), and every command
+that reaches that daemon (not the `daemon` noun's own) asks `GetDaemon`
+once a process on its way in (`daemon::heard`, beside the hold flush; the
+cost, one call more a command) and
+says each warning on stderr as it ends, its answer unchanged. While it
+stands, each round first tries the whole start-up again
+(`started_up_again`); the first that succeeds CLEARS it (the folds resume
+from their positions, so a later whole catch-up leaves nothing missing)
+and the log says `the start-up catch-up, tried again, succeeded`. Under
+`test-support` the switch file `~/.ctxloom/daemon/test-start-up-fails`
+fails every start-up attempt while it is there, its line the why (never
+taken; a test removes it). Doctor has no daemon check, so it says
+nothing of it. Then `tick` catches up the read models,
 plans each project on the board (`session-policies`), and takes the steps
 (launch, start, feed, clear, end), recording what each child said as its
 run's facts. Its ports: the engine registry (`HostedEngine`, an `Engine`
@@ -2511,6 +2529,28 @@ aside as `<root>.held.corrupt-<n>` (0600, never parsed again); a hold of
 another format is never touched (`run-ports-hold-format`). No record is
 fsync'd. The property tests use a seeded generator of the test's own (no
 property crate is in the lock).
+
+What reclaims a hold (s4-Q14, unit H4; owner H-Q7 (a), H-Q8 (a)): a
+session's DESTROY, and nothing else. The hold is the client's, so the
+command that asked the daemon for the destroy (`session remove`, `session
+sweep`) reads this home's holds by the session's resource name
+(`reclaim_application::Holds` over the `Spool`, `SessionHolds`,
+`destroys_held`) once the daemon answers: each session it destroys or
+plans to that holds anything warns first, the notice
+`sessions-application-destroys-held` (its facts and set-aside parts; never
+a refusal), and an applied destroy then discards the hold and its
+set-aside parts; a refused removal touches no hold; a hold that cannot be
+read or discarded fails the command (10) after the daemon's answer is
+printed. A downgrade's facts (of a newer ctxloom) stay held until a
+reinstall or the destroy. Doctor reports every hold,
+`DOCTOR-CHECK-HELD-FACTS-h1` (doctor-checks' `held.rs`, wired by
+`Doctor::reporting_holds` with this binary's own stamp): `ok` when nothing
+is held, `info` for facts a daemon of their version takes held up to an
+hour (`STALE_AFTER_SECONDS`), `warn` for one held longer, of a newer
+ctxloom, with gaps, set-aside parts, an unreadable format or a bad tail,
+or holds that cannot be read; each hold named by its harp (else its root)
+with its count, size, stamps and oldest instant; `--fix` removes none.
+`ctxloom clean` never takes a hold (it is no cache).
 
 ## No path dependency leaves the repository
 

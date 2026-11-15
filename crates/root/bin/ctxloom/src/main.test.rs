@@ -378,6 +378,9 @@ mod project_resolver;
 #[path = "session.test.rs"]
 mod session;
 
+#[path = "held.test.rs"]
+mod held;
+
 #[path = "gherkin_surfaces.test.rs"]
 mod gherkin_surfaces;
 

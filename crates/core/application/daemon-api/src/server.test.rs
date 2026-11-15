@@ -104,6 +104,8 @@ pub(crate) struct Loop {
     drained: Mutex<Vec<String>>,
     /// How many reads asked for a fresh round.
     freshened: Mutex<u32>,
+    /// Why its start-up catch-up failed, while it stands (OD-52).
+    start_up: Mutex<Option<String>>,
 }
 
 impl Hosting for Loop {
@@ -134,6 +136,10 @@ impl Hosting for Loop {
     fn fresh(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         *self.freshened.lock().unwrap() += 1;
         Box::pin(async {})
+    }
+
+    fn start_up_failed(&self) -> Option<String> {
+        self.start_up.lock().unwrap().clone()
     }
 }
 
@@ -344,6 +350,23 @@ async fn get_daemon_says_what_it_hosts_and_how_long_it_has_been_idle() {
     assert_eq!(daemon.runs.len(), 1);
     assert_eq!(daemon.runs[0].harp, "brisk-copper-moth");
     assert_eq!((daemon.idle_seconds, daemon.idle_limit_seconds), (42, 600));
+}
+
+// OD-52: a daemon whose start-up catch-up failed says so in GetDaemon, as
+// the notice `daemon-api-start-up-incomplete` naming why; one whole says
+// nothing.
+#[tokio::test]
+async fn get_daemon_warns_while_its_start_up_catch_up_has_failed() {
+    let f = fixture(vec![]);
+    assert!(f.api.get_daemon().await.unwrap().warnings.is_empty());
+    let why = "the board's catch-up: the store is locked".to_string();
+    *f.hosting.start_up.lock().unwrap() = Some(why.clone());
+    let daemon = f.api.get_daemon().await.unwrap();
+    assert_eq!(daemon.warnings, [crate::StartUpIncomplete { why }.notice()]);
+    assert_eq!(daemon.warnings[0].code, "daemon-api-start-up-incomplete");
+    // Cleared once a later catch-up succeeded.
+    *f.hosting.start_up.lock().unwrap() = None;
+    assert!(f.api.get_daemon().await.unwrap().warnings.is_empty());
 }
 
 // StopDaemon with nothing hosted: asked to drain.

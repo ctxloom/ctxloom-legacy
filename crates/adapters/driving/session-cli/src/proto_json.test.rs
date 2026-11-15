@@ -273,6 +273,17 @@ fn test_the_generated_proto3_json_is_byte_identical_to_the_hand_written() {
         idle_seconds: 1,
         idle_limit_seconds: 600,
         draining_for: "v0.2.0-def5678".to_string(),
+        warnings: vec![
+            v1::Notice {
+                code: "daemon-api-start-up-incomplete".to_string(),
+                args: vec![v1::NeedArg {
+                    name: "why".to_string(),
+                    value: "the store is locked".to_string(),
+                }],
+                text: "the daemon's start-up catch-up failed".to_string(),
+            },
+            v1::Notice::default(),
+        ],
     };
     let removal = every_field_of_a_removal();
     // A plan: `applied` has presence (OQ-7), so its `false` is printed.

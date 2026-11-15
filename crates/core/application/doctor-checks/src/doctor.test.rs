@@ -805,3 +805,76 @@ fn the_companions_row_comes_just_before_the_stated_limit() {
         "{markers:?}"
     );
 }
+
+/// This home's holds, as the port surveys them (s4-Q14, H4).
+struct Held(Vec<run_ports::HoldSummary>);
+
+impl run_ports::HeldFacts for Held {
+    fn hold(
+        &self,
+        _: &uuid::Uuid,
+        _: run_ports::HeldFact,
+    ) -> Result<run_ports::Held, run_ports::HoldError> {
+        unreachable!("doctor holds nothing")
+    }
+
+    fn is_empty(&self, _: &uuid::Uuid) -> Result<bool, run_ports::HoldError> {
+        unreachable!("doctor asks no emptiness")
+    }
+
+    fn sessions(&self) -> Result<Vec<uuid::Uuid>, run_ports::HoldError> {
+        Ok(self.0.iter().map(|s| s.root).collect())
+    }
+
+    fn take(&self, _: &uuid::Uuid) -> Result<Option<run_ports::Batch>, run_ports::HoldError> {
+        unreachable!("doctor delivers nothing")
+    }
+
+    fn discard(&self, _: &uuid::Uuid) -> Result<u64, run_ports::HoldError> {
+        unreachable!("doctor discards nothing (owner H-Q7 (a))")
+    }
+
+    fn survey(&self) -> Result<Vec<run_ports::HoldSummary>, run_ports::HoldError> {
+        Ok(self.0.clone())
+    }
+}
+
+// s4-Q14, H4: a doctor reporting the holds has their row, judged by the
+// stamp it is told, before the stated limit; one not asked has none.
+#[test]
+fn a_doctor_reporting_the_holds_has_their_row_before_the_stated_limit() {
+    let mem = project();
+    let name = "projects/calm-otter/sessions/brisk-copper-moth";
+    let held = Held(vec![run_ports::HoldSummary {
+        root: sessions::SessionName::parse(name).unwrap().id(),
+        session: Some(name.to_string()),
+        facts: 3,
+        gaps: 0,
+        bytes: 10,
+        stamps: vec!["v0.5.0-fed4321".to_string()],
+        oldest: None,
+        set_aside: 0,
+        unreadable: false,
+        bad_tail: false,
+    }]);
+    let report = doctor(&mem, true)
+        .reporting_holds(Arc::new(held), "v0.4.0-abc1234", 1_794_700_800)
+        .report(false);
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let n = markers.len();
+    assert_eq!(markers[n - 2], crate::HELD_FACTS_MARKER, "{markers:?}");
+    assert_eq!(markers[n - 1], "DOCTOR-CHECK-INGESTION-q7");
+    assert_eq!(
+        report.checks[n - 2].status,
+        Status::Warn,
+        "a newer ctxloom's"
+    );
+    assert!(report.checks[n - 2].detail.contains("brisk-copper-moth"));
+    let plain = doctor(&mem, true).report(false);
+    assert!(!plain
+        .checks
+        .iter()
+        .any(|c| c.marker == crate::HELD_FACTS_MARKER));
+    // Doctor's json says the row as the others are said.
+    assert!(!report.failed(), "a warning is advisory");
+}

@@ -36,7 +36,10 @@
 //!   naming no requester;
 //! - `CreateHandOff` and `DeleteHandOff` (slice 4 U3, T6, S10): a child's
 //!   launch environment kept by the daemon ([`HandOffs`]), its owner and
-//!   credential checked first, so a refused launch writes nothing.
+//!   credential checked first, so a refused launch writes nothing;
+//! - [`StartUpIncomplete`]: a daemon whose start-up catch-up or sweep
+//!   failed serves anyway and says so (OD-52), in `GetDaemon`'s
+//!   `Daemon.warnings`.
 
 mod caller;
 mod client;
@@ -47,6 +50,7 @@ mod refusal;
 mod runs;
 mod server;
 mod session_client;
+mod start_up;
 mod terminal;
 
 pub use caller::{
@@ -61,6 +65,7 @@ pub use refusal::{rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, R
 pub use runs::RunStream;
 pub use server::{About, Answer, Api, Assemblies, Calls, Harps, Hosting, Parts, SessionStates};
 pub use session_client::{Client, Removed, RequestIds, SessionReads, SessionRemovals};
+pub use start_up::StartUpIncomplete;
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).
@@ -77,6 +82,7 @@ pub const EN_US: (&str, &str) = (
 pub fn diagnostic_samples() -> Vec<Box<dyn angzarr_diagnostic::Diagnostic>> {
     let mut all = refusal::samples();
     all.extend(client::samples());
+    all.extend(start_up::samples());
     all
 }
 

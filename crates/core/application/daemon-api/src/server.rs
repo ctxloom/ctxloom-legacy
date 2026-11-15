@@ -56,6 +56,9 @@ pub trait Hosting: Send + Sync {
     /// before it was asked (bounded: a round that does not come is waited
     /// for no longer than the loop's own pace allows).
     fn fresh(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    /// Why its start-up catch-up (or its sweep) failed, while no later
+    /// catch-up has succeeded (OD-52): it serves anyway, and says so.
+    fn start_up_failed(&self) -> Option<String>;
 }
 
 /// A project's context, assembled as a process in it would (slice 3 step
@@ -459,6 +462,13 @@ impl<E: Edge> Api<E> {
             idle_seconds: self.parts.hosting.idle_seconds(),
             idle_limit_seconds: about.idle_limit_seconds,
             draining_for: self.parts.hosting.draining().unwrap_or_default(),
+            warnings: self
+                .parts
+                .hosting
+                .start_up_failed()
+                .map(|why| crate::StartUpIncomplete { why }.notice())
+                .into_iter()
+                .collect(),
         }
     }
 
