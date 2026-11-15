@@ -786,3 +786,22 @@ fn a_doctor_reporting_stale_distilled_forms_warns_of_each_before_the_stated_limi
         .iter()
         .any(|c| c.marker == "DOCTOR-CHECK-STALE-DISTILLED-t1"));
 }
+
+// A doctor asked to report the companions gives their row, just before the
+// stated limit, which stays last.
+#[test]
+fn the_companions_row_comes_just_before_the_stated_limit() {
+    let report = doctor(&project(), true)
+        .reporting_companions(Box::new(|| library_application::Outcome {
+            result: Ok(Vec::new()),
+            notices: Vec::new(),
+        }))
+        .report(false);
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let n = markers.len();
+    assert_eq!(
+        markers[n - 2..],
+        ["DOCTOR-CHECK-COMPANIONS-m4", "DOCTOR-CHECK-INGESTION-q7"],
+        "{markers:?}"
+    );
+}

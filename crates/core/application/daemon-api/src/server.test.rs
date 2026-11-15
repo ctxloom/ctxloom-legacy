@@ -770,6 +770,63 @@ async fn get_transcript_refuses_what_has_no_lines() {
     assert_eq!(invalid.reason, "shape");
 }
 
+/// The prompt `prompt` the session `harp`'s hooks delivered: a capture fact
+/// on its stream, keyed as a hook keys it.
+async fn prompted(f: &Fixture, harp: &str, prompt_id: &str, prompt: &str) {
+    use angzarr_embedded::markup::DomainMessage;
+    use angzarr_embedded::v1::{command_page, CommandPage, Fact, FactOrigin};
+    let name = format!("projects/calm-quiet-heron/sessions/{harp}");
+    let root = sessions::SessionName::parse(&name).unwrap().root();
+    let cover = Cover {
+        domain: sessions::SESSION_DOMAIN.to_string(),
+        root: Some(root),
+        edition: None,
+    };
+    let fact = sessions::RecordPromptSubmitted {
+        prompt_id: prompt_id.to_string(),
+        prompt: prompt.to_string(),
+    };
+    let book = CommandBook {
+        cover: Some(cover),
+        page: Some(CommandPage {
+            body: Some(command_page::Body::Fact(Fact {
+                payload: Some(angzarr_embedded::Any::from_msg(&fact.to_wire()).unwrap()),
+                origin: Some(FactOrigin {
+                    external_id: format!("hook:prompt:{harp}:{prompt_id}"),
+                    description: String::new(),
+                }),
+            })),
+            ..CommandPage::default()
+        }),
+    };
+    f.world.handle(book).await.unwrap();
+}
+
+// GetTranscript answers each line the session's hooks delivered, and no
+// blank one.
+#[tokio::test]
+async fn get_transcript_answers_each_captured_line() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.mint("amber-swift-owl").await;
+    prompted(&f, "amber-swift-owl", "p1", "first words").await;
+    prompted(&f, "amber-swift-owl", "p2", "second words").await;
+    f.catch_up().await;
+    let name = "projects/calm-quiet-heron/sessions/amber-swift-owl";
+    let transcript = f
+        .api
+        .get_transcript(v1::GetTranscriptRequest {
+            name: format!("{name}/transcript"),
+        })
+        .await
+        .unwrap();
+    assert_eq!(transcript.name, format!("{name}/transcript"));
+    let lines: Vec<&str> = transcript.lines.iter().map(|l| l.json.as_str()).collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].contains("first words"), "{lines:?}");
+    assert!(lines[1].contains("second words"), "{lines:?}");
+}
+
 /// An assembly that records where it was made and answers its fragments.
 #[derive(Default)]
 struct Assembling(std::sync::Mutex<Vec<(String, Vec<String>)>>);

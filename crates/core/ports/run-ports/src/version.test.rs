@@ -34,6 +34,8 @@ fn newer_is_the_versions_semver_precedence() {
         ("v0.2.0-aaaaaaa", "v0.2-aaaaaaa"),
         ("v0.2.0", "v0.1.0-aaaaaaa"),
         ("", "v0.1.0-aaaaaaa"),
+        ("v0.2.0-", "v0.1.0-aaaaaaa"),
+        ("v0.2.0-zzzzzzz", "v0.1.0-aaaaaaa"),
     ] {
         assert!(!newer(a, b), "{a} vs {b}");
         assert!(!newer(b, a), "{b} vs {a}");

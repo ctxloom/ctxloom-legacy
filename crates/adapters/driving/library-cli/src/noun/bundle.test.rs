@@ -315,3 +315,419 @@ mod write {
         assert_eq!(doc["applied"], true);
     }
 }
+
+// Each answer as the API message it is, built from a view whose every field
+// is set, so a field the message leaves out is a field it lost.
+mod messages {
+    use std::collections::BTreeMap;
+
+    use library_application::{
+        BundleCreated, BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved,
+        BundleRow, BundleShow, BundleView, McpRow, Preview, Removal, ShownCommand, ShownFragment,
+        ShownMcp, ShownSkill, Viewed,
+    };
+    use serde_json::{json, Value};
+
+    use super::super::{
+        bundle, created, edited, exported, imported, listed, removed, shown, viewed,
+    };
+
+    const P: &str = "projects/calm-otter";
+
+    fn as_json(message: impl serde::Serialize) -> Value {
+        serde_json::to_value(message).unwrap()
+    }
+
+    fn row() -> BundleRow {
+        BundleRow {
+            name: "acme/rules".to_string(),
+            reference: "https://example.com/acme@bundles/rules".to_string(),
+            path: "cache/rules/bundle.yaml".to_string(),
+            origin: String::new(),
+            version: "2.1.0".to_string(),
+            description: "house rules".to_string(),
+            tags: vec!["team".to_string()],
+            fragment_count: 3,
+            command_count: 4,
+            mcp_count: 5,
+            profile_count: 6,
+            held: false,
+            commit: "abc123".to_string(),
+        }
+    }
+
+    // A listed bundle carries every field its row has (BASIC).
+    #[test]
+    fn test_a_listed_bundle_carries_every_field_of_its_row() {
+        let expected = json!({
+            "name": "projects/calm-otter/remotes/acme/bundles/rules",
+            "origin": "REMOTE",
+            "reference": "https://example.com/acme@bundles/rules",
+            "commit": "abc123",
+            "path": "cache/rules/bundle.yaml",
+            "version": "2.1.0",
+            "description": "house rules",
+            "tags": ["team"],
+            "fragment_count": 3,
+            "command_count": 4,
+            "mcp_server_count": 5,
+            "profile_count": 6,
+        });
+        assert_eq!(as_json(bundle(P, &row())), expected);
+        let list = BundleList {
+            rows: vec![row()],
+            no_root: false,
+            hint: String::new(),
+        };
+        assert_eq!(as_json(listed(P, &list)), json!({ "bundles": [expected] }));
+    }
+
+    // `bundle show` (FULL): its own fields, each child by name with its
+    // summary, over the listing's, under the show's own name.
+    fn show() -> BundleShow {
+        BundleShow {
+            name: "demo".to_string(),
+            path: "bundles/demo/bundle.yaml".to_string(),
+            version: "1.2.3".to_string(),
+            author: "ada".to_string(),
+            description: "the demo".to_string(),
+            tags: vec!["go".to_string()],
+            notes: "read me".to_string(),
+            installation: "install me".to_string(),
+            fragments: BTreeMap::from([(
+                "golang".to_string(),
+                ShownFragment {
+                    tags: vec!["lang".to_string()],
+                    preview: "GO-RULES".to_string(),
+                    distilled: true,
+                    no_distill: true,
+                    premise: "when editing Go".to_string(),
+                    stale: false,
+                },
+            )]),
+            commands: BTreeMap::from([(
+                "review".to_string(),
+                ShownCommand {
+                    tags: vec!["qa".to_string()],
+                    description: "Review code".to_string(),
+                    preview: "REVIEW".to_string(),
+                    distilled: false,
+                    no_distill: false,
+                    stale: true,
+                },
+            )]),
+            mcp: BTreeMap::from([(
+                "tree-sitter".to_string(),
+                ShownMcp {
+                    command: "tree-sitter".to_string(),
+                    args: vec!["--stdio".to_string()],
+                    env: BTreeMap::from([("LANG".to_string(), "C".to_string())]),
+                    notes: "mcp notes".to_string(),
+                    installation: "npm i".to_string(),
+                },
+            )]),
+            skills: BTreeMap::from([(
+                "reviewer".to_string(),
+                ShownSkill {
+                    path: "skills/reviewer".to_string(),
+                    tags: vec!["review".to_string()],
+                    notes: "skill notes".to_string(),
+                },
+            )]),
+            profiles: vec!["dev".to_string()],
+            hooks: vec!["pre_tool".to_string()],
+            // A listing named otherwise: the show's own name wins.
+            listing: BundleRow {
+                name: "other".to_string(),
+                reference: "ctxloom+local:demo".to_string(),
+                path: "listed/path".to_string(),
+                version: "0.0.1".to_string(),
+                description: "listed".to_string(),
+                tags: vec!["listed".to_string()],
+                commit: "def456".to_string(),
+                fragment_count: 1,
+                command_count: 1,
+                mcp_count: 1,
+                profile_count: 1,
+                ..BundleRow::default()
+            },
+        }
+    }
+
+    #[test]
+    fn test_a_shown_bundle_carries_its_fields_its_children_and_its_listing() {
+        let b = "projects/calm-otter/bundles/demo";
+        assert_eq!(
+            as_json(shown(P, &show())),
+            json!({
+                "name": b,
+                "origin": "PROJECT",
+                "reference": "ctxloom+local:demo",
+                "commit": "def456",
+                "path": "bundles/demo/bundle.yaml",
+                "version": "1.2.3",
+                "author": "ada",
+                "description": "the demo",
+                "tags": ["go"],
+                "notes": "read me",
+                "installation": "install me",
+                "fragment_count": 1,
+                "command_count": 1,
+                "mcp_server_count": 1,
+                "profile_count": 1,
+                "skill_count": 1,
+                "fragments": [{
+                    "item": format!("{b}/fragments/golang"),
+                    "tags": ["lang"],
+                    "preview": "GO-RULES",
+                    "distilled": "FRESH",
+                    "no_distill": true,
+                    "premise": "when editing Go",
+                }],
+                "commands": [{
+                    "item": format!("{b}/commands/review"),
+                    "tags": ["qa"],
+                    "description": "Review code",
+                    "preview": "REVIEW",
+                    "distilled": "STALE",
+                    "no_distill": false,
+                }],
+                "skills": [{
+                    "item": format!("{b}/skills/reviewer"),
+                    "tags": ["review"],
+                    "notes": "skill notes",
+                    "path": "skills/reviewer",
+                }],
+                "mcp_servers": [{
+                    "item": format!("{b}/mcpServers/tree-sitter"),
+                    "command": "tree-sitter",
+                    "args": ["--stdio"],
+                    "env": {"LANG": "C"},
+                    "notes": "mcp notes",
+                    "installation": "npm i",
+                }],
+                "profiles": [format!("{b}/profiles/dev")],
+                "hooks": ["pre_tool"],
+            })
+        );
+    }
+
+    fn view(viewed: Viewed, distilled: bool) -> BundleView {
+        BundleView {
+            bundle: "demo".to_string(),
+            path: String::new(),
+            distilled,
+            content: String::new(),
+            item: false,
+            viewed,
+        }
+    }
+
+    // `bundle view`: a command's body and whether it is the distilled form;
+    // a skill's tags, notes and path; the files, and whether the distilled
+    // forms were asked; and the bundle by its name when nothing was read.
+    #[test]
+    fn test_a_viewed_item_carries_what_was_read() {
+        let b = "projects/calm-otter/bundles/demo";
+        let command = Viewed::Body {
+            kind: "commands".to_string(),
+            name: "review".to_string(),
+            body: "short\n".to_string(),
+            distilled: true,
+        };
+        assert_eq!(
+            as_json(viewed(P, &view(command, true))),
+            json!({
+                "name": format!("{b}/commands/review"),
+                "body": "short\n",
+                "body_is_distilled": true,
+            })
+        );
+        let skill = Viewed::Skill {
+            name: "reviewer".to_string(),
+            skill: ShownSkill {
+                path: "skills/reviewer".to_string(),
+                tags: vec!["review".to_string()],
+                notes: "skill notes".to_string(),
+            },
+        };
+        assert_eq!(
+            as_json(viewed(P, &view(skill, false))),
+            json!({
+                "name": format!("{b}/skills/reviewer"),
+                "tags": ["review"],
+                "notes": "skill notes",
+                "path": "skills/reviewer",
+            })
+        );
+        let files = Viewed::Files(vec![("bundle.yaml".to_string(), "x\n".to_string())]);
+        assert_eq!(
+            as_json(viewed(P, &view(files, true))),
+            json!({
+                "name": b,
+                "files": [{"path": "bundle.yaml", "content": "x\n"}],
+                "distilled": true,
+            })
+        );
+        assert_eq!(
+            as_json(viewed(P, &view(Viewed::Nothing, false))),
+            json!({ "name": b })
+        );
+        // An MCP server is the server's own resource.
+        let mcp = Viewed::Mcp(McpRow {
+            name: "tree-sitter".to_string(),
+            command: "tree-sitter".to_string(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            url: String::new(),
+            served_by: String::new(),
+            source: String::new(),
+            notes: String::new(),
+            installation: String::new(),
+        });
+        assert_eq!(
+            as_json(viewed(P, &view(mcp, false)))["name"],
+            format!("{b}/mcpServers/tree-sitter")
+        );
+    }
+
+    // The writes' responses: each names the bundle and carries the path,
+    // source and counts the write reported.
+    #[test]
+    fn test_the_write_responses_carry_what_the_write_reported() {
+        let b = "projects/calm-otter/bundles/demo";
+        let made = BundleCreated {
+            status: "created".to_string(),
+            name: "demo".to_string(),
+            path: "bundles/demo/bundle.yaml".to_string(),
+        };
+        assert_eq!(
+            as_json(created(P, &made)),
+            json!({"bundle": {"name": b}, "path": "bundles/demo/bundle.yaml", "applied": true})
+        );
+        let changed = BundleEdited {
+            status: "updated".to_string(),
+            name: "demo".to_string(),
+            changes: vec!["updated version".to_string()],
+            path: "bundles/demo/bundle.yaml".to_string(),
+        };
+        assert_eq!(
+            as_json(edited(P, &changed)),
+            json!({
+                "bundle": {"name": b},
+                "path": "bundles/demo/bundle.yaml",
+                "applied": true,
+                "changes": ["updated version"],
+            })
+        );
+        let gone = Removal::Done(BundleRemoved {
+            status: "removed".to_string(),
+            name: "demo".to_string(),
+            path: "bundles/demo".to_string(),
+        });
+        assert_eq!(
+            as_json(removed(P, "asked", &gone)),
+            json!({"bundle": {"name": b}, "path": "bundles/demo", "applied": true})
+        );
+        let preview = Removal::Preview(Preview::of(
+            "demo".to_string(),
+            vec!["fragments/x.md".to_string()],
+            "ctxloom bundle remove demo --yes".to_string(),
+        ));
+        assert_eq!(
+            as_json(removed(P, "demo", &preview)),
+            json!({
+                "bundle": {"name": b},
+                "applied": false,
+                "detail": ["fragments/x.md"],
+                "apply_command": "ctxloom bundle remove demo --yes",
+            })
+        );
+        let out = BundleExported {
+            status: "exported".to_string(),
+            name: "demo".to_string(),
+            source: "bundles/demo".to_string(),
+            dest: "out/demo".to_string(),
+        };
+        assert_eq!(
+            as_json(exported(P, &out)),
+            json!({
+                "bundle": b,
+                "source": "bundles/demo",
+                "destination": "out/demo",
+                "applied": true,
+            })
+        );
+        let came = BundleImported {
+            status: "imported".to_string(),
+            source: "out/demo".to_string(),
+            dest: "bundles/demo/".to_string(),
+            version: "1.0.0".to_string(),
+            fragments: 2,
+            commands: 3,
+            mcp: 4,
+        };
+        assert_eq!(
+            as_json(imported(P, &came)),
+            json!({
+                "bundle": {
+                    "name": b,
+                    "version": "1.0.0",
+                    "fragment_count": 2,
+                    "command_count": 3,
+                    "mcp_server_count": 4,
+                },
+                "path": "bundles/demo/",
+                "applied": true,
+            })
+        );
+    }
+}
+
+// `bundle distill`: the bundle, its fragments and its commands each in its
+// own list, each with the state distilling left it in.
+mod distill {
+    use library_application::fakes::{Setup, CONFIG, ENVELOPE};
+    use serde_json::json;
+
+    use crate::tests::write_verbs::json;
+
+    const TIDY: &[(&str, &str)] = &[
+        ENVELOPE,
+        (
+            "fragments/dist.md",
+            "---\ntags: [distilled]\n---\nlong form\n",
+        ),
+        (
+            "fragments/dist.distilled.md",
+            // The source's digest (T30): the form is fresh.
+            "---\nsource_sha256: 1e6de09466e07ecb91f3f923292ba979acc739dc0d20700659e433e1859f8be5\n---\nshort form\n",
+        ),
+        ("fragments/plain.md", "---\nno_distill: true\n---\nPLAIN\n"),
+        ("prompts/quiet.md", "---\nno_distill: true\n---\nQUIET\n"),
+    ];
+
+    #[test]
+    fn test_bundle_distill_lists_each_fragment_and_command_with_its_state() {
+        let library = Setup {
+            bundles: &[("tidy", TIDY)],
+            layers: &[CONFIG],
+            ..Setup::default()
+        }
+        .library();
+        let b = "projects/calm-otter/bundles/tidy";
+        assert_eq!(
+            json(&library, &["bundle", "distill", "tidy"]),
+            json!({
+                "name": b,
+                "fragments": [
+                    {"item": format!("{b}/fragments/dist"), "distilled": "FRESH", "no_distill": false},
+                    {"item": format!("{b}/fragments/plain"), "distilled": "NONE", "no_distill": true},
+                ],
+                "commands": [
+                    {"item": format!("{b}/commands/quiet"), "distilled": "NONE", "no_distill": true},
+                ],
+            })
+        );
+    }
+}

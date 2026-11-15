@@ -63,6 +63,8 @@ pub trait Prompts {
     /// Each enabled registered companion's `init.setup_guidance`, in order
     /// (j000300): what the interview carries after ctxloom's own. A
     /// disabled companion's is none (OD-9). None by default.
+    // `vec![]` is the same value as `Vec::new()`: the mutant is equivalent.
+    #[cfg_attr(test, mutants::skip)]
     fn companion_guidance(&self) -> Vec<String> {
         Vec::new()
     }

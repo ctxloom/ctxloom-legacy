@@ -203,3 +203,89 @@ fn the_kill_switch_is_taken_by_the_step_it_names_alone() {
     assert!(files.take_die_at("turn"));
     assert!(!files.take_die_at("turn"), "taken once");
 }
+
+/// A host whose one-shot is placed at once and ended when the test says,
+/// through the `Told` it keeps.
+struct Kept(Arc<Mutex<Vec<daemon_application::Told>>>);
+
+struct NoStop;
+
+impl daemon_application::OneShotControl for NoStop {
+    fn stop(&self) {}
+}
+
+impl daemon_application::OneShotHost for Kept {
+    fn host(
+        &self,
+        _: daemon_application::HostRequest,
+        told: daemon_application::Told,
+    ) -> Box<dyn daemon_application::OneShotControl> {
+        told.placed(&run_application::Placement {
+            run: "0195f0a4-7b1e-7000-8000-000000000001".to_string(),
+            session: SESSION.to_string(),
+            name: "projects/calm-otter/sessions/harp-1".to_string(),
+            harp: "harp-1".to_string(),
+            engine: "claude-code".to_string(),
+        });
+        self.0.lock().unwrap().push(told);
+        Box::new(NoStop)
+    }
+}
+
+// askew-glitter: a one-shot's client hears its reply the moment it ends
+// (`Told::done`), and may ask the daemon to stop at once. What the API
+// says it hosts is the one-shots as they are NOW, never the loop's last
+// round's copy: the round below saw it live, it then ended before the
+// next, and a stop between them is not refused for it.
+#[test]
+fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
+    use daemon_api::Hosting;
+    use daemon_proto::v1::hosted_run::Kind;
+    let told = Arc::new(Mutex::new(Vec::new()));
+    let one_shots = Arc::new(daemon_application::OneShots::new(Box::new(Kept(
+        Arc::clone(&told),
+    ))));
+    let shared = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        Arc::clone(&one_shots),
+    );
+    one_shots.create(daemon_application::HostRequest::default());
+    // The round, as the loop tells it: its children.
+    let child = (
+        SESSION.to_string(),
+        "0195f0a4-7b1e-7000-8000-000000000009".to_string(),
+    );
+    shared.tell(vec![child], std::time::Instant::now());
+    assert_eq!(
+        kinds(&shared.hosted()),
+        [
+            ("000000000009", Kind::Child),
+            ("000000000001", Kind::OneShot)
+        ],
+        "the round's child, and the one-shot live"
+    );
+    told.lock().unwrap()[0].done(run_application::Done {
+        result: Ok(run_application::Answer {
+            harp: "harp-1".to_string(),
+            session: SESSION.to_string(),
+            engine: "claude-code".to_string(),
+            answer: "HELLO".to_string(),
+        }),
+        notices: Vec::new(),
+    });
+    assert_eq!(
+        kinds(&shared.hosted()),
+        [("000000000009", Kind::Child)],
+        "the one-shot ended, with no round since"
+    );
+}
+
+/// Each hosted run's root's last twelve digits, and its kind.
+fn kinds(
+    hosted: &[daemon_proto::v1::HostedRun],
+) -> Vec<(&str, daemon_proto::v1::hosted_run::Kind)> {
+    hosted
+        .iter()
+        .map(|run| (&run.run[run.run.len() - 12..], run.kind()))
+        .collect()
+}

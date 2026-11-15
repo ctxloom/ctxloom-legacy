@@ -226,3 +226,22 @@ fn test_the_host_notice_names_the_key_that_said_it() {
         "library-application-notice-session-home-host-fix = to give each run a session home of its own, remove session_home: host from { $place } in your home config"
     ));
 }
+
+// The config version refusals are among the samples.
+#[test]
+fn the_config_version_refusals_have_samples() {
+    let codes: Vec<String> = diagnostic_samples()
+        .iter()
+        .map(|d| d.code().to_string())
+        .collect();
+    for want in [
+        "library-application-config-newer",
+        "library-application-config-older",
+        "library-application-config-version-unreadable",
+    ] {
+        assert!(
+            codes.iter().any(|c| c == want),
+            "no sample for {want}: {codes:?}"
+        );
+    }
+}

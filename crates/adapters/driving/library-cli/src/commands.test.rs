@@ -145,3 +145,34 @@ fn test_each_item_create_names_its_own_reference_form() {
         help("command")
     );
 }
+
+// An item noun's distill speaks of its own kind: a fragment's, a fragment
+// and its reference; a command's, a command.
+#[test]
+fn test_each_item_nouns_distill_names_its_own_kind() {
+    let distill = |noun: &str| {
+        nouns()
+            .into_iter()
+            .find(|n| n.get_name() == noun)
+            .unwrap_or_else(|| panic!("the {noun} noun"))
+            .find_subcommand("distill")
+            .unwrap_or_else(|| panic!("{noun} distill"))
+            .clone()
+    };
+    let help = |command: &Command| {
+        let about = command.get_about().map(ToString::to_string).unwrap();
+        let reference = command
+            .get_arguments()
+            .find(|a| a.get_id() == "ref")
+            .and_then(|a| a.get_help())
+            .map(ToString::to_string)
+            .unwrap();
+        (about, reference)
+    };
+    let (about, reference) = help(&distill("fragment"));
+    assert!(about.starts_with("Distill a fragment:"), "{about}");
+    assert_eq!(reference, "bundle#fragments/name");
+    let (about, reference) = help(&distill("command"));
+    assert!(about.starts_with("Distill a command:"), "{about}");
+    assert_eq!(reference, "bundle#commands/name");
+}

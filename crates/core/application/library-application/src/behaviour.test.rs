@@ -1775,3 +1775,80 @@ fn test_a_carried_server_named_ctxloom_is_said_shadowed() {
     );
     assert!(said("mcp/ledger.yaml").is_empty());
 }
+
+// bundle show: a command whose distilled form records another source's
+// digest is stale; one that records its own is not.
+#[test]
+fn test_bundle_show_says_which_commands_distilled_form_is_stale() {
+    let files: &[(&str, &str)] = &[
+        ENVELOPE,
+        ("prompts/fresh.md", "PROMPT-NO-NEWLINE"),
+        (
+            "prompts/fresh.distilled.md",
+            "---\nsource_sha256: dfe10d5714810a6292151055130f594559f8173c4ffa3ee8beee05361a4a2e37\n---\nshort\n",
+        ),
+        ("prompts/old.md", "PROMPT-NO-NEWLINE"),
+        (
+            "prompts/old.distilled.md",
+            "---\nsource_sha256: 0000000000000000000000000000000000000000000000000000000000000000\n---\nshort\n",
+        ),
+    ];
+    let shown = ok(with(&[("b", files)], &[CONFIG])
+        .library()
+        .bundle_show(&plain(), "b"));
+    assert!(!shown.commands["fresh"].stale);
+    assert!(shown.commands["old"].stale);
+}
+
+// bundle view of a profile gives it as data, every field it wrote.
+#[test]
+fn test_viewing_a_profile_gives_each_of_its_fields() {
+    let files: &[(&str, &str)] = &[
+        ENVELOPE,
+        (
+            "profiles/pr.yaml",
+            "description: d\nparents: [base]\ntags: [t]\nbundles: [b]\nvariables:\n  k: v\nexclude_fragments: [ef]\nexclude_mcp: [em]\n",
+        ),
+    ];
+    let library = with(&[("b", files)], &[CONFIG]).library();
+    let viewed = ok(library.bundle_view(&plain(), "b#profiles/pr", false));
+    let crate::Viewed::Profile(shown) = viewed.viewed else {
+        panic!("a profile: {:?}", viewed.viewed);
+    };
+    assert_eq!(shown.name, "pr");
+    assert_eq!(shown.description, "d");
+    assert_eq!(shown.parents, ["base"]);
+    assert_eq!(shown.tags, ["t"]);
+    assert_eq!(shown.bundles, ["b"]);
+    assert_eq!(
+        shown.variables,
+        std::collections::BTreeMap::from([("k".to_string(), "v".to_string())])
+    );
+    assert_eq!(shown.exclude_fragments, ["ef"]);
+    assert_eq!(shown.exclude_mcp, ["em"]);
+}
+
+// bundle view of a whole bundle gives its files as data: the manifest first,
+// then the rest by path, each once.
+#[test]
+fn test_viewing_a_whole_bundle_gives_the_manifest_first_then_each_file() {
+    let files: &[(&str, &str)] = &[
+        ENVELOPE,
+        ("README.md", "read me\n"),
+        ("fragments/a.md", "A\n"),
+    ];
+    let library = with(&[("b", files)], &[CONFIG]).library();
+    let viewed = ok(library.bundle_view(&plain(), "b", false));
+    let crate::Viewed::Files(listed) = viewed.viewed else {
+        panic!("files: {:?}", viewed.viewed);
+    };
+    let pair = |path: &str, text: &str| (path.to_string(), text.to_string());
+    assert_eq!(
+        listed,
+        [
+            pair(ENVELOPE.0, ENVELOPE.1),
+            pair("README.md", "read me\n"),
+            pair("fragments/a.md", "A\n"),
+        ]
+    );
+}

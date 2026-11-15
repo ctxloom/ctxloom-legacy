@@ -174,3 +174,94 @@ mod write {
         assert!(refused_code(&library, &["mcp"], JSON).contains("mcp-bare-json"));
     }
 }
+
+// Each view's mapping to its message, field by field (OD-40): what the
+// binary's tests alone reached.
+mod mapping {
+    use super::super::*;
+    use library_application::McpListRow;
+    use serde_json::json;
+
+    const PARENT: &str = "projects/p";
+
+    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
+        let mut out = Vec::new();
+        crate::api::print(&mut out, message).unwrap();
+        serde_json::from_slice(&out).unwrap()
+    }
+
+    #[test]
+    fn test_a_shown_server_is_its_whole_resource() {
+        let show = McpShow {
+            name: "tree".to_string(),
+            found: true,
+            entries: vec![McpRow {
+                name: "tree".to_string(),
+                command: "tree-sitter".to_string(),
+                args: vec!["--stdio".to_string()],
+                env: [("K".to_string(), "v".to_string())].into(),
+                url: "https://mcp.example".to_string(),
+                served_by: "acme".to_string(),
+                source: "demo".to_string(),
+                notes: "a note".to_string(),
+                installation: "npm i tree".to_string(),
+            }],
+        };
+        assert_eq!(
+            json_of(&shown(PARENT, &show)),
+            json!({"mcp_servers": [{
+                "name": "projects/p/bundles/demo/mcpServers/tree",
+                "command": "tree-sitter",
+                "args": ["--stdio"],
+                "env": {"K": "v"},
+                "url": "https://mcp.example",
+                "served_by": "acme",
+                "notes": "a note",
+                "installation": "npm i tree",
+            }]})
+        );
+    }
+
+    #[test]
+    fn test_a_listed_server_is_its_row() {
+        let list = McpList {
+            servers: vec![McpListRow {
+                name: "tree".to_string(),
+                command: "tree-sitter".to_string(),
+                args: vec!["--stdio".to_string()],
+                url: "https://mcp.example".to_string(),
+                served_by: "acme".to_string(),
+                source: "demo".to_string(),
+            }],
+        };
+        assert_eq!(
+            json_of(&listed(PARENT, &list)),
+            json!({"mcp_servers": [{
+                "name": "projects/p/bundles/demo/mcpServers/tree",
+                "command": "tree-sitter",
+                "args": ["--stdio"],
+                "url": "https://mcp.example",
+                "served_by": "acme",
+            }]})
+        );
+    }
+
+    #[test]
+    fn test_a_set_server_answers_its_path() {
+        let set = McpSet {
+            status: "created".to_string(),
+            bundle: "demo".to_string(),
+            name: "tree".to_string(),
+            path: "mcp/tree.yaml".to_string(),
+        };
+        assert_eq!(
+            json_of(&set_of(PARENT, &set)),
+            json!({
+                "mcp_server": {"name": "projects/p/bundles/demo/mcpServers/tree"},
+                "path": "mcp/tree.yaml",
+                "applied": true,
+                "created": true,
+            })
+        );
+    }
+}
