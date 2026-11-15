@@ -57,6 +57,7 @@ pub use aggregate::SessionAggregate;
 pub use daemon::{command_id, keyed_book, urgency_word};
 pub use generated::*;
 pub use harp::validate;
+pub use lifeline::{DRAINED, REHOSTED, REHOST_BUDGET};
 pub use name::{project_id_root, root_of, ProjectName, SessionName, NAMESPACE};
 pub use names::NameClaimAggregate;
 pub use projects::{fold_project, ProjectAggregate, ProjectNameAggregate};

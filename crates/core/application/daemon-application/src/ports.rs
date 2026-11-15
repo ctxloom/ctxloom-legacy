@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use library_application::Previewed;
-use run_ports::{ChildEngine, ChildObservation, ChildSpec, Engine, GitUser, SessionRecords};
+use run_ports::{
+    ChildEngine, ChildObservation, ChildSpec, Engine, GitUser, HeldLock, SessionRecords,
+};
 
 /// Where an engine keeps a child's transcripts, from the child's spec.
 pub type Transcripts = Arc<dyn Fn(&ChildSpec) -> Option<String> + Send + Sync>;
@@ -124,6 +126,28 @@ pub trait HandOffs: Send + Sync {
 pub trait ChildHomes: Send + Sync {
     /// The session directories of the project at `project_dir`.
     fn records(&self, project_dir: &str) -> Box<dyn SessionRecords>;
+
+    /// Take the lock of session `harp` in the project at `project_dir`
+    /// (`<project>/.ctxloom/sessions/<harp>.lock`, the platform's file lock,
+    /// at once or not at all), held for the hosted child's life, so its
+    /// session reads live and no sweep (a one-shot's launcher's included)
+    /// takes it for lost while its host holds it. Why not, when it cannot
+    /// be had (another holds it: the session runs elsewhere).
+    fn hold_session(&self, project_dir: &str, harp: &str) -> Result<HeldLock, String>;
+}
+
+/// Where a hosted child works (owner s4-Q11): its agent's `workspace`, the
+/// live project or a checkout of its session's own, placed by the one
+/// launch through the project's workspaces (worktree-git's, under
+/// ctxloom's home) and let go WIP-safe at the child's close and, for a
+/// lost one, at the next start's sweep (OD-19).
+pub trait ChildWorkspaces: Send + Sync {
+    /// The workspaces of the project `project_id` at `project_dir`.
+    fn of(
+        &self,
+        project_id: &str,
+        project_dir: &str,
+    ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync>;
 }
 
 /// What hosted children say, heard off the launcher's thread: the root

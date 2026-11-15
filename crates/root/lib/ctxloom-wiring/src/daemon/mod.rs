@@ -458,6 +458,8 @@ fn be_the_daemon(
         // Composed as every launch's engines are (the one session-setup
         // path): calling this binary, over her own settings.
         engines: crate::commands::hosted_engines(wiring, &crate::program::running().name),
+        // The environment its children's checkouts' git runs in.
+        env: Arc::clone(wiring.env()),
     };
     serve::serve(wiring.fs(), place, pace, say)
         .map_err(|detail| failed(LibError::NoRuntime { detail }))?;
@@ -800,11 +802,20 @@ pub(crate) fn request_id() -> String {
 }
 
 /// A log line writer: each line appended to `path` with its time, through
-/// the file-system seam. Nothing it is given holds a secret.
+/// the file-system seam. Nothing it is given holds a secret. The log's
+/// directory is made here, as the daemon starts, and never again: a line
+/// said once it is gone (the user deleted her ctxloom home, j000100's exit)
+/// is dropped, so a daemon's exit never makes the home it was removed from.
 fn logger(fs: Arc<dyn Fs>, path: PathBuf) -> Box<dyn FnMut(&str) + Send> {
+    if let Some(dir) = path.parent() {
+        let _ = fs.create_dir_all(dir, Mode::from_bits(0o700));
+    }
     Box::new(move |line: &str| {
-        if let Some(dir) = path.parent() {
-            let _ = fs.create_dir_all(dir, Mode::from_bits(0o700));
+        let in_place = path
+            .parent()
+            .is_none_or(|dir| fs.exists(dir).unwrap_or(false));
+        if !in_place {
+            return;
         }
         if let Ok(mut file) = fs.open(&path, Open::Append(Mode::from_bits(0o600))) {
             let seconds = std::time::SystemTime::now()

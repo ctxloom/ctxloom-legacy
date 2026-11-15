@@ -61,6 +61,13 @@ pub(super) struct State {
     before_kill: Option<run_ports::Discovery>,
     /// The hook the session's assistant fired last.
     fired: Option<Fired>,
+    /// The daemon that hosted the scenario's child was killed already (U6:
+    /// a re-host budget's scenario plants its past re-hosts with no daemon).
+    killed: bool,
+    /// What the child's session settings said before its agent edited them.
+    settings: Option<String>,
+    /// The hooks the session's assistant fired across its daemon's kill.
+    hooks: Vec<crate::tests::Ran>,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -212,6 +219,7 @@ fn interactive_session(w: &mut World) {
 /// conversation (a new id), as claude's own does. It ends when its input
 /// does.
 const CHILD_STUB: &str = r#"here=$(dirname "$0")
+printf '%s\n' "$*" >> "$here/child-args"
 env > "$here/child-env"
 n=1
 sid=S1
@@ -652,9 +660,71 @@ fn alices_session_running(w: &mut World, harp: String) {
     w.common.set_env("ANTHROPIC_API_KEY", "a-key".to_string()); // gitleaks:allow
 }
 
+/// Alice's assistant on her terminal, as far as its session's liveness
+/// goes: a process that holds the session's lock until released.
+const HOLDS_LOCK: &str = r#"exec flock -n "$1" sh -c 'i=0; while [ ! -e "$0" ] && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done' "$2"
+"#;
+
 #[given(regex = r#"^Alice's session "([^"]+)" is running, with a child "([^"]+)" working for it$"#)]
-fn alices_session_with_child(_: &mut World, _owner: String, _child: String) {
-    red("Alice's session is running, with a child working for it")
+fn alices_session_with_child(w: &mut World, owner: String, child: String) {
+    assert_eq!(
+        (child.as_str(), owner.as_str()),
+        (CHILD, OWNER),
+        "the child and owner the harness hosts"
+    );
+    // Her session, recorded, its lock held by her assistant.
+    let dir = stub_claude(w, CHILD_STUB);
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+    let seeded = run_now(w, &["test", "seed-session", &owner, "--lock", "free"]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let lock = w
+        .common
+        .project
+        .dir()
+        .join(format!(".ctxloom/sessions/{owner}.lock"));
+    let release = dir.join("release");
+    let holder = dir.join("holds-lock");
+    files::put_program(&holder, HOLDS_LOCK);
+    let assistant = std::process::Command::new(&holder)
+        .args([lock.as_os_str(), release.as_os_str()])
+        .spawn()
+        .expect("her assistant starts");
+    w.daemon_spec.run = Some(assistant);
+    w.daemon_spec.release = Some(release);
+    until(w, "her session's lock held", DAEMON_WAIT, |w| {
+        listed_state(w, &owner).filter(|s| s == "LIVE")
+    });
+    // Its child, in the middle of a turn.
+    w.common.set_env("ANTHROPIC_API_KEY", "a-key".to_string()); // gitleaks:allow
+    files::put(stub_dir(w).join("hold"), "once");
+    let launched = run_now(
+        w,
+        &["session", "launch", &owner, "--name", &child, "a task"],
+    );
+    assert_eq!(launched.code, 0, "{}", launched.said());
+    until(w, "the child's first turn", DAEMON_WAIT, |_| {
+        files::exists(dir.join("child-turn")).then_some(())
+    });
+}
+
+/// The state `session list` gives `harp`, if it lists it.
+fn listed_state(w: &World, harp: &str) -> Option<String> {
+    let ran = run_now(w, &["session", "list", "--format", "json"]);
+    let listed = ran.json();
+    let rows = listed
+        .as_array()
+        .cloned()
+        .or_else(|| listed["sessions"].as_array().cloned())
+        .unwrap_or_default();
+    rows.iter()
+        .find(|row| {
+            row["name"]
+                .as_str()
+                .is_some_and(|n| n.ends_with(&format!("/{harp}")))
+        })
+        .and_then(|row| row["state"].as_str().map(str::to_string))
 }
 
 #[given(
@@ -883,8 +953,59 @@ fn serving_busy(w: &mut World, busy: String) {
     }
 }
 
+/// The kill switch at a step (U6): a daemon that finds it names the step
+/// it is killed outright at, takes it, and is killed; the next finds none.
+const DIE_AT: &str = "test-die-at";
+
+/// The step the daemon spec's `when` names, as the switch says it.
+fn die_at(when: &str) -> Option<&'static str> {
+    Some(match when {
+        "after the run is enqueued" => "enqueued",
+        "after the session is minted" => "minted",
+        "after the engine is started" => "started",
+        "while a turn is in flight" => "turn",
+        "after a hook's fact is recorded, before it is answered" => "hook",
+        "while the discovery file is written" => "discovery",
+        _ => return None,
+    })
+}
+
+/// Wait, bounded, for the daemon the scenario started to have exited (it
+/// was killed outright: its discovery file is left).
+fn daemon_gone(w: &mut World) {
+    let Some(mut daemon) = w.daemon_spec.daemon.take() else {
+        return;
+    };
+    let deadline = Instant::now() + DAEMON_WAIT;
+    while matches!(daemon.try_wait(), Ok(None)) {
+        assert!(
+            Instant::now() < deadline,
+            "the daemon was never killed; its log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    w.daemon_spec.killed = true;
+}
+
 #[given(regex = r"^the daemon will be killed outright (.+)$")]
 fn killed_at(w: &mut World, when: String) {
+    if let Some(step) = die_at(&when) {
+        // Killed already (a scenario that planted what its daemon left).
+        if w.daemon_spec.killed {
+            return;
+        }
+        if w.daemon_spec.daemon.is_some() {
+            w.daemon_spec.before_kill = Some(discovery_now(w));
+        }
+        files::put(daemon_dir(w).join(DIE_AT), step);
+        // A daemon serving with the step already reached (a child's turn in
+        // flight) takes the switch on its next round.
+        if w.daemon_spec.daemon.is_some() {
+            daemon_gone(w);
+        }
+        return;
+    }
     if when != "after the write is applied, before it is answered" {
         red("the daemon will be killed outright at a step")
     }
@@ -964,8 +1085,18 @@ fn stale_hand_off(w: &mut World) {
 #[when(
     "Alice's daemon is killed outright while her assistant works, and her assistant goes on firing its hooks"
 )]
-fn alices_daemon_killed(_: &mut World) {
-    red("Alice's daemon is killed outright while her assistant works")
+fn alices_daemon_killed(w: &mut World) {
+    let named = run_now(w, &["test", "session-name", OWNER]);
+    assert_eq!(named.code, 0, "{}", named.said());
+    let name = named.stdout.trim().to_string();
+    w.daemon_spec.before_kill = Some(discovery_now(w));
+    // Killed once her prompt's fact is recorded, before it is answered.
+    files::put(daemon_dir(w).join(DIE_AT), "hook");
+    let (prompt, _) = hook_run(w, "UserPromptSubmit", USER_PROMPT_SUBMIT, Some(&name));
+    daemon_gone(w);
+    // She goes on: her next hook finds no daemon, starts one, and delivers.
+    let (stop, _) = hook_run(w, "Stop", STOP, Some(&name));
+    w.daemon_spec.hooks = vec![prompt, stop];
 }
 
 #[when("her daemon's idle time passes")]
@@ -1146,9 +1277,31 @@ fn ten_hooks_at_once(w: &mut World) {
     });
 }
 
+/// A one-shot's stub turn that fires its UserPromptSubmit hook (the
+/// fixture beside it) before it answers.
+fn hooking_stub() -> String {
+    format!(
+        r#"{RECORDS_ITSELF}cat > /dev/null
+ctxloom hook claude-code execute UserPromptSubmit < "$here/prompt.json" > /dev/null 2>&1 || true
+echo '{{"type":"system","subtype":"init","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
+echo '{{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
+"#
+    )
+}
+
 #[when("Alice asks her assistant one thing, which the killed daemon leaves unfinished")]
-fn unfinished(_: &mut World) {
-    red("Alice asks her assistant one thing, which the killed daemon leaves unfinished")
+fn unfinished(w: &mut World) {
+    let dir = stub_claude(w, &hooking_stub());
+    files::put(dir.join("prompt.json"), USER_PROMPT_SUBMIT);
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    let mut env = env_of(w);
+    env.push(("ANTHROPIC_API_KEY".to_string(), "a-key".to_string())); // gitleaks:allow
+                                                                      // What it comes to is the kill's: the record is what is judged.
+    let _ = w
+        .common
+        .project
+        .run_with(&env_pairs(&env), &["run", "--one-shot", "one thing"]);
 }
 
 // ------------------------------------------------------- then: the journey
@@ -1285,27 +1438,52 @@ fn child_is_gone(w: &World, child: &str, hand_off: bool) {
 }
 
 #[then("a new ctxloom daemon is serving for Alice")]
-fn new_daemon(_: &mut World) {
-    red("a new ctxloom daemon is serving for Alice")
+fn new_daemon(w: &mut World) {
+    let old = w
+        .daemon_spec
+        .before_kill
+        .clone()
+        .expect("a daemon was killed");
+    assert!(serving_now(w), "{}", daemon_log_text(w));
+    let now = discovery_now(w);
+    assert_ne!(now.pid, old.pid, "another daemon: {}", daemon_log_text(w));
 }
 
 #[then(regex = r#"^"([^"]+)" is listed as live, and its assistant never stopped$"#)]
-fn still_live(_: &mut World, _harp: String) {
-    red("the session is listed as live, and its assistant never stopped")
+fn still_live(w: &mut World, harp: String) {
+    assert_eq!(listed_state(w, &harp).as_deref(), Some("LIVE"));
+    let assistant = w.daemon_spec.run.as_mut().expect("her assistant");
+    assert!(
+        matches!(assistant.try_wait(), Ok(None)),
+        "her assistant never stopped"
+    );
 }
 
 #[then(
     regex = r#"^"([^"]+)" found the new daemon and delivered again what the old one had not answered, and the record holds each once$"#
 )]
-fn redelivered(_: &mut World, _harp: String) {
-    red("the session redelivered to the new daemon, each once")
+fn redelivered(w: &mut World, harp: String) {
+    for ran in &w.daemon_spec.hooks {
+        assert_eq!(ran.code, 0, "{}", ran.said());
+    }
+    let events = session_events(w, &harp);
+    assert_eq!(count_of(&events, "PromptSubmitted"), 1, "{events:?}");
+    assert_eq!(count_of(&events, "TurnEnded"), 1, "{events:?}");
 }
 
 #[then(
     regex = r#"^"([^"]+)" is working again in its own conversation, with what it was launched with$"#
 )]
-fn rehosted(_: &mut World, _child: String) {
-    red("the child is re-hosted from its hand-off file")
+fn rehosted(w: &mut World, child: String) {
+    assert_eq!(child, CHILD, "the child the harness hosts");
+    let starts = started_again(w);
+    assert!(starts[1].contains("--resume S1"), "{starts:?}");
+    let env = until(w, "the child's environment", DAEMON_WAIT, |w| {
+        files::read(stub_dir(w).join("child-env"))
+            .ok()
+            .filter(|env| env.contains("ANTHROPIC_API_KEY=a-key")) // gitleaks:allow
+    });
+    assert!(env.contains("ANTHROPIC_API_KEY=a-key")); // gitleaks:allow
 }
 
 #[then("her daemon has exited, and nothing says it serves")]
@@ -1785,9 +1963,88 @@ fn nothing_recorded(w: &mut World, harp: String) {
     );
 }
 
+/// Every stream of the one store, as `ctxloom test record` prints it.
+fn record(w: &World) -> Vec<Value> {
+    let ran = run_now(w, &["test", "record"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    ran.json().as_array().cloned().unwrap_or_default()
+}
+
+/// The events of the stream of `domain` and `root` in `record`.
+fn stream_events<'a>(record: &'a [Value], domain: &str, root: &str) -> &'a [Value] {
+    record
+        .iter()
+        .find(|s| s["domain"] == domain && s["root"] == root)
+        .and_then(|s| s["events"].as_array())
+        .map_or(&[], Vec::as_slice)
+}
+
+/// The root of the session `harp` (its mint names it) in `record`.
+fn session_root(record: &[Value], harp: &str) -> Option<String> {
+    record
+        .iter()
+        .filter(|s| s["domain"] == "sessions")
+        .find(|s| {
+            s["events"].as_array().is_some_and(|events| {
+                events
+                    .iter()
+                    .any(|e| e["type"] == "SessionMinted" && e["harp"] == harp)
+            })
+        })
+        .and_then(|s| s["root"].as_str().map(str::to_string))
+}
+
+/// The events of the run of the session `root`'s `incarnation`.
+fn run_events_of(record: &[Value], session: &str, incarnation: u64) -> Vec<Value> {
+    record
+        .iter()
+        .filter(|s| s["domain"] == "runs")
+        .find(|s| {
+            s["events"].as_array().is_some_and(|events| {
+                events.iter().any(|e| {
+                    e["type"] == "RunEnqueued"
+                        && e["session"] == session
+                        && e["incarnation"] == incarnation
+                })
+            })
+        })
+        .and_then(|s| s["events"].as_array().cloned())
+        .unwrap_or_default()
+}
+
 #[then("no run is left owed a runner, no incarnation is left open and no fact is recorded twice")]
-fn record_whole(_: &mut World) {
-    red("the record is whole after the daemon was killed")
+fn record_whole(w: &mut World) {
+    let record = record(w);
+    for stream in &record {
+        let events = stream["events"].as_array().cloned().unwrap_or_default();
+        let mut seen = std::collections::BTreeSet::new();
+        for event in &events {
+            assert!(
+                seen.insert((event["type"].to_string(), event["payload"].to_string())),
+                "recorded twice on {} {}: {event}",
+                stream["domain"],
+                stream["root"]
+            );
+        }
+        let has = |kind: &str| events.iter().any(|e| e["type"] == kind);
+        if stream["domain"] == "runs" && has("RunEnqueued") {
+            assert!(has("RunEnded"), "a run left owed or unended: {stream}");
+        }
+        if stream["domain"] == "sessions" {
+            let numbers = |kind: &str| -> std::collections::BTreeSet<u64> {
+                events
+                    .iter()
+                    .filter(|e| e["type"] == kind)
+                    .filter_map(|e| e["incarnation"].as_u64())
+                    .collect()
+            };
+            let open: Vec<u64> = numbers("IncarnationOwed")
+                .difference(&numbers("IncarnationEnded"))
+                .copied()
+                .collect();
+            assert!(open.is_empty(), "incarnations {open:?} left open: {stream}");
+        }
+    }
 }
 
 // ------------------------------------------- then: cli/session_children
@@ -2011,18 +2268,89 @@ fn ended_cleanly(w: &mut World) {
     }
 }
 
+/// The child the harness hosts, and its owner.
+const CHILD: &str = "brisk-copper-moth";
+const OWNER: &str = "amber-quiet-heron";
+
+/// The child's session's root in `record`.
+fn child_root(record: &[Value]) -> String {
+    session_root(record, CHILD).expect("the child is recorded")
+}
+
 #[then(
     "the run the killed daemon hosted ended lost, and its turn in flight ended failed, with its owner told"
 )]
-fn lost_and_told(_: &mut World) {
-    red("the lost run's turn in flight ended failed, and its owner was told")
+fn lost_and_told(w: &mut World) {
+    let record = record(w);
+    let run = run_events_of(&record, &child_root(&record), 1);
+    let of = |kind: &str, field: &str| -> Vec<String> {
+        run.iter()
+            .filter(|e| e["type"] == kind)
+            .map(|e| e[field].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(of("RunEnded", "cause"), ["RunnerLoss"], "{run:?}");
+    assert_eq!(of("TurnFailedRecorded", "class"), ["RunnerLost"], "{run:?}");
+    until(
+        w,
+        "the owner told its child's turn failed",
+        DAEMON_WAIT,
+        |w| {
+            pending_text(w, OWNER)
+                .iter()
+                .any(|t| t.contains(&format!("child {CHILD} failed its turn")))
+                .then_some(())
+        },
+    );
+}
+
+/// The texts of the messages `harp` holds pending.
+fn pending_text(w: &World, harp: &str) -> Vec<String> {
+    shown(w, harp)["pending"]
+        .as_array()
+        .map(|pending| {
+            pending
+                .iter()
+                .filter_map(|m| m["text"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The arguments of each start of the stub child, in order.
+fn child_starts(w: &World) -> Vec<String> {
+    files::read(stub_dir(w).join("child-args"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Wait for the child to be started again, resuming its conversation.
+fn started_again(w: &World) -> Vec<String> {
+    until(w, "the child started again", DAEMON_WAIT, |w| {
+        let starts = child_starts(w);
+        (starts.len() >= 2).then_some(starts)
+    })
 }
 
 #[then(
     regex = r#"^"([^"]+)" runs again as its session's next incarnation, in its own conversation$"#
 )]
-fn next_incarnation(_: &mut World, _child: String) {
-    red("the child runs again as its session's next incarnation")
+fn next_incarnation(w: &mut World, child: String) {
+    assert_eq!(child, CHILD, "the child the harness hosts");
+    let starts = started_again(w);
+    assert!(
+        !starts[0].contains("--resume") && starts[1].contains("--resume S1"),
+        "its own conversation resumed: {starts:?}"
+    );
+    until(w, "its next incarnation's run started", DAEMON_WAIT, |w| {
+        let record = record(w);
+        run_events_of(&record, &child_root(&record), 2)
+            .iter()
+            .any(|e| e["type"] == "RunnerStartedRecorded")
+            .then_some(())
+    });
 }
 
 /// The session write the last command was (the daemon spec's retry rows),
@@ -2443,34 +2771,141 @@ fn nothing_imported(w: &mut World) {
     );
 }
 
+/// The `IncarnationOwed` events of the child's session in `record`, each
+/// `(incarnation, reason)`.
+fn child_owed(record: &[Value]) -> Vec<(u64, String)> {
+    stream_events(record, "sessions", &child_root(record))
+        .iter()
+        .filter(|e| e["type"] == "IncarnationOwed")
+        .map(|e| {
+            (
+                e["incarnation"].as_u64().unwrap_or_default(),
+                e["reason"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect()
+}
+
 #[then(regex = r#"^its incarnation was recorded with the cause "([^"]+)"$"#)]
-fn incarnation_cause(_: &mut World, _c: String) {
-    red("its incarnation was recorded with the cause")
+fn incarnation_cause(w: &mut World, cause: String) {
+    let owed = child_owed(&record(w));
+    assert_eq!(
+        owed.last(),
+        Some(&(2, cause)),
+        "its next incarnation's cause: {owed:?}"
+    );
 }
 
 #[given(expr = "a child {string} of {string} that has been re-hosted {int} times in the last hour")]
-fn rehosted_n(_: &mut World, _c: String, _o: String, _n: i64) {
-    red("a child re-hosted n times in the last hour")
+fn rehosted_n(w: &mut World, child: String, owner: String, times: i64) {
+    assert_eq!(
+        (child.as_str(), owner.as_str()),
+        (CHILD, OWNER),
+        "the child and owner the harness hosts"
+    );
+    child_mid_turn(w, child.clone());
+    // Its daemon is killed outright with its turn in flight; then its past
+    // re-hosts are planted, as earlier daemons would have recorded them,
+    // its host lost again after the last.
+    files::put(daemon_dir(w).join(DIE_AT), "turn");
+    daemon_gone(w);
+    let seeded = run_now(w, &["test", "seed-rehosts", &child, &times.to_string()]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+}
+
+/// The messages `harp`'s session was sent, by id, in `record`.
+fn sent_to(record: &[Value], harp: &str) -> Vec<(String, String)> {
+    let Some(root) = session_root(record, harp) else {
+        return Vec::new();
+    };
+    stream_events(record, "sessions", &root)
+        .iter()
+        .filter(|e| e["type"] == "MessageSent")
+        .map(|e| {
+            (
+                e["message_id"].as_str().unwrap_or_default().to_string(),
+                e["text"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect()
 }
 
 #[then(regex = r#"^"([^"]+)" was not re-hosted again, and ended runner-lost$"#)]
-fn past_budget(_: &mut World, _c: String) {
-    red("the child was not re-hosted past its budget")
+fn past_budget(w: &mut World, child: String) {
+    assert_eq!(child, CHILD, "the child the harness hosts");
+    // Its re-host was decided once its owner's notice is recorded.
+    let record = until(w, "the re-host refused for its budget", DAEMON_WAIT, |w| {
+        let record = record(w);
+        sent_to(&record, OWNER)
+            .iter()
+            .any(|(id, _)| id.ends_with(":rehost-budget"))
+            .then_some(record)
+    });
+    let owed = child_owed(&record);
+    let ended: Vec<u64> = stream_events(&record, "sessions", &child_root(&record))
+        .iter()
+        .filter(|e| e["type"] == "IncarnationEnded")
+        .filter_map(|e| e["incarnation"].as_u64())
+        .collect();
+    assert_eq!(
+        owed.last().map(|(n, _)| *n),
+        ended.iter().max().copied(),
+        "nothing owed past its last end: {owed:?}"
+    );
+    let run = run_events_of(&record, &child_root(&record), 1);
+    assert!(
+        run.iter()
+            .any(|e| e["type"] == "RunEnded" && e["cause"] == "RunnerLoss"),
+        "{run:?}"
+    );
+    assert_eq!(child_starts(w).len(), 1, "never started again");
 }
 
 #[then(regex = r#"^"([^"]+)" was told that its child ended$"#)]
-fn owner_told(_: &mut World, _o: String) {
-    red("the owner was told its child ended")
+fn owner_told(w: &mut World, owner: String) {
+    let told = until(w, "the owner told", DAEMON_WAIT, |w| {
+        let texts = pending_text(w, &owner);
+        texts
+            .iter()
+            .any(|t| t.starts_with(&format!("child {CHILD} ended")))
+            .then_some(texts)
+    });
+    assert!(!told.is_empty());
+}
+
+/// The child's session's claude settings: its session home is its
+/// `CLAUDE_CONFIG_DIR`, whose user-scope `settings.json` they are.
+fn child_settings(w: &World) -> PathBuf {
+    w.common
+        .project
+        .dir()
+        .join(".ctxloom/sessions")
+        .join(CHILD)
+        .join("home/settings.json")
 }
 
 #[given(expr = "a child {string} whose session settings its agent has edited")]
-fn settings_edited(_: &mut World, _c: String) {
-    red("a child whose session settings its agent edited")
+fn settings_edited(w: &mut World, child: String) {
+    child_mid_turn(w, child);
+    let path = child_settings(w);
+    let made = files::read(&path).expect("its launch wrote its settings");
+    files::put(
+        &path,
+        "{\"permissions\": {\"allow\": [\"Bash(*)\"]}, \"agent-edit\": 1}\n",
+    );
+    w.daemon_spec.settings = Some(made);
 }
 
 #[then("the re-hosted child's session settings are the ones the user's config makes, and its agent's edit is gone")]
-fn settings_regenerated(_: &mut World) {
-    red("the re-hosted child's settings were regenerated")
+fn settings_regenerated(w: &mut World) {
+    started_again(w);
+    let now = files::read(child_settings(w)).expect("its settings");
+    assert!(!now.contains("agent-edit"), "the edit is gone: {now}");
+    assert_eq!(
+        Some(now),
+        w.daemon_spec.settings.clone(),
+        "written again from the user's config, as its launch wrote them"
+    );
 }
 
 /// A stub engine of a registration scenario: it records the directory its

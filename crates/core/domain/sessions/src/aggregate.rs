@@ -21,10 +21,10 @@ use crate::{
     adopted, end_recorded, engine_bound, kept_changed, lifeline, live, record, session_minted,
     title_set, AdoptRotations, BindEngineSession, ChildCannotStop, EndRecorded, EngineMismatch,
     EngineSessionBound, HarpInvalid, IncarnationEnded, IncarnationOwed, KeptChanged, MintSession,
-    NoNativeSession, NoSession, RecordEnd, RecordIncarnationEnded, ResumeSession, SessionAdopted,
-    SessionCommand, SessionDestroyed, SessionEvent, SessionExists, SessionMinted, SessionRejection,
-    SessionRunning, SessionState, SessionUnknown, SetKept, SetSessionTitle, StopOrdered,
-    StopSession, TitleSet, WorkspaceMismatch,
+    NoNativeSession, NoSession, RecordEnd, RecordIncarnationEnded, RehostBudgetSpent,
+    RehostSession, ResumeSession, SessionAdopted, SessionCommand, SessionDestroyed, SessionEvent,
+    SessionExists, SessionMinted, SessionRejection, SessionRunning, SessionState, SessionUnknown,
+    SetKept, SetSessionTitle, StopOrdered, StopSession, TitleSet, WorkspaceMismatch,
 };
 use crate::{
     daemon, ChildEnded, ChildForgotten, ChildLaunchFailed, ChildLaunched, ClearChild,
@@ -305,6 +305,33 @@ impl SessionAggregate {
                 rejection,
                 Refuses<Self, ResumeSession>,
                 [SessionUnknown{harp} => SessionUnknown, SessionDestroyed{harp} => SessionDestroyed, SessionRunning{harp} => SessionRunning, NoNativeSession{harp} => NoNativeSession, EngineMismatch{harp, engine, asked} => EngineMismatch, WorkspaceMismatch{harp, workspace, asked} => WorkspaceMismatch]
+            )
+        })
+    }
+
+    /// Re-host a lost child (T19, s4-Q9): owe its next incarnation.
+    #[handles_cmd(
+        RehostSession,
+        refuses(
+            NoSession,
+            SessionIsClosed,
+            SessionRunning,
+            NoNativeSession,
+            RehostBudgetSpent
+        )
+    )]
+    fn rehost(
+        &self,
+        cmd: RehostSession,
+        ctx: &Context,
+    ) -> Result<IncarnationOwed, Failed<Refuses<Self, RehostSession>>> {
+        let _ = ctx;
+        lifeline::rehosted(&self.session, &cmd).map_err(|rejection| {
+            refuse!(
+                SessionRejection,
+                rejection,
+                Refuses<Self, RehostSession>,
+                [NoSession => NoSession, SessionClosed{harp} => SessionIsClosed, SessionRunning{harp} => SessionRunning, NoNativeSession{harp} => NoNativeSession, RehostBudgetSpent{harp, limit, recent} => RehostBudgetSpent]
             )
         })
     }

@@ -395,3 +395,43 @@ fn a_filled_model_reads_a_gap_through_its_fill() {
     .unwrap();
     assert_eq!(*fill.0.lock().unwrap(), [(0, 2)]);
 }
+
+// T19: the board keeps each session's last incarnation's end and its cause
+// (what the re-host step plans from); a later end replaces it.
+#[test]
+fn a_session_keeps_its_last_incarnations_end() {
+    let mut board = Board::new();
+    board
+        .project(&book(SESSION_DOMAIN, root(), 0, minted(Some("owner"))))
+        .unwrap();
+    assert_eq!(board.last_end(ID), None);
+    let ended = |incarnation, cause: &str| {
+        SessionEvent::IncarnationEnded(sessions::IncarnationEnded {
+            incarnation,
+            cause: cause.to_string(),
+            notice_parent: true,
+        })
+        .to_any()
+    };
+    board
+        .project(&book(SESSION_DOMAIN, root(), 2, vec![ended(1, "orphaned")]))
+        .unwrap();
+    assert_eq!(board.last_end(ID), Some((1, "orphaned")));
+    board
+        .project(&book(
+            SESSION_DOMAIN,
+            root(),
+            3,
+            vec![
+                SessionEvent::IncarnationOwed(IncarnationOwed {
+                    incarnation: 2,
+                    reason: "rehost".to_string(),
+                })
+                .to_any(),
+                ended(2, "runner-exit"),
+            ],
+        ))
+        .unwrap();
+    assert_eq!(board.last_end(ID), Some((2, "runner-exit")));
+    assert_eq!(board.last_end("nobody"), None);
+}

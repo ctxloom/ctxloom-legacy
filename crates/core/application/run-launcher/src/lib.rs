@@ -28,7 +28,7 @@ pub use home::{set_up_home, set_up_launch, HomeSetUp, HomeSetup, LaunchSetUp, La
 pub use launch::{
     launch_of, FindProgram, LaunchEngines, LaunchMade, LaunchRequest, NotLaunched, Unprepared,
 };
-pub use launcher::{Launched, Launcher, Outcome, Sweeper, Swept};
+pub use launcher::{Launched, Launcher, Outcome, Released, Releases, Sweeper, Swept};
 pub use orders::{Order, Orders};
 pub use workspace::{place_workspace, Axis, Placement, Workspace};
 

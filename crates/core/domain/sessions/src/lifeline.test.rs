@@ -337,3 +337,101 @@ fn a_session_with_no_workspace_recorded_resumes_as_one_in_the_project() {
     assert_eq!(code, "sessions-workspace-mismatch");
     assert_eq!(args["workspace"], "none");
 }
+
+fn rehost(recent: u32, cause: &str) -> crate::RehostSession {
+    crate::RehostSession {
+        recent_rehosts: recent,
+        cause: cause.to_string(),
+    }
+}
+
+/// A child whose first run bound its native session and was lost: its
+/// incarnation ended `orphaned` by a sweep.
+fn lost_child() -> Session {
+    let mut session = Session::new();
+    session.run(mint(crate::aggregate::tests::HARP)).unwrap();
+    session
+        .bound(crate::BindEngineSession {
+            native_id: "native-1".to_string(),
+            transcript_path: String::new(),
+            engine_version: None,
+        })
+        .unwrap();
+    session.fact(ended(1, "orphaned"), "end:s:1");
+    session
+}
+
+// T19, s4-Q9: a re-host owes the lost child its next incarnation, reason
+// `rehost`, on the same stream.
+#[test]
+fn a_rehost_owes_the_lost_childs_next_incarnation() {
+    let mut session = lost_child();
+    let events = session.run(rehost(0, "")).unwrap();
+    assert_eq!(
+        events,
+        vec![SessionEvent::IncarnationOwed(IncarnationOwed {
+            incarnation: 2,
+            reason: "rehost".to_string(),
+        })]
+    );
+    assert_eq!(session.state().open_incarnation, Some(2));
+}
+
+// S47: at 60 recent re-hosts it is refused, naming the budget, and nothing
+// is owed; at 59 it is not.
+#[test]
+fn a_rehost_past_its_budget_is_refused_and_owes_nothing() {
+    let mut session = lost_child();
+    let (code, args) = session.run(rehost(60, "rehost")).unwrap_err();
+    assert_eq!(code, "sessions-rehost-budget-spent");
+    assert_eq!(args["limit"], "60");
+    assert_eq!(args["recent"], "60");
+    assert_eq!(args["harp"], crate::aggregate::tests::HARP);
+    assert_eq!(session.state().open_incarnation, None);
+    assert!(session.run(rehost(59, "")).is_ok());
+}
+
+// s4-Q5: a drain's hand-over re-hosts with cause `drain`, never refused for
+// the budget.
+#[test]
+fn a_drains_rehost_is_never_refused_for_the_budget() {
+    let mut session = lost_child();
+    let events = session.run(rehost(600, "drain")).unwrap();
+    assert!(matches!(&events[..],
+        [SessionEvent::IncarnationOwed(o)] if o.reason == "drain" && o.incarnation == 2));
+}
+
+#[test]
+fn a_rehost_while_an_incarnation_is_open_is_refused_as_running() {
+    let mut session = lost_child();
+    session.run(rehost(0, "")).unwrap();
+    let (code, _) = session.run(rehost(0, "")).unwrap_err();
+    assert_eq!(code, "sessions-session-running");
+}
+
+#[test]
+fn a_rehost_of_a_child_with_no_native_session_is_refused() {
+    let mut session = first_run_ended("orphaned");
+    let (code, _) = session.run(rehost(0, "")).unwrap_err();
+    assert_eq!(code, "sessions-no-native-session");
+}
+
+#[test]
+fn a_rehost_of_no_session_is_refused() {
+    let mut session = Session::new();
+    let (code, _) = session.run(rehost(0, "")).unwrap_err();
+    assert_eq!(code, "sessions-no-session");
+}
+
+#[test]
+fn a_rehost_of_a_closed_child_is_refused() {
+    let mut session = lost_child();
+    session
+        .run(crate::CloseSession {
+            requester: None,
+            cause: "closed".to_string(),
+        })
+        .unwrap();
+    let (code, _) = session.run(rehost(0, "")).unwrap_err();
+    assert_eq!(code, "sessions-session-closed");
+}

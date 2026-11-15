@@ -13,6 +13,8 @@ angzarr-embedded.workspace = true
 daemon-board.workspace = true
 # A hosted one-shot's events, as `WatchRun` streams them (U4).
 daemon-proto.workspace = true
+# A hosted child's checkout, placed and let go (s4-Q11, OD-19).
+isolation-ports.workspace = true
 library-application.workspace = true
 pending-launches.workspace = true
 pending-messages.workspace = true
