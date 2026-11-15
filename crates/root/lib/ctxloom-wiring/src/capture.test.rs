@@ -797,3 +797,107 @@ async fn two_hooks_of_one_session_at_once_record_each_fact_once_in_held_order() 
     );
     assert!(held.is_empty(&root()).unwrap());
 }
+
+// ----------------------------- the fold is fresh (owner, H3's condition)
+
+type SqliteEdge =
+    EmbeddedEdge<crate::CoreStores<angzarr_embedded::angzarr_store_sqlite::SqliteStore>>;
+
+/// The daemon's listener over `edge` (any core), as [`a_daemon`] serves one.
+async fn listening<E: Edge + 'static>(
+    edge: &Arc<E>,
+    bearer: &run_ports::Token,
+) -> (hook_listener::HookListener, run_ports::Discovery) {
+    use run_ports::CertMint;
+    let names = run_ports::CertNames::new(
+        vec![std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
+        Vec::new(),
+    );
+    let certificate = hook_tls::Minter::lasting(hook_tls::SystemClock, 3_600)
+        .mint(&names)
+        .unwrap();
+    let listener = hook_listener::HookListener::serve_tcp_gated(
+        Arc::clone(edge),
+        runs_application::UserGate::new(bearer),
+        "127.0.0.1:0".parse().unwrap(),
+        hook_listener::TlsIdentity::from_pem(certificate.public().to_pem(), certificate.key_pem()),
+    )
+    .await
+    .unwrap();
+    let discovery = run_ports::Discovery {
+        stamp: "v0.1.0-abc1234".to_string(),
+        pid: 1,
+        endpoint: format!("https://127.0.0.1:{}", listener.local_addr().port()),
+        cert: certificate.public().clone(),
+        bearer: bearer.clone(),
+        home: "/home/u".to_string(),
+    };
+    (listener, discovery)
+}
+
+/// The mint of the session `SESSION` names, as a command book.
+fn mint_book() -> angzarr_embedded::v1::CommandBook {
+    let mint = sessions::MintSession {
+        harp: HARP.to_string(),
+        project_id: "calm-otter".to_string(),
+        project_dir: "/w".to_string(),
+        output_dir: "/o".to_string(),
+        engine: "claude-code".to_string(),
+        origin: sessions::Origin::Session,
+        started_at: None,
+        depth: 0,
+        owner: None,
+        workspace: None,
+    };
+    angzarr_embedded::v1::CommandBook::command_of(
+        session_cover(),
+        &sessions::SessionCommand::from(mint),
+    )
+}
+
+// The owner's condition on "no such session": a fact is decided on its
+// aggregate's stream folded FRESH from the store, so a session another
+// process minted a moment ago is seen. Forced over the real one-file store
+// (sqlite) with two handles, the daemon's and another process's: the
+// daemon's listener first answers a capture fact for the session "no such
+// session" (it has loaded that empty stream once), then the other process
+// mints the session, and the very next delivery through the listener is
+// applied, never "no such session" from a cached fold.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_another_process_minted_a_moment_ago_is_seen_by_the_listener() {
+    let fs = Arc::new(file_system::Rooted::temp().unwrap());
+    let open = || async {
+        ctxloom_store_sqlite::Stores::new(fs.clone(), "/home/u")
+            .open()
+            .await
+            .unwrap()
+    };
+    let daemon = InProcessCore::start(open().await).await;
+    let other = InProcessCore::start(open().await).await;
+    let edge: Arc<SqliteEdge> = daemon.edge();
+    let bearer = run_ports::Token::from_bytes([5; 32]);
+    let (listener, discovery) = listening(&edge, &bearer).await;
+    let deliver = |id: &'static str| {
+        let discovery = discovery.clone();
+        tokio::task::spawn_blocking(move || {
+            daemon_sink(discovery).deliver(book_of(&prompt(id)), Duration::from_secs(10))
+        })
+    };
+    assert_eq!(deliver("p0").await.unwrap(), Delivery::NoSuchSession);
+    other.edge().handle(mint_book()).await.unwrap();
+    assert_eq!(
+        deliver("p1").await.unwrap(),
+        Delivery::Applied,
+        "the mint the other handle committed is in the fold"
+    );
+    let recorded = edge.events(&session_cover(), 0).await.unwrap();
+    assert!(
+        recorded.iter().any(|page| matches!(
+            page.meta.as_ref().and_then(|m| m.causation.as_ref()),
+            Some(angzarr_embedded::v1::event_meta::Causation::Fact(fact))
+                if fact.origin.as_ref().is_some_and(|o| o.external_id.ends_with(":p1"))
+        )),
+        "the prompt is recorded on the daemon's store"
+    );
+    listener.stop().await.unwrap();
+}

@@ -1094,6 +1094,36 @@ The rules:
 
 ## A refusal is a typed message; its status lives in the proto alone
 
+Two trees of answers that are not a success (owner ruling 2026-11-14), each
+with its root:
+
+- BUSINESS REFUSALS: commands only. A fact is never refused for a business
+  reason (it already happened: its handler records it, or records nothing,
+  and its one failure is a bug). The status is the refusal message's
+  `(refusal_status)` alone (below). Roots: each domain's `refuse!` macro
+  (`sessions`, `runs`, `trees` and `scheduler`'s `src/refusal.rs`), reading
+  the generated `Refusal::REFUSAL_STATUS`; at the edge `daemon_api::
+  ApiRefusal::of` (a daemon proto refusal's `REFUSAL_STATUS`) and
+  `ApiRefusal::rejected` (a domain's, as the kernel coded it), answered by
+  `daemon_api_grpc`'s `status_of_error`; and the hook listener's
+  `runs_application::hook_commands::coded_of` (its `Failure::Rejected`
+  arm, the status the refusal declared).
+- INFRASTRUCTURE ERRORS: what is wrong with the request's surroundings,
+  never a business decision: a session the daemon has no record of
+  (`run_ports::NO_SUCH_SESSION`, NOT_FOUND), an etag or expected-sequence
+  conflict's ABORTED (angzarr's own spec keys, their status the
+  `AngzarrReason` surface in angzarr's protos), a malformed book, a store or
+  kernel failure (INTERNAL), an unserved method (UNIMPLEMENTED). Their
+  status MAY be named in Rust, but only at a root of this tree. There is no
+  single root yet; the roots today are `runs_application::hook_commands::
+  coded_of` and `no_such_session_answer` (the hook listener: a kernel
+  failure's INVALID_ARGUMENT or INTERNAL, an unknown session's NOT_FOUND)
+  and `daemon_api_grpc`'s `status_of_error` (the daemon API: `ApiError::
+  Failed` INTERNAL, `Unimplemented`); clients read them back in one place
+  each (`hook_sink_grpc`'s `delivery_of_code`, `daemon_client::called`). PROPOSED, not built: one root, an `Infrastructure` enum in
+  run-ports naming each error and its code once, which both listeners
+  answer through.
+
 A command refuses with a typed refusal MESSAGE of ctxloom's own protos
 (`proto/ctxloom/...`, and the scheduler's under `proto/io/angzarr/scheduler`),
 one per rejection, listed in the `refuses` of the commands that raise it, each

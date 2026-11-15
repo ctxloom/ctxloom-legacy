@@ -224,6 +224,15 @@ impl Observation {
 /// capture fact records its event on any live session, so none recorded
 /// means the stream holds no session). Its distinct answer is
 /// [`run_ports::NO_SUCH_SESSION`] ([`run_ports::Delivery::NoSuchSession`]).
+///
+/// INVARIANT (owner's condition on the answer): this is safe only because
+/// the kernel decides every fact on its aggregate's stream folded FRESH
+/// from the store (angzarr-embedded's step 3, `read_history`: the stream
+/// read from the store for each input; the session aggregate keeps no
+/// snapshot), so a session another process or daemon minted a moment
+/// earlier is in the fold. A kernel that decided on a cached or older fold
+/// would make "applied with no event" a lie; held by the wiring's
+/// `a_session_another_process_minted_a_moment_ago_is_seen_by_the_listener`.
 pub fn no_such_session(book: &CommandBook, answered: &angzarr_embedded::Answered) -> bool {
     let recorded = answered
         .events
