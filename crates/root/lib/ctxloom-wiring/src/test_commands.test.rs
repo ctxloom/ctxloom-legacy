@@ -253,6 +253,7 @@ fn every_seed_flag_lands_in_the_seed() {
         "a.md",
         "--other-file",
         "b.md",
+        "--resumable",
     ]);
     assert_eq!(
         format!("{seed:?}"),
@@ -269,6 +270,7 @@ fn every_seed_flag_lands_in_the_seed() {
                 oneshot: true,
                 native: Some(("n1".to_string(), "/t/n1.jsonl".to_string())),
                 other_files: vec!["a.md".to_string(), "b.md".to_string()],
+                resumable: true,
             }
         )
     );

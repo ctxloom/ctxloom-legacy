@@ -25,7 +25,8 @@
 //!   retried once on a new daemon (S8);
 //! - `CreateRun`, `GetRun` and `WatchRun` (U4, T7): a one-shot hosted by
 //!   the daemon's one-shots, answered once placed, its events streamed
-//!   ([`RunStream`]); a TERMINAL run is U5's;
+//!   ([`RunStream`]); a TERMINAL run (U5) prepared by the daemon's
+//!   terminals, answered with its one launch for the frontend to start;
 //! - [`launch`]: the one launch (T10, `run_ports::Launch`) to the wire
 //!   (`ctxloom.v1.Launch`) and back;
 //! - [`Caller`]: a SESSION as the daemon's client (slice 3, ctxloom's MCP
@@ -46,6 +47,7 @@ mod refusal;
 mod runs;
 mod server;
 mod session_client;
+mod terminal;
 
 pub use caller::{
     launch_lock_name, urgency_of, Caller, ChildWrites, Launch, Written, DELEGATION_LIMIT,

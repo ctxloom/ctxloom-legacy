@@ -11,10 +11,14 @@
 //! the same way a one-shot child is (D18, rulings 53, 73e). [`client`] is
 //! `run --one-shot` as the daemon's client (U4, T7): the daemon hosts the
 //! run (`Runs::one_shot` in its process), the command prints what it said.
+//! [`frontend`] is
+//! the interactive session's frontend (U5, T9): the daemon's launch started
+//! on the user's terminal, its start and exit reported to the daemon.
 
 pub mod client;
 mod credential;
 mod error;
+pub mod frontend;
 mod hosted;
 mod one_shot;
 

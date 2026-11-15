@@ -14,6 +14,7 @@ mod core_link;
 mod daemon;
 mod distiller;
 mod error;
+mod frontend;
 mod interview;
 mod isolation;
 mod library;

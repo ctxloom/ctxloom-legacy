@@ -4,7 +4,7 @@
 //! daemon, over its one store, in the environment the client sent, S7), and
 //! answered once it is placed, or with its `end` when it ended before that;
 //! its notices, reply, stop and end are then `WatchRun`'s. A TERMINAL run is
-//! U5's: its arm of [`Api::create_run`] answers UNIMPLEMENTED until then.
+//! U5's (`terminal.rs`): prepared, answered with its launch, and watched.
 
 use std::sync::Arc;
 
@@ -34,7 +34,7 @@ fn run_of(name: &str) -> &str {
 
 /// The engine's resource name under `parent` (its word, outside a
 /// project), as a dry run's `Run` names it.
-fn engine_name(parent: &str, engine: &str) -> String {
+pub(crate) fn engine_name(parent: &str, engine: &str) -> String {
     match parent.starts_with("projects/") {
         true => format!("{parent}/engines/{engine}"),
         false => engine.to_string(),
@@ -67,7 +67,7 @@ impl<E: Edge> Api<E> {
             v1::run::Mode::OneShot => self.create_one_shot(request).await,
             // U5: a TERMINAL run, planned and prepared, its `Launch` for the
             // frontend to start (daemon-api's terminal.rs).
-            v1::run::Mode::Terminal => Err(unimplemented("CreateRun(TERMINAL)")),
+            v1::run::Mode::Terminal => self.create_terminal(request).await,
             v1::run::Mode::Unspecified => Err(unimplemented("CreateRun(MODE_UNSPECIFIED)")),
         }
     }
@@ -134,7 +134,7 @@ impl<E: Edge> Api<E> {
     /// The project `parent` names, as the warm index holds it (read fresh:
     /// the client's `ResolveProject` just registered it); none under
     /// `users/me`. A project nobody named is `ProjectNotFound`.
-    async fn host_project(&self, parent: &str) -> Result<Option<HostProject>, ApiError> {
+    pub(crate) async fn host_project(&self, parent: &str) -> Result<Option<HostProject>, ApiError> {
         if !parent.starts_with("projects/") {
             return Ok(None);
         }
@@ -155,6 +155,9 @@ impl<E: Edge> Api<E> {
 
     /// `GetRun`: a run the daemon hosts (or keeps, ended), by its name.
     pub async fn get_run(&self, request: v1::GetRunRequest) -> Result<v1::Run, ApiError> {
+        if let Some(run) = self.get_terminal(&request.name) {
+            return Ok(run);
+        }
         let hosted = self
             .one_shots()?
             .get(run_of(&request.name))
@@ -170,6 +173,9 @@ impl<E: Edge> Api<E> {
 
     /// `WatchRun`: a hosted run's events from its first, until its end.
     pub async fn watch_run(&self, request: v1::WatchRunRequest) -> Result<RunStream, ApiError> {
+        if let Some(watch) = self.watch_terminal(&request.name) {
+            return Ok(watch);
+        }
         let watch = self
             .one_shots()?
             .watch(run_of(&request.name))

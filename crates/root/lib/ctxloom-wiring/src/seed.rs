@@ -49,6 +49,9 @@ pub struct Seed {
     pub native: Option<(String, String)>,
     /// Authored files in the session directory.
     pub other_files: Vec<String>,
+    /// Its first incarnation ended, as a run's end tells it, so the session
+    /// can be resumed (`run --session`).
+    pub resumable: bool,
 }
 
 fn seed_error(detail: impl ToString) -> TestError {
@@ -61,15 +64,25 @@ impl Wiring {
     /// The events of the cwd's project's session `harp`, as `ctxloom test
     /// session-events` prints them (slice 3: a write applied once): each
     /// one's type name, and a message's id and text.
-    pub fn session_events(&self, harp: &str) -> Result<serde_json::Value, TestError> {
+    pub fn session_events(
+        &self,
+        harp: &str,
+        run: Option<u32>,
+    ) -> Result<serde_json::Value, TestError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(seed_error)?;
-        runtime.block_on(self.events_of(harp))
+        runtime.block_on(self.events_of(harp, run))
     }
 
-    async fn events_of(&self, harp: &str) -> Result<serde_json::Value, TestError> {
+    /// The events of `harp`'s session stream, or of its run of incarnation
+    /// `run` when one is named (U5: the frontend's reports, as recorded).
+    async fn events_of(
+        &self,
+        harp: &str,
+        run: Option<u32>,
+    ) -> Result<serde_json::Value, TestError> {
         use angzarr_embedded::v1::event_page;
         use angzarr_embedded::{EventStore, StreamRef};
         let mut sessions = self.sessions();
@@ -90,10 +103,17 @@ impl Wiring {
         let read = async {
             let store = stores.open(&project).await.map_err(seed_error)?;
             let name = sessions::SessionName::new(&named.harp, harp).map_err(seed_error)?;
-            let cover = Cover {
-                domain: SESSION_DOMAIN.to_string(),
-                root: Some(name.root()),
-                edition: None,
+            let cover = match run {
+                None => Cover {
+                    domain: SESSION_DOMAIN.to_string(),
+                    root: Some(name.root()),
+                    edition: None,
+                },
+                Some(incarnation) => Cover {
+                    domain: runs::RUN_DOMAIN.to_string(),
+                    root: Some(runs::run_root(&name.uid(), incarnation)),
+                    edition: None,
+                },
             };
             let stream = StreamRef::try_from(&cover).map_err(seed_error)?;
             let slice = store.read(stream, 0, None).await.map_err(seed_error)?;
@@ -288,6 +308,9 @@ impl Wiring {
         if let Some(ago) = seed.ended_ago {
             run(now, RecordEnd { at: before(ago) }.into()).await?;
         }
+        if seed.resumable {
+            run_book(now, incarnation_ended(&session_cover)).await?;
+        }
         self.plant_files(seed)?;
         Ok(uuid::Uuid::from_bytes(id).to_string())
     }
@@ -350,6 +373,38 @@ impl Wiring {
             }
         }
         Ok(())
+    }
+}
+
+/// The end of the session's first incarnation, as its run's end tells it
+/// (keyed as the run's teller keys it).
+fn incarnation_ended(cover: &Cover) -> CommandBook {
+    use angzarr_embedded::markup::DomainMessage;
+    use angzarr_embedded::v1::{Fact, FactOrigin};
+    let session = cover
+        .root
+        .as_ref()
+        .and_then(|root| uuid::Uuid::from_slice(&root.value).ok())
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+    let fact = sessions::RecordIncarnationEnded {
+        incarnation: 1,
+        cause: "runner-exit".to_string(),
+    };
+    CommandBook {
+        cover: Some(cover.clone()),
+        page: Some(CommandPage {
+            body: Some(command_page::Body::Fact(Fact {
+                payload: Some(
+                    angzarr_embedded::Any::from_msg(&fact.to_wire()).expect("a fact encodes"),
+                ),
+                origin: Some(FactOrigin {
+                    external_id: format!("incarnation-ended:{session}:1"),
+                    description: String::new(),
+                }),
+            })),
+            ..CommandPage::default()
+        }),
     }
 }
 

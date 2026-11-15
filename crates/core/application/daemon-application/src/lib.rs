@@ -19,6 +19,10 @@
 //!   case's one-shot run in the daemon over its one store, in its client's
 //!   environment (the engine's TURN command, owner s4-Q8), its engine
 //!   stopped by the tick's stop step once its run's stream asks.
+//! - The interactive sessions it prepares ([`Terminals`], U5, T9): each is
+//!   the run use case's interactive session run in the daemon, its one
+//!   launch handed to the frontend that asked ([`Frontended`]), which starts
+//!   it on the user's terminal and reports its start and exit.
 //! - Engines are resolved by NAME through the registry the root composes
 //!   ([`HostedEngine`]: an `Engine` beside its `ChildEngine`), never one
 //!   adapter named in code.
@@ -31,6 +35,7 @@ mod daemon;
 mod one_shot;
 mod ports;
 mod rehost;
+mod terminal;
 
 pub use daemon::{Daemon, Folds, Place, Ports, Taken};
 pub use one_shot::{
@@ -42,6 +47,11 @@ pub use ports::{
     Kept, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
+pub use terminal::{
+    Created as TerminalCreated, FrontendReports, Frontended, Placed as TerminalPlaced, Seen,
+    TerminalHost, TerminalRequest, Terminals, Told as TerminalTold, Waits, Watch as TerminalWatch,
+    POLL, START_WITHIN,
+};
 
 #[cfg(test)]
 #[path = "daemon.test.rs"]

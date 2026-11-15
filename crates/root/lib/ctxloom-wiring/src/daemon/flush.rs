@@ -56,13 +56,6 @@ pub(crate) enum Flushed {
 /// binary's; a test's own under test-support), within [`FLUSH_BOUND`].
 /// The frontend calls it at its start and its exit report (slice 4 U5);
 /// a command on its way in calls it through [`on_the_way_in`].
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "slice 4 U5's frontend calls it at its start and its exit report"
-    )
-)]
 pub(crate) fn flush_holds(wiring: &Wiring, stamp: &str) -> Flushed {
     let own = own_stamp(wiring.env(), stamp);
     match serving_here(wiring, &files_of(wiring)) {
@@ -129,7 +122,7 @@ pub(crate) fn on_the_way_in(wiring: &Wiring, own: &str, found: &run_ports::Disco
 /// What this process's flush set aside, to be said once on stderr.
 static SAID: Mutex<Vec<HeldSetAside>> = Mutex::new(Vec::new());
 
-fn to_say(notices: Vec<HeldSetAside>) {
+pub(crate) fn to_say(notices: Vec<HeldSetAside>) {
     if let Ok(mut said) = SAID.lock() {
         said.extend(notices);
     }

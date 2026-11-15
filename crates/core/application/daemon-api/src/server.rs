@@ -277,6 +277,9 @@ pub struct Api<E> {
     /// Where a child's hand-off is planned and kept; none, `CreateHandOff`
     /// and `DeleteHandOff` fail.
     pub(crate) hand_offs: Option<Arc<dyn crate::HandOffs>>,
+    /// The interactive sessions the daemon prepares (U5); none, a TERMINAL
+    /// `CreateRun` fails.
+    pub(crate) terminals: Option<Arc<daemon_application::Terminals>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -287,6 +290,16 @@ impl<E: Edge> Api<E> {
             assemblies: None,
             one_shots: None,
             hand_offs: None,
+            terminals: None,
+        }
+    }
+
+    /// The API, its interactive sessions prepared by `terminals` (U5).
+    #[must_use]
+    pub fn preparing_terminals(self, terminals: Arc<daemon_application::Terminals>) -> Api<E> {
+        Api {
+            terminals: Some(terminals),
+            ..self
         }
     }
 

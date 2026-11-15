@@ -123,6 +123,38 @@ fn the_user_may_ask_a_run_to_stop_and_nothing_else_of_the_runs_domain() {
         .is_err());
 }
 
+// U5: a frontend reports its terminal session's start and exit (or that it
+// never started), as facts of the run; no other runner fact, and none as a
+// command.
+#[test]
+fn the_user_may_report_a_terminal_s_start_and_exit_and_no_other_runner_fact() {
+    let list = user_allowlist();
+    for type_url in [
+        url::<runs::RunnerStarted>(),
+        url::<runs::RunExited>(),
+        url::<runs::LaunchFailed>(),
+    ] {
+        assert!(
+            list.permits_body(BodyKind::Fact, &type_url).is_ok(),
+            "{type_url}"
+        );
+        assert!(
+            list.permits_body(BodyKind::Command, &type_url).is_err(),
+            "{type_url}"
+        );
+    }
+    for type_url in [
+        url::<runs::TurnCompleted>(),
+        url::<runs::RunnerLost>(),
+        url::<runs::LaunchOrphaned>(),
+    ] {
+        assert!(
+            list.permits_body(BodyKind::Fact, &type_url).is_err(),
+            "{type_url}"
+        );
+    }
+}
+
 // The gate keeps the digest alone: nothing it renders is the bearer.
 #[test]
 fn the_gate_shows_no_bearer() {

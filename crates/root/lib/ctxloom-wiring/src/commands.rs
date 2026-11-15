@@ -64,12 +64,12 @@ pub(crate) fn build_deps(wiring: &Wiring) -> Result<Deps, LibError> {
     }))))
 }
 
-/// `run --one-shot`, or `run` (the human's session): the library plans it, the
-/// run use cases do it. A one-shot's prompt piped on standard input is read
-/// only where nothing else gave one; a session is given the terminal.
+/// `run --one-shot`, or `run` (the human's session): the user's daemon plans
+/// and records it, this command its client (U4) or its frontend (U5). A
+/// one-shot's prompt piped on standard input is read only where nothing else
+/// gave one; a session is given the terminal.
 fn one_shot(
     (env, version): (&Arc<EnvSnapshot>, &str),
-    deps: &Rc<Deps>,
     run: &clap::ArgMatches,
     call: &Call<'_>,
     catalog: &Catalog,
@@ -77,12 +77,7 @@ fn one_shot(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let wiring = Wiring::new(Arc::clone(env)).map_err(|e| Failure::new(e, Exit::FAILED))?;
-    let remotes: Rc<dyn deps_ports::RemoteLibrary> = deps.clone();
-    let library =
-        crate::library::build(&wiring, Some(remotes)).map_err(|e| Failure::new(e, Exit::FAILED))?;
-    let mut uses = crate::oneshot::OneShots::new(&wiring, library)
-        .with_puller(Rc::new(DepsPuller(Rc::clone(deps))))
-        .stamped(version);
+    let mut uses = crate::oneshot::OneShots::new(&wiring).stamped(version);
     if !run_cli::is_one_shot(run) {
         return run_cli::session(&mut uses, run, call, catalog, out, err);
     }
@@ -397,11 +392,13 @@ impl Commands {
         err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
         let env = Arc::clone(&self.env);
+        let stamp = self.version.clone();
         let wired = self.wired().map_err(|e| Failure::new(e, Exit::FAILED))?;
         let terminal = crate::interview::StdTerminal::new(&env);
         let sessions = crate::interview::SetupSessions {
             env: &env,
             flags: &call.globals,
+            stamp: &stamp,
         };
         let uses = setup_cli::UseCases {
             auth: &wired.setup.auth,
@@ -564,7 +561,7 @@ impl Commands {
         if noun == "run" {
             let run = call.matches.subcommand_matches("run");
             if let Some(run) = run.filter(|m| !cli_support::flag(m, "dry-run")) {
-                return one_shot((&env, &version), &wired.deps, run, call, catalog, out, err);
+                return one_shot((&env, &version), run, call, catalog, out, err);
             }
         }
         if SURFACE_NOUNS.contains(&noun) {

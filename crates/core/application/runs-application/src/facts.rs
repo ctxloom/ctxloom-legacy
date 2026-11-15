@@ -88,6 +88,23 @@ fn turn_key(turn: u64, message_ids: &[String]) -> String {
         .unwrap_or_else(|| turn.to_string())
 }
 
+/// The book of the core's `LaunchFailed` of `run`, keyed as
+/// [`Facts::launch_failed`] records it (`launch-failed:<run>`): what a
+/// frontend reports of a terminal launch it never started (U5), so the
+/// frontend's report and the daemon's own record are one fact.
+pub fn launch_failed_book(run: &Uuid, deterministic: bool, detail: &str) -> CommandBook {
+    let cover = Cover {
+        domain: runs::RUN_DOMAIN.to_string(),
+        root: Some(run.clone()),
+        edition: None,
+    };
+    let fact = runs::LaunchFailed {
+        deterministic,
+        detail: detail.to_string(),
+    };
+    book_of(cover, any_of(&fact), format!("launch-failed:{}", text(run)))
+}
+
 /// The book of a fact on `cover`.
 fn book_of(cover: Cover, payload: Any, external_id: String) -> CommandBook {
     CommandBook {

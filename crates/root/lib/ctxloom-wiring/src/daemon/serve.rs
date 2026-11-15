@@ -133,13 +133,14 @@ pub(crate) fn serve(
         // What the loop shares with the API's use cases (slice 2 step 5).
         let shared = Arc::new(Shared::new(kept.index.clone().unwrap_or_default()));
         let one_shots = one_shots_over(&core, home, &temp);
+        let terminals = terminals_over(&core, home, &temp);
         let started = start(
             &fs,
             (home, &temp),
             &core,
             &kept,
             (os, user_home, stamp, pace, engines),
-            (&files, &shared, &one_shots),
+            (&files, &shared, &one_shots, &terminals),
             (&say, &env),
         )
         .await;
@@ -151,6 +152,7 @@ pub(crate) fn serve(
                 drop(shared);
                 drop(kept);
                 drop(one_shots);
+                drop(terminals);
                 said(&say, &format!("the start failed: {detail}"));
                 match core.close().await {
                     Ok(()) => said(&say, "the store is closed"),
@@ -165,7 +167,7 @@ pub(crate) fn serve(
             &mut launcher,
             &core,
             (&files, &own, &held),
-            (pace, &shared),
+            (pace, &shared, &terminals),
             &say,
         )
         .await;
@@ -192,6 +194,10 @@ pub(crate) fn serve(
         drop(shared);
         drop(kept);
         drop(one_shots);
+        // A session a frontend still runs keeps its thread (and its copy of
+        // the core) until its frontend reports: the store's close then says
+        // so, and the frontend reports to the next daemon (S17).
+        drop(terminals);
         said(&say, "exited");
         // Closed, not dropped (ruling 131).
         if let Err(unclosed) = core.close().await {
@@ -226,6 +232,32 @@ fn one_shots_over(
     )))
 }
 
+/// What a daemon's start shares with its loop and its API: its files, the
+/// round's state, the one-shots it hosts and the sessions it prepares.
+type Hosts<'a> = (
+    &'a DaemonFiles,
+    &'a Arc<Shared>,
+    &'a Arc<OneShots>,
+    &'a Arc<daemon_application::Terminals>,
+);
+
+/// The interactive sessions the daemon prepares (U5), each over `core`
+/// shared, on the daemon's runtime: the API creates and watches them.
+fn terminals_over(
+    core: &InProcessCore<SqliteStore>,
+    home: &Path,
+    temp: &Path,
+) -> Arc<daemon_application::Terminals> {
+    Arc::new(daemon_application::Terminals::new(Box::new(
+        crate::frontend::HostedTerminals {
+            core: core.share(),
+            runtime: tokio::runtime::Handle::current(),
+            home: home.to_path_buf(),
+            temp: temp.to_path_buf(),
+        },
+    )))
+}
+
 /// The daemon started (its bearer and certificate minted, its listener
 /// serving the coordinator and the `Ctxloom` service, the launcher
 /// composed, the discovery file published): the listener, the launcher and
@@ -243,7 +275,7 @@ async fn start(
         Pace,
         Vec<daemon_application::HostedEngine>,
     ),
-    (files, shared, one_shots): (&DaemonFiles, &Arc<Shared>, &Arc<OneShots>),
+    (files, shared, one_shots, terminals): Hosts<'_>,
     (say, env): (&Say, &Arc<process_env::EnvSnapshot>),
 ) -> Result<(HookListener, Daemon<CoreEdge, OsTokenSource>, Discovery), String> {
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
@@ -294,7 +326,7 @@ async fn start(
         .hosting_one_shots(Arc::clone(one_shots)),
         fs,
         (home, temp),
-        &engines,
+        (&engines, terminals),
     );
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
@@ -374,19 +406,25 @@ async fn swept_and_advertised(
 /// The API the daemon serves: `api`, a project's context assembled from its
 /// registered root (slice 3 step 6), and a child's hand-off planned, judged
 /// and kept here (slice 4 U3), over `home`, `temp` and the `engines` its
-/// children are hosted on.
+/// children are hosted on, and the interactive sessions `terminals`
+/// prepares (U5).
 fn served(
     api: daemon_api::Api<CoreEdge>,
     fs: &Arc<dyn Fs>,
     (home, temp): (&Path, &Path),
-    engines: &[daemon_application::HostedEngine],
+    (engines, terminals): (
+        &[daemon_application::HostedEngine],
+        &Arc<daemon_application::Terminals>,
+    ),
 ) -> Arc<dyn daemon_api::Calls> {
     Arc::new(
-        api.assembling(Arc::new(super::places::ProjectAssemblies {
-            home: home.to_path_buf(),
-            temp: temp.to_path_buf(),
-        }))
-        .handing_off(super::files::api_hand_offs(fs, (home, temp), engines)),
+        // The sessions it prepares (U5).
+        api.preparing_terminals(Arc::clone(terminals))
+            .assembling(Arc::new(super::places::ProjectAssemblies {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+            }))
+            .handing_off(super::files::api_hand_offs(fs, (home, temp), engines)),
     )
 }
 
@@ -567,7 +605,7 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
     launcher: &mut Daemon<E, T>,
     core: &InProcessCore<SqliteStore>,
     (files, own, held): (&DaemonFiles, &Discovery, &Instance),
-    (pace, shared): (Pace, &Arc<Shared>),
+    (pace, shared, terminals): (Pace, &Arc<Shared>, &daemon_application::Terminals),
     say: &Say,
 ) -> Result<(), String> {
     let mut quiet_since = Instant::now();
@@ -631,7 +669,9 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
         let round = shared.round_starts();
         let busy = launcher.tick(core.store(), core.catalog(), draining).await;
         shared.round_done(round);
-        if busy || launcher.hosting() > 0 {
+        // A session it prepares (asked for, or its frontend's TUI running)
+        // keeps it: its frontend is a client it serves (U5).
+        if busy || launcher.hosting() > 0 || terminals.hosting() > 0 {
             quiet_since = Instant::now();
         } else if quiet_since.elapsed() >= pace.idle {
             // M9: a run any process started and has not ended (an

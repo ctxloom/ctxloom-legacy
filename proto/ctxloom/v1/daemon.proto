@@ -6,9 +6,9 @@ syntax = "proto3";
 // ResolveProject, GetProject, GetSession, ListSessions, SearchSessions, and
 // in a `session-destroy` build DeleteSession and SweepSessions; slice 3 adds
 // GetTranscript and AssembleContext (its fragments and tags); slice 4 adds
-// CreateHandOff and DeleteHandOff (a child's launch, U3), and CreateRun for a
-// ONE_SHOT run (a TERMINAL one answers UNIMPLEMENTED until U5), GetRun and
-// WatchRun (U4); every other method answers UNIMPLEMENTED.
+// CreateHandOff and DeleteHandOff (a child's launch, U3), CreateRun for a
+// ONE_SHOT run, GetRun and WatchRun (U4), and CreateRun for a TERMINAL run,
+// answered with its launch (U5); every other method answers UNIMPLEMENTED.
 //
 // THE USER'S DAEMON'S API (T1-T30; the owner's API rulings Q1-Q13; rulings
 // 146, 147). It MIRRORS THE COMMAND LINE (T22): the CLI's nouns are AIP

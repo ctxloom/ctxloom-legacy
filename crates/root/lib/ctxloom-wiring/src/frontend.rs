@@ -1,0 +1,779 @@
+//! The interactive session as the user's daemon prepares it and its
+//! frontend starts it (U5: T9, S3, S17, S20), wired.
+//!
+//! The DAEMON's half ([`HostedTerminals`]): each session on a thread of its
+//! own, the run use case's `Runs::interactive` over the daemon's one store,
+//! in the environment and working directory its client sent (S7), planned,
+//! enqueued, named, minted and set up exactly as before, its runner the
+//! daemon-application's `Frontended`: the one launch handed to the client
+//! that asked, the frontend's start and exit read from the run's stream
+//! ([`StoreReports`]), the session's lock the frontend's.
+//!
+//! The FRONTEND's half ([`client_terminal`], the command `ctxloom run`, and
+//! init's interview): its project resolved and named by the daemon, the
+//! daemon reached (started if none serves, S16; none, exit 10 before
+//! anything is planned), `CreateRun{TERMINAL}` answered with the launch,
+//! then `run_application::frontend` over this host: the session's lock
+//! taken, the TUI started on this terminal with exactly the launch's
+//! program, arguments, environment and directory (`run_terminal`), its
+//! start and exit reported as the run's facts through the coordinator's
+//! `Handle`, each retried on whichever daemon serves for up to 60 s (S17).
+//! While the TUI runs, the run's `WatchRun` is followed (reopened on the
+//! next daemon when one dies): a `stop` asks the TUI to stop, then kills it
+//! after the grace (S20), and once the TUI is over the run's last notices
+//! and its end are read, for a while. SIGHUP and SIGTERM stop the TUI too
+//! (ruling 114); a SIGINT is the terminal's, and the engine's.
+//!
+//! Nothing here opens the store in the command's process (T1).
+
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
+use std::time::{Duration, Instant};
+
+use angzarr_embedded::angzarr_store_sqlite::SqliteStore;
+use angzarr_embedded::v1::{event_page, CommandBook, Cover, Uuid};
+use angzarr_embedded::Payload;
+use daemon_application::{
+    FrontendReports, Frontended, HostRequest, Seen, TerminalHost, TerminalTold, Waits,
+};
+use daemon_ports::{Called, DaemonApi, Daemons, RunEvents};
+use daemon_proto::v1;
+use host_launcher::HostLauncher;
+use library_application::{Flags, Notice};
+use run_application::frontend::{Frontend, Pause, Prepared, Report, Reports, Terminal};
+use run_application::{client, Done, Ended, OneShot, RunError};
+use run_ports::{BoxFuture, Delivery, Edge, Launch, LaunchAt, LaunchFailure, Limits, Running};
+use session_ports::{Held, LockError, SessionLock};
+
+use crate::daemon::Reach;
+use crate::oneshot::{hosted_setup, runs_over, Driven, Hosted};
+use crate::signals::{self, Heard};
+use crate::Wiring;
+
+/// How long, once the TUI is over and its exit reported, the run's last
+/// notices and its end are waited for.
+const LAST_WORD: Duration = Duration::from_secs(10);
+
+/// How long a broken watch waits before it is opened again on the daemon
+/// that serves then.
+const WATCH_AGAIN: Duration = Duration::from_millis(250);
+
+/// The stack of the thread a prepared session is driven on, as a main
+/// thread's is.
+const SESSION_STACK: usize = 16 * 1024 * 1024;
+
+/// The runtime the frontend runs on: multi-thread, so the run's watch and
+/// its reports make progress while the TUI is waited for on a blocking
+/// thread ([`run_ports::Running::finish`] blocks).
+pub(crate) fn run_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+}
+
+// ----------------------------------------------------------- the daemon's
+
+/// What prepares the daemon's interactive sessions (U5): each on a thread of
+/// its own, over the daemon's ONE store (its core shared), in the
+/// environment and directory its client sent (S7).
+pub(crate) struct HostedTerminals {
+    pub(crate) core: crate::SharedCore<SqliteStore>,
+    /// The daemon's runtime, which each session is driven on.
+    pub(crate) runtime: tokio::runtime::Handle,
+    pub(crate) home: PathBuf,
+    pub(crate) temp: PathBuf,
+}
+
+impl TerminalHost for HostedTerminals {
+    // Spawns the thread a prepared session runs on; the acceptance tests
+    // drive it (run.feature's daemon Rule, j002700).
+    #[cfg_attr(test, mutants::skip)]
+    fn host(&self, request: HostRequest, told: TerminalTold) {
+        let core = self.core.clone();
+        let runtime = self.runtime.clone();
+        let (home, temp) = (self.home.clone(), self.temp.clone());
+        let spawned = std::thread::Builder::new()
+            .name("ctxloom-terminal".to_string())
+            // A session's whole run is driven on it (the plan, the set-up,
+            // the launcher): more than a thread's default stack holds.
+            .stack_size(SESSION_STACK)
+            .spawn({
+                let told = told.clone();
+                move || {
+                    let hosted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        runtime.block_on(Box::pin(host_terminal(
+                            core,
+                            (&home, &temp),
+                            request,
+                            told.clone(),
+                        )))
+                    }));
+                    let done = hosted.unwrap_or_else(|_| Done {
+                        result: Err(RunError::NotStarted {
+                            detail: "the daemon's session panicked".to_string(),
+                        }),
+                        notices: Vec::new(),
+                    });
+                    told.done(events_of(&done));
+                }
+            });
+        if let Err(e) = spawned {
+            told.done(events_of(&Done {
+                result: Err(RunError::NotStarted {
+                    detail: format!("no thread for the session: {e}"),
+                }),
+                notices: Vec::new(),
+            }));
+        }
+    }
+}
+
+/// What a prepared session's end says on its watch: what it noticed, then
+/// its end (exit 0 and no code for a session that ended; its error's
+/// otherwise).
+pub(crate) fn events_of(done: &Done<Ended>) -> Vec<v1::RunEvent> {
+    let event = |event| v1::RunEvent { event: Some(event) };
+    let mut events: Vec<v1::RunEvent> = done
+        .notices
+        .iter()
+        .map(|notice| event(v1::run_event::Event::Notice(client::notice_of(notice))))
+        .collect();
+    let end = match &done.result {
+        Ok(_) => client::answered(),
+        Err(error) => client::end_of(error),
+    };
+    events.push(event(v1::run_event::Event::End(end)));
+    events
+}
+
+/// A session's lock the daemon does not take: its frontend does.
+struct Unheld;
+
+impl SessionLock for Unheld {
+    fn hold(&mut self, _: &str) -> Result<Held, LockError> {
+        Ok(Held::new(()))
+    }
+}
+
+/// One prepared session, start to end (`Runs::interactive` over the
+/// daemon's core, in its client's wiring), its launch handed to its
+/// frontend by the runner.
+async fn host_terminal(
+    core: crate::SharedCore<SqliteStore>,
+    places: (&Path, &Path),
+    request: HostRequest,
+    told: TerminalTold,
+) -> Done<Ended> {
+    let hosted = match hosted_setup(places, &request).await {
+        Ok(hosted) => hosted,
+        Err((error, notices)) => {
+            return Done {
+                result: Err(error),
+                notices,
+            }
+        }
+    };
+    let Hosted {
+        wiring,
+        library,
+        output_dir,
+        synced,
+        project,
+    } = hosted;
+    let fs = wiring.fs();
+    let project_dir = wiring.project_dir();
+    let locks = liveness::LockFiles::new(Arc::clone(&fs), project_dir.clone());
+    let runner = Frontended {
+        told,
+        project_harp: project.1.clone(),
+        reports: Arc::new(StoreReports {
+            edge: core.edge(),
+            runtime: tokio::runtime::Handle::current(),
+        }),
+        waits: Arc::new(Waited(Instant::now())),
+        locks: Arc::new(liveness::RunLockFiles::new(Arc::clone(&fs), places.0)),
+        project_dir: project_dir.display().to_string(),
+        lock_path: Arc::new(move |harp: &str| locks.path(harp).display().to_string()),
+        finder: Arc::new(HostLauncher::default().searching(Arc::clone(&fs))),
+    };
+    let driven = Driven {
+        runner,
+        locks: Box::new(Unheld),
+    };
+    let mut runs = runs_over(&wiring, library, &output_dir, driven, core, project);
+    let mut done = runs.interactive(&request.flags, &request.request).await;
+    // Every part of the run let go before it is told over: the daemon
+    // closes its store once nothing holds it.
+    drop(runs);
+    let mut notices = synced;
+    notices.append(&mut done.notices);
+    done.notices = notices;
+    done
+}
+
+/// The daemon's clock, for a session waiting on its frontend.
+struct Waited(Instant);
+
+impl Waits for Waited {
+    fn elapsed(&self) -> Duration {
+        self.0.elapsed()
+    }
+
+    // Sleeps the session's own thread between two reads of its run.
+    #[cfg_attr(test, mutants::skip)]
+    fn wait(&self, pause: Duration) {
+        std::thread::sleep(pause);
+    }
+}
+
+/// The frontend's reports as the daemon's store holds them: read from the
+/// run's stream and the session's, on the daemon's runtime, the session's
+/// thread waiting for the answer.
+struct StoreReports<E> {
+    edge: Arc<E>,
+    runtime: tokio::runtime::Handle,
+}
+
+/// The stream of `domain` whose root is `id` (UUID text).
+fn cover(domain: &str, id: &str) -> Cover {
+    let root = uuid::Uuid::parse_str(id).unwrap_or_default();
+    Cover {
+        domain: domain.to_string(),
+        root: Some(Uuid::from_bytes(*root.as_bytes())),
+        edition: None,
+    }
+}
+
+impl<E: Edge + 'static> FrontendReports for StoreReports<E> {
+    fn seen(&self, at: &LaunchAt) -> Seen {
+        let edge = Arc::clone(&self.edge);
+        let (run, session) = (
+            cover(runs::RUN_DOMAIN, &at.run),
+            cover(sessions::SESSION_DOMAIN, &at.session),
+        );
+        let (tell, heard) = std::sync::mpsc::channel();
+        self.runtime.spawn(async move {
+            let run = edge.events(&run, 0).await.unwrap_or_default();
+            let session = edge.events(&session, 0).await.unwrap_or_default();
+            let _ = tell.send((run, session));
+        });
+        let Ok((run, session)) = heard.recv() else {
+            return Seen::default();
+        };
+        seen_in(&run, &session)
+    }
+}
+
+/// What the frontend's reports came to, as the run's and the session's
+/// pages hold them: the start's pid, the run's end (its exit, or, before
+/// any start, why it never started), and whether the session was closed.
+fn seen_in(
+    run: &[angzarr_embedded::v1::EventPage],
+    session: &[angzarr_embedded::v1::EventPage],
+) -> Seen {
+    let mut seen = Seen::default();
+    for any in bodies(run) {
+        match runs::RunEvent::from_any(any) {
+            Ok(runs::RunEvent::RunnerStartedRecorded(started)) => seen.started = Some(started.pid),
+            Ok(runs::RunEvent::RunEnded(ended)) => match seen.started {
+                Some(_) => {
+                    seen.exited = Some(run_ports::Exit {
+                        code: ended.exit_code,
+                        signal: None,
+                    })
+                }
+                None => {
+                    seen.failed = Some(LaunchFailure {
+                        deterministic: true,
+                        detail: ended.detail,
+                    })
+                }
+            },
+            _ => {}
+        }
+    }
+    seen.closed = bodies(session).any(|any| any.type_url.ends_with(".SessionClosed"));
+    seen
+}
+
+fn bodies(
+    pages: &[angzarr_embedded::v1::EventPage],
+) -> impl Iterator<Item = &angzarr_embedded::Any> {
+    pages.iter().filter_map(|page| match &page.body {
+        Some(event_page::Body::Event(any)) => Some(any),
+        _ => None,
+    })
+}
+
+// --------------------------------------------------------- the frontend's
+
+/// `ctxloom run` (and init's interview) as the frontend of the session the
+/// user's daemon prepares (U5, T9): see the module.
+pub(crate) fn client_terminal(
+    wiring: &Wiring,
+    stamp: &str,
+    flags: &Flags,
+    request: &OneShot,
+) -> Done<Ended> {
+    let refused = |error: RunError| Done {
+        result: Err(error),
+        notices: Vec::new(),
+    };
+    // Resolved before the run's runtime starts: the resolution blocks on a
+    // runtime of its own.
+    let parent = match crate::daemon::library_parent(wiring, stamp, crate::Minting::AtRoot) {
+        Ok(parent) => parent,
+        Err(failure) => return refused(crate::oneshot::failed(failure)),
+    };
+    let runtime = match run_runtime() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            return refused(RunError::NotStarted {
+                detail: e.to_string(),
+            })
+        }
+    };
+    let (stop, heard) = (host_launcher::Stop::new(), Heard::default());
+    let mut done = runtime.block_on(async {
+        let mut said = Vec::new();
+        // Made on the runtime, before anything is launched.
+        let hearing = match wiring.fs().os().signals(&signals::HEARD) {
+            Ok(signals) => Some(tokio::spawn(signals::forward(
+                signals,
+                &signals::STOP_SESSION,
+                stop.clone(),
+                heard.clone(),
+            ))),
+            Err(e) => {
+                said.push(Notice::text(format!(
+                    "cannot listen for signals ({e}): a signal ends ctxloom without stopping the engine"
+                )));
+                None
+            }
+        };
+        let asked = client::Asked {
+            parent,
+            cwd: wiring
+                .env()
+                .cwd()
+                .map(|cwd| cwd.display().to_string())
+                .unwrap_or_default(),
+            env: wiring.env().vars_utf8().into_iter().collect(),
+            flags: flags.clone(),
+            request: request.clone(),
+            request_id: crate::daemon::request_id(),
+        };
+        let mut done = terminal(wiring, stamp, &asked, &stop).await;
+        if let Some(hearing) = hearing {
+            hearing.abort();
+        }
+        said.append(&mut done.notices);
+        done.notices = said;
+        done
+    });
+    heard.overrule(&mut done.result);
+    done
+}
+
+/// The session: created, then started and followed (see the module).
+async fn terminal(
+    wiring: &Wiring,
+    stamp: &str,
+    asked: &client::Asked,
+    stop: &host_launcher::Stop,
+) -> Done<Ended> {
+    let refused = |error: RunError, notices: Vec<Notice>| Done {
+        result: Err(error),
+        notices,
+    };
+    // H3: reaching the daemon delivers the home's holds first, at the
+    // session's start (`Reach`'s flush on the way in).
+    let reach = Reach::new(wiring, stamp);
+    let api = match reach.reach().await {
+        Ok(api) => api,
+        Err(unreached) => return refused(RunError::Unreached(unreached), Vec::new()),
+    };
+    let mut create = client::create_request(asked);
+    create.mode = v1::run::Mode::Terminal as i32;
+    let run = match api.create_run(create).await {
+        Ok(run) => run,
+        Err(called) => return refused(RunError::Called(Box::new(called)), Vec::new()),
+    };
+    let mut notices: Vec<Notice> = run.notices.iter().map(client::noticed).collect();
+    if let Some(end) = &run.end {
+        let error = client::error_of(end).unwrap_or(RunError::NotStarted {
+            detail: "the daemon ended the session before its launch".to_string(),
+        });
+        return refused(error, notices);
+    }
+    let Some(launch) = run.launch.as_ref().and_then(daemon_api::launch::from_wire) else {
+        return refused(
+            RunError::NotStarted {
+                detail: "the daemon answered no launch".to_string(),
+            },
+            notices,
+        );
+    };
+    #[cfg(feature = "test-support")]
+    record_launch(wiring, &launch);
+    let prepared = Prepared {
+        run: run.name.clone(),
+        session: run.session.clone(),
+        launch,
+    };
+    let reports = DaemonReports {
+        reach: Reach::new(wiring, stamp),
+    };
+    let tty = Tty(HostLauncher::stopped_by(stop.clone()));
+    let mut locks = liveness::LockFiles::new(wiring.fs(), project_of(&prepared.launch, wiring));
+    let clock = Clock(Instant::now());
+    let over = Over::default();
+    let followed = Mutex::new(Followed::default());
+    let session = async {
+        let mut frontend = Frontend {
+            locks: &mut locks,
+            terminal: &tty,
+            reports: &reports,
+            pause: &clock,
+            limits: Limits::new(crate::oneshot::TURN_DEADLINE),
+        };
+        let done = frontend.run(&prepared).await;
+        over.set();
+        done
+    };
+    let watched = follow(&reach, &run.name, stop, &over, &followed);
+    let (mut done, ()) = both(session, watched).await;
+    // H3: once the exit is reported, what the session's hooks held is
+    // delivered too; what it set aside is said as the command ends.
+    let flushed = crate::daemon::flush::flush_holds(wiring, stamp);
+    crate::daemon::flush::to_say(crate::daemon::flush::notices(&flushed));
+    let followed = followed.into_inner().unwrap_or_else(|e| e.into_inner());
+    notices.extend(followed.notices);
+    notices.append(&mut done.notices);
+    done.notices = notices;
+    // The daemon's own word on the run, once the TUI is over: an error of
+    // its (the run's end not recorded) is the command's.
+    if let Some(error) = followed.end.as_ref().and_then(client::error_of) {
+        if done.result.is_ok() {
+            done.result = Err(error);
+        }
+    }
+    done
+}
+
+/// The project whose session the launch's lock is of: three up from it
+/// (`<project>/.ctxloom/sessions/<harp>.lock`), else this command's.
+fn project_of(launch: &Launch, wiring: &Wiring) -> PathBuf {
+    Path::new(&launch.session_lock)
+        .ancestors()
+        .nth(3)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map_or_else(|| wiring.project_dir(), Path::to_path_buf)
+}
+
+/// The TUI on this terminal: `run_terminal`, its wait on a blocking thread.
+struct Tty(HostLauncher);
+
+impl Terminal for Tty {
+    fn start(&self, launch: &Launch, limits: &Limits) -> Result<Box<dyn Running>, LaunchFailure> {
+        run_ports::RunnerLauncher::start(&self.0, launch, limits)
+    }
+
+    fn wait(
+        &self,
+        running: Box<dyn Running>,
+    ) -> BoxFuture<'_, Result<run_ports::TurnOutput, LaunchFailure>> {
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || running.finish())
+                .await
+                .unwrap_or_else(|e| {
+                    Err(LaunchFailure {
+                        deterministic: false,
+                        detail: e.to_string(),
+                    })
+                })
+        })
+    }
+}
+
+/// The frontend's clock.
+struct Clock(Instant);
+
+impl Pause for Clock {
+    fn elapsed(&self) -> Duration {
+        self.0.elapsed()
+    }
+
+    fn pause(&self, pause: Duration) -> BoxFuture<'_, ()> {
+        Box::pin(tokio::time::sleep(pause))
+    }
+}
+
+/// The frontend's reports, each attempt to the daemon serving then (found,
+/// or started when none serves), through the coordinator's `Handle`.
+struct DaemonReports<'a> {
+    reach: Reach<'a>,
+}
+
+impl Reports for DaemonReports<'_> {
+    fn deliver<'a>(&'a self, launch: &'a Launch, report: &'a Report) -> BoxFuture<'a, Delivery> {
+        Box::pin(async move {
+            let api = match self.reach.reach().await {
+                Ok(api) => api,
+                Err(unreached) => {
+                    return Delivery::Unavailable {
+                        detail: unreached.to_string(),
+                    }
+                }
+            };
+            delivery_of(api.handle(report_book(launch, report)).await)
+        })
+    }
+}
+
+/// What a report's `Handle` came to, as a delivery: applied, a duplicate, a
+/// daemon not there (worth another), or refused (final).
+fn delivery_of(handled: Result<bool, Called>) -> Delivery {
+    match handled {
+        Ok(true) => Delivery::Applied,
+        Ok(false) => Delivery::Duplicate,
+        Err(Called::Unreachable { detail }) => Delivery::Unavailable { detail },
+        Err(called) => Delivery::Refused {
+            detail: called.to_string(),
+        },
+    }
+}
+
+/// The fact a report is, on the run's stream, keyed by its run as the
+/// launcher keys its own (`started:<run>`, `exit:<run>`,
+/// `launch-failed:<run>`): a report the daemon also records is one fact.
+fn report_book(launch: &Launch, report: &Report) -> CommandBook {
+    let id = |text: &str| {
+        let id = uuid::Uuid::parse_str(text).unwrap_or_default();
+        Uuid::from_bytes(*id.as_bytes())
+    };
+    let who = runs_application::Identity {
+        run: id(&launch.at.run),
+        session: id(&launch.at.session),
+        incarnation: launch.at.incarnation,
+        harp: launch.at.harp.clone(),
+        depth: 0,
+    };
+    match report {
+        Report::Started { pid } => {
+            runs_application::RunnerFact::RunnerStarted(runs::RunnerStarted {
+                runtime: launch.engine.clone(),
+                workspace: launch.cwd.clone().unwrap_or_default(),
+                pid: *pid,
+            })
+            .book(&who)
+        }
+        Report::Exited { code, signal } => {
+            runs_application::RunnerFact::RunExited(runs::RunExited {
+                code: code.unwrap_or(0),
+                signal: signal.unwrap_or(0),
+            })
+            .book(&who)
+        }
+        Report::NotStarted {
+            deterministic,
+            detail,
+        } => runs_application::launch_failed_book(&who.run, *deterministic, detail),
+    }
+}
+
+/// Whether the TUI is over, once it is.
+#[derive(Default)]
+struct Over(std::sync::atomic::AtomicBool, tokio::sync::Notify);
+
+impl Over {
+    fn set(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.1.notify_waiters();
+    }
+
+    fn is_set(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Once the TUI is over, and [`LAST_WORD`] after.
+    async fn and_last_word(&self) {
+        while !self.is_set() {
+            let notified = self.1.notified();
+            if self.is_set() {
+                break;
+            }
+            notified.await;
+        }
+        tokio::time::sleep(LAST_WORD).await;
+    }
+}
+
+/// What the run's watch said: its notices and its end.
+#[derive(Default)]
+struct Followed {
+    notices: Vec<Notice>,
+    end: Option<v1::RunEnd>,
+}
+
+/// Follow the run `name` for the TUI's life, and its last word after: a
+/// `stop` asks the TUI to stop (`stop`); a broken watch (its daemon gone) is
+/// opened again on the next daemon; a daemon that does not know the run (a
+/// new one) has nothing more to say of it.
+async fn follow(
+    reach: &Reach<'_>,
+    name: &str,
+    stop: &host_launcher::Stop,
+    over: &Over,
+    followed: &Mutex<Followed>,
+) {
+    let mut until: Pin<Box<dyn Future<Output = ()> + Send + '_>> = Box::pin(over.and_last_word());
+    loop {
+        let opened = async {
+            let api = reach.reach().await.ok()?;
+            Some(
+                api.watch_run(v1::WatchRunRequest {
+                    name: name.to_string(),
+                })
+                .await,
+            )
+        };
+        let events = match first(Box::pin(opened), &mut until).await {
+            First::Right(()) => return,
+            First::Left(Some(Ok(events))) => events,
+            // Not this daemon's run (a new daemon), or not served: nothing
+            // more will be said of it.
+            First::Left(Some(Err(Called::Refused { .. } | Called::Unimplemented { .. }))) => return,
+            First::Left(_) => {
+                if over.is_set() {
+                    return;
+                }
+                tokio::time::sleep(WATCH_AGAIN).await;
+                continue;
+            }
+        };
+        if heard_out(events, stop, &mut until, followed).await {
+            return;
+        }
+        if over.is_set() {
+            return;
+        }
+        tokio::time::sleep(WATCH_AGAIN).await;
+    }
+}
+
+/// Read `events` until their end (true), the bound `until` (true), or a
+/// broken stream (false).
+async fn heard_out(
+    mut events: Box<dyn RunEvents>,
+    stop: &host_launcher::Stop,
+    until: &mut Pin<Box<dyn Future<Output = ()> + Send + '_>>,
+    followed: &Mutex<Followed>,
+) -> bool {
+    loop {
+        let next = match first(events.next(), until).await {
+            First::Right(()) => return true,
+            First::Left(next) => next,
+        };
+        let Some(Ok(event)) = next else {
+            return false;
+        };
+        let mut followed = followed.lock().unwrap_or_else(|e| e.into_inner());
+        match event.event {
+            Some(v1::run_event::Event::Stop(_)) => stop.request(),
+            Some(v1::run_event::Event::Notice(notice)) => {
+                followed.notices.push(client::noticed(&notice));
+            }
+            Some(v1::run_event::Event::End(end)) => {
+                followed.end = Some(end);
+                return true;
+            }
+            Some(v1::run_event::Event::Reply(_)) | None => {}
+        }
+    }
+}
+
+/// Which of two futures was ready first.
+enum First<A, B> {
+    Left(A),
+    Right(B),
+}
+
+/// Poll `left` and `right` until one is ready; `right` is left as it was,
+/// to be polled again.
+async fn first<A, B>(
+    mut left: Pin<Box<dyn Future<Output = A> + Send + '_>>,
+    right: &mut Pin<Box<dyn Future<Output = B> + Send + '_>>,
+) -> First<A, B> {
+    std::future::poll_fn(|cx| {
+        if let Poll::Ready(a) = left.as_mut().poll(cx) {
+            return Poll::Ready(First::Left(a));
+        }
+        if let Poll::Ready(b) = right.as_mut().poll(cx) {
+            return Poll::Ready(First::Right(b));
+        }
+        Poll::Pending
+    })
+    .await
+}
+
+/// Both futures, polled together, to their ends.
+async fn both<A, B>(a: impl Future<Output = A>, b: impl Future<Output = B>) -> (A, B) {
+    let (mut a, mut b) = (std::pin::pin!(a), std::pin::pin!(b));
+    let (mut left, mut right) = (None, None);
+    std::future::poll_fn(|cx| {
+        if left.is_none() {
+            if let Poll::Ready(value) = a.as_mut().poll(cx) {
+                left = Some(value);
+            }
+        }
+        if right.is_none() {
+            if let Poll::Ready(value) = b.as_mut().poll(cx) {
+                right = Some(value);
+            }
+        }
+        match (left.take(), right.take()) {
+            (Some(l), Some(r)) => Poll::Ready((l, r)),
+            (l, r) => {
+                left = l;
+                right = r;
+                Poll::Pending
+            }
+        }
+    })
+    .await
+}
+
+/// Under `test-support`, a terminal stood in (`CTXLOOM_TEST_TERMINAL`),
+/// the launch the frontend was handed, written to
+/// `<ctxloom home>/.ctxloom/test-frontend-launch.json`: the acceptance tests
+/// compare the TUI's program, arguments, environment and directory with it.
+/// Compiled out of the shipped binary.
+#[cfg(feature = "test-support")]
+fn record_launch(wiring: &Wiring, launch: &Launch) {
+    if wiring.env().non_empty("CTXLOOM_TEST_TERMINAL").is_none() {
+        return;
+    }
+    let record = serde_json::json!({
+        "program": launch.program,
+        "args": launch.args,
+        "env": launch.env,
+        "cwd": launch.cwd,
+        "session_home": launch.session_home,
+        "session_lock": launch.session_lock,
+    });
+    let path = wiring.home().join(".ctxloom/test-frontend-launch.json");
+    let _ = wiring.fs().write_atomic(
+        &path,
+        record.to_string().as_bytes(),
+        file_system::Perms::Exact(os::Mode::from_bits(0o600)),
+    );
+}
+
+#[cfg(test)]
+#[path = "frontend.test.rs"]
+mod tests;

@@ -69,6 +69,9 @@ enum TestVerb {
     SessionEvents {
         /// The session's harp
         harp: String,
+        /// The events of its run of this incarnation instead
+        #[arg(long)]
+        run: Option<u32>,
     },
     /// Print every stream of the one store, as json: each event's type,
     /// its payload's bytes, and what the record's readers ask of it
@@ -118,6 +121,9 @@ struct SeedArgs {
     /// An authored file in the session directory
     #[arg(long)]
     other_file: Vec<String>,
+    /// Its first incarnation ended, so it can be resumed
+    #[arg(long)]
+    resumable: bool,
 }
 
 impl From<SeedArgs> for Seed {
@@ -137,6 +143,7 @@ impl From<SeedArgs> for Seed {
             oneshot: args.oneshot,
             native,
             other_files: args.other_file,
+            resumable: args.resumable,
         }
     }
 }
@@ -241,9 +248,9 @@ pub(crate) fn run(
             let name = wiring.session_resource(&harp).map_err(failed)?;
             output(writeln!(out, "{name}"))
         }
-        TestVerb::SessionEvents { harp } => {
+        TestVerb::SessionEvents { harp, run } => {
             let wiring = wiring().map_err(failed)?;
-            let events = wiring.session_events(&harp).map_err(failed)?;
+            let events = wiring.session_events(&harp, run).map_err(failed)?;
             output(writeln!(out, "{events}"))
         }
         TestVerb::Record => {
