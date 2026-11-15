@@ -28,7 +28,8 @@
 //! record is delivered as the gap fact in its place (`RecordCaptureGap`,
 //! H3), so the session's record says what is missing; a record that is not
 //! a fact of this session (its external id is not its book's, or its book is
-//! another stream's) is dropped and said. The hook's time is the
+//! another stream's), and one the daemon finally refused or parked, goes to
+//! the hold's set-aside part (never a silent drop, H3) and is said. The hook's time is the
 //! [`HookClock`]'s: the core reads no clock. Nothing here fails: whatever
 //! went wrong is a [`Kept`] in the [`HoldReport`], for the hook to say.
 //!
@@ -41,7 +42,7 @@ use std::time::Duration;
 use angzarr_embedded::v1::{command_page, CommandBook, Uuid};
 use daemon_proto::google::protobuf::Timestamp;
 use run_ports::{
-    up_to_date, Bound, Delivery, FactSink, Held, HeldEntry, HeldFact, HeldFacts, HoldError,
+    up_to_date, Bound, Delivery, FactSink, Fate, Held, HeldEntry, HeldFact, HeldFacts, HoldError,
 };
 use surface_ports::HookEvent;
 
@@ -90,7 +91,7 @@ pub enum NotHeld {
     Full(Bound),
     /// The hold could not be used.
     Failed(HoldError),
-    /// A held record that is not a fact of this session: dropped.
+    /// A held record that is not a fact of this session: set aside (H3).
     Foreign,
 }
 
@@ -426,10 +427,11 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
     ) -> SessionFlush {
         let session = Uuid::from_bytes(*root.as_bytes());
         let mut flushed = Vec::new();
-        let left = self.rounds(root, &session, daemon, sink, &mut flushed);
+        let mut name = None;
+        let left = self.rounds(root, &session, daemon, sink, &mut flushed, &mut name);
         SessionFlush {
             root: *root,
-            session: None,
+            session: name,
             flushed,
             left,
         }
@@ -442,6 +444,7 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
         daemon: &str,
         sink: &S,
         flushed: &mut Vec<Kept>,
+        name: &mut Option<String>,
     ) -> Left {
         for _ in 0..TAKE_ROUNDS {
             match self.held.is_empty(root) {
@@ -454,7 +457,13 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
                 Ok(None) => return Left::Taken,
                 Err(error) => return Left::Failed(error),
             };
-            let mut keep = vec![true; batch.entries().len()];
+            if name.is_none() {
+                *name = batch.entries().iter().find_map(|entry| match entry {
+                    HeldEntry::Fact(fact) => Some(fact.session.clone()),
+                    HeldEntry::Gap(_) => None,
+                });
+            }
+            let mut fates = vec![Fate::Keep; batch.entries().len()];
             let mut removed = false;
             let mut stopped = None;
             for (i, entry) in batch.entries().iter().enumerate() {
@@ -478,8 +487,10 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
                 if !up_to_date(daemon, stamp) {
                     continue;
                 }
+                // No fact of this session's stream: never delivered, never
+                // dropped either (H3), but set aside.
                 let Some(book) = book else {
-                    keep[i] = false;
+                    fates[i] = Fate::SetAside;
                     removed = true;
                     flushed.push(Kept {
                         external_id,
@@ -497,14 +508,19 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
                     stopped = Some(Left::Unsettled(delivery));
                     break;
                 }
-                keep[i] = false;
+                // A final answer that is no record (refused, parked) is set
+                // aside, never retried and never dropped (H3).
+                fates[i] = match delivery {
+                    Delivery::Refused { .. } | Delivery::Parked => Fate::SetAside,
+                    _ => Fate::Cut,
+                };
                 removed = true;
                 flushed.push(Kept {
                     external_id,
                     outcome: Outcome::Delivered(delivery),
                 });
             }
-            if let Err(error) = batch.settle(|i| keep[i]) {
+            if let Err(error) = batch.settle_fates(|i| fates[i]) {
                 return Left::Failed(error);
             }
             if let Some(left) = stopped {

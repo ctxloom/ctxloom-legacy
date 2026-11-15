@@ -23,7 +23,9 @@
 //! A torn tail (an append that crashed) is cut by the next append or take;
 //! corruption has its valid prefix kept and the rest set aside as
 //! `<root>.held.corrupt-<n>` (0600, never parsed again), so later appends
-//! start clean. A hold in a format this ctxloom does not know is never
+//! start clean. A settle's records the flusher sets aside (`Fate::SetAside`:
+//! ones it can never deliver, s4-Q14 H3) go there too, their frames as
+//! they were, one part a settle. A hold in a format this ctxloom does not know is never
 //! touched. No record is fsync'd: the hold's durability is the store's, a
 //! process's crash and not the machine's.
 //!
@@ -471,9 +473,6 @@ struct Settling {
 
 impl Settle for Settling {
     fn settle(self: Box<Self>, fates: &[Fate]) -> Result<Settled, HoldError> {
-        // RED: a set-aside record is cut.
-        let keep: Vec<bool> = fates.iter().map(|f| *f == Fate::Keep).collect();
-        let keep = keep.as_slice();
         let spool = &self.spool;
         let _append = spool.append_lock(&self.session)?;
         let path = spool.hold_path(&self.session);
@@ -489,9 +488,21 @@ impl Settle for Settling {
         }
         let mut kept = 0;
         let mut rewritten = MAGIC.to_vec();
-        for (frame, _) in self.frames.iter().zip(keep).filter(|(_, keep)| **keep) {
-            rewritten.extend_from_slice(&self.snapshot[frame.clone()]);
-            kept += 1;
+        let mut aside = Vec::new();
+        for (frame, fate) in self.frames.iter().zip(fates) {
+            match fate {
+                Fate::Keep => {
+                    rewritten.extend_from_slice(&self.snapshot[frame.clone()]);
+                    kept += 1;
+                }
+                // Its frame as it was, beside the hold, as corruption is
+                // (s4-Q14, H3: no silent drop).
+                Fate::SetAside => aside.extend_from_slice(&self.snapshot[frame.clone()]),
+                Fate::Cut => {}
+            }
+        }
+        if !aside.is_empty() {
+            spool.set_aside(&self.session, &aside)?;
         }
         rewritten.extend_from_slice(&now[self.snapshot.len()..]);
         if rewritten.len() == MAGIC.len() {

@@ -26,8 +26,8 @@ use std::sync::Mutex;
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 use std::time::{Duration, Instant};
 
-use run_ports::{FactSink, HeldFacts, HoldError};
-use runs_application::{command_flushes, Flush, HookClock, SessionFlush};
+use run_ports::{Delivery, FactSink, HeldFacts, HoldError};
+use runs_application::{command_flushes, Flush, HookClock, Outcome, SessionFlush};
 
 use super::{files_of, own_stamp, serving_here};
 use crate::capture::{daemon_sink, Deadline};
@@ -147,8 +147,53 @@ pub(crate) fn take_said() -> Vec<HeldSetAside> {
 /// word): how many of its held facts, and why, the reasons in held order,
 /// each once.
 pub(crate) fn notices(flushed: &Flushed) -> Vec<HeldSetAside> {
-    let _ = flushed;
-    Vec::new()
+    let Flushed::Done(done) = flushed else {
+        return Vec::new();
+    };
+    done.iter()
+        .filter_map(|session| {
+            let aside = session.set_aside();
+            if aside.is_empty() {
+                return None;
+            }
+            let mut whys: Vec<String> = Vec::new();
+            for kept in &aside {
+                let why = why_set_aside(&kept.outcome);
+                if !whys.contains(&why) {
+                    whys.push(why);
+                }
+            }
+            Some(HeldSetAside {
+                session: session_said(session),
+                count: aside.len() as u64,
+                why: whys.join("; "),
+            })
+        })
+        .collect()
+}
+
+/// The session a notice names: its harp, as its hold's first fact names
+/// it, else its session root.
+fn session_said(flushed: &SessionFlush) -> String {
+    flushed
+        .session
+        .as_deref()
+        .and_then(|name| sessions::SessionName::parse(name).ok())
+        .map_or_else(|| flushed.root.to_string(), |name| name.harp().to_string())
+}
+
+/// Why a record was set aside, as the notice says it (PROPOSAL, the
+/// owner's to word).
+fn why_set_aside(outcome: &Outcome) -> String {
+    match outcome {
+        Outcome::Delivered(Delivery::Refused { detail }) => {
+            format!("the daemon refused it: {detail}")
+        }
+        Outcome::Delivered(Delivery::Parked) => {
+            "the daemon parked it, as a fact it can never record".to_string()
+        }
+        _ => "it is not a fact of this session's stream".to_string(),
+    }
 }
 
 /// A session's held facts a flush set aside: never delivered again, kept in

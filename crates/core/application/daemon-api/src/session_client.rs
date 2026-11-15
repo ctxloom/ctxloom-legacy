@@ -329,9 +329,13 @@ impl<D: Daemons> SessionReads for Client<D> {
     }
 
     async fn get_transcript(&self, harp: &str) -> Result<v1::Transcript, CallError> {
-        // RED: not read from the daemon yet.
-        let _ = harp;
-        Ok(v1::Transcript::default())
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::GetTranscriptRequest {
+                name: format!("{}/sessions/{harp}/transcript", self.project(api).await?),
+            };
+            api.get_transcript(request).await
+        })
+        .await
     }
 }
 

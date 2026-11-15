@@ -475,7 +475,7 @@ fn unrecorded(kept: &Kept, harp: &str) -> Unrecorded {
         ),
         Outcome::NotHeld(NotHeld::Failed(error)) => format!("it could not be held: {error}"),
         Outcome::NotHeld(NotHeld::Foreign) => {
-            format!("a held record that is not a fact of {harp}'s stream was dropped")
+            format!("a held record that is not a fact of {harp}'s stream was set aside")
         }
     };
     Unrecorded::from(NotRecorded { what, why })

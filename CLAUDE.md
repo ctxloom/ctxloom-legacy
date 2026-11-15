@@ -142,8 +142,8 @@ angzarr-store-sqlite"), every project's streams in it, each rooted on its
 resource name (below), every hook's fact an event when it is delivered. `session list`, `search` and `show`
 are the daemon's reads (slice 2 step 6, "The daemon's API"), from the session
 index it keeps warm, each waiting for the daemon's next round so it answers
-what was committed before it was asked; `transcript show` catches up from the
-store on each read; so a live session shows what was delivered so far; nothing projects the events into a file (no
+what was committed before it was asked; `transcript show` is one too
+(`GetTranscript`, owner's H3 follow-up); so a live session shows what was delivered so far; nothing projects the events into a file (no
 `transcripts/transcript.jsonl`, `records/*.jsonl`, position file or
 `metadata.json`). A session's directory, `.ctxloom/sessions/<harp>/` in the
 project, holds what its engine needs (the session home, its native
@@ -2252,7 +2252,18 @@ lists them): only when the command is not older than the daemon
 (`runs_application::command_flushes`), each hold taken at once or skipped
 (`Left::Taken`, never waited for), within `FLUSH_BOUND` (2 s) for the whole
 flush, a hold the bound did not reach left untouched (`Left::OutOfTime`);
-it says nothing, and what it could not deliver stays held. Every
+what it could not deliver stays held. Nothing a flush meets is dropped
+silently (owner, H3 follow-up): a held record the daemon finally refuses or
+parks, or one that is no fact of its hold's session, goes to the hold's
+set-aside part, as corruption does (run-ports' `Fate::SetAside`,
+`Batch::settle_fates`; fact-spool writes its frames as the next
+`<root>.held.corrupt-<n>`), a hook's flush and a command's alike; a command
+says it ONCE a session as it ends, `ctxloom-wiring-held-set-aside` (the
+session's harp, how many, each reason once; `daemon::flush::take_said`,
+said by `Commands::run`; the wording a draft, the owner's to approve).
+`session list|show|search` and `session transcript show` are daemon reads
+(`daemon_api::SessionReads`, `get_transcript` over `GetTranscript`), so a
+read includes what was held. Every
 session's, not only its project's: the daemon and its one store serve the
 home, and a hold names its session only inside its records. The `daemon`
 noun's own `status`, `stop` and `resolve` deliver none (`Reach::observing`:
