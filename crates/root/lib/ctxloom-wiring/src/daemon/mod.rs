@@ -879,7 +879,9 @@ pub(crate) fn ask_to_drain(env: &Arc<EnvSnapshot>, own: &str, within: Duration) 
     std::thread::scope(|scope| {
         scope.spawn(|| {
             let client = client_of(&found);
-            let _ = block_on(tokio::time::timeout(wait, client.stop_daemon(request)));
+            // The deadline made on the runtime it is awaited on.
+            let _ =
+                block_on(async { tokio::time::timeout(wait, client.stop_daemon(request)).await });
         });
     });
 }
