@@ -33,9 +33,10 @@ use crate::{
     SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
 };
 use crate::{
-    AssistantTextShown, CaptureGapped, Compacted, PromptSubmitted, RecordAssistantText,
-    RecordCaptureGap, RecordCompaction, RecordPromptSubmitted, RecordSessionEnded, RecordToolCall,
-    RecordTurnEnded, SessionEnded, ToolCalled, TurnEnded,
+    AssistantTextShown, CaptureGapped, Compacted, ConversationCleared, PromptSubmitted,
+    RecordAssistantText, RecordCaptureGap, RecordCompaction, RecordConversationCleared,
+    RecordPromptSubmitted, RecordSessionEnded, RecordToolCall, RecordTurnEnded, SessionEnded,
+    SessionReopened, ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -504,6 +505,32 @@ impl SessionAggregate {
             dropped_at: fact.dropped_at,
             stamp: fact.stamp,
         }))
+    }
+
+    /// RecordConversationCleared (PROPOSED, U7b): a FACT (the engine started
+    /// a new conversation), so never refused. RED: records nothing yet.
+    #[handles_fact(RecordConversationCleared)]
+    fn hook_conversation_cleared(
+        &self,
+        fact: RecordConversationCleared,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = (ctx, fact);
+        record(None::<ConversationCleared>)
+    }
+
+    // Equivalent: the capture events carry no aggregate state; projectors fold them
+    // (`crate::apply` has no arm that changes the state for them).
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(ConversationCleared)]
+    fn applied_conversationcleared(&mut self, event: ConversationCleared, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    // RED (U7b): a reopen is folded as nothing yet.
+    #[applies(SessionReopened)]
+    fn applied_sessionreopened(&mut self, event: SessionReopened, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
     }
 
     // Equivalent: the capture events carry no aggregate state; projectors fold them

@@ -341,7 +341,7 @@ fn hooks_recorded(w: &mut World) {
 }
 
 #[cucumber::then(
-    "the session's transcript holds her prompt, the tool call with its status, the assistant's words, the turn's end and the session's end at the exit, each once"
+    "the session's transcript holds her prompt, the tool call with its status, the assistant's words and the turn's end, each once"
 )]
 fn transcript_holds(w: &mut World) {
     // Ruling 87a: read from the session's events, as a person reads it.
@@ -350,13 +350,8 @@ fn transcript_holds(w: &mut World) {
     let kinds: Vec<&str> = lines.iter().map(|l| l["kind"].as_str().unwrap()).collect();
     assert_eq!(
         kinds,
-        [
-            "entry",
-            "tool",
-            "assistant_delta",
-            "turn_end",
-            "session_end"
-        ],
+        // PROPOSED (U7b, 2026-11-15): no `session_end` at the exit.
+        ["entry", "tool", "assistant_delta", "turn_end"],
         "each once, the turn ended twice (its completion and its idle): {lines:#?}"
     );
     for line in &lines {

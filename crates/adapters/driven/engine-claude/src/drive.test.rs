@@ -246,7 +246,6 @@ fn an_interactive_home_gets_settings_whose_hooks_call_ctxloom_execute() {
         "MessageDisplay",
         "PostToolBatch",
         "Stop",
-        "SessionEnd",
         "PreCompact",
         "PostCompact",
     ] {
@@ -336,10 +335,11 @@ fn a_childs_home_registers_the_per_turn_events_and_not_the_per_process_ones() {
     );
 }
 
-// The terminal session's set is unchanged: it also hears the session begin
-// and end.
+// The terminal session's set: it also hears the session begin. PROPOSED (U7b,
+// 2026-11-15; owner: SessionEnded is lost): ctxloom registers no SessionEnd
+// of its own (a bundle's authored session_end hook still rides the launch).
 #[test]
-fn an_interactive_home_registers_the_session_events_too() {
+fn an_interactive_home_registers_the_session_start_too() {
     assert_eq!(
         registered_events(&prepared(true)),
         [
@@ -347,7 +347,6 @@ fn an_interactive_home_registers_the_session_events_too() {
             "PostCompact",
             "PostToolBatch",
             "PreCompact",
-            "SessionEnd",
             "SessionStart",
             "Stop",
             "UserPromptSubmit"

@@ -217,6 +217,33 @@ message Compacted {
   string summary_sha256 = 5;
 }
 
+// PROPOSED (U7b, 2026-11-15; owner: clears captured, typed): the engine
+// started a new conversation within the session: claude's /clear
+// (SessionStart `source: clear`; a streaming child's
+// `conversation_reset{trigger: clear}`). It carries no content. The
+// conversation the clear left is the session's lineage already: the bind
+// that follows displaces it (`EngineSessionBound.displaced`). external_id
+// `hook:clear:<session>:<native_session>`, the NEW conversation's id, so the
+// hook and the driver reporting one clear are one fact.
+message RecordConversationCleared {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.ConversationCleared"]
+  };
+
+  // The engine's conversation after the clear.
+  string native_session = 1;
+  // What the engine named as its cause (`clear`); empty when it named none.
+  string trigger = 2;
+}
+
+message ConversationCleared {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  string native_session = 1;
+  string trigger = 2;
+}
+
 message CaptureGapped {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
 

@@ -435,3 +435,74 @@ fn a_rehost_of_a_closed_child_is_refused() {
     let (code, _) = session.run(rehost(0, "")).unwrap_err();
     assert_eq!(code, "sessions-session-closed");
 }
+
+// ------------------------------------- a resume reopens a closed session
+//
+// PROPOSED (U7b, 2026-11-15; owner: an explicit resume REOPENS a closed
+// session). A close is ctxloom's control lifecycle of its sessions, apart
+// from the engine's conversation: `run --session` on a closed session records
+// that it was reopened, then owes its next incarnation, and the session
+// takes work again.
+
+/// The bound session, its run ended, then closed by a human.
+fn bound_ended_and_closed() -> Session {
+    let mut session = bound_and_ended();
+    session
+        .run(crate::CloseSession {
+            requester: None,
+            cause: "closed".to_string(),
+        })
+        .unwrap();
+    assert!(session.state().closed);
+    session
+}
+
+#[test]
+fn a_resume_of_a_closed_session_reopens_it_then_owes_the_next_incarnation() {
+    let mut session = bound_ended_and_closed();
+    let events = session.run(resume("")).unwrap();
+    assert_eq!(
+        events,
+        vec![
+            SessionEvent::SessionReopened(crate::SessionReopened {
+                cause: "resume".to_string(),
+            }),
+            SessionEvent::IncarnationOwed(IncarnationOwed {
+                incarnation: 2,
+                reason: "resume".to_string(),
+            }),
+        ]
+    );
+    let state = session.state();
+    assert!(!state.closed, "reopened: {state:?}");
+    assert_eq!(state.open_incarnation, Some(2));
+}
+
+#[test]
+fn a_reopened_session_takes_messages_again() {
+    let mut session = bound_ended_and_closed();
+    session.run(resume("")).unwrap();
+    let sent = session.run(crate::SendMessage {
+        message_id: "m1".to_string(),
+        urgency: crate::Urgency::Inform,
+        text: "after the reopen".to_string(),
+        requester: None,
+        supported: vec![crate::Urgency::Inform],
+    });
+    assert!(sent.is_ok(), "{sent:?}");
+}
+
+#[test]
+fn a_resume_of_an_open_session_records_no_reopen() {
+    let mut session = bound_and_ended();
+    let events = session.run(resume("")).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, SessionEvent::SessionReopened(_))),
+        "{events:?}"
+    );
+}
+
+// Only an explicit resume reopens: a re-host of a closed child stays refused
+// (`a_rehost_of_a_closed_child_is_refused`, above).

@@ -133,6 +133,7 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         | SessionEvent::TurnEnded(_)
         | SessionEvent::SessionEnded(_)
         | SessionEvent::Compacted(_)
+        | SessionEvent::ConversationCleared(_)
         | SessionEvent::CaptureGapped(_) => {}
         // A run's end is when the session's last run ended (the proto's
         // RecordEnd: IncarnationEnded supersedes it), at its page's instant.
@@ -147,6 +148,7 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         // the delivery and clear policies): no state of the session.
         SessionEvent::MessageSent(_) | SessionEvent::ClearRequested(_) => {}
         SessionEvent::SessionClosed(_)
+        | SessionEvent::SessionReopened(_)
         | SessionEvent::ChildLaunched(_)
         | SessionEvent::ChildLaunchFailed(_)
         | SessionEvent::ChildEnded(_)

@@ -204,6 +204,19 @@ message SessionClosed {
   string cause = 1;
 }
 
+// PROPOSED (U7b, 2026-11-15; owner: an explicit resume reopens a closed
+// session): a closed session was reopened, so it takes work again. A close
+// is ctxloom's control of its sessions, not the engine's conversation; only
+// an explicit resume (`ResumeSession`, `run --session`) reopens one, and it
+// records this before the incarnation it owes. Nothing else reopens a
+// session: a re-host, a message and a clear of a closed one stay refused.
+message SessionReopened {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  // Why it was reopened: `resume`.
+  string cause = 1;
+}
+
 message MessageSent {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
 

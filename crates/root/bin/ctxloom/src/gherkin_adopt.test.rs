@@ -212,16 +212,66 @@ fn started_through_ctxloom(w: &mut World) {
 /// (its reply, json off a terminal, names it), by `run --session`.
 #[when(expr = "Alice takes another turn on that session with {string}")]
 fn another_turn(w: &mut World, prompt: String) {
-    let harp = w.json()["harp"]
-        .as_str()
-        .unwrap_or_else(|| panic!("the last reply names its session: {}", w.ran().said()))
-        .to_string();
+    // The session a step already named (a close of it, U7b), else the one
+    // the last reply names.
+    let harp = match w.adopt.harp.clone() {
+        Some(harp) => harp,
+        None => w.json()["harp"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the last reply names its session: {}", w.ran().said()))
+            .to_string(),
+    };
     w.adopt.harp = Some(harp.clone());
     w.before_run();
     w.common.run_lines(
         &format!("ctxloom run --one-shot \"{prompt}\" --session {harp}"),
         "",
     );
+}
+
+/// PROPOSED (U7b, 2026-11-15): Alice closes the session the last one-shot
+/// made (its reply names it), as `session close` does.
+#[given("Alice has closed that session")]
+fn closed_that_session(w: &mut World) {
+    let harp = w.json()["harp"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the last reply names its session: {}", w.ran().said()))
+        .to_string();
+    w.adopt.harp = Some(harp.clone());
+    w.before_run();
+    w.common
+        .run_lines(&format!("ctxloom session close {harp}"), "");
+    w.ran().succeeds();
+    assert!(session_shown(w, &harp)["closed"] == serde_json::Value::Bool(true));
+}
+
+/// PROPOSED (U7b, 2026-11-15): the session the turn was taken on is open
+/// again (`session show`'s `closed`).
+#[then("the session is no longer closed")]
+fn no_longer_closed(w: &mut World) {
+    let harp = w.adopt.harp.clone().expect("a turn was taken on a session");
+    let shown = session_shown(w, &harp);
+    assert_ne!(
+        shown["closed"],
+        serde_json::Value::Bool(true),
+        "{harp} is still closed: {shown}"
+    );
+}
+
+/// `session show <harp> --format json`, now.
+fn session_shown(w: &World, harp: &str) -> serde_json::Value {
+    let env: Vec<(&str, &str)> = w
+        .common
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let ran = w
+        .common
+        .project
+        .run_with(&env, &["session", "show", harp, "--format", "json"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    serde_json::from_str(&ran.stdout).unwrap_or_else(|e| panic!("{e}: {}", ran.stdout))
 }
 
 #[then("the reply names the same session")]

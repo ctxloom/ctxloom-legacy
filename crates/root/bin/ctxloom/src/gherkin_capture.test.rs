@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use std::process::{Command, Stdio};
 
-use cucumber::then;
+use cucumber::{given, then, when};
 use serde_json::{json, Value};
 
 use super::World;
@@ -42,6 +42,19 @@ const PROMPT: &str = "Run the shell command: echo hi";
 const DELTAS: [&str; 3] = ["The command `echo hi` ", "ran and ", "printed `hi`."];
 /// The tool's response: a body no record may keep.
 const TOOL_BODY: &str = "TOOL-RESPONSE-BODY-THAT-MUST-NOT-BE-KEPT";
+
+/// The summary a compaction writes: text no record may keep (U7b).
+const SUMMARY: &str = "SUMMARY-TEXT-THAT-MUST-NOT-BE-KEPT";
+
+/// The digest of [`SUMMARY`] (`sha256sum`).
+const SUMMARY_DIGEST: &str = "cef013b74ea1e85fb9c2ea4637fdba548c47af461e939b7c7e72ceef0ab9cb22";
+
+/// The prompt a compaction is under: claude gives each its own (the live
+/// probe: the same on PreCompact, PostCompact and its SessionStart).
+const COMPACT_PROMPT: &str = "c0c0c0c0-0000-4000-8000-00000000c0c0";
+
+/// The prompt a late hook's turn's end names: one no hook had reported.
+const LATE_PROMPT: &str = "1a7e1a7e-0000-4000-8000-0000001a7e00";
 
 /// The digest of [`TOOL_BODY`] (`sha256sum`).
 const TOOL_DIGEST: &str = "71ca0ef886ae43a96de885a15d913cc2cbe0553f553638a28601890879ed97e3";
@@ -138,6 +151,8 @@ pub(super) struct State {
     ended: Vec<Value>,
     /// How many hook processes the stub was to fire.
     firings: usize,
+    /// What a hook fired after the run said (U7b).
+    late: Option<Ran>,
 }
 
 impl World {
@@ -275,6 +290,13 @@ pub(super) fn fires(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         run_watched(w, step);
     } else if step.value.contains("stops ctxloom with a SIGTERM") {
         run_stopped(w, step);
+    } else if step.value.contains("compacts its context once by hand") {
+        run_compacting(w, step);
+    } else if step
+        .value
+        .contains("clears its conversation between two prompts")
+    {
+        red("a stub engine whose SessionStart says `clear` between two prompts");
     } else {
         return false;
     }
@@ -407,8 +429,21 @@ fn child_transcript(w: &mut World) {
     assert_eq!(lines[0]["entry"]["type"], "user");
     assert_eq!(lines[0]["entry"]["content"], PROMPT);
     for (n, delta) in DELTAS.iter().enumerate() {
-        assert_eq!(lines[1 + n]["delta"]["text"], *delta, "{n}");
+        let line = &lines[1 + n]["delta"];
+        assert_eq!(line["text"], *delta, "{n}");
+        assert_eq!(line["index"], n);
+        assert_eq!(line["final"], n == DELTAS.len() - 1);
+        assert!(!line["message_id"].as_str().unwrap_or_default().is_empty());
     }
+    let tool = &lines[4]["tool"];
+    assert_eq!(tool["name"], "Bash");
+    assert_eq!(tool["response_bytes"], TOOL_BODY.len());
+    assert_eq!(tool["response_sha256"], TOOL_DIGEST);
+    let turn_end = lines[5].as_object().unwrap();
+    assert!(
+        !turn_end.contains_key("text") && !turn_end.contains_key("delta"),
+        "the turn's end carries no text: {turn_end:?}"
+    );
     let whole = serde_json::to_string(&lines).unwrap();
     assert!(
         !whole.contains(TOOL_BODY),
@@ -421,6 +456,7 @@ fn child_transcript(w: &mut World) {
     for (n, line) in lines.iter().enumerate() {
         assert_eq!(line["seq"], n, "{line}");
     }
+    w.capture.ended = lines;
 }
 
 #[then("the session's transcript holds no prompt and no words of the assistant's")]
@@ -514,52 +550,6 @@ fn hooks_delivered(w: &mut World) {
     }
 }
 
-#[then("the session's transcript holds her prompt, the assistant's words in order, the tool call as a digest, the turn's end and the session's end, each once")]
-fn transcript_holds(w: &mut World) {
-    let lines = w.transcript();
-    let kinds: Vec<&str> = lines.iter().map(|l| l["kind"].as_str().unwrap()).collect();
-    assert_eq!(
-        kinds,
-        [
-            "entry",
-            "assistant_delta",
-            "assistant_delta",
-            "assistant_delta",
-            "tool",
-            "turn_end",
-            "session_end"
-        ],
-        "each observation once, though every hook fired twice: {lines:#?}"
-    );
-    assert_eq!(lines[0]["entry"]["type"], "user");
-    assert_eq!(lines[0]["entry"]["content"], PROMPT);
-    for (n, delta) in DELTAS.iter().enumerate() {
-        let line = &lines[1 + n]["delta"];
-        assert_eq!(line["text"], *delta, "{n}");
-        assert_eq!(line["index"], n);
-        assert_eq!(line["final"], n == DELTAS.len() - 1);
-        assert!(!line["message_id"].as_str().unwrap_or_default().is_empty());
-    }
-    let tool = &lines[4]["tool"];
-    assert_eq!(tool["name"], "Bash");
-    assert_eq!(tool["response_bytes"], TOOL_BODY.len());
-    assert_eq!(tool["response_sha256"], TOOL_DIGEST);
-    let turn_end = lines[5].as_object().unwrap();
-    assert!(
-        !turn_end.contains_key("text") && !turn_end.contains_key("delta"),
-        "the turn's end carries no text: {turn_end:?}"
-    );
-    let whole = serde_json::to_string(&lines).unwrap();
-    assert!(
-        !whole.contains(TOOL_BODY),
-        "the tool's response body was kept"
-    );
-    for (n, line) in lines.iter().enumerate() {
-        assert_eq!(line["seq"], n, "{line}");
-    }
-    w.capture.ended = lines;
-}
-
 // Ruling 87a: the store is live (each hook's fact is an event when it is
 // delivered), so another process reading the session while its engine runs
 // sees what was delivered so far. The stub reads it after firing every hook
@@ -581,11 +571,24 @@ fn readable_while_running(w: &mut World) {
     );
 }
 
-#[then("a hook fired after the run has ended is answered without failing, and adds nothing to the transcript")]
+#[then(
+    "a hook fired again after the run has ended is answered without failing, and adds nothing a second time"
+)]
 fn late_hook(w: &mut World) {
-    // The environment the engine had, as a hook that outlived its engine
-    // would still have it: its run and session, no listener of the run's own
-    // (slice 4 U7), and nothing of a key.
+    let ran = fire_late(w, "Stop", STOP);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    assert_eq!(ran.stdout.trim(), "{}", "the engine is answered as usual");
+    // Slice 4 U7 (s4-Q3): no run credential dies with the run, so nothing
+    // refuses the hook; it reaches the user's daemon, and the session holds
+    // what it repeats already.
+    assert_eq!(w.transcript(), w.capture.ended, "nothing was appended");
+}
+
+/// Run `ctxloom hook claude-code execute <event>` on `payload` with the
+/// environment the engine had, as a hook that outlived its engine would
+/// still have it: its run and session, no listener of the run's own (slice
+/// 4 U7), and nothing of a key.
+fn fire_late(w: &World, event: &str, payload: &str) -> Ran {
     let engine_env = files::read(w.engine_dir().join("engine-env")).expect("the engine's env");
     assert!(
         !engine_env.contains("CTXLOOM_ENDPOINT="),
@@ -597,7 +600,7 @@ fn late_hook(w: &mut World) {
     );
     let mut command = Command::new(crate::tests::binary());
     command
-        .args(["hook", "claude-code", "execute", "Stop"])
+        .args(["hook", "claude-code", "execute", event])
         .env_clear()
         .env("TMPDIR", crate::tests::temp_root())
         .current_dir(w.common.project.dir())
@@ -609,14 +612,143 @@ fn late_hook(w: &mut World) {
         command.env(name, value);
     }
     let mut child = command.spawn().expect("ctxloom runs");
-    crate::tests::feed(child.stdin.take().expect("stdin"), STOP);
-    let ran = Ran::of(child.wait_with_output().expect("ctxloom finishes"));
+    crate::tests::feed(child.stdin.take().expect("stdin"), payload);
+    Ran::of(child.wait_with_output().expect("ctxloom finishes"))
+}
+
+// PROPOSED (U7b, 2026-11-15): a late hook with something new is recorded.
+#[when("after the run has ended, a hook of her session reports a turn's end it had not reported")]
+fn late_new_turn_end(w: &mut World) {
+    w.ran().succeeds();
+    let stop = payload(STOP, |v| v["prompt_id"] = json!(LATE_PROMPT));
+    w.capture.late = Some(fire_late(w, "Stop", &stop));
+}
+
+#[then("that hook answered, said nothing was left unrecorded, and exited 0")]
+fn late_answered(w: &mut World) {
+    let ran = w.capture.late.as_ref().expect("a late hook was fired");
     assert_eq!(ran.code, 0, "{}", ran.said());
     assert_eq!(ran.stdout.trim(), "{}", "the engine is answered as usual");
-    // Slice 4 U7 (s4-Q3): no run credential dies with the run, so nothing
-    // refuses the hook; it reaches the user's daemon, and the session, its
-    // run ended, records nothing more.
-    assert_eq!(w.transcript(), w.capture.ended, "nothing was appended");
+    for warning in ["hook-cli-not-recorded", "hook-cli-held"] {
+        assert!(!ran.stderr.contains(warning), "{}", ran.said());
+    }
+}
+
+#[then("the session's transcript ends with that turn's end, once")]
+fn transcript_ends_late(w: &mut World) {
+    let lines = w.transcript();
+    let late: Vec<&Value> = lines
+        .iter()
+        .filter(|l| l["prompt_id"] == LATE_PROMPT)
+        .collect();
+    assert_eq!(late.len(), 1, "the late turn's end once: {lines:#?}");
+    let last = lines.last().expect("a transcript");
+    assert_eq!(last["kind"], "turn_end", "{lines:#?}");
+    assert_eq!(last["prompt_id"], LATE_PROMPT, "{lines:#?}");
+}
+
+#[then("the session is listed as ended under its own name")]
+fn listed_ended_by_harp(w: &mut World) {
+    let harp = w.harp();
+    let ran = w.run_now(&["session", "list", "--format", "json"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    assert_eq!(
+        listed_state(&ran.stdout, &harp).as_deref(),
+        Some("ended"),
+        "{}",
+        ran.stdout
+    );
+}
+
+/// An interactive run whose stub engine compacts its context once by hand
+/// (`/compact`): a prompt, then PreCompact and PostCompact under the
+/// compaction's own prompt, the summary's text in PostCompact's payload.
+fn run_compacting(w: &mut World, step: &cucumber::gherkin::Step) {
+    let bin = w.engine_dir();
+    let ctxloom = crate::tests::binary().display().to_string();
+    files::put_program(bin.join("ctxloom"), &format!("exec '{ctxloom}' \"$@\"\n"));
+    let compact = |event: &str, summary: Option<&str>| {
+        let mut value = json!({
+            "session_id": "9d764b45-a56a-48d7-ac9d-c2a16c5669f1",
+            "prompt_id": COMPACT_PROMPT,
+            "hook_event_name": event,
+            "trigger": "manual",
+        });
+        if let Some(summary) = summary {
+            value["compact_summary"] = json!(summary);
+        }
+        value.to_string()
+    };
+    let payloads = [
+        (
+            payload(USER_PROMPT_SUBMIT, |v| v["prompt"] = json!(PROMPT)),
+            "UserPromptSubmit",
+        ),
+        (compact("PreCompact", None), "PreCompact"),
+        (compact("PostCompact", Some(SUMMARY)), "PostCompact"),
+    ];
+    for (n, (text, event)) in payloads.iter().enumerate() {
+        files::put(bin.join(format!("payloads/{n:02}-{event}.json")), text);
+    }
+    w.capture.firings = 2 * payloads.len();
+    files::put_program(bin.join("claude"), STUB);
+    w.common.set_env("CTXLOOM_TEST_TERMINAL", "1".to_string());
+    w.before_run();
+    let lines = crate::tests::gherkin_common::doc(step);
+    w.common_mut().run_lines(&lines, "");
+}
+
+#[then(
+    expr = "the session's transcript holds the compaction before and after it, with its trigger {string} and the summary's size and digest, and not its text"
+)]
+fn compaction_recorded(w: &mut World, trigger: String) {
+    let lines = w.transcript();
+    let compactions: Vec<&Value> = lines.iter().filter(|l| l["kind"] == "compaction").collect();
+    assert_eq!(
+        compactions.len(),
+        2,
+        "before and after, once each: {lines:#?}"
+    );
+    let (before, after) = (compactions[0], compactions[1]);
+    for (line, phase) in [(before, "before"), (after, "after")] {
+        assert_eq!(line["phase"], phase, "{line}");
+        assert_eq!(line["trigger"], trigger.as_str(), "{line}");
+        assert_eq!(line["prompt_id"], COMPACT_PROMPT, "{line}");
+    }
+    assert_eq!(after["summary_bytes"], SUMMARY.len(), "{after}");
+    assert_eq!(after["summary_sha256"], SUMMARY_DIGEST, "{after}");
+    let whole = serde_json::to_string(&lines).unwrap();
+    assert!(!whole.contains(SUMMARY), "the summary's text was kept");
+}
+
+/// A step of U7b's spec whose harness is not built (ruling 132: red until the
+/// owner approves the Gherkin and the unit is built).
+fn red(step: &str) -> ! {
+    panic!("RED (ruling 132, U7b): not built yet: {step}")
+}
+
+#[given(
+    expr = "Alice has run her assistant interactively, and its engine named its conversation {string} when it started"
+)]
+fn ran_naming_conversation(_w: &mut World, native: String) {
+    red(&format!(
+        "an interactive run whose SessionStart named {native}, its bind delivered to the daemon"
+    ))
+}
+
+#[then("the session's transcript holds her first prompt, its turn's end, the clear, her second prompt and its turn's end, each once")]
+fn transcript_holds_the_clear(_w: &mut World) {
+    red("the transcript's clear line")
+}
+
+#[then("the session's record keeps the conversation before the clear in its lineage")]
+fn clear_kept_in_lineage(_w: &mut World) {
+    red("the record's lineage after a clear")
+}
+
+#[then("the assistant was resumed on the conversation after the clear")]
+fn resumed_after_clear(_w: &mut World) {
+    red("a resume after a clear")
 }
 
 // ------------------------------------------- a live session (defects 1, 2)

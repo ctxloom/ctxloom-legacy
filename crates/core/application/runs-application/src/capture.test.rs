@@ -314,17 +314,11 @@ fn two_compactions_of_one_turn_have_two_ids() {
 }
 
 // A PostToolUse and a PostToolBatch both fire for one call: only the batch
-// reports it, so a call is never recorded twice. The bind is SessionStart's
-// own fact.
+// reports it, so a call is never recorded twice. (PROPOSED, U7b: the bind is
+// SessionStart's observation, below, so SessionStart is no longer here.)
 #[test]
 fn events_that_observe_nothing_hold_no_observation() {
-    for event in [
-        "post_tool",
-        "post_file_edit",
-        "pre_tool",
-        "session_start",
-        "permission_ask",
-    ] {
+    for event in ["post_tool", "post_file_edit", "pre_tool", "permission_ask"] {
         let held = observe(&HookEvent {
             event: event.to_string(),
             tool: "Bash".to_string(),
@@ -332,6 +326,52 @@ fn events_that_observe_nothing_hold_no_observation() {
         });
         assert!(held.is_empty(), "{event}: {held:?}");
     }
+}
+
+// PROPOSED (U7b, 2026-11-15; owner: SessionEnded is lost entirely): a
+// session's end observes nothing. An older home that still registers
+// SessionEnd is answered, and records nothing.
+#[test]
+fn a_session_end_observes_nothing() {
+    assert!(observe(&session_end()).is_empty());
+}
+
+fn session_start(source: &str, native: &str) -> HookEvent {
+    HookEvent {
+        event: "session_start".to_string(),
+        native_session: native.to_string(),
+        transcript: format!("/home/u/.claude/projects/p/{native}.jsonl"),
+        source: source.to_string(),
+        ..HookEvent::default()
+    }
+}
+
+// PROPOSED (U7b, 2026-11-15; H-Q9 folded in): SessionStart's bind of the
+// engine's own conversation is an observation like the rest, delivered and
+// held like any capture fact, keyed as `bind_book` keys it
+// (`bind:<session>:<native_id>`), for every source: a startup, a resume and
+// a compaction (the same id, so it records nothing new) alike.
+#[test]
+fn a_session_start_observes_its_conversations_bind() {
+    for source in ["startup", "resume", "compact"] {
+        assert_eq!(
+            ids(&[session_start(source, "n1")]),
+            [format!("bind:{S}:n1")],
+            "{source}"
+        );
+    }
+}
+
+// PROPOSED (U7b, 2026-11-15; owner: clears captured, typed): a SessionStart
+// whose source is `clear` observes the clear, keyed by the NEW conversation
+// (`hook:clear:<session>:<native>`, so the driver's report of the same clear
+// is one fact), and then the new conversation's bind, in that order.
+#[test]
+fn a_clear_observes_the_clear_then_the_new_conversations_bind() {
+    assert_eq!(
+        ids(&[session_start("clear", "n2")]),
+        [format!("hook:clear:{S}:n2"), format!("bind:{S}:n2")]
+    );
 }
 
 // ------------------------------------------------------------ external ids
