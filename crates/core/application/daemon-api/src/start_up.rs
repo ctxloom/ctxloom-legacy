@@ -21,8 +21,11 @@ impl StartUpIncomplete {
     /// The notice `Daemon.warnings` carries: its code, its args and its
     /// en-US text.
     pub fn notice(&self) -> v1::Notice {
-        let _ = self;
-        v1::Notice::default()
+        v1::Notice {
+            code: self.code().to_string(),
+            args: run_application::client::flat_args(self),
+            text: self.to_string(),
+        }
     }
 }
 
