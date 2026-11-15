@@ -4,10 +4,7 @@
 
 use crate::aggregate::tests::{mint, Session};
 use crate::MintSession;
-use crate::{
-    IncarnationEnded, IncarnationOwed, RecordIncarnationEnded, SessionEvent, StopOrdered,
-    StopSession,
-};
+use crate::{IncarnationEnded, IncarnationOwed, RecordIncarnationEnded, SessionEvent, StopOrdered};
 
 fn ended(incarnation: u32, cause: &str) -> RecordIncarnationEnded {
     RecordIncarnationEnded {
@@ -93,30 +90,7 @@ fn an_end_records_when_the_sessions_last_run_ended() {
     );
 }
 
-// PORTED-FROM-GO: internal/core/coord/launchgate_giveup_test.go
-// TestAgentStop_OnAnEndedRunStillStopsTheRelaunch: a stop order sets the flag
-// even after the run ended.
-#[test]
-fn a_stop_ordered_after_the_end_still_sets_the_flag() {
-    let mut session = first_run_ended("runner-exit");
-    let events = session
-        .run(StopSession {
-            requester_depth: 0,
-            reason: "user".to_string(),
-            requester: None,
-        })
-        .unwrap();
-    assert_eq!(
-        events,
-        vec![SessionEvent::StopOrdered(StopOrdered {
-            reason: "user".to_string()
-        })]
-    );
-    assert!(session.state().stopped);
-}
-
-// Owner ruling 101: no end owes a relaunch, whatever its cause, stopped or
-// not; an idle reap, an expected end, notices nobody.
+// Owner ruling 101: no end owes a relaunch, whatever its cause; an idle reap, an expected end, notices nobody.
 #[test]
 fn no_end_owes_a_relaunch_and_an_idle_reap_notices_nobody() {
     for cause in ["runner-exit", "stopped", "orphaned", "launch-failed"] {
@@ -139,37 +113,6 @@ fn no_end_owes_a_relaunch_and_an_idle_reap_notices_nobody() {
             notice_parent: false,
         })]
     );
-}
-
-// NEW-DESIGN (plan 3.1, Go's I2: "refused from a child"). The depth is
-// STAMPED from the caller's identity by admission, never read from the
-// payload; the aggregate refuses depth > 0.
-#[test]
-fn a_stop_ordered_by_a_child_is_refused() {
-    let mut session = Session::minted();
-    let (code, args) = session
-        .run(StopSession {
-            requester_depth: 2,
-            reason: "x".to_string(),
-            requester: None,
-        })
-        .unwrap_err();
-    assert_eq!(code, "sessions-child-cannot-stop");
-    assert_eq!(args["depth"], "2");
-    assert!(!session.state().stopped);
-}
-
-// NEW-DESIGN: a second stop order records nothing.
-#[test]
-fn a_second_stop_order_records_nothing() {
-    let mut session = Session::minted();
-    let stop = StopSession {
-        requester_depth: 0,
-        reason: "u".to_string(),
-        requester: None,
-    };
-    assert_eq!(session.run(stop.clone()).unwrap().len(), 1);
-    assert!(session.run(stop).unwrap().is_empty());
 }
 
 // NEW-DESIGN: an end told twice (a retried policy step) records nothing the

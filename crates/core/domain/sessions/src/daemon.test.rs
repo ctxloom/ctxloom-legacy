@@ -8,7 +8,7 @@ use crate::{
     Child, ChildEnded, ChildForgotten, ChildLaunchFailed, ChildLaunched, ClearChild,
     ClearRequested, CloseSession, EndChild, ForgetChild, IncarnationOwed, LaunchChild, MessageSent,
     MintSession, RecordChildLaunchFailed, RecordIncarnationEnded, SendMessage, SessionClosed,
-    SessionEvent, SessionRef, StopOrdered, StopSession, TargetTrust, Urgency,
+    SessionEvent, SessionRef, TargetTrust, Urgency,
 };
 
 /// The stream the harness addresses: root `[7; 16]`, as text.
@@ -165,31 +165,6 @@ fn a_closed_session_takes_no_message_clear_or_child() {
 }
 
 // --------------------------------------------------------- stop (S-f)
-
-// D25/S-f reconciles StopSession: an owner stops its own child whatever the
-// child's depth; another session may not; the depth rule still guards a
-// requester that names no session.
-#[test]
-fn a_child_is_stopped_by_its_owner_and_by_no_other_session() {
-    let stop = |requester: Option<&str>, depth: u32| StopSession {
-        requester_depth: depth,
-        reason: "r".to_string(),
-        requester: requester.map(at),
-    };
-    let mut by_owner = child();
-    assert_eq!(
-        by_owner.run(stop(Some(OWNER), 1)).unwrap(),
-        vec![SessionEvent::StopOrdered(StopOrdered {
-            reason: "r".to_string()
-        })]
-    );
-    let mut by_stranger = child();
-    let (code, _) = by_stranger.run(stop(Some(STRANGER), 0)).unwrap_err();
-    assert_eq!(code, "sessions-not-owner");
-    let mut by_depth = child();
-    let (code, _) = by_depth.run(stop(None, 1)).unwrap_err();
-    assert_eq!(code, "sessions-child-cannot-stop");
-}
 
 // ------------------------------------------------------------- messages
 

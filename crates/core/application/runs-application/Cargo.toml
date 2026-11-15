@@ -1,7 +1,7 @@
 [package]
 name = "runs-application"
 version = "0.1.0"
-description = "The runs use cases: the agent's Facts, AgentRequests and Feeds, admission by identity, and the enqueue that mints a run's credential"
+description = "The runs use cases: the agent's Facts and Feeds, admission by identity, and the enqueue that mints a run's credential"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

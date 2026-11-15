@@ -19,12 +19,12 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 use crate::refusal::refuse;
 use crate::{
     adopted, end_recorded, engine_bound, kept_changed, lifeline, live, record, session_minted,
-    title_set, AdoptRotations, BindEngineSession, ChildCannotStop, EndRecorded, EngineMismatch,
-    EngineSessionBound, HarpInvalid, IncarnationEnded, IncarnationOwed, KeptChanged, MintSession,
-    NoNativeSession, NoSession, RecordEnd, RecordIncarnationEnded, RehostBudgetSpent,
-    RehostSession, ResumeSession, SessionAdopted, SessionCommand, SessionDestroyed, SessionEvent,
-    SessionExists, SessionMinted, SessionRejection, SessionRunning, SessionState, SessionUnknown,
-    SetKept, SetSessionTitle, StopOrdered, StopSession, TitleSet, WorkspaceMismatch,
+    title_set, AdoptRotations, BindEngineSession, EndRecorded, EngineMismatch, EngineSessionBound,
+    HarpInvalid, IncarnationEnded, IncarnationOwed, KeptChanged, MintSession, NoNativeSession,
+    NoSession, RecordEnd, RecordIncarnationEnded, RehostBudgetSpent, RehostSession, ResumeSession,
+    SessionAdopted, SessionCommand, SessionDestroyed, SessionEvent, SessionExists, SessionMinted,
+    SessionRejection, SessionRunning, SessionState, SessionUnknown, SetKept, SetSessionTitle,
+    StopOrdered, TitleSet, WorkspaceMismatch,
 };
 use crate::{
     daemon, ChildEnded, ChildForgotten, ChildLaunchFailed, ChildLaunched, ClearChild,
@@ -162,25 +162,6 @@ impl SessionAggregate {
                 rejection,
                 Refuses<Self, RecordEnd>,
                 [NoSession => NoSession]
-            )
-        })
-    }
-
-    /// Order the session's runs to stop; refused from a session that is not
-    /// its owner, else from a child.
-    #[handles_cmd(StopSession, refuses(NoSession, ChildCannotStop, NotOwner))]
-    fn stop_session(
-        &self,
-        cmd: StopSession,
-        ctx: &Context,
-    ) -> Result<Option<StopOrdered>, Failed<Refuses<Self, StopSession>>> {
-        let _ = ctx;
-        lifeline::stop_ordered(&self.session, &cmd).map_err(|rejection| {
-            refuse!(
-                SessionRejection,
-                rejection,
-                Refuses<Self, StopSession>,
-                [NoSession => NoSession, ChildCannotStop{depth} => ChildCannotStop, NotOwner{requester} => NotOwner]
             )
         })
     }
@@ -623,6 +604,9 @@ impl SessionAggregate {
         fold(&mut self.session, event.into(), page);
     }
 
+    // Equivalent: retired (owner 2026-11-15), it folds to nothing
+    // (`crate::apply`'s arm for it changes nothing).
+    #[cfg_attr(test, mutants::skip)]
     #[applies(StopOrdered)]
     fn stop_ordered(&mut self, event: StopOrdered, page: &PageContext) {
         fold(&mut self.session, event.into(), page);

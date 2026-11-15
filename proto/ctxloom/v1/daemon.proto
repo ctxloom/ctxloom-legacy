@@ -35,7 +35,9 @@ syntax = "proto3";
 //   session send <harp> <urgency> <text>  sessions.SendMessage      pending-messages
 //   session clear <harp>                  sessions.ClearChild       session-index
 //   session close <harp>                  sessions.CloseSession     session-index
-//   session stop <harp>                   sessions.StopSession      session-index
+//   session stop <harp> (not built)       runs.RequestStop          (Handle)
+//                                         (the session's current run; no
+//                                         latch, owner 2026-11-15)
 //   session launch <owner> ...            sessions.LaunchChild      session-index
 //                                         (after CreateHandOff)
 //   session approvals answer <ask> <d>    approvals.AnswerApproval  pending-approvals

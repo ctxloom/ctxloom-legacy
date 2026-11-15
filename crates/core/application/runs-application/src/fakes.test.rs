@@ -239,17 +239,6 @@ impl World {
         World { edge, me, other }
     }
 
-    /// A child (depth 2) of `me`'s tree, with a run of its own.
-    pub(crate) async fn child(&self) -> Party {
-        World::party(
-            &self.edge,
-            "5f0c7a52-3333-5333-8333-000000000003",
-            "lone-wolf-pup",
-            2,
-        )
-        .await
-    }
-
     async fn party(edge: &Arc<KernelEdge>, session: &str, harp: &str, depth: u32) -> Party {
         let session_root = uuid(session);
         let session_cover = Cover {

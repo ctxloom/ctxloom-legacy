@@ -3,7 +3,7 @@
 use angzarr_embedded::v1::Uuid;
 use sessions::{
     ClearChild, CloseSession, LaunchChild, SendMessage, SessionCommand, SessionRef, SetKept,
-    StopSession, TargetTrust, Urgency,
+    TargetTrust, Urgency,
 };
 
 use crate::identity::Identity;
@@ -32,7 +32,6 @@ fn requester_of(command: &SessionCommand) -> Option<SessionRef> {
         SessionCommand::SendMessage(c) => c.requester.clone(),
         SessionCommand::ClearChild(c) => c.requester.clone(),
         SessionCommand::LaunchChild(c) => c.requester.clone(),
-        SessionCommand::StopSession(c) => c.requester.clone(),
         _ => None,
     }
 }
@@ -84,12 +83,6 @@ fn every_guarded_command_is_stamped_with_the_credentials_requester() {
             delegation_limit: 1,
             requester: forged(),
             prompt: String::new(),
-        }
-        .into(),
-        StopSession {
-            requester_depth: 0,
-            reason: String::new(),
-            requester: forged(),
         }
         .into(),
     ];

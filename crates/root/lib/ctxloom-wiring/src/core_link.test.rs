@@ -1,5 +1,5 @@
 //! The use cases over the real `App::serve_in`, in process. RED (S5): the
-//! wiring is a stub. These are the in-process Facts / AgentRequests / Feeds
+//! wiring is a stub. These are the in-process Facts / Feeds
 //! checks of the task (scope 5) on the real exposure seam; the finer admission
 //! rules are `runs-application`'s, over a kernel double.
 

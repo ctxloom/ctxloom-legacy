@@ -14,7 +14,7 @@ use crate::{
     live, Child, ChildEnded, ChildForgotten, ChildLaunchFailed, ChildLaunched, ClearChild,
     ClearRequested, CloseSession, EndChild, ForgetChild, IncarnationOwed, LaunchChild, MessageSent,
     RecordChildLaunchFailed, SendMessage, SessionClosed, SessionEvent, SessionRef,
-    SessionRejection, SessionState, StopSession, Urgency,
+    SessionRejection, SessionState, Urgency,
 };
 
 /// The namespace every keyed command id is derived in:
@@ -94,16 +94,9 @@ pub(crate) fn closed(
     }))
 }
 
-/// A stop order's requester (D25, S-f): a session requester is judged by the
-/// owner rule; with none, the depth rule (Go's I2) is the lifeline's.
-pub(crate) fn stop_may(held: &SessionState, stop: &StopSession) -> Result<(), SessionRejection> {
-    owner_may(live(held)?, stop.requester.as_ref())
-}
-
 /// What a message records: refused on a closed session, from a session that
 /// is not the owner, and with an urgency the engine cannot honour (S-c); a
-/// wake to a session with no incarnation open, and not stopped, also owes the
-/// next (M2).
+/// wake to a session with no incarnation open also owes the next (M2).
 pub(crate) fn message_sent(
     held: &SessionState,
     send: &SendMessage,
@@ -115,11 +108,12 @@ pub(crate) fn message_sent(
             urgency: urgency_word(send.urgency).to_string(),
         });
     }
-    let owed = (send.urgency == Urgency::Wake && held.open_incarnation.is_none() && !held.stopped)
-        .then(|| IncarnationOwed {
+    let owed = (send.urgency == Urgency::Wake && held.open_incarnation.is_none()).then(|| {
+        IncarnationOwed {
             incarnation: held.incarnation + 1,
             reason: "wake".to_string(),
-        });
+        }
+    });
     Ok((
         MessageSent {
             message_id: send.message_id.clone(),

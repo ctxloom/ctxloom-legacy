@@ -832,7 +832,16 @@ cannot be resumed). A CLOSED session is REOPENED by its resume (owner
 conversation): `ResumeSession` records `SessionReopened{cause: resume}`
 before the incarnation it owes, which clears `closed` and `closed_cause`, so
 the session takes work again; nothing else reopens one (a re-host, a
-message and a clear of a closed one stay refused).
+message and a clear of a closed one stay refused). A session has NO stop
+latch (owner 2026-11-15, the design note's Q9): `SessionState.stopped`
+(field 20, reserved), `StopSession`, the `sessions-child-cannot-stop`
+refusal (`ChildCannotStop`) and runs-application's `AgentRequests` (whose
+one kind it was) are gone, and `StopOrdered`, in streams recorded before,
+is RETIRED in place (still decodes, folds to nothing, never emitted); a
+wake, a start and a re-host no longer ask whether a session was stopped.
+Close is the one "no more work"; stopping a running session is its run's
+`runs.RequestStop`, which ends that run (so its incarnation) and nothing
+more (the `session stop` verb, its scenarios `@pending`, is not built).
 Not built:
 the hidden runner subcommand.
 
@@ -1280,7 +1289,7 @@ under ctxloom's own `<home>/.ctxloom/worktrees/`, never the project; the
 port's never-forced `remove`, worktree-git's, never a prune; one holding
 work is left and said in the log). A CHILD whose last incarnation was lost
 (the board's `last_end` is `orphaned`) or handed over by a draining daemon
-(`drained`, `session_policies::ENDED_DRAINED`; DRAIN below), not closed, stopped or owed another,
+(`drained`, `session_policies::ENDED_DRAINED`; DRAIN below), not closed or owed another,
 with a native session bound, is RE-HOSTED by the plan's step
 `rehost:<child>:<n+1>` (`daemon-application`'s `rehost.rs`): the sessions
 command `RehostSession{recent_rehosts, cause}` owes `IncarnationOwed{n+1,

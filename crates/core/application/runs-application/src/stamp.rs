@@ -5,9 +5,7 @@
 //! takes the run and session it stamps from is the transport's (not yet
 //! placed: the daemon's gate admits the user and stamps nothing).
 
-use sessions::{
-    ClearChild, CloseSession, LaunchChild, SendMessage, SessionCommand, SessionRef, StopSession,
-};
+use sessions::{ClearChild, CloseSession, LaunchChild, SendMessage, SessionCommand, SessionRef};
 
 use crate::identity::Identity;
 
@@ -26,7 +24,7 @@ impl Identity {
 }
 
 /// `command` with its `requester` replaced by `requester` when it is one the
-/// owner rule guards (close, send, clear, launch, stop); any other command as
+/// owner rule guards (close, send, clear, launch); any other command as
 /// it was.
 pub fn stamped(command: SessionCommand, requester: &SessionRef) -> SessionCommand {
     let requester = Some(requester.clone());
@@ -39,7 +37,6 @@ pub fn stamped(command: SessionCommand, requester: &SessionRef) -> SessionComman
             ..launch
         }
         .into(),
-        SessionCommand::StopSession(stop) => StopSession { requester, ..stop }.into(),
         other => other,
     }
 }
