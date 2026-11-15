@@ -2858,8 +2858,8 @@ turns (their steps block cucumber's one executor thread), so a cluster
 lasts at least its slowest feature (`daemon`: cli/daemon.feature, about
 100 s). Each cluster's `terminate-after` is an override naming it in
 `.config/nextest.toml`, about 2.4 times its longest measured run
-(2026-11-14, 20 cores, alone, beside the binary's tests and beside 12
-crates'; the table is there), whole slow periods, at least 60 s: `daemon`
+(2026-11-14, 20 cores, alone, beside the binary's tests, beside 12
+crates' and in the whole workspace; the table is there), whole slow periods, at least 60 s: `daemon`
 300 s, `journeys` 150 s, `library` 90 s, `remotes`, `setup`, `sessions`
 and `other` 60 s; every other test keeps 120 s. A host of fewer cores was
 not measured. Separation: each scenario has a temporary root of its own,
