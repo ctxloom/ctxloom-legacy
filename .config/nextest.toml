@@ -80,9 +80,10 @@ retries = 0
 
 # A test is SLOW after 30 s and terminated after 4 periods, 120 s
 # (https://nexte.st/docs/features/slow-tests/). Measured on 2026-11-11 (the
-# whole workspace, 3,853 tests, 20 cores): the longest test takes 5.0 s
-# (`gherkin_features::every_feature_runs`), then 3.1 s (companion_assembly,
-# hook-listener's held connection); every other under 2.3 s. 30 s is six
+# whole workspace, 3,853 tests, 20 cores): the longest test took 5.0 s
+# (the feature runner, then one test; its clusters now have limits of their
+# own, below), then 3.1 s (companion_assembly, hook-listener's held
+# connection); every other under 2.3 s. 30 s is six
 # times the longest, room for a loaded machine or a mutant; a test past 120 s
 # is hung, and once hung the pre-commit hook until a person intervened. Its
 # process group is sent SIGTERM, then SIGKILL after the grace.
@@ -97,7 +98,10 @@ leak-timeout = { period = "200ms", result = "fail" }
 # and dial it expecting nobody there (`closed_url`, `closed_endpoint`), run
 # one at a time across every test binary: ports are system-wide, and another
 # test's port-0 bind taking the freed port was the race of ad31aa071
-# (https://nexte.st/docs/configuration/test-groups/).
+# (https://nexte.st/docs/configuration/test-groups/). The feature runner's
+# clusters are not among them: the daemons and listeners their scenarios
+# start bind port 0 in ctxloom's own processes and are told the port, and no
+# scenario dials a port it freed, so they share no port and run at once.
 [test-groups]
 ports = { max-threads = 1 }
 
@@ -112,6 +116,56 @@ filter = '''
     | (package(ctxloom) & test(/^tests::hook::/))
 '''
 test-group = 'ports'
+
+# The feature runner's clusters (owner ruling of 2026-11-14): the features
+# run as one test per cluster of feature files
+# (`tests::gherkin_features::clusters::<name>`, gherkin_features.test.rs's
+# CLUSTERS), which nextest runs at once, each with a limit of its own, set
+# here by an override naming it. Every other test keeps the 120 s above.
+# Not a gate tuned until it passes: each limit is about 2.4 times the
+# longest run of its cluster measured on 2026-11-14 (20 cores, the host
+# shared with other agents' builds and tests, load average 20 to 41),
+# rounded up to whole slow periods, and at least 60 s. A cluster's features
+# run at once, so it takes at least as long as its slowest feature, whose
+# scenarios take turns: `daemon` is cli/daemon.feature's 100 s or so, its
+# daemons' idle times waited out in turn. Seconds, as measured: alone (the
+# clusters only, `just ratchet-base`), beside the binary's other 500 tests
+# (`just test-pkg ctxloom`, twice), and beside 2,500 tests of 12 crates:
+#
+#   cluster    alone   package       12 crates   longest   limit
+#   daemon     123.1   118.5 103.1   105.4       123.1     300 (60 s x 5)
+#   journeys    49.5    50.7  42.2    32.8        50.7     150 (30 s x 5)
+#   library     28.4    30.6  28.7    20.3        30.6      90 (30 s x 3)
+#   remotes     16.5    18.6  19.8    12.6        19.8      60 (30 s x 2)
+#   setup       14.2    15.9  16.3    10.1        16.3      60 (30 s x 2)
+#   sessions    12.8    14.8  14.8    10.4        14.8      60 (30 s x 2)
+#   other        4.0     4.0   5.2     3.6         5.2      60 (30 s x 2)
+#
+# Measured with 3 features of a cluster at once (the 20 cores shared among
+# the 7 clusters); a host of fewer cores runs 2 at once and was not
+# measured. A cluster past its limit is hung, as any test past 120 s is.
+[[profile.default.overrides]]
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::daemon)'
+slow-timeout = { period = "60s", terminate-after = 5, grace-period = "10s" }
+
+[[profile.default.overrides]]
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::journeys)'
+slow-timeout = { period = "30s", terminate-after = 5, grace-period = "10s" }
+
+[[profile.default.overrides]]
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::library)'
+slow-timeout = { period = "30s", terminate-after = 3, grace-period = "10s" }
+
+[[profile.default.overrides]]
+filter = '''
+    package(ctxloom) & (
+        test(=tests::gherkin_features::clusters::remotes)
+        | test(=tests::gherkin_features::clusters::setup)
+        | test(=tests::gherkin_features::clusters::sessions)
+        | test(=tests::gherkin_features::clusters::other)
+    )
+'''
+slow-timeout = { period = "30s", terminate-after = 2, grace-period = "10s" }
 
 # The Windows and macOS subset CI runs on a branch push (owner ruling
 # 2026-11-12; ci.yml sets NEXTEST_PROFILE=ci-platform there, `default` on

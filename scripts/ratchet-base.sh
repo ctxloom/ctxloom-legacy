@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # The base's scenario list for the ratchet (owner ruling 165): `just
-# ratchet-base <base>`. The feature runner (`every_feature_runs`, under
-# GHERKIN_RATCHET) is run on the base commit, checked out alone in a
-# throwaway worktree beside the checkout (.<checkout>.ratchet-base, its own
-# target dir target/ratchet-base), and its list is cached by the base's sha
-# at target/ratchet/<sha>.list; a cached list is used as it is.
+# ratchet-base <base>`. The feature runner, under GHERKIN_RATCHET, is run
+# on the base commit (its cluster tests, `tests::gherkin_features::
+# clusters::*`, which nextest runs at once and which assemble the one list
+# between them; or a base's one `every_feature_runs` from before them),
+# checked out alone in a throwaway worktree beside the checkout
+# (.<checkout>.ratchet-base, its own target dir target/ratchet-base), and its
+# list is cached by the base's sha at target/ratchet/<sha>.list; a cached
+# list is used as it is.
 #
 #   ok   ratchet-base (1a2b3c4: 136 red of 512) 301.0s
 #
@@ -106,17 +109,19 @@ fi
 [ -z "$chooser" ] || echo "note ratchet-base: $short cannot run one scenario alone; ${chooser:0:7}'s runner change was applied on it"
 
 # The feature runner on the base, its list to $1, the rest of the arguments
-# its environment; its output appended to the log.
+# its environment; its output appended to the log. The runner is the base's:
+# its clusters, or its one test from before them.
 run_features() {
     local list=$1
     shift
     (cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" "GHERKIN_RATCHET=$list" "$@" \
         cargo nextest run --manifest-path "$wt/Cargo.toml" --package ctxloom --no-fail-fast --no-tests=fail \
         --status-level fail --final-status-level fail --success-output never --failure-output final \
-        --hide-progress-bar --cargo-quiet -E 'test(=tests::gherkin_features::every_feature_runs)') \
+        --hide-progress-bar --cargo-quiet -E "$runner_tests") \
         >> "$log" 2>&1 7>&-
 }
 
+runner_tests='test(=tests::gherkin_features::every_feature_runs) | test(/^tests::gherkin_features::clusters::/)'
 start=$(date +%s)
 : > "$log"
 if [ -n "$ids" ]; then
