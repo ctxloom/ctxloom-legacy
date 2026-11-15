@@ -14,7 +14,7 @@ use daemon_api::{Removed, SessionRemovals};
 use daemon_proto::v1;
 use isolation_application::{IsolationError, WorktreeUse};
 #[cfg(feature = "session-destroy")]
-use reclaim_application::ReclaimError;
+use reclaim_application::{ReclaimError, SessionHolds};
 #[cfg(feature = "session-destroy")]
 use sessions_application::Timestamp;
 use sessions_application::{
@@ -107,11 +107,14 @@ pub fn is_destroy(session: &Session) -> bool {
 }
 
 /// Run `session`'s destroy ([`is_destroy`]) on the daemon's client
-/// `removals`, writing its answer to `out`.
+/// `removals`, writing its answer to `out`; each session it destroys, or
+/// plans to, has its hold in this process's `holds` warned of, and once
+/// destroyed discarded (s4-Q14, H4: the hold is the client's).
 #[cfg(feature = "session-destroy")]
 pub fn destroy<R: SessionRemovals>(
     session: &Session,
     removals: &R,
+    holds: &dyn SessionHolds,
     format: Format,
     out: &mut dyn Write,
 ) -> Result<Done, Failure> {
@@ -134,9 +137,9 @@ pub fn destroy<R: SessionRemovals>(
                         yes: args.yes,
                         verb: REMOVE_VERB,
                     };
-                    sweep(removals, &ask, format, out).await
+                    sweep(removals, holds, &ask, format, out).await
                 }
-                (None, Some(harp)) => remove(removals, harp, args, format, out).await,
+                (None, Some(harp)) => remove(removals, holds, harp, args, format, out).await,
                 (None, None) => unreachable!("clap requires a session or an age"),
             },
             Some(SessionVerb::Sweep(args)) => {
@@ -149,7 +152,7 @@ pub fn destroy<R: SessionRemovals>(
                     yes: args.yes,
                     verb: "session sweep",
                 };
-                sweep(removals, &ask, format, out).await
+                sweep(removals, holds, &ask, format, out).await
             }
             _ => unreachable!("only a destroy: session_cli::is_destroy"),
         }
@@ -589,11 +592,13 @@ async fn rename<S: SessionService>(
 #[cfg(feature = "session-destroy")]
 async fn remove<R: SessionRemovals>(
     removals: &R,
+    holds: &dyn SessionHolds,
     harp: &str,
     args: &RemoveArgs,
     format: Format,
     out: &mut dyn Write,
 ) -> Result<Done, Failure> {
+    let _ = holds;
     let removed = removals
         .delete_session(harp, args.yes, args.even_if_live)
         .await
@@ -670,6 +675,7 @@ struct Sweep<'a> {
 #[cfg(feature = "session-destroy")]
 async fn sweep<R: SessionRemovals>(
     removals: &R,
+    holds: &dyn SessionHolds,
     args: &Sweep<'_>,
     format: Format,
     out: &mut dyn Write,
@@ -684,6 +690,7 @@ async fn sweep<R: SessionRemovals>(
         };
         reclaim_application::parse_age(flag, age, now).map_err(reclaim_failure)?;
     }
+    let _ = holds;
     let report = removals
         .sweep_sessions(
             args.all_projects,

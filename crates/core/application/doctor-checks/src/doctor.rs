@@ -9,6 +9,7 @@ use ctxloom_ports::{
     ConfigFiles, Executables, Failure, ForeignWorktrees, GitIdentity, Scope, Source, UserFiles,
 };
 use library_application::{AgentLosses, LegacyGo};
+use run_ports::HeldFacts;
 use serde::Serialize;
 
 use crate::checks::{self, Check, Status};
@@ -61,6 +62,17 @@ pub struct Doctor {
     /// The enabled registered companions, each asked for its loadout through
     /// the library's one probe, when the report is made; none wired, no row.
     companions: Option<CompanionsAsked>,
+    /// This home's holds (s4-Q14, H4), judged by this ctxloom's stamp at an
+    /// instant; none wired, no row.
+    holds: Option<Holds>,
+}
+
+/// The holds doctor reports: the port, this ctxloom's stamp, and now
+/// (seconds since the epoch).
+struct Holds {
+    held: Arc<dyn HeldFacts>,
+    own: String,
+    now: i64,
 }
 
 /// Asks the enabled registered companions for their loadouts: what
@@ -91,6 +103,21 @@ impl Doctor {
             worktrees: None,
             stale: None,
             companions: None,
+            holds: None,
+        }
+    }
+
+    /// This doctor, reporting what `held` holds, judged by this ctxloom's
+    /// stamp `own` (the one a command flushes as) at `now`, seconds since
+    /// the epoch (s4-Q14, H4).
+    pub fn reporting_holds(self, held: Arc<dyn HeldFacts>, own: &str, now: i64) -> Doctor {
+        Doctor {
+            holds: Some(Holds {
+                held,
+                own: own.to_string(),
+                now,
+            }),
+            ..self
         }
     }
 
@@ -277,6 +304,13 @@ impl Doctor {
         if let Some(ask) = &self.companions {
             let at = report.checks.len() - 1;
             report.checks.insert(at, checks::companions(&ask()));
+        }
+        if let Some(holds) = &self.holds {
+            let at = report.checks.len() - 1;
+            report.checks.insert(
+                at,
+                crate::held::held_facts(&holds.held.survey(), &holds.own, holds.now),
+            );
         }
         if let Some(worktrees) = &self.worktrees {
             let listing = match &root {

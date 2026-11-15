@@ -773,6 +773,39 @@ struct Daemon {
     deletes: std::cell::RefCell<Vec<(String, bool, bool)>>,
     /// Each sweep asked: all, older_than, yes.
     sweeps: std::cell::RefCell<Vec<(bool, Option<String>, bool)>>,
+    /// This process's holds, by session resource name (s4-Q14, H4).
+    held: std::collections::BTreeMap<String, reclaim_application::HeldOf>,
+    /// The holds' reads and discards fail.
+    holds_fail: bool,
+    /// Each hold discarded, by name.
+    discarded: std::cell::RefCell<Vec<String>>,
+}
+
+fn hold_failure() -> reclaim_application::HoldError {
+    reclaim_application::HoldError::Io {
+        path: "/h/.ctxloom/held".to_string(),
+        ext_err_txt: "Permission denied (os error 13)".to_string(),
+    }
+}
+
+impl reclaim_application::SessionHolds for Daemon {
+    fn held(
+        &self,
+        name: &str,
+    ) -> Result<Option<reclaim_application::HeldOf>, reclaim_application::HoldError> {
+        if self.holds_fail {
+            return Err(hold_failure());
+        }
+        Ok(self.held.get(name).copied())
+    }
+
+    fn discard(&self, name: &str) -> Result<(), reclaim_application::HoldError> {
+        if self.holds_fail {
+            return Err(hold_failure());
+        }
+        self.discarded.borrow_mut().push(name.to_string());
+        Ok(())
+    }
 }
 
 impl daemon_api::SessionRemovals for Daemon {
@@ -808,7 +841,7 @@ fn destroy_go(daemon: &Daemon, format: Format, words: &[&str]) -> Ran {
     let session = parsed(words);
     assert!(crate::is_destroy(&session), "{words:?}");
     let mut out = Vec::new();
-    let result = crate::destroy(&session, daemon, format, &mut out);
+    let result = crate::destroy(&session, daemon, daemon, format, &mut out);
     Ran {
         out: String::from_utf8(out).unwrap(),
         result,
@@ -993,6 +1026,123 @@ fn a_removal_of_machine_files_alone_or_a_refused_one_does_not_warn() {
     .result
     .unwrap_err();
     assert!(!format!("{:?}", failed.lines).contains("notes.md"));
+}
+
+const NAME: &str = "projects/calm-otter/sessions/amber-swift-owl";
+
+/// `daemon`, its session holding `facts` and `set_aside` parts.
+fn holding(mut daemon: Daemon, name: &str, facts: u64, set_aside: u32) -> Daemon {
+    daemon.held.insert(
+        name.to_string(),
+        reclaim_application::HeldOf { facts, set_aside },
+    );
+    daemon
+}
+
+/// The held-facts warning a command's notices hold, if any: its args.
+fn held_warning(done: &crate::Done) -> Option<String> {
+    done.notices
+        .iter()
+        .find(|n| n.code() == "sessions-application-destroys-held")
+        .map(|n| format!("{:?}", n.args()))
+}
+
+// s4-Q14, H-Q8 (a): a removal's plan warns of the session's held facts,
+// naming the count, and keeps them.
+#[test]
+fn a_removal_report_warns_of_the_sessions_held_facts_and_keeps_them() {
+    let daemon = holding(done_with(plan(false)), NAME, 3, 0);
+    let done = destroy_go(&daemon, Format::Text, &["remove", "amber-swift-owl"])
+        .result
+        .unwrap();
+    let warned = held_warning(&done).expect("the held facts' warning");
+    assert!(warned.contains("amber-swift-owl"), "{warned}");
+    assert!(warned.contains("facts") && warned.contains('3'), "{warned}");
+    assert!(
+        daemon.discarded.borrow().is_empty(),
+        "a plan discards nothing"
+    );
+    assert!(done.would_change);
+}
+
+// H-Q8 (a): an applied removal warns, then discards the hold (its
+// set-aside parts with it).
+#[test]
+fn an_applied_removal_warns_of_its_held_facts_and_discards_them() {
+    let daemon = holding(done_with(plan(true)), NAME, 3, 1);
+    let done = destroy_go(
+        &daemon,
+        Format::Json,
+        &["remove", "amber-swift-owl", "--yes"],
+    )
+    .result
+    .unwrap();
+    let warned = held_warning(&done).expect("the held facts' warning");
+    assert!(
+        warned.contains("set_aside") && warned.contains('1'),
+        "{warned}"
+    );
+    assert_eq!(*daemon.discarded.borrow(), [NAME]);
+}
+
+// A session with no hold is warned of nothing, and no hold is touched.
+#[test]
+fn a_removal_of_a_session_that_holds_nothing_does_not_warn_of_held_facts() {
+    let daemon = holding(
+        done_with(plan(true)),
+        "projects/calm-otter/sessions/brisk-copper-moth",
+        9,
+        0,
+    );
+    let done = destroy_go(
+        &daemon,
+        Format::Text,
+        &["remove", "amber-swift-owl", "--yes"],
+    )
+    .result
+    .unwrap();
+    assert_eq!(held_warning(&done), None);
+    assert!(daemon.discarded.borrow().is_empty());
+}
+
+// A refused removal destroys nothing: its hold is neither warned of nor
+// discarded.
+#[test]
+fn a_refused_removal_leaves_its_hold_alone() {
+    let daemon = holding(
+        refused_with(Refusal::Kept {
+            harp: "amber-swift-owl".to_string(),
+        }),
+        NAME,
+        3,
+        0,
+    );
+    let failure = destroy_go(
+        &daemon,
+        Format::Text,
+        &["remove", "amber-swift-owl", "--yes"],
+    )
+    .result
+    .unwrap_err();
+    assert_eq!(failure.failure.exit, Exit::REFUSED);
+    assert!(daemon.discarded.borrow().is_empty());
+}
+
+// A hold that cannot be read or discarded fails the command (10), after the
+// daemon's answer is printed: never a quiet leftover.
+#[test]
+fn a_removal_whose_hold_cannot_be_reached_fails() {
+    let mut daemon = holding(done_with(plan(true)), NAME, 3, 0);
+    daemon.holds_fail = true;
+    let ran = destroy_go(
+        &daemon,
+        Format::Text,
+        &["remove", "amber-swift-owl", "--yes"],
+    );
+    assert!(ran.out.contains("destroyed"), "{}", ran.out);
+    let failure = ran.result.unwrap_err();
+    assert_eq!(failure.failure.exit, Exit::FAILED);
+    assert_eq!(failure.failure.cause.code(), "run-ports-hold-io");
 }
 
 // --even-if-live reaches the daemon, which judges by the lock; the applying
@@ -1764,6 +1914,80 @@ fn a_sweep_warns_of_the_authored_files_each_destroy_takes() {
         .unwrap();
     let warned = authored_warning(&done).expect("the warning");
     assert!(warned.contains("notes.md"), "{warned}");
+}
+
+/// A sweep's removal of `harp` (of calm-otter), `applied` or planned.
+fn swept_removal(harp: &str, applied: bool) -> v1::DeleteSessionResponse {
+    v1::DeleteSessionResponse {
+        name: format!("projects/calm-otter/sessions/{harp}"),
+        harp: harp.to_string(),
+        applied: Some(applied),
+        ..v1::DeleteSessionResponse::default()
+    }
+}
+
+// s4-Q14, H-Q8 (a): each session a sweep plans to destroy warns of its held
+// facts; nothing is discarded by a report.
+#[test]
+fn a_sweep_report_warns_of_each_planned_destroys_held_facts() {
+    let mut daemon = swept(
+        vec![
+            row("plan-one", "purge", "planned", "", ""),
+            row("plan-two", "purge", "planned", "", ""),
+        ],
+        v1::SweepCounts {
+            planned: 2,
+            ..v1::SweepCounts::default()
+        },
+    );
+    if let Some(swept) = daemon.swept.as_mut() {
+        swept.sessions = vec![
+            swept_removal("plan-one", false),
+            swept_removal("plan-two", false),
+        ];
+    }
+    let daemon = holding(daemon, "projects/calm-otter/sessions/plan-two", 4, 0);
+    let done = destroy_go(&daemon, Format::Text, &["sweep"])
+        .result
+        .unwrap();
+    let warnings: Vec<String> = done
+        .notices
+        .iter()
+        .filter(|n| n.code() == "sessions-application-destroys-held")
+        .map(|n| format!("{:?}", n.args()))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("plan-two"), "{warnings:?}");
+    assert!(daemon.discarded.borrow().is_empty());
+}
+
+// Each session a sweep destroyed has its hold discarded, even when another
+// row failed (the failure is still the command's exit).
+#[test]
+fn a_sweep_discards_the_hold_of_each_session_it_destroyed() {
+    let mut daemon = swept(
+        vec![
+            row("gone-one", "purge", "done", "", ""),
+            row("bad-one", "purge", "failed", "boom", ""),
+        ],
+        v1::SweepCounts {
+            done: 1,
+            failed: 1,
+            ..v1::SweepCounts::default()
+        },
+    );
+    if let Some(swept) = daemon.swept.as_mut() {
+        swept.sessions = vec![swept_removal("gone-one", true)];
+    }
+    let daemon = holding(daemon, "projects/calm-otter/sessions/gone-one", 2, 0);
+    let failure = destroy_go(&daemon, Format::Text, &["sweep", "--yes"])
+        .result
+        .unwrap_err();
+    assert_eq!(failure.failure.cause.code(), "session-cli-sweep-failed");
+    assert_eq!(
+        *daemon.discarded.borrow(),
+        ["projects/calm-otter/sessions/gone-one"]
+    );
 }
 
 #[test]

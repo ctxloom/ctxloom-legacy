@@ -141,7 +141,11 @@ impl Commands {
             // opens no store for it.
             let wiring = Wiring::new(Arc::clone(&self.env)).map_err(|e| failed(Box::new(e)))?;
             let client = crate::daemon::client(&wiring, &self.version);
-            destroy(&command, &client, format, out)
+            // The hold is this process's (s4-Q14, H4; H-Q5 revised): the
+            // destroy's warning and discard read this home's.
+            let holds =
+                reclaim_application::Holds(fact_spool::Spool::at_home(wiring.fs(), wiring.home()));
+            destroy(&command, &client, &holds, format, out)
         } else {
             let service = self.sessions().map_err(failed)?;
             session_cli::run(&command, service, format, out)
@@ -280,10 +284,11 @@ impl Commands {
 fn destroy<R: daemon_api::SessionRemovals>(
     command: &session_cli::Session,
     client: &R,
+    holds: &dyn reclaim_application::SessionHolds,
     format: Format,
     out: &mut dyn Write,
 ) -> Result<session_cli::Done, session_cli::Failure> {
-    session_cli::destroy(command, client, format, out)
+    session_cli::destroy(command, client, holds, format, out)
 }
 
 /// A plain build has no destroying verb, so nothing is a destroy.
@@ -291,6 +296,7 @@ fn destroy<R: daemon_api::SessionRemovals>(
 fn destroy<R>(
     _: &session_cli::Session,
     _: &R,
+    _: &dyn reclaim_application::SessionHolds,
     _: Format,
     _: &mut dyn Write,
 ) -> Result<session_cli::Done, session_cli::Failure> {
