@@ -328,11 +328,18 @@ fn a_child_owed_an_incarnation_is_started_and_a_primary_is_not() {
             .any(|k| k.starts_with("start:")),
         "a closed child is not started"
     );
+    // Owner 2026-11-15: no stop latch; a child whose stream holds a retired
+    // stop order is started like any other.
     let mut stopped = World::with_child();
     stopped.child.push(SessionEvent::StopOrdered(StopOrdered {
         reason: "x".to_string(),
     }));
-    assert!(stopped.plan().is_empty(), "a stopped child is not started");
+    assert!(
+        keys(&stopped.plan())
+            .iter()
+            .any(|k| k.starts_with("start:")),
+        "a retired stop order keeps no child from its start"
+    );
 }
 
 // A run already enqueued that this daemon does not host is not started again.
@@ -681,11 +688,13 @@ fn a_child_that_exited_closed_or_owes_its_next_is_not_rehosted() {
     let mut closed_child = ended_child("orphaned");
     closed_child.child.push(closed());
     assert!(!rehosted(closed_child), "closed");
+    // Owner 2026-11-15: no stop latch; a retired stop order keeps no lost
+    // child from its re-host.
     let mut stopped = ended_child("orphaned");
     stopped.child.push(SessionEvent::StopOrdered(StopOrdered {
         reason: "x".to_string(),
     }));
-    assert!(!rehosted(stopped), "stopped");
+    assert!(rehosted(stopped), "a retired stop order");
     let mut unbound = World::with_child();
     unbound.child.push(incarnation_ended(1, "orphaned"));
     assert!(!rehosted(unbound), "no native session");

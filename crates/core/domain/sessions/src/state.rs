@@ -43,8 +43,6 @@ pub struct SessionState {
     pub incarnation: u32,
     /// The incarnation owed or running and not yet ended, if any.
     pub open_incarnation: Option<u32>,
-    /// Set by a stop order; no incarnation is owed after it.
-    pub stopped: bool,
     /// The owner a child was minted for (D26); `None` for a top-level
     /// session.
     pub owner: Option<SessionRef>,
@@ -85,7 +83,6 @@ impl From<SessionState> for sessions_proto::v1::SessionState {
             depth: value.depth,
             incarnation: value.incarnation,
             open_incarnation: value.open_incarnation,
-            stopped: value.stopped,
             owner: value.owner.map(sessions_proto::v1::SessionRef::from),
             closed: value.closed,
             closed_cause: value.closed_cause,
@@ -138,7 +135,6 @@ impl TryFrom<sessions_proto::v1::SessionState> for SessionState {
             depth: value.depth,
             incarnation: value.incarnation,
             open_incarnation: value.open_incarnation,
-            stopped: value.stopped,
             owner: value.owner.map(SessionRef::try_from).transpose()?,
             closed: value.closed,
             closed_cause: value.closed_cause,

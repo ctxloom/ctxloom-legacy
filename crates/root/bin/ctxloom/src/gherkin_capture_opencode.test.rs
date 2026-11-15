@@ -341,7 +341,7 @@ fn hooks_recorded(w: &mut World) {
 }
 
 #[cucumber::then(
-    "the session's transcript holds her prompt, the tool call with its status, the assistant's words, the turn's end and the session's end at the exit, each once"
+    "the session's transcript holds her prompt, the tool call with its status, the assistant's words and the turn's end, each once"
 )]
 fn transcript_holds(w: &mut World) {
     // Ruling 87a: read from the session's events, as a person reads it.
@@ -350,13 +350,8 @@ fn transcript_holds(w: &mut World) {
     let kinds: Vec<&str> = lines.iter().map(|l| l["kind"].as_str().unwrap()).collect();
     assert_eq!(
         kinds,
-        [
-            "entry",
-            "tool",
-            "assistant_delta",
-            "turn_end",
-            "session_end"
-        ],
+        // No `session_end` at the exit (owner 2026-11-15).
+        ["entry", "tool", "assistant_delta", "turn_end"],
         "each once, the turn ended twice (its completion and its idle): {lines:#?}"
     );
     for line in &lines {
@@ -378,7 +373,6 @@ fn transcript_holds(w: &mut World) {
     assert_eq!(words["delta"]["text"], WORDS);
     assert_eq!(words["delta"]["final"], true);
     assert_eq!(lines[3]["prompt_id"], PROMPT_ID);
-    assert_eq!(lines[4]["reason"], "exit");
     let whole = serde_json::to_string(&lines).unwrap();
     assert!(!whole.contains(TOOL_BODY), "the tool's output was kept");
     assert!(

@@ -52,6 +52,14 @@ impl Home {
         self.env.run(args)
     }
 
+    /// The resource name of the seeded session `harp` (`CTXLOOM_SESSION`'s
+    /// value for its hooks: the session a hook addresses its facts to).
+    fn name_of(&self, harp: &str) -> String {
+        let shown = self.run(&["session", "show", harp, "--format", "json"]);
+        assert_eq!(shown.code, 0, "{}", shown.said());
+        shown.json()["name"].as_str().expect("a name").to_string()
+    }
+
     /// Seed `harp` with `flags`; it must succeed.
     fn seed(&self, harp: &str, flags: &[&str]) {
         let mut args = vec!["test", "seed-session", harp];
@@ -719,15 +727,14 @@ const SESSION_START: &str = r#"{"session_id":"vendor-session-42","transcript_pat
 // session_hooks.feature: "Binding a session records the harp both in the
 // transcript and in the index", through the one callback form,
 // `hook claude-code execute SessionStart`: the marker on stdout (parsed ALONE as
-// JSON, as context) and the binding in the index.
+// JSON, as context) and the binding in the index, delivered to the user's
+// daemon as every capture fact is (owner 2026-11-15, H-Q9).
 #[test]
 fn test_executing_session_start_binds_the_session_and_emits_the_marker() {
     let home = Home::new();
     home.seed("brisk-copper-moth", &[]);
-    let vars = [(
-        "CTXLOOM_SESSION",
-        "projects/amber-quiet-heron/sessions/brisk-copper-moth",
-    )];
+    let name = home.name_of("brisk-copper-moth");
+    let vars = [("CTXLOOM_SESSION", name.as_str())];
     let ran = home.env.run_hook(
         &["hook", "claude-code", "execute", "SessionStart"],
         SESSION_START,
@@ -761,10 +768,8 @@ fn test_executing_session_start_binds_the_session_and_emits_the_marker() {
 fn test_a_second_bind_with_a_new_session_rotates_the_binding() {
     let home = Home::new();
     home.seed("brisk-copper-moth", &[]);
-    let vars = [(
-        "CTXLOOM_SESSION",
-        "projects/amber-quiet-heron/sessions/brisk-copper-moth",
-    )];
+    let name = home.name_of("brisk-copper-moth");
+    let vars = [("CTXLOOM_SESSION", name.as_str())];
     let bind = |payload: &str| {
         home.env.run_hook(
             &["hook", "claude-code", "execute", "SessionStart"],

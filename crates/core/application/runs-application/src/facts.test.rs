@@ -346,7 +346,7 @@ async fn a_claim_is_recorded_and_ends_nothing() {
 #[tokio::test]
 async fn every_agent_fact_applies_in_every_state() {
     use crate::fakes::command_book;
-    let states = ["live", "turn in flight", "stop ordered", "ended"];
+    let states = ["live", "turn in flight", "stop requested", "ended"];
     for state in states {
         let world = World::new().await;
         let facts = Facts::new(Arc::clone(&world.edge));
@@ -365,15 +365,13 @@ async fn every_agent_fact_applies_in_every_state() {
                     .await
                     .unwrap();
             }
-            "stop ordered" => {
-                let stop = sessions::StopSession {
-                    requester_depth: 0,
+            "stop requested" => {
+                let stop = runs::RequestStop {
                     reason: "x".to_string(),
-                    requester: None,
                 };
                 world
                     .edge
-                    .handle(command_book(me.identity.session_cover(), stop))
+                    .handle(command_book(me.identity.run_cover(), stop))
                     .await
                     .unwrap();
             }

@@ -13,8 +13,7 @@
 //! waits for the exit report. So everything the launcher and the run use
 //! case do around a terminal session (the `RunnerStarted` and `RunExited`
 //! it records, which the frontend's reports already made and are
-//! DUPLICATES, the native session bound from the hooks' end, opencode's end
-//! at its exit, the checkout released WIP-safe, the incarnation ended) is
+//! DUPLICATES, the checkout released WIP-safe, the incarnation ended) is
 //! done here, unchanged, once the frontend says the TUI exited.
 //!
 //! While it waits it watches for what the frontend must be told: the

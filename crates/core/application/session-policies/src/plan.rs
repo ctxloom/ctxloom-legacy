@@ -383,7 +383,7 @@ pub const ENDED_DRAINED: &str = "drained";
 
 /// Each child of this project whose last incarnation was lost (cause
 /// `rehost`) or handed over by a draining daemon (cause `drain`, s4-Q5), and
-/// is neither closed nor stopped, nor owed another: its re-host. A child with
+/// is neither closed nor owed another: its re-host. A child with
 /// no native session has no conversation to resume, and is left ended.
 fn rehosts(scene: &Scene<'_>, steps: &mut Vec<Step>) {
     for (id, session) in scene.sessions() {
@@ -395,7 +395,7 @@ fn rehosts(scene: &Scene<'_>, steps: &mut Vec<Step>) {
             Some((n, ENDED_DRAINED)) if n == session.incarnation => sessions::DRAINED,
             _ => continue,
         };
-        let open = session.open_incarnation.is_some() || session.closed || session.stopped;
+        let open = session.open_incarnation.is_some() || session.closed;
         if open || session.native_id.is_empty() {
             continue;
         }
@@ -429,7 +429,7 @@ fn runs(scene: &Scene<'_>, steps: &mut Vec<Step>) {
         let run = scene.board.run(id, incarnation);
         let hosted = scene.hosted.contains(&at.run());
         if !hosted {
-            let startable = run.is_none() && !session.closed && !session.stopped;
+            let startable = run.is_none() && !session.closed;
             if startable {
                 steps.push(Step::Start {
                     key: format!("start:{}", at.run()),

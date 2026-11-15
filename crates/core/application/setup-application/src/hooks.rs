@@ -18,27 +18,18 @@ const AGENT_SETUP_NUDGE: &str = "ctxloom: this project has profiles but no agent
 const LINK_TAG: &str = "ctxloom:link_id=";
 
 /// What `hook <engine> execute <name>` answers: the engine's stdout, and what
-/// else the caller is to do with the event (the driving edge records the bind,
-/// and warns of a session with no harp).
+/// else the caller is to do with the event (the driving edge records what it
+/// observed, a session start's bind among it, and warns of a session with no
+/// harp).
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct HookAnswer {
     /// The engine's wire answer, one JSON line (empty for silence).
     pub stdout: String,
-    /// A session start to bind: the harp, and the engine's session.
-    pub bind: Option<SessionBind>,
     /// A session start fired with no usable harp: nothing truthful to emit.
     pub harp_missing: bool,
     /// The event the codec decoded, for the
     /// caller that records it. `None` for an answer made without one.
     pub event: Option<HookEvent>,
-}
-
-/// The binding a session start asks for.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct SessionBind {
-    pub harp: String,
-    pub native_id: String,
-    pub transcript: String,
 }
 
 /// The harp self-id marker, `<ctxloom name="..." kind="harp" />`: the only
@@ -58,8 +49,8 @@ impl Setup {
     /// the registry (an unknown one is `UnknownHookEngine`, naming the known
     /// ones), the native name is mapped to the unified event by the engine's
     /// codec, and the payload decoded by it. A session start answers the
-    /// harp's marker as context plus the session-start notice, and asks for the
-    /// bind; a post-tool call answers what `skill_mates` does; every other
+    /// harp's marker as context plus the session-start notice (its bind is an
+    /// observation of its event, recorded like the rest); a post-tool call answers what `skill_mates` does; every other
     /// event (turn_end, message_display, post_tool_batch, ...) answers
     /// silence. `harp` is the session the hook runs in (may be empty).
     pub fn execute_hook(
@@ -85,11 +76,6 @@ impl Setup {
                 })?;
                 Ok(HookAnswer {
                     stdout,
-                    bind: usable.then(|| SessionBind {
-                        harp: harp.to_string(),
-                        native_id: event.native_session.clone(),
-                        transcript: event.transcript.clone(),
-                    }),
                     harp_missing: !usable,
                     event: Some(event),
                 })

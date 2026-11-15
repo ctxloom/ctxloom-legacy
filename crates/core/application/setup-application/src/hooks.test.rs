@@ -149,7 +149,7 @@ fn test_executing_a_hook_of_an_unknown_engine_is_refused_listing_the_known_ones(
 }
 
 #[test]
-fn test_a_session_start_answers_the_marker_and_the_notice_and_asks_for_the_bind() {
+fn test_a_session_start_answers_the_marker_and_the_notice_and_carries_its_event() {
     let w = world("schema_version: 8\n");
     let answer = w
         .setup
@@ -168,19 +168,17 @@ fn test_a_session_start_answers_the_marker_and_the_notice_and_asks_for_the_bind(
         "{}",
         answer.stdout
     );
+    // Its bind is an observation of the event, recorded with the rest.
+    let event = answer.event.expect("the decoded event");
     assert_eq!(
-        answer.bind,
-        Some(SessionBind {
-            harp: "brisk-copper-moth".into(),
-            native_id: "vendor-42".into(),
-            transcript: "/t/a.jsonl".into(),
-        })
+        (event.native_session.as_str(), event.transcript.as_str()),
+        ("vendor-42", "/t/a.jsonl")
     );
     assert!(!answer.harp_missing);
 }
 
 #[test]
-fn test_a_session_start_with_no_usable_harp_says_nothing_and_binds_nothing() {
+fn test_a_session_start_with_no_usable_harp_says_nothing() {
     let w = world(CONFIG);
     for harp in ["", "has\"quote", "has>angle"] {
         let answer = w
@@ -188,7 +186,6 @@ fn test_a_session_start_with_no_usable_harp_says_nothing_and_binds_nothing() {
             .execute_hook("claude-code", "SessionStart", "{}", harp)
             .unwrap();
         assert!(!answer.stdout.contains("kind=\"harp\""), "{harp:?}");
-        assert_eq!(answer.bind, None, "{harp:?}");
         assert!(answer.harp_missing, "{harp:?}");
     }
 }
@@ -206,7 +203,6 @@ fn test_a_post_tool_call_answers_what_skill_mates_does() {
             .skill_mates("claude-code", r#"{"skill":"admit"}"#)
             .unwrap()
     );
-    assert_eq!(answer.bind, None);
 }
 
 // The primary agent's data events are recorded elsewhere (M2); here they are
@@ -220,7 +216,6 @@ fn test_the_events_that_carry_data_answer_silence() {
             .execute_hook("claude-code", native, "{}", "brisk-copper-moth")
             .unwrap();
         assert_eq!(answer.stdout, "context=;notice=\n", "{native}");
-        assert_eq!(answer.bind, None, "{native}");
         assert!(!answer.harp_missing, "{native}");
     }
 }

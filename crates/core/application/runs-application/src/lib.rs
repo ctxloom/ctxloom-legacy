@@ -5,8 +5,6 @@
 //!   closed [`RunnerFact`] and [`ModelFact`] have no command in them; every
 //!   variant addresses the caller's own run or session, and its `external_id` is derived from its
 //!   cause (plan 4.3).
-//! - [`AgentRequests`]: the agent's refusable asks, equally closed and
-//!   identity-stamped (D7).
 //! - [`Feeds`]: per-stream catch-up from a resume point, no cross-stream
 //!   position anywhere (plan 6).
 //! - [`Enqueuer`]: the run's enqueue, which mints no credential (owner
@@ -32,7 +30,6 @@ mod gate;
 mod hold;
 mod hook_commands;
 mod identity;
-mod requests;
 mod stamp;
 mod user_gate;
 
@@ -52,7 +49,6 @@ pub use hold::{
 };
 pub use hook_commands::{EdgeCommands, EdgeFailure};
 pub use identity::{Identity, Role};
-pub use requests::{AgentRequest, AgentRequests, Requested};
 /// The edge port the listener serves the kernel through, for the driving adapter
 /// that holds one without depending on the ports.
 pub use run_ports::Edge;

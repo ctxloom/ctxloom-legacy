@@ -11,8 +11,6 @@ use angzarr_presentation::{Catalog, Format};
 use clap::{ArgMatches, Command, FromArgMatches};
 use cli_support::say_warning;
 use ctxloom_cli::{shaped, Call, CliError, Failure, PROG};
-use hook_cli::Binding;
-use sessions_application::{BindRequest, SessionService};
 
 use crate::capture::DaemonReach;
 use crate::{Commands, HoldingRecording, HookRecording, HookSink, RunIds, Sessions, Wiring};
@@ -192,19 +190,9 @@ impl Commands {
         // The session the hooks run in, by its resource name (s3-Q3).
         let harp = crate::capture::harp_of(self.env.utf8(run_ports::SESSION_VARIABLE));
         let hook_cli::HookVerb::Execute { hook_name } = &hook.verb;
-        // The bind is asked for while the setup use cases are borrowed, and
-        // made once they are let go (both live on this command's state).
-        let mut asked = Asked::default();
         let outcome = if hook_name == hook_cli::STATUSLINE {
             // Rendering only: it needs neither the application nor a home.
-            hook_cli::execute(
-                &hook.engine,
-                hook_name,
-                input,
-                &harp,
-                &NoService,
-                &mut asked,
-            )
+            hook_cli::execute(&hook.engine, hook_name, input, &harp, &NoService)
         } else {
             // A hook is a process of its own. One whose environment names an
             // endpoint (M10b's container arrival, OD-13) delivers there alone,
@@ -243,25 +231,9 @@ impl Commands {
                 }
             };
             let setup = self.hooks().map_err(|e| failed(Box::new(e)))?;
-            hook_cli::execute_recording(
-                &hook.engine,
-                hook_name,
-                input,
-                &harp,
-                &setup,
-                &mut asked,
-                &*recording,
-            )
+            hook_cli::execute_recording(&hook.engine, hook_name, input, &harp, &setup, &*recording)
         }
         .map_err(declined)?;
-        if let Some((harp, native_id, transcript)) = asked.0 {
-            let bound = Bind(self)
-                .bind(&harp, &native_id, &transcript)
-                .map_err(failed)
-                .map(|()| Exit::OK);
-            // The bind's store closed before the hook answers (ruling 131).
-            self.closing(bound, format, catalog, err)?;
-        }
         for warning in &outcome.warnings {
             say_warning(warning, PROG, format, catalog, err);
         }
@@ -317,53 +289,6 @@ impl hook_cli::HookService for NoService {
         _: &str,
     ) -> Result<setup_application::HookAnswer, Box<dyn Diagnostic>> {
         unreachable!("the statusline renders in hook-cli and asks nothing")
-    }
-}
-
-/// The bind a callback asked for: harp, the engine's session, its transcript.
-#[derive(Default)]
-struct Asked(Option<(String, String, String)>);
-
-impl hook_cli::Binding for Asked {
-    fn bind(
-        &mut self,
-        harp: &str,
-        native_id: &str,
-        transcript: &str,
-    ) -> Result<(), Box<dyn Diagnostic>> {
-        self.0 = Some((harp.into(), native_id.into(), transcript.into()));
-        Ok(())
-    }
-}
-
-/// What binds a session for the hook: the sessions use case, blocked on.
-struct Bind<'a>(&'a mut Commands);
-
-impl hook_cli::Binding for Bind<'_> {
-    fn bind(
-        &mut self,
-        harp: &str,
-        native_id: &str,
-        transcript_path: &str,
-    ) -> Result<(), Box<dyn Diagnostic>> {
-        let service = self.0.sessions()?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|e| -> Box<dyn Diagnostic> {
-                Box::new(CliError::Output {
-                    detail: e.to_string(),
-                })
-            })?;
-        runtime
-            .block_on(service.bind(BindRequest {
-                project: None,
-                harp: harp.to_string(),
-                native_id: native_id.to_string(),
-                transcript_path: transcript_path.to_string(),
-            }))
-            .map(drop)
-            .map_err(|e| -> Box<dyn Diagnostic> { Box::new(e) })
     }
 }
 

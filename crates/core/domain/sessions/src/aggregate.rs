@@ -19,12 +19,12 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 use crate::refusal::refuse;
 use crate::{
     adopted, end_recorded, engine_bound, kept_changed, lifeline, live, record, session_minted,
-    title_set, AdoptRotations, BindEngineSession, ChildCannotStop, EndRecorded, EngineMismatch,
-    EngineSessionBound, HarpInvalid, IncarnationEnded, IncarnationOwed, KeptChanged, MintSession,
-    NoNativeSession, NoSession, RecordEnd, RecordIncarnationEnded, RehostBudgetSpent,
-    RehostSession, ResumeSession, SessionAdopted, SessionCommand, SessionDestroyed, SessionEvent,
-    SessionExists, SessionMinted, SessionRejection, SessionRunning, SessionState, SessionUnknown,
-    SetKept, SetSessionTitle, StopOrdered, StopSession, TitleSet, WorkspaceMismatch,
+    title_set, AdoptRotations, BindEngineSession, EndRecorded, EngineMismatch, EngineSessionBound,
+    HarpInvalid, IncarnationEnded, IncarnationOwed, KeptChanged, MintSession, NoNativeSession,
+    NoSession, RecordEnd, RecordIncarnationEnded, RehostBudgetSpent, RehostSession, ResumeSession,
+    SessionAdopted, SessionCommand, SessionDestroyed, SessionEvent, SessionExists, SessionMinted,
+    SessionRejection, SessionRunning, SessionState, SessionUnknown, SetKept, SetSessionTitle,
+    StopOrdered, TitleSet, WorkspaceMismatch,
 };
 use crate::{
     daemon, ChildEnded, ChildForgotten, ChildLaunchFailed, ChildLaunched, ClearChild,
@@ -33,9 +33,10 @@ use crate::{
     SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
 };
 use crate::{
-    AssistantTextShown, CaptureGapped, Compacted, PromptSubmitted, RecordAssistantText,
-    RecordCaptureGap, RecordCompaction, RecordPromptSubmitted, RecordSessionEnded, RecordToolCall,
-    RecordTurnEnded, SessionEnded, ToolCalled, TurnEnded,
+    AssistantTextShown, CaptureGapped, Compacted, ConversationCleared, PromptSubmitted,
+    RecordAssistantText, RecordCaptureGap, RecordCompaction, RecordConversationCleared,
+    RecordPromptSubmitted, RecordToolCall, RecordTurnEnded, SessionEnded, SessionReopened,
+    ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -165,25 +166,6 @@ impl SessionAggregate {
         })
     }
 
-    /// Order the session's runs to stop; refused from a session that is not
-    /// its owner, else from a child.
-    #[handles_cmd(StopSession, refuses(NoSession, ChildCannotStop, NotOwner))]
-    fn stop_session(
-        &self,
-        cmd: StopSession,
-        ctx: &Context,
-    ) -> Result<Option<StopOrdered>, Failed<Refuses<Self, StopSession>>> {
-        let _ = ctx;
-        lifeline::stop_ordered(&self.session, &cmd).map_err(|rejection| {
-            refuse!(
-                SessionRejection,
-                rejection,
-                Refuses<Self, StopSession>,
-                [NoSession => NoSession, ChildCannotStop{depth} => ChildCannotStop, NotOwner{requester} => NotOwner]
-            )
-        })
-    }
-
     /// Close the session: terminal (K1); nothing on one already closed.
     #[handles_cmd(CloseSession, refuses(NoSession, NotOwner))]
     fn close_session(
@@ -297,15 +279,21 @@ impl SessionAggregate {
         &self,
         cmd: ResumeSession,
         ctx: &Context,
-    ) -> Result<IncarnationOwed, Failed<Refuses<Self, ResumeSession>>> {
+    ) -> Result<Emit<Self>, Failed<Refuses<Self, ResumeSession>>> {
         let _ = ctx;
-        lifeline::resumed(&self.session, &cmd).map_err(|rejection| {
+        let (reopened, owed) = lifeline::resumed(&self.session, &cmd).map_err(|rejection| {
             refuse!(
                 SessionRejection,
                 rejection,
                 Refuses<Self, ResumeSession>,
                 [SessionUnknown{harp} => SessionUnknown, SessionDestroyed{harp} => SessionDestroyed, SessionRunning{harp} => SessionRunning, NoNativeSession{harp} => NoNativeSession, EngineMismatch{harp, engine, asked} => EngineMismatch, WorkspaceMismatch{harp, workspace, asked} => WorkspaceMismatch]
             )
+        })?;
+        Ok(match reopened {
+            Some(reopened) => Emit::of(reopened).then(move |_: &Self, _: &Context| {
+                Ok::<_, Failed<Refuses<Self, ResumeSession>>>(owed)
+            }),
+            None => Emit::of(owed),
         })
     }
 
@@ -455,21 +443,6 @@ impl SessionAggregate {
         }))
     }
 
-    /// RecordSessionEnded: a FACT (it already happened in the engine), so never refused;
-    /// recorded as its event on a live session, nothing on a stream with none.
-    #[handles_fact(RecordSessionEnded)]
-    fn hook_session_ended(
-        &self,
-        fact: RecordSessionEnded,
-        ctx: &Context,
-    ) -> Result<FactEmit<Self>, Bug> {
-        let _ = ctx;
-        record(live(&self.session).ok().map(|_| SessionEnded {
-            native_session: fact.native_session,
-            reason: fact.reason,
-        }))
-    }
-
     /// RecordCompaction: a FACT (it already happened in the engine), so never refused;
     /// recorded as its event on a live session, nothing on a stream with none.
     #[handles_fact(RecordCompaction)]
@@ -504,6 +477,35 @@ impl SessionAggregate {
             dropped_at: fact.dropped_at,
             stamp: fact.stamp,
         }))
+    }
+
+    /// RecordConversationCleared: a FACT (the engine started a new
+    /// conversation), so never refused; recorded as its event on a live
+    /// session, nothing on a stream with none.
+    #[handles_fact(RecordConversationCleared)]
+    fn hook_conversation_cleared(
+        &self,
+        fact: RecordConversationCleared,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        record(live(&self.session).ok().map(|_| ConversationCleared {
+            native_session: fact.native_session,
+            trigger: fact.trigger,
+        }))
+    }
+
+    // Equivalent: the capture events carry no aggregate state; projectors fold them
+    // (`crate::apply` has no arm that changes the state for them).
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(ConversationCleared)]
+    fn applied_conversationcleared(&mut self, event: ConversationCleared, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    #[applies(SessionReopened)]
+    fn applied_sessionreopened(&mut self, event: SessionReopened, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
     }
 
     // Equivalent: the capture events carry no aggregate state; projectors fold them
@@ -602,6 +604,9 @@ impl SessionAggregate {
         fold(&mut self.session, event.into(), page);
     }
 
+    // Equivalent: retired (owner 2026-11-15), it folds to nothing
+    // (`crate::apply`'s arm for it changes nothing).
+    #[cfg_attr(test, mutants::skip)]
     #[applies(StopOrdered)]
     fn stop_ordered(&mut self, event: StopOrdered, page: &PageContext) {
         fold(&mut self.session, event.into(), page);

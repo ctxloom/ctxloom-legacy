@@ -197,6 +197,11 @@ impl Session {
     pub(crate) fn state(&self) -> SessionState {
         self.harness.state().state().clone()
     }
+
+    /// The stream holds `events` already (stored before: a retired event).
+    pub(crate) fn given<const N: usize>(&mut self, events: [SessionEvent; N]) {
+        self.harness.given(events);
+    }
 }
 
 pub(crate) fn mint(harp: &str) -> MintSession {
@@ -823,11 +828,54 @@ fn event_any(page: &angzarr_embedded::v1::EventPage) -> &angzarr_embedded::Any {
 // the stream is the transcript's order.
 
 use crate::{
-    AssistantTextShown, CaptureGapped, Compacted, CompactionPhase, PromptSubmitted,
-    RecordAssistantText, RecordCaptureGap, RecordCompaction, RecordPromptSubmitted,
-    RecordSessionEnded, RecordToolCall, RecordTurnEnded, SessionEnded, ToolCallStatus, ToolCalled,
-    TurnEnded,
+    AssistantTextShown, CaptureGapped, Compacted, CompactionPhase, ConversationCleared,
+    PromptSubmitted, RecordAssistantText, RecordCaptureGap, RecordCompaction,
+    RecordConversationCleared, RecordPromptSubmitted, RecordToolCall, RecordTurnEnded,
+    SessionEnded, ToolCallStatus, ToolCalled, TurnEnded,
 };
+
+fn cleared_fact() -> RecordConversationCleared {
+    RecordConversationCleared {
+        native_session: "n2".to_string(),
+        trigger: "clear".to_string(),
+    }
+}
+
+// Owner 2026-11-15 (clears captured, typed): a clear is a
+// capture fact like the rest: recorded on a live session as its event,
+// once (a redelivery, the hook's and the driver's report of one clear, is
+// DUPLICATE), nothing on a stream with no session.
+#[test]
+fn a_clear_is_recorded_on_a_live_session_once() {
+    let mut session = Session::minted();
+    assert_eq!(
+        session.fact(cleared_fact(), "hook:clear:s:n2"),
+        [SessionEvent::ConversationCleared(ConversationCleared {
+            native_session: "n2".to_string(),
+            trigger: "clear".to_string(),
+        })]
+    );
+    assert!(session.fact(cleared_fact(), "hook:clear:s:n2").is_empty());
+    let mut none = Session::new();
+    assert!(none.fact(cleared_fact(), "hook:clear:x").is_empty());
+}
+
+// Owner 2026-11-15 (SessionEnded retired in place): a stream
+// that holds a SessionEnded (every interactive session recorded before)
+// still folds, and the session reads as it would without it.
+#[test]
+fn a_stream_holding_a_retired_session_end_folds_as_before() {
+    let mut session = Session::minted();
+    let before = session.state();
+    session
+        .harness
+        .given([SessionEvent::SessionEnded(SessionEnded {
+            native_session: "n1".to_string(),
+            reason: "prompt_input_exit".to_string(),
+        })]);
+    assert_eq!(session.state(), before);
+    assert_eq!(session.fact(prompt_fact(), "hook:prompt:s:p1").len(), 1);
+}
 
 fn gap_fact() -> RecordCaptureGap {
     RecordCaptureGap {
@@ -979,19 +1027,6 @@ fn every_observation_records_its_event_on_a_live_session() {
             trigger: "manual".to_string(),
             summary_bytes: 12,
             summary_sha256: "ab".to_string(),
-        })]
-    );
-    assert_eq!(
-        session.fact(
-            RecordSessionEnded {
-                native_session: "n1".to_string(),
-                reason: "prompt_input_exit".to_string(),
-            },
-            "hook:session-end:s:n1"
-        ),
-        [SessionEvent::SessionEnded(SessionEnded {
-            native_session: "n1".to_string(),
-            reason: "prompt_input_exit".to_string(),
         })]
     );
 }

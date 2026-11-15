@@ -88,18 +88,6 @@ message RecordTurnEnded {
   string prompt_id = 1;
 }
 
-// The engine's session ended. external_id
-// `hook:session-end:<session>:<native_session>`.
-message RecordSessionEnded {
-  option (io.angzarr.v1.fact) = {
-    component: "ctxloom.sessions.v1.SessionState"
-    emits: ["ctxloom.sessions.v1.SessionEnded"]
-  };
-
-  string native_session = 1;
-  string reason = 2;
-}
-
 enum CompactionPhase {
   COMPACTION_PHASE_UNSPECIFIED = 0;
   COMPACTION_PHASE_BEFORE = 1;
@@ -200,6 +188,10 @@ message TurnEnded {
   string prompt_id = 1;
 }
 
+// RETIRED (owner 2026-11-15): never emitted; folded to nothing and rendered
+// nothing, kept only so the streams that hold one still read (angzarr refuses
+// an unknown stored type). Its fact, RecordSessionEnded, is gone: a session's
+// end is its run's end (`IncarnationEnded`) and its lock's verdict.
 message SessionEnded {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
 
@@ -215,6 +207,32 @@ message Compacted {
   string trigger = 3;
   uint64 summary_bytes = 4;
   string summary_sha256 = 5;
+}
+
+// The engine started a new conversation within the session: claude's /clear
+// (SessionStart `source: clear`; a streaming child's
+// `conversation_reset{trigger: clear}`). It carries no content. The
+// conversation the clear left is the session's lineage already: the bind
+// that follows displaces it (`EngineSessionBound.displaced`). external_id
+// `hook:clear:<session>:<native_session>`, the NEW conversation's id, so the
+// hook and the driver reporting one clear are one fact.
+message RecordConversationCleared {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.ConversationCleared"]
+  };
+
+  // The engine's conversation after the clear.
+  string native_session = 1;
+  // What the engine named as its cause (`clear`); empty when it named none.
+  string trigger = 2;
+}
+
+message ConversationCleared {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  string native_session = 1;
+  string trigger = 2;
 }
 
 message CaptureGapped {
