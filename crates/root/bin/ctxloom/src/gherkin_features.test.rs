@@ -7,13 +7,16 @@
 //!
 //! The features run concurrently, a thread each up to the machine's cores
 //! (each cucumber run also runs 4 scenarios at once). `GHERKIN_ONLY=<text>`
-//! runs only the features whose path contains it.
+//! runs only the features whose path contains it, and `GHERKIN_SCENARIO=<id>`
+//! only the scenario of that id (the ratchet's re-confirmation, alone).
 //!
 //! `GHERKIN_RATCHET=<absolute file>` asks for the scenario list instead of a
 //! verdict: every scenario run, one line each, sorted, `red\t<id>` or
 //! `green\t<id>` (the id is `gherkin_common::scenario_id`'s, a failure no
 //! scenario owns the feature's `outside_id`), is written to the file, and the
-//! test passes whatever failed. `just closeout-ratchet` (scripts/
+//! test passes whatever failed. Beside it, `<file>.failures` says why each
+//! red scenario is red: its failed step and what it said (capped), which the
+//! console's output, hidden on a pass, no longer does. `just closeout-ratchet` (scripts/
 //! closeout-ratchet.sh) judges that list against its base branch's; nothing
 //! else sets it.
 
@@ -29,19 +32,20 @@ use crate::tests::files;
 /// Run one feature with its World: whether it passed, and each scenario's
 /// outcome. A pending feature is skipped; a pending scenario is left out by
 /// the World's run (`gherkin_common::run_feature`).
-fn run_one(rel: &str) -> Result<FeatureRun, String> {
+fn run_one(rel: &str, only: Option<&str>) -> Result<FeatureRun, String> {
     let path = features_dir().join(rel);
     let text = files::read(&path).map_err(|e| format!("{rel}: {e}"))?;
     if is_pending_feature(&text) {
         return Ok(FeatureRun {
             passed: true,
             scenarios: Vec::new(),
+            failures: Vec::new(),
         });
     }
     match world_of(&text).map_err(|e| format!("{rel}: {e}"))? {
-        "base" => Ok(super::gherkin::run(&path)),
-        "surfaces" => Ok(super::gherkin_surfaces::run(&path)),
-        "isolation" => Ok(super::gherkin_isolation::run(&path)),
+        "base" => Ok(super::gherkin::run_only(&path, only)),
+        "surfaces" => Ok(super::gherkin_surfaces::run_only(&path, only)),
+        "isolation" => Ok(super::gherkin_isolation::run_only(&path, only)),
         other => Err(format!("{rel}: unknown world {other}")),
     }
 }
@@ -66,20 +70,69 @@ fn scenario_list(outcomes: &[(String, bool)]) -> String {
         .collect()
 }
 
+/// The feature of a scenario id: its part before the first ` :: `.
+fn feature_of(id: &str) -> &str {
+    id.split(" :: ").next().unwrap_or(id)
+}
+
+/// How much of a failure's message the failures file keeps.
+const FAILURE_MESSAGE_MAX: usize = 2_000;
+
+/// The failures file beside the `GHERKIN_RATCHET` list (`<list>.failures`):
+/// a record per failed step, sorted by scenario id, blank-line separated:
+/// `red\t<id>`, `  step: <keyword> <text>`, then the message, each line
+/// indented, capped at [`FAILURE_MESSAGE_MAX`] bytes (`[+N bytes]` after).
+fn failures_file(failures: &[super::gherkin_common::Failure]) -> String {
+    let mut sorted: Vec<&super::gherkin_common::Failure> = failures.iter().collect();
+    sorted.sort_by(|a, b| a.scenario.cmp(&b.scenario));
+    sorted
+        .into_iter()
+        .map(|failed| {
+            let mut message = failed.message.clone();
+            if message.len() > FAILURE_MESSAGE_MAX {
+                let mut cut = FAILURE_MESSAGE_MAX;
+                while !message.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                let more = message.len() - cut;
+                message.truncate(cut);
+                message.push_str(&format!(" [+{more} bytes]"));
+            }
+            let body: Vec<String> = message.lines().map(|l| format!("  {l}")).collect();
+            format!(
+                "red\t{}\n  step: {}\n{}\n\n",
+                failed.scenario,
+                failed.step,
+                body.join("\n")
+            )
+        })
+        .collect()
+}
+
+/// Where the failures file of the list `file` is: beside it.
+fn failures_path(file: &std::path::Path) -> std::path::PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(".failures");
+    std::path::PathBuf::from(name)
+}
+
 #[test]
 fn every_feature_runs() {
     let only = host_var("GHERKIN_ONLY")
         .map(|v| v.to_string_lossy().into_owned())
         .unwrap_or_default();
     let ratchet = host_var("GHERKIN_RATCHET").map(std::path::PathBuf::from);
+    let scenario = host_var("GHERKIN_SCENARIO").map(|v| v.to_string_lossy().into_owned());
     let features: Vec<String> = feature_files()
         .into_iter()
         .filter(|f| f.contains(&only))
+        .filter(|f| scenario.as_deref().is_none_or(|id| feature_of(id) == f))
         .collect();
     assert!(!features.is_empty(), "no feature matches {only:?}");
     let next = AtomicUsize::new(0);
     let failures = Mutex::new(Vec::new());
     let outcomes = Mutex::new(Vec::new());
+    let steps_failed = Mutex::new(Vec::new());
     let threads = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(4)
@@ -89,12 +142,18 @@ fn every_feature_runs() {
             scope.spawn(|| loop {
                 let i = next.fetch_add(1, Ordering::SeqCst);
                 let Some(rel) = features.get(i) else { break };
-                let (failed, seen) = match run_one(rel) {
+                let (failed, seen) = match run_one(rel, scenario.as_deref()) {
                     Ok(run) if run.passed => (None, run.scenarios),
-                    Ok(run) => (
-                        Some(format!("{rel}: a scenario failed (its output is above)")),
-                        run.scenarios,
-                    ),
+                    Ok(run) => {
+                        steps_failed
+                            .lock()
+                            .expect("not poisoned")
+                            .extend(run.failures);
+                        (
+                            Some(format!("{rel}: a scenario failed (its output is above)")),
+                            run.scenarios,
+                        )
+                    }
                     Err(e) => (Some(e), vec![(outside_id(rel), false)]),
                 };
                 outcomes.lock().expect("not poisoned").extend(seen);
@@ -111,6 +170,8 @@ fn every_feature_runs() {
         );
         let outcomes = outcomes.into_inner().expect("not poisoned");
         files::put(&file, scenario_list(&outcomes));
+        let steps_failed = steps_failed.into_inner().expect("not poisoned");
+        files::put(failures_path(&file), failures_file(&steps_failed));
         return;
     }
     let mut failures = failures.into_inner().expect("not poisoned");
@@ -306,6 +367,102 @@ fn the_skill_list_step_finds_a_skill_of_its_bundle_alone() {
     ];
     expected.sort();
     assert_eq!(got, expected);
+}
+
+/// Each red scenario's failure is kept: its id, the step that failed (its
+/// keyword and text) and what it said, so a red ratchet run can be read
+/// afterwards (`<list>.failures`); a green scenario has none.
+#[test]
+fn a_red_scenarios_failing_step_and_its_message_are_kept() {
+    let project = super::library::Project::bare();
+    let path = project.dir().join("why.feature");
+    files::put(
+        &path,
+        "Feature: f\n  Scenario: green\n    When I run \"ctxloom version\"\n    Then the command succeeds\n\n  Scenario: red\n    When I run \"ctxloom no-such-verb\"\n    Then the command succeeds\n",
+    );
+    let run = super::gherkin::run(&path);
+    assert!(!run.passed);
+    let feature = path.display().to_string();
+    assert_eq!(run.failures.len(), 1, "{:?}", run.failures);
+    let failed = &run.failures[0];
+    assert_eq!(failed.scenario, format!("{feature} :: red"));
+    assert_eq!(failed.step, "Then the command succeeds");
+    assert!(
+        failed.message.contains("no-such-verb"),
+        "{}",
+        failed.message
+    );
+}
+
+/// The failures file: a record per red scenario, its message capped, in the
+/// order of the ids.
+#[test]
+fn the_failures_file_names_each_red_scenario_its_step_and_its_capped_message() {
+    use super::gherkin_common::Failure;
+    let long = "x".repeat(5_000);
+    let failures = vec![
+        Failure {
+            scenario: "b :: s".to_string(),
+            step: "Then it holds".to_string(),
+            message: "line one\nline two".to_string(),
+        },
+        Failure {
+            scenario: "a :: t".to_string(),
+            step: "Given a start".to_string(),
+            message: long,
+        },
+    ];
+    let text = failures_file(&failures);
+    let records: Vec<&str> = text.split("\n\n").filter(|r| !r.is_empty()).collect();
+    assert_eq!(records.len(), 2, "{text}");
+    assert!(
+        records[0].starts_with("red\ta :: t\n  step: Given a start\n  "),
+        "{text}"
+    );
+    assert!(records[0].len() < FAILURE_MESSAGE_MAX + 200, "not capped");
+    assert!(
+        records[0].contains("[+"),
+        "no cap marker: {}",
+        &records[0][..80]
+    );
+    assert_eq!(
+        records[1],
+        "red\tb :: s\n  step: Then it holds\n  line one\n  line two"
+    );
+}
+
+/// The ratchet's re-confirmation runs one scenario alone (`GHERKIN_SCENARIO`
+/// names its id): only it runs, an outline's row as much as a plain one, and
+/// an id no scenario has runs nothing.
+#[test]
+fn one_scenario_runs_alone_by_its_id() {
+    let project = super::library::Project::bare();
+    let path = project.dir().join("alone.feature");
+    files::put(
+        &path,
+        "Feature: f\n  Scenario: plain\n    Given an empty project directory\n\n  Scenario: other\n    Given a step no World has\n\n  Scenario Outline: outline <what>\n    Given <step>\n\n    Examples:\n      | what | step |\n      | ok | an empty project directory |\n      | bad | a step no World has |\n",
+    );
+    let feature = path.display().to_string();
+    let plain = format!("{feature} :: plain");
+    let run = super::gherkin::run_only(&path, Some(&plain));
+    assert_eq!(run.scenarios, vec![(plain, true)]);
+    assert!(run.passed);
+    let row = format!("{feature} :: outline bad :: | bad | a step no World has |");
+    let run = super::gherkin::run_only(&path, Some(&row));
+    assert_eq!(run.scenarios, vec![(row, false)]);
+    let run = super::gherkin::run_only(&path, Some("nobody :: none"));
+    assert!(run.scenarios.is_empty(), "{:?}", run.scenarios);
+}
+
+/// `GHERKIN_SCENARIO`'s id names its feature: the part before the first
+/// ` :: `.
+#[test]
+fn a_scenario_ids_feature_is_its_first_part() {
+    assert_eq!(
+        feature_of("journeys/j.feature :: r :: s :: | a |"),
+        "journeys/j.feature"
+    );
+    assert_eq!(feature_of("cli/x.feature"), "cli/x.feature");
 }
 
 /// A feature that cannot run is red outside its scenarios.

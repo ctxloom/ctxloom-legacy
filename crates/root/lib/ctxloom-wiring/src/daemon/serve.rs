@@ -627,8 +627,12 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
         }
         match advertised(own, files.discovery().as_ref()) {
             Advertised::Ours => {}
-            Advertised::Gone => match files.publish(own) {
-                Ok(()) => said(say, "the discovery file was gone: advertised again"),
+            Advertised::Gone => match files.republish(own) {
+                Ok(true) => said(say, "the discovery file was gone: advertised again"),
+                Ok(false) => said(
+                    say,
+                    "the discovery file's directory was gone: not advertised again",
+                ),
                 Err(e) => said(
                     say,
                     &format!("the discovery file was gone, and cannot be written: {e}"),

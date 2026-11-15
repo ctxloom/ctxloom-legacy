@@ -1458,9 +1458,16 @@ client's `ensure` all ask the health check, never the lock, so a daemon that
 holds the lock and does not answer (stopped, hung) is not serving, and a
 stale port another process took is never handed anything. A serving daemon
 looks at its discovery file each tick: gone, it publishes it again (it still
-holds the single-instance lock); naming another daemon (its lock file was replaced, and
+holds the single-instance lock) where its directory still is
+(`DaemonFiles::republish`); naming another daemon (its lock file was replaced, and
 another took it), it exits, and withdraws only its OWN advertisement
-(`DaemonFiles::withdraw_own`), never the other's. A client with no live
+(`DaemonFiles::withdraw_own`), never the other's. Once started, a daemon never
+makes its own directory again (owner, 2026-11-14; j000100's exit is deleting
+`~/.ctxloom`): its log's directory is made as it starts (`logger`) and a line
+said once it is gone is dropped, and a discovery file whose directory is gone
+is not published again; so a daemon whose home was deleted exits on its lock
+and leaves nothing there. A replaced lock (its directory still there) is
+logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
 within `SPAWN_WAIT`, eight seconds: S16's ten (`HOOK_BOUND`) less a
@@ -3065,7 +3072,21 @@ the feature runner's: `GHERKIN_RATCHET=<absolute file>` makes
 `green<TAB><id>` (the id `<feature path under features/> :: [<rule> ::
 ]<scenario>[ :: | <example row> |]`; a failure no scenario owns is `<feature>
 :: (outside a scenario)`), and pass whatever failed, so only the ratchet's
-judge (`scripts/ratchet-judge.sh`) decides. The base's list is `just
+judge (`scripts/ratchet-judge.sh`) decides. Beside the list it writes
+`<list>.failures`, why each red scenario is red (a record per failed step:
+`red<TAB><id>`, `  step: <keyword> <text>`, its message indented, capped at
+2000 bytes), since a passing test's console output is never shown; the
+judge's FAIL line names it (`why: <list>.failures`), and the base's is cached
+beside its list. `GHERKIN_SCENARIO=<id>` runs that one scenario alone. A
+cached base list can freeze a flaky scenario's colour, so every scenario
+whose colour on the branch differs from the base's list is RE-CONFIRMED on
+the base before it is judged (owner, 2026-11-14; `ratchet-base.sh <base>
+--reconfirm <ids> <out>`, in the base's throwaway worktree): run alone, then
+in its feature file. A difference both re-runs give the base's listed colour
+is reproduced and judged as ever (a new red stays one, a turned green
+passes); one that is not, or was not re-run, is `FLAKY <id>`, named with its
+colours and its failures-file reason, and FAILS the ratchet whichever way it
+went: a flake is a finding, never a pass. The base's list is `just
 ratchet-base <base>` (`scripts/ratchet-base.sh`): only that test, on the
 base's tip, in a throwaway worktree `.<checkout>.ratchet-base` beside the
 checkout (target dir `target/ratchet-base`), cached by sha at

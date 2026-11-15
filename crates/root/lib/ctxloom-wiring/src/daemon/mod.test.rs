@@ -5,8 +5,8 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use super::{
-    account_home, daemon_env, daemon_home, instance_lock, request_id, ACCOUNT_HOME_VARIABLE,
-    CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
+    account_home, daemon_env, daemon_home, instance_lock, logger, request_id,
+    ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
 };
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -230,4 +230,29 @@ fn each_request_id_is_fresh() {
     let (one, two) = (request_id(), request_id());
     assert_ne!(one, two);
     assert!(uuid::Uuid::parse_str(&one).is_ok(), "{one}");
+}
+
+// j000100's exit: the daemon's log is made where it starts, and a line said
+// once its directory is gone (its home deleted) is dropped, never a reason
+// to make the directory again; a line said where it still is is appended.
+#[test]
+fn the_log_is_made_at_the_start_and_a_line_whose_directory_is_gone_is_dropped() {
+    let root = crate::fixtures::root();
+    let home = root.root().join("home");
+    let log = home.join(".ctxloom/daemon/daemon.log");
+    let mut say = logger(crate::fixtures::fs(), log.clone());
+    assert!(
+        crate::fixtures::exists(log.parent().unwrap()),
+        "made at the start"
+    );
+    say("serving");
+    let text = crate::fixtures::fs().read_to_string(&log).unwrap();
+    assert!(text.ends_with(" serving\n"), "{text}");
+    crate::fixtures::remove_dir(home.join(".ctxloom"));
+    say("the single-instance lock file was replaced or removed: exiting");
+    say("exited");
+    assert!(
+        !crate::fixtures::exists(home.join(".ctxloom")),
+        "made again"
+    );
 }
