@@ -19,8 +19,10 @@ Feature: The machine callbacks every session fires — do they deliver, and do t
   Nobody types any of them, so nobody notices when one stops working.
 
   A hook also RECORDS what its event observed (a prompt, a piece of the
-  assistant's text, a tool call, a turn's end, a session's end, a compaction)
-  as facts of its session. Recording never changes the answer: stdout is the
+  assistant's text, a tool call, a turn's end, a compaction, a clear) as
+  facts of its session, and SessionStart binds the engine's own
+  conversation, which a resume uses, delivered and held like the rest.
+  Recording never changes the answer: stdout is the
   engine's own answer and the exit is 0 whether or not a fact was delivered.
   A hook delivers to the user's daemon (cli/daemon.feature): it finds the
   daemon, or starts one, and retries within a bound. A fact that cannot be

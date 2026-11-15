@@ -8,7 +8,7 @@ use crate::{
     Child, ChildEnded, ChildForgotten, ChildLaunchFailed, ChildLaunched, ClearChild,
     ClearRequested, CloseSession, EndChild, ForgetChild, IncarnationOwed, LaunchChild, MessageSent,
     MintSession, RecordChildLaunchFailed, RecordIncarnationEnded, SendMessage, SessionClosed,
-    SessionEvent, SessionRef, StopOrdered, StopSession, TargetTrust, Urgency,
+    SessionEvent, SessionRef, TargetTrust, Urgency,
 };
 
 /// The stream the harness addresses: root `[7; 16]`, as text.
@@ -166,31 +166,6 @@ fn a_closed_session_takes_no_message_clear_or_child() {
 
 // --------------------------------------------------------- stop (S-f)
 
-// D25/S-f reconciles StopSession: an owner stops its own child whatever the
-// child's depth; another session may not; the depth rule still guards a
-// requester that names no session.
-#[test]
-fn a_child_is_stopped_by_its_owner_and_by_no_other_session() {
-    let stop = |requester: Option<&str>, depth: u32| StopSession {
-        requester_depth: depth,
-        reason: "r".to_string(),
-        requester: requester.map(at),
-    };
-    let mut by_owner = child();
-    assert_eq!(
-        by_owner.run(stop(Some(OWNER), 1)).unwrap(),
-        vec![SessionEvent::StopOrdered(StopOrdered {
-            reason: "r".to_string()
-        })]
-    );
-    let mut by_stranger = child();
-    let (code, _) = by_stranger.run(stop(Some(STRANGER), 0)).unwrap_err();
-    assert_eq!(code, "sessions-not-owner");
-    let mut by_depth = child();
-    let (code, _) = by_depth.run(stop(None, 1)).unwrap_err();
-    assert_eq!(code, "sessions-child-cannot-stop");
-}
-
 // ------------------------------------------------------------- messages
 
 // D12, D28: one message type; it records its id, urgency, text and sender.
@@ -280,7 +255,7 @@ fn a_wake_to_a_session_with_no_run_open_owes_the_next_incarnation() {
 // D30, M2: an inform owes nothing; a wake to a session with its run open
 // owes nothing; nor does a wake to a stopped session.
 #[test]
-fn only_a_wake_to_an_idle_unstopped_session_owes_an_incarnation() {
+fn only_a_wake_to_an_idle_session_owes_an_incarnation() {
     let mut open = Session::minted();
     assert_eq!(open.run(send("m1", Urgency::Wake, None)).unwrap().len(), 1);
 
@@ -295,18 +270,17 @@ fn only_a_wake_to_an_idle_unstopped_session_owes_an_incarnation() {
     );
     assert_eq!(informed.state().open_incarnation, None);
 
+    // Owner 2026-11-15: no stop latch. A stream holding a stop order (a
+    // retired event, recorded before) is woken like any idle session.
     let mut stopped = Session::minted();
-    stopped
-        .run(StopSession {
-            requester_depth: 0,
-            reason: "u".to_string(),
-            requester: None,
-        })
-        .unwrap();
+    stopped.given([SessionEvent::StopOrdered(crate::StopOrdered {
+        reason: "u".to_string(),
+    })]);
     stopped.fact(ended(1), "end:s:1");
     assert_eq!(
         stopped.run(send("m1", Urgency::Wake, None)).unwrap().len(),
-        1
+        2,
+        "the wake owes its next incarnation"
     );
 }
 

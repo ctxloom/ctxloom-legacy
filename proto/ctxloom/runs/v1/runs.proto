@@ -175,7 +175,9 @@ message QueueTurn {
   TurnUrgency urgency = 4;
 }
 
-// Ask the run to stop (the policy session to run, on `StopOrdered`).
+// Ask the run to stop: a hosted one-shot's signal (U4), and the session's
+// stop verb when it is built (owner 2026-11-15: it ends the session's current
+// run, and nothing more; no latch on the session).
 message RequestStop {
   option (io.angzarr.v1.command) = {
     component: "ctxloom.runs.v1.RunState"

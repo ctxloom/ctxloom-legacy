@@ -38,8 +38,6 @@ pub enum SessionRejection {
     NoClaim,
     /// A release by a session that does not hold the name.
     NotHolder { harp: String },
-    /// A stop ordered by a child (Go's I2); `depth` is the requester's.
-    ChildCannotStop { depth: u64 },
     /// A command from a session that is not the target's owner (D25, S-f);
     /// `requester` is its stable id.
     NotOwner { requester: String },
@@ -106,7 +104,6 @@ impl Diagnostic for SessionRejection {
             SessionRejection::ProjectHarpMismatch { .. } => code!("project-harp-mismatch"),
             SessionRejection::NoClaim => code!("no-claim"),
             SessionRejection::NotHolder { .. } => code!("not-holder"),
-            SessionRejection::ChildCannotStop { .. } => code!("child-cannot-stop"),
             SessionRejection::NotOwner { .. } => code!("not-owner"),
             SessionRejection::SessionClosed { .. } => code!("session-closed"),
             SessionRejection::OwnerClosed { .. } => code!("owner-closed"),
@@ -200,7 +197,6 @@ impl Diagnostic for SessionRejection {
                 ("project", project.as_str().into()),
                 ("expected", expected.as_str().into()),
             ],
-            SessionRejection::ChildCannotStop { depth } => vec![("depth", (*depth).into())],
             SessionRejection::NoSession | SessionRejection::NoClaim => Vec::new(),
         }
     }
@@ -245,7 +241,6 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(SessionRejection::NoClaim),
         Box::new(SessionRejection::NotHolder { harp: harp() }),
-        Box::new(SessionRejection::ChildCannotStop { depth: 1 }),
         Box::new(SessionRejection::NotOwner {
             requester: "0b0e5f4e-7c1d-4f6a-9d3e-2a1b0c9d8e7f".to_string(),
         }),

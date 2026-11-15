@@ -217,17 +217,6 @@ fn a_turn_end_is_one_observation_without_text() {
 }
 
 #[test]
-fn a_session_end_names_the_engine_session_and_the_reason() {
-    assert_eq!(
-        observe(&session_end()),
-        [Observation::SessionEnded(sessions::RecordSessionEnded {
-            native_session: "n1".to_string(),
-            reason: "prompt_input_exit".to_string(),
-        })]
-    );
-}
-
-#[test]
 fn a_compaction_is_before_or_after_by_the_event() {
     assert_eq!(
         observe(&compaction("compaction_before", "p1")),
@@ -314,17 +303,11 @@ fn two_compactions_of_one_turn_have_two_ids() {
 }
 
 // A PostToolUse and a PostToolBatch both fire for one call: only the batch
-// reports it, so a call is never recorded twice. The bind is SessionStart's
-// own fact.
+// reports it, so a call is never recorded twice. (The bind is SessionStart's
+// observation, below.)
 #[test]
 fn events_that_observe_nothing_hold_no_observation() {
-    for event in [
-        "post_tool",
-        "post_file_edit",
-        "pre_tool",
-        "session_start",
-        "permission_ask",
-    ] {
+    for event in ["post_tool", "post_file_edit", "pre_tool", "permission_ask"] {
         let held = observe(&HookEvent {
             event: event.to_string(),
             tool: "Bash".to_string(),
@@ -332,6 +315,52 @@ fn events_that_observe_nothing_hold_no_observation() {
         });
         assert!(held.is_empty(), "{event}: {held:?}");
     }
+}
+
+// Owner 2026-11-15 (SessionEnded is lost entirely): a session's end
+// observes nothing. An older home that still registers
+// SessionEnd is answered, and records nothing.
+#[test]
+fn a_session_end_observes_nothing() {
+    assert!(observe(&session_end()).is_empty());
+}
+
+fn session_start(source: &str, native: &str) -> HookEvent {
+    HookEvent {
+        event: "session_start".to_string(),
+        native_session: native.to_string(),
+        transcript: format!("/home/u/.claude/projects/p/{native}.jsonl"),
+        source: source.to_string(),
+        ..HookEvent::default()
+    }
+}
+
+// Owner 2026-11-15 (H-Q9 folded in): SessionStart's bind of the
+// engine's own conversation is an observation like the rest, delivered and
+// held like any capture fact, keyed as `bind_book` keys it
+// (`bind:<session>:<native_id>`), for every source: a startup, a resume and
+// a compaction (the same id, so it records nothing new) alike.
+#[test]
+fn a_session_start_observes_its_conversations_bind() {
+    for source in ["startup", "resume", "compact"] {
+        assert_eq!(
+            ids(&[session_start(source, "n1")]),
+            [format!("bind:{S}:n1")],
+            "{source}"
+        );
+    }
+}
+
+// Owner 2026-11-15 (clears captured, typed): a SessionStart
+// whose source is `clear` observes the clear, keyed by the NEW conversation
+// (`hook:clear:<session>:<native>`, so the driver's report of the same clear
+// is one fact), and then the new conversation's bind, in that order.
+#[test]
+fn a_clear_observes_the_clear_then_the_new_conversations_bind() {
+    assert_eq!(
+        ids(&[session_start("clear", "n2")]),
+        [format!("hook:clear:{S}:n2"), format!("bind:{S}:n2")]
+    );
 }
 
 // ------------------------------------------------------------ external ids
@@ -343,7 +372,7 @@ fn an_external_id_spells_its_kind_session_and_cause() {
         delta("m1", 3, false, "x"),
         batch(&[("toolu_a", "Bash", "{}", "")]),
         turn_end(),
-        session_end(),
+        session_start("clear", "n1"),
         compaction("compaction_before", "p1"),
         compaction("compaction_after", "p1"),
     ];
@@ -354,7 +383,8 @@ fn an_external_id_spells_its_kind_session_and_cause() {
             format!("hook:text:{S}:m1:3"),
             format!("hook:tool:{S}:toolu_a"),
             format!("hook:turn-end:{S}:p1"),
-            format!("hook:session-end:{S}:n1"),
+            format!("hook:clear:{S}:n1"),
+            format!("bind:{S}:n1"),
             format!("hook:compact:{S}:p1:manual:before"),
             format!("hook:compact:{S}:p1:manual:after"),
         ]
@@ -384,7 +414,7 @@ fn an_id_does_not_depend_on_the_payload_beyond_its_cause() {
 // same cause in another session has another.
 #[test]
 fn distinct_causes_never_share_an_id() {
-    let mut events = vec![session_end()];
+    let mut events = vec![session_start("clear", "n1")];
     for p in ["p1", "p2"] {
         events.push(turn_start(p, "x"));
         events.push(compaction("compaction_before", p));
@@ -450,7 +480,6 @@ fn the_delivery_budget_is_under_the_engines_hook_timeout() {
         "MessageDisplay",
         "Stop",
         "PostToolBatch",
-        "SessionEnd",
         "PreCompact",
     ] {
         assert!(delivery_budget(native) > Duration::ZERO, "{native}");
@@ -658,13 +687,12 @@ async fn delivered_to_the_kernel_the_observations_become_events_and_a_redelivery
 }
 
 // Each native event's budget is exact: the long one the engine gives a prompt,
-// the short one it gives a session end, the middle one a streamed piece, and
+// the middle one a streamed piece, and
 // the default for the rest.
 #[test]
 fn each_native_events_delivery_budget_is_exact() {
     for (native, seconds) in [
         ("UserPromptSubmit", 20),
-        ("SessionEnd", 1),
         ("MessageDisplay", 5),
         ("Stop", 8),
         ("PostToolBatch", 8),

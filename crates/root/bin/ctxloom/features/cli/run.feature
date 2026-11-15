@@ -517,6 +517,21 @@ Feature: run — assembling a project's context and handing it to an engine
       And the reply names the same session
       And the assistant was resumed on its own session "00000000-0000-4000-8000-0000000000aa"
 
+    # A close is ctxloom's control of its sessions (it takes no more work),
+    # not the engine's conversation: an explicit resume of a closed session
+    # reopens it, and the session takes work again.
+    Scenario: Another turn on a closed session reopens it, in the engine's own session
+      # new: owner 2026-11-15 (an explicit resume reopens a closed session).
+      Given Alice has a project that has never used ctxloom
+      And Alice has set ctxloom up in her project
+      And Alice has started her assistant through ctxloom
+      And Alice has closed that session
+      When Alice takes another turn on that session with "and then?"
+      Then the command succeeds
+      And the reply names the same session
+      And the assistant was resumed on its own session "00000000-0000-4000-8000-0000000000aa"
+      And the session is no longer closed
+
     Scenario: A name no session holds is refused, and nothing is launched
       # new: owner ruling 115 (2026-11-10).
       Given Alice has a project that has never used ctxloom

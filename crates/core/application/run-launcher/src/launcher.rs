@@ -51,7 +51,7 @@ use run_ports::{
     Edge, Engine, FailureClass, Launch, LaunchAt, LaunchKind, Limits, RunnerLauncher,
     SessionRecords, TurnOutcome,
 };
-use runs_application::{Facts, Identity, Observation, RunnerFact};
+use runs_application::{Facts, Identity, RunnerFact};
 
 use crate::error::LaunchError;
 use crate::launch::{LaunchEngines, LaunchRequest, NotLaunched, Unprepared};
@@ -429,19 +429,10 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             Ok(output) => output,
             Err(failure) => return self.never_started(who, failure, done).await,
         };
-        // The engine's own session its hooks named at the session's end is
-        // bound, so `run --session` can resume it (owner ruling 115).
-        if let Some(native) = self.native_session_ended(who).await? {
-            self.record(who, bound(&native)).await?;
-        }
-        // An engine with no hook for its session's end (opencode, ruling 58):
-        // its exit is the end, and the launcher says so.
-        if self
-            .engine(&order.engine)
-            .is_some_and(|engine| engine.session_ends_with_exit())
-        {
-            self.observe(who, session_ended_at_exit()).await?;
-        }
+        // Nothing is bound or observed at the exit (owner 2026-11-15): the
+        // engine's own conversation is the one its SessionStart bound,
+        // delivered like any capture fact, and the session's end is its
+        // run's end.
         self.record(
             who,
             RunnerFact::RunExited(runs::RunExited {
@@ -453,36 +444,6 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         Ok(done(Outcome::Ended {
             code: output.exit.code,
         }))
-    }
-
-    /// The engine's own session the session's hooks last named at its end
-    /// (`SessionEnded.native_session`), if any.
-    async fn native_session_ended(&self, who: &Identity) -> Result<Option<String>, LaunchError> {
-        let cover = angzarr_embedded::v1::Cover {
-            domain: sessions::SESSION_DOMAIN.to_string(),
-            root: Some(who.session.clone()),
-            edition: None,
-        };
-        let pages = self
-            .edge
-            .events(&cover, 0)
-            .await
-            .map_err(|e| LaunchError::Fact {
-                reason: e.to_string(),
-            })?;
-        let mut native = None;
-        for page in &pages {
-            if let Some(angzarr_embedded::v1::event_page::Body::Event(any)) = &page.body {
-                if let Ok(sessions::SessionEvent::SessionEnded(ended)) =
-                    <sessions::SessionEvent as angzarr_embedded::Payload>::from_any(any)
-                {
-                    if !ended.native_session.is_empty() {
-                        native = Some(ended.native_session);
-                    }
-                }
-            }
-        }
-        Ok(native)
     }
 
     /// The launch's preparation started nothing: record why (deterministic:
@@ -631,17 +592,6 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         }
     }
 
-    /// Record `observation` on the session's stream.
-    async fn observe(&self, who: &Identity, observation: Observation) -> Result<(), LaunchError> {
-        self.facts
-            .observe(who, &observation)
-            .await
-            .map(drop)
-            .map_err(|e| LaunchError::Fact {
-                reason: e.to_string(),
-            })
-    }
-
     async fn record(&self, who: &Identity, fact: RunnerFact) -> Result<(), LaunchError> {
         self.facts
             .record(who, fact)
@@ -709,15 +659,6 @@ fn who_session(who: &Identity) -> String {
     uuid::Uuid::from_slice(&who.session.value)
         .map(|id| id.hyphenated().to_string())
         .unwrap_or_default()
-}
-
-/// The end of a terminal session whose engine has no hook for it: at its
-/// exit, of no native session the launcher knows.
-fn session_ended_at_exit() -> Observation {
-    Observation::SessionEnded(sessions::RecordSessionEnded {
-        native_session: String::new(),
-        reason: "exit".to_string(),
-    })
 }
 
 fn failure_class(class: FailureClass) -> runs::TurnFailureClass {

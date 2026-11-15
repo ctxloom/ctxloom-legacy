@@ -627,8 +627,8 @@ fn step_of(book: &angzarr_embedded::v1::CommandBook) -> Option<&'static str> {
         | "RecordAssistantText"
         | "RecordToolCall"
         | "RecordTurnEnded"
-        | "RecordSessionEnded"
-        | "RecordCompaction" => "hook",
+        | "RecordCompaction"
+        | "RecordConversationCleared" => "hook",
         _ => return None,
     })
 }

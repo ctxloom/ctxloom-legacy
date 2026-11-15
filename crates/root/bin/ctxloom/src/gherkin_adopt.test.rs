@@ -34,7 +34,7 @@ const OPERATIONAL_MARKERS: [&str; 2] = [
 /// The stub engine: records its launch beside itself, and replies as claude
 /// does under `--output-format stream-json`: its session's `init` and a
 /// `result` carrying the answer.
-const CLAUDE_STUB: &str = r#"rec="$(dirname "$0")/claude-launch"
+pub(super) const CLAUDE_STUB: &str = r#"rec="$(dirname "$0")/claude-launch"
 for a in "$@"; do
   printf '%s\n' "$a" >> "$rec"
   [ -f "$a" ] && cat "$a" >> "$rec"
@@ -66,7 +66,7 @@ pub(super) struct State {
     /// Every file of her home, then.
     home_before: Option<BTreeMap<String, Vec<u8>>>,
     /// The session the last turn was taken on, by its harp.
-    harp: Option<String>,
+    pub(super) harp: Option<String>,
 }
 
 /// Every file below `path` (or `path` itself, a file), by its path.
@@ -212,16 +212,66 @@ fn started_through_ctxloom(w: &mut World) {
 /// (its reply, json off a terminal, names it), by `run --session`.
 #[when(expr = "Alice takes another turn on that session with {string}")]
 fn another_turn(w: &mut World, prompt: String) {
-    let harp = w.json()["harp"]
-        .as_str()
-        .unwrap_or_else(|| panic!("the last reply names its session: {}", w.ran().said()))
-        .to_string();
+    // The session a step already named (a close of it), else the one
+    // the last reply names.
+    let harp = match w.adopt.harp.clone() {
+        Some(harp) => harp,
+        None => w.json()["harp"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the last reply names its session: {}", w.ran().said()))
+            .to_string(),
+    };
     w.adopt.harp = Some(harp.clone());
     w.before_run();
     w.common.run_lines(
         &format!("ctxloom run --one-shot \"{prompt}\" --session {harp}"),
         "",
     );
+}
+
+/// Alice closes the session the last one-shot
+/// made (its reply names it), as `session close` does.
+#[given("Alice has closed that session")]
+fn closed_that_session(w: &mut World) {
+    let harp = w.json()["harp"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the last reply names its session: {}", w.ran().said()))
+        .to_string();
+    w.adopt.harp = Some(harp.clone());
+    w.before_run();
+    w.common
+        .run_lines(&format!("ctxloom session close {harp}"), "");
+    w.ran().succeeds();
+    assert!(session_shown(w, &harp)["closed"] == serde_json::Value::Bool(true));
+}
+
+/// The session the turn was taken on is open
+/// again (`session show`'s `closed`).
+#[then("the session is no longer closed")]
+fn no_longer_closed(w: &mut World) {
+    let harp = w.adopt.harp.clone().expect("a turn was taken on a session");
+    let shown = session_shown(w, &harp);
+    assert_ne!(
+        shown["closed"],
+        serde_json::Value::Bool(true),
+        "{harp} is still closed: {shown}"
+    );
+}
+
+/// `session show <harp> --format json`, now.
+fn session_shown(w: &World, harp: &str) -> serde_json::Value {
+    let env: Vec<(&str, &str)> = w
+        .common
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let ran = w
+        .common
+        .project
+        .run_with(&env, &["session", "show", harp, "--format", "json"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    serde_json::from_str(&ran.stdout).unwrap_or_else(|e| panic!("{e}: {}", ran.stdout))
 }
 
 #[then("the reply names the same session")]

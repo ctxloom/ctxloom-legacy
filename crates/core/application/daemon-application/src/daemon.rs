@@ -1512,6 +1512,23 @@ impl<E: Edge> Daemon<E> {
         let facts = Facts::new(Arc::clone(&self.edge));
         let who = hosted.who.clone();
         let turn_of = |ids: &[String]| ids.iter().find_map(|id| hosted.turns.get(id).copied());
+        // A clear (owner 2026-11-15: clears captured, typed) is in the
+        // session's record before the bind of the conversation after it,
+        // keyed by that conversation as the hook keys it, so the two
+        // reports of one clear are one fact.
+        if let ChildObservation::Cleared {
+            native_id: Some(native_id),
+        } = &observation
+        {
+            let cleared =
+                runs_application::Observation::Cleared(sessions::RecordConversationCleared {
+                    native_session: native_id.clone(),
+                    trigger: "clear".to_string(),
+                });
+            if let Err(error) = facts.observe(&who, &cleared).await {
+                (self.say)(&format!("{}: not recorded: {error:?}", who.harp));
+            }
+        }
         let fact = match observation {
             ChildObservation::Started { native_id }
             | ChildObservation::Cleared {

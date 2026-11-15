@@ -3,7 +3,7 @@
 use angzarr_embedded::markup::{Failed, Refuses, TypedRefusal};
 
 use super::*;
-use crate::{Refusal, SessionAggregate, SessionRejection, SetKept, StopSession};
+use crate::{CloseSession, Refusal, SessionAggregate, SessionRejection, SetKept};
 
 fn harp() -> String {
     "owl".to_string()
@@ -54,10 +54,6 @@ fn table() -> Vec<(TypedRefusal, SessionRejection)> {
         (
             TypedRefusal::of(&NotHolder { harp: harp() }),
             SessionRejection::NotHolder { harp: harp() },
-        ),
-        (
-            TypedRefusal::of(&ChildCannotStop { depth: 2 }),
-            SessionRejection::ChildCannotStop { depth: 2 },
         ),
         (
             TypedRefusal::of(&NotOwner {
@@ -115,13 +111,13 @@ fn a_message_that_is_no_refusal_of_ours_is_none_of_ours() {
     assert_eq!(SessionRejection::try_from(&other), Err(NotOurs));
 }
 
-/// What `StopSession` refuses with for `rejection`.
-fn stop_refuses(rejection: SessionRejection) -> Failed<Refuses<SessionAggregate, StopSession>> {
+/// What `CloseSession` refuses with for `rejection`.
+fn close_refuses(rejection: SessionRejection) -> Failed<Refuses<SessionAggregate, CloseSession>> {
     refuse!(
         SessionRejection,
         rejection,
-        Refuses<SessionAggregate, StopSession>,
-        [NoSession => NoSession, ChildCannotStop{depth} => ChildCannotStop]
+        Refuses<SessionAggregate, CloseSession>,
+        [NoSession => NoSession, NotOwner{requester} => NotOwner]
     )
 }
 
@@ -133,8 +129,10 @@ fn a_handler_refuses_with_the_message_of_the_rejection_under_its_declared_status
             <NoSession as Refusal>::REFUSAL_STATUS,
         ),
         (
-            SessionRejection::ChildCannotStop { depth: 2 },
-            <ChildCannotStop as Refusal>::REFUSAL_STATUS,
+            SessionRejection::NotOwner {
+                requester: "r".to_string(),
+            },
+            <NotOwner as Refusal>::REFUSAL_STATUS,
         ),
     ];
     for (rejection, declared) in cases {
@@ -146,7 +144,7 @@ fn a_handler_refuses_with_the_message_of_the_rejection_under_its_declared_status
         let Failed::Rejected {
             rejection: choice,
             status,
-        } = stop_refuses(rejection)
+        } = close_refuses(rejection)
         else {
             panic!("a refusal");
         };
@@ -158,7 +156,7 @@ fn a_handler_refuses_with_the_message_of_the_rejection_under_its_declared_status
 #[test]
 fn a_rejection_the_command_lists_no_message_for_is_the_handlers_bug() {
     assert!(matches!(
-        stop_refuses(SessionRejection::NoClaim),
+        close_refuses(SessionRejection::NoClaim),
         Failed::Bug(_)
     ));
 }

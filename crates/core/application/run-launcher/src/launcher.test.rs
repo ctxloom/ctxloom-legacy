@@ -1112,115 +1112,37 @@ async fn the_orders_engine_settings_reach_the_engines_request() {
     }
 }
 
-// Ruling 58: an engine with no hook for its session's end (opencode) has it
-// recorded by the launcher at its terminal command's exit, once, before the
-// run ends; an engine whose hooks say it (claude) does not, and neither does a
-// command that never started, nor a child's turn.
+// Owner 2026-11-15 (SessionEnded is lost): a terminal session's exit
+// records only its run's facts, for every engine: no session end (opencode's
+// once was the launcher's) and no bind (claude's once came from its hooks'
+// end; its conversation is the one its SessionStart bound, delivered like
+// any capture fact).
 #[tokio::test]
-async fn an_engine_whose_session_ends_with_its_exit_has_the_end_recorded_at_the_exit() {
-    use crate::fakes::EndsByExit;
-    let launch = |interactive: bool, runner: ScriptedRunner| {
-        let mut asked = order("fake");
-        asked.interactive = interactive;
-        asked.prompt = String::new();
-        let edge = Arc::new(TestEdge::new());
-        let records = MemoryRecords::default();
-        let launcher = Launcher::new(
-            Arc::clone(&edge),
-            runner,
-            records.clone(),
-            vec![Arc::new(EndsByExit(ScriptedEngine::answering("ok", None)))
-                as Arc<dyn run_ports::Engine>],
-            orders_with(asked),
-            limits(),
-        );
-        (edge, launcher, records)
-    };
-    let (edge, mut launcher, records) = launch(true, ScriptedRunner::exits(0));
-    enqueued(&edge, SESSION, HARP).await;
-    launcher.step(&edge.store, edge.catalog()).await.unwrap();
-    let ended: Vec<_> = session_events(&edge, SESSION)
-        .await
-        .into_iter()
-        .filter_map(|e| match e {
-            SessionEvent::SessionEnded(ended) => Some(ended),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        ended,
-        [sessions::SessionEnded {
-            native_session: String::new(),
-            reason: "exit".to_string(),
-        }]
-    );
-    assert!(records.text(HARP, "transcripts/transcript.jsonl").is_none());
-    assert_eq!(
-        names(&run_events(&edge, SESSION).await),
-        ["RunEnqueued", "RunnerAttached", "RunnerStarted", "RunEnded"]
-    );
-
-    for (interactive, runner) in [
-        (
-            true,
-            ScriptedRunner::answering(TurnLaunch::NotStarted(LaunchFailure {
-                deterministic: true,
-                detail: "no opencode".to_string(),
-            })),
-        ),
-        (false, ScriptedRunner::exits(0)),
-    ] {
-        let (edge, mut launcher, _) = launch(interactive, runner);
-        enqueued(&edge, SESSION, HARP).await;
-        launcher.step(&edge.store, edge.catalog()).await.unwrap();
-        assert!(
-            !session_events(&edge, SESSION)
-                .await
-                .iter()
-                .any(|e| matches!(e, SessionEvent::SessionEnded(_))),
-            "interactive {interactive}: no end recorded"
-        );
-    }
-}
-
-// Owner ruling 115: a terminal session is resumed by its engine's own
-// session, which its hooks name at its end (claude's SessionEnd): once the
-// terminal exits, the launcher binds the last one named, as a child's turn
-// binds the one its stream names. None named, nothing is bound.
-#[tokio::test]
-async fn a_terminal_sessions_native_session_its_hooks_named_is_bound_at_its_exit() {
-    let bound = |events: Vec<SessionEvent>| -> Vec<String> {
-        events
-            .into_iter()
-            .filter_map(|e| match e {
-                SessionEvent::EngineSessionBound(b) => Some(b.native_id),
-                _ => None,
-            })
-            .collect()
-    };
+async fn a_terminal_sessions_exit_records_its_runs_end_and_nothing_of_the_session() {
     let mut asked = order("fake");
     asked.interactive = true;
-    let mut named = rig(
-        ScriptedEngine::answering("ok", None),
-        ScriptedRunner::exits(0),
-        orders_with(asked.clone()),
-    );
-    enqueued(&named.edge, SESSION, HARP).await;
-    crate::fakes::hook_session_ended(&named.edge, SESSION, "native-term-1").await;
-    named.step().await;
-    assert_eq!(
-        bound(session_events(&named.edge, SESSION).await),
-        ["native-term-1"]
-    );
-
-    let mut none = rig(
+    asked.prompt = String::new();
+    let mut rig = rig(
         ScriptedEngine::answering("ok", None),
         ScriptedRunner::exits(0),
         orders_with(asked),
     );
-    enqueued(&none.edge, SESSION, HARP).await;
-    none.step().await;
-    assert!(bound(session_events(&none.edge, SESSION).await).is_empty());
+    enqueued(&rig.edge, SESSION, HARP).await;
+    rig.step().await;
+    assert!(
+        !session_events(&rig.edge, SESSION)
+            .await
+            .iter()
+            .any(|e| matches!(
+                e,
+                SessionEvent::EngineSessionBound(_) | SessionEvent::SessionEnded(_)
+            )),
+        "the exit recorded something of the session"
+    );
+    assert_eq!(
+        names(&run_events(&rig.edge, SESSION).await),
+        ["RunEnqueued", "RunnerAttached", "RunnerStarted", "RunEnded"]
+    );
 }
 
 // Ruling 78: the caller's CTXLOOM_PERMIT_<NAME> reaches the engine's command

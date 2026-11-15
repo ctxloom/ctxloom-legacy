@@ -13,7 +13,6 @@ sessions-project-identity-changed-fix = move the other repository away, or give 
 sessions-project-harp-mismatch = this directory is the project { $project }, not projects/{ $expected }
 sessions-no-claim = nobody holds that session name
 sessions-not-holder = this session does not hold the name { $harp }
-sessions-child-cannot-stop = a child (depth { $depth }) cannot order a stop
 sessions-not-owner = session { $requester } is not this session's owner, and only its owner may do that
 sessions-session-closed = session { $harp } is closed: it takes no message, clear or new run
 sessions-owner-closed = session { $harp } is closed, and a closed session launches no child

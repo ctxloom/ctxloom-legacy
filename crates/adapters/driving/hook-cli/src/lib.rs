@@ -8,15 +8,14 @@
 //! it and refuses an unknown one, listing the known), `<hook-name>` the
 //! engine's native event, or `statusline` for its statusline command, which is
 //! rendered here and records nothing. Every other name is answered by the
-//! application ([`HookService`]) through the engine's own codec, and a
-//! session start it asks to bind is bound through [`Binding`]. This crate
-//! holds no engine knowledge.
+//! application ([`HookService`]) through the engine's own codec; what the
+//! event observed (a session start's bind among it) is recorded through
+//! [`Recording`]. This crate holds no engine knowledge.
 //!
 //! `mail-drain`, `mail-peek` and `permission` arrive with the slices that need
 //! them (S10). The retired `turn-changed` is not a command; `stamp-plan` is
 //! taskloom's (D17).
 
-mod bind;
 mod capture;
 mod error;
 mod execute;
@@ -25,12 +24,11 @@ mod hud;
 use angzarr_diagnostic::Diagnostic;
 use clap::{Args, Command, Subcommand};
 
-pub use bind::{Binding, Outcome};
 pub use capture::{execute_recording, NotRecorded, Recording, Unrecorded};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{HookError, HookWarning, EN_US};
-pub use execute::{execute, STATUSLINE};
+pub use execute::{execute, Outcome, STATUSLINE};
 pub use hud::{
     bar_color, context_bar, hud, render, StatusPayload, CYAN, DIM, GREEN, RED, RESET, YELLOW,
 };
