@@ -479,8 +479,9 @@ impl Extension for Commands {
         for set_aside in crate::daemon::flush::take_said() {
             cli_support::say_warning(&set_aside, ctxloom_cli::PROG, call.format(), catalog, err);
         }
-        // What the daemon it reached warns of (OD-52: its start-up catch-up
-        // failed), said once as the command ends.
+        // What the daemon's answers warned of (OD-52: its start-up catch-up
+        // failed; OD-54: it hands over), heard from the answers themselves
+        // (OD-55), each said once as the command ends.
         for warning in crate::daemon::heard::take_heard() {
             cli_support::say_warning(&warning, ctxloom_cli::PROG, call.format(), catalog, err);
         }

@@ -53,6 +53,14 @@ pub use names::with_unresolved_names;
 /// `ctxloom.v1`.
 pub use ctxloom::v1;
 
+/// The response metadata key the daemon's standing warnings ride on (owner
+/// ruling OD-55): every answer of its `Ctxloom` service, a refusal's status
+/// too, carries one value per warning, each a prost-encoded [`v1::Notice`]
+/// (its code and args, so the client renders it from its own catalog). A
+/// `-bin` key: gRPC's binary metadata, base64 on the wire, the key repeated
+/// for a list.
+pub const WARNING_METADATA: &str = "ctxloom-warning-bin";
+
 // The refusals' declared statuses, generated from the protos.
 include!(concat!(env!("OUT_DIR"), "/refusals.rs"));
 

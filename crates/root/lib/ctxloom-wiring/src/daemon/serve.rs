@@ -363,7 +363,10 @@ async fn start(
         UserGate::new(&bearer),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         TlsIdentity::from_pem(certificate.public().to_pem(), certificate.key_pem()),
-        Some(daemon_api_grpc::service(calls, UserGate::new(&bearer))),
+        Some(api_served(
+            daemon_api_grpc::service(calls, UserGate::new(&bearer)),
+            say,
+        )),
     )
     .await
     .map_err(|e| code(&e))?;
@@ -517,6 +520,24 @@ fn served(
                 temp: temp.to_path_buf(),
             }))
             .handing_off(super::files::api_hand_offs(fs, (home, temp), engines)),
+    )
+}
+
+/// The `Ctxloom` service as the listener serves it.
+#[cfg(not(feature = "test-support"))]
+fn api_served<S>(service: S, _: &Say) -> S {
+    service
+}
+
+/// Under test-support, the service telling the daemon's log each call
+/// made of it (`served <path>`): a test counts the calls a command made
+/// (OD-55: none asks `GetDaemon` for the daemon's warnings).
+#[cfg(feature = "test-support")]
+fn api_served<S>(service: S, say: &Say) -> daemon_api_grpc::Told<S> {
+    let say = Arc::clone(say);
+    daemon_api_grpc::telling(
+        service,
+        Arc::new(move |path: &str| said(&say, &format!("served {path}"))),
     )
 }
 

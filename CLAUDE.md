@@ -1313,10 +1313,28 @@ as `Daemon.warnings` (field 11, each a `Notice`: daemon-api's
 `StartUpIncomplete`, `daemon-api-start-up-incomplete`, arg `why`, with a
 `-fix`; wording a DRAFT for the owner), `daemon status` shows it (text
 `warning: ...` and its `  fix:` line; json `warnings`), and every command
-that reaches that daemon (not the `daemon` noun's own) asks `GetDaemon`
-once a process on its way in (`daemon::heard`, beside the hold flush; the
-cost, one call more a command) and
-says each warning on stderr as it ends, its answer unchanged. While it
+that reaches that daemon says each warning on stderr as it ends, its
+answer unchanged, from the ANSWERS IT ALREADY HAD (owner ruling OD-55,
+2026-11-15: "we're not calling again"): the service attaches the daemon's
+standing warnings (`Calls::warnings`, `Api::warnings`, the same list as
+`Daemon.warnings`) to EVERY answer, a refusal's or failure's status too, as
+gRPC response metadata, `daemon_proto::WARNING_METADATA`
+(`ctxloom-warning-bin`, one value per warning, each a prost-encoded
+`Notice`, so the client renders its code and args from its own catalog;
+binary metadata, base64 on the wire), added by one wrapper around the whole
+generated server (`daemon_api_grpc::Warned`, inside `Gated`, so a caller
+that is not the user is told none; read once the answer is made, so a
+drain's answer carries its hand-over). The command's client hears each
+answer's (`daemon_client::DaemonClient::hearing`, `warnings_in`; the
+wiring's `hearing_client_of`, every `Reach` but `daemon status`'s,
+`Reach::showing_warnings`, which shows them in its answer instead) and
+`daemon::heard` keeps each once a process, however many answers carried it,
+for the command's end. No `GetDaemon` is asked for them. The coordinator's
+answers (`Handle`, `HandleSync`) carry none (its bearer check is inside it;
+every command reaching the daemon makes a service call too). Under
+`test-support` the daemon's log says `served <path>` for each service call
+(`daemon_api_grpc::Told`, serve.rs's `api_served`), which a test counts
+calls by. While it
 stands, each round first tries the whole start-up again
 (`started_up_again`); the first that succeeds CLEARS it (the folds resume
 from their positions, so a later whole catch-up leaves nothing missing)
@@ -1769,10 +1787,12 @@ re-hosting; `--drain` with `--even-if-live` is a usage error (clap's
 drain WARNS AT ONCE (OD-54 (2)): while a daemon drains and hosts
 anything, its `Daemon.warnings` (StopDaemon's answer and GetDaemon's)
 carry `daemon-api-handing-over` (`daemon_api::HandingOver`: both stamps,
-the harps, the period in seconds, `About.hand_over_seconds`), which the
-asking command says on stderr as it ends (`heard::hear`, from the stop's
-answer or `SkewError::Draining.warnings`), and its log says each busy
-child as it is steered. The draining daemon
+the harps, the period in seconds, `About.hand_over_seconds`; wording
+approved), and it rides every answer's metadata as the start-up's does
+(OD-55): the asking command hears it from the stop's answer (the
+`daemon-api-draining` refusal it then raises carries nothing of its own),
+a later call's `DaemonDraining` refusal carries it too, and each says it on
+stderr as it ends, once; its log says each busy child as it is steered. The draining daemon
 (`Hosting::drain`/`draining`, `Daemon.draining_for`, said by `daemon
 status`) refuses every new call but `GetDaemon` and `StopDaemon` with the
 typed `DaemonDraining` (`Api::open`, the same code); the hooks' facts and the
@@ -1782,7 +1802,11 @@ frontends' reports (the coordinator) still land. Its loop hands over
 below; each hosted child bound to its native session with no turn in
 flight (and no guidance of its own still pending) is ended once; its exit
 ends its incarnation `drained`, its hand-off KEPT; one-shots finish their
-turn; it exits once it hosts nothing. A BUSY child (a turn in flight, at
+turn, and one still running once the hand-over's period (below) has passed
+is stopped as `daemon stop --even-if-live` stops one (SIGTERM: its caller
+exits 143, `run-application-stopped` naming it), said in the log
+(`<harp>: a one-shot still running after <n>s: its engine stopped
+(SIGTERM)`; owner, 2026-11-15, U8c); it exits once it hosts nothing. A BUSY child (a turn in flight, at
 the hand-over's first round) is STEERED (OD-54 (1)) with the approved
 guidance, `session_policies::DRAIN_GUIDANCE` ("ctxloom is being upgraded:
 finish the step you are on and end your turn; you will be resumed in this

@@ -74,6 +74,8 @@ pub(super) struct State {
     settings: Option<String>,
     /// The hooks the session's assistant fired across its daemon's kill.
     hooks: Vec<crate::tests::Ran>,
+    /// The child an older daemon hosts is open and idle already (U8).
+    older_hosting: bool,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -148,13 +150,18 @@ fn start_daemon(w: &mut World) {
 /// Start `ctxloom daemon serve` with the idle time `idle` (seconds), and
 /// wait for it to answer.
 fn start_daemon_idling(w: &mut World, idle: u64) {
+    start_daemon_serving(w, idle, &[]);
+}
+
+/// Start `ctxloom daemon serve` with the idle time `idle` (seconds) and
+/// `more` of its (hidden) options, and wait for it to answer.
+fn start_daemon_serving(w: &mut World, idle: u64, more: &[&str]) {
     let env = env_of(w);
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let idle = idle.to_string();
-    let daemon = w
-        .common
-        .project
-        .start_with(&env, &["daemon", "serve", "--idle-seconds", &idle]);
+    let mut args = vec!["daemon", "serve", "--idle-seconds", &idle];
+    args.extend_from_slice(more);
+    let daemon = w.common.project.start_with(&env, &args);
     w.daemon_spec.daemon = Some(daemon);
     let deadline = Instant::now() + Duration::from_secs(30);
     while !serving_now(w) {
@@ -222,7 +229,8 @@ fn interactive_session(w: &mut World) {
 /// environment written once, an init, then for each message given a line
 /// of `turns` (its conversation's id, then the message) and a result; a
 /// turn begun while `hold` is there is left in flight until the interrupt
-/// (`interrupted`), which ends it aborted; `/clear` starts a new
+/// (`interrupted`), which ends it aborted (unless `deaf` is there: then the
+/// interrupt is ignored, and the turn stays in flight); `/clear` starts a new
 /// conversation (a new id), as claude's own does. It ends when its input
 /// does.
 const CHILD_STUB: &str = r#"here=$(dirname "$0")
@@ -235,6 +243,7 @@ printf '{"type":"system","subtype":"init","cwd":"/work","session_id":"%s","tools
 while IFS= read -r line; do
   case "$line" in
     *'"control_request"'*)
+      [ -e "$here/deaf" ] && continue
       : > "$here/interrupted"
       printf '{"type":"control_response","response":{"subtype":"success"}}\n'
       if [ -n "$busy" ]; then
@@ -385,6 +394,11 @@ fn idle_child(w: &mut World) {
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
     start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
     hosted_child(w);
+    first_turn_ended(w);
+}
+
+/// The hosted child's first turn has ended: its owner was told so.
+fn first_turn_ended(w: &World) {
     until(w, "the child's first turn to end", DAEMON_WAIT, |w| {
         let owner = shown(w, "amber-quiet-heron");
         owner["pending"]
@@ -1342,6 +1356,10 @@ const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 #[given(expr = "a child {string} that is open and idle")]
 fn child_idle(w: &mut World, child: String) {
     assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
+    // The older daemon's child is open and idle already.
+    if w.daemon_spec.older_hosting {
+        return;
+    }
     idle_child(w);
 }
 
@@ -1398,7 +1416,23 @@ fn stale_hand_off(w: &mut World) {
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
 }
 
+/// The test-support switch that fails the daemon's start-up catch-up
+/// (OD-52), its one line the why.
+const START_UP_FAILS: &str = "test-start-up-fails";
+
+#[given(expr = "the daemon's start-up catch-up will fail with {string}")]
+fn start_up_will_fail(w: &mut World, why: String) {
+    files::put(daemon_dir(w).join(START_UP_FAILS), format!("{why}\n"));
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+}
+
 // ------------------------------------------------------------------- when
+
+#[when("the cause of the failure is gone")]
+fn start_up_cause_gone(w: &mut World) {
+    files::remove(daemon_dir(w).join(START_UP_FAILS));
+}
 
 #[when(
     "Alice's daemon is killed outright while her assistant works, and her assistant goes on firing its hooks"
@@ -3841,4 +3875,225 @@ fn lock_inside(_: &mut World, _path: String) {
 #[then(regex = r#"^the bundle "([^"]+)" is the imported one, whole, and no trash is left$"#)]
 fn import_converged(_: &mut World, _bundle: String) {
     red("bundle import --force converged")
+}
+
+// ------------------------------------------------------ the drain (U8, U8b)
+
+/// The hand-over's period a scenario's daemon is given, in seconds: what
+/// stands for the five minutes (`daemon serve --hand-over-seconds`).
+const HAND_OVER_SECONDS: &str = "2";
+
+/// The drain's guidance, as the daemon steers a busy child with it.
+const DRAIN_GUIDANCE: &str = "ctxloom is being upgraded: finish the step you are on and end your turn; you will be resumed in this conversation.";
+
+#[given(
+    expr = "a ctxloom daemon of an older version is serving for this home, hosting a child {string}"
+)]
+fn serving_older_hosting(w: &mut World, child: String) {
+    assert_eq!(child, CHILD, "the child the harness hosts");
+    // Every command until the child is open and idle is the older daemon's
+    // own version, so none asks it to drain.
+    w.common.set_env(STAMP_VARIABLE, OLDER_STAMP.to_string());
+    start_daemon_stamped(w, OLDER_STAMP);
+    hosted_child(w);
+    first_turn_ended(w);
+    until(w, "the child bound to its conversation", DAEMON_WAIT, |w| {
+        (shown(w, CHILD)["native_session"] == "S1").then_some(())
+    });
+    w.common.env.retain(|(name, _)| name != STAMP_VARIABLE);
+    w.daemon_spec.older_hosting = true;
+}
+
+#[given(
+    expr = "a ctxloom daemon is serving for this home, hosting a child {string} with a turn in flight"
+)]
+fn serving_hosting_busy(w: &mut World, child: String) {
+    assert_eq!(child, CHILD, "the child the harness hosts");
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+    // Its first turn is taken and left in flight.
+    files::put(stub_dir(w).join("hold"), "once");
+    hosted_child(w);
+}
+
+#[given(
+    expr = "a ctxloom daemon is serving for this home, hosting a child {string} that does not end its turn"
+)]
+fn serving_hosting_deaf(w: &mut World, child: String) {
+    assert_eq!(child, CHILD, "the child the harness hosts");
+    w.common.project = crate::tests::library::Project::initialized();
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    start_daemon_serving(
+        w,
+        DEFAULT_IDLE_SECONDS,
+        &["--hand-over-seconds", HAND_OVER_SECONDS],
+    );
+    // Its first turn is taken and left in flight, and it ignores the
+    // interrupt that would end it.
+    files::put(stub_dir(w).join("hold"), "once");
+    files::put(stub_dir(w).join("deaf"), "");
+    hosted_child(w);
+}
+
+/// This ctxloom's own stamp, as `--version` says it.
+fn own_stamp(w: &World) -> String {
+    let ran = run_now(w, &["--version"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    ran.stdout
+        .split_whitespace()
+        .last()
+        .expect("a stamp")
+        .to_string()
+}
+
+#[then(regex = r#"^the error names "([^"]+)", both versions, and "([^"]+)"$"#)]
+fn error_names_both_versions(w: &mut World, code: String, harp: String) {
+    let own = own_stamp(w);
+    let ran = w.common.ran();
+    for part in [code.as_str(), OLDER_STAMP, own.as_str(), harp.as_str()] {
+        assert!(ran.stderr.contains(part), "{part}: {}", ran.said());
+    }
+}
+
+/// Wait, bounded, for the daemon the scenario started to exit; its code.
+fn exit_of_daemon(w: &mut World) -> Option<i32> {
+    let deadline = Instant::now() + DAEMON_WAIT;
+    loop {
+        let daemon = w
+            .daemon_spec
+            .daemon
+            .as_mut()
+            .expect("the scenario started a daemon");
+        if let Some(status) = daemon.try_wait().expect("the daemon is waited for") {
+            return status.code();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the daemon still runs; its log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[then("the older daemon has exited, and the child's hand-off is kept")]
+fn older_exited_hand_off_kept(w: &mut World) {
+    assert_eq!(exit_of_daemon(w), Some(0), "{}", daemon_log_text(w));
+    assert!(
+        files::exists(stub_dir(w).join("child-exited")),
+        "the child ended; the daemon's log:\n{}",
+        daemon_log_text(w)
+    );
+    assert_eq!(hand_offs(w).len(), 1, "its hand-off is kept");
+}
+
+/// The child started again by the next daemon, resuming its own
+/// conversation (`--resume S1`), where its first start resumed none.
+fn rehosted_resuming(w: &World) {
+    let starts = started_again(w);
+    assert!(
+        !starts[0].contains("--resume") && starts[1].contains("--resume S1"),
+        "its own conversation resumed: {starts:?}"
+    );
+}
+
+#[then("the child was re-hosted resuming its own conversation, and takes the turn")]
+fn rehosted_and_takes_the_turn(w: &mut World) {
+    rehosted_resuming(w);
+    turn_on(w, "next task");
+}
+
+#[then(regex = r#"^it warns "([^"]+)", naming "([^"]+)"$"#)]
+fn warns_naming(w: &mut World, code: String, harp: String) {
+    let ran = w.common.ran();
+    for part in [code.as_str(), harp.as_str()] {
+        assert!(ran.stderr.contains(part), "{part}: {}", ran.said());
+    }
+}
+
+#[then(regex = r#"^the child was steered with "([^"]+)"$"#)]
+fn steered_with(w: &mut World, guidance: String) {
+    assert_eq!(guidance, DRAIN_GUIDANCE, "the approved guidance");
+    turn_on(w, &guidance);
+    assert!(
+        files::exists(stub_dir(w).join("interrupted")),
+        "its turn in flight was interrupted"
+    );
+}
+
+#[then("once its turn ended the daemon has exited, and nothing says it serves")]
+fn turn_ended_then_exited(w: &mut World) {
+    until(w, "the child ended", DAEMON_WAIT, |w| {
+        files::exists(stub_dir(w).join("child-exited")).then_some(())
+    });
+    daemon_exited(w);
+}
+
+#[then("the child is hosted again, resuming its own conversation")]
+fn hosted_again(w: &mut World) {
+    let ran = w.common.ran();
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    rehosted_resuming(w);
+}
+
+#[then("after five minutes the child's turn in flight was cut and the daemon has exited")]
+fn cut_after_the_period(w: &mut World) {
+    assert_eq!(exit_of_daemon(w), Some(0), "{}", daemon_log_text(w));
+    let log = daemon_log_text(w);
+    assert!(
+        log.contains(&format!(
+            "{CHILD}: still busy after {HAND_OVER_SECONDS}s: its turn in flight cut, handed over"
+        )),
+        "{log}"
+    );
+    assert!(
+        files::exists(stub_dir(w).join("child-exited")),
+        "the child ended"
+    );
+    assert!(!serving_now(w), "nothing says it serves");
+}
+
+#[then("the next daemon hosts the child again, resuming its own conversation")]
+fn next_daemon_hosts_again(w: &mut World) {
+    files::remove(stub_dir(w).join("deaf"));
+    let shown = run_now(w, &["session", "show", CHILD, "--format", "json"]);
+    assert_eq!(shown.code, 0, "{}", shown.said());
+    rehosted_resuming(w);
+}
+
+/// The warnings `daemon status --format json` says the daemon stands by.
+fn status_warnings(w: &World) -> Vec<Value> {
+    let status = run_now(w, &["daemon", "status", "--format", "json"]);
+    assert_eq!(status.code, 0, "{}", status.said());
+    status.json()["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[then(expr = "\"ctxloom daemon status --format json\" has a warning with code {string}")]
+fn status_warns(w: &mut World, code: String) {
+    let warnings = status_warnings(w);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning["code"] == code.as_str()),
+        "{warnings:?}"
+    );
+}
+
+#[then("within a few seconds \"ctxloom daemon status\" has no warning")]
+fn status_warns_no_more(w: &mut World) {
+    until(w, "the daemon's warning cleared", DAEMON_WAIT, |w| {
+        status_warnings(w).is_empty().then_some(())
+    });
+}
+
+#[then("\"ctxloom session list\" says nothing of the start-up")]
+fn listed_says_nothing_of_the_start_up(w: &mut World) {
+    let listed = run_now(w, &["session", "list"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    assert!(!listed.stderr.contains("start-up"), "{}", listed.said());
 }

@@ -27,3 +27,18 @@ fn what_is_heard_is_taken_once_in_its_own_code_and_args() {
     assert!(args[0].1.contains("the store is locked"), "{args:?}");
     assert!(take_heard().is_empty());
 }
+
+// OD-55: every answer carries the daemon's warnings, so a command hears
+// the same one many times; it says each once a process, whenever it heard
+// it, and a warning heard again after it was said is not said again.
+#[test]
+fn a_warning_heard_from_many_answers_is_said_once_a_process() {
+    let once = warning("heard on every answer");
+    let other = warning("another");
+    hear(vec![once.clone()]);
+    hear(vec![once.clone(), other.clone()]);
+    let said = take_heard();
+    assert_eq!(said.len(), 2, "{said:?}");
+    hear(vec![once, other]);
+    assert!(take_heard().is_empty());
+}

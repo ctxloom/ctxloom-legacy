@@ -2452,3 +2452,98 @@ async fn a_child_ended_by_an_escalation_is_not_handed_over() {
     world.tick().await;
     assert_eq!(ended(&world, CHILD).await, [(1, "runner-exit".to_string())]);
 }
+
+/// A one-shot host whose one-shot is placed and runs until stopped; how
+/// many times its control was asked to stop.
+struct Working(Arc<std::sync::atomic::AtomicUsize>);
+
+struct Stopped(Arc<std::sync::atomic::AtomicUsize>);
+
+impl crate::OneShotControl for Stopped {
+    fn stop(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// The hosted one-shot's run root, as text.
+const ONE_SHOT_RUN: &str = "0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a";
+
+impl crate::OneShotHost for Working {
+    fn host(&self, _: crate::HostRequest, told: crate::Told) -> Box<dyn crate::OneShotControl> {
+        told.placed(&run_application::Placement {
+            run: ONE_SHOT_RUN.to_string(),
+            session: "0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b".to_string(),
+            name: "projects/calm-quiet-heron/sessions/quick-fox".to_string(),
+            harp: "quick-fox".to_string(),
+            engine: ENGINE.to_string(),
+        });
+        Box::new(Stopped(Arc::clone(&self.0)))
+    }
+}
+
+impl World {
+    /// The world, its daemon hosting the one-shots of `one_shots`.
+    fn hosting_one_shots(self, one_shots: Arc<crate::OneShots>) -> World {
+        let World {
+            edge,
+            engine,
+            homes,
+            daemon,
+            clock,
+            said,
+        } = self;
+        World {
+            daemon: daemon.hosting_one_shots(one_shots),
+            edge,
+            engine,
+            homes,
+            clock,
+            said,
+        }
+    }
+}
+
+// U8c (owner, 2026-11-15): a one-shot a draining daemon hosts is left to
+// run within the hand-over's period, and once the period has passed on
+// the daemon's clock, still running, it is stopped as `daemon stop
+// --even-if-live` stops one (SIGTERM, so its caller exits 143), once, and
+// said in the log.
+#[tokio::test]
+async fn a_one_shot_still_running_after_the_period_is_stopped() {
+    let period = std::time::Duration::from_secs(2);
+    let world = World::built_within(
+        Box::new(Plans),
+        LockProbe::Unproven,
+        Box::new(Handed::of(BTreeMap::new())),
+        Some(period),
+    );
+    let stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let one_shots = Arc::new(crate::OneShots::new(Box::new(Working(Arc::clone(&stops)))));
+    let mut world = world.hosting_one_shots(Arc::clone(&one_shots));
+    let _ = one_shots.create(crate::HostRequest::default());
+    assert_eq!(world.daemon.hosting(), 1, "the one-shot is hosted");
+    world.daemon.hand_over();
+    world.tick().await;
+    world
+        .clock
+        .pass(period - std::time::Duration::from_millis(1));
+    world.tick().await;
+    let asked = || stops.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(asked(), 0, "within the period");
+    world.clock.pass(std::time::Duration::from_millis(1));
+    assert!(world.tick().await, "busy: it stopped one");
+    assert_eq!(asked(), 1, "at its end");
+    world.tick().await;
+    assert_eq!(asked(), 1, "once");
+    let events: Vec<daemon_proto::v1::RunEvent> =
+        one_shots.watch(ONE_SHOT_RUN).unwrap().take(1).collect();
+    match &events[0].event {
+        Some(daemon_proto::v1::run_event::Event::Stop(stop)) => assert_eq!(stop.reason, "SIGTERM"),
+        other => panic!("a stop: {other:?}"),
+    }
+    let log = world.said.lock().unwrap().join("\n");
+    assert!(
+        log.contains("quick-fox: a one-shot still running after 2s: its engine stopped (SIGTERM)"),
+        "{log}"
+    );
+}

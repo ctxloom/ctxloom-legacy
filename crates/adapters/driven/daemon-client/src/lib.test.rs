@@ -26,6 +26,29 @@ fn token(byte: u8) -> Token {
     Token::from_bytes([byte; 32])
 }
 
+/// The warning the fake stands by, its `why` arg `why`.
+fn standing(why: &str) -> v1::Notice {
+    v1::Notice {
+        code: "daemon-api-start-up-incomplete".to_string(),
+        args: vec![v1::NeedArg {
+            name: "why".to_string(),
+            value: why.to_string(),
+        }],
+        text: String::new(),
+    }
+}
+
+/// `metadata` carrying the daemon's warnings (OD-55): the standing one,
+/// named `why`, and a value that is no notice, passed over.
+fn warned(metadata: &mut tonic::metadata::MetadataMap, why: &str) {
+    let key = daemon_proto::WARNING_METADATA;
+    metadata.append_bin(
+        key,
+        tonic::metadata::MetadataValue::from_bytes(&standing(why).encode_to_vec()),
+    );
+    metadata.append_bin(key, tonic::metadata::MetadataValue::from_bytes(&[0xff]));
+}
+
 /// A daemon that answers the bearer it was made with, and refuses a stop.
 struct Fake {
     bearer: String,
@@ -52,11 +75,13 @@ impl Ctxloom for Fake {
         request: Request<v1::GetDaemonRequest>,
     ) -> Result<Response<v1::Daemon>, Status> {
         self.admit(&request)?;
-        Ok(Response::new(v1::Daemon {
+        let mut response = Response::new(v1::Daemon {
             name: request.into_inner().name,
             pid: 99,
             ..v1::Daemon::default()
-        }))
+        });
+        warned(response.metadata_mut(), "answered");
+        Ok(response)
     }
 
     async fn stop_daemon(
@@ -74,11 +99,13 @@ impl Ctxloom for Fake {
             message: "ctxloom.v1.DaemonHosting".to_string(),
             details: vec![refusal],
         };
-        Err(Status::with_details(
+        let mut status = Status::with_details(
             Code::FailedPrecondition,
             "ctxloom.v1.DaemonHosting",
             Bytes::from(details.encode_to_vec()),
-        ))
+        );
+        warned(status.metadata_mut(), "refused");
+        Err(status)
     }
 
     /// A project resolved: named by the cwd it was asked from.
@@ -672,5 +699,69 @@ async fn a_handle_to_a_daemon_with_no_coordinator_is_unimplemented() {
     assert!(
         matches!(&called, Called::Unimplemented { method } if method.ends_with("/Handle")),
         "{called:?}"
+    );
+}
+
+/// What a hearing client was told, call by call.
+fn heard_by() -> (
+    super::Hears,
+    std::sync::Arc<std::sync::Mutex<Vec<Vec<v1::Notice>>>>,
+) {
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let told = std::sync::Arc::clone(&heard);
+    let hears: super::Hears = std::sync::Arc::new(move |notices| {
+        told.lock().unwrap().push(notices);
+    });
+    (hears, heard)
+}
+
+// OD-55: the daemon's warnings ride its answers' metadata; a client
+// hearing them is told each answer's, an answer's and a refusal's alike,
+// a value that is no notice passed over; an answer with none tells
+// nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_hearing_client_is_told_each_answers_warnings() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let (hears, heard) = heard_by();
+    let client = DaemonClient::new(&found, WITHIN).hearing(hears);
+    client
+        .get_daemon(v1::GetDaemonRequest::default())
+        .await
+        .unwrap();
+    client
+        .stop_daemon(v1::StopDaemonRequest::default())
+        .await
+        .unwrap_err();
+    client
+        .resolve_project(v1::ResolveProjectRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        *heard.lock().unwrap(),
+        [vec![standing("answered")], vec![standing("refused")]]
+    );
+}
+
+// A client nobody hears through says nothing of them, and its answer
+// stands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_client_not_hearing_is_answered_as_ever() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let daemon = DaemonClient::new(&found, WITHIN)
+        .get_daemon(v1::GetDaemonRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(daemon.pid, 99);
+}
+
+#[test]
+fn the_warnings_in_metadata_are_its_notices_in_order() {
+    let mut metadata = tonic::metadata::MetadataMap::new();
+    assert!(super::warnings_in(&metadata).is_empty());
+    warned(&mut metadata, "one");
+    warned(&mut metadata, "two");
+    assert_eq!(
+        super::warnings_in(&metadata),
+        [standing("one"), standing("two")]
     );
 }

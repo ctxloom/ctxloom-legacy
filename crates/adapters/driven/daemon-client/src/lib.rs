@@ -5,8 +5,13 @@
 //! and is bounded by a deadline. A status is read back as [`Called`]: a
 //! refusal as its typed message from `google.rpc.Status.details` (S11).
 //! A domain write goes to angzarr's command coordinator the daemon serves
-//! beside the service, `HandleSync` (slice 3 step 4), the same way.
+//! beside the service, `HandleSync` (slice 3 step 4), the same way. The
+//! daemon's standing warnings ride every answer's metadata (owner ruling
+//! OD-55, [`daemon_proto::WARNING_METADATA`]), a refusal's too: a client
+//! [`DaemonClient::hearing`] them is told each answer's, so no call is made
+//! to ask for them.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use angzarr_embedded::v1::{CommandBook, DeliveryOutcome};
@@ -17,6 +22,7 @@ use daemon_proto::service::ctxloom_client::CtxloomClient;
 use daemon_proto::v1;
 use prost::Message;
 use run_ports::{parse_endpoint, Discovery, PublicCert, Token};
+use tonic::metadata::MetadataMap;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tonic::{Code, Request, Status};
 
@@ -32,7 +38,13 @@ pub struct DaemonClient {
     within: Duration,
     /// A destroy's deadline (`DeleteSession`, `SweepSessions`).
     destroying: Duration,
+    /// What is told the warnings each answer carries (OD-55), if anything.
+    hears: Option<Hears>,
 }
+
+/// What a client tells the daemon's warnings an answer carried: called
+/// once per answer that carries any, with them in order.
+pub type Hears = Arc<dyn Fn(Vec<v1::Notice>) + Send + Sync>;
 
 impl std::fmt::Debug for DaemonClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -52,6 +64,26 @@ impl DaemonClient {
             bearer: found.bearer.clone(),
             within,
             destroying: within,
+            hears: None,
+        }
+    }
+
+    /// This client, the warnings each answer carries (OD-55) told to
+    /// `hears`.
+    pub fn hearing(self, hears: Hears) -> DaemonClient {
+        DaemonClient {
+            hears: Some(hears),
+            ..self
+        }
+    }
+
+    /// The warnings `metadata` carries told to what hears them, if any do.
+    fn heard(&self, metadata: &MetadataMap) {
+        if let Some(hears) = &self.hears {
+            let warnings = warnings_in(metadata);
+            if !warnings.is_empty() {
+                hears(warnings);
+            }
         }
     }
 
@@ -116,6 +148,18 @@ struct RpcStatus {
     message: String,
     #[prost(message, repeated, tag = "3")]
     details: Vec<prost_types::Any>,
+}
+
+/// The daemon's warnings `metadata` carries (OD-55), in order: each
+/// [`daemon_proto::WARNING_METADATA`] value a prost-encoded `Notice`; one
+/// that does not decode is passed over.
+pub fn warnings_in(metadata: &MetadataMap) -> Vec<v1::Notice> {
+    metadata
+        .get_all_bin(daemon_proto::WARNING_METADATA)
+        .iter()
+        .filter_map(|value| value.to_bytes().ok())
+        .filter_map(|bytes| v1::Notice::decode(bytes).ok())
+        .collect()
 }
 
 /// What `status`, answered to `method`, came to.
@@ -187,8 +231,14 @@ macro_rules! call {
         let request = $self.request($message)?;
         let answered = tokio::time::timeout(within, client.$method(request)).await;
         match answered {
-            Ok(Ok(response)) => Ok(response.into_inner()),
-            Ok(Err(status)) => Err(came_to($name, &status)),
+            Ok(Ok(response)) => {
+                $self.heard(response.metadata());
+                Ok(response.into_inner())
+            }
+            Ok(Err(status)) => {
+                $self.heard(status.metadata());
+                Err(came_to($name, &status))
+            }
             Err(_) => Err(Called::Unreachable {
                 detail: format!("no answer within {within:?}"),
             }),

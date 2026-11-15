@@ -20,8 +20,6 @@ struct Daemon {
     asked: Mutex<Vec<&'static str>>,
     gets: Mutex<Vec<v1::GetDaemonRequest>>,
     stops: Mutex<Vec<v1::StopDaemonRequest>>,
-    /// What it warns of, as it answers (OD-54's drain warning).
-    warnings: Vec<v1::Notice>,
 }
 
 impl Daemon {
@@ -36,7 +34,6 @@ impl Daemon {
                 })
                 .collect(),
             name: "daemon".to_string(),
-            warnings: self.warnings.clone(),
             ..v1::Daemon::default()
         }
     }
@@ -198,7 +195,6 @@ async fn a_newer_client_asks_a_busy_daemon_to_drain_and_is_refused_meanwhile() {
             own: NEWER.to_string(),
             daemon: OLDER.to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
-            warnings: Vec::new(),
         }
     );
     assert_eq!(refused.exit(), Exit::REFUSED);
@@ -212,25 +208,6 @@ async fn a_newer_client_asks_a_busy_daemon_to_drain_and_is_refused_meanwhile() {
     assert!(!stops[0].even_if_live, "nothing it hosts is ended");
     assert_eq!(stops[0].version, NEWER, "for the client's own stamp");
     assert_eq!(stops[0].name, "daemon");
-}
-
-// OD-54 (2): the drain's warning, as the draining daemon answered it, rides
-// the refusal of the call that asked, for the command to say at once.
-#[tokio::test]
-async fn a_drains_warning_rides_the_refusal_of_the_call_that_asked() {
-    let warning = v1::Notice {
-        code: "daemon-api-handing-over".to_string(),
-        ..v1::Notice::default()
-    };
-    let daemon = Daemon {
-        warnings: vec![warning.clone()],
-        ..hosting(vec!["brisk-copper-moth"])
-    };
-    let refused = reconcile(&daemon, NEWER, OLDER).await.unwrap_err();
-    assert!(
-        matches!(&refused, SkewError::Draining { warnings, .. } if warnings == &[warning]),
-        "{refused:?}"
-    );
 }
 
 // A newer client meeting an idle older daemon asks it to drain too: hosting
@@ -437,7 +414,6 @@ async fn a_newer_sessions_call_asks_a_busy_older_daemon_to_drain() {
             own: NEW.to_string(),
             daemon: OLD.to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
-            warnings: Vec::new(),
         }
     );
     assert_eq!(refused.exit(), Exit::REFUSED);
