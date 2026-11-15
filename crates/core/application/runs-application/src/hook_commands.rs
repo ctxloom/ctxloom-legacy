@@ -100,7 +100,7 @@ fn coded_of(failure: &Failure<Rejected>) -> Coded {
 /// The answer to a capture fact addressed to a session the daemon has no
 /// record of: capture.proto's `FactSessionUnknown`, its full name the key
 /// ([`run_ports::NO_SUCH_SESSION`]), the session's root its arg, under
-/// NOT_FOUND (a fact is never refused, so no `(refusal_status)` declares it:
+/// the not-found status (a fact is never refused, so no `(refusal_status)` declares it:
 /// it is the listener's own answer, as the kernel's spec keys are).
 fn no_such_session_answer(book: &CommandBook) -> Coded {
     let session = book
