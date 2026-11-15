@@ -339,3 +339,48 @@ fn test_annals_has_left_the_workspace() {
         .collect();
     assert!(annals.is_empty(), "still in the graph: {annals:?}");
 }
+
+/// The sources that may call `run_ports::hook_environment`: its own module
+/// and that module's tests. It is KEPT for M10b's container arrival (OD-13),
+/// and no host run calls it (slice 4 U7: the per-run listener is gone, and
+/// with it the endpoint, bearer and certificate a host engine was told).
+/// M10b's container launcher joins this list when it lands; a review of
+/// M10b flags the function as dead code if it lands without calling it.
+const HOOK_ENVIRONMENT_CALLERS: [&str; 2] = [
+    "crates/core/ports/run-ports/src/hook.rs",
+    "crates/core/ports/run-ports/src/hook.test.rs",
+];
+
+/// Nothing outside M10b's kept list calls `hook_environment` (U7, OD-13).
+#[test]
+fn test_nothing_but_the_m10b_kept_list_calls_hook_environment() {
+    let root = super::repo_root();
+    let mut all = Vec::new();
+    files(&root.join("crates"), &mut all);
+    // Spelled in pieces so this file does not hold the call itself.
+    let call = concat!("hook_", "environment(");
+    let mut scanned = 0;
+    let mut callers = Vec::new();
+    for path in all {
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let Ok(text) = files::read(&path) else {
+            continue;
+        };
+        scanned += 1;
+        let relative = path
+            .strip_prefix(&root)
+            .expect("under the repository")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if text.contains(call) && !HOOK_ENVIRONMENT_CALLERS.contains(&relative.as_str()) {
+            callers.push(relative);
+        }
+    }
+    assert!(scanned > 100, "scanned only {scanned} Rust files");
+    assert!(
+        callers.is_empty(),
+        "hook_environment is M10b's alone (OD-13): {callers:#?}"
+    );
+}
