@@ -240,20 +240,30 @@ impl daemon_application::OneShotHost for Kept {
 #[test]
 fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
     use daemon_api::Hosting;
+    use daemon_proto::v1::hosted_run::Kind;
     let told = Arc::new(Mutex::new(Vec::new()));
     let one_shots = Arc::new(daemon_application::OneShots::new(Box::new(Kept(
         Arc::clone(&told),
     ))));
-    let shared = super::Shared::new(session_index::SessionIndexes::default());
+    let shared = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        Arc::clone(&one_shots),
+    );
     one_shots.create(daemon_application::HostRequest::default());
-    // The round: what the launcher found it hosts as it started.
-    let live = one_shots
-        .live()
-        .into_iter()
-        .map(|placed| (placed.session, placed.run))
-        .collect();
-    shared.tell(Vec::new(), live, std::time::Instant::now());
-    assert_eq!(shared.hosted().len(), 1, "live as the round found it");
+    // The round, as the loop tells it: its children.
+    let child = (
+        SESSION.to_string(),
+        "0195f0a4-7b1e-7000-8000-000000000009".to_string(),
+    );
+    shared.tell(vec![child], std::time::Instant::now());
+    assert_eq!(
+        kinds(&shared.hosted()),
+        [
+            ("000000000009", Kind::Child),
+            ("000000000001", Kind::OneShot)
+        ],
+        "the round's child, and the one-shot live"
+    );
     told.lock().unwrap()[0].done(run_application::Done {
         result: Ok(run_application::Answer {
             harp: "harp-1".to_string(),
@@ -263,9 +273,19 @@ fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
         }),
         notices: Vec::new(),
     });
-    assert!(
-        shared.hosted().is_empty(),
-        "ended, with no round since: {:?}",
-        shared.hosted()
+    assert_eq!(
+        kinds(&shared.hosted()),
+        [("000000000009", Kind::Child)],
+        "the one-shot ended, with no round since"
     );
+}
+
+/// Each hosted run's root's last twelve digits, and its kind.
+fn kinds(
+    hosted: &[daemon_proto::v1::HostedRun],
+) -> Vec<(&str, daemon_proto::v1::hosted_run::Kind)> {
+    hosted
+        .iter()
+        .map(|run| (&run.run[run.run.len() - 12..], run.kind()))
+        .collect()
 }
