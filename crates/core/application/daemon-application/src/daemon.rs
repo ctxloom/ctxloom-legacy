@@ -18,7 +18,7 @@ use session_index::SessionIndexes;
 use session_policies::{plan, Fed, RunAt, Scene, Sent, Step};
 use sessions::Urgency;
 
-use crate::one_shot::OneShots;
+use crate::one_shot::{OneShots, STOP_SIGNAL};
 use crate::ports::{
     ChildHomes, ChildPlans, ChildWorkspaces, Ears, HandOff, HandOffs, HostedEngine, Monotonic,
 };
@@ -395,7 +395,8 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     /// conversation. A busy child is steered with the guidance (OD-54) and
     /// ended at its turn's end, or, still busy once the hand-over's period
     /// has passed on its clock, ended anyway, its turn cut. Its one-shots
-    /// finish their turn.
+    /// finish their turn, or, still running once the period has passed,
+    /// are stopped as [`Daemon::end_all`] stops one (U8c).
     pub fn hand_over(&mut self) {
         self.handing_over = true;
         self.hand_over_began = self.clock.as_ref().map(|clock| clock.now());
@@ -702,8 +703,10 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
 
     /// The hand-over's period (OD-54): once it has passed on the daemon's
     /// clock, each child still hosted and not yet ended is ended anyway, its
-    /// turn in flight cut, its incarnation to end `drained`. Whether it
-    /// ended any.
+    /// turn in flight cut, its incarnation to end `drained`; and each
+    /// one-shot still running is stopped (U8c, owner 2026-11-15), as the
+    /// daemon's end stops one ([`STOP_SIGNAL`]). Whether it ended or
+    /// stopped any.
     fn hand_over_the_overdue(&mut self) -> bool {
         let (Some(clock), Some(began)) = (&self.clock, self.hand_over_began) else {
             return false;
@@ -728,7 +731,28 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 let _ = hosted.control.end(END_GRACE);
             }
         }
-        !overdue.is_empty()
+        let stopped = self.stop_the_overdue_one_shots();
+        !overdue.is_empty() || stopped
+    }
+
+    /// Each one-shot still running once the hand-over's period has passed
+    /// stopped, once, and said. Whether it stopped any.
+    fn stop_the_overdue_one_shots(&mut self) -> bool {
+        let Some(one_shots) = self.one_shots.clone() else {
+            return false;
+        };
+        let mut stopped = false;
+        for placed in one_shots.live() {
+            if one_shots.stop(&placed.run, STOP_SIGNAL) {
+                (self.say)(&format!(
+                    "{}: a one-shot still running after {}s: its engine stopped ({STOP_SIGNAL})",
+                    placed.harp,
+                    self.hand_over_period.as_secs()
+                ));
+                stopped = true;
+            }
+        }
+        stopped
     }
 
     /// One round: hear the children, catch up, plan, act. Whether it did

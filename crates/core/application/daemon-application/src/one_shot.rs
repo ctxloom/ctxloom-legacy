@@ -32,6 +32,11 @@ use run_application::{Answer, Done, OneShot, Placement, RunError};
 /// launcher's `stop_grace`), as its client is told.
 pub const STOP_GRACE_MS: u32 = 5_000;
 
+/// The signal a one-shot the daemon stops of its own is stopped as (its
+/// end, `--even-if-live`, or a drain's period passed): its client exits
+/// 128 plus its number.
+pub const STOP_SIGNAL: &str = "SIGTERM";
+
 /// How many ended one-shots are kept for a late watch.
 const ENDED_KEPT: usize = 16;
 
@@ -349,7 +354,7 @@ impl OneShots {
     /// SIGTERM would.
     pub fn stop_all(&self) {
         for run in self.unstopped() {
-            self.stop(&run, "SIGTERM");
+            self.stop(&run, STOP_SIGNAL);
         }
     }
 

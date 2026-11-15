@@ -1732,7 +1732,11 @@ frontends' reports (the coordinator) still land. Its loop hands over
 below; each hosted child bound to its native session with no turn in
 flight (and no guidance of its own still pending) is ended once; its exit
 ends its incarnation `drained`, its hand-off KEPT; one-shots finish their
-turn; it exits once it hosts nothing. A BUSY child (a turn in flight, at
+turn, and one still running once the hand-over's period (below) has passed
+is stopped as `daemon stop --even-if-live` stops one (SIGTERM: its caller
+exits 143, `run-application-stopped` naming it), said in the log
+(`<harp>: a one-shot still running after <n>s: its engine stopped
+(SIGTERM)`; owner, 2026-11-15, U8c); it exits once it hosts nothing. A BUSY child (a turn in flight, at
 the hand-over's first round) is STEERED (OD-54 (1)) with the approved
 guidance, `session_policies::DRAIN_GUIDANCE` ("ctxloom is being upgraded:
 finish the step you are on and end your turn; you will be resumed in this
