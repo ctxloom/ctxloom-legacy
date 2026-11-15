@@ -1251,8 +1251,15 @@ mutation first), bump the revs in Cargo.toml, `just dev-local-off`.
 
 The user daemon (`ctxloom daemon serve`) hosts its children through ONE
 launcher in the application ring (owner T18): `core/application/
-daemon-application`'s `Daemon`. Its first step, `start_up`, is the sweep
-(`run_launcher::Sweeper`, above); then `tick` catches up the read models,
+daemon-application`'s `Daemon`. Its first step, `start_up`, catches up
+every read model it plans and its API answers from (the board, the pending
+messages, the session index) with the store's log and then sweeps
+(`run_launcher::Sweeper`, above), all before the root publishes the
+discovery file (`serve.rs`'s `swept_and_advertised`), so a fresh daemon
+serves nothing (no fact, command or read: the user bearer reaches no one
+before the publish) from folds older than the log (owner, s4-Q14 H3's
+condition; a failed catch-up is logged, and the first round's step is the
+retry); then `tick` catches up the read models,
 plans each project on the board (`session-policies`), and takes the steps
 (launch, start, feed, clear, end), recording what each child said as its
 run's facts. Its ports: the engine registry (`HostedEngine`, an `Engine`
