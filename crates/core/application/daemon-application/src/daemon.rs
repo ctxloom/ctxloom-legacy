@@ -19,8 +19,10 @@ use session_policies::{plan, Fed, RunAt, Scene, Sent, Step};
 use sessions::Urgency;
 
 use crate::one_shot::OneShots;
-use crate::ports::{ChildHomes, ChildPlans, Ears, HandOff, HandOffs, HostedEngine};
-use run_launcher::{Sweeper, Swept};
+use crate::ports::{
+    ChildHomes, ChildPlans, ChildWorkspaces, Ears, HandOff, HandOffs, HostedEngine,
+};
+use run_launcher::{Released, Releases, Sweeper, Swept};
 
 /// How long an ended child has to exit before its tree is stopped.
 const END_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
@@ -61,6 +63,31 @@ struct Hosted {
     /// of its native id, as the engine's hook would (D-N51).
     transcripts: Option<String>,
     _lock: HeldLock,
+    /// Its session's lock, held for its life (U6): its session reads live,
+    /// and no sweep takes it for lost while it is hosted.
+    _session_lock: Option<HeldLock>,
+    /// The checkout it works in, let go WIP-safe once it exits (s4-Q11).
+    checkout: Option<Placed>,
+}
+
+/// A hosted child's checkout: where the launch placed it, what it wrote
+/// there, and the workspaces that let it go.
+struct Placed {
+    checkout: isolation_ports::Checkout,
+    files: Vec<String>,
+    workspaces: Arc<dyn isolation_ports::Workspaces + Send + Sync>,
+}
+
+impl Placed {
+    /// Let the checkout go WIP-safe (owner ruling 2026-11-12, Q2): the
+    /// files the launch placed taken out, then a clean one removed (its
+    /// branch with it when merged), one holding work left, never forced.
+    fn release(&self) -> isolation_ports::Removal {
+        self.workspaces
+            .remove_files(&self.checkout.path, &self.files);
+        self.workspaces
+            .remove(&self.checkout.repo_dir, &self.checkout.path)
+    }
 }
 
 /// What a step came to.
@@ -74,10 +101,98 @@ pub enum Taken {
     Again,
 }
 
+/// The child a start hosts: its name, its engine, its project and the
+/// engine's own session it resumes (none: a new conversation).
+pub(crate) struct Child<'a> {
+    harp: &'a str,
+    engine: &'a str,
+    project_dir: &'a str,
+    resume: Option<String>,
+}
+
+/// What a child's spawn is told beside its plan.
+struct Spawn<'a> {
+    at: &'a RunAt,
+    harp: &'a str,
+    name: &'a str,
+    project_dir: &'a str,
+    resume: Option<String>,
+    workspace: run_launcher::Workspace,
+    workspaces: Option<&'a dyn isolation_ports::Workspaces>,
+}
+
+/// A child's plan: what it is hosted with, the workspace axis its agent
+/// works on, and the agent it was planned for (its checkout's name).
+struct Planned {
+    hosted: run_application::HostedChild,
+    axis: String,
+    agent: String,
+}
+
+impl std::ops::Deref for Planned {
+    type Target = run_application::HostedChild;
+
+    fn deref(&self) -> &run_application::HostedChild {
+        &self.hosted
+    }
+}
+
+/// A child enqueued, to start: its engine, its plan, its hand-off, its
+/// run's hook token and the locks it holds.
+struct Ready {
+    engine: HostedEngine,
+    child: Planned,
+    handed: HandOff,
+    hook_token: run_ports::Token,
+    run_lock: HeldLock,
+    session_lock: HeldLock,
+}
+
+/// What a hosted child holds for its life.
+struct Locks {
+    run: HeldLock,
+    session: Option<HeldLock>,
+    checkout: Option<Placed>,
+}
+
+/// The release of a lost run's checkout (OD-19): only one under ctxloom's
+/// own `worktrees` (a scratch checkout of a session's), never the project
+/// or anything else; WIP-safe through the project's workspaces.
+struct LostCheckouts {
+    workspaces: Arc<dyn ChildWorkspaces>,
+    root: std::path::PathBuf,
+}
+
+impl Releases for LostCheckouts {
+    fn release(&self, swept: &Swept) -> Released {
+        let path = std::path::Path::new(&swept.workspace);
+        let ours = path.starts_with(&self.root) && path != self.root;
+        if swept.workspace.is_empty() || swept.project_dir.is_empty() || !ours {
+            return Released::Nothing;
+        }
+        // The project id is the checkouts directory's first segment under
+        // the root: `<root>/<project-id>/<harp>/<agent>`.
+        let project_id = path
+            .strip_prefix(&self.root)
+            .ok()
+            .and_then(|rel| rel.components().next())
+            .map(|first| first.as_os_str().to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let workspaces = self.workspaces.of(&project_id, &swept.project_dir);
+        match workspaces.remove(&swept.project_dir, &swept.workspace) {
+            isolation_ports::Removal::Removed => Released::Removed(swept.workspace.clone()),
+            isolation_ports::Removal::Left(why) => Released::Left {
+                path: swept.workspace.clone(),
+                why,
+            },
+        }
+    }
+}
+
 /// The daemon's launcher over the one store's edge `E`, minting run tokens
 /// from `T`.
 pub struct Daemon<E: Edge, T: TokenSource> {
-    edge: Arc<E>,
+    pub(crate) edge: Arc<E>,
     tokens: Arc<T>,
     engines: Vec<HostedEngine>,
     plans: Box<dyn ChildPlans>,
@@ -86,8 +201,8 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     ears: Box<dyn Ears>,
     run_locks: Arc<dyn RunLocks>,
     place: Place,
-    say: Box<dyn FnMut(&str) + Send>,
-    board: CatchUp<Boards>,
+    pub(crate) say: Box<dyn FnMut(&str) + Send>,
+    pub(crate) board: CatchUp<Boards>,
     pending: CatchUp<PendingMessages>,
     index: CatchUp<SessionIndexes>,
     launches: CatchUp<PendingModel>,
@@ -100,13 +215,15 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     /// Steps refused this time round: tried again once the store changes.
     refused: BTreeSet<String>,
     /// The steps whose failure was said already (once, not each round).
-    complained: BTreeSet<String>,
+    pub(crate) complained: BTreeSet<String>,
     /// Where a child's program is found (`RunnerLauncher::find_program`:
     /// PATHEXT's on Windows); none, it is started as named.
     finder: Option<Arc<dyn RunnerLauncher>>,
     /// The one-shots it hosts (U4), shared with its API; none, it hosts
     /// none.
     one_shots: Option<Arc<OneShots>>,
+    /// Where a child works (s4-Q11); none, every child in its project.
+    workspaces: Option<Arc<dyn ChildWorkspaces>>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -200,7 +317,16 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             complained: BTreeSet::new(),
             finder: None,
             one_shots: None,
+            workspaces: None,
         }
+    }
+
+    /// The daemon, placing each child where its agent's `workspace` says
+    /// (s4-Q11) through `workspaces`, and letting a lost child's checkout
+    /// go at its start's sweep (OD-19).
+    pub fn placing(mut self, workspaces: Arc<dyn ChildWorkspaces>) -> Daemon<E, T> {
+        self.workspaces = Some(workspaces);
+        self
     }
 
     /// The daemon, hosting the one-shots of `one_shots` (U4): counted as
@@ -221,6 +347,17 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     /// How many runs it hosts now: its children and its one-shots.
     pub fn hosting(&self) -> usize {
         self.hosted.len() + self.one_shots.as_ref().map_or(0, |o| o.hosting())
+    }
+
+    /// Whether a child it hosts has a turn in flight (its run holds a turn
+    /// queued and not ended), as its board says.
+    pub fn in_flight(&self) -> bool {
+        let board = self.board.projector().board();
+        self.hosted.values().any(|hosted| {
+            board
+                .run(&hosted.at.session, hosted.at.incarnation)
+                .is_some_and(|run| !run.state.turns.is_empty())
+        })
     }
 
     /// The one-shots it hosts, each as its session's stable id and its
@@ -298,6 +435,19 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         self.swept(&owed, &started).await
     }
 
+    /// What lets a lost run's checkout go (OD-19): the project's workspaces,
+    /// for a run that worked in a checkout of ctxloom's own (under its
+    /// home's `worktrees`), never the project itself; none, nothing.
+    fn releases(&self) -> Option<Arc<dyn Releases>> {
+        let workspaces = Arc::clone(self.workspaces.as_ref()?);
+        Some(Arc::new(LostCheckouts {
+            workspaces,
+            root: std::path::Path::new(&self.place.home)
+                .join(".ctxloom")
+                .join("worktrees"),
+        }))
+    }
+
     /// The runs owed a runner, and the runs started and not ended, as the
     /// store holds them now.
     async fn caught_up_launches<S: ReadStore + Store + Processed>(
@@ -323,7 +473,11 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         owed: &[PendingLaunch],
         started: &[StartedRun],
     ) -> Result<Vec<Swept>, String> {
-        let swept = Sweeper::new(Arc::clone(&self.edge), Arc::clone(&self.run_locks))
+        let mut sweeper = Sweeper::new(Arc::clone(&self.edge), Arc::clone(&self.run_locks));
+        if let Some(releases) = self.releases() {
+            sweeper = sweeper.releasing(releases);
+        }
+        let swept = sweeper
             .sweep(owed, started)
             .await
             .map_err(|e| angzarr_diagnostic::Diagnostic::code(&e).to_string())?;
@@ -336,6 +490,15 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                     false => "launch-orphaned",
                 }
             ));
+            match &run.released {
+                Released::Nothing => {}
+                Released::Removed(path) => {
+                    (self.say)(&format!("{}: its checkout {path} removed", run.session));
+                }
+                Released::Left { path, why } => {
+                    (self.say)(&format!("{}: its checkout {path} left: {why}", run.session))
+                }
+            }
         }
         Ok(swept)
     }
@@ -409,7 +572,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     }
 
     /// Send `sent` to the store.
-    async fn send(&mut self, sent: &Sent) -> Taken {
+    pub(crate) async fn send(&mut self, sent: &Sent) -> Taken {
         match self.edge.handle(sent.book.clone()).await {
             Ok(_) => Taken::Done,
             Err(Failure::Rejected(rejected)) => {
@@ -428,7 +591,15 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     async fn take(&mut self, project_id: &str, step: Step) -> Taken {
         match step {
             Step::Send(sent) => self.send(&sent).await,
-            Step::Launch { mint, failed, .. } => {
+            Step::Launch {
+                mut mint, failed, ..
+            } => {
+                // The axis it works on, recorded at its mint (s4-Q11): its
+                // agent's `workspace`, as its plan settles it.
+                if mint.mint.command.workspace.is_none() {
+                    let session = mint.claim.command.session.clone();
+                    mint.mint.command.workspace = self.axis_of(&session, &mint.mint.command);
+                }
                 let claim = Sent {
                     key: mint.claim.key.clone(),
                     project_id: mint.claim.project_id.clone(),
@@ -453,11 +624,20 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 harp,
                 engine,
                 project_dir,
+                resume,
                 ..
             } => {
-                self.start(project_id, at, &harp, &engine, &project_dir)
-                    .await
+                let child = Child {
+                    harp: &harp,
+                    engine: &engine,
+                    project_dir: &project_dir,
+                    resume,
+                };
+                self.start(project_id, at, &child).await
             }
+            Step::Rehost {
+                at, harp, owner, ..
+            } => self.rehost(project_id, &at, &harp, &owner).await,
             Step::Feed {
                 at,
                 turn,
@@ -516,14 +696,8 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     /// none of, or that cannot be planned or is refused, ends its
     /// incarnation and is released by its owner (D-N47); one that cannot
     /// start ends its run and its incarnation, so nothing is left owed.
-    async fn start(
-        &mut self,
-        project_id: &str,
-        at: RunAt,
-        harp: &str,
-        engine: &str,
-        project_dir: &str,
-    ) -> Taken {
+    async fn start(&mut self, project_id: &str, at: RunAt, start: &Child<'_>) -> Taken {
+        let (harp, engine, project_dir) = (start.harp, start.engine, start.project_dir);
         let facts = Facts::new(Arc::clone(&self.edge));
         let run = at.run();
         let Some(hosted_engine) = self.engine(engine) else {
@@ -550,6 +724,17 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 return Taken::Again;
             }
         };
+        // Its session's lock, held for its life (U6): one another holds is
+        // a session running elsewhere, tried again later.
+        let session_lock = match self.homes.hold_session(project_dir, harp) {
+            Ok(held) => held,
+            Err(why) => {
+                if self.complained.insert(format!("session-lock:{run}")) {
+                    (self.say)(&format!("{harp}: its session's lock: {why}"));
+                }
+                return Taken::Again;
+            }
+        };
         let enqueued = Enqueuer::new(Arc::clone(&self.edge), Arc::clone(&self.tokens))
             .enqueue(EnqueueRequest {
                 session: at.session.clone(),
@@ -565,6 +750,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             Err(EnqueueError::Refused(rejection)) => {
                 let code = angzarr_diagnostic::Diagnostic::code(&rejection).to_string();
                 (self.say)(&format!("{harp}: refused: {code}"));
+                drop(session_lock);
                 drop(lock);
                 self.launch_refused(project_id, &at, &code).await;
                 return Taken::Done;
@@ -574,6 +760,38 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 return Taken::Again;
             }
         };
+        let ready = Ready {
+            engine: hosted_engine,
+            child,
+            handed,
+            hook_token: enqueued.hook_token,
+            run_lock: lock,
+            session_lock,
+        };
+        self.started(project_id, at, start, ready).await
+    }
+
+    /// The child enqueued (`ready`), started and hosted: its engine started
+    /// where it works, its start recorded, held for its life. One that
+    /// cannot start ends its run and its incarnation.
+    async fn started(
+        &mut self,
+        project_id: &str,
+        at: RunAt,
+        start: &Child<'_>,
+        ready: Ready,
+    ) -> Taken {
+        let (harp, project_dir) = (start.harp, start.project_dir);
+        let facts = Facts::new(Arc::clone(&self.edge));
+        let run = at.run();
+        let Ready {
+            engine: hosted_engine,
+            child,
+            handed,
+            hook_token,
+            run_lock: lock,
+            session_lock,
+        } = ready;
         let who = Identity {
             run: root_of(&run),
             session: root_of(&at.session),
@@ -582,17 +800,29 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             depth: 1,
         };
         let name = self.name_of(project_id, harp);
+        let workspaces = self
+            .workspaces
+            .as_ref()
+            .map(|of| of.of(project_id, project_dir));
+        let workspace = self.workspace_of(project_id, &at, harp, &child, &handed);
         let started = self.spawn_child(
             &hosted_engine,
-            &at,
-            harp,
-            &name,
-            project_dir,
+            Spawn {
+                at: &at,
+                harp,
+                name: &name,
+                project_dir,
+                resume: start.resume.clone(),
+                workspace,
+                workspaces: workspaces
+                    .as_deref()
+                    .map(|w| w as &dyn isolation_ports::Workspaces),
+            },
             &child,
             &handed,
-            &enqueued.hook_token,
+            &hook_token,
         );
-        let (child, transcripts) = match started {
+        let (child, transcripts, placed) = match started {
             Ok(started) => started,
             Err(detail) => {
                 (self.say)(&format!("{harp}: not started: {detail}"));
@@ -604,12 +834,26 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             }
         };
         let pid = child.control.pid();
+        // Where it works: its checkout, else the project.
+        let cwd = placed
+            .as_ref()
+            .map_or_else(|| project_dir.to_string(), |p| p.cwd.clone());
+        if let Some(warning) = placed.as_ref().and_then(|p| p.warning.as_ref()) {
+            (self.say)(&format!("{harp}: works in the project: {warning}"));
+        }
+        let checkout = placed.and_then(|placed| {
+            Some(Placed {
+                checkout: placed.checkout?,
+                files: placed.files,
+                workspaces: Arc::clone(workspaces.as_ref()?),
+            })
+        });
         let recorded = facts
             .record(
                 &who,
                 RunnerFact::RunnerStarted(runs::RunnerStarted {
                     runtime: "host".to_string(),
-                    workspace: project_dir.to_string(),
+                    workspace: cwd,
                     pid,
                 }),
             )
@@ -621,8 +865,72 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             (self.say)(&format!("{harp}: its start not recorded: {error:?}"));
         }
         (self.say)(&format!("{harp}: started, pid {pid}"));
-        self.host(child, transcripts, at, who, lock);
+        self.host(
+            child,
+            transcripts,
+            at,
+            who,
+            Locks {
+                run: lock,
+                session: Some(session_lock),
+                checkout,
+            },
+        );
         Taken::Done
+    }
+
+    /// The workspace axis the child minted by `mint` works on, as its plan
+    /// settles it (its agent's `workspace`), on its engine and in its
+    /// launcher's environment (its hand-off); none where it cannot be
+    /// planned (its start says why).
+    fn axis_of(&mut self, session: &str, mint: &sessions::MintSession) -> Option<String> {
+        let handed = self.hand_offs.read(session)?;
+        let previewed = self
+            .plans
+            .preview(&mint.engine, &handed.agent, &mint.project_dir, &handed.env)
+            .ok()?;
+        Some(
+            run_launcher::Axis::of(&previewed.plan.axes.0)
+                .word()
+                .to_string(),
+        )
+    }
+
+    /// What the child asks of the workspace axis: the axis its session was
+    /// minted on (its own, so a re-host re-enters its checkout), else its
+    /// plan's; its checkouts directory under ctxloom's home; its agent.
+    fn workspace_of(
+        &self,
+        project_id: &str,
+        at: &RunAt,
+        harp: &str,
+        child: &Planned,
+        handed: &HandOff,
+    ) -> run_launcher::Workspace {
+        let board = self.board.projector().board();
+        let recorded = board
+            .session(&at.session)
+            .and_then(|session| session.workspace.clone());
+        let axis = recorded.unwrap_or_else(|| child.axis.clone());
+        let agent = [&handed.agent, &child.agent]
+            .into_iter()
+            .find(|agent| !agent.is_empty())
+            .cloned()
+            .unwrap_or_default();
+        run_launcher::Workspace {
+            axis: run_launcher::Axis::of(&axis),
+            work_dir: match project_id.is_empty() {
+                true => String::new(),
+                false => isolation_ports::session_worktrees(
+                    std::path::Path::new(&self.place.home),
+                    project_id,
+                    harp,
+                )
+                .display()
+                .to_string(),
+            },
+            agent,
+        }
     }
 
     /// Hold the started `child`: its observations heard through the ears,
@@ -633,7 +941,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         transcripts: Option<String>,
         at: RunAt,
         who: Identity,
-        lock: HeldLock,
+        locks: Locks,
     ) {
         let run = at.run();
         self.ears.listen(run.clone(), child.observations);
@@ -645,7 +953,9 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 control: child.control,
                 turns: BTreeMap::new(),
                 transcripts,
-                _lock: lock,
+                _lock: locks.run,
+                _session_lock: locks.session,
+                checkout: locks.checkout,
             },
         );
     }
@@ -659,15 +969,43 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
-    ) -> Result<run_application::HostedChild, String> {
+    ) -> Result<Planned, String> {
         let previewed = self.plans.preview(engine.name(), agent, project_dir, env)?;
-        Ok(run_application::hosted_child(
-            &previewed,
-            engine.name(),
-            &self.engines(),
-            engine.engine.credentials(),
-            env,
-        ))
+        let plan = &previewed.plan;
+        let agent = [&plan.agent, &plan.settings_agent]
+            .into_iter()
+            .find(|agent| !agent.is_empty())
+            .cloned()
+            .unwrap_or_default();
+        Ok(Planned {
+            hosted: run_application::hosted_child(
+                &previewed,
+                engine.name(),
+                &self.engines(),
+                engine.engine.credentials(),
+                env,
+            ),
+            axis: plan.axes.0.clone(),
+            agent,
+        })
+    }
+
+    /// Let go of what the exited child `gone` held: its checkout, WIP-safe
+    /// (s4-Q11), said; then its locks, as it is dropped.
+    fn let_go(&mut self, harp: &str, gone: Hosted) {
+        if let Some(placed) = &gone.checkout {
+            match placed.release() {
+                isolation_ports::Removal::Removed => (self.say)(&format!(
+                    "{harp}: its checkout {} removed",
+                    placed.checkout.path
+                )),
+                isolation_ports::Removal::Left(why) => (self.say)(&format!(
+                    "{harp}: its checkout {} (branch {}) left: {why}",
+                    placed.checkout.path, placed.checkout.branch
+                )),
+            }
+        }
+        drop(gone);
     }
 
     /// The environment the child `session` is started with: its hand-off,
@@ -754,18 +1092,28 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
     /// listener for its hooks: made by the one launch (T10,
     /// `run_launcher::launch_of`), its program found and its permits
     /// applied there, then started exactly as made.
-    #[allow(clippy::too_many_arguments)]
     fn spawn_child(
         &self,
         engine: &HostedEngine,
-        at: &RunAt,
-        harp: &str,
-        name: &str,
-        project_dir: &str,
-        child: &run_application::HostedChild,
+        spawn: Spawn<'_>,
+        child: &Planned,
         handed: &HandOff,
         hook_token: &run_ports::Token,
-    ) -> Result<(run_ports::StartedChild, Option<String>), String> {
+    ) -> Result<
+        (
+            run_ports::StartedChild,
+            Option<String>,
+            Option<run_launcher::Placement>,
+        ),
+        String,
+    > {
+        let Spawn {
+            at,
+            harp,
+            name,
+            project_dir,
+            ..
+        } = spawn;
         let sent = &handed.env;
         // Composed for this launch (T21): her settings read now, where her
         // launcher finds them.
@@ -803,9 +1151,9 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                     // launch's plan does.
                     surfaces: child.surfaces.clone(),
                 },
-                // No workspaces: until a hosted child's request carries a
-                // workspace axis, it works in the live project.
-                workspace: run_launcher::Workspace::default(),
+                // Its agent's `workspace` (s4-Q11): the project, or a
+                // checkout of its session's own.
+                workspace: spawn.workspace.clone(),
                 env: self.child_environment(at, name, sent, hook_token),
                 // What the daemon sets for the child, which no permit
                 // replaces (ruling 78b): its HOME (the session home) and the
@@ -813,7 +1161,8 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                 owned: vec!["HOME".to_string(), "PATH".to_string()],
             },
             prompt: String::new(),
-            resume: None,
+            // Its own conversation, from its second incarnation on (T19).
+            resume: spawn.resume.clone(),
             session_id: None,
             user_home: self.place.user_home.clone(),
             model: child.model.clone(),
@@ -836,7 +1185,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             },
             &find,
             &mut *records,
-            None,
+            spawn.workspaces,
             &request,
             &self.place.os,
         )
@@ -847,7 +1196,7 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
         let started = starts
             .start(&spec, &made.launch)
             .map_err(|e| e.to_string())?;
-        Ok((started, (engine.transcripts)(&spec)))
+        Ok((started, (engine.transcripts)(&spec), made.placed))
     }
 
     /// The environment a child's engine is started with: its launcher's,
@@ -967,7 +1316,9 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
                     .incarnation_ended(&at.session, at.incarnation, "runner-exit")
                     .await;
                 (self.say)(&format!("{}: exited {exit:?}", who.harp));
-                self.hosted.remove(run);
+                if let Some(gone) = self.hosted.remove(run) {
+                    self.let_go(&who.harp, gone);
+                }
                 return;
             }
             ChildObservation::InterruptAnswered { .. } | ChildObservation::Cleared { .. } => None,

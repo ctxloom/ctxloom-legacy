@@ -44,7 +44,10 @@ fn the_noun_is_hidden_and_has_a_verb_for_each_test_command() {
             "open-store",
             "seed-session",
             "project-name",
-            "session-events"
+            "session-name",
+            "session-events",
+            "record",
+            "seed-rehosts"
         ]
     );
 }
@@ -250,6 +253,7 @@ fn every_seed_flag_lands_in_the_seed() {
         "a.md",
         "--other-file",
         "b.md",
+        "--resumable",
     ]);
     assert_eq!(
         format!("{seed:?}"),
@@ -266,6 +270,7 @@ fn every_seed_flag_lands_in_the_seed() {
                 oneshot: true,
                 native: Some(("n1".to_string(), "/t/n1.jsonl".to_string())),
                 other_files: vec!["a.md".to_string(), "b.md".to_string()],
+                resumable: true,
             }
         )
     );

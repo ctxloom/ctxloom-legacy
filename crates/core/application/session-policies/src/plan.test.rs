@@ -588,3 +588,122 @@ fn another_projects_sessions_on_the_one_board_are_not_planned_here() {
     world.owner.push(closed());
     assert!(world.plan().is_empty(), "{:?}", keys(&world.plan()));
 }
+
+/// The child's engine bound its native session `native-1`.
+fn bound() -> SessionEvent {
+    SessionEvent::EngineSessionBound(sessions::EngineSessionBound {
+        native_id: "native-1".to_string(),
+        transcript_path: String::new(),
+        engine_version: String::new(),
+        displaced: None,
+    })
+}
+
+/// The child's `incarnation` ended for `cause`.
+fn incarnation_ended(incarnation: u32, cause: &str) -> SessionEvent {
+    SessionEvent::IncarnationEnded(sessions::IncarnationEnded {
+        incarnation,
+        cause: cause.to_string(),
+        notice_parent: true,
+    })
+}
+
+/// A child bound to its engine's session whose first incarnation ended
+/// `cause`, its run started and ended elsewhere.
+fn ended_child(cause: &str) -> World {
+    let mut world = World::with_child();
+    world.child.push(bound());
+    world.child.push(incarnation_ended(1, cause));
+    world.run = vec![
+        enqueued(),
+        RunEvent::RunEnded(runs::RunEnded {
+            cause: runs::EndCause::RunnerLoss,
+            exit_code: None,
+            detail: String::new(),
+        }),
+    ];
+    world
+}
+
+// T19: a child whose last incarnation was lost (`orphaned`) is re-hosted as
+// its next, keyed by it; its owner is named for a refusal's notice.
+#[test]
+fn a_child_whose_host_was_lost_is_rehosted_as_its_next_incarnation() {
+    let steps = ended_child("orphaned").plan();
+    assert_eq!(keys(&steps), [format!("rehost:{CHILD}:2")]);
+    let Step::Rehost {
+        at, harp, owner, ..
+    } = &steps[0]
+    else {
+        panic!("{steps:?}");
+    };
+    assert_eq!(
+        at,
+        &RunAt {
+            session: CHILD.to_string(),
+            incarnation: 2
+        }
+    );
+    assert_eq!(harp, "kid");
+    assert_eq!(owner, &at_owner());
+}
+
+fn at_owner() -> SessionRef {
+    at(OWNER)
+}
+
+// One that exited, closed, stopped, never bound a native session, or owes
+// its next already is not re-hosted.
+#[test]
+fn a_child_that_exited_closed_or_owes_its_next_is_not_rehosted() {
+    let rehosted = |world: World| keys(&world.plan()).iter().any(|k| k.starts_with("rehost:"));
+    assert!(!rehosted(ended_child("runner-exit")), "it exited");
+    let mut closed_child = ended_child("orphaned");
+    closed_child.child.push(closed());
+    assert!(!rehosted(closed_child), "closed");
+    let mut stopped = ended_child("orphaned");
+    stopped.child.push(SessionEvent::StopOrdered(StopOrdered {
+        reason: "x".to_string(),
+    }));
+    assert!(!rehosted(stopped), "stopped");
+    let mut unbound = World::with_child();
+    unbound.child.push(incarnation_ended(1, "orphaned"));
+    assert!(!rehosted(unbound), "no native session");
+    let mut owed = ended_child("orphaned");
+    owed.child
+        .push(SessionEvent::IncarnationOwed(IncarnationOwed {
+            incarnation: 2,
+            reason: "rehost".to_string(),
+        }));
+    assert!(!rehosted(owed), "its next is owed already");
+    let mut primary = World {
+        owner: minted("boss", None),
+        ..World::default()
+    };
+    primary.owner.push(bound());
+    primary.owner.push(incarnation_ended(1, "orphaned"));
+    assert!(!rehosted(primary), "a primary is never re-hosted");
+}
+
+// T19: the re-hosted incarnation is started resuming its own conversation;
+// a first start resumes nothing.
+#[test]
+fn a_later_incarnation_is_started_resuming_its_native_session() {
+    let first = World::with_child().plan();
+    assert!(matches!(&first[0], Step::Start { resume: None, .. }));
+    let mut owed = ended_child("orphaned");
+    owed.child
+        .push(SessionEvent::IncarnationOwed(IncarnationOwed {
+            incarnation: 2,
+            reason: "rehost".to_string(),
+        }));
+    owed.run.clear();
+    let steps = owed.plan();
+    let Some(Step::Start { at, resume, .. }) =
+        steps.iter().find(|s| matches!(s, Step::Start { .. }))
+    else {
+        panic!("{steps:?}");
+    };
+    assert_eq!(at.incarnation, 2);
+    assert_eq!(resume.as_deref(), Some("native-1"));
+}

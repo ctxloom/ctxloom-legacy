@@ -540,10 +540,58 @@ fn has_ctxloom(w: &mut World) {
     );
 }
 
+/// How long the daemon her one-shot started is given to see its home gone
+/// and exit.
+const DAEMON_EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Her daemon still serves when she deletes its home: it is named (its
+/// discovery file's pid) before the delete, and its exit is waited for
+/// (bounded) after it, so the steps that read her home read it once the
+/// daemon has had its say, never in a race with its next round.
 #[when("Alice takes ctxloom back out by deleting .ctxloom and ~/.ctxloom")]
 fn delete_ctxloom(w: &mut World) {
+    let discovery = w
+        .common
+        .project
+        .home()
+        .join(run_ports::DAEMON_DIR)
+        .join(run_ports::DISCOVERY_FILE);
+    let daemon = files::read_bytes(&discovery)
+        .ok()
+        .and_then(|bytes| run_ports::Discovery::decode(&bytes))
+        .map(|found| found.pid);
     files::remove_tree(w.common.project.dir().join(".ctxloom"));
     files::remove_tree(w.common.project.home().join(".ctxloom"));
+    if let Some(pid) = daemon {
+        assert!(
+            exited_within(pid, DAEMON_EXIT_WAIT),
+            "her daemon (pid {pid}) still runs {DAEMON_EXIT_WAIT:?} after its home was deleted"
+        );
+    }
+}
+
+/// Whether process `pid` is gone, waited for at most `within`: `kill -0`
+/// answers whether it is there (unix). Windows has no `kill`: it is taken as
+/// gone, and the home is read at once, as before.
+fn exited_within(pid: u32, within: std::time::Duration) -> bool {
+    if os::host().flavor() == os::Flavor::Windows {
+        return true;
+    }
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        let there = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !there {
+            return true;
+        }
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 #[then("nothing in her home directory outside ~/.ctxloom was written")]

@@ -503,19 +503,10 @@ pub(crate) fn world_without_programs(name: &str) -> World {
 // reaches the daemon, which an in-process test cannot spawn (its program is
 // the test harness).
 
-// Without `--one-shot` it is the human's session, which is started on the
-// engine asked for, prompt or none.
-#[test]
-fn test_run_without_one_shot_is_the_session() {
-    let world = world_without_programs("session");
-    let failure = try_line(
-        &mut world.commands(),
-        Format::Json,
-        &["run", "--engine", "nope"],
-    )
-    .unwrap_err();
-    assert_eq!(failure.cause.code(), "runs-unknown-engine");
-}
+// Without `--one-shot` it is the human's session, prepared by the daemon
+// and started by the command as its frontend (U5): its refusals (an engine
+// nobody drives) are held by the binary's acceptance tests, for the same
+// reason.
 
 // `--dry-run` stays the library's (the plan printed, nothing run, its
 // detailed code 1) is held by the binary's `library_cli_run.test.rs`: every

@@ -1771,10 +1771,126 @@ async fn the_sweep_answers_the_runs_it_ended_and_a_second_ends_none() {
             session: SESSION.to_string(),
             incarnation: 1,
             started: true,
+            project_dir: started[0].project_dir.clone(),
+            workspace: "/work/proj".to_string(),
+            released: crate::Released::Nothing,
         }]
     );
     assert!(sweeper.sweep(&owed, &started).await.unwrap().is_empty());
     assert_eq!(ends(&edge).await, [lost()], "ended once");
+}
+
+/// The runs owed a runner and started, as the store holds them now.
+async fn swept_runs(
+    edge: &Arc<TestEdge>,
+) -> (
+    Vec<pending_launches::PendingLaunch>,
+    Vec<pending_launches::StartedRun>,
+) {
+    let mut pending = pending_launches::catch_up();
+    pending.step(&edge.store, edge.catalog()).await.unwrap();
+    let model = pending.projector().pending();
+    (model.launches(), model.started())
+}
+
+/// Queue a turn of `message` on `SESSION`'s first run, as the daemon's
+/// delivery does.
+async fn queued(edge: &Arc<TestEdge>, message: &str) {
+    let cover = angzarr_embedded::v1::Cover {
+        domain: runs::RUN_DOMAIN.to_string(),
+        root: Some(runs::run_root(SESSION, 1)),
+        edition: None,
+    };
+    let book = angzarr_embedded::CommandBookExt::command_of(
+        cover,
+        &runs::RunCommand::from(runs::QueueTurn {
+            prompt_ref: String::new(),
+            resume: false,
+            message_ids: vec![message.to_string()],
+            urgency: runs::TurnUrgency::Wake,
+        }),
+    );
+    run_ports::Edge::handle(&**edge, book).await.unwrap();
+}
+
+// S18: a lost run's turn in flight is ended failed, runner-lost, BEFORE the
+// run's end (after it the run records no turn's end), so its owner is told;
+// a second sweep fails it no second time.
+#[tokio::test]
+async fn a_lost_runs_turn_in_flight_ends_failed_before_the_run_ends() {
+    let edge = Arc::new(TestEdge::new());
+    started_run(&edge).await;
+    queued(&edge, "m-1").await;
+    let (owed, started) = swept_runs(&edge).await;
+    let sweeper = crate::Sweeper::new(Arc::clone(&edge), Locks::saying(Free, Unproven));
+    sweeper.sweep(&owed, &started).await.unwrap();
+    let events = run_events(&edge, SESSION).await;
+    let failed: Vec<(runs::TurnFailureClass, Vec<String>)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::TurnFailedRecorded(failed) => {
+                Some((failed.class, failed.message_ids.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        failed,
+        [(runs::TurnFailureClass::RunnerLost, vec!["m-1".to_string()])]
+    );
+    let at = |want: fn(&RunEvent) -> bool| events.iter().position(want).unwrap();
+    assert!(
+        at(|e| matches!(e, RunEvent::TurnFailedRecorded(_)))
+            < at(|e| matches!(e, RunEvent::RunEnded(_))),
+        "the turn fails before the run ends"
+    );
+    assert!(sweeper.sweep(&owed, &started).await.unwrap().is_empty());
+    let again = run_events(&edge, SESSION).await;
+    assert_eq!(
+        again
+            .iter()
+            .filter(|e| matches!(e, RunEvent::TurnFailedRecorded(_)))
+            .count(),
+        1
+    );
+}
+
+/// Releases that say each run they were asked of, and answer `answer`.
+struct Releasing(std::sync::Mutex<Vec<(String, String)>>, crate::Released);
+
+impl crate::Releases for Releasing {
+    fn release(&self, swept: &crate::Swept) -> crate::Released {
+        self.0
+            .lock()
+            .unwrap()
+            .push((swept.project_dir.clone(), swept.workspace.clone()));
+        self.1.clone()
+    }
+}
+
+// OD-19: what a lost run held is let go through the sweeper's releases,
+// told where it worked, and what that came to is in its sweep; a sweeper
+// with none releases nothing (above).
+#[tokio::test]
+async fn a_lost_runs_checkout_is_released_through_the_sweepers_releases() {
+    let edge = Arc::new(TestEdge::new());
+    started_run(&edge).await;
+    let (owed, started) = swept_runs(&edge).await;
+    let left = crate::Released::Left {
+        path: "/work/proj".to_string(),
+        why: "it holds work".to_string(),
+    };
+    let releases = Arc::new(Releasing(std::sync::Mutex::default(), left.clone()));
+    let swept = crate::Sweeper::new(Arc::clone(&edge), Locks::saying(Free, Unproven))
+        .releasing(Arc::clone(&releases) as Arc<dyn crate::Releases>)
+        .sweep(&owed, &started)
+        .await
+        .unwrap();
+    assert_eq!(swept[0].released, left);
+    assert_eq!(
+        *releases.0.lock().unwrap(),
+        [(started[0].project_dir.clone(), "/work/proj".to_string())]
+    );
 }
 
 /// An engine that tells its command the user's home it was asked with (as

@@ -353,6 +353,38 @@ message ResumeSession {
   string workspace = 3;
 }
 
+// Re-host a daemon's child (T19, S18, S47; owner s4-Q9): owe it its next
+// incarnation once the run its last incarnation had was lost (a killed
+// daemon's child, ended `orphaned` by the next start's sweep), so the
+// daemon starts it again resuming its engine's own session. Keyed
+// `rehost:<session>:<n+1>`, so a second daemon's is a DUPLICATE. The
+// evidence, `recent_rehosts`, is the daemon's count of this session's
+// `IncarnationOwed{reason: rehost}` recorded in the hour before the loss it
+// answers, by their recorded instants (decide reads no clock); at
+// `REHOST_BUDGET` (60) or more it is refused, and the child stays ended. A
+// drain's hand-over (`cause: drain`, s4-Q5) is not counted and never
+// refused for the budget. Refused, too, for a stream holding no session, a
+// closed one, one whose incarnation is still open, and one whose engine
+// never bound a native session (there is no conversation to resume).
+message RehostSession {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.IncarnationOwed"]
+    refuses: "ctxloom.sessions.v1.NoSession"
+    refuses: "ctxloom.sessions.v1.SessionIsClosed"
+    refuses: "ctxloom.sessions.v1.SessionRunning"
+    refuses: "ctxloom.sessions.v1.NoNativeSession"
+    refuses: "ctxloom.sessions.v1.RehostBudgetSpent"
+  };
+
+  // How many times the session was re-hosted in the hour before the loss
+  // this re-host answers.
+  uint32 recent_rehosts = 1;
+  // Why it is re-hosted: `rehost` (empty: the same), after its host was
+  // lost; `drain`, handed over by a draining daemon (not counted).
+  string cause = 2;
+}
+
 message IncarnationOwed {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
 
@@ -465,6 +497,16 @@ message WorkspaceMismatch {
   string harp = 1;
   string workspace = 2;
   string asked = 3;
+}
+
+// A re-host of a child re-hosted `limit` times or more in the last hour
+// (S47): it is left ended, and its owner told.
+message RehostBudgetSpent {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string harp = 1;
+  uint32 limit = 2;
+  uint32 recent = 3;
 }
 
 // endregion refusals

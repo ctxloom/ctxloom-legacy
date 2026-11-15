@@ -8,7 +8,7 @@
 //! bundle, approval) appears in this crate's signatures.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use angzarr_embedded::v1::{CommandBook, Cover, EventBook, EventPage};
 use angzarr_embedded::{Answered, Failure, Handled, KernelError, Rejected, Sampled, StoreError};
@@ -62,7 +62,13 @@ pub struct EmbeddedEdge<R: Stores<Key = ()>> {
     app: Arc<App<R>>,
     sample: Box<dyn Fn() -> Sampled + Send + Sync>,
     exposed: BTreeMap<String, Expose>,
+    applied: OnceLock<Applied>,
 }
+
+/// What is told of each book the edge applied, once it is applied and
+/// before it is answered: the book, and where it arrived from (a `handle`
+/// is the core's own, `Loopback`).
+pub type Applied = Box<dyn Fn(&CommandBook, Arrival) + Send + Sync>;
 
 impl<R: Stores<Key = ()>> EmbeddedEdge<R> {
     /// An edge over `app`; `sample` gives each call its instant and command id
@@ -75,6 +81,22 @@ impl<R: Stores<Key = ()>> EmbeddedEdge<R> {
             app,
             sample: Box::new(sample),
             exposed: BTreeMap::new(),
+            applied: OnceLock::new(),
+        }
+    }
+
+    /// Tell `applied` of each book this edge applies, once it is applied and
+    /// before it is answered (the composition root's: a test-support kill
+    /// switch, slice 4 U6). Set once; a second is ignored, and whether this
+    /// one was set is answered.
+    pub fn telling(&self, applied: Applied) -> bool {
+        self.applied.set(applied).is_ok()
+    }
+
+    /// Tell what is told of applied books that `book` was.
+    fn applied(&self, book: &CommandBook, arrival: Arrival) {
+        if let Some(applied) = self.applied.get() {
+            applied(book, arrival);
         }
     }
 
@@ -105,15 +127,25 @@ fn hidden(
 
 impl<R: Stores<Key = ()>> Edge for EmbeddedEdge<R> {
     async fn serve(&self, book: CommandBook, arrival: Arrival) -> Result<Answered, Unserved> {
-        self.app
+        let told = self.applied.get().map(|_| book.clone());
+        let served = self
+            .app
             .serve(book, host_arrival(arrival), &(self.sample)())
             .await
-            .map_err(unserved)
+            .map_err(unserved)?;
+        if let Some(book) = told {
+            self.applied(&book, arrival);
+        }
+        Ok(served)
     }
 
     async fn handle(&self, book: CommandBook) -> Result<Answered, Failure<Rejected>> {
         let cover = book.cover.clone();
+        let told = self.applied.get().map(|_| book.clone());
         let handled = self.app.handle(book, &(self.sample)()).await?;
+        if let Some(book) = told {
+            self.applied(&book, Arrival::Loopback);
+        }
         Ok(answered(handled, cover))
     }
 
@@ -127,6 +159,7 @@ impl<R: Stores<Key = ()>> Edge for EmbeddedEdge<R> {
             return Err(Unserved::Hidden { domain });
         }
         let cover = book.cover.clone();
+        let told = self.applied.get().map(|_| book.clone());
         let store = self
             .app
             .stores()
@@ -139,6 +172,9 @@ impl<R: Stores<Key = ()>> Edge for EmbeddedEdge<R> {
             .handle_sync(&store, book, &projectors, &(self.sample)())
             .await
             .map_err(Unserved::Failed)?;
+        if let Some(book) = told {
+            self.applied(&book, arrival);
+        }
         Ok(SyncAnswered {
             answered: answered(synced.handled, cover),
             projections: synced.projections,

@@ -339,7 +339,8 @@ Slice M1 (run) adds `ctxloom run`: `--one-shot <prompt>` and the bare interactiv
 session. A turn is a command. A child agent on claude runs one `claude -p
 --output-format stream-json` command per turn (`--resume <native id>` on later
 ones); the primary agent keeps the human's terminal, handed to the engine by
-inheritance. Both are heard through hooks (a child since owner ruling 51).
+inheritance (by the command, the session's frontend, from the launch the
+daemon prepared: U5, below). Both are heard through hooks (a child since owner ruling 51).
 Crates:
 
 - `core/ports/run-ports` (`RunnerLauncher`, `Engine`, `SessionRecords`,
@@ -620,13 +621,57 @@ aggregate refusal's refusals, and the exit crosses as its code
 to its end under the daemon (owner s4-Q7: the tokens are spent for nobody;
 its reply is in the run's facts, its words in the transcript); a daemon
 killed mid-turn fails the command (10, the stream broken: S8(a), a one-shot
-is not run again). `CreateRun` for a TERMINAL run answers UNIMPLEMENTED until
-U5 (its arm in `daemon_api`'s `runs.rs`); `GetRun` and `WatchRun` of a run
-the daemon does not host are `RunNotFound`. The daemon counts its one-shots
-as what it hosts (idle, `GetDaemon`'s `runs` as ONE_SHOT, a `StopDaemon`
-refusal), stops them with its children (`end_all`, as a SIGTERM) and waits
-for each to end before its store is closed. The interactive session (and
-init's interview) is still the command's own, in process, until U5.
+is not run again). `GetRun` and `WatchRun` of a run the daemon does not
+host are `RunNotFound`. The daemon counts its one-shots as what it hosts
+(idle, `GetDaemon`'s `runs` as ONE_SHOT, a `StopDaemon` refusal), stops
+them with its children (`end_all`, as a SIGTERM) and waits for each to end
+before its store is closed.
+THE INTERACTIVE SESSION IS PREPARED BY THE DAEMON, ITS TUI STARTED BY THE
+COMMAND (U5: T9, S3, S17, S20; owner s4-Q6 for init's interview, which is
+the same frontend). `run` (and init's interview, `interview::SetupSessions`)
+is the session's FRONTEND (`run_application::frontend`, wired by
+`frontend::client_terminal`; the in-process interactive path is gone): its
+project resolved by the daemon, the daemon reached (none can be:
+`daemon-ports-not-started`, exit 10, nothing planned or minted), and
+`CreateRun{TERMINAL}` sent as a one-shot's is. The daemon prepares it
+(`daemon_application::Terminals`, its root's `frontend::HostedTerminals`):
+on a thread of its own (a 16 MiB stack: the whole run is driven on it),
+`Runs::interactive` over the ONE store in the client's wiring, planned,
+enqueued, named, minted and set up exactly as before, its runner
+`daemon_application::Frontended`: the one `Launch` (with the session lock's
+path, `Launch.session_lock`) handed to the client in `Run.launch` (the
+user's environment crosses to her own client in that answer alone; a read,
+`GetRun`, carries none), then the run's stream read (`frontend::
+StoreReports`, every `POLL`) for the frontend's start report (at most
+`START_WITHIN`, 60 s, else the launch failed) and its exit report. The
+session's lock is the FRONTEND's (the daemon's `Runs` takes none): taken
+before the TUI starts (held by another: refused, `LaunchFailed` reported,
+nothing started), held for its life, let go only after its exit is
+reported. The frontend starts the launch on this terminal through
+`run_terminal` (exactly its program, arguments, WHOLE environment and
+directory), reports `RunnerStarted{pid}` after the spawn and `RunExited`
+after the exit (or `LaunchFailed`) as the run's facts through the
+coordinator's `Handle`, keyed as the launcher keys its own (`started:<run>`,
+`exit:<run>`, `launch-failed:<run>`, `runs_application::launch_failed_book`),
+so the daemon's own record of each is a DUPLICATE; the user gate admits
+these three facts. Each report is retried on whichever daemon serves (found,
+or started) for up to `frontend::REPORT_FOR` (60 s, S17), then said. The
+daemon, once the exit is in the stream, does what the CLI's launcher did:
+the native session bound from the hooks' end, opencode's end at its exit
+(`session_ends_with_exit`), the checkout released WIP-safe, the
+incarnation ended (`runner-exit`); a frontend gone without reporting (its
+session's lock free, no exit recorded) is ended as a kill. While the TUI
+runs the frontend follows `WatchRun` (reopened on the next daemon when one
+dies): a `stop` (the session CLOSED, S20: `Frontended` sees `SessionClosed`
+in the session's stream) asks the TUI to stop, then kills it after
+`Terminal::STOP_GRACE`; once the TUI is over the run's last notices (said
+after the TUI, as before) and its end are read for up to 10 s. A daemon
+killed mid-session does not end the TUI; its reports reach the next daemon.
+The daemon counts a session it prepares as a client it serves (idle). Not
+built: after a daemon death, the next daemon has no thread for the session,
+so its checkout's release and its incarnation's end at the exit are left
+(the incarnation stays open; the T18 sweep's, U6); a frontend killed
+between the plan and its start report leaves the run to `START_WITHIN`.
 
 A run asked to stop stops its engine first (ruling 114): for the whole run
 `ctxloom-wiring`'s `signals` hears SIGHUP, SIGINT and SIGTERM
@@ -673,7 +718,8 @@ The runner's and the model's tokens are gone (`EnqueueRun` and
 authenticated caller is the user, with the user's allowlist
 (`runs_application::user_allowlist`, every command and fact the session
 domain handles, read from the aggregate, since angzarr's unrestricted
-allowlist is its own, and the runs domain's `RequestStop`, U4; the
+allowlist is its own, the runs domain's `RequestStop`, U4, and the
+frontend's `RunnerStarted`, `RunExited` and `LaunchFailed` facts, U5; the
 coordinator's command half reaches the session and run domains alone,
 `EdgeCommands::reach`). The run's `HookGate` (the CLI run's own listener's,
 kept while the CLI serves its own runs) identifies the run its bearer names
@@ -800,8 +846,9 @@ as `RunEnqueued.launcher_lock` (field 12, as in `EnqueueRun`), held in the
 its file is removed as it is let go, so only a dead holder's is ever left (a
 refused run leaves nothing in the project). The SESSION's lock,
 `<project>/.ctxloom/sessions/<harp>.lock`, is taken once the session is
-minted and held until after its engine exits and the listener stops, so a
-live session reads live (and `session remove` refuses it without
+minted and held until after its engine exits and the listener stops (an
+interactive session's by its frontend, from before its TUI starts until its
+exit is reported, U5), so a live session reads live (and `session remove` refuses it without
 `--even-if-live`). A launcher's step sweeps other processes' runs: one still
 owed a runner whose own lock is free, and one started whose session's lock
 is free, have lost their owner; it probes, re-reads the run's stream (an
@@ -815,10 +862,23 @@ whose OWN lock (`RunEnqueued.launcher_lock`, which `pending-launches` keeps
 on a started run) is free has lost its owner too: a host that held it for
 the run's life, as the daemon does for a child it hosts, is gone (T3, T18);
 a primary removes its file once its runner started, which proves nothing.
-Then the session's incarnation ended (`orphaned`). The sweep is ONE
+A child the daemon hosts holds its SESSION's lock too, for its life
+(slice 4 U6, the owner's ruling on U4: `ChildHomes::hold_session`, the
+platform's file lock at `<project>/.ctxloom/sessions/<harp>.lock`, its
+directory made; one another holds starts nothing, tried again later), so
+another launcher's sweep (a hosted one-shot's `Launcher::step`, in the
+daemon's own process) never takes a live hosted child for lost where a
+session lock file was left free by an earlier run. A started run's turns
+still open (the one in flight, any queued behind it) are ended FIRST,
+`TurnFailed{class: TURN_FAILURE_CLASS_RUNNER_LOST}` keyed
+`turn:<run>:<turn>:failed` (S18: after the run's end it records no turn's
+end), so its owner is told of each through the notice policy. Then the
+session's incarnation ended (`orphaned`). The sweep is ONE
 implementation, `run_launcher::Sweeper`: `Launcher::step` runs it over the
 runs it holds no order for, and the daemon's launcher runs it as its first
-step (below). Every
+step (below), `releasing` what each lost run held (`Releases`, OD-19: its
+checkout now; a container in M10b): its `Swept` names the run's project and
+the workspace its `RunnerStarted` recorded, and `released` what came of it. Every
 run's end, or abandon after its mint, tells its session
 `RecordIncarnationEnded` (`runner-exit`, `launch-failed`; keyed
 `incarnation-ended:<session>:<n>`), so no incarnation stays open; nothing
@@ -1169,11 +1229,54 @@ run's facts. Its ports: the engine registry (`HostedEngine`, an `Engine`
 beside its `ChildEngine`, resolved by NAME; the wiring's `hosted_engines(wiring, program)`
 composes claude and opencode, and nothing in the launcher names an adapter),
 `ChildPlans` (the child's project's dry run on its own engine, and her git identity there), `HandOffs`,
-`ChildHomes`, `Ears` (the root pumps each child's observations off a thread:
+`ChildHomes` (its session directories, and its session's lock),
+`ChildWorkspaces` (`Daemon::placing`: the project's worktree-git
+workspaces), `Ears` (the root pumps each child's observations off a thread:
 no thread in the core), `RunLocks`, `TokenSource` and the edge.
 `ctxloom-wiring/src/daemon/serve.rs` only composes it, with the single-instance lock,
 the runtime, the store and its core, the listener, the discovery file and
-the pace.
+the pace. The start's sweep runs BEFORE the daemon is advertised (its
+discovery file published), so the first command that finds a new daemon
+finds the record whole (T18).
+
+SWEEP, RE-HOST AND T21 (slice 4 U6; T18, T19, S18, S47, OD-19). The start's
+sweep releases a lost run's checkout WIP-safe (`LostCheckouts`: only one
+under ctxloom's own `<home>/.ctxloom/worktrees/`, never the project; the
+port's never-forced `remove`, worktree-git's, never a prune; one holding
+work is left and said in the log). A CHILD whose last incarnation was lost
+(the board's `last_end` is `orphaned`), not closed, stopped or owed another,
+with a native session bound, is RE-HOSTED by the plan's step
+`rehost:<child>:<n+1>` (`daemon-application`'s `rehost.rs`): the sessions
+command `RehostSession{recent_rehosts, cause}` owes `IncarnationOwed{n+1,
+rehost}`, its evidence the daemon's count of the session's own `rehost`
+owes recorded in the hour before the loss (the last `IncarnationEnded`'s
+recorded instant: decide reads no clock), refused
+`sessions-rehost-budget-spent` (`RehostBudgetSpent`) at
+`sessions::REHOST_BUDGET` (60); then the child stays ended (its run
+runner-lost) and its owner is told, `notice:<child>:<n>:rehost-budget`. A
+drain's hand-over is `cause: drain` (s4-Q5), never counted nor refused for
+the budget (the drain itself is U8's). The re-hosted incarnation is the
+plan's ordinary start (`Step::Start.resume`, the session's bound native id
+from its second incarnation on: claude `--resume`), its environment read
+again from its hand-off (T6) and its settings written again from the
+user's config (T21). Never a one-shot (S8(a)) and never a primary. A hosted
+child FOLLOWS ITS AGENT'S `workspace` (owner s4-Q11): its axis is planned
+at its launch and recorded at its mint (`MintSession.workspace`), a re-host
+re-enters the axis its session was minted on, its checkout is
+`isolation_ports::session_worktrees` under ctxloom's home for its agent,
+placed by the one launch, `RunnerStarted.workspace` is where it works, and
+at its exit the checkout is let go WIP-safe (the files the launch placed
+taken out, then the port's `remove`; one holding work left and said with
+its branch). Under `test-support` a daemon is killed outright at a step by
+the switch file `~/.ctxloom/daemon/test-die-at` (its word: `enqueued`,
+`minted`, `started`, `turn`, `hook`, `discovery`; taken by the daemon that
+finds it): the core's edge tells each book it applied
+(`EmbeddedEdge::telling`) and the daemon aborts once one of the step's is
+applied, before it is answered; `turn` is also taken by the loop while a
+hosted child's turn is in flight (`Daemon::in_flight`), and `discovery`
+while its discovery file is written. `ctxloom test record` prints every
+stream of the one store, and `ctxloom test seed-rehosts <harp> <n>` plants
+a child's past re-hosts.
 
 The daemon has ONE principal, the user (slice 2). At each start it mints
 the user bearer (T12: 256 bits, `credentials`' `OsTokenSource`) and a new
@@ -1218,7 +1321,7 @@ serving daemon's is refused before it does anything, `ctxloom-wiring-daemon-
 other-home` (exit 20, naming both homes, its fix the daemon's home or a
 `daemon stop` from it), and never served by a second daemon (`daemon
 status`, `daemon stop`, `daemon resolve` and the child verbs; a hook's rediscovery passes
-such a daemon over and delivers to its run's listener). The file is 0600
+such a daemon over and holds its facts). The file is 0600
 and its directory 0700, tightened on each publish whoever made it (the
 single-instance lock may have); on Windows the platform sets no mode and the profile's
 inherited ACL stands (M8). It keeps other users out, not the user's own
@@ -1329,8 +1432,8 @@ is CLAIMED, its mark cleared (`HandOffs::claim`); an open child's is kept.
 Accepted cost (T6): an API key lies at rest for the child's life. Not yet:
 a hosted child's workspace axis (s4-Q11), the root session's persisted
 launcher places for `child_launch` (s4-Q1; a session's call sends its
-engine's environment, whose settings places are its session home's), and
-the stop of a running interactive session's TUI on its close (U5). A hosted child's session home is prepared with its agent's
+engine's environment, whose settings places are its session home's). A
+running interactive session closed stops its TUI (U5, above). A hosted child's session home is prepared with its agent's
 permissions document for the engine, verbatim (rulings 133-137,
 `run_application::HostedChild::permissions`). A hosted child is made by the
 one launch (`launch_of`, T10) like every other: its permits applied (the
@@ -1355,9 +1458,16 @@ client's `ensure` all ask the health check, never the lock, so a daemon that
 holds the lock and does not answer (stopped, hung) is not serving, and a
 stale port another process took is never handed anything. A serving daemon
 looks at its discovery file each tick: gone, it publishes it again (it still
-holds the single-instance lock); naming another daemon (its lock file was replaced, and
+holds the single-instance lock) where its directory still is
+(`DaemonFiles::republish`); naming another daemon (its lock file was replaced, and
 another took it), it exits, and withdraws only its OWN advertisement
-(`DaemonFiles::withdraw_own`), never the other's. A client with no live
+(`DaemonFiles::withdraw_own`), never the other's. Once started, a daemon never
+makes its own directory again (owner, 2026-11-14; j000100's exit is deleting
+`~/.ctxloom`): its log's directory is made as it starts (`logger`) and a line
+said once it is gone is dropped, and a discovery file whose directory is gone
+is not published again; so a daemon whose home was deleted exits on its lock
+and leaves nothing there. A replaced lock (its directory still there) is
+logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
 within `SPAWN_WAIT`, eight seconds: S16's ten (`HOOK_BOUND`) less a
@@ -2166,8 +2276,8 @@ What the engine's hooks observe (a prompt, each MessageDisplay delta, a tool
 call as size and SHA-256 only, a turn's end without text, a session's end, a
 compaction) is a typed fact of the SESSION stream (`proto/ctxloom/sessions/v1/
 capture.proto`; `runs-application::observe` makes them from the unified
-`HookEvent`, `Capture` delivers them through a `run-ports::FactSink`, failing
-open: a delivery that did not happen is dropped and said on stderr). The
+`HookEvent`; a hook delivers them through a `run-ports::FactSink`, or HOLDS
+them for later, below, and never fails its engine). The
 session aggregate records each on a live session, nothing on any other, and a
 redelivery is DUPLICATE. No file holds the transcript (owner ruling 87a):
 `session-index` folds it from the stream's pages on each read (a
@@ -2177,7 +2287,8 @@ hooks have delivered. A one-shot child's prompt and words come from its hooks AL
 rulings 26 and 51): the launcher records none of them, and reads the child's
 stream only for the reply it returns and the run's outcome facts (RunnerStarted,
 TurnCompleted/TurnFailed, LaunchFailed, RunExited). Accepted costs: a hook
-delivery that is dropped loses that part of the record, and a child whose hooks
+delivery that is dropped (on the environment's endpoint, or past the hold's
+bound) loses that part of the record, and a child whose hooks
 never reach the listener has no conversation in its transcript (its reply is
 still printed); a failing tool has no status from the hooks (claude gives no
 PostToolUse and no error flag; the stream's `is_error` is not recorded); every
@@ -2199,19 +2310,52 @@ Compaction (`PreCompact`, `PostCompact`) is registered and recorded: the fact
 holds the prompt, the phase, the `trigger` (`manual`/`auto`) and the summary's
 size and SHA-256 (never its text, ruling B). Not captured: thinking
 blocks, a tool's status (Claude's payload carries none) and a result's body.
-A hook is a separate process and delivers through the run's listener:
-`ctxloom-wiring`'s `HookSink` is `hook-sink-grpc`'s `GrpcSink` to
-`CTXLOOM_ENDPOINT` with `CTXLOOM_BEARER`, pinning `CTXLOOM_TLS_CERT` as its only
-root, when the endpoint and bearer are set and well formed (a missing or
-garbled certificate is `HookSink::Refused`, never plaintext), and
-fails open otherwise (and on any undelivered fact): it answers the engine as
-usual and warns `hook-cli-not-recorded` for each observation. Before that
-endpoint, a hook delivers to the user daemon its discovery file names, if
-one serves (`HookSink::rediscovered`, read at each hook), presenting the
-USER bearer that file holds (`run_ports::Bearer::user`), never its run's;
-one that does not answer is passed over for the environment's way. The
-`Unreachable` sink is that fallback; the in-process `EdgeSink` is for tests and the run's own
-facts. The session's end (`SessionEnd`) is captured like the rest.
+A hook is a separate process, and how it delivers is `ctxloom-wiring`'s
+hook arm (`sessions.rs`, slice 4 §3.8, S16, OD-13). (i) Its environment
+names an endpoint (`CTXLOOM_ENDPOINT`: a CLI run's per-run listener until
+U7 removes it, kept for M10b's containers): `HookSink` is `hook-sink-grpc`'s
+`GrpcSink` there with `CTXLOOM_BEARER`, pinning `CTXLOOM_TLS_CERT` as its
+only root, when they are set and well formed (a missing or garbled
+certificate is `HookSink::Refused`, never plaintext), else `Unreachable`;
+through `Capture`, failing open: a delivery that did not happen is dropped
+and said, `hook-cli-not-recorded` for each observation. Such a hook never
+spawns a daemon and never holds (a container's hold would sit in the
+container). (ii) Otherwise it is `HoldingRecording` (s4-Q14, unit H2): it
+reaches the user daemon its discovery file names, read at each hook, and
+starts one when none serves (`daemon::hook_daemon`, `ensure_within`), all
+within its bound, `HOOK_BOUND` (10 s) or the engine's `delivery_budget`
+where that is shorter (`capture::hook_bound`; the spawn wait is what the
+bound leaves `DELIVERY_MARGIN` of, at most `SPAWN_WAIT`, so a SessionEnd's
+1 s waits for none), presenting the USER bearer that file holds
+(`capture::daemon_sink`, `run_ports::Bearer::user`), never its run's; then
+`runs_application::Holding` decides, over fact-spool's `Spool` at its
+ctxloom home and the hook's `Deadline` (`HookClock`; the core reads no
+clock). It HOLDS every observation (`hook-cli-held`, its `why`) when no
+daemon was reached or started (H-Q2) or the daemon is older than the hook
+(`!run_ports::up_to_date(daemon, own)`, H-Q1; the hook's stamp is the
+binary's, a test's `CTXLOOM_TEST_STAMP` under test-support, and so is a
+`daemon serve`'s). Up to date, it first delivers what its session's hold
+holds (owner, H-Q5 revised: the client side flushes, never the daemon):
+`take` (none: another process is taking it), each record in held order the
+daemon is up to date for, through the same sink, each waiting only what is
+left of the bound, then the delivered prefix cut, again (at most
+`TAKE_ROUNDS`, 8) until nothing it can deliver is left; a record held by a
+newer hook is kept and passed over, a gap record goes, a record whose
+external id is not its book's origin or whose book is not this session's
+stream is dropped and said. Then its own facts are delivered. A hold
+another process is taking, a held delivery left unsettled, or the bound
+spent leaves the rest held and holds the hook's own facts BEHIND it
+(`hook-cli-held-behind`), so a session's facts reach its stream first-in,
+first-out; an own delivery left unsettled is held and the rest behind it.
+A final answer (`Refused`, `Parked`) is never held (said, not recorded).
+A hold at its bound, or one that cannot be used, drops the fact, said as
+`hook-cli-not-recorded`. The wording of `hook-cli-held` and
+`-held-behind` is a draft, the owner's to approve (H-Q10). Not yet built:
+the CLI's and the frontend's flush on the way in (H3), and the drain asked
+of an older daemon (H-Q6, U8); a hold of a session no hook fires again
+waits for them. The in-process `EdgeSink` is for tests and the run's own
+facts. A unit test's executable never spawns itself as the daemon
+(`SPAWNS_ITSELF`). The session's end (`SessionEnd`) is captured like the rest.
 A compaction's external id is `hook:compact:<session>:<prompt_id>:<trigger>:
 <phase>`, so two compactions of one turn (a manual and an auto) are two facts;
 two of the SAME trigger in one turn would still collide (the payload offers no
@@ -2221,8 +2365,8 @@ SIGINT or SIGTERM stops its engine, records its end and stops the listener
 before it exits (ruling 114, above). A SIGKILL is not heard: the engine
 outlives it.
 
-A session's HOLD (s4-Q14, unit H1; built as a library, no hook or daemon
-uses it yet: H2 makes a hook hold, the flush is later) keeps capture facts
+A session's HOLD (s4-Q14, unit H1; a hook holds there and flushes it since
+H2, above) keeps capture facts
 in order for a ctxloom process of an up-to-date version to deliver (owner:
 the client side pushes a hold over the API; the daemon reads no hold file).
 "Up to date" is semver not older, `run_ports::up_to_date(daemon, fact) =
@@ -2928,7 +3072,21 @@ the feature runner's: `GHERKIN_RATCHET=<absolute file>` makes
 `green<TAB><id>` (the id `<feature path under features/> :: [<rule> ::
 ]<scenario>[ :: | <example row> |]`; a failure no scenario owns is `<feature>
 :: (outside a scenario)`), and pass whatever failed, so only the ratchet's
-judge (`scripts/ratchet-judge.sh`) decides. The base's list is `just
+judge (`scripts/ratchet-judge.sh`) decides. Beside the list it writes
+`<list>.failures`, why each red scenario is red (a record per failed step:
+`red<TAB><id>`, `  step: <keyword> <text>`, its message indented, capped at
+2000 bytes), since a passing test's console output is never shown; the
+judge's FAIL line names it (`why: <list>.failures`), and the base's is cached
+beside its list. `GHERKIN_SCENARIO=<id>` runs that one scenario alone. A
+cached base list can freeze a flaky scenario's colour, so every scenario
+whose colour on the branch differs from the base's list is RE-CONFIRMED on
+the base before it is judged (owner, 2026-11-14; `ratchet-base.sh <base>
+--reconfirm <ids> <out>`, in the base's throwaway worktree): run alone, then
+in its feature file. A difference both re-runs give the base's listed colour
+is reproduced and judged as ever (a new red stays one, a turned green
+passes); one that is not, or was not re-run, is `FLAKY <id>`, named with its
+colours and its failures-file reason, and FAILS the ratchet whichever way it
+went: a flake is a finding, never a pass. The base's list is `just
 ratchet-base <base>` (`scripts/ratchet-base.sh`): only that test, on the
 base's tip, in a throwaway worktree `.<checkout>.ratchet-base` beside the
 checkout (target dir `target/ratchet-base`), cached by sha at

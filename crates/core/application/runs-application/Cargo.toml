@@ -11,6 +11,8 @@ publish.workspace = true
 angzarr-coordinator = { workspace = true, features = ["commands"] }
 angzarr-diagnostic.workspace = true
 angzarr-embedded.workspace = true
+# A held fact's `held_at` (run-ports' HeldFact carries daemon-proto's Timestamp).
+daemon-proto.workspace = true
 prost.workspace = true
 run-ports.workspace = true
 runs.workspace = true

@@ -175,15 +175,11 @@ async fn a_one_shot_in_a_project_nobody_named_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_terminal_run_and_a_preview_are_not_served_yet() {
+async fn a_run_of_no_mode_and_a_preview_are_not_served_yet() {
     let f = fixture(vec![]);
     let (hosted, asked) = one_shots(false);
     let api = f.restarted().await.hosting_one_shots(hosted);
     for request in [
-        v1::CreateRunRequest {
-            mode: v1::run::Mode::Terminal as i32,
-            ..one_shot("users/me")
-        },
         v1::CreateRunRequest {
             mode: v1::run::Mode::Unspecified as i32,
             ..one_shot("users/me")

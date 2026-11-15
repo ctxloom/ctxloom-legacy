@@ -255,6 +255,41 @@ mod through_an_app {
         assert!(edge.events(&cover(), 2).await.unwrap().is_empty());
     }
 
+    /// What an edge told of the books it applied: each one's arrival.
+    type Told = Arc<std::sync::Mutex<Vec<Arrival>>>;
+
+    fn telling(edge: &EmbeddedEdge<OneStore<MemoryStore>>) -> Told {
+        let told: Told = Arc::default();
+        let tell = Arc::clone(&told);
+        assert!(edge.telling(Box::new(move |book: &CommandBook, arrival| {
+            assert_eq!(book.cover, Some(cover()));
+            tell.lock().unwrap().push(arrival);
+        })));
+        assert!(!edge.telling(Box::new(|_, _| {})), "set once");
+        told
+    }
+
+    // U6: a book applied is told, with its arrival (a handle is the core's
+    // own, loopback); one refused or hidden is not.
+    #[tokio::test]
+    async fn each_book_applied_is_told_with_its_arrival_and_no_other() {
+        let edge = edge()
+            .await
+            .exposed([(DOMAIN.to_string(), Expose::Loopback)].into());
+        let told = telling(&edge);
+        edge.handle(on()).await.unwrap();
+        assert!(edge.serve(off(), Arrival::Ip).await.is_err(), "hidden");
+        edge.serve(off(), Arrival::Loopback).await.unwrap();
+        assert!(edge
+            .serve_sync(on(), vec!["nobody".to_string()], Arrival::Loopback)
+            .await
+            .is_err());
+        assert_eq!(
+            *told.lock().unwrap(),
+            [Arrival::Loopback, Arrival::Loopback]
+        );
+    }
+
     // A SIMPLE request is the kernel's handle_sync, behind the exposure the
     // edge is told: a domain not exposed to the arrival is hidden; one that
     // is, naming a projector the application does not run, is refused

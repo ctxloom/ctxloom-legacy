@@ -191,6 +191,14 @@ fn answer(event: HookEvent) -> HookAnswer {
     }
 }
 
+/// The not-recorded report an [`Unrecorded`] is (a test's expectation).
+fn dropped(unrecorded: &hook_cli::Unrecorded) -> &hook_cli::NotRecorded {
+    match unrecorded {
+        hook_cli::Unrecorded::Dropped(dropped) => dropped,
+        other => panic!("not dropped: {other:?}"),
+    }
+}
+
 fn batch() -> HookEvent {
     HookEvent {
         event: "post_tool_batch".to_string(),
@@ -232,7 +240,7 @@ async fn a_hook_records_its_observations_on_the_session_its_harp_names() {
 fn a_hook_with_no_listener_names_each_observation_it_could_not_record() {
     let recording = HookRecording::new(Unreachable, RunIds::from_environment(Some(SESSION)));
     let missed = recording.record("PostToolBatch", HARP, &answer(batch()));
-    let what: Vec<&str> = missed.iter().map(|m| m.what.as_str()).collect();
+    let what: Vec<&str> = missed.iter().map(|m| dropped(m).what.as_str()).collect();
     assert_eq!(
         what,
         [
@@ -241,10 +249,10 @@ fn a_hook_with_no_listener_names_each_observation_it_could_not_record() {
         ]
     );
     assert!(
-        missed[0].why.contains("listener is not running"),
+        dropped(&missed[0]).why.contains("listener is not running"),
         "{missed:?}"
     );
-    assert!(missed[1].why.contains("not tried"), "{missed:?}");
+    assert!(dropped(&missed[1]).why.contains("not tried"), "{missed:?}");
 }
 
 #[test]
@@ -252,7 +260,7 @@ fn a_hook_whose_run_names_no_session_records_nothing_and_says_so() {
     let recording = HookRecording::new(Unreachable, RunIds::from_environment(None));
     let missed = recording.record("UserPromptSubmit", HARP, &answer(prompt("p1")));
     assert_eq!(missed.len(), 1);
-    assert!(missed[0].why.contains(HARP), "{missed:?}");
+    assert!(dropped(&missed[0]).why.contains(HARP), "{missed:?}");
 }
 
 #[test]
@@ -363,8 +371,11 @@ fn a_hook_recording_over_a_dead_listener_says_unavailable_once_and_stops_trying(
     let recording = HookRecording::new(sink, RunIds::from_environment(Some(SESSION)));
     let missed = recording.record("PostToolBatch", HARP, &answer(batch()));
     assert_eq!(missed.len(), 2);
-    assert!(missed[0].why.contains("cannot reach"), "{missed:?}");
-    assert!(missed[1].why.contains("not tried"), "{missed:?}");
+    assert!(
+        dropped(&missed[0]).why.contains("cannot reach"),
+        "{missed:?}"
+    );
+    assert!(dropped(&missed[1]).why.contains("not tried"), "{missed:?}");
 }
 
 /// A loopback URL nobody listens on: a port that was bound, then released.
@@ -432,32 +443,6 @@ async fn a_hook_records_on_its_runs_session_with_no_session_directory() {
     assert_eq!(pages(&edge).await.len(), before + 2);
 }
 
-fn discovered(endpoint: &str) -> run_ports::Discovery {
-    run_ports::Discovery {
-        stamp: "v0.1.0-abc1234".to_string(),
-        pid: 1,
-        endpoint: endpoint.to_string(),
-        cert: run_ports::PublicCert::from_env_value(A_CERT).unwrap(),
-        bearer: run_ports::Token::from_bytes([9; 32]),
-        home: "/home/u".to_string(),
-    }
-}
-
-// B1, D27: a hook rediscovers the daemon; with no daemon it delivers as its
-// environment says.
-#[test]
-fn a_hook_goes_to_the_daemon_it_rediscovers_and_else_as_its_environment_says() {
-    let daemon = HookSink::rediscovered(
-        Some(discovered(ENDPOINT)),
-        HookSink::Unreachable(Unreachable),
-    );
-    assert!(matches!(daemon, HookSink::Rediscovered { .. }));
-    assert!(matches!(
-        HookSink::rediscovered(None, HookSink::Unreachable(Unreachable)),
-        HookSink::Unreachable(_)
-    ));
-}
-
 /// The daemon's listener over `edge`: the user's gate for `bearer`, on a
 /// loopback port, with a fresh certificate; and the discovery it would
 /// write.
@@ -507,8 +492,7 @@ async fn a_hook_presents_the_user_bearer_its_discovery_names_to_the_daemon() {
     };
     let deliver = |discovery: run_ports::Discovery, id: &'static str| {
         tokio::task::spawn_blocking(move || {
-            HookSink::rediscovered(Some(discovery), HookSink::Unreachable(Unreachable))
-                .deliver(book_of(&prompt(id)), Duration::from_secs(10))
+            daemon_sink(discovery).deliver(book_of(&prompt(id)), Duration::from_secs(10))
         })
     };
     assert_eq!(deliver(discovery, "p1").await.unwrap(), Delivery::Applied);
@@ -521,21 +505,275 @@ async fn a_hook_presents_the_user_bearer_its_discovery_names_to_the_daemon() {
     listener.stop().await.unwrap();
 }
 
-// A daemon that does not answer (it died; its port is closed) is passed
-// over: the delivery goes the environment's way.
-#[test]
-fn a_daemon_that_does_not_answer_falls_back_to_the_environments_way() {
-    let sink = HookSink::rediscovered(
-        Some(discovered(&closed_url())),
-        HookSink::Unreachable(Unreachable),
-    );
-    match sink.deliver(a_book(), Duration::from_secs(5)) {
-        Delivery::Unavailable { detail } => {
-            assert_eq!(
-                detail, "the listener is not running",
-                "the fallback's answer"
-            );
+// ------------------------------------------- HoldingRecording (s4-Q14, H2)
+
+/// The hook's own stamp, and an older and a newer daemon's.
+const OWN: &str = "v0.2.0-aaaaaaa";
+const OLDER: &str = "v0.1.0-bbbbbbb";
+
+/// The daemon a test's hook reaches: none, or one of `stamp` over the
+/// in-process edge; the waits it was asked for, and what it runs inside its
+/// first delivery (another hook of the session, forcing their race).
+struct Reaching {
+    daemon: Option<(String, Arc<TheEdge>)>,
+    waits: std::sync::Mutex<Vec<Duration>>,
+    during: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Reaching {
+    fn none() -> Reaching {
+        Reaching {
+            daemon: None,
+            waits: std::sync::Mutex::new(Vec::new()),
+            during: std::sync::Mutex::new(None),
         }
-        other => panic!("{other:?}"),
     }
+
+    fn daemon(stamp: &str, edge: &Arc<TheEdge>) -> Reaching {
+        Reaching {
+            daemon: Some((stamp.to_string(), Arc::clone(edge))),
+            ..Reaching::none()
+        }
+    }
+}
+
+/// The in-process sink, running `during` inside its first delivery.
+struct Racing {
+    sink: EdgeSink<TheEdge>,
+    during: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl FactSink for Racing {
+    fn deliver(&self, book: angzarr_embedded::v1::CommandBook, within: Duration) -> Delivery {
+        let during = self.during.lock().unwrap().take();
+        if let Some(during) = during {
+            during();
+        }
+        self.sink.deliver(book, within)
+    }
+}
+
+impl HookReach for Reaching {
+    type Sink = Racing;
+
+    fn reach(&self, wait: Duration) -> Option<(String, Racing)> {
+        self.waits.lock().unwrap().push(wait);
+        let (stamp, edge) = self.daemon.as_ref()?;
+        Some((
+            stamp.clone(),
+            Racing {
+                sink: EdgeSink::new(Arc::clone(edge)),
+                during: std::sync::Mutex::new(self.during.lock().unwrap().take()),
+            },
+        ))
+    }
+}
+
+/// A home's holds on a temporary file system.
+fn spool() -> fact_spool::Spool {
+    let fs = Arc::new(file_system::Rooted::temp().unwrap());
+    let home = std::path::PathBuf::from(os::host().flavor().from_top("/home/a"));
+    fact_spool::Spool::at_home(fs, &home)
+}
+
+fn holding(
+    reach: Reaching,
+    held: &fact_spool::Spool,
+) -> HoldingRecording<Reaching, fact_spool::Spool, RunIds> {
+    HoldingRecording::new(
+        reach,
+        held.clone(),
+        RunIds::from_environment(Some(SESSION)),
+        OWN,
+        SESSION,
+        std::time::Instant::now(),
+    )
+}
+
+fn root() -> uuid::Uuid {
+    uuid::Uuid::from_slice(&session_id().value).unwrap()
+}
+
+/// What the session's hold holds, by external id, in order.
+fn held_ids(held: &fact_spool::Spool) -> Vec<String> {
+    let batch = held.take(&root()).unwrap().expect("no other taker");
+    batch
+        .entries()
+        .iter()
+        .map(|entry| match entry {
+            run_ports::HeldEntry::Fact(fact) => fact.external_id.clone(),
+            run_ports::HeldEntry::Gap(gap) => format!("gap:{}", gap.external_id),
+        })
+        .collect()
+}
+
+fn external_ids(event: &HookEvent) -> Vec<String> {
+    observe(event)
+        .iter()
+        .map(|o| o.external_id(&session_id()))
+        .collect()
+}
+
+/// The external ids of the facts the session's stream recorded, in order.
+async fn recorded(edge: &TheEdge) -> Vec<String> {
+    pages(edge)
+        .await
+        .iter()
+        .filter_map(|page| match page.meta.as_ref()?.causation.as_ref()? {
+            angzarr_embedded::v1::event_meta::Causation::Fact(fact) => {
+                Some(fact.origin.as_ref()?.external_id.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+// A hook whose daemon is older than it (H-Q1) holds its facts, delivers
+// nothing, and says each held, naming both versions.
+#[tokio::test]
+async fn a_hook_newer_than_its_daemon_holds_its_facts_and_says_so() {
+    let (_, edge) = world().await;
+    let held = spool();
+    let before = pages(&edge).await.len();
+    let said = holding(Reaching::daemon(OLDER, &edge), &held).record(
+        "PostToolBatch",
+        HARP,
+        &answer(batch()),
+    );
+    assert_eq!(pages(&edge).await.len(), before, "nothing delivered");
+    assert_eq!(held_ids(&held), external_ids(&batch()));
+    assert_eq!(said.len(), 2);
+    for unrecorded in &said {
+        let hook_cli::Unrecorded::Held { harp, why, .. } = unrecorded else {
+            panic!("held: {unrecorded:?}")
+        };
+        assert_eq!(harp, HARP);
+        assert!(why.contains(OLDER) && why.contains(OWN), "{why}");
+    }
+}
+
+// A hook that reaches no daemon (none serves, none could be started) holds
+// (H-Q2), and says why, within the bound it was given.
+#[test]
+fn a_hook_that_reaches_no_daemon_holds_and_says_why() {
+    let held = spool();
+    let recording = holding(Reaching::none(), &held);
+    let said = recording.record("UserPromptSubmit", HARP, &answer(prompt("p1")));
+    assert_eq!(held_ids(&held), external_ids(&prompt("p1")));
+    let [hook_cli::Unrecorded::Held { why, .. }] = said.as_slice() else {
+        panic!("one held: {said:?}")
+    };
+    assert!(
+        why.contains("no ctxloom daemon could be reached or started within 10 s"),
+        "{why}"
+    );
+    let waits = recording.reach.waits.lock().unwrap().clone();
+    assert_eq!(waits.len(), 1);
+    assert!(
+        waits[0] <= crate::daemon::SPAWN_WAIT,
+        "a spawn waits at most a client's wait: {waits:?}"
+    );
+}
+
+// The spawn wait is what the hook's bound leaves a delivery's margin of:
+// S16's ten seconds, or the engine's own budget where it is shorter
+// (SessionEnd's one second leaves no wait at all).
+#[test]
+fn a_hooks_spawn_wait_is_what_its_bound_leaves() {
+    assert_eq!(hook_bound("UserPromptSubmit"), crate::daemon::HOOK_BOUND);
+    assert_eq!(hook_bound("SessionEnd"), Duration::from_secs(1));
+    let start = std::time::Instant::now();
+    let wait = spawn_wait(&Deadline(start + hook_bound("UserPromptSubmit")));
+    assert!(
+        wait <= crate::daemon::SPAWN_WAIT && wait > Duration::from_secs(7),
+        "{wait:?}"
+    );
+    assert_eq!(
+        spawn_wait(&Deadline(start + hook_bound("SessionEnd"))),
+        Duration::ZERO
+    );
+}
+
+// H-Q5 revised: an up-to-date hook delivers its session's hold first, in
+// held order, then its own fact, and the hold is gone.
+#[tokio::test]
+async fn an_up_to_date_hook_delivers_what_its_session_holds_then_its_own() {
+    let (_, edge) = world().await;
+    let held = spool();
+    holding(Reaching::daemon(OLDER, &edge), &held).record(
+        "UserPromptSubmit",
+        HARP,
+        &answer(prompt("p1")),
+    );
+    let before = recorded(&edge).await;
+    let said = holding(Reaching::daemon(OWN, &edge), &held).record(
+        "PostToolBatch",
+        HARP,
+        &answer(batch()),
+    );
+    assert!(said.is_empty(), "{said:?}");
+    let now = recorded(&edge).await;
+    assert_eq!(
+        now[before.len()..].to_vec(),
+        [external_ids(&prompt("p1")), external_ids(&batch())].concat()
+    );
+    assert!(held.is_empty(&root()).unwrap(), "nothing is held");
+}
+
+// Two hooks of one session at once, over the real hold and its flock: the
+// second fires INSIDE the first one's delivery of the held fact. It cannot
+// take the hold (the first holds its flush lock), so it holds behind; the
+// first takes it again and delivers it before its own. Each fact once, in
+// held order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_hooks_of_one_session_at_once_record_each_fact_once_in_held_order() {
+    let (_, edge) = world().await;
+    let held = spool();
+    let (first_edge, first_held) = (Arc::clone(&edge), held.clone());
+    tokio::task::spawn_blocking(move || {
+        holding(Reaching::daemon(OLDER, &first_edge), &first_held).record(
+            "UserPromptSubmit",
+            HARP,
+            &answer(prompt("p1")),
+        )
+    })
+    .await
+    .unwrap();
+    let before = recorded(&edge).await;
+    let (second_said, told) = std::sync::mpsc::channel();
+    let reach = Reaching::daemon(OWN, &edge);
+    {
+        let (edge, held) = (Arc::clone(&edge), held.clone());
+        *reach.during.lock().unwrap() = Some(Box::new(move || {
+            let said = holding(Reaching::daemon(OWN, &edge), &held).record(
+                "UserPromptSubmit",
+                HARP,
+                &answer(prompt("p2")),
+            );
+            second_said.send(said).unwrap();
+        }));
+    }
+    let first_held = held.clone();
+    let first = tokio::task::spawn_blocking(move || {
+        holding(reach, &first_held).record("PostToolBatch", HARP, &answer(batch()))
+    })
+    .await
+    .unwrap();
+    let second = told.recv().unwrap();
+    assert!(
+        matches!(second.as_slice(), [hook_cli::Unrecorded::HeldBehind { .. }]),
+        "{second:?}"
+    );
+    assert!(first.is_empty(), "{first:?}");
+    let now = recorded(&edge).await;
+    assert_eq!(
+        now[before.len()..].to_vec(),
+        [
+            external_ids(&prompt("p1")),
+            external_ids(&prompt("p2")),
+            external_ids(&batch())
+        ]
+        .concat()
+    );
+    assert!(held.is_empty(&root()).unwrap());
 }

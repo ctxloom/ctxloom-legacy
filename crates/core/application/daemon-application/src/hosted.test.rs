@@ -3,7 +3,7 @@
 //! started with, what its observations record, how its turns are fed, and
 //! how it ends.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use angzarr_embedded::v1::{event_page, CommandBook, Cover};
@@ -279,9 +279,22 @@ impl HandOffs for Handed {
 /// A file of a project's session directories: its project, harp and path.
 type HomeKey = (String, String, String);
 
-/// Every project's session directories, in memory, shared by every clone.
+/// The session locks held, by `<project>/<harp>`, shared by every clone.
+type SessionsHeld = Arc<Mutex<BTreeSet<String>>>;
+
+/// Every project's session directories, in memory, shared by every clone,
+/// and the session locks held there.
 #[derive(Clone, Default)]
-struct Homes(Arc<Mutex<BTreeMap<HomeKey, Vec<u8>>>>);
+struct Homes(Arc<Mutex<BTreeMap<HomeKey, Vec<u8>>>>, SessionsHeld);
+
+/// A session lock [`Homes`] holds: let go when dropped.
+struct HeldSession(SessionsHeld, String);
+
+impl Drop for HeldSession {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
 
 impl Homes {
     fn key(project_dir: &str, harp: &str, rel: &str) -> HomeKey {
@@ -370,6 +383,45 @@ impl run_ports::SessionRecords for ProjectHomes {
 impl ChildHomes for Homes {
     fn records(&self, project_dir: &str) -> Box<dyn run_ports::SessionRecords> {
         Box::new(ProjectHomes(self.clone(), project_dir.to_string()))
+    }
+
+    fn hold_session(&self, project_dir: &str, harp: &str) -> Result<run_ports::HeldLock, String> {
+        let key = format!("{project_dir}/{harp}");
+        if !self.1.lock().unwrap().insert(key.clone()) {
+            return Err(format!("{key} is held"));
+        }
+        Ok(run_ports::HeldLock::new(
+            format!("{project_dir}/.ctxloom/sessions/{harp}.lock"),
+            HeldSession(Arc::clone(&self.1), key),
+        ))
+    }
+}
+
+/// The locks as the files would say them once a session's lock file was
+/// left free by an earlier run (a CLI `run --session` of the child, say):
+/// every run lock held (the daemon holds its children's), and a session's
+/// held only while [`Homes`] holds it.
+struct LeftLocks(SessionsHeld);
+
+impl RunLocks for LeftLocks {
+    fn hold_run(&self, run: &str) -> Result<run_ports::HeldLock, run_ports::LockError> {
+        Ok(run_ports::HeldLock::new(format!("/locks/{run}.lock"), ()))
+    }
+
+    fn probe(&self, _: &str) -> LockProbe {
+        LockProbe::Held
+    }
+
+    fn session(&self, project_dir: &str, harp: &str) -> LockProbe {
+        match self
+            .0
+            .lock()
+            .unwrap()
+            .contains(&format!("{project_dir}/{harp}"))
+        {
+            true => LockProbe::Held,
+            false => LockProbe::Free,
+        }
     }
 }
 
@@ -1415,4 +1467,540 @@ async fn a_closed_childs_hand_off_is_swept_whatever_its_mark() {
     *files.listed.lock().unwrap() = vec![kept(closed, true, true)];
     world.tick().await;
     assert_eq!(*files.deleted.lock().unwrap(), [closed.to_string()]);
+}
+
+// ---------------------------------------------------------------- U6
+
+/// The pending launches' runs, owed and started, as the store holds them.
+async fn runs_now(
+    edge: &Arc<TestEdge>,
+) -> (
+    Vec<pending_launches::PendingLaunch>,
+    Vec<pending_launches::StartedRun>,
+) {
+    let mut pending = pending_launches::catch_up();
+    pending.step(&edge.store, edge.catalog()).await.unwrap();
+    let model = pending.projector().pending();
+    (model.launches(), model.started())
+}
+
+// U6 (owner ruling on U4): a hosted child holds its session's lock for its
+// life, so another launcher's sweep (a hosted one-shot's, in the daemon's
+// own process) does not take it for lost, even where its session's lock
+// file was left free by an earlier run. Forced: the sweep runs while the
+// child is hosted, its lock file free but for the daemon's hold.
+#[tokio::test]
+async fn a_one_shots_sweep_while_a_child_is_hosted_leaves_the_child() {
+    let world = World::hosting().await;
+    assert!(
+        world.homes.1.lock().unwrap().contains("/work/kid"),
+        "the child's session lock is held while it is hosted"
+    );
+    let (owed, started) = runs_now(&world.edge).await;
+    assert_eq!(started.len(), 1, "the child's run is started");
+    let swept = run_launcher::Sweeper::new(
+        Arc::clone(&world.edge),
+        Arc::new(LeftLocks(Arc::clone(&world.homes.1))),
+    )
+    .sweep(&owed, &started)
+    .await
+    .unwrap();
+    assert!(swept.is_empty(), "nothing swept: {swept:?}");
+    assert!(
+        !world
+            .run_events()
+            .await
+            .iter()
+            .any(|event| matches!(event, RunEvent::RunEnded(_))),
+        "the hosted child's run is not ended"
+    );
+    // Once let go (here: the daemon is gone), the same sweep ends it.
+    drop(world.daemon);
+    let swept = run_launcher::Sweeper::new(
+        Arc::clone(&world.edge),
+        Arc::new(LeftLocks(Arc::clone(&world.homes.1))),
+    )
+    .sweep(&owed, &started)
+    .await
+    .unwrap();
+    assert_eq!(swept.len(), 1, "a child no one holds is lost");
+}
+
+// U6: its session's lock is let go once it exits; one another holds keeps
+// it from starting at all (nothing enqueued), tried again later.
+#[tokio::test]
+async fn a_childs_session_lock_is_let_go_at_its_exit_and_one_held_elsewhere_starts_nothing() {
+    let mut world = World::hosting().await;
+    world.say(ChildObservation::Exited {
+        exit: Exit {
+            code: Some(0),
+            signal: None,
+        },
+        detail: String::new(),
+    });
+    world.tick().await;
+    assert!(world.homes.1.lock().unwrap().is_empty(), "let go");
+
+    let mut world = World::new(Box::new(Plans));
+    world.name_project().await;
+    world
+        .homes
+        .1
+        .lock()
+        .unwrap()
+        .insert("/work/kid".to_string());
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    assert_eq!(world.daemon.hosting(), 0, "not started");
+    assert!(world.run_events().await.is_empty(), "nothing enqueued");
+    world.homes.1.lock().unwrap().clear();
+    world.tick().await;
+    assert_eq!(world.daemon.hosting(), 1, "started once it could be had");
+}
+
+/// The checkout a `worktree` child's workspaces make.
+const CHECKOUT: &str = "/home/u/.ctxloom/worktrees/calm-otter/kid/dev";
+
+/// A project's workspaces: a checkout for each request, each removal
+/// answered `removal`, and what each was asked.
+struct Checkouts {
+    asked: Mutex<Vec<String>>,
+    removal: isolation_ports::Removal,
+}
+
+impl isolation_ports::Workspaces for Checkouts {
+    fn prepare(
+        &self,
+        request: &isolation_ports::Request,
+    ) -> Result<isolation_ports::Prepared, isolation_ports::Failure> {
+        self.asked.lock().unwrap().push(format!(
+            "prepare {} {} {}",
+            request.project_dir, request.work_dir, request.agent
+        ));
+        Ok(isolation_ports::Prepared::Checkout(
+            isolation_ports::Checkout {
+                path: CHECKOUT.to_string(),
+                branch: "ctxloom/kid/dev".to_string(),
+                repo_dir: "/work".to_string(),
+                reused: false,
+            },
+        ))
+    }
+
+    fn session_known(&self, _: &str) -> Result<bool, isolation_ports::Failure> {
+        Ok(true)
+    }
+
+    fn scratch(
+        &self,
+        _: Option<&str>,
+    ) -> Result<Vec<isolation_ports::Scratch>, isolation_ports::Failure> {
+        Ok(Vec::new())
+    }
+
+    fn place_files(
+        &self,
+        _: &str,
+        _: &[isolation_ports::PlacedFile],
+    ) -> Result<(), isolation_ports::Failure> {
+        Ok(())
+    }
+
+    fn remove_files(&self, checkout: &str, _: &[String]) {
+        self.asked
+            .lock()
+            .unwrap()
+            .push(format!("remove-files {checkout}"));
+    }
+
+    fn inspect(&self, path: &str) -> isolation_ports::Standing {
+        isolation_ports::Standing::Unresolved(path.to_string())
+    }
+
+    fn remove(&self, repo_dir: &str, path: &str) -> isolation_ports::Removal {
+        self.asked
+            .lock()
+            .unwrap()
+            .push(format!("remove {repo_dir} {path}"));
+        self.removal.clone()
+    }
+}
+
+/// The workspaces of every project: the one [`Checkouts`].
+struct AllCheckouts(Arc<Checkouts>);
+
+impl crate::ChildWorkspaces for AllCheckouts {
+    fn of(&self, _: &str, _: &str) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+        Arc::clone(&self.0) as Arc<dyn isolation_ports::Workspaces + Send + Sync>
+    }
+}
+
+/// A plan of the child whose agent `dev` works in a worktree.
+struct WorktreePlans;
+
+impl ChildPlans for WorktreePlans {
+    fn preview(
+        &self,
+        engine: &str,
+        agent: &str,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<Previewed, String> {
+        let mut previewed = Plans.preview(engine, agent, project_dir, env)?;
+        previewed.plan.axes.0 = "worktree".to_string();
+        previewed.plan.agent = "dev".to_string();
+        Ok(previewed)
+    }
+
+    fn git_user(&self, _: &str, _: &BTreeMap<String, String>) -> Option<run_ports::GitUser> {
+        None
+    }
+}
+
+/// A world whose child's agent works in a worktree, each removal of its
+/// checkout answered `removal`, the child launched by its owner (its axis
+/// recorded at its mint) and hosted.
+async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkouts>, Log) {
+    let checkouts = Arc::new(Checkouts {
+        asked: Mutex::default(),
+        removal,
+    });
+    let mut world = World::new(Box::new(WorktreePlans));
+    let said: Log = Arc::default();
+    let log = Arc::clone(&said);
+    world.daemon = Daemon::new(Ports {
+        edge: Arc::clone(&world.edge),
+        tokens: Arc::new(Counting::default()),
+        engines: vec![HostedEngine {
+            engine: world.engine.clone(),
+            child: world.engine.clone(),
+            transcripts: Arc::new(|_| None),
+            for_launch: None,
+        }],
+        plans: Box::new(WorktreePlans),
+        hand_offs: Box::new(Handed::of(BTreeMap::new())),
+        homes: Box::new(world.homes.clone()),
+        ears: Box::new(Listening::default()),
+        run_locks: Arc::new(Locks(LockProbe::Unproven)),
+        place: Place {
+            home: "/home/u".to_string(),
+            program_dir: None,
+            os: "linux".to_string(),
+            user_home: None,
+            endpoint: "https://127.0.0.1:1".to_string(),
+            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
+        },
+        folds: Folds::default(),
+        say: Box::new(move |line: &str| log.lock().unwrap().push(line.to_string())),
+    })
+    .placing(Arc::new(AllCheckouts(Arc::clone(&checkouts))));
+    world.name_project().await;
+    world.mint(OWNER, "boss", None).await;
+    world
+        .handle(
+            OWNER,
+            sessions::LaunchChild {
+                child_project_id: "calm-otter".to_string(),
+                child_session: CHILD.to_string(),
+                child_root: "/work".to_string(),
+                harp: "kid".to_string(),
+                engine: ENGINE.to_string(),
+                trust: sessions::TargetTrust {
+                    same_project: true,
+                    trusted: true,
+                },
+                delegation_limit: 1,
+                requester: None,
+                prompt: String::new(),
+            },
+        )
+        .await;
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert_eq!(
+        world.daemon.hosting(),
+        1,
+        "hosted: {:?}",
+        said.lock().unwrap()
+    );
+    (world, checkouts, said)
+}
+
+/// What the daemon logged.
+type Log = Arc<Mutex<Vec<String>>>;
+
+// s4-Q11: a hosted child follows its agent's `workspace`: its axis is
+// recorded at its mint, it is placed in a checkout of its session's own
+// (under ctxloom's home), started there, and its start records the
+// checkout as where it works.
+#[tokio::test]
+async fn a_worktree_agents_child_is_minted_on_its_axis_and_works_in_its_checkout() {
+    let (world, checkouts, _) = in_a_worktree(isolation_ports::Removal::Removed).await;
+    let minted: Vec<Option<String>> = world
+        .session_events(CHILD)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::SessionMinted(minted) => Some(minted.workspace),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(minted, [Some("worktree".to_string())]);
+    assert_eq!(
+        checkouts.asked.lock().unwrap().first().map(String::as_str),
+        Some("prepare /work /home/u/.ctxloom/worktrees/calm-otter/kid dev")
+    );
+    let started = world.engine.started.lock().unwrap().clone();
+    assert_eq!(started[0].cwd.as_deref(), Some(CHECKOUT));
+    let workspaces: Vec<String> = world
+        .run_events()
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::RunnerStartedRecorded(started) => Some(started.workspace),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(workspaces, [CHECKOUT]);
+}
+
+// s4-Q11: at its exit its checkout is let go WIP-safe through the port: the
+// files the launch placed taken out, then the port's removal (never
+// forced); a checkout holding work is left, and said with its branch.
+#[tokio::test]
+async fn a_childs_checkout_holding_work_is_kept_at_its_close_and_said() {
+    let (mut world, checkouts, said) = in_a_worktree(isolation_ports::Removal::Left(
+        "it has uncommitted changes; left in place to preserve WIP".to_string(),
+    ))
+    .await;
+    world.say(ChildObservation::Exited {
+        exit: Exit {
+            code: Some(0),
+            signal: None,
+        },
+        detail: String::new(),
+    });
+    world.tick().await;
+    let asked = checkouts.asked.lock().unwrap().clone();
+    assert_eq!(
+        &asked[1..],
+        [
+            format!("remove-files {CHECKOUT}"),
+            format!("remove /work {CHECKOUT}")
+        ]
+    );
+    let said = said.lock().unwrap().join("\n");
+    assert!(
+        said.contains(&format!(
+            "kid: its checkout {CHECKOUT} (branch ctxloom/kid/dev) left: it has uncommitted changes"
+        )),
+        "{said}"
+    );
+}
+
+// OD-19: the start's sweep lets a lost run's checkout go WIP-safe, only one
+// under ctxloom's own worktrees; the project itself is never removed.
+#[tokio::test]
+async fn the_starts_sweep_releases_a_lost_childs_checkout_and_never_the_project() {
+    let (world, checkouts, said) = in_a_worktree(isolation_ports::Removal::Removed).await;
+    let World { edge, homes, .. } = world;
+    drop(homes);
+    // The daemon is killed: a new one starts over the same store, its locks
+    // saying the child's run is lost.
+    let mut next = Daemon::new(Ports {
+        edge: Arc::clone(&edge),
+        tokens: Arc::new(Counting::default()),
+        engines: Vec::new(),
+        plans: Box::new(WorktreePlans),
+        hand_offs: Box::new(Handed::of(BTreeMap::new())),
+        homes: Box::new(Homes::default()),
+        ears: Box::new(Listening::default()),
+        run_locks: Arc::new(Locks(LockProbe::Free)),
+        place: Place {
+            home: "/home/u".to_string(),
+            program_dir: None,
+            os: "linux".to_string(),
+            user_home: None,
+            endpoint: "https://127.0.0.1:1".to_string(),
+            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
+        },
+        folds: Folds::default(),
+        say: Box::new(|_| {}),
+    })
+    .placing(Arc::new(AllCheckouts(Arc::clone(&checkouts))));
+    let swept = next.start_up(&edge.store, edge.catalog()).await.unwrap();
+    assert_eq!(
+        swept.iter().map(|s| s.released.clone()).collect::<Vec<_>>(),
+        [run_launcher::Released::Removed(CHECKOUT.to_string())]
+    );
+    assert_eq!(
+        checkouts.asked.lock().unwrap().last().map(String::as_str),
+        Some(format!("remove /work {CHECKOUT}").as_str())
+    );
+    let _ = said;
+}
+
+/// A daemon started over `world`'s store, engine and session homes, after
+/// the world's own was killed, its locks probing as `locks`.
+fn restarted(world: &World, locks: LockProbe) -> Daemon<TestEdge, Counting> {
+    Daemon::new(Ports {
+        edge: Arc::clone(&world.edge),
+        tokens: Arc::new(Counting::default()),
+        engines: vec![HostedEngine {
+            engine: world.engine.clone(),
+            child: world.engine.clone(),
+            transcripts: Arc::new(|_| None),
+            for_launch: None,
+        }],
+        plans: Box::new(Plans),
+        hand_offs: Box::new(Handed::of(BTreeMap::new())),
+        homes: Box::new(world.homes.clone()),
+        ears: Box::new(Listening::default()),
+        run_locks: Arc::new(Locks(locks)),
+        place: Place {
+            home: "/home/u".to_string(),
+            program_dir: None,
+            os: "linux".to_string(),
+            user_home: None,
+            endpoint: "https://127.0.0.1:1".to_string(),
+            cert: PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
+        },
+        folds: Folds::default(),
+        say: Box::new(|_| {}),
+    })
+}
+
+/// A hosted child bound to its engine's session `n1`, then its daemon
+/// killed (dropped: its locks let go).
+async fn killed_with_a_bound_child() -> World {
+    let mut world = World::hosting().await;
+    world.say(ChildObservation::Started {
+        native_id: "n1".to_string(),
+    });
+    world.tick().await;
+    world.daemon = restarted(&world, LockProbe::Unproven);
+    world
+}
+
+/// The incarnations `CHILD` was owed, with their reasons.
+async fn owed(world: &World) -> Vec<(u32, String)> {
+    world
+        .session_events(CHILD)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::IncarnationOwed(owed) => Some((owed.incarnation, owed.reason)),
+            _ => None,
+        })
+        .collect()
+}
+
+// T19, S18: a killed daemon's child is swept (its run lost) by the next
+// start, then re-hosted as its session's next incarnation, cause `rehost`,
+// and started again resuming its own conversation (its bound native id).
+#[tokio::test]
+async fn a_killed_daemons_child_is_rehosted_resuming_its_own_conversation() {
+    let mut world = killed_with_a_bound_child().await;
+    world.daemon = restarted(&world, LockProbe::Free);
+    let swept = world
+        .daemon
+        .start_up(&world.edge.store, world.edge.catalog())
+        .await
+        .unwrap();
+    assert_eq!(swept.len(), 1, "the lost run is swept");
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert_eq!(
+        owed(&world).await,
+        [(1, "first".to_string()), (2, "rehost".to_string())]
+    );
+    let started = world.engine.started.lock().unwrap().clone();
+    assert_eq!(started.len(), 2, "started again");
+    assert_eq!(started[0].resume, None, "its first start resumed nothing");
+    assert_eq!(
+        started[1].resume.as_deref(),
+        Some("n1"),
+        "its own conversation"
+    );
+    assert_eq!(world.daemon.hosting(), 1);
+}
+
+// S47: a child re-hosted 60 times in the hour before its loss is not
+// re-hosted again: it stays ended, and its owner is told it ended.
+#[tokio::test]
+async fn a_child_past_its_rehost_budget_stays_ended_and_its_owner_is_told() {
+    let mut world = killed_with_a_bound_child().await;
+    let facts = runs_application::Facts::new(Arc::clone(&world.edge));
+    for n in 1..=60 {
+        facts.incarnation_ended(CHILD, n, "orphaned").await.unwrap();
+        world
+            .handle(
+                CHILD,
+                sessions::RehostSession {
+                    recent_rehosts: 0,
+                    cause: String::new(),
+                },
+            )
+            .await;
+    }
+    facts
+        .incarnation_ended(CHILD, 61, "orphaned")
+        .await
+        .unwrap();
+    world.daemon = restarted(&world, LockProbe::Free);
+    world
+        .daemon
+        .start_up(&world.edge.store, world.edge.catalog())
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    let owed = owed(&world).await;
+    assert_eq!(owed.last(), Some(&(61, "rehost".to_string())), "no 62nd");
+    assert_eq!(
+        world.engine.started.lock().unwrap().len(),
+        1,
+        "not started again"
+    );
+    let told: Vec<(String, String)> = world
+        .session_events(OWNER)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::MessageSent(sent) => Some((sent.message_id, sent.text)),
+            _ => None,
+        })
+        .collect();
+    let notice = told
+        .iter()
+        .find(|(id, _)| id == &format!("notice:{CHILD}:61:rehost-budget"))
+        .unwrap_or_else(|| panic!("the owner was told: {told:?}"));
+    assert!(notice.1.starts_with("child kid ended"), "{}", notice.1);
+}
+
+// A hosted child's turn is in flight from its queue until its end.
+#[tokio::test]
+async fn a_hosted_childs_turn_is_in_flight_until_it_ends() {
+    let mut world = World::hosting().await;
+    assert!(!world.daemon.in_flight(), "no turn yet");
+    world
+        .handle(
+            CHILD,
+            sessions::SendMessage {
+                message_id: "m-1".to_string(),
+                urgency: Urgency::Wake,
+                text: "go".to_string(),
+                requester: None,
+                supported: vec![Urgency::Inform, Urgency::Wake, Urgency::Steer],
+            },
+        )
+        .await;
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    assert!(world.daemon.in_flight(), "its turn is in flight");
 }

@@ -177,11 +177,57 @@ impl DaemonFiles {
     /// Advertise `discovery`, 0600, in a 0700 directory.
     pub(crate) fn publish(&self, discovery: &Discovery) -> std::io::Result<()> {
         self.private_dir(self.instance_dir())?;
+        #[cfg(feature = "test-support")]
+        self.die_while_publishing(discovery);
         self.fs.write_atomic(
             &self.discovery_path(),
             &discovery.encode(),
             Perms::Exact(Mode::from_bits(FILE_MODE)),
         )
+    }
+
+    /// Advertise `discovery` again, as [`publish`](Self::publish) does, but
+    /// only where its directory still is: whether it was written. A daemon
+    /// whose directory was removed (its home deleted, j000100's exit) makes
+    /// nothing again; it exits on the lock it no longer holds.
+    pub(crate) fn republish(&self, discovery: &Discovery) -> std::io::Result<bool> {
+        // No directory is made: one removed between a look and a write is
+        // the write's NotFound, the same answer.
+        if !self.fs.exists(self.instance_dir())? {
+            return Ok(false);
+        }
+        // A re-advertise is a publish to U6's kill switch, as it was when it
+        // went through `publish`.
+        #[cfg(feature = "test-support")]
+        self.die_while_publishing(discovery);
+        match self.fs.write_atomic(
+            &self.discovery_path(),
+            &discovery.encode(),
+            Perms::Exact(Mode::from_bits(FILE_MODE)),
+        ) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Under test-support, killed outright while the discovery file is
+    /// written, when the switch says so (U6): half its bytes are in the
+    /// atomic write's own temporary beside it, and the file it replaces is
+    /// left as it was (an atomic write, T25).
+    #[cfg(feature = "test-support")]
+    fn die_while_publishing(&self, discovery: &Discovery) {
+        if !self.take_die_at("discovery") {
+            return;
+        }
+        let bytes = discovery.encode();
+        let partial = self.discovery_path().with_extension("partial");
+        let _ = self.fs.write_atomic(
+            &partial,
+            &bytes[..bytes.len() / 2],
+            Perms::Exact(Mode::from_bits(FILE_MODE)),
+        );
+        std::process::abort();
     }
 
     /// What the discovery file says, if it says it.
@@ -327,6 +373,20 @@ impl DaemonFiles {
     pub(crate) fn take_die_after_apply(&self) -> bool {
         self.fs.remove_file(&self.path(DIE_AFTER_APPLY)).is_ok()
     }
+
+    /// The test-support switch that kills the daemon outright at one step
+    /// (slice 4 U6, `test-die-at`, its one line the step's word: `enqueued`,
+    /// `minted`, `started`, `turn`, `hook`, `discovery`): whether it names
+    /// `step`, taken (removed) when it does, so the daemon started after
+    /// finds none.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn take_die_at(&self, step: &str) -> bool {
+        let named = self
+            .fs
+            .read(&self.path(DIE_AT))
+            .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).trim() == step);
+        named && self.fs.remove_file(&self.path(DIE_AT)).is_ok()
+    }
 }
 
 /// The daemon's hand-offs, as its API makes them (`CreateHandOff`, S10):
@@ -437,6 +497,10 @@ impl daemon_api::HandOffs for ApiHandOffs {
 /// The kill switch's file, in the daemon's directory.
 #[cfg(feature = "test-support")]
 const DIE_AFTER_APPLY: &str = "test-die-after-apply";
+
+/// The test-support switch that kills a daemon at a step (slice 4 U6).
+#[cfg(feature = "test-support")]
+const DIE_AT: &str = "test-die-at";
 
 /// A hand-off's text: its header, then a `NAME=value` line per variable of
 /// the child's environment, a `@NAME=value` line per place of its

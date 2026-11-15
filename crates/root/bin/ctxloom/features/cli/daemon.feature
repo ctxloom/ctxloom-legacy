@@ -270,14 +270,69 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       And a ctxloom daemon serves for this home, started by that hook
       And the session's transcript holds the prompt, once
 
-    Scenario: A hook that can neither reach nor start a daemon answers the engine and says what it dropped
-      # new: the hook fails open.
+    Scenario: A hook that can neither reach nor start a daemon answers the engine, and holds its fact
+      # new: changed for s4-Q14 (H-Q2): the hook holds what it could not deliver.
       Given an initialized ctxloom project
       And a session "brisk-copper-moth" that is still running
       And no ctxloom daemon can be started for this home
       When the session's assistant fires its UserPromptSubmit hook
       Then the hook exits 0, and its answer to the engine is unchanged
-      And the hook warns "hook-cli-not-recorded" for the prompt, within its bound
+      And the hook warns "hook-cli-held" for the prompt, within its bound
+      And the prompt is held for "brisk-copper-moth", in a file only its owner can read
+
+  Rule: A hook holds its facts until a daemon that is up to date serves, and its session's next hook delivers them first, in the order held
+
+    The facts a hook observes are never delivered to a daemon of an older
+    version, and never dropped for want of one: the hook keeps them, in
+    order, in its session's hold under ~/.ctxloom/held (0600, the user's
+    alone), and answers its engine as usual. A daemon is up to date for a
+    hook when its version is not older than the hook's. The session's next
+    hook that finds such a daemon serving delivers what the session holds,
+    each fact once, in the order held, before its own; while anything it
+    can deliver is left held, the session's later facts wait behind it. A
+    fact held by a newer hook than the daemon is kept, and skipped.
+
+    Scenario: A hook whose daemon is of an older version holds its fact, and answers the engine as usual
+      # new: s4-Q14.
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And a ctxloom daemon of an older version is serving for this home
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook exits 0, and its answer to the engine is unchanged
+      And the hook warns "hook-cli-held" for the prompt
+      And the prompt is held for "brisk-copper-moth", in a file only its owner can read
+      And nothing was recorded for "brisk-copper-moth"
+
+    Scenario: A hook of an older version delivers to a newer daemon
+      # new: s4-Q14 (up to date is "not older").
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And a ctxloom daemon of a newer version is serving for this home
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook exits 0, and says nothing was left unrecorded
+      And nothing is held for "brisk-copper-moth"
+      And the session's transcript holds the prompt, once
+
+    Scenario: A hook of the daemon's version delivers what its session holds first, then its own fact
+      # new: s4-Q14 (H-Q5 revised: the client side delivers a hold).
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And the session holds a prompt its hook held while an older daemon served
+      And a ctxloom daemon of this version is serving for this home
+      When the session's assistant fires its Stop hook
+      Then the hook exits 0, and says nothing was left unrecorded
+      And nothing is held for "brisk-copper-moth"
+      And the session's transcript holds the prompt, then the turn's end, each once
+
+    Scenario: A hold past its bound keeps what it holds and says what it dropped
+      # new: s4-Q14 (H-Q4).
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And a ctxloom daemon of an older version is serving for this home
+      And the holds of this home are at their bound
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook exits 0, and its answer to the engine is unchanged
+      And the hook warns "hook-cli-not-recorded" for the prompt, saying the hold is at its bound
 
   Rule: A daemon killed at any instant comes back on the next call, and the record is whole
 

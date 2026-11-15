@@ -139,7 +139,7 @@ impl World {
         self.adopt_scratch().join("bin")
     }
 
-    fn harp(&self) -> String {
+    pub(super) fn harp(&self) -> String {
         let sessions = self.common.project.dir().join(".ctxloom/sessions");
         let names: Vec<String> = files::children(&sessions)
             .iter()

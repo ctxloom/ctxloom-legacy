@@ -14,6 +14,7 @@ mod core_link;
 mod daemon;
 mod distiller;
 mod error;
+mod frontend;
 mod interview;
 mod isolation;
 mod library;
@@ -21,6 +22,8 @@ mod mcp;
 mod oneshot;
 mod process_env;
 mod program;
+#[cfg(feature = "test-support")]
+mod record;
 #[cfg(feature = "test-support")]
 mod seed;
 mod sessions;
@@ -58,7 +61,10 @@ use crate::library::PathSearch;
 use uuid::Uuid;
 use worktree_git::GitWorkspaces;
 
-pub use capture::{EdgeSink, HookRecording, HookSink, RunIds, SessionIds, Unreachable};
+pub use capture::{
+    daemon_sink, Deadline, EdgeSink, HoldingRecording, HookReach, HookRecording, HookSink, RunIds,
+    SessionIds, Unreachable,
+};
 pub use commands::{engines, Commands, Hooks};
 pub use core_link::{CoreStores, InProcessCore, Projectors, SharedCore, Unclosed};
 #[cfg(any(test, feature = "test-support"))]

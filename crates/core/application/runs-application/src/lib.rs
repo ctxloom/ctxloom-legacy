@@ -29,6 +29,7 @@ mod error;
 mod facts;
 mod feeds;
 mod gate;
+mod hold;
 mod hook_commands;
 mod hook_gate;
 mod identity;
@@ -41,9 +42,10 @@ pub use enqueue::{CredentialEvidence, EnqueueError, EnqueueRequest, Enqueued, En
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{AppError, EN_US};
-pub use facts::{Fact, Facts, ModelFact, Recorded, RunnerFact};
+pub use facts::{launch_failed_book, Fact, Facts, ModelFact, Recorded, RunnerFact};
 pub use feeds::{Cursor, Feeds, Follow};
 pub use gate::owns;
+pub use hold::{HoldReport, Holding, HookClock, Kept, NotHeld, Outcome, Serving, Why, TAKE_ROUNDS};
 pub use hook_commands::{EdgeCommands, EdgeFailure};
 pub use hook_gate::{HookGate, HookIdentity};
 pub use identity::{Identity, Role};

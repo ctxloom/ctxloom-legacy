@@ -11,10 +11,8 @@
 
 use cli_support::{Exit, ExitClass};
 use std::io::{BufRead, IsTerminal, Write};
-use std::rc::Rc;
 use std::sync::Arc;
 
-use deps_application::Deps;
 use init_application::{
     Added, Companions, Ended, LaunchFailure, NotAdded, PromptFailure, Prompts, Sessions, Terminal,
 };
@@ -97,29 +95,26 @@ fn answered(line: Option<&str>) -> bool {
     }
 }
 
-/// The interactive sessions of `init`.
+/// The interactive sessions of `init`: each prepared by the user's daemon
+/// and started on this terminal by its frontend (U5, owner s4-Q6), as a
+/// `ctxloom run` is.
 pub(crate) struct SetupSessions<'a> {
     pub(crate) env: &'a Arc<EnvSnapshot>,
     pub(crate) flags: &'a Flags,
+    /// This binary's stamp, which the daemon that prepares the session must
+    /// share (M3).
+    pub(crate) stamp: &'a str,
 }
 
 impl SetupSessions<'_> {
     /// One interactive session of the default agent, opened with `prompt`
-    /// (none: nothing), over the project as it is now: its library and its
-    /// dependency use cases both (those of the process's start saw no
-    /// project on a first init, and would read the home's remotes and
-    /// installs, not the ones the interview made).
+    /// (none: nothing), over the project as it is now: the daemon plans it
+    /// in this process's directory and environment (S7), so it sees what the
+    /// interview configured, and pulls its dependencies when `sync.on_run`
+    /// asks.
     fn launch(&self, prompt: &str) -> Result<Ended, LaunchFailure> {
         let wiring =
             Wiring::new(Arc::clone(self.env)).map_err(|e| LaunchFailure::failed(Box::new(e)))?;
-        let deps: Rc<Deps> = Rc::new(
-            crate::commands::build_deps(&wiring).map_err(|e| LaunchFailure::failed(Box::new(e)))?,
-        );
-        let remotes: Rc<dyn deps_ports::RemoteLibrary> = deps.clone();
-        let library = crate::library::build(&wiring, Some(remotes))
-            .map_err(|e| LaunchFailure::failed(Box::new(e)))?;
-        let mut sessions =
-            OneShots::new(&wiring, library).with_puller(Rc::new(crate::commands::DepsPuller(deps)));
         let request = OneShot {
             run: RunRequest {
                 prompt: prompt.to_string(),
@@ -128,25 +123,33 @@ impl SetupSessions<'_> {
             engine: String::new(),
             session: String::new(),
         };
-        let done = sessions.interactive(self.flags, &request);
-        let notices = done
-            .notices
-            .into_iter()
-            .map(|n| Box::new(n) as init_application::Failure)
-            .collect();
-        // The launch's own exit code, as `ctxloom run` ends with it.
-        let ended = done.result.map_err(|e| {
-            let exit = e.exit();
-            LaunchFailure {
-                cause: Box::new(e),
-                exit,
-            }
-        })?;
-        Ok(Ended {
-            code: ended.code,
-            notices,
-        })
+        let done = OneShots::new(&wiring)
+            .stamped(self.stamp)
+            .interactive(self.flags, &request);
+        ended_of(done)
     }
+}
+
+/// What init is told of a session's run: its exit code and notices, or, for
+/// a run that refused or failed, a launch failure with the run's own exit
+/// (as `ctxloom run` ends with it).
+fn ended_of(done: run_application::Done<run_application::Ended>) -> Result<Ended, LaunchFailure> {
+    let notices = done
+        .notices
+        .into_iter()
+        .map(|n| Box::new(n) as init_application::Failure)
+        .collect();
+    let ended = done.result.map_err(|e| {
+        let exit = e.exit();
+        LaunchFailure {
+            cause: Box::new(e),
+            exit,
+        }
+    })?;
+    Ok(Ended {
+        code: ended.code,
+        notices,
+    })
 }
 
 impl Sessions for SetupSessions<'_> {

@@ -71,6 +71,8 @@ struct SessionFold {
     launched: Vec<ChildLaunched>,
     messages: BTreeMap<String, Message>,
     clears: Vec<String>,
+    /// Its last incarnation's end: the incarnation and its cause.
+    last_end: Option<(u32, String)>,
 }
 
 impl SessionFold {
@@ -87,6 +89,9 @@ impl SessionFold {
                 );
             }
             SessionEvent::ClearRequested(clear) => self.clears.push(clear.clear_id.clone()),
+            SessionEvent::IncarnationEnded(ended) => {
+                self.last_end = Some((ended.incarnation, ended.cause.clone()));
+            }
             _ => {}
         }
     }
@@ -216,6 +221,16 @@ impl Board {
         self.sessions
             .get(session)
             .map_or(&[], |session| session.clears.as_slice())
+    }
+
+    /// The last incarnation of `session` that ended, and its cause (`orphaned`
+    /// for one whose run's owner was lost, T19); none before any ended.
+    pub fn last_end(&self, session: &str) -> Option<(u32, &str)> {
+        self.sessions
+            .get(session)?
+            .last_end
+            .as_ref()
+            .map(|(incarnation, cause)| (*incarnation, cause.as_str()))
     }
 
     /// The session whose harp is `harp`.

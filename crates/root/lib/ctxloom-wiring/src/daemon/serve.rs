@@ -62,6 +62,8 @@ pub(crate) struct Place {
     /// The engines it hosts children on, composed as every launch's are
     /// (`commands::hosted_engines`).
     pub(crate) engines: Vec<daemon_application::HostedEngine>,
+    /// The environment its children's checkouts' git runs in (s4-Q11).
+    pub(crate) env: Arc<process_env::EnvSnapshot>,
 }
 
 /// How the daemon paces itself.
@@ -96,6 +98,7 @@ pub(crate) fn serve(
         os,
         user_home,
         engines,
+        env,
     } = place;
     let home = home.as_path();
     let files = DaemonFiles::with_instance(Arc::clone(&fs), home, instance_lock);
@@ -123,17 +126,22 @@ pub(crate) fn serve(
             kept.clone()
         })
         .await;
+        // Under test-support, the kill switch at a step (U6), on every book
+        // the core applies: the launcher's, its one-shots', its clients'.
+        #[cfg(feature = "test-support")]
+        dies_at_steps(&core.edge(), &files);
         // What the loop shares with the API's use cases (slice 2 step 5).
         let shared = Arc::new(Shared::new(kept.index.clone().unwrap_or_default()));
         let one_shots = one_shots_over(&core, home, &temp);
+        let terminals = terminals_over(&core, home, &temp);
         let started = start(
             &fs,
             (home, &temp),
             &core,
             &kept,
             (os, user_home, stamp, pace, engines),
-            (&files, &shared, &one_shots),
-            &say,
+            (&files, &shared, &one_shots, &terminals),
+            (&say, &env),
         )
         .await;
         let (listener, mut launcher, own) = match started {
@@ -144,6 +152,7 @@ pub(crate) fn serve(
                 drop(shared);
                 drop(kept);
                 drop(one_shots);
+                drop(terminals);
                 said(&say, &format!("the start failed: {detail}"));
                 match core.close().await {
                     Ok(()) => said(&say, "the store is closed"),
@@ -154,16 +163,11 @@ pub(crate) fn serve(
         };
         let endpoint = own.endpoint.clone();
         said(&say, &format!("serving at {endpoint}"));
-        // The launcher's first step (T18): the runs other processes, and a
-        // killed daemon, left are swept before anything is hosted.
-        if let Err(detail) = launcher.start_up(core.store(), core.catalog()).await {
-            said(&say, &format!("the start's sweep failed: {detail}"));
-        }
         let result = run(
             &mut launcher,
             &core,
             (&files, &own, &held),
-            (pace, &shared),
+            (pace, &shared, &terminals),
             &say,
         )
         .await;
@@ -190,6 +194,10 @@ pub(crate) fn serve(
         drop(shared);
         drop(kept);
         drop(one_shots);
+        // A session a frontend still runs keeps its thread (and its copy of
+        // the core) until its frontend reports: the store's close then says
+        // so, and the frontend reports to the next daemon (S17).
+        drop(terminals);
         said(&say, "exited");
         // Closed, not dropped (ruling 131).
         if let Err(unclosed) = core.close().await {
@@ -224,6 +232,32 @@ fn one_shots_over(
     )))
 }
 
+/// What a daemon's start shares with its loop and its API: its files, the
+/// round's state, the one-shots it hosts and the sessions it prepares.
+type Hosts<'a> = (
+    &'a DaemonFiles,
+    &'a Arc<Shared>,
+    &'a Arc<OneShots>,
+    &'a Arc<daemon_application::Terminals>,
+);
+
+/// The interactive sessions the daemon prepares (U5), each over `core`
+/// shared, on the daemon's runtime: the API creates and watches them.
+fn terminals_over(
+    core: &InProcessCore<SqliteStore>,
+    home: &Path,
+    temp: &Path,
+) -> Arc<daemon_application::Terminals> {
+    Arc::new(daemon_application::Terminals::new(Box::new(
+        crate::frontend::HostedTerminals {
+            core: core.share(),
+            runtime: tokio::runtime::Handle::current(),
+            home: home.to_path_buf(),
+            temp: temp.to_path_buf(),
+        },
+    )))
+}
+
 /// The daemon started (its bearer and certificate minted, its listener
 /// serving the coordinator and the `Ctxloom` service, the launcher
 /// composed, the discovery file published): the listener, the launcher and
@@ -241,8 +275,8 @@ async fn start(
         Pace,
         Vec<daemon_application::HostedEngine>,
     ),
-    (files, shared, one_shots): (&DaemonFiles, &Arc<Shared>, &Arc<OneShots>),
-    say: &Say,
+    (files, shared, one_shots, terminals): Hosts<'_>,
+    (say, env): (&Say, &Arc<process_env::EnvSnapshot>),
 ) -> Result<(HookListener, Daemon<CoreEdge, OsTokenSource>, Discovery), String> {
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
     let edge = core.edge();
@@ -292,7 +326,7 @@ async fn start(
         .hosting_one_shots(Arc::clone(one_shots)),
         fs,
         (home, temp),
-        &engines,
+        (&engines, terminals),
     );
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
@@ -316,7 +350,7 @@ async fn start(
         (home, temp),
         &edge,
         kept,
-        (engines, user_home.clone()),
+        (engines, user_home.clone(), env),
         Told {
             home: home.to_string_lossy().into_owned(),
             program_dir: std::env::current_exe()
@@ -338,30 +372,59 @@ async fn start(
         bearer,
         home: home.display().to_string(),
     };
-    if let Err(e) = files.publish(&own) {
+    match swept_and_advertised(launcher, core, files, &own, say).await {
+        Ok(launcher) => Ok((listener, launcher, own)),
+        Err(detail) => {
+            let _ = listener.stop().await;
+            Err(detail)
+        }
+    }
+}
+
+/// The launcher's first step (T18), before the daemon is advertised: the
+/// runs other processes, and a killed daemon, left are swept (their
+/// checkouts let go, OD-19), so the first command that finds it finds the
+/// record whole; then `own` is published. On a failure to publish, the
+/// launcher is let go and why is answered.
+async fn swept_and_advertised(
+    mut launcher: Daemon<CoreEdge, OsTokenSource>,
+    core: &InProcessCore<SqliteStore>,
+    files: &DaemonFiles,
+    own: &Discovery,
+    say: &Say,
+) -> Result<Daemon<CoreEdge, OsTokenSource>, String> {
+    if let Err(detail) = launcher.start_up(core.store(), core.catalog()).await {
+        said(say, &format!("the start's sweep failed: {detail}"));
+    }
+    if let Err(e) = files.publish(own) {
         drop(launcher);
-        let _ = listener.stop().await;
         return Err(format!("the discovery file cannot be written: {e}"));
     }
-    Ok((listener, launcher, own))
+    Ok(launcher)
 }
 
 /// The API the daemon serves: `api`, a project's context assembled from its
 /// registered root (slice 3 step 6), and a child's hand-off planned, judged
 /// and kept here (slice 4 U3), over `home`, `temp` and the `engines` its
-/// children are hosted on.
+/// children are hosted on, and the interactive sessions `terminals`
+/// prepares (U5).
 fn served(
     api: daemon_api::Api<CoreEdge>,
     fs: &Arc<dyn Fs>,
     (home, temp): (&Path, &Path),
-    engines: &[daemon_application::HostedEngine],
+    (engines, terminals): (
+        &[daemon_application::HostedEngine],
+        &Arc<daemon_application::Terminals>,
+    ),
 ) -> Arc<dyn daemon_api::Calls> {
     Arc::new(
-        api.assembling(Arc::new(super::places::ProjectAssemblies {
-            home: home.to_path_buf(),
-            temp: temp.to_path_buf(),
-        }))
-        .handing_off(super::files::api_hand_offs(fs, (home, temp), engines)),
+        // The sessions it prepares (U5).
+        api.preparing_terminals(Arc::clone(terminals))
+            .assembling(Arc::new(super::places::ProjectAssemblies {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+            }))
+            .handing_off(super::files::api_hand_offs(fs, (home, temp), engines)),
     )
 }
 
@@ -436,6 +499,48 @@ impl<E: run_ports::Edge> run_ports::Edge for Dying<E> {
     }
 }
 
+/// Under test-support (U6): the core's `edge` tells each book it applied to
+/// the kill switch, which kills the daemon outright once a book of the step
+/// it names is applied, before it is answered: `enqueued` (a run's
+/// `EnqueueRun`), `minted` (a `MintSession`), `started` (a
+/// `RunnerStarted`), `turn` (a `TurnStarted`), `hook` (a hook's capture
+/// fact). Forced, never waited for (the race rule).
+#[cfg(feature = "test-support")]
+fn dies_at_steps(edge: &Arc<CoreEdge>, files: &DaemonFiles) {
+    let files = files.clone();
+    edge.telling(Box::new(move |book, _| {
+        if let Some(step) = step_of(book) {
+            if files.take_die_at(step) {
+                std::process::abort();
+            }
+        }
+    }));
+}
+
+/// The kill switch's step a book applied is, if any.
+#[cfg(feature = "test-support")]
+fn step_of(book: &angzarr_embedded::v1::CommandBook) -> Option<&'static str> {
+    use angzarr_embedded::v1::command_page::Body;
+    let payload = match book.page.as_ref()?.body.as_ref()? {
+        Body::Command(command) => command.payload.as_ref()?,
+        Body::Fact(fact) => fact.payload.as_ref()?,
+    };
+    let name = payload.type_url.rsplit('.').next()?;
+    Some(match name {
+        "EnqueueRun" => "enqueued",
+        "MintSession" => "minted",
+        "RunnerStarted" => "started",
+        "TurnStarted" => "turn",
+        "RecordPromptSubmitted"
+        | "RecordAssistantText"
+        | "RecordToolCall"
+        | "RecordTurnEnded"
+        | "RecordSessionEnded"
+        | "RecordCompaction" => "hook",
+        _ => return None,
+    })
+}
+
 /// The launcher (T18), composed: its ports over this process's home, the
 /// core's `edge` (`home` and `temp` the process's), the folds `kept`
 /// registered in the kernel, the daemon's
@@ -445,7 +550,11 @@ fn launcher(
     (home, temp): (&Path, &Path),
     edge: &Arc<CoreEdge>,
     kept: &Projectors,
-    (engines, user_home): (Vec<daemon_application::HostedEngine>, Option<PathBuf>),
+    (engines, user_home, env): (
+        Vec<daemon_application::HostedEngine>,
+        Option<PathBuf>,
+        &Arc<process_env::EnvSnapshot>,
+    ),
     told: Told,
     say: Say,
 ) -> Daemon<CoreEdge, OsTokenSource> {
@@ -477,6 +586,14 @@ fn launcher(
     .finding(Arc::new(
         host_launcher::HostLauncher::default().searching(Arc::clone(fs)),
     ))
+    // A child follows its agent's `workspace` (s4-Q11): its checkout under
+    // ctxloom's home, let go WIP-safe at its exit and, lost, at the next
+    // start's sweep (OD-19).
+    .placing(Arc::new(Workspaces {
+        fs: Arc::clone(fs),
+        home: home.to_path_buf(),
+        env: Arc::clone(env),
+    }))
 }
 
 /// Tick until the daemon is asked to stop, its single-instance lock file
@@ -488,7 +605,7 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
     launcher: &mut Daemon<E, T>,
     core: &InProcessCore<SqliteStore>,
     (files, own, held): (&DaemonFiles, &Discovery, &Instance),
-    (pace, shared): (Pace, &Arc<Shared>),
+    (pace, shared, terminals): (Pace, &Arc<Shared>, &daemon_application::Terminals),
     say: &Say,
 ) -> Result<(), String> {
     let mut quiet_since = Instant::now();
@@ -510,8 +627,12 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
         }
         match advertised(own, files.discovery().as_ref()) {
             Advertised::Ours => {}
-            Advertised::Gone => match files.publish(own) {
-                Ok(()) => said(say, "the discovery file was gone: advertised again"),
+            Advertised::Gone => match files.republish(own) {
+                Ok(true) => said(say, "the discovery file was gone: advertised again"),
+                Ok(false) => said(
+                    say,
+                    "the discovery file's directory was gone: not advertised again",
+                ),
                 Err(e) => said(
                     say,
                     &format!("the discovery file was gone, and cannot be written: {e}"),
@@ -538,11 +659,19 @@ async fn run<E: run_ports::Edge, T: run_ports::TokenSource>(
         }
         // Armed before the round reads (S-N2): a commit during it is not
         // missed.
+        // Under test-support, killed outright while a hosted child's turn is
+        // in flight, when the switch says so (U6).
+        #[cfg(feature = "test-support")]
+        if launcher.in_flight() && files.take_die_at("turn") {
+            std::process::abort();
+        }
         let commit = core.store().next_commit();
         let round = shared.round_starts();
         let busy = launcher.tick(core.store(), core.catalog(), draining).await;
         shared.round_done(round);
-        if busy || launcher.hosting() > 0 {
+        // A session it prepares (asked for, or its frontend's TUI running)
+        // keeps it: its frontend is a client it serves (U5).
+        if busy || launcher.hosting() > 0 || terminals.hosting() > 0 {
             quiet_since = Instant::now();
         } else if quiet_since.elapsed() >= pace.idle {
             // M9: a run any process started and has not ended (an
@@ -820,6 +949,44 @@ impl ChildHomes for Homes {
         Box::new(SessionDirs::new(
             Arc::clone(&self.0),
             PathBuf::from(project_dir),
+        ))
+    }
+
+    /// Its session's lock, `liveness`' (the platform's file lock), the
+    /// sessions directory made first.
+    fn hold_session(&self, project_dir: &str, harp: &str) -> Result<run_ports::HeldLock, String> {
+        use session_ports::SessionLock;
+        let mut locks = liveness::LockFiles::new(Arc::clone(&self.0), project_dir);
+        let path = locks.path(harp);
+        if let Some(dir) = path.parent() {
+            self.0
+                .create_dir_all(dir, os::Mode::from_bits(0o755))
+                .map_err(|e| e.to_string())?;
+        }
+        let held = locks.hold(harp).map_err(|e| e.report().to_string())?;
+        Ok(run_ports::HeldLock::new(path.display().to_string(), held))
+    }
+}
+
+/// A child's project's workspaces: worktree-git's, its checkouts under
+/// ctxloom's home (`isolation_ports::worktrees_root`).
+struct Workspaces {
+    fs: Arc<dyn Fs>,
+    home: PathBuf,
+    env: Arc<process_env::EnvSnapshot>,
+}
+
+impl daemon_application::ChildWorkspaces for Workspaces {
+    fn of(
+        &self,
+        project_id: &str,
+        project_dir: &str,
+    ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+        Arc::new(worktree_git::GitWorkspaces::new(
+            Arc::clone(&self.fs),
+            PathBuf::from(project_dir),
+            Some(isolation_ports::worktrees_root(&self.home, project_id)),
+            Arc::clone(&self.env),
         ))
     }
 }

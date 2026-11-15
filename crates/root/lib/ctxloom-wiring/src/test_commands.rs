@@ -58,11 +58,31 @@ enum TestVerb {
     /// Print where the library's resource names are rooted: the cwd's
     /// project as the daemon names it (`projects/<harp>`), or `users/me`
     ProjectName,
+    /// Print the resource name of the cwd's project's session, the project
+    /// named in process, as a seed names it (no daemon reached)
+    SessionName {
+        /// The session's harp
+        harp: String,
+    },
     /// Print the events of the cwd's project's session, as json: each one's
     /// type, and a message's id and text
     SessionEvents {
         /// The session's harp
         harp: String,
+        /// The events of its run of this incarnation instead
+        #[arg(long)]
+        run: Option<u32>,
+    },
+    /// Print every stream of the one store, as json: each event's type,
+    /// its payload's bytes, and what the record's readers ask of it
+    Record,
+    /// Plant a child's past re-hosts in the one store, each recorded over
+    /// the last minutes, its last host lost again
+    SeedRehosts {
+        /// The session's harp
+        harp: String,
+        /// How many re-hosts
+        count: u32,
     },
 }
 
@@ -101,6 +121,9 @@ struct SeedArgs {
     /// An authored file in the session directory
     #[arg(long)]
     other_file: Vec<String>,
+    /// Its first incarnation ended, so it can be resumed
+    #[arg(long)]
+    resumable: bool,
 }
 
 impl From<SeedArgs> for Seed {
@@ -120,6 +143,7 @@ impl From<SeedArgs> for Seed {
             oneshot: args.oneshot,
             native,
             other_files: args.other_file,
+            resumable: args.resumable,
         }
     }
 }
@@ -219,10 +243,24 @@ pub(crate) fn run(
             let parent = crate::daemon::library_parent(&wiring, version, crate::Minting::AtRoot)?;
             output(writeln!(out, "{parent}"))
         }
-        TestVerb::SessionEvents { harp } => {
+        TestVerb::SessionName { harp } => {
             let wiring = wiring().map_err(failed)?;
-            let events = wiring.session_events(&harp).map_err(failed)?;
+            let name = wiring.session_resource(&harp).map_err(failed)?;
+            output(writeln!(out, "{name}"))
+        }
+        TestVerb::SessionEvents { harp, run } => {
+            let wiring = wiring().map_err(failed)?;
+            let events = wiring.session_events(&harp, run).map_err(failed)?;
             output(writeln!(out, "{events}"))
+        }
+        TestVerb::Record => {
+            let wiring = wiring().map_err(failed)?;
+            let record = wiring.record().map_err(failed)?;
+            output(writeln!(out, "{record}"))
+        }
+        TestVerb::SeedRehosts { harp, count } => {
+            let wiring = wiring().map_err(failed)?;
+            wiring.seed_rehosts(&harp, count).map_err(failed)
         }
         TestVerb::OpenStore { project } => {
             let path = wiring()
