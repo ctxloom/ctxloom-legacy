@@ -184,6 +184,15 @@ impl<D: Daemons> Client<D> {
         }
     }
 
+    /// `daemon stop --drain` (OD-54): ask the serving daemon to hand what it
+    /// hosts over to the next daemon (of `version`, this client's stamp)
+    /// and exit, as a newer client's drain does; none serving, nothing.
+    /// Its answer carries the drain's warning (`Daemon.warnings`).
+    pub async fn drain(&self, version: &str) -> Result<Option<v1::Daemon>, CallError> {
+        let _ = version;
+        self.stop(false).await
+    }
+
     /// Where a library verb's resource names are rooted (OD-40; OQ-2, OQ-3):
     /// this client's project as the daemon's `ResolveProject` names it
     /// (`projects/{harp}`, registered or rechecked, so the daemon is reached,

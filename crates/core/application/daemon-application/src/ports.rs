@@ -160,3 +160,10 @@ pub trait Ears: Send + Sync {
     /// What was heard since last asked, in the order heard.
     fn heard(&self) -> Vec<(String, ChildObservation)>;
 }
+
+/// The daemon's monotonic clock (OD-54): how long since some fixed instant
+/// of its own. The core reads no clock: the root's is its process's
+/// `Instant`, a test's a fake it moves. What times a hand-over's period.
+pub trait Monotonic: Send + Sync {
+    fn now(&self) -> std::time::Duration;
+}

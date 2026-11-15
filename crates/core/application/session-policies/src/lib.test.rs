@@ -12,8 +12,8 @@ use sessions::{
 };
 
 use crate::{
-    cascade, child_ended, deliver, destroy, launch, launch_failed, notice, run_cover,
-    session_cover, RunGate,
+    cascade, child_ended, deliver, destroy, drain_guidance, launch, launch_failed, notice,
+    run_cover, session_cover, RunGate, DRAIN_GUIDANCE,
 };
 
 const OWNER: &str = "0a0a0a0a-0a0a-0a0a-0a0a-0a0a0a0a0a0a";
@@ -210,6 +210,35 @@ fn a_childs_end_wakes_its_owner_keyed_by_the_child_and_incarnation() {
     assert_eq!(
         notice(&at(CHILD), "kid", &at(OWNER), &ended(false), &every),
         None
+    );
+}
+
+// ------------------------------------------------------------- the drain
+
+// OD-54: a draining daemon steers a busy child with the approved guidance,
+// the session's own steer (the one delivery path), keyed by the child and
+// its run, so a redelivery records it once.
+#[test]
+fn the_drains_guidance_is_a_steer_to_the_child_keyed_by_its_run() {
+    let every = [Urgency::Inform, Urgency::Wake, Urgency::Steer];
+    let sent = drain_guidance(&at(CHILD), 2, &every).unwrap();
+    assert_eq!(sent.key, format!("drain:{CHILD}:2"));
+    assert_eq!(sent.command.message_id, sent.key);
+    assert_eq!(sent.command.urgency, Urgency::Steer);
+    assert_eq!(sent.command.text, DRAIN_GUIDANCE);
+    assert_eq!(
+        DRAIN_GUIDANCE,
+        "ctxloom is being upgraded: finish the step you are on and end your turn; \
+         you will be resumed in this conversation."
+    );
+    assert_eq!(sent.command.requester, None);
+    assert_eq!(sent.command.supported, every.to_vec());
+    assert_eq!(sent.cover, session_cover(CHILD).unwrap());
+    assert_eq!(sent.project_id, "calm-otter");
+    assert_eq!(
+        drain_guidance(&at(CHILD), 2, &[Urgency::Inform, Urgency::Wake]),
+        None,
+        "an engine that takes no steer is given none"
     );
 }
 

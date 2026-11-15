@@ -39,12 +39,16 @@
 //!   credential checked first, so a refused launch writes nothing;
 //! - [`StartUpIncomplete`]: a daemon whose start-up catch-up or sweep
 //!   failed serves anyway and says so (OD-52), in `GetDaemon`'s
+//!   `Daemon.warnings`;
+//! - [`HandingOver`]: a daemon asked to drain while it hosts children
+//!   warns at once what it does with them (OD-54), in the same
 //!   `Daemon.warnings`.
 
 mod caller;
 mod client;
 mod destroy;
 mod hand_off;
+mod hand_over;
 pub mod launch;
 mod refusal;
 mod runs;
@@ -61,6 +65,7 @@ pub use client::{
 };
 pub use destroy::{Places, Purges};
 pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
+pub use hand_over::HandingOver;
 pub use refusal::{rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection};
 pub use runs::RunStream;
 pub use server::{About, Answer, Api, Assemblies, Calls, Harps, Hosting, Parts, SessionStates};
@@ -83,6 +88,7 @@ pub fn diagnostic_samples() -> Vec<Box<dyn angzarr_diagnostic::Diagnostic>> {
     let mut all = refusal::samples();
     all.extend(client::samples());
     all.extend(start_up::samples());
+    all.extend(hand_over::samples());
     all
 }
 

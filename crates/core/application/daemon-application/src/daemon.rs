@@ -20,12 +20,17 @@ use sessions::Urgency;
 
 use crate::one_shot::OneShots;
 use crate::ports::{
-    ChildHomes, ChildPlans, ChildWorkspaces, Ears, HandOff, HandOffs, HostedEngine,
+    ChildHomes, ChildPlans, ChildWorkspaces, Ears, HandOff, HandOffs, HostedEngine, Monotonic,
 };
 use run_launcher::{Released, Releases, Sweeper, Swept};
 
 /// How long an ended child has to exit before its tree is stopped.
 const END_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long a draining daemon waits for a busy child, steered to end its
+/// turn, before it hands the child over anyway, its turn in flight cut
+/// (owner ruling OD-54: five minutes).
+pub const HAND_OVER_PERIOD: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Where the daemon is, as a child it hosts is told: ctxloom's home, the
 /// directory of the running program (its engine's `PATH` leads with it, so
@@ -230,6 +235,11 @@ pub struct Daemon<E: Edge, T: TokenSource> {
     /// The runs of the children it ended to hand them over: each one's
     /// incarnation ends `drained` at its exit.
     drained: BTreeSet<String>,
+    /// Its clock (OD-54), which times a hand-over's period; none, a busy
+    /// child is waited for until its turn ends.
+    clock: Option<Arc<dyn Monotonic>>,
+    /// How long a hand-over waits for a busy child ([`HAND_OVER_PERIOD`]).
+    hand_over_period: std::time::Duration,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -326,7 +336,22 @@ impl<E: Edge, T: TokenSource> Daemon<E, T> {
             workspaces: None,
             handing_over: false,
             drained: BTreeSet::new(),
+            clock: None,
+            hand_over_period: HAND_OVER_PERIOD,
         }
+    }
+
+    /// The daemon, timing a hand-over's period by `clock` (OD-54).
+    pub fn clocked(mut self, clock: Arc<dyn Monotonic>) -> Daemon<E, T> {
+        self.clock = Some(clock);
+        self
+    }
+
+    /// The daemon, waiting `period` for a busy child before it hands it over
+    /// anyway (default [`HAND_OVER_PERIOD`]; a test's is short).
+    pub fn handing_over_within(mut self, period: std::time::Duration) -> Daemon<E, T> {
+        self.hand_over_period = period;
+        self
     }
 
     /// The daemon, placing each child where its agent's `workspace` says

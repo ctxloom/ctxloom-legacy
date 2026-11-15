@@ -37,14 +37,14 @@ mod ports;
 mod rehost;
 mod terminal;
 
-pub use daemon::{Daemon, Folds, Place, Ports, Taken};
+pub use daemon::{Daemon, Folds, Place, Ports, Taken, HAND_OVER_PERIOD};
 pub use one_shot::{
     Created, HostProject, HostRequest, Hosted, OneShotControl, OneShotHost, OneShots, Told, Watch,
     STOP_GRACE_MS,
 };
 pub use ports::{
     ChildHomes, ChildPlans, ChildWorkspaces, Ears, ForLaunch, HandOff, HandOffs, HostedEngine,
-    Kept, Transcripts,
+    Kept, Monotonic, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
 pub use terminal::{

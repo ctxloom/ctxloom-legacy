@@ -20,7 +20,10 @@ use super::library::Project;
 
 /// The fake claude (engine-claude's child stub): an init, the echo of each
 /// message given, a result; a `/clear` rotates its session id (S1, then S2)
-/// as claude's does. Beside it: every line it is given, after the session id
+/// as claude's does; a message holding `LINGER` begins a turn it never ends
+/// of its own (its turn stays in flight), and an interrupt ends the turn in
+/// flight aborted, as claude's does, unless a file `deaf` is beside it (then
+/// it is ignored). Beside it: every line it is given, after the session id
 /// it was given under, in `input.log`; its environment in `env-<harp>.log`,
 /// each start's arguments a line of `args-<harp>.log`, and its context file in `context-<harp>.log`; `exited` once its input
 /// ends (the daemon's end closes it).
@@ -41,6 +44,16 @@ printf '{"type":"system","subtype":"init","cwd":"/work","session_id":"%s","tools
 while IFS= read -r line; do
   printf '%s %s\n' "$sid" "$line" >> "$here/input.log"
   case "$line" in
+    *'"control_request"'*)
+      [ -e "$here/deaf" ] && continue
+      printf '{"type":"control_response","response":{"subtype":"success","request_id":"ctxloom-interrupt-1","response":{"still_queued":[]}}}\n'
+      printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"session_id":"%s"}\n' "$sid"
+      printf '{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","session_id":"%s"}\n' "$sid"
+      ;;
+    *LINGER*)
+      text=$(printf '%s' "$line" | sed 's/.*"content":"\([^"]*\)".*/\1/')
+      printf '{"type":"user","message":{"role":"user","content":"%s"},"session_id":"%s","isReplay":true}\n' "$text" "$sid"
+      ;;
     *'"content":"/clear"'*)
       sid=S2
       printf '{"type":"conversation_reset","new_conversation_id":"c2","trigger":"clear","session_id":"S1"}\n'
@@ -1297,4 +1310,140 @@ fn a_daemon_whose_start_up_catch_up_fails_serves_and_says_so_until_one_succeeds(
         "{}",
         world.log()
     );
+}
+
+/// A daemon started by hand (`--hand-over-seconds` given when `period` is),
+/// serving, with the owner seeded and its child launched on a first task
+/// that lingers: its turn is in flight.
+fn a_busy_child(world: &World, period: Option<&str>) -> Killed {
+    let seeded = world.run(&["test", "seed-session", OWNER]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let mut args = vec!["daemon", "serve", "--idle-seconds", "60"];
+    if let Some(period) = period {
+        args.extend(["--hand-over-seconds", period]);
+    }
+    let daemon = Killed(world.project.start_with(&ENV, &args));
+    world.until("the daemon serving", |w| w.serving().then_some(()));
+    let launched = world.run_also(
+        &[("ANTHROPIC_API_KEY", "launchers-key")], // gitleaks:allow
+        &[
+            "session",
+            "launch",
+            OWNER,
+            "--name",
+            CHILD,
+            "LINGER first task",
+        ],
+    );
+    assert_eq!(launched.code, 0, "{}\n{}", launched.said(), world.log());
+    world.until("the child's lingering turn in flight", |w| {
+        w.input().contains("LINGER first task").then_some(())
+    });
+    daemon
+}
+
+/// `daemon stop --drain` asked of the serving daemon: answered at once
+/// (exit 0), its warning said, in json, naming the child.
+fn drain_asked(world: &World) {
+    let drained = world.run(&["daemon", "stop", "--drain", "--format", "json"]);
+    assert_eq!(drained.code, 0, "{}\n{}", drained.said(), world.log());
+    for part in ["daemon-api-handing-over", CHILD] {
+        assert!(drained.stderr.contains(part), "{part}: {}", drained.said());
+    }
+}
+
+/// The child re-hosted by the next daemon a command starts, resuming its
+/// own conversation (`--resume S1`).
+fn rehosted_resuming(world: &World) {
+    let started = world.until("the child re-hosted", |w| {
+        w.show(CHILD);
+        let args = w.of("args", CHILD)?;
+        let lines: Vec<String> = args.lines().map(str::to_string).collect();
+        (lines.len() == 2).then_some(lines)
+    });
+    assert!(!started[0].contains("--resume"), "{started:?}");
+    assert!(started[1].contains("--resume S1"), "{started:?}");
+    let _ = world.run(&["daemon", "stop", "--even-if-live"]);
+}
+
+// OD-54 (1, 3), end to end: `daemon stop --drain` hands a busy child over
+// gracefully. The command is answered at once and warns of the hand-over;
+// the child's turn in flight is interrupted by the approved guidance, a
+// steer, which is its next turn; once that turn ends the child is ended
+// (its hand-off kept) and the daemon exits; the next command's daemon
+// re-hosts it, resuming its own conversation.
+#[test]
+fn a_drain_steers_a_busy_child_to_end_its_turn_then_hands_it_over() {
+    let world = World::new();
+    let mut daemon = a_busy_child(&world, None);
+    drain_asked(&world);
+    world.until("the guidance given as the child's next turn", |w| {
+        let input = w.input();
+        let interrupted = input.contains("control_request");
+        let guided = input.contains(
+            "ctxloom is being upgraded: finish the step you are on and end your turn; \
+             you will be resumed in this conversation.",
+        );
+        (interrupted && guided).then_some(())
+    });
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "the daemon handed its child over and exited; its log:\n{}",
+        world.log()
+    );
+    assert!(
+        files::exists(world.stub_dir.join("exited")),
+        "the child ended"
+    );
+    let handed = world.project.home().join(".ctxloom/daemon/launch");
+    assert_eq!(files::children(&handed).len(), 1, "its hand-off is kept");
+    let log = world.log();
+    assert!(
+        log.contains(&format!("{CHILD}: a turn in flight: steered to end it")),
+        "{log}"
+    );
+    rehosted_resuming(&world);
+}
+
+// OD-54 (2), end to end: a busy child that does not end its turn (it
+// ignores the interrupt) is handed over automatically once the hand-over's
+// period has passed (here two seconds, the daemon's own clock), its turn in
+// flight cut; the daemon exits, and the next re-hosts the child resuming
+// its own conversation.
+#[test]
+fn a_child_still_busy_after_the_period_is_handed_over_automatically() {
+    let world = World::new();
+    files::put(world.stub_dir.join("deaf"), "");
+    let mut daemon = a_busy_child(&world, Some("2"));
+    drain_asked(&world);
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "the daemon handed its child over and exited; its log:\n{}",
+        world.log()
+    );
+    let log = world.log();
+    assert!(
+        log.contains(&format!(
+            "{CHILD}: still busy after 2s: its turn in flight cut, handed over"
+        )),
+        "{log}"
+    );
+    assert!(
+        files::exists(world.stub_dir.join("exited")),
+        "the child ended"
+    );
+    files::remove(world.stub_dir.join("deaf"));
+    rehosted_resuming(&world);
+}
+
+// OD-54 (3): `--drain` and `--even-if-live` are two ways of stopping, and
+// asked together the command is refused as a usage error (exit 20),
+// stopping nothing.
+#[test]
+fn a_stop_both_draining_and_even_if_live_is_refused() {
+    let world = World::new();
+    let refused = world.run(&["daemon", "stop", "--drain", "--even-if-live"]);
+    assert_eq!(refused.code, 20, "{}", refused.said());
 }

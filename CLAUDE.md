@@ -1710,24 +1710,55 @@ hosts; `even_if_live` wins over it. Hosting nothing, the daemon exits at
 once and the client starts its own (`Reconciled::Stopped`); hosting runs,
 the client's call is refused `daemon-api-draining` (exit 20, naming both
 stamps and the harps it still hosts; `SkewError::Draining`), and the next
-command, once it has exited, starts the new daemon. The draining daemon
+command, once it has exited, starts the new daemon. `ctxloom daemon stop
+--drain` (OD-54 (3)) asks the same of the serving daemon, whatever its
+version, for the client's own stamp (`Client::drain`): answered at once,
+exit 0, the daemon handing over and exiting, the next command's daemon
+re-hosting; `--drain` with `--even-if-live` is a usage error (clap's
+`conflicts_with`, exit 20); nothing new under `--detailed-exitcode`. The
+drain WARNS AT ONCE (OD-54 (2)): while a daemon drains and hosts
+anything, its `Daemon.warnings` (StopDaemon's answer and GetDaemon's)
+carry `daemon-api-handing-over` (`daemon_api::HandingOver`: both stamps,
+the harps, the period in seconds, `About.hand_over_seconds`), which the
+asking command says on stderr as it ends (`heard::hear`, from the stop's
+answer or `SkewError::Draining.warnings`), and its log says each busy
+child as it is steered. The draining daemon
 (`Hosting::drain`/`draining`, `Daemon.draining_for`, said by `daemon
 status`) refuses every new call but `GetDaemon` and `StopDaemon` with the
 typed `DaemonDraining` (`Api::open`, the same code); the hooks' facts and the
 frontends' reports (the coordinator) still land. Its loop hands over
 (`Daemon::hand_over`): it starts no child and delivers no message
-(`Step::delivers`; what is pending is the next daemon's), each hosted child
-bound to its native session with no turn in flight is ended once, and a busy
-one at its turn's end; its exit ends its incarnation `drained`, its hand-off
-KEPT; one-shots finish their turn; it exits once it hosts nothing. The next
-daemon re-hosts each such child, cause `drain`, resuming its conversation.
-TUIs are untouched. Not built (owner's, s4-Q4's ruling): the guidance sent
-to a child to finish up, and the compliance timer (its default and its
-expiry); a busy child is waited for, bounded only by its turn's own
-deadline, and `daemon stop --even-if-live` is the escalation (its children
-end `runner-exit` and are not re-hosted). A daemon of a ctxloom from before
-the drain takes it for a plain stop and refuses it for its runs
-(`DaemonHosting`), which the client reads as a busy daemon, as before.
+(`Step::delivers`; what is pending is the next daemon's), but the guidance
+below; each hosted child bound to its native session with no turn in
+flight (and no guidance of its own still pending) is ended once; its exit
+ends its incarnation `drained`, its hand-off KEPT; one-shots finish their
+turn; it exits once it hosts nothing. A BUSY child (a turn in flight, at
+the hand-over's first round) is STEERED (OD-54 (1)) with the approved
+guidance, `session_policies::DRAIN_GUIDANCE` ("ctxloom is being upgraded:
+finish the step you are on and end your turn; you will be resumed in this
+conversation."), by the one steer path: the session's own `SendMessage`
+(`session_policies::drain_guidance`, a steer keyed and identified
+`drain:<child>:<incarnation>`), delivered by the plan's delivery (the one
+delivery a draining daemon lets through, to that run while the guidance is
+pending) and fed as any steer (the turn in flight interrupted, the guidance
+its next turn); the child is ended once that turn ends. A child still
+hosted once the hand-over's period has passed on the daemon's clock
+(`daemon_application::HAND_OVER_PERIOD`, five minutes; `Daemon::clocked`
+over the `Monotonic` port, the root's its process's `Instant`, a test's a
+fake; `daemon serve --hand-over-seconds`, hidden, a test's short one) is
+handed over AUTOMATICALLY (OD-54 (2)): ended once, its turn in flight cut,
+its incarnation `drained`, its hand-off kept, and said in the log
+(`<harp>: still busy after <n>s: its turn in flight cut, handed over`); no
+kill is offered. The next daemon re-hosts each such child, cause `drain`,
+resuming its conversation. TUIs are untouched. Accepted residuals: a child
+never bound to its engine's session is ended at the period too and,
+having no conversation, is not re-hosted; a guidance still pending when
+the period cuts its child (never delivered) is delivered by the next
+daemon, as a steer to the re-hosted child. `daemon stop --even-if-live` is
+the escalation (its children end `runner-exit` and are not re-hosted). A
+daemon of a ctxloom from before the drain takes it for a plain stop and
+refuses it for its runs (`DaemonHosting`), which the client reads as a busy
+daemon, as before.
 
 PROJECT REGISTRATION (owner, 2026-11-12). `ResolveProject` is
 register-or-recheck: the client sends what IT resolved (`Wiring::

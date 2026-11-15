@@ -91,6 +91,9 @@ pub struct About {
     pub version: String,
     pub start_time: Timestamp,
     pub idle_limit_seconds: u64,
+    /// How long a drain waits for a busy child before it hands it over
+    /// anyway, its turn cut (OD-54), in seconds.
+    pub hand_over_seconds: u64,
 }
 
 /// The API's ports, composed by the root.
