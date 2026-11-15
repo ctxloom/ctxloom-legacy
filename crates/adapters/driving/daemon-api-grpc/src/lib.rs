@@ -156,7 +156,7 @@ pub fn warn(headers: &mut http::HeaderMap, warnings: &[v1::Notice]) {
             MetadataValue::from_bytes(&warning.encode_to_vec()),
         );
     }
-    let _ = (headers, metadata);
+    headers.extend(metadata.into_headers());
 }
 
 /// The `Ctxloom` service's handlers.

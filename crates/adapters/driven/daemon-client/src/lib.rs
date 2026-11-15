@@ -79,7 +79,12 @@ impl DaemonClient {
 
     /// The warnings `metadata` carries told to what hears them, if any do.
     fn heard(&self, metadata: &MetadataMap) {
-        let _ = (&self.hears, metadata);
+        if let Some(hears) = &self.hears {
+            let warnings = warnings_in(metadata);
+            if !warnings.is_empty() {
+                hears(warnings);
+            }
+        }
     }
 
     /// This client, each destroy (`DeleteSession`, `SweepSessions`: its
@@ -149,8 +154,12 @@ struct RpcStatus {
 /// [`daemon_proto::WARNING_METADATA`] value a prost-encoded `Notice`; one
 /// that does not decode is passed over.
 pub fn warnings_in(metadata: &MetadataMap) -> Vec<v1::Notice> {
-    let _ = metadata;
-    Vec::new()
+    metadata
+        .get_all_bin(daemon_proto::WARNING_METADATA)
+        .iter()
+        .filter_map(|value| value.to_bytes().ok())
+        .filter_map(|bytes| v1::Notice::decode(bytes).ok())
+        .collect()
 }
 
 /// What `status`, answered to `method`, came to.

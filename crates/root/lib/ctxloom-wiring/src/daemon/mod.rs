@@ -291,7 +291,8 @@ pub(crate) fn run(
         // They look at the daemon and change nothing: no hold is delivered
         // on their way in (H3).
         DaemonVerb::Status => {
-            let reach = Reach::new(&wiring, stamp).observing();
+            // It shows the daemon's warnings itself (OD-52): it hears none.
+            let reach = Reach::new(&wiring, stamp).observing().showing_warnings();
             let found = block_on(client_reaching(&wiring, reach).status())?.map_err(called)?;
             let warnings = found
                 .as_ref()
@@ -306,14 +307,15 @@ pub(crate) fn run(
         } => {
             let reach = Reach::new(&wiring, stamp).observing();
             let client = client_reaching(&wiring, reach);
-            let answered = match drain {
+            // Its warnings (a drain's hand-over among them) are heard from
+            // the stop's answer, as every call's (OD-55), and said at once.
+            match drain {
                 // OD-54 (3): handed over as a newer client's drain hands it,
-                // for this client's own stamp; its warning said at once.
+                // for this client's own stamp.
                 true => block_on(client.drain(own_stamp(env, stamp)))?,
                 false => block_on(client.stop(even_if_live))?,
             }
             .map_err(called)?;
-            heard::hear(answered.map(|daemon| daemon.warnings).unwrap_or_default());
             Ok(Exit::OK)
         }
         DaemonVerb::Resolve => {
@@ -350,6 +352,12 @@ const STOPPED_WAIT: Duration = Duration::from_secs(8);
 /// The daemon `found` names, as a client calls it.
 fn client_of(found: &run_ports::Discovery) -> daemon_client::DaemonClient {
     daemon_client::DaemonClient::new(found, CALL_WAIT).destroying(DESTROY_WAIT)
+}
+
+/// The daemon `found` names, as a command calls it: the warnings each of
+/// its answers carries heard, to be said as the command ends (OD-55).
+fn hearing_client_of(found: &run_ports::Discovery) -> daemon_client::DaemonClient {
+    client_of(found).hearing(std::sync::Arc::new(heard::hear))
 }
 
 /// `future`, on a runtime of its own.
@@ -400,7 +408,11 @@ fn reconciled(
     let Some(found) = found else {
         return Ok(());
     };
-    let outcome = block_on(daemon_api::reconcile(&client_of(found), own, &found.stamp))?;
+    let outcome = block_on(daemon_api::reconcile(
+        &hearing_client_of(found),
+        own,
+        &found.stamp,
+    ))?;
     match outcome {
         Ok(daemon_api::Reconciled::Same) => Ok(()),
         Ok(daemon_api::Reconciled::Stopped) => {
@@ -411,7 +423,6 @@ fn reconciled(
             Ok(())
         }
         Err(skew) => {
-            hear_drain(&skew);
             let exit = skew.exit();
             Err(Failure::new(skew, exit))
         }
@@ -446,7 +457,7 @@ fn resolve(
             Failure::new(e, exit)
         })?
         .unwrap_or_default();
-    block_on(daemon_api::resolve(&client_of(&found), request))?.map_err(called)
+    block_on(daemon_api::resolve(&hearing_client_of(&found), request))?.map_err(called)
 }
 
 /// What `resolve` answers: the project the daemon named.
@@ -589,6 +600,10 @@ pub(crate) struct Reach<'a> {
     /// process (s4-Q14, H3): every command's but the `daemon` noun's own,
     /// which look at the daemon and change nothing.
     flushes: bool,
+    /// Whether the daemon's warnings its answers carry are heard, to be
+    /// said on stderr as the command ends (OD-55): every command's but
+    /// `daemon status`'s, which shows them in its answer.
+    hears: bool,
 }
 
 impl<'a> Reach<'a> {
@@ -600,6 +615,7 @@ impl<'a> Reach<'a> {
             stamp: own_stamp(wiring.env(), stamp).to_string(),
             never_stops: false,
             flushes: true,
+            hears: true,
         }
     }
 
@@ -612,16 +628,31 @@ impl<'a> Reach<'a> {
         }
     }
 
+    /// This reach as `daemon status` makes it: the daemon's warnings are
+    /// its answer, not heard to be said on stderr.
+    pub(crate) fn showing_warnings(self) -> Reach<'a> {
+        Reach {
+            hears: false,
+            ..self
+        }
+    }
+
+    /// The daemon `found` names, as this reach calls it: hearing the
+    /// warnings its answers carry (OD-55), unless it shows them.
+    fn client(&self, found: &run_ports::Discovery) -> daemon_client::DaemonClient {
+        match self.hears {
+            true => hearing_client_of(found),
+            false => client_of(found),
+        }
+    }
+
     /// The daemon `found` names, reached: the home's holds delivered to it
-    /// first (H3), and what it warns of heard to be said (OD-52), the first
-    /// time this process reaches it.
-    async fn reached(&self, found: &run_ports::Discovery) -> daemon_client::DaemonClient {
-        let api = client_of(found);
+    /// first (H3), the first time this process reaches it.
+    fn reached(&self, found: &run_ports::Discovery) -> daemon_client::DaemonClient {
         if self.flushes {
             flush::on_the_way_in(self.wiring, &self.stamp, found);
-            heard::on_the_way_in(&api).await;
         }
-        api
+        self.client(found)
     }
 
     /// This reach as a session's call makes it (OD-3,
@@ -649,14 +680,6 @@ impl<'a> Reach<'a> {
     }
 }
 
-/// A drain this command asked for (OD-54): its warning, as the draining
-/// daemon answered it, said as the command ends.
-fn hear_drain(skew: &daemon_api::SkewError) {
-    if let daemon_api::SkewError::Draining { warnings, .. } = skew {
-        heard::hear(warnings.clone());
-    }
-}
-
 /// A refusal of the wiring's, as the reach declines.
 fn declined(refused: impl angzarr_diagnostic::Diagnostic + Send + Sync + 'static) -> Unreached {
     Unreached::Declined(Arc::new(refused))
@@ -668,7 +691,7 @@ impl Daemons for Reach<'_> {
     async fn serving(&self) -> Result<Option<daemon_client::DaemonClient>, Unreached> {
         let files = files_of(self.wiring);
         match serving_here(self.wiring, &files).map_err(declined)? {
-            Some(found) => Ok(Some(self.reached(&found).await)),
+            Some(found) => Ok(Some(self.reached(&found))),
             None => Ok(None),
         }
     }
@@ -676,7 +699,9 @@ impl Daemons for Reach<'_> {
     async fn reach(&self) -> Result<daemon_client::DaemonClient, Unreached> {
         let files = files_of(self.wiring);
         if let Some(found) = serving_here(self.wiring, &files).map_err(declined)? {
-            let api = client_of(&found);
+            // Its answers' warnings heard (OD-55): a drain's hand-over
+            // among them, as the draining daemon answered it.
+            let api = self.client(&found);
             // OD-3: a session's call drains an idle older daemon, and is
             // refused by any other of another stamp.
             let reconciled = if self.never_stops {
@@ -685,7 +710,7 @@ impl Daemons for Reach<'_> {
                 daemon_api::reconcile(&api, &self.stamp, &found.stamp).await
             };
             match reconciled {
-                Ok(daemon_api::Reconciled::Same) => return Ok(self.reached(&found).await),
+                Ok(daemon_api::Reconciled::Same) => return Ok(self.reached(&found)),
                 Ok(daemon_api::Reconciled::Stopped) => {
                     let deadline = Instant::now() + STOPPED_WAIT;
                     while Instant::now() < deadline && files.discovery().is_some_and(|d| live(&d)) {
@@ -693,15 +718,12 @@ impl Daemons for Reach<'_> {
                     }
                 }
                 Err(daemon_api::SkewError::Call(_)) => {}
-                Err(busy) => {
-                    hear_drain(&busy);
-                    return Err(declined(busy));
-                }
+                Err(busy) => return Err(declined(busy)),
             }
         }
         ensure(self.wiring, self.wiring.env());
         match serving_here(self.wiring, &files).map_err(declined)? {
-            Some(found) => Ok(self.reached(&found).await),
+            Some(found) => Ok(self.reached(&found)),
             None => Err(Unreached::NotStarted {
                 log: self.log(&files),
             }),

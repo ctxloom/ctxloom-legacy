@@ -47,9 +47,6 @@ pub enum SkewError {
         own: String,
         daemon: String,
         harps: Vec<String>,
-        /// What the draining daemon warned of as it answered (OD-54: the
-        /// hand-over's warning), for the command to say at once.
-        warnings: Vec<daemon_proto::v1::Notice>,
     },
 }
 
@@ -97,7 +94,6 @@ pub async fn reconcile<A: DaemonApi>(
             own: own.to_string(),
             daemon: daemon.to_string(),
             harps: answered.runs.into_iter().map(|run| run.harp).collect(),
-            warnings: answered.warnings,
         }),
         // A run started between the two calls (or, asked to drain, a daemon
         // of a ctxloom before the drain, which takes it for a stop).
@@ -307,7 +303,6 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
             own: "v0.2.0-b".to_string(),
             daemon: "v0.1.0-a".to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
-            warnings: Vec::new(),
         }),
         Box::new(CallError::LaunchLock {
             detail: "permission denied".to_string(),
