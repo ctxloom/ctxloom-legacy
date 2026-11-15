@@ -396,7 +396,7 @@ async fn swept_and_advertised(
     own: &Discovery,
     say: &Say,
 ) -> Result<Daemon<CoreEdge, OsTokenSource>, String> {
-    if let Err(detail) = launcher.start_up(core.store(), core.catalog()).await {
+    if let Err(detail) = started_up(&mut launcher, core, files).await {
         said(say, &format!("the start's sweep failed: {detail}"));
     }
     if let Err(e) = files.publish(own) {
@@ -404,6 +404,32 @@ async fn swept_and_advertised(
         return Err(format!("the discovery file cannot be written: {e}"));
     }
     Ok(launcher)
+}
+
+/// The launcher's start-up (T18): its read models caught up with the
+/// store's log, then its sweep.
+#[cfg(not(feature = "test-support"))]
+async fn started_up(
+    launcher: &mut Daemon<CoreEdge, OsTokenSource>,
+    core: &InProcessCore<SqliteStore>,
+    _: &DaemonFiles,
+) -> Result<Vec<daemon_application::Swept>, String> {
+    launcher.start_up(core.store(), core.catalog()).await
+}
+
+/// Under test-support, failed while the switch
+/// ([`DaemonFiles::start_up_fails`]) is there, its why the switch's line
+/// (OD-52).
+#[cfg(feature = "test-support")]
+async fn started_up(
+    launcher: &mut Daemon<CoreEdge, OsTokenSource>,
+    core: &InProcessCore<SqliteStore>,
+    files: &DaemonFiles,
+) -> Result<Vec<daemon_application::Swept>, String> {
+    match files.start_up_fails() {
+        Some(why) => Err(why),
+        None => launcher.start_up(core.store(), core.catalog()).await,
+    }
 }
 
 /// The API the daemon serves: `api`, a project's context assembled from its
@@ -872,6 +898,10 @@ impl daemon_api::Hosting for Shared {
             self.wake.notify_one();
             let _ = tokio::time::timeout(FRESH_WAIT, done.wait_for(|round| *round >= need)).await;
         })
+    }
+
+    fn start_up_failed(&self) -> Option<String> {
+        None
     }
 }
 

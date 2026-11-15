@@ -375,6 +375,12 @@ message Daemon {
   // Once it was asked to drain (s4-Q4): the stamp of the daemon it hands
   // what it hosts over to; empty while it serves.
   string draining_for = 10;
+  // What the person must be told of this daemon (owner ruling OD-52): its
+  // start-up catch-up or sweep failed, so what it answers may be missing
+  // events. Each a notice in its crate's code and args
+  // (`daemon-api-start-up-incomplete`); cleared once a later catch-up, which
+  // the daemon tries again each round, succeeds. Empty while it is whole.
+  repeated Notice warnings = 11;
 }
 
 message StopDaemonRequest {
