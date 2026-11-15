@@ -76,7 +76,7 @@ pub use program::{check_batch_arguments, is_batch_file, BatchArguments, ProgramN
 pub use records::{check_rel, RecordsError, SessionRecords};
 pub use serving::{BoxFuture, HookServer, Serving};
 pub use settings::{AuthSetting, CredentialPolicy, EngineSettings, SessionHome};
-pub use sink::{Delivery, FactSink};
+pub use sink::{Delivery, FactSink, NO_SUCH_SESSION};
 pub use tls::{CertError, CertMint, CertNames, HookCertificate, PublicCert};
 pub use token::{Token, TokenError, TokenHash, TokenSource, EN_US};
 pub use version::newer;

@@ -328,3 +328,38 @@ async fn a_simple_request_the_edge_does_not_serve_is_answered_as_an_unknown_doma
         .unwrap_err();
     assert_eq!(failure.coded(), hidden);
 }
+
+// s4-Q14, H3 follow-up (owner: a DISTINCT, typed answer, never "applied"): a
+// capture fact addressed to a session the daemon has no record of (its
+// stream holds none) is answered under the typed answer's status and key,
+// FactSessionUnknown; one on a live session is applied as ever.
+#[tokio::test]
+async fn a_capture_fact_to_a_session_with_no_record_is_answered_no_such_session() {
+    let world = World::new().await;
+    let bearer = Token::from_bytes([42; 32]);
+    let coordinator = Coordinator::new(
+        EdgeCommands::new(Arc::clone(&world.edge)),
+        (),
+        crate::UserGate::new(&bearer),
+    );
+    let credential = Credential::bearer(bearer.to_text().as_bytes());
+    let session = coordinator
+        .open(angzarr_coordinator::Arrival::Loopback, Some(&credential))
+        .await
+        .unwrap();
+    let nobody = crate::fakes::uuid("5f0c7a52-3333-5333-8333-000000000003");
+    let refused = session
+        .handle(turn_ended(session_cover(&nobody), "hook:turn-end:n:p1"))
+        .await
+        .unwrap_err();
+    let coded = refused.coded();
+    assert_eq!(coded.key, run_ports::NO_SUCH_SESSION);
+    assert_eq!(coded.code, Code::NotFound, "the typed answer's own status");
+    assert_eq!(pages(&world, &session_cover(&nobody)).await, 0);
+    let mine = session_cover(&world.me.identity.session);
+    let answered = session
+        .handle(turn_ended(mine, "hook:turn-end:s:p1"))
+        .await
+        .unwrap();
+    assert_eq!(answered.delivery, DeliveryOutcome::Applied);
+}

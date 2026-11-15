@@ -37,7 +37,9 @@ mod requests;
 mod stamp;
 mod user_gate;
 
-pub use capture::{delivery_budget, observe, Attempt, Capture, Observation, Report};
+pub use capture::{
+    delivery_budget, no_such_session, observe, Attempt, Capture, Observation, Report,
+};
 pub use enqueue::{CredentialEvidence, EnqueueError, EnqueueRequest, Enqueued, Enqueuer, Evidence};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;

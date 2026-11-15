@@ -218,6 +218,17 @@ impl Observation {
     }
 }
 
+/// Whether `answered` to `book` says the daemon has no record of the session
+/// it is addressed to (s4-Q14, H3 follow-up): `book` is a capture fact of
+/// the session domain, and the kernel answered it applied with no event (a
+/// capture fact records its event on any live session, so none recorded
+/// means the stream holds no session). Its distinct answer is
+/// [`run_ports::NO_SUCH_SESSION`] ([`run_ports::Delivery::NoSuchSession`]).
+pub fn no_such_session(book: &CommandBook, answered: &angzarr_embedded::Answered) -> bool {
+    let _ = (book, answered);
+    false
+}
+
 /// How long a hook may spend delivering, by the engine's native hook name:
 /// strictly under the engine's own timeout for it, so the engine never kills
 /// the hook mid-answer (UserPromptSubmit 30s, MessageDisplay 10s).

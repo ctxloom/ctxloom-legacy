@@ -469,3 +469,29 @@ fn what_is_to_be_said_is_taken_once() {
     assert_eq!(take_said(), vec![notice]);
     assert!(take_said().is_empty());
 }
+
+// s4-Q14, H3 follow-up: a hold of a session the daemon has no record of
+// (never minted, or destroyed) is set aside, never "applied" into nothing,
+// and said like the other reasons.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hold_of_a_session_the_daemon_has_no_record_of_is_set_aside_and_said() {
+    const NOBODY: &str = "projects/amber-quiet-heron/sessions/never-minted-wren";
+    let edge = kernel().await;
+    let held = spool();
+    hold(&held, NOBODY, &prompt("p1"));
+    let (h, e) = (held.clone(), Arc::clone(&edge));
+    let flushed =
+        tokio::task::spawn_blocking(move || flush_with(&h, &soon(), OWN, OWN, &Racing::over(&e)))
+            .await
+            .unwrap();
+    assert_eq!(
+        notices(&flushed),
+        vec![HeldSetAside {
+            session: "never-minted-wren".to_string(),
+            count: 1,
+            why: "the daemon has no record of this session".to_string(),
+        }]
+    );
+    assert_eq!(held_files(&held), vec![(root_of(NOBODY), 1, 0)]);
+    assert!(recorded(&edge, NOBODY).await.is_empty());
+}

@@ -149,6 +149,19 @@ message RecordCaptureGap {
   string stamp = 4;
 }
 
+// The answer (s4-Q14, H3 follow-up; owner: a DISTINCT, typed answer, never
+// "applied") to a capture fact addressed to a session the daemon has no
+// record of: its stream holds no session (never minted, or destroyed), so
+// the fact was recorded nowhere. Not a refusal (a fact is never refused,
+// and the markup holds `(refusal_status)` to a command's refusals): the
+// daemon's listener answers a capture fact that recorded nothing with this
+// message's full name as the reason key, under NOT_FOUND; a client sets the
+// fact aside, says so, and never retries it.
+message FactSessionUnknown {
+  // The session's stream root, as the fact's cover named it (UUID text).
+  string session = 1;
+}
+
 message PromptSubmitted {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
 

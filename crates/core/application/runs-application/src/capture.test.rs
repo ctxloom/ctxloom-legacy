@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use surface_ports::{HookEvent, MessageDisplay, ToolCall, ToolStatus};
 
 use crate::fakes::{uuid, World, SESSION_ME, SESSION_OTHER};
-use crate::{delivery_budget, observe, Capture, Observation, Recorded};
+use crate::{delivery_budget, no_such_session, observe, Capture, Observation, Recorded};
 
 const S: &str = SESSION_ME;
 
@@ -735,4 +735,74 @@ fn a_gap_with_no_time_is_dropped_at_the_epoch() {
     };
     assert_eq!(gap.dropped_at, angzarr_embedded::Timestamp::default());
     assert_eq!(gap.why, "disk");
+}
+
+// s4-Q14, H3 follow-up: a capture fact the kernel applied with no event was
+// addressed to a session the daemon has no record of; anything else is not.
+#[test]
+fn a_capture_fact_applied_with_no_event_had_no_session() {
+    use angzarr_embedded::v1::DeliveryOutcome;
+    let session = uuid(S);
+    let fact = observe(&turn_start("p1", "echo hi"))[0].book(&session);
+    let gap = Observation::gap(&run_ports::HeldGap {
+        stamp: String::new(),
+        external_id: "x".to_string(),
+        held_at: None,
+        why: "bound".to_string(),
+    })
+    .book(&session);
+    let answered = |delivery, events: usize| angzarr_embedded::Answered {
+        delivery,
+        events: Some(angzarr_embedded::v1::EventBook {
+            pages: vec![angzarr_embedded::v1::EventPage::default(); events],
+            ..angzarr_embedded::v1::EventBook::default()
+        }),
+    };
+    let nothing = angzarr_embedded::Answered {
+        delivery: DeliveryOutcome::Applied,
+        events: None,
+    };
+    assert!(no_such_session(&fact, &nothing), "no event book at all");
+    assert!(no_such_session(
+        &fact,
+        &answered(DeliveryOutcome::Applied, 0)
+    ));
+    assert!(no_such_session(
+        &gap,
+        &answered(DeliveryOutcome::Applied, 0)
+    ));
+    assert!(!no_such_session(
+        &fact,
+        &answered(DeliveryOutcome::Applied, 1)
+    ));
+    assert!(!no_such_session(
+        &fact,
+        &answered(DeliveryOutcome::Duplicate, 0)
+    ));
+    // A command, or a fact of no capture (a bind records nothing when it
+    // changes nothing), is never read so.
+    let command = crate::fakes::command_book(
+        fact.cover.clone().unwrap(),
+        sessions::SetKept { kept: true },
+    );
+    assert!(!no_such_session(
+        &command,
+        &answered(DeliveryOutcome::Applied, 0)
+    ));
+    let mut elsewhere = fact.clone();
+    elsewhere.cover.as_mut().unwrap().domain = "runs".to_string();
+    assert!(!no_such_session(
+        &elsewhere,
+        &answered(DeliveryOutcome::Applied, 0)
+    ));
+}
+
+// The answer's reason key is the full name of the typed answer the protos
+// declare: capture.proto, package ctxloom.sessions.v1, FactSessionUnknown.
+#[test]
+fn the_no_such_session_key_is_the_typed_answers_full_name() {
+    let proto = include_str!("../../../../../proto/ctxloom/sessions/v1/capture.proto");
+    let (package, name) = run_ports::NO_SUCH_SESSION.rsplit_once('.').unwrap();
+    assert!(proto.contains(&format!("package {package};")), "{package}");
+    assert!(proto.contains(&format!("\nmessage {name} {{")), "{name}");
 }

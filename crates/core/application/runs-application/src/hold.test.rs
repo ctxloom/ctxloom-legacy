@@ -585,6 +585,8 @@ fn a_refused_or_parked_held_fact_is_set_aside_and_said() {
             detail: "no".to_string(),
         },
         Delivery::Parked,
+        // A session the daemon has no record of (H3 follow-up).
+        Delivery::NoSuchSession,
     ] {
         let memory = Memory::holding(vec![
             held_of(&prompt("p1"), OWN),

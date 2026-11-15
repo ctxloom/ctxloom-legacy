@@ -123,6 +123,26 @@ async fn a_domain_the_edge_does_not_serve_is_refused_not_unavailable() {
     ));
 }
 
+// s4-Q14, H3 follow-up: the in-process sink answers a capture fact
+// addressed to a session the store has no record of as the daemon's
+// listener does: no such session, never applied.
+#[tokio::test]
+async fn a_fact_to_a_session_with_no_record_is_no_such_session() {
+    let (_, edge) = world().await;
+    let sink = EdgeSink::new(edge);
+    let nobody = Uuid::from_bytes(*uuid::Uuid::from_u128(7).as_bytes());
+    let book = observe(&prompt("p1"))[0].book(&nobody);
+    assert_eq!(
+        sink.deliver(book, Duration::from_secs(5)),
+        Delivery::NoSuchSession
+    );
+    assert_eq!(
+        sink.deliver(book_of(&prompt("p1")), Duration::from_secs(5)),
+        Delivery::Applied,
+        "a live session's as ever"
+    );
+}
+
 #[tokio::test]
 async fn a_fact_that_loses_every_race_is_parked() {
     let (store, edge) = world().await;

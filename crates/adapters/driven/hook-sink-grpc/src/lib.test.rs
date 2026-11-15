@@ -809,3 +809,33 @@ fn an_error_chain_is_one_line_of_its_causes_outermost_first() {
     );
     assert_eq!(chain(&Layer("alone", None)), "alone");
 }
+
+// s4-Q14, H3 follow-up: the daemon's typed answer to a fact addressed to a
+// session it has no record of is its own delivery, by the answer's key as
+// message or reason; another not-found stays a refusal.
+#[test]
+fn a_fact_of_no_such_session_is_its_own_answer() {
+    use run_ports::NO_SUCH_SESSION;
+    assert_eq!(
+        delivery_of_code(Code::NotFound, NO_SUCH_SESSION, ""),
+        Delivery::NoSuchSession
+    );
+    assert_eq!(
+        delivery_of_code(Code::NotFound, "x", NO_SUCH_SESSION),
+        Delivery::NoSuchSession
+    );
+    assert!(matches!(
+        delivery_of_code(Code::NotFound, "x", "y"),
+        Delivery::Refused { .. }
+    ));
+}
+
+#[test]
+fn a_fact_of_no_such_session_over_the_wire_is_answered_so() {
+    let server = serve(Answer::Fail(Code::NotFound, run_ports::NO_SUCH_SESSION));
+    let sink = server.sink();
+    assert_eq!(
+        sink.deliver(CommandBook::default(), BUDGET),
+        Delivery::NoSuchSession
+    );
+}
