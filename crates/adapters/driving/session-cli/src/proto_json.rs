@@ -170,6 +170,28 @@ pub fn daemon(daemon: &v1::Daemon) -> Value {
         .u64("idle_seconds", daemon.idle_seconds)
         .u64("idle_limit_seconds", daemon.idle_limit_seconds)
         .text("draining_for", &daemon.draining_for)
+        .list("warnings", daemon.warnings.iter().map(notice).collect())
+        .done()
+}
+
+/// A notice: its code, its args and its text (OD-52's daemon warnings).
+fn notice(notice: &v1::Notice) -> Value {
+    Fields::default()
+        .text("code", &notice.code)
+        .list(
+            "args",
+            notice
+                .args
+                .iter()
+                .map(|arg| {
+                    Fields::default()
+                        .text("name", &arg.name)
+                        .text("value", &arg.value)
+                        .done()
+                })
+                .collect(),
+        )
+        .text("text", &notice.text)
         .done()
 }
 

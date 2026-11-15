@@ -1218,3 +1218,83 @@ fn a_newer_command_drains_an_older_daemon_which_hands_its_child_over() {
         w.input().contains("second task").then_some(())
     });
 }
+
+// OD-52: a fresh daemon whose start-up catch-up fails STILL starts, and is
+// loud about it: its log says so, `daemon status` (text and json) carries
+// the warning `daemon-api-start-up-incomplete` naming why, and a command
+// that reaches it (`session list`) says it on stderr and still answers. A
+// later catch-up that succeeds (tried again each round) clears it: the
+// status and the next command say nothing more. The fault is the
+// test-support switch `test-start-up-fails`, there until the test removes it.
+#[test]
+fn a_daemon_whose_start_up_catch_up_fails_serves_and_says_so_until_one_succeeds() {
+    let world = World::new();
+    let switch = world
+        .project
+        .home()
+        .join(".ctxloom/daemon/test-start-up-fails");
+    files::put(&switch, "the store is made to fail\n");
+    let listed = world.run(&["session", "list", "--format", "text"]);
+    assert_eq!(listed.code, 0, "{}\n{}", listed.said(), world.log());
+    assert!(
+        listed
+            .stderr
+            .contains("the daemon's start-up catch-up failed: "),
+        "{}",
+        listed.said()
+    );
+    assert!(
+        listed.stderr.contains("the store is made to fail"),
+        "{}",
+        listed.said()
+    );
+    assert!(
+        listed.stderr.contains("may be missing events"),
+        "{}",
+        listed.said()
+    );
+    let log = world.log();
+    assert!(log.contains("the start-up catch-up failed"), "{log}");
+    assert!(log.contains("the store is made to fail"), "{log}");
+    let status = world.ok(&["daemon", "status", "--format", "json"]);
+    let warnings = status["warnings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(warnings.len(), 1, "{status}");
+    assert_eq!(warnings[0]["code"], "daemon-api-start-up-incomplete");
+    assert!(
+        warnings[0]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("the store is made to fail")),
+        "{status}"
+    );
+    let text = world.run(&["daemon", "status", "--format", "text"]);
+    assert_eq!(text.code, 0, "{}", text.said());
+    assert!(
+        text.stdout
+            .contains("warning: the daemon's start-up catch-up failed: the store is made to fail"),
+        "{}",
+        text.said()
+    );
+    // The cause gone, a round's catch-up succeeds and clears it.
+    files::remove(&switch);
+    world.until("the warning cleared", |w| {
+        let status = w.ok(&["daemon", "status", "--format", "json"]);
+        status["warnings"]
+            .as_array()
+            .is_none_or(|warnings| warnings.is_empty())
+            .then_some(())
+    });
+    let again = world.run(&["session", "list", "--format", "text"]);
+    assert_eq!(again.code, 0, "{}", again.said());
+    assert!(
+        !again.stderr.contains("start-up catch-up failed"),
+        "{}",
+        again.said()
+    );
+    assert!(
+        world
+            .log()
+            .contains("the start-up catch-up, tried again, succeeded"),
+        "{}",
+        world.log()
+    );
+}
