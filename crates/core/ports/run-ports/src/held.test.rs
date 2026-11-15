@@ -96,15 +96,36 @@ fn a_gaps_why_is_a_word() {
 
 /// A settle that records the flags it was handed.
 #[derive(Default, Clone)]
-struct Told(Arc<Mutex<Option<Vec<bool>>>>);
+struct Told(Arc<Mutex<Option<Vec<bool>>>>, Arc<Mutex<Vec<Fate>>>);
 
 impl Settle for Told {
-    fn settle(self: Box<Self>, keep: &[bool]) -> Result<Settled, HoldError> {
-        *self.0.lock().unwrap() = Some(keep.to_vec());
+    fn settle(self: Box<Self>, fates: &[Fate]) -> Result<Settled, HoldError> {
+        let keep: Vec<bool> = fates.iter().map(|f| *f == Fate::Keep).collect();
+        *self.0.lock().unwrap() = Some(keep.clone());
+        *self.1.lock().unwrap() = fates.to_vec();
         Ok(Settled::Cut {
             kept: keep.iter().filter(|k| **k).count(),
         })
     }
+}
+
+// s4-Q14, H3: a batch hands its adapter each record's fate: a keep flag's
+// `false` is a cut, and a set-aside is its own fate.
+#[test]
+fn a_settle_hands_each_records_fate() {
+    let told = Told::default();
+    let batch = Batch::new((0..3).map(gap).collect(), Box::new(told.clone()));
+    batch
+        .settle_fates(|i| [Fate::Cut, Fate::SetAside, Fate::Keep][i])
+        .unwrap();
+    assert_eq!(
+        *told.1.lock().unwrap(),
+        vec![Fate::Cut, Fate::SetAside, Fate::Keep]
+    );
+    let told = Told::default();
+    let batch = Batch::new((0..2).map(gap).collect(), Box::new(told.clone()));
+    batch.settle(|i| i == 1).unwrap();
+    assert_eq!(*told.1.lock().unwrap(), vec![Fate::Cut, Fate::Keep]);
 }
 
 fn gap(n: usize) -> HeldEntry {

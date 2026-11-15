@@ -115,6 +115,16 @@ pub struct Kept {
 }
 
 impl Kept {
+    /// Whether a flush set it aside (H3: no silent drop): the daemon
+    /// finally refused or parked it, or it is no fact of its hold's session.
+    pub fn set_aside(&self) -> bool {
+        matches!(
+            self.outcome,
+            Outcome::Delivered(Delivery::Refused { .. } | Delivery::Parked)
+                | Outcome::NotHeld(NotHeld::Foreign)
+        )
+    }
+
     /// Whether the hook has something to say of it: anything but a fact
     /// the daemon has (applied, or a duplicate).
     pub fn said(&self) -> bool {
@@ -343,10 +353,23 @@ pub enum Left {
 pub struct SessionFlush {
     /// The session root the hold is named by.
     pub root: uuid::Uuid,
-    /// Each record it delivered (or dropped), in held order.
+    /// The session's resource name, as the hold's first fact names it.
+    pub session: Option<String>,
+    /// Each record it delivered (or set aside), in held order.
     pub flushed: Vec<Kept>,
     /// What it left, and why.
     pub left: Left,
+}
+
+impl SessionFlush {
+    /// The records it set aside, in held order: those the daemon finally
+    /// refused or parked, and those that are no fact of the hold's session.
+    pub fn set_aside(&self) -> Vec<&Kept> {
+        self.flushed
+            .iter()
+            .filter(|kept| kept.set_aside())
+            .collect()
+    }
 }
 
 /// The client side's flush of holds (owner, H-Q5 revised): a hook's of its
@@ -378,6 +401,7 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
             if self.clock.remaining().is_zero() {
                 flushes.push(SessionFlush {
                     root,
+                    session: None,
                     flushed: Vec::new(),
                     left: Left::OutOfTime,
                 });
@@ -405,6 +429,7 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Flush<'a, H, C> {
         let left = self.rounds(root, &session, daemon, sink, &mut flushed);
         SessionFlush {
             root: *root,
+            session: None,
             flushed,
             left,
         }

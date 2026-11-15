@@ -51,8 +51,9 @@ pub use engine::{
 };
 pub use git::{git_config, GitUser, GIT_CONFIG_FILE};
 pub use held::{
-    up_to_date, Batch, Bound, GapWhy, Held, HeldEntry, HeldFact, HeldFacts, HeldGap, HoldError,
-    HoldSummary, Settle, Settled, APPEND_WAIT, GAP_SLACK, HELD_DIR, HOME_BOUND, SESSION_BOUND,
+    up_to_date, Batch, Bound, Fate, GapWhy, Held, HeldEntry, HeldFact, HeldFacts, HeldGap,
+    HoldError, HoldSummary, Settle, Settled, APPEND_WAIT, GAP_SLACK, HELD_DIR, HOME_BOUND,
+    SESSION_BOUND,
 };
 pub use hook::{
     endpoint_url, hook_environment, parse_endpoint, Bearer, BearerError, Dial, EndpointError,

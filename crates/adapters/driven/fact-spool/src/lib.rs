@@ -45,8 +45,8 @@ use file_lock::{LockError, Locked};
 use file_system::{Fs, Open, Perms};
 use os::Mode;
 use run_ports::{
-    Batch, Bound, GapWhy, Held, HeldEntry, HeldFact, HeldFacts, HeldGap, HoldError, HoldSummary,
-    Settle, Settled, APPEND_WAIT, GAP_SLACK, HELD_DIR, HOME_BOUND, SESSION_BOUND,
+    Batch, Bound, Fate, GapWhy, Held, HeldEntry, HeldFact, HeldFacts, HeldGap, HoldError,
+    HoldSummary, Settle, Settled, APPEND_WAIT, GAP_SLACK, HELD_DIR, HOME_BOUND, SESSION_BOUND,
 };
 use uuid::Uuid;
 
@@ -470,7 +470,10 @@ struct Settling {
 }
 
 impl Settle for Settling {
-    fn settle(self: Box<Self>, keep: &[bool]) -> Result<Settled, HoldError> {
+    fn settle(self: Box<Self>, fates: &[Fate]) -> Result<Settled, HoldError> {
+        // RED: a set-aside record is cut.
+        let keep: Vec<bool> = fates.iter().map(|f| *f == Fate::Keep).collect();
+        let keep = keep.as_slice();
         let spool = &self.spool;
         let _append = spool.append_lock(&self.session)?;
         let path = spool.hold_path(&self.session);

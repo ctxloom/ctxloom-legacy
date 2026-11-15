@@ -476,6 +476,26 @@ impl Extension for Commands {
         out: &mut dyn Write,
         err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
+        let ran = self.run_noun(noun, call, catalog, out, err);
+        // What the flush on the way in set aside (s4-Q14, H3), said once
+        // a session as the command ends.
+        for set_aside in crate::daemon::flush::take_said() {
+            cli_support::say_warning(&set_aside, ctxloom_cli::PROG, call.format(), catalog, err);
+        }
+        ran
+    }
+}
+
+impl Commands {
+    /// [`Extension::run`]'s command, before what its flush set aside is said.
+    fn run_noun(
+        &mut self,
+        noun: &str,
+        call: &Call<'_>,
+        catalog: &Catalog,
+        out: &mut dyn Write,
+        err: &mut dyn Write,
+    ) -> Result<Exit, Failure> {
         #[cfg(feature = "test-support")]
         if noun == crate::test_commands::NOUN {
             let env = Arc::clone(&self.env);

@@ -361,3 +361,111 @@ fn with_no_daemon_serving_nothing_is_flushed() {
     let wiring = crate::Wiring::new(Arc::new(env)).unwrap();
     assert_eq!(flush_holds(&wiring, OWN), Flushed::NotServing);
 }
+
+// ------------------------------------------- H3: no silent drop on flush
+
+/// A sink that answers every delivery `answer`.
+struct Answering(Delivery);
+
+impl FactSink for Answering {
+    fn deliver(&self, _: CommandBook, _: Duration) -> Delivery {
+        self.0.clone()
+    }
+}
+
+/// Each hold the home has, with how many set-aside parts and facts it has.
+fn held_files(held: &fact_spool::Spool) -> Vec<(uuid::Uuid, u32, u64)> {
+    held.survey()
+        .unwrap()
+        .into_iter()
+        .map(|h| (h.root, h.set_aside, h.facts))
+        .collect()
+}
+
+// The daemon finally refuses what a session holds: each record goes to the
+// hold's set-aside part, not into the void, and the flush says it ONCE for
+// the session, naming its harp, how many and why.
+#[test]
+fn what_the_daemon_refuses_is_set_aside_and_said_once_a_session() {
+    let held = spool();
+    hold(&held, ONE, &prompt("p1"));
+    hold(&held, ONE, &turn_end("p1"));
+    let refused = Answering(Delivery::Refused {
+        detail: "the domain sessions is not served".to_string(),
+    });
+    let flushed = flush_with(&held, &soon(), OWN, OWN, &refused);
+    let said = notices(&flushed);
+    assert_eq!(
+        said,
+        vec![HeldSetAside {
+            session: "amber-swift-owl".to_string(),
+            count: 2,
+            why: "the daemon refused it: the domain sessions is not served".to_string(),
+        }]
+    );
+    assert!(held.is_empty(&root_of(ONE)).unwrap(), "nothing held");
+    assert_eq!(
+        held_files(&held),
+        vec![(root_of(ONE), 1, 0)],
+        "set aside beside the hold, in one part"
+    );
+}
+
+// A parked record and one that is no fact of its hold's session are set
+// aside too, each reason said once, in held order.
+#[test]
+fn a_parked_and_a_foreign_record_are_set_aside_each_reason_said_once() {
+    let held = spool();
+    hold(&held, ONE, &prompt("p1"));
+    hold(&held, ONE, &prompt("p2"));
+    // TWO's fact, in ONE's hold.
+    let observation = &observe(&prompt("q1"))[0];
+    held.hold(
+        &root_of(ONE),
+        HeldFact::of_book(
+            OWN,
+            ONE,
+            observation.external_id(&id_of(TWO)),
+            &observation.book(&id_of(TWO)),
+            None,
+        ),
+    )
+    .unwrap();
+    let flushed = flush_with(&held, &soon(), OWN, OWN, &Answering(Delivery::Parked));
+    assert_eq!(
+        notices(&flushed),
+        vec![HeldSetAside {
+            session: "amber-swift-owl".to_string(),
+            count: 3,
+            why: "the daemon parked it, as a fact it can never record; \
+                  it is not a fact of this session's stream"
+                .to_string(),
+        }]
+    );
+    assert!(held.is_empty(&root_of(ONE)).unwrap());
+}
+
+// A flush that delivered everything says nothing; one that did not run
+// says nothing either.
+#[test]
+fn a_flush_that_set_nothing_aside_says_nothing() {
+    let held = spool();
+    hold(&held, ONE, &prompt("p1"));
+    let flushed = flush_with(&held, &soon(), OWN, OWN, &Answering(Delivery::Applied));
+    assert!(notices(&flushed).is_empty());
+    assert!(notices(&Flushed::NotServing).is_empty());
+    assert!(held_files(&held).is_empty());
+}
+
+// What the way in set aside is said once: taken, it is gone.
+#[test]
+fn what_is_to_be_said_is_taken_once() {
+    let notice = HeldSetAside {
+        session: "s".to_string(),
+        count: 1,
+        why: "w".to_string(),
+    };
+    to_say(vec![notice.clone()]);
+    assert_eq!(take_said(), vec![notice]);
+    assert!(take_said().is_empty());
+}

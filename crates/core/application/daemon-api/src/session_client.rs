@@ -62,6 +62,11 @@ pub trait SessionReads {
 
     /// `session show`: this project's session `harp`.
     async fn get_session(&self, harp: &str) -> Result<v1::Session, CallError>;
+
+    /// `session transcript show`: this project's session `harp`'s
+    /// transcript, its D27 lines as delivered so far (owner, H3 follow-up:
+    /// a session read reaches the daemon, so its flush runs first).
+    async fn get_transcript(&self, harp: &str) -> Result<v1::Transcript, CallError>;
 }
 
 /// What a removal the daemon was asked came to: done (or planned, without
@@ -321,6 +326,12 @@ impl<D: Daemons> SessionReads for Client<D> {
             api.get_session(request).await
         })
         .await
+    }
+
+    async fn get_transcript(&self, harp: &str) -> Result<v1::Transcript, CallError> {
+        // RED: not read from the daemon yet.
+        let _ = harp;
+        Ok(v1::Transcript::default())
     }
 }
 

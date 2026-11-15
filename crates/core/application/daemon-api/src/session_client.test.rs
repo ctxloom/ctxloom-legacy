@@ -79,6 +79,17 @@ impl DaemonApi for Fake {
         })
     }
 
+    async fn get_transcript(&self, r: v1::GetTranscriptRequest) -> Result<v1::Transcript, Called> {
+        self.ask("get-transcript", None)?;
+        self.names.lock().unwrap().push(r.name.clone());
+        Ok(v1::Transcript {
+            name: r.name,
+            lines: vec![v1::TranscriptLine {
+                json: "{}".to_string(),
+            }],
+        })
+    }
+
     async fn list_sessions(
         &self,
         r: v1::ListSessionsRequest,
@@ -623,4 +634,31 @@ async fn a_dry_runs_parent_reaches_the_daemon_even_with_nothing_to_resolve() {
         "daemon-ports-not-started"
     );
     assert_eq!(failed.exit(), Exit::FAILED);
+}
+
+// Owner, H3 follow-up: `session transcript show` is a daemon read: it
+// addresses the session's transcript in the project the daemon named, and
+// is made once more on a new daemon if its own dies.
+#[tokio::test]
+async fn a_transcript_is_read_from_the_daemon_of_the_resolved_project() {
+    let daemons = Fakes::new();
+    daemons.template.dying.lock().unwrap().push(1);
+    let read = in_project(&daemons)
+        .get_transcript("amber-swift-owl")
+        .await
+        .unwrap();
+    assert_eq!(
+        read.name,
+        "projects/calm-otter/sessions/amber-swift-owl/transcript"
+    );
+    assert_eq!(read.lines.len(), 1);
+    assert_eq!(
+        daemons.asked(),
+        [
+            "1:resolve",
+            "1:get-transcript",
+            "2:resolve",
+            "2:get-transcript"
+        ]
+    );
 }

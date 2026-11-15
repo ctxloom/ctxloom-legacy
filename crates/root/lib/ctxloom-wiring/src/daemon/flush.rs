@@ -14,10 +14,16 @@
 //! bounded by [`FLUSH_BOUND`], so a command never stalls on it; what the
 //! bound leaves is the next command's (or the session's next hook's).
 //!
-//! It says nothing: what it could not deliver stays held, and a final
-//! answer (refused, parked) or a foreign record leaves the hold unsaid.
+//! What it could not deliver stays held, unsaid. What it can never deliver
+//! (the daemon finally refused or parked it, or it is no fact of its hold's
+//! session) goes to the hold's set-aside part and is said ONCE a session,
+//! [`HeldSetAside`], on stderr when the command ends ([`take_said`]); never
+//! a silent drop (owner, H3).
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+use angzarr_diagnostic::{code, Arg, Diagnostic};
 use std::time::{Duration, Instant};
 
 use run_ports::{FactSink, HeldFacts, HoldError};
@@ -111,10 +117,69 @@ impl WayIn {
 }
 
 /// A command reaching the daemon `found` names, of stamp `own`: its flush
-/// of the home's holds, the first time this process reaches it.
+/// of the home's holds, the first time this process reaches it; what it
+/// set aside is said when the command ends ([`take_said`]).
 pub(crate) fn on_the_way_in(wiring: &Wiring, own: &str, found: &run_ports::Discovery) {
     if FLUSHED_ON_THE_WAY_IN.first() {
-        let _ = flush_to(wiring, own, found);
+        let flushed = flush_to(wiring, own, found);
+        to_say(notices(&flushed));
+    }
+}
+
+/// What this process's flush set aside, to be said once on stderr.
+static SAID: Mutex<Vec<HeldSetAside>> = Mutex::new(Vec::new());
+
+fn to_say(notices: Vec<HeldSetAside>) {
+    if let Ok(mut said) = SAID.lock() {
+        said.extend(notices);
+    }
+}
+
+/// What this process's flush set aside and has not said yet, taken: the
+/// command says each once, on stderr, as it ends.
+pub(crate) fn take_said() -> Vec<HeldSetAside> {
+    SAID.lock()
+        .map(|mut said| std::mem::take(&mut *said))
+        .unwrap_or_default()
+}
+
+/// What a flush set aside, one notice a session (PROPOSAL, the owner's to
+/// word): how many of its held facts, and why, the reasons in held order,
+/// each once.
+pub(crate) fn notices(flushed: &Flushed) -> Vec<HeldSetAside> {
+    let _ = flushed;
+    Vec::new()
+}
+
+/// A session's held facts a flush set aside: never delivered again, kept in
+/// the hold's set-aside part (H3). `session` is its harp where the hold
+/// names it, else its session root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HeldSetAside {
+    pub(crate) session: String,
+    pub(crate) count: u64,
+    pub(crate) why: String,
+}
+
+impl std::fmt::Display for HeldSetAside {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        angzarr_diagnostic::display(self, f)
+    }
+}
+
+impl std::error::Error for HeldSetAside {}
+
+impl Diagnostic for HeldSetAside {
+    fn code(&self) -> &str {
+        code!("held-set-aside")
+    }
+
+    fn args(&self) -> Vec<(&str, Arg)> {
+        vec![
+            ("session", self.session.clone().into()),
+            ("count", self.count.into()),
+            ("why", self.why.clone().into()),
+        ]
     }
 }
 

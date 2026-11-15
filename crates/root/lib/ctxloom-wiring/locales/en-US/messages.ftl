@@ -13,3 +13,6 @@ ctxloom-wiring-seed = the test seed could not plant the session: { $ext_err_txt 
 ctxloom-wiring-test-refused = the test command { $verb } refused, as it always does
 ctxloom-wiring-test-refused-fix = nothing to fix: ask for the other test command
 ctxloom-wiring-test-findings = { $count } fatal findings
+# s4-Q14 (H3): DRAFT wording, the owner's to approve. A command's flush of
+# the home's holds could never deliver these (said once a session).
+ctxloom-wiring-held-set-aside = set aside { $count } held facts of { $session }, which will never be recorded: { $why }; they are kept beside the session's hold under ~/.ctxloom/held, and not delivered again

@@ -11,8 +11,8 @@ use std::time::Duration;
 use angzarr_embedded::v1::{command_page, CommandBook, Uuid};
 use daemon_proto::google::protobuf::Timestamp;
 use run_ports::{
-    Batch, Bound, Delivery, FactSink, Held, HeldEntry, HeldFact, HeldFacts, HeldGap, HoldError,
-    HoldSummary, Settle, Settled,
+    Batch, Bound, Delivery, FactSink, Fate, Held, HeldEntry, HeldFact, HeldFacts, HeldGap,
+    HoldError, HoldSummary, Settle, Settled,
 };
 use surface_ports::{HookEvent, MessageDisplay};
 
@@ -121,6 +121,8 @@ struct Inner {
     refuse: Option<Result<Held, HoldError>>,
     /// Calls of the port, by name.
     calls: Vec<&'static str>,
+    /// What a settle set aside, in order.
+    aside: Vec<HeldEntry>,
 }
 
 /// One session's hold in memory, with the adapter's take and settle
@@ -142,6 +144,20 @@ impl Memory {
 
     fn calls(&self) -> Vec<&'static str> {
         self.0.lock().unwrap().calls.clone()
+    }
+
+    /// What was set aside, by external id.
+    fn aside(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .aside
+            .iter()
+            .map(|e| match e {
+                HeldEntry::Fact(f) => f.external_id.clone(),
+                HeldEntry::Gap(g) => format!("gap:{}", g.external_id),
+            })
+            .collect()
     }
 
     fn refusing(&self, answer: Result<Held, HoldError>) {
@@ -204,15 +220,17 @@ struct Settling {
 }
 
 impl Settle for Settling {
-    fn settle(self: Box<Self>, keep: &[bool]) -> Result<Settled, HoldError> {
+    fn settle(self: Box<Self>, fates: &[Fate]) -> Result<Settled, HoldError> {
         let mut inner = self.memory.0.lock().unwrap();
         let since = inner.entries.split_off(self.len);
-        let kept: Vec<HeldEntry> = std::mem::take(&mut inner.entries)
-            .into_iter()
-            .zip(keep)
-            .filter(|(_, k)| **k)
-            .map(|(e, _)| e)
-            .collect();
+        let mut kept = Vec::new();
+        for (entry, fate) in std::mem::take(&mut inner.entries).into_iter().zip(fates) {
+            match fate {
+                Fate::Keep => kept.push(entry),
+                Fate::SetAside => inner.aside.push(entry),
+                Fate::Cut => {}
+            }
+        }
         let count = kept.len();
         inner.entries = kept;
         inner.entries.extend(since);
@@ -558,27 +576,46 @@ fn an_unsettled_held_delivery_keeps_it_and_holds_the_hook_behind() {
 }
 
 // A final answer to a held fact (refused, parked) is settled: it leaves the
-// hold and is said, never retried.
+// hold for its set-aside part (no silent drop, H3), is said, and is never
+// retried; what follows it is still delivered.
 #[test]
-fn a_refused_held_fact_leaves_the_hold_and_is_said() {
-    let memory = Memory::holding(vec![held_of(&prompt("p1"), OWN)]);
-    let clock = long();
-    let refused = Delivery::Refused {
-        detail: "no".to_string(),
-    };
-    let sink = Sink::new().answering([refused.clone()]);
-    let report = Holding::new(&memory, &clock, OWN, NAME).record(
-        &session(),
-        &turn_end("p1"),
-        daemon(OWN, &sink),
-    );
-    assert!(memory.entries().is_empty());
-    assert_eq!(outcomes(&report.flushed), vec![Outcome::Delivered(refused)]);
-    assert_eq!(
-        outcomes(&report.own),
-        vec![Outcome::Delivered(Delivery::Applied)]
-    );
-    assert_eq!(report.said().len(), 1);
+fn a_refused_or_parked_held_fact_is_set_aside_and_said() {
+    for answer in [
+        Delivery::Refused {
+            detail: "no".to_string(),
+        },
+        Delivery::Parked,
+    ] {
+        let memory = Memory::holding(vec![
+            held_of(&prompt("p1"), OWN),
+            held_of(&prompt("p2"), OWN),
+        ]);
+        let clock = long();
+        let sink = Sink::new().answering([answer.clone()]);
+        let report = Holding::new(&memory, &clock, OWN, NAME).record(
+            &session(),
+            &turn_end("p2"),
+            daemon(OWN, &sink),
+        );
+        assert!(memory.entries().is_empty());
+        assert_eq!(
+            memory.aside(),
+            ids_of(&prompt("p1")),
+            "set aside, not dropped"
+        );
+        assert_eq!(
+            outcomes(&report.flushed),
+            vec![
+                Outcome::Delivered(answer.clone()),
+                Outcome::Delivered(Delivery::Applied)
+            ]
+        );
+        assert_eq!(
+            outcomes(&report.own),
+            vec![Outcome::Delivered(Delivery::Applied)]
+        );
+        assert_eq!(report.said().len(), 1);
+    }
 }
 
 // An own delivery left unsettled (the daemon died under the hook) is held,
@@ -748,6 +785,14 @@ fn a_held_record_of_another_stream_is_dropped_and_said() {
     );
     assert_eq!(sink.delivered(), ids_of(&turn_end("p1")));
     assert!(memory.entries().is_empty());
+    assert_eq!(
+        memory.aside(),
+        vec![
+            observation.external_id(&uuid(SESSION_OTHER)),
+            "hook:prompt:not-its-book".to_string()
+        ],
+        "set aside, never dropped (H3)"
+    );
     assert_eq!(
         outcomes(&report.flushed),
         vec![
@@ -1127,4 +1172,37 @@ fn a_hold_that_cannot_be_read_leaves_the_others_flushing() {
     );
     assert_eq!(done[1].left, Left::Nothing);
     assert_eq!(sink.delivered(), ids_on(SESSION_OTHER, &prompt("q1")));
+}
+
+// A command's flush names each hold's session (its first fact's name) and
+// what it set aside, so it is said once, by session (H3: no silent drop).
+#[test]
+fn a_session_flush_names_its_session_and_what_it_set_aside() {
+    let memory = Memory::holding(vec![
+        held_of(&prompt("p1"), OWN),
+        held_of(&prompt("p2"), OWN),
+        held_of(&prompt("p3"), OWN),
+    ]);
+    let clock = long();
+    let sink = Sink::new().answering([
+        Delivery::Parked,
+        Delivery::Applied,
+        Delivery::Refused {
+            detail: "no".to_string(),
+        },
+    ]);
+    let done = Flush::new(&memory, &clock).session(&root(), OWN, &sink);
+    assert_eq!(done.session.as_deref(), Some(NAME));
+    assert_eq!(
+        done.set_aside()
+            .iter()
+            .map(|k| k.external_id.clone())
+            .collect::<Vec<_>>(),
+        [ids_of(&prompt("p1")), ids_of(&prompt("p3"))].concat()
+    );
+    assert_eq!(
+        memory.aside(),
+        [ids_of(&prompt("p1")), ids_of(&prompt("p3"))].concat()
+    );
+    assert_eq!(done.left, Left::Nothing);
 }

@@ -194,12 +194,26 @@ pub enum Settled {
     Replaced,
 }
 
+/// What becomes of one record of a taken hold when its batch is settled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fate {
+    /// It stays in the hold, where it was.
+    Keep,
+    /// It goes: delivered.
+    Cut,
+    /// It goes from the hold to its set-aside part (as corruption does),
+    /// never delivered again: the daemon finally refused or parked it, or
+    /// it is not a fact of the hold's session (s4-Q14, H3: no silent drop).
+    SetAside,
+}
+
 /// The adapter's half of a [`Batch`]: what rewrites the hold once the
-/// caller says what to keep.
+/// caller says what becomes of each record.
 pub trait Settle: Send {
-    /// Rewrite the hold to the snapshot's records `keep` marks (one flag
-    /// per record, in order), then everything appended since.
-    fn settle(self: Box<Self>, keep: &[bool]) -> Result<Settled, HoldError>;
+    /// Rewrite the hold to the snapshot's records `fates` keeps (one fate
+    /// per record, in order), then everything appended since; the records
+    /// it sets aside are kept in the hold's set-aside part.
+    fn settle(self: Box<Self>, fates: &[Fate]) -> Result<Settled, HoldError>;
 }
 
 /// A hold's snapshot, in the order held, owned by the one process that
@@ -223,8 +237,14 @@ impl Batch {
     /// Keep the records `keep(i)` says, remove the rest. A record appended
     /// after the snapshot is always kept.
     pub fn settle(self, keep: impl Fn(usize) -> bool) -> Result<Settled, HoldError> {
-        let flags: Vec<bool> = (0..self.entries.len()).map(keep).collect();
-        self.settle.settle(&flags)
+        self.settle_fates(|i| if keep(i) { Fate::Keep } else { Fate::Cut })
+    }
+
+    /// Settle each record as `fate(i)` says: kept, cut, or set aside. A
+    /// record appended after the snapshot is always kept.
+    pub fn settle_fates(self, fate: impl Fn(usize) -> Fate) -> Result<Settled, HoldError> {
+        let fates: Vec<Fate> = (0..self.entries.len()).map(fate).collect();
+        self.settle.settle(&fates)
     }
 
     /// Cut the delivered prefix: the snapshot's first `delivered` records
