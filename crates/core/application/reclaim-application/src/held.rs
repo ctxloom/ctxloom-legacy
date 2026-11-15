@@ -39,13 +39,27 @@ pub struct Holds<H>(pub H);
 
 impl<H: HeldFacts> SessionHolds for Holds<H> {
     fn held(&self, name: &str) -> Result<Option<HeldOf>, HoldError> {
-        let _ = name;
-        Ok(None)
+        // A hold is named by its session's stream root.
+        let Ok(session) = sessions::SessionName::parse(name) else {
+            return Ok(None);
+        };
+        let root = session.id();
+        Ok(self
+            .0
+            .survey()?
+            .into_iter()
+            .find(|summary| summary.root == root)
+            .map(|summary| HeldOf {
+                facts: summary.facts,
+                set_aside: summary.set_aside,
+            }))
     }
 
     fn discard(&self, name: &str) -> Result<(), HoldError> {
-        let _ = name;
-        Ok(())
+        match sessions::SessionName::parse(name) {
+            Ok(session) => self.0.discard(&session.id()).map(|_| ()),
+            Err(_) => Ok(()),
+        }
     }
 }
 
@@ -57,8 +71,11 @@ pub fn destroys_held(
     name: &str,
     applied: bool,
 ) -> Result<Option<HeldOf>, HoldError> {
-    let _ = (holds, name, applied);
-    Ok(None)
+    let held = holds.held(name)?;
+    if applied && held.is_some() {
+        holds.discard(name)?;
+    }
+    Ok(held)
 }
 
 #[cfg(test)]

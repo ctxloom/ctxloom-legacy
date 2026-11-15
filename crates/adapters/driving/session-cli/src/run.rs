@@ -14,7 +14,7 @@ use daemon_api::{Removed, SessionRemovals};
 use daemon_proto::v1;
 use isolation_application::{IsolationError, WorktreeUse};
 #[cfg(feature = "session-destroy")]
-use reclaim_application::{ReclaimError, SessionHolds};
+use reclaim_application::{destroys_held, ReclaimError, SessionHolds};
 #[cfg(feature = "session-destroy")]
 use sessions_application::Timestamp;
 use sessions_application::{
@@ -22,7 +22,7 @@ use sessions_application::{
     RemovedNothing, SessionService, State, TitleRequest, TranscriptQuery, Urgency, STATES,
 };
 #[cfg(feature = "session-destroy")]
-use sessions_application::{DestroysAuthored, REMOVE_VERB};
+use sessions_application::{DestroysAuthored, DestroysHeld, REMOVE_VERB};
 
 use crate::render::{
     conversation_text, import_text, listing_text, session_text, transcripts_text, worktrees_text,
@@ -598,7 +598,6 @@ async fn remove<R: SessionRemovals>(
     format: Format,
     out: &mut dyn Write,
 ) -> Result<Done, Failure> {
-    let _ = holds;
     let removed = removals
         .delete_session(harp, args.yes, args.even_if_live)
         .await
@@ -632,6 +631,17 @@ async fn remove<R: SessionRemovals>(
         done.notices.push(Box::new(DestroysAuthored {
             harp: harp.to_string(),
             files: plan.authored.join(", "),
+        }));
+    }
+    // s4-Q14, H-Q8 (a): what its hold keeps goes with it too, warned of
+    // the same way; an applied destroy then discards it.
+    if let Some(held) =
+        destroys_held(holds, &plan.name, plan.applied == Some(true)).map_err(hold_failure)?
+    {
+        done.notices.push(Box::new(DestroysHeld {
+            harp: harp.to_string(),
+            facts: held.facts,
+            set_aside: held.set_aside,
         }));
     }
     if !args.yes {
@@ -690,7 +700,6 @@ async fn sweep<R: SessionRemovals>(
         };
         reclaim_application::parse_age(flag, age, now).map_err(reclaim_failure)?;
     }
-    let _ = holds;
     let report = removals
         .sweep_sessions(
             args.all_projects,
@@ -711,6 +720,20 @@ async fn sweep<R: SessionRemovals>(
             harp: row.harp.clone(),
             files: row.authored.join(", "),
         }));
+    }
+    // s4-Q14, H-Q8 (a): each session it destroys, or plans to, has its
+    // hold warned of; each destroyed has it discarded, before a failed
+    // row fails the command.
+    for removal in &report.sessions {
+        if let Some(held) = destroys_held(holds, &removal.name, removal.applied == Some(true))
+            .map_err(hold_failure)?
+        {
+            done.notices.push(Box::new(DestroysHeld {
+                harp: removal.harp.clone(),
+                facts: held.facts,
+                set_aside: held.set_aside,
+            }));
+        }
     }
     let counts = report.counts.unwrap_or_default();
     if args.yes && counts.failed > 0 {
@@ -734,6 +757,13 @@ async fn sweep<R: SessionRemovals>(
         }));
     }
     Ok(done)
+}
+
+/// A hold this process could not read or discard: a failure (10), never a
+/// quiet leftover.
+#[cfg(feature = "session-destroy")]
+fn hold_failure(error: reclaim_application::HoldError) -> Failure {
+    Failure::new(error, Exit::FAILED, Vec::new())
 }
 
 /// A reclaim use case's failure: its diagnostic and exit code.
