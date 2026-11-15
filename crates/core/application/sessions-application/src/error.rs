@@ -237,6 +237,41 @@ impl Diagnostic for DestroysAuthored {
     }
 }
 
+/// A removal of a session whose hold keeps facts no daemon has recorded
+/// (s4-Q14, H4; owner H-Q8 (a)): a notice, never a refusal, said whether
+/// the removal was applied (the hold discarded with it) or only reported.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DestroysHeld {
+    pub harp: String,
+    /// The facts its hold keeps.
+    pub facts: u64,
+    /// Its hold's set-aside parts: what a flush could never record.
+    pub set_aside: u32,
+}
+
+impl fmt::Display for DestroysHeld {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        angzarr_diagnostic::display(self, f)
+    }
+}
+
+impl Diagnostic for DestroysHeld {
+    fn code(&self) -> &str {
+        code!("destroys-held")
+    }
+
+    fn args(&self) -> Vec<(&str, Arg)> {
+        vec![
+            ("harp", self.harp.as_str().into()),
+            (
+                "facts",
+                i64::try_from(self.facts).unwrap_or(i64::MAX).into(),
+            ),
+            ("set_aside", i64::from(self.set_aside).into()),
+        ]
+    }
+}
+
 /// This crate's en-US messages, its name first.
 pub const EN_US: (&str, &str) = (
     env!("CARGO_PKG_NAME"),
@@ -285,6 +320,11 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(DestroysAuthored {
             harp: harp(),
             files: "design-notes.md, plan.md".to_string(),
+        }),
+        Box::new(DestroysHeld {
+            harp: harp(),
+            facts: 3,
+            set_aside: 1,
         }),
     ]);
     samples

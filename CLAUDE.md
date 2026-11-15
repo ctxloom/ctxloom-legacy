@@ -2574,6 +2574,28 @@ another format is never touched (`run-ports-hold-format`). No record is
 fsync'd. The property tests use a seeded generator of the test's own (no
 property crate is in the lock).
 
+What reclaims a hold (s4-Q14, unit H4; owner H-Q7 (a), H-Q8 (a)): a
+session's DESTROY, and nothing else. The hold is the client's, so the
+command that asked the daemon for the destroy (`session remove`, `session
+sweep`) reads this home's holds by the session's resource name
+(`reclaim_application::Holds` over the `Spool`, `SessionHolds`,
+`destroys_held`) once the daemon answers: each session it destroys or
+plans to that holds anything warns first, the notice
+`sessions-application-destroys-held` (its facts and set-aside parts; never
+a refusal), and an applied destroy then discards the hold and its
+set-aside parts; a refused removal touches no hold; a hold that cannot be
+read or discarded fails the command (10) after the daemon's answer is
+printed. A downgrade's facts (of a newer ctxloom) stay held until a
+reinstall or the destroy. Doctor reports every hold,
+`DOCTOR-CHECK-HELD-FACTS-h1` (doctor-checks' `held.rs`, wired by
+`Doctor::reporting_holds` with this binary's own stamp): `ok` when nothing
+is held, `info` for facts a daemon of their version takes held up to an
+hour (`STALE_AFTER_SECONDS`), `warn` for one held longer, of a newer
+ctxloom, with gaps, set-aside parts, an unreadable format or a bad tail,
+or holds that cannot be read; each hold named by its harp (else its root)
+with its count, size, stamps and oldest instant; `--fix` removes none.
+`ctxloom clean` never takes a hold (it is no cache).
+
 ## No path dependency leaves the repository
 
 A tracked `Cargo.toml` or `.cargo/*.toml` never holds a dependency, `[patch]`
