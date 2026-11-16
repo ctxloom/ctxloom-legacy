@@ -2070,9 +2070,45 @@ a terminal (or the stood-in `CTXLOOM_TEST_TERMINAL`) it asks `[y/N]` on
 stderr and only `y`/`yes` grants; off one it prints the preview and changes
 nothing (exit 1 under `--detailed-exitcode` when the apply would change
 something); `--yes` applies. The grant and revoke are `HandleSync` on
-projector `trust-index`, keyed once per call. Nothing enforces trust yet:
-the launch check, the prompt pass-over and a cross-project child's trust are
-U2 and later units. `trust-plan-stale`'s text is DRAFT.
+projector `trust-index`, keyed once per call. `trust-plan-stale`'s text is
+DRAFT.
+
+Trust is ENFORCED (step 8 U2). The daemon reads it (`TrustIndex::trusts`, by
+project id) for every launch it makes, a one-shot, a terminal session, a
+hand-off and a hosted child's start, and plans it with
+`library_application::Flags::trusted` (never the client's to say: no flag or
+variable sets it). Untrusted, `config::load` holds ruling 46's four keys back
+from the project layer as before (`Config::held_back`, the notice as before),
+and the plan names those THIS launch reads (`DryRun::untrusted`: its engine's
+block and its agent's, owner Q8), which are `EnqueueRun.untrusted_settings`
+(field 14): the runs aggregate refuses them LAST of its checks (Q9),
+`runs-untrusted-project-settings` (`UntrustedProjectSettings{paths}`,
+FAILED_PRECONDITION; `LaunchRefusals` field 7; DRAFT text); the credential
+evidence is read with them held back, so an untrusted `auth.file` is reported
+once. Trusted, the project's own keys apply until the trust is revoked (S23).
+In-process library verbs still hold them back (until T13). A project's own
+`ctxloom` bundle replaces an operational prompt (init's interview, distill's)
+only once the project is trusted (D4): `Project::operational_prompt` passes it
+over for the built-in otherwise, with the DRAFT notice
+`library-application-notice-prompt-untrusted`, which `init prompt` says with
+its remedy. Where no flag says, the library asks `Library::with_trust` (the
+wiring's `daemon::trust_ask`: ONE `GetTrust` of the user's daemon, which may
+start one), and only when a project `ctxloom` bundle is there to decide on.
+
+A child may work in ANOTHER project (step 8 Q1, D8): `session launch <owner>
+--project <dir>` (the shell's working directory) and `child_launch`'s
+`project` (relative to the session's `CTXLOOM_ROOT`, Q-C). The caller resolves
+the directory (`Caller::resolving`, the wiring's `daemon::project_resolver`: a
+command run there, its `CTXLOOM_ROOT` dropped; a directory in no ctxloom
+project is `daemon-api-project-unknown`, exit 20) and registers it
+(`ResolveProject`); the child is named in that project,
+`CreateHandOffRequest.project` names it, and the daemon refuses an untrusted
+one, `sessions-untrusted-target`, before anything is planned or written, else
+plans the child at its root with its trust (`HandOff.project` answers it).
+`LaunchChild` carries its project's id and root and `TargetTrust` from the
+daemon's answers (`same_project`; `trusted`, GetTrust's, unread for the
+owner's own project). Not yet: a cross-project child's outputs go to its
+owner's output folder; its asks are the root's project's (Q-A, U4).
 
 ## Storage is angzarr-store-sqlite
 

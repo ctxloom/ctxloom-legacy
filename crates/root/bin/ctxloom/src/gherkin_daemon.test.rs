@@ -505,6 +505,12 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         w.before_run();
         let mut env = env_of(w);
         env.push(("CTXLOOM_TEST_TERMINAL".to_string(), "1".to_string()));
+        // Her login, as a command at her terminal has it: the trust's actor.
+        for name in ["USER", "LOGNAME", "USERNAME"] {
+            if let Some(value) = crate::tests::host_var(name) {
+                env.push((name.to_string(), value.to_string_lossy().into_owned()));
+            }
+        }
         let words = line_words(step);
         let args: Vec<&str> = words.iter().map(String::as_str).collect();
         w.common.ran = Some(w.common.project.run_input(&args, "yes\n", &env_pairs(&env)));
@@ -3449,6 +3455,17 @@ fn run_in_project(w: &mut World, line: String, name: String) {
     w.before_line(&line);
     w.before_run();
     w.common.run_lines_at(Some(&dir), &line, "");
+    // A child launched there is minted by the daemon after its launch is
+    // answered (`session launch` answers it as launched): its `session
+    // show` is read once the store has it, bounded, as `the child ... ran
+    // its first turn` reads it.
+    if line.trim_start().starts_with("ctxloom session show") && w.ran().code != 0 {
+        let deadline = Instant::now() + DAEMON_WAIT;
+        while w.ran().code != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+            w.common.run_lines_at(Some(&dir), &line, "");
+        }
+    }
 }
 
 #[given(expr = "I note the ask named by {string} as {string}")]

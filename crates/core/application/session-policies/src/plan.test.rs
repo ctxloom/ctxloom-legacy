@@ -252,9 +252,11 @@ fn a_child_the_owner_no_longer_holds_is_not_launched() {
     assert!(world.plan().is_empty());
 }
 
-// A child in another project is that project's to launch.
+// A child in another project (step 8 Q1) is launched by its owner's plan,
+// minted in its own project at its own root: one store holds both (T14),
+// and nothing in its project's plan holds its launch.
 #[test]
-fn a_child_in_another_project_is_not_launched_here() {
+fn a_child_in_another_project_is_minted_there_by_its_owners_plan() {
     let mut world = World::launched("port it");
     world.owner[2] = SessionEvent::ChildLaunched(ChildLaunched {
         child: Some(SessionRef {
@@ -267,7 +269,18 @@ fn a_child_in_another_project_is_not_launched_here() {
         depth: 1,
         prompt: "x".to_string(),
     });
-    assert!(world.plan().is_empty());
+    let steps = world.plan();
+    assert_eq!(keys(&steps), [format!("mint:{OWNER}:{CHILD}")]);
+    let Step::Launch { mint, failed, .. } = &steps[0] else {
+        panic!("{steps:?}");
+    };
+    assert_eq!(mint.mint.project_id, "far-heron");
+    assert_eq!(mint.claim.project_id, "far-heron");
+    assert_eq!(mint.mint.command.project_id, "far-heron");
+    assert_eq!(mint.mint.command.project_dir, "/far");
+    assert_eq!(mint.mint.command.owner, Some(at(OWNER)));
+    // The owner is told, in its own project, if it fails.
+    assert_eq!(failed.project_id, PROJECT);
 }
 
 // The launch's prompt is the minted child's first wake.

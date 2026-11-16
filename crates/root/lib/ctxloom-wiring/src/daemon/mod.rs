@@ -919,7 +919,7 @@ pub(crate) fn project_resolver(wiring: &Wiring, base: PathBuf) -> Arc<daemon_api
     let home = wiring.home().to_path_buf();
     let user_home = wiring.user_home();
     Arc::new(move |dir: &str| {
-        let at = base.join(dir);
+        let at = lexical(&base.join(dir));
         let vars: Vec<(OsString, OsString)> = env
             .vars()
             .filter(|(name, _)| *name != OsStr::new(run_ports::ROOT_VARIABLE))
@@ -948,6 +948,26 @@ pub(crate) fn project_resolver(wiring: &Wiring, base: PathBuf) -> Arc<daemon_api
             })),
         }
     })
+}
+
+/// `path` with its `.` and `..` taken out by their words alone: a
+/// project's directory named `../api` is the sibling `api`, never found by a
+/// walk up from `<project>/..` to the project itself.
+pub(crate) fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(part);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The launch locks a launch from `wiring`'s home holds (T6): its daemon's

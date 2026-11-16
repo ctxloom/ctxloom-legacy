@@ -274,3 +274,16 @@ fn the_log_is_made_at_the_start_and_a_line_whose_directory_is_gone_is_dropped() 
         "made again"
     );
 }
+
+// Step 8 Q1: a launch's `--project ../api` is the sibling directory, by its
+// words alone.
+#[test]
+fn a_projects_directory_is_read_lexically() {
+    use std::path::Path;
+    assert_eq!(
+        super::lexical(Path::new("/w/project/../api")),
+        Path::new("/w/api")
+    );
+    assert_eq!(super::lexical(Path::new("/w/./a/b/..")), Path::new("/w/a"));
+    assert_eq!(super::lexical(Path::new("../x")), Path::new("../x"));
+}

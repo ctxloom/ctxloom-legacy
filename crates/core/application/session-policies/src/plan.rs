@@ -234,13 +234,14 @@ pub fn plan(scene: &Scene<'_>) -> Vec<Step> {
     steps
 }
 
-/// The launches owed, and each launched child's first task.
+/// The launches owed, and each launched child's first task: its owner's
+/// plan's, a child in another project's too (step 8 Q1), minted in its own
+/// project (one store holds every project's, T14).
 fn launches(scene: &Scene<'_>, steps: &mut Vec<Step>) {
-    let ours = |child: &SessionRef| child.project_id == scene.project_id;
     for (owner_id, owner) in scene.sessions() {
         let owner_ref = here(scene.project_id, owner_id);
         for launched in scene.board.launched(owner_id) {
-            let Some(child) = launched.child.as_ref().filter(|c| ours(c)) else {
+            let Some(child) = launched.child.as_ref() else {
                 continue;
             };
             let held = owner
