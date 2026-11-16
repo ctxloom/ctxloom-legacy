@@ -20,6 +20,12 @@
 # is read run by run. A tier below its threshold fails `score` (the verdict's
 # own exit), after the scores are kept.
 #
+# On a branch that carries red spec on purpose (an integration branch, owner
+# ruling 165), the shard holding the binary's mutants judges its feature
+# runner against the tree's own scenario list (`mutants-shard`'s ratchet,
+# GHERKIN_RATCHET_BASE), so its baseline is not red for the carried red and
+# a new red still fails; the suites job runs the runner straight.
+#
 # A dispatch may choose: `suites` (run the test suites too), `shards` (n),
 # and `only-shard` (run that one shard k of n alone, to measure a shard's
 # time; the score is then of that shard only).

@@ -10,7 +10,8 @@
 # subset passes; a failure outside the feature runner (another test, another
 # gate) fails though the list is a subset; a new red fails; on a base with no
 # red scenario (main) one red scenario fails, as the plain closeout would;
-# mutants-batch gets merge-base(base, HEAD) and GHERKIN_RATCHET.
+# mutants-batch gets merge-base(base, HEAD) and GHERKIN_RATCHET_BASE (the
+# base's list) when the base has red, and neither ratchet variable on main.
 #
 # The landing gate (`just land-ratchet <base>`: closeout-ratchet.sh
 # --no-mutation <base>): the same gates and judge with no mutants-batch, even
@@ -143,7 +144,7 @@ lint:
 test:
     @cp "$STUB_LIST" "$GHERKIN_RATCHET"; [ "${STUB_TEST_RC:-0}" = 0 ] || { echo "FAIL test: tests failed: 1 failed (full log: x)" >&2; exit "$STUB_TEST_RC"; }; echo "ok   test (stub) 0.1s"
 mutants-batch base="":
-    @echo "ok   mutants-batch (base=[{{base}}] ratchet=[${GHERKIN_RATCHET:-}]) 0.1s"
+    @echo "ok   mutants-batch (base=[{{base}}] ratchet=[${GHERKIN_RATCHET:-}] judged=[${GHERKIN_RATCHET_BASE:-}]) 0.1s"
 lint-deps:
     @echo "ok   lint-deps (stub) 0.1s"
 lint-os:
@@ -164,7 +165,7 @@ list "$tmp/slice.list" "red:f/a.feature :: one" "green:f/a.feature :: two" "gree
 rc=0; out=$(closeout) || rc=$?
 [ "$rc" -eq 0 ] || fail "closeout of a subset exited $rc: $out"
 grep -q '^ok   ratchet (base 2 red; here 1 red, 1 turned green)' <<< "$out" || fail "no ratchet line: $out"
-grep -q "base=\[$fork\] ratchet=\[$r/target/logs/ratchet/mutants.list\]" <<< "$out" || fail "mutants-batch args: $out"
+grep -q "base=\[$fork\] ratchet=\[\] judged=\[$tmp/base.list\]" <<< "$out" || fail "mutants-batch args: $out"
 grep -q '^ok   closeout-ratchet (4 gates; base [0-9a-f]\{7\}: 2 red, 1 turned green) ' <<< "$out" || fail "summary: $out"
 
 # A failure outside the feature runner fails, though the list is a subset:
@@ -217,6 +218,7 @@ list "$tmp/base.list" "green:f/a.feature :: one" "green:f/b.feature :: three"
 list "$tmp/slice.list" "green:f/a.feature :: one" "green:f/b.feature :: three"
 rc=0; out=$(closeout) || rc=$?
 [ "$rc" -eq 0 ] || fail "an all-green slice on an all-green base failed: $out"
+grep -q "base=\[$fork\] ratchet=\[\] judged=\[\]" <<< "$out" || fail "mutants-batch on an all-green base was given a ratchet: $out"
 list "$tmp/slice.list" "red:f/a.feature :: one" "green:f/b.feature :: three"
 rc=0; out=$(closeout) || rc=$?
 [ "$rc" -eq 1 ] || fail "a red scenario passed on an all-green base: $out"
