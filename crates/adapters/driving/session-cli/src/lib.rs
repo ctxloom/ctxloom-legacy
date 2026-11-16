@@ -23,6 +23,7 @@
 //! ctxloom session clear <harp>
 //! ctxloom session close <harp>
 //! ctxloom trust [--yes] | trust --undo [--yes] | trust list   (the second noun, step 8 U1)
+//! ctxloom session approvals [<harp>] | approvals answer <ask|harp> <option> [msg] [--yes]   (step 8 U4)
 //! ```
 //!
 //! The child verbs (slice 4 U3, S2, S19) are the user's: each is the session
@@ -52,14 +53,17 @@
 mod error;
 // The hand-written renderer the generated JSON replaced (OQ-21), kept as
 // the oracle its byte-equality test holds the generated JSON to.
+mod approvals;
 #[cfg(test)]
 mod proto_json;
 mod render;
 mod run;
+mod text;
 mod trust;
 
 use clap::{Args, Command, Subcommand};
 
+pub use approvals::{approvals, is_approvals, AlwaysPlan, AlwaysRules};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{CliFault, EN_US};
@@ -142,6 +146,47 @@ pub enum SessionVerb {
     /// Close a session for good: its engine ends, and so do the children it holds
     #[command(after_help = "Examples:\n  ctxloom session close brisk-copper-moth")]
     Close(HarpArgs),
+    /// The permission asks waiting for you, from the sessions your daemon runs: list them, answer one
+    #[command(
+        after_help = "Examples:\n  ctxloom session approvals\n  ctxloom session approvals amber-quiet-heron\n  ctxloom session approvals answer ask-tidy-wren allow-once\n  ctxloom session approvals answer brisk-copper-moth deny \"not yet\""
+    )]
+    Approvals(Approvals),
+}
+
+/// The `session approvals` group: bare, the waiting asks listed.
+#[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct Approvals {
+    #[command(subcommand)]
+    pub verb: Option<ApprovalsVerb>,
+    /// Only the asks under this root session (default: every ask waiting in this project)
+    #[arg(value_name = "SESSION-NAME")]
+    pub harp: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ApprovalsVerb {
+    /// Answer an ask with one of the options it offers
+    #[command(
+        after_help = "Examples:\n  ctxloom session approvals answer ask-tidy-wren allow-once\n  ctxloom session approvals answer brisk-copper-moth allow-always --yes\n  ctxloom session approvals answer brisk-copper-moth deny \"not yet\""
+    )]
+    Answer(AnswerArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct AnswerArgs {
+    /// The ask's name (ask-...), or the name of the session that asked, while one of its asks waits
+    #[arg(value_name = "ASK-OR-SESSION")]
+    pub target: String,
+    /// One of the options the ask offers: allow-once, allow-session, allow-always, deny, deny-always
+    #[arg(value_name = "OPTION")]
+    pub option: String,
+    /// Said to the engine with a deny (claude's asks only)
+    #[arg(value_name = "MESSAGE")]
+    pub message: Option<String>,
+    /// Apply what this invocation shows (allow-always's config write), without asking
+    #[arg(short = 'y', long)]
+    pub yes: bool,
 }
 
 #[derive(Args, Debug)]

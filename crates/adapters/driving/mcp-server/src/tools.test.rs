@@ -18,7 +18,7 @@ fn the_tools_offered_are_the_built_ones_each_with_an_object_schema() {
     let offered = tools();
     let names: Vec<&str> = offered.iter().map(|t| t.name.as_ref()).collect();
     assert_eq!(names, TOOL_NAMES);
-    assert!(!names.contains(&"approval_prompt"));
+    assert_eq!(names.last(), Some(&"approval_prompt"));
     for tool in &offered {
         let schema = tool.input_schema.as_ref();
         assert_eq!(schema["type"], "object", "{}", tool.name);
@@ -44,6 +44,16 @@ fn the_tools_offered_are_the_built_ones_each_with_an_object_schema() {
         .find(|t| t.name == "context_assemble")
         .unwrap();
     assert_eq!(assemble.input_schema["required"], json!(["bundles"]));
+    // P0 Q2: claude calls it with exactly these three.
+    let prompt = offered
+        .iter()
+        .find(|t| t.name == "approval_prompt")
+        .unwrap();
+    assert_eq!(
+        prompt.input_schema["required"],
+        json!(["tool_name", "input", "tool_use_id"])
+    );
+    assert_eq!(prompt.input_schema["properties"]["input"]["type"], "object");
 }
 
 #[test]
@@ -118,6 +128,9 @@ fn every_tool_offered_is_described_in_the_approved_words() {
         ("child_send", "Send one of your children a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn)."),
         ("child_close", "Close one of your children: its engine is ended, and it takes no more messages."),
         ("child_clear", "Clear one of your children's conversation, as its engine's own /clear does."),
+        // DRAFT (texts.md §1, step 8 U4): the owner approves it with the
+        // slice's texts (D14).
+        ("approval_prompt", "Ask the user whether a tool call may run. Your engine calls this itself, as its permission prompt, when its permissions say to ask; you never need to call it. The call waits while the user decides from their own terminal, and answers with their choice: run it this once, run it for the rest of this session, always run it, or do not. If nobody answers in time, it is denied. A denial carries a message: read it, do not retry the same call unasked, and tell the user what you wanted to run and why."),
     ];
     let offered = tools();
     assert_eq!(offered.len(), approved.len());

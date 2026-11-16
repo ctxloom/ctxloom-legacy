@@ -27,6 +27,11 @@ use daemon_proto::v1;
 
 pub use prost_types::Any;
 
+/// When a wait ends, by the wall clock: an ask's recorded expiry and a
+/// margin (step 8 U5). An instant, not a span, so a call retried on a new
+/// daemon ends when the first would have, never a whole span later.
+pub type Until = daemon_proto::google::protobuf::Timestamp;
+
 /// The daemon's `Ctxloom` service, as a client calls it. Each method is
 /// one RPC; the ones not served yet are not here.
 pub trait DaemonApi: Send + Sync {
@@ -114,6 +119,53 @@ pub trait DaemonApi: Send + Sync {
     ) -> impl Future<Output = Result<v1::ListTrustsResponse, Called>> + Send {
         let _ = request;
         async { Err(unserved("ListTrusts")) }
+    }
+
+    /// `CreateApproval` (step 8 U4, D10): a session's permission ask
+    /// recorded by the daemon, which fills what only it knows (the run, the
+    /// engine, the root, the timeout, the name and the options); a retry of
+    /// the same request is the same approval. The default is a daemon that
+    /// does not serve it.
+    fn create_approval(
+        &self,
+        request: v1::CreateApprovalRequest,
+    ) -> impl Future<Output = Result<v1::Approval, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("CreateApproval")) }
+    }
+
+    /// `GetApproval` (step 8 U4): an ask, by its name. The default is a
+    /// daemon that does not serve it.
+    fn get_approval(
+        &self,
+        request: v1::GetApprovalRequest,
+    ) -> impl Future<Output = Result<v1::Approval, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("GetApproval")) }
+    }
+
+    /// `ListApprovals` (step 8 U4): a project's asks. The default is a
+    /// daemon that does not serve it.
+    fn list_approvals(
+        &self,
+        request: v1::ListApprovalsRequest,
+    ) -> impl Future<Output = Result<v1::ListApprovalsResponse, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("ListApprovals")) }
+    }
+
+    /// `WaitApproval` (step 8 U4, S27): an ask, answered once it is settled,
+    /// waited for until `until` (its own deadline: the ask's recorded
+    /// expiry and a margin, never a read's; U5: the expiry is the daemon's
+    /// alarm, so the deadline is only a backstop). The default is a daemon
+    /// that does not serve it.
+    fn wait_approval(
+        &self,
+        request: v1::WaitApprovalRequest,
+        until: Until,
+    ) -> impl Future<Output = Result<v1::Approval, Called>> + Send {
+        let _ = (request, until);
+        async { Err(unserved("WaitApproval")) }
     }
 
     /// `CreateRun` (U4, T7): a ONE_SHOT run hosted by the daemon, answered

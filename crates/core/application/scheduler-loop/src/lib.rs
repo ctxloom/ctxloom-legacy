@@ -9,6 +9,11 @@
 //! all inside that one kernel call. [`SchedulerLoop::run`] repeats `tick`
 //! over a [`Clock`] and a [`Wait`]; tests drive `tick`.
 //!
+//! The model is the loop's own ([`SchedulerLoop::new`]), or one it shares
+//! with an application's kernel ([`SchedulerLoop::sharing`]), which folds
+//! each commit inline as well, so an alarm armed in process is in the model
+//! before the loop's next catch-up.
+//!
 //! Exactly once: a re-sent `RecordAlarmDue` is a DUPLICATE by its id; the
 //! scheduler's own re-check covers a moved or cancelled alarm; a fresh loop
 //! over the same store rebuilds its model from the streams, in which a fired
@@ -24,11 +29,11 @@ use angzarr_embedded::v1::{
     command_page, event_page, CommandBook, CommandPage, Cover, Fact, FactOrigin,
 };
 use angzarr_embedded::{
-    ids, CatchUp, Failure, Handled, Kernel, Payload, Processed, ReadStore, Rejected, Sampled,
-    Store, Timestamp, Watch,
+    ids, CatchUp, Failure, Handled, Kernel, Payload, Processed, ProjectorHandler, ReadStore,
+    Rejected, Sampled, Store, Timestamp, Watch,
 };
 use scheduler::{alarm_external_id, stream_for, RecordAlarmDue, SchedulerEvent, SCHEDULER_DOMAIN};
-use scheduler_due::{catch_up, DueAlarm, DueModel};
+use scheduler_due::{catch_up, DueAlarm, DueModel, ReadsDue};
 use scheduler_ports::{Clock, Wait};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -72,8 +77,8 @@ impl Tick {
 }
 
 /// The loop: a due model, held in memory, over a store.
-pub struct SchedulerLoop {
-    due: CatchUp<DueModel>,
+pub struct SchedulerLoop<M = DueModel> {
+    due: CatchUp<M>,
 }
 
 impl Default for SchedulerLoop {
@@ -83,10 +88,22 @@ impl Default for SchedulerLoop {
 }
 
 impl SchedulerLoop {
-    /// A loop with an empty model: its first tick rebuilds it from each
-    /// stream's start.
+    /// A loop with an empty model of its own: its first tick rebuilds it
+    /// from each stream's start.
     pub fn new() -> SchedulerLoop {
         SchedulerLoop { due: catch_up() }
+    }
+}
+
+impl<M: ProjectorHandler + ReadsDue> SchedulerLoop<M> {
+    /// A loop over `model`, a due model it shares (an application's kernel
+    /// folds each commit into it too): its first tick catches it up from
+    /// each stream's start, each page folded once however it arrives.
+    pub fn sharing(model: M) -> SchedulerLoop<M> {
+        SchedulerLoop {
+            due: CatchUp::new(&[SCHEDULER_DOMAIN], model)
+                .expect("a due model reads the scheduler domain"),
+        }
     }
 
     /// One step: catch the model up, then fire every alarm armed at or before
@@ -111,14 +128,17 @@ impl SchedulerLoop {
         tick.unread = caught
             .map(|caught| caught.failures().iter().map(|(c, _)| c.clone()).collect())
             .unwrap_or_default();
-        let due = self.due.projector().due().due_at_or_before(&now);
+        let due = self
+            .due
+            .projector()
+            .read_due(|due| due.due_at_or_before(&now));
         for alarm in due {
             match fire(kernel, store, &alarm, now).await {
                 Ok(sent) => tick.sent.push((alarm, sent)),
                 Err(code) => tick.failed.push((alarm, code)),
             }
         }
-        tick.next = self.due.projector().due().next_after(&now);
+        tick.next = self.due.projector().read_due(|due| due.next_after(&now));
         Ok(tick)
     }
 

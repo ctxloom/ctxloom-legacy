@@ -192,7 +192,7 @@ async fn an_unknown_domain_is_answered_the_way_the_kernel_answers_a_malformed_bo
 }
 
 #[tokio::test]
-async fn only_the_session_run_and_trust_domains_are_reached_and_on_this_machine() {
+async fn only_the_session_run_trust_and_approvals_domains_are_reached_and_on_this_machine() {
     let world = World::new().await;
     let commands = EdgeCommands::new(Arc::clone(&world.edge));
     use angzarr_coordinator::Reach;
@@ -202,6 +202,12 @@ async fn only_the_session_run_and_trust_domains_are_reached_and_on_this_machine(
     assert_eq!(commands.reach(runs::RUN_DOMAIN), Reach::Loopback);
     // Step 8 U1: the user's trust in a project.
     assert_eq!(commands.reach(trust::TRUST_DOMAIN), Reach::Loopback);
+    // Step 8 U4: the user's answer to an ask, an engine's withdrawal.
+    assert_eq!(commands.reach(approvals::APPROVALS_DOMAIN), Reach::Loopback);
+    assert_eq!(
+        commands.reach(approvals::APPROVAL_NAMES_DOMAIN),
+        Reach::None
+    );
     assert_eq!(commands.reach(trees::TREE_DOMAIN), Reach::None);
 }
 

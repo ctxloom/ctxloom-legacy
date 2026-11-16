@@ -176,6 +176,24 @@ impl DaemonApi for Fake {
         })
     }
 
+    async fn wait_approval(
+        &self,
+        r: v1::WaitApprovalRequest,
+        until: daemon_ports::Until,
+    ) -> Result<v1::Approval, Called> {
+        self.ask(&format!("wait {} until {}", r.name, until.seconds));
+        if self.dying.lock().unwrap().contains(&self.n) {
+            return Err(Called::Unreachable {
+                detail: "killed while it waited".to_string(),
+            });
+        }
+        Ok(v1::Approval {
+            name: r.name,
+            state: "expired".to_string(),
+            ..v1::Approval::default()
+        })
+    }
+
     async fn handle_sync(
         &self,
         book: CommandBook,
@@ -741,6 +759,30 @@ async fn a_launch_into_another_project_with_no_resolution_is_refused() {
     assert!(world.asked().is_empty(), "{:?}", world.asked());
 }
 
+// Step 8 Q7: a chosen name of the ask form is refused before anything is
+// asked of the daemon, in the sessions domain's words.
+#[tokio::test]
+async fn a_launch_naming_its_child_as_an_ask_is_refused_and_asks_nothing() {
+    let world = World::new();
+    let refused = world
+        .user(false)
+        .launch(&super::Launch {
+            owner: Some("amber-quiet-heron".to_string()),
+            harp: Some("ask-tidy-wren".to_string()),
+            ..super::Launch::default()
+        })
+        .await;
+    let Err(CallError::Refused(crate::Rejection::Sessions(
+        sessions::SessionRejection::HarpInvalid { harp, reason },
+    ))) = refused
+    else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(harp, "ask-tidy-wren");
+    assert_eq!(reason, sessions::RESERVED_REASON);
+    assert!(world.asked().is_empty(), "{:?}", world.asked());
+}
+
 // A refused LaunchChild takes its hand-off back: a refused launch leaves
 // nothing.
 #[tokio::test]
@@ -937,4 +979,27 @@ async fn a_second_launch_of_a_child_while_the_first_is_made_is_refused() {
     );
     drop(first);
     caller.launch(&a_launch()).await.unwrap();
+}
+
+// U5: a wait retried on a new daemon (the first died while it waited) ends
+// at the same instant as the first would have, never a second span later.
+#[tokio::test]
+async fn a_wait_retried_on_a_new_daemon_ends_when_the_first_would_have() {
+    let w = World::new();
+    w.dying.lock().unwrap().push(1);
+    let caller = w.caller(false);
+    let name = "projects/calm-quiet-heron/approvals/ask-tidy-wren";
+    let until = daemon_ports::Until {
+        seconds: 1_360,
+        nanos: 0,
+    };
+    let waited = caller.wait_approval(name, until).await.unwrap();
+    assert_eq!(waited.state, "expired");
+    assert_eq!(
+        w.asked(),
+        [
+            format!("1:wait {name} until 1360"),
+            format!("2:wait {name} until 1360"),
+        ]
+    );
 }

@@ -249,6 +249,18 @@ fn chain(error: &dyn std::error::Error) -> String {
     text
 }
 
+/// What is left until `until` by the system's clock; nothing once past.
+fn remaining(until: daemon_ports::Until) -> Duration {
+    let until = std::time::UNIX_EPOCH
+        + Duration::new(
+            u64::try_from(until.seconds).unwrap_or(0),
+            u32::try_from(until.nanos).unwrap_or(0),
+        );
+    until
+        .duration_since(std::time::SystemTime::now())
+        .unwrap_or(Duration::ZERO)
+}
+
 /// One call: `$method` of the client with `$message`, its status read back,
 /// within the client's deadline for a read (or `$within`).
 macro_rules! call {
@@ -349,6 +361,49 @@ impl DaemonApi for DaemonClient {
         request: v1::ListTrustsRequest,
     ) -> Result<v1::ListTrustsResponse, Called> {
         call!(self, list_trusts, "ListTrusts", request)
+    }
+
+    async fn create_approval(
+        &self,
+        request: v1::CreateApprovalRequest,
+    ) -> Result<v1::Approval, Called> {
+        // An ask is minted, claimed and recorded before it is answered: a
+        // write's deadline, as a run's.
+        call!(
+            self,
+            create_approval,
+            "CreateApproval",
+            request,
+            self.destroying
+        )
+    }
+
+    async fn get_approval(&self, request: v1::GetApprovalRequest) -> Result<v1::Approval, Called> {
+        call!(self, get_approval, "GetApproval", request)
+    }
+
+    async fn list_approvals(
+        &self,
+        request: v1::ListApprovalsRequest,
+    ) -> Result<v1::ListApprovalsResponse, Called> {
+        call!(self, list_approvals, "ListApprovals", request)
+    }
+
+    async fn wait_approval(
+        &self,
+        request: v1::WaitApprovalRequest,
+        until: daemon_ports::Until,
+    ) -> Result<v1::Approval, Called> {
+        // The caller's own deadline (the ask's recorded expiry and a
+        // margin), never a read's: an ask waits as long as the user takes
+        // within its time, and a retry ends when the first call would have.
+        call!(
+            self,
+            wait_approval,
+            "WaitApproval",
+            request,
+            remaining(until)
+        )
     }
 
     async fn create_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Called> {

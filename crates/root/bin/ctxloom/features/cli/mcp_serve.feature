@@ -119,7 +119,13 @@ Feature: ctxloom's own MCP server — an engine's way to the daemon, through the
         | Alice runs "ctxloom session approvals answer brisk-copper-moth allow-always --yes"  | {"behavior":"allow"} with the input unchanged, and a session rule for "Bash" "rm -rf build/" |
         | Alice runs 'ctxloom session approvals answer brisk-copper-moth deny "not yet"'      | {"behavior":"deny"} with the message "not yet"                                             |
         | Alice runs "ctxloom session approvals answer brisk-copper-moth deny"                | {"behavior":"deny"}, saying the user denied it                                             |
-        | nobody answers within the ask's time                                                | {"behavior":"deny"}, saying no answer came in time                                         |
+
+    Scenario: A claude child's permission ask nobody answers in time is denied through the approval prompt
+      # new: the timeout, through the scheduler's alarm (a short time of its own, so the rows above never race it).
+      Given an initialized ctxloom project whose project config says "engines.claude-code.approval_timeout: 2s"
+      And a claude child "brisk-copper-moth" of "amber-quiet-heron" whose engine calls "approval_prompt" for "Bash" with "rm -rf build/"
+      When nobody answers within the ask's time
+      Then the tool answered the engine {"behavior":"deny"}, saying no answer came in time
 
     Scenario: A call claude cancels withdraws its ask, and the server answers nothing for it
       # new: a cancelled ask is withdrawn at once.

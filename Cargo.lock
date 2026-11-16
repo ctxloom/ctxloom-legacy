@@ -402,6 +402,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "approvals"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "angzarr-diagnostic",
+ "angzarr-embedded",
+ "angzarr-embedded-macros",
+ "approvals-proto",
+ "mutants",
+ "prost",
+ "scheduler",
+ "serde_json",
+ "sessions",
+ "sha2 0.10.9",
+ "uuid",
+]
+
+[[package]]
+name = "approvals-proto"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "prost",
+ "prost-types",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1011,6 +1038,7 @@ dependencies = [
  "angzarr-embedded-host",
  "angzarr-presentation",
  "angzarr-yaml",
+ "approvals",
  "auth-application",
  "cache-files",
  "clap",
@@ -1067,6 +1095,7 @@ dependencies = [
  "mcp-server",
  "mutants",
  "os",
+ "pending-approvals",
  "pending-launches",
  "pending-messages",
  "ports",
@@ -1083,7 +1112,10 @@ dependencies = [
  "runs",
  "runs-application",
  "scheduler",
+ "scheduler-due",
+ "scheduler-fixture",
  "scheduler-loop",
+ "scheduler-ports",
  "serde",
  "serde_json",
  "session-cli",
@@ -1173,6 +1205,8 @@ version = "0.1.0"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
+ "approvals",
+ "approvals-proto",
  "daemon-application",
  "daemon-board",
  "daemon-ports",
@@ -1181,6 +1215,7 @@ dependencies = [
  "isolation-application",
  "library-application",
  "mutants",
+ "pending-approvals",
  "pending-messages",
  "prost",
  "prost-types",
@@ -1231,6 +1266,7 @@ dependencies = [
  "isolation-ports",
  "library-application",
  "mutants",
+ "pending-approvals",
  "pending-launches",
  "pending-messages",
  "run-application",
@@ -3000,10 +3036,13 @@ name = "mcp-server"
 version = "0.1.0"
 dependencies = [
  "angzarr-diagnostic",
+ "angzarr-embedded",
+ "approvals-proto",
  "clap",
  "daemon-api",
  "daemon-proto",
  "mutants",
+ "prost",
  "rmcp",
  "serde",
  "serde_json",
@@ -3289,6 +3328,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
 dependencies = [
  "base64ct",
+]
+
+[[package]]
+name = "pending-approvals"
+version = "0.1.0"
+dependencies = [
+ "angzarr-embedded",
+ "approvals",
+ "daemon-proto",
+ "held-projection",
+ "mutants",
+ "prost",
+ "uuid",
 ]
 
 [[package]]
@@ -3986,6 +4038,7 @@ dependencies = [
  "angzarr-coordinator",
  "angzarr-diagnostic",
  "angzarr-embedded",
+ "approvals",
  "daemon-proto",
  "mutants",
  "prost",

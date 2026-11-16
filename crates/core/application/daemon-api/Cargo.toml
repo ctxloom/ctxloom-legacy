@@ -34,6 +34,10 @@ session-ports.workspace = true
 # warm index `GetTrust` and `ListTrusts` read.
 trust.workspace = true
 trust-index.workspace = true
+# The permission asks (step 8 U4): their commands, facts, names and roots,
+# and the warm read model the approvals calls read.
+approvals.workspace = true
+pending-approvals.workspace = true
 sessions.workspace = true
 sessions-application.workspace = true
 sessions-proto.workspace = true
@@ -48,6 +52,8 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 prost-types.workspace = true
 # The trust commands' wire form, which a test decodes a sent book's into.
 trust-proto.workspace = true
+# The approvals commands' and facts' wire form, decoded from a sent book.
+approvals-proto.workspace = true
 
 [features]
 # `diagnostic_samples`, for other crates' catalog tests.

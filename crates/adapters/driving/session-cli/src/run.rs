@@ -62,8 +62,14 @@ pub struct Failure {
 }
 
 impl Failure {
+    /// `cause`, ending the command with its own class's exit.
+    pub fn of(cause: impl Diagnostic + ExitClass + 'static) -> Failure {
+        let exit = cause.exit();
+        Failure::new(cause, exit, Vec::new())
+    }
+
     /// `cause`, ending the command with `exit`, with `lines` to say beside it.
-    fn new(cause: impl Diagnostic + 'static, exit: Exit, lines: Vec<String>) -> Failure {
+    pub(crate) fn new(cause: impl Diagnostic + 'static, exit: Exit, lines: Vec<String>) -> Failure {
         Failure {
             failure: cli_support::Failure::new(cause, exit),
             lines,
@@ -504,6 +510,9 @@ async fn execute<S: SessionService + ImportService + WorktreeUse>(
             | SessionVerb::Clear(_)
             | SessionVerb::Close(_),
         ) => unreachable!("a child verb is the daemon's: session_cli::child"),
+        Some(SessionVerb::Approvals(_)) => {
+            unreachable!("the asks are the daemon's: session_cli::approvals")
+        }
     }
 }
 

@@ -18,6 +18,7 @@ use std::sync::Arc;
 use ctxloom_ports::{Editor, Scaffold, UserFiles};
 
 mod agents;
+mod always;
 mod bundles;
 pub(crate) mod companions;
 mod configfile;
@@ -33,6 +34,7 @@ pub mod requests;
 mod skills;
 pub mod views;
 
+pub use always::AlwaysAllowed;
 pub use error::WriteError;
 
 /// The one check of a name a write mints (a bundle, fragment, command,

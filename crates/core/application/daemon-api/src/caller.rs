@@ -539,7 +539,13 @@ impl<D: Daemons> Caller<D> {
             (None, None) => return Err(not_a_name("", "shape")),
         };
         let harp = match (&launch.harp, &self.names) {
-            (Some(harp), _) => harp.clone(),
+            // A name chosen may not take an ask's form (step 8, Q7), refused
+            // before anything is written.
+            (Some(harp), _) => {
+                sessions::validate_session_name(harp)
+                    .map_err(|rejection| CallError::Refused(Rejection::Sessions(rejection)))?;
+                harp.clone()
+            }
             (None, Some(names)) => names(),
             (None, None) => String::new(),
         };

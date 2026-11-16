@@ -46,8 +46,14 @@
 //! - `GetTrust` and `ListTrusts` (step 8 U1): a project's trust previewed
 //!   at its registered root ([`Trusts`]) and the projects trusted now, from
 //!   the warm trust index; the user's grant and revoke ([`TrustWrites`])
-//!   through the coordinator's `HandleSync` on `trust-index`.
+//!   through the coordinator's `HandleSync` on `trust-index`;
+//! - `CreateApproval`, `GetApproval`, `ListApprovals` and `WaitApproval`
+//!   (step 8 U4): a session's permission ask recorded and read from the
+//!   warm pending approvals ([`Approving`]), served while draining (D6);
+//!   the user's answer ([`ApprovalAnswers`]) through `HandleSync` on
+//!   `pending-approvals`, and the MCP server's ask, wait and withdrawal.
 
+mod approvals;
 mod caller;
 mod client;
 mod destroy;
@@ -62,6 +68,10 @@ mod start_up;
 mod terminal;
 mod trust;
 
+pub use approvals::{
+    ask_of, settled_how, settled_of, settled_refusal, Answered, ApprovalAnswers, Approving,
+    AskNames,
+};
 pub use caller::{
     launch_lock_name, urgency_of, Caller, ChildWrites, Launch, ProjectResolver, Written,
     DELEGATION_LIMIT,
@@ -84,7 +94,7 @@ pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).
-pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Synced, Unreached};
+pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Synced, Unreached, Until};
 
 /// This crate's en-US messages, its name first.
 pub const EN_US: (&str, &str) = (

@@ -584,3 +584,355 @@ async fn a_trust_granted_through_the_edge_is_answered_by_the_trust_index() {
         .unwrap_err();
     assert!(matches!(hidden, Unserved::Hidden { .. }), "{hidden:?}");
 }
+
+/// An ask of the session `c` under the root `o`.
+fn an_ask() -> approvals::RecordApprovalAsked {
+    let reference = |session: &str| approvals::SessionRef {
+        project_id: "calm-otter".to_string(),
+        session: session.to_string(),
+    };
+    approvals::RecordApprovalAsked {
+        ask_id: "ask-tidy-wren".to_string(),
+        child: reference("c"),
+        run: "r".to_string(),
+        engine: "claude-code".to_string(),
+        root: reference("o"),
+        tool_name: "Bash".to_string(),
+        input_excerpt: "{}".to_string(),
+        input_bytes: 2,
+        input_sha256: "x".to_string(),
+        timeout_seconds: 300,
+        engine_request_id: "toolu_1".to_string(),
+        options: approvals::claude_options("Bash", r#"{"command":"ls"}"#),
+        name: "projects/calm-quiet-heron/approvals/ask-tidy-wren".to_string(),
+        child_name: "projects/calm-quiet-heron/sessions/c".to_string(),
+        root_name: "projects/calm-quiet-heron/sessions/o".to_string(),
+        agent: "default".to_string(),
+    }
+}
+
+// Step 8 U4: the daemon's core holds the asks and their names; the ask is
+// recorded in process, projected into the pending approvals, and its answer
+// is a loopback SIMPLE request answered the ask as the pending approvals
+// have it; the network reaches no ask, and no one outside reaches a name.
+#[tokio::test]
+async fn an_ask_recorded_in_process_is_answered_over_loopback_and_projected() {
+    use prost::Message as _;
+    let mut kept = Projectors::default();
+    let core = InProcessCore::start_with(MemoryStore::default(), |store| {
+        kept = Projectors::filled(store);
+        kept.clone()
+    })
+    .await;
+    let asked = an_ask();
+    let cover = Cover {
+        domain: approvals::APPROVALS_DOMAIN.to_string(),
+        root: Some(angzarr_embedded::v1::Uuid::from_bytes([5; 16])),
+        edition: None,
+    };
+    core.edge()
+        .handle(approvals::fact_book(
+            cover.clone(),
+            &asked,
+            "approval:r:toolu_1",
+        ))
+        .await
+        .unwrap();
+    let pending = kept.approvals.clone().unwrap();
+    assert_eq!(
+        pending
+            .index()
+            .listed("projects/calm-quiet-heron", None, true)
+            .len(),
+        1
+    );
+    let answer = approvals::AnswerApproval {
+        ask_id: "ask-tidy-wren".to_string(),
+        option: "allow-once".to_string(),
+        message: String::new(),
+    };
+    let book = sessions::keyed_book(cover, &answer, "answer:1");
+    let synced = core
+        .edge()
+        .serve_sync(
+            book.clone(),
+            vec!["pending-approvals".to_string()],
+            Arrival::Loopback,
+        )
+        .await
+        .unwrap();
+    let answered = daemon_proto::v1::Approval::decode(
+        synced.projections[0]
+            .projection
+            .as_ref()
+            .expect("the pending approvals' view")
+            .value
+            .as_slice(),
+    )
+    .unwrap();
+    assert_eq!(answered.state, "answered");
+    assert_eq!(answered.option, "allow-once");
+    let hidden = core
+        .edge()
+        .serve_sync(book, vec!["pending-approvals".to_string()], Arrival::Ip)
+        .await
+        .unwrap_err();
+    assert!(matches!(hidden, Unserved::Hidden { .. }), "{hidden:?}");
+    let claim = approvals::ClaimApprovalName {
+        project_id: "calm-otter".to_string(),
+        ask_id: "ask-pale-moth".to_string(),
+        approval: "a".to_string(),
+    };
+    let names = Cover {
+        domain: approvals::APPROVAL_NAMES_DOMAIN.to_string(),
+        root: Some(angzarr_embedded::v1::Uuid::from_bytes([6; 16])),
+        edition: None,
+    };
+    let unexposed = core
+        .edge()
+        .serve(
+            sessions::keyed_book(names, &claim, "claim"),
+            Arrival::Loopback,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(unexposed, Unserved::Hidden { .. }),
+        "{unexposed:?}"
+    );
+}
+
+// Owner ruling 2026-11-16: only the daemon's core resumes owed policy work
+// at start, and only it registers the alarm consumers' policies; a CLI
+// command's core (`InProcessCore::start`) scans no policy source.
+mod resume_at_start {
+    use std::sync::{Arc, Mutex};
+
+    use angzarr_embedded::angzarr_ports::Uuid as CommandId;
+    use angzarr_embedded::angzarr_ports::{
+        ListStreams, PositionKey, PositionStore, Processed, Slice, SnapshotStore, StoreError,
+        StreamRef, Write, Written,
+    };
+    use angzarr_embedded::testing::MemoryStore;
+    use angzarr_embedded::v1::{Cover, EventPage, Snapshot, Uuid};
+    use angzarr_embedded::EventStore;
+    use run_ports::Edge as _;
+
+    use super::an_ask;
+    use crate::{InProcessCore, Projectors};
+
+    /// What a start asked of the store that only a resume asks: every
+    /// stream listed, each domain's streams, each handler's record.
+    #[derive(Default, Debug)]
+    struct Asked {
+        listed: usize,
+        covered: Vec<String>,
+        processed: Vec<String>,
+    }
+
+    /// A memory store that counts the scans a resume makes; clones share
+    /// the store and the count.
+    #[derive(Clone, Default)]
+    struct Counting {
+        inner: MemoryStore,
+        asked: Arc<Mutex<Asked>>,
+    }
+
+    impl Counting {
+        fn asked(&self) -> std::sync::MutexGuard<'_, Asked> {
+            self.asked.lock().unwrap()
+        }
+
+        fn forget(&self) {
+            *self.asked() = Asked::default();
+        }
+    }
+
+    impl EventStore for Counting {
+        async fn write(&self, write: Write<'_>) -> Result<Written, StoreError> {
+            self.inner.write(write).await
+        }
+
+        async fn read(
+            &self,
+            stream: StreamRef<'_>,
+            from: u64,
+            to: Option<u64>,
+        ) -> Result<Slice, StoreError> {
+            self.inner.read(stream, from, to).await
+        }
+
+        async fn find_command(
+            &self,
+            stream: StreamRef<'_>,
+            command_id: CommandId,
+        ) -> Result<Vec<EventPage>, StoreError> {
+            self.inner.find_command(stream, command_id).await
+        }
+
+        async fn covers(&self, domain: &str) -> Result<Vec<Cover>, StoreError> {
+            self.asked().covered.push(domain.to_string());
+            self.inner.covers(domain).await
+        }
+    }
+
+    impl SnapshotStore for Counting {
+        async fn read_snapshot(
+            &self,
+            stream: StreamRef<'_>,
+        ) -> Result<Option<Snapshot>, StoreError> {
+            self.inner.read_snapshot(stream).await
+        }
+
+        async fn write_snapshot(
+            &self,
+            stream: StreamRef<'_>,
+            snapshot: &Snapshot,
+        ) -> Result<(), StoreError> {
+            self.inner.write_snapshot(stream, snapshot).await
+        }
+    }
+
+    impl PositionStore for Counting {
+        async fn position(&self, key: PositionKey<'_>) -> Result<u64, StoreError> {
+            self.inner.position(key).await
+        }
+    }
+
+    impl ListStreams for Counting {
+        async fn list_streams(&self) -> Result<Vec<Cover>, StoreError> {
+            self.asked().listed += 1;
+            self.inner.list_streams().await
+        }
+    }
+
+    impl Processed for Counting {
+        async fn processed(&self, handler: &str) -> Result<Vec<(Cover, u64)>, StoreError> {
+            self.asked().processed.push(handler.to_string());
+            self.inner.processed(handler).await
+        }
+    }
+
+    fn ask_cover() -> Cover {
+        Cover {
+            domain: approvals::APPROVALS_DOMAIN.to_string(),
+            root: Some(Uuid::from_bytes([5; 16])),
+            edition: None,
+        }
+    }
+
+    /// A store holding one ask whose arming is owed: recorded by a core
+    /// with no alarm consumer, so no policy has handled it yet.
+    async fn an_owed_arming() -> Counting {
+        let store = Counting::default();
+        let core =
+            InProcessCore::start_consuming(store.clone(), |_| Projectors::default(), &[]).await;
+        core.edge()
+            .handle(approvals::fact_book(
+                ask_cover(),
+                &an_ask(),
+                "approval:r:toolu_1",
+            ))
+            .await
+            .unwrap();
+        drop(core);
+        assert!(
+            store
+                .covers(scheduler::SCHEDULER_DOMAIN)
+                .await
+                .unwrap()
+                .is_empty(),
+            "nothing armed yet"
+        );
+        store.forget();
+        store
+    }
+
+    // A CLI command's core starts without a resume: it lists no stream,
+    // scans no domain and reads no handler's record.
+    #[tokio::test]
+    async fn a_command_cores_start_scans_no_policy_source() {
+        let store = an_owed_arming().await;
+        let core = InProcessCore::start(store.clone()).await;
+        let asked = store.asked();
+        assert_eq!(asked.listed, 0, "{asked:?}");
+        assert!(asked.covered.is_empty(), "{asked:?}");
+        assert!(asked.processed.is_empty(), "{asked:?}");
+        drop(asked);
+        drop(core);
+    }
+
+    // So the owed arming stays owed through a command core's start, and the
+    // daemon's next start pays it: the ask's alarm is armed.
+    #[tokio::test]
+    async fn owed_policy_work_waits_for_the_daemons_start() {
+        let store = an_owed_arming().await;
+        drop(InProcessCore::start(store.clone()).await);
+        assert!(
+            store
+                .covers(scheduler::SCHEDULER_DOMAIN)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a command core's start armed nothing"
+        );
+        let daemon = InProcessCore::start_with(store.clone(), |_| Projectors::default()).await;
+        assert_eq!(
+            store
+                .covers(scheduler::SCHEDULER_DOMAIN)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "the daemon's start armed the ask's alarm"
+        );
+        drop(daemon);
+    }
+
+    // The daemon's core resumes at start: every policy source is scanned,
+    // the approvals' (the arming) and the scheduler's (the delivery).
+    #[tokio::test]
+    async fn the_daemons_core_start_scans_every_policy_source() {
+        let store = an_owed_arming().await;
+        let core = InProcessCore::start_with(store.clone(), |_| Projectors::default()).await;
+        let asked = store.asked();
+        assert_eq!(asked.listed, 1, "{asked:?}");
+        assert!(
+            asked
+                .covered
+                .contains(&approvals::APPROVALS_DOMAIN.to_string()),
+            "{asked:?}"
+        );
+        assert!(
+            asked
+                .covered
+                .contains(&scheduler::SCHEDULER_DOMAIN.to_string()),
+            "{asked:?}"
+        );
+        drop(asked);
+        drop(core);
+    }
+
+    // A command core registers no alarm consumer either: an ask committed
+    // through it (none is, in production: every ask is the daemon's) arms
+    // nothing in process.
+    #[tokio::test]
+    async fn a_command_core_registers_no_alarm_consumer() {
+        let store = Counting::default();
+        let core = InProcessCore::start(store.clone()).await;
+        core.edge()
+            .handle(approvals::fact_book(
+                ask_cover(),
+                &an_ask(),
+                "approval:r:toolu_1",
+            ))
+            .await
+            .unwrap();
+        assert!(store
+            .covers(scheduler::SCHEDULER_DOMAIN)
+            .await
+            .unwrap()
+            .is_empty());
+        drop(core);
+    }
+}

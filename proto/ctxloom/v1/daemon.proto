@@ -8,7 +8,8 @@ syntax = "proto3";
 // GetTranscript and AssembleContext (its fragments and tags); slice 4 adds
 // CreateHandOff and DeleteHandOff (a child's launch, U3), CreateRun for a
 // ONE_SHOT run, GetRun and WatchRun (U4), and CreateRun for a TERMINAL run,
-// answered with its launch (U5); step 8 U1 adds GetTrust and ListTrusts; every
+// answered with its launch (U5); step 8 U1 adds GetTrust and ListTrusts, and
+// U4 CreateApproval, GetApproval, ListApprovals and WaitApproval; every
 // other method answers UNIMPLEMENTED.
 //
 // THE USER'S DAEMON'S API (T1-T30; the owner's API rulings Q1-Q13; rulings
@@ -41,14 +42,18 @@ syntax = "proto3";
 //                                         latch, owner 2026-11-15)
 //   session launch <owner> ...            sessions.LaunchChild      session-index
 //                                         (after CreateHandOff)
-//   session approvals answer <ask> <d>    approvals.AnswerApproval  pending-approvals
+//   session approvals answer <ask> <opt>  approvals.AnswerApproval  pending-approvals
 //   trust                                 trust.GrantTrust          trust-index
 //   trust --undo                          trust.RevokeTrust         trust-index
 //   a one-shot's signal (API Q11)         runs.RequestStop          (Handle)
 //   the frontend's TUI start and exit     runs.RecordRunnerStarted, (Handle, facts)
 //                                         RecordRunExited, RecordLaunchFailed
 //   a hook                                the capture facts         (Handle, facts)
-//   the daemon, hosting a child's ask     approvals.RecordApprovalAsked (Handle, fact)
+//   the daemon, an opencode ask (ACP)     approvals.RecordApprovalAsked (in process, fact)
+//   `mcp serve`, a cancelled claude ask   approvals.RecordApprovalWithdrawn (Handle, fact)
+// claude's ask is not a domain write of the client's: `mcp serve` calls
+// `CreateApproval` (below), and the daemon records `RecordApprovalAsked`
+// with what only it knows (D10).
 // A remove is a sequence the daemon runs (`DeleteSession` below: its
 // worktrees, then its streams purged, then its directory and lock; T28's
 // trash step is not built), as `bundle import --force` is to be (the old
@@ -139,9 +144,15 @@ service Ctxloom {
   // `drain` (`daemon stop --drain`, `ctxloom shutdown`, OD-54): it hands
   // what it hosts over to the next daemon (of its own version: one version
   // runs at a time, OD-62) within `drain_timeout_seconds`
-  // (else its configured `daemon.drain_timeout`), refusing every new call
-  // but this and GetDaemon (`DaemonDraining`) meanwhile, and exits once it
-  // hosts nothing.
+  // (else its configured `daemon.drain_timeout`), refusing every NEW call
+  // meanwhile (`DaemonDraining`), but serving calls on work it already
+  // holds (OD-62 adjusted): GetDaemon, this, ResolveProject/GetProject,
+  // WatchRun of a run it hosts, DeleteHandOff of a hand-off made before the
+  // drain, and every approvals call (D6: CreateApproval, GetApproval,
+  // ListApprovals, WaitApproval; an ask comes only from a session the
+  // daemon already hosts), and exits once it hosts nothing. An ask left
+  // waiting when the daemon goes is ended by its alarm under the next
+  // daemon (D11).
   rpc StopDaemon(StopDaemonRequest) returns (Daemon);
   // endregion
 
@@ -195,10 +206,19 @@ service Ctxloom {
   rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
   // endregion
 
-  // region approvals: `projects/{project}/approvals/{approval}`
+  // region approvals: `projects/{project}/approvals/{approval}`, the
+  // approval's id `ask-<adjective>-<noun>` (D9, Q7)
+  // The claude ask (D10, AIP-133): `ctxloom mcp serve` sends the engine's
+  // request, and the daemon fills root, run, engine, timeout, the harp and
+  // the options, then records `approvals.RecordApprovalAsked`. Idempotent on
+  // (session, engine_request_id): a retry answers the same approval.
+  rpc CreateApproval(CreateApprovalRequest) returns (Approval);
   rpc GetApproval(GetApprovalRequest) returns (Approval);
   rpc ListApprovals(ListApprovalsRequest) returns (ListApprovalsResponse);
-  // ctxloom's MCP approval tool waits here (S27): answered once settled.
+  // ctxloom's MCP approval tool waits here (S27): answered once the approval
+  // is settled (answered, expired or withdrawn). The caller's deadline is
+  // the approval's `expire_time` plus a margin, never `within`'s read
+  // deadline.
   rpc WaitApproval(WaitApprovalRequest) returns (Approval);
   // endregion
 
@@ -982,11 +1002,27 @@ message RunEvent {
 
 // region approvals
 
-// A child's permission ask (approvals/v1/approvals.proto's state).
+// One choice an approval offers (approvals.v1.ApprovalOption, rendered).
+message ApprovalOption {
+  // The word `session approvals answer` takes: `allow-once`,
+  // `allow-session`, `allow-always`, `deny`, `deny-always` (Q2).
+  string id = 1;
+  // `allow_once`, `allow_session`, `allow_always`, `reject_once`,
+  // `reject_always`.
+  string kind = 2;
+  // What the human is shown: the ACP option's own `name`; empty for
+  // claude's, which the CLI says itself (its catalog's words).
+  string label = 3;
+  // claude: the rule, `Bash(rm -rf build/)`.
+  string rule = 4;
+}
+
+// A permission ask (approvals/v1/approvals.proto's state).
 message Approval {
-  // `projects/{project}/approvals/{approval}`.
+  // `projects/{project}/approvals/{approval}`, `{approval}` the ask's name,
+  // `ask-<adjective>-<noun>`, under its ROOT's project (Q-A).
   string name = 1;
-  // The asking child's and its root's session resource names.
+  // The asking session's and its root's session resource names.
   string child = 2;
   string root = 3;
   string engine = 4;
@@ -994,9 +1030,41 @@ message Approval {
   string input_excerpt = 6;
   google.protobuf.Timestamp ask_time = 7;
   google.protobuf.Timestamp expire_time = 8;
-  // Empty while it waits; `allow`, `deny` or `expired`.
-  string decision = 9;
+  // Field 9 was `decision` (never served): the state and the option replace it.
+  reserved 9;
+  reserved "decision";
+  // Said to the engine with a deny.
   string message = 10;
+  repeated ApprovalOption options = 11;
+  // `waiting`, `answered`, `expired` or `withdrawn`.
+  string state = 12;
+  // When answered: the option's id.
+  string option = 13;
+  // Its stream's root (a UUID), as a session's `uid`: what an answer is
+  // sent to.
+  string uid = 14;
+  // When answered: its option's kind (`allow_once`, ...).
+  string option_kind = 15;
+  // How long it waits, in seconds (its engine's `approval_timeout`; 0 is
+  // `now`).
+  uint32 timeout_seconds = 16;
+  // The agent the asking session was planned for (what `allow-always`
+  // writes into, `agents.<agent>.engines.<engine>.permissions`).
+  string agent = 17;
+}
+
+message CreateApprovalRequest {
+  // `projects/{project}`.
+  string parent = 1;
+  // The asking session's stable id (the engine's `CTXLOOM_SESSION`); the
+  // daemon finds its run, engine, root and approval_timeout from it.
+  string session = 2;
+  // claude's `tool_use_id`.
+  string engine_request_id = 3;
+  string tool_name = 4;
+  // The tool's `input`, as the JSON text claude sent; the daemon bounds it.
+  string input_json = 5;
+  string request_id = 90;
 }
 
 message GetApprovalRequest {
@@ -1132,6 +1200,15 @@ message TranscriptEmpty {
 // A session's resource name no session holds.
 message SessionNotFound {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+
+  string name = 1;
+}
+
+// A session the daemon hosts no run of, asked for (step 8 U4:
+// `CreateApproval` from a session it does not host: an ask comes only from
+// a session the daemon runs, D6).
+message SessionNotHosted {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 
   string name = 1;
 }

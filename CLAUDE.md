@@ -2021,7 +2021,8 @@ drafts), named `projects/{project harp}/sessions/{harp}` (`SessionRecord.name`,
 `sessions::SessionName`) once its project is named (the `projects` aggregate,
 S54), its title the one set (S55); the session with its pending messages;
 the session's state. A CLI command's core registers none
-(`InProcessCore::start`); the daemon's does (`start_with`, `Projectors::
+(`InProcessCore::start`, which also registers no policy and resumes
+nothing at start); the daemon's does (`start_with`, `Projectors::
 filled`). There is ONE fold per read model: `core/read-model/held-projection`'s
 `Held` is a shared handle, the same instance the kernel runs inline and the
 daemon's catch-up drives, each page folded once (one before where the fold
@@ -2126,6 +2127,161 @@ cannot be read is a launch that failed (its owner told). The owner's side addres
 its full name (`projects/<its project>/sessions/<harp>`, the launch's
 answer); a bare harp is the caller's project's. Its asks are the root's
 project's (Q-A, U4).
+
+## Approvals (step 8 U4, ruling 142; plan `approvals-trust-step8.plan.md` §0)
+
+Step 8 U4 adds three crates: `core/wire/approvals-proto` (from
+`proto/ctxloom/approvals/v1/approvals.proto`, compiled for the first time;
+it keeps its own `SessionRef`, one package per wire crate), `core/domain/
+approvals` (the approval and approval-names aggregates) and
+`core/read-model/pending-approvals` (their projector). An ask is a session's
+permission ask (a claude child's or one-shot's, routed through ctxloom's MCP
+approval prompt): one stream per ask, rooted on UUIDv5(the asking session's
+id, its key `approval:<run>:<request id>`, `approvals::ask_root`), so a
+redelivered ask is one; its NAME is `ask-<adjective>-<noun>` (D9, Q7:
+harp-names' two-word mint, `ask-` before it), claimed in `approval-names`
+on the root of its resource name `projects/{project}/approvals/{ask}` under
+its ROOT's project (Q-A). `RecordApprovalAsked` (a fact, the daemon's own)
+records it once with its options; a timeout of 0 (`approval_timeout: now`,
+D16) records it expired in the same decide. `RecordApprovalWithdrawn` (a
+fact, `mcp serve`'s on claude's `notifications/cancelled`) withdraws a
+waiting ask. `AnswerApproval` (the user's) names one of its options:
+refused `approvals-approval-unknown`, `-approval-settled` (`answered
+(<option>)`, `expired`, `withdrawn`), `-option-not-offered` (naming those
+offered) or `-message-not-relayed` (a message with an ACP option, Q6). The
+fact journals the approval's, the child's and the root's resource names and
+the asking agent, so the projection is the `ctxloom.v1.Approval` resource.
+claude's options are ctxloom's (`approvals::claude_options`): the rule is
+the tool and its exact input, `Bash(<command>)` or `<Tool>(<path>)` for
+Read, Write, Edit, MultiEdit (`file_path`) and NotebookEdit
+(`notebook_path`), offering `allow-once`, `allow-session`, `allow-always`
+and `deny`; any other tool offers `allow-once` and `deny` alone (Q5).
+An ask ends by its alarm (U5; S26, D11, D12): `approvals::ArmsExpiry`
+(the approvals' policy towards the scheduler) arms `approval-expiry:<the
+ask's stream root>` at the instant `ApprovalAsked` was recorded plus its
+`timeout_seconds` (`approvals::expiry_at`; an ask with no time, `now`, is
+expired in its own decide and arms nothing), and `ApprovalAnswered` or
+`ApprovalWithdrawn` cancels it; `approvals::DeliverToApprovals`
+(`scheduler::delivery!`) hands the ask `RecordAlarmReached`, which the
+aggregate re-checks against its own state (still waiting, its own alarm, the
+instant it armed) before it records `ApprovalExpired`; the waiting tool then
+answers the DRAFT `mcp-server-approval-expired`. Both policies are ONE entry
+of `core_link::ALARM_CONSUMERS` (`approvals_expiry`). Only the daemon's
+core resumes owed policy work at start (owner ruling 2026-11-16; below), so
+the resume's cost, which grows faster than the sources' history (the
+daemon's start over 1000 settled asks takes over a second; angzarr-
+embedded's quadratic resume is being fixed upstream), is the daemon's
+alone: a CLI command's core start is under a millisecond at any history.
+
+The daemon serves `CreateApproval` (D10: the session's run, engine, agent
+and `approval_timeout` are the child it hosts, daemon-application's `Asker`,
+told the API each round through `Hosting::asker`; a session it does not
+host is `daemon-api-session-not-hosted`; idempotent on (session, request
+id); read back from the ask's own stream), `GetApproval` (unknown:
+`approvals-approval-unknown`), `ListApprovals` (a project's asks, oldest
+first, under a root, waiting) and `WaitApproval` (answered once settled,
+read afresh each round; the gRPC edge awaits it, so a caller that hangs up
+drops it; the client's deadline is an INSTANT, `daemon_ports::Until`, the
+ask's recorded expiry plus a minute, `mcp_server`'s `wait_until`, so a wait
+retried on a new daemon ends when the first would have). Every
+approvals call is served while the daemon drains (D6). The kernel registers
+both aggregates (approvals on loopback, the names not exposed) and the
+pending approvals (`Projectors::approvals`, `Folds::approvals`); the
+coordinator reaches the approvals domain; the user allowlist adds
+`AnswerApproval` and `RecordApprovalWithdrawn`.
+
+`ctxloom mcp serve` offers `approval_prompt` (`TOOL_NAMES` 9; DRAFT
+description `tools/approval_prompt.md`): `CreateApproval`, then
+`WaitApproval`, answered in claude's verified shape (P0):
+`{"behavior":"allow","updatedInput":<input>}`, with the session rule
+(`updatedPermissions`, destination `session`) for allow-session and
+allow-always, or `{"behavior":"deny","message"}` (the user's message, else
+the DRAFT `mcp-server-approval-denied`, `-expired`, `-denied-at-once`). A
+cancelled call is withdrawn with claude's reason and answered nothing (rmcp
+drops it). claude's `server/discover` (a string id, before `initialize`)
+is answered `{}` by the server's own reader of its input
+(`mcp_server::pump`), before rmcp sees it.
+
+`session approvals [<harp>]` lists this project's waiting asks (text form
+DRAFT, texts.md §6; its words, claude's option labels and `trust`'s text
+are session-cli's catalog, `session_cli::text::Text`, ruling after U4); `session approvals answer <ask|harp> <option>
+["<message>"] [--yes]` names an ask by its name, or by its asking session's
+harp while exactly one waits (`daemon-api-approval-ambiguous` naming each,
+`daemon-api-approval-none-waiting`: client-side, DRAFT), and sends
+`AnswerApproval` through `HandleSync` on `pending-approvals`; a refusal the
+coordinator names by type alone is said with the ask as the daemon has it.
+An `allow-always` of a claude ask writes its rule into the asking agent's
+`agents.<a>.engines.<e>.permissions` `allow` (`Library::allow_always`)
+WHERE IT TAKES EFFECT (owner ruling after U4): a project's agent replaces
+the home's of the same name whole, so into the project's definition when
+the project defines the agent, else the home's (defined by neither, the
+project's); from that definition's own document for the engine, else the
+effective one, which is then its engine's default (so `defaultMode` is
+kept); the preview names the file. Q3's order: the ask checked
+waiting, the rule written, then the ask answered; off a terminal without
+`--yes` it previews (exit 1 under `--detailed-exitcode`), at one it asks
+`[y/N]`; a rule written for an ask settled meanwhile stays,
+`daemon-api-approval-rule-kept` (exit 20, DRAFT). A new session's chosen name may not begin `ask-`
+(`sessions::validate_session_name`, `sessions-harp-invalid` reason
+`reserved`, refused by the caller before anything is written); an existing
+one keeps its name (Q-B).
+
+## The scheduler runs in the daemon (step 8 U5a; plan `approvals-trust-step8.plan.md` U5)
+
+The scheduler's crates (`core/domain/scheduler`, `core/read-model/
+scheduler-due`, `core/application/scheduler-loop`, `core/ports/
+scheduler-ports`; design `scheduler.plan.md`) are wired. Every core
+registers `SchedulerAggregate`, exposed to nobody (its streams are written by
+policies and the clock loop alone). Only the DAEMON's core
+(`core_link::InProcessCore::start_with`) then registers each domain that
+arms alarms, `core_link::ALARM_CONSUMERS` (an `AlarmConsumer` is a `fn(&mut
+Registry)` registering the consumer's arm/cancel policy towards the
+scheduler and its `scheduler::delivery!` policy), and resumes at start
+(`CoreStores::at_start`, `Resume::AtStart`), which runs the policy work its
+store owes: an alarm fired and not delivered is delivered (a crash between
+the two hops, or a delivery policy new to a store with history), an ask
+recorded and not armed is armed. Its one entry is the approvals' expiry (U5,
+above). A CLI command's core (`InProcessCore::start`) registers no alarm
+consumer, no policy at all, and resumes nothing (`Resume::Never`: it lists
+no stream and scans no policy source; owner ruling 2026-11-16). That is
+correct because nothing a CLI process commits is a policy's source: the
+policies' sources are the approvals' and the scheduler's streams, and every
+ask, answer, withdrawal and alarm is the daemon's (the hook gate, the
+daemon API's `CreateApproval` and answers, the scheduler loop); a CLI
+process commits only the sessions domains' (`sessions-application`'s
+registry, which holds no policy), and no production CLI process starts an
+`InProcessCore` at all (`run` and the session verbs are the daemon's
+clients). Work a core without the consumers left owed waits for the
+daemon's next start (`core_link.test.rs`'s `resume_at_start`).
+The daemon's core also registers the due model (`Projectors::due`, the
+wiring's `scheduling::SchedulerDues`: `scheduler_due::Due` held by
+`held-projection`, so the kernel's inline fold and the loop's catch-up are
+ONE fold, each page once; `scheduler-loop`'s `SchedulerLoop::sharing` reads
+it through `scheduler_due::ReadsDue`). The daemon runs `SchedulerLoop::run`
+for its life on its runtime (`daemon/serve.rs`'s `scheduler_over`, the
+wiring's `scheduling::start`): on `core_link::SystemClock` (the clock each
+call's sample reads), waiting `min(next due, the daemon's poll)` on the
+runtime's timer, cut short by any book the kernel folds into the due model
+(an alarm armed in process fires at once) and by the stop; it fires through
+the kernel directly (`SharedCore::kernel`), so the edge's test kill switch
+never sees a clock fact. A tick that fails (its catch-up) is said and the
+loop goes on, its model kept; the log says each `alarm fired: <target>
+<alarm>`, each fact that failed and each unreadable stream. It runs while the
+daemon drains; once the daemon's loop returns it is stopped
+(`lifelong_ended`: its current tick finishes, at most five seconds, else it
+is cut and said) BEFORE anything else is let go, so its copy of the core is
+gone before the store closes (ruling 131; a running scheduler is a holder:
+`Unclosed::StillHeld`). A daemon started after another, killed or stopped,
+rebuilds the model from every scheduler stream's start: an alarm that came
+due meanwhile fires once, late, at the instant armed. `scheduling.test.rs`
+proves arm-fire-deliver, cancel, the in-process wake, the kill and restart,
+the resume's delivery and the holder, over a real store with
+`scheduler-fixture`'s dummy domain registered as a test's consumer
+(`InProcessCore::start_consuming`, crate-private; the fixture is a
+dev-dependency, never in any build of the binary), a `FakeClock` moved by
+the test and forced wakes, no sleep. Not proven: a real process kill (the
+"kill" aborts the loop's task and drops the core unclosed) and the binary's
+daemon firing an alarm (no production consumer arms one yet).
 
 ## Storage is angzarr-store-sqlite
 

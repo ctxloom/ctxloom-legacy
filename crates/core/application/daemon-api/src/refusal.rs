@@ -157,6 +157,28 @@ pub enum ApiRejection {
     LaunchInProgress {
         harp: String,
     },
+    /// An ask asked by a session the daemon hosts no run of (step 8 U4).
+    SessionNotHosted {
+        name: String,
+    },
+    /// An answer naming a harp that has two or more asks waiting (S29): its
+    /// asks' names, oldest first (client-side: no service method refuses it).
+    ApprovalAmbiguous {
+        harp: String,
+        asks: Vec<String>,
+    },
+    /// An answer naming a harp that has no ask waiting (Q-B).
+    ApprovalNoneWaiting {
+        harp: String,
+    },
+    /// An `allow-always` whose rule was written, and whose ask was settled
+    /// before its answer reached it (Q3): the rule stays.
+    ApprovalRuleKept {
+        ask_id: String,
+        how: String,
+        rule: String,
+        path: String,
+    },
 }
 
 impl Diagnostic for ApiRejection {
@@ -173,6 +195,10 @@ impl Diagnostic for ApiRejection {
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
             ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
+            ApiRejection::SessionNotHosted { .. } => code!("session-not-hosted"),
+            ApiRejection::ApprovalAmbiguous { .. } => code!("approval-ambiguous"),
+            ApiRejection::ApprovalNoneWaiting { .. } => code!("approval-none-waiting"),
+            ApiRejection::ApprovalRuleKept { .. } => code!("approval-rule-kept"),
         }
     }
 
@@ -185,9 +211,27 @@ impl Diagnostic for ApiRejection {
             ApiRejection::SessionNotFound { name }
             | ApiRejection::TranscriptEmpty { name }
             | ApiRejection::ProjectNotFound { name }
-            | ApiRejection::RunNotFound { name } => {
+            | ApiRejection::RunNotFound { name }
+            | ApiRejection::SessionNotHosted { name } => {
                 vec![("name", name.as_str().into())]
             }
+            ApiRejection::ApprovalAmbiguous { harp, asks } => vec![
+                ("harp", harp.as_str().into()),
+                ("count", (asks.len() as u64).into()),
+                ("asks", asks.join(", ").into()),
+            ],
+            ApiRejection::ApprovalNoneWaiting { harp } => vec![("harp", harp.as_str().into())],
+            ApiRejection::ApprovalRuleKept {
+                ask_id,
+                how,
+                rule,
+                path,
+            } => vec![
+                ("ask_id", ask_id.as_str().into()),
+                ("how", how.as_str().into()),
+                ("rule", rule.as_str().into()),
+                ("path", path.as_str().into()),
+            ],
             ApiRejection::ProjectUnknown { cwd } => vec![("cwd", cwd.as_str().into())],
             ApiRejection::LaunchInProgress { harp } => vec![("harp", harp.as_str().into())],
             ApiRejection::DaemonHosting { runs, harps } => {
@@ -241,6 +285,8 @@ pub enum Rejection {
     Runs(runs::RunRejection),
     /// The trust domain's (a grant whose preview is stale, step 8 U1).
     Trust(trust::TrustRejection),
+    /// The approvals domain's (an answer refused, step 8 U4).
+    Approvals(approvals::ApprovalsRejection),
 }
 
 impl Rejection {
@@ -252,6 +298,7 @@ impl Rejection {
             Rejection::Removal(removal) => Report::of(removal),
             Rejection::Runs(runs) => Report::of(runs),
             Rejection::Trust(trust) => Report::of(trust),
+            Rejection::Approvals(approvals) => Report::of(approvals),
         }
     }
 }
@@ -364,6 +411,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
             .and_then(|r| api(ApiRejection::TranscriptEmpty { name: r.name })),
         "ctxloom.v1.ProjectNotFound" => decode::<v1::ProjectNotFound>(refusal)
             .and_then(|r| api(ApiRejection::ProjectNotFound { name: r.name })),
+        "ctxloom.v1.SessionNotHosted" => decode::<v1::SessionNotHosted>(refusal)
+            .and_then(|r| api(ApiRejection::SessionNotHosted { name: r.name })),
         "ctxloom.v1.RunNotFound" => decode::<v1::RunNotFound>(refusal)
             .and_then(|r| api(ApiRejection::RunNotFound { name: r.name })),
         "ctxloom.v1.ProjectUnknown" => decode::<v1::ProjectUnknown>(refusal)
@@ -482,9 +531,21 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
     }
     let trusted: Option<angzarr_embedded::markup::TypedRefusal> =
         typed_as!(refusal, [trust::PlanStale]);
-    trusted
-        .and_then(|typed| trust::TrustRejection::try_from(&typed).ok())
-        .map(Rejection::Trust)
+    if let Some(trusted) = trusted.and_then(|typed| trust::TrustRejection::try_from(&typed).ok()) {
+        return Some(Rejection::Trust(trusted));
+    }
+    let answered: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
+        refusal,
+        [
+            approvals::ApprovalUnknown,
+            approvals::ApprovalIsSettled,
+            approvals::OptionNotOffered,
+            approvals::MessageNotRelayed,
+        ]
+    );
+    answered
+        .and_then(|typed| approvals::ApprovalsRejection::try_from(&typed).ok())
+        .map(Rejection::Approvals)
 }
 
 fn decode<T: Message + Default>(refusal: &Any) -> Option<T> {
@@ -541,6 +602,22 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(ApiRejection::LaunchInProgress {
             harp: "brisk-copper-moth".to_string(),
+        }),
+        Box::new(ApiRejection::SessionNotHosted {
+            name: "projects/calm-otter/sessions/amber-swift-owl".to_string(),
+        }),
+        Box::new(ApiRejection::ApprovalAmbiguous {
+            harp: "brisk-copper-moth".to_string(),
+            asks: vec!["ask-tidy-wren".to_string(), "ask-pale-moth".to_string()],
+        }),
+        Box::new(ApiRejection::ApprovalNoneWaiting {
+            harp: "brisk-copper-moth".to_string(),
+        }),
+        Box::new(ApiRejection::ApprovalRuleKept {
+            ask_id: "ask-tidy-wren".to_string(),
+            how: "expired".to_string(),
+            rule: "Bash(rm -rf build/)".to_string(),
+            path: "/work/calm/.ctxloom/config.yaml".to_string(),
         }),
     ]
 }

@@ -56,6 +56,8 @@ pub struct Folds {
     /// The trusts given (step 8 U1): what `GetTrust` and `ListTrusts`
     /// read.
     pub trusts: trust_index::TrustIndexes,
+    /// The permission asks (step 8 U4): what the approvals calls read.
+    pub approvals: pending_approvals::PendingApprovals,
 }
 
 /// A child the daemon hosts: its run, the runner's identity, its control,
@@ -75,6 +77,42 @@ struct Hosted {
     _session_lock: Option<HeldLock>,
     /// The checkout it works in, let go WIP-safe once it exits (s4-Q11).
     checkout: Option<Placed>,
+    /// What an ask of its engine is recorded with (step 8 U4).
+    asker: Asker,
+}
+
+/// What the daemon knows of a session it hosts that its engine's ask is
+/// recorded with (step 8 U4, D10): its run, its engine, the agent it was
+/// planned for and its engine's `approval_timeout`, read with its plan at
+/// its launch (T21).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Asker {
+    /// The session's stable id.
+    pub session: String,
+    /// Its run's root, as text.
+    pub run: String,
+    pub engine: String,
+    pub agent: String,
+    pub approval_timeout: std::time::Duration,
+}
+
+impl Asker {
+    /// The asker of the child at `at`, hosted on `engine`, its hand-off
+    /// `handed` and its plan `planned`: its agent the one it was launched
+    /// for, else the one its plan settled.
+    fn of(at: &RunAt, engine: &str, handed: &HandOff, planned: &Planned) -> Asker {
+        Asker {
+            session: at.session.clone(),
+            run: at.run(),
+            engine: engine.to_string(),
+            agent: [&handed.agent, &planned.agent]
+                .into_iter()
+                .find(|agent| !agent.is_empty())
+                .cloned()
+                .unwrap_or_default(),
+            approval_timeout: planned.settings.approval_timeout,
+        }
+    }
 }
 
 /// A hosted child's checkout: where the launch placed it, what it wrote
@@ -210,6 +248,7 @@ pub struct Daemon<E: Edge> {
     pending: CatchUp<PendingMessages>,
     index: CatchUp<SessionIndexes>,
     trusts: CatchUp<trust_index::TrustIndexes>,
+    approvals: CatchUp<pending_approvals::PendingApprovals>,
     launches: CatchUp<PendingModel>,
     /// Each hosted child's environment, by its session's stable id: its
     /// launcher's, taken from the hand-off at its first start (S6, D-N45),
@@ -350,6 +389,7 @@ impl<E: Edge> Daemon<E> {
             pending: pending_messages::caught_up(folds.pending),
             index: session_index::SessionIndex::caught_up(folds.index),
             trusts: trust_index::caught_up(folds.trusts),
+            approvals: pending_approvals::caught_up(folds.approvals),
             launches: pending_launches::catch_up(),
             envs: BTreeMap::new(),
             hosted: BTreeMap::new(),
@@ -474,6 +514,14 @@ impl<E: Edge> Daemon<E> {
             .unwrap_or_default()
     }
 
+    /// What each child it hosts asks with (step 8 U4), in run order.
+    pub fn askers(&self) -> Vec<Asker> {
+        self.hosted
+            .values()
+            .map(|hosted| hosted.asker.clone())
+            .collect()
+    }
+
     /// The runs it hosts, each as its session's stable id and its run's
     /// root (text), in run order: what `GetDaemon` names.
     pub fn hosted_runs(&self) -> Vec<(String, String)> {
@@ -556,6 +604,10 @@ impl<E: Edge> Daemon<E> {
             .step(store, catalog)
             .await
             .map_err(|e| format!("the trust index's catch-up: {e:?}"))?;
+        self.approvals
+            .step(store, catalog)
+            .await
+            .map_err(|e| format!("the pending approvals' catch-up: {e:?}"))?;
         self.sweep(store, catalog).await
     }
 
@@ -890,6 +942,7 @@ impl<E: Edge> Daemon<E> {
         let pending = self.pending.step_if_changed(store, catalog).await;
         let _ = self.index.step_if_changed(store, catalog).await;
         let _ = self.trusts.step_if_changed(store, catalog).await;
+        let _ = self.approvals.step_if_changed(store, catalog).await;
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
         }
@@ -1194,7 +1247,7 @@ impl<E: Edge> Daemon<E> {
         let run = at.run();
         let Ready {
             engine: hosted_engine,
-            child,
+            child: planned,
             handed,
             run_lock: lock,
             session_lock,
@@ -1211,7 +1264,7 @@ impl<E: Edge> Daemon<E> {
             .workspaces
             .as_ref()
             .map(|of| of.of(project_id, project_dir));
-        let workspace = self.workspace_of(project_id, &at, harp, &child, &handed);
+        let workspace = self.workspace_of(project_id, &at, harp, &planned, &handed);
         let started = self.spawn_child(
             &hosted_engine,
             Spawn {
@@ -1225,7 +1278,7 @@ impl<E: Edge> Daemon<E> {
                     .as_deref()
                     .map(|w| w as &dyn isolation_ports::Workspaces),
             },
-            &child,
+            &planned,
             &handed,
         );
         let (child, transcripts, placed) = match started {
@@ -1271,6 +1324,7 @@ impl<E: Edge> Daemon<E> {
             (self.say)(&format!("{harp}: its start not recorded: {error:?}"));
         }
         (self.say)(&format!("{harp}: started, pid {pid}"));
+        let asker = Asker::of(&at, hosted_engine.name(), &handed, &planned);
         self.host(
             child,
             transcripts,
@@ -1281,6 +1335,7 @@ impl<E: Edge> Daemon<E> {
                 session: Some(session_lock),
                 checkout,
             },
+            asker,
         );
         Taken::Done
     }
@@ -1369,6 +1424,7 @@ impl<E: Edge> Daemon<E> {
         at: RunAt,
         who: Identity,
         locks: Locks,
+        asker: Asker,
     ) {
         let run = at.run();
         self.ears.listen(run.clone(), child.observations);
@@ -1383,6 +1439,7 @@ impl<E: Edge> Daemon<E> {
                 _lock: locks.run,
                 _session_lock: locks.session,
                 checkout: locks.checkout,
+                asker,
             },
         );
     }

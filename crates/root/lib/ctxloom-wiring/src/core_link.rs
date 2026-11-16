@@ -18,13 +18,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use angzarr_embedded::angzarr_store_sqlite::SqliteStore;
 use angzarr_embedded::v1::Uuid as WireUuid;
 use angzarr_embedded::{
-    Catalog, ListStreams, OnRetryable, Processed, Registry, Sampled, Store, StoreError, Timestamp,
+    Catalog, Kernel, ListStreams, OnRetryable, Processed, Registry, Sampled, Store, StoreError,
+    Timestamp,
 };
 use angzarr_embedded_host::config::Expose;
 use angzarr_embedded_host::stores::Stores;
 use angzarr_embedded_host::App;
 use embedded_edge::EmbeddedEdge;
 use runs::RunAggregate;
+use scheduler::SchedulerAggregate;
 use sessions::{NameClaimAggregate, ProjectAggregate, ProjectNameAggregate, SessionAggregate};
 use std::num::NonZeroU32;
 use trees::TreeAggregate;
@@ -40,39 +42,96 @@ pub(crate) const RACE_RUNS: NonZeroU32 = match NonZeroU32::new(3) {
     None => NonZeroU32::MIN,
 };
 
-/// The instant and the fresh command id each call is handled at: this is the
-/// composition root, where the clock and the ids live.
-fn sample() -> Sampled {
+/// The instant now, the system's: this is the composition root, where the
+/// clock lives.
+fn system_now() -> Timestamp {
     let since = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
+    Timestamp {
+        seconds: since.as_secs() as i64,
+        nanos: since.subsec_nanos() as i32,
+    }
+}
+
+/// The instant and the fresh command id each call is handled at: this is the
+/// composition root, where the clock and the ids live.
+fn sample() -> Sampled {
     Sampled {
-        now: Timestamp {
-            seconds: since.as_secs() as i64,
-            nanos: since.subsec_nanos() as i32,
-        },
+        now: system_now(),
         command_id: WireUuid::from_bytes(*uuid::Uuid::now_v7().as_bytes()),
     }
 }
 
+/// The scheduler's clock (step 8 U5a): the system's, as each call's sample.
+pub struct SystemClock;
+
+impl scheduler_ports::Clock for SystemClock {
+    fn now(&self) -> Timestamp {
+        system_now()
+    }
+}
+
+/// What registers one domain that arms alarms (step 8 U5a): its aggregate
+/// if the core has not, its policy towards the scheduler (arming and
+/// cancelling, `ArmAlarm`/`CancelAlarm`) and its delivery policy
+/// (`scheduler::delivery!`, which hands it `RecordAlarmReached`).
+pub type AlarmConsumer = fn(&mut Registry);
+
+/// Every domain that arms alarms, registered in the daemon's core alone
+/// (owner ruling 2026-11-16: the daemon commits every trigger, an ask and
+/// its answer or withdrawal alike) and resumed at its start: the approvals'
+/// expiry (step 8 U5, D12). A CLI command's core registers none.
+pub const ALARM_CONSUMERS: &[AlarmConsumer] = &[approvals_expiry];
+
+/// The approvals' expiry (step 8 U5): an ask arms `approval-expiry:<ask>`
+/// for its time, its answer or withdrawal cancels it, and the alarm reached
+/// is delivered to the ask, which expires if it still waits. Its aggregate
+/// is the core's own.
+fn approvals_expiry(registry: &mut Registry) {
+    registry
+        .policy(approvals::ArmsExpiry)
+        .expect("the approvals' expiry arming registers")
+        .policy(approvals::DeliverToApprovals)
+        .expect("the approvals' expiry delivery registers");
+}
+
 /// The core's one store, as the application resolves it: every call's key
-/// is `()`, and it is resumed at start (as `OneStore`), shared with the core
-/// that keeps it, so it can be closed once the application is let go.
-pub struct CoreStores<S>(Arc<S>);
+/// is `()`, shared with the core that keeps it, so it can be closed once
+/// the application is let go. The daemon's is resumed at start (as
+/// `OneStore`); a CLI command's never is (owner ruling 2026-11-16).
+pub struct CoreStores<S> {
+    store: Arc<S>,
+    resumed: Resume,
+}
+
+/// Whether a core resumes, at its start, the policy work its store owes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Resume {
+    /// The daemon's core: every policy source scanned, the owed steps run.
+    AtStart,
+    /// A CLI command's core: nothing scanned. It registers no policy and
+    /// commits nothing a policy's source holds, so it owes none.
+    Never,
+}
 
 impl<S: Store + Processed + ListStreams + Send + Sync> Stores for CoreStores<S> {
     type Key = ();
     type Store = Arc<S>;
 
     async fn store(&self, _key: &()) -> Result<Arc<S>, StoreError> {
-        Ok(Arc::clone(&self.0))
+        Ok(Arc::clone(&self.store))
     }
 
-    // Equivalent to none here: the resume at start runs the policies' owed
-    // work, and the core registers aggregates alone.
-    #[cfg_attr(test, mutants::skip)]
+    // The daemon's resume at start runs the policy work a crash (or a
+    // policy new to a domain with history) left owed: an alarm fired and
+    // not yet delivered is delivered (`scheduling.test.rs`). Its cost grows
+    // with the sources' history, which a CLI command's core never pays.
     fn at_start(&self) -> Vec<()> {
-        vec![()]
+        match self.resumed {
+            Resume::AtStart => vec![()],
+            Resume::Never => Vec::new(),
+        }
     }
 }
 
@@ -80,7 +139,7 @@ impl<S: Store + Processed + ListStreams + Send + Sync> Stores for CoreStores<S> 
 /// each a handle on a fold another driver (a catch-up) may share, run inline
 /// after every commit of its sources, and what a `HandleSync` names. A core
 /// a CLI command runs registers none (its folds would be partial, and it
-/// serves no `HandleSync`); the daemon's registers all four.
+/// serves no `HandleSync`); the daemon's registers every one.
 #[derive(Clone, Default)]
 pub struct Projectors {
     pub board: Option<daemon_board::Boards>,
@@ -88,6 +147,10 @@ pub struct Projectors {
     pub index: Option<session_index::SessionIndexes>,
     /// The projects' trusts (step 8 U1).
     pub trusts: Option<trust_index::TrustIndexes>,
+    /// The permission asks (step 8 U4).
+    pub approvals: Option<pending_approvals::PendingApprovals>,
+    /// The alarms armed, which the daemon's scheduler reads (step 8 U5a).
+    pub due: Option<crate::scheduling::SchedulerDues>,
 }
 
 impl Projectors {
@@ -103,6 +166,8 @@ impl Projectors {
             pending: Some(pending_messages::PendingMessages::filled(fill())),
             index: Some(session_index::SessionIndexes::filled(fill())),
             trusts: Some(trust_index::TrustIndexes::filled(fill())),
+            approvals: Some(pending_approvals::PendingApprovals::filled(fill())),
+            due: Some(crate::scheduling::SchedulerDues::filled(fill())),
         }
     }
 
@@ -129,6 +194,16 @@ impl Projectors {
             registry
                 .projector_handler(&trust_index::SOURCES, trusts)
                 .expect("the trust index registers");
+        }
+        if let Some(approvals) = self.approvals {
+            registry
+                .projector_handler(&pending_approvals::SOURCES, approvals)
+                .expect("the pending approvals register");
+        }
+        if let Some(due) = self.due {
+            registry
+                .projector_handler(&[scheduler::SCHEDULER_DOMAIN], due)
+                .expect("the due alarms register");
         }
     }
 }
@@ -220,19 +295,43 @@ impl<S> InProcessCore<S>
 where
     S: Store + Processed + ListStreams + Send + Sync + 'static,
 {
-    /// The application over `store`: the sessions, runs, trees and trust
-    /// aggregates registered; sessions and runs exposed to the network (the
-    /// container bridge reaches them) and trees and trust to loopback; the kernel's retries off,
-    /// so a fact at the race cap is parked at once.
+    /// A CLI command's core over `store`: the sessions, runs, trees, trust,
+    /// approvals and scheduler aggregates registered; sessions and runs
+    /// exposed to the network (the container bridge reaches them) and
+    /// trees, trust and approvals to loopback; the kernel's retries off, so
+    /// a fact at the race cap is parked at once. No read model, no policy
+    /// (no alarm consumer), and no resume at start (owner ruling
+    /// 2026-11-16): the daemon's core alone pays for owed policy work.
     pub async fn start(store: S) -> InProcessCore<S> {
-        InProcessCore::start_with(store, |_| Projectors::default()).await
+        InProcessCore::begin(store, |_| Projectors::default(), &[], Resume::Never).await
     }
 
-    /// [`InProcessCore::start`], with the read models `projectors` builds
-    /// (given the store it will keep) registered in its kernel (S32).
+    /// The daemon's core: [`InProcessCore::start`]'s, with the read models
+    /// `projectors` builds (given the store it will keep) registered in its
+    /// kernel (S32), every domain that arms alarms ([`ALARM_CONSUMERS`]),
+    /// and the policy work its store owes resumed at start.
     pub async fn start_with(
         store: S,
         projectors: impl FnOnce(&Arc<S>) -> Projectors,
+    ) -> InProcessCore<S> {
+        InProcessCore::start_consuming(store, projectors, ALARM_CONSUMERS).await
+    }
+
+    /// [`InProcessCore::start_with`], `consumers` the domains that arm
+    /// alarms (production's are [`ALARM_CONSUMERS`]; a test's its own).
+    pub(crate) async fn start_consuming(
+        store: S,
+        projectors: impl FnOnce(&Arc<S>) -> Projectors,
+        consumers: &[AlarmConsumer],
+    ) -> InProcessCore<S> {
+        InProcessCore::begin(store, projectors, consumers, Resume::AtStart).await
+    }
+
+    async fn begin(
+        store: S,
+        projectors: impl FnOnce(&Arc<S>) -> Projectors,
+        consumers: &[AlarmConsumer],
+        resumed: Resume,
     ) -> InProcessCore<S> {
         let store = Arc::new(store);
         let mut registry = Registry::new();
@@ -262,11 +361,31 @@ where
         registry
             .aggregate::<TrustAggregate>(TrustAggregate::default)
             .expect("the trust aggregate registers");
+        // The permission asks and their names (step 8 U4): an answer and a
+        // withdrawal are the user's, on loopback; the ask and its name's
+        // claim are the daemon's own.
+        registry
+            .aggregate::<approvals::ApprovalAggregate>(approvals::ApprovalAggregate::default)
+            .expect("the approvals aggregate registers");
+        registry
+            .aggregate::<approvals::ApprovalNameAggregate>(
+                approvals::ApprovalNameAggregate::default,
+            )
+            .expect("the approval names aggregate registers");
+        // The scheduler (step 8 U5a): its streams are written by policies
+        // and the daemon's clock loop alone, so it is exposed to nobody.
+        registry
+            .aggregate::<SchedulerAggregate>(SchedulerAggregate::default)
+            .expect("the scheduler aggregate registers");
+        for consumer in consumers {
+            consumer(&mut registry);
+        }
         let exposed = BTreeMap::from([
             (sessions::SESSION_DOMAIN.to_string(), Expose::Ip),
             (runs::RUN_DOMAIN.to_string(), Expose::Ip),
             (trees::TREE_DOMAIN.to_string(), Expose::Loopback),
             (trust::TRUST_DOMAIN.to_string(), Expose::Loopback),
+            (approvals::APPROVALS_DOMAIN.to_string(), Expose::Loopback),
         ]);
         let retries = OnRetryable {
             max_retries: 0,
@@ -276,7 +395,11 @@ where
             max_backoff: Duration::ZERO,
             jitter: 0.0,
         };
-        let app = App::builder(CoreStores(Arc::clone(&store)), registry)
+        let stores = CoreStores {
+            store: Arc::clone(&store),
+            resumed,
+        };
+        let app = App::builder(stores, registry)
             .exposed(exposed.clone())
             .on_retryable(retries)
             .start()
@@ -369,6 +492,12 @@ where
 
     pub fn catalog(&self) -> &Catalog {
         self.app.registry().catalog()
+    }
+
+    /// The kernel the application runs, its settings the application's:
+    /// what the daemon's scheduler sends its clock facts through.
+    pub(crate) fn kernel(&self) -> Kernel<'_> {
+        self.app.kernel()
     }
 }
 

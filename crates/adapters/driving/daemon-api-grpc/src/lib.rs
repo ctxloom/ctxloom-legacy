@@ -383,6 +383,51 @@ impl Ctxloom for Served {
         .await
     }
 
+    async fn create_approval(
+        &self,
+        request: Request<v1::CreateApprovalRequest>,
+    ) -> Result<Response<v1::Approval>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.create_approval(message).await
+        })
+        .await
+    }
+
+    async fn get_approval(
+        &self,
+        request: Request<v1::GetApprovalRequest>,
+    ) -> Result<Response<v1::Approval>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.get_approval(message).await
+        })
+        .await
+    }
+
+    async fn list_approvals(
+        &self,
+        request: Request<v1::ListApprovalsRequest>,
+    ) -> Result<Response<v1::ListApprovalsResponse>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.list_approvals(message).await
+        })
+        .await
+    }
+
+    /// Awaited here, never on a blocking thread: the wait lasts as long as
+    /// the user takes, and a caller that hangs up (its deadline passed, its
+    /// call cancelled) drops it, so no wait outlives its caller.
+    async fn wait_approval(
+        &self,
+        request: Request<v1::WaitApprovalRequest>,
+    ) -> Result<Response<v1::Approval>, Status> {
+        let calls = Arc::clone(&self.calls);
+        calls
+            .wait_approval(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(status_of_error)
+    }
+
     async fn get_trust(
         &self,
         request: Request<v1::GetTrustRequest>,

@@ -38,7 +38,7 @@ mod ports;
 mod rehost;
 mod terminal;
 
-pub use daemon::{Daemon, Folds, Place, Ports, Taken, HAND_OVER_PERIOD};
+pub use daemon::{Asker, Daemon, Folds, Place, Ports, Taken, HAND_OVER_PERIOD};
 pub use one_shot::{
     Created, HostProject, HostRequest, Hosted, OneShotControl, OneShotHost, OneShots, Told, Watch,
     STOP_GRACE_MS,

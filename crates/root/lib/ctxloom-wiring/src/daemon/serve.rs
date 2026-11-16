@@ -168,6 +168,7 @@ pub(crate) fn serve(
         };
         let endpoint = own.endpoint.clone();
         said(&say, &format!("serving at {endpoint}"));
+        let scheduler = scheduler_over(&core, &kept, pace, &say);
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
         let terminated = hear_terminate((&fs, home), &shared, &say);
@@ -179,9 +180,7 @@ pub(crate) fn serve(
             &say,
         )
         .await;
-        if let Some(terminated) = terminated {
-            terminated.abort();
-        }
+        lifelong_ended(terminated, scheduler, &say).await;
         files.withdraw_own(&own);
         // Every holder of the store let go before the close (ruling 131):
         // the launcher (its edge and its folds), the edge, the listener's
@@ -229,6 +228,46 @@ pub(crate) fn serve(
 
 /// How long the daemon's exit waits for its runtime's blocking tasks.
 const RUNTIME_END: Duration = Duration::from_secs(5);
+
+/// How long the daemon's exit waits for its scheduler's tick to finish.
+const SCHEDULER_END: Duration = Duration::from_secs(5);
+
+/// The scheduler (step 8 U5a), for the daemon's life, over `core` and the
+/// due model `kept` registered in its kernel, on the system clock, looking
+/// at the store at the daemon's poll; its lines in the daemon's log. Its
+/// alarms fire while the daemon drains too.
+fn scheduler_over(
+    core: &InProcessCore<SqliteStore>,
+    kept: &Projectors,
+    pace: Pace,
+    say: &Say,
+) -> crate::scheduling::Scheduler {
+    let say = Arc::clone(say);
+    crate::scheduling::start(
+        core.share(),
+        kept.due.clone().unwrap_or_default(),
+        Arc::new(crate::SystemClock),
+        pace.poll,
+        Arc::new(move |line: &str| said(&say, line)),
+    )
+}
+
+/// What runs for the daemon's life, ended once its loop returns and before
+/// anything else is let go: the SIGTERM listener, then the scheduler, whose
+/// copy of the core goes before the store closes (ruling 131). A scheduler
+/// that does not end in time is cut, and said.
+async fn lifelong_ended(
+    terminated: Option<tokio::task::JoinHandle<()>>,
+    scheduler: crate::scheduling::Scheduler,
+    say: &Say,
+) {
+    if let Some(terminated) = terminated {
+        terminated.abort();
+    }
+    if !scheduler.stop(SCHEDULER_END).await {
+        said(say, "the scheduler did not stop in time: it was cut");
+    }
+}
 
 /// What the loop shares with its API, its drain's period read from
 /// `pace`'s default and `home`'s config.
@@ -678,7 +717,12 @@ fn served(
             }))
             .handing_off(super::files::api_hand_offs(fs, (home, temp), engines))
             // The trusts it reads (step 8 U1).
-            .trusting(trusting(kept, (home, temp))),
+            .trusting(trusting(kept, (home, temp)))
+            // The asks it records and reads (step 8 U4).
+            .approving(daemon_api::Approving {
+                index: kept.approvals.clone().unwrap_or_default(),
+                names: Arc::new(FreshAskNames),
+            }),
     )
 }
 
@@ -851,6 +895,7 @@ fn launcher(
             pending: kept.pending.clone().unwrap_or_default(),
             index: kept.index.clone().unwrap_or_default(),
             trusts: kept.trusts.clone().unwrap_or_default(),
+            approvals: kept.approvals.clone().unwrap_or_default(),
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })
@@ -887,7 +932,7 @@ async fn run<E: run_ports::Edge>(
     let mut stopping = false;
     let mut handing_over = false;
     loop {
-        shared.tell(launcher.hosted_runs(), quiet_since);
+        shared.tell(launcher.hosted_runs(), launcher.askers(), quiet_since);
         if !files.still_holds(held) {
             said(
                 say,
@@ -1047,6 +1092,8 @@ struct Round {
     endpoint: String,
     /// Each hosted child's session id and run root.
     children: Vec<(String, String)>,
+    /// What each hosted child's ask is recorded with (step 8 U4).
+    askers: Vec<daemon_application::Asker>,
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
@@ -1108,9 +1155,15 @@ impl Shared {
 
     /// What the round found it hosts: its children, each its session id
     /// and run root.
-    fn tell(&self, children: Vec<(String, String)>, quiet_since: Instant) {
+    fn tell(
+        &self,
+        children: Vec<(String, String)>,
+        askers: Vec<daemon_application::Asker>,
+        quiet_since: Instant,
+    ) {
         let mut round = self.round();
         round.children = children;
+        round.askers = askers;
         round.quiet_since = Some(quiet_since);
     }
 
@@ -1162,6 +1215,14 @@ impl daemon_api::Hosting for Shared {
                 }
             })
             .collect()
+    }
+
+    fn asker(&self, session: &str) -> Option<daemon_application::Asker> {
+        self.round()
+            .askers
+            .iter()
+            .find(|asker| asker.session == session)
+            .cloned()
     }
 
     fn idle_seconds(&self) -> u64 {
@@ -1231,6 +1292,22 @@ struct FreshHarps;
 impl daemon_api::Harps for FreshHarps {
     fn fresh(&self) -> Vec<String> {
         crate::fresh_project_harps()
+    }
+}
+
+/// How many ask names one ask tries before it fails.
+const ASK_NAME_TRIES: usize = 8;
+
+/// Fresh ask names (step 8 U4, Q7): harp-names' two-word mints, as a
+/// task's id (`tidy-wren`); the daemon prefixes `ask-`.
+struct FreshAskNames;
+
+impl daemon_api::AskNames for FreshAskNames {
+    fn fresh(&self) -> Vec<String> {
+        use ports::Mint as _;
+        (0..ASK_NAME_TRIES)
+            .map(|_| harp_names::HarpNames.mint())
+            .collect()
     }
 }
 

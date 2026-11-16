@@ -93,7 +93,7 @@ pub const EN_US: (&str, &str) = (
 /// One value of every fault, for the catalog test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
-    vec![
+    let faults: Vec<Box<dyn Diagnostic>> = vec![
         Box::new(CliFault::BadState {
             value: "running".to_string(),
             states: "live, ended, unknown".to_string(),
@@ -108,7 +108,8 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(AlreadyClosed {
             harp: "brisk-copper-moth".to_string(),
         }),
-    ]
+    ];
+    faults.into_iter().chain(crate::text::samples()).collect()
 }
 
 #[cfg(test)]
