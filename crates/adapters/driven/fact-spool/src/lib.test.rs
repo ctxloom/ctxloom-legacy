@@ -801,3 +801,300 @@ fn race_appenders_and_discards_leave_a_whole_hold() {
         .iter()
         .any(|n| n.contains("corrupt")));
 }
+
+// --- what the file system answers ------------------------------------------
+
+/// The operations [`Faulty`] can be told to fail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Op {
+    Read,
+    Open,
+    Metadata,
+    ReadDir,
+    Remove,
+}
+
+/// A file system that answers `kind` for an operation on a path whose file
+/// name is the one named, and is the temporary one otherwise: the errors a
+/// real tree gives (a hold reaped between the listing and the look, one
+/// nobody may read) at the one place a test names.
+#[derive(Debug)]
+struct Faulty {
+    inner: Arc<Rooted>,
+    faults: Vec<(Op, String, std::io::ErrorKind)>,
+}
+
+impl Faulty {
+    fn fault(&self, op: Op, path: &Path) -> std::io::Result<()> {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        match self
+            .faults
+            .iter()
+            .find(|(o, n, _)| *o == op && Some(n) == name.as_ref())
+        {
+            Some((_, _, kind)) => Err(std::io::Error::new(*kind, "injected")),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Fs for Faulty {
+    fn cwd(&self) -> Result<&Path, file_system::CwdError> {
+        self.inner.cwd()
+    }
+    fn os(&self) -> &dyn os::Os {
+        self.inner.os()
+    }
+    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        self.fault(Op::Read, path)?;
+        self.inner.read(path)
+    }
+    fn read_to_string(&self, path: &Path) -> std::io::Result<String> {
+        self.fault(Op::Read, path)?;
+        self.inner.read_to_string(path)
+    }
+    fn write_atomic(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        perms: file_system::Perms,
+    ) -> std::io::Result<()> {
+        self.inner.write_atomic(path, bytes, perms)
+    }
+    fn open(&self, path: &Path, how: Open) -> std::io::Result<std::fs::File> {
+        self.fault(Op::Open, path)?;
+        self.inner.open(path, how)
+    }
+    fn create_dir_all(&self, path: &Path, mode: Mode) -> std::io::Result<()> {
+        self.inner.create_dir_all(path, mode)
+    }
+    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+        self.fault(Op::Remove, path)?;
+        self.inner.remove_file(path)
+    }
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.remove_dir_all(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        self.inner.rename(from, to)
+    }
+    fn set_permissions(&self, path: &Path, mode: Mode) -> std::io::Result<()> {
+        self.inner.set_permissions(path, mode)
+    }
+    fn read_dir(&self, path: &Path) -> std::io::Result<Vec<file_system::Entry>> {
+        self.fault(Op::ReadDir, path)?;
+        self.inner.read_dir(path)
+    }
+    fn metadata(&self, path: &Path) -> std::io::Result<file_system::Meta> {
+        self.fault(Op::Metadata, path)?;
+        self.inner.metadata(path)
+    }
+    fn symlink_metadata(&self, path: &Path) -> std::io::Result<file_system::Meta> {
+        self.inner.symlink_metadata(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        self.inner.exists(path)
+    }
+    fn canonicalize(&self, path: &Path) -> std::io::Result<PathBuf> {
+        self.inner.canonicalize(path)
+    }
+    fn symlink_dir(&self, target: &Path, link: &Path) -> std::io::Result<()> {
+        self.inner.symlink_dir(target, link)
+    }
+    fn read_link(&self, link: &Path) -> std::io::Result<PathBuf> {
+        self.inner.read_link(link)
+    }
+    fn make_temp_dir(&self, parent: &Path, prefix: &str) -> std::io::Result<PathBuf> {
+        self.inner.make_temp_dir(parent, prefix)
+    }
+    fn real_path(&self, path: &Path) -> std::io::Result<PathBuf> {
+        self.inner.real_path(path)
+    }
+    fn same_file(&self, file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
+        self.inner.same_file(file, path)
+    }
+}
+
+/// `spool`'s holds as they are on disk, seen through a file system that
+/// answers each of `faults`.
+fn faulty(fs: &Arc<Rooted>, faults: &[(Op, String, std::io::ErrorKind)]) -> Spool {
+    let faulty = Arc::new(Faulty {
+        inner: Arc::clone(fs),
+        faults: faults.to_vec(),
+    });
+    Spool::at_home(faulty, &home())
+}
+
+const DENIED: std::io::ErrorKind = std::io::ErrorKind::PermissionDenied;
+const GONE: std::io::ErrorKind = std::io::ErrorKind::NotFound;
+
+fn is_io(result: Result<impl std::fmt::Debug, HoldError>) {
+    match result {
+        Err(HoldError::Io { ext_err_txt, .. }) => assert_eq!(ext_err_txt, "injected"),
+        other => panic!("not the injected error: {other:?}"),
+    }
+}
+
+fn hold_name(s: &Uuid) -> String {
+    format!("{s}.held")
+}
+
+#[test]
+fn a_hold_that_cannot_be_read_fails_and_is_never_taken_for_none() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    hold_all(&spool, &s, &["a"]);
+    let faulty = faulty(&fs, &[(Op::Read, hold_name(&s), DENIED)]);
+    is_io(faulty.is_empty(&s));
+    is_io(faulty.take(&s).map(|b| b.map(|b| b.entries().len())));
+}
+
+#[test]
+fn a_holds_directory_that_cannot_be_listed_fails_and_lists_no_sessions() {
+    let (fs, spool) = spool();
+    hold_all(&spool, &root(1), &["a"]);
+    let faulty = faulty(&fs, &[(Op::ReadDir, "held".to_string(), DENIED)]);
+    is_io(faulty.sessions());
+    is_io(faulty.survey().map(|s| s.len()));
+}
+
+#[test]
+fn a_set_aside_part_that_cannot_be_made_fails_the_repair() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    corrupt_after(&fs, &spool, &s, &["a"]);
+    let faulty = faulty(&fs, &[(Op::Open, format!("{s}.held.corrupt-1"), DENIED)]);
+    is_io(faulty.take(&s).map(|b| b.map(|b| b.entries().len())));
+    assert!(
+        !names(&fs, spool.dir())
+            .iter()
+            .any(|n| n.contains("corrupt")),
+        "no later part is taken in its place"
+    );
+}
+
+#[test]
+fn another_hold_that_cannot_be_measured_fails_an_append() {
+    let (fs, spool) = spool();
+    let (s, other) = (root(1), root(2));
+    hold_all(&spool, &other, &["o"]);
+    let faulty = faulty(&fs, &[(Op::Metadata, hold_name(&other), DENIED)]);
+    is_io(faulty.hold(&s, fact("a")));
+}
+
+#[test]
+fn another_hold_gone_between_the_listing_and_the_look_takes_no_bytes() {
+    let (fs, spool) = spool();
+    let (s, other) = (root(1), root(2));
+    hold_all(&spool, &other, &["o"]);
+    let faulty = faulty(&fs, &[(Op::Metadata, hold_name(&other), GONE)]);
+    assert_eq!(faulty.hold(&s, fact("a")).unwrap(), Held::Kept);
+}
+
+// The home's bound counts every OTHER hold: never the session's own, and
+// nothing in the directory that is no hold (its locks, its set-aside parts).
+#[test]
+fn the_homes_bound_counts_other_holds_alone() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    let file = MAGIC.len() as u64 + framed("f0") + framed("f1");
+    let spool = spool.bounded(u64::MAX / 4, file);
+    fs.create_dir_all(spool.dir(), super::PRIVATE_DIR).unwrap();
+    fs.write_atomic(
+        &spool.dir().join(format!("{}.held.corrupt-1", root(2))),
+        &[0; 4096],
+        file_system::Perms::Exact(Mode::PRIVATE_FILE),
+    )
+    .unwrap();
+    hold_all(&spool, &s, &["f0", "f1"]);
+    assert_eq!(held(&spool, &s), ["f0", "f1"]);
+}
+
+#[test]
+fn a_hold_that_cannot_be_surveyed_fails_the_survey() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    hold_all(&spool, &s, &["a"]);
+    let faulty = faulty(&fs, &[(Op::Read, hold_name(&s), DENIED)]);
+    is_io(faulty.survey().map(|s| s.len()));
+}
+
+#[test]
+fn a_hold_gone_between_the_listing_and_the_survey_is_passed_over() {
+    let (fs, spool) = spool();
+    let (s, other) = (root(1), root(2));
+    hold_all(&spool, &s, &["a"]);
+    hold_all(&spool, &other, &["o"]);
+    let faulty = faulty(&fs, &[(Op::Read, hold_name(&s), GONE)]);
+    let survey = faulty.survey().unwrap();
+    assert_eq!(survey.iter().map(|h| h.root).collect::<Vec<_>>(), [other]);
+}
+
+#[test]
+fn a_hold_that_cannot_be_removed_fails_its_discard() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    hold_all(&spool, &s, &["a"]);
+    let faulty = faulty(&fs, &[(Op::Remove, hold_name(&s), DENIED)]);
+    is_io(faulty.discard(&s));
+    assert_eq!(held(&spool, &s), ["a"]);
+}
+
+// A creation that tore before its magic was whole is repaired to the
+// magic alone: an empty hold, never an empty file.
+#[test]
+fn a_hold_whose_creation_tore_is_repaired_to_its_magic() {
+    let (fs, spool) = spool();
+    let s = root(1);
+    fs.create_dir_all(spool.dir(), super::PRIVATE_DIR).unwrap();
+    append_raw(&fs, &spool.hold_path(&s), &MAGIC[..3]);
+    assert!(spool.take(&s).unwrap().unwrap().entries().is_empty());
+    assert_eq!(fs.read(&spool.hold_path(&s)).unwrap(), MAGIC);
+}
+
+// One time is earlier than another only when it is strictly before it,
+// nanoseconds breaking a tie of seconds.
+#[test]
+fn earlier_is_strictly_before() {
+    use daemon_proto::google::protobuf::Timestamp;
+    let at = |seconds, nanos| Timestamp { seconds, nanos };
+    assert!(!super::earlier(&at(10, 5), &at(10, 5)), "the same time");
+    assert!(super::earlier(&at(10, 4), &at(10, 5)));
+    assert!(super::earlier(&at(9, 9), &at(10, 0)));
+    assert!(!super::earlier(&at(10, 6), &at(10, 5)));
+    assert!(!super::earlier(&at(11, 0), &at(10, 9)));
+}
+
+// A survey's oldest is the earliest time a hold's records were held, in
+// whatever order they were held.
+#[test]
+fn a_surveys_oldest_is_the_earliest_whatever_the_order() {
+    use daemon_proto::google::protobuf::Timestamp;
+    let (_fs, spool) = spool();
+    let s = root(1);
+    for (id, seconds) in [("a", 10), ("b", 30), ("c", 20)] {
+        let f = HeldFact {
+            held_at: Some(Timestamp { seconds, nanos: 0 }),
+            ..fact(id)
+        };
+        spool.hold(&s, f).unwrap();
+    }
+    let survey = spool.survey().unwrap();
+    assert_eq!(
+        survey[0].oldest,
+        Some(Timestamp {
+            seconds: 10,
+            nanos: 0
+        })
+    );
+}
+
+// A spool's Debug names its directory alone: never its file system, its
+// bounds or its pauses.
+#[test]
+fn a_spools_debug_names_its_directory_alone() {
+    let (_fs, spool) = spool();
+    let spool = spool.bounded(1234, 5678);
+    let shown = format!("{spool:?}");
+    assert_eq!(shown, format!("Spool {{ dir: {:?}, .. }}", spool.dir()));
+}

@@ -594,6 +594,30 @@ fn the_gate_is_ready_when_its_service_is() {
     ));
 }
 
+// So are the warnings' and the told calls' wrappers: each is ready when the
+// service it wraps is, never before (in the daemon that is tonic's generated
+// server, ready always, but a wrapper answers for the service it is given).
+#[test]
+fn the_warned_and_told_wrappers_are_ready_when_their_service_is() {
+    use tonic::codegen::Service;
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let warned = |ready| super::Warned {
+        inner: Readiness(ready),
+        calls: Arc::<Scripted>::default(),
+    };
+    let told = |ready| crate::telling(Readiness(ready), Arc::new(|_: &str| {}));
+    assert!(warned(false).poll_ready(&mut cx).is_pending());
+    assert!(matches!(
+        warned(true).poll_ready(&mut cx),
+        std::task::Poll::Ready(Ok(()))
+    ));
+    assert!(told(false).poll_ready(&mut cx).is_pending());
+    assert!(matches!(
+        told(true).poll_ready(&mut cx),
+        std::task::Poll::Ready(Ok(()))
+    ));
+}
+
 // U4: CreateRun and GetRun are their use cases' answers, a TERMINAL run is
 // UNIMPLEMENTED until U5, and WatchRun streams every event its use case
 // gives, in order, then ends.

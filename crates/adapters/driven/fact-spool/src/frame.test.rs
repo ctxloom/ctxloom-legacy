@@ -148,6 +148,21 @@ fn a_length_past_the_bound_is_corruption_and_one_within_it_a_torn_tail() {
     assert_eq!((within.tail, within.valid_end), (Tail::Torn, good));
 }
 
+// The bound is the longest record a hold has: a record exactly that long
+// is read, one byte longer is corruption.
+#[test]
+fn a_record_exactly_at_the_bound_is_read_and_one_past_it_is_corruption() {
+    let entry = Gen::new(5).entry();
+    let bytes = file_of(std::slice::from_ref(&entry));
+    let len = (bytes.len() - MAGIC.len() - HEADER) as u64;
+    let at = scan(&bytes, len).unwrap();
+    assert_eq!(entries(&at), [entry]);
+    assert_eq!((at.tail, at.valid_end), (Tail::Clean, bytes.len()));
+    let past = scan(&bytes, len - 1).unwrap();
+    assert!(past.entries.is_empty());
+    assert_eq!((past.tail, past.valid_end), (Tail::Corrupt, MAGIC.len()));
+}
+
 #[test]
 fn a_payload_that_is_no_record_is_corruption() {
     for payload in [vec![0xff, 0xff, 0xff], Vec::new()] {
