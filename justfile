@@ -401,6 +401,18 @@ mutants-batch base="" head="HEAD":
 # it): how one crate's mutants are run whole, as for a runaway mutant's hunt.
 # It runs under the mutation run's memory cap (`mutants_memory_max`,
 # gates/memory-cap.sh) and says the scope's memory peak.
+#
+# The ratchet (owner ruling 165): a shard holding mutants of the binary runs
+# its feature runner, so on a tree that carries red spec on purpose (an
+# integration branch) its unmutated baseline would fail (exit 4) and judge
+# nothing. Such a shard first makes the tree's own scenario list (`just
+# ratchet-base HEAD`, the runner alone in a throwaway worktree, cached by
+# sha), and when that list has red the run is given it as
+# GHERKIN_RATCHET_BASE: every run of the runner, the baseline and each
+# mutant's, is judged against it in the test (a new red fails it, the
+# tree's red passes), so the binary's tests still kill. A list with no red
+# (main) sets nothing: the plain gate. A shard with no mutant of the binary
+# runs no runner and makes no list.
 [group('closeout')]
 [doc("One shard of a mutation run (the workspace, or one package): mutants-shard <k/n> [out] [package]")]
 [no-exit-message]
@@ -414,8 +426,20 @@ mutants-shard shard out="target/logs/mutants-shard" package="": _mutants-no-feat
     {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' --check
     scope=(--workspace)
     [ -z '{{package}}' ] || scope=(--package '{{package}}')
+    ratchet=()
+    binary=$(cargo mutants --dir {{TOP}} --list --json "${scope[@]}" --shard '{{shard}}' \
+        | jq '[.[] | select(.package == "ctxloom")] | length')
+    if [ "$binary" -gt 0 ]; then
+        just --justfile {{TOP}}/justfile ratchet-base HEAD
+        list={{TOP}}/target/ratchet/$(git -C {{TOP}} rev-parse HEAD).list
+        red=$(grep -c '^red' "$list" || true)
+        if [ "$red" -gt 0 ]; then
+            ratchet=(env "GHERKIN_RATCHET_BASE=$list")
+            echo "mutants-shard {{shard}}: ratchet: the tree carries $red red scenarios; each feature-runner run is judged against them (GHERKIN_RATCHET_BASE)"
+        fi
+    fi
     rc=0
-    {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' \
+    "${ratchet[@]}" {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' \
         cargo mutants --dir {{TOP}} --in-place "${scope[@]}" --shard '{{shard}}' --output "$out" --colors never || rc=$?
     echo "$rc" > "$out/exit"
     found=$(jq '.total_mutants // 0' "$out/mutants.out/outcomes.json" 2>/dev/null || echo 0)

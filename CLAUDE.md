@@ -3395,6 +3395,17 @@ scope can be made, that shard runs deliberately UNCAPPED
 the job's alone, so a runaway mutant fails that shard and nothing else.
 `mutants-shard <k/n> [out] [package]` with a package narrows the run to that
 one crate (`0/1` for all of it), how one crate's mutants are run whole.
+A shard holding mutants of the binary runs its feature runner, so on a tree
+that carries red spec on purpose (an integration branch, ruling 165) its
+unmutated baseline was red (cargo-mutants' exit 4, the score judging
+nothing: run 43870047304 on daemon/integration). Such a shard first makes
+the tree's own list (`just ratchet-base HEAD`, below), and when it has red
+runs cargo-mutants with `GHERKIN_RATCHET_BASE` naming it: every run of the
+runner, the baseline's and each mutant's, is judged against that list in
+the test, so the tree's red passes, a new red fails (the baseline, or kills
+the mutant). A list with no red (main) sets nothing: the plain gate. A
+shard with no mutant of the binary (`cargo mutants --list`) makes no list.
+The suites job still runs the runner straight, so its red is judged there.
 
 The release profile (owner ruling 2026-11-12, Cargo.toml's
 `[profile.release]`) is fat LTO, one codegen unit, opt-level 3,
@@ -3640,7 +3651,8 @@ Each branch landing on the integration branch runs it; the full `just
 closeout-ratchet <base>` runs once per batch and before main. `just
 closeout-ratchet <base>` (owner ruling 165; `scripts/closeout-ratchet.sh`) is
 closeout's six gates as usual, mutation included (over merge-base(<base>,
-HEAD)..HEAD), except that the feature runner may fail where the base's does
+HEAD)..HEAD, given `GHERKIN_RATCHET_BASE` naming the base's list when it
+has red, as `mutants-shard` is), except that the feature runner may fail where the base's does
 and nowhere else: the slice's red scenarios must be a SUBSET of the base
 tip's. It may turn red green, never add a red scenario or break a green one
 (`FAIL ratchet: N new red scenarios: B broke green, A added red`, each named,
@@ -3660,6 +3672,11 @@ and its failures file, between them: each, holding `<list>.lock`, replaces
 the lines and records of the features it ran and keeps the rest, sorted as
 one; `<list>.run` names the run that wrote it (`NEXTEST_RUN_ID`), so what
 an earlier run left is dropped and the file is exactly the run's scenarios.
+`GHERKIN_RATCHET_BASE=<absolute file>`, a base's list, judges each cluster
+against it in the test itself: it fails naming each of its scenarios red
+here and not red there (`broke green`, `added red`, the judge's rule) and
+passes the base's red, so a mutation run of a tree with red spec still has
+the runner judging (`mutants-shard`, `closeout-ratchet`'s mutants-batch).
 `GHERKIN_SCENARIO=<id>` runs that one scenario alone, `GHERKIN_ONLY=<text>`
 the features whose path holds it; a cluster holding none passes having run
 nothing, and when no feature matches at all every cluster fails. A
