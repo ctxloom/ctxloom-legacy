@@ -4,8 +4,9 @@
 //!
 //! `child_launch` (slice 4 U3, owner ruling s4-Q1) is the session's own
 //! child's launch over the daemon's `CreateHandOff`, as `session launch` is
-//! the user's. `approval_prompt` is not offered until approvals are (OD-1):
-//! a tool that always refuses would be a lie.
+//! the user's. `approval_prompt` (step 8 U4) is a claude engine's
+//! permission prompt, served by the server itself (it waits, and hears a
+//! cancel: `crate::approval`).
 
 use std::fmt;
 use std::sync::Arc;
@@ -15,8 +16,11 @@ use daemon_api::{CallError, Caller, Daemons, Launch};
 use rmcp::model::{JsonObject, Tool};
 use serde_json::{json, Value};
 
+/// The approval tool's name: `mcp__ctxloom__approval_prompt` to claude.
+pub const APPROVAL_PROMPT: &str = "approval_prompt";
+
 /// The names of the tools offered, in the order listed.
-pub const TOOL_NAMES: [&str; 8] = [
+pub const TOOL_NAMES: [&str; 9] = [
     "session_list",
     "session_show",
     "transcript_show",
@@ -25,6 +29,7 @@ pub const TOOL_NAMES: [&str; 8] = [
     "child_send",
     "child_close",
     "child_clear",
+    APPROVAL_PROMPT,
 ];
 
 /// A JSON Schema object of `properties`, `required` named.
@@ -62,6 +67,8 @@ const CHILD_LAUNCH: &str = include_str!("../tools/child_launch.md");
 const CHILD_SEND: &str = include_str!("../tools/child_send.md");
 const CHILD_CLOSE: &str = include_str!("../tools/child_close.md");
 const CHILD_CLEAR: &str = include_str!("../tools/child_clear.md");
+// DRAFT (texts.md §1, D14): the owner approves it with the slice's texts.
+const APPROVAL_PROMPT_TEXT: &str = include_str!("../tools/approval_prompt.md");
 
 /// A description as offered: the file's text without the newline that ends
 /// it, so it is the approved text byte for byte.
@@ -141,6 +148,18 @@ pub fn tools() -> Vec<Tool> {
             "child_clear",
             describe(CHILD_CLEAR),
             schema(json!({"child": session_property("The child")}), &["child"]),
+        ),
+        Tool::new(
+            APPROVAL_PROMPT,
+            describe(APPROVAL_PROMPT_TEXT),
+            schema(
+                json!({
+                    "tool_name": {"type": "string", "description": "The tool your engine asks to run"},
+                    "input": {"type": "object", "description": "Its input, as your engine would run it"},
+                    "tool_use_id": {"type": "string", "description": "Your engine's id of the call"}
+                }),
+                &["tool_name", "input", "tool_use_id"],
+            ),
         ),
     ]
 }

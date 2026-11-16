@@ -68,7 +68,10 @@ mod start_up;
 mod terminal;
 mod trust;
 
-pub use approvals::{ask_of, settled_how, Answered, ApprovalAnswers, Approving, AskNames};
+pub use approvals::{
+    ask_of, settled_how, settled_of, settled_refusal, Answered, ApprovalAnswers, Approving,
+    AskNames,
+};
 pub use caller::{
     launch_lock_name, urgency_of, Caller, ChildWrites, Launch, ProjectResolver, Written,
     DELEGATION_LIMIT,

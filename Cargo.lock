@@ -3032,10 +3032,13 @@ name = "mcp-server"
 version = "0.1.0"
 dependencies = [
  "angzarr-diagnostic",
+ "angzarr-embedded",
+ "approvals-proto",
  "clap",
  "daemon-api",
  "daemon-proto",
  "mutants",
+ "prost",
  "rmcp",
  "serde",
  "serde_json",

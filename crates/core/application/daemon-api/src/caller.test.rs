@@ -741,6 +741,30 @@ async fn a_launch_into_another_project_with_no_resolution_is_refused() {
     assert!(world.asked().is_empty(), "{:?}", world.asked());
 }
 
+// Step 8 Q7: a chosen name of the ask form is refused before anything is
+// asked of the daemon, in the sessions domain's words.
+#[tokio::test]
+async fn a_launch_naming_its_child_as_an_ask_is_refused_and_asks_nothing() {
+    let world = World::new();
+    let refused = world
+        .user(false)
+        .launch(&super::Launch {
+            owner: Some("amber-quiet-heron".to_string()),
+            harp: Some("ask-tidy-wren".to_string()),
+            ..super::Launch::default()
+        })
+        .await;
+    let Err(CallError::Refused(crate::Rejection::Sessions(
+        sessions::SessionRejection::HarpInvalid { harp, reason },
+    ))) = refused
+    else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(harp, "ask-tidy-wren");
+    assert_eq!(reason, sessions::RESERVED_REASON);
+    assert!(world.asked().is_empty(), "{:?}", world.asked());
+}
+
 // A refused LaunchChild takes its hand-off back: a refused launch leaves
 // nothing.
 #[tokio::test]

@@ -62,6 +62,35 @@ impl session_cli::Asking for TrustTerminal {
     }
 }
 
+/// An ask's `allow-always` rule written into the config (step 8 U4, Q3),
+/// through the library over this project as a command finds it.
+struct LibraryRules<'a> {
+    wiring: &'a Wiring,
+    flags: library_application::Flags,
+}
+
+impl session_cli::AlwaysRules for LibraryRules<'_> {
+    fn allow_always(
+        &self,
+        agent: &str,
+        engine: &str,
+        rule: &str,
+        apply: bool,
+    ) -> Result<session_cli::AlwaysPlan, session_cli::Failure> {
+        let library = crate::library::build(self.wiring, None).map_err(session_cli::Failure::of)?;
+        let written = library
+            .allow_always(&self.flags, agent, engine, rule, apply)
+            .result
+            .map_err(session_cli::Failure::of)?;
+        Ok(session_cli::AlwaysPlan {
+            path: written.path,
+            key: written.key,
+            rule: written.rule,
+            document: written.document,
+        })
+    }
+}
+
 /// Whether `line`, what she typed at a `[y/N]` question, is a yes: `y` or
 /// `yes`, in any case; anything else, a bare Enter too, is a no.
 fn said_yes(line: &str) -> bool {
@@ -208,6 +237,19 @@ impl Commands {
             let wiring = Wiring::new(Arc::clone(&self.env)).map_err(|e| failed(Box::new(e)))?;
             let client = crate::daemon::client(&wiring, &self.version);
             session_cli::read(&command, &client, format, out)
+        } else if session_cli::is_approvals(&command) {
+            // The asks are the daemon's (step 8 U4); an allow-always's rule
+            // is the config's, written through the library here.
+            let wiring = Wiring::new(Arc::clone(&self.env)).map_err(|e| failed(Box::new(e)))?;
+            let caller = crate::daemon::child_caller(&wiring, &self.version)?;
+            let rules = LibraryRules {
+                wiring: &wiring,
+                flags: call.globals.clone(),
+            };
+            let asking = TrustTerminal {
+                stood_in: crate::interview::stood_in(&self.env),
+            };
+            session_cli::approvals(&command, &caller, &rules, &asking, format, out)
         } else if session_cli::is_child(&command) {
             // The child verbs are the user's writes through the daemon's
             // coordinator (slice 4 U3): this process opens no store for them.

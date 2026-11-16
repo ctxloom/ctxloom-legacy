@@ -65,6 +65,29 @@ pub fn settled_how(approval: &v1::Approval) -> Option<String> {
     }
 }
 
+/// The refusal of an answer to `approval`, settled already (as the
+/// approvals domain says it), when it is settled.
+pub fn settled_refusal(approval: &v1::Approval) -> Option<CallError> {
+    settled_how(approval).map(|how| {
+        CallError::Refused(Rejection::Approvals(ApprovalsRejection::ApprovalSettled {
+            ask_id: ask_of(approval).to_string(),
+            how,
+        }))
+    })
+}
+
+/// The ask and how it was settled, when `error` is an answer refused for
+/// a settled ask.
+pub fn settled_of(error: &CallError) -> Option<(String, String)> {
+    match error {
+        CallError::Refused(Rejection::Approvals(ApprovalsRejection::ApprovalSettled {
+            ask_id,
+            how,
+        })) => Some((ask_id.clone(), how.clone())),
+        _ => None,
+    }
+}
+
 /// The ask an approval's name ends with.
 pub fn ask_of(approval: &v1::Approval) -> &str {
     approval.name.rsplit('/').next().unwrap_or_default()
@@ -505,10 +528,8 @@ impl<D: Daemons> Caller<D> {
         message: &str,
     ) -> Result<Answered, CallError> {
         let ask_id = ask_of(approval).to_string();
-        if let Some(how) = settled_how(approval) {
-            return Err(CallError::Refused(Rejection::Approvals(
-                ApprovalsRejection::ApprovalSettled { ask_id, how },
-            )));
+        if let Some(settled) = settled_refusal(approval) {
+            return Err(settled);
         }
         if !approval.options.iter().any(|o| o.id == option) {
             return Err(CallError::Refused(Rejection::Approvals(

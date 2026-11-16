@@ -18,8 +18,14 @@
 //! - `child_launch` launches the session's own child through the daemon's
 //!   `CreateHandOff` (slice 4 U3, s4-Q1), its harp minted when it names
 //!   none ([`daemon_api::Caller::naming`]);
-//! - `approval_prompt` is not offered until approvals are built (OD-1).
+//! - `approval_prompt` (step 8 U4, S27) is a claude engine's permission
+//!   prompt: the ask recorded by the daemon (`CreateApproval`), waited on
+//!   (`WaitApproval`, under a deadline of its own) and answered in claude's
+//!   verified shape; a call claude cancels is withdrawn ([`approval`]).
+//! - claude's `server/discover`, sent before `initialize`, is answered `{}`
+//!   by the transport's reader, before rmcp sees it (P0 Q11).
 
+pub mod approval;
 mod tools;
 
 use std::fmt;
@@ -58,6 +64,8 @@ pub struct Server<D> {
     caller: Arc<Caller<D>>,
     version: String,
     say: Say,
+    /// The reasons claude gave for the calls it cancelled.
+    cancels: approval::Cancels,
 }
 
 impl<D: Daemons + 'static> Server<D> {
@@ -67,6 +75,7 @@ impl<D: Daemons + 'static> Server<D> {
             caller: Arc::new(caller),
             version: version.to_string(),
             say: Box::new(|d| angzarr_diagnostic::Report::of(d).to_string()),
+            cancels: approval::Cancels::default(),
         }
     }
 
@@ -107,10 +116,13 @@ where
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let arguments = request.arguments.unwrap_or_default();
-        let answered = tools::dispatch(&self.caller, &request.name, &arguments).await;
+        let answered = match request.name.as_ref() {
+            tools::APPROVAL_PROMPT => self.prompt(&arguments, &context).await,
+            name => tools::dispatch(&self.caller, name, &arguments).await,
+        };
         Ok(match answered {
             Ok(texts) => {
                 CallToolResult::success(texts.into_iter().map(ContentBlock::text).collect())
@@ -122,6 +134,96 @@ where
         }
         .into())
     }
+}
+
+impl<D> Server<D>
+where
+    D: Daemons + Send + Sync + 'static,
+    D::Api: Send + Sync,
+{
+    /// `approval_prompt`: the ask of `args` (`{tool_name, input,
+    /// tool_use_id}`) recorded, waited on until it is settled, and answered
+    /// as claude reads an answer; a call claude cancels meanwhile is
+    /// withdrawn, and answered nothing (claude waits for no answer to it).
+    async fn prompt(
+        &self,
+        args: &rmcp::model::JsonObject,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<Vec<String>, tools::Refused> {
+        let refused = |e: tools::ToolArgs| -> tools::Refused { Box::new(e) };
+        let failed = |e: daemon_api::CallError| -> tools::Refused { Box::new(e) };
+        let tool = tools::APPROVAL_PROMPT;
+        let tool_name = tools::text(tool, args, "tool_name").map_err(refused)?;
+        let request_id = tools::text(tool, args, "tool_use_id").map_err(refused)?;
+        let input = args.get("input").cloned().ok_or_else(|| {
+            refused(tools::ToolArgs::Missing {
+                tool: tool.to_string(),
+                argument: "input".to_string(),
+            })
+        })?;
+        let asked = self
+            .caller
+            .create_approval(tool_name, &input.to_string(), request_id)
+            .await
+            .map_err(failed)?;
+        let settled = match asked.state.as_str() {
+            "waiting" => {
+                let within = std::time::Duration::from_secs(u64::from(asked.timeout_seconds))
+                    + approval::WAIT_MARGIN;
+                tokio::select! {
+                    waited = self.caller.wait_approval(&asked.name, within) => waited.map_err(failed)?,
+                    () = context.ct.cancelled() => {
+                        let id = serde_json::to_value(&context.id)
+                            .map(|id| id.to_string())
+                            .unwrap_or_default();
+                        let reason = self.cancels.reason(&id);
+                        self.caller
+                            .withdraw_approval(&asked, &reason)
+                            .await
+                            .map_err(failed)?;
+                        return Ok(Vec::new());
+                    }
+                }
+            }
+            _ => asked,
+        };
+        Ok(vec![
+            approval::answer_of(&settled, &input, &self.say).to_string()
+        ])
+    }
+}
+
+/// Pump the engine's `input` into `feed`, a line at a time, as rmcp reads
+/// it: claude's `server/discover` answered here (`answer` writes the line)
+/// and not passed on, a `notifications/cancelled` heard by `cancels` and
+/// passed on, anything else passed on as it came. `feed` is shut down when
+/// the input ends.
+pub(crate) async fn pump<R, W>(
+    input: R,
+    mut feed: W,
+    answer: impl Fn(String),
+    cancels: approval::Cancels,
+) -> std::io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let mut lines = tokio::io::BufReader::new(input).lines();
+    while let Some(line) = lines.next_line().await? {
+        match approval::intercepted(&line) {
+            approval::Intercepted::Answer(answered) => {
+                answer(answered + "\n");
+                continue;
+            }
+            approval::Intercepted::Cancelled { id, reason } => cancels.heard(id, reason),
+            approval::Intercepted::Pass => {}
+        }
+        feed.write_all(line.as_bytes()).await?;
+        feed.write_all(b"\n").await?;
+        feed.flush().await?;
+    }
+    feed.shutdown().await
 }
 
 /// Serve `server` over this process's stdin, writing to `out` (its stdout,
@@ -144,7 +246,20 @@ where
     let (lines, written) = std::sync::mpsc::channel::<Vec<u8>>();
     let serving = std::thread::spawn(move || {
         runtime.block_on(async move {
-            let transport = (tokio::io::stdin(), Lines(lines));
+            // The engine's input, read here first: `server/discover`
+            // answered, a cancel heard, the rest passed to rmcp.
+            let (feed, input) = tokio::io::duplex(1 << 16);
+            let answers = lines.clone();
+            let cancels = server.cancels.clone();
+            tokio::spawn(pump(
+                tokio::io::stdin(),
+                feed,
+                move |answered: String| {
+                    let _ = answers.send(answered.into_bytes());
+                },
+                cancels,
+            ));
+            let transport = (input, Lines(lines));
             let running = server
                 .serve(transport)
                 .await
@@ -234,7 +349,7 @@ pub const EN_US: (&str, &str) = (
 /// One value of every diagnostic of the crate, for the catalog test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
-    vec![
+    let samples: Vec<Box<dyn Diagnostic>> = vec![
         Box::new(McpError::NoSession {
             variable: "CTXLOOM_SESSION".to_string(),
         }),
@@ -251,7 +366,8 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(tools::ToolArgs::Urgency {
             given: "shout".to_string(),
         }),
-    ]
+    ];
+    samples.into_iter().chain(approval::samples()).collect()
 }
 
 #[cfg(test)]
