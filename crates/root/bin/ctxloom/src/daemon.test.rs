@@ -26,8 +26,11 @@ use super::library::Project;
 /// it is ignored). Beside it: every line it is given, after the session id
 /// it was given under, in `input.log`; its environment in `env-<harp>.log`,
 /// each start's arguments a line of `args-<harp>.log`, and its context file in `context-<harp>.log`; `exited` once its input
-/// ends (the daemon's end closes it).
-const STUB: &str = r#"#!/bin/sh
+/// ends (the daemon's end closes it). A message `ASK <command>` is a turn
+/// whose model asks to run the Bash command, through the approval prompt
+/// as claude asks ([`PROMPT_CLIENT`], step 8), and the turn ends saying
+/// what came of it.
+const STUB_HEAD: &str = r#"#!/bin/sh
 here=$(dirname "$0")
 harp=${CTXLOOM_SESSION##*/}
 sid=S1
@@ -40,10 +43,23 @@ for a in "$@"; do
   prev=$a
 done
 [ -n "$ctx" ] && cat "$ctx" > "$here/context-$harp.log"
+"#;
+
+/// The fake claude's turns: see [`stub`].
+const STUB_TURNS: &str = r#"
 printf '{"type":"system","subtype":"init","cwd":"/work","session_id":"%s","tools":[]}\n' "$sid"
+asked=0
 while IFS= read -r line; do
   printf '%s %s\n' "$sid" "$line" >> "$here/input.log"
   case "$line" in
+    *'"content":"ASK '*)
+      # The turn's model asks to run the command after ASK, through the
+      # approval prompt, as claude does.
+      text=$(printf '%s' "$line" | sed 's/.*"content":"ASK \([^"]*\)".*/\1/')
+      asked=$((asked+1))
+      printf '{"tool_name":"Bash","input":{"command":"%s"},"tool_use_id":"toolu_%s_%s"}\n' "$text" "$harp" "$asked" > "$here/asking-$harp"
+      asks "$here/asking-$harp"
+      ;;
     *'"control_request"'*)
       [ -e "$here/deaf" ] && continue
       printf '{"type":"control_response","response":{"subtype":"success","request_id":"ctxloom-interrupt-1","response":{"still_queued":[]}}}\n'
@@ -70,6 +86,87 @@ done
 printf 'done' > "$here/exited"
 "#;
 
+/// claude's approval prompt as the fake claudes call it (step 8, probe P0
+/// on claude 2.1.322, `approval-probe/`): the tool `--permission-prompt-tool`
+/// names (`mcp__<server>__<tool>`), on the server of that name in the file
+/// `--mcp-config` names, started as claude starts it (its command and args,
+/// in the engine's own environment and directory), sent `server/discover`
+/// before `initialize`, then `notifications/initialized`, then the
+/// `tools/call` with the arguments claude gives (`{tool_name, input,
+/// tool_use_id}`); its answer acted on: a `{"behavior":"allow"...}` runs the
+/// tool, anything else does not (claude fails closed, P0 Q3). A command
+/// given no prompt tool asks nothing, and its tool is not run (claude's
+/// headless `-p` denies, P0 Q6). It scripts the ENGINE: ctxloom records the
+/// ask through its own path. Each answer's line is kept in
+/// `prompt-answers` beside the stub, and what came of each ask (`ran
+/// <what>` or `denied <what>`) in `ran`; the turn's result says it. Uses
+/// `$here`, `$sid` and the command's arguments.
+pub(crate) const PROMPT_CLIENT: &str = r#"
+prompt_tool=""
+mcp_config=""
+prev=""
+for a in "$@"; do
+  [ "$prev" = "--permission-prompt-tool" ] && prompt_tool=$a
+  [ "$prev" = "--mcp-config" ] && mcp_config=$a
+  prev=$a
+done
+prompts=0
+hear() {
+  while IFS= read -r heard <&8; do
+    case "$heard" in *"\"id\":$1"*) return 0 ;; esac
+  done
+  return 1
+}
+prompt() {
+  heard=""
+  [ -n "$prompt_tool" ] && [ -n "$mcp_config" ] || return 1
+  server=${prompt_tool#mcp__}
+  server=${server%%__*}
+  tool=${prompt_tool##*__}
+  entry=$(tr -d '\n' < "$mcp_config" | sed -n "s/.*\"$server\": *{\([^}]*\)}.*/\1/p")
+  program=$(printf '%s' "$entry" | sed -n 's/.*"command": *"\([^"]*\)".*/\1/p')
+  words=$(printf '%s' "$entry" | sed -n 's/.*"args": *\[\([^]]*\)\].*/\1/p' | tr ',' '\n' | sed 's/^ *"//; s/" *$//' | tr '\n' ' ')
+  [ -n "$program" ] || return 1
+  prompts=$((prompts+1))
+  pipes="$here/prompt.$$.$prompts"
+  mkdir -p "$pipes" && mkfifo "$pipes/in" "$pipes/out" || return 1
+  "$program" $words < "$pipes/in" > "$pipes/out" 2> "$pipes/err" &
+  served=$!
+  exec 7> "$pipes/in" 8< "$pipes/out"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"server-discover-probe-1","method":"server/discover","params":{}}' >&7
+  hear '"server-discover-probe-1"' &&
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.322"}}}' >&7 &&
+    hear 1 &&
+    printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >&7 &&
+    printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$tool" "$(cat "$1")" >&7 &&
+    hear 2
+  called=$?
+  answer=$heard
+  exec 7>&-
+  wait "$served"
+  exec 8<&-
+  printf '%s\n' "$answer" >> "$here/prompt-answers"
+  heard=$answer
+  return $called
+}
+asks() {
+  what=$(sed -n 's/.*"command": *"\([^"]*\)".*/\1/p' "$1")
+  [ -n "$what" ] || what=$(sed -n 's/.*"tool_name": *"\([^"]*\)".*/\1/p' "$1")
+  verdict=denied
+  if prompt "$1"; then
+    case "$heard" in *'\"behavior\":\"allow\"'*) verdict=ran ;; esac
+  fi
+  printf '%s %s\n' "$verdict" "$what" >> "$here/ran"
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s %s","session_id":"%s"}\n' "$verdict" "$what" "$sid"
+}
+"#;
+
+/// The fake claude, whole: its records, the approval prompt's client, its
+/// turns.
+fn stub() -> String {
+    [STUB_HEAD, PROMPT_CLIENT, STUB_TURNS].concat()
+}
+
 /// The project's config: a default agent whose profile selects the demo
 /// bundle, so a child's context is that project's (D18).
 const PROJECT_CONFIG: &str = "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n    profiles:\n      - dev\ndefault_agent: dev\n";
@@ -94,7 +191,7 @@ impl World {
         project.fragment("demo", "testing");
         project.profile("dev", "demo");
         let stub_dir = project.home().join("fake-claude");
-        files::put_program(stub_dir.join("claude"), STUB);
+        files::put_program(stub_dir.join("claude"), &stub());
         project.write_home(
             ".ctxloom/config.yaml",
             &format!(
@@ -296,6 +393,73 @@ fn clears_and_runs_on_the_new_conversation(world: &World) {
     assert!(
         lines[3].starts_with("S2 ") && lines[3].contains("third task"),
         "{input}"
+    );
+}
+
+// Step 8 U6: a claude child is launched with ctxloom's approval prompt as
+// its permission prompt tool, and the ask its turn makes (the fake claude
+// calling `ctxloom mcp serve`'s approval_prompt as claude does) waits,
+// listed, until the user answers it from another terminal; then the child
+// runs the tool and its turn ends. Nothing is timed: each wait is for what
+// the daemon or the fake's records say.
+#[test]
+fn a_childs_ask_waits_on_the_users_answer_through_the_approval_prompt() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let world = World::new();
+    let seeded = world.run(&["test", "seed-session", OWNER]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let launched = world.run_also(
+        &[("ANTHROPIC_API_KEY", "launchers-key")], // gitleaks:allow
+        &[
+            "session",
+            "launch",
+            OWNER,
+            "--name",
+            CHILD,
+            "ASK touch hi.txt",
+        ],
+    );
+    assert_eq!(launched.code, 0, "{}\n{}", launched.said(), world.log());
+    let asked = world.until("the child's ask listed", |w| {
+        let listed = w.ok(&["session", "approvals", "--format", "json"]);
+        listed["approvals"]
+            .as_array()
+            .and_then(|asks| asks.first().cloned())
+    });
+    assert_eq!(asked["tool_name"], "Bash", "{asked}");
+    assert!(
+        asked["child"]
+            .as_str()
+            .is_some_and(|c| c.ends_with(&format!("/sessions/{CHILD}"))),
+        "{asked}"
+    );
+    let args = world.of("args", CHILD).expect("the child started");
+    assert!(
+        args.contains("--permission-prompt-tool mcp__ctxloom__approval_prompt"),
+        "{args}"
+    );
+    // Not run while it waits.
+    assert!(
+        files::read(world.stub_dir.join("ran")).is_err(),
+        "ran before the answer"
+    );
+    world.ok(&["session", "approvals", "answer", CHILD, "allow-once"]);
+    let ran = world.until("the child to run it", |w| {
+        files::read(w.stub_dir.join("ran")).ok()
+    });
+    assert_eq!(ran, "ran touch hi.txt\n");
+    let answers = files::read(world.stub_dir.join("prompt-answers")).expect("answered");
+    let answer: Value = serde_json::from_str(answers.lines().last().unwrap()).unwrap();
+    let said: Value =
+        serde_json::from_str(answer["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(said["behavior"], "allow", "{said}");
+    assert_eq!(said["updatedInput"]["command"], "touch hi.txt", "{said}");
+    let listed = world.ok(&["session", "approvals", "--format", "json"]);
+    assert!(
+        listed["approvals"].as_array().is_none_or(Vec::is_empty),
+        "{listed}"
     );
 }
 

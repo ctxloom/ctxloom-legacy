@@ -259,7 +259,7 @@ pub(crate) mod companion_stub;
 mod companion_assembly;
 
 #[path = "daemon.test.rs"]
-mod daemon;
+pub(crate) mod daemon;
 
 #[path = "mcp_serve.test.rs"]
 pub(crate) mod mcp_serve;
