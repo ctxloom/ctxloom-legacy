@@ -203,8 +203,6 @@ impl Spool {
     /// Under the append lock: the hold read, its torn tail cut and its
     /// corruption set aside, so what is on disk is its valid prefix.
     /// `None` when there is no hold.
-    // Equivalent: `<=` differs only at `valid_end == MAGIC.len()`, where both arms leave the magic.
-    #[cfg_attr(test, mutants::skip)]
     fn repaired(&self, session: &Uuid) -> Result<Option<(Vec<u8>, Scan)>, HoldError> {
         let path = self.hold_path(session);
         let Some(mut bytes) = self.read(&path)? else {
@@ -215,12 +213,11 @@ impl Spool {
             self.set_aside(session, &bytes[scan.valid_end..])?;
         }
         if scan.tail != Tail::Clean {
-            if scan.valid_end < MAGIC.len() {
-                // A creation that tore before its magic was whole.
-                bytes = MAGIC.to_vec();
-            } else {
-                bytes.truncate(scan.valid_end);
-            }
+            // The magic, then the whole frames: a valid prefix past the
+            // magic starts with it, and one that tore before its magic was
+            // whole (`valid_end` 0) has no frames, so it is the magic alone.
+            let frames = bytes.get(MAGIC.len()..scan.valid_end).unwrap_or_default();
+            bytes = [&MAGIC[..], frames].concat();
             self.write(&path, &bytes)?;
         }
         Ok(Some((bytes, scan)))
