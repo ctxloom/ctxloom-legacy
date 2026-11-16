@@ -8,7 +8,7 @@
 //! run's own lock it took before it asked, U5's start-report race), and
 //! takes over its END PATH, as the original daemon's would have run it:
 //!
-//! - the frontend's exit report (its `RunExited`, or its `LaunchFailed`)
+//! - the frontend's exit report (its `RecordRunExited`, or its `RecordLaunchFailed`)
 //!   ends the run: its incarnation is ended (`runner-exit`, or
 //!   `launch-failed` for one never started) and its checkout let go
 //!   WIP-safe (a clean one removed, one holding work left and said; never
@@ -16,7 +16,7 @@
 //! - a frontend gone without reporting (the session's lock free and the
 //!   run's own lock not held, no end in the run's stream once that was seen:
 //!   a frontend records its exit before it lets its locks go) is a kill, as
-//!   the original daemon's `Frontended` read it: `RunExited{signal: 9}`,
+//!   the original daemon's `Frontended` read it: `RecordRunExited{signal: 9}`,
 //!   keyed `exit:<run>` as the frontend's own, so a late report of it is a
 //!   DUPLICATE, then the same end;
 //! - a run never started whose own lock is left free (its frontend died
@@ -64,7 +64,7 @@ pub(crate) struct Adopted {
 /// The run's stream, as far as its end path reads it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Read {
-    /// Its `RunnerStarted`'s workspace, once started.
+    /// Its `RecordRunnerStarted`'s workspace, once started.
     started: Option<String>,
     /// Its end's cause, once ended.
     ended: Option<runs::EndCause>,
@@ -256,7 +256,7 @@ impl<E: Edge> Daemon<E> {
             harp: adopted.harp.clone(),
             depth: 0,
         };
-        let fact = RunnerFact::RunExited(runs::RunExited {
+        let fact = RunnerFact::RunExited(runs::RecordRunExited {
             code: 0,
             signal: KILLED,
         });

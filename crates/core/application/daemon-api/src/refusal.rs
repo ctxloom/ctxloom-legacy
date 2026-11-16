@@ -233,7 +233,7 @@ pub enum Rejection {
     Api(ApiRejection),
     /// The sessions domain's (a project's registration, a name's claim).
     Sessions(sessions::SessionRejection),
-    /// A removal's (`DeleteSession`'s `RemovalRefused`), in the words of
+    /// A removal's (`DeleteSession`'s `RemovalRefusal`), in the words of
     /// the use case that refused it.
     Removal(RemovalRejection),
     /// The runs domain's (a child's launch judged before its hand-off is
@@ -269,33 +269,33 @@ pub enum RemovalRejection {
 impl RemovalRejection {
     /// `refused`'s reason, for the session `harp`; none for a reason this
     /// crate does not know.
-    pub fn of(refused: &v1::RemovalRefused, harp: &str) -> Option<RemovalRejection> {
+    pub fn of(refused: &v1::RemovalRefusal, harp: &str) -> Option<RemovalRejection> {
         use sessions_application::Refusal;
         let harp = harp.to_string();
         Some(
-            match v1::removal_refused::Reason::try_from(refused.reason).ok()? {
-                v1::removal_refused::Reason::NotProvenDead => {
+            match v1::removal_refusal::Reason::try_from(refused.reason).ok()? {
+                v1::removal_refusal::Reason::NotProvenDead => {
                     RemovalRejection::Session(Refusal::NotProvenDead {
                         harp,
                         reason: refused.detail.clone(),
                         verb: sessions_application::REMOVE_VERB.to_string(),
                     })
                 }
-                v1::removal_refused::Reason::Kept => {
+                v1::removal_refusal::Reason::Kept => {
                     RemovalRejection::Session(Refusal::Kept { harp })
                 }
-                v1::removal_refused::Reason::Retained => {
+                v1::removal_refusal::Reason::Retained => {
                     RemovalRejection::Session(Refusal::Retained {
                         harp,
                         detail: refused.detail.clone(),
                     })
                 }
-                v1::removal_refused::Reason::WorktreesKeep => RemovalRejection::KeepsSession {
+                v1::removal_refusal::Reason::WorktreesKeep => RemovalRejection::KeepsSession {
                     harp,
                     spared: refused.spared,
                     skipped: refused.skipped,
                 },
-                v1::removal_refused::Reason::Unspecified => return None,
+                v1::removal_refusal::Reason::Unspecified => return None,
             },
         )
     }
@@ -389,7 +389,7 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 detail: r.detail,
             })
         }),
-        "ctxloom.v1.RemovalRefused" => decode::<v1::RemovalRefused>(refusal).and_then(|r| {
+        "ctxloom.v1.RemovalRefusal" => decode::<v1::RemovalRefusal>(refusal).and_then(|r| {
             let harp = r
                 .plan
                 .as_ref()
@@ -398,8 +398,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 .unwrap_or_else(|| r.name.rsplit('/').next().unwrap_or_default().to_string());
             RemovalRejection::of(&r, &harp).map(Rejection::Removal)
         }),
-        "ctxloom.sessions.v1.ProjectIdentityChanged" => {
-            decode::<wire::ProjectIdentityChanged>(refusal).and_then(|r| {
+        "ctxloom.sessions.v1.ProjectIdentityMismatch" => {
+            decode::<wire::ProjectIdentityMismatch>(refusal).and_then(|r| {
                 ours(sessions::SessionRejection::ProjectIdentityChanged {
                     project: r.project,
                     root: r.root,
@@ -451,7 +451,7 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
             sessions::SessionUnknown,
             sessions::NoSession,
             sessions::SessionIsClosed,
-            sessions::OwnerClosed,
+            sessions::OwnerIsClosed,
             sessions::NotOwner,
             sessions::NoOpenIncarnation,
             sessions::DelegationLimit,
@@ -470,7 +470,7 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
             runs::NoCredential,
             runs::FileOnlyCredential,
             runs::UnknownEngine,
-            runs::LaunchRefused,
+            runs::LaunchRefusals,
         ]
     );
     ran.and_then(|typed| runs::RunRejection::try_from(&typed).ok())

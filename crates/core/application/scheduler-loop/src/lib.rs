@@ -3,13 +3,13 @@
 //! [`SchedulerLoop::tick`] is the unit: one step with no sleeping. It catches
 //! a HELD due model up over the scheduler streams, and for every alarm armed
 //! at or before `now`, in instant order, sends the scheduler the private
-//! fact `AlarmDue` under the deterministic id `alarm:<stream>/<alarm_id>@<at>`
+//! fact `RecordAlarmDue` under the deterministic id `alarm:<stream>/<alarm_id>@<at>`
 //! and the arming event's correlation. The scheduler re-checks it and records
-//! `AlarmFired`; the target's delivery policy then delivers `AlarmReached`,
+//! `AlarmFired`; the target's delivery policy then delivers `RecordAlarmReached`,
 //! all inside that one kernel call. [`SchedulerLoop::run`] repeats `tick`
 //! over a [`Clock`] and a [`Wait`]; tests drive `tick`.
 //!
-//! Exactly once: a re-sent `AlarmDue` is a DUPLICATE by its id; the
+//! Exactly once: a re-sent `RecordAlarmDue` is a DUPLICATE by its id; the
 //! scheduler's own re-check covers a moved or cancelled alarm; a fresh loop
 //! over the same store rebuilds its model from the streams, in which a fired
 //! alarm is gone and an alarm that came due while no loop ran is simply due
@@ -27,7 +27,7 @@ use angzarr_embedded::{
     ids, CatchUp, Failure, Handled, Kernel, Payload, Processed, ReadStore, Rejected, Sampled,
     Store, Timestamp, Watch,
 };
-use scheduler::{alarm_external_id, stream_for, AlarmDue, SchedulerEvent, SCHEDULER_DOMAIN};
+use scheduler::{alarm_external_id, stream_for, RecordAlarmDue, SchedulerEvent, SCHEDULER_DOMAIN};
 use scheduler_due::{catch_up, DueAlarm, DueModel};
 use scheduler_ports::{Clock, Wait};
 
@@ -177,7 +177,7 @@ async fn fire<S: Store>(
         root: Some(stream_for(&alarm.target)),
         edition: alarm.target.edition.clone(),
     };
-    let due = AlarmDue {
+    let due = RecordAlarmDue {
         alarm_id: alarm.alarm_id.clone(),
         at: alarm.at,
     };

@@ -304,7 +304,7 @@ impl World {
     pub(crate) async fn end(&self, party: &Party) {
         let book = fact_book(
             party.identity.run_cover(),
-            runs::RunExited { code: 0, signal: 0 },
+            runs::RecordRunExited { code: 0, signal: 0 },
             "exit:fixture",
         );
         self.edge.handle(book).await.unwrap();

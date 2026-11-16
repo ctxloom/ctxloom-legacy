@@ -125,7 +125,7 @@ async fn what_the_users_allowlist_forbids_is_answered_as_an_unknown_domain_and_w
     let lifecycle = session
         .handle(fact_book(
             world.me.identity.run_cover(),
-            runs::RunnerLost {},
+            runs::RecordRunnerLost {},
             "runner-lost:forged",
         ))
         .await

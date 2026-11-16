@@ -454,7 +454,7 @@ where
     /// The session named `harp`, if it can be resumed as far as a read says:
     /// a name no session holds is `SessionUnknown`, a claimed name whose
     /// stream holds nothing (`session remove` destroyed it, its claim kept,
-    /// ruling 94c) `SessionDestroyed`, and a session whose lock another
+    /// ruling 94c) `SessionIsDestroyed`, and a session whose lock another
     /// process holds `SessionRunning`. Runs other processes left are swept
     /// first (the launcher's step: an owner found dead ends its incarnation,
     /// ruling 93), so a crashed session's open incarnation does not keep it.
@@ -985,7 +985,7 @@ where
     }
 
     /// End the enqueued `run` of `session` that `error` stopped before its
-    /// engine was launched (owner ruling 73g): a `LaunchFailed`, so no run is
+    /// engine was launched (owner ruling 73g): a `RecordLaunchFailed`, so no run is
     /// left owed a runner, its run lock let go, and, for a session already
     /// `minted`, its incarnation ended (ruling 85). The error is the run's,
     /// whatever recording its end met.

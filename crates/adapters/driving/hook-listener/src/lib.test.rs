@@ -430,7 +430,7 @@ async fn what_the_gate_forbids_is_answered_as_an_unknown_domain_and_writes_nothi
             "a runner-lifecycle fact the user's processes never report",
             fact(
                 cover(runs::RUN_DOMAIN, &world.run),
-                &runs::RunnerLost {},
+                &runs::RecordRunnerLost {},
                 "runner-lost:forged",
             ),
         ),

@@ -799,7 +799,7 @@ fn conflicting(
             sequence,
             body: Some(angzarr_embedded::v1::event_page::Body::Event(
                 angzarr_embedded::Any {
-                    type_url: "type.googleapis.com/ctxloom.runs.v1.RunExited".to_string(),
+                    type_url: "type.googleapis.com/ctxloom.runs.v1.RecordRunExited".to_string(),
                     value: Vec::new(),
                 },
             )),

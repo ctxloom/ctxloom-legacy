@@ -16,7 +16,7 @@ use angzarr_embedded::{
     Timestamp,
 };
 use scheduler::{
-    alarm_external_id, stream_for, AlarmArmed, AlarmDue, AlarmFired, ArmAlarm, CancelAlarm,
+    alarm_external_id, stream_for, AlarmArmed, AlarmFired, ArmAlarm, CancelAlarm, RecordAlarmDue,
     SchedulerAggregate, SchedulerEvent, Stream, SCHEDULER_DOMAIN,
 };
 
@@ -100,7 +100,7 @@ impl Project {
 
     fn fire(&mut self, model: &mut Model, target_id: u8, alarm_id: &str, seconds: i64) {
         let target = target(target_id);
-        let due = AlarmDue {
+        let due = RecordAlarmDue {
             alarm_id: alarm_id.to_string(),
             at: at(seconds),
         };

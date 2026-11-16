@@ -22,15 +22,15 @@ use crate::{
     title_set, AdoptRotations, BindEngineSession, EndRecorded, EngineMismatch, EngineSessionBound,
     HarpInvalid, IncarnationEnded, IncarnationOwed, KeptChanged, MintSession, NoNativeSession,
     NoSession, RecordEnd, RecordIncarnationEnded, RehostBudgetSpent, RehostSession, ResumeSession,
-    SessionAdopted, SessionCommand, SessionDestroyed, SessionEvent, SessionExists, SessionMinted,
+    SessionAdopted, SessionCommand, SessionEvent, SessionExists, SessionIsDestroyed, SessionMinted,
     SessionRejection, SessionRunning, SessionState, SessionUnknown, SetKept, SetSessionTitle,
     StopOrdered, TitleSet, WorkspaceMismatch,
 };
 use crate::{
     daemon, ChildEnded, ChildForgotten, ChildLaunchFailed, ChildLaunched, ClearChild,
     ClearRequested, CloseSession, DelegationLimit, EndChild, ForgetChild, LaunchChild, MessageSent,
-    NoOpenIncarnation, NotOwner, OwnerClosed, RecordChildLaunchFailed, SendMessage, SessionClosed,
-    SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
+    NoOpenIncarnation, NotOwner, OwnerIsClosed, RecordChildLaunchFailed, SendMessage,
+    SessionClosed, SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
 };
 use crate::{
     AssistantTextShown, CaptureGapped, Compacted, ConversationCleared, PromptSubmitted,
@@ -236,7 +236,7 @@ impl SessionAggregate {
         LaunchChild,
         refuses(
             NoSession,
-            OwnerClosed,
+            OwnerIsClosed,
             NoOpenIncarnation,
             DelegationLimit,
             UntrustedTarget,
@@ -258,7 +258,7 @@ impl SessionAggregate {
                 SessionRejection,
                 rejection,
                 Refuses<Self, LaunchChild>,
-                [NoSession => NoSession, OwnerClosed{harp} => OwnerClosed, NoOpenIncarnation{harp} => NoOpenIncarnation, DelegationLimit{limit, open} => DelegationLimit, UntrustedTarget{root} => UntrustedTarget, NotOwner{requester} => NotOwner]
+                [NoSession => NoSession, OwnerClosed{harp} => OwnerIsClosed, NoOpenIncarnation{harp} => NoOpenIncarnation, DelegationLimit{limit, open} => DelegationLimit, UntrustedTarget{root} => UntrustedTarget, NotOwner{requester} => NotOwner]
             )
         })
     }
@@ -268,7 +268,7 @@ impl SessionAggregate {
         ResumeSession,
         refuses(
             SessionUnknown,
-            SessionDestroyed,
+            SessionIsDestroyed,
             SessionRunning,
             NoNativeSession,
             EngineMismatch,
@@ -286,7 +286,7 @@ impl SessionAggregate {
                 SessionRejection,
                 rejection,
                 Refuses<Self, ResumeSession>,
-                [SessionUnknown{harp} => SessionUnknown, SessionDestroyed{harp} => SessionDestroyed, SessionRunning{harp} => SessionRunning, NoNativeSession{harp} => NoNativeSession, EngineMismatch{harp, engine, asked} => EngineMismatch, WorkspaceMismatch{harp, workspace, asked} => WorkspaceMismatch]
+                [SessionUnknown{harp} => SessionUnknown, SessionDestroyed{harp} => SessionIsDestroyed, SessionRunning{harp} => SessionRunning, NoNativeSession{harp} => NoNativeSession, EngineMismatch{harp, engine, asked} => EngineMismatch, WorkspaceMismatch{harp, workspace, asked} => WorkspaceMismatch]
             )
         })?;
         Ok(match reopened {

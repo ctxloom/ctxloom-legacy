@@ -74,7 +74,7 @@ message RegisterProject {
     component: "ctxloom.sessions.v1.ProjectState"
     emits: ["ctxloom.sessions.v1.ProjectRegistered", "ctxloom.sessions.v1.ProjectIdentityAdopted"]
     refuses: "ctxloom.sessions.v1.UnnamedProject"
-    refuses: "ctxloom.sessions.v1.ProjectIdentityChanged"
+    refuses: "ctxloom.sessions.v1.ProjectIdentityMismatch"
     refuses: "ctxloom.sessions.v1.ProjectHarpMismatch"
   };
 
@@ -157,7 +157,7 @@ message UnnamedProject {
 // A recheck whose repository is not the one registered: its root commit
 // changed (another repository at the project's place). Names the
 // registered project.
-message ProjectIdentityChanged {
+message ProjectIdentityMismatch {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 
   // `projects/{project}`, the registered project.

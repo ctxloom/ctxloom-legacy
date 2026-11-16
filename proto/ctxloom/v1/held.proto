@@ -48,7 +48,7 @@ message HeldFact {
   google.protobuf.Timestamp held_at = 5;
 
   // A fact on the session's RUN stream (the frontend's own reports,
-  // RunnerStarted, RunExited and LaunchFailed, held as hook facts are:
+  // RecordRunnerStarted, RecordRunExited and RecordLaunchFailed, held as hook facts are:
   // slice 4, a daemon dying under a live TUI): the incarnation whose run
   // it is, the book's root `runs::run_root(session, incarnation)`. 0: a
   // fact of the session's own stream.

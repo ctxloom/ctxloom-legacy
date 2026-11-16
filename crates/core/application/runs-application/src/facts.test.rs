@@ -27,14 +27,14 @@ fn identity() -> Identity {
 const RUN: &str = "a1a1a1a1-0000-5000-8000-000000000001";
 
 fn turn_started(turn: u64) -> RunnerFact {
-    RunnerFact::TurnStarted(runs::TurnStarted {
+    RunnerFact::TurnStarted(runs::RecordTurnStarted {
         turn,
         message_ids: Vec::new(),
     })
 }
 
 fn exited() -> RunnerFact {
-    RunnerFact::RunExited(runs::RunExited { code: 0, signal: 0 })
+    RunnerFact::RunExited(runs::RecordRunExited { code: 0, signal: 0 })
 }
 
 fn bound(native_id: &str) -> RunnerFact {
@@ -52,18 +52,18 @@ fn bound(native_id: &str) -> RunnerFact {
 fn a_turn_of_messages_is_identified_by_its_first_message() {
     let who = identity();
     let ids = vec!["m1".to_string(), "m2".to_string()];
-    let started = RunnerFact::TurnStarted(runs::TurnStarted {
+    let started = RunnerFact::TurnStarted(runs::RecordTurnStarted {
         turn: 4,
         message_ids: ids.clone(),
     });
-    let completed = RunnerFact::TurnCompleted(runs::TurnCompleted {
+    let completed = RunnerFact::TurnCompleted(runs::RecordTurnCompleted {
         turn: 4,
         native_key: String::new(),
         answer_ref: String::new(),
         exit_code: 0,
         message_ids: ids.clone(),
     });
-    let failed = RunnerFact::TurnFailed(runs::TurnFailed {
+    let failed = RunnerFact::TurnFailed(runs::RecordTurnFailed {
         turn: 9,
         class: runs::TurnFailureClass::Interrupted,
         detail: String::new(),
@@ -82,14 +82,14 @@ fn a_turn_of_messages_is_identified_by_its_first_message() {
 #[test]
 fn turn_facts_are_identified_by_run_and_turn() {
     let who = identity();
-    let completed = RunnerFact::TurnCompleted(runs::TurnCompleted {
+    let completed = RunnerFact::TurnCompleted(runs::RecordTurnCompleted {
         turn: 4,
         native_key: String::new(),
         answer_ref: String::new(),
         exit_code: 0,
         message_ids: Vec::new(),
     });
-    let failed = RunnerFact::TurnFailed(runs::TurnFailed {
+    let failed = RunnerFact::TurnFailed(runs::RecordTurnFailed {
         turn: 4,
         class: runs::TurnFailureClass::EngineError,
         detail: String::new(),
@@ -112,7 +112,7 @@ fn turn_facts_are_identified_by_run_and_turn() {
 fn the_exit_and_the_attach_are_identified_by_the_run() {
     let who = identity();
     assert_eq!(exited().external_id(&who), format!("exit:{RUN}"));
-    let attached = RunnerFact::RunnerAttached(runs::RunnerAttached {
+    let attached = RunnerFact::RunnerAttached(runs::RecordRunnerAttached {
         runner_id: "r1".to_string(),
         protocol: "v1".to_string(),
     });
@@ -124,7 +124,7 @@ fn the_exit_and_the_attach_are_identified_by_the_run() {
 #[test]
 fn the_runner_start_is_identified_by_the_run() {
     let who = identity();
-    let started = RunnerFact::RunnerStarted(runs::RunnerStarted {
+    let started = RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
         runtime: "claude-code".to_string(),
         workspace: "/w".to_string(),
         pid: 7,
@@ -160,13 +160,13 @@ fn the_engine_session_bind_is_identified_by_session_and_native_id() {
 #[test]
 fn claims_are_identified_by_run_and_turn() {
     let who = identity();
-    let summary = ModelFact::SummaryReported(runs::SummaryReported {
+    let summary = ModelFact::SummaryReported(runs::RecordSummaryReported {
         turn: 3,
         ordinal: 2,
         scope: "progress".to_string(),
         text_ref: "t".to_string(),
     });
-    let done = ModelFact::FinalReported(runs::FinalReported {
+    let done = ModelFact::FinalReported(runs::RecordFinalReported {
         turn: 3,
         text_ref: "t".to_string(),
     });
@@ -311,13 +311,13 @@ async fn a_claim_is_recorded_and_ends_nothing() {
     let facts = Facts::new(Arc::clone(&world.edge));
     let who = &world.me.identity;
     let claims = [
-        ModelFact::SummaryReported(runs::SummaryReported {
+        ModelFact::SummaryReported(runs::RecordSummaryReported {
             turn: 1,
             ordinal: 0,
             scope: "progress".to_string(),
             text_ref: "t:1".to_string(),
         }),
-        ModelFact::FinalReported(runs::FinalReported {
+        ModelFact::FinalReported(runs::RecordFinalReported {
             turn: 1,
             text_ref: "t:final".to_string(),
         }),

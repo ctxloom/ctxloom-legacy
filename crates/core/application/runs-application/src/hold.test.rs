@@ -1212,7 +1212,7 @@ fn a_session_flush_names_its_session_and_what_it_set_aside() {
 // ------------------------------------------- a frontend's reports (slice 4)
 
 /// A frontend's report of the session's run of `incarnation`: a
-/// `RunnerStarted` (`started`) or a `RunExited`, keyed as the frontend
+/// `RecordRunnerStarted` (`started`) or a `RecordRunExited`, keyed as the frontend
 /// keys it.
 fn run_report(incarnation: u32, started: bool) -> RunReport {
     let who = crate::Identity {
@@ -1223,12 +1223,12 @@ fn run_report(incarnation: u32, started: bool) -> RunReport {
         depth: 0,
     };
     let fact = match started {
-        true => crate::RunnerFact::RunnerStarted(runs::RunnerStarted {
+        true => crate::RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
             runtime: "claude-code".to_string(),
             workspace: "/work".to_string(),
             pid: 4242,
         }),
-        false => crate::RunnerFact::RunExited(runs::RunExited { code: 0, signal: 0 }),
+        false => crate::RunnerFact::RunExited(runs::RecordRunExited { code: 0, signal: 0 }),
     };
     RunReport {
         external_id: fact.external_id(&who),

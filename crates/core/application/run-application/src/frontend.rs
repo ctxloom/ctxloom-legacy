@@ -9,9 +9,9 @@
 //!    92), so the session reads live;
 //! 2. it starts the launch on the terminal (its program, arguments, WHOLE
 //!    environment and directory, nothing inherited);
-//! 3. it reports the start (`RunnerStarted`, with the pid the spawn gave),
-//!    waits for the TUI's exit, and reports it (`RunExited`), or reports a
-//!    launch that never started (`LaunchFailed`);
+//! 3. it reports the start (`RecordRunnerStarted`, with the pid the spawn gave),
+//!    waits for the TUI's exit, and reports it (`RecordRunExited`), or reports a
+//!    launch that never started (`RecordLaunchFailed`);
 //! 4. it lets the lock go, only after the exit was reported.
 //!
 //! Each report is a runs fact keyed by its run (`started:<run>`,

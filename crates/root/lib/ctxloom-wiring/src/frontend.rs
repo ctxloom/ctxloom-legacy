@@ -877,7 +877,7 @@ fn report_book(launch: &Launch, report: &Report) -> CommandBook {
     };
     match report {
         Report::Started { pid } => {
-            runs_application::RunnerFact::RunnerStarted(runs::RunnerStarted {
+            runs_application::RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
                 runtime: launch.engine.clone(),
                 workspace: launch.cwd.clone().unwrap_or_default(),
                 pid: *pid,
@@ -885,7 +885,7 @@ fn report_book(launch: &Launch, report: &Report) -> CommandBook {
             .book(&who)
         }
         Report::Exited { code, signal } => {
-            runs_application::RunnerFact::RunExited(runs::RunExited {
+            runs_application::RunnerFact::RunExited(runs::RecordRunExited {
                 code: code.unwrap_or(0),
                 signal: signal.unwrap_or(0),
             })

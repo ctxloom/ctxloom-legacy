@@ -353,11 +353,11 @@ async fn a_delete_destroys_the_session_its_runs_and_its_directory() {
 }
 
 /// The refusal a delete answered, decoded.
-fn removal_refused(result: Result<v1::DeleteSessionResponse, ApiError>) -> v1::RemovalRefused {
-    let (code, refused): (_, v1::RemovalRefused) = refused(result);
+fn removal_refused(result: Result<v1::DeleteSessionResponse, ApiError>) -> v1::RemovalRefusal {
+    let (code, refused): (_, v1::RemovalRefusal) = refused(result);
     assert_eq!(
         code,
-        <v1::RemovalRefused as daemon_proto::Refusal>::REFUSAL_STATUS
+        <v1::RemovalRefusal as daemon_proto::Refusal>::REFUSAL_STATUS
     );
     refused
 }
@@ -375,7 +375,7 @@ async fn a_session_its_lock_cannot_prove_ended_is_refused_with_its_plan() {
         let refused = removal_refused(f.api.delete_session(delete(NAME, true)).await);
         assert_eq!(
             refused.reason,
-            v1::removal_refused::Reason::NotProvenDead as i32
+            v1::removal_refusal::Reason::NotProvenDead as i32
         );
         assert!(refused.detail.contains(says), "{}", refused.detail);
         let plan = refused.plan.expect("the plan");
@@ -423,7 +423,7 @@ async fn a_kept_or_retained_session_is_refused() {
     f.world.handle(keep).await.unwrap();
     f.catch_up().await;
     let refused = removal_refused(f.api.delete_session(delete(NAME, true)).await);
-    assert_eq!(refused.reason, v1::removal_refused::Reason::Kept as i32);
+    assert_eq!(refused.reason, v1::removal_refusal::Reason::Kept as i32);
 
     let f = finished(HARP, transcript_and_notes(HARP)).await;
     f.places
@@ -431,7 +431,7 @@ async fn a_kept_or_retained_session_is_refused() {
         .last_active
         .insert(HARP.to_string(), at(NOW - 3600));
     let refused = removal_refused(f.api.delete_session(delete(NAME, true)).await);
-    assert_eq!(refused.reason, v1::removal_refused::Reason::Retained as i32);
+    assert_eq!(refused.reason, v1::removal_refusal::Reason::Retained as i32);
     assert!(refused.detail.contains("it ended"), "{}", refused.detail);
     assert!(f.places.held().destroyed.is_empty());
 }
@@ -455,7 +455,7 @@ async fn a_worktree_that_is_not_safe_keeps_the_whole_session() {
         );
         assert_eq!(
             refused.reason,
-            v1::removal_refused::Reason::WorktreesKeep as i32
+            v1::removal_refusal::Reason::WorktreesKeep as i32
         );
         assert_eq!((refused.spared, refused.skipped), (1, 0));
         let worktrees = refused.plan.and_then(|plan| plan.worktrees).unwrap();
@@ -907,7 +907,7 @@ async fn a_removal_honours_the_configured_transcript_retention() {
     let f = finished(HARP, transcript_and_notes(HARP)).await;
     f.places.held().retention = Some("90d".to_string());
     let refused = removal_refused(f.api.delete_session(delete(NAME, true)).await);
-    assert_eq!(refused.reason, v1::removal_refused::Reason::Retained as i32);
+    assert_eq!(refused.reason, v1::removal_refusal::Reason::Retained as i32);
     assert_eq!(f.places.held().retention_asked, [ROOT]);
     assert!(f.places.held().destroyed.is_empty());
 
@@ -929,7 +929,7 @@ async fn a_removal_honours_the_configured_transcript_retention() {
         .last_active
         .insert(HARP.to_string(), at(NOW - 10 * DAY));
     let refused = removal_refused(f.api.delete_session(delete(NAME, true)).await);
-    assert_eq!(refused.reason, v1::removal_refused::Reason::Retained as i32);
+    assert_eq!(refused.reason, v1::removal_refusal::Reason::Retained as i32);
 }
 
 // A configured retention that is no age is refused, naming the key, and
@@ -967,10 +967,10 @@ async fn a_sweep_holds_a_purge_within_the_configured_retention() {
 // A refusal the daemon answers is its own message, under its status.
 #[test]
 fn a_removal_refused_is_a_failed_precondition() {
-    let refusal = ApiRefusal::of(&v1::RemovalRefused::default());
+    let refusal = ApiRefusal::of(&v1::RemovalRefusal::default());
     assert_eq!(
         refusal.code,
-        <v1::RemovalRefused as daemon_proto::Refusal>::REFUSAL_STATUS
+        <v1::RemovalRefusal as daemon_proto::Refusal>::REFUSAL_STATUS
     );
 }
 

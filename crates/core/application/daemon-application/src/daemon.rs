@@ -491,7 +491,7 @@ impl<E: Edge> Daemon<E> {
     /// (the board, the pending messages, the session index), then every run
     /// the store holds caught up,
     /// and the ones whose owner is gone ended (the sweep every launcher
-    /// runs: `LaunchOrphaned` for one owed a runner, `RunnerLost` for one
+    /// runs: `RecordLaunchOrphaned` for one owed a runner, `RecordRunnerLost` for one
     /// started, its incarnation ended `orphaned`), before anything is
     /// hosted; every run the sweep leaves (its owner alive: a live TUI's
     /// frontend) is ADOPTED, its end path this daemon's (owner
@@ -1139,7 +1139,7 @@ impl<E: Edge> Daemon<E> {
         let recorded = facts
             .record(
                 &who,
-                RunnerFact::RunnerStarted(runs::RunnerStarted {
+                RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
                     runtime: "host".to_string(),
                     workspace: cwd,
                     pid,
@@ -1577,13 +1577,13 @@ impl<E: Edge> Daemon<E> {
                 },
             )),
             ChildObservation::TurnStarted { message_ids } => turn_of(&message_ids)
-                .map(|turn| RunnerFact::TurnStarted(runs::TurnStarted { turn, message_ids })),
+                .map(|turn| RunnerFact::TurnStarted(runs::RecordTurnStarted { turn, message_ids })),
             ChildObservation::TurnEnded {
                 message_ids,
                 outcome,
             } => turn_of(&message_ids).map(|turn| match outcome {
                 TurnOutcome::Answered { native_id, .. } => {
-                    RunnerFact::TurnCompleted(runs::TurnCompleted {
+                    RunnerFact::TurnCompleted(runs::RecordTurnCompleted {
                         turn,
                         native_key: native_id.unwrap_or_default(),
                         answer_ref: String::new(),
@@ -1592,7 +1592,7 @@ impl<E: Edge> Daemon<E> {
                     })
                 }
                 TurnOutcome::Failed { class, detail, .. } => {
-                    RunnerFact::TurnFailed(runs::TurnFailed {
+                    RunnerFact::TurnFailed(runs::RecordTurnFailed {
                         turn,
                         class: failure_class(class),
                         detail,
@@ -1605,7 +1605,7 @@ impl<E: Edge> Daemon<E> {
                 let _ = facts
                     .record(
                         &who,
-                        RunnerFact::RunExited(runs::RunExited {
+                        RunnerFact::RunExited(runs::RecordRunExited {
                             code: exit.code.unwrap_or(-1),
                             signal: exit.signal.unwrap_or(0),
                         }),

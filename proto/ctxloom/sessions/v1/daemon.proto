@@ -125,7 +125,7 @@ message LaunchChild {
     component: "ctxloom.sessions.v1.SessionState"
     emits: ["ctxloom.sessions.v1.ChildLaunched"]
     refuses: "ctxloom.sessions.v1.NoSession"
-    refuses: "ctxloom.sessions.v1.OwnerClosed"
+    refuses: "ctxloom.sessions.v1.OwnerIsClosed"
     refuses: "ctxloom.sessions.v1.NoOpenIncarnation"
     refuses: "ctxloom.sessions.v1.DelegationLimit"
     refuses: "ctxloom.sessions.v1.UntrustedTarget"
@@ -287,7 +287,7 @@ message SessionIsClosed {
 }
 
 // A child launched by an owner that is closed.
-message OwnerClosed {
+message OwnerIsClosed {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 
   string harp = 1;

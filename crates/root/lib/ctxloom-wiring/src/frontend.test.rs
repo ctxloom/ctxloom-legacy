@@ -47,12 +47,13 @@ fn fact_of(book: &angzarr_embedded::v1::CommandBook) -> (String, String, Vec<u8>
 fn each_report_is_its_run_s_fact_keyed_as_the_launcher_keys_its_own() {
     let started = report_book(&launch(), &Report::Started { pid: 4242 });
     let (url, key, bytes) = fact_of(&started);
-    assert!(url.ends_with(".RunnerStarted"), "{url}");
+    assert!(url.ends_with(".RecordRunnerStarted"), "{url}");
     assert_eq!(key, format!("started:{RUN}"));
-    let wire = <runs::RunnerStarted as angzarr_embedded::markup::DomainMessage>::Wire::decode(
-        bytes.as_slice(),
-    )
-    .unwrap();
+    let wire =
+        <runs::RecordRunnerStarted as angzarr_embedded::markup::DomainMessage>::Wire::decode(
+            bytes.as_slice(),
+        )
+        .unwrap();
     assert_eq!(wire.pid, 4242);
     assert_eq!(wire.runtime, "claude-code");
     assert_eq!(wire.workspace, "/work/checkout");
@@ -64,9 +65,9 @@ fn each_report_is_its_run_s_fact_keyed_as_the_launcher_keys_its_own() {
         },
     );
     let (url, key, bytes) = fact_of(&exited);
-    assert!(url.ends_with(".RunExited"), "{url}");
+    assert!(url.ends_with(".RecordRunExited"), "{url}");
     assert_eq!(key, format!("exit:{RUN}"));
-    let wire = <runs::RunExited as angzarr_embedded::markup::DomainMessage>::Wire::decode(
+    let wire = <runs::RecordRunExited as angzarr_embedded::markup::DomainMessage>::Wire::decode(
         bytes.as_slice(),
     )
     .unwrap();
@@ -79,7 +80,7 @@ fn each_report_is_its_run_s_fact_keyed_as_the_launcher_keys_its_own() {
         },
     );
     let (url, key, _) = fact_of(&failed);
-    assert!(url.ends_with(".LaunchFailed"), "{url}");
+    assert!(url.ends_with(".RecordLaunchFailed"), "{url}");
     assert_eq!(key, format!("launch-failed:{RUN}"));
     for book in [started, exited, failed] {
         assert_eq!(book.cover.expect("a cover").domain, runs::RUN_DOMAIN);

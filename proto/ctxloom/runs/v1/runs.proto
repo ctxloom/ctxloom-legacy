@@ -43,7 +43,7 @@ enum EndCause {
   END_CAUSE_DRAIN_INTERRUPTED = 7;
   // Value 8 was FINAL_REPORTED. Owner ruling 2026-11-04 (S5 review item 16): a
   // final report is a model's CLAIM, advisory, and never ends a run; the end is
-  // the runner's observation (RunExited and the like).
+  // the runner's observation (RecordRunExited and the like).
   reserved 8;
   // A run owed a runner whose launcher died before it started one (its run
   // lock free, ruling 100): no launch failed, nothing was launched.
@@ -91,7 +91,7 @@ message EnqueueRun {
     refuses: "ctxloom.runs.v1.FileOnlyCredential"
     refuses: "ctxloom.runs.v1.NoPrompt"
     refuses: "ctxloom.runs.v1.UnknownEngine"
-    refuses: "ctxloom.runs.v1.LaunchRefused"
+    refuses: "ctxloom.runs.v1.LaunchRefusals"
   };
 
   string session = 1;
@@ -165,7 +165,7 @@ message QueueTurn {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.InterruptRequested", "ctxloom.runs.v1.TurnQueued"]
     refuses: "ctxloom.runs.v1.NoRun"
-    refuses: "ctxloom.runs.v1.Ended"
+    refuses: "ctxloom.runs.v1.RunIsEnded"
     refuses: "ctxloom.runs.v1.TurnInFlight"
   };
 
@@ -192,7 +192,7 @@ message RequestStop {
 
 // region facts (what already happened: recorded, never refused)
 
-message RunnerAttached {
+message RecordRunnerAttached {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.RunnerAttachedRecorded"]
@@ -207,7 +207,7 @@ message RunnerAttached {
 // which (`pid`, 0 when the launcher could not learn it). The sign that a
 // launch was made, so a run owed a runner stops being owed on it and not on
 // the runner's first word. Keyed `started:<run>`.
-message RunnerStarted {
+message RecordRunnerStarted {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.RunnerStartedRecorded"]
@@ -222,7 +222,7 @@ message RunnerStarted {
 // `message_ids` are the turn's messages (S-b): the turn is keyed by them,
 // `turn:<run>:<first message id>:<phase>`; a turn queued by no message (the
 // one-shot's) is keyed by its number, `turn:<run>:<turn>:<phase>`.
-message TurnStarted {
+message RecordTurnStarted {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.TurnStartedRecorded"]
@@ -232,7 +232,7 @@ message TurnStarted {
   repeated string message_ids = 2;
 }
 
-message TurnCompleted {
+message RecordTurnCompleted {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.TurnCompletedRecorded"]
@@ -245,7 +245,7 @@ message TurnCompleted {
   repeated string message_ids = 5;
 }
 
-message TurnFailed {
+message RecordTurnFailed {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.TurnFailedRecorded"]
@@ -259,7 +259,7 @@ message TurnFailed {
 
 // The runner (or the launcher, on process exit) ended. The FIRST terminal
 // input ends the run; a second records nothing.
-message RunExited {
+message RecordRunExited {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.RunEnded"]
@@ -269,7 +269,7 @@ message RunExited {
   int32 signal = 2;
 }
 
-message LaunchFailed {
+message RecordLaunchFailed {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.RunEnded"]
@@ -283,7 +283,7 @@ message LaunchFailed {
 // 95): a sweeping process records it, never the runner, and it ends the run
 // for runner loss. Keyed `runner-lost:<run>`, so a second sweeper's is a
 // DUPLICATE; on a run already ended it records nothing.
-message RunnerLost {
+message RecordRunnerLost {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.RunEnded"]
@@ -292,9 +292,9 @@ message RunnerLost {
 
 // A run still owed a runner whose launcher died before starting one (its run
 // lock free, rulings 92, 100): no launch failed, so it is not a
-// `LaunchFailed`. A sweeping process records it; keyed
+// `RecordLaunchFailed`. A sweeping process records it; keyed
 // `launch-orphaned:<run>`, so a second sweeper's is a DUPLICATE.
-message LaunchOrphaned {
+message RecordLaunchOrphaned {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.RunEnded"]
@@ -307,7 +307,7 @@ message LaunchOrphaned {
 // the runner side, never chosen by the model, and the external id derives from
 // them (`report:<run>:<turn>:<ordinal>`, `final:<run>:<turn>`). References
 // (run, turn, text_ref), not embedded authority.
-message SummaryReported {
+message RecordSummaryReported {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.SummaryReportedRecorded"]
@@ -322,7 +322,7 @@ message SummaryReported {
 // The model says its work is done. A CLAIM: it notifies the parent and
 // transitions nothing; acceptance is a separate refusable command by a decider
 // role. It does not end the run or revoke a credential.
-message FinalReported {
+message RecordFinalReported {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.runs.v1.RunState"
     emits: ["ctxloom.runs.v1.FinalReportedRecorded"]
@@ -385,7 +385,7 @@ message TurnQueued {
 
 // A steer asked the turn in flight to be interrupted (S-b): the driver sends
 // the engine's interrupt; the interrupted turn ends as it ends (a
-// TurnFailed, class INTERRUPTED, or TurnCompleted if it beat the interrupt).
+// RecordTurnFailed, class INTERRUPTED, or RecordTurnCompleted if it beat the interrupt).
 message InterruptRequested {
   option (io.angzarr.v1.event) = {component: "ctxloom.runs.v1.RunState"};
 
@@ -480,7 +480,7 @@ message TurnInFlight {
 }
 
 // A command to a run that has ended (the end fence).
-message Ended {
+message RunIsEnded {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 }
 
@@ -542,7 +542,7 @@ message UnknownEngine {
 // singular message field, and an empty refusal (NoPrompt) must still be seen.
 // The fatal findings are not here: `fatal_findings` says only how many there
 // were, and the library says them.
-message LaunchRefused {
+message LaunchRefusals {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 
   repeated NoPrompt no_prompt = 1;

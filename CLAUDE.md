@@ -171,14 +171,14 @@ launch path alike: the plan's axis
 (`DryRun.axes.0`, the flag else the config's `workspace`) rides the `Order`
 (`Order.workspace`: the axis, the session's checkouts directory from
 `Place.worktrees`, the agent), and the placed directory is the
-`PrepareRequest`'s and the `TurnRequest`'s `cwd` and `RunnerStarted.workspace`
+`PrepareRequest`'s and the `TurnRequest`'s `cwd` and `RecordRunnerStarted.workspace`
 (`Order.cwd` stays the live project), so claude's trust entry
 (`seeded_state`, `projects.<cwd>.hasTrustDialogAccepted`) is the checkout's
 resolved path. `none` is the project; a checkout is
 its path; one that cannot be had (not a git repository, the add failed, no
 checkouts directory or no workspaces port) is the project and the notice
 `library-application-notice-workspace-unavailable`; one the port refuses
-fails the launch (`LaunchFailed`). Once the engine has exited, and before
+fails the launch (`RecordLaunchFailed`). Once the engine has exited, and before
 the session's lock is let go, the run lets the
 checkout go (`Launcher::release`, the port's WIP-safe `remove`, never
 forced; owner ruling 2026-11-12, Q2): a clean one is removed (`git worktree
@@ -311,7 +311,7 @@ the daemon reads the lock) unless `--even-if-live` (the one override), for
 a kept one, and within the transcript retention: its project's
 `session_transcript_retention`, read from its REGISTERED root (30 days
 unless configured; one that is no age is `AgeInvalid`, a configuration that
-does not read `ConfigUnreadable`, a sweep's too, the flag or not). A refused removal is the typed `RemovalRefused`
+does not read `ConfigUnreadable`, a sweep's too, the flag or not). A refused removal is the typed `RemovalRefusal`
 carrying its PLAN (the files, their classes and bytes, the authored ones,
 the worktrees), so it prints exactly the plan it printed in process, then
 the refusal in the refusing use case's words (`daemon_api::
@@ -594,11 +594,11 @@ binary's entries are its wiring (`manage hooks check`, a surface's
 `hooks_present` and `statusline`); doctor reads an entry running `ctxloom` or
 the running binary's name as ctxloom's. The CLI's own help and fix texts
 still say `ctxloom`.
-The launcher records `RunnerStarted{runtime, workspace, pid}` AFTER the spawn,
+The launcher records `RecordRunnerStarted{runtime, workspace, pid}` AFTER the spawn,
 with the pid the spawn gave (`RunnerLauncher::launch` answers a `Running`, the
 launcher records, `Running::finish` waits), and the pending launches clear on
 it, not on the runner's first word; a command that cannot spawn is a
-`LaunchFailed` and never a `RunnerStarted`. An interactive run's terminal
+`RecordLaunchFailed` and never a `RecordRunnerStarted`. An interactive run's terminal
 session is ended by the human (the terminal delivers Ctrl-C to the shared
 process group, so it cancels a generation inside claude).
 A ONE-SHOT IS HOSTED BY THE USER'S DAEMON (U4, T7; owner s4-Q8): `run
@@ -656,12 +656,12 @@ user's environment crosses to her own client in that answer alone; a read,
 StoreReports`, every `POLL`) for the frontend's start report (at most
 `START_WITHIN`, 60 s, else the launch failed) and its exit report. The
 session's lock is the FRONTEND's (the daemon's `Runs` takes none): taken
-before the TUI starts (held by another: refused, `LaunchFailed` reported,
+before the TUI starts (held by another: refused, `RecordLaunchFailed` reported,
 nothing started), held for its life, let go only after its exit is
 reported. The frontend starts the launch on this terminal through
 `run_terminal` (exactly its program, arguments, WHOLE environment and
-directory), reports `RunnerStarted{pid}` after the spawn and `RunExited`
-after the exit (or `LaunchFailed`) as the run's facts through the
+directory), reports `RecordRunnerStarted{pid}` after the spawn and `RecordRunExited`
+after the exit (or `RecordLaunchFailed`) as the run's facts through the
 coordinator's `Handle`, keyed as the launcher keys its own (`started:<run>`,
 `exit:<run>`, `launch-failed:<run>`, `runs_application::launch_failed_book`),
 so the daemon's own record of each is a DUPLICATE; the user gate admits
@@ -703,12 +703,12 @@ DAEMON DYING UNDER A LIVE TUI (owner 2026-11-14; `daemon-application`'s
 lock, or the run's own the frontend holds; at the start nothing is the
 daemon's own, so every survivor is another's), said in its log, and takes
 over its END PATH each round (`Daemon::end_the_adopted`): the run's end
-(the frontend's exit report, or its `LaunchFailed`) ends the incarnation
+(the frontend's exit report, or its `RecordLaunchFailed`) ends the incarnation
 (`runner-exit`, or `launch-failed` never started) and lets its checkout go
 WIP-safe (the sweep's `LostCheckouts`: only one under ctxloom's
 `worktrees`, never forced, one holding work left and said); a frontend
 gone without reporting (the session's lock free, the run's own not held,
-no end once that was seen) is a kill, `RunExited{signal: 9}` keyed
+no end once that was seen) is a kill, `RecordRunExited{signal: 9}` keyed
 `exit:<run>` (its late report a DUPLICATE), then the same end; one never
 started whose own lock is left free is the sweep's (`launch-orphaned`).
 The idle count's sweep (`live_runs`) leaves an adopted run to it. A
@@ -767,8 +767,8 @@ with them), and so are the scope tables (`Scope`, `hook_allowlist`,
 user, with the user's allowlist (`runs_application::user_allowlist`, every
 command and fact the session domain handles, read from the aggregate, since
 angzarr's unrestricted allowlist is its own, the runs domain's
-`RequestStop`, U4, and the frontend's `RunnerStarted`, `RunExited` and
-`LaunchFailed` facts, U5; the coordinator's command half reaches the session
+`RequestStop`, U4, and the frontend's `RecordRunnerStarted`, `RecordRunExited` and
+`RecordLaunchFailed` facts, U5; the coordinator's command half reaches the session
 and run domains alone, `EdgeCommands::reach`). What a hook process
 receives, through the engine env (like `CTXLOOM_HOME`; both of
 `engine-claude`'s allowlists, `ENV_ALLOWLIST` for a child's turn since ruling
@@ -894,7 +894,7 @@ advisory file locks through the platform's `file-lock`, taken at once or not
 at all, never a pid). The run's OWN lock, `<home>/.ctxloom/runs/<run>.lock`
 (`liveness::RunLockFiles`), is taken before its enqueue is visible, journaled
 as `RunEnqueued.launcher_lock` (field 12, as in `EnqueueRun`), held in the
-`Orders` and let go once `RunnerStarted` is recorded (or the launch failed);
+`Orders` and let go once `RecordRunnerStarted` is recorded (or the launch failed);
 a terminal run's is its FRONTEND's instead (`runs/<request id>.lock`, taken
 before it asked; U5's start-report race, above);
 its file is removed as it is let go, so only a dead holder's is ever left (a
@@ -908,10 +908,10 @@ owed a runner whose own lock is free, and one started whose session's lock
 is free, have lost their owner; it probes, re-reads the run's stream (an
 owner records its start or end before it lets its lock go, so a normal end
 wins the race), then records the run's end, keyed by the run (a second
-sweeper's is a DUPLICATE): `LaunchOrphaned` (`launch-orphaned:<run>`,
+sweeper's is a DUPLICATE): `RecordLaunchOrphaned` (`launch-orphaned:<run>`,
 `END_CAUSE_LAUNCH_ORPHANED`) for one owed a runner, since no launch failed
-(ruling 100), and `RunnerLost` (`runner-lost:<run>`, `END_CAUSE_RUNNER_LOSS`)
-for one started (ruling 95); no orphan claims `LaunchFailed`. A started run
+(ruling 100), and `RecordRunnerLost` (`runner-lost:<run>`, `END_CAUSE_RUNNER_LOSS`)
+for one started (ruling 95); no orphan claims `RecordLaunchFailed`. A started run
 whose OWN lock (`RunEnqueued.launcher_lock`, which `pending-launches` keeps
 on a started run) is free has lost its owner too: a host that held it for
 the run's life, as the daemon does for a child it hosts, is gone (T3, T18);
@@ -924,7 +924,7 @@ another launcher's sweep (a hosted one-shot's `Launcher::step`, in the
 daemon's own process) never takes a live hosted child for lost where a
 session lock file was left free by an earlier run. A started run's turns
 still open (the one in flight, any queued behind it) are ended FIRST,
-`TurnFailed{class: TURN_FAILURE_CLASS_RUNNER_LOST}` keyed
+`RecordTurnFailed{class: TURN_FAILURE_CLASS_RUNNER_LOST}` keyed
 `turn:<run>:<turn>:failed` (S18: after the run's end it records no turn's
 end), so its owner is told of each through the notice policy. Then the
 session's incarnation ended (`orphaned`). The sweep is ONE
@@ -932,7 +932,7 @@ implementation, `run_launcher::Sweeper`: `Launcher::step` runs it over the
 runs it holds no order for, and the daemon's launcher runs it as its first
 step (below), `releasing` what each lost run held (`Releases`, OD-19: its
 checkout now; a container in M10b): its `Swept` names the run's project and
-the workspace its `RunnerStarted` recorded, and `released` what came of it. Every
+the workspace its `RecordRunnerStarted` recorded, and `released` what came of it. Every
 run's end, or abandon after its mint, tells its session
 `RecordIncarnationEnded` (`runner-exit`, `launch-failed`; keyed
 `incarnation-ended:<session>:<n>`), so no incarnation stays open; nothing
@@ -1019,7 +1019,7 @@ credential (`runs-file-only-credential`, `runs-no-credential`), which an engine
 nobody drives is not judged on (73d: such an engine is planned anyway, on the
 agent's own engine, so the findings and the prompt still report). Every check
 is run: one failure is its own refusal, unchanged; two or more, or one beside
-the plan's fatal findings, are ONE `runs-launch-refused` (`LaunchRefused`,
+the plan's fatal findings, are ONE `runs-launch-refused` (`LaunchRefusals`,
 FAILED_PRECONDITION) holding each in check order, said as one json envelope
 with `refusals: [{code, args, message, fix?}]`, or in text the summary line then
 each refusal's `ctxloom:` and `  fix:` lines (cli-support's `Failure::refusals`
@@ -1030,7 +1030,7 @@ else 20. The run is enqueued FIRST (73g): plan, evidence, `EnqueueRun`, the
 project told, a name claimed, `MintSession`, the session's lock, the order.
 So a REFUSED run leaves nothing: no name, no session, no directory, no event,
 no open incarnation. A failure after the enqueue (the project, the names, the
-mint, the session's lock, the first catch-up) ends the run with a `LaunchFailed` fact, so no run stays
+mint, the session's lock, the first catch-up) ends the run with a `RecordLaunchFailed` fact, so no run stays
 owed a runner, and a session already minted has its directory written with
 the run's end in it.
 
@@ -1209,6 +1209,24 @@ stream is a DUPLICATE; the event it produces records the origin on its
 `Causation::Fact`. A fact the kernel dead-letters is answered
 `ANGZARR_REASON_FACT_DEAD_LETTERED`, which the runs application reports as
 `Recorded::Parked` (final, never retried).
+
+Names follow the naming rule (OD-53, owner 2026-11-15; ctxloom-personal's
+`event-sourcing-naming` fragment): a command is imperative (`CloseSession`),
+a fact is a request to record, `Record*` (`RecordRunnerStarted`,
+`RecordAlarmDue`), an event names its subject in the past
+(`SessionClosed`), and a refusal names a state, never an event or a verb
+(`SessionIsClosed`, `RunIsEnded`, `ProjectIdentityMismatch`). Unit N1 renamed
+the free ones: every run fact, the scheduler's `RecordAlarmDue` and
+`RecordAlarmReached`, the refusals `RunIsEnded`, `LaunchRefusals`,
+`OwnerIsClosed`, `SessionIsDestroyed`, `ProjectIdentityMismatch`,
+`ApprovalIsSettled` and daemon-api's `RemovalRefusal`, and the fixture's
+`DummyClosed`. A refusal's rename is a wire change only: its diagnostic CODE
+(`runs-ended`, `runs-launch-refused`, ...) and its `*Rejection` variant are
+unchanged. STORED events keep their names (`Compacted`, the names domain's
+`Claimed` and `Released`, the run's `*Recorded` events): a stream holds them
+by type URL. Facts are never stored by type, but a hold file carries a held
+fact's book, type URL and all, so a rename is safe only because `ctxloom
+shutdown` flushes the holds before an install (no alias table).
 
 ## The pins: one of each
 
@@ -1405,7 +1423,7 @@ child FOLLOWS ITS AGENT'S `workspace` (owner s4-Q11): its axis is planned
 at its launch and recorded at its mint (`MintSession.workspace`), a re-host
 re-enters the axis its session was minted on, its checkout is
 `isolation_ports::session_worktrees` under ctxloom's home for its agent,
-placed by the one launch, `RunnerStarted.workspace` is where it works, and
+placed by the one launch, `RecordRunnerStarted.workspace` is where it works, and
 at its exit the checkout is let go WIP-safe (the files the launch placed
 taken out, then the port's `remove`; one holding work left and said with
 its branch). Under `test-support` a daemon is killed outright at a step by
@@ -1979,7 +1997,7 @@ the registered identity it is judged against):
 recorded once (`ProjectRegistered`: root, common dir, root commit), and on
 every later call only the ROOT COMMIT is rechecked (a worktree's root
 differs; its common dir is the primary's): another is refused
-`ProjectIdentityChanged`, an expected name not the registered harp
+`ProjectIdentityMismatch`, an expected name not the registered harp
 `ProjectHarpMismatch`, each naming the registered project; an unnamed
 project is refused `UnnamedProject` (`sessions-project-not-named`). Outside
 git the identity is empty, and ADOPTED (owner, after step 5): the first
@@ -2199,7 +2217,7 @@ and `notices` 92. Every enum of `ctxloom.v1` follows AIP-216 and AIP-126
 it describes, `STATE_UNSPECIFIED` its zero; another enum's zero is
 `<NAME>_UNSPECIFIED`, its other values unprefixed, nested in its one owner
 (`AssembledFragment.Form`, `Launch.Kind`, `Launch.Stdio`, `HostedRun.Kind`, `Session.State`,
-`RemovalFile.Class`, `Run.Mode`, `RemovalRefused.Reason`, `Bundle.Origin`,
+`RemovalFile.Class`, `Run.Mode`, `RemovalRefusal.Reason`, `Bundle.Origin`,
 `Bundle.View`, `Agent.View`, `EngineAuth.State`, `Config.View`); the three
 shared by several messages stay top-level, unprefixed but their zero
 (`DistilledState`, `ItemView`, `ItemKind`), so proto3's package-wide value
@@ -2614,8 +2632,8 @@ redelivery is DUPLICATE. No file holds the transcript (owner ruling 87a):
 `seq` counting lines), so it is live: a session still running shows what its
 hooks have delivered. A one-shot child's prompt and words come from its hooks ALONE (owner
 rulings 26 and 51): the launcher records none of them, and reads the child's
-stream only for the reply it returns and the run's outcome facts (RunnerStarted,
-TurnCompleted/TurnFailed, LaunchFailed, RunExited). Accepted costs: a hook
+stream only for the reply it returns and the run's outcome facts (RecordRunnerStarted,
+RecordTurnCompleted/RecordTurnFailed, RecordLaunchFailed, RecordRunExited). Accepted costs: a hook
 delivery that is dropped (on the environment's endpoint, or past the hold's
 bound) loses that part of the record, and a child whose hooks
 never reach the listener has no conversation in its transcript (its reply is
@@ -3167,7 +3185,7 @@ ctxloom has no posture of its own (owner ruling 134, superseding rulings 59,
 70, 106-109 and 125 as far as permissions go): the launch no longer judges a
 `network`/`sandbox` word against its runtime; `runs-unenforced-posture`,
 `UnenforcedPosture`, `PostureEvidence` and `run_ports::enforced` are gone
-(`EnqueueRun` field 13 `posture` and `LaunchRefused` field 6
+(`EnqueueRun` field 13 `posture` and `LaunchRefusals` field 6
 `unenforced_posture` are reserved). Such intent is said in the engine's own
 words (its permissions document) and enforced by the engine; a claude
 `sandbox` (a sibling of `permissions` in its settings) needs a block of its

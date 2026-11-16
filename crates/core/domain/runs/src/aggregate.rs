@@ -6,6 +6,11 @@
 //! once. A run holds no credential (owner ruling s4-Q3: the hook bearer's
 //! digest went with the per-run listener).
 
+// The `#[aggregate]` macro generates the run's fact enum from its handlers, and
+// every fact is `Record*` (the naming rule, OD-53), so its variants share
+// the prefix by design.
+#![allow(clippy::enum_variant_names)]
+
 use angzarr_embedded::markup::{
     pack_message, Bug, Context, DomainMessage, Emit, FactEmit, Failed, PageContext, Refuses,
 };
@@ -13,16 +18,17 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
 use crate::refusal::refuse;
 use crate::{
-    apply, run_root, EndCause, EnqueueRun, FinalReported, FinalReportedRecorded, LaunchFailed,
-    LaunchOrphaned, QueueTurn, RequestStop, RunCommand, RunEnded, RunEnqueued, RunEvent, RunExited,
-    RunRejection, RunState, RunnerAttached, RunnerAttachedRecorded, RunnerLost, RunnerStarted,
-    RunnerStartedRecorded, StopRequested, SummaryReported, SummaryReportedRecorded, TurnCompleted,
-    TurnCompletedRecorded, TurnFailed, TurnFailedRecorded, TurnQueued, TurnStarted,
+    apply, run_root, EndCause, EnqueueRun, FinalReportedRecorded, QueueTurn, RecordFinalReported,
+    RecordLaunchFailed, RecordLaunchOrphaned, RecordRunExited, RecordRunnerAttached,
+    RecordRunnerLost, RecordRunnerStarted, RecordSummaryReported, RecordTurnCompleted,
+    RecordTurnFailed, RecordTurnStarted, RequestStop, RunCommand, RunEnded, RunEnqueued, RunEvent,
+    RunRejection, RunState, RunnerAttachedRecorded, RunnerStartedRecorded, StopRequested,
+    SummaryReportedRecorded, TurnCompletedRecorded, TurnFailedRecorded, TurnQueued,
     TurnStartedRecorded,
 };
-use crate::{AlreadyEnqueued, Ended, NoRun, NotItsStream, TurnInFlight};
+use crate::{AlreadyEnqueued, NoRun, NotItsStream, RunIsEnded, TurnInFlight};
 use crate::{
-    CredentialEvidence, FileOnlyCredential, LaunchRefused, NoCredential, NoPrompt, Refusal,
+    CredentialEvidence, FileOnlyCredential, LaunchRefusals, NoCredential, NoPrompt, Refusal,
     RunMode, UnknownEngine,
 };
 use crate::{InterruptRequested, TurnUrgency};
@@ -126,7 +132,7 @@ fn decide_enqueue(ctx: &Context, cmd: EnqueueRun) -> Result<RunEnqueued, RunReje
 /// There is no posture check (owner ruling 134: ctxloom has no posture of its
 /// own; an engine's permissions are its own document).
 /// One failure is its own refusal; two or more, or one beside the plan's
-/// fatal findings, are one `LaunchRefused` holding each in that order, and
+/// fatal findings, are one `LaunchRefusals` holding each in that order, and
 /// the findings alone are an empty one (they are the library's to say).
 fn launchable(cmd: &EnqueueRun) -> Result<(), RunRejection> {
     let mut refusals = Vec::new();
@@ -209,7 +215,7 @@ pub(crate) fn enqueue_refusal(
                 refusals,
                 fatal_findings,
             )),
-            status: <LaunchRefused as Refusal>::REFUSAL_STATUS,
+            status: <LaunchRefusals as Refusal>::REFUSAL_STATUS,
         };
     }
     refuse!(
@@ -229,8 +235,8 @@ pub(crate) fn enqueue_refusal(
 
 /// The aggregate's message: each refusal in the field of its kind, in check
 /// order (one field per kind, so the fields' order is the checks').
-fn launch_refused(refusals: Vec<RunRejection>, fatal_findings: u32) -> LaunchRefused {
-    let mut message = LaunchRefused {
+fn launch_refused(refusals: Vec<RunRejection>, fatal_findings: u32) -> LaunchRefusals {
+    let mut message = LaunchRefusals {
         no_prompt: Vec::new(),
         unknown_engine: Vec::new(),
         no_credential: Vec::new(),
@@ -270,11 +276,11 @@ impl RunAggregate {
             FileOnlyCredential,
             NoPrompt,
             UnknownEngine,
-            LaunchRefused
+            LaunchRefusals
         )
     )]
     // The refusal is the generated `Refuses` choice, which holds
-    // `LaunchRefused` by value (four lists of refusals): the
+    // `LaunchRefusals` by value (four lists of refusals): the
     // markup's type, not one this crate can box.
     #[allow(clippy::result_large_err)]
     fn enqueue(
@@ -287,7 +293,7 @@ impl RunAggregate {
 
     /// Queue a turn: one in flight, a steer behind it interrupting it, and
     /// none after the end.
-    #[handles_cmd(QueueTurn, refuses(NoRun, Ended, TurnInFlight))]
+    #[handles_cmd(QueueTurn, refuses(NoRun, RunIsEnded, TurnInFlight))]
     fn queue_turn(
         &self,
         cmd: QueueTurn,
@@ -299,7 +305,7 @@ impl RunAggregate {
                 RunRejection,
                 rejection,
                 Refuses<Self, QueueTurn>,
-                [NoRun => NoRun, Ended => Ended, TurnInFlight{turn} => TurnInFlight]
+                [NoRun => NoRun, Ended => RunIsEnded, TurnInFlight{turn} => TurnInFlight]
             )
         })?;
         Ok(match interrupt {
@@ -328,8 +334,12 @@ impl RunAggregate {
         })
     }
 
-    #[handles_fact(RunnerAttached)]
-    fn runner_attached(&self, fact: RunnerAttached, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordRunnerAttached)]
+    fn runner_attached(
+        &self,
+        fact: RecordRunnerAttached,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.live().then_some(RunnerAttachedRecorded {
             runner_id: fact.runner_id,
@@ -338,8 +348,12 @@ impl RunAggregate {
     }
 
     /// The launcher made the runner's process: recorded while the run is live.
-    #[handles_fact(RunnerStarted)]
-    fn runner_started(&self, fact: RunnerStarted, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordRunnerStarted)]
+    fn runner_started(
+        &self,
+        fact: RecordRunnerStarted,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.live().then_some(RunnerStartedRecorded {
             runtime: fact.runtime,
@@ -348,8 +362,8 @@ impl RunAggregate {
         }))
     }
 
-    #[handles_fact(TurnStarted)]
-    fn turn_started(&self, fact: TurnStarted, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordTurnStarted)]
+    fn turn_started(&self, fact: RecordTurnStarted, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.live().then_some(TurnStartedRecorded {
             turn: fact.turn,
@@ -357,8 +371,12 @@ impl RunAggregate {
         }))
     }
 
-    #[handles_fact(TurnCompleted)]
-    fn turn_completed(&self, fact: TurnCompleted, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordTurnCompleted)]
+    fn turn_completed(
+        &self,
+        fact: RecordTurnCompleted,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.live().then_some(TurnCompletedRecorded {
             turn: fact.turn,
@@ -369,8 +387,8 @@ impl RunAggregate {
         }))
     }
 
-    #[handles_fact(TurnFailed)]
-    fn turn_failed(&self, fact: TurnFailed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordTurnFailed)]
+    fn turn_failed(&self, fact: RecordTurnFailed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.live().then_some(TurnFailedRecorded {
             turn: fact.turn,
@@ -380,40 +398,48 @@ impl RunAggregate {
         }))
     }
 
-    #[handles_fact(RunExited)]
-    fn run_exited(&self, fact: RunExited, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordRunExited)]
+    fn run_exited(&self, fact: RecordRunExited, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.end(EndCause::RunnerExit, Some(fact.code), String::new()))
     }
 
-    #[handles_fact(LaunchFailed)]
-    fn launch_failed(&self, fact: LaunchFailed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordLaunchFailed)]
+    fn launch_failed(
+        &self,
+        fact: RecordLaunchFailed,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.end(EndCause::LaunchFailed, None, fact.detail))
     }
 
     /// A started run whose owner is gone (rulings 93, 95): it ends for
     /// runner loss, once.
-    #[handles_fact(RunnerLost)]
-    fn runner_lost(&self, fact: RunnerLost, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordRunnerLost)]
+    fn runner_lost(&self, fact: RecordRunnerLost, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
         let _ = (fact, ctx);
         recorded(self.end(EndCause::RunnerLoss, None, String::new()))
     }
 
     /// A run owed a runner whose launcher died before starting one (ruling
     /// 100): it ends orphaned, once, and claims no launch failure.
-    #[handles_fact(LaunchOrphaned)]
-    fn launch_orphaned(&self, fact: LaunchOrphaned, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordLaunchOrphaned)]
+    fn launch_orphaned(
+        &self,
+        fact: RecordLaunchOrphaned,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
         let _ = (fact, ctx);
         recorded(self.end(EndCause::LaunchOrphaned, None, String::new()))
     }
 
     /// A model's claim: advisory evidence, recorded and nothing else (owner
     /// ruling 2026-11-04, item 16). Total: it applies in every state.
-    #[handles_fact(SummaryReported)]
+    #[handles_fact(RecordSummaryReported)]
     fn summary_reported(
         &self,
-        fact: SummaryReported,
+        fact: RecordSummaryReported,
         ctx: &Context,
     ) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
@@ -427,8 +453,12 @@ impl RunAggregate {
 
     /// A model's final claim: notifies, transitions nothing (it neither ends
     /// the run nor revokes a credential). Total.
-    #[handles_fact(FinalReported)]
-    fn final_reported(&self, fact: FinalReported, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+    #[handles_fact(RecordFinalReported)]
+    fn final_reported(
+        &self,
+        fact: RecordFinalReported,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
         recorded(self.enqueued().then_some(FinalReportedRecorded {
             turn: fact.turn,

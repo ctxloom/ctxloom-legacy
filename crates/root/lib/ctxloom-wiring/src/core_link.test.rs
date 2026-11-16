@@ -89,7 +89,7 @@ impl World {
 use angzarr_embedded::v1::CommandBook;
 
 fn exited() -> RunnerFact {
-    RunnerFact::RunExited(runs::RunExited { code: 0, signal: 0 })
+    RunnerFact::RunExited(runs::RecordRunExited { code: 0, signal: 0 })
 }
 
 // NEW-DESIGN (plan 6.2 "one code path": run_id in S4 and the run domain's
@@ -279,7 +279,7 @@ mod the_edge_over_trees {
 
 // Step 1b-ii: the launcher and the recorder catch up from the core's own
 // store, through its own catalog: a run enqueued through the real App is owed
-// a runner, and then (the launcher's RunnerStarted recorded through the same App)
+// a runner, and then (the launcher's RecordRunnerStarted recorded through the same App)
 // is not.
 #[tokio::test]
 async fn the_pending_launches_catch_up_over_the_cores_store_and_catalog() {
@@ -297,7 +297,7 @@ async fn the_pending_launches_catch_up_over_the_cores_store_and_catalog() {
     Facts::new(world.edge())
         .record(
             &world.identity,
-            RunnerFact::RunnerStarted(runs::RunnerStarted {
+            RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
                 runtime: "claude-code".to_string(),
                 workspace: "/work".to_string(),
                 pid: 0,

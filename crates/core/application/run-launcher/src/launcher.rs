@@ -6,21 +6,21 @@
 //! 1. the launch is made ([`crate::launch_of`], T10: the session home
 //!    written, the engine's command built, the permits applied, the program
 //!    found, the command checked); a launch that fails here has started
-//!    nothing, and is a `LaunchFailed`;
-//! 2. `RunnerAttached` is recorded, then the launch is SPAWNED
-//!    ([`RunnerLauncher::start`]), and only then are `RunnerStarted` (with the
-//!    pid the spawn gave) and `TurnStarted` recorded, while the command runs:
-//!    the pending launches clear on `RunnerStarted` (not on a runner's first
+//!    nothing, and is a `RecordLaunchFailed`;
+//! 2. `RecordRunnerAttached` is recorded, then the launch is SPAWNED
+//!    ([`RunnerLauncher::start`]), and only then are `RecordRunnerStarted` (with the
+//!    pid the spawn gave) and `RecordTurnStarted` recorded, while the command runs:
+//!    the pending launches clear on `RecordRunnerStarted` (not on a runner's first
 //!    word, which a spawned and silent turn never says), so a catch-up that
 //!    reads the streams while the command runs does not launch the run
-//!    again. A command that cannot be spawned is a `LaunchFailed`, which ends
-//!    the run, and never a `RunnerStarted`;
+//!    again. A command that cannot be spawned is a `RecordLaunchFailed`, which ends
+//!    the run, and never a `RecordRunnerStarted`;
 //! 3. the command runs to its end ([`Running::finish`]; a wait that breaks
-//!    after the spawn is a `LaunchFailed` too); one that ran is read by the engine
+//!    after the spawn is a `RecordLaunchFailed` too); one that ran is read by the engine
 //!    ([`Engine::finish_turn`]): the reply is the launch's answer, the
 //!    engine's own session id is bound to the session, and the turn is
-//!    `TurnCompleted` or `TurnFailed`;
-//! 4. `RunExited` ends the run.
+//!    `RecordTurnCompleted` or `RecordTurnFailed`;
+//! 4. `RecordRunExited` ends the run.
 //!
 //! The transcript is read from the capture facts on the session's stream (no
 //! file, owner ruling 87a). A child's turn's facts are its hooks' alone (owner
@@ -31,15 +31,15 @@
 //! its prompts. The events carry no file reference (`answer_ref` is empty).
 //!
 //! The run's own lock (rulings 86, 92), which its enqueuer holds through the
-//! [`Orders`], is let go once `RunnerStarted` is recorded (or the launch
+//! [`Orders`], is let go once `RecordRunnerStarted` is recorded (or the launch
 //! failed); from then on the session's lock is the run's evidence (ruling
 //! 93). A step also sweeps the runs other processes left: one still owed a
 //! runner whose own lock is free, and one started whose session's lock is
 //! free, have lost their owner. The sweep probes the lock, THEN re-reads the
 //! run's stream (an owner records its start or end before it lets its lock
 //! go), and records the run's end, keyed by the run so a second sweeper's is
-//! a DUPLICATE: `LaunchOrphaned` for one owed a runner (no launch failed,
-//! ruling 100), `RunnerLost` for one started (runner loss, ruling 95); then
+//! a DUPLICATE: `RecordLaunchOrphaned` for one owed a runner (no launch failed,
+//! ruling 100), `RecordRunnerLost` for one started (runner loss, ruling 95); then
 //! the end of the session's incarnation (`orphaned`).
 
 use std::sync::Arc;
@@ -190,7 +190,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
     /// a run still owed a runner whose own lock is free has lost its launcher
     /// (rulings 86, 92), and a started run whose session's lock is free has
     /// lost its owner (ruling 93). Whichever process catches up on it first
-    /// records it ended: `LaunchOrphaned` or `RunnerLost` (rulings 95, 100).
+    /// records it ended: `RecordLaunchOrphaned` or `RecordRunnerLost` (rulings 95, 100).
     pub fn with_locks(mut self, locks: Arc<dyn run_ports::RunLocks>) -> Self {
         self.locks = Some(locks);
         self
@@ -367,7 +367,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
                 }
                 self.record(
                     who,
-                    RunnerFact::TurnCompleted(runs::TurnCompleted {
+                    RunnerFact::TurnCompleted(runs::RecordTurnCompleted {
                         turn: TURN,
                         native_key: native_id.clone().unwrap_or_default(),
                         // No file holds the answer (ruling 87a).
@@ -386,7 +386,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             } => {
                 self.record(
                     who,
-                    RunnerFact::TurnFailed(runs::TurnFailed {
+                    RunnerFact::TurnFailed(runs::RecordTurnFailed {
                         turn: TURN,
                         class: failure_class(class),
                         detail: detail.clone(),
@@ -399,7 +399,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         };
         self.record(
             who,
-            RunnerFact::RunExited(runs::RunExited {
+            RunnerFact::RunExited(runs::RecordRunExited {
                 code,
                 signal: output.exit.signal.unwrap_or(0),
             }),
@@ -435,7 +435,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         // run's end.
         self.record(
             who,
-            RunnerFact::RunExited(runs::RunExited {
+            RunnerFact::RunExited(runs::RecordRunExited {
                 code: output.exit.code.unwrap_or(0),
                 signal: output.exit.signal.unwrap_or(0),
             }),
@@ -621,7 +621,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
 /// The launcher's word that the runner is spawned: the engine it runs under,
 /// where (`cwd`, its placed workspace), and the pid the spawn gave.
 fn runner_started(order: &Order, cwd: Option<&str>, pid: u32) -> RunnerFact {
-    RunnerFact::RunnerStarted(runs::RunnerStarted {
+    RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
         runtime: order.engine.clone(),
         workspace: cwd.unwrap_or_default().to_string(),
         pid,
@@ -631,14 +631,14 @@ fn runner_started(order: &Order, cwd: Option<&str>, pid: u32) -> RunnerFact {
 /// The one-shot's turn started: its turn 1, queued by no message (D28 S-b
 /// keys it by its number).
 fn turn_started() -> RunnerFact {
-    RunnerFact::TurnStarted(runs::TurnStarted {
+    RunnerFact::TurnStarted(runs::RecordTurnStarted {
         turn: TURN,
         message_ids: Vec::new(),
     })
 }
 
 fn attached() -> RunnerFact {
-    RunnerFact::RunnerAttached(runs::RunnerAttached {
+    RunnerFact::RunnerAttached(runs::RecordRunnerAttached {
         runner_id: RUNNER.to_string(),
         protocol: PROTOCOL.to_string(),
     })
@@ -690,12 +690,12 @@ pub struct Swept {
     pub run: Uuid,
     pub session: String,
     pub incarnation: u32,
-    /// It had been started (`RunnerLost`), not only owed a runner
-    /// (`LaunchOrphaned`).
+    /// It had been started (`RecordRunnerLost`), not only owed a runner
+    /// (`RecordLaunchOrphaned`).
     pub started: bool,
     /// The project it ran for (its session's), empty until its mint is seen.
     pub project_dir: String,
-    /// Where its runner worked, as its `RunnerStarted` recorded it (its
+    /// Where its runner worked, as its `RecordRunnerStarted` recorded it (its
     /// checkout, or the project); empty when it never started.
     pub workspace: String,
     /// What became of what it held, once it was ended.
@@ -825,7 +825,7 @@ impl<E: Edge> Sweeper<E> {
     /// started run's turns still open (the one in flight, and any queued
     /// behind it) are ended failed first, `runner-lost` (S18): the run's end
     /// would leave them open for good, and its owner is told of each. Where
-    /// its runner worked (its `RunnerStarted`'s workspace) when it was ended
+    /// its runner worked (its `RecordRunnerStarted`'s workspace) when it was ended
     /// here; none when it was not.
     async fn orphaned(&self, lost: &Lost<'_>) -> Result<Option<String>, LaunchError> {
         let cover = angzarr_embedded::v1::Cover {
@@ -893,7 +893,7 @@ impl<E: Edge> Sweeper<E> {
             self.facts
                 .record(
                     &who,
-                    RunnerFact::TurnFailed(runs::TurnFailed {
+                    RunnerFact::TurnFailed(runs::RecordTurnFailed {
                         turn: open.turn,
                         class: runs::TurnFailureClass::RunnerLost,
                         detail: LOST_TURN.to_string(),

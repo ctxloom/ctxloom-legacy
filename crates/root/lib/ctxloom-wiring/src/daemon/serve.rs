@@ -750,7 +750,7 @@ impl<E: run_ports::Edge> run_ports::Edge for Dying<E> {
 /// the kill switch, which kills the daemon outright once a book of the step
 /// it names is applied, before it is answered: `enqueued` (a run's
 /// `EnqueueRun`), `minted` (a `MintSession`), `started` (a
-/// `RunnerStarted`), `turn` (a `TurnStarted`), `hook` (a hook's capture
+/// `RecordRunnerStarted`), `turn` (a `RecordTurnStarted`), `hook` (a hook's capture
 /// fact). Forced, never waited for (the race rule).
 #[cfg(feature = "test-support")]
 fn dies_at_steps(edge: &Arc<CoreEdge>, files: &DaemonFiles) {
@@ -776,8 +776,8 @@ fn step_of(book: &angzarr_embedded::v1::CommandBook) -> Option<&'static str> {
     Some(match name {
         "EnqueueRun" => "enqueued",
         "MintSession" => "minted",
-        "RunnerStarted" => "started",
-        "TurnStarted" => "turn",
+        "RecordRunnerStarted" => "started",
+        "RecordTurnStarted" => "turn",
         "RecordPromptSubmitted"
         | "RecordAssistantText"
         | "RecordToolCall"

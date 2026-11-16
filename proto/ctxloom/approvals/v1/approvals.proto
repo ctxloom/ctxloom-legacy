@@ -125,7 +125,7 @@ message AnswerApproval {
     component: "ctxloom.approvals.v1.ApprovalState"
     emits: ["ctxloom.approvals.v1.ApprovalAnswered"]
     refuses: "ctxloom.approvals.v1.ApprovalUnknown"
-    refuses: "ctxloom.approvals.v1.ApprovalSettled"
+    refuses: "ctxloom.approvals.v1.ApprovalIsSettled"
   };
 
   string ask_id = 1;
@@ -180,7 +180,7 @@ message ApprovalUnknown {
 }
 
 // Already answered, or expired.
-message ApprovalSettled {
+message ApprovalIsSettled {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 
   string ask_id = 1;

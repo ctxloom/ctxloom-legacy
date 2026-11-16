@@ -180,8 +180,8 @@ fn each_kill_step_is_the_book_it_names() {
     for (name, fact, step) in [
         ("EnqueueRun", false, Some("enqueued")),
         ("MintSession", false, Some("minted")),
-        ("RunnerStarted", true, Some("started")),
-        ("TurnStarted", true, Some("turn")),
+        ("RecordRunnerStarted", true, Some("started")),
+        ("RecordTurnStarted", true, Some("turn")),
         ("RecordPromptSubmitted", true, Some("hook")),
         ("RecordTurnEnded", true, Some("hook")),
         ("SendMessage", false, None),

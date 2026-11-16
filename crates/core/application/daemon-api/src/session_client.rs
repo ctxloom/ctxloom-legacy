@@ -385,7 +385,7 @@ impl<D: Daemons> SessionRemovals for Client<D> {
             match api.delete_session(request).await {
                 Ok(done) => Ok(Removed::Done(done)),
                 Err(called) => {
-                    let refused = called.refusal::<v1::RemovalRefused>();
+                    let refused = called.refusal::<v1::RemovalRefusal>();
                     let why = refused.as_ref().and_then(|refused| {
                         crate::RemovalRejection::of(refused, harp).map(|why| (refused, why))
                     });

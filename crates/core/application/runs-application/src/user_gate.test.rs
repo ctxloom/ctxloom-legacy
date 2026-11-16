@@ -130,9 +130,9 @@ fn the_user_may_ask_a_run_to_stop_and_nothing_else_of_the_runs_domain() {
 fn the_user_may_report_a_terminal_s_start_and_exit_and_no_other_runner_fact() {
     let list = user_allowlist();
     for type_url in [
-        url::<runs::RunnerStarted>(),
-        url::<runs::RunExited>(),
-        url::<runs::LaunchFailed>(),
+        url::<runs::RecordRunnerStarted>(),
+        url::<runs::RecordRunExited>(),
+        url::<runs::RecordLaunchFailed>(),
     ] {
         assert!(
             list.permits_body(BodyKind::Fact, &type_url).is_ok(),
@@ -144,9 +144,9 @@ fn the_user_may_report_a_terminal_s_start_and_exit_and_no_other_runner_fact() {
         );
     }
     for type_url in [
-        url::<runs::TurnCompleted>(),
-        url::<runs::RunnerLost>(),
-        url::<runs::LaunchOrphaned>(),
+        url::<runs::RecordTurnCompleted>(),
+        url::<runs::RecordRunnerLost>(),
+        url::<runs::RecordLaunchOrphaned>(),
     ] {
         assert!(
             list.permits_body(BodyKind::Fact, &type_url).is_err(),

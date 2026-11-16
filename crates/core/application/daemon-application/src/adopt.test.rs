@@ -181,7 +181,7 @@ impl Rig {
         runs_application::Facts::new(Arc::clone(&self.edge))
             .record(
                 &self.who(),
-                runs_application::RunnerFact::RunnerStarted(runs::RunnerStarted {
+                runs_application::RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
                     runtime: "claude-code".to_string(),
                     workspace: CHECKOUT.to_string(),
                     pid: 4242,
@@ -196,7 +196,10 @@ impl Rig {
         runs_application::Facts::new(Arc::clone(&self.edge))
             .record(
                 &self.who(),
-                runs_application::RunnerFact::RunExited(runs::RunExited { code: 0, signal: 0 }),
+                runs_application::RunnerFact::RunExited(runs::RecordRunExited {
+                    code: 0,
+                    signal: 0,
+                }),
             )
             .await
             .unwrap();

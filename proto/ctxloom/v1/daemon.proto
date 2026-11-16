@@ -44,8 +44,8 @@ syntax = "proto3";
 //   trust [--remote <name>]               trust.GrantTrust          trust-index
 //   trust --undo                          trust.RevokeTrust         trust-index
 //   a one-shot's signal (API Q11)         runs.RequestStop          (Handle)
-//   the frontend's TUI start and exit     runs.RunnerStarted,       (Handle, facts)
-//                                         RunExited, LaunchFailed
+//   the frontend's TUI start and exit     runs.RecordRunnerStarted, (Handle, facts)
+//                                         RecordRunExited, RecordLaunchFailed
 //   a hook                                the capture facts         (Handle, facts)
 //   the daemon, hosting a child's ask     approvals.RecordApprovalAsked (Handle, fact)
 // A remove is a sequence the daemon runs (`DeleteSession` below: its
@@ -425,7 +425,7 @@ message StopDaemonRequest {
 // HEAD`; of several, the lexically least). The first call names the project
 // (its harp minted, S54) and records the rest in the `projects` aggregate;
 // every later one recomputes and compares: a changed root commit is refused
-// `ctxloom.sessions.v1.ProjectIdentityChanged`, a `name` that is not the
+// `ctxloom.sessions.v1.ProjectIdentityMismatch`, a `name` that is not the
 // registered project's `ProjectHarpMismatch`, each naming the registered
 // project. Outside git the two VCS fields are empty (an empty identity).
 message ResolveProjectRequest {
@@ -1158,7 +1158,7 @@ message DaemonDraining {
 // 2026-11-12): every file the removal would have destroyed, its class and
 // bytes, the authored ones, and the worktrees, so a refused removal says
 // what it did not do.
-message RemovalRefused {
+message RemovalRefusal {
   // Why a removal was refused.
   enum Reason {
     REASON_UNSPECIFIED = 0;
@@ -1204,7 +1204,7 @@ message ConfigUnreadable {
 }
 
 // A registration's recheck is refused with the projects aggregate's own
-// typed refusals (`ctxloom.sessions.v1.ProjectIdentityChanged`,
+// typed refusals (`ctxloom.sessions.v1.ProjectIdentityMismatch`,
 // `ProjectHarpMismatch`), answered as every refusal is (S11).
 
 // endregion

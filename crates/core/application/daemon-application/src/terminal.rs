@@ -11,7 +11,7 @@
 //! `Runs::interactive` drives. Its start hands the launch over
 //! ([`Told::prepared`]) and waits for the frontend's start report; its wait
 //! waits for the exit report. So everything the launcher and the run use
-//! case do around a terminal session (the `RunnerStarted` and `RunExited`
+//! case do around a terminal session (the `RecordRunnerStarted` and `RecordRunExited`
 //! it records, which the frontend's reports already made and are
 //! DUPLICATES, the checkout released WIP-safe, the incarnation ended) is
 //! done here, unchanged, once the frontend says the TUI exited.

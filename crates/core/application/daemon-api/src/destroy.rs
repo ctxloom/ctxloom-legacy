@@ -10,7 +10,7 @@
 //! [`Removing`], over the session index the daemon keeps warm, the daemon's
 //! one store ([`Purges`]) and the session's own project ([`Places`]: its
 //! files and lock, its worktrees, its configuration read from its
-//! REGISTERED root). A refused removal answers [`v1::RemovalRefused`],
+//! REGISTERED root). A refused removal answers [`v1::RemovalRefusal`],
 //! which carries its plan, so the client says what was not done.
 
 use std::collections::BTreeMap;
@@ -379,7 +379,7 @@ impl<E: Edge> Api<E> {
     /// `DeleteSession` (`session remove`, a `session-destroy` build's, M5):
     /// the session by its resource name, removed whole or not at all
     /// ([`reclaim_application::remove`]); `validate_only` is the plan.
-    /// Refused, it answers [`v1::RemovalRefused`] carrying the plan.
+    /// Refused, it answers [`v1::RemovalRefusal`] carrying the plan.
     pub async fn delete_session(
         &self,
         request: v1::DeleteSessionRequest,
@@ -418,8 +418,8 @@ impl<E: Edge> Api<E> {
         .await
         .map_err(|error| reclaim_failed(&error))?;
         let plan = deletion(&request.name, &done.removal, done.worktrees.as_ref());
-        let refused = |reason: v1::removal_refused::Reason, detail: String, counts: (u64, u64)| {
-            ApiError::from(ApiRefusal::of(&v1::RemovalRefused {
+        let refused = |reason: v1::removal_refusal::Reason, detail: String, counts: (u64, u64)| {
+            ApiError::from(ApiRefusal::of(&v1::RemovalRefusal {
                 name: request.name.clone(),
                 reason: reason as i32,
                 detail,
@@ -430,17 +430,17 @@ impl<E: Edge> Api<E> {
         };
         match (&done.removal.refusal, &done.kept) {
             (Some(Refusal::NotProvenDead { reason, .. }), _) => Err(refused(
-                v1::removal_refused::Reason::NotProvenDead,
+                v1::removal_refusal::Reason::NotProvenDead,
                 reason.clone(),
                 (0, 0),
             )),
             (Some(Refusal::Kept { .. }), _) => Err(refused(
-                v1::removal_refused::Reason::Kept,
+                v1::removal_refusal::Reason::Kept,
                 String::new(),
                 (0, 0),
             )),
             (Some(Refusal::Retained { detail, .. }), _) => Err(refused(
-                v1::removal_refused::Reason::Retained,
+                v1::removal_refusal::Reason::Retained,
                 detail.clone(),
                 (0, 0),
             )),
@@ -450,7 +450,7 @@ impl<E: Edge> Api<E> {
                     spared, skipped, ..
                 }),
             ) => Err(refused(
-                v1::removal_refused::Reason::WorktreesKeep,
+                v1::removal_refusal::Reason::WorktreesKeep,
                 String::new(),
                 (*spared, *skipped),
             )),

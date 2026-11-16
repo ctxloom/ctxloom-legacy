@@ -52,8 +52,8 @@ fn url<M: angzarr_embedded::markup::DomainMessage>() -> String {
 /// What the user may send: every command and fact of the session domain,
 /// the runs domain's `RequestStop` (U4: a hosted one-shot's command stops
 /// its run on a signal, API Q11), and the facts a frontend reports of the
-/// terminal session it started (U5, S17: `RunnerStarted`, `RunExited`,
-/// `LaunchFailed`).
+/// terminal session it started (U5, S17: `RecordRunnerStarted`, `RecordRunExited`,
+/// `RecordLaunchFailed`).
 pub fn user_allowlist() -> Allowlist {
     let commands = <sessions::SessionAggregate as Domain>::Command::type_urls();
     let facts = <sessions::SessionAggregate as Domain>::Fact::type_urls();
@@ -63,9 +63,9 @@ pub fn user_allowlist() -> Allowlist {
     // U5: a frontend's reports of the terminal session it started, keyed
     // by their run (a stray one is a DUPLICATE, or names no run).
     let reports = [
-        url::<runs::RunnerStarted>(),
-        url::<runs::RunExited>(),
-        url::<runs::LaunchFailed>(),
+        url::<runs::RecordRunnerStarted>(),
+        url::<runs::RecordRunExited>(),
+        url::<runs::RecordLaunchFailed>(),
     ]
     .into_iter()
     .map(|url| (BodyKind::Fact, url));

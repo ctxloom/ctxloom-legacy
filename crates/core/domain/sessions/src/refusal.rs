@@ -14,8 +14,8 @@ use angzarr_embedded::markup::TypedRefusal;
 
 use crate::{
     DelegationLimit, EngineMismatch, HarpInvalid, NamesTaken, NoClaim, NoNativeSession,
-    NoOpenIncarnation, NoSession, NotHolder, NotOwner, OwnerClosed, RehostBudgetSpent,
-    SessionDestroyed, SessionExists, SessionIsClosed, SessionRejection, SessionRunning,
+    NoOpenIncarnation, NoSession, NotHolder, NotOwner, OwnerIsClosed, RehostBudgetSpent,
+    SessionExists, SessionIsClosed, SessionIsDestroyed, SessionRejection, SessionRunning,
     SessionUnknown, UntrustedTarget, UrgencyUnsupported, WorkspaceMismatch,
 };
 
@@ -69,7 +69,7 @@ impl TryFrom<&TypedRefusal> for SessionRejection {
         if let Some(crate::UnnamedProject { project_id }) = refusal.object() {
             return Ok(SessionRejection::ProjectNotNamed { project_id });
         }
-        if let Some(crate::ProjectIdentityChanged {
+        if let Some(crate::ProjectIdentityMismatch {
             project,
             root,
             registered_commit,
@@ -95,7 +95,7 @@ impl TryFrom<&TypedRefusal> for SessionRejection {
         if let Some(SessionUnknown { harp }) = refusal.object() {
             return Ok(SessionRejection::SessionUnknown { harp });
         }
-        if let Some(SessionDestroyed { harp }) = refusal.object() {
+        if let Some(SessionIsDestroyed { harp }) = refusal.object() {
             return Ok(SessionRejection::SessionDestroyed { harp });
         }
         if let Some(SessionRunning { harp }) = refusal.object() {
@@ -140,7 +140,7 @@ fn daemon_rejection(refusal: &TypedRefusal) -> Option<SessionRejection> {
     if let Some(SessionIsClosed { harp }) = refusal.object() {
         return Some(SessionRejection::SessionClosed { harp });
     }
-    if let Some(OwnerClosed { harp }) = refusal.object() {
+    if let Some(OwnerIsClosed { harp }) = refusal.object() {
         return Some(SessionRejection::OwnerClosed { harp });
     }
     if let Some(NoOpenIncarnation { harp }) = refusal.object() {

@@ -251,7 +251,7 @@ pub(crate) fn ended(events: &[SessionEvent]) -> Vec<(u32, String)> {
 }
 
 // T18: the daemon's FIRST step is the sweep. A child a killed daemon hosted
-// (started, its run lock left free) is ended `RunnerLost` and its
+// (started, its run lock left free) is ended `RecordRunnerLost` and its
 // incarnation closed, before anything is hosted; a second start ends
 // nothing again.
 #[tokio::test]
@@ -279,7 +279,7 @@ async fn the_start_sweeps_a_killed_daemons_child_and_ends_it_once() {
     runs_application::Facts::new(Arc::clone(&edge))
         .record(
             &who,
-            runs_application::RunnerFact::RunnerStarted(runs::RunnerStarted {
+            runs_application::RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
                 runtime: "host".to_string(),
                 workspace: "/work".to_string(),
                 pid: 7,
@@ -358,7 +358,7 @@ async fn a_run(edge: &Arc<TestEdge>, started: bool) {
     runs_application::Facts::new(Arc::clone(edge))
         .record(
             &who,
-            runs_application::RunnerFact::RunnerStarted(runs::RunnerStarted {
+            runs_application::RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
                 runtime: "host".to_string(),
                 workspace: "/work".to_string(),
                 pid: 7,

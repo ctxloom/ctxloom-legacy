@@ -12,10 +12,11 @@ use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Cover, Fact, 
 use angzarr_embedded::{Any, Failure, Handled, Payload, Registry};
 
 use crate::{
-    run_root, CredentialEvidence, EndCause, EnqueueRun, FinalReported, LaunchFailed,
-    LaunchOrphaned, QueueTurn, RequestStop, RunAggregate, RunCommand, RunEnded, RunEvent,
-    RunExited, RunMode, RunRejection, RunState, RunnerAttached, RunnerLost, RunnerStarted,
-    SummaryReported, TurnCompleted, TurnFailed, TurnFailureClass, TurnStarted, RUN_DOMAIN,
+    run_root, CredentialEvidence, EndCause, EnqueueRun, QueueTurn, RecordFinalReported,
+    RecordLaunchFailed, RecordLaunchOrphaned, RecordRunExited, RecordRunnerAttached,
+    RecordRunnerLost, RecordRunnerStarted, RecordSummaryReported, RecordTurnCompleted,
+    RecordTurnFailed, RecordTurnStarted, RequestStop, RunAggregate, RunCommand, RunEnded, RunEvent,
+    RunMode, RunRejection, RunState, TurnFailureClass, RUN_DOMAIN,
 };
 
 const SESSION: &str = "5f0c7a52-1111-5111-8111-000000000001";
@@ -206,8 +207,8 @@ fn queue_turn() -> QueueTurn {
     }
 }
 
-fn exited(code: i32) -> RunExited {
-    RunExited { code, signal: 0 }
+fn exited(code: i32) -> RecordRunExited {
+    RecordRunExited { code, signal: 0 }
 }
 
 // NEW-DESIGN (plan 3.3), owner ruling s4-Q3: the event holds the session,
@@ -296,14 +297,14 @@ fn two_turns_of_one_runner_are_one_run_enqueued_and_one_run_ended() {
     let mut run = Run::enqueued();
     run.command(queue_turn()).unwrap();
     run.fact(
-        TurnStarted {
+        RecordTurnStarted {
             turn: 1,
             message_ids: Vec::new(),
         },
         "turn:r:1:started",
     );
     run.fact(
-        TurnCompleted {
+        RecordTurnCompleted {
             turn: 1,
             native_key: "k".to_string(),
             answer_ref: String::new(),
@@ -314,14 +315,14 @@ fn two_turns_of_one_runner_are_one_run_enqueued_and_one_run_ended() {
     );
     run.command(queue_turn()).unwrap();
     run.fact(
-        TurnStarted {
+        RecordTurnStarted {
             turn: 3,
             message_ids: Vec::new(),
         },
         "turn:r:3:started",
     );
     run.fact(
-        TurnCompleted {
+        RecordTurnCompleted {
             turn: 3,
             native_key: "k".to_string(),
             answer_ref: String::new(),
@@ -348,14 +349,14 @@ fn two_turns_of_one_runner_are_one_run_enqueued_and_one_run_ended() {
     assert_eq!((enqueued, ended), (1, 1));
 }
 
-// NEW-DESIGN (plan 3.3: TurnCompleted, then RunIdle): a completed turn frees
+// NEW-DESIGN (plan 3.3: RecordTurnCompleted, then RunIdle): a completed turn frees
 // the gate, so the next one queues.
 #[test]
 fn a_completed_turn_frees_the_gate() {
     let mut run = Run::enqueued();
     run.command(queue_turn()).unwrap();
     run.fact(
-        TurnCompleted {
+        RecordTurnCompleted {
             turn: 1,
             native_key: String::new(),
             answer_ref: String::new(),
@@ -368,14 +369,14 @@ fn a_completed_turn_frees_the_gate() {
     run.command(queue_turn()).unwrap();
 }
 
-// NEW-DESIGN (plan 3.3: TurnFailed records the class; the policy run->hold
+// NEW-DESIGN (plan 3.3: RecordTurnFailed records the class; the policy run->hold
 // reads it).
 #[test]
 fn a_failed_turn_records_its_class_and_frees_the_gate() {
     let mut run = Run::enqueued();
     run.command(queue_turn()).unwrap();
     let events = run.fact(
-        TurnFailed {
+        RecordTurnFailed {
             turn: 1,
             class: TurnFailureClass::RateLimited,
             detail: "429".to_string(),
@@ -413,7 +414,7 @@ fn the_first_terminal_input_ends_the_run_and_a_second_records_nothing() {
     ));
     let before = run.event_count();
     let second = run.fact(
-        LaunchFailed {
+        RecordLaunchFailed {
             deterministic: true,
             detail: String::new(),
         },
@@ -432,14 +433,14 @@ fn the_first_terminal_input_ends_the_run_and_a_second_records_nothing() {
 fn runner_lost_ends_a_started_run_for_runner_loss_once() {
     let mut run = Run::enqueued();
     run.fact(
-        RunnerStarted {
+        RecordRunnerStarted {
             runtime: "fake".to_string(),
             workspace: "/w".to_string(),
             pid: 7,
         },
         "started:r",
     );
-    let ended = run.fact(RunnerLost {}, "runner-lost:r");
+    let ended = run.fact(RecordRunnerLost {}, "runner-lost:r");
     assert_eq!(
         ended,
         [RunEvent::RunEnded(RunEnded {
@@ -451,7 +452,7 @@ fn runner_lost_ends_a_started_run_for_runner_loss_once() {
     assert_eq!(run.state().ended, Some(EndCause::RunnerLoss));
     let handled = run
         .harness
-        .when_book(fact_book(RunnerLost {}, "runner-lost:r"))
+        .when_book(fact_book(RecordRunnerLost {}, "runner-lost:r"))
         .handled()
         .unwrap();
     assert!(matches!(handled, Handled::Duplicate(..)));
@@ -461,7 +462,7 @@ fn runner_lost_ends_a_started_run_for_runner_loss_once() {
 #[test]
 fn launch_orphaned_ends_a_waiting_run_orphaned_and_claims_no_launch_failure() {
     let mut run = Run::enqueued();
-    let ended = run.fact(LaunchOrphaned {}, "launch-orphaned:r");
+    let ended = run.fact(RecordLaunchOrphaned {}, "launch-orphaned:r");
     assert_eq!(
         ended,
         [RunEvent::RunEnded(RunEnded {
@@ -473,7 +474,7 @@ fn launch_orphaned_ends_a_waiting_run_orphaned_and_claims_no_launch_failure() {
     assert_eq!(run.state().ended, Some(EndCause::LaunchOrphaned));
     let handled = run
         .harness
-        .when_book(fact_book(LaunchOrphaned {}, "launch-orphaned:r"))
+        .when_book(fact_book(RecordLaunchOrphaned {}, "launch-orphaned:r"))
         .handled()
         .unwrap();
     assert!(matches!(handled, Handled::Duplicate(..)));
@@ -483,13 +484,15 @@ fn launch_orphaned_ends_a_waiting_run_orphaned_and_claims_no_launch_failure() {
 fn an_orphan_fact_on_an_ended_or_unenqueued_run_records_nothing() {
     let mut ended = Run::enqueued();
     ended.fact(exited(0), "exit:r");
-    assert!(ended.fact(RunnerLost {}, "runner-lost:r").is_empty());
+    assert!(ended.fact(RecordRunnerLost {}, "runner-lost:r").is_empty());
     assert!(ended
-        .fact(LaunchOrphaned {}, "launch-orphaned:r")
+        .fact(RecordLaunchOrphaned {}, "launch-orphaned:r")
         .is_empty());
     let mut none = Run::new();
-    assert!(none.fact(RunnerLost {}, "runner-lost:r").is_empty());
-    assert!(none.fact(LaunchOrphaned {}, "launch-orphaned:r").is_empty());
+    assert!(none.fact(RecordRunnerLost {}, "runner-lost:r").is_empty());
+    assert!(none
+        .fact(RecordLaunchOrphaned {}, "launch-orphaned:r")
+        .is_empty());
 }
 
 // NEW-DESIGN (plan 4.3: a re-sent fact with the same external_id is
@@ -513,7 +516,7 @@ fn every_end_revokes_the_credential_whatever_the_cause() {
     };
     let launch_failed = |run: &mut Run| {
         run.fact(
-            LaunchFailed {
+            RecordLaunchFailed {
                 deterministic: false,
                 detail: "boom".to_string(),
             },
@@ -541,7 +544,7 @@ fn an_end_survives_a_restart() {
 }
 
 // NEW-DESIGN (plan 3.3: RequestStop from the policy session->run; the run
-// ends later by RunExited or StopGraceElapsed, not by the request).
+// ends later by RecordRunExited or StopGraceElapsed, not by the request).
 #[test]
 fn a_stop_request_is_recorded_once_and_does_not_end_the_run() {
     let mut run = Run::enqueued();
@@ -627,8 +630,8 @@ fn a_claim_again_is_a_duplicate_and_a_new_ordinal_is_a_new_claim() {
 
 type State = (&'static str, fn() -> Run);
 
-fn summary(turn: u64, ordinal: u32) -> SummaryReported {
-    SummaryReported {
+fn summary(turn: u64, ordinal: u32) -> RecordSummaryReported {
+    RecordSummaryReported {
         turn,
         ordinal,
         scope: "progress".to_string(),
@@ -636,8 +639,8 @@ fn summary(turn: u64, ordinal: u32) -> SummaryReported {
     }
 }
 
-fn final_claim(turn: u64) -> FinalReported {
-    FinalReported {
+fn final_claim(turn: u64) -> RecordFinalReported {
+    RecordFinalReported {
         turn,
         text_ref: "text:final".to_string(),
     }
@@ -648,7 +651,7 @@ fn facts() -> Vec<(CommandBook, &'static str)> {
     vec![
         (
             fact_book(
-                RunnerAttached {
+                RecordRunnerAttached {
                     runner_id: "r".to_string(),
                     protocol: "v1".to_string(),
                 },
@@ -658,7 +661,7 @@ fn facts() -> Vec<(CommandBook, &'static str)> {
         ),
         (
             fact_book(
-                RunnerStarted {
+                RecordRunnerStarted {
                     runtime: "claude-code".to_string(),
                     workspace: "/w".to_string(),
                     pid: 7,
@@ -669,7 +672,7 @@ fn facts() -> Vec<(CommandBook, &'static str)> {
         ),
         (
             fact_book(
-                TurnStarted {
+                RecordTurnStarted {
                     turn: 1,
                     message_ids: Vec::new(),
                 },
@@ -679,7 +682,7 @@ fn facts() -> Vec<(CommandBook, &'static str)> {
         ),
         (
             fact_book(
-                TurnCompleted {
+                RecordTurnCompleted {
                     turn: 1,
                     native_key: String::new(),
                     answer_ref: String::new(),
@@ -692,7 +695,7 @@ fn facts() -> Vec<(CommandBook, &'static str)> {
         ),
         (
             fact_book(
-                TurnFailed {
+                RecordTurnFailed {
                     turn: 1,
                     class: TurnFailureClass::EngineError,
                     detail: String::new(),
@@ -705,7 +708,7 @@ fn facts() -> Vec<(CommandBook, &'static str)> {
         (fact_book(exited(0), "exit"), "exit"),
         (
             fact_book(
-                LaunchFailed {
+                RecordLaunchFailed {
                     deterministic: false,
                     detail: String::new(),
                 },
@@ -768,7 +771,7 @@ fn every_fact_applies_in_every_state() {
 fn a_runner_attaching_is_recorded_on_the_run() {
     let mut run = Run::enqueued();
     let events = run.fact(
-        RunnerAttached {
+        RecordRunnerAttached {
             runner_id: "r1".to_string(),
             protocol: "v1".to_string(),
         },
@@ -782,7 +785,7 @@ fn a_runner_attaching_is_recorded_on_the_run() {
 // the fold keeps what it said.
 #[test]
 fn a_runner_starting_is_recorded_on_the_run_and_only_while_it_is_live() {
-    let started = || RunnerStarted {
+    let started = || RecordRunnerStarted {
         runtime: "claude-code".to_string(),
         workspace: "/w".to_string(),
         pid: 7,
@@ -923,7 +926,7 @@ fn a_child_needs_one_of_its_variables_set_unless_its_engine_asks_for_none() {
     }
 }
 
-// Rulings 73, 73b: two failing checks are ONE refusal, LaunchRefused, holding
+// Rulings 73, 73b: two failing checks are ONE refusal, LaunchRefusals, holding
 // both in check order; its count is how many failed.
 #[test]
 fn two_failing_checks_are_one_launch_refused_holding_both_in_check_order() {

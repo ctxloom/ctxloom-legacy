@@ -116,7 +116,7 @@ fn now<T>(future: impl std::future::Future<Output = T>) -> T {
 
 // The double launch, forced and not waited for: the instant the command is
 // spawned (here: while it runs, silent, with no word of its own), the store
-// already holds the launcher's RunnerStarted, and a catch-up that reads the
+// already holds the launcher's RecordRunnerStarted, and a catch-up that reads the
 // streams THEN does not owe the run a runner again.
 #[tokio::test]
 async fn a_spawned_silent_turn_is_already_started_when_a_catch_up_reads_it() {
@@ -624,9 +624,9 @@ async fn a_command_that_could_not_start_ends_the_run_as_a_failed_launch() {
     );
 }
 
-// The ordering the truthful RunnerStarted rests on, forced and not waited
+// The ordering the truthful RecordRunnerStarted rests on, forced and not waited
 // for: INSIDE the spawn (the pid not yet given to the launcher) the store
-// holds no RunnerStarted, and the moment the command runs it holds one with
+// holds no RecordRunnerStarted, and the moment the command runs it holds one with
 // the spawn's pid.
 #[tokio::test]
 async fn the_runner_start_is_recorded_after_the_spawn_and_not_before() {
@@ -1363,7 +1363,7 @@ async fn started_run(edge: &Arc<TestEdge>) {
     enqueued_by(edge, SESSION, HARP, RUN_LOCK).await;
     as_the_runner(
         edge,
-        runs_application::RunnerFact::RunnerStarted(runs::RunnerStarted {
+        runs_application::RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
             runtime: "fake".to_string(),
             workspace: "/work/proj".to_string(),
             pid: 7,
@@ -1374,7 +1374,7 @@ async fn started_run(edge: &Arc<TestEdge>) {
 
 // Rulings 86, 92, 100: a run owed a runner whose own lock is free has lost
 // its launcher, and nobody else holds its order: the next process to catch up
-// records `LaunchOrphaned` (no launch failed), which ends it and closes its
+// records `RecordLaunchOrphaned` (no launch failed), which ends it and closes its
 // session's incarnation (ruling 85). Nothing is launched for it.
 #[tokio::test]
 async fn a_run_whose_launchers_lock_is_free_is_recorded_as_an_orphan() {
@@ -1383,7 +1383,7 @@ async fn a_run_whose_launchers_lock_is_free_is_recorded_as_an_orphan() {
     let mut later = another_process(&edge, Locks::saying(Free, Unproven));
     let launched = later.step(&edge.store, edge.catalog()).await.unwrap();
     assert!(launched.is_empty(), "an orphan is not launched");
-    // Not `LaunchFailed`: no orphan claims a launch failure.
+    // Not `RecordLaunchFailed`: no orphan claims a launch failure.
     assert_eq!(ends(&edge).await, [orphaned()]);
     assert_eq!(closed(&edge).await, [(1, "orphaned".to_string())]);
 }
@@ -1462,7 +1462,7 @@ async fn a_run_whose_order_this_process_holds_is_launched_not_orphaned() {
 
 // Rulings 93, 95: a STARTED run whose session's lock is free has lost its
 // owner (the run holds its session's lock from its mint to its end): it is
-// ended by `RunnerLost`, for runner loss, and its incarnation closed.
+// ended by `RecordRunnerLost`, for runner loss, and its incarnation closed.
 #[tokio::test]
 async fn a_started_run_whose_sessions_lock_is_free_is_ended_for_runner_loss() {
     let edge = Arc::new(TestEdge::new());
@@ -1475,7 +1475,7 @@ async fn a_started_run_whose_sessions_lock_is_free_is_ended_for_runner_loss() {
 
 // Ruling 95, the race forced: two processes find the same started orphan,
 // the second catching up in the gap between the first one's probe and its
-// record. `RunnerLost` is keyed by the run, so the second is a DUPLICATE: the
+// record. `RecordRunnerLost` is keyed by the run, so the second is a DUPLICATE: the
 // run ends once, its incarnation is closed once, and neither fails.
 #[tokio::test]
 async fn two_processes_that_find_the_same_started_orphan_end_it_once() {
@@ -1526,7 +1526,7 @@ async fn a_sweep_racing_a_normal_end_ends_the_run_once_by_its_exit() {
     *locks.before.lock().unwrap() = Some(Box::new(move || {
         now(as_the_runner(
             &owner_edge,
-            runs_application::RunnerFact::RunExited(runs::RunExited { code: 0, signal: 0 }),
+            runs_application::RunnerFact::RunExited(runs::RecordRunExited { code: 0, signal: 0 }),
         ));
         now(
             runs_application::Facts::new(Arc::clone(&owner_edge)).incarnation_ended(
@@ -1646,7 +1646,7 @@ async fn a_sweep_that_finds_the_runner_started_since_records_nothing() {
     *locks.before.lock().unwrap() = Some(Box::new(move || {
         now(as_the_runner(
             &owner_edge,
-            runs_application::RunnerFact::RunnerStarted(runs::RunnerStarted {
+            runs_application::RunnerFact::RunnerStarted(runs::RecordRunnerStarted {
                 runtime: "fake".to_string(),
                 workspace: "/work/proj".to_string(),
                 pid: 7,
@@ -1661,7 +1661,7 @@ async fn a_sweep_that_finds_the_runner_started_since_records_nothing() {
 
 // T3, T18: a STARTED run whose own lock is free has lost the host that held
 // it for the run's life (a killed daemon's child: no session lock, its run
-// lock left free): it is ended by `RunnerLost`, and its incarnation closed.
+// lock left free): it is ended by `RecordRunnerLost`, and its incarnation closed.
 #[tokio::test]
 async fn a_started_run_whose_own_lock_is_free_is_ended_for_runner_loss() {
     let edge = Arc::new(TestEdge::new());
@@ -1887,7 +1887,7 @@ fn rig_placing(order: crate::Order, workspaces: Arc<crate::fakes::ScriptedWorksp
     rig
 }
 
-/// The `RunnerStarted` the launch recorded: where it said the runner works.
+/// The `RecordRunnerStarted` the launch recorded: where it said the runner works.
 async fn started_in(edge: &Arc<TestEdge>) -> String {
     run_events(edge, SESSION)
         .await

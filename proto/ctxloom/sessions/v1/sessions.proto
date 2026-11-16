@@ -319,7 +319,7 @@ message ResumeSession {
     component: "ctxloom.sessions.v1.SessionState"
     emits: ["ctxloom.sessions.v1.SessionReopened", "ctxloom.sessions.v1.IncarnationOwed"]
     refuses: "ctxloom.sessions.v1.SessionUnknown"
-    refuses: "ctxloom.sessions.v1.SessionDestroyed"
+    refuses: "ctxloom.sessions.v1.SessionIsDestroyed"
     refuses: "ctxloom.sessions.v1.SessionRunning"
     refuses: "ctxloom.sessions.v1.NoNativeSession"
     refuses: "ctxloom.sessions.v1.EngineMismatch"
@@ -439,7 +439,7 @@ message SessionUnknown {
 
 // A resume of a session `session remove` destroyed: its name is still
 // claimed (94c), its stream holds nothing.
-message SessionDestroyed {
+message SessionIsDestroyed {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
 
   string harp = 1;

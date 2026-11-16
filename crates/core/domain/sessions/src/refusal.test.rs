@@ -68,7 +68,7 @@ fn table() -> Vec<(TypedRefusal, SessionRejection)> {
             SessionRejection::SessionClosed { harp: harp() },
         ),
         (
-            TypedRefusal::of(&OwnerClosed { harp: harp() }),
+            TypedRefusal::of(&OwnerIsClosed { harp: harp() }),
             SessionRejection::OwnerClosed { harp: harp() },
         ),
         (

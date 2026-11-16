@@ -949,7 +949,7 @@ async fn a_project_that_cannot_be_told_starts_nothing() {
     // The proposal for ruling 73f: the project is told once the run is
     // enqueued, and a project that cannot be told ends the run it enqueued, so
     // no run is left owed a runner; no name was claimed and nothing served.
-    assert_eq!(edge_timeline(&rig), ["EnqueueRun", "LaunchFailed"]);
+    assert_eq!(edge_timeline(&rig), ["EnqueueRun", "RecordLaunchFailed"]);
 }
 
 // The mint is the first thing that can fail, and the name is claimed first: a
@@ -1003,7 +1003,10 @@ async fn names_that_are_all_taken_refuse_the_run_with_the_kernels_refusal() {
     // was served.
     let timeline = edge_timeline(&rig);
     assert_eq!(timeline.first().map(String::as_str), Some("EnqueueRun"));
-    assert_eq!(timeline.last().map(String::as_str), Some("LaunchFailed"));
+    assert_eq!(
+        timeline.last().map(String::as_str),
+        Some("RecordLaunchFailed")
+    );
     assert!(
         !timeline.iter().any(|t| t == "serve" || t == "certificate"),
         "{timeline:?}"
@@ -1123,7 +1126,10 @@ async fn a_name_claimed_for_a_mint_that_fails_is_released() {
         ["Claimed", "Released"]
     );
     let timeline = edge_timeline(&rig);
-    assert_eq!(timeline.last().map(String::as_str), Some("LaunchFailed"));
+    assert_eq!(
+        timeline.last().map(String::as_str),
+        Some("RecordLaunchFailed")
+    );
 }
 
 /// The events of `harp`'s claim stream, by their short type names.
@@ -1239,7 +1245,7 @@ async fn a_claim_refused_for_another_reason_is_not_tried_again_with_another_name
     assert!(rig.runner.seen.lock().unwrap().is_empty());
     assert_eq!(
         edge_timeline(&rig),
-        ["EnqueueRun", "LaunchFailed"],
+        ["EnqueueRun", "RecordLaunchFailed"],
         "the enqueued run is ended"
     );
 }
@@ -2172,13 +2178,13 @@ async fn a_permit_for_the_path_the_run_builds_or_for_home_is_ignored() {
 // ---- every pre-launch check, decided by the run's enqueue (owner rulings 73, 73a-f) ----
 
 /// A run that failed after its session was made: the enqueued run is ended
-/// (a `LaunchFailed`), and nothing is written into its directory (ruling
+/// (a `RecordLaunchFailed`), and nothing is written into its directory (ruling
 /// 87a: the run's end is its stream's).
 fn after_its_session_the_run_ended(rig: &Rig) {
     let timeline = edge_timeline(rig);
     let at = |what: &str| timeline.iter().position(|t| t == what);
     assert!(at("EnqueueRun") < at("MintSession"), "{timeline:?}");
-    assert!(at("LaunchFailed").is_some(), "{timeline:?}");
+    assert!(at("RecordLaunchFailed").is_some(), "{timeline:?}");
     let names = rig.records.names("amber-swift-owl");
     assert!(names.iter().all(|n| n.starts_with("home/")), "{names:?}");
 }
@@ -2596,7 +2602,10 @@ async fn names_whose_directories_all_exist_refuse_the_run_as_taken() {
             .any(|t| t.starts_with("ClaimName") || t == "MintSession"),
         "{timeline:?}"
     );
-    assert_eq!(timeline.last().map(String::as_str), Some("LaunchFailed"));
+    assert_eq!(
+        timeline.last().map(String::as_str),
+        Some("RecordLaunchFailed")
+    );
 }
 
 /// The incarnations `session`'s stream records as ended: (incarnation, cause).
@@ -3013,7 +3022,7 @@ fn placing(
     (script, workspaces)
 }
 
-/// Where the run's `RunnerStarted` says its runner works.
+/// Where the run's `RecordRunnerStarted` says its runner works.
 async fn started_in(rig: &Rig, session: &str) -> String {
     run_events(&rig.edge, session)
         .await

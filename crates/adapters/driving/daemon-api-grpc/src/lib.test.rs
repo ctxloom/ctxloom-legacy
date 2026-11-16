@@ -178,14 +178,14 @@ impl Calls for Scripted {
                     name: request.name,
                     ..v1::DeleteSessionResponse::default()
                 }),
-                false => Err(daemon_api::ApiRefusal::of(&v1::RemovalRefused {
+                false => Err(daemon_api::ApiRefusal::of(&v1::RemovalRefusal {
                     name: request.name,
-                    reason: v1::removal_refused::Reason::Kept as i32,
+                    reason: v1::removal_refusal::Reason::Kept as i32,
                     plan: Some(v1::DeleteSessionResponse {
                         authored: vec!["notes.md".to_string()],
                         ..v1::DeleteSessionResponse::default()
                     }),
-                    ..v1::RemovalRefused::default()
+                    ..v1::RemovalRefusal::default()
                 })
                 .into()),
             }
@@ -493,7 +493,7 @@ async fn a_destroy_build_serves_delete_and_sweep() {
         .unwrap_err();
     assert_eq!(status.code(), Code::FailedPrecondition);
     let details = super::RpcStatus::decode(status.details()).unwrap();
-    let refused: v1::RemovalRefused = details.details[0].to_msg().unwrap();
+    let refused: v1::RemovalRefusal = details.details[0].to_msg().unwrap();
     assert_eq!(refused.plan.unwrap().authored, ["notes.md"]);
     let swept = client
         .sweep_sessions(with_bearer(v1::SweepSessionsRequest::default(), BEARER))

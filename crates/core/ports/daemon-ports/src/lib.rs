@@ -183,7 +183,7 @@ pub trait DaemonApi: Send + Sync {
     }
 
     /// `DeleteSession`: a session removed whole or not at all (refused
-    /// `RemovalRefused`, its plan inside); a `session-destroy` build's daemon
+    /// `RemovalRefusal`, its plan inside); a `session-destroy` build's daemon
     /// serves it (M5). The default is a daemon that does not.
     fn delete_session(
         &self,

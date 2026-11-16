@@ -133,11 +133,11 @@ impl DaemonApi for Fake {
             ..v1::DeleteSessionResponse::default()
         };
         if r.name.ends_with("/kept-heron") {
-            let refusal = crate::ApiRefusal::of(&v1::RemovalRefused {
+            let refusal = crate::ApiRefusal::of(&v1::RemovalRefusal {
                 name: r.name,
-                reason: v1::removal_refused::Reason::Kept as i32,
+                reason: v1::removal_refusal::Reason::Kept as i32,
                 plan: Some(plan),
-                ..v1::RemovalRefused::default()
+                ..v1::RemovalRefusal::default()
             });
             return Err(Called::Refused {
                 code: refusal.code,

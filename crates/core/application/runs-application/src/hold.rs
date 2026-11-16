@@ -214,8 +214,8 @@ impl<'a, H: HeldFacts + ?Sized, C: HookClock + ?Sized> Holding<'a, H, C> {
     }
 
     /// Deliver or hold a FRONTEND's reports of the session's run (slice 4,
-    /// a daemon dying under a live TUI: `RunnerStarted`, `RunExited`,
-    /// `LaunchFailed`, each on the run stream of its incarnation), as a
+    /// a daemon dying under a live TUI: `RecordRunnerStarted`, `RecordRunExited`,
+    /// `RecordLaunchFailed`, each on the run stream of its incarnation), as a
     /// hook's observations are: behind what the session's hold holds, held
     /// when no up-to-date daemon takes them, so the next attempt (the
     /// frontend's next report, or any command's flush) delivers them in

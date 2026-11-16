@@ -4,8 +4,8 @@
 
 use crate::aggregate::tests::Run;
 use crate::{
-    InterruptRequested, QueueTurn, RunEvent, TurnCompleted, TurnFailed, TurnFailureClass,
-    TurnQueued, TurnStarted, TurnUrgency,
+    InterruptRequested, QueueTurn, RecordTurnCompleted, RecordTurnFailed, RecordTurnStarted,
+    RunEvent, TurnFailureClass, TurnQueued, TurnUrgency,
 };
 
 fn queue(ids: &[&str], urgency: TurnUrgency) -> QueueTurn {
@@ -21,8 +21,8 @@ fn ids(of: &[&str]) -> Vec<String> {
     of.iter().map(|id| id.to_string()).collect()
 }
 
-fn completed(turn: u64, of: &[&str]) -> TurnCompleted {
-    TurnCompleted {
+fn completed(turn: u64, of: &[&str]) -> RecordTurnCompleted {
+    RecordTurnCompleted {
         turn,
         native_key: String::new(),
         answer_ref: String::new(),
@@ -119,7 +119,7 @@ fn the_interrupted_turns_end_hands_the_gate_to_the_steer() {
     run.command(queue(&["m1"], TurnUrgency::Wake)).unwrap(); // seq 1
     run.command(queue(&["m2"], TurnUrgency::Steer)).unwrap(); // seq 2, 3
     run.fact(
-        TurnFailed {
+        RecordTurnFailed {
             turn: 1,
             class: TurnFailureClass::Interrupted,
             detail: String::new(),
@@ -164,7 +164,7 @@ fn an_end_naming_no_open_turn_frees_nothing() {
 fn a_turn_the_run_never_queued_records_its_facts_and_frees_nothing() {
     let mut run = Run::enqueued();
     let started = run.fact(
-        TurnStarted {
+        RecordTurnStarted {
             turn: 1,
             message_ids: Vec::new(),
         },
@@ -184,7 +184,7 @@ fn a_turn_started_records_its_messages() {
     let mut run = Run::enqueued();
     run.command(queue(&["m1"], TurnUrgency::Wake)).unwrap();
     let events = run.fact(
-        TurnStarted {
+        RecordTurnStarted {
             turn: 1,
             message_ids: ids(&["m1"]),
         },

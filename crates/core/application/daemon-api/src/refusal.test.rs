@@ -64,7 +64,7 @@ fn the_daemons_own_refusals_are_told_in_its_words() {
 // A registration's refusals are the sessions domain's, told in its words.
 #[test]
 fn a_registrations_refusals_are_the_sessions_domains() {
-    let changed = Any::from_msg(&sessions_proto::v1::ProjectIdentityChanged {
+    let changed = Any::from_msg(&sessions_proto::v1::ProjectIdentityMismatch {
         project: "projects/calm-quiet-heron".to_string(),
         root: "/work/calm".to_string(),
         registered_commit: "a".to_string(),
@@ -133,14 +133,14 @@ fn an_unnamed_project_is_the_sessions_domains() {
 }
 
 fn kept(plan_harp: &str) -> Any {
-    Any::from_msg(&v1::RemovalRefused {
+    Any::from_msg(&v1::RemovalRefusal {
         name: "projects/calm-otter/sessions/amber-swift-owl".to_string(),
-        reason: v1::removal_refused::Reason::Kept as i32,
+        reason: v1::removal_refusal::Reason::Kept as i32,
         plan: Some(v1::DeleteSessionResponse {
             harp: plan_harp.to_string(),
             ..v1::DeleteSessionResponse::default()
         }),
-        ..v1::RemovalRefused::default()
+        ..v1::RemovalRefusal::default()
     })
     .unwrap()
 }

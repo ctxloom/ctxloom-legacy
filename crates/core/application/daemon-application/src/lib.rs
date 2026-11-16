@@ -5,7 +5,7 @@
 //! - Its START is the orphan sweep ([`Daemon::start_up`]): `run-launcher`'s
 //!   [`Sweeper`], the one every launcher's step runs (rulings 86, 92, 93,
 //!   95, 100), over every run the store holds, before anything is hosted. A
-//!   killed daemon's children (their run locks left free) end `RunnerLost`.
+//!   killed daemon's children (their run locks left free) end `RecordRunnerLost`.
 //! - Each [`Daemon::tick`]: the read models catch up (the same folds the
 //!   kernel runs inline, S32), the policy plan is made for each project on
 //!   the board (`session-policies`), and its steps are taken: a launch

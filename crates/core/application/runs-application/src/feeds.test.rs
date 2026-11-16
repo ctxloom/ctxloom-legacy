@@ -11,7 +11,7 @@ use crate::{Cursor, Feeds};
 async fn fact(world: &World, id: &str, turn: u64) {
     let book = fact_book(
         world.me.identity.run_cover(),
-        runs::TurnStarted {
+        runs::RecordTurnStarted {
             turn,
             message_ids: Vec::new(),
         },

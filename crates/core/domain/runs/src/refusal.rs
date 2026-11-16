@@ -13,8 +13,8 @@
 use angzarr_embedded::markup::TypedRefusal;
 
 use crate::{
-    AlreadyEnqueued, Ended, FileOnlyCredential, LaunchRefused, NoCredential, NoPrompt, NoRun,
-    NotItsStream, RunRejection, TurnInFlight, UnknownEngine,
+    AlreadyEnqueued, FileOnlyCredential, LaunchRefusals, NoCredential, NoPrompt, NoRun,
+    NotItsStream, RunIsEnded, RunRejection, TurnInFlight, UnknownEngine,
 };
 
 /// What a command handler fails with for `rejection`: the typed refusal
@@ -58,7 +58,7 @@ impl TryFrom<&TypedRefusal> for RunRejection {
         if let Some(TurnInFlight { turn }) = refusal.object() {
             return Ok(RunRejection::TurnInFlight { turn });
         }
-        if refusal.object::<Ended>().is_some() {
+        if refusal.object::<RunIsEnded>().is_some() {
             return Ok(RunRejection::Ended);
         }
         if refusal.object::<NotItsStream>().is_some() {
@@ -76,7 +76,7 @@ impl TryFrom<&TypedRefusal> for RunRejection {
         if let Some(UnknownEngine { name, known }) = refusal.object() {
             return Ok(RunRejection::UnknownEngine { name, known });
         }
-        if let Some(aggregate) = refusal.object::<LaunchRefused>() {
+        if let Some(aggregate) = refusal.object::<LaunchRefusals>() {
             return Ok(launch_refused(aggregate));
         }
         Err(NotOurs)
@@ -85,8 +85,8 @@ impl TryFrom<&TypedRefusal> for RunRejection {
 
 /// The aggregate's rejection: each refusal its fields hold, in the fields'
 /// order, which is the checks'.
-fn launch_refused(aggregate: LaunchRefused) -> RunRejection {
-    let LaunchRefused {
+fn launch_refused(aggregate: LaunchRefusals) -> RunRejection {
+    let LaunchRefusals {
         no_prompt,
         unknown_engine,
         no_credential,

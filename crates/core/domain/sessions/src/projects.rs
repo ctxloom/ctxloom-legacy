@@ -12,7 +12,7 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd};
 use crate::refusal::refuse;
 use crate::{
     validate, ClaimProjectName, HarpInvalid, NameProject, ProjectCommand, ProjectEvent,
-    ProjectHarpMismatch, ProjectIdentityAdopted, ProjectIdentityChanged, ProjectNameClaimed,
+    ProjectHarpMismatch, ProjectIdentityAdopted, ProjectIdentityMismatch, ProjectNameClaimed,
     ProjectNameCommand, ProjectNameEvent, ProjectNameState, ProjectNameTaken, ProjectNamed,
     ProjectRegistered, ProjectState, RegisterProject, SessionRejection, UnnamedProject,
 };
@@ -72,7 +72,7 @@ impl ProjectAggregate {
     /// repository, and its common directory is its primary checkout's.
     #[handles_cmd(
         RegisterProject,
-        refuses(UnnamedProject, ProjectIdentityChanged, ProjectHarpMismatch)
+        refuses(UnnamedProject, ProjectIdentityMismatch, ProjectHarpMismatch)
     )]
     fn register(
         &self,
@@ -88,7 +88,7 @@ impl ProjectAggregate {
                 Refuses<Self, RegisterProject>,
                 [
                     ProjectNotNamed{project_id} => UnnamedProject,
-                    ProjectIdentityChanged{project, root, registered_commit, found_commit} => ProjectIdentityChanged,
+                    ProjectIdentityChanged{project, root, registered_commit, found_commit} => ProjectIdentityMismatch,
                     ProjectHarpMismatch{project, expected} => ProjectHarpMismatch,
                 ]
             )

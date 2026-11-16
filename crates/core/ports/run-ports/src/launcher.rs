@@ -146,7 +146,7 @@ pub enum LaunchEvent {
 impl TurnLaunch {
     /// The facts the answer itself makes, in order: a command that started
     /// and is over is `RunExited`; one that did not start is `LaunchFailed`.
-    /// (`RunnerStarted`, with the pid, is the caller's to record between
+    /// (`RecordRunnerStarted`, with the pid, is the caller's to record between
     /// [`RunnerLauncher::launch`] and [`Running::finish`].)
     pub fn events(&self) -> Vec<LaunchEvent> {
         match self {

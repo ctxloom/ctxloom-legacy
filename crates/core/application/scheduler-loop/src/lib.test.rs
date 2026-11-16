@@ -1,6 +1,6 @@
 //! The scheduler's loop, end to end and in process: a dummy domain records a
 //! deadline, its policy arms an alarm, `tick(now)` fires it, and the delivery
-//! policy hands the dummy `AlarmReached`, which it records. A fake clock, an
+//! policy hands the dummy `RecordAlarmReached`, which it records. A fake clock, an
 //! in-memory store, and nothing sleeps.
 
 use std::time::Duration;
@@ -15,7 +15,7 @@ use angzarr_embedded::{
     CommandBookExt as _, Handled, Kernel, OnRetryable, Payload, Registry, StreamRef, Timestamp,
 };
 use scheduler::{
-    alarm_external_id, stream_for, AlarmDue, SchedulerAggregate, SchedulerEvent, Stream,
+    alarm_external_id, stream_for, RecordAlarmDue, SchedulerAggregate, SchedulerEvent, Stream,
     SCHEDULER_DOMAIN,
 };
 use scheduler_fixture::{
@@ -239,7 +239,7 @@ fn due_book(n: u8, seconds: i64) -> (CommandBook, String) {
         cover: Some(World::new().scheduler_cover(n)),
         page: Some(CommandPage {
             body: Some(command_page::Body::Fact(Fact {
-                payload: Some(pack_message(&AlarmDue {
+                payload: Some(pack_message(&RecordAlarmDue {
                     alarm_id: DEADLINE_ALARM.to_string(),
                     at: at(seconds),
                 })),
