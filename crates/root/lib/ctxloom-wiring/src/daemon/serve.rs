@@ -116,7 +116,7 @@ pub(crate) fn serve(
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
-    runtime.block_on(async move {
+    let served = runtime.block_on(async move {
         let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
         let store = Stores::new(Arc::clone(&fs), home.to_path_buf())
             .open()
@@ -215,8 +215,20 @@ pub(crate) fn serve(
             said(&say, &format!("the store did not close: {unclosed}"));
         }
         result
-    })
+    });
+    // Its runtime let go within a bound, never waited on for good: a live
+    // frontend's session keeps a blocking task (its `WatchRun`, waiting on
+    // the session's thread, which waits on the frontend) that a plain drop
+    // waits out for the frontend's life, and every SIGTERM meanwhile is
+    // taken by the runtime's handler and heard by nothing (2026-11-15: a
+    // test's daemon outlived its home 43 minutes; ruling 114). What is left
+    // ends with the process.
+    runtime.shutdown_timeout(RUNTIME_END);
+    served
 }
+
+/// How long the daemon's exit waits for its runtime's blocking tasks.
+const RUNTIME_END: Duration = Duration::from_secs(5);
 
 /// What the loop shares with its API, its drain's period read from
 /// `pace`'s default and `home`'s config.

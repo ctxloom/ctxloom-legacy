@@ -1915,7 +1915,16 @@ so a new binary stops an older daemon; an older daemon ignores the timeout
 field and drains within its own. `just install [when]` (and
 `install-windows [when]`) runs the NEW binary's `shutdown` before a
 changed binary replaces the installed one (`just install now`: at once),
-says what will not stop, and installs anyway.
+says what will not stop, and installs anyway. A daemon's exit lets its
+runtime go within `RUNTIME_END` (5 s, `Runtime::shutdown_timeout`), never
+waited on for good: a live frontend's session keeps a blocking task (its
+`WatchRun`) that a plain drop waited out for the frontend's life, every
+SIGTERM meanwhile taken by tokio's handler and heard by nothing (2026-11-15,
+ruling 114). A frontend's watch for its stop and notices runs beside its
+session in the main thread's future (`frontend::beside`), never spawned:
+that thread holds std's stderr lock for the whole command (the binary's
+`main`), so a notice written from the runtime's one worker hung it, and
+the signals and the stop with it.
 
 PROJECT REGISTRATION (owner, 2026-11-12). `ResolveProject` is
 register-or-recheck: the client sends what IT resolved (`Wiring::
