@@ -35,6 +35,8 @@ feature_rules := ""
 features_prepare := ""
 red_judge := ""
 mutation_thresholds := "crates=90"
+mutants_memory_max := "16G"
+mutants_swap_max := "2G"
 workspace_wide := "Cargo.toml"
 
 # What the recipe's process holds open, one target per line, and a

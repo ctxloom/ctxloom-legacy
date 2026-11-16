@@ -3283,7 +3283,13 @@ outcomes.json and judges them with the gates' own `_mutants-verdict`
 against `mutation_thresholds`, writing `scores.json` (per tier: killed,
 viable, percent, threshold, pass), uploaded as `mutation-scores` and
 appended to the run's summary. A tier below its threshold fails the score
-job, after the scores are kept.
+job, after the scores are kept. Each shard first asks whether the mutation
+run's memory cap (below) can be had on its runner; where no systemd user
+scope can be made, that shard runs deliberately UNCAPPED
+(`MUTANTS_MEMORY_MAX=none`, said in the step summary): the runner's VM is
+the job's alone, so a runaway mutant fails that shard and nothing else.
+`mutants-shard <k/n> [out] [package]` with a package narrows the run to that
+one crate (`0/1` for all of it), how one crate's mutants are run whole.
 
 The release profile (owner ruling 2026-11-12, Cargo.toml's
 `[profile.release]`) is fat LTO, one codegen unit, opt-level 3,
@@ -3434,7 +3440,26 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    `.cargo/mutants.toml` or a lowered threshold. cargo mutants runs in a
    session of its own (`setsid`), and whatever it leaves running (a
    process a test spawned whose stop a mutant broke) is killed and named
-   in the gate's log; the verdict does not change. The last run's mutants.out (each
+   in the gate's log; the verdict does not change. Every cargo-mutants
+   run (`mutants-staged`, so `mutants-batch`, `closeout` and
+   `closeout-ratchet`, and `mutants-shard`) is under a MEMORY CAP,
+   `gates/memory-cap.sh` (owner ruling of 2026-11-15, after a runaway
+   daemon-application mutant grew to about 70 GB twice and the global OOM
+   took the editor's whole user scope with every session in it): a
+   transient systemd user scope with `MemoryMax=` the justfile's
+   `mutants_memory_max` (16G, env `MUTANTS_MEMORY_MAX`), `MemorySwapMax=`
+   `mutants_swap_max` (2G, env `MUTANTS_SWAP_MAX`) and
+   `OOMPolicy=continue`, so the cap's OOM killer kills the runaway test
+   alone (its mutant is caught) and the run goes on; the default policy
+   would stop the whole run. The command starts only once the scope's
+   `memory.max` is seen set, and the log ends with the scope's memory peak
+   and any OOM kill. A shell with no `XDG_RUNTIME_DIR` (an agent's) gets
+   `/run/user/<uid>` when its bus is there; with no user bus the gate FAILS
+   before anything is built, naming the fix, and never runs uncapped
+   unasked: `MUTANTS_MEMORY_MAX=none` is the opt-out, stated in the run's
+   output. Plain test runs (`just test`, `land-ratchet`) are not capped.
+   Its self-test is `scripts/memory-cap.selftest.sh` (`just selftest`).
+   The last run's mutants.out (each
    mutant's log, outcomes.json) is kept in target/logs/mutants-staged/. Red
    tests fail it on every branch (no mutant can be judged against failing
    tests), as does a run that found mutants and tested fewer: a mutation

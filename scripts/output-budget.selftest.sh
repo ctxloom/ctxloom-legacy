@@ -37,6 +37,8 @@ feature_rules := ""
 features_prepare := ""
 red_judge := ""
 mutation_thresholds := "crates=90"
+mutants_memory_max := "16G"
+mutants_swap_max := "2G"
 workspace_wide := "Cargo.toml"
 build:
     @just --justfile {{TOP}}/justfile _run build workspace cargo cargo build -q --message-format=short --manifest-path {{TOP}}/Cargo.toml --workspace

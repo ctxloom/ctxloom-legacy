@@ -38,11 +38,16 @@
 #                        the commit. It runs in the checkout, the staged index
 #                        and target/logs/test-staged.log in place. "" lets
 #                        every red commit through (whatever went red).
+#   mutants_memory_max   the mutation run's memory cap (systemd's MemoryMax:
+#                        `16G`, ...), or `none` to run it uncapped, said in
+#                        its log (gates/memory-cap.sh).
+#   mutants_swap_max     its swap cap (systemd's MemorySwapMax).
 #
 # and this recipe, which the hooks call: `lint` (clippy, through `_run`).
 #
 # Needs bash, git, jq, flock, setsid, ps and pkill (util-linux, procps),
-# cargo-nextest, cargo-deny, cargo-mutants, gitleaks and lefthook. A missing
+# systemd-run and journalctl with a reachable systemd user manager (the
+# mutation run's memory cap), cargo-nextest, cargo-deny, cargo-mutants, gitleaks and lefthook. A missing
 # tool fails its gate; nothing skips.
 
 # With forward slashes: on Windows just gives `D:\a\...`, whose backslashes
@@ -517,6 +522,9 @@ mutants-staged: _mutants-no-features
         echo "ok   mutants-staged (no mutants: the staged change touches no Rust source)"
         exit 0
     fi
+    # The run's memory cap (gates/memory-cap.sh), before the staged tree is
+    # built: no user bus is a failure here, never an uncapped run.
+    '{{gates_root}}/gates/memory-cap.sh' mutants-staged '{{mutants_memory_max}}' '{{mutants_swap_max}}' --check
     exec just --justfile '{{gates_root}}/justfile' _staged-tree _mutants-affected
 
 # No feature rule reaches the mutation run (owner ruling 99): cargo mutants
@@ -554,6 +562,14 @@ _mutants-affected:
 # restarts. No such process can hold the staged tree's lock either: fd 9 is
 # closed for the run. Only the session's processes are touched; nothing
 # started outside the run is in it.
+#
+# cargo mutants runs under a memory cap (gates/memory-cap.sh: a systemd user
+# scope, MemoryMax=`mutants_memory_max`, MemorySwapMax=`mutants_swap_max`,
+# OOMPolicy=continue), so a mutant whose test grows without bound is killed
+# by the cap's OOM killer (its test fails: caught) and the run goes on,
+# rather than filling the machine (2026-11-15: twice, about 70 GB, and the
+# global OOM took the user scope that started it). The log ends with the
+# scope's memory peak. `mutants_memory_max` `none` opts out, and says so.
 [no-exit-message]
 _mutants-judge: _mutants-no-features
     #!/usr/bin/env bash
@@ -583,6 +599,7 @@ _mutants-judge: _mutants-no-features
     # In the background, so an interrupt is handled at once rather than once
     # the run ends: the trap's exit reaps the session, cargo mutants too.
     setsid --wait bash -c 'echo $$ > "$1"; shift; exec "$@"' mutants-session "$session" \
+        "$root/gates/memory-cap.sh" mutants-staged '{{mutants_memory_max}}' '{{mutants_swap_max}}' \
         cargo mutants --dir "$root" --in-place --workspace --in-diff "$work/staged.patch" \
         --output "$out" --colors never 9>&- &
     wait "$!" || rc=$?
