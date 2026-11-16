@@ -599,7 +599,7 @@ pub(crate) struct Reach<'a> {
     stamp: String,
     /// Whether this reach never ends what a daemon hosts (OD-3: a session's
     /// MCP server's calls): an idle daemon of an older version is asked to
-    /// drain, and any other of another stamp refuses the call.
+    /// stop, and any other of another stamp refuses the call.
     never_stops: bool,
     /// Whether reaching the daemon delivers the home's holds first, once a
     /// process (s4-Q14, H3): every command's but the `daemon` noun's own,
@@ -662,7 +662,7 @@ impl<'a> Reach<'a> {
 
     /// This reach as a session's call makes it (OD-3,
     /// [`daemon_api::reconcile_session`]): an idle daemon of an older
-    /// version drained and replaced by this binary's, any other daemon of
+    /// version stopped and replaced by this binary's, any other daemon of
     /// another stamp a typed mismatch, and nothing a daemon hosts ended.
     pub(crate) fn never_stopping(self) -> Reach<'a> {
         Reach {
@@ -704,10 +704,9 @@ impl Daemons for Reach<'_> {
     async fn reach(&self) -> Result<daemon_client::DaemonClient, Unreached> {
         let files = files_of(self.wiring);
         if let Some(found) = serving_here(self.wiring, &files).map_err(declined)? {
-            // Its answers' warnings heard (OD-55): a drain's hand-over
-            // among them, as the draining daemon answered it.
+            // Its answers' warnings heard (OD-55).
             let api = self.client(&found);
-            // OD-3: a session's call drains an idle older daemon, and is
+            // OD-3: a session's call stops an idle older daemon, and is
             // refused by any other of another stamp.
             let reconciled = if self.never_stops {
                 daemon_api::reconcile_session(&api, &self.stamp, &found.stamp).await
@@ -941,38 +940,6 @@ pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_
     }
     ensure_within(&wiring, env, wait);
     serving(&wiring, &files).ok().flatten()
-}
-
-/// H-Q6 (b), s4-Q4: ask the daemon serving for `env`'s home, if one is
-/// live, to drain for the stamp `own`, waiting `within` at most (never more
-/// than a health check's wait). Fire and forget: whatever it answers, or
-/// fails, is not the asker's; it starts no daemon and ends nothing.
-pub(crate) fn ask_to_drain(env: &Arc<EnvSnapshot>, own: &str, within: Duration) {
-    use daemon_ports::DaemonApi;
-    let Ok(wiring) = Wiring::new(Arc::clone(env)) else {
-        return;
-    };
-    let files = files_of(&wiring);
-    let Ok(Some(found)) = serving(&wiring, &files) else {
-        return;
-    };
-    let request = daemon_proto::v1::StopDaemonRequest {
-        name: "daemon".to_string(),
-        drain: true,
-        version: own.to_string(),
-        ..daemon_proto::v1::StopDaemonRequest::default()
-    };
-    let wait = within.min(HEALTH_WAIT);
-    // A runtime of its own, on a thread of its own: a hook may be inside
-    // another runtime's thread.
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let client = client_of(&found);
-            // The deadline made on the runtime it is awaited on.
-            let _ =
-                block_on(async { tokio::time::timeout(wait, client.stop_daemon(request)).await });
-        });
-    });
 }
 
 /// Whether this executable may spawn itself as the daemon: a unit test's is

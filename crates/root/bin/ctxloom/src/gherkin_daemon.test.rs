@@ -74,8 +74,6 @@ pub(super) struct State {
     settings: Option<String>,
     /// The hooks the session's assistant fired across its daemon's kill.
     hooks: Vec<crate::tests::Ran>,
-    /// The child an older daemon hosts is open and idle already (U8).
-    older_hosting: bool,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -1356,10 +1354,6 @@ const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 #[given(expr = "a child {string} that is open and idle")]
 fn child_idle(w: &mut World, child: String) {
     assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
-    // The older daemon's child is open and idle already.
-    if w.daemon_spec.older_hosting {
-        return;
-    }
     idle_child(w);
 }
 
@@ -3877,7 +3871,7 @@ fn import_converged(_: &mut World, _bundle: String) {
     red("bundle import --force converged")
 }
 
-// ------------------------------------------------------ the drain (U8, U8b)
+// ------------------------------------------------------------ the drain (U8b)
 
 /// The hand-over's period a scenario's daemon is given, in seconds: what
 /// stands for the five minutes (`daemon serve --hand-over-seconds`).
@@ -3885,24 +3879,6 @@ const HAND_OVER_SECONDS: &str = "2";
 
 /// The drain's guidance, as the daemon steers a busy child with it.
 const DRAIN_GUIDANCE: &str = "ctxloom is being upgraded: finish the step you are on and end your turn; you will be resumed in this conversation.";
-
-#[given(
-    expr = "a ctxloom daemon of an older version is serving for this home, hosting a child {string}"
-)]
-fn serving_older_hosting(w: &mut World, child: String) {
-    assert_eq!(child, CHILD, "the child the harness hosts");
-    // Every command until the child is open and idle is the older daemon's
-    // own version, so none asks it to drain.
-    w.common.set_env(STAMP_VARIABLE, OLDER_STAMP.to_string());
-    start_daemon_stamped(w, OLDER_STAMP);
-    hosted_child(w);
-    first_turn_ended(w);
-    until(w, "the child bound to its conversation", DAEMON_WAIT, |w| {
-        (shown(w, CHILD)["native_session"] == "S1").then_some(())
-    });
-    w.common.env.retain(|(name, _)| name != STAMP_VARIABLE);
-    w.daemon_spec.older_hosting = true;
-}
 
 #[given(
     expr = "a ctxloom daemon is serving for this home, hosting a child {string} with a turn in flight"
@@ -3937,26 +3913,6 @@ fn serving_hosting_deaf(w: &mut World, child: String) {
     hosted_child(w);
 }
 
-/// This ctxloom's own stamp, as `--version` says it.
-fn own_stamp(w: &World) -> String {
-    let ran = run_now(w, &["--version"]);
-    assert_eq!(ran.code, 0, "{}", ran.said());
-    ran.stdout
-        .split_whitespace()
-        .last()
-        .expect("a stamp")
-        .to_string()
-}
-
-#[then(regex = r#"^the error names "([^"]+)", both versions, and "([^"]+)"$"#)]
-fn error_names_both_versions(w: &mut World, code: String, harp: String) {
-    let own = own_stamp(w);
-    let ran = w.common.ran();
-    for part in [code.as_str(), OLDER_STAMP, own.as_str(), harp.as_str()] {
-        assert!(ran.stderr.contains(part), "{part}: {}", ran.said());
-    }
-}
-
 /// Wait, bounded, for the daemon the scenario started to exit; its code.
 fn exit_of_daemon(w: &mut World) -> Option<i32> {
     let deadline = Instant::now() + DAEMON_WAIT;
@@ -3978,17 +3934,6 @@ fn exit_of_daemon(w: &mut World) -> Option<i32> {
     }
 }
 
-#[then("the older daemon has exited, and the child's hand-off is kept")]
-fn older_exited_hand_off_kept(w: &mut World) {
-    assert_eq!(exit_of_daemon(w), Some(0), "{}", daemon_log_text(w));
-    assert!(
-        files::exists(stub_dir(w).join("child-exited")),
-        "the child ended; the daemon's log:\n{}",
-        daemon_log_text(w)
-    );
-    assert_eq!(hand_offs(w).len(), 1, "its hand-off is kept");
-}
-
 /// The child started again by the next daemon, resuming its own
 /// conversation (`--resume S1`), where its first start resumed none.
 fn rehosted_resuming(w: &World) {
@@ -3997,12 +3942,6 @@ fn rehosted_resuming(w: &World) {
         !starts[0].contains("--resume") && starts[1].contains("--resume S1"),
         "its own conversation resumed: {starts:?}"
     );
-}
-
-#[then("the child was re-hosted resuming its own conversation, and takes the turn")]
-fn rehosted_and_takes_the_turn(w: &mut World) {
-    rehosted_resuming(w);
-    turn_on(w, "next task");
 }
 
 #[then(regex = r#"^it warns "([^"]+)", naming "([^"]+)"$"#)]

@@ -1144,15 +1144,14 @@ fn a_hosted_childs_settings_are_read_at_its_launch_from_its_launchers_place() {
 /// than VERSION's, whatever this binary is built as.
 const OLDER_STAMP: &str = "v0.0.1-abc0";
 
-// s4-Q4 (OD-3 extended), end to end: a daemon of an older version hosting
-// an idle child is met by a command of this (newer) version. That command
-// asks it to drain and is refused meanwhile, `daemon-api-draining` (exit
-// 20), naming both stamps and the child; the old daemon ends the child
-// (its hand-off kept) and exits; the next command starts this version's
-// daemon, which re-hosts the child (cause `drain`) resuming its own
-// conversation, and the child takes its next turn there.
+// OD-61/OD-62 (owner, 2026-11-15: one ctxloom version runs at a time),
+// end to end: a daemon of an older version hosting an idle child is met by
+// a command of this (newer) version. Nothing drains it: the command is
+// refused, `daemon-api-version-skew-busy` (exit 20), naming both stamps and
+// the child, its fix the plain stop; the older daemon still serves, and
+// its child is not ended.
 #[test]
-fn a_newer_command_drains_an_older_daemon_which_hands_its_child_over() {
+fn a_newer_command_meeting_a_busy_older_daemon_is_refused_and_drains_nothing() {
     let world = World::new();
     let older = [("CTXLOOM_TEST_STAMP", OLDER_STAMP)];
     let seeded = world.run_also(&older, &["test", "seed-session", OWNER]);
@@ -1192,44 +1191,28 @@ fn a_newer_command_drains_an_older_daemon_which_hands_its_child_over() {
 
     let refused = world.run(&["session", "show", CHILD, "--format", "json"]);
     assert_eq!(refused.code, 20, "{}\n{}", refused.said(), world.log());
-    for part in ["daemon-api-draining", OLDER_STAMP, CHILD] {
+    for part in ["daemon-api-version-skew-busy", OLDER_STAMP, CHILD] {
         assert!(refused.stderr.contains(part), "{part}: {}", refused.said());
     }
+    assert!(
+        refused
+            .stderr
+            .contains("ctxloom daemon stop --even-if-live"),
+        "its fix: {}",
+        refused.said()
+    );
     assert_eq!(
-        exited_within(&mut daemon.0, Duration::from_secs(30)),
-        Some(0),
-        "the older daemon handed its child over and exited; its log:\n{}",
+        exited_within(&mut daemon.0, Duration::from_secs(2)),
+        None,
+        "the older daemon still serves; its log:\n{}",
         world.log()
     );
     assert!(
-        files::exists(world.stub_dir.join("exited")),
-        "the child ended"
+        !files::exists(world.stub_dir.join("exited")),
+        "the child was not ended"
     );
-    let handed = world.project.home().join(".ctxloom/daemon/launch");
-    assert_eq!(files::children(&handed).len(), 1, "its hand-off is kept");
-
-    // The next command starts this version's daemon, which re-hosts the
-    // child, resuming its own conversation.
-    let started = world.until("the child re-hosted", |w| {
-        w.show(CHILD);
-        let args = w.of("args", CHILD)?;
-        let lines: Vec<String> = args.lines().map(str::to_string).collect();
-        (lines.len() == 2).then_some(lines)
-    });
-    assert!(!started[0].contains("--resume"), "{started:?}");
-    assert!(started[1].contains("--resume S1"), "{started:?}");
-    world.ok(&[
-        "session",
-        "send",
-        CHILD,
-        "wake",
-        "second task",
-        "--id",
-        "m2",
-    ]);
-    world.until("its next turn, on the new daemon", |w| {
-        w.input().contains("second task").then_some(())
-    });
+    assert_eq!(shown_by_older(CHILD)["native_session"], "S1");
+    let _ = world.run_also(&older, &["daemon", "stop", "--even-if-live"]);
 }
 
 // OD-52: a fresh daemon whose start-up catch-up fails STILL starts, and is

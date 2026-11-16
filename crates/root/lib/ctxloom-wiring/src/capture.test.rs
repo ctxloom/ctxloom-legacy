@@ -537,8 +537,6 @@ const OLDER: &str = "v0.1.0-bbbbbbb";
 struct Reaching {
     daemon: Option<(String, Arc<TheEdge>)>,
     waits: std::sync::Mutex<Vec<Duration>>,
-    /// Each drain the hook asked, by the stamp it asked for and within.
-    drains: std::sync::Mutex<Vec<(String, Duration)>>,
     during: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
@@ -547,7 +545,6 @@ impl Reaching {
         Reaching {
             daemon: None,
             waits: std::sync::Mutex::new(Vec::new()),
-            drains: std::sync::Mutex::new(Vec::new()),
             during: std::sync::Mutex::new(None),
         }
     }
@@ -589,10 +586,6 @@ impl HookReach for Reaching {
                 during: std::sync::Mutex::new(self.during.lock().unwrap().take()),
             },
         ))
-    }
-
-    fn ask_to_drain(&self, own: &str, within: Duration) {
-        self.drains.lock().unwrap().push((own.to_string(), within));
     }
 }
 
@@ -702,36 +695,6 @@ async fn a_hook_newer_than_its_daemon_holds_its_facts_and_says_so() {
         assert_eq!(harp, HARP);
         assert!(why.contains(OLDER) && why.contains(OWN), "{why}");
     }
-}
-
-// H-Q6 (b), s4-Q4: a hook that holds because its daemon is older asks it,
-// once, to drain for the hook's own stamp, within at most a health check's
-// wait; it is told nothing back (fire and forget).
-#[tokio::test]
-async fn a_hook_holding_for_an_older_daemon_asks_it_once_to_drain() {
-    let (_, edge) = world().await;
-    let held = spool();
-    let recording = holding(Reaching::daemon(OLDER, &edge), &held);
-    recording.record("PostToolBatch", HARP, &answer(batch()));
-    let drains = recording.reach.drains.lock().unwrap().clone();
-    assert_eq!(drains.len(), 1, "once, for both its facts: {drains:?}");
-    assert_eq!(drains[0].0, OWN);
-    assert!(drains[0].1 <= crate::daemon::HEALTH_WAIT, "{drains:?}");
-}
-
-// A hook that delivers to an up-to-date daemon, or holds because none was
-// reached, asks no daemon to drain (a hook never touches a daemon's life
-// but to hand an older one over).
-#[tokio::test]
-async fn a_hook_that_delivers_or_reaches_none_asks_no_drain() {
-    let (_, edge) = world().await;
-    let held = spool();
-    let up_to_date = holding(Reaching::daemon(OWN, &edge), &held);
-    up_to_date.record("UserPromptSubmit", HARP, &answer(prompt("p1")));
-    assert!(up_to_date.reach.drains.lock().unwrap().is_empty());
-    let unreached = holding(Reaching::none(), &held);
-    unreached.record("UserPromptSubmit", HARP, &answer(prompt("p2")));
-    assert!(unreached.reach.drains.lock().unwrap().is_empty());
 }
 
 // A hook that reaches no daemon (none serves, none could be started) holds

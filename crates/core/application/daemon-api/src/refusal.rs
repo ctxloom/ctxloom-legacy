@@ -135,8 +135,8 @@ pub enum ApiRejection {
         runs: u64,
         harps: Vec<String>,
     },
-    /// A call to a daemon asked to drain (s4-Q4): its stamp, the stamp it
-    /// hands over to, and the sessions of the runs it still hosts.
+    /// A call to a daemon asked to drain (`daemon stop --drain`, OD-54):
+    /// its stamp, the stamp of the ctxloom that asked it, and the sessions of the runs it still hosts.
     Draining {
         daemon: String,
         successor: String,
@@ -228,9 +228,8 @@ impl ExitClass for ApiRejection {
     }
 }
 
-/// The args of `daemon-api-draining`, the server's refusal and the
-/// client's alike: the draining daemon's stamp, its successor's, and the
-/// sessions it still hosts.
+/// The args of `daemon-api-draining`: the draining daemon's stamp, the
+/// asking ctxloom's, and the sessions it still hosts.
 pub(crate) fn draining_args<'a>(
     daemon: &'a str,
     successor: &'a str,

@@ -250,19 +250,6 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
 
   Rule: A daemon asked to drain hands what it hosts over, and the next daemon resumes it
 
-    Scenario: A command of a newer version drains an older daemon, which hands its children over
-      # new: U8 (s4-Q4, OD-3 extended): a newer client drains an older daemon.
-      Given an initialized ctxloom project
-      And a ctxloom daemon of an older version is serving for this home, hosting a child "brisk-copper-moth"
-      And a child "brisk-copper-moth" that is open and idle
-      When I run "ctxloom session list --format json"
-      Then the command exits with code 20
-      And the error names "daemon-api-draining", both versions, and "brisk-copper-moth"
-      And the older daemon has exited, and the child's hand-off is kept
-      When I run "ctxloom session send brisk-copper-moth wake 'next task'"
-      Then the command succeeds
-      And the child was re-hosted resuming its own conversation, and takes the turn
-
     Scenario: Stopping with --drain hands what the daemon hosts over, and the next daemon resumes it
       # new: U8b (OD-54 (1), (3)): `daemon stop --drain`, a busy child steered.
       Given an initialized ctxloom project
