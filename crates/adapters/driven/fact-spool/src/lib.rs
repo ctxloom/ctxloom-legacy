@@ -203,6 +203,8 @@ impl Spool {
     /// Under the append lock: the hold read, its torn tail cut and its
     /// corruption set aside, so what is on disk is its valid prefix.
     /// `None` when there is no hold.
+    // Equivalent: `<=` differs only at `valid_end == MAGIC.len()`, where both arms leave the magic.
+    #[cfg_attr(test, mutants::skip)]
     fn repaired(&self, session: &Uuid) -> Result<Option<(Vec<u8>, Scan)>, HoldError> {
         let path = self.hold_path(session);
         let Some(mut bytes) = self.read(&path)? else {
