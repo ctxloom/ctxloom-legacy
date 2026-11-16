@@ -170,7 +170,7 @@ pub(crate) fn serve(
         said(&say, &format!("serving at {endpoint}"));
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
-        let terminated = hear_terminate(&fs, &shared, &own.stamp, &say);
+        let terminated = hear_terminate(&fs, &shared, &say);
         let result = run(
             &mut launcher,
             &core,
@@ -253,14 +253,13 @@ fn configured_drain_timeout(fs: &Arc<dyn Fs>, home: &Path) -> Reader {
 }
 
 /// Hear SIGTERM for the daemon's life (owner, 2026-11-15): the first asks
-/// it to drain, for its own stamp, within its configured timeout, as
+/// it to drain within its configured timeout, as
 /// `daemon stop --drain` does; a second is the plain stop, ending what it
 /// hosts (`--even-if-live`, ruling 114's stop of each engine). None heard
 /// when the platform cannot listen (said in the log).
 fn hear_terminate(
     fs: &Arc<dyn Fs>,
     shared: &Arc<Shared>,
-    stamp: &str,
     say: &Say,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let mut signals = match fs.os().signals(&[os::Signal::Terminate]) {
@@ -273,11 +272,11 @@ fn hear_terminate(
             return None;
         }
     };
-    let (shared, stamp, say) = (Arc::clone(shared), stamp.to_string(), Arc::clone(say));
+    let (shared, say) = (Arc::clone(shared), Arc::clone(say));
     Some(tokio::spawn(async move {
         let _ = signals.recv().await;
         said(&say, "SIGTERM: asked to drain");
-        daemon_api::Hosting::drain(shared.as_ref(), &stamp, None);
+        daemon_api::Hosting::drain(shared.as_ref(), None);
         shared.wake.notify_one();
         let _ = signals.recv().await;
         said(&say, "SIGTERM again: asked to stop even if live");
@@ -829,16 +828,11 @@ async fn run<E: run_ports::Edge>(
         // Asked to drain (`daemon stop --drain`, `ctxloom shutdown`, a
         // SIGTERM; OD-54): it hands what it hosts over to the next daemon,
         // and exits once it hosts nothing.
-        if !handing_over {
-            if let Some(successor) = daemon_api::Hosting::draining(shared.as_ref()) {
-                said(
-                    say,
-                    &format!("asked to drain for ctxloom {successor}: handing what it hosts over"),
-                );
-                launcher.hand_over();
-                handing_over = true;
-                stopping = true;
-            }
+        if !handing_over && daemon_api::Hosting::draining(shared.as_ref()) {
+            said(say, "asked to drain: handing what it hosts over");
+            launcher.hand_over();
+            handing_over = true;
+            stopping = true;
         }
         // The drain's timeout, read again each round (owner, 2026-11-15): a
         // `daemon.drain_timeout` changed while it drains is the drain's.
@@ -948,9 +942,8 @@ struct Round {
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
-    /// Asked to drain (OD-54): the stamp of the ctxloom that asked, the
-    /// first it was asked for.
-    drain: Option<String>,
+    /// Asked to drain (OD-54).
+    drain: bool,
     /// The timeout the drain was asked with (`ctxloom shutdown <duration>`),
     /// none for the configured one.
     drain_within: Option<Duration>,
@@ -1074,10 +1067,10 @@ impl daemon_api::Hosting for Shared {
         round.stop = Some(end_hosted || round.stop.unwrap_or(false));
     }
 
-    fn drain(&self, successor: &str, within: Option<Duration>) {
+    fn drain(&self, within: Option<Duration>) {
         let mut round = self.round();
-        if round.drain.is_none() {
-            round.drain = Some(successor.to_string());
+        if !round.drain {
+            round.drain = true;
             round.drain_within = within;
         }
     }
@@ -1086,8 +1079,8 @@ impl daemon_api::Hosting for Shared {
         self.drain_period().as_secs()
     }
 
-    fn draining(&self) -> Option<String> {
-        self.round().drain.clone()
+    fn draining(&self) -> bool {
+        self.round().drain
     }
 
     /// The next round to START after this call (so its catch-up reads what

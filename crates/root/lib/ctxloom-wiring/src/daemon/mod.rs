@@ -210,11 +210,10 @@ impl Render for Status {
             "idle {}s of {}s",
             daemon.idle_seconds, daemon.idle_limit_seconds
         )?;
-        if !daemon.draining_for.is_empty() {
+        if daemon.draining {
             writeln!(
                 out,
-                "draining: handing what it hosts over to ctxloom {}",
-                daemon.draining_for
+                "draining: handing what it hosts over to the next daemon"
             )?;
         }
         // What it warns of (OD-52), in this command's catalog's words.
@@ -316,9 +315,8 @@ pub(crate) fn run(
             // Its warnings (a drain's hand-over among them) are heard from
             // the stop's answer, as every call's (OD-55), and said at once.
             match drain {
-                // OD-54 (3): handed over within the configured timeout, for
-                // this client's own stamp.
-                true => block_on(client.drain(own_stamp(env, stamp), None))?,
+                // OD-54 (3): handed over within the configured timeout.
+                true => block_on(client.drain(None))?,
                 false => block_on(client.stop(even_if_live))?,
             }
             .map_err(called)?;

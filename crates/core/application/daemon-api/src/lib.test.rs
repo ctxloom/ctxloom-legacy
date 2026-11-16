@@ -23,7 +23,6 @@ fn the_samples_hold_every_diagnostic_of_the_crate() {
             "daemon-api-age-invalid",
             "daemon-api-config-unreadable",
             "daemon-api-launch-in-progress",
-            "daemon-api-version-skew-busy",
             "daemon-api-version-skew",
             "daemon-api-launch-lock",
             "daemon-api-start-up-incomplete",

@@ -1764,21 +1764,25 @@ VERSION SKEW (M3; owner OD-61/OD-62, 2026-11-15: ONE ctxloom version runs
 at a time, and nothing drains a daemon for its version): a client whose
 stamp is not the serving daemon's asks it (`GetDaemon`); hosting nothing,
 it is stopped (a plain `StopDaemon`), waited out and the client starts its
-own; hosting live runs, the command is refused,
-`daemon-api-version-skew-busy` (exit 20, naming both stamps and the harps,
-fix `ctxloom daemon stop --even-if-live`), whatever the two versions (a
-newer client's automatic drain, H-Q6's hook nudge and `daemon-api-draining`
-on this path are gone; a hook held for an older daemon only holds). An
+own; hosting live runs, the command is refused, `daemon-api-version-skew`
+(`SkewError::Mismatch`, exit 20, naming both stamps and the harps, fix
+`ctxloom daemon stop`, `--even-if-live` ending what it hosts), whatever the
+two versions. Nothing passes one version's work to another's: a newer
+client's automatic drain, H-Q6's hook nudge, the successor version
+(`StopDaemonRequest.version`, field 4, `Daemon.draining_for`, field 10, and
+`DaemonDraining.successor`, field 2, all reserved), `daemon-api-version-skew-busy`
+and `daemon-api-draining` on this path are gone; a hook held for an older
+daemon only holds. An
 install stops every running ctxloom first (SHUTDOWN, below). `daemon resolve` reconciles
 first, and the child verbs as every client reaching through `Reach` does;
 under `test-support`, `CTXLOOM_TEST_STAMP` names the client's stamp.
 
 DRAIN (OD-54; owner 2026-11-15). A daemon drains when it is asked: `ctxloom
-daemon stop --drain` (`Client::drain`, for the client's own stamp,
-`StopDaemon{drain: true, version}`), `ctxloom shutdown [<duration>]`
+daemon stop --drain` (`Client::drain`, `StopDaemon{drain: true}`),
+`ctxloom shutdown [<duration>]`
 (SHUTDOWN, below; the same request with `drain_timeout_seconds`, field 5)
 or a SIGTERM to the daemon (serve.rs's `hear_terminate`: the first is the
-drain, for its own stamp, logged `SIGTERM: asked to drain`; a second is the
+drain, logged `SIGTERM: asked to drain`; a second is the
 plain stop, `--even-if-live`, ruling 114's stop of each engine). A drain is
 never refused for what the daemon hosts; `even_if_live` wins over it. Its
 TIMEOUT is the first that says: the request's `drain_timeout_seconds`, the
@@ -1794,19 +1798,20 @@ Hosting nothing, the daemon exits at once. `--drain` with `--even-if-live` is a 
 `conflicts_with`, exit 20); nothing new under `--detailed-exitcode`. The
 drain WARNS AT ONCE (OD-54 (2)): while a daemon drains and hosts
 anything, its `Daemon.warnings` (StopDaemon's answer and GetDaemon's)
-carry `daemon-api-handing-over` (`daemon_api::HandingOver`: both stamps,
-the harps, the period in seconds, `Hosting::hand_over_seconds`, the
-timeout as the loop reads it now; wording approved), and it rides every
+carry `daemon-api-handing-over` (`daemon_api::HandingOver`: its stamp, the
+harps, the period in seconds, `Hosting::hand_over_seconds`, the timeout as
+the loop reads it now; its successor version gone, OD-62, so its wording
+is a DRAFT again), and it rides every
 answer's metadata as the start-up's does (OD-55): the asking command hears
 it from the stop's answer, a later call's `DaemonDraining` refusal carries
 it too, and each says it on stderr as it ends, once; its log says each
 busy child as it is steered. The draining daemon
-(`Hosting::drain`/`draining`, `Daemon.draining_for`, said by `daemon
-status`) refuses every new call but `GetDaemon`, `StopDaemon` and the
+(`Hosting::drain`/`draining`, `Daemon.draining`, field 12, said by
+`daemon status`) refuses every new call but `GetDaemon`, `StopDaemon` and the
 project's names (`ResolveProject`, `GetProject`: a command that only names
 its project, as a config change's json does, starts no work and lands) with
-the typed `DaemonDraining` (`daemon-api-draining`, naming its stamp, the
-asker's and what it hosts; `Api::open`): new runs and launches
+the typed `DaemonDraining` (`daemon-api-draining`, naming its stamp and
+what it hosts, wording a DRAFT; `Api::open`): new runs and launches
 (`CreateRun`, `CreateHandOff`), a run's watch, the session reads and
 destroys, the transcript and the assembly; the hooks' facts and the
 frontends' reports (the coordinator, not the service) still land. Its loop hands over(`Daemon::hand_over`): it starts no child and delivers no message
@@ -1841,8 +1846,8 @@ having no conversation, is not re-hosted; a guidance still pending when
 the period cuts its child (never delivered) is delivered by the next
 daemon, as a steer to the re-hosted child. `daemon stop --even-if-live` is
 the escalation (its children end `runner-exit` and are not re-hosted).
-TUIs are not handed over: a frontend outlives its daemon, and the drained
-daemon's successor adopts it (U5), or `ctxloom shutdown` asks it to stop.
+TUIs are not handed over: a frontend outlives its daemon, and the daemon
+after the drained one adopts it (U5), or `ctxloom shutdown` asks it to stop.
 
 SHUTDOWN (owner, 2026-11-15, OD-62; `ctxloom-wiring`'s `daemon/shutdown.rs`).
 `ctxloom shutdown [<duration> | now]` stops every running ctxloom of this

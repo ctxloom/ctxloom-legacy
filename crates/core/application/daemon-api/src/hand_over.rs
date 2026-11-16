@@ -11,12 +11,11 @@ use std::fmt;
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 use daemon_proto::v1;
 
-/// The daemon of the stamp `daemon` hands `harps` over to `successor`'s,
+/// The daemon of the stamp `daemon` hands `harps` over to the next daemon,
 /// a busy one within `seconds`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandingOver {
     pub daemon: String,
-    pub successor: String,
     pub harps: Vec<String>,
     pub seconds: u64,
 }
@@ -49,7 +48,6 @@ impl Diagnostic for HandingOver {
     fn args(&self) -> Vec<(&str, Arg)> {
         vec![
             ("daemon", self.daemon.as_str().into()),
-            ("successor", self.successor.as_str().into()),
             ("harps", self.harps.join(", ").into()),
             ("seconds", self.seconds.to_string().into()),
         ]
@@ -60,7 +58,6 @@ impl Diagnostic for HandingOver {
 pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
     vec![Box::new(HandingOver {
         daemon: "v0.1.0-a".to_string(),
-        successor: "v0.2.0-b".to_string(),
         harps: vec!["brisk-copper-moth".to_string()],
         seconds: 300,
     })]

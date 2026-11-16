@@ -9,15 +9,17 @@ daemon-api-transcript-empty = { $name } has no captured transcript yet
 daemon-api-project-unknown = { $cwd } is in no ctxloom project
 daemon-api-daemon-hosting = the daemon hosts { $runs } live run(s): { $harps }
 daemon-api-daemon-hosting-fix = wait for them to end, or end them with it: ctxloom daemon stop --even-if-live
-daemon-api-draining = the serving daemon, ctxloom { $daemon }, is handing what it hosts over to ctxloom { $successor }, and takes no new call; it still hosts: { $harps }
-daemon-api-draining-fix = run the command again once it has exited (the next daemon resumes each child it handed over); to end what it hosts now: ctxloom daemon stop --even-if-live
-daemon-api-version-skew-busy = the serving daemon is ctxloom { $daemon }, not this ctxloom { $own }, and it hosts live runs: { $harps }
-daemon-api-version-skew-busy-fix = ctxloom daemon stop --even-if-live
+# OD-62 (2026-11-15): DRAFT wording, the owner's to approve (the successor
+# version is gone).
+daemon-api-draining = the serving daemon, ctxloom { $daemon }, is shutting down and takes no new call; it still hosts: { $harps }
+daemon-api-draining-fix = run the command again once it has exited (the next daemon resumes each child it handed over); to stop what it hosts now: ctxloom shutdown now
 daemon-api-age-invalid = { $key } { $value } is neither an age nor a date
 daemon-api-age-invalid-fix = give an age such as 90d, 1h30m or 1.5d, or a date such as 2026-01-01
 daemon-api-config-unreadable = the configuration of the project at { $root } does not read: { $ext_err_txt }
-daemon-api-version-skew = the serving daemon is ctxloom { $daemon }, not this ctxloom { $own }: a session's call never stops it
-daemon-api-version-skew-fix = once that daemon hosts nothing, `ctxloom daemon stop` lets this ctxloom start its own
+# OD-62 (2026-11-15): one ctxloom version runs at a time. DRAFT wording,
+# the owner's to approve.
+daemon-api-version-skew = the serving daemon is ctxloom { $daemon }, not this ctxloom { $own } (it hosts: { $harps })
+daemon-api-version-skew-fix = stop it with `ctxloom daemon stop` (`--even-if-live` ends what it hosts), then run the command again
 daemon-api-assembly-missing-fragment = no fragment is named { $name }
 daemon-api-assembly-missing-tag = no fragment is tagged { $name }
 daemon-api-launch-in-progress = another launch of { $harp } is being made now
@@ -26,4 +28,4 @@ daemon-api-launch-lock = a child's launch lock could not be taken: { $ext_err_tx
 # OD-52: DRAFT wording, the owner's to approve.
 daemon-api-start-up-incomplete = the daemon's start-up catch-up failed: { $why }; what it shows (sessions, transcripts, what it hosts) may be missing events until a later catch-up succeeds
 daemon-api-start-up-incomplete-fix = the daemon tries the catch-up again each round, and this warning clears once one succeeds; the daemon's log (daemon/daemon.log under ctxloom's home) says why it failed
-daemon-api-handing-over = the daemon, ctxloom { $daemon }, is handing { $harps } over to ctxloom { $successor }: a child busy in a turn has been steered to end it, and is handed over within { $seconds } seconds at the latest, its turn in flight cut; the next daemon resumes each in its own conversation
+daemon-api-handing-over = the daemon, ctxloom { $daemon }, is shutting down: { $harps } will be handed over to the next daemon; a child busy in a turn has been steered to end it, and is handed over within { $seconds } seconds at the latest, its turn in flight cut; the next daemon resumes each in its own conversation

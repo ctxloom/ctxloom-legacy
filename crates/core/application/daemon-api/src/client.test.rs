@@ -136,7 +136,7 @@ async fn another_stamp_is_refused_by_a_busy_daemon() {
     let refused = reconcile(&daemon, "0.2.0+b", "0.1.0+a").await.unwrap_err();
     assert_eq!(
         refused,
-        SkewError::Busy {
+        SkewError::Mismatch {
             own: "0.2.0+b".to_string(),
             daemon: "0.1.0+a".to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
@@ -163,7 +163,7 @@ async fn a_stop_refused_for_live_runs_is_a_busy_daemon() {
     };
     let refused = reconcile(&daemon, "0.2.0+b", "0.1.0+a").await.unwrap_err();
     assert!(
-        matches!(&refused, SkewError::Busy { harps, .. } if harps == &["brisk-copper-moth"]),
+        matches!(&refused, SkewError::Mismatch { harps, .. } if harps == &["brisk-copper-moth"]),
         "{refused:?}"
     );
 }
@@ -191,7 +191,7 @@ async fn no_client_drains_a_busy_daemon_of_another_version() {
         let refused = reconcile(&daemon, own, theirs).await.unwrap_err();
         assert_eq!(
             refused,
-            SkewError::Busy {
+            SkewError::Mismatch {
                 own: own.to_string(),
                 daemon: theirs.to_string(),
                 harps: vec!["brisk-copper-moth".to_string()],
@@ -201,8 +201,8 @@ async fn no_client_drains_a_busy_daemon_of_another_version() {
     }
 }
 
-// A newer client meeting an idle older daemon stops it plainly (no drain,
-// no version told), and starts its own.
+// A newer client meeting an idle older daemon stops it plainly (never a
+// drain), and starts its own.
 #[tokio::test]
 async fn a_newer_client_stops_an_idle_daemon_plainly() {
     let daemon = Daemon::default();
@@ -213,7 +213,6 @@ async fn a_newer_client_stops_an_idle_daemon_plainly() {
     let stops = daemon.stops.lock().unwrap();
     assert_eq!(stops.len(), 1, "{stops:?}");
     assert!(!stops[0].drain && !stops[0].even_if_live, "{stops:?}");
-    assert_eq!(stops[0].version, "");
 }
 
 // A daemon that cannot be asked is a failure (exit 10).
@@ -303,14 +302,18 @@ async fn a_stop_names_the_daemon_and_its_override() {
 // Each error displays as its code and its args.
 #[test]
 fn the_errors_display_their_code_and_args() {
-    let busy = SkewError::Busy {
+    let busy = SkewError::Mismatch {
         own: "0.2.0+b".to_string(),
         daemon: "0.1.0+a".to_string(),
         harps: vec!["brisk-copper-moth".to_string(), "calm-otter".to_string()],
     };
     assert_eq!(
         busy.to_string(),
-        "daemon-api-version-skew-busy own=0.2.0+b daemon=0.1.0+a harps=\"brisk-copper-moth, calm-otter\""
+        "daemon-api-version-skew own=0.2.0+b daemon=0.1.0+a harps=\"brisk-copper-moth, calm-otter\""
+    );
+    assert_eq!(
+        mismatch("0.2.0+b", "0.1.0+a").to_string(),
+        "daemon-api-version-skew own=0.2.0+b daemon=0.1.0+a harps=nothing"
     );
     let failed = Called::Failed {
         code: 13,
@@ -348,6 +351,16 @@ fn mismatch(own: &str, daemon: &str) -> SkewError {
     SkewError::Mismatch {
         own: own.to_string(),
         daemon: daemon.to_string(),
+        harps: Vec::new(),
+    }
+}
+
+/// The refusal of a busy daemon of another stamp, hosting the child.
+fn busy(own: &str, daemon: &str) -> SkewError {
+    SkewError::Mismatch {
+        own: own.to_string(),
+        daemon: daemon.to_string(),
+        harps: vec!["brisk-copper-moth".to_string()],
     }
 }
 
@@ -387,7 +400,7 @@ async fn a_newer_sessions_call_is_refused_by_a_busy_older_daemon() {
         ..Daemon::default()
     };
     let refused = reconcile_session(&daemon, NEW, OLD).await.unwrap_err();
-    assert_eq!(refused, mismatch(NEW, OLD));
+    assert_eq!(refused, busy(NEW, OLD));
     assert_eq!(refused.exit(), Exit::REFUSED);
     assert!(daemon.stops.lock().unwrap().is_empty());
 }
@@ -409,7 +422,7 @@ async fn a_run_started_between_the_look_and_the_stop_refuses_the_call() {
         ..Daemon::default()
     };
     let refused = reconcile_session(&daemon, NEW, OLD).await.unwrap_err();
-    assert_eq!(refused, mismatch(NEW, OLD));
+    assert_eq!(refused, busy(NEW, OLD));
     assert_eq!(*daemon.asked.lock().unwrap(), ["get", "stop"]);
     assert!(!daemon.stops.lock().unwrap()[0].even_if_live);
 }

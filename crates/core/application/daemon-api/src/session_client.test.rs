@@ -53,7 +53,7 @@ impl DaemonApi for Fake {
 
     async fn stop_daemon(&self, r: v1::StopDaemonRequest) -> Result<v1::Daemon, Called> {
         let rpc = match r.drain {
-            true => format!("drain {} {}", r.version, r.even_if_live),
+            true => format!("drain {:?} {}", r.drain_timeout_seconds, r.even_if_live),
             false => format!("stop {}", r.even_if_live),
         };
         self.ask(&rpc, r.env)?;
@@ -458,25 +458,23 @@ async fn status_and_stop_start_no_daemon() {
     assert_eq!(daemons.reaches(), 0);
 }
 
-// OD-54 (3): `daemon stop --drain` asks the serving daemon to drain for this
-// client's stamp (never `even_if_live`), its environment sent; with none
+// OD-54 (3): `daemon stop --drain` (and `ctxloom shutdown`, its timeout
+// sent) asks the serving daemon to drain (never `even_if_live`), its
+// environment sent; with none
 // serving it does nothing and starts none.
 #[tokio::test]
 async fn a_drain_asks_the_serving_daemon_to_hand_over_and_starts_none() {
     let mut daemons = Fakes::new();
     daemons.serving = false;
-    assert_eq!(
-        outside(&daemons).drain("v0.2.0-b", None).await.unwrap(),
-        None
-    );
+    assert_eq!(outside(&daemons).drain(None).await.unwrap(), None);
     assert!(daemons.asked().is_empty());
     daemons.serving = true;
     assert!(outside(&daemons)
-        .drain("v0.2.0-b", None)
+        .drain(Some(std::time::Duration::from_secs(90)))
         .await
         .unwrap()
         .is_some());
-    assert_eq!(daemons.asked(), ["0:drain v0.2.0-b false"]);
+    assert_eq!(daemons.asked(), ["0:drain Some(90) false"]);
     assert_eq!(daemons.names(), ["daemon"]);
     assert_eq!(daemons.reaches(), 0, "it starts no daemon");
 }

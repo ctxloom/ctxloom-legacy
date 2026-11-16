@@ -373,7 +373,7 @@ fn a_drains_period_is_the_requests_else_the_configs_else_the_default() {
         Duration::from_secs(60),
         "the config's"
     );
-    shared.drain("v0.2.0-b", None);
+    shared.drain(None);
     said.store(5, Ordering::SeqCst);
     assert_eq!(shared.drain_period(), Duration::from_secs(5), "read again");
     assert_eq!(shared.hand_over_seconds(), 5);
@@ -385,12 +385,13 @@ fn a_drains_period_is_the_requests_else_the_configs_else_the_default() {
             configured: Box::new(|| Some(Duration::from_secs(60))),
         },
     );
-    asked.drain("v0.2.0-b", Some(Duration::from_secs(900)));
-    asked.drain("v0.3.0-c", Some(Duration::from_secs(1)));
+    assert!(!asked.draining());
+    asked.drain(Some(Duration::from_secs(900)));
+    asked.drain(Some(Duration::from_secs(1)));
     assert_eq!(
         asked.drain_period(),
         Duration::from_secs(900),
         "the first ask's"
     );
-    assert_eq!(asked.draining().as_deref(), Some("v0.2.0-b"));
+    assert!(asked.draining());
 }

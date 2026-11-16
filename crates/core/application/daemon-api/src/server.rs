@@ -47,11 +47,11 @@ pub trait Hosting: Send + Sync {
     /// Ask it to stop: drain, or end what it hosts first (`end_hosted`).
     fn stop(&self, end_hosted: bool);
     /// Ask it to hand what it hosts over to the next daemon and exit
-    /// (OD-54), for the ctxloom of the stamp `successor`, waiting `within`
-    /// for what it hosts (none: its configured `daemon.drain_timeout`).
-    fn drain(&self, successor: &str, within: Option<std::time::Duration>);
-    /// The stamp it was asked to drain for, once it was.
-    fn draining(&self) -> Option<String>;
+    /// (OD-54), waiting `within` for what it hosts (none: its configured
+    /// `daemon.drain_timeout`).
+    fn drain(&self, within: Option<std::time::Duration>);
+    /// Whether it was asked to drain.
+    fn draining(&self) -> bool;
     /// How long the drain in progress waits for a busy child, in seconds
     /// (the period the loop last read; OD-54, owner 2026-11-15).
     fn hand_over_seconds(&self) -> u64;
@@ -473,8 +473,8 @@ impl<E: Edge> Api<E> {
             clients: 0,
             idle_seconds: self.parts.hosting.idle_seconds(),
             idle_limit_seconds: about.idle_limit_seconds,
-            draining_for: self.parts.hosting.draining().unwrap_or_default(),
             warnings: self.warnings(),
+            draining: self.parts.hosting.draining(),
         }
     }
 
@@ -493,9 +493,11 @@ impl<E: Edge> Api<E> {
     }
 
     /// The drain's warning (OD-54), while it drains and hosts anything:
-    /// what it hands over, to whom, and within how long a busy child.
+    /// what it hands over, and within how long a busy child.
     fn handing_over(&self) -> Option<v1::Notice> {
-        let successor = self.parts.hosting.draining()?;
+        if !self.parts.hosting.draining() {
+            return None;
+        }
         let harps: Vec<String> = self
             .parts
             .hosting
@@ -509,7 +511,6 @@ impl<E: Edge> Api<E> {
         Some(
             crate::HandingOver {
                 daemon: self.parts.about.version.clone(),
-                successor,
                 harps,
                 seconds: self.parts.hosting.hand_over_seconds(),
             }
@@ -520,14 +521,13 @@ impl<E: Edge> Api<E> {
     /// Whether the daemon takes a new call: not once it was asked to drain
     /// (OD-54, or a SIGTERM), when every call but `GetDaemon`, `StopDaemon`
     /// and the project's names is refused
-    /// `DaemonDraining`, naming both stamps and what it still hosts.
+    /// `DaemonDraining`, naming its stamp and what it still hosts.
     pub(crate) fn open(&self) -> Result<(), ApiError> {
-        let Some(successor) = self.parts.hosting.draining() else {
+        if !self.parts.hosting.draining() {
             return Ok(());
-        };
+        }
         Err(ApiRefusal::of(&v1::DaemonDraining {
             version: self.parts.about.version.clone(),
-            successor,
             harps: self
                 .parts
                 .hosting
@@ -553,7 +553,7 @@ impl<E: Edge> Api<E> {
             let within = request
                 .drain_timeout_seconds
                 .map(std::time::Duration::from_secs);
-            self.parts.hosting.drain(&request.version, within);
+            self.parts.hosting.drain(within);
             return Ok(self.daemon());
         }
         let daemon = self.daemon();

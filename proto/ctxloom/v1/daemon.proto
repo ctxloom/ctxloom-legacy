@@ -136,7 +136,8 @@ service Ctxloom {
   // `daemon stop`: refused `DaemonHosting` while it hosts live runs, unless
   // `even_if_live`, which ends the hosted engines cleanly first (S12), or
   // `drain` (`daemon stop --drain`, `ctxloom shutdown`, OD-54): it hands
-  // what it hosts over to the next daemon within `drain_timeout_seconds`
+  // what it hosts over to the next daemon (of its own version: one version
+  // runs at a time, OD-62) within `drain_timeout_seconds`
   // (else its configured `daemon.drain_timeout`), refusing every new call
   // but this and GetDaemon (`DaemonDraining`) meanwhile, and exits once it
   // hosts nothing.
@@ -376,15 +377,19 @@ message Daemon {
   uint32 clients = 7;
   uint64 idle_seconds = 8;
   uint64 idle_limit_seconds = 9;
-  // Once it was asked to drain (OD-54; a SIGTERM too): the stamp of the
-  // ctxloom that asked it (its own, for a signal); empty while it serves.
-  string draining_for = 10;
+  // Field 10 was `draining_for`, the stamp of the version a drain handed
+  // over to (gone with the version-to-version hand-over, OD-62).
+  reserved 10;
+  reserved "draining_for";
   // What the person must be told of this daemon (owner ruling OD-52): its
   // start-up catch-up or sweep failed, so what it answers may be missing
   // events. Each a notice in its crate's code and args
   // (`daemon-api-start-up-incomplete`); cleared once a later catch-up, which
   // the daemon tries again each round, succeeds. Empty while it is whole.
   repeated Notice warnings = 11;
+  // Once it was asked to drain (`daemon stop --drain`, `ctxloom shutdown`,
+  // a SIGTERM; OD-54): it takes no new call and exits once it hosts nothing.
+  bool draining = 12;
 }
 
 message StopDaemonRequest {
@@ -396,8 +401,10 @@ message StopDaemonRequest {
   // next daemon re-hosts it (cause `drain`). `even_if_live` wins over it.
   // No client asks it for a version skew (OD-62).
   bool drain = 3;
-  // The asking client's versionator stamp.
-  string version = 4;
+  // Field 4 was `version`, the stamp a drain handed over to (gone with the
+  // version-to-version hand-over, OD-62).
+  reserved 4;
+  reserved "version";
   // How long the drain waits for what it hosts before it stops what remains
   // (owner, 2026-11-15: `ctxloom shutdown <duration>`); unset, the daemon's
   // `daemon.drain_timeout`, read again at each round, else five minutes.
@@ -1134,14 +1141,16 @@ message DaemonHosting {
   repeated string harps = 2;
 }
 
-// Any call but `GetDaemon` and `StopDaemon` to a daemon asked to drain
-// (OD-54; a SIGTERM too): its stamp, the stamp of the ctxloom that asked it,
-// and the sessions of the runs it still hosts.
+// Any call but `GetDaemon`, `StopDaemon` and the project's names to a
+// daemon asked to drain (OD-54; a SIGTERM too): its stamp and the sessions
+// of the runs it still hosts.
 message DaemonDraining {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 
   string version = 1;
-  string successor = 2;
+  // Field 2 was `successor`, the stamp it handed over to (OD-62).
+  reserved 2;
+  reserved "successor";
   repeated string harps = 3;
 }
 

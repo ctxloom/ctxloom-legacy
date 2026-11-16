@@ -30,7 +30,7 @@ use file_system::Fs;
 use liveness::FrontendLocks;
 use serde::Serialize;
 
-use super::{block_on, called, client_reaching, files_of, output, own_stamp, serving, Reach};
+use super::{block_on, called, client_reaching, files_of, output, serving, Reach};
 use crate::Wiring;
 
 /// The noun.
@@ -293,8 +293,7 @@ impl Shutdown<'_> {
         say(format!("running: {}", at_first.said()));
         if !period.is_zero() {
             if at_first.daemon.is_some() {
-                let own = own_stamp(self.wiring.env(), self.stamp);
-                let drained = block_on(self.client().drain(own, Some(period)))?.map_err(called)?;
+                let drained = block_on(self.client().drain(Some(period)))?.map_err(called)?;
                 let hosts: Vec<String> = drained
                     .iter()
                     .flat_map(|daemon| daemon.runs.iter().map(|run| run.harp.clone()))

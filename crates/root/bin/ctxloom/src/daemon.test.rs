@@ -1147,7 +1147,7 @@ const OLDER_STAMP: &str = "v0.0.1-abc0";
 // OD-61/OD-62 (owner, 2026-11-15: one ctxloom version runs at a time),
 // end to end: a daemon of an older version hosting an idle child is met by
 // a command of this (newer) version. Nothing drains it: the command is
-// refused, `daemon-api-version-skew-busy` (exit 20), naming both stamps and
+// refused, `daemon-api-version-skew` (exit 20), naming both stamps and
 // the child, its fix the plain stop; the older daemon still serves, and
 // its child is not ended.
 #[test]
@@ -1191,13 +1191,11 @@ fn a_newer_command_meeting_a_busy_older_daemon_is_refused_and_drains_nothing() {
 
     let refused = world.run(&["session", "show", CHILD, "--format", "json"]);
     assert_eq!(refused.code, 20, "{}\n{}", refused.said(), world.log());
-    for part in ["daemon-api-version-skew-busy", OLDER_STAMP, CHILD] {
+    for part in ["daemon-api-version-skew", OLDER_STAMP, CHILD] {
         assert!(refused.stderr.contains(part), "{part}: {}", refused.said());
     }
     assert!(
-        refused
-            .stderr
-            .contains("ctxloom daemon stop --even-if-live"),
+        refused.stderr.contains("ctxloom daemon stop"),
         "its fix: {}",
         refused.said()
     );
@@ -1675,10 +1673,7 @@ fn a_sigterm_drains_the_daemon_and_a_changed_timeout_is_the_drains() {
     signal(pid, "-TERM");
     world.until("the daemon draining", |w| {
         let status = w.ok(&["daemon", "status", "--format", "json"]);
-        status["draining_for"]
-            .as_str()
-            .is_some_and(|stamp| !stamp.is_empty())
-            .then_some(())
+        (status["draining"] == Value::Bool(true)).then_some(())
     });
     let refused = world.run(&["session", "list", "--format", "json"]);
     assert_eq!(refused.code, 20, "{}", refused.said());

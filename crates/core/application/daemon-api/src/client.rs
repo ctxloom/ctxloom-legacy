@@ -1,10 +1,11 @@
 //! The client's version-skew rule (M3, owner 2026-11-12): a client whose
 //! full versionator stamp is not the serving daemon's asks the daemon
 //! (`GetDaemon`) whether it hosts live runs. None: it stops that daemon
-//! (`StopDaemon`) and starts its own. Some: it is refused, a decline whose
-//! fix is `ctxloom daemon stop --even-if-live`, whatever the two versions
-//! (owner, OD-61/OD-62: one ctxloom version runs at a time; nothing drains
-//! a daemon for its version).
+//! (`StopDaemon`) and starts its own. Some: it is refused
+//! (`daemon-api-version-skew`, naming both versions and what it hosts), a
+//! decline whose fix is `ctxloom daemon stop`, whatever the two versions
+//! (owner, OD-61/OD-62: one ctxloom version runs at a time; nothing hands a
+//! daemon's work to another version's).
 
 use std::fmt;
 
@@ -28,17 +29,17 @@ pub enum Reconciled {
 /// Why the client cannot use the daemon it found.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SkewError {
-    /// Another stamp, hosting live runs.
-    Busy {
+    /// The daemon could not be asked.
+    Call(Called),
+    /// Another stamp, that the client may not stop: hosting live runs
+    /// (`harps`), or, for a caller that never stops a daemon (OD-3, a
+    /// session's MCP server), not older than it. Its call is refused,
+    /// naming both stamps.
+    Mismatch {
         own: String,
         daemon: String,
         harps: Vec<String>,
     },
-    /// The daemon could not be asked.
-    Call(Called),
-    /// Another stamp, seen by a caller that never stops a daemon (OD-3, a
-    /// session's MCP server): its call is refused, naming both.
-    Mismatch { own: String, daemon: String },
 }
 
 /// Reconcile the client's stamp `own` with the serving daemon's, `daemon`,
@@ -51,7 +52,7 @@ pub async fn reconcile<A: DaemonApi>(
     if own == daemon {
         return Ok(Reconciled::Same);
     }
-    let busy = |harps: Vec<String>| SkewError::Busy {
+    let busy = |harps: Vec<String>| SkewError::Mismatch {
         own: own.to_string(),
         daemon: daemon.to_string(),
         harps,
@@ -97,17 +98,14 @@ pub async fn reconcile_session<A: DaemonApi>(
     if own == daemon {
         return Ok(Reconciled::Same);
     }
-    let mismatch = || SkewError::Mismatch {
-        own: own.to_string(),
-        daemon: daemon.to_string(),
-    };
     if !newer(own, daemon) {
-        return Err(mismatch());
+        return Err(SkewError::Mismatch {
+            own: own.to_string(),
+            daemon: daemon.to_string(),
+            harps: Vec::new(),
+        });
     }
-    match reconcile(api, own, daemon).await {
-        Err(SkewError::Busy { .. }) => Err(mismatch()),
-        other => other,
-    }
+    reconcile(api, own, daemon).await
 }
 
 impl fmt::Display for SkewError {
@@ -121,7 +119,6 @@ impl std::error::Error for SkewError {}
 impl Diagnostic for SkewError {
     fn code(&self) -> &str {
         match self {
-            SkewError::Busy { .. } => code!("version-skew-busy"),
             SkewError::Mismatch { .. } => code!("version-skew"),
             SkewError::Call(called) => called.code(),
         }
@@ -129,26 +126,28 @@ impl Diagnostic for SkewError {
 
     fn args(&self) -> Vec<(&str, Arg)> {
         match self {
-            SkewError::Busy { own, daemon, harps } => vec![
+            SkewError::Mismatch { own, daemon, harps } => vec![
                 ("own", own.as_str().into()),
                 ("daemon", daemon.as_str().into()),
-                ("harps", harps.join(", ").into()),
-            ],
-            SkewError::Mismatch { own, daemon } => vec![
-                ("own", own.as_str().into()),
-                ("daemon", daemon.as_str().into()),
+                (
+                    "harps",
+                    match harps.is_empty() {
+                        true => "nothing".into(),
+                        false => harps.join(", ").into(),
+                    },
+                ),
             ],
             SkewError::Call(called) => called.args(),
         }
     }
 }
 
-/// A busy daemon of another version is a decline (exit 20); a call that
-/// failed is a failure.
+/// A daemon of another version is a decline (exit 20); a call that failed
+/// is a failure.
 impl ExitClass for SkewError {
     fn exit(&self) -> Exit {
         match self {
-            SkewError::Busy { .. } | SkewError::Mismatch { .. } => Exit::REFUSED,
+            SkewError::Mismatch { .. } => Exit::REFUSED,
             SkewError::Call(_) => Exit::FAILED,
         }
     }
@@ -257,14 +256,10 @@ pub async fn resolve<A: DaemonApi>(
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
     vec![
-        Box::new(SkewError::Busy {
-            own: "0.2.0+b".to_string(),
-            daemon: "0.1.0+a".to_string(),
-            harps: vec!["brisk-copper-moth".to_string()],
-        }),
         Box::new(SkewError::Mismatch {
             own: "0.2.0+b".to_string(),
             daemon: "0.1.0+a".to_string(),
+            harps: vec!["brisk-copper-moth".to_string()],
         }),
         Box::new(CallError::LaunchLock {
             detail: "permission denied".to_string(),
