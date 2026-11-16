@@ -1844,7 +1844,18 @@ config is no client of the daemon, so nothing refuses the write) is the
 drain's, still timed from its start; else the daemon's default,
 `daemon_application::HAND_OVER_PERIOD` (five minutes; `daemon serve
 --hand-over-seconds`, hidden, sets that default, a test's short one).
-Hosting nothing, the daemon exits at once. `--drain` with `--even-if-live` is a usage error (clap's
+Hosting nothing, the daemon exits at once, unless a live frontend of its
+home remains (owner ruling 2026-11-16, PREVENT the early drain exit; the
+wiring's `serve::stays_for`, `Staying`): a draining daemon then STAYS,
+logged `draining: hosting nothing, it stays for the live frontends pid
+<n>`, so a frontend's last reports (its TUI's exit) always reach a
+daemon and are never held for want of one; it exits once no frontend is
+live (a frontend gone without reporting reads free by its lock, so it
+holds nothing), or once the drain's time and `FRONTENDS_GRACE` (30 s:
+the frontends asked to stop then, by `ctxloom shutdown` or by their
+notice's `stop_at`, stop their TUI and report) have passed, said `after
+the drain's <n>s and 30s more, the frontends ... still run: exiting`. A
+plain stop (`--even-if-live`, the second SIGTERM) stays for none. `--drain` with `--even-if-live` is a usage error (clap's
 `conflicts_with`, exit 20); nothing new under `--detailed-exitcode`. The
 drain WARNS AT ONCE (OD-54 (2)): while a daemon drains and hosts
 anything, its `Daemon.warnings` (StopDaemon's answer and GetDaemon's)
@@ -1904,7 +1915,9 @@ the period cuts its child (never delivered) is delivered by the next
 daemon, as a steer to the re-hosted child. `daemon stop --even-if-live` is
 the escalation (its children end `runner-exit` and are not re-hosted).
 TUIs are not handed over: a frontend outlives its daemon, and the daemon
-after the drained one adopts it (U5), or `ctxloom shutdown` asks it to stop.
+after the drained one adopts it (U5), or `ctxloom shutdown` asks it to stop;
+a draining daemon stays while one is live (above), so it takes its last
+reports.
 
 SHUTDOWN (owner, 2026-11-15, OD-62; `ctxloom-wiring`'s `daemon/shutdown.rs`).
 `ctxloom shutdown [<duration> | now]` stops every running ctxloom of this
@@ -1918,7 +1931,8 @@ is refused before anything is asked, `ctxloom-wiring-shutdown-bad-time`
 for the daemon to exit AND the live frontends to end (a TUI is left to its
 human for the whole time), and for the daemon a grace longer
 (`DRAIN_GRACE`, 30 s: its period's end stops its one-shots and cuts its
-busy children). Then, `now` at once: each live interactive frontend is
+busy children) when no frontend is live (one that is keeps the daemon, so
+the frontends are asked to stop at once). Then, `now` at once: each live interactive frontend is
 asked to stop and waited for (`FRONTENDS_WAIT`, 20 s), then the daemon
 serving then (a frontend's report may have started one) the plain stop
 (`--even-if-live`) and waited for (`STOP_WAIT`, 30 s). Each step is said
@@ -1960,8 +1974,8 @@ its terminal's stderr as `ctxloom: <text>` once per notice (`Watch::look`).
 itself at the span's end); a SIGTERM's drain tells it with `stop_at` its
 start plus the timeout, told again when the timeout changes while the
 daemon lives, and the frontend stops itself then (said `the drain ctxloom
-was told of ended: ...`), since a daemon hosting nothing has exited by
-then. The notice text (`shutdown::notice_text`, "ctxloom is shutting down:
+was told of ended: ...`), and reports its end to the daemon, which
+stayed for it. The notice text (`shutdown::notice_text`, "ctxloom is shutting down:
 this session will be stopped in <span>; finish and exit") and both stop
 sentences are DRAFTS (OD-63). Under `test-support`, the daemon directory's
 `test-deaf-to-stop` makes a daemon take a stop and a drain and ignore them,

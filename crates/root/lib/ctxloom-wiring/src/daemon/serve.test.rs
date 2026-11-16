@@ -8,7 +8,7 @@ use std::time::Duration;
 use daemon_application::{ChildHomes, Ears, HandOffs};
 use run_ports::{ChildObservation, Exit};
 
-use super::{advertised, said, step_of, Advertised, HandOffFiles, Homes, Pumps, Say};
+use super::{advertised, said, stays_for, step_of, Advertised, HandOffFiles, Homes, Pumps, Say};
 use crate::daemon::files::DaemonFiles;
 use crate::fixtures;
 
@@ -394,4 +394,15 @@ fn a_drains_period_is_the_requests_else_the_configs_else_the_default() {
         "the first ask's"
     );
     assert!(asked.draining());
+}
+
+// Owner ruling 2026-11-16 (PREVENT the early drain exit): a draining
+// daemon hosting nothing stays only while a frontend is live, within its
+// drain's time and grace, and never for a plain stop.
+#[test]
+fn a_draining_daemon_stays_only_for_a_live_frontend_within_its_time() {
+    assert!(stays_for(&[42], true, false), "a live frontend, in time");
+    assert!(!stays_for(&[], true, false), "no live frontend");
+    assert!(!stays_for(&[42], false, false), "its time has passed");
+    assert!(!stays_for(&[42], true, true), "a plain stop");
 }

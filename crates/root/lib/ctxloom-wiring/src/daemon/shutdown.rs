@@ -11,7 +11,9 @@
 //! stopped then (its notice, which it shows its human: owner, 2026-11-15,
 //! OD-63), and waits for the daemon to exit and the frontends to
 //! end, at most that long (the daemon then a grace longer, as its period's
-//! end stops what it still hosts). Then, `now` at once: each live frontend
+//! end stops what it still hosts, unless a live frontend keeps it: a
+//! draining daemon stays while one remains, so its last reports reach it).
+//! Then, `now` at once: each live frontend
 //! is asked to stop (its stop file, [`liveness::FrontendLocks`]; it stops
 //! its engine as a SIGTERM would, ruling 114, and reports its end), waited
 //! for, and the daemon serving then is asked the plain stop
@@ -537,10 +539,12 @@ impl Shutdown<'_> {
                 return Ok(after);
             }
             // The daemon's own period ends with it: it stops what it still
-            // hosts, then exits, a grace later.
-            let after = match after.daemon {
-                Some(_) => self.wait(DRAIN_GRACE, |running| running.daemon.is_none())?,
-                None => after,
+            // hosts, then exits, a grace later. A live frontend keeps it
+            // (owner ruling, 2026-11-16: its last reports are the daemon's),
+            // so the frontends are asked to stop now, while it serves.
+            let after = match (after.daemon, after.frontends.is_empty()) {
+                (Some(_), true) => self.wait(DRAIN_GRACE, |running| running.daemon.is_none())?,
+                _ => after,
             };
             say(format!(
                 "after the drain's {}s, still running: {}",
