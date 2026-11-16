@@ -4,7 +4,9 @@
 //!
 //! The port says nothing of WHO holds or delivers (owner, H-Q5 revised:
 //! the client side, any process of an up-to-date version, pushes a hold
-//! over the API; the daemon reads no hold file). It is the hold alone:
+//! over the API; the daemon reads no hold file, but for the ONE named
+//! exception of OD-59 (2): its start-up sweep flushes a judged run's
+//! session's hold, `daemon_application::StartHolds`). It is the hold alone:
 //!
 //! - [`HeldFacts::hold`] appends one fact, under the session's short
 //!   APPEND lock, within the session's and the home's bound; past either,

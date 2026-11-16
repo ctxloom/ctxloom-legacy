@@ -2740,7 +2740,23 @@ stamp)`: the daemon serving the home, none started; what it set aside said
 as the command ends). `ctxloom shutdown` flushes them too, and declines
 while one is left with a live record (SHUTDOWN, flush before install).
 The daemon never reads
-a hold. A hook that holds because its daemon is older only holds: it asks
+a hold, with ONE named exception (OD-59 (2), owner 2026-11-16, "ALLOW the
+check"): its START-UP sweep, before it judges a run (the runs owed a runner
+and the runs started), delivers that run's session's hold
+(`daemon_application::StartHolds`, the wiring's `daemon::flush::StartFlush`,
+`Daemon::flushing_at_start`), so a TUI frontend that exited while no daemon
+served (its exit report held) has its run ended as the report says (its
+exit code, `RunnerExit`; the sweep's re-read finds the run ended and leaves
+it to the adoption's end path: incarnation `runner-exit`, checkout let go),
+never `runner-lost`. It is the client side's own flush of one session
+(`runs_application::Flush::session`, through the daemon's in-process
+`EdgeSink`, within `FLUSH_BOUND`), no second reader of a record; its read
+models are caught up first, so a "no such session" is true. What it cannot
+deliver (a record of a newer ctxloom, a hold in a format this one cannot
+read, one another process takes, one set aside) leaves the run to the sweep
+as before, said in the log (`ended runner-lost without what its hold held:
+<why>`). Nothing else of the daemon reads a hold: not its rounds, not its
+API. A hook that holds because its daemon is older only holds: it asks
 no daemon to drain (H-Q6's nudge is gone, OD-62).
 A GAP (the owner: a gap is delivered into the transcript) is a fact a
 hold dropped past its bound: its gap record is delivered, in its place in
@@ -2752,7 +2768,7 @@ session's record says for good which fact is missing there, and when; the
 transcript's line is `kind: gap`, `gap: {facts: 1, dropped, why,
 dropped_at}`, and its text `gap: 1 fact not recorded (<id>, dropped at
 <time>: <why>)` (the wording a draft, the owner's to approve). The in-process `EdgeSink` is for tests and the run's own
-facts. A unit test's executable never spawns itself as the daemon
+facts, and the daemon's start-up flush (above). A unit test's executable never spawns itself as the daemon
 (`SPAWNS_ITSELF`). The session's end is NOT captured (owner 2026-11-15):
 it is its run's end (`IncarnationEnded`) and its lock's verdict.
 `RecordSessionEnded` is gone; `SessionEnded`, in every interactive stream

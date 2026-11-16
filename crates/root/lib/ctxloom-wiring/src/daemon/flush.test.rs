@@ -495,3 +495,135 @@ async fn a_hold_of_a_session_the_daemon_has_no_record_of_is_set_aside_and_said()
     assert_eq!(held_files(&held), vec![(root_of(NOBODY), 1, 0)]);
     assert!(recorded(&edge, NOBODY).await.is_empty());
 }
+
+// ------------------------------------------- the start's flush (OD-59 (2))
+
+/// The daemon's start-up flush over a home on a temporary file system, and
+/// that home's holds, for a daemon of `stamp` behind `edge`.
+fn start_flush(edge: &Arc<TheEdge>, stamp: &str) -> (StartFlush<TheEdge>, fact_spool::Spool) {
+    let fs: Arc<dyn file_system::Fs> = Arc::new(file_system::Rooted::temp().unwrap());
+    let home = std::path::PathBuf::from(os::host().flavor().from_top("/home/a"));
+    let held = fact_spool::Spool::at_home(Arc::clone(&fs), &home);
+    let flush = StartFlush {
+        fs,
+        home,
+        edge: Arc::clone(edge),
+        stamp: stamp.to_string(),
+    };
+    (flush, held)
+}
+
+// The named exception's flush delivers ONE session's hold (the judged
+// run's), in held order, through the daemon's own edge, and leaves every
+// other session's hold where it is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_starts_flush_delivers_the_judged_sessions_hold_alone() {
+    use daemon_application::StartHolds;
+    let edge = kernel().await;
+    let (flush, held) = start_flush(&edge, OWN);
+    hold(&held, ONE, &prompt("p1"));
+    hold(&held, ONE, &turn_end("p1"));
+    hold(&held, TWO, &prompt("q1"));
+    let done = flush.flush(&root_of(ONE).hyphenated().to_string()).await;
+    assert_eq!(
+        done,
+        daemon_application::HoldFlushed {
+            delivered: 2,
+            set_aside: 0,
+            left: None,
+        }
+    );
+    assert_eq!(
+        recorded(&edge, ONE).await,
+        [id(ONE, &prompt("p1")), id(ONE, &turn_end("p1"))]
+    );
+    assert!(
+        recorded(&edge, TWO).await.is_empty(),
+        "not judged, not read"
+    );
+    assert_eq!(held_ids(&held, TWO), [id(TWO, &prompt("q1"))]);
+}
+
+// A record this daemon is not up to date for (held by a newer ctxloom)
+// stays held, and the flush says so: the sweep then judges the run as
+// before, `runner-lost`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_starts_flush_leaves_a_newer_ctxloom_s_record_and_says_so() {
+    use daemon_application::StartHolds;
+    let edge = kernel().await;
+    let (flush, held) = start_flush(&edge, OLDER);
+    hold(&held, ONE, &prompt("p1"));
+    let done = flush.flush(&root_of(ONE).hyphenated().to_string()).await;
+    assert_eq!(done.delivered, 0);
+    assert_eq!(
+        done.left.as_deref(),
+        Some("records held by a newer ctxloom")
+    );
+    assert!(!done.whole());
+    assert!(recorded(&edge, ONE).await.is_empty());
+    assert_eq!(held_ids(&held, ONE), [id(ONE, &prompt("p1"))]);
+}
+
+// A session the hold has nothing of says nothing, and one that is no
+// session id is left, said.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_starts_flush_of_an_empty_hold_is_whole_and_of_no_id_is_left() {
+    use daemon_application::StartHolds;
+    let edge = kernel().await;
+    let (flush, _held) = start_flush(&edge, OWN);
+    let done = flush.flush(&root_of(ONE).hyphenated().to_string()).await;
+    assert_eq!(done, daemon_application::HoldFlushed::default());
+    assert!(done.whole());
+    let none = flush.flush("not-a-session").await;
+    assert_eq!(none.left.as_deref(), Some("not-a-session is no session id"));
+}
+
+// Each reason a flush left something is said; a final refusal is counted
+// set aside, apart from what was delivered.
+#[test]
+fn a_start_flush_says_why_it_left_what_it_left() {
+    let flushed = |left: Left| SessionFlush {
+        root: root_of(ONE),
+        session: None,
+        flushed: vec![
+            runs_application::Kept {
+                external_id: "a".to_string(),
+                outcome: runs_application::Outcome::Delivered(Delivery::Applied),
+            },
+            runs_application::Kept {
+                external_id: "b".to_string(),
+                outcome: runs_application::Outcome::Delivered(Delivery::Parked),
+            },
+        ],
+        left,
+    };
+    let said = |left: Left, empty| held_flushed(&flushed(left), empty);
+    let whole = said(Left::Nothing, Ok(true));
+    assert_eq!((whole.delivered, whole.set_aside, whole.left), (1, 1, None));
+    let gone = run_ports::HoldError::Format {
+        path: "/h".to_string(),
+    };
+    for (left, empty, why) in [
+        (
+            Left::Nothing,
+            Ok(false),
+            "records held by a newer ctxloom".to_string(),
+        ),
+        (Left::Nothing, Err(gone.clone()), gone.to_string()),
+        (Left::Failed(gone.clone()), Ok(true), gone.to_string()),
+        (
+            Left::Taken,
+            Ok(false),
+            "another process is taking it".to_string(),
+        ),
+        (
+            Left::Unsettled(Delivery::TimedOut),
+            Ok(false),
+            "a delivery was not settled: TimedOut".to_string(),
+        ),
+        (Left::OutOfTime, Ok(false), "its time was spent".to_string()),
+        (Left::Rounds, Ok(false), "facts kept arriving".to_string()),
+    ] {
+        assert_eq!(said(left, empty).left, Some(why));
+    }
+}

@@ -555,8 +555,9 @@ async fn a_hold_the_start_cannot_deliver_leaves_the_run_lost_and_says_so() {
     let hold = rig.hold(
         None,
         crate::HoldFlushed {
+            delivered: 0,
+            set_aside: 1,
             left: Some("held by a newer ctxloom (v9.0.0)".to_string()),
-            ..crate::HoldFlushed::default()
         },
     );
     let mut daemon = rig
@@ -571,8 +572,17 @@ async fn a_hold_the_start_cannot_deliver_leaves_the_run_lost_and_says_so() {
     assert_eq!(*hold.asked.lock().unwrap(), [TUI.to_string()]);
     let said = rig.said.lock().unwrap().join("\n");
     assert!(
-        said.contains("ended runner-lost without what its hold held")
-            && said.contains("held by a newer ctxloom (v9.0.0)"),
+        said.contains(&format!(
+            "{TUI}: its hold delivered at the start, before its run is judged: 0 delivered; \
+             1 set aside; left held: held by a newer ctxloom (v9.0.0)"
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "{TUI}: ended runner-lost without what its hold held: 1 set aside; left held: \
+             held by a newer ctxloom (v9.0.0)"
+        )),
         "{said}"
     );
 }

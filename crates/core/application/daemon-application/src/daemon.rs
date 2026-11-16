@@ -250,8 +250,6 @@ pub struct Daemon<E: Edge> {
     /// What delivers a judged run's session's hold at the start, before
     /// the sweep judges it (OD-59 (2), the named exception,
     /// [`crate::StartHolds`]); none, nothing is delivered.
-    // Red: read once the start's sweep flushes (the next commit).
-    #[allow(dead_code)]
     start_holds: Option<Arc<dyn crate::StartHolds>>,
 }
 
@@ -283,6 +281,18 @@ pub(crate) fn child_urgency(message: Urgency, turn: TurnUrgency) -> run_ports::U
 fn root_of(text: &str) -> Uuid {
     let id = uuid::Uuid::parse_str(text).unwrap_or_default();
     Uuid::from_bytes(*id.as_bytes())
+}
+
+/// What a start-up flush did not deliver, as the log says it.
+fn not_whole(flushed: &crate::HoldFlushed) -> String {
+    let mut parts = Vec::new();
+    if flushed.set_aside > 0 {
+        parts.push(format!("{} set aside", flushed.set_aside));
+    }
+    if let Some(why) = &flushed.left {
+        parts.push(format!("left held: {why}"));
+    }
+    parts.join("; ")
 }
 
 /// Whether a catch-up's step handed anything.
@@ -510,7 +520,11 @@ impl<E: Edge> Daemon<E> {
     /// started, its incarnation ended `orphaned`), before anything is
     /// hosted; every run the sweep leaves (its owner alive: a live TUI's
     /// frontend) is ADOPTED, its end path this daemon's (owner
-    /// 2026-11-14, [`crate::adopt`]). What it ended.
+    /// 2026-11-14, [`crate::adopt`]). Before the sweep judges a run, its
+    /// session's hold is delivered (OD-59 (2), the ONE named exception to
+    /// "the daemon never reads a hold", [`crate::StartHolds`]), so a TUI
+    /// exit report held while no daemon served ends its run as it says.
+    /// What it ended.
     pub async fn start_up<S: ReadStore + Store + Processed>(
         &mut self,
         store: &S,
@@ -542,7 +556,21 @@ impl<E: Edge> Daemon<E> {
         catalog: &Catalog,
     ) -> Result<Vec<Swept>, String> {
         let (owed, started) = self.caught_up_launches(store, catalog).await?;
+        let holds = self.flush_the_judged_holds(&owed, &started).await;
         let swept = self.swept(&owed, &started).await?;
+        for run in &swept {
+            if let Some(flushed) = holds.get(&run.session).filter(|f| !f.whole()) {
+                (self.say)(&format!(
+                    "{}: ended {} without what its hold held: {}",
+                    run.session,
+                    match run.started {
+                        true => "runner-lost",
+                        false => "launch-orphaned",
+                    },
+                    not_whole(flushed)
+                ));
+            }
+        }
         // What the sweep left is another process's, its owner alive: at the
         // start nothing is this daemon's own.
         let left = |run: &Uuid| !swept.iter().any(|s| &s.run == run);
@@ -550,6 +578,48 @@ impl<E: Edge> Daemon<E> {
         let started: Vec<StartedRun> = started.into_iter().filter(|r| left(&r.run)).collect();
         self.adopt(&owed, &started);
         Ok(swept)
+    }
+
+    /// THE ONE NAMED EXCEPTION to "the daemon never reads a hold" (OD-59
+    /// (2), owner 2026-11-16, [`crate::StartHolds`]): before the start's
+    /// sweep judges the runs `owed` and `started`, the hold of each one's
+    /// session is delivered, as an up-to-date client's flush delivers it,
+    /// so a TUI exit report held while no daemon served ends its run as it
+    /// says (the sweep's re-read then finds the run ended and leaves it to
+    /// the adoption's end path). Each session once; what each flush did, by
+    /// session. Only the start's sweep calls it.
+    async fn flush_the_judged_holds(
+        &mut self,
+        owed: &[PendingLaunch],
+        started: &[StartedRun],
+    ) -> BTreeMap<String, crate::HoldFlushed> {
+        let mut flushed = BTreeMap::new();
+        let Some(holds) = self.start_holds.clone() else {
+            return flushed;
+        };
+        let sessions = owed
+            .iter()
+            .map(|launch| &launch.session)
+            .chain(started.iter().map(|run| &run.session));
+        for session in sessions {
+            if flushed.contains_key(session) {
+                continue;
+            }
+            let done = holds.flush(session).await;
+            if done.delivered > 0 || !done.whole() {
+                (self.say)(&format!(
+                    "{session}: its hold delivered at the start, before its run is judged: {} \
+                     delivered{}",
+                    done.delivered,
+                    match done.whole() {
+                        true => String::new(),
+                        false => format!("; {}", not_whole(&done)),
+                    }
+                ));
+            }
+            flushed.insert(session.clone(), done);
+        }
+        flushed
     }
 
     /// What lets a lost run's checkout go (OD-19): the project's workspaces,

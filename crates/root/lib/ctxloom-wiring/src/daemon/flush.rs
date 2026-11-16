@@ -1,6 +1,8 @@
 //! A ctxloom command's flush of its home's HOLDS on the way in (s4-Q14,
 //! unit H3; owner, H-Q5 revised: the client side pushes a hold over the
-//! daemon's API, and the daemon reads no hold file).
+//! daemon's API, and the daemon reads no hold file, but for ONE named
+//! exception: its start-up sweep's flush of a judged run's session,
+//! [`StartFlush`], OD-59 (2)).
 //!
 //! A command of an up-to-date version (not older than the serving daemon,
 //! [`runs_application::command_flushes`]) that reaches the daemon delivers
@@ -21,7 +23,7 @@
 //! a silent drop (owner, H3).
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 use std::time::{Duration, Instant};
@@ -30,7 +32,7 @@ use run_ports::{Delivery, FactSink, HeldFacts, HoldError};
 use runs_application::{command_flushes, Flush, HookClock, Outcome, SessionFlush};
 
 use super::{files_of, own_stamp, serving_here};
-use crate::capture::{daemon_sink, Deadline};
+use crate::capture::{daemon_sink, Deadline, EdgeSink};
 use crate::Wiring;
 
 /// The most a command's flush of its home's holds may take, in all.
@@ -99,6 +101,104 @@ where
     match Flush::new(held, clock).every(daemon, sink) {
         Ok(done) => Flushed::Done(done),
         Err(error) => Flushed::Failed(error),
+    }
+}
+
+/// THE ONE NAMED EXCEPTION to "the daemon never reads a hold" (OD-59 (2),
+/// owner 2026-11-16, "ALLOW the check"; `daemon_application::StartHolds`):
+/// the daemon's start-up sweep delivers the hold of each session whose run
+/// it is about to judge, so a TUI frontend's exit report, held while no
+/// daemon served, ends its run as it says instead of `runner-lost`. It is
+/// the client side's own flush of one session ([`Flush::session`]: in held
+/// order, only what this daemon of `stamp` is up to date for, the delivered
+/// prefix cut, a final refusal set aside), through the daemon's in-process
+/// edge ([`EdgeSink`]) instead of its listener; no other reader of a hold's
+/// record exists. Each session's flush is bounded by [`FLUSH_BOUND`]. What
+/// it cannot deliver (a record of a newer ctxloom, a hold in a format this
+/// one cannot read, one another process is taking) stays, and the sweep
+/// judges the run as before, said in the log.
+pub(crate) struct StartFlush<E: run_ports::Edge + 'static> {
+    pub(crate) fs: Arc<dyn file_system::Fs>,
+    pub(crate) home: std::path::PathBuf,
+    pub(crate) edge: Arc<E>,
+    /// The daemon's own stamp (a test's under test-support).
+    pub(crate) stamp: String,
+}
+
+impl<E: run_ports::Edge + 'static> daemon_application::StartHolds for StartFlush<E> {
+    fn flush<'a>(
+        &'a self,
+        session: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = daemon_application::HoldFlushed> + Send + 'a>,
+    > {
+        let fs = Arc::clone(&self.fs);
+        let home = self.home.clone();
+        let edge = Arc::clone(&self.edge);
+        let stamp = self.stamp.clone();
+        let session = session.to_string();
+        Box::pin(async move {
+            // The flush blocks (the hold's files, the sink's own runtime):
+            // off the daemon's workers.
+            tokio::task::spawn_blocking(move || start_flush(fs, &home, edge, &stamp, &session))
+                .await
+                .unwrap_or_else(|e| daemon_application::HoldFlushed {
+                    left: Some(format!("its flush panicked: {e}")),
+                    ..daemon_application::HoldFlushed::default()
+                })
+        })
+    }
+}
+
+/// [`StartFlush`]'s flush of `session`'s hold under `home`, to the daemon
+/// of `stamp` behind `edge`.
+fn start_flush<E: run_ports::Edge + 'static>(
+    fs: Arc<dyn file_system::Fs>,
+    home: &std::path::Path,
+    edge: Arc<E>,
+    stamp: &str,
+    session: &str,
+) -> daemon_application::HoldFlushed {
+    let Ok(root) = uuid::Uuid::parse_str(session) else {
+        return daemon_application::HoldFlushed {
+            left: Some(format!("{session} is no session id")),
+            ..daemon_application::HoldFlushed::default()
+        };
+    };
+    let held = fact_spool::Spool::at_home(fs, home);
+    let sink = EdgeSink::new(edge);
+    let clock = Deadline(Instant::now() + FLUSH_BOUND);
+    let flushed = Flush::new(&held, &clock).session(&root, stamp, &sink);
+    held_flushed(&flushed, held.is_empty(&root))
+}
+
+/// What a start-up flush did, as the daemon judges it: `empty`, whether
+/// the hold holds nothing now (a record a newer ctxloom held is left by a
+/// flush that says [`runs_application::Left::Nothing`]).
+pub(crate) fn held_flushed(
+    flushed: &SessionFlush,
+    empty: Result<bool, HoldError>,
+) -> daemon_application::HoldFlushed {
+    let set_aside = flushed.set_aside().len();
+    let delivered = flushed.flushed.len() - set_aside;
+    let left = match (&flushed.left, empty) {
+        (runs_application::Left::Nothing, Ok(true)) => None,
+        (runs_application::Left::Nothing, Ok(false)) => {
+            Some("records held by a newer ctxloom".to_string())
+        }
+        (runs_application::Left::Nothing, Err(e)) => Some(e.to_string()),
+        (runs_application::Left::Failed(e), _) => Some(e.to_string()),
+        (runs_application::Left::Taken, _) => Some("another process is taking it".to_string()),
+        (runs_application::Left::Unsettled(delivery), _) => {
+            Some(format!("a delivery was not settled: {delivery:?}"))
+        }
+        (runs_application::Left::OutOfTime, _) => Some("its time was spent".to_string()),
+        (runs_application::Left::Rounds, _) => Some("facts kept arriving".to_string()),
+    };
+    daemon_application::HoldFlushed {
+        delivered,
+        set_aside,
+        left,
     }
 }
 

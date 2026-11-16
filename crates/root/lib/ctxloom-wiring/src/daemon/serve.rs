@@ -529,7 +529,15 @@ async fn start(
         Arc::clone(say),
     )
     .hosting_one_shots(Arc::clone(one_shots));
-    let launcher = timed(launcher, pace);
+    let launcher = timed(launcher, pace)
+        // OD-59 (2), the ONE named exception to "the daemon never reads a
+        // hold": its start delivers a judged run's session's hold first.
+        .flushing_at_start(Arc::new(super::flush::StartFlush {
+            fs: Arc::clone(fs),
+            home: home.to_path_buf(),
+            edge: Arc::clone(&edge),
+            stamp: stamp.clone(),
+        }));
     let own = Discovery {
         stamp,
         pid: std::process::id(),
