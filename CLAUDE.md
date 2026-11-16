@@ -1910,7 +1910,8 @@ by the file `<pid>.stop` beside it, which it looks for every 200 ms
 (`watch_for_stop`): it then requests its `Stop` (the TUI asked to stop, then
 killed after its grace, as a SIGTERM to it does, ruling 114), reports its
 end and exits, said `asked to stop by `ctxloom shutdown``. A drain TELLS
-each live frontend at once (OD-63, its spec held): the file `<pid>.notice`
+each live frontend at once (OD-63; its spec, `features/cli/shutdown.feature`,
+owner-approved 2026-11-16): the file `<pid>.notice`
 beside its lock (`liveness::FrontendNotice`: a `stop_at: <epoch seconds>|none`
 line, then the text; a later one replaces it), which the frontend shows on
 its terminal's stderr as `ctxloom: <text>` once per notice (`Watch::look`).
