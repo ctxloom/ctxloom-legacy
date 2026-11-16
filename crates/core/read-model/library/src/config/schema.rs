@@ -305,7 +305,8 @@ pub const ENGINES: &[&str] = &[
 const SESSION_HOMES: &[&str] = &["host", "session"];
 
 /// One `engines.<engine>` block: what its agents share. `model`, `effort` and
-/// `permissions` are the agent's, never here.
+/// `permissions` are the agent's, never here; `approval_timeout` is the
+/// engine's alone (no agent overrides it).
 fn engine_block() -> Node {
     object(vec![
         ("command", non_empty()),
@@ -313,6 +314,10 @@ fn engine_block() -> Node {
         ("auth", Node::Auth),
         ("runtime", choice(RUNTIMES)),
         ("env", list(pattern(Pat::NoEquals))),
+        // OD-41 (D16): how long an ask of the engine's child waits for an
+        // answer, a span or `now` (every ask denied at once); 300 s unsaid
+        // ([`super::engines::APPROVAL_TIMEOUT_DEFAULT`]).
+        ("approval_timeout", pattern(Pat::Span)),
     ])
 }
 

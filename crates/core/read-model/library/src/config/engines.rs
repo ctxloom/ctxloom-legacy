@@ -11,9 +11,20 @@
 //! function of the merged config tree: [`effective`] answers "what does this
 //! agent run with, and which layer said so", [`runtime_change`] is the
 //! isolation guard, [`AuthSource`] is where an engine's credential comes from
-//! (a source, never a value).
+//! (a source, never a value). [`approval_timeout_of`] is how long an ask of
+//! the engine's child waits (OD-41, D16).
 //!
+use std::time::Duration;
+
 use angzarr_yaml::Value;
+
+/// How long an ask waits for an answer when its engine's block says no
+/// `approval_timeout` (OD-41): 300 seconds.
+pub const APPROVAL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+
+/// [`APPROVAL_TIMEOUT_DEFAULT`] as the config's grammar writes it, for a
+/// listing that shows the value with its layer.
+pub const APPROVAL_TIMEOUT_DEFAULT_TEXT: &str = "5m";
 
 /// Which layer said a value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -286,6 +297,10 @@ pub struct Effective {
     pub command: Sourced<String>,
     pub session_home: Sourced<String>,
     pub auth: Sourced<AuthSource>,
+    /// How long an ask of the engine waits for an answer, as written (a span
+    /// or `now`): the engine block's (no agent overrides it), else
+    /// [`APPROVAL_TIMEOUT_DEFAULT_TEXT`]. [`span_of`] reads it.
+    pub approval_timeout: Sourced<String>,
 }
 
 /// The settings agent `agent` runs with on its own engine, over the merged
@@ -387,6 +402,7 @@ fn resolve(config: &Value, agent: &str, on: Option<&str>) -> Result<Effective, E
         ),
         session_home: session_home_of(binding, block),
         auth,
+        approval_timeout: approval_timeout_of(block),
         engine,
     })
 }
@@ -416,6 +432,9 @@ pub struct Drive {
     pub session_home: String,
     pub auth: Sourced<AuthSource>,
     pub env: Vec<String>,
+    /// How long an ask of the engine waits for an answer (OD-41); zero is
+    /// `now`, every ask denied at once (D16).
+    pub approval_timeout: Duration,
 }
 
 impl Default for Drive {
@@ -425,6 +444,7 @@ impl Default for Drive {
             session_home: "session".to_string(),
             auth: default_source(AuthSource::None),
             env: Vec::new(),
+            approval_timeout: APPROVAL_TIMEOUT_DEFAULT,
         }
     }
 }
@@ -445,6 +465,7 @@ impl From<&Effective> for Drive {
             session_home: effective.session_home.value.clone(),
             auth: effective.auth.clone(),
             env: effective.env.value.clone(),
+            approval_timeout: span_of(&effective.approval_timeout.value),
         }
     }
 }
@@ -473,6 +494,7 @@ pub fn engine_drive(config: &Value, engine: &str) -> Result<Drive, EngineError> 
             .unwrap_or_else(|| "session".to_string()),
         auth,
         env: block.and_then(|b| names_of(b, "env")).unwrap_or_default(),
+        approval_timeout: span_of(&approval_timeout_of(block).value),
     })
 }
 
@@ -625,6 +647,28 @@ fn runtime_of(
 /// ruling 44(b) for this key): the agent's own `session_home`, else the
 /// engine block's, else a session home of its own. Engine-neutral, like the
 /// runtime: `run --engine` keeps the agent's.
+/// The engine block's `approval_timeout` as written (OD-41), else the
+/// default. One that does not read as a span (a config read `--degraded`,
+/// whose violation was said) is not said: the default stands.
+pub fn approval_timeout_of(block: Option<&Value>) -> Sourced<String> {
+    match block
+        .and_then(|b| text_of(b, "approval_timeout"))
+        .filter(|text| duration_text::parse(text).is_ok())
+    {
+        Some(value) => Sourced {
+            value,
+            source: Source::Engine,
+        },
+        None => default(APPROVAL_TIMEOUT_DEFAULT_TEXT.to_string()),
+    }
+}
+
+/// An `approval_timeout` as written, as a span: `now` is zero (D16); one
+/// that does not read is [`APPROVAL_TIMEOUT_DEFAULT`].
+pub fn span_of(text: &str) -> Duration {
+    duration_text::parse(text).unwrap_or(APPROVAL_TIMEOUT_DEFAULT)
+}
+
 fn session_home_of(binding: &Value, block: Option<&Value>) -> Sourced<String> {
     match (
         text_of(binding, "session_home"),

@@ -1852,3 +1852,53 @@ fn test_viewing_a_whole_bundle_gives_the_manifest_first_then_each_file() {
         ]
     );
 }
+
+// OD-41 (D16): a dry run carries the engine's approval_timeout, as a span
+// for the launch and as written with its layer for its Settings; a project
+// layer may say it (it is not one of ruling 46's keys).
+#[test]
+fn test_a_dry_run_carries_the_engines_approval_timeout_with_its_layer() {
+    let files: &[(&str, &str)] = &[ENVELOPE, ("profiles/p.yaml", "description: p\n")];
+    let plan = |layers: &[&'static str], agent: &str| {
+        ok(with(&[("project", files)], layers).library().dry_run(
+            &plain(),
+            &crate::RunRequest {
+                agent: agent.to_string(),
+                ..crate::RunRequest::default()
+            },
+        ))
+        .plan
+    };
+    let said = plan(
+        &[
+            "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n",
+            "schema_version: 9\nengines:\n  claude-code:\n    approval_timeout: 1h\n",
+        ],
+        "dev",
+    );
+    assert_eq!(
+        said.drive.approval_timeout,
+        std::time::Duration::from_secs(3600)
+    );
+    let settings = said.settings.unwrap();
+    assert_eq!(settings.approval_timeout.value, "1h");
+    assert_eq!(settings.approval_timeout.source, "engine");
+    // Unsaid: five minutes, said by nobody.
+    let unsaid = plan(
+        &["schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n"],
+        "dev",
+    );
+    assert_eq!(
+        unsaid.drive.approval_timeout,
+        crate::APPROVAL_TIMEOUT_DEFAULT
+    );
+    let settings = unsaid.settings.unwrap();
+    assert_eq!(settings.approval_timeout.value, "5m");
+    assert_eq!(settings.approval_timeout.source, "default");
+    // `now` is zero: every ask denied at once (D16).
+    let now = plan(
+        &["schema_version: 9\nengines:\n  claude-code:\n    approval_timeout: now\nagents:\n  dev:\n    engine: claude-code\n"],
+        "dev",
+    );
+    assert_eq!(now.drive.approval_timeout, std::time::Duration::ZERO);
+}

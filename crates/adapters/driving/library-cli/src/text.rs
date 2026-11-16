@@ -691,6 +691,11 @@ fn engine_lines(out: &mut dyn Write, row: &EngineRow) -> io::Result<()> {
     writeln!(out, "  {}", sourced_line("session_home", &row.session_home))?;
     writeln!(out, "  {}", sourced_line("runtime", &row.runtime))?;
     writeln!(out, "  {}", names_line("env", &row.env))?;
+    writeln!(
+        out,
+        "  {}",
+        sourced_line("approval_timeout", &row.approval_timeout)
+    )?;
     let via = row
         .auth
         .via
@@ -1005,6 +1010,13 @@ fn dry_run_settings(
         "session_home",
         &s.session_home.value,
         place(s.session_home.source, false),
+    )?;
+    // How long an ask waits, the engine block's alone (OD-41, D16).
+    row(
+        out,
+        "approval_timeout",
+        &s.approval_timeout.value,
+        place(s.approval_timeout.source, false),
     )?;
     if s.env.keys.is_empty() {
         return row(out, "env", "none", place(s.env.source, false));

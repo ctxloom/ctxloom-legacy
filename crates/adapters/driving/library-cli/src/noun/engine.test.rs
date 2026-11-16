@@ -13,7 +13,7 @@ mod read {
         assert_eq!(ran.code(), 0);
         assert_eq!(
             ran.out,
-            "claude-code\n  command: /opt/claude (engine)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: HTTPS_PROXY (engine)\n  auth: not-needed (engine)\n  agents:\n    dev\n      model: haiku (agent)\n      effort: engine default, no flag passed (default)\n      permissions: {defaultMode: acceptEdits} (default)\n        passed to claude-code verbatim; ctxloom does not check it\n      runtime: host (agent; replaces project container-rootless: weakens isolation)\n      env: HTTPS_PROXY (engine)\n      session_home: session (default)\n    same\n      model: engine default, no flag passed (default)\n      effort: engine default, no flag passed (default)\n      permissions: {defaultMode: acceptEdits} (default)\n        passed to claude-code verbatim; ctxloom does not check it\n      runtime: container-rootless (agent)\n      env: HTTPS_PROXY (engine)\n      session_home: session (default)\n    strict\n      model: engine default, no flag passed (default)\n      effort: engine default, no flag passed (default)\n      permissions: {defaultMode: acceptEdits} (default)\n        passed to claude-code verbatim; ctxloom does not check it\n      runtime: container-rootful (agent; replaces project container-rootless: ownership differs, not interchangeable)\n      env: HTTPS_PROXY (engine)\n      session_home: session (default)\n"
+            "claude-code\n  command: /opt/claude (engine)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: HTTPS_PROXY (engine)\n  approval_timeout: 5m (default)\n  auth: not-needed (engine)\n  agents:\n    dev\n      model: haiku (agent)\n      effort: engine default, no flag passed (default)\n      permissions: {defaultMode: acceptEdits} (default)\n        passed to claude-code verbatim; ctxloom does not check it\n      runtime: host (agent; replaces project container-rootless: weakens isolation)\n      env: HTTPS_PROXY (engine)\n      session_home: session (default)\n    same\n      model: engine default, no flag passed (default)\n      effort: engine default, no flag passed (default)\n      permissions: {defaultMode: acceptEdits} (default)\n        passed to claude-code verbatim; ctxloom does not check it\n      runtime: container-rootless (agent)\n      env: HTTPS_PROXY (engine)\n      session_home: session (default)\n    strict\n      model: engine default, no flag passed (default)\n      effort: engine default, no flag passed (default)\n      permissions: {defaultMode: acceptEdits} (default)\n        passed to claude-code verbatim; ctxloom does not check it\n      runtime: container-rootful (agent; replaces project container-rootless: ownership differs, not interchangeable)\n      env: HTTPS_PROXY (engine)\n      session_home: session (default)\n"
         );
     }
 
@@ -23,7 +23,7 @@ mod read {
         assert_eq!(ran.code(), 0);
         assert_eq!(
             ran.out,
-            "claude-code\n  command: /opt/claude (engine)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: HTTPS_PROXY (engine)\n  auth: not-needed (engine)\n  agents: dev, same, strict\nmock\n  command: mock (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  auth: not-needed (default)\nmock-launch\n  command: mock-launch (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  auth: not-needed (default)\nmock-lossy\n  command: mock-lossy (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  auth: not-needed (default)\nmock-noskills\n  command: mock-noskills (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  auth: not-needed (default)\nopencode\n  command: opencode (default)\n  session_home: host (engine)\n  runtime: container-rootless (project)\n  env: none (default)\n  auth: not-needed (default)\n  agents: plain\n"
+            "claude-code\n  command: /opt/claude (engine)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: HTTPS_PROXY (engine)\n  approval_timeout: 5m (default)\n  auth: not-needed (engine)\n  agents: dev, same, strict\nmock\n  command: mock (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  approval_timeout: 5m (default)\n  auth: not-needed (default)\nmock-launch\n  command: mock-launch (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  approval_timeout: 5m (default)\n  auth: not-needed (default)\nmock-lossy\n  command: mock-lossy (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  approval_timeout: 5m (default)\n  auth: not-needed (default)\nmock-noskills\n  command: mock-noskills (default)\n  session_home: session (default)\n  runtime: container-rootless (project)\n  env: none (default)\n  approval_timeout: 5m (default)\n  auth: not-needed (default)\nopencode\n  command: opencode (default)\n  session_home: host (engine)\n  runtime: container-rootless (project)\n  env: none (default)\n  approval_timeout: 5m (default)\n  auth: not-needed (default)\n  agents: plain\n"
         );
     }
 
@@ -66,6 +66,11 @@ mod read {
         assert_eq!(
             engine["auth"],
             serde_json::json!({"value": {"word": "none"}, "source": "engine", "state": "NOT_NEEDED"})
+        );
+        // OD-41: how long an ask waits, as written, with its layer.
+        assert_eq!(
+            engine["approval_timeout"],
+            serde_json::json!({"value": "5m", "source": "default"})
         );
         assert_eq!(
             engine["agents"][0],

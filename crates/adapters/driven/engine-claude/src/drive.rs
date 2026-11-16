@@ -49,6 +49,31 @@ pub const USER_SETTINGS_FILE: &str = "settings.json";
 /// keeps of its onboarding and of each project it ran in.
 pub const STATE_FILE: &str = ".claude.json";
 
+/// The variable claude reads its MCP tool calls' time limit from, in
+/// milliseconds (owner ruling Q12, step 8).
+pub const MCP_TOOL_TIMEOUT: &str = "MCP_TOOL_TIMEOUT";
+
+/// The longest ask a child's approval prompt call is known to outlast
+/// without [`MCP_TOOL_TIMEOUT`] (probe P0: a 310 s wait survived): at or
+/// under it, the variable is not set (Q12).
+pub const MCP_TOOL_TIMEOUT_FLOOR: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// How far past the ask's own time [`MCP_TOOL_TIMEOUT`] is set, so the ask
+/// expires, and its call is answered, before claude gives up on the call.
+pub const MCP_TOOL_TIMEOUT_MARGIN: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The [`MCP_TOOL_TIMEOUT`] a child (a hosted child's or a one-shot's turn)
+/// is given for asks that wait `approval_timeout` (Q12): over
+/// [`MCP_TOOL_TIMEOUT_FLOOR`], the timeout plus [`MCP_TOOL_TIMEOUT_MARGIN`],
+/// in milliseconds; otherwise none, and claude's own limit stands.
+pub fn mcp_tool_timeout(approval_timeout: std::time::Duration) -> Option<String> {
+    (approval_timeout > MCP_TOOL_TIMEOUT_FLOOR).then(|| {
+        (approval_timeout + MCP_TOOL_TIMEOUT_MARGIN)
+            .as_millis()
+            .to_string()
+    })
+}
+
 /// The context file's name in the session home.
 pub const CONTEXT_PROMPT_FILE: &str = "ctxloom-context.md";
 
@@ -753,6 +778,15 @@ pub(crate) fn environment(
     };
     env.insert("HOME".to_string(), home);
     env.insert("CLAUDE_CONFIG_DIR".to_string(), config_dir);
+    // A child's asks wait on ctxloom's approval prompt tool (step 8): one
+    // that may wait past claude's own MCP call limit is given a limit past
+    // it (Q12). Set here, so it is owned: no permit replaces it (ruling
+    // 78b). The terminal session asks at its own terminal, and is given none.
+    if !interactive {
+        if let Some(limit) = mcp_tool_timeout(settings.approval_timeout) {
+            env.insert(MCP_TOOL_TIMEOUT.to_string(), limit);
+        }
+    }
     Ok(env)
 }
 

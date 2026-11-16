@@ -55,6 +55,10 @@ fn test_a_permissions_document_that_is_no_object_is_printed_as_written() {
             value: "session".to_string(),
             source: "default",
         },
+        approval_timeout: library_application::SourcedValue {
+            value: "5m".to_string(),
+            source: "default",
+        },
         env: library_application::EnvSetting {
             value: Vec::new(),
             source: "default",

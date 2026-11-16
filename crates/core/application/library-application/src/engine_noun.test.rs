@@ -306,3 +306,26 @@ fn test_an_engine_s_agents_carry_their_session_home_and_its_source() {
     assert_eq!(agent("kept").session_home.source, "engine");
     assert_eq!(row.session_home.value, "host");
 }
+
+// OD-41 (D16): an engine's approval_timeout is listed as written with the
+// layer that said it, `5m` by default; each agent of it shows the same.
+#[test]
+fn test_an_engines_approval_timeout_is_shown_with_its_layer() {
+    let unsaid = show("schema_version: 9\n", "opencode");
+    assert_eq!(unsaid.approval_timeout.value, "5m");
+    assert_eq!(unsaid.approval_timeout.source, "default");
+    let row = show(
+        "schema_version: 9\nengines:\n  claude-code:\n    approval_timeout: now\nagents:\n  dev:\n    engine: claude-code\n",
+        "claude-code",
+    );
+    assert_eq!(row.approval_timeout.value, "now");
+    assert_eq!(row.approval_timeout.source, "engine");
+    let dev = &row
+        .agents
+        .iter()
+        .find(|a| a.name == "dev")
+        .unwrap()
+        .settings;
+    assert_eq!(dev.approval_timeout.value, "now");
+    assert_eq!(dev.approval_timeout.source, "engine");
+}

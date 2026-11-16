@@ -178,6 +178,10 @@ message AgentSettings {
   // else its engine block's, else `session` (owner ruling of 2026-11-13,
   // superseding 44(b) for this key).
   SourcedText session_home = 6;
+  // How long an ask of the engine waits for an answer, as written (a span,
+  // or `now`, every ask denied at once): the engine block's
+  // `approval_timeout`, else `5m` (OD-41, D16).
+  SourcedText approval_timeout = 7;
 }
 
 // An engine surface an agent's selection cannot reach. was: NotCarried.
@@ -1439,6 +1443,8 @@ message Engine {
   SourcedList env = 5;
   EngineAuth auth = 6;
   repeated EngineAgent agents = 7;
+  // `approval_timeout`, as written, else `5m` (OD-41, D16).
+  SourcedText approval_timeout = 8;
 }
 
 message GetEngineRequest {

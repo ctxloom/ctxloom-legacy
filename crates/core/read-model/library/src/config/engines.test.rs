@@ -873,3 +873,56 @@ fn test_the_engine_asked_for_is_the_agent_s_unless_it_is_the_default_it_already_
     );
     assert_eq!(on("named", "opencode"), text("opencode", Source::Agent));
 }
+
+// OD-41 (D16): how long an ask of the engine waits is its engine block's
+// `approval_timeout`, as written and from the block, else 300 seconds said
+// by nobody; `now` is zero (every ask denied at once); an agent never says it.
+#[test]
+fn test_an_engines_approval_timeout_is_its_blocks_else_five_minutes() {
+    let silent = of("agents:\n  dev:\n    profiles: [p]\n", "dev");
+    assert_eq!(silent.approval_timeout, text("5m", Source::Default));
+    assert_eq!(
+        Drive::from(&silent).approval_timeout,
+        Duration::from_secs(300)
+    );
+    assert_eq!(APPROVAL_TIMEOUT_DEFAULT, Duration::from_secs(300));
+    assert_eq!(
+        span_of(APPROVAL_TIMEOUT_DEFAULT_TEXT),
+        APPROVAL_TIMEOUT_DEFAULT
+    );
+
+    let said = "engines:\n  claude-code:\n    approval_timeout: 1h\n  opencode:\n    approval_timeout: now\nagents:\n  dev:\n    profiles: [p]\n";
+    let got = of(said, "dev");
+    assert_eq!(got.approval_timeout, text("1h", Source::Engine));
+    assert_eq!(
+        Drive::from(&got).approval_timeout,
+        Duration::from_secs(3600)
+    );
+    // On another engine (`run --engine`), that engine's block says it.
+    let on = effective_on(&cfg(said), "dev", "opencode").unwrap();
+    assert_eq!(on.approval_timeout, text("now", Source::Engine));
+    assert_eq!(Drive::from(&on).approval_timeout, Duration::ZERO);
+    // A launch with no agent reads the engine's block alone.
+    let bare = engine_drive(&cfg(said), "claude-code").unwrap();
+    assert_eq!(bare.approval_timeout, Duration::from_secs(3600));
+    let unsaid = engine_drive(&cfg("schema_version: 9\n"), "opencode").unwrap();
+    assert_eq!(unsaid.approval_timeout, APPROVAL_TIMEOUT_DEFAULT);
+    assert_eq!(Drive::default().approval_timeout, APPROVAL_TIMEOUT_DEFAULT);
+    // What every agent of the engine shares, as `engine show` lists it.
+    let shared = engine_settings(&cfg(said), "claude-code").unwrap();
+    assert_eq!(shared.approval_timeout, text("1h", Source::Engine));
+}
+
+// A value that does not read as a span (a config read `--degraded`, its
+// violation already said) is not taken: the default stands, said by nobody.
+#[test]
+fn test_an_approval_timeout_that_does_not_read_is_the_default() {
+    let got = of(
+        "engines:\n  claude-code:\n    approval_timeout: soon\nagents:\n  dev:\n    profiles: [p]\n",
+        "dev",
+    );
+    assert_eq!(got.approval_timeout, text("5m", Source::Default));
+    assert_eq!(span_of("soon"), APPROVAL_TIMEOUT_DEFAULT);
+    assert_eq!(span_of("90s"), Duration::from_secs(90));
+    assert_eq!(span_of("now"), Duration::ZERO);
+}
