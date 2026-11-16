@@ -10,6 +10,7 @@
 //! not link. The driven adapter `embedded-edge` converts (review question 6).
 
 mod argv;
+mod asks;
 mod bind;
 mod child;
 mod discovery;
@@ -35,6 +36,9 @@ mod token;
 mod version;
 
 pub use argv::{check_command_line, CommandTooLong, Measure, MAX_ARG_STRLEN, WINDOWS_COMMAND_LINE};
+pub use asks::{
+    AskKind, AskOption, Asker, PermissionAnswer, PermissionAsk, PermissionAsks, PermissionRouter,
+};
 pub use bind::{bind_for, BindPlan, BindRefusal, ContainerRuntime, PlatformFacts, Probe, Runtime};
 pub use child::{
     ChildControl, ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions,

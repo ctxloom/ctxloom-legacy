@@ -22,10 +22,12 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 
+use crate::asks::PermissionAsks;
 use crate::engine::{EngineError, TurnOutcome};
 use crate::launch::{Launch, Stdio};
 use crate::launcher::{Exit, TurnCommand};
@@ -73,17 +75,48 @@ impl ChildMessage {
 }
 
 /// How a child's requests for permission are answered (an engine that asks
-/// over its protocol, as opencode's ACP `session/request_permission`): no
-/// human is there to ask. Each answer is for the one request, never
-/// "always". The agent's permission posture says which; none refuses.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// over its protocol, as opencode's ACP `session/request_permission`). With
+/// no human at the child's terminal, an ask is either ROUTED to the user
+/// ([`ChildPermissions::Ask`], step 8 U7: what the daemon gives the children
+/// and one-shots it hosts), or answered by a posture, once, never "always".
+/// None refuses.
+#[derive(Clone, Default)]
 pub enum ChildPermissions {
     /// Refused (fail closed): the engine goes on without.
     #[default]
     Refuse,
     /// Allowed.
     Allow,
+    /// Asked of the user: recorded as an approval ask and answered with the
+    /// engine's own option she chose ([`crate::PermissionAsks`]).
+    Ask(Arc<dyn PermissionAsks>),
 }
+
+impl fmt::Debug for ChildPermissions {
+    /// The posture's name; the routed form's asker is no value to print.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ChildPermissions::Refuse => "Refuse",
+            ChildPermissions::Allow => "Allow",
+            ChildPermissions::Ask(_) => "Ask",
+        })
+    }
+}
+
+impl PartialEq for ChildPermissions {
+    /// The same posture; two routed forms are equal when they route to the
+    /// same asker.
+    fn eq(&self, other: &ChildPermissions) -> bool {
+        match (self, other) {
+            (ChildPermissions::Refuse, ChildPermissions::Refuse)
+            | (ChildPermissions::Allow, ChildPermissions::Allow) => true,
+            (ChildPermissions::Ask(one), ChildPermissions::Ask(two)) => Arc::ptr_eq(one, two),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ChildPermissions {}
 
 /// What a child is started with: a turn request's settings, with no prompt
 /// (the child is given its messages later).

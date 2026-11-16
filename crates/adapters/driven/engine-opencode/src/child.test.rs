@@ -10,6 +10,7 @@
 //! `PERMIT` asks a permission first and answers with the option chosen.
 
 use std::collections::BTreeMap;
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use agent_client_protocol::v1::schema::{
@@ -18,13 +19,14 @@ use agent_client_protocol::v1::schema::{
 };
 use file_system::{Fs, Rooted};
 use run_ports::{
-    ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions, ChildSpec,
-    EngineSettings, Exit, FailureClass, Launch, LaunchKind, Queued, StartedChild, Stdio,
-    TurnOutcome, Urgency,
+    AskKind, AskOption, ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions,
+    ChildSpec, EngineSettings, Exit, FailureClass, Launch, LaunchKind, PermissionAnswer,
+    PermissionAsk, PermissionAsks, Queued, StartedChild, Stdio, TurnOutcome, Urgency,
 };
 
 use crate::child::{
-    child_command, detail_of, permission_answer, said_of, stop_of, PASSWORD_VARIABLE,
+    child_command, detail_of, outcome_of, permission_answer, permission_ask, said_of, stop_of,
+    PASSWORD_VARIABLE,
 };
 use crate::conversation::{Heard, Stop};
 use crate::Opencode;
@@ -60,7 +62,7 @@ while IFS= read -r line; do
         *LONG*) pending="$pending $id"; chunk msg_long "working" ;;
         *EXIT*) echo "the engine fell over" >&2; exit 7 ;;
         *PERMIT*)
-          printf '{"jsonrpc":"2.0","id":"perm-1","method":"session/request_permission","params":{"sessionId":"%s","toolCall":{"toolCallId":"t1"},"options":[{"optionId":"always","name":"Always allow","kind":"allow_always"},{"optionId":"once","name":"Allow once","kind":"allow_once"},{"optionId":"no","name":"Reject","kind":"reject_once"}]}}\n' "$sid"
+          printf '{"jsonrpc":"2.0","id":"perm-1","method":"session/request_permission","params":{"sessionId":"%s","toolCall":{"toolCallId":"t1","title":"bash","rawInput":{"command":"touch hi.txt"}},"options":[{"optionId":"always","name":"Always allow","kind":"allow_always"},{"optionId":"once","name":"Allow once","kind":"allow_once"},{"optionId":"no","name":"Reject","kind":"reject_once"}]}}\n' "$sid"
           IFS= read -r answer
           printf '%s\n' "$answer" >> "$here/input.log"
           chosen=$(field optionId "$answer")
@@ -358,11 +360,11 @@ fn a_permission_is_answered_once_by_the_posture_else_cancelled() {
         RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id.to_string()))
     };
     assert_eq!(
-        permission_answer(&request, ChildPermissions::Allow),
+        permission_answer(&request, &ChildPermissions::Allow),
         selected("once")
     );
     assert_eq!(
-        permission_answer(&request, ChildPermissions::Refuse),
+        permission_answer(&request, &ChildPermissions::Refuse),
         selected("no")
     );
     let always_only: RequestPermissionRequest = serde_json::from_str(
@@ -373,7 +375,7 @@ fn a_permission_is_answered_once_by_the_posture_else_cancelled() {
     .unwrap();
     for posture in [ChildPermissions::Allow, ChildPermissions::Refuse] {
         assert_eq!(
-            permission_answer(&always_only, posture),
+            permission_answer(&always_only, &posture),
             RequestPermissionOutcome::Cancelled
         );
     }
@@ -709,4 +711,262 @@ fn the_pid_is_the_engines_own() {
     assert_eq!(written, pid.to_string());
     let shown = format!("{:?}", running.child);
     assert!(shown.contains(&format!("pid: {pid}")), "{shown}");
+}
+
+/// How long a routed test waits for what its asker is told.
+const TOLD: Duration = Duration::from_secs(20);
+
+/// An asker that tells its test each ask, then answers it `answer`, or,
+/// with none, waits until the ask is withdrawn (or [`TOLD`] passes) and
+/// answers it cancelled; it keeps every withdrawal.
+struct Asker {
+    answer: Option<PermissionAnswer>,
+    asked: Mutex<mpsc::Sender<PermissionAsk>>,
+    withdrawn: Mutex<Vec<(String, String)>>,
+    changed: Condvar,
+    told: Mutex<mpsc::Sender<(String, String)>>,
+}
+
+impl Asker {
+    #[allow(clippy::type_complexity)]
+    fn new(
+        answer: Option<PermissionAnswer>,
+    ) -> (
+        Arc<Asker>,
+        mpsc::Receiver<PermissionAsk>,
+        mpsc::Receiver<(String, String)>,
+    ) {
+        let (asked, asks) = mpsc::channel();
+        let (told, withdrawals) = mpsc::channel();
+        let asker = Arc::new(Asker {
+            answer,
+            asked: Mutex::new(asked),
+            withdrawn: Mutex::new(Vec::new()),
+            changed: Condvar::new(),
+            told: Mutex::new(told),
+        });
+        (asker, asks, withdrawals)
+    }
+}
+
+impl PermissionAsks for Asker {
+    fn ask(&self, ask: &PermissionAsk) -> PermissionAnswer {
+        let _ = self.asked.lock().unwrap().send(ask.clone());
+        if let Some(answer) = &self.answer {
+            return answer.clone();
+        }
+        let withdrawn = self.withdrawn.lock().unwrap();
+        let _ = self
+            .changed
+            .wait_timeout_while(withdrawn, TOLD, |w| {
+                !w.iter().any(|(id, _)| *id == ask.request_id)
+            })
+            .unwrap();
+        PermissionAnswer::Cancelled
+    }
+
+    fn withdraw(&self, request_id: &str, reason: &str) {
+        let told = (request_id.to_string(), reason.to_string());
+        self.withdrawn.lock().unwrap().push(told.clone());
+        self.changed.notify_all();
+        let _ = self.told.lock().unwrap().send(told);
+    }
+}
+
+fn routed(asker: &Arc<Asker>) -> ChildPermissions {
+    ChildPermissions::Ask(Arc::clone(asker) as Arc<dyn PermissionAsks>)
+}
+
+/// The line the fake opencode was given in answer to its permission request.
+fn permission_reply(running: &Running) -> String {
+    running
+        .input()
+        .into_iter()
+        .find(|l| l.contains("\"id\":\"perm-1\""))
+        .unwrap_or_else(|| panic!("no answer to perm-1: {:?}", running.input()))
+}
+
+#[test]
+fn a_permission_request_names_its_tool_input_and_options() {
+    let request: RequestPermissionRequest = serde_json::from_str(
+        r#"{"sessionId":"S1","toolCall":{"toolCallId":"t9","title":"bash","rawInput":{"command":"touch hi.txt"}},"options":[
+            {"optionId":"once","name":"Allow once","kind":"allow_once"},
+            {"optionId":"always","name":"Always allow","kind":"allow_always"},
+            {"optionId":"reject","name":"Reject","kind":"reject_once"},
+            {"optionId":"never","name":"Never","kind":"reject_always"}]}"#,
+    )
+    .unwrap();
+    let option = |id: &str, name: &str, kind| AskOption {
+        option_id: id.to_string(),
+        name: name.to_string(),
+        kind,
+    };
+    assert_eq!(
+        permission_ask(&request),
+        PermissionAsk {
+            request_id: "t9".to_string(),
+            tool_name: "bash".to_string(),
+            input_json: r#"{"command":"touch hi.txt"}"#.to_string(),
+            options: vec![
+                option("once", "Allow once", AskKind::AllowOnce),
+                option("always", "Always allow", AskKind::AllowAlways),
+                option("reject", "Reject", AskKind::RejectOnce),
+                option("never", "Never", AskKind::RejectAlways),
+            ],
+        }
+    );
+    // No title: its name; neither: its id; no input: an empty object.
+    let named: RequestPermissionRequest = serde_json::from_str(
+        r#"{"sessionId":"S1","toolCall":{"toolCallId":"t1","name":"edit"},"options":[]}"#,
+    )
+    .unwrap();
+    assert_eq!(permission_ask(&named).tool_name, "edit");
+    assert_eq!(permission_ask(&named).input_json, "{}");
+    let bare: RequestPermissionRequest =
+        serde_json::from_str(r#"{"sessionId":"S1","toolCall":{"toolCallId":"t1"},"options":[]}"#)
+            .unwrap();
+    assert_eq!(permission_ask(&bare).tool_name, "t1");
+}
+
+#[test]
+fn an_answer_is_the_option_chosen_when_the_request_offered_it() {
+    let request: RequestPermissionRequest = serde_json::from_str(
+        r#"{"sessionId":"S1","toolCall":{"toolCallId":"t1"},"options":[
+            {"optionId":"once","name":"Allow once","kind":"allow_once"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        outcome_of(&request, &PermissionAnswer::Selected("once".to_string())),
+        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("once".to_string()))
+    );
+    assert_eq!(
+        outcome_of(&request, &PermissionAnswer::Selected("always".to_string())),
+        RequestPermissionOutcome::Cancelled
+    );
+    assert_eq!(
+        outcome_of(&request, &PermissionAnswer::Cancelled),
+        RequestPermissionOutcome::Cancelled
+    );
+}
+
+#[test]
+fn a_routed_request_is_asked_and_answered_with_the_option_chosen() {
+    let (asker, asks, _) = Asker::new(Some(PermissionAnswer::Selected("always".to_string())));
+    let mut running = run_with(STUB, |spec| spec.permissions = routed(&asker));
+    running.next();
+    running.send("m-1", "PERMIT a tool", Urgency::Wake);
+    assert_eq!(
+        running.until(ended(&["m-1"])),
+        vec![started(&["m-1"]), answered(&["m-1"], "chose always", "S1")]
+    );
+    let ask = asks.recv_timeout(TOLD).expect("the ask was routed");
+    assert_eq!(ask.request_id, "t1");
+    assert_eq!(ask.tool_name, "bash");
+    assert_eq!(ask.input_json, r#"{"command":"touch hi.txt"}"#);
+    let kinds: Vec<AskKind> = ask.options.iter().map(|o| o.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AskKind::AllowAlways,
+            AskKind::AllowOnce,
+            AskKind::RejectOnce
+        ]
+    );
+    assert!(
+        permission_reply(&running).contains("\"optionId\":\"always\""),
+        "{:?}",
+        running.input()
+    );
+}
+
+#[test]
+fn a_routed_request_nobody_chose_for_is_answered_cancelled() {
+    let (asker, _asks, _) = Asker::new(Some(PermissionAnswer::Cancelled));
+    let mut running = run_with(STUB, |spec| spec.permissions = routed(&asker));
+    running.next();
+    running.send("m-1", "PERMIT a tool", Urgency::Wake);
+    assert_eq!(
+        running.until(ended(&["m-1"])),
+        vec![started(&["m-1"]), answered(&["m-1"], "chose nothing", "S1")]
+    );
+    assert!(
+        permission_reply(&running).contains("\"outcome\":\"cancelled\""),
+        "{:?}",
+        running.input()
+    );
+}
+
+#[test]
+fn a_steer_into_a_turn_that_waits_on_an_ask_answers_it_cancelled_first_and_withdraws_it() {
+    let (asker, asks, withdrawals) = Asker::new(None);
+    let mut running = run_with(STUB, |spec| spec.permissions = routed(&asker));
+    running.next();
+    running.send("m-1", "PERMIT a tool", Urgency::Wake);
+    // Forced, not waited for: the ask is held by the asker before the steer.
+    asks.recv_timeout(TOLD).expect("the ask was routed");
+    running.send("m-2", "look at main.rs", Urgency::Steer);
+    let seen = running.until(ended(&["m-2"]));
+    assert!(
+        seen.contains(&answered(&["m-1"], "chose nothing", "S1")),
+        "{seen:?}"
+    );
+    assert_eq!(
+        withdrawals
+            .recv_timeout(TOLD)
+            .expect("the ask was withdrawn"),
+        ("t1".to_string(), "steered".to_string())
+    );
+    let input = running.input();
+    let reply = input
+        .iter()
+        .position(|l| l.contains("\"id\":\"perm-1\""))
+        .expect("the request was answered");
+    assert!(
+        input[reply].contains("\"outcome\":\"cancelled\""),
+        "{input:?}"
+    );
+    let steer = input
+        .iter()
+        .position(|l| l.contains("look at main.rs"))
+        .expect("the steer was written");
+    assert!(reply < steer, "the answer came after the steer: {input:?}");
+}
+
+#[test]
+fn an_interrupt_of_a_turn_that_waits_on_an_ask_withdraws_it() {
+    let (asker, asks, withdrawals) = Asker::new(None);
+    let mut running = run_with(STUB, |spec| spec.permissions = routed(&asker));
+    running.next();
+    running.send("m-1", "PERMIT a tool", Urgency::Wake);
+    asks.recv_timeout(TOLD).expect("the ask was routed");
+    assert!(running.child.control.interrupt().unwrap());
+    running.until(ended(&["m-1"]));
+    assert_eq!(
+        withdrawals
+            .recv_timeout(TOLD)
+            .expect("the ask was withdrawn"),
+        ("t1".to_string(), "interrupted".to_string())
+    );
+    assert!(
+        permission_reply(&running).contains("\"outcome\":\"cancelled\""),
+        "{:?}",
+        running.input()
+    );
+}
+
+#[test]
+fn an_end_of_a_child_whose_turn_waits_on_an_ask_withdraws_it() {
+    let (asker, asks, withdrawals) = Asker::new(None);
+    let mut running = run_with(STUB, |spec| spec.permissions = routed(&asker));
+    running.next();
+    running.send("m-1", "PERMIT a tool", Urgency::Wake);
+    asks.recv_timeout(TOLD).expect("the ask was routed");
+    running.child.control.end(Duration::from_secs(10)).unwrap();
+    // The cancel withdraws it, before the input's end.
+    assert_eq!(
+        withdrawals
+            .recv_timeout(TOLD)
+            .expect("the ask was withdrawn"),
+        ("t1".to_string(), "interrupted".to_string())
+    );
 }

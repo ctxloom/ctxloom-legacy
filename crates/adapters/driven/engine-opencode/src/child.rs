@@ -30,12 +30,22 @@
 //! line before it (a cancel, say) was written. The connection keeps reading
 //! until opencode exits, so a cancelled turn's reply is still heard.
 //!
-//! A permission request (`session/request_permission`) is answered from the
-//! child's posture ([`ChildPermissions`]): no human is there to ask.
+//! A permission request (`session/request_permission`) is answered as the
+//! child's [`ChildPermissions`] say: ROUTED to the user (step 8 U7, what the
+//! daemon gives what it hosts), or from a posture. A routed request is
+//! handed to the connection's main task, never awaited in its handler (it
+//! would hold the dispatch loop, and with it the cancel that withdraws it):
+//! the main task asks it of the [`PermissionAsks`] on a thread of its own
+//! and answers the request with the engine's own option the user chose,
+//! else `cancelled`. When ctxloom redirects the turn the request waits in
+//! (a steer written into it, a cancel, the input's end), every request
+//! still pending is answered `cancelled` BEFORE that call is made, and
+//! withdrawn (Q10).
 //!
 //! The control's `Drop` closes the engine's input, so a child no one holds
 //! ends (opencode runs its plugin's `dispose` and exits on its input's end).
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{ChildStdin, ExitStatus};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -54,9 +64,9 @@ use agent_client_protocol::{Client, JsonRpcNotification, JsonRpcRequest, JsonRpc
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{FutureExt, StreamExt};
 use run_ports::{
-    ChildControl, ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions,
-    ChildSpec, Ended, EngineError, Exit, Launch, Queued, StartedChild, Stdio, Token, TurnCommand,
-    TurnRequest, Urgency,
+    AskKind, AskOption, ChildControl, ChildEngine, ChildError, ChildMessage, ChildObservation,
+    ChildPermissions, ChildSpec, Ended, EngineError, Exit, Launch, PermissionAnswer, PermissionAsk,
+    PermissionAsks, Queued, StartedChild, Stdio, Token, TurnCommand, TurnRequest, Urgency,
 };
 use run_within::{run_piped, Piped, RunError, Spec};
 use serde::{Deserialize, Serialize};
@@ -98,7 +108,7 @@ impl ChildEngine for Opencode {
             model: spec.model.clone(),
             resume: spec.resume.clone(),
         };
-        start(&command, opening, spec.permissions)
+        start(&command, opening, spec.permissions.clone())
     }
 }
 
@@ -168,10 +178,161 @@ struct SetModelResponse {}
 #[notification(method = "_ctxloom/end_of_input")]
 struct EndOfInput {}
 
+/// How a routed permission request is answered, once: the responder its
+/// handler handed over.
+type Reply = Box<dyn FnOnce(RequestPermissionOutcome) + Send>;
+
 /// What the connection's main task is given, in order.
 enum Input {
     Act(Act),
     Heard(Heard),
+    /// A permission request to route, and how it is answered.
+    Asked {
+        request: Box<RequestPermissionRequest>,
+        reply: Reply,
+    },
+    /// The routed request `key` was settled.
+    Settled {
+        key: u64,
+        answer: PermissionAnswer,
+    },
+}
+
+/// A routed permission request still waiting for its answer.
+struct Pending {
+    request: RequestPermissionRequest,
+    reply: Reply,
+}
+
+/// The routed permission requests the main task holds, by key.
+struct Asking {
+    asks: Arc<dyn PermissionAsks>,
+    next: u64,
+    pending: BTreeMap<u64, Pending>,
+}
+
+impl Asking {
+    /// Hand `request` to the asker on a thread of its own: its answer is
+    /// posted back to `inbox` as settled.
+    fn ask(
+        &mut self,
+        inbox: &UnboundedSender<Input>,
+        request: RequestPermissionRequest,
+        reply: Reply,
+    ) {
+        let key = self.next;
+        self.next += 1;
+        let ask = permission_ask(&request);
+        self.pending.insert(key, Pending { request, reply });
+        let asks = Arc::clone(&self.asks);
+        let inbox = inbox.clone();
+        let spawned = thread::Builder::new()
+            .name("ctxloom-acp-ask".to_string())
+            .spawn(move || {
+                let answer = asks.ask(&ask);
+                let _ = inbox.unbounded_send(Input::Settled { key, answer });
+            });
+        // No thread, no ask: answered at once, as nobody chose.
+        if spawned.is_err() {
+            self.settle(key, PermissionAnswer::Cancelled);
+        }
+    }
+
+    /// The request `key` answered as `answer` says, if it still waits.
+    fn settle(&mut self, key: u64, answer: PermissionAnswer) {
+        if let Some(pending) = self.pending.remove(&key) {
+            (pending.reply)(outcome_of(&pending.request, &answer));
+        }
+    }
+
+    /// Every request still waiting answered `cancelled`, then withdrawn
+    /// (`reason` says why), each on a thread of its own: the withdrawal
+    /// waits on the record, the connection does not.
+    fn withdraw_all(&mut self, reason: &str) {
+        for (_, pending) in std::mem::take(&mut self.pending) {
+            let request_id = pending.request.tool_call.tool_call_id.to_string();
+            (pending.reply)(RequestPermissionOutcome::Cancelled);
+            let asks = Arc::clone(&self.asks);
+            let reason = reason.to_string();
+            let _ = thread::Builder::new()
+                .name("ctxloom-acp-withdraw".to_string())
+                .spawn(move || asks.withdraw(&request_id, &reason));
+        }
+    }
+}
+
+/// Why a call ctxloom is about to make withdraws the requests that wait:
+/// it redirects the turn they wait in. None for a call that does not.
+fn withdrawing(act: &Act) -> Option<&'static str> {
+    match act {
+        Act::Prompt { .. } => Some("steered"),
+        Act::Cancel { .. } => Some("interrupted"),
+        Act::CloseInput => Some("ended"),
+        _ => None,
+    }
+}
+
+/// The ask a permission request makes: its tool call's id, what it names
+/// (its title, else its name, else its id), its raw input as JSON (`{}`
+/// when none), and its options of the kinds ACP defines.
+pub(crate) fn permission_ask(request: &RequestPermissionRequest) -> PermissionAsk {
+    let call = &request.tool_call;
+    let tool_name = call
+        .fields
+        .title
+        .clone()
+        .or_else(|| call.fields.name.clone())
+        .unwrap_or_else(|| call.tool_call_id.to_string());
+    let input_json = call
+        .fields
+        .raw_input
+        .as_ref()
+        .map_or_else(|| "{}".to_string(), ToString::to_string);
+    let options = request
+        .options
+        .iter()
+        .filter_map(|option| {
+            let kind = match option.kind {
+                PermissionOptionKind::AllowOnce => AskKind::AllowOnce,
+                PermissionOptionKind::AllowAlways => AskKind::AllowAlways,
+                PermissionOptionKind::RejectOnce => AskKind::RejectOnce,
+                PermissionOptionKind::RejectAlways => AskKind::RejectAlways,
+                // A kind a later schema adds: not offered.
+                _ => return None,
+            };
+            Some(AskOption {
+                option_id: option.option_id.to_string(),
+                name: option.name.clone(),
+                kind,
+            })
+        })
+        .collect();
+    PermissionAsk {
+        request_id: call.tool_call_id.to_string(),
+        tool_name,
+        input_json,
+        options,
+    }
+}
+
+/// What `answer` answers `request` with: the option chosen, when it is one
+/// the request offered, else `cancelled`.
+pub(crate) fn outcome_of(
+    request: &RequestPermissionRequest,
+    answer: &PermissionAnswer,
+) -> RequestPermissionOutcome {
+    match answer {
+        PermissionAnswer::Selected(id) => request
+            .options
+            .iter()
+            .find(|option| option.option_id.to_string() == *id)
+            .map_or(RequestPermissionOutcome::Cancelled, |option| {
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                    option.option_id.clone(),
+                ))
+            }),
+        PermissionAnswer::Cancelled => RequestPermissionOutcome::Cancelled,
+    }
 }
 
 /// What the control and the connection share.
@@ -316,6 +477,15 @@ async fn connect(
     permissions: ChildPermissions,
 ) -> Result<(), agent_client_protocol::Error> {
     let updates = inbox.clone();
+    let asked = inbox.clone();
+    let mut asking = match &permissions {
+        ChildPermissions::Ask(asks) => Some(Asking {
+            asks: Arc::clone(asks),
+            next: 0,
+            pending: BTreeMap::new(),
+        }),
+        ChildPermissions::Refuse | ChildPermissions::Allow => None,
+    };
     Client
         .v1()
         .name("ctxloom")
@@ -330,9 +500,20 @@ async fn connect(
         )
         .on_receive_request(
             async move |request: RequestPermissionRequest, responder, _connection| {
+                if matches!(permissions, ChildPermissions::Ask(_)) {
+                    let reply: Reply = Box::new(move |outcome| {
+                        // A connection that is going takes no answer.
+                        let _ = responder.respond(RequestPermissionResponse::new(outcome));
+                    });
+                    let _ = asked.unbounded_send(Input::Asked {
+                        request: Box::new(request),
+                        reply,
+                    });
+                    return Ok(());
+                }
                 responder.respond(RequestPermissionResponse::new(permission_answer(
                     &request,
-                    permissions,
+                    &permissions,
                 )))
             },
             agent_client_protocol::on_receive_request!(),
@@ -343,7 +524,7 @@ async fn connect(
             loop {
                 futures::select! {
                     input = inputs.next() => match input {
-                        Some(input) => carry_out(&connection, shared, &inbox, observed, input),
+                        Some(input) => carry_out(&connection, shared, &inbox, observed, &mut asking, input),
                         None => break,
                     },
                     () = closed => break,
@@ -353,20 +534,26 @@ async fn connect(
             // more is asked of an engine that is going.
             while let Ok(input) = inputs.try_recv() {
                 if let Input::Heard(_) = input {
-                    carry_out(&connection, shared, &inbox, observed, input);
+                    carry_out(&connection, shared, &inbox, observed, &mut asking, input);
                 }
+            }
+            // A request the engine no longer waits for: withdrawn.
+            if let Some(asking) = asking.as_mut() {
+                asking.withdraw_all("ended");
             }
             Ok(())
         })
         .await
 }
 
-/// Carry out one input: make a call, or hear an answer.
+/// Carry out one input: make a call, hear an answer, or route a
+/// permission request and answer it.
 fn carry_out(
     connection: &agent_client_protocol::v1::ConnectionTo<agent_client_protocol::Agent>,
     shared: &Mutex<Shared>,
     inbox: &UnboundedSender<Input>,
     observed: &mpsc::Sender<ChildObservation>,
+    asking: &mut Option<Asking>,
     input: Input,
 ) {
     match input {
@@ -383,7 +570,21 @@ fn carry_out(
         }
         // A call that cannot be sent is the connection going: its end follows.
         Input::Act(act) => {
+            // The requests the turn waits on are answered before the call
+            // that redirects it is made (Q10).
+            if let (Some(asking), Some(reason)) = (asking.as_mut(), withdrawing(&act)) {
+                asking.withdraw_all(reason);
+            }
             let _ = call(connection, inbox, observed, act);
+        }
+        Input::Asked { request, reply } => match asking.as_mut() {
+            Some(asking) => asking.ask(inbox, *request, reply),
+            None => reply(RequestPermissionOutcome::Cancelled),
+        },
+        Input::Settled { key, answer } => {
+            if let Some(asking) = asking.as_mut() {
+                asking.settle(key, answer);
+            }
         }
     }
 }
@@ -499,15 +700,17 @@ pub(crate) fn stop_of(reason: StopReason) -> Stop {
     }
 }
 
-/// The answer to a permission request: the posture's option, once (never
-/// "always": nothing outlives the request), else cancelled (no such option).
+/// The answer to a permission request from a posture: its option, once
+/// (never "always": nothing outlives the request), else cancelled (no such
+/// option). A routed request is the main task's ([`Asking`]); answered
+/// here, it is refused.
 pub(crate) fn permission_answer(
     request: &RequestPermissionRequest,
-    permissions: ChildPermissions,
+    permissions: &ChildPermissions,
 ) -> RequestPermissionOutcome {
     let kind = match permissions {
         ChildPermissions::Allow => PermissionOptionKind::AllowOnce,
-        ChildPermissions::Refuse => PermissionOptionKind::RejectOnce,
+        ChildPermissions::Refuse | ChildPermissions::Ask(_) => PermissionOptionKind::RejectOnce,
     };
     request
         .options

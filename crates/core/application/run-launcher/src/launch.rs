@@ -260,7 +260,7 @@ fn drive(
                 settings: request.settings.clone(),
                 resume: request.resume.clone(),
                 session_id: request.session_id.clone(),
-                permissions: request.child_permissions,
+                permissions: request.child_permissions.clone(),
             };
             let command = child.command(&spec).map_err(|e| e.to_string())?;
             Ok((command, child.stdio(), Some(spec)))
