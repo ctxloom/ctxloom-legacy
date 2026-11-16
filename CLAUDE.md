@@ -3490,7 +3490,8 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    daemon-application mutant grew to about 70 GB twice and the global OOM
    took the editor's whole user scope with every session in it): a
    transient systemd user scope with `MemoryMax=` the justfile's
-   `mutants_memory_max` (16G, env `MUTANTS_MEMORY_MAX`), `MemorySwapMax=`
+   `mutants_memory_max` (8G, owner ruling of 2026-11-16, env
+   `MUTANTS_MEMORY_MAX`), `MemorySwapMax=`
    `mutants_swap_max` (2G, env `MUTANTS_SWAP_MAX`) and
    `OOMPolicy=continue`, so the cap's OOM killer kills the runaway test
    alone (its mutant is caught) and the run goes on; the default policy
@@ -3500,7 +3501,21 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    `/run/user/<uid>` when its bus is there; with no user bus the gate FAILS
    before anything is built, naming the fix, and never runs uncapped
    unasked: `MUTANTS_MEMORY_MAX=none` is the opt-out, stated in the run's
-   output. Plain test runs (`just test`, `land-ratchet`) are not capped.
+   output. The TEST GATES are capped the same way (owner ruling of
+   2026-11-16): every run of the gates' `_tests` (`just test`, `test-pkg`,
+   `test-staged`, and so the test leg of `closeout`, `closeout-ratchet` and
+   `land-ratchet`), build and tests, and the ratchet base's feature runner
+   (`scripts/ratchet-base.sh`), at `tests_memory_max` (16G, env
+   `TESTS_MEMORY_MAX`) and `tests_swap_max` (2G, env `TESTS_SWAP_MAX`), so
+   one runaway test is killed alone, nextest reports it failed and runs the
+   rest (forced in the self-test with a runaway nextest test). No user bus
+   is `_tests`' 121 before anything is built (its FAIL line naming
+   `TESTS_MEMORY_MAX=none`, the opt-out, said in the run's log); the
+   wrapper names the caller's opt-out variable (`MEMORY_CAP_OPT_OUT`). CI
+   and the nightly set `TESTS_MEMORY_MAX=none` deliberately (a hosted
+   runner's VM is the job's alone; Windows and macOS have no systemd), each
+   test step saying so. `gates/` is a copy of the shared gates repository:
+   the change is to be ported there.
    Its self-test is `scripts/memory-cap.selftest.sh` (`just selftest`).
    The last run's mutants.out (each
    mutant's log, outcomes.json) is kept in target/logs/mutants-staged/. Red

@@ -111,14 +111,22 @@ fi
 [ -z "$emitter" ] || echo "note ratchet-base: $short predates the scenario list; ${emitter:0:7}'s runner change was applied on it"
 [ -z "$chooser" ] || echo "note ratchet-base: $short cannot run one scenario alone; ${chooser:0:7}'s runner change was applied on it"
 
+# The test gates' memory cap (gates/memory-cap.sh, the checkout's, at the
+# justfile's `tests_memory_max` and `tests_swap_max`; TESTS_MEMORY_MAX=none
+# opts out), had before anything is built: no user bus is a failure.
+cap=(env MEMORY_CAP_OPT_OUT=TESTS_MEMORY_MAX "$top/gates/memory-cap.sh" ratchet-base
+    "$(just --justfile "$top/justfile" --evaluate tests_memory_max)"
+    "$(just --justfile "$top/justfile" --evaluate tests_swap_max)")
+"${cap[@]}" --check
+
 # The feature runner on the base, its list to $1, the rest of the arguments
 # its environment; its output appended to the log. The runner is the base's:
-# its clusters, or its one test from before them.
+# its clusters, or its one test from before them; it runs under the cap.
 run_features() {
     local list=$1
     shift
     (cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" "GHERKIN_RATCHET=$list" "$@" \
-        cargo nextest run --manifest-path "$wt/Cargo.toml" --package ctxloom --no-fail-fast --no-tests=fail \
+        "${cap[@]}" cargo nextest run --manifest-path "$wt/Cargo.toml" --package ctxloom --no-fail-fast --no-tests=fail \
         --status-level fail --final-status-level fail --success-output never --failure-output final \
         --hide-progress-bar --cargo-quiet -E "$runner_tests") \
         >> "$log" 2>&1 7>&-

@@ -3,6 +3,11 @@
 # <swap_max> <command>...`, or `memory-cap.sh <label> <memory_max> <swap_max>
 # --check` to say only whether the cap can be had.
 #
+# Its callers: every cargo-mutants run (`mutants_memory_max`) and every
+# test gate's run (`_tests`, so `test`, `test-pkg`, `test-staged` and the
+# test leg of `closeout`, `closeout-ratchet` and `land-ratchet`:
+# `tests_memory_max`, owner ruling of 2026-11-16).
+#
 # Why (2026-11-15): a cargo-mutants mutant whose test grew without bound
 # filled all RAM and swap twice; the kernel's global OOM killer took the
 # test, and systemd then stopped the whole user scope it ran under (an
@@ -14,7 +19,8 @@
 # OOMPolicy=continue. That last is the point: with the default (stop) the
 # scope's OOM stops every process in it, the whole mutation run; with
 # continue only the process the kernel picks (the runaway test) is killed,
-# its test fails, cargo-mutants counts the mutant caught and goes on.
+# its test fails, cargo-mutants counts the mutant caught and goes on (and
+# a nextest run reports that test failed and runs the rest).
 # `--collect` lets a scope that ended failed (an OOM kill) go, so its name
 # is free again. Inside the scope the command is started only once the
 # scope's memory.max is seen set (a manager without the memory controller
@@ -29,13 +35,17 @@
 # bus is there. With no user bus to reach, or a scope that cannot be made,
 # it FAILS, saying why and the fix; it never runs the command uncapped
 # unasked. The opt-out is <memory_max> `none`: the command runs uncapped,
-# and the run says so.
+# and the run says so. The variable that opts out is the caller's, named
+# in what is said (MEMORY_CAP_OPT_OUT, default MUTANTS_MEMORY_MAX; the
+# test gates' is TESTS_MEMORY_MAX).
 #
 # Exit: the command's own; 1 when the cap cannot be had; 2 on usage.
 # Environment: MEMORY_CAP_RUN_USER, the directory holding the per-user
-# runtime directories (default /run/user; the self-test's seam).
+# runtime directories (default /run/user; the self-test's seam), and
+# MEMORY_CAP_OPT_OUT, the opt-out's variable.
 # Self-test: scripts/memory-cap.selftest.sh (`just selftest`).
 set -euo pipefail
+opt_out=${MEMORY_CAP_OPT_OUT:-MUTANTS_MEMORY_MAX}
 
 if [ "${1:-}" = --inside ]; then
     # In the scope: refuse to run unless the cap took; then run the command
@@ -48,7 +58,7 @@ if [ "${1:-}" = --inside ]; then
     case "$max" in
         '' | max)
             echo "FAIL $label: the memory cap did not take: the scope's memory.max is '${max:-unreadable}' ($cg)" >&2
-            echo "  fix: delegate the memory controller to the user manager (systemd's user@.service Delegate=), or opt out, stating it: MUTANTS_MEMORY_MAX=none" >&2
+            echo "  fix: delegate the memory controller to the user manager (systemd's user@.service Delegate=), or opt out, stating it: $opt_out=none" >&2
             exit 1 ;;
     esac
     rc=0
@@ -67,7 +77,7 @@ label=$1 memory_max=$2 swap_max=$3
 shift 3
 
 if [ "$memory_max" = none ]; then
-    echo "$label: memory cap: none (MUTANTS_MEMORY_MAX=none): this run is UNCAPPED; a runaway test can take the whole machine's memory"
+    echo "$label: memory cap: none ($opt_out=none): this run is UNCAPPED; a runaway test can take the whole machine's memory"
     [ "$1" = --check ] && exit 0
     exec "$@"
 fi
@@ -77,7 +87,7 @@ unable() {
     echo "  fix: $2" >&2
     exit 1
 }
-fix_bus="run it from a login session (or enable lingering: loginctl enable-linger $(id -un)), or opt out, stating it: MUTANTS_MEMORY_MAX=none"
+fix_bus="run it from a login session (or enable lingering: loginctl enable-linger $(id -un)), or opt out, stating it: $opt_out=none"
 command -v systemd-run >/dev/null 2>&1 || unable "systemd-run is not on PATH, and the cap is a systemd user scope" "$fix_bus"
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
     run_user=${MEMORY_CAP_RUN_USER:-/run/user}/$(id -u)

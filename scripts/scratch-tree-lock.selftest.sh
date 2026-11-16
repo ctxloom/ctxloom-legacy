@@ -27,6 +27,7 @@ fx=$tmp/fx
 mkdir -p "$fx/gates"
 cp "$gates" "$fx/gates/gates.just"
 cp "$(dirname "$gates")/drop-worktree.sh" "$fx/gates/drop-worktree.sh"
+cp "$(dirname "$gates")/memory-cap.sh" "$fx/gates/memory-cap.sh"
 cat > "$fx/justfile" <<'J'
 TOP := `git rev-parse --show-toplevel`
 import 'gates/gates.just'
@@ -37,6 +38,8 @@ red_judge := ""
 mutation_thresholds := "crates=90"
 mutants_memory_max := "16G"
 mutants_swap_max := "2G"
+tests_memory_max := "none"
+tests_swap_max := "0"
 workspace_wide := "Cargo.toml"
 
 # What the recipe's process holds open, one target per line, and a

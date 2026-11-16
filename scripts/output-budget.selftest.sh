@@ -18,6 +18,7 @@ fx=$tmp/fx
 mkdir -p "$fx/gates" "$fx/crates/a/src"
 cp "$gates" "$fx/gates/gates.just"
 cp "$(dirname "$gates")/drop-worktree.sh" "$fx/gates/drop-worktree.sh"
+cp "$(dirname "$gates")/memory-cap.sh" "$fx/gates/memory-cap.sh"
 cat > "$fx/Cargo.toml" <<'T'
 [workspace]
 members = ["crates/a"]
@@ -39,6 +40,8 @@ red_judge := ""
 mutation_thresholds := "crates=90"
 mutants_memory_max := "16G"
 mutants_swap_max := "2G"
+tests_memory_max := "none"
+tests_swap_max := "0"
 workspace_wide := "Cargo.toml"
 build:
     @just --justfile {{TOP}}/justfile _run build workspace cargo cargo build -q --message-format=short --manifest-path {{TOP}}/Cargo.toml --workspace

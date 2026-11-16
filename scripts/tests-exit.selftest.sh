@@ -8,8 +8,9 @@
 #   0 passed; 100 a test failed; 101 not built; 120 a doc test failed;
 #   121 nextest failed some other way (`nextest exited <code>` in the log).
 # 100 and 120 are red (committed off the default branch only); 101 and 121
-# are refused on every branch. The gates are gates/gates.just (or
-# $GATES_JUST).
+# are refused on every branch. Its memory cap: opted out and said, and
+# with no user bus a 121 before anything is built. The gates are
+# gates/gates.just (or $GATES_JUST).
 set -euo pipefail
 while IFS= read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
 here=$(cd "$(dirname "$0")" && pwd)
@@ -22,6 +23,7 @@ fx=$tmp/fx
 mkdir -p "$fx/gates" "$fx/crates/a/src" "$tmp/bin"
 cp "$gates" "$fx/gates/gates.just"
 cp "$(dirname "$gates")/drop-worktree.sh" "$fx/gates/drop-worktree.sh"
+cp "$(dirname "$gates")/memory-cap.sh" "$fx/gates/memory-cap.sh"
 cat > "$fx/Cargo.toml" <<'T'
 [workspace]
 members = ["crates/a"]
@@ -47,6 +49,8 @@ features_prepare := ""
 mutation_thresholds := "crates=90"
 mutants_memory_max := "16G"
 mutants_swap_max := "2G"
+tests_memory_max := "none"
+tests_swap_max := "0"
 workspace_wide := "Cargo.toml"
 red_judge := "_judge"
 [no-exit-message]
@@ -103,6 +107,33 @@ for code in 102 105 104 4; do
     tests_rc "nextest exits $code" 121 FAKE_NEXTEST_RC="$code"
     grep -q "^nextest exited $code: not a test failure" "$tmp/out" || fail "_tests, nextest $code: not named: $(cat "$tmp/out")"
 done
+# The memory cap (gates/memory-cap.sh, `tests_memory_max`): the fixture
+# opts out, and the run says so; with a cap and no user bus to reach, the
+# run FAILS before anything is built, 121, the cap's FAIL line and its fix
+# naming TESTS_MEMORY_MAX; where a user scope can be had, a capped run
+# passes and ends with the scope's peak.
+tests_rc "uncapped" 0
+grep -q "^tests: memory cap: none (TESTS_MEMORY_MAX=none): this run is UNCAPPED" "$tmp/out" \
+    || fail "_tests, uncapped: the opt-out is not said: $(cat "$tmp/out")"
+if "$fx/gates/memory-cap.sh" probe 1G 0 --check > /dev/null 2>&1; then
+    rc=0
+    (cd "$fx" && just --set tests_memory_max 2G --set tests_swap_max 0 _tests --workspace > "$tmp/out" 2>&1) || rc=$?
+    [ "$rc" -eq 0 ] || fail "_tests, capped: exit $rc, want 0: $(tail -n 20 "$tmp/out")"
+    grep -q "^tests: memory peak .* (cap MemoryMax=2G MemorySwapMax=0)" "$tmp/out" \
+        || fail "_tests, capped: no peak line: $(cat "$tmp/out")"
+else
+    echo "SKIP tests-exit.selftest (a capped run): no systemd user scope here"
+fi
+mkdir -p "$tmp/run-user/$(id -u)"
+rm -rf "$tmp/target"
+rc=0
+(cd "$fx" && env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS "MEMORY_CAP_RUN_USER=$tmp/run-user" \
+    just --set tests_memory_max 1G _tests --workspace > "$tmp/out" 2>&1) || rc=$?
+[ "$rc" -eq 121 ] || fail "_tests, no bus: exit $rc, want 121: $(cat "$tmp/out")"
+grep -q "^FAIL tests: no memory cap" "$tmp/out" || fail "_tests, no bus: not said: $(cat "$tmp/out")"
+grep -q "^  fix: .*TESTS_MEMORY_MAX=none" "$tmp/out" || fail "_tests, no bus: no fix naming the opt-out: $(cat "$tmp/out")"
+[ ! -e "$tmp/target" ] || fail "_tests, no bus: something was built uncapped"
+
 # The extract says which, so a FAIL line never calls a runner failure red.
 printf 'nextest exited 102: not a test failure\n' > "$tmp/log"
 said=$(cd "$fx" && just _extract-tests "$tmp/log" 121)

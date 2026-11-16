@@ -55,8 +55,17 @@ red_judge := ""
 # grows without bound is killed by the cap's OOM killer (caught) instead of
 # filling the machine (2026-11-15). MUTANTS_MEMORY_MAX=none opts out, said in
 # the run's log; MUTANTS_MEMORY_MAX and MUTANTS_SWAP_MAX change the cap.
-mutants_memory_max := env("MUTANTS_MEMORY_MAX", "16G")
+# 8G (owner ruling of 2026-11-16, down from 16G).
+mutants_memory_max := env("MUTANTS_MEMORY_MAX", "8G")
 mutants_swap_max := env("MUTANTS_SWAP_MAX", "2G")
+# The test gates' memory cap, the same scope (owner ruling of 2026-11-16):
+# every run of the gates' `_tests` (`test`, `test-pkg`, `test-staged`, and
+# the test leg of `closeout`, `closeout-ratchet` and `land-ratchet`) and the
+# ratchet base's feature runner (scripts/ratchet-base.sh). TESTS_MEMORY_MAX=none
+# opts out, said in the run's log; TESTS_MEMORY_MAX and TESTS_SWAP_MAX change
+# the cap.
+tests_memory_max := env("TESTS_MEMORY_MAX", "16G")
+tests_swap_max := env("TESTS_SWAP_MAX", "2G")
 
 mutation_thresholds := "crates/core/domain=90 crates/core/read-model=90 crates/core/ports=90 crates/core/application=90 crates/adapters=90 crates/root/lib=0 crates/root/bin=0"
 

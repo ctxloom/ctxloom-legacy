@@ -42,12 +42,16 @@
 #                        `16G`, ...), or `none` to run it uncapped, said in
 #                        its log (gates/memory-cap.sh).
 #   mutants_swap_max     its swap cap (systemd's MemorySwapMax).
+#   tests_memory_max     the test gates' memory cap (`_tests`: `test`,
+#                        `test-staged`, and every caller of `_tests`), or
+#                        `none` to run them uncapped, said in their log.
+#   tests_swap_max       its swap cap.
 #
 # and this recipe, which the hooks call: `lint` (clippy, through `_run`).
 #
 # Needs bash, git, jq, flock, setsid, ps and pkill (util-linux, procps),
 # systemd-run and journalctl with a reachable systemd user manager (the
-# mutation run's memory cap), cargo-nextest, cargo-deny, cargo-mutants, gitleaks and lefthook. A missing
+# mutation run's and the test gates' memory caps), cargo-nextest, cargo-deny, cargo-mutants, gitleaks and lefthook. A missing
 # tool fails its gate; nothing skips.
 
 # With forward slashes: on Windows just gives `D:\a\...`, whose backslashes
@@ -423,9 +427,36 @@ _test-affected scope:
 # NEXTEST_PROFILE, when set, is the nextest profile (nextest reads it itself;
 # said here so the run's log names it): CI's `ci-platform` narrows the run by
 # its `default-filter` (.config/nextest.toml).
+#
+# The whole run, build and tests, is under the test gates' memory cap
+# (gates/memory-cap.sh, owner ruling of 2026-11-16: a systemd user scope,
+# MemoryMax=`tests_memory_max`, MemorySwapMax=`tests_swap_max`,
+# OOMPolicy=continue), so a test that grows without bound is killed by the
+# cap's OOM killer alone: nextest reports that test failed (100) and runs
+# the rest, and the machine keeps its memory. The log ends with the scope's
+# memory peak. With no user bus to reach the run FAILS before anything is
+# built (121, the cap's FAIL line and its fix said); `tests_memory_max`
+# `none` (TESTS_MEMORY_MAX=none) opts out, said in the log. Any exit of the
+# capped run outside the codes above (the cap not taking) is 121 too.
 [positional-arguments]
 [no-exit-message]
 _tests +packages:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root='{{gates_root}}'
+    cap=(env MEMORY_CAP_OPT_OUT=TESTS_MEMORY_MAX "$root/gates/memory-cap.sh" tests '{{tests_memory_max}}' '{{tests_swap_max}}')
+    "${cap[@]}" --check || exit 121
+    rc=0
+    "${cap[@]}" just --justfile "$root/justfile" _tests-capped "$@" || rc=$?
+    case "$rc" in
+        0|100|101|120|121) exit "$rc" ;;
+        *) echo "the capped test run exited $rc: not a test failure"; exit 121 ;;
+    esac
+
+# `_tests`' run, inside its memory cap.
+[positional-arguments]
+[no-exit-message]
+_tests-capped +packages:
     #!/usr/bin/env bash
     set -euo pipefail
     root='{{gates_root}}'

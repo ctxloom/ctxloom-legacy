@@ -49,6 +49,13 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: never
+  # The test gates' memory cap (gates/memory-cap.sh, a systemd user scope;
+  # owner ruling of 2026-11-16) is opted out of, deliberately: a hosted
+  # runner's VM is the job's alone, so a runaway test fails that job and
+  # nothing else, and the Windows and macOS runners have no systemd at all
+  # (whether the Linux one can make a user scope is not relied on). Each
+  # test step says so in its output.
+  TESTS_MEMORY_MAX: none
 
 jobs:
   plan:
@@ -115,7 +122,10 @@ jobs:
         with:
           node-version: "22"
       - run: just build
-      - run: just test
+      - name: just test (uncapped, TESTS_MEMORY_MAX=none)
+        run: |
+          echo "test gates: memory cap: none (TESTS_MEMORY_MAX=none): this runner's VM is the job's alone"
+          just test
       - if: failure()
         uses: ctxloom/ci/.github/actions/gate-logs@fa01764571615bd3174313e84631bdd5c13a02e6 # main 2026-11-12
         with:
