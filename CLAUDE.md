@@ -2107,8 +2107,24 @@ one, `sessions-untrusted-target`, before anything is planned or written, else
 plans the child at its root with its trust (`HandOff.project` answers it).
 `LaunchChild` carries its project's id and root and `TargetTrust` from the
 daemon's answers (`same_project`; `trusted`, GetTrust's, unread for the
-owner's own project). Not yet: a cross-project child's outputs go to its
-owner's output folder; its asks are the root's project's (Q-A, U4).
+owner's own project). Such a child is WHOLE across the two projects (step
+8 U2b, owner ruling 2026-11-16). One board holds every project's sessions
+(T14) and each project's plan plans its own, a step reaching across where
+its owner or child is (session-policies' `plan`): the owner's plan launches
+and CLOSES its child there (the cascade, `cascade:<owner>:<child>`, sent to
+the child's project), the child's plan tells each turn it ends to its owner
+(`notice:...`, in the owner's project) and ends it on its owner when it
+closes (`child-ended:...`); its hosted run is ended, its engine exits and
+its hand-off is removed, as within one project. Its outputs are its OWN
+project's: the plan mints it with no output folder of its owner's, and the
+daemon reads that project's `output.dir` there (`ChildPlans::output_root`,
+the wiring's `child_output_root`, with the env its launcher handed),
+`<its root>/<output.dir>/<its harp>`; one that cannot be read is a launch
+that failed (its owner told). A child of the owner's own project keeps its
+outputs in its owner's folder, as before. The owner's side addresses it by
+its full name (`projects/<its project>/sessions/<harp>`, the launch's
+answer); a bare harp is the caller's project's. Its asks are the root's
+project's (Q-A, U4).
 
 ## Storage is angzarr-store-sqlite
 

@@ -78,6 +78,14 @@ fn hosted(name: &'static str) -> HostedEngine {
 pub(crate) struct Plans(Arc<Mutex<Vec<String>>>);
 
 impl ChildPlans for Plans {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        _: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Ok(format!("{project_dir}/ctxloom"))
+    }
+
     fn preview(
         &self,
         engine: &str,

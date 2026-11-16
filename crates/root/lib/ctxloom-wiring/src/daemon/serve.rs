@@ -1292,6 +1292,14 @@ impl ChildPlans for Plans {
     ) -> Option<run_ports::GitUser> {
         super::child_git_user(&self.temp, self.user_home.as_deref(), project_dir, env)
     }
+
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        super::child_output_root(&self.home, &self.temp, project_dir, env)
+    }
 }
 
 /// The hand-off files under the daemon's directory (T6: read at each of

@@ -194,6 +194,14 @@ impl ChildEngine for Scripted {
 struct Plans;
 
 impl ChildPlans for Plans {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        _: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Ok(format!("{project_dir}/the-outputs"))
+    }
+
     fn preview(
         &self,
         engine: &str,
@@ -865,6 +873,14 @@ struct Permitted;
 const DOCUMENT: &str = r#"{"defaultMode":"plan","allow":["Bash(ls)"]}"#;
 
 impl ChildPlans for Permitted {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Plans.output_root(project_dir, env)
+    }
+
     fn preview(
         &self,
         engine: &str,
@@ -916,6 +932,14 @@ async fn a_hosted_childs_home_is_prepared_with_its_agents_permissions() {
 struct Surfaced;
 
 impl ChildPlans for Surfaced {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Plans.output_root(project_dir, env)
+    }
+
     fn preview(
         &self,
         engine: &str,
@@ -1186,6 +1210,14 @@ async fn ending_all_ends_each_hosted_child() {
 async fn an_owner_is_told_its_childs_launch_failed() {
     struct Failing;
     impl ChildPlans for Failing {
+        fn output_root(
+            &self,
+            project_dir: &str,
+            env: &BTreeMap<String, String>,
+        ) -> Result<String, String> {
+            Plans.output_root(project_dir, env)
+        }
+
         fn preview(
             &self,
             _: &str,
@@ -1321,6 +1353,14 @@ impl HandOffs for Files {
 struct ForAgent(Arc<Mutex<Vec<String>>>);
 
 impl ChildPlans for ForAgent {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Plans.output_root(project_dir, env)
+    }
+
     fn preview(
         &self,
         engine: &str,
@@ -1705,6 +1745,14 @@ impl crate::ChildWorkspaces for AllCheckouts {
 struct TrustSeen(Arc<Mutex<Vec<bool>>>);
 
 impl ChildPlans for TrustSeen {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Plans.output_root(project_dir, env)
+    }
+
     fn preview(
         &self,
         engine: &str,
@@ -1769,6 +1817,14 @@ async fn a_hosted_child_is_planned_with_its_projects_trust() {
 struct WorktreePlans;
 
 impl ChildPlans for WorktreePlans {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Plans.output_root(project_dir, env)
+    }
+
     fn preview(
         &self,
         engine: &str,
@@ -2652,5 +2708,130 @@ async fn a_one_shot_still_running_after_the_period_is_stopped() {
     assert!(
         log.contains("quick-fox: a one-shot still running after 2s: its engine stopped (SIGTERM)"),
         "{log}"
+    );
+}
+
+/// Each output root's read: its project and the handed `PATH`.
+type RootsRead = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+/// A plan of the child whose projects' output roots are read: each read's
+/// project and handed `PATH` recorded; `root` none, the read fails.
+struct Outputs {
+    asked: RootsRead,
+    root: Option<&'static str>,
+}
+
+impl ChildPlans for Outputs {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((project_dir.to_string(), env.get("PATH").cloned()));
+        self.root
+            .map(str::to_string)
+            .ok_or_else(|| "library-application-config-unreadable".to_string())
+    }
+
+    fn preview(
+        &self,
+        engine: &str,
+        agent: &str,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+        trusted: bool,
+    ) -> Result<Previewed, String> {
+        Plans.preview(engine, agent, project_dir, env, trusted)
+    }
+
+    fn git_user(&self, _: &str, _: &BTreeMap<String, String>) -> Option<run_ports::GitUser> {
+        None
+    }
+}
+
+/// A world whose owner launched its child into the project `far-heron` at
+/// `/far` (trusted), its output roots read by `outputs`, ticked thrice.
+async fn launched_across(outputs: Outputs) -> World {
+    let mut world = World::new(Box::new(outputs));
+    world.name_project().await;
+    world.mint(OWNER, "boss", None).await;
+    world
+        .handle(
+            OWNER,
+            sessions::LaunchChild {
+                child_project_id: "far-heron".to_string(),
+                child_session: CHILD.to_string(),
+                child_root: "/far".to_string(),
+                harp: "kid".to_string(),
+                engine: ENGINE.to_string(),
+                trust: sessions::TargetTrust {
+                    same_project: false,
+                    trusted: true,
+                },
+                delegation_limit: 1,
+                requester: None,
+                prompt: String::new(),
+            },
+        )
+        .await;
+    for _ in 0..3 {
+        world.tick().await;
+    }
+    world
+}
+
+// Step 8 U2b: a child launched into another project keeps its outputs in
+// THAT project's output folder, as its config says, under its own harp:
+// read in its project with the environment its launcher handed.
+#[tokio::test]
+async fn a_child_in_another_project_keeps_its_outputs_in_its_projects_folder() {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let world = launched_across(Outputs {
+        asked: Arc::clone(&asked),
+        root: Some("/far/notes/"),
+    })
+    .await;
+    let minted: Vec<(String, String)> = world
+        .session_events(CHILD)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::SessionMinted(minted) => Some((minted.project_id, minted.output_dir)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        minted,
+        [("far-heron".to_string(), "/far/notes/kid".to_string())]
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [("/far".to_string(), Some("/usr/bin".to_string()))]
+    );
+}
+
+// Step 8 U2b: a child whose project's output folder cannot be read is not
+// minted: its owner is told the launch failed, and holds it no longer.
+#[tokio::test]
+async fn a_child_whose_projects_output_folder_cannot_be_read_is_not_launched() {
+    let world = launched_across(Outputs {
+        asked: Arc::default(),
+        root: None,
+    })
+    .await;
+    assert!(world.session_events(CHILD).await.is_empty(), "not minted");
+    let failed = world
+        .session_events(OWNER)
+        .await
+        .into_iter()
+        .any(|event| matches!(event, SessionEvent::ChildLaunchFailed(_)));
+    assert!(failed, "the owner was told");
+    let said = world.said.lock().unwrap().join("\n");
+    assert!(
+        said.contains("kid: its output folder not read: library-application-config-unreadable"),
+        "{said}"
     );
 }

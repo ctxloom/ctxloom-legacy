@@ -2067,3 +2067,128 @@ fn a_set_aside_hold_does_not_block_a_shutdown() {
         shut.said()
     );
 }
+
+/// The project a cross-project child works in (step 8 U2b): `api`, beside
+/// the owner's, initialized with its own id, its default agent on
+/// claude-code, its outputs kept in `notes/`.
+const OTHER_CONFIG: &str = "schema_version: 9\nagents:\n  default:\n    engine: claude-code\ndefault_agent: default\noutput:\n  dir: notes\n";
+
+impl World {
+    /// The project `api` beside this one, trusted by the user.
+    fn other_project(&self) -> std::path::PathBuf {
+        let dir = self.project.dir().parent().expect("a parent").join("api");
+        files::put(dir.join(".ctxloom/config.yaml"), OTHER_CONFIG);
+        files::put(
+            dir.join(super::library::PROJECT_MARKER),
+            "api-fixture-project\n",
+        );
+        let trusted = self.project.run_in_with(&dir, &ENV, &["trust", "--yes"]);
+        assert_eq!(trusted.code, 0, "{}\n{}", trusted.said(), self.log());
+        dir
+    }
+
+    /// `args` run in `dir` (its project found from there), answered.
+    fn ok_in(&self, dir: &std::path::Path, args: &[&str]) -> Value {
+        let ran = self.project.run_in_with(dir, &ENV, args);
+        assert_eq!(ran.code, 0, "{args:?}: {}\n{}", ran.said(), self.log());
+        ran.json()
+    }
+}
+
+// Step 8 U2b (owner, 2026-11-16: "make cross-project children whole"): a
+// child launched into ANOTHER project is whole there. Its session is that
+// project's, and its outputs are kept in that project's output folder, as
+// its config says; each turn it ends is told to its owner in the owner's
+// project; the owner's side reaches it by its full name; and the owner's
+// close cascades across: the child is closed, its engine exits and its
+// hand-off is removed.
+#[test]
+fn a_child_in_another_project_tells_its_owner_and_ends_with_its_close() {
+    let world = World::new();
+    let seeded = world.run(&["test", "seed-session", OWNER]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let api = world.other_project();
+    let launched = world.run_also(
+        &[("ANTHROPIC_API_KEY", "launchers-key")], // gitleaks:allow
+        &[
+            "session",
+            "launch",
+            OWNER,
+            "--name",
+            CHILD,
+            "--project",
+            "../api",
+            "first task",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(launched.code, 0, "{}\n{}", launched.said(), world.log());
+    let launched = launched.json();
+    let name = launched["name"].as_str().expect("a name").to_string();
+    let child_id = launched["uid"].as_str().expect("an id").to_string();
+
+    // Its first turn's end is told to its owner, in the owner's project.
+    let first = world.until("the first notice", |w| {
+        let notices = w.notices();
+        (notices.len() == 1).then(|| notices[0].clone())
+    });
+    assert_eq!(
+        first,
+        format!("child {CHILD} finished its turn for launch:{child_id}")
+    );
+
+    // Its session is its project's, its outputs that project's folder's.
+    let child = world.ok_in(&api, &["session", "show", CHILD, "--format", "json"]);
+    assert_eq!(child["name"], Value::String(name.clone()));
+    let outputs = std::path::PathBuf::from(child["output_dir"].as_str().unwrap_or(""));
+    let canonical = files::canonical(&api);
+    assert!(
+        [api.clone(), canonical]
+            .iter()
+            .any(|root| outputs == root.join("notes").join(CHILD)),
+        "{child}"
+    );
+    assert_eq!(
+        world.show(OWNER)["children"],
+        Value::Array(vec![Value::String(name.clone())])
+    );
+    let listed = world.ok_in(&api, &["session", "list", "--format", "json"]);
+    assert!(listed.to_string().contains(&name), "{listed}");
+
+    // The owner's side reaches it by its full name: a wake is its next
+    // turn, and that turn's end is told too.
+    world.ok(&[
+        "session",
+        "send",
+        &name,
+        "wake",
+        "second task",
+        "--id",
+        "m2",
+        "--format",
+        "json",
+    ]);
+    let second = world.until("the second notice", |w| {
+        let notices = w.notices();
+        (notices.len() == 2).then(|| notices[1].clone())
+    });
+    assert_eq!(second, format!("child {CHILD} finished its turn for m2"));
+
+    // The owner's close cascades across projects.
+    world.ok(&["session", "close", OWNER, "--format", "json"]);
+    world.until("the child closed and released", |w| {
+        let shown = w.ok_in(&api, &["session", "show", CHILD, "--format", "json"]);
+        let closed = shown["closed"] == Value::Bool(true);
+        let released = w.show(OWNER).get("children").is_none();
+        (closed && released).then_some(())
+    });
+    world.until("the child's engine gone", |w| {
+        files::exists(w.stub_dir.join("exited")).then_some(())
+    });
+    world.until("the child's hand-off gone", |w| {
+        files::children(w.project.home().join(".ctxloom/daemon/launch"))
+            .is_empty()
+            .then_some(())
+    });
+}

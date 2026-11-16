@@ -99,6 +99,18 @@ pub trait ChildPlans: Send + Sync {
     /// her home): what the child's session home is seeded with (owner
     /// ruling 112), as a CLI run's is. None when git knows neither part.
     fn git_user(&self, project_dir: &str, env: &BTreeMap<String, String>) -> Option<GitUser>;
+
+    /// Where the project at `project_dir` keeps its sessions' outputs, as
+    /// its config says (`output.dir`, against its root unless absolute;
+    /// unsaid, `ctxloom/`), read as a ctxloom process there would read it
+    /// with `env`: a child launched into it from another project keeps its
+    /// outputs in `<this>/<harp>` (step 8 U2b). The error is the code of
+    /// what could not be read.
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String>;
 }
 
 /// The hand-off files a child's environment is kept in for its life (T6;

@@ -1202,6 +1202,53 @@ pub(crate) fn child_plan(
     env: &BTreeMap<String, String>,
     trusted: bool,
 ) -> Result<library_application::Previewed, String> {
+    let library = child_library(home, temp, project_dir, env)?;
+    let request = library_application::RunRequest {
+        agent: agent.to_string(),
+        engine: engine.to_string(),
+        ..library_application::RunRequest::default()
+    };
+    let flags = library_application::Flags {
+        trusted,
+        ..library_application::Flags::default()
+    };
+    library
+        .dry_run(&flags, &request)
+        .result
+        .map_err(|e| angzarr_diagnostic::Diagnostic::code(&e).to_string())
+}
+
+/// The root of the session output folders of the project at
+/// `project_dir`, as a ctxloom process there reads its config with `env`
+/// (step 8 U2b: a child launched into it from another project keeps its
+/// outputs under it): `output.dir` against the project's root, its default
+/// where the config does not say or does not read, as a hosted run's is.
+pub(crate) fn child_output_root(
+    home: &Path,
+    temp: &Path,
+    project_dir: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let library = child_library(home, temp, project_dir, env)?;
+    let written = library
+        .run_settings(&library_application::Flags::default())
+        .map_or_else(
+            || library_application::OUTPUT_DIR_DEFAULT.to_string(),
+            |settings| settings.output_dir,
+        );
+    let root = crate::oneshot::output_root(Path::new(project_dir), &written);
+    Ok(root.display().to_string())
+}
+
+/// The library of the project at `project_dir`, as a ctxloom process
+/// there would build it: `env` with the project as its root and the
+/// daemon's home as its home.
+fn child_library(
+    home: &Path,
+    temp: &Path,
+    project_dir: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<library_application::Library, String> {
     let mut vars: Vec<(OsString, OsString)> = env
         .iter()
         .filter(|(name, _)| !matches!(name.as_str(), "CTXLOOM_ROOT" | "HOME"))
@@ -1217,20 +1264,7 @@ pub(crate) fn child_plan(
     );
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
     let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| code(&e))?;
-    let library = crate::library::build(&wiring, None).map_err(|e| code(&e))?;
-    let request = library_application::RunRequest {
-        agent: agent.to_string(),
-        engine: engine.to_string(),
-        ..library_application::RunRequest::default()
-    };
-    let flags = library_application::Flags {
-        trusted,
-        ..library_application::Flags::default()
-    };
-    library
-        .dry_run(&flags, &request)
-        .result
-        .map_err(|e| code(&e))
+    crate::library::build(&wiring, None).map_err(|e| code(&e))
 }
 
 #[cfg(test)]

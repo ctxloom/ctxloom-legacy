@@ -983,6 +983,23 @@ impl<E: Edge> Daemon<E> {
                     let session = mint.claim.command.session.clone();
                     mint.mint.command.workspace = self.axis_of(&session, &mint.mint.command);
                 }
+                // Its output folder, where its plan left it to its project
+                // (a child in another project, step 8 U2b): that project's
+                // `output.dir`, as its config says, and its own harp. One
+                // that cannot be read is a launch that cannot be made.
+                if mint.mint.command.output_dir.is_empty() {
+                    let session = mint.claim.command.session.clone();
+                    match self.output_of(&session, &mint.mint.command) {
+                        Ok(dir) => mint.mint.command.output_dir = dir,
+                        Err(code) => {
+                            (self.say)(&format!(
+                                "{}: its output folder not read: {code}",
+                                mint.mint.command.harp
+                            ));
+                            return self.send(&failed).await;
+                        }
+                    }
+                }
                 let claim = Sent {
                     key: mint.claim.key.clone(),
                     project_id: mint.claim.project_id.clone(),
@@ -1288,6 +1305,20 @@ impl<E: Edge> Daemon<E> {
                 .word()
                 .to_string(),
         )
+    }
+
+    /// The output folder of the child `session` that `mint` makes: its
+    /// project's root of session outputs, read in that project with the
+    /// environment its launcher handed (none handed, an empty one), then
+    /// its harp.
+    fn output_of(&self, session: &str, mint: &sessions::MintSession) -> Result<String, String> {
+        let env = self
+            .hand_offs
+            .read(session)
+            .map(|handed| handed.env)
+            .unwrap_or_default();
+        let root = self.plans.output_root(&mint.project_dir, &env)?;
+        Ok(format!("{}/{}", root.trim_end_matches('/'), mint.harp))
     }
 
     /// What the child asks of the workspace axis: the axis its session was

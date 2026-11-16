@@ -30,9 +30,11 @@
 //! - clear (M1): each clear asked of a hosted child is handed to it once;
 //! - end (D13, D14): a hosted child whose session closed is ended.
 //!
-//! Only this project's sessions are acted on, though one board holds every
-//! project's (the one store, T14): a child in another project, or an owner
-//! there, is that project's plan's.
+//! Only this project's sessions are planned, though one board holds every
+//! project's (the one store, T14); a step on one of them reaches across to
+//! another project where its owner or child is (step 8 U2b): an owner's
+//! plan launches and closes its child there, a child's plan tells and ends
+//! it on its owner there. Each step is planned by one project alone.
 
 use std::collections::BTreeSet;
 
@@ -250,8 +252,16 @@ fn launches(scene: &Scene<'_>, steps: &mut Vec<Step>) {
                 .any(|c| c.session.as_ref() == Some(child));
             match scene.board.session(&child.session) {
                 None if held => {
+                    // A child of this project keeps its outputs with its
+                    // owner's; one in another project in that project's
+                    // folder, which its config says: the daemon reads it
+                    // there (step 8 U2b), so none is planned here.
+                    let output_dir = match child.project_id == scene.project_id {
+                        true => owner.output_dir.as_str(),
+                        false => "",
+                    };
                     let (Some(mint), Some(failed)) = (
-                        launch(&owner_ref, launched, &owner.output_dir),
+                        launch(&owner_ref, launched, output_dir),
                         launch_failed(&owner_ref, child, "sessions-launch-refused"),
                     ) else {
                         continue;
@@ -298,18 +308,10 @@ fn prompt(child: &SessionRef, state: &SessionState, text: &str) -> Option<Sent> 
 fn closes(scene: &Scene<'_>, steps: &mut Vec<Step>) {
     for (id, session) in scene.sessions().filter(|(_, s)| s.closed) {
         let me = here(scene.project_id, id);
-        let children: Vec<_> = session
-            .children
-            .iter()
-            .filter(|c| {
-                c.session
-                    .as_ref()
-                    .is_some_and(|c| c.project_id == scene.project_id)
-            })
-            .cloned()
-            .collect();
+        // Every child it holds, one in another project too (step 8 U2b):
+        // its close is sent to that project's store (one board, T14).
         steps.extend(
-            cascade(&me, &children)
+            cascade(&me, &session.children)
                 .into_iter()
                 .map(|k| Step::Send(k.into())),
         );
@@ -323,20 +325,18 @@ fn closes(scene: &Scene<'_>, steps: &mut Vec<Step>) {
         let closed = sessions::SessionClosed {
             cause: session.closed_cause.clone(),
         };
-        if holds && owner.project_id == scene.project_id {
+        // Its owner, in this project or another (step 8 U2b).
+        if holds {
             steps.extend(child_ended(&me, owner, &closed).map(|k| Step::Send(k.into())));
         }
     }
 }
 
-/// Each turn a child's run ended, told to its open owner.
+/// Each turn a child's run ended, told to its open owner, in this project
+/// or another (step 8 U2b): the child's project's plan tells it.
 fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
     for (id, child) in scene.sessions() {
-        let Some(owner_ref) = child
-            .owner
-            .as_ref()
-            .filter(|o| o.project_id == scene.project_id)
-        else {
+        let Some(owner_ref) = child.owner.as_ref() else {
             continue;
         };
         let Some(owner) = scene

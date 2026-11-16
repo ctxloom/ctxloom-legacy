@@ -30,6 +30,16 @@ fn at(session: &str) -> SessionRef {
     }
 }
 
+/// Another project, the one a cross-project child works in.
+const FAR: &str = "far-heron";
+
+fn far(session: &str) -> SessionRef {
+    SessionRef {
+        project_id: FAR.to_string(),
+        session: session.to_string(),
+    }
+}
+
 fn root(session: &str) -> angzarr_embedded::v1::Uuid {
     let id = uuid::Uuid::parse_str(session).unwrap();
     angzarr_embedded::v1::Uuid::from_bytes(*id.as_bytes())
@@ -156,6 +166,27 @@ impl World {
     }
 
     fn plan(&self) -> Vec<Step> {
+        self.plan_for(PROJECT)
+    }
+
+    /// The child in [`FAR`], the owner here: the owner's launch of it and
+    /// the child's mint name that project (step 8 Q1).
+    fn across(mut self) -> World {
+        for event in self.owner.iter_mut() {
+            if let SessionEvent::ChildLaunched(launched) = event {
+                launched.child = Some(far(CHILD));
+                launched.child_root = "/far".to_string();
+            }
+        }
+        if let Some(SessionEvent::SessionMinted(minted)) = self.child.first_mut() {
+            minted.project_id = FAR.to_string();
+            minted.project_dir = "/far".to_string();
+        }
+        self
+    }
+
+    /// The plan of `project`, over the one board.
+    fn plan_for(&self, project: &str) -> Vec<Step> {
         let mut board = Board::new();
         let mut pending = Pending::new();
         let streams = [(OWNER, &self.owner), (CHILD, &self.child)];
@@ -185,7 +216,7 @@ impl World {
             false => BTreeSet::new(),
         };
         plan(&Scene {
-            project_id: PROJECT,
+            project_id: project,
             board: &board,
             pending: &pending,
             hosted: &hosted,
@@ -796,4 +827,88 @@ fn a_later_incarnation_is_started_resuming_its_native_session() {
     };
     assert_eq!(at.incarnation, 2);
     assert_eq!(resume.as_deref(), Some("native-1"));
+}
+
+/// The send of `steps` keyed `key`, or a panic naming every key.
+fn sent_keyed<'a>(steps: &'a [Step], key: &str) -> &'a crate::Sent {
+    match steps.iter().find(|s| s.key() == key) {
+        Some(Step::Send(sent)) => sent,
+        _ => panic!("no send {key}: {:?}", keys(steps)),
+    }
+}
+
+// Step 8 U2b: a closed owner closes the child it holds in ANOTHER project
+// (the one board holds both, T14), sent to that project's store, and the
+// child's project plans nothing of it.
+#[test]
+fn a_closed_owner_closes_its_child_in_another_project() {
+    let mut world = World::with_child().across();
+    world.owner.push(closed());
+    let steps = world.plan();
+    let key = format!("cascade:{OWNER}:{CHILD}");
+    let sent = sent_keyed(&steps, &key);
+    assert_eq!(sent.project_id, FAR);
+    assert_eq!(sent.book.cover.as_ref().unwrap().root, Some(root(CHILD)));
+    let close: CloseSession = command(steps.iter().find(|s| s.key() == key).unwrap());
+    assert_eq!(close.cause, "owner-closed");
+    assert!(
+        !keys(&world.plan_for(FAR)).contains(&key.as_str()),
+        "planned once, by the owner's project"
+    );
+}
+
+// Step 8 U2b: a closed child in another project is ended on its owner,
+// sent to the owner's project's store, by the child's project's plan alone.
+#[test]
+fn a_closed_child_in_another_project_is_ended_on_its_owner() {
+    let mut world = World::with_child().across();
+    world.child.push(closed());
+    let key = format!("child-ended:{OWNER}:{CHILD}");
+    let steps = world.plan_for(FAR);
+    let sent = sent_keyed(&steps, &key);
+    assert_eq!(sent.project_id, PROJECT);
+    assert_eq!(sent.book.cover.as_ref().unwrap().root, Some(root(OWNER)));
+    let end: EndChild = command(steps.iter().find(|s| s.key() == key).unwrap());
+    assert_eq!(end.child, Some(far(CHILD)));
+    assert!(!keys(&world.plan()).contains(&key.as_str()));
+}
+
+// Step 8 U2b: each turn a child in another project ended is told to its
+// owner, in the owner's project's store, by the child's project's plan.
+#[test]
+fn each_turn_a_child_in_another_project_ended_is_told_to_its_owner() {
+    let world = World::with_child().across().hosting(vec![
+        enqueued(),
+        queued(&["m1"], TurnUrgency::Wake),
+        RunEvent::TurnCompletedRecorded(TurnCompletedRecorded {
+            turn: 1,
+            native_key: String::new(),
+            answer_ref: String::new(),
+            exit_code: 0,
+            message_ids: vec!["m1".to_string()],
+        }),
+    ]);
+    let key = format!("notice:{CHILD}:1:1");
+    let steps = world.plan_for(FAR);
+    let sent = sent_keyed(&steps, &key);
+    assert_eq!(sent.project_id, PROJECT);
+    assert_eq!(sent.book.cover.as_ref().unwrap().root, Some(root(OWNER)));
+    let notice: SendMessage = command(steps.iter().find(|s| s.key() == key).unwrap());
+    assert_eq!(notice.text, "child kid finished its turn for m1");
+    assert_eq!(notice.urgency, Urgency::Inform);
+    assert!(!keys(&world.plan()).contains(&key.as_str()));
+}
+
+// Step 8 U2b: a child in another project is minted with no output folder of
+// its owner's: its folder is its own project's to say (the daemon reads it
+// from that project's config), never the owner's.
+#[test]
+fn a_child_in_another_project_is_minted_with_its_output_folder_left_to_its_project() {
+    let world = World::launched("port it").across();
+    let steps = world.plan();
+    let Some(Step::Launch { mint, .. }) = steps.first() else {
+        panic!("{:?}", keys(&steps));
+    };
+    assert_eq!(mint.mint.command.project_id, FAR);
+    assert_eq!(mint.mint.command.output_dir, "");
 }
