@@ -222,7 +222,7 @@ pub type Telling = Box<dyn FnMut(&Placement) + Send>;
 /// Where a run was placed, once its run is enqueued, its session made and
 /// its order placed, before its engine is launched: what the daemon that
 /// hosts it tells its client (U4).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Placement {
     /// The run's root, as text.
     pub run: String,
@@ -232,6 +232,25 @@ pub struct Placement {
     pub name: String,
     pub harp: String,
     pub engine: String,
+    /// The agent the run was planned for (the plan's, else the default
+    /// agent it took): what an ask of its engine names (step 8, D7).
+    pub agent: String,
+    /// Its engine's `approval_timeout`, as its plan read it: how long an
+    /// ask of its engine waits (step 8, D7).
+    pub approval_timeout: std::time::Duration,
+    /// The human's terminal session: its asks are hers to answer at her
+    /// terminal (S28), never routed.
+    pub interactive: bool,
+}
+
+/// The agent `plan` is for: the one it was asked for, else the default
+/// agent it took; none, empty.
+fn planned_agent(plan: &library_application::DryRun) -> String {
+    [&plan.agent, &plan.settings_agent]
+        .into_iter()
+        .find(|a| !a.is_empty())
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// A run made and enqueued, its order placed: the session, its name, the
@@ -649,6 +668,7 @@ where
                     .await);
             }
         };
+        let agent = planned_agent(&previewed.plan);
         let started = self.start(
             previewed,
             request,
@@ -671,6 +691,9 @@ where
                 .unwrap_or_default(),
             harp: started.harp.clone(),
             engine: started.engine.clone(),
+            agent,
+            approval_timeout: settings.approval_timeout,
+            interactive,
         };
         if let Some(told) = self.told.as_mut() {
             told(&placement);
@@ -1108,11 +1131,7 @@ where
     /// is for (the plan's, else the default agent it took). The launcher
     /// places the engine.
     fn workspace(&self, plan: &library_application::DryRun, harp: &str) -> run_launcher::Workspace {
-        let agent = [&plan.agent, &plan.settings_agent]
-            .into_iter()
-            .find(|a| !a.is_empty())
-            .cloned()
-            .unwrap_or_default();
+        let agent = planned_agent(plan);
         run_launcher::Workspace {
             axis: run_launcher::Axis::of(&plan.axes.0),
             work_dir: if self.place.worktrees.is_empty() {

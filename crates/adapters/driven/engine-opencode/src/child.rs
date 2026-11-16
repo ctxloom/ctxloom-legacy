@@ -131,6 +131,8 @@ pub(crate) fn child_command(spec: &ChildSpec, password: &str) -> Result<TurnComm
         model: spec.model.clone(),
         effort: spec.effort.clone(),
         settings: spec.settings.clone(),
+        // opencode asks over ACP, not through a prompt tool (U7).
+        approval_prompt: false,
     };
     let mut command = TurnCommand::new(drive::program(&request));
     command.args = vec![

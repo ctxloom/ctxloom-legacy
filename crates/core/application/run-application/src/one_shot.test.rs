@@ -704,6 +704,41 @@ async fn a_one_shot_answers_with_the_engines_reply_on_a_session_of_its_own() {
     );
 }
 
+// Step 8 (D7): a one-shot's engine asks through ctxloom's approval prompt,
+// so the daemon that hosts it is told, with where it was placed, the agent it
+// was planned for and how long its asks wait; the terminal's is told it is
+// one (its asks are her terminal's, S28).
+#[tokio::test]
+async fn a_placement_tells_the_agent_and_the_approval_timeout_its_asks_take() {
+    let told = Arc::new(Mutex::new(Vec::new()));
+    let placed = |told: &Arc<Mutex<Vec<crate::Placement>>>| {
+        let told = Arc::clone(told);
+        Box::new(move |p: &crate::Placement| told.lock().unwrap().push(p.clone())) as crate::Telling
+    };
+    let mut script = Script::answering();
+    script.agent = "dev";
+    script.drive.approval_timeout = std::time::Duration::from_secs(90);
+    let mut runs = rig(script).runs.telling(placed(&told));
+    runs.one_shot(&Flags::default(), &ask())
+        .await
+        .result
+        .unwrap();
+    let mut script = Script::answering();
+    script.prompt = "";
+    script.runner = ScriptedRunner::exits(0);
+    let mut runs = rig(script).runs.telling(placed(&told));
+    runs.interactive(&Flags::default(), &ask())
+        .await
+        .result
+        .unwrap();
+    let told = told.lock().unwrap();
+    assert_eq!(told.len(), 2, "{told:?}");
+    assert_eq!(told[0].agent, "dev");
+    assert_eq!(told[0].approval_timeout, std::time::Duration::from_secs(90));
+    assert!(!told[0].interactive);
+    assert!(told[1].interactive);
+}
+
 #[tokio::test]
 async fn the_engine_is_handed_the_plans_context_and_prompt_and_the_callers_environment() {
     let mut rig = rig(Script::answering());

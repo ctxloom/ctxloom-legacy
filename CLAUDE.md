@@ -349,6 +349,19 @@ session. A turn is a command. A child agent on claude runs one `claude -p
 ones); the primary agent keeps the human's terminal, handed to the engine by
 inheritance (by the command, the session's frontend, from the launch the
 daemon prepared: U5, below). Both are heard through hooks (a child since owner ruling 51).
+A claude hosted child and a claude one-shot turn are launched with
+`--permission-prompt-tool mcp__ctxloom__approval_prompt` (step 8 U6, D7;
+`engine_claude::APPROVAL_PROMPT_TOOL`, after `--settings`): an ask its
+permissions make is put to ctxloom's MCP approval prompt, which waits on the
+user's answer through the daemon (Approvals, below). It needs no allow entry,
+and no home ctxloom writes registers a PermissionRequest hook of ctxloom's
+(probe P0: such a hook fires beside the tool and races it). A turn is named
+the prompt only where ctxloom's server rides its launch
+(`TurnRequest::approval_prompt`, the launcher's `!no_context`): a launch with
+no context (OD-38; the distiller's) carries no server, so no prompt claude
+would not find, and its asks are claude's headless default (denied). The
+terminal session (claude's TUI) is given none: its human answers at her own
+terminal (S28).
 Crates:
 
 - `core/ports/run-ports` (`RunnerLauncher`, `Engine`, `SessionRecords`,
@@ -2175,7 +2188,10 @@ alone: a CLI command's core start is under a millisecond at any history.
 
 The daemon serves `CreateApproval` (D10: the session's run, engine, agent
 and `approval_timeout` are the child it hosts, daemon-application's `Asker`,
-told the API each round through `Hosting::asker`; a session it does not
+told the API each round through `Hosting::asker`, else the live one-shot it
+hosts as it was placed (U6, D7: `run_application::Placement`'s `agent`,
+`approval_timeout` and `interactive`, `OneShots::asker`; the human's
+terminal session is no asker, S28); a session it does not
 host is `daemon-api-session-not-hosted`; idempotent on (session, request
 id); read back from the ask's own stream), `GetApproval` (unknown:
 `approvals-approval-unknown`), `ListApprovals` (a project's asks, oldest
@@ -3311,7 +3327,8 @@ plus 60 s in milliseconds, only when the timeout is over 300 s (owner ruling
 Q12; `engine_claude::mcp_tool_timeout`), set in `drive::environment`, so it
 is owned (ruling 78b: a permit for it is ignored); at 300 s or under it is
 not set, and a permit may give one. `docs/config/permissions.md` is the page.
-Nothing asks yet (U4). `auth` is THE auth setting: `none`, `login` (the
+Its asks reach ctxloom's approval prompt (U4's tool, U6's
+`--permission-prompt-tool`). `auth` is THE auth setting: `none`, `login` (the
 human's own login shared in place), `token` (the engine's built-in variables),
 or a source `{env: NAME|[NAMES], file: PATH}`; a name that is not a variable
 name is refused without being repeated; a file is only a primary session's.

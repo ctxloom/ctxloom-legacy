@@ -47,6 +47,10 @@ fn placement(n: u8) -> Placement {
         name: format!("projects/calm-otter/sessions/harp-{n}"),
         harp: format!("harp-{n}"),
         engine: "claude-code".to_string(),
+        agent: format!("agent-{n}"),
+        approval_timeout: Duration::from_secs(60 * u64::from(n)),
+        // The third is the human's terminal session.
+        interactive: n == 3,
     }
 }
 
@@ -265,4 +269,34 @@ fn test_only_the_newest_ended_one_shots_are_kept() {
         "the oldest forgotten"
     );
     assert!(one_shots.get(&placement(2).run).is_some(), "the rest kept");
+}
+
+// Step 8 (D7): a live one-shot's ask is recorded with its run, engine, agent
+// and approval_timeout as it was placed; the terminal session's is not routed
+// (S28), and an ended one, or a session none of them is, has none.
+#[test]
+fn test_a_live_one_shot_asks_as_it_was_placed_and_the_terminal_never_does() {
+    let (one_shots, told, _) = hosting(Script::Placed);
+    for _ in 0..3 {
+        one_shots.create(request());
+    }
+    let first = placement(1);
+    assert_eq!(
+        one_shots.asker(&first.session),
+        Some(crate::Asker {
+            session: first.session.clone(),
+            run: first.run.clone(),
+            engine: "claude-code".to_string(),
+            agent: "agent-1".to_string(),
+            approval_timeout: Duration::from_secs(60),
+        })
+    );
+    assert_eq!(
+        one_shots.asker(&placement(2).session).map(|a| a.agent),
+        Some("agent-2".to_string())
+    );
+    assert_eq!(one_shots.asker(&placement(3).session), None, "a terminal's");
+    assert_eq!(one_shots.asker("s9"), None);
+    told.lock().unwrap()[0].done(answer("HELLO"));
+    assert_eq!(one_shots.asker(&first.session), None, "ended");
 }

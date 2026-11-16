@@ -49,6 +49,15 @@ pub const USER_SETTINGS_FILE: &str = "settings.json";
 /// keeps of its onboarding and of each project it ran in.
 pub const STATE_FILE: &str = ".claude.json";
 
+/// ctxloom's approval prompt as claude names it: the `approval_prompt` tool
+/// of ctxloom's own MCP server (`ctxloom`), which `--permission-prompt-tool`
+/// names for a child and a one-shot (step 8, U6, D7), so every ask its
+/// permissions make waits on the user's answer through the daemon. It needs
+/// no allow entry, and no PermissionRequest hook of ctxloom's decides beside
+/// it (probe P0: the hook races the tool). The terminal session asks at its
+/// own terminal (S28) and is given none.
+pub const APPROVAL_PROMPT_TOOL: &str = "mcp__ctxloom__approval_prompt";
+
 /// The variable claude reads its MCP tool calls' time limit from, in
 /// milliseconds (owner ruling Q12, step 8).
 pub const MCP_TOOL_TIMEOUT: &str = "MCP_TOOL_TIMEOUT";
@@ -300,6 +309,11 @@ impl Engine for Claude {
         push_mcp_config(&mut command.args, request);
         // The turn's hooks: the session dir's settings, as the terminal's.
         push_settings(&mut command.args, request);
+        // Its asks wait on the user through ctxloom's prompt (D7), where
+        // ctxloom's server rides the launch.
+        if request.approval_prompt {
+            push_approval_prompt(&mut command.args);
+        }
         push_model_and_effort(&mut command.args, request)?;
         if let Some(native_id) = &request.resume {
             command.args.push("--resume".to_string());
@@ -651,6 +665,14 @@ pub(crate) fn push_settings(args: &mut Vec<String>, request: &TurnRequest) {
 pub(crate) fn push_mcp_config(args: &mut Vec<String>, request: &TurnRequest) {
     args.push("--mcp-config".to_string());
     args.push(format!("{}/{MCP_CONFIG_FILE}", request.home));
+}
+
+/// `--permission-prompt-tool mcp__ctxloom__approval_prompt`: an ask of the
+/// engine's permissions is put to ctxloom's [`APPROVAL_PROMPT_TOOL`], which
+/// waits on the user's answer (a child's and a one-shot's; probe P0).
+pub(crate) fn push_approval_prompt(args: &mut Vec<String>) {
+    args.push("--permission-prompt-tool".to_string());
+    args.push(APPROVAL_PROMPT_TOOL.to_string());
 }
 
 /// The effort levels `claude --effort` takes (`claude --help`, 2.1.321).

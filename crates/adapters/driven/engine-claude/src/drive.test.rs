@@ -21,6 +21,7 @@ fn request() -> TurnRequest {
         model: String::new(),
         effort: String::new(),
         settings: EngineSettings::default(),
+        approval_prompt: true,
     }
 }
 
@@ -48,9 +49,39 @@ fn a_turn_is_one_print_command_that_streams_json() {
             "/p/.ctxloom/sessions/h/home/ctxloom-mcp.json",
             "--settings",
             "/p/.ctxloom/sessions/h/home/ctxloom-hooks.json",
+            "--permission-prompt-tool",
+            "mcp__ctxloom__approval_prompt",
         ]
     );
     assert_eq!(command.cwd.as_deref(), Some("/p"));
+}
+
+// Step 8 (D7): a one-shot's asks go to ctxloom's approval prompt, a tool of
+// the ctxloom server its launch carries; a launch with no context carries no
+// server (OD-38), so it names no prompt claude would not find. The terminal
+// session asks at its own terminal (S28), and never names one.
+#[test]
+fn only_a_turn_that_carries_ctxloom_s_server_names_its_approval_prompt() {
+    assert_eq!(crate::APPROVAL_PROMPT_TOOL, "mcp__ctxloom__approval_prompt");
+    assert!(crate::APPROVAL_PROMPT_TOOL.starts_with(OUR_TOOLS.trim_end_matches('*')));
+    let mut bare = request();
+    bare.approval_prompt = false;
+    let command = Claude::new().drive_turn(&bare).unwrap();
+    assert!(
+        !command
+            .args
+            .contains(&"--permission-prompt-tool".to_string()),
+        "{:?}",
+        command.args
+    );
+    let mut terminal = request();
+    terminal.prompt = String::new();
+    let tui = Claude::new().drive_interactive(&terminal).unwrap();
+    assert!(
+        !tui.args.contains(&"--permission-prompt-tool".to_string()),
+        "{:?}",
+        tui.args
+    );
 }
 
 #[test]
@@ -720,7 +751,8 @@ fn a_document_that_is_not_json_is_refused() {
 }
 
 // Ruling 137 retires ruling 116's flag: no `--permission-mode` is passed, for
-// a turn or for the terminal, whatever the document says.
+// a turn or for the terminal, whatever the document says. (A turn's
+// `--permission-prompt-tool` names where its asks go, step 8: no mode.)
 #[test]
 fn no_permission_mode_flag_is_ever_passed() {
     let asked = request();
@@ -729,7 +761,10 @@ fn no_permission_mode_flag_is_ever_passed() {
         Claude::new().drive_interactive(&asked).unwrap(),
     ] {
         assert!(
-            !command.args.iter().any(|a| a.contains("permission")),
+            !command
+                .args
+                .iter()
+                .any(|a| a.contains("permission") && a != "--permission-prompt-tool"),
             "{command:?}"
         );
     }

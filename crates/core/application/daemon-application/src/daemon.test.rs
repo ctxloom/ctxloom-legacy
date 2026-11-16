@@ -641,6 +641,7 @@ impl crate::OneShotHost for PlacedHost {
             name: "projects/calm-otter/sessions/kid".to_string(),
             harp: "kid".to_string(),
             engine: "claude-code".to_string(),
+            ..Default::default()
         });
         Box::new(Stops(Arc::clone(&self.0)))
     }

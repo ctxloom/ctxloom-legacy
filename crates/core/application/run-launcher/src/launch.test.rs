@@ -230,6 +230,41 @@ fn each_kind_is_driven_by_its_own_command() {
     assert!(matches!(no_child.unwrap_err().why, NotLaunched::Failed(_)));
 }
 
+// Step 8 (D7): a turn is offered ctxloom's approval prompt where ctxloom's
+// server rides the launch, that is every launch with context; one with none
+// (OD-38) carries no server, and is offered no prompt.
+#[test]
+fn a_turn_is_offered_the_approval_prompt_unless_it_carries_no_context() {
+    let engine = ScriptedEngine::answering("", None);
+    let finder = |c: &TurnCommand| Ok(c.program.clone());
+    let made = |request: &LaunchRequest| {
+        launch_of(
+            engines(&engine),
+            &finder,
+            &mut MemoryRecords::default(),
+            None,
+            request,
+            "linux",
+        )
+        .unwrap()
+        .launch
+    };
+    let offered = made(&request(LaunchKind::OneShot));
+    assert!(
+        !offered.args.contains(&"--no-approval-prompt".to_string()),
+        "{:?}",
+        offered.args
+    );
+    let mut bare = request(LaunchKind::OneShot);
+    bare.setup.home.surfaces.0.no_context = true;
+    let bare = made(&bare);
+    assert!(
+        bare.args.contains(&"--no-approval-prompt".to_string()),
+        "{:?}",
+        bare.args
+    );
+}
+
 // 3. The permits, over the engine's command and before the program is looked
 // for: the finder is asked for the command with the permit applied, and a
 // permit for a name the run set is ignored and said.

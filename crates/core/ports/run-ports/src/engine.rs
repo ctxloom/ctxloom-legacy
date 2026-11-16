@@ -223,6 +223,11 @@ pub struct TurnRequest {
     /// How the config says the engine is run (program, home, credential
     /// source, environment passthrough).
     pub settings: crate::settings::EngineSettings,
+    /// ctxloom's MCP server rides the launch, so its approval prompt
+    /// (`approval_prompt`) can answer the engine's permission asks (step 8,
+    /// D7). A launch with no context carries no server at all (OD-38), and
+    /// so no prompt: an engine names none it would not find.
+    pub approval_prompt: bool,
 }
 
 impl fmt::Debug for TurnRequest {
@@ -239,6 +244,7 @@ impl fmt::Debug for TurnRequest {
             .field("model", &self.model)
             .field("effort", &self.effort)
             .field("settings", &self.settings)
+            .field("approval_prompt", &self.approval_prompt)
             .finish()
     }
 }

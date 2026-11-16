@@ -234,6 +234,8 @@ fn drive(
         model: request.model.clone(),
         effort: request.effort.clone(),
         settings: request.settings.clone(),
+        // ctxloom's server rides every launch with context (OD-38).
+        approval_prompt: !request.setup.home.surfaces.0.no_context,
     };
     let engine = engines.engine;
     match request.kind {

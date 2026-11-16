@@ -104,6 +104,8 @@ pub(super) struct State {
     engine: Option<crate::tests::mcp_serve::Mcp>,
     /// What a step's discovery probe was answered.
     discovered: Option<Value>,
+    /// The arguments a step scripted the stub claude's ask with (step 8 U6).
+    scripted: Option<Value>,
 }
 
 /// An ask the scripted claude made: its server, the call's id, and the
@@ -343,14 +345,34 @@ fn interactive_session(w: &mut World) {
 /// (`interrupted`), which ends it aborted (unless `deaf` is there: then the
 /// interrupt is ignored, and the turn stays in flight); `/clear` starts a new
 /// conversation (a new id), as claude's own does. It ends when its input
-/// does.
-const CHILD_STUB: &str = r#"here=$(dirname "$0")
+/// does. Its model asks (step 8 U6) when a step scripts it, the arguments of
+/// the ask in `ask` beside it ([`script_ask`]): a turn begun with one there
+/// asks at once, and a turn in flight asks once one is put there; either
+/// asks through ctxloom's approval prompt as claude does
+/// (`daemon::PROMPT_CLIENT`), then ends saying what came of it.
+fn child_stub() -> String {
+    [
+        CHILD_STUB_HEAD,
+        crate::tests::daemon::PROMPT_CLIENT,
+        CHILD_STUB_TURNS,
+    ]
+    .concat()
+}
+
+const CHILD_STUB_HEAD: &str = r#"here=$(dirname "$0")
 pwd >> "$here/child-cwds"
 printf '%s\n' "$*" >> "$here/child-args"
 env > "$here/child-env"
+"#;
+
+const CHILD_STUB_TURNS: &str = r#"
 n=1
 sid=S1
 busy=
+watcher=
+over="$here/asked.$$"
+# claim: the scripted ask taken, if there is one (one taker).
+claim() { mv "$here/ask" "$here/asking.$$" 2>/dev/null; }
 printf '{"type":"system","subtype":"init","cwd":"/work","session_id":"%s","tools":[]}\n' "$sid"
 while IFS= read -r line; do
   case "$line" in
@@ -360,7 +382,10 @@ while IFS= read -r line; do
       printf '{"type":"control_response","response":{"subtype":"success"}}\n'
       if [ -n "$busy" ]; then
         busy=
-        printf '{"type":"result","subtype":"error_during_execution","is_error":false,"terminal_reason":"aborted_streaming","result":"","session_id":"%s"}\n' "$sid"
+        [ -n "$watcher" ] && kill "$watcher" 2>/dev/null
+        watcher=
+        [ -e "$over" ] || printf '{"type":"result","subtype":"error_during_execution","is_error":false,"terminal_reason":"aborted_streaming","result":"","session_id":"%s"}\n' "$sid"
+        rm -f "$over"
       fi
       continue ;;
     *'"/clear"'*)
@@ -372,13 +397,32 @@ while IFS= read -r line; do
   esac
   printf '%s %s\n' "$sid" "$line" >> "$here/turns"
   : > "$here/child-turn"
+  if claim; then
+    asks "$here/asking.$$"
+    continue
+  fi
   if [ -e "$here/hold" ]; then
     rm -f "$here/hold"
     busy=1
+    rm -f "$over"
+    (
+      i=0
+      while [ "$i" -lt 600 ]; do
+        if claim; then
+          asks "$here/asking.$$"
+          : > "$over"
+          exit 0
+        fi
+        sleep 0.1
+        i=$((i+1))
+      done
+    ) &
+    watcher=$!
     continue
   fi
   printf '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"%s"}\n' "$sid"
 done
+[ -n "$watcher" ] && kill "$watcher" 2>/dev/null
 : > "$here/child-exited"
 "#;
 
@@ -453,7 +497,7 @@ fn hosting_daemon(w: &mut World) {
     if w.daemon_spec.daemon.is_some() {
         return;
     }
-    stub_claude(w, CHILD_STUB);
+    stub_claude(w, &child_stub());
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
     start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
@@ -463,15 +507,69 @@ fn hosting_daemon(w: &mut World) {
 /// stub child and a daemon the scenario owns, when its steps set up none
 /// (no engine on the host's `PATH` is ever started).
 pub(super) fn before_line(w: &mut World, line: &str) {
-    if line.trim_start().starts_with("ctxloom session launch") {
+    let line = line.trim_start();
+    if line.starts_with("ctxloom session launch") {
         hosting_daemon(w);
+    } else if line.starts_with("ctxloom run --one-shot") && !line.contains("--engine") && bare(w) {
+        // A one-shot on a project whose steps named no engine runs claude:
+        // the one-shot stub, never the host's.
+        stub_claude(w, &one_shot_stub());
+        w.common
+            .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
     }
 }
+
+/// Whether nothing the scenario set up says how its engine is run: no stub
+/// is named, its project names no engine and its home config no engine
+/// block, so a launch would start the host's own claude.
+fn bare(w: &World) -> bool {
+    let project = w
+        .common
+        .project
+        .read(".ctxloom/config.yaml")
+        .unwrap_or_default();
+    let home = w
+        .common
+        .project
+        .read_home(".ctxloom/config.yaml")
+        .unwrap_or_default();
+    w.daemon_spec.stub.is_none() && !project.contains("engine:") && !home.contains("engines:")
+}
+
+/// A one-shot's stub turn (engine-claude's `claude -p`): its arguments, one
+/// a line, in `one-shot-args` and its environment in `one-shot-env`; its
+/// prompt read from its input; then its reply or, when a step scripted an
+/// ask ([`script_ask`]), the ask through ctxloom's approval prompt as claude
+/// asks (`daemon::PROMPT_CLIENT`) and what came of it.
+fn one_shot_stub() -> String {
+    [
+        ONE_SHOT_HEAD,
+        crate::tests::daemon::PROMPT_CLIENT,
+        ONE_SHOT_TURN,
+    ]
+    .concat()
+}
+
+const ONE_SHOT_HEAD: &str = r#"here=$(dirname "$0")
+printf '%s\n' "$@" > "$here/one-shot-args"
+env > "$here/one-shot-env"
+sid=9d764b45-a56a-48d7-ac9d-c2a16c5669f1
+"#;
+
+const ONE_SHOT_TURN: &str = r#"
+cat > /dev/null
+printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$sid"
+if mv "$here/ask" "$here/asking.$$" 2>/dev/null; then
+  asks "$here/asking.$$"
+else
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"ONE-SHOT-REPLY","session_id":"%s"}\n' "$sid"
+fi
+"#;
 
 /// A child the daemon hosts: launched by the user for a seeded owner
 /// (`session launch`), and seen to take its first turn.
 fn hosted_child(w: &mut World) {
-    let dir = stub_claude(w, CHILD_STUB);
+    let dir = stub_claude(w, &child_stub());
     let seeded = run_now(w, &["test", "seed-session", "amber-quiet-heron"]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
     let mut env = env_of(w);
@@ -1122,7 +1220,7 @@ fn alices_session_with_child(w: &mut World, owner: String, child: String) {
         "the child and owner the harness hosts"
     );
     // Her session, recorded, its lock held by her assistant.
-    let dir = stub_claude(w, CHILD_STUB);
+    let dir = stub_claude(w, &child_stub());
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
     start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
@@ -3115,7 +3213,7 @@ fn closed_listed(w: &mut World, harp: String) {
     expr = "a session {string} whose engine environment names ANTHROPIC_API_KEY through its engine block"
 )]
 fn owner_curated_env(w: &mut World, harp: String) {
-    let dir = stub_claude(w, CHILD_STUB);
+    let dir = stub_claude(w, &child_stub());
     // Its engine block names the key, so its engine's environment holds it
     // (what its MCP server runs in).
     w.common.project.write_home(
@@ -3438,14 +3536,53 @@ fn ask_expires(w: &mut World) {
     });
 }
 
+/// The arguments the hosted child stub was last started with, once it has
+/// been, as its words.
+fn child_args(w: &World) -> Vec<String> {
+    let args = until(w, "the child's start", DAEMON_WAIT, |w| {
+        files::read(stub_dir(w).join("child-args")).ok()
+    });
+    let last = args.lines().last().unwrap_or_default();
+    last.split_whitespace().map(str::to_string).collect()
+}
+
+/// The value after `flag` in `args`.
+fn flag_value<'a>(args: &'a [String], flag: &str) -> &'a str {
+    args.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].as_str())
+        .unwrap_or_else(|| panic!("no {flag} among {args:?}"))
+}
+
+/// The claude was given `flag` `value`, side by side.
+fn launched_with(args: &[String], flag: &str, value: &str) {
+    assert_eq!(flag_value(args, flag), value, "{args:?}");
+}
+
+/// The MCP config claude was named (`--mcp-config`) names ctxloom's own
+/// server, `ctxloom mcp serve` as the running binary's name, with no
+/// identity in its entry.
+fn names_ctxloom_server(args: &[String]) {
+    let file = flag_value(args, "--mcp-config");
+    let config: Value =
+        serde_json::from_str(&files::read(file).expect("the MCP config")).expect("JSON");
+    let entry = &config["mcpServers"]["ctxloom"];
+    assert!(
+        entry["command"].as_str().is_some_and(|c| !c.is_empty()),
+        "{config}"
+    );
+    assert_eq!(entry["args"], json!(["mcp", "serve"]), "{config}");
+    assert!(entry.get("env").is_none(), "{entry}");
+}
+
 #[then(regex = r#"^the child's claude was launched with "([^"]+)" "([^"]+)"$"#)]
-fn claude_flag(_: &mut World, _flag: String, _value: String) {
-    red("the child's claude was launched with the permission prompt tool")
+fn claude_flag(w: &mut World, flag: String, value: String) {
+    launched_with(&child_args(w), &flag, &value);
 }
 
 #[then("the child's session home names ctxloom's MCP server")]
-fn home_names_mcp(_: &mut World) {
-    red("the child's session home names ctxloom's MCP server")
+fn home_names_mcp(w: &mut World) {
+    names_ctxloom_server(&child_args(w));
 }
 
 #[given(
@@ -3460,19 +3597,75 @@ fn opencode_allowed(_: &mut World) {
     red("the child's opencode was answered allow-once")
 }
 
+/// The scripted claude's model asks, at its next turn or in the one in
+/// flight (step 8 U6), to run `tool` with `text`: the arguments claude gives
+/// its prompt tool, put whole in `ask` beside the stub (written aside, then
+/// renamed, so the stub never reads half of it). The stub asks through
+/// ctxloom's approval prompt itself; nothing here records an ask.
+fn script_ask(w: &mut World, tool: &str, text: &str) {
+    let arguments = json!({
+        "tool_name": tool,
+        "input": ask_input(tool, text),
+        "tool_use_id": "toolu_scripted_1",
+    });
+    let dir = stub_dir(w);
+    files::put(dir.join("ask.tmp"), format!("{arguments}\n"));
+    files::rename(dir.join("ask.tmp"), dir.join("ask"));
+    w.daemon_spec.scripted = Some(arguments);
+}
+
+/// Wait, at most [`DAEMON_WAIT`], until an ask is listed waiting (`root`'s,
+/// or the project's): the scripted engine has asked.
+fn ask_listed(w: &World, root: Option<&str>) {
+    until(w, "the engine's ask listed", DAEMON_WAIT, |w| {
+        (!waiting_asks(w, root).is_empty()).then_some(())
+    });
+}
+
 #[given(regex = r#"^"([^"]+)" asks to run "([^"]+)" with "([^"]*)"$"#)]
-fn journey_child_asks(_: &mut World, _child: String, _tool: String, _input: String) {
-    red("the child asks to run a tool")
+fn journey_child_asks(w: &mut World, _child: String, tool: String, input: String) {
+    script_ask(w, &tool, &input);
+    ask_listed(w, Some(OWNER));
+}
+
+/// The asks the last command listed (its JSON's `approvals`).
+fn listed_asks(w: &mut World) -> Vec<Value> {
+    w.common.json()["approvals"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("no asks listed: {}", w.ran().said()))
 }
 
 #[then(regex = r#"^she sees "([^"]+)" asking to run "([^"]+)" with "([^"]*)"$"#)]
-fn sees_ask(_: &mut World, _child: String, _tool: String, _input: String) {
-    red("she sees the child's ask")
+fn sees_ask(w: &mut World, child: String, tool: String, input: String) {
+    let asks = listed_asks(w);
+    assert!(
+        asks.iter().any(|ask| {
+            ask["child"]
+                .as_str()
+                .is_some_and(|c| c.ends_with(&format!("/sessions/{child}")))
+                && ask["tool_name"] == tool.as_str()
+                && ask["input_excerpt"]
+                    .as_str()
+                    .is_some_and(|e| e.contains(&input))
+        }),
+        "{asks:?}"
+    );
+}
+
+/// What the scripted claudes did with their asks: `ran <what>` or `denied
+/// <what>`, a line each.
+fn stub_ran(w: &World) -> String {
+    files::read(stub_dir(w).join("ran")).unwrap_or_default()
 }
 
 #[then(regex = r#"^"([^"]+)" ran "([^"]*)", and nothing waits for her any more$"#)]
-fn ran_after_allow(_: &mut World, _child: String, _input: String) {
-    red("the child ran the allowed tool, and nothing waits")
+fn ran_after_allow(w: &mut World, _child: String, input: String) {
+    let ran = format!("ran {input}");
+    until(w, "the child to run what it asked", DAEMON_WAIT, |w| {
+        stub_ran(w).lines().any(|line| line == ran).then_some(())
+    });
+    assert_eq!(waiting_asks(w, None), Vec::<Value>::new());
 }
 
 // ------------------------------------- step 8: approvals and trust's harness
@@ -3565,7 +3758,7 @@ fn child_of_idle_beside(w: &mut World, child: String, owner: String, name: Strin
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
     start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
-    let dir = stub_claude(w, CHILD_STUB);
+    let dir = stub_claude(w, &child_stub());
     let seeded = run_now(w, &["test", "seed-session", &owner]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
     let mut env = env_of(w);
@@ -3766,9 +3959,10 @@ fn started_ran(w: &mut World) -> crate::tests::Ran {
 }
 
 #[when(regex = r#"^I start '([^']+)', whose engine asks to run "([^"]+)" with "([^"]*)"$"#)]
-fn start_asking(w: &mut World, line: String, _tool: String, _input: String) {
+fn start_asking(w: &mut World, line: String, tool: String, input: String) {
+    script_ask(w, &tool, &input);
     start_line(w, &line);
-    red("a one-shot's scripted claude asking through ctxloom's approval prompt (U6)")
+    ask_listed(w, None);
 }
 
 #[when(
@@ -3782,7 +3976,22 @@ fn start_opencode_asking(w: &mut World, line: String, _tool: String, _offered: S
 #[then("the started command succeeds, its engine told to run the tool")]
 fn started_told_to_run(w: &mut World) {
     started_ran(w).succeeds();
-    red("the one-shot's engine told to run the tool (U6)")
+    // The prompt's answer, as claude read it: allowed, its input unchanged.
+    let answers = files::read(stub_dir(w).join("prompt-answers")).expect("the prompt answered");
+    let answer: Value =
+        serde_json::from_str(answers.lines().last().unwrap_or_default()).expect("JSON-RPC");
+    let said = crate::tests::mcp_serve::answered_json(&answer["result"]);
+    assert_eq!(said["behavior"], "allow", "{said}");
+    let asked = w.daemon_spec.scripted.clone().expect("a scripted ask");
+    assert_eq!(said["updatedInput"], asked["input"], "{said}");
+    let what = asked["input"]["command"].as_str().unwrap_or_default();
+    assert!(
+        stub_ran(w)
+            .lines()
+            .any(|line| line == format!("ran {what}")),
+        "{}",
+        stub_ran(w)
+    );
 }
 
 #[then(
@@ -4036,19 +4245,41 @@ fn claude_given_above(w: &mut World, name: String, floor: String) {
     assert!(given > floor, "{name}={given}, not above {floor}");
 }
 
+// Probe P0: a PermissionRequest hook fires beside the approval prompt and
+// races it, so ctxloom's hooks (the `--settings` file) hold none.
 #[then("the child's session home registers no PermissionRequest hook of ctxloom's")]
-fn no_permission_request_hook(_: &mut World) {
-    red("a claude child's hooks hold no PermissionRequest of ctxloom's (step 8, U6)")
+fn no_permission_request_hook(w: &mut World) {
+    let args = child_args(w);
+    let file = flag_value(&args, "--settings");
+    let settings: Value =
+        serde_json::from_str(&files::read(file).expect("ctxloom's hooks file")).expect("JSON");
+    let hooks = settings["hooks"].as_object().expect("ctxloom's hooks");
+    assert!(hooks.contains_key("Stop"), "{settings}");
+    assert!(!hooks.contains_key("PermissionRequest"), "{settings}");
+}
+
+/// The arguments the one-shot stub was started with, one a line.
+fn one_shot_args(w: &World) -> Vec<String> {
+    files::read(stub_dir(w).join("one-shot-args"))
+        .unwrap_or_else(|e| {
+            panic!(
+                "the one-shot's claude never started ({e}): {}",
+                w.ran().said()
+            )
+        })
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
 
 #[then(regex = r#"^the one-shot's claude was launched with "([^"]+)" "([^"]+)"$"#)]
-fn one_shot_claude_flag(_: &mut World, _flag: String, _value: String) {
-    red("a claude one-shot launched with the approval prompt tool (step 8, U6)")
+fn one_shot_claude_flag(w: &mut World, flag: String, value: String) {
+    launched_with(&one_shot_args(w), &flag, &value);
 }
 
 #[then("the one-shot's session home names ctxloom's MCP server")]
-fn one_shot_home_names_mcp(_: &mut World) {
-    red("a claude one-shot's session home names ctxloom's MCP server (step 8, U6)")
+fn one_shot_home_names_mcp(w: &mut World) {
+    names_ctxloom_server(&one_shot_args(w));
 }
 
 #[then(expr = "the one-shot's opencode was launched as {string}, and closed after its one turn")]
@@ -4064,8 +4295,19 @@ fn file_unchanged_by_answer(_: &mut World, _rel: String) {
 #[then(
     "she sees she may allow it once, for the rest of the child's session, or always, or deny it"
 )]
-fn sees_options(_: &mut World) {
-    red("she sees the ask's options (step 8, U4)")
+fn sees_options(w: &mut World) {
+    let asks = listed_asks(w);
+    let ids: Vec<&str> = asks[0]["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|option| option["id"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        ["allow-once", "allow-session", "allow-always", "deny"],
+        "{asks:?}"
+    );
 }
 
 // ------------------------------------- the architecture rulings T13-T30
@@ -5445,7 +5687,7 @@ fn child_asking(w: &mut World, child: &str, owner: &str, tool: &str, text: &str)
         w.common
             .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
         start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
-        stub_claude(w, CHILD_STUB);
+        stub_claude(w, &child_stub());
     }
     files::put(stub_dir(w).join("hold"), "once");
     if (child, owner) == ("brisk-copper-moth", "amber-quiet-heron") {

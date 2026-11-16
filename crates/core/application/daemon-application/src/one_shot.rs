@@ -315,6 +315,24 @@ impl OneShots {
             .collect()
     }
 
+    /// What an ask of the engine of `session`'s live one-shot is recorded
+    /// with (step 8, D7: one-shots ask too): its run, its engine, the agent
+    /// it was planned for and its engine's `approval_timeout`, as it was
+    /// placed. None for a session none of them is, and for the human's
+    /// terminal session, whose asks are hers to answer there (S28).
+    pub fn asker(&self, session: &str) -> Option<crate::Asker> {
+        self.live()
+            .into_iter()
+            .find(|placed| placed.session == session && !placed.interactive)
+            .map(|placed| crate::Asker {
+                session: placed.session,
+                run: placed.run,
+                engine: placed.engine,
+                agent: placed.agent,
+                approval_timeout: placed.approval_timeout,
+            })
+    }
+
     /// The runs of the live ones whose engine is not being stopped yet.
     pub fn unstopped(&self) -> Vec<String> {
         self.table()
