@@ -1509,3 +1509,202 @@ fn a_one_shot_still_running_after_the_period_is_stopped() {
         "{log}"
     );
 }
+
+// ------------------------------------------------- `ctxloom shutdown` (OD-62)
+
+impl World {
+    /// The home config, its drain's timeout `timeout` beside the stub.
+    fn drain_timeout(&self, timeout: &str) {
+        self.project.write_home(
+            ".ctxloom/config.yaml",
+            &format!(
+                "schema_version: 9\neditor:\n  command: \"true\"\nengines:\n  claude-code:\n    command: {}\ndaemon:\n  drain_timeout: {timeout}\n",
+                self.stub_dir.join("claude").display()
+            ),
+        );
+    }
+}
+
+/// The daemon serving now: its pid, as `daemon status` says it.
+fn daemon_pid(world: &World) -> Option<u32> {
+    let status = world.ok(&["daemon", "status", "--format", "json"]);
+    status["pid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+}
+
+// Owner, 2026-11-15: with nothing of ctxloom running, `ctxloom shutdown`
+// says so and succeeds, starting nothing.
+#[test]
+fn a_shutdown_with_nothing_running_says_so() {
+    let world = World::new();
+    let shut = world.run(&["shutdown", "now"]);
+    assert_eq!(shut.code, 0, "{}", shut.said());
+    assert!(
+        shut.stdout.contains("nothing of ctxloom is running"),
+        "{}",
+        shut.said()
+    );
+    assert!(!world.serving(), "no daemon was started");
+}
+
+// `ctxloom shutdown now` asks the daemon the plain stop (`--even-if-live`)
+// at once: an idle daemon exits, and the command says nothing runs.
+#[test]
+fn a_shutdown_now_stops_the_daemon_at_once() {
+    let world = World::new();
+    let mut daemon = Killed(
+        world
+            .project
+            .start_with(&ENV, &["daemon", "serve", "--idle-seconds", "60"]),
+    );
+    world.until("the daemon serving", |w| w.serving().then_some(()));
+    let shut = world.run(&["shutdown", "now"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), world.log());
+    assert!(
+        shut.stdout.contains("asked the daemon") && shut.stdout.contains("to stop even if live"),
+        "{}",
+        shut.said()
+    );
+    assert!(
+        shut.stdout
+            .contains("stopped: nothing of ctxloom is running"),
+        "{}",
+        shut.said()
+    );
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "{}",
+        world.log()
+    );
+}
+
+// A time that is no span (nor `now`) is refused before anything is asked
+// (exit 20), naming what was given; the daemon serves on.
+#[test]
+fn a_shutdown_time_that_is_no_span_is_refused() {
+    let world = World::new();
+    let refused = world.run(&["shutdown", "soon", "--format", "json"]);
+    assert_eq!(refused.code, 20, "{}", refused.said());
+    assert!(
+        refused.stderr.contains("ctxloom-wiring-shutdown-bad-time")
+            && refused.stderr.contains("soon"),
+        "{}",
+        refused.said()
+    );
+}
+
+// `ctxloom shutdown <span>` drains within that span, overriding the
+// config's: a busy child that does not end its turn is handed over at its
+// end (its turn cut, its hand-off kept), the daemon exits, and the next
+// command's daemon re-hosts it on its own conversation.
+#[test]
+fn a_shutdown_with_a_span_drains_within_it() {
+    let world = World::new();
+    world.drain_timeout("1h");
+    files::put(world.stub_dir.join("deaf"), "");
+    let mut daemon = a_busy_child(&world, None);
+    let shut = world.run(&["shutdown", "2s"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), world.log());
+    assert!(
+        shut.stdout.contains("asked the daemon to drain within 2s"),
+        "{}",
+        shut.said()
+    );
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "{}",
+        world.log()
+    );
+    assert!(
+        world.log().contains(&format!(
+            "{CHILD}: still busy after 2s: its turn in flight cut, handed over"
+        )),
+        "{}",
+        world.log()
+    );
+    files::remove(world.stub_dir.join("deaf"));
+    rehosted_resuming(&world);
+}
+
+// Bare `ctxloom shutdown` drains within the home config's
+// `daemon.drain_timeout` (owner, 2026-11-15: "a missing time string would
+// be the config setting").
+#[test]
+fn a_bare_shutdown_drains_within_the_configured_timeout() {
+    let world = World::new();
+    world.drain_timeout("1s");
+    files::put(world.stub_dir.join("deaf"), "");
+    let mut daemon = a_busy_child(&world, None);
+    let shut = world.run(&["shutdown"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), world.log());
+    assert!(
+        shut.stdout.contains("asked the daemon to drain within 1s"),
+        "{}",
+        shut.said()
+    );
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "{}",
+        world.log()
+    );
+    assert!(
+        world
+            .log()
+            .contains(&format!("{CHILD}: still busy after 1s")),
+        "{}",
+        world.log()
+    );
+}
+
+// Owner, 2026-11-15: a SIGTERM to the daemon is a drain within its
+// configured timeout. From then on it refuses new invocations
+// (`daemon-api-draining`, exit 20) while `daemon status` still answers; a
+// change to `daemon.drain_timeout` written meanwhile lands (the config is
+// no client of the daemon), and the drain in progress honours it.
+#[test]
+fn a_sigterm_drains_the_daemon_and_a_changed_timeout_is_the_drains() {
+    let world = World::new();
+    world.drain_timeout("1h");
+    files::put(world.stub_dir.join("deaf"), "");
+    let mut daemon = a_busy_child(&world, None);
+    let pid = daemon_pid(&world).expect("a daemon serves");
+    signal(pid, "-TERM");
+    world.until("the daemon draining", |w| {
+        let status = w.ok(&["daemon", "status", "--format", "json"]);
+        status["draining_for"]
+            .as_str()
+            .is_some_and(|stamp| !stamp.is_empty())
+            .then_some(())
+    });
+    let refused = world.run(&["session", "list", "--format", "json"]);
+    assert_eq!(refused.code, 20, "{}", refused.said());
+    assert!(
+        refused.stderr.contains("daemon-api-draining"),
+        "{}",
+        refused.said()
+    );
+    assert!(
+        exited_within(&mut daemon.0, Duration::from_secs(2)).is_none(),
+        "within its hour it waits for its child"
+    );
+    world.drain_timeout("1s");
+    let shown = world.run(&["config", "show", "--format", "json"]);
+    assert_eq!(shown.code, 0, "the change lands: {}", shown.said());
+    assert!(shown.stdout.contains("drain_timeout"), "{}", shown.said());
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "{}",
+        world.log()
+    );
+    let log = world.log();
+    assert!(log.contains("SIGTERM: asked to drain"), "{log}");
+    assert!(
+        log.contains(&format!("{CHILD}: still busy after 1s")),
+        "{log}"
+    );
+}

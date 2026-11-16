@@ -440,3 +440,67 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     );
     rig.stop();
 }
+
+// Owner, 2026-11-15 (OD-62): `ctxloom shutdown now` asks a live TUI's
+// frontend to stop (a frontend outlives its daemon, so the daemon alone is
+// not enough), then the daemon the plain stop: the TUI is stopped as a
+// SIGTERM to its frontend would stop it (ruling 114), its end is recorded,
+// and nothing of ctxloom runs after.
+#[test]
+fn test_a_shutdown_now_stops_a_live_tuis_frontend_and_the_daemon() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    let harp = rig.harp();
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    wait(&rig.log(), "the start recorded", || {
+        rig.types(&harp, true)
+            .iter()
+            .any(|t| t == "RunnerStartedRecorded")
+    });
+    let daemon = rig.daemon_pid().expect("a daemon serves");
+    let shut = rig.run(&["shutdown", "now"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), rig.log());
+    assert!(
+        shut.stdout.contains("asked the frontend pid"),
+        "{}",
+        shut.said()
+    );
+    assert!(
+        shut.stdout
+            .contains("stopped: nothing of ctxloom is running"),
+        "{}",
+        shut.said()
+    );
+    let _ = finished(session);
+    assert!(!alive(daemon), "the daemon stopped");
+    assert_eq!(rig.ended(&harp), "runner-exit", "{}", rig.log());
+    rig.stop();
+}
+
+// A drain leaves a TUI to its human for the drain's whole timeout (no TUI
+// is handed over): `ctxloom shutdown 2s` waits the two seconds, says the
+// frontend still runs, then asks it to stop.
+#[test]
+fn test_a_shutdown_with_a_span_waits_it_out_for_a_live_tui_then_stops_it() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    let shut = rig.run(&["shutdown", "2s"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), rig.log());
+    assert!(
+        shut.stdout.contains("after the drain's 2s, still running")
+            && shut.stdout.contains("asked the frontend pid"),
+        "{}",
+        shut.said()
+    );
+    let _ = finished(session);
+    rig.stop();
+}
