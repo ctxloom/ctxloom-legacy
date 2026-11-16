@@ -2104,7 +2104,7 @@ fn wake(id: &str) -> sessions::SendMessage {
     }
 }
 
-// s4-Q4 (OD-3 extended): a daemon handing over ends an idle child at once;
+// OD-54: a daemon handing over ends an idle child at once;
 // at its exit its incarnation ends `drained` (not `runner-exit`), its
 // hand-off is KEPT for the daemon that re-hosts it, and, hosting nothing
 // more, it may exit.

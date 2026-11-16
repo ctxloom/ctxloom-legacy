@@ -398,7 +398,7 @@ impl<E: Edge> Daemon<E> {
         self
     }
 
-    /// Hand what it hosts over to the next daemon (OD-3 extended, s4-Q4):
+    /// Hand what it hosts over to the next daemon (OD-54; `ctxloom shutdown`, a SIGTERM):
     /// from its next round on it starts no child and delivers no message
     /// but the drain's guidance, and each child it hosts with no turn in
     /// flight is ended, its incarnation ended `drained` and its hand-off

@@ -387,7 +387,7 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
 const ORPHANED: &str = "orphaned";
 
 /// Why a hosted child's incarnation ends when a draining daemon ended it to
-/// hand it over to the next (OD-3 extended, s4-Q4).
+/// hand it over to the next daemon (OD-54).
 pub const ENDED_DRAINED: &str = "drained";
 
 /// Each child of this project whose last incarnation was lost (cause
