@@ -1,5 +1,8 @@
 # Ported from cli/mcp_tools.feature (rev f36e8dfb2)
 # NOT ported: any of it yet (the Feature is @pending).
+# Left out: the approval hook scenario (`ctxloom hook permission`): an
+#   engine's permission ask is routed through the approval prompt of
+#   ctxloom's MCP server (cli/mcp_serve.feature, cli/session_approvals.feature).
 
 @pending
 Feature: MCP tools
@@ -113,23 +116,3 @@ Feature: MCP tools
     When the agent calls tool "evaluate_triggers"
     Then the tool call succeeds
     And the tool result field "evaluated" equals "0"
-
-  # The approval hook (`ctxloom hook permission`) is the engine's half of the
-  # approval route: it posts the engine's ask to the runner's hook path and
-  # writes back only a decision the runner returned. A session that routes
-  # no approvals (the standing owner is interactive: its human answers in the
-  # engine's own UI) refuses, and the hook says so on stderr while writing
-  # NOTHING to stdout — no decision, which an engine nobody sits at denies.
-  # The refusal's text can only have come back over the wire, under the
-  # endpoint's bearer.
-  Scenario: The approval hook relays a runner that routes no approvals as no decision
-    Given an initialized ctxloom project
-    And a session owner is standing
-    And the approval hook reaches the session owner's endpoint
-    When I run "ctxloom hook permission --event PermissionRequest" with input:
-      """
-      {"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"}}
-      """
-    Then the command succeeds
-    And the hook writes nothing to stdout
-    And the output contains "routes no approvals"

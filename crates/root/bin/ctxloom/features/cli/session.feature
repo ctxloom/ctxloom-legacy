@@ -1,12 +1,14 @@
 # world: base
 # Ported from cli/session.feature (rev f36e8dfb2)
-# NOT ported: the Rules tagged @pending (the transcript sub-noun,
-#   approvals and control): not turned on yet. The reading Rule is on, its
+# NOT ported: the Rules tagged @pending (the transcript sub-noun and
+#   control): not turned on yet. The reading Rule is on, its
 #   listings in the daemon's shape (owner, 2026-11-13).
 #   The rest of Go's file is in the files that say `Ported from cli/session.feature`.
 #   Left out: the `session remove` Rule (retired: `session remove`
 #   is the one destroyer, cli/session_purge.feature) and the `session adopt`
 #   Rule (dropped: it repaired transcripts a Go defect orphaned).
+#   Left out: the `session approvals` Rule (Go's coordinator's, readable
+#   only): the contract is cli/session_approvals.feature.
 # Ported from journeys/j001200_recall.feature (its empty search, the last scenario of the reading Rule)
 
 @doc
@@ -45,7 +47,6 @@ Feature: session — the record of what your assistant did, and the tools to pru
     ctxloom session worktrees               (bare: lists)
     ctxloom session worktrees list [<harp>]
     ctxloom session remove <harp> | --older-than <age> [--yes]
-    ctxloom session approvals
 
   Rule: Reading the record touches nothing
 
@@ -259,56 +260,6 @@ Feature: session — the record of what your assistant did, and the tools to pru
       Given an initialized ctxloom project
       And a recorded session "amber-swift-owl"
       When I run "ctxloom session watch amber-swift-owl"
-      Then the command fails
-      And the output contains "unknown command"
-
-  @pending
-  Rule: Pending approvals are readable from any terminal, and only readable
-
-    # `session approvals` asks every live coordinator on this host, found by
-    # the endpoint files coordinators write under the state root. With none
-    # running nothing is parked anywhere, so that is a message naming where
-    # discovery looked, not a failure; the structured form says how many
-    # coordinators answered, which is what separates "none running" from
-    # "running with nothing pending".
-    Scenario: With no coordinator running, the text says so and where it looked
-      Given an initialized ctxloom project
-      When I run "ctxloom --format text session approvals"
-      Then the command succeeds
-      And the output contains "no coordinator is running"
-      And the output contains "no live endpoint under"
-
-    Scenario: With no coordinator running, the JSON reports none answered and nothing pending
-      Given an initialized ctxloom project
-      When I run "ctxloom --format json session approvals"
-      Then the command succeeds
-      And the output reports "coordinators" as "0"
-      And the output reports "approvals" as empty, saying "no coordinator is running"
-
-    # A SECOND PROCESS reaching a LIVE coordinator: the standing owner is a
-    # real `ctxloom run` hosting one, and this command finds it by discovery
-    # and asks it over RPC. "coordinators" is 1 only because that round trip
-    # happened. The owner is interactive and routes no approvals, so nothing
-    # is parked — a request parked by a headless child is not staged here:
-    # nothing in this harness can wait on another process's queue without
-    # polling it. That proof is the integration lane's
-    # TestPermissionContract_AnotherProcessListsTheParkedAsk.
-    Scenario: Another terminal reaches the running session's coordinator and finds nothing parked
-      Given an initialized ctxloom project
-      And a session owner is standing
-      When I run "ctxloom --format json session approvals"
-      Then the command succeeds
-      And the output reports "coordinators" as "1"
-      And the output reports "approvals" as empty, saying "no pending approvals"
-      When I run "ctxloom --format text session approvals"
-      Then the command succeeds
-      And the output contains "no pending approvals"
-
-    # The command only lists: there is no argument that names a request to
-    # answer, so one passed is refused rather than acted on.
-    Scenario: Naming a request to answer is refused
-      Given an initialized ctxloom project
-      When I run "ctxloom session approvals amber-swift-owl"
       Then the command fails
       And the output contains "unknown command"
 

@@ -33,6 +33,10 @@ pub(crate) struct Common {
     /// session's harp is minted, never chosen (owner S55), so a journey's
     /// "amber-quiet-heron" is whichever harp its session was given.
     pub(crate) aliases: Vec<(String, String)>,
+    /// What a step noted from a command's output, each `(label, value)`
+    /// (`I note ... as "<label>"`): `{<label>}` in a later command line or
+    /// in `the output contains` is the value (a minted name, never chosen).
+    pub(crate) notes: Vec<(String, String)>,
 }
 
 impl Common {
@@ -43,6 +47,7 @@ impl Common {
             ran: None,
             line: String::new(),
             aliases: Vec::new(),
+            notes: Vec::new(),
         }
     }
 
@@ -51,6 +56,31 @@ impl Common {
     /// JSON, as JSON writes it, so a Windows path's `\` is escaped); the first
     /// to fail is the one the next step sees.
     pub(crate) fn run_lines(&mut self, lines: &str, input: &str) {
+        self.run_lines_at(None, lines, input);
+    }
+
+    /// `text` with each noted `{<label>}` as the value noted under it
+    /// ([`Common::note`]); text naming no note is as written.
+    pub(crate) fn expanded(&self, text: &str) -> String {
+        self.notes
+            .iter()
+            .fold(text.to_string(), |text, (label, value)| {
+                text.replace(&format!("{{{label}}}"), value)
+            })
+    }
+
+    /// Keep `value` under `label`, for `{<label>}` in a later step.
+    pub(crate) fn note(&mut self, label: &str, value: &str) {
+        self.notes.retain(|(noted, _)| noted != label);
+        self.notes.push((label.to_string(), value.to_string()));
+    }
+
+    /// [`Common::run_lines`], each command run from `cwd` when one is given
+    /// (another project, found by walking up from it: no `CTXLOOM_ROOT`),
+    /// else in the project.
+    pub(crate) fn run_lines_at(&mut self, cwd: Option<&Path>, lines: &str, input: &str) {
+        let lines = self.expanded(lines);
+        let lines = lines.as_str();
         let dir = self.project.dir().display().to_string();
         let quoted = serde_json::to_string(&dir).expect("a string is JSON");
         let in_json = &quoted[1..quoted.len() - 1];
@@ -72,7 +102,9 @@ impl Common {
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();
-            let ran = if input.is_empty() {
+            let ran = if let Some(cwd) = cwd {
+                self.project.run_in_with(cwd, &env, &args)
+            } else if input.is_empty() {
                 self.project.run_with(&env, &args)
             } else {
                 self.project
@@ -424,11 +456,13 @@ macro_rules! common_steps {
 
             #[then(expr = "the output contains {string}")]
             fn output_contains(w: &mut World, text: String) {
+                let text = w.common().expanded(&text);
                 w.ran().contains(&Common::clap_wording(&text));
             }
 
             #[then(expr = "the output does not contain {string}")]
             fn output_lacks(w: &mut World, text: String) {
+                let text = w.common().expanded(&text);
                 w.ran().lacks(&Common::clap_wording(&text));
             }
 

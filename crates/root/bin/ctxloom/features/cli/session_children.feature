@@ -12,7 +12,7 @@ Feature: session launch, send, clear and close — a child of a session, run by 
 
   Surfaces covered here:
 
-    ctxloom session launch <owner> [--name <harp>] [--agent <agent>] [--engine <engine>] ["<task>"]
+    ctxloom session launch <owner> [--name <harp>] [--project <dir>] [--agent <agent>] [--engine <engine>] ["<task>"]
     ctxloom session send <harp> {inform|wake|steer} "<text>" [--id <id>]
     ctxloom session clear <harp>
     ctxloom session close <harp>
@@ -27,6 +27,17 @@ Feature: session launch, send, clear and close — a child of a session, run by 
   conversation. It is deleted when the child is closed, and a file whose
   child is no longer open is swept. The child sees only its environment,
   never the file.
+
+  IN ANOTHER PROJECT. `--project <dir>` launches the child to work in the
+  ctxloom project at that directory (by default, the owner's own): its
+  session is that project's, it runs in that project's root on that
+  project's config (its agents and engines), and its owner holds it as a
+  child all the same (`session show <owner>`). A child works in a project other than its owner's
+  only once the user has trusted that project (cli/trust.feature). The
+  owner agent does the same through the `child_launch` tool's `project`.
+
+  A CHILD'S NAME is any harp but one beginning `ask-`, which names an
+  approval ask (cli/session_approvals.feature).
 
   URGENCY, always said, as the word after the harp: `inform` waits for the
   child's next turn, whoever starts it; `wake` starts a turn when the child
@@ -52,6 +63,45 @@ Feature: session launch, send, clear and close — a child of a session, run by 
       And the output reports "name" containing "/sessions/brisk-copper-moth"
       And the child "brisk-copper-moth" of "amber-quiet-heron" ran its first turn on "review the change"
       And the child's hand-off file is readable by its owner alone while the child is open
+
+    Scenario: A launch with --project runs the child in that project, under its owner
+      # new: a child in another project (step 8: the cross-repository surface).
+      Given an initialized ctxloom project
+      And Alice has exported her assistant's token
+      And a session "amber-quiet-heron" that is still running
+      And a second project "api" beside this one, initialized with ctxloom
+      And I run "ctxloom trust --yes" in the project "api"
+      When I run 'ctxloom session launch amber-quiet-heron --name brisk-copper-moth --project ../api --format json "review the change"'
+      Then the command succeeds
+      And the child "brisk-copper-moth" of "amber-quiet-heron" ran its first turn on "review the change", in the root of "api"
+      When I run "ctxloom session show brisk-copper-moth --format json" in the project "api"
+      Then the command succeeds
+      And the output reports "name" containing "/sessions/brisk-copper-moth"
+      When I run "ctxloom session show amber-quiet-heron --format json"
+      Then the command succeeds
+      And the output reports "children[0]" containing "/sessions/brisk-copper-moth"
+
+    Scenario: A launch with --project naming no ctxloom project is refused, and leaves nothing
+      # new: a child in another project (step 8: the cross-repository surface).
+      Given an initialized ctxloom project
+      And Alice has exported her assistant's token
+      And a session "amber-quiet-heron" that is still running
+      And an empty directory "nowhere" beside this project
+      When I run 'ctxloom session launch amber-quiet-heron --name brisk-copper-moth --project ../nowhere "review"'
+      Then the command exits with code 20
+      And the output contains "is in no ctxloom project"
+      And no hand-off file was left behind
+
+    Scenario: A child's name may not begin "ask-", which names an approval ask
+      # new: an ask's name is a form no session can have (step 8, ask names).
+      Given an initialized ctxloom project
+      And Alice has exported her assistant's token
+      And a session "amber-quiet-heron" that is still running
+      When I run 'ctxloom session launch amber-quiet-heron --name ask-tidy-wren "review"'
+      Then the command exits with code 20
+      And the refusal is "sessions-harp-invalid"
+      And the output contains "ask-"
+      And no hand-off file was left behind
 
     Scenario: A launch for an owner nobody recorded is refused
       # new: session launch.

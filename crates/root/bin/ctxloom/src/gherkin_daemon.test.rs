@@ -84,6 +84,9 @@ pub(super) struct State {
     stub: Option<PathBuf>,
     /// What the interactive session's command came to, once it ended.
     session_ran: Option<crate::tests::Ran>,
+    /// A command a step started and left running (`I start ...`), for a
+    /// later step to wait for.
+    started: Option<Child>,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -109,6 +112,10 @@ impl Drop for State {
             }
             let _ = run.kill();
             let _ = run.wait();
+        }
+        if let Some(mut started) = self.started.take() {
+            let _ = started.kill();
+            let _ = started.wait();
         }
         if let Some(mut daemon) = self.daemon.take() {
             let _ = daemon.kill();
@@ -3113,25 +3120,30 @@ fn ran_projects_program_now(_: &mut World) {
 }
 
 #[given(expr = "an initialized ctxloom project whose project config says {string}")]
-fn project_says(_: &mut World, _setting: String) {
-    red("an initialized ctxloom project whose project config says a project-only setting")
+fn project_says(w: &mut World, setting: String) {
+    w.common.project = crate::tests::library::Project::initialized();
+    w.common
+        .project
+        .write(".ctxloom/config.yaml", &config_saying(&setting));
 }
 
-#[given(
-    expr = "an initialized ctxloom project whose own {string} bundle replaces the setup prompt"
-)]
-fn project_overrides_setup(_: &mut World, _bundle: String) {
-    red("a project whose own ctxloom bundle replaces the setup prompt")
-}
-
-#[then("the setup used the built-in prompt, and said the project's own waits for trust")]
-fn builtin_setup(_: &mut World) {
-    red("the setup used the built-in prompt, and said the project's waits for trust")
-}
-
-#[then("the project is not trusted")]
-fn not_trusted(_: &mut World) {
-    red("the project is not trusted")
+/// A project config at the current schema that says `setting`, a dotted
+/// key and its value (`engines.claude-code.command: /opt/their-claude`),
+/// nested as YAML writes it.
+fn config_saying(setting: &str) -> String {
+    let (path, value) = setting
+        .split_once(": ")
+        .unwrap_or_else(|| panic!("{setting:?} is `<dotted key>: <value>`"));
+    let mut yaml = crate::tests::library::MINIMAL_CONFIG.to_string();
+    let keys: Vec<&str> = path.split('.').collect();
+    for (depth, key) in keys.iter().enumerate() {
+        let indent = "  ".repeat(depth);
+        match depth + 1 == keys.len() {
+            true => yaml.push_str(&format!("{indent}{key}: {value}\n")),
+            false => yaml.push_str(&format!("{indent}{key}:\n")),
+        }
+    }
+    yaml
 }
 
 #[then("the project is listed as trusted by the user running ctxloom, with the time it was given")]
@@ -3139,30 +3151,10 @@ fn listed_trusted(_: &mut World) {
     red("the project is listed as trusted, with its actor and time")
 }
 
-#[given("the project's settings change after the preview and before the answer")]
-fn changed_mid_trust(_: &mut World) {
-    red("the project's settings change after the preview and before the answer")
-}
-
-#[given("an initialized ctxloom project that the user has trusted")]
-fn project_trusted(_: &mut World) {
-    red("an initialized ctxloom project that the user has trusted")
-}
-
-#[given(expr = "an initialized ctxloom project with a remote {string}")]
-fn project_with_remote(_: &mut World, _remote: String) {
-    red("an initialized ctxloom project with a remote")
-}
-
-#[then(expr = "the remote {string} is listed as trusted by the user running ctxloom")]
-fn remote_trusted(_: &mut World, _remote: String) {
-    red("the remote is listed as trusted")
-}
-
 // -------------------------------------------------- approvals (ruling 142)
 
 #[given(
-    regex = r#"^a child "([^"]+)" of "([^"]+)" whose engine has asked to run "([^"]+)" with "([^"]*)"$"#
+    regex = r#"^a child "([^"]+)" of "([^"]+)" whose engine has asked to run "([^"]+)" with "((?:[^"\\]|\\.)*)"$"#
 )]
 fn child_asked(_: &mut World, _child: String, _owner: String, _tool: String, _input: String) {
     red("a child whose engine has asked to run a tool")
@@ -3176,11 +3168,6 @@ fn engine_told(_: &mut World, _what: String) {
 #[then(expr = "no ask is waiting under {string}")]
 fn none_waiting(_: &mut World, _root: String) {
     red("no ask is waiting under the root")
-}
-
-#[given(expr = "a child {string} of {string} whose ask has been answered")]
-fn ask_answered(_: &mut World, _child: String, _owner: String) {
-    red("a child whose ask has been answered")
 }
 
 #[when("the ask's time runs out")]
@@ -3223,6 +3210,371 @@ fn sees_ask(_: &mut World, _child: String, _tool: String, _input: String) {
 #[then(regex = r#"^"([^"]+)" ran "([^"]*)", and nothing waits for her any more$"#)]
 fn ran_after_allow(_: &mut World, _child: String, _input: String) {
     red("the child ran the allowed tool, and nothing waits")
+}
+
+// ------------------------------------- step 8: approvals and trust's harness
+
+/// A project beside this one, by its name: its directory.
+fn beside(w: &World, name: &str) -> PathBuf {
+    w.common
+        .project
+        .dir()
+        .parent()
+        .expect("the project has a parent")
+        .join(name)
+}
+
+#[given(expr = "a second project {string} beside this one, initialized with ctxloom")]
+fn second_project_beside(w: &mut World, name: String) {
+    let dir = beside(w, &name);
+    files::put(
+        dir.join(".ctxloom/config.yaml"),
+        crate::tests::library::MINIMAL_CONFIG,
+    );
+    // An id of its own, as `init` mints one: never this project's.
+    files::put(
+        dir.join(crate::tests::library::PROJECT_MARKER),
+        format!("{name}-fixture-project\n"),
+    );
+}
+
+#[given(expr = "an empty directory {string} beside this project")]
+fn empty_directory_beside(w: &mut World, name: String) {
+    files::mkdirs(beside(w, &name));
+}
+
+#[given(expr = "I run {string} in the project {string}")]
+#[when(expr = "I run {string} in the project {string}")]
+fn run_in_project(w: &mut World, line: String, name: String) {
+    let dir = beside(w, &name);
+    w.before_line(&line);
+    w.before_run();
+    w.common.run_lines_at(Some(&dir), &line, "");
+}
+
+#[given(expr = "I note the ask named by {string} as {string}")]
+#[then(expr = "I note the ask named by {string} as {string}")]
+fn note_ask(w: &mut World, path: String, label: String) {
+    let doc = w.common.json();
+    let name = crate::tests::library::at(&doc, &path)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("no name at {path}: {}", w.ran().said()))
+        .to_string();
+    let ask = name.rsplit('/').next().unwrap_or(&name).to_string();
+    w.common.note(&label, &ask);
+}
+
+#[then(expr = "the output reports {string} as the project's harp under {string}, then {string}")]
+fn reports_project_harp(w: &mut World, path: String, under: String, then: String) {
+    w.common
+        .output_reports(&path, &format!("{under}{{project}}{then}"));
+}
+
+/// Wait, at most `limit`, for `child` to end, its output drained as it
+/// comes (a full pipe never stalls it): what it came to. One that outlives
+/// the limit is killed, and the test fails.
+fn finished(mut child: Child, limit: Duration) -> crate::tests::Ran {
+    use std::io::Read as _;
+    let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as _));
+    let err = drain(child.stderr.take().map(|p| Box::new(p) as _));
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("the command is waited for") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the command did not end within {limit:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    crate::tests::Ran::of(std::process::Output {
+        status,
+        stdout: out.join().expect("stdout drained"),
+        stderr: err.join().expect("stderr drained"),
+    })
+}
+
+/// Start `line` (one ctxloom command, notes expanded) in the project with
+/// the scenario's environment, left running: what a later step waits for.
+fn start_line(w: &mut World, line: &str) {
+    let line = w.common.expanded(line);
+    w.before_line(&line);
+    w.before_run();
+    let words = crate::tests::gherkin_common::split(&line);
+    assert_eq!(words.first().map(String::as_str), Some("ctxloom"), "{line}");
+    let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+    let env = env_of(w);
+    let child = w.common.project.start_with(&env_pairs(&env), &args);
+    w.common.line = line;
+    w.daemon_spec.started = Some(child);
+}
+
+/// The command a scenario started ([`start_line`]), ended: what it came to.
+fn started_ran(w: &mut World) -> crate::tests::Ran {
+    let child = w.daemon_spec.started.take().expect("a command was started");
+    let ran = finished(child, DAEMON_WAIT);
+    w.common.ran = Some(ran.clone());
+    ran
+}
+
+#[when(regex = r#"^I start '([^']+)', whose engine asks to run "([^"]+)" with "([^"]*)"$"#)]
+fn start_asking(w: &mut World, line: String, _tool: String, _input: String) {
+    start_line(w, &line);
+    red("a one-shot's scripted claude asking through ctxloom's approval prompt (U6)")
+}
+
+#[when(
+    regex = r#"^I start '([^']+)', whose opencode sends a permission request for "([^"]+)" offering (.+)$"#
+)]
+fn start_opencode_asking(w: &mut World, line: String, _tool: String, _offered: String) {
+    start_line(w, &line);
+    red("a one-shot's scripted opencode sending ACP's permission request (U7)")
+}
+
+#[then("the started command succeeds, its engine told to run the tool")]
+fn started_told_to_run(w: &mut World) {
+    started_ran(w).succeeds();
+    red("the one-shot's engine told to run the tool (U6)")
+}
+
+#[then(
+    regex = r"^the started command succeeds, its opencode answered with its request's (\w+) option$"
+)]
+fn started_opencode_answered(w: &mut World, _kind: String) {
+    started_ran(w).succeeds();
+    red("the one-shot's opencode answered with its request's option (U7)")
+}
+
+/// The question a stood-in terminal asks before it reads its answer: a
+/// yes/no one, as ctxloom asks it (`[y/N]` or `[Y/n]`), on stderr.
+fn asking(said: &str) -> bool {
+    said.contains("[y/N]") || said.contains("[Y/n]")
+}
+
+#[when(
+    expr = "I run {string} at a terminal, and before I answer the project config is changed to say {string}, then I answer {string}"
+)]
+fn run_at_terminal_changed(w: &mut World, line: String, setting: String, answer: String) {
+    use std::io::{Read as _, Write as _};
+    let line = w.common.expanded(&line);
+    w.before_line(&line);
+    w.before_run();
+    let words = crate::tests::gherkin_common::split(&line);
+    assert_eq!(words.first().map(String::as_str), Some("ctxloom"), "{line}");
+    let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+    let mut env = env_of(w);
+    env.push(("CTXLOOM_TEST_TERMINAL".to_string(), "1".to_string()));
+    let mut child = w.common.project.start_talking(&env_pairs(&env), &args);
+    // Its stderr read as it comes, so the step sees the question asked
+    // before it acts: forced, never waited out (the race rule).
+    let said = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reader = {
+        let said = std::sync::Arc::clone(&said);
+        let mut pipe = child.stderr.take().expect("stderr is piped");
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 512];
+            while let Ok(n) = pipe.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                said.lock()
+                    .expect("not poisoned")
+                    .extend_from_slice(&chunk[..n]);
+            }
+        })
+    };
+    let text = |said: &std::sync::Mutex<Vec<u8>>| {
+        String::from_utf8_lossy(&said.lock().expect("not poisoned")).to_string()
+    };
+    let deadline = Instant::now() + DAEMON_WAIT;
+    while !asking(&text(&said)) {
+        if matches!(child.try_wait(), Ok(Some(_))) || Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the command asked nothing at its terminal: {}", text(&said));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    w.common
+        .project
+        .write(".ctxloom/config.yaml", &config_saying(&setting));
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    stdin
+        .write_all(format!("{answer}\n").as_bytes())
+        .expect("the answer is typed");
+    drop(stdin);
+    let mut ran = finished(child, DAEMON_WAIT);
+    reader.join().expect("stderr drained");
+    ran.stderr = text(&said);
+    w.common.line = line;
+    w.common.ran = Some(ran);
+}
+
+// ------------------------------------- step 8: approvals and trust, red
+
+#[given(
+    expr = "the engine of {string} calls {string} for {string} with project {string} and task {string}"
+)]
+#[when(
+    expr = "the engine of {string} calls {string} for {string} with project {string} and task {string}"
+)]
+fn tool_call_with_project(
+    _: &mut World,
+    _owner: String,
+    _tool: String,
+    _child: String,
+    _project: String,
+    _task: String,
+) {
+    red("child_launch's project (step 8, Q1)")
+}
+
+#[then(expr = "the tool failed with {string}, naming {string}")]
+fn tool_failed_naming(_: &mut World, _code: String, _named: String) {
+    red("a tool's refusal, naming what it refused (step 8, Q1)")
+}
+
+#[then(expr = "the tool answered with the child's session, named under the project {string}")]
+fn tool_answered_in_project(_: &mut World, _project: String) {
+    red("child_launch's child, named in the project it works in (step 8, Q1)")
+}
+
+#[then(
+    expr = "the child {string} of {string} ran its first turn on {string}, in the root of {string}"
+)]
+fn first_turn_in_project(_: &mut World, _c: String, _o: String, _task: String, _p: String) {
+    red("a child in another project ran its first turn there (step 8, Q1)")
+}
+
+#[when(expr = "its engine sends {string} to ctxloom's MCP server before {string}")]
+fn sends_before_initialize(_: &mut World, _method: String, _before: String) {
+    red("the MCP server answers server/discover (step 8, U4)")
+}
+
+#[then("the server answered it with an empty result")]
+fn answered_empty(_: &mut World) {
+    red("the MCP server answered server/discover (step 8, U4)")
+}
+
+#[then("the engine went on to initialize the server and list its tools")]
+fn initialized_after_discover(_: &mut World) {
+    red("the MCP server initialized after server/discover (step 8, U4)")
+}
+
+#[when(expr = "the engine sends {string} for that call")]
+fn engine_cancels(_: &mut World, _notification: String) {
+    red("the MCP server hears notifications/cancelled (step 8, U4)")
+}
+
+#[then("the server sent no answer for the cancelled call, and still serves the engine's next call")]
+fn cancelled_unanswered(_: &mut World) {
+    red("a cancelled approval prompt call is answered nothing (step 8, U4)")
+}
+
+#[given(regex = r#"^"([^"]+)"'s engine has also asked to run "([^"]+)" with "([^"]*)"$"#)]
+fn also_asked(_: &mut World, _child: String, _tool: String, _input: String) {
+    red("a second ask of one child (step 8, U4/U6)")
+}
+
+#[when(regex = r#"^"([^"]+)"'s engine asks to run "([^"]+)" with "([^"]*)"$"#)]
+fn engine_asks(_: &mut World, _child: String, _tool: String, _input: String) {
+    red("a child's engine asks (step 8, U4/U6)")
+}
+
+#[then(expr = "an ask is still waiting under {string}")]
+fn still_waiting(_: &mut World, _root: String) {
+    red("an ask still waiting under its root (step 8, U4)")
+}
+
+#[then(expr = "the output reports the ask's {string} as 300 seconds after its {string}")]
+fn expires_after(_: &mut World, _expire: String, _asked: String) {
+    red("an ask's default time (step 8, U3/U4)")
+}
+
+#[then("the child's engine cancelled its approval prompt call")]
+fn engine_cancelled(_: &mut World) {
+    red("a steered claude cancels its approval prompt call (step 8, U4/U6)")
+}
+
+#[given(
+    regex = r#"^an opencode child "([^"]+)" of "([^"]+)" that sends a permission request for "([^"]+)" offering (.+)$"#
+)]
+fn opencode_asks_offering(
+    _: &mut World,
+    _child: String,
+    _owner: String,
+    _tool: String,
+    _offered: String,
+) {
+    red("an opencode child's ACP permission request, with its options (step 8, U7)")
+}
+
+#[then(expr = "the child's opencode was answered {string} for its permission request")]
+fn opencode_answered_word(_: &mut World, _word: String) {
+    red("an opencode child's request answered cancelled (step 8, U7)")
+}
+
+#[then(regex = r"^the child's opencode was answered with its request's (\w+) option$")]
+fn opencode_answered_kind(_: &mut World, _kind: String) {
+    red("an opencode child's request answered with an option of its kind (step 8, U7)")
+}
+
+#[when(regex = r#"^"([^"]+)"'s engine exits without cancelling its approval prompt call$"#)]
+fn exits_uncancelled(_: &mut World, _child: String) {
+    red("a child's engine exits with its ask waiting (step 8, U5/U6)")
+}
+
+#[then(expr = "the child's claude was not given {string}")]
+fn claude_not_given(_: &mut World, _name: String) {
+    red("a claude child's environment without MCP_TOOL_TIMEOUT (step 8, U6)")
+}
+
+#[then(expr = "the child's claude was given {string} above {string}")]
+fn claude_given_above(_: &mut World, _name: String, _floor: String) {
+    red("a claude child's MCP_TOOL_TIMEOUT past its approval_timeout (step 8, U6)")
+}
+
+#[then("the child's session home registers no PermissionRequest hook of ctxloom's")]
+fn no_permission_request_hook(_: &mut World) {
+    red("a claude child's hooks hold no PermissionRequest of ctxloom's (step 8, U6)")
+}
+
+#[then(regex = r#"^the one-shot's claude was launched with "([^"]+)" "([^"]+)"$"#)]
+fn one_shot_claude_flag(_: &mut World, _flag: String, _value: String) {
+    red("a claude one-shot launched with the approval prompt tool (step 8, U6)")
+}
+
+#[then("the one-shot's session home names ctxloom's MCP server")]
+fn one_shot_home_names_mcp(_: &mut World) {
+    red("a claude one-shot's session home names ctxloom's MCP server (step 8, U6)")
+}
+
+#[then(expr = "the one-shot's opencode was launched as {string}, and closed after its one turn")]
+fn one_shot_over_acp(_: &mut World, _command: String) {
+    red("an opencode one-shot runs over ACP for its one turn (step 8, U7)")
+}
+
+#[then(expr = "the file {string} is as it was before the answer")]
+fn file_unchanged_by_answer(_: &mut World, _rel: String) {
+    red("an answer that writes nothing (step 8, U7)")
+}
+
+#[then(
+    "she sees she may allow it once, for the rest of the child's session, or always, or deny it"
+)]
+fn sees_options(_: &mut World) {
+    red("she sees the ask's options (step 8, U4)")
 }
 
 // ------------------------------------- the architecture rulings T13-T30
@@ -3762,7 +4114,7 @@ fn approval_prompt_called(_: &mut World, _c: String, _o: String, _t: String, _i:
     red("a claude child calls approval_prompt")
 }
 
-#[when(regex = r#"^(Alice runs "[^"]+"|nobody answers within the ask's time)$"#)]
+#[when(regex = r#"^(Alice runs "[^"]+"|Alice runs '[^']+'|nobody answers within the ask's time)$"#)]
 fn approval_answered_by(_: &mut World, _w: String) {
     red("the ask is answered, or times out")
 }

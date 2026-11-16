@@ -120,10 +120,11 @@ Feature: One daemon of her own does ctxloom's work, wherever Alice types
     And nothing "brisk-copper-moth" was launched with is left at rest
 
   # The child wants to run something its permissions say to ask about. No
-  # one is at its terminal, so the ask comes to Alice, wherever she types;
-  # she allows it, and the child goes on.
+  # one is at its terminal, so the ask comes to Alice, wherever she types,
+  # with the choices her assistant's engine offers; she allows it this
+  # once, and the child goes on.
   Scenario: Alice answers her child's permission ask from any terminal
-    # new: approvals.
+    # new: approvals, with the engine's options.
     Given Alice's session "amber-quiet-heron" is running, with a child "brisk-copper-moth" working for it
     And "brisk-copper-moth" asks to run "Bash" with "make release"
     When Alice looks at what her session's children are waiting on:
@@ -132,9 +133,10 @@ Feature: One daemon of her own does ctxloom's work, wherever Alice types
       """
     Then the command succeeds
     And she sees "brisk-copper-moth" asking to run "Bash" with "make release"
-    When Alice allows it:
+    And she sees she may allow it once, for the rest of the child's session, or always, or deny it
+    When Alice allows it this once:
       """
-      ctxloom session approvals answer brisk-copper-moth allow
+      ctxloom session approvals answer brisk-copper-moth allow-once
       """
     Then the command succeeds
     And "brisk-copper-moth" ran "make release", and nothing waits for her any more

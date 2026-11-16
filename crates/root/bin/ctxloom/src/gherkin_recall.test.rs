@@ -228,6 +228,16 @@ fn recorded_input(w: &mut World, text: String) {
     );
 }
 
+#[then(expr = "the mock recorded input does not contain {string}")]
+fn recorded_input_lacks(w: &mut World, text: String) {
+    let input = files::read(w.model_dir().join("model-input"))
+        .unwrap_or_else(|e| panic!("the model was asked nothing ({e}): {}", w.ran().said()));
+    assert!(
+        !input.contains(&text),
+        "the model had in front of it: {input}"
+    );
+}
+
 #[then("ctxloom refuses, naming the harp it could not find and the command that lists the sessions there are")]
 fn refuses_unknown(w: &mut World) {
     assert_eq!(w.ran().code, 20, "{}", w.ran().said());

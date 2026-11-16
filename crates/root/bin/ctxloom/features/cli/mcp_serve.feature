@@ -13,10 +13,18 @@ Feature: ctxloom's own MCP server — an engine's way to the daemon, through the
   elicitations, to the engine. A tool's write carries the id the server
   chose, and is retried once on a new daemon.
 
-  Its tools: a child's launch, send, close and clear; a session's list,
+  Its tools: a child's launch (in the owner's project, or in another by
+  `project`, a directory, relative to the calling session's project root),
+  send, close and clear; a session's list,
   show and transcript; the assembled context; and the approval prompt that
-  a claude child's permission asks are routed through
-  (`--permission-prompt-tool mcp__ctxloom__approval_prompt`).
+  the permission asks of a claude child or one-shot are routed through
+  (`--permission-prompt-tool mcp__ctxloom__approval_prompt`): claude calls
+  it with `{tool_name, input, tool_use_id}` and waits, however long the
+  user takes within the ask's time, for its answer, the JSON text
+  `{"behavior":"allow", ...}` or `{"behavior":"deny","message": ...}`. A
+  call claude cancels (`notifications/cancelled`) withdraws its ask. The
+  server answers claude's `server/discover` probe, sent before
+  `initialize`.
 
   It is also how an engine running in a container reaches ctxloom: through
   its MCP server and the hook endpoint, over TCP and TLS, never through a
@@ -51,6 +59,14 @@ Feature: ctxloom's own MCP server — an engine's way to the daemon, through the
       When its engine lists the tools of ctxloom's MCP server
       Then the tools are "child_launch", "child_send", "child_close", "child_clear", "session_list", "session_show", "transcript_show", "context_assemble" and "approval_prompt"
 
+    Scenario: The server answers claude's discovery probe before it is initialized
+      # new: claude sends `server/discover`, with a string id, before `initialize`.
+      Given an initialized ctxloom project
+      And a session "amber-quiet-heron" that is still running
+      When its engine sends "server/discover" to ctxloom's MCP server before "initialize"
+      Then the server answered it with an empty result
+      And the engine went on to initialize the server and list its tools
+
   Rule: A tool is a client of the daemon, and holds nothing itself
 
     Scenario: A tool's write is the domain's command through the daemon's coordinator, applied once
@@ -60,6 +76,17 @@ Feature: ctxloom's own MCP server — an engine's way to the daemon, through the
       When the engine of "amber-quiet-heron" calls "child_send" for "brisk-copper-moth" with wake "check the tests"
       Then the tool answered with the child's session as the daemon's read model has it after the message
       And the message was sent once, under the id the server chose
+
+    Scenario: child_launch with a project launches the child to work in that project
+      # new: the child_launch tool's project (step 8: the cross-repository surface).
+      Given an initialized ctxloom project
+      And Alice has exported her assistant's token
+      And a session "amber-quiet-heron" that is still running
+      And a second project "api" beside this one, initialized with ctxloom
+      And I run "ctxloom trust --yes" in the project "api"
+      When the engine of "amber-quiet-heron" calls "child_launch" for "brisk-copper-moth" with project "../api" and task "review the change"
+      Then the tool answered with the child's session, named under the project "api"
+      And the child "brisk-copper-moth" of "amber-quiet-heron" ran its first turn on "review the change", in the root of "api"
 
     Scenario: A tool whose daemon is killed under it is retried once on a new daemon
       # new: the retry is the server's too.
@@ -86,10 +113,21 @@ Feature: ctxloom's own MCP server — an engine's way to the daemon, through the
       Then the tool answered the engine <answer>
 
       Examples:
-        | who                                                           | answer                                              |
-        | Alice runs "ctxloom session approvals answer brisk-copper-moth allow" | {"behavior":"allow"} with the input unchanged       |
-        | Alice runs "ctxloom session approvals answer brisk-copper-moth deny"  | {"behavior":"deny"} with a message                  |
-        | nobody answers within the ask's time                          | {"behavior":"deny"}, saying no answer came in time  |
+        | who                                                                                 | answer                                                                                     |
+        | Alice runs "ctxloom session approvals answer brisk-copper-moth allow-once"          | {"behavior":"allow"} with the input unchanged                                              |
+        | Alice runs "ctxloom session approvals answer brisk-copper-moth allow-session"       | {"behavior":"allow"} with the input unchanged, and a session rule for "Bash" "rm -rf build/" |
+        | Alice runs "ctxloom session approvals answer brisk-copper-moth allow-always --yes"  | {"behavior":"allow"} with the input unchanged, and a session rule for "Bash" "rm -rf build/" |
+        | Alice runs 'ctxloom session approvals answer brisk-copper-moth deny "not yet"'      | {"behavior":"deny"} with the message "not yet"                                             |
+        | Alice runs "ctxloom session approvals answer brisk-copper-moth deny"                | {"behavior":"deny"}, saying the user denied it                                             |
+        | nobody answers within the ask's time                                                | {"behavior":"deny"}, saying no answer came in time                                         |
+
+    Scenario: A call claude cancels withdraws its ask, and the server answers nothing for it
+      # new: a cancelled ask is withdrawn at once.
+      Given an initialized ctxloom project
+      And a claude child "brisk-copper-moth" of "amber-quiet-heron" whose engine calls "approval_prompt" for "Bash" with "rm -rf build/"
+      When the engine sends "notifications/cancelled" for that call
+      Then no ask is waiting under "amber-quiet-heron"
+      And the server sent no answer for the cancelled call, and still serves the engine's next call
 
   Rule: A containerized engine reaches the daemon through its MCP server
 

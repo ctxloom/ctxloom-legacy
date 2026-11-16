@@ -282,13 +282,15 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the output contains "Phase 5 — Close"
 
     # Owner ruling 128: init reads the interview THROUGH the catalog. A
-    # project bundle named `ctxloom` overrides the built-in one whole: what it
-    # holds is what init opens with (a trust cost the owner accepted), and a
-    # setup interview it lacks is refused, naming the prompt, never taken
-    # from the built-in bundle.
+    # project bundle named `ctxloom` overrides the built-in one whole, once
+    # the user has trusted the project (cli/trust.feature: an untrusted one
+    # is passed over for the built-in prompts, with a notice): what it holds
+    # is what init opens with, and a setup interview it lacks is refused,
+    # naming the prompt, never taken from the built-in bundle.
     Scenario: A project bundle named ctxloom replaces the interview init opens with
-      # new: owner ruling 128.
+      # new: owner ruling 128, on a project the user trusts (step 8, D4).
       Given an initialized ctxloom project
+      And I run "ctxloom trust --yes"
       And the project already has the file ".ctxloom/content/bundles/v2/ctxloom/bundle.yaml":
         """
         schema_version: 4
@@ -307,8 +309,9 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the output does not contain "Phase 1 — Open, orient, scan"
 
     Scenario: A project bundle named ctxloom without the interview is refused, naming it
-      # new: owner ruling 128.
+      # new: owner ruling 128, on a project the user trusts (step 8, D4).
       Given an initialized ctxloom project
+      And I run "ctxloom trust --yes"
       And the project already has the file ".ctxloom/content/bundles/v2/ctxloom/bundle.yaml":
         """
         schema_version: 4
