@@ -1,8 +1,7 @@
-//! The drive half: a child's turn is one `opencode run --format json` with the
-//! prompt on stdin (the probe: an argument with a space reaches the model
-//! wrapped in literal quotes, and `run` reads stdin to its end); the human's
-//! session is the TUI; both get the session home as `OPENCODE_CONFIG_DIR`,
-//! every XDG base and HOME relocated into it, and a curated environment.
+//! The drive half: a one-shot is no turn command of its own (it runs over
+//! ACP, step 8 U7); a child's command (`opencode acp`, [`crate::child`]) and
+//! the human's TUI both get the session home as `OPENCODE_CONFIG_DIR`, every
+//! XDG base and HOME relocated into it, and a curated environment.
 
 use std::collections::BTreeMap;
 
@@ -39,64 +38,78 @@ fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// A child's command (`opencode acp`), hosted or a one-shot's.
 fn turn(request: &TurnRequest) -> TurnCommand {
-    Opencode::new().drive_turn(request).unwrap()
+    crate::child::acp_command(request, "pw").unwrap()
 }
 
 fn terminal(request: &TurnRequest) -> TurnCommand {
     Opencode::new().drive_interactive(request).unwrap()
 }
 
+// Q13 (step 8 U7): a one-shot is no `opencode run` command; it runs over
+// ACP, as a child: its prompt is a message, never on its command line or
+// stdin.
 #[test]
-fn test_a_turn_is_one_run_command_that_prints_json_with_the_prompt_on_stdin() {
+fn test_a_one_shot_is_no_turn_command_and_a_childs_command_carries_no_prompt() {
+    let refused = Opencode::new().drive_turn(&request()).unwrap_err();
+    assert!(matches!(refused, EngineError::NotYet { .. }), "{refused:?}");
+    assert!(refused.to_string().contains("ACP"), "{refused}");
+    assert!(matches!(
+        Opencode::new().finish_turn(&run_ports::TurnOutput {
+            exit: run_ports::Exit {
+                code: Some(0),
+                signal: None,
+            },
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            timed_out: false,
+            truncated: false,
+            drain_incomplete: false,
+        }),
+        run_ports::TurnOutcome::Failed { .. }
+    ));
     let command = turn(&request());
     assert_eq!(command.program, "opencode");
-    assert_eq!(command.args, ["run", "--format", "json"]);
-    assert_eq!(command.stdin, b"Reply with exactly: ok");
-    assert!(!command.args.iter().any(|a| a.contains("exactly")));
+    assert_eq!(
+        command.args,
+        [
+            "acp",
+            "--cwd",
+            "/p",
+            "--hostname",
+            "127.0.0.1",
+            "--port",
+            "0"
+        ]
+    );
+    assert!(command.stdin.is_empty());
     assert_eq!(command.cwd.as_deref(), Some("/p"));
 }
 
-// The first turn makes the session; a later one names it (the id the first
-// turn's stream gave, bound to the session by the launcher).
+// opencode names a model `provider/model`, set over ACP for a child and a
+// flag for the TUI; an effort level is not passed (no opencode flag for it
+// is verified), and is not refused either.
 #[test]
-fn test_a_later_turn_names_the_native_session() {
-    let mut later = request();
-    later.resume = Some("ses_e3c648397ffesrvA00TD1hAwdC".to_string());
-    assert_eq!(
-        turn(&later).args,
-        [
-            "run",
-            "--format",
-            "json",
-            "--session",
-            "ses_e3c648397ffesrvA00TD1hAwdC"
-        ]
-    );
-}
-
-// opencode names a model `provider/model`; an effort level is not passed (no
-// opencode flag for it is verified), and is not refused either.
-#[test]
-fn test_a_model_is_passed_and_an_effort_is_not() {
+fn test_a_model_is_a_flag_of_the_tui_alone_and_an_effort_is_not() {
     let mut chosen = request();
     chosen.model = "opencode/big-pickle".to_string();
     chosen.effort = "high".to_string();
-    assert_eq!(
-        turn(&chosen).args,
-        ["run", "--format", "json", "-m", "opencode/big-pickle"]
-    );
+    assert!(!turn(&chosen).args.iter().any(|a| a.contains("big-pickle")));
     chosen.prompt = String::new();
     assert_eq!(terminal(&chosen).args, ["-m", "opencode/big-pickle"]);
 }
 
 // Owner rulings 133-139: opencode's permissions are its config's, never a
 // flag (and ctxloom chooses no opencode agent, `build` or `plan`: no flag for
-// one is in scope), so a turn and the TUI carry none.
+// one is in scope), so a child and the TUI carry none.
 #[test]
 fn test_no_permission_or_agent_flag_is_passed() {
     let chosen = request();
-    assert_eq!(turn(&chosen).args, ["run", "--format", "json"]);
+    assert!(!turn(&chosen)
+        .args
+        .iter()
+        .any(|a| a.contains("permission") || a == "--agent"));
     let mut chosen = request();
     chosen.prompt = String::new();
     assert!(terminal(&chosen).args.is_empty());
@@ -380,10 +393,13 @@ fn test_a_host_home_keeps_the_users_own_dirs_and_still_loads_the_plugin() {
     assert_eq!(got("XDG_CONFIG_HOME").as_deref(), Some("/home/alice/.cfg"));
     assert_eq!(got("XDG_DATA_HOME"), None);
     assert_eq!(
-        Opencode::new().drive_turn(&TurnRequest {
-            settings,
-            ..request()
-        }),
+        crate::child::acp_command(
+            &TurnRequest {
+                settings,
+                ..request()
+            },
+            "pw"
+        ),
         Err(EngineError::NoHostHome {
             engine: "opencode".to_string()
         })

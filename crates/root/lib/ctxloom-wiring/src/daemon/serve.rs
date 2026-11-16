@@ -136,7 +136,8 @@ pub(crate) fn serve(
         #[cfg(feature = "test-support")]
         dies_at_steps(&core.edge(), &files);
         // What the loop shares with the API's use cases (slice 2 step 5).
-        let one_shots = one_shots_over(&core, home, &temp);
+        let asking = routed_asks(&say);
+        let one_shots = one_shots_over(&core, home, &temp, &asking.router);
         let shared = shared_over(&kept, &one_shots, (&fs, home), pace);
         let terminals = terminals_over(&core, home, &temp);
         let started = start(
@@ -146,7 +147,7 @@ pub(crate) fn serve(
             &kept,
             (os, user_home, stamp, pace, engines),
             (&files, &shared, &one_shots, &terminals),
-            (&say, &env),
+            (&say, &env, &asking),
         )
         .await;
         let (listener, mut launcher, own) = match started {
@@ -386,13 +387,28 @@ fn seconds_now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
+/// Where the asks the daemon's engines make over their own protocol go
+/// (step 8 U7): its API, once it is built, on the daemon's runtime (the
+/// one this is called on), said in its log.
+fn routed_asks(say: &Say) -> super::asks::Asking {
+    let routes: super::asks::LateRoutes = Arc::new(std::sync::OnceLock::new());
+    let say = Arc::clone(say);
+    let router = Arc::new(super::asks::RoutedAsks {
+        routes: Arc::clone(&routes),
+        runtime: tokio::runtime::Handle::current(),
+        say: Arc::new(move |line: &str| said(&say, line)),
+    });
+    super::asks::Asking { routes, router }
+}
+
 /// The one-shots the daemon hosts (U4), each over `core` shared, on the
-/// daemon's runtime (the one this is called on): the API creates and
-/// watches them, the launcher stops them.
+/// daemon's runtime (the one this is called on), their asks routed by
+/// `asks`: the API creates and watches them, the launcher stops them.
 fn one_shots_over(
     core: &InProcessCore<SqliteStore>,
     home: &Path,
     temp: &Path,
+    asks: &Arc<dyn run_ports::PermissionRouter>,
 ) -> Arc<daemon_application::OneShots> {
     Arc::new(daemon_application::OneShots::new(Box::new(
         crate::oneshot::HostedOneShots {
@@ -400,6 +416,7 @@ fn one_shots_over(
             runtime: tokio::runtime::Handle::current(),
             home: home.to_path_buf(),
             temp: temp.to_path_buf(),
+            asks: Some(Arc::clone(asks)),
         },
     )))
 }
@@ -411,6 +428,24 @@ type Hosts<'a> = (
     &'a Arc<Shared>,
     &'a Arc<OneShots>,
     &'a Arc<daemon_application::Terminals>,
+);
+
+/// What a daemon's start composes its launches with: its OS, the user's
+/// home, its stamp, its pace and the engines it hosts on.
+type Composed = (
+    String,
+    Option<PathBuf>,
+    String,
+    Pace,
+    Vec<daemon_application::HostedEngine>,
+);
+
+/// What a daemon's start says through, the environment it composes its
+/// launches in, and where its engines' asks go (step 8 U7).
+type Saying<'a> = (
+    &'a Say,
+    &'a Arc<process_env::EnvSnapshot>,
+    &'a super::asks::Asking,
 );
 
 /// The interactive sessions the daemon prepares (U5), each over `core`
@@ -440,15 +475,9 @@ async fn start(
     (home, temp): (&Path, &Path),
     core: &InProcessCore<SqliteStore>,
     kept: &Projectors,
-    (os, user_home, stamp, pace, engines): (
-        String,
-        Option<PathBuf>,
-        String,
-        Pace,
-        Vec<daemon_application::HostedEngine>,
-    ),
+    (os, user_home, stamp, pace, engines): Composed,
     (files, shared, one_shots, terminals): Hosts<'_>,
-    (say, env): (&Say, &Arc<process_env::EnvSnapshot>),
+    (say, env, asking): Saying<'_>,
 ) -> Result<(HookListener, Daemon<CoreEdge>, Discovery), String> {
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
     let edge = core.edge();
@@ -490,7 +519,7 @@ async fn start(
         .hosting_one_shots(Arc::clone(one_shots)),
         fs,
         (home, temp),
-        (&engines, terminals, kept),
+        (&engines, terminals, kept, asking),
     );
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
@@ -517,7 +546,7 @@ async fn start(
         (home, temp),
         &edge,
         kept,
-        (engines, user_home.clone(), env),
+        (engines, user_home.clone(), env, &asking.router),
         Told {
             home: home.to_string_lossy().into_owned(),
             program_dir: std::env::current_exe()
@@ -663,13 +692,14 @@ fn served(
     api: daemon_api::Api<CoreEdge>,
     fs: &Arc<dyn Fs>,
     (home, temp): (&Path, &Path),
-    (engines, terminals, kept): (
+    (engines, terminals, kept, asking): (
         &[daemon_application::HostedEngine],
         &Arc<daemon_application::Terminals>,
         &Projectors,
+        &super::asks::Asking,
     ),
 ) -> Arc<dyn daemon_api::Calls> {
-    Arc::new(
+    let api = Arc::new(
         // The sessions it prepares (U5).
         api.preparing_terminals(Arc::clone(terminals))
             .assembling(Arc::new(super::places::ProjectAssemblies {
@@ -684,7 +714,11 @@ fn served(
                 index: kept.approvals.clone().unwrap_or_default(),
                 names: Arc::new(FreshAskNames),
             }),
-    )
+    );
+    // The asks its engines make over their own protocol reach the API that
+    // serves (held weakly: ruling 131; step 8 U7).
+    asking.serving(api.clone());
+    api
 }
 
 /// The `Ctxloom` service as the listener serves it.
@@ -827,10 +861,11 @@ fn launcher(
     (home, temp): (&Path, &Path),
     edge: &Arc<CoreEdge>,
     kept: &Projectors,
-    (engines, user_home, env): (
+    (engines, user_home, env, asks): (
         Vec<daemon_application::HostedEngine>,
         Option<PathBuf>,
         &Arc<process_env::EnvSnapshot>,
+        &Arc<dyn run_ports::PermissionRouter>,
     ),
     told: Told,
     say: Say,
@@ -872,6 +907,9 @@ fn launcher(
         home: home.to_path_buf(),
         env: Arc::clone(env),
     }))
+    // Its children's engines' own permission requests, routed to the user
+    // (step 8 U7).
+    .routing_asks(Arc::clone(asks))
 }
 
 /// Tick until the daemon is asked to stop, its single-instance lock file

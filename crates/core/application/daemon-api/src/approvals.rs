@@ -278,19 +278,27 @@ impl<E: Edge> Api<E> {
     /// expired, was withdrawn, or is no longer known). Waits as long as its
     /// caller does.
     pub async fn routed_answer(&self, approval: &v1::Approval) -> PermissionAnswer {
-        let Ok(approving) = self.approving_ports() else {
-            return PermissionAnswer::Cancelled;
-        };
         loop {
-            self.parts.hosting.fresh().await;
-            let Some(row) = approving.index.index().named(&approval.name) else {
-                return PermissionAnswer::Cancelled;
-            };
-            match row.state {
-                pending_approvals::State::Waiting => continue,
-                pending_approvals::State::Answered => return chosen(&row),
-                _ => return PermissionAnswer::Cancelled,
+            if let Some(answer) = self.routed_settled(approval).await {
+                return answer;
             }
+        }
+    }
+
+    /// One round of [`Api::routed_answer`]: the daemon's next round waited
+    /// for, then the answer if the ask is settled, none while it waits.
+    pub async fn routed_settled(&self, approval: &v1::Approval) -> Option<PermissionAnswer> {
+        let Ok(approving) = self.approving_ports() else {
+            return Some(PermissionAnswer::Cancelled);
+        };
+        self.parts.hosting.fresh().await;
+        let Some(row) = approving.index.index().named(&approval.name) else {
+            return Some(PermissionAnswer::Cancelled);
+        };
+        match row.state {
+            pending_approvals::State::Waiting => None,
+            pending_approvals::State::Answered => Some(chosen(&row)),
+            _ => Some(PermissionAnswer::Cancelled),
         }
     }
 

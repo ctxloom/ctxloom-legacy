@@ -128,7 +128,7 @@ fn workdir(spec: &ChildSpec) -> &str {
 
 /// The child's command. Its stdin and stdout are the ACP connection. The
 /// model is set over ACP (`session/set_model`), not by a flag; an effort
-/// level is not passed (no opencode flag for it is verified, as for a turn).
+/// level is not passed (no opencode flag for it is verified).
 pub(crate) fn child_command(spec: &ChildSpec, password: &str) -> Result<TurnCommand, EngineError> {
     let request = TurnRequest {
         prompt: String::new(),
@@ -142,17 +142,29 @@ pub(crate) fn child_command(spec: &ChildSpec, password: &str) -> Result<TurnComm
         effort: spec.effort.clone(),
         settings: spec.settings.clone(),
     };
-    let mut command = TurnCommand::new(drive::program(&request));
+    acp_command(&request, password)
+}
+
+/// `opencode acp` for `request` (a hosted child's, or a one-shot's: step 8
+/// U7, a one-shot runs over ACP for its one turn), in a child's environment
+/// (the curated [`drive::ENV_ALLOWLIST`], relocated into its session home)
+/// with `password` its own listener's. Its prompt, if any, is a message,
+/// never on its command line or its stdin.
+pub(crate) fn acp_command(
+    request: &TurnRequest,
+    password: &str,
+) -> Result<TurnCommand, EngineError> {
+    let mut command = TurnCommand::new(drive::program(request));
     command.args = vec![
         "acp".to_string(),
         "--cwd".to_string(),
-        workdir(spec).to_string(),
+        request.cwd.clone().unwrap_or_else(|| request.home.clone()),
         "--hostname".to_string(),
         "127.0.0.1".to_string(),
         "--port".to_string(),
         "0".to_string(),
     ];
-    command.env = drive::environment(&Opencode::new(), drive::ENV_ALLOWLIST, &request)?;
+    command.env = drive::environment(&Opencode::new(), drive::ENV_ALLOWLIST, request)?;
     command
         .env
         .insert(PASSWORD_VARIABLE.to_string(), password.to_string());
@@ -760,9 +772,21 @@ fn keep_stderr(stderr: impl Read + Send + 'static) -> mpsc::Receiver<String> {
             start.extend_from_slice(&buffer[..read.min(room)]);
         }
         let text = String::from_utf8_lossy(&start);
-        let _ = told.send(crate::stream::bounded(text.trim()).to_string());
+        let _ = told.send(bounded(text.trim()).to_string());
     });
     kept
+}
+
+/// How much of stderr an exit's detail keeps.
+const STDERR_DETAIL: usize = 400;
+
+/// `text`, cut to [`STDERR_DETAIL`] bytes at a character boundary.
+pub(crate) fn bounded(text: &str) -> &str {
+    let mut end = text.len().min(STDERR_DETAIL);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// The exit's detail: a wait that failed says so; else the start of stderr

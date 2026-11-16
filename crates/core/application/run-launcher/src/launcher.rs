@@ -399,7 +399,9 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
                 spec: &spec,
                 made: &made,
             };
-            let outcome = self.child_turn(child.as_ref(), turn).await?;
+            // Boxed: its state is kept off the stack of the launch's own
+            // future, which a one-shot's thread runs (the daemon's, 2 MiB).
+            let outcome = Box::pin(self.child_turn(child.as_ref(), turn)).await?;
             return Ok(done(outcome));
         }
         // A child's turn is heard through its hooks alone (owner rulings 26

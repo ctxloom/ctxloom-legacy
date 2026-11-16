@@ -98,6 +98,12 @@ pub(super) struct State {
     engine: Option<crate::tests::mcp_serve::Mcp>,
     /// What a step's discovery probe was answered.
     discovered: Option<Value>,
+    /// The scripted `opencode acp` the home config names, once one is set
+    /// (step 8 U7).
+    opencode: Option<PathBuf>,
+    /// The project config as it was before an answer (step 8 U7: an
+    /// opencode answer writes nothing).
+    config_before: Option<String>,
 }
 
 /// An ask the scripted claude made: its server, the call's id, and the
@@ -268,11 +274,17 @@ fn write_home_config(w: &World) {
             .read_home(".ctxloom/config.yaml")
             .unwrap_or_default(),
     ));
+    if w.daemon_spec.stub.is_some() || w.daemon_spec.opencode.is_some() {
+        config.push_str("engines:\n");
+    }
     if let Some(stub) = &w.daemon_spec.stub {
         config.push_str(&format!(
-            "engines:\n  claude-code:\n    command: {}\n",
+            "  claude-code:\n    command: {}\n",
             stub.display()
         ));
+    }
+    if let Some(stub) = &w.daemon_spec.opencode {
+        config.push_str(&format!("  opencode:\n    command: {}\n", stub.display()));
     }
     if let Some(timeout) = &w.daemon_spec.drain_timeout {
         config.push_str(&format!("daemon:\n  drain_timeout: {timeout}\n"));
@@ -456,6 +468,13 @@ fn hosting_daemon(w: &mut World) {
 pub(super) fn before_line(w: &mut World, line: &str) {
     if line.trim_start().starts_with("ctxloom session launch") {
         hosting_daemon(w);
+    }
+    // An opencode one-shot (step 8 U7) runs on the scripted `opencode acp`,
+    // its project's agent on opencode, unless a step set one up already.
+    if line.contains("ctxloom run --one-shot --engine opencode") && w.daemon_spec.opencode.is_none()
+    {
+        opencode_project(w);
+        stub_opencode(w, None);
     }
 }
 
@@ -3601,9 +3620,15 @@ fn start_asking(w: &mut World, line: String, _tool: String, _input: String) {
 #[when(
     regex = r#"^I start '([^']+)', whose opencode sends a permission request for "([^"]+)" offering (.+)$"#
 )]
-fn start_opencode_asking(w: &mut World, line: String, _tool: String, _offered: String) {
+fn start_opencode_asking(w: &mut World, line: String, tool: String, offered: String) {
+    opencode_project(w);
+    stub_opencode(w, Some((&tool, &offered)));
+    let before = waiting_asks(w, None).len();
     start_line(w, &line);
-    red("a one-shot's scripted opencode sending ACP's permission request (U7)")
+    // The engine asks once its one turn starts: the ask is listed then.
+    until(w, "the one-shot's ask to be listed", DAEMON_WAIT, |w| {
+        (waiting_asks(w, None).len() > before).then_some(())
+    });
 }
 
 #[then("the started command succeeds, its engine told to run the tool")]
@@ -3615,9 +3640,9 @@ fn started_told_to_run(w: &mut World) {
 #[then(
     regex = r"^the started command succeeds, its opencode answered with its request's (\w+) option$"
 )]
-fn started_opencode_answered(w: &mut World, _kind: String) {
+fn started_opencode_answered(w: &mut World, kind: String) {
     started_ran(w).succeeds();
-    red("the one-shot's opencode answered with its request's option (U7)")
+    answered_with_kind(w, &kind);
 }
 
 /// The question a stood-in terminal asks before it reads its answer: a
@@ -3795,23 +3820,27 @@ fn first_turn_in_project(
     regex = r#"^an opencode child "([^"]+)" of "([^"]+)" that sends a permission request for "([^"]+)" offering (.+)$"#
 )]
 fn opencode_asks_offering(
-    _: &mut World,
-    _child: String,
-    _owner: String,
-    _tool: String,
-    _offered: String,
+    w: &mut World,
+    child: String,
+    owner: String,
+    tool: String,
+    offered: String,
 ) {
-    red("an opencode child's ACP permission request, with its options (step 8, U7)")
+    opencode_child_asking(w, &child, &owner, &tool, &offered);
 }
 
 #[then(expr = "the child's opencode was answered {string} for its permission request")]
-fn opencode_answered_word(_: &mut World, _word: String) {
-    red("an opencode child's request answered cancelled (step 8, U7)")
+fn opencode_answered_word(w: &mut World, word: String) {
+    let answer = opencode_answer(w);
+    assert!(
+        answer.contains(&format!("\"outcome\":\"{word}\"")),
+        "opencode was answered {answer}"
+    );
 }
 
 #[then(regex = r"^the child's opencode was answered with its request's (\w+) option$")]
-fn opencode_answered_kind(_: &mut World, _kind: String) {
-    red("an opencode child's request answered with an option of its kind (step 8, U7)")
+fn opencode_answered_kind(w: &mut World, kind: String) {
+    answered_with_kind(w, &kind);
 }
 
 #[when(regex = r#"^"([^"]+)"'s engine exits without cancelling its approval prompt call$"#)]
@@ -3877,13 +3906,40 @@ fn one_shot_home_names_mcp(_: &mut World) {
 }
 
 #[then(expr = "the one-shot's opencode was launched as {string}, and closed after its one turn")]
-fn one_shot_over_acp(_: &mut World, _command: String) {
-    red("an opencode one-shot runs over ACP for its one turn (step 8, U7)")
+fn one_shot_over_acp(w: &mut World, command: String) {
+    let dir = opencode_dir(w);
+    let args = files::read(dir.join("opencode-args")).expect("opencode was launched");
+    let words: Vec<&str> = command.split(' ').collect();
+    assert_eq!(words.first(), Some(&"opencode"), "{command}");
+    assert_eq!(
+        args.lines().next(),
+        words.get(1).copied(),
+        "launched as {args:?}"
+    );
+    let prompts = files::read(dir.join("opencode-input"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.contains("\"session/prompt\""))
+        .count();
+    assert_eq!(prompts, 1, "one turn");
+    assert!(
+        files::exists(dir.join("opencode-closed")),
+        "its input was never closed"
+    );
 }
 
 #[then(expr = "the file {string} is as it was before the answer")]
-fn file_unchanged_by_answer(_: &mut World, _rel: String) {
-    red("an answer that writes nothing (step 8, U7)")
+fn file_unchanged_by_answer(w: &mut World, rel: String) {
+    assert_eq!(
+        rel, ".ctxloom/config.yaml",
+        "the file kept is the project config"
+    );
+    let before = w
+        .daemon_spec
+        .config_before
+        .clone()
+        .expect("the config was kept before the answer");
+    assert_eq!(w.common.project.read(&rel), Some(before));
 }
 
 #[then(
@@ -5181,6 +5237,161 @@ fn start_then_exit(w: &mut World) {
         .filter(|t| matches!(*t, "RunnerStartedRecorded" | "RunEnded"))
         .collect();
     assert_eq!(order, ["RunnerStartedRecorded", "RunEnded"], "{run:?}");
+}
+
+// ------------------------------------- step 8 U7: the asks, as opencode makes them
+
+/// The scripted `opencode acp`: it speaks ACP's lines as opencode 1.18.4
+/// does (the spike's), writing its arguments to `opencode-args` and every
+/// line it is given to `opencode-input`. Its turn's prompt is answered with
+/// the capture scenarios' reply; the FIRST prompt it is given, when
+/// `opencode-asks` is beside it (the tool on its first line, the options'
+/// JSON on its second), first sends `session/request_permission` for that
+/// tool and waits for its answer, which it writes to `opencode-answers`. At
+/// its input's end it writes `opencode-closed` and exits.
+const OPENCODE_ACP: &str = r#"here="$(dirname "$0")"
+: > "$here/opencode-args"
+for a in "$@"; do printf '%s\n' "$a" >> "$here/opencode-args"; done
+n=0
+sid=
+asked=
+field() { printf '%s' "$2" | sed -n "s/^.*\"$1\":\"\([^\"]*\)\".*\$/\1/p"; }
+reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$1" "$2"; }
+chunk() { printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"%s","update":{"sessionUpdate":"agent_message_chunk","messageId":"%s","content":{"type":"text","text":"%s"}}}}\n' "$sid" "$1" "$2"; }
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$here/opencode-input"
+  id=$(printf '%s' "$line" | sed -n 's/^.*"id":\("[^"]*"\|[0-9][0-9]*\).*$/\1/p')
+  case "$(field method "$line")" in
+    initialize) reply "$id" '{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}' ;;
+    session/new) n=$((n+1)); sid="ses_$n"; reply "$id" "{\"sessionId\":\"$sid\"}" ;;
+    session/load) sid=$(field sessionId "$line"); reply "$id" '{}' ;;
+    session/set_model) reply "$id" '{}' ;;
+    session/prompt)
+      if [ -z "$asked" ] && [ -f "$here/opencode-asks" ]; then
+        asked=1
+        tool=$(sed -n 1p "$here/opencode-asks")
+        options=$(sed -n 2p "$here/opencode-asks")
+        printf '{"jsonrpc":"2.0","id":"perm-1","method":"session/request_permission","params":{"sessionId":"%s","toolCall":{"toolCallId":"call_1","title":"%s","rawInput":{"command":"touch hi.txt"}},"options":%s}}\n' "$sid" "$tool" "$options"
+        IFS= read -r answer
+        printf '%s\n' "$answer" >> "$here/opencode-input"
+        printf '%s\n' "$answer" >> "$here/opencode-answers"
+      fi
+      chunk msg_reply "J001000-CHILD-REPLY"
+      reply "$id" '{"stopReason":"end_turn"}' ;;
+  esac
+done
+echo closed > "$here/opencode-closed"
+"#;
+
+/// The id the scripted opencode gives an option of `kind` (opencode's own
+/// for its three: `once`, `always`, `reject`).
+fn option_id(kind: &str) -> &'static str {
+    match kind {
+        "allow_once" => "once",
+        "allow_always" => "always",
+        "reject_once" => "reject",
+        "reject_always" => "never",
+        _ => panic!("no ACP option kind {kind:?}"),
+    }
+}
+
+/// The options a step's words offer (`allow_once, allow_always and
+/// reject_once`), as ACP's request lists them.
+fn acp_options(offered: &str) -> Value {
+    let kinds: Vec<&str> = offered
+        .split(", ")
+        .flat_map(|part| part.split(" and "))
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .collect();
+    Value::Array(
+        kinds
+            .iter()
+            .map(|kind| {
+                json!({"optionId": option_id(kind), "name": format!("{kind} (opencode)"), "kind": kind})
+            })
+            .collect(),
+    )
+}
+
+fn opencode_dir(w: &World) -> PathBuf {
+    w.common.project.home().join("fake-opencode")
+}
+
+/// Point opencode at the scripted `opencode acp` in the scenario's home; it
+/// asks to run `tool` offering `offered`'s options when one is given.
+fn stub_opencode(w: &mut World, asks: Option<(&str, &str)>) {
+    let dir = opencode_dir(w);
+    files::put_program(dir.join("opencode"), OPENCODE_ACP);
+    if let Some((tool, offered)) = asks {
+        files::put(
+            dir.join("opencode-asks"),
+            format!("{tool}\n{}\n", acp_options(offered)),
+        );
+    }
+    w.daemon_spec.opencode = Some(dir.join("opencode"));
+    write_home_config(w);
+}
+
+/// The project's config: its default agent on opencode.
+fn opencode_project(w: &World) {
+    let config = config_of(&[
+        "agents.default.engine: opencode".to_string(),
+        "default_agent: default".to_string(),
+    ]);
+    w.common.project.write(".ctxloom/config.yaml", &config);
+}
+
+/// The scenario's opencode child `child` of `owner`, hosted by the daemon
+/// on the project's default agent (on opencode), its first turn asking to
+/// run `tool` offering `offered`: waited for until the ask is listed. The
+/// project config is kept as it is now.
+fn opencode_child_asking(w: &mut World, child: &str, owner: &str, tool: &str, offered: &str) {
+    if w.daemon_spec.daemon.is_none() {
+        w.common
+            .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+        start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+    }
+    opencode_project(w);
+    stub_opencode(w, Some((tool, offered)));
+    w.daemon_spec.config_before = w.common.project.read(".ctxloom/config.yaml");
+    let seeded = run_now(w, &["test", "seed-session", owner]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let before = waiting_asks(w, None).len();
+    let launched = run_now(w, &["session", "launch", owner, "--name", child, "a task"]);
+    assert_eq!(launched.code, 0, "{}", launched.said());
+    until(
+        w,
+        "the opencode child's ask to be listed",
+        DAEMON_WAIT,
+        |w| (waiting_asks(w, None).len() > before).then_some(()),
+    );
+}
+
+/// What the scripted opencode was answered for its permission request, once
+/// it was.
+fn opencode_answer(w: &World) -> String {
+    until(
+        w,
+        "opencode's permission request to be answered",
+        DAEMON_WAIT,
+        |w| {
+            files::read(opencode_dir(w).join("opencode-answers"))
+                .ok()
+                .filter(|answers| !answers.trim().is_empty())
+        },
+    )
+}
+
+/// opencode's permission request was answered with its own option of
+/// `kind`.
+fn answered_with_kind(w: &World, kind: &str) {
+    let answer = opencode_answer(w);
+    assert!(
+        answer.contains("\"outcome\":\"selected\"")
+            && answer.contains(&format!("\"optionId\":\"{}\"", option_id(kind))),
+        "opencode was answered {answer}, not its {kind} option"
+    );
 }
 
 // ------------------------------------- step 8 U4: the asks, as claude makes them

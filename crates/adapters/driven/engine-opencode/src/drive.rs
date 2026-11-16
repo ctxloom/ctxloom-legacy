@@ -1,14 +1,10 @@
 //! opencode's drive half.
 //!
-//! A child's turn is one `opencode run --format json` command: the prompt on
-//! stdin, which `run` reads to its end (the live probe: an argument with a
-//! space reaches the model wrapped in literal quotes, and a stdin left open
-//! hangs `run`), the context in the session home's `AGENTS.md`, the events on
-//! stdout (read by [`crate::stream`] for the reply and the outcome alone). A
-//! later turn names the session the first turn's stream gave (`--session`).
-//! `run` waits for the plugin's `dispose` before it exits, so every delivery
-//! of the turn is made by then (probe P4). The human's session is opencode's
-//! TUI on her terminal, the prompt a flag.
+//! A child, hosted or a one-shot, is `opencode acp` ([`crate::child`]; a
+//! one-shot runs over ACP for its one turn, step 8 U7, so its permission
+//! asks are heard: `opencode run` is gone, owner Q13), its context in the
+//! session home's `AGENTS.md`. The human's session is opencode's TUI on her
+//! terminal, the prompt a flag.
 //!
 //! Either is heard through the plugin alone (owner rulings 26, 51 and 58).
 //!
@@ -31,6 +27,10 @@ use crate::{Opencode, NAME};
 
 /// The program: found on the `PATH` of the process that runs the command.
 const PROGRAM: &str = "opencode";
+
+/// What opencode no longer builds: a one-shot's turn as a command of its own
+/// (`opencode run`); its one-shot runs over ACP (step 8 U7).
+const TURN_COMMAND: &str = "turn command (an opencode one-shot runs over ACP)";
 
 /// The provider keys of opencode's built-in credential source (rulings 69,
 /// 79): the standard variables of its Anthropic and OpenAI providers
@@ -222,18 +222,14 @@ impl Engine for Opencode {
         })
     }
 
-    fn drive_turn(&self, request: &TurnRequest) -> Result<TurnCommand, EngineError> {
-        let mut command = TurnCommand::new(program(request));
-        command.args = ["run", "--format", "json"].map(String::from).to_vec();
-        if let Some(native_id) = &request.resume {
-            command.args.push("--session".to_string());
-            command.args.push(native_id.clone());
-        }
-        push_model(&mut command.args, request);
-        command.env = environment(self, ENV_ALLOWLIST, request)?;
-        command.stdin = request.prompt.clone().into_bytes();
-        command.cwd = request.cwd.clone();
-        Ok(command)
+    /// None: an opencode one-shot runs over ACP for its one turn, as a
+    /// child ([`crate::child`], step 8 U7, owner Q13: `opencode run` is
+    /// gone, nothing un-hosted ran it), so its asks are heard.
+    fn drive_turn(&self, _: &TurnRequest) -> Result<TurnCommand, EngineError> {
+        Err(EngineError::NotYet {
+            engine: NAME.to_string(),
+            operation: TURN_COMMAND.to_string(),
+        })
     }
 
     /// Every key is optional (a built-in provider's free models need none),
@@ -262,8 +258,13 @@ impl Engine for Opencode {
         }
     }
 
-    fn finish_turn(&self, output: &TurnOutput) -> TurnOutcome {
-        crate::stream::read_turn(output)
+    /// No turn command is run ([`Engine::drive_turn`]): none is read.
+    fn finish_turn(&self, _: &TurnOutput) -> TurnOutcome {
+        TurnOutcome::Failed {
+            class: run_ports::FailureClass::EngineError,
+            detail: format!("opencode runs no {TURN_COMMAND}"),
+            native_id: None,
+        }
     }
 
     /// An agent with no model is told opencode chooses its own (owner

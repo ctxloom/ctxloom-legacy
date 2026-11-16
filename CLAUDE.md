@@ -616,8 +616,9 @@ shared, `InProcessCore::share`), in a wiring built from the client's
 environment and directory (`oneshot::hosted_wiring`), so it is planned, its
 dependencies pulled (`sync.on_run`), enqueued (ruling 73), named, minted,
 locked (the session's lock and the run's are the DAEMON's), placed and its
-engine's TURN command (`claude -p`, `opencode run`) driven through the one
-launcher, exactly as before, its engine the daemon's child. `CreateRun` is
+engine's TURN command (`claude -p`) driven through the one launcher,
+exactly as before, its engine the daemon's child; an opencode one-shot is
+driven as a CHILD for its one turn instead (step 8 U7, below). `CreateRun` is
 answered once the run is placed (`Runs::telling`, `run_application::
 Placement`), or with its `end` (`Run.end`, its name `<parent>/runs/-`) when
 it ended before that; the client then follows `WatchRun` (s4-Q2: its
@@ -2191,6 +2192,36 @@ name. A new session's chosen name may not begin `ask-`
 `reserved`, refused by the caller before anything is written); an existing
 one keeps its name (Q-B).
 
+opencode's asks are ROUTED over ACP (step 8 U7). A permission request
+(`session/request_permission`) from a child or one-shot the daemon hosts is
+answered as its `run_ports::ChildPermissions` say: `Ask(Arc<dyn
+PermissionAsks>)`, what the daemon gives (`Daemon::routing_asks`,
+`Launcher::routing_asks`, a `run_ports::PermissionRouter` per session and
+run, the `Asker` that is run-ports' now), else `Refuse` (fail closed). The
+ACP driver hands the request to its connection's main task (never awaited
+in the handler, which would hold the dispatch loop), asks it on a thread of
+its own and answers with the request's own `optionId` of the option the
+user chose, else `cancelled`. The ask is recorded IN PROCESS
+(`Api::create_routed_approval`) with the engine's own options in the one
+vocabulary (`allow_once` allow-once, `allow_always` allow-always,
+`reject_once` deny, `reject_always` deny-always; `daemon_api::
+engine_options`), each labelled with ACP's name and relayed by its id; the
+answer is waited a round at a time (`Api::routed_settled`) by the root's
+bridge (`daemon/asks.rs`, the API held weakly so an ask never keeps the
+store from its close), bounded by the `approval_timeout` and a minute
+until U5's expiry. An opencode `allow-always` is relayed only, nothing
+written (Q4: its option has no rule); a message with an opencode answer is
+refused `approvals-message-not-relayed` (Q6, exit 20). When ctxloom
+redirects the turn an ask waits in (a steer written into it, an interrupt,
+the child's end or drain), every pending request is answered `cancelled`
+BEFORE that call is made and withdrawn (`RecordApprovalWithdrawn`, reason
+`steered`, `interrupted` or `ended`; Q10); a withdrawal that comes while
+its ask is still being recorded is held and made once it is. The ACP
+routing is engine-neutral (`permission_ask`, `outcome_of`, the pending
+requests); `opencode acp`'s command and its `session/set_model` are
+opencode's. A hosted one-shot's thread has a 16 MiB stack
+(`ONE_SHOT_STACK`: std's 2 MiB overflowed in a debug build).
+
 ## Storage is angzarr-store-sqlite
 
 ctxloom's store is ONE per user (owner T14): angzarr-store-sqlite's
@@ -3123,10 +3154,18 @@ the compaction part (before; `auto` -> trigger) and the summary message
 codec maps `PreCompact|PostCompact` onto them). opencode says nothing of a
 session's end, and nothing records one (owner 2026-11-15: its end is its
 run's); its `/new` (a clear) is not captured yet (unprobed).
-A child turn is `opencode run --format json [--session <id>] [-m <model>]` with
-the prompt on STDIN (an argv prompt with a space reaches the model quoted, and
-`run` reads stdin to EOF); the stream is read for the reply (the final step's
-text; a turn a refused tool ended is answered) and the outcome only. The TUI is
+A child, hosted or a ONE-SHOT, is `opencode acp` (`engine_opencode::child`,
+`acp_command`), driven as an ACP client; a one-shot runs over ACP for its
+one turn (owner ruling, step 8 U7: run-launcher's `Launcher::with_turn_child`,
+the wiring's for opencode alone: its prompt sent as its one message, the
+child ended once that turn has, its turn and exit recorded as a turn
+command's, held in the root's `OneShotHold` so the daemon's stop ends it),
+so its permission asks are heard as a hosted child's are. `opencode run`
+is GONE (owner Q13: nothing un-hosted ran it; every one-shot is the
+daemon's, and the dry run builds no command): opencode's `drive_turn`
+refuses (`run-ports-engine-not-yet`) and its stream reader is deleted, with
+the cost that a turn's JSON-RPC error is no longer classed by provider
+status (rate limit, credential) as `run`'s `error` line was. The TUI is
 `opencode [-m] [--session] [--prompt <text>]`. Both run relocated: `HOME`,
 every XDG base and `OPENCODE_CONFIG_DIR` in the session home, the npm pre-seed
 (`node_modules/` and a `package-lock.json` naming `@opencode-ai/plugin`) in the
@@ -3275,7 +3314,7 @@ configured text where the project has no name yet.
 `auth status` and doctor read the effective source (`auth-application`; any
 one variable authenticates, `via` names it). A source that is a FILE alone
 (owner ruling 53) authenticates no child: a child launch (`claude -p`,
-`opencode run`) on it is the typed `runs-file-only-credential` (proto
+`opencode acp`) on it is the typed `runs-file-only-credential` (proto
 `FileOnlyCredential`, its fix names the built-in variables to put in
 `engines.<e>.auth.env` and export), decided by the run's enqueue (ruling 73e)
 before a name is claimed or anything minted, as `runs-no-credential` is too; `auth status` gives it a

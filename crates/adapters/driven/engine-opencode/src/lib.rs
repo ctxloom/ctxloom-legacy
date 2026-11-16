@@ -9,10 +9,12 @@
 //! [`Opencode::calling`]).
 //! [`Codec`] reads those payloads into the unified hook event.
 //!
-//! The drive half (`drive`) runs a child's turn as `opencode run --format
-//! json` and the human's session as opencode's TUI, both with the same plugin.
-//! A long-lived child (`child`, the [`run_ports::ChildEngine`]) is one
-//! `opencode acp` process driven as an ACP client, many turns on it.
+//! The drive half (`drive`) runs the human's session as opencode's TUI. A
+//! child (`child`, the [`run_ports::ChildEngine`]) is one `opencode acp`
+//! process driven as an ACP client: a hosted child takes many turns on it,
+//! a one-shot its one turn (step 8 U7: `opencode run` is gone, owner Q13),
+//! and its permission requests are answered as its `ChildPermissions` say
+//! (routed to the user by the daemon). Both load the same plugin.
 //!
 //! At a directory's root (the surface half) ctxloom gives opencode its context
 //! alone, as a section of `AGENTS.md`; MCP servers, settings, hooks, commands
@@ -28,7 +30,6 @@ mod codec;
 mod conversation;
 mod drive;
 mod home;
-mod stream;
 
 use surface_ports::{
     Claim, EngineSurfaces, HookCodec, Inputs, Kind, Planned, SurfaceError, SurfaceStore, Wiring,

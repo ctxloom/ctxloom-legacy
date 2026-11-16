@@ -136,16 +136,96 @@ fn unmade(cause: &dyn std::fmt::Display) -> RunError {
 pub(crate) struct Driven<L> {
     pub(crate) runner: L,
     pub(crate) locks: Box<dyn session_ports::SessionLock>,
+    /// How a one-shot its engine runs as a child (opencode's, over ACP,
+    /// step 8 U7) is held and its asks routed; none, every one-shot is its
+    /// engine's turn command.
+    pub(crate) turns: Option<ChildTurns>,
+}
+
+/// How a one-shot driven as a child is held while it runs (so its stop
+/// ends it) and where its asks go.
+pub(crate) struct ChildTurns {
+    pub(crate) hold: Arc<OneShotHold>,
+    pub(crate) asks: Option<Arc<dyn run_ports::PermissionRouter>>,
+}
+
+/// The stack of a hosted one-shot's thread: the run's future, planned,
+/// enqueued and launched, is driven on it whole (std's default of 2 MiB
+/// overflowed in a debug build once a one-shot could be driven as a child).
+const ONE_SHOT_STACK: usize = 16 * 1024 * 1024;
+
+/// How long a stopped one-shot's child has to exit before its tree is
+/// stopped (the launcher's stop grace).
+const CHILD_STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// A hosted one-shot's child while it runs (step 8 U7): its control, held
+/// so a stop ends it, also when the stop came before it was started.
+#[derive(Default)]
+pub(crate) struct OneShotHold {
+    held: std::sync::Mutex<(Option<Arc<dyn run_ports::ChildControl>>, bool)>,
+}
+
+impl OneShotHold {
+    fn state(&self) -> std::sync::MutexGuard<'_, (Option<Arc<dyn run_ports::ChildControl>>, bool)> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Stop it: the child held is ended, and one held later is ended at
+    /// once.
+    pub(crate) fn stop(&self) {
+        let control = {
+            let mut state = self.state();
+            state.1 = true;
+            state.0.clone()
+        };
+        if let Some(control) = control {
+            end_aside(control);
+        }
+    }
+}
+
+/// `control` ended on a thread of its own: an end waits out its grace, and
+/// whoever stops it does not.
+fn end_aside(control: Arc<dyn run_ports::ChildControl>) {
+    let _ = std::thread::Builder::new()
+        .name("ctxloom-one-shot-stop".to_string())
+        .spawn(move || {
+            let _ = control.end(CHILD_STOP_GRACE);
+        });
+}
+
+impl run_ports::ChildHold for OneShotHold {
+    fn hold(&self, control: Arc<dyn run_ports::ChildControl>) {
+        let stopped = {
+            let mut state = self.state();
+            state.0 = Some(Arc::clone(&control));
+            state.1
+        };
+        if stopped {
+            end_aside(control);
+        }
+    }
+
+    fn release(&self) {
+        self.state().0 = None;
+    }
 }
 
 impl Driven<HostLauncher> {
     /// The engine started on this host, stopped by `stop`, each program
     /// found on its own PATH by the host's rules (PATHEXT on Windows); the
     /// session's lock taken here.
-    pub(crate) fn here(wiring: &Wiring, stop: host_launcher::Stop) -> Driven<HostLauncher> {
+    pub(crate) fn here(
+        wiring: &Wiring,
+        stop: host_launcher::Stop,
+        turns: ChildTurns,
+    ) -> Driven<HostLauncher> {
         Driven {
             runner: HostLauncher::stopped_by(stop).searching(wiring.fs()),
             locks: Box::new(liveness::LockFiles::new(wiring.fs(), wiring.project_dir())),
+            turns: Some(turns),
         }
     }
 }
@@ -164,7 +244,11 @@ pub(crate) fn runs_over<K: Core, L: run_ports::RunnerLauncher>(
 where
     K::Edge: 'static,
 {
-    let Driven { runner, locks } = driven;
+    let Driven {
+        runner,
+        locks,
+        turns,
+    } = driven;
     let project_dir = wiring.project_dir();
     let orders = Arc::new(Orders::new());
     // The engines' callbacks run this binary, by its file name, and its
@@ -188,7 +272,10 @@ where
         core.edge(),
         runner,
         SessionDirs::new(wiring.fs(), project_dir.clone()),
-        vec![claude as Arc<dyn Engine>, opencode as Arc<dyn Engine>],
+        vec![
+            claude as Arc<dyn Engine>,
+            opencode.clone() as Arc<dyn Engine>,
+        ],
         Arc::clone(&orders),
         Limits::new(TURN_DEADLINE),
     )
@@ -197,6 +284,22 @@ where
     // Each command measured against this platform's command line before
     // it is spawned (a terminal session's opening prompt is on it).
     .on_os(wiring.os_name());
+    // An opencode one-shot runs over ACP for its one turn (step 8 U7, owner
+    // ruling: so its asks are heard as a hosted child's are).
+    let launcher = match turns {
+        Some(ChildTurns { hold, asks }) => {
+            let launcher = launcher.with_turn_child(
+                engine_opencode::NAME,
+                opencode as Arc<dyn run_ports::ChildEngine>,
+                hold,
+            );
+            match asks {
+                Some(asks) => launcher.routing_asks(asks),
+                None => launcher,
+            }
+        }
+        None => launcher,
+    };
     let enqueuer = Enqueuer::new(core.edge());
     let output_root = output_root(&project_dir, output_dir);
     Runs::new(Parts {
@@ -555,17 +658,21 @@ pub(crate) struct HostedOneShots {
     /// ctxloom's home, the daemon's (a client's is the same, M11).
     pub(crate) home: std::path::PathBuf,
     pub(crate) temp: std::path::PathBuf,
+    /// Where its engines' own permission requests go (step 8 U7).
+    pub(crate) asks: Option<Arc<dyn run_ports::PermissionRouter>>,
 }
 
 /// A hosted one-shot's engine, stopped through its launcher's [`Stop`]
-/// (its tree asked to stop, killed after the grace).
+/// (its tree asked to stop, killed after the grace), or, driven as a child,
+/// through its hold (its child ended).
 ///
 /// [`Stop`]: host_launcher::Stop
-struct Stopping(host_launcher::Stop);
+struct Stopping(host_launcher::Stop, Arc<OneShotHold>);
 
 impl daemon_application::OneShotControl for Stopping {
     fn stop(&self) {
         self.0.request();
+        self.1.stop();
     }
 }
 
@@ -579,12 +686,18 @@ impl daemon_application::OneShotHost for HostedOneShots {
         told: daemon_application::Told,
     ) -> Box<dyn daemon_application::OneShotControl> {
         let stop = host_launcher::Stop::new();
-        let control = Box::new(Stopping(stop.clone()));
+        let hold = Arc::new(OneShotHold::default());
+        let control = Box::new(Stopping(stop.clone(), Arc::clone(&hold)));
+        let turns = ChildTurns {
+            hold,
+            asks: self.asks.clone(),
+        };
         let core = self.core.clone();
         let runtime = self.runtime.clone();
         let (home, temp) = (self.home.clone(), self.temp.clone());
         let spawned = std::thread::Builder::new()
             .name("ctxloom-one-shot".to_string())
+            .stack_size(ONE_SHOT_STACK)
             .spawn({
                 let told = told.clone();
                 move || {
@@ -593,7 +706,7 @@ impl daemon_application::OneShotHost for HostedOneShots {
                             core,
                             (&home, &temp),
                             request,
-                            stop,
+                            (stop, turns),
                             told.clone(),
                         ))
                     }));
@@ -710,7 +823,7 @@ async fn host_one_shot(
     core: crate::SharedCore<SqliteStore>,
     places: (&Path, &Path),
     request: daemon_application::HostRequest,
-    stop: host_launcher::Stop,
+    (stop, turns): (host_launcher::Stop, ChildTurns),
     told: daemon_application::Told,
 ) -> Done<Answer> {
     let hosted = match hosted_setup(places, &request).await {
@@ -733,7 +846,7 @@ async fn host_one_shot(
         &wiring,
         library,
         &output_dir,
-        Driven::here(&wiring, stop),
+        Driven::here(&wiring, stop, turns),
         core,
         project,
     )

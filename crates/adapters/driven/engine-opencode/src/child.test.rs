@@ -25,8 +25,8 @@ use run_ports::{
 };
 
 use crate::child::{
-    child_command, detail_of, outcome_of, permission_answer, permission_ask, said_of, stop_of,
-    PASSWORD_VARIABLE,
+    bounded, child_command, detail_of, outcome_of, permission_answer, permission_ask, said_of,
+    stop_of, PASSWORD_VARIABLE,
 };
 use crate::conversation::{Heard, Stop};
 use crate::Opencode;
@@ -969,4 +969,13 @@ fn an_end_of_a_child_whose_turn_waits_on_an_ask_withdraws_it() {
             .expect("the ask was withdrawn"),
         ("t1".to_string(), "interrupted".to_string())
     );
+}
+
+// An exit's stderr is cut at 400 bytes, back to a character boundary: a
+// two-byte character across the cut is left out whole.
+#[test]
+fn stderr_is_cut_at_a_character_boundary() {
+    let text = format!("{}\u{e9}tail", "a".repeat(399));
+    assert_eq!(bounded(&text), "a".repeat(399));
+    assert_eq!(bounded("short"), "short");
 }

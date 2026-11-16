@@ -212,6 +212,8 @@ async fn host_terminal(
     let driven = Driven {
         runner,
         locks: Box::new(Unheld),
+        // A terminal session is no one-shot: none is driven as a child.
+        turns: None,
     };
     let mut runs = runs_over(&wiring, library, &output_dir, driven, core, project);
     // U5's start-report race: the run's own lock is its frontend's.
