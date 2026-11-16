@@ -47,7 +47,14 @@ use crate::{
     RunGate,
 };
 
-/// The engine children run on in this slice: the one with a child engine.
+/// The engines with a child adapter (OD-58): a child the daemon hosts on one
+/// takes every urgency over its engine's stream (D15). The composition
+/// root's `hosted_engines` is held to this list by its test, so an engine
+/// given a child adapter is granted here too.
+pub const CHILD_ENGINES: &[&str] = &["claude-code"];
+
+/// The engine a child runs on when neither its launch nor its daemon names
+/// one.
 pub const CHILD_ENGINE: &str = "claude-code";
 
 /// A command (or a fact) to send to `project_id`'s store, under `key`.
@@ -195,11 +202,13 @@ impl<'a> Scene<'a> {
     }
 }
 
-/// The urgencies `session`'s engine takes: a child the daemon hosts takes
-/// all three (its engine's stream, D15); a primary takes only an inform,
-/// since nothing wakes a terminal session yet (D7 is not built).
+/// The urgencies `session`'s engine takes: a child the daemon hosts on an
+/// engine with a child adapter ([`CHILD_ENGINES`]) takes all three (its
+/// engine's stream, D15; OD-58); a primary takes only an inform, since
+/// nothing wakes a terminal session yet (D7 is not built).
 pub fn supported(session: &SessionState) -> Vec<Urgency> {
-    match session.owner.is_some() && session.engine == CHILD_ENGINE {
+    let hosted = CHILD_ENGINES.contains(&session.engine.as_str());
+    match session.owner.is_some() && hosted {
         true => vec![Urgency::Inform, Urgency::Wake, Urgency::Steer],
         false => vec![Urgency::Inform],
     }
