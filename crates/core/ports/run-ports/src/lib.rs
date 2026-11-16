@@ -41,8 +41,8 @@ pub use asks::{
 };
 pub use bind::{bind_for, BindPlan, BindRefusal, ContainerRuntime, PlatformFacts, Probe, Runtime};
 pub use child::{
-    ChildControl, ChildEngine, ChildError, ChildMessage, ChildObservation, ChildPermissions,
-    ChildSpec, Ended, Queued, StartedChild, Urgency,
+    ChildControl, ChildEngine, ChildError, ChildHold, ChildMessage, ChildObservation,
+    ChildPermissions, ChildSpec, Ended, Queued, StartedChild, Urgency,
 };
 pub use discovery::{
     Discovery, DAEMON_CERT_LIFETIME_SECONDS, DAEMON_DIR, DAEMON_LOCK_FILE, DISCOVERY_FILE,

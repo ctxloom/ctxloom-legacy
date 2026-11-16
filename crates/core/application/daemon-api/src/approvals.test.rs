@@ -344,6 +344,225 @@ async fn every_approvals_call_is_served_while_the_daemon_drains() {
         .unwrap();
 }
 
+/// opencode's ACP ask of `bash`, offering `kinds`, each by an id of its own.
+fn acp_ask(request_id: &str, kinds: &[run_ports::AskKind]) -> run_ports::PermissionAsk {
+    let id_of = |kind: run_ports::AskKind| match kind {
+        run_ports::AskKind::AllowOnce => "once",
+        run_ports::AskKind::AllowAlways => "always",
+        run_ports::AskKind::RejectOnce => "reject",
+        run_ports::AskKind::RejectAlways => "never",
+    };
+    run_ports::PermissionAsk {
+        request_id: request_id.to_string(),
+        tool_name: "bash".to_string(),
+        input_json: r#"{"command":"touch hi.txt"}"#.to_string(),
+        options: kinds
+            .iter()
+            .map(|kind| run_ports::AskOption {
+                option_id: id_of(*kind).to_string(),
+                name: format!("the {} option", id_of(*kind)),
+                kind: *kind,
+            })
+            .collect(),
+    }
+}
+
+fn opencode_asker() -> run_ports::Asker {
+    run_ports::Asker {
+        engine: "opencode".to_string(),
+        ..asker(300)
+    }
+}
+
+const EVERY_KIND: [run_ports::AskKind; 4] = [
+    run_ports::AskKind::AllowOnce,
+    run_ports::AskKind::AllowAlways,
+    run_ports::AskKind::RejectOnce,
+    run_ports::AskKind::RejectAlways,
+];
+
+#[test]
+fn an_engines_own_options_are_said_in_the_one_vocabulary_and_relayed_by_their_own_ids() {
+    let mut ask = acp_ask("t", &EVERY_KIND);
+    // A second option of a kind already offered is not offered again.
+    ask.options.push(run_ports::AskOption {
+        option_id: "again".to_string(),
+        name: "again".to_string(),
+        kind: run_ports::AskKind::AllowOnce,
+    });
+    let offered = engine_options(&ask.options);
+    let said: Vec<(&str, approvals::OptionKind, &str, &str, &str)> = offered
+        .iter()
+        .map(|o| {
+            (
+                o.id.as_str(),
+                o.kind,
+                o.label.as_str(),
+                o.rule.as_str(),
+                o.engine_option_id.as_str(),
+            )
+        })
+        .collect();
+    use approvals::OptionKind as K;
+    assert_eq!(
+        said,
+        [
+            ("allow-once", K::AllowOnce, "the once option", "", "once"),
+            (
+                "allow-always",
+                K::AllowAlways,
+                "the always option",
+                "",
+                "always"
+            ),
+            ("deny", K::RejectOnce, "the reject option", "", "reject"),
+            (
+                "deny-always",
+                K::RejectAlways,
+                "the never option",
+                "",
+                "never"
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_routed_ask_is_recorded_with_its_engines_own_options_once() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    let (api, index) = asking(&f, 300, vec!["tidy-wren"]).await;
+    // Routed in process: no hosting entry is read for it.
+    f.hosting.askers.lock().unwrap().clear();
+    let made = api
+        .create_routed_approval(&opencode_asker(), &acp_ask("t1", &EVERY_KIND))
+        .await
+        .unwrap();
+    assert_eq!(
+        made.name,
+        "projects/calm-quiet-heron/approvals/ask-tidy-wren"
+    );
+    assert_eq!(made.child, CHILD_NAME);
+    assert_eq!(made.root, ROOT_NAME);
+    assert_eq!(made.engine, "opencode");
+    assert_eq!(made.tool_name, "bash");
+    assert!(made.input_excerpt.contains("touch hi.txt"));
+    assert_eq!(made.state, "waiting");
+    let ids: Vec<&str> = made.options.iter().map(|o| o.id.as_str()).collect();
+    assert_eq!(ids, ["allow-once", "allow-always", "deny", "deny-always"]);
+    assert_eq!(made.options[0].label, "the once option");
+    caught(&f, &index).await;
+    let again = api
+        .create_routed_approval(&opencode_asker(), &acp_ask("t1", &EVERY_KIND))
+        .await
+        .unwrap();
+    assert_eq!(again, made);
+}
+
+/// The answer `option` of the ask `made`, as its stream's next page.
+fn answered_with(
+    made: &v1::Approval,
+    option: &str,
+    kind: approvals::OptionKind,
+) -> angzarr_embedded::v1::EventBook {
+    settling(
+        made,
+        approvals::ApprovalEvent::ApprovalAnswered(approvals::ApprovalAnswered {
+            option: option.to_string(),
+            kind,
+            message: String::new(),
+        }),
+    )
+}
+
+async fn project(index: &PendingApprovals, book: angzarr_embedded::v1::EventBook) {
+    use angzarr_embedded::ProjectorHandler as _;
+    index
+        .dispatch(&angzarr_embedded::angzarr_router::hpb::ProjectRequest { events: Some(book) })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_routed_answer_is_the_engines_own_option_chosen_else_cancelled() {
+    use approvals::OptionKind as K;
+    for (option, kind, relayed) in [
+        ("allow-once", K::AllowOnce, Some("once")),
+        ("allow-always", K::AllowAlways, Some("always")),
+        ("deny", K::RejectOnce, Some("reject")),
+        ("deny-always", K::RejectAlways, Some("never")),
+    ] {
+        let f = fixture(vec!["calm-quiet-heron"]);
+        let (api, index) = asking(&f, 300, vec!["tidy-wren"]).await;
+        let made = api
+            .create_routed_approval(&opencode_asker(), &acp_ask("t1", &EVERY_KIND))
+            .await
+            .unwrap();
+        caught(&f, &index).await;
+        project(&index, answered_with(&made, option, kind)).await;
+        let expected = relayed.map_or(run_ports::PermissionAnswer::Cancelled, |id| {
+            run_ports::PermissionAnswer::Selected(id.to_string())
+        });
+        assert_eq!(api.routed_answer(&made).await, expected, "{option}");
+    }
+    // Withdrawn, expired or unknown: cancelled.
+    let f = fixture(vec!["calm-quiet-heron"]);
+    let (api, index) = asking(&f, 300, vec!["tidy-wren"]).await;
+    let made = api
+        .create_routed_approval(&opencode_asker(), &acp_ask("t1", &EVERY_KIND))
+        .await
+        .unwrap();
+    caught(&f, &index).await;
+    project(
+        &index,
+        settling(
+            &made,
+            approvals::ApprovalEvent::ApprovalExpired(approvals::ApprovalExpired {}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        api.routed_answer(&made).await,
+        run_ports::PermissionAnswer::Cancelled
+    );
+    let unknown = v1::Approval {
+        name: "projects/calm-quiet-heron/approvals/ask-none".to_string(),
+        ..made.clone()
+    };
+    assert_eq!(
+        api.routed_answer(&unknown).await,
+        run_ports::PermissionAnswer::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn a_routed_ask_withdrawn_is_withdrawn_once_and_its_wait_ends_cancelled() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    let (api, index) = asking(&f, 300, vec!["tidy-wren"]).await;
+    let made = api
+        .create_routed_approval(&opencode_asker(), &acp_ask("t1", &EVERY_KIND))
+        .await
+        .unwrap();
+    api.withdraw_routed(&made, "steered").await.unwrap();
+    // A second withdrawal is the same one.
+    api.withdraw_routed(&made, "steered").await.unwrap();
+    caught(&f, &index).await;
+    let row = index.index().named(&made.name).unwrap();
+    assert_eq!(row.state, pending_approvals::State::Withdrawn);
+    assert_eq!(
+        api.routed_answer(&made).await,
+        run_ports::PermissionAnswer::Cancelled
+    );
+    let cover = Cover {
+        domain: approvals::APPROVALS_DOMAIN.to_string(),
+        root: Some(Uuid::from_bytes(
+            *uuid::Uuid::parse_str(&made.uid).unwrap().as_bytes(),
+        )),
+        edition: None,
+    };
+    let pages = f.world.events(&cover, 0).await.unwrap();
+    assert_eq!(pages.len(), 2, "asked, then withdrawn once");
+}
+
 #[test]
 fn a_settled_approval_says_how_and_a_waiting_one_nothing() {
     let approval = |state: &str| v1::Approval {

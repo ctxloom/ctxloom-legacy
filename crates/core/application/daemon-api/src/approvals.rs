@@ -23,13 +23,14 @@ use angzarr_embedded::v1::Cover;
 use angzarr_embedded::Failure;
 use approvals::{
     ask_key, ask_name, ask_root, bounded, claude_options, fact_book, is_ask_name, name_root,
-    AnswerApproval, ApprovalName, ApprovalsRejection, ClaimApprovalName, RecordApprovalAsked,
-    RecordApprovalWithdrawn, SessionRef, APPROVALS_DOMAIN, APPROVAL_NAMES_DOMAIN,
+    AnswerApproval, ApprovalName, ApprovalOption, ApprovalsRejection, ClaimApprovalName,
+    OptionKind, RecordApprovalAsked, RecordApprovalWithdrawn, SessionRef, ALLOW_ALWAYS, ALLOW_ONCE,
+    APPROVALS_DOMAIN, APPROVAL_NAMES_DOMAIN, DENY, DENY_ALWAYS,
 };
 use daemon_ports::{Called, DaemonApi, Daemons};
 use daemon_proto::v1;
 use pending_approvals::{PendingApprovals, PENDING_APPROVALS};
-use run_ports::Edge;
+use run_ports::{AskKind, AskOption, Asker, Edge, PermissionAnswer, PermissionAsk};
 
 use crate::caller::{on_daemon, Caller};
 use crate::client::CallError;
@@ -112,6 +113,72 @@ fn unknown(ask: &str) -> ApiError {
     })
 }
 
+/// An ask to record: the engine's request id, what it asks to run, with
+/// what (JSON text), and the options it offers.
+struct Asked<'a> {
+    request_id: &'a str,
+    tool_name: &'a str,
+    input_json: &'a str,
+    options: Vec<ApprovalOption>,
+}
+
+/// The options an engine's own ask offers (ACP's), in the one vocabulary
+/// (Q2): `allow_once` is `allow-once`, `allow_always` `allow-always`,
+/// `reject_once` `deny`, `reject_always` `deny-always`; each labelled with
+/// the engine's own name of it and relayed back by its own id. A second
+/// option of a kind already offered is not.
+pub fn engine_options(options: &[AskOption]) -> Vec<ApprovalOption> {
+    let mut offered: Vec<ApprovalOption> = Vec::new();
+    for option in options {
+        let (id, kind) = match option.kind {
+            AskKind::AllowOnce => (ALLOW_ONCE, OptionKind::AllowOnce),
+            AskKind::AllowAlways => (ALLOW_ALWAYS, OptionKind::AllowAlways),
+            AskKind::RejectOnce => (DENY, OptionKind::RejectOnce),
+            AskKind::RejectAlways => (DENY_ALWAYS, OptionKind::RejectAlways),
+        };
+        if offered.iter().any(|o| o.id == id) {
+            continue;
+        }
+        offered.push(ApprovalOption {
+            id: id.to_string(),
+            kind,
+            label: option.name.clone(),
+            rule: String::new(),
+            engine_option_id: option.option_id.clone(),
+        });
+    }
+    offered
+}
+
+/// What the answered `row` relays to its engine: the engine's own id of
+/// the option chosen; none known, cancelled.
+fn chosen(row: &pending_approvals::ApprovalRow) -> PermissionAnswer {
+    row.options
+        .iter()
+        .find(|option| option.id == row.option && !option.engine_option_id.is_empty())
+        .map_or(PermissionAnswer::Cancelled, |option| {
+            PermissionAnswer::Selected(option.engine_option_id.clone())
+        })
+}
+
+/// The withdrawal of `approval` for `reason`: its stream, the fact, and
+/// its key (one per ask, so a redelivery is one withdrawal).
+fn withdrawal(approval: &v1::Approval, reason: &str) -> (Cover, RecordApprovalWithdrawn, String) {
+    let ask_id = ask_of(approval).to_string();
+    let root = uuid::Uuid::parse_str(&approval.uid).unwrap_or_default();
+    let cover = Cover {
+        domain: APPROVALS_DOMAIN.to_string(),
+        root: Some(angzarr_embedded::v1::Uuid::from_bytes(*root.as_bytes())),
+        edition: None,
+    };
+    let key = format!("approval-withdrawn:{ask_id}");
+    let fact = RecordApprovalWithdrawn {
+        ask_id,
+        reason: reason.to_string(),
+    };
+    (cover, fact, key)
+}
+
 impl<E: Edge> Api<E> {
     /// Where its asks are; none, the approvals calls fail.
     fn approving_ports(&self) -> Result<&Approving, ApiError> {
@@ -164,27 +231,110 @@ impl<E: Edge> Api<E> {
         {
             return Ok(made.resource());
         }
-        let (record, root) = self.tree_of(&request.session)?;
+        let Some(asker) = self.parts.hosting.asker(&request.session) else {
+            let (record, _) = self.tree_of(&request.session)?;
+            let name = self.parts.index.index().name_of(&record);
+            return Err(ApiRefusal::of(&v1::SessionNotHosted { name }).into());
+        };
+        let ask = Asked {
+            request_id: &request.engine_request_id,
+            tool_name: &request.tool_name,
+            input_json: &request.input_json,
+            options: claude_options(&request.tool_name, &request.input_json),
+        };
+        self.record_ask(&approving, &asker, ask).await
+    }
+
+    /// A ROUTED ask (step 8 U7): the engine of the session `asker` names,
+    /// which this daemon runs (a child, or a one-shot), asked `ask` over
+    /// its own protocol (opencode's ACP request), recorded in process with
+    /// the engine's own options (each relayed back by its own id, Q4). The
+    /// same request again is answered the approval it made.
+    pub async fn create_routed_approval(
+        &self,
+        asker: &Asker,
+        ask: &PermissionAsk,
+    ) -> Result<v1::Approval, ApiError> {
+        let approving = self.approving_ports()?.clone();
+        self.parts.hosting.fresh().await;
+        if let Some(made) = approving
+            .index
+            .index()
+            .asked_by(&asker.session, &ask.request_id)
+        {
+            return Ok(made.resource());
+        }
+        let asked = Asked {
+            request_id: &ask.request_id,
+            tool_name: &ask.tool_name,
+            input_json: &ask.input_json,
+            options: engine_options(&ask.options),
+        };
+        self.record_ask(&approving, asker, asked).await
+    }
+
+    /// What the human chose for the routed ask `approval`, once it is
+    /// settled: the engine's own option of her answer, else cancelled (it
+    /// expired, was withdrawn, or is no longer known). Waits as long as its
+    /// caller does.
+    pub async fn routed_answer(&self, approval: &v1::Approval) -> PermissionAnswer {
+        let Ok(approving) = self.approving_ports() else {
+            return PermissionAnswer::Cancelled;
+        };
+        loop {
+            self.parts.hosting.fresh().await;
+            let Some(row) = approving.index.index().named(&approval.name) else {
+                return PermissionAnswer::Cancelled;
+            };
+            match row.state {
+                pending_approvals::State::Waiting => continue,
+                pending_approvals::State::Answered => return chosen(&row),
+                _ => return PermissionAnswer::Cancelled,
+            }
+        }
+    }
+
+    /// The routed ask `approval` withdrawn (Q10): its turn was redirected,
+    /// `reason` says how. Keyed by the ask, so a second withdrawal is one;
+    /// a settled ask is left as it is.
+    pub async fn withdraw_routed(
+        &self,
+        approval: &v1::Approval,
+        reason: &str,
+    ) -> Result<(), ApiError> {
+        let (cover, fact, key) = withdrawal(approval, reason);
+        match self.parts.edge.handle(fact_book(cover, &fact, &key)).await {
+            Ok(_) => Ok(()),
+            Err(Failure::Rejected(rejected)) => Err(ApiRefusal::rejected(&rejected).into()),
+            Err(other) => Err(ApiError::failed(other)),
+        }
+    }
+
+    /// `ask` of the session `asker` names recorded: its name minted and
+    /// claimed under its root's project (Q-A), the fact recorded, and the
+    /// approval as its stream says it.
+    async fn record_ask(
+        &self,
+        approving: &Approving,
+        asker: &Asker,
+        ask: Asked<'_>,
+    ) -> Result<v1::Approval, ApiError> {
+        let (record, root) = self.tree_of(&asker.session)?;
         let (child_name, root_name, project) = {
             let index = self.parts.index.index();
             let project = index.project_harp(&root.project_id).map(str::to_string);
             (index.name_of(&record), index.name_of(&root), project)
         };
-        let asker = self.parts.hosting.asker(&request.session).ok_or_else(|| {
-            ApiError::from(ApiRefusal::of(&v1::SessionNotHosted {
-                name: child_name.clone(),
-            }))
-        })?;
         let project = project.ok_or_else(|| ApiError::Failed {
             detail: format!("the project {} has no harp", root.project_id),
         })?;
-        let stream = ask_root(&request.session, &asker.run, &request.engine_request_id);
-        let ask = self
-            .claim(&approving, &project, &root.project_id, stream)
+        let stream = ask_root(&asker.session, &asker.run, ask.request_id);
+        let name = self
+            .claim(approving, &project, &root.project_id, stream)
             .await?;
-        let input = bounded(&request.input_json);
+        let input = bounded(ask.input_json);
         let fact = RecordApprovalAsked {
-            ask_id: ask.ask.clone(),
+            ask_id: name.ask.clone(),
             child: SessionRef {
                 project_id: record.project_id.clone(),
                 session: record.id.clone(),
@@ -195,14 +345,14 @@ impl<E: Edge> Api<E> {
                 project_id: root.project_id.clone(),
                 session: root.id.clone(),
             },
-            tool_name: request.tool_name.clone(),
+            tool_name: ask.tool_name.to_string(),
             input_excerpt: input.excerpt,
             input_bytes: input.bytes,
             input_sha256: input.sha256,
             timeout_seconds: u32::try_from(asker.approval_timeout.as_secs()).unwrap_or(u32::MAX),
-            engine_request_id: request.engine_request_id.clone(),
-            options: claude_options(&request.tool_name, &request.input_json),
-            name: ask.to_string(),
+            engine_request_id: ask.request_id.to_string(),
+            options: ask.options,
+            name: name.to_string(),
             child_name,
             root_name,
             agent: asker.agent.clone(),
@@ -212,7 +362,7 @@ impl<E: Edge> Api<E> {
             root: Some(angzarr_embedded::v1::Uuid::from_bytes(*stream.as_bytes())),
             edition: None,
         };
-        let key = ask_key(&asker.run, &request.engine_request_id);
+        let key = ask_key(&asker.run, ask.request_id);
         match self
             .parts
             .edge
@@ -609,18 +759,8 @@ impl<D: Daemons> Caller<D> {
         approval: &v1::Approval,
         reason: &str,
     ) -> Result<bool, CallError> {
-        let ask_id = ask_of(approval).to_string();
-        let root = uuid::Uuid::parse_str(&approval.uid).unwrap_or_default();
-        let cover = Cover {
-            domain: APPROVALS_DOMAIN.to_string(),
-            root: Some(angzarr_embedded::v1::Uuid::from_bytes(*root.as_bytes())),
-            edition: None,
-        };
-        let fact = RecordApprovalWithdrawn {
-            ask_id: ask_id.clone(),
-            reason: reason.to_string(),
-        };
-        let book = fact_book(cover, &fact, &format!("approval-withdrawn:{ask_id}"));
+        let (cover, fact, key) = withdrawal(approval, reason);
+        let book = fact_book(cover, &fact, &key);
         on_daemon!(self, |api| api.handle(book.clone()).await)
     }
 }

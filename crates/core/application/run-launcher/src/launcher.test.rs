@@ -2351,3 +2351,286 @@ fn rig_quiet() -> Rig {
         orders_with(order("fake")),
     )
 }
+
+// ------------------------------------- step 8 U7: a one-shot driven as a child
+
+/// What the one-shot's child was asked, and what it says: its turn's
+/// outcome once it is sent its message, then its exit once it is ended.
+#[derive(Default)]
+struct ChildSeen {
+    specs: Vec<run_ports::ChildSpec>,
+    sent: Vec<(String, String, run_ports::Urgency)>,
+    ends: usize,
+    held: usize,
+    released: usize,
+}
+
+#[derive(Clone)]
+struct OneTurn {
+    seen: Arc<Mutex<ChildSeen>>,
+    /// The turn's outcome; none, the engine exits without one.
+    outcome: Option<TurnOutcome>,
+    said: Arc<Mutex<std::collections::VecDeque<run_ports::ChildObservation>>>,
+}
+
+impl OneTurn {
+    fn answering(outcome: Option<TurnOutcome>) -> OneTurn {
+        OneTurn {
+            seen: Arc::default(),
+            outcome,
+            said: Arc::default(),
+        }
+    }
+}
+
+struct OneTurnControl(OneTurn);
+
+impl run_ports::ChildControl for OneTurnControl {
+    fn pid(&self) -> u32 {
+        777
+    }
+
+    fn send(
+        &self,
+        message: run_ports::ChildMessage,
+        urgency: run_ports::Urgency,
+    ) -> Result<run_ports::Queued, run_ports::ChildError> {
+        let turn = &self.0;
+        turn.seen
+            .lock()
+            .unwrap()
+            .sent
+            .push((message.id.clone(), message.text, urgency));
+        let mut said = turn.said.lock().unwrap();
+        match &turn.outcome {
+            Some(outcome) => said.push_back(run_ports::ChildObservation::TurnEnded {
+                message_ids: vec![message.id],
+                outcome: outcome.clone(),
+            }),
+            None => said.push_back(run_ports::ChildObservation::Exited {
+                exit: run_ports::Exit {
+                    code: Some(7),
+                    signal: None,
+                },
+                detail: "the engine fell over".to_string(),
+            }),
+        }
+        Ok(run_ports::Queued::Written)
+    }
+
+    fn interrupt(&self) -> Result<bool, run_ports::ChildError> {
+        Ok(false)
+    }
+
+    fn clear(&self) -> Result<run_ports::Queued, run_ports::ChildError> {
+        Ok(run_ports::Queued::Written)
+    }
+
+    fn end(&self, _: std::time::Duration) -> Result<run_ports::Ended, run_ports::ChildError> {
+        self.0.seen.lock().unwrap().ends += 1;
+        let exit = run_ports::Exit {
+            code: Some(0),
+            signal: None,
+        };
+        self.0
+            .said
+            .lock()
+            .unwrap()
+            .push_back(run_ports::ChildObservation::Exited {
+                exit,
+                detail: String::new(),
+            });
+        Ok(run_ports::Ended {
+            exit,
+            undelivered: Vec::new(),
+        })
+    }
+}
+
+struct Saying(Arc<Mutex<std::collections::VecDeque<run_ports::ChildObservation>>>);
+
+impl Iterator for Saying {
+    type Item = run_ports::ChildObservation;
+
+    fn next(&mut self) -> Option<run_ports::ChildObservation> {
+        self.0.lock().unwrap().pop_front()
+    }
+}
+
+impl run_ports::ChildEngine for OneTurn {
+    fn command(
+        &self,
+        spec: &run_ports::ChildSpec,
+    ) -> Result<run_ports::TurnCommand, run_ports::ChildError> {
+        let mut command = run_ports::TurnCommand::new("fake-acp");
+        command.env = spec.env.clone();
+        Ok(command)
+    }
+
+    fn stdio(&self) -> run_ports::Stdio {
+        run_ports::Stdio::Acp
+    }
+
+    fn start(
+        &self,
+        spec: &run_ports::ChildSpec,
+        _: &run_ports::Launch,
+    ) -> Result<run_ports::StartedChild, run_ports::ChildError> {
+        self.seen.lock().unwrap().specs.push(spec.clone());
+        Ok(run_ports::StartedChild {
+            control: Box::new(OneTurnControl(self.clone())),
+            observations: Box::new(Saying(Arc::clone(&self.said))),
+        })
+    }
+}
+
+impl run_ports::ChildHold for OneTurn {
+    fn hold(&self, control: Arc<dyn run_ports::ChildControl>) {
+        assert_eq!(control.pid(), 777);
+        self.seen.lock().unwrap().held += 1;
+    }
+
+    fn release(&self) {
+        self.seen.lock().unwrap().released += 1;
+    }
+}
+
+struct NoAsks;
+
+impl run_ports::PermissionAsks for NoAsks {
+    fn ask(&self, _: &run_ports::PermissionAsk) -> run_ports::PermissionAnswer {
+        run_ports::PermissionAnswer::Cancelled
+    }
+
+    fn withdraw(&self, _: &str, _: &str) {}
+}
+
+/// A router that keeps the askers it was asked for.
+#[derive(Default)]
+struct Routes(Mutex<Vec<run_ports::Asker>>);
+
+impl run_ports::PermissionRouter for Routes {
+    fn asks(&self, asker: &run_ports::Asker) -> Arc<dyn run_ports::PermissionAsks> {
+        self.0.lock().unwrap().push(asker.clone());
+        Arc::new(NoAsks)
+    }
+}
+
+fn child_rig(turn: &OneTurn, routes: Option<Arc<Routes>>) -> Rig {
+    let mut rig = rig(
+        ScriptedEngine::answering("NOT-THE-TURN-COMMAND", None),
+        ScriptedRunner::exits(0),
+        orders_with(order("fake")),
+    );
+    let launcher = std::mem::replace(
+        &mut rig.launcher,
+        Launcher::new(
+            Arc::clone(&rig.edge),
+            rig.runner.clone(),
+            rig.records.clone(),
+            Vec::new(),
+            Arc::new(Orders::new()),
+            limits(),
+        ),
+    );
+    let launcher = launcher.with_turn_child("fake", Arc::new(turn.clone()), Arc::new(turn.clone()));
+    rig.launcher = match routes {
+        Some(routes) => launcher.routing_asks(routes),
+        None => launcher,
+    };
+    rig
+}
+
+// A one-shot whose engine drives it as a child (opencode's, over ACP) is
+// started as one, sent its prompt as its one message, ended once that turn
+// has, and recorded as a turn command's run is; no turn command is run.
+#[tokio::test]
+async fn a_one_shot_driven_as_a_child_takes_its_one_turn_then_is_ended() {
+    let turn = OneTurn::answering(Some(TurnOutcome::Answered {
+        answer: "THE-REPLY".to_string(),
+        native_id: Some("ses_1".to_string()),
+    }));
+    let routes = Arc::new(Routes::default());
+    let mut rig = child_rig(&turn, Some(Arc::clone(&routes)));
+    enqueued(&rig.edge, SESSION, HARP).await;
+    let launched = rig.step().await;
+    assert_eq!(
+        launched[0].outcome,
+        Outcome::Answered {
+            answer: "THE-REPLY".to_string(),
+            native_id: Some("ses_1".to_string())
+        }
+    );
+    assert!(
+        rig.runner.seen.lock().unwrap().is_empty(),
+        "no turn command"
+    );
+    {
+        let seen = turn.seen.lock().unwrap();
+        assert_eq!(seen.specs.len(), 1);
+        assert_eq!(
+            seen.sent,
+            [(
+                "one-shot".to_string(),
+                "THE-PROMPT".to_string(),
+                run_ports::Urgency::Wake
+            )]
+        );
+        assert_eq!(seen.ends, 1, "ended after its one turn");
+        assert_eq!((seen.held, seen.released), (1, 1));
+        // Its asks are routed for its own session and run, on its engine.
+        let asked = routes.0.lock().unwrap().clone();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].session, SESSION);
+        assert_eq!(asked[0].engine, "fake");
+        assert!(!asked[0].run.is_empty());
+        assert!(matches!(
+            seen.specs[0].permissions,
+            run_ports::ChildPermissions::Ask(_)
+        ));
+    }
+    assert_eq!(
+        names(&run_events(&rig.edge, SESSION).await),
+        [
+            "RunEnqueued",
+            "RunnerAttached",
+            "RunnerStarted",
+            "TurnStarted",
+            "TurnCompleted",
+            "RunEnded"
+        ]
+    );
+    let bound = session_events(&rig.edge, SESSION).await;
+    assert!(
+        bound
+            .iter()
+            .any(|e| matches!(e, SessionEvent::EngineSessionBound(b) if b.native_id == "ses_1")),
+        "{bound:?}"
+    );
+}
+
+// No router: such a one-shot's requests are refused; an engine that exits
+// before its turn ends fails the turn, with what it said.
+#[tokio::test]
+async fn a_one_shot_child_that_exits_mid_turn_fails_it_and_unrouted_asks_are_refused() {
+    let turn = OneTurn::answering(None);
+    let mut rig = child_rig(&turn, None);
+    enqueued(&rig.edge, SESSION, HARP).await;
+    let launched = rig.step().await;
+    let Outcome::Failed { class, detail } = &launched[0].outcome else {
+        panic!("{:?}", launched[0].outcome);
+    };
+    assert_eq!(*class, FailureClass::EngineError);
+    assert!(detail.contains("fell over"), "{detail}");
+    {
+        let seen = turn.seen.lock().unwrap();
+        assert_eq!(
+            seen.specs[0].permissions,
+            run_ports::ChildPermissions::Refuse
+        );
+        assert_eq!(seen.ends, 0);
+    }
+    let events = names(&run_events(&rig.edge, SESSION).await);
+    assert!(events.contains(&"TurnFailed"), "{events:?}");
+    assert_eq!(events.last(), Some(&"RunEnded"));
+}

@@ -238,6 +238,17 @@ pub trait ChildControl: Send + Sync {
     fn end(&self, grace: Duration) -> Result<Ended, ChildError>;
 }
 
+/// Where a ONE-SHOT driven as a child (opencode's, over ACP, step 8 U7) is
+/// held while its one turn runs, so that a stop asked from elsewhere (the
+/// daemon stopping a one-shot it hosts) ends it: the launcher holds its
+/// control here once it is started, and lets it go once it has ended.
+pub trait ChildHold: Send + Sync {
+    /// The one-shot's child is running: `control` ends it.
+    fn hold(&self, control: std::sync::Arc<dyn ChildControl>);
+    /// It has ended: nothing is held.
+    fn release(&self);
+}
+
 /// A started child: its control, and what it says, until it exits.
 pub struct StartedChild {
     pub control: Box<dyn ChildControl>,

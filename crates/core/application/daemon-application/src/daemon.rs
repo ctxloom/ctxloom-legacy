@@ -82,36 +82,26 @@ struct Hosted {
 }
 
 /// What the daemon knows of a session it hosts that its engine's ask is
-/// recorded with (step 8 U4, D10): its run, its engine, the agent it was
-/// planned for and its engine's `approval_timeout`, read with its plan at
-/// its launch (T21).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Asker {
-    /// The session's stable id.
-    pub session: String,
-    /// Its run's root, as text.
-    pub run: String,
-    pub engine: String,
-    pub agent: String,
-    pub approval_timeout: std::time::Duration,
-}
+/// recorded with (step 8 U4, D10): run-ports' [`Asker`], one shape for an
+/// ask asked through the coordinator (claude's approval tool) and one
+/// routed in process (opencode's ACP request, U7).
+pub use run_ports::Asker;
 
-impl Asker {
-    /// The asker of the child at `at`, hosted on `engine`, its hand-off
-    /// `handed` and its plan `planned`: its agent the one it was launched
-    /// for, else the one its plan settled.
-    fn of(at: &RunAt, engine: &str, handed: &HandOff, planned: &Planned) -> Asker {
-        Asker {
-            session: at.session.clone(),
-            run: at.run(),
-            engine: engine.to_string(),
-            agent: [&handed.agent, &planned.agent]
-                .into_iter()
-                .find(|agent| !agent.is_empty())
-                .cloned()
-                .unwrap_or_default(),
-            approval_timeout: planned.settings.approval_timeout,
-        }
+/// The asker of the child at `at`, hosted on `engine`, its hand-off
+/// `handed` and its plan `planned`: its agent the one it was launched for,
+/// else the one its plan settled; its `approval_timeout` read with its plan
+/// at its launch (T21).
+fn asker_of(at: &RunAt, engine: &str, handed: &HandOff, planned: &Planned) -> Asker {
+    Asker {
+        session: at.session.clone(),
+        run: at.run(),
+        engine: engine.to_string(),
+        agent: [&handed.agent, &planned.agent]
+            .into_iter()
+            .find(|agent| !agent.is_empty())
+            .cloned()
+            .unwrap_or_default(),
+        approval_timeout: planned.settings.approval_timeout,
     }
 }
 
@@ -294,6 +284,9 @@ pub struct Daemon<E: Edge> {
     /// the sweep judges it (OD-59 (2), the named exception,
     /// [`crate::StartHolds`]); none, nothing is delivered.
     start_holds: Option<Arc<dyn crate::StartHolds>>,
+    /// Where a child's engine's own permission requests go (step 8 U7,
+    /// opencode's ACP asks): routed to the user; none, they are refused.
+    asks: Option<Arc<dyn run_ports::PermissionRouter>>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -408,6 +401,25 @@ impl<E: Edge> Daemon<E> {
             guided: BTreeMap::new(),
             adopted: BTreeMap::new(),
             start_holds: None,
+            asks: None,
+        }
+    }
+
+    /// The daemon, routing the permission requests its children's engines
+    /// make over their own protocol (opencode's ACP) through `asks` (step 8
+    /// U7): each recorded as an approval ask of its session and answered
+    /// with the option the user chose.
+    pub fn routing_asks(mut self, asks: Arc<dyn run_ports::PermissionRouter>) -> Daemon<E> {
+        self.asks = Some(asks);
+        self
+    }
+
+    /// How the engine of the child `asker` names answers its permission
+    /// requests: routed when the daemon routes asks, else refused.
+    fn child_permissions(&self, asker: &Asker) -> run_ports::ChildPermissions {
+        match &self.asks {
+            Some(router) => run_ports::ChildPermissions::Ask(router.asks(asker)),
+            None => run_ports::ChildPermissions::Refuse,
         }
     }
 
@@ -1246,6 +1258,7 @@ impl<E: Edge> Daemon<E> {
             .as_ref()
             .map(|of| of.of(project_id, project_dir));
         let workspace = self.workspace_of(project_id, &at, harp, &planned, &handed);
+        let asker = asker_of(&at, hosted_engine.name(), &handed, &planned);
         let started = self.spawn_child(
             &hosted_engine,
             Spawn {
@@ -1261,6 +1274,7 @@ impl<E: Edge> Daemon<E> {
             },
             &planned,
             &handed,
+            &asker,
         );
         let (child, transcripts, placed) = match started {
             Ok(started) => started,
@@ -1305,7 +1319,6 @@ impl<E: Edge> Daemon<E> {
             (self.say)(&format!("{harp}: its start not recorded: {error:?}"));
         }
         (self.say)(&format!("{harp}: started, pid {pid}"));
-        let asker = Asker::of(&at, hosted_engine.name(), &handed, &planned);
         self.host(
             child,
             transcripts,
@@ -1553,6 +1566,7 @@ impl<E: Edge> Daemon<E> {
         spawn: Spawn<'_>,
         child: &Planned,
         handed: &HandOff,
+        asker: &Asker,
     ) -> Result<
         (
             run_ports::StartedChild,
@@ -1622,8 +1636,10 @@ impl<E: Edge> Daemon<E> {
             model: child.model.clone(),
             effort: child.effort.clone(),
             settings: child.settings.clone(),
-            // claude asks no permission over its stream: unused here.
-            child_permissions: run_ports::ChildPermissions::default(),
+            // An engine that asks over its own protocol (opencode's ACP)
+            // has its asks routed to the user (step 8 U7); claude asks
+            // through ctxloom's approval tool, and leaves it unused.
+            child_permissions: self.child_permissions(asker),
             session_lock: String::new(),
         };
         let as_named = |command: &run_ports::TurnCommand| Ok(command.program.clone());

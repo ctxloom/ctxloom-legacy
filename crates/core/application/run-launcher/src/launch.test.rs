@@ -112,10 +112,19 @@ impl ChildEngine for Child {
     }
 }
 
+/// The engine, with its child half: what a child is launched on.
 fn engines(engine: &ScriptedEngine) -> LaunchEngines<'_> {
     LaunchEngines {
         engine,
         child: Some(&Child),
+    }
+}
+
+/// The engine alone: what a one-shot's turn command is launched on.
+fn turn_engine(engine: &ScriptedEngine) -> LaunchEngines<'_> {
+    LaunchEngines {
+        engine,
+        child: None,
     }
 }
 
@@ -132,7 +141,7 @@ fn setup_is_first_and_a_home_that_cannot_be_written_asks_the_engine_nothing() {
     };
     let finder = Finder::finding("/found/fake");
     let refused = launch_of(
-        engines(&engine),
+        turn_engine(&engine),
         &|c| finder.find(c),
         &mut records,
         None,
@@ -158,7 +167,7 @@ fn the_engines_command_follows_setup_and_one_it_will_not_build_is_looked_for_now
     };
     let finder = Finder::finding("/found/fake");
     let refused = launch_of(
-        engines(&engine),
+        turn_engine(&engine),
         &|c| finder.find(c),
         &mut records,
         None,
@@ -185,8 +194,12 @@ fn each_kind_is_driven_by_its_own_command() {
     let engine = ScriptedEngine::answering("", None);
     let finder = |c: &TurnCommand| Ok(c.program.clone());
     let made = |kind| {
+        let engines = match kind {
+            LaunchKind::Child => engines(&engine),
+            _ => turn_engine(&engine),
+        };
         launch_of(
-            engines(&engine),
+            engines,
             &finder,
             &mut MemoryRecords::default(),
             None,
@@ -228,6 +241,22 @@ fn each_kind_is_driven_by_its_own_command() {
         "linux",
     );
     assert!(matches!(no_child.unwrap_err().why, NotLaunched::Failed(_)));
+    // A one-shot given its engine's child half is driven as a child (step
+    // 8 U7: opencode's, over ACP), for its one turn: no prompt on stdin.
+    let as_child = launch_of(
+        engines(&engine),
+        &finder,
+        &mut MemoryRecords::default(),
+        None,
+        &request(LaunchKind::OneShot),
+        "linux",
+    )
+    .unwrap();
+    assert_eq!(as_child.launch.kind, LaunchKind::OneShot);
+    assert_eq!(as_child.launch.program, "fake-child");
+    assert_eq!(as_child.launch.stdio, Stdio::StreamJson);
+    assert!(as_child.launch.stdin.is_empty());
+    assert!(as_child.child.is_some(), "its spec");
 }
 
 // 3. The permits, over the engine's command and before the program is looked
@@ -238,7 +267,7 @@ fn the_permits_are_applied_before_the_program_is_looked_for() {
     let engine = ScriptedEngine::answering("", None);
     let finder = Finder::finding("/found/fake");
     let made = launch_of(
-        engines(&engine),
+        turn_engine(&engine),
         &|c| finder.find(c),
         &mut MemoryRecords::default(),
         None,
@@ -269,7 +298,7 @@ fn the_program_found_is_the_launchs_and_one_found_nowhere_is_checked_no_further(
     let engine = ScriptedEngine::answering("", None);
     let finder = Finder::finding("/found/fake");
     let made = launch_of(
-        engines(&engine),
+        turn_engine(&engine),
         &|c| finder.find(c),
         &mut MemoryRecords::default(),
         None,
@@ -334,7 +363,7 @@ fn the_complete_command_is_measured_last() {
         .insert(PERMIT.to_string(), "x".repeat(run_ports::MAX_ARG_STRLEN));
     let finder = Finder::finding("/found/fake");
     let refused = launch_of(
-        engines(&engine),
+        turn_engine(&engine),
         &|c| finder.find(c),
         &mut MemoryRecords::default(),
         None,
@@ -351,7 +380,7 @@ fn the_complete_command_is_measured_last() {
     assert_eq!(refused.ignored.len(), 1);
     // Nothing is measured for an OS with no limit of its own.
     assert!(launch_of(
-        engines(&engine),
+        turn_engine(&engine),
         &|c| finder.find(c),
         &mut MemoryRecords::default(),
         None,
@@ -406,7 +435,7 @@ fn a_launch_names_its_run_home_lock_and_checkout() {
         agent: "dev".to_string(),
     };
     let made = launch_of(
-        engines(&engine),
+        turn_engine(&engine),
         &|c| Ok(c.program.clone()),
         &mut MemoryRecords::default(),
         Some(&workspaces),

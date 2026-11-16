@@ -2654,3 +2654,65 @@ async fn a_one_shot_still_running_after_the_period_is_stopped() {
         "{log}"
     );
 }
+
+/// A router that keeps the askers it was asked for, and answers each with
+/// its one asker.
+struct Router {
+    asks: Arc<dyn run_ports::PermissionAsks>,
+    asked: Mutex<Vec<run_ports::Asker>>,
+}
+
+/// An asker nothing asks in these tests.
+struct NoAsks;
+
+impl run_ports::PermissionAsks for NoAsks {
+    fn ask(&self, _: &run_ports::PermissionAsk) -> run_ports::PermissionAnswer {
+        run_ports::PermissionAnswer::Cancelled
+    }
+
+    fn withdraw(&self, _: &str, _: &str) {}
+}
+
+impl run_ports::PermissionRouter for Router {
+    fn asks(&self, asker: &run_ports::Asker) -> Arc<dyn run_ports::PermissionAsks> {
+        self.asked.lock().unwrap().push(asker.clone());
+        Arc::clone(&self.asks)
+    }
+}
+
+// Step 8 U7: a child's engine's own permission requests (opencode's ACP)
+// are routed to the user, through the asks of its own session and run.
+#[tokio::test]
+async fn a_hosted_childs_permission_requests_are_routed_for_its_own_session() {
+    let asks: Arc<dyn run_ports::PermissionAsks> = Arc::new(NoAsks);
+    let router = Arc::new(Router {
+        asks: Arc::clone(&asks),
+        asked: Mutex::new(Vec::new()),
+    });
+    let mut world = World::new(Box::new(Plans));
+    let daemon = std::mem::replace(&mut world.daemon, World::new(Box::new(Plans)).daemon);
+    world.daemon = daemon.routing_asks(router.clone());
+    world.name_project().await;
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    let started = world.engine.started.lock().unwrap().clone();
+    assert_eq!(started.len(), 1, "{started:?}");
+    assert_eq!(
+        started[0].permissions,
+        run_ports::ChildPermissions::Ask(asks)
+    );
+    let asked = router.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0].session, CHILD);
+    assert_eq!(asked[0].engine, ENGINE);
+    assert_eq!(asked[0], world.daemon.askers()[0]);
+}
+
+// No router: a child's engine's requests are refused (fail closed).
+#[tokio::test]
+async fn a_hosted_childs_permission_requests_are_refused_when_nothing_routes_them() {
+    let world = World::hosting().await;
+    let started = world.engine.started.lock().unwrap().clone();
+    assert_eq!(started[0].permissions, run_ports::ChildPermissions::Refuse);
+}

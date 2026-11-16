@@ -48,8 +48,9 @@ use angzarr_embedded::v1::Uuid;
 use angzarr_embedded::{Catalog, CatchUp, Processed, ReadStore, Store};
 use pending_launches::{catch_up, PendingLaunch, PendingModel, StartedRun};
 use run_ports::{
-    Edge, Engine, FailureClass, Launch, LaunchAt, LaunchKind, Limits, RunnerLauncher,
-    SessionRecords, TurnOutcome,
+    Asker, ChildEngine, ChildHold, ChildMessage, ChildObservation, ChildPermissions, ChildSpec,
+    Edge, Engine, FailureClass, Launch, LaunchAt, LaunchKind, Limits, PermissionRouter,
+    RunnerLauncher, SessionRecords, TurnOutcome, Urgency,
 };
 use runs_application::{Facts, Identity, RunnerFact};
 
@@ -64,6 +65,27 @@ const ORPHANED: &str = "orphaned";
 
 /// The turn a one-shot takes.
 const TURN: u64 = 1;
+
+/// A launch prepared: its engine, its launch, and, for a one-shot driven
+/// as a child, the spec its engine converses by.
+type Prepared = (Arc<dyn Engine>, Launch, Option<ChildSpec>);
+
+/// The id of a one-shot's one message, when it is driven as a child.
+const ONE_SHOT_MESSAGE: &str = "one-shot";
+
+/// How long a one-shot driven as a child has to exit once its turn has
+/// ended, before its tree is stopped.
+const CHILD_END_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A one-shot driven as a child: whose run it is, its order, where it
+/// works, the spec its engine converses by and its launch.
+struct ChildTurn<'a> {
+    who: &'a Identity,
+    order: &'a Order,
+    cwd: Option<&'a str>,
+    spec: &'a ChildSpec,
+    made: &'a Launch,
+}
 
 /// The name a runner attaches with.
 const RUNNER: &str = "host-launcher";
@@ -150,6 +172,13 @@ pub struct Launcher<E: Edge, L: RunnerLauncher, R: SessionRecords> {
     /// Where a worktree is made; none: a run asking for one works in the
     /// project, and says so.
     workspaces: Option<Arc<dyn isolation_ports::Workspaces + Send + Sync>>,
+    /// The engines whose one-shot is driven as a CHILD for its one turn
+    /// (opencode's, over ACP, step 8 U7), by name.
+    turn_children: Vec<(String, Arc<dyn ChildEngine>)>,
+    /// Where such a one-shot's permission requests go; none, refused.
+    asks: Option<Arc<dyn PermissionRouter>>,
+    /// Where such a one-shot is held while it runs, so a stop ends it.
+    hold: Option<Arc<dyn ChildHold>>,
 }
 
 impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
@@ -173,7 +202,40 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             pending: catch_up(),
             locks: None,
             workspaces: None,
+            turn_children: Vec::new(),
+            asks: None,
+            hold: None,
         }
+    }
+
+    /// The launcher, driving a one-shot on the engine `name` as `child`, a
+    /// child for its one turn, then ended (step 8 U7: opencode's, over ACP,
+    /// so its asks are heard as a hosted child's are), held in `hold` while
+    /// it runs.
+    pub fn with_turn_child(
+        mut self,
+        name: &str,
+        child: Arc<dyn ChildEngine>,
+        hold: Arc<dyn ChildHold>,
+    ) -> Self {
+        self.turn_children.push((name.to_string(), child));
+        self.hold = Some(hold);
+        self
+    }
+
+    /// The launcher, routing the permission requests of a one-shot driven
+    /// as a child through `asks` (step 8 U7).
+    pub fn routing_asks(mut self, asks: Arc<dyn PermissionRouter>) -> Self {
+        self.asks = Some(asks);
+        self
+    }
+
+    /// The child half a one-shot on `engine` is driven by, when it is.
+    fn turn_child(&self, engine: &str) -> Option<Arc<dyn ChildEngine>> {
+        self.turn_children
+            .iter()
+            .find(|(name, _)| name == engine)
+            .map(|(_, child)| Arc::clone(child))
     }
 
     /// The launcher, placing a run that asks for a worktree in a checkout
@@ -313,7 +375,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             checkout_files: checkout_files.clone(),
             workspace_warning: workspace_warning.clone(),
         };
-        let (engine, made) = match prepared {
+        let (engine, made, spec) = match prepared {
             Ok(prepared) => prepared,
             Err(unprepared) => {
                 let outcome = self.unprepared(&who, &launch, unprepared).await?;
@@ -328,6 +390,17 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             return self
                 .terminal(&who, &order, cwd.as_deref(), &made, done)
                 .await;
+        }
+        if let (Some(spec), Some(child)) = (spec, self.turn_child(&order.engine)) {
+            let turn = ChildTurn {
+                who: &who,
+                order: &order,
+                cwd: cwd.as_deref(),
+                spec: &spec,
+                made: &made,
+            };
+            let outcome = self.child_turn(child.as_ref(), turn).await?;
+            return Ok(done(outcome));
         }
         // A child's turn is heard through its hooks alone (owner rulings 26
         // and 51): its prompt and its words are theirs to record, and the
@@ -349,6 +422,100 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         Ok(done(outcome))
     }
 
+    /// A one-shot driven as a child (step 8 U7): its engine started as a
+    /// child, held while it runs (a stop ends it), given the prompt as its
+    /// one message, then ended once that turn has; its turn and its exit
+    /// recorded as a turn command's are. Heard through its hooks alone, as
+    /// every one-shot (owner rulings 26, 51, 58).
+    async fn child_turn(
+        &self,
+        child: &dyn ChildEngine,
+        turn: ChildTurn<'_>,
+    ) -> Result<Outcome, LaunchError> {
+        let ChildTurn {
+            who,
+            order,
+            cwd,
+            spec,
+            made,
+        } = turn;
+        let started = match child.start(spec, made) {
+            Ok(started) => started,
+            Err(error) => {
+                let failure = run_ports::LaunchFailure {
+                    deterministic: matches!(
+                        error,
+                        run_ports::ChildError::NotStarted {
+                            deterministic: true,
+                            ..
+                        }
+                    ),
+                    detail: error.to_string(),
+                };
+                self.not_started(who, failure.deterministic, &failure.detail)
+                    .await?;
+                self.orders.release(&who_session(who), who.incarnation);
+                return Ok(Outcome::NotStarted {
+                    detail: failure.detail,
+                });
+            }
+        };
+        let control: Arc<dyn run_ports::ChildControl> = Arc::from(started.control);
+        if let Some(hold) = &self.hold {
+            hold.hold(Arc::clone(&control));
+        }
+        self.record(who, runner_started(order, cwd, control.pid()))
+            .await?;
+        // Started: the run's own lock has done its work (ruling 92).
+        self.orders.release(&who_session(who), who.incarnation);
+        self.record(who, turn_started()).await?;
+        let mut observations = started.observations;
+        let mut ended = None;
+        let mut exit = None;
+        // A child that will not take its one message is ended at once.
+        if control
+            .send(
+                ChildMessage::new(ONE_SHOT_MESSAGE, &order.prompt),
+                Urgency::Wake,
+            )
+            .is_err()
+        {
+            let _ = control.end(CHILD_END_GRACE);
+        }
+        for observation in observations.by_ref() {
+            match observation {
+                ChildObservation::TurnEnded { outcome, .. } => {
+                    ended = Some(outcome);
+                    let _ = control.end(CHILD_END_GRACE);
+                }
+                ChildObservation::Exited { exit: was, detail } => {
+                    exit = Some((was, detail));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if let Some(hold) = &self.hold {
+            hold.release();
+        }
+        let (exit, detail) = exit.unwrap_or((
+            run_ports::Exit {
+                code: None,
+                signal: None,
+            },
+            String::new(),
+        ));
+        let outcome = ended.unwrap_or(TurnOutcome::Failed {
+            class: FailureClass::EngineError,
+            detail: match detail.is_empty() {
+                true => "the engine exited before its turn ended".to_string(),
+                false => detail,
+            },
+            native_id: None,
+        });
+        self.turn_outcome(who, outcome, exit).await
+    }
+
     /// The turn's command is over: what the engine reads of it recorded (its
     /// own session bound, the turn completed or failed), then the run's
     /// exit.
@@ -358,8 +525,20 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         engine: &dyn Engine,
         output: &run_ports::TurnOutput,
     ) -> Result<Outcome, LaunchError> {
-        let outcome = engine.finish_turn(output);
-        let code = output.exit.code.unwrap_or(0);
+        self.turn_outcome(who, engine.finish_turn(output), output.exit)
+            .await
+    }
+
+    /// The one-shot's turn came to `outcome` and its engine exited as
+    /// `exit`: its own session bound, the turn completed or failed, then
+    /// the run's exit.
+    async fn turn_outcome(
+        &self,
+        who: &Identity,
+        outcome: TurnOutcome,
+        exit: run_ports::Exit,
+    ) -> Result<Outcome, LaunchError> {
+        let code = exit.code.unwrap_or(0);
         let outcome = match outcome {
             TurnOutcome::Answered { answer, native_id } => {
                 if let Some(native) = &native_id {
@@ -401,7 +580,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             who,
             RunnerFact::RunExited(runs::RecordRunExited {
                 code,
-                signal: output.exit.signal.unwrap_or(0),
+                signal: exit.signal.unwrap_or(0),
             }),
         )
         .await?;
@@ -500,10 +679,25 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         ignored: &mut Vec<run_ports::Ignored>,
         left_out: &mut Vec<run_ports::LeftOut>,
         placed: &mut Option<Placement>,
-    ) -> Result<(Arc<dyn Engine>, Launch), NotLaunched> {
+    ) -> Result<Prepared, NotLaunched> {
         let engine = self
             .engine(&order.engine)
             .ok_or_else(|| NotLaunched::Failed(format!("no engine named {}", order.engine)))?;
+        // A one-shot its engine drives as a child (step 8 U7), its asks
+        // routed for its own session and run.
+        let child = (!order.interactive)
+            .then(|| self.turn_child(&order.engine))
+            .flatten();
+        let child_permissions = match (&child, &self.asks) {
+            (Some(_), Some(router)) => ChildPermissions::Ask(router.asks(&Asker {
+                session: at.session.clone(),
+                run: at.run.clone(),
+                engine: order.engine.clone(),
+                agent: String::new(),
+                approval_timeout: order.settings.approval_timeout,
+            })),
+            _ => ChildPermissions::Refuse,
+        };
         let request = LaunchRequest {
             at,
             kind: match order.interactive {
@@ -532,7 +726,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             model: order.model.clone(),
             effort: order.effort.clone(),
             settings: order.settings.clone(),
-            child_permissions: run_ports::ChildPermissions::default(),
+            child_permissions,
             // The run's session lock is its caller's (run-application holds
             // it); the launcher takes none.
             session_lock: String::new(),
@@ -541,7 +735,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         let made = crate::launch_of(
             LaunchEngines {
                 engine: &*engine,
-                child: None,
+                child: child.as_deref(),
             },
             &|command| runner.find_program(command),
             &mut self.records,
@@ -556,7 +750,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
                 ignored.clone_from(&made.launch.ignored);
                 left_out.clone_from(&made.launch.left_out);
                 *placed = made.placed;
-                Ok((engine, made.launch))
+                Ok((engine, made.launch, made.child))
             }
             Err(unprepared) => {
                 let Unprepared {

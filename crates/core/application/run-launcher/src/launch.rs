@@ -6,7 +6,9 @@
 //!    home, `CTXLOOM_ROOT`);
 //! 2. the engine builds its command: the terminal's
 //!    ([`Engine::drive_interactive`]), a turn's ([`Engine::drive_turn`]; a
-//!    one-shot, owner ruling s4-Q8), or a child's ([`ChildEngine::command`]);
+//!    one-shot, owner ruling s4-Q8), or a child's ([`ChildEngine::command`];
+//!    also a one-shot's when its engine runs one as a child, given as
+//!    [`LaunchEngines::child`]: opencode's, over ACP, step 8 U7);
 //! 3. the caller's permits are applied over it (rulings 78, 78b), never over
 //!    a name ctxloom set;
 //! 4. its program is found on its own `PATH` (PATHEXT's on Windows);
@@ -79,7 +81,8 @@ impl fmt::Debug for LaunchRequest {
 }
 
 /// The engine a launch is made for: its `Engine` (the home it prepares, a
-/// turn's and the terminal's command) and, for a child, its child half.
+/// turn's and the terminal's command) and, for a child, its child half; a
+/// one-shot given a child half is driven as a child for its one turn.
 #[derive(Clone, Copy)]
 pub struct LaunchEngines<'a> {
     pub engine: &'a dyn Engine,
@@ -241,11 +244,13 @@ fn drive(
             .drive_interactive(&turn())
             .map(|command| (command, Stdio::Inherit, None))
             .map_err(|e| e.to_string()),
-        LaunchKind::OneShot => engine
+        // A one-shot whose engine runs it as a child (opencode's, over ACP,
+        // step 8 U7) is a child's launch, for its one turn.
+        LaunchKind::OneShot if engines.child.is_none() => engine
             .drive_turn(&turn())
             .map(|command| (command, Stdio::Piped, None))
             .map_err(|e| e.to_string()),
-        LaunchKind::Child => {
+        LaunchKind::OneShot | LaunchKind::Child => {
             let child = engines
                 .child
                 .ok_or_else(|| format!("{} hosts no child", engine.name()))?;
