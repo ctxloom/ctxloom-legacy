@@ -24,6 +24,7 @@ mod process_env;
 mod program;
 #[cfg(feature = "test-support")]
 mod record;
+mod scheduling;
 #[cfg(feature = "test-support")]
 mod seed;
 mod sessions;
@@ -66,12 +67,16 @@ pub use capture::{
     SessionIds, Unreachable,
 };
 pub use commands::{engines, Commands, Hooks};
-pub use core_link::{CoreStores, InProcessCore, Projectors, SharedCore, Unclosed};
+pub use core_link::{
+    AlarmConsumer, CoreStores, InProcessCore, Projectors, SharedCore, SystemClock, Unclosed,
+    ALARM_CONSUMERS,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{LibError, EN_US};
 pub use library::LibraryCommands;
 pub use process_env::ProcessEnv;
+pub use scheduling::SchedulerDues;
 #[cfg(feature = "test-support")]
 pub use seed::Seed;
 pub use sweep_config::SweepSettings;

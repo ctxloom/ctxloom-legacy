@@ -168,6 +168,7 @@ pub(crate) fn serve(
         };
         let endpoint = own.endpoint.clone();
         said(&say, &format!("serving at {endpoint}"));
+        let scheduler = scheduler_over(&core, &kept, pace, &say);
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
         let terminated = hear_terminate((&fs, home), &shared, &say);
@@ -179,9 +180,7 @@ pub(crate) fn serve(
             &say,
         )
         .await;
-        if let Some(terminated) = terminated {
-            terminated.abort();
-        }
+        lifelong_ended(terminated, scheduler, &say).await;
         files.withdraw_own(&own);
         // Every holder of the store let go before the close (ruling 131):
         // the launcher (its edge and its folds), the edge, the listener's
@@ -229,6 +228,46 @@ pub(crate) fn serve(
 
 /// How long the daemon's exit waits for its runtime's blocking tasks.
 const RUNTIME_END: Duration = Duration::from_secs(5);
+
+/// How long the daemon's exit waits for its scheduler's tick to finish.
+const SCHEDULER_END: Duration = Duration::from_secs(5);
+
+/// The scheduler (step 8 U5a), for the daemon's life, over `core` and the
+/// due model `kept` registered in its kernel, on the system clock, looking
+/// at the store at the daemon's poll; its lines in the daemon's log. Its
+/// alarms fire while the daemon drains too.
+fn scheduler_over(
+    core: &InProcessCore<SqliteStore>,
+    kept: &Projectors,
+    pace: Pace,
+    say: &Say,
+) -> crate::scheduling::Scheduler {
+    let say = Arc::clone(say);
+    crate::scheduling::start(
+        core.share(),
+        kept.due.clone().unwrap_or_default(),
+        Arc::new(crate::SystemClock),
+        pace.poll,
+        Arc::new(move |line: &str| said(&say, line)),
+    )
+}
+
+/// What runs for the daemon's life, ended once its loop returns and before
+/// anything else is let go: the SIGTERM listener, then the scheduler, whose
+/// copy of the core goes before the store closes (ruling 131). A scheduler
+/// that does not end in time is cut, and said.
+async fn lifelong_ended(
+    terminated: Option<tokio::task::JoinHandle<()>>,
+    scheduler: crate::scheduling::Scheduler,
+    say: &Say,
+) {
+    if let Some(terminated) = terminated {
+        terminated.abort();
+    }
+    if !scheduler.stop(SCHEDULER_END).await {
+        said(say, "the scheduler did not stop in time: it was cut");
+    }
+}
 
 /// What the loop shares with its API, its drain's period read from
 /// `pace`'s default and `home`'s config.

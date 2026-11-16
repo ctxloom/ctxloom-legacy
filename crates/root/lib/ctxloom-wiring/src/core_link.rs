@@ -18,13 +18,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use angzarr_embedded::angzarr_store_sqlite::SqliteStore;
 use angzarr_embedded::v1::Uuid as WireUuid;
 use angzarr_embedded::{
-    Catalog, ListStreams, OnRetryable, Processed, Registry, Sampled, Store, StoreError, Timestamp,
+    Catalog, Kernel, ListStreams, OnRetryable, Processed, Registry, Sampled, Store, StoreError,
+    Timestamp,
 };
 use angzarr_embedded_host::config::Expose;
 use angzarr_embedded_host::stores::Stores;
 use angzarr_embedded_host::App;
 use embedded_edge::EmbeddedEdge;
 use runs::RunAggregate;
+use scheduler::SchedulerAggregate;
 use sessions::{NameClaimAggregate, ProjectAggregate, ProjectNameAggregate, SessionAggregate};
 use std::num::NonZeroU32;
 use trees::TreeAggregate;
@@ -40,20 +42,46 @@ pub(crate) const RACE_RUNS: NonZeroU32 = match NonZeroU32::new(3) {
     None => NonZeroU32::MIN,
 };
 
-/// The instant and the fresh command id each call is handled at: this is the
-/// composition root, where the clock and the ids live.
-fn sample() -> Sampled {
+/// The instant now, the system's: this is the composition root, where the
+/// clock lives.
+fn system_now() -> Timestamp {
     let since = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
+    Timestamp {
+        seconds: since.as_secs() as i64,
+        nanos: since.subsec_nanos() as i32,
+    }
+}
+
+/// The instant and the fresh command id each call is handled at: this is the
+/// composition root, where the clock and the ids live.
+fn sample() -> Sampled {
     Sampled {
-        now: Timestamp {
-            seconds: since.as_secs() as i64,
-            nanos: since.subsec_nanos() as i32,
-        },
+        now: system_now(),
         command_id: WireUuid::from_bytes(*uuid::Uuid::now_v7().as_bytes()),
     }
 }
+
+/// The scheduler's clock (step 8 U5a): the system's, as each call's sample.
+pub struct SystemClock;
+
+impl scheduler_ports::Clock for SystemClock {
+    fn now(&self) -> Timestamp {
+        system_now()
+    }
+}
+
+/// What registers one domain that arms alarms (step 8 U5a): its aggregate
+/// if the core has not, its policy towards the scheduler (arming and
+/// cancelling, `ArmAlarm`/`CancelAlarm`) and its delivery policy
+/// (`scheduler::delivery!`, which hands it `RecordAlarmReached`).
+pub type AlarmConsumer = fn(&mut Registry);
+
+/// Every domain that arms alarms, registered in every core so a trigger's
+/// arming runs wherever it commits, and resumed at each start. None yet:
+/// approvals' expiry (step 8 U5) is the first.
+pub const ALARM_CONSUMERS: &[AlarmConsumer] = &[];
 
 /// The core's one store, as the application resolves it: every call's key
 /// is `()`, and it is resumed at start (as `OneStore`), shared with the core
@@ -68,9 +96,9 @@ impl<S: Store + Processed + ListStreams + Send + Sync> Stores for CoreStores<S> 
         Ok(Arc::clone(&self.0))
     }
 
-    // Equivalent to none here: the resume at start runs the policies' owed
-    // work, and the core registers aggregates alone.
-    #[cfg_attr(test, mutants::skip)]
+    // The resume at start runs the policy work a crash (or a policy new to
+    // a domain with history) left owed: an alarm fired and not yet
+    // delivered is delivered (`core_link.test.rs`).
     fn at_start(&self) -> Vec<()> {
         vec![()]
     }
@@ -80,7 +108,7 @@ impl<S: Store + Processed + ListStreams + Send + Sync> Stores for CoreStores<S> 
 /// each a handle on a fold another driver (a catch-up) may share, run inline
 /// after every commit of its sources, and what a `HandleSync` names. A core
 /// a CLI command runs registers none (its folds would be partial, and it
-/// serves no `HandleSync`); the daemon's registers all four.
+/// serves no `HandleSync`); the daemon's registers every one.
 #[derive(Clone, Default)]
 pub struct Projectors {
     pub board: Option<daemon_board::Boards>,
@@ -90,6 +118,8 @@ pub struct Projectors {
     pub trusts: Option<trust_index::TrustIndexes>,
     /// The permission asks (step 8 U4).
     pub approvals: Option<pending_approvals::PendingApprovals>,
+    /// The alarms armed, which the daemon's scheduler reads (step 8 U5a).
+    pub due: Option<crate::scheduling::SchedulerDues>,
 }
 
 impl Projectors {
@@ -106,6 +136,7 @@ impl Projectors {
             index: Some(session_index::SessionIndexes::filled(fill())),
             trusts: Some(trust_index::TrustIndexes::filled(fill())),
             approvals: Some(pending_approvals::PendingApprovals::filled(fill())),
+            due: Some(crate::scheduling::SchedulerDues::filled(fill())),
         }
     }
 
@@ -137,6 +168,11 @@ impl Projectors {
             registry
                 .projector_handler(&pending_approvals::SOURCES, approvals)
                 .expect("the pending approvals register");
+        }
+        if let Some(due) = self.due {
+            registry
+                .projector_handler(&[scheduler::SCHEDULER_DOMAIN], due)
+                .expect("the due alarms register");
         }
     }
 }
@@ -228,8 +264,9 @@ impl<S> InProcessCore<S>
 where
     S: Store + Processed + ListStreams + Send + Sync + 'static,
 {
-    /// The application over `store`: the sessions, runs, trees and trust
-    /// aggregates registered; sessions and runs exposed to the network (the
+    /// The application over `store`: the sessions, runs, trees, trust and
+    /// scheduler aggregates registered, and every domain that arms alarms
+    /// ([`ALARM_CONSUMERS`]); sessions and runs exposed to the network (the
     /// container bridge reaches them) and trees and trust to loopback; the kernel's retries off,
     /// so a fact at the race cap is parked at once.
     pub async fn start(store: S) -> InProcessCore<S> {
@@ -241,6 +278,16 @@ where
     pub async fn start_with(
         store: S,
         projectors: impl FnOnce(&Arc<S>) -> Projectors,
+    ) -> InProcessCore<S> {
+        InProcessCore::start_consuming(store, projectors, ALARM_CONSUMERS).await
+    }
+
+    /// [`InProcessCore::start_with`], `consumers` the domains that arm
+    /// alarms (production's are [`ALARM_CONSUMERS`]; a test's its own).
+    pub(crate) async fn start_consuming(
+        store: S,
+        projectors: impl FnOnce(&Arc<S>) -> Projectors,
+        consumers: &[AlarmConsumer],
     ) -> InProcessCore<S> {
         let store = Arc::new(store);
         let mut registry = Registry::new();
@@ -281,6 +328,14 @@ where
                 approvals::ApprovalNameAggregate::default,
             )
             .expect("the approval names aggregate registers");
+        // The scheduler (step 8 U5a): its streams are written by policies
+        // and the daemon's clock loop alone, so it is exposed to nobody.
+        registry
+            .aggregate::<SchedulerAggregate>(SchedulerAggregate::default)
+            .expect("the scheduler aggregate registers");
+        for consumer in consumers {
+            consumer(&mut registry);
+        }
         let exposed = BTreeMap::from([
             (sessions::SESSION_DOMAIN.to_string(), Expose::Ip),
             (runs::RUN_DOMAIN.to_string(), Expose::Ip),
@@ -389,6 +444,12 @@ where
 
     pub fn catalog(&self) -> &Catalog {
         self.app.registry().catalog()
+    }
+
+    /// The kernel the application runs, its settings the application's:
+    /// what the daemon's scheduler sends its clock facts through.
+    pub(crate) fn kernel(&self) -> Kernel<'_> {
+        self.app.kernel()
     }
 }
 

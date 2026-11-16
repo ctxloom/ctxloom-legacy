@@ -2191,6 +2191,51 @@ name. A new session's chosen name may not begin `ask-`
 `reserved`, refused by the caller before anything is written); an existing
 one keeps its name (Q-B).
 
+## The scheduler runs in the daemon (step 8 U5a; plan `approvals-trust-step8.plan.md` U5)
+
+The scheduler's crates (`core/domain/scheduler`, `core/read-model/
+scheduler-due`, `core/application/scheduler-loop`, `core/ports/
+scheduler-ports`; design `scheduler.plan.md`) are wired. EVERY core
+(`core_link::InProcessCore::start_with`, a CLI command's and the daemon's)
+registers `SchedulerAggregate`, exposed to nobody (its streams are written by
+policies and the clock loop alone), and then each domain that arms alarms,
+`core_link::ALARM_CONSUMERS` (an `AlarmConsumer` is a `fn(&mut Registry)`
+registering the consumer's arm/cancel policy towards the scheduler and its
+`scheduler::delivery!` policy), so a trigger's arming runs wherever it
+commits. The list is EMPTY: ctxloom registers no kernel policy in production
+yet; approvals' expiry (U5) is its first entry. `CoreStores::at_start` is the
+resume at start, which delivers an alarm fired and not delivered (a crash
+between the two hops, or a delivery policy new to a store with history).
+The daemon's core also registers the due model (`Projectors::due`, the
+wiring's `scheduling::SchedulerDues`: `scheduler_due::Due` held by
+`held-projection`, so the kernel's inline fold and the loop's catch-up are
+ONE fold, each page once; `scheduler-loop`'s `SchedulerLoop::sharing` reads
+it through `scheduler_due::ReadsDue`). The daemon runs `SchedulerLoop::run`
+for its life on its runtime (`daemon/serve.rs`'s `scheduler_over`, the
+wiring's `scheduling::start`): on `core_link::SystemClock` (the clock each
+call's sample reads), waiting `min(next due, the daemon's poll)` on the
+runtime's timer, cut short by any book the kernel folds into the due model
+(an alarm armed in process fires at once) and by the stop; it fires through
+the kernel directly (`SharedCore::kernel`), so the edge's test kill switch
+never sees a clock fact. A tick that fails (its catch-up) is said and the
+loop goes on, its model kept; the log says each `alarm fired: <target>
+<alarm>`, each fact that failed and each unreadable stream. It runs while the
+daemon drains; once the daemon's loop returns it is stopped
+(`lifelong_ended`: its current tick finishes, at most five seconds, else it
+is cut and said) BEFORE anything else is let go, so its copy of the core is
+gone before the store closes (ruling 131; a running scheduler is a holder:
+`Unclosed::StillHeld`). A daemon started after another, killed or stopped,
+rebuilds the model from every scheduler stream's start: an alarm that came
+due meanwhile fires once, late, at the instant armed. `scheduling.test.rs`
+proves arm-fire-deliver, cancel, the in-process wake, the kill and restart,
+the resume's delivery and the holder, over a real store with
+`scheduler-fixture`'s dummy domain registered as a test's consumer
+(`InProcessCore::start_consuming`, crate-private; the fixture is a
+dev-dependency, never in any build of the binary), a `FakeClock` moved by
+the test and forced wakes, no sleep. Not proven: a real process kill (the
+"kill" aborts the loop's task and drops the core unclosed) and the binary's
+daemon firing an alarm (no production consumer arms one yet).
+
 ## Storage is angzarr-store-sqlite
 
 ctxloom's store is ONE per user (owner T14): angzarr-store-sqlite's
