@@ -167,3 +167,45 @@ pub trait Ears: Send + Sync {
 pub trait Monotonic: Send + Sync {
     fn now(&self) -> std::time::Duration;
 }
+
+/// THE ONE NAMED EXCEPTION to "the daemon never reads a hold" (OD-59 (2),
+/// owner 2026-11-16, "ALLOW the check"; H-Q5 revised made the hold the
+/// client side's to deliver): the start-up sweep delivers the hold of each
+/// session whose run it is about to judge BEFORE it judges it, so a TUI
+/// frontend that exited while no daemon served (its exit report held) has
+/// its run ended as its report says, not `runner-lost`. It is a FLUSH, the
+/// client side's own ([`runs_application::Flush::session`]): every record
+/// of the session's hold this daemon is up to date for, in held order,
+/// through the daemon's own edge, its delivered prefix cut; no second
+/// reader of a hold's record exists. Nothing else of the daemon reads a
+/// hold: not its rounds, not its API.
+pub trait StartHolds: Send + Sync {
+    /// Deliver what the hold of `session` (its stable id, hyphenated)
+    /// holds, as an up-to-date client's flush of it delivers it.
+    fn flush<'a>(
+        &'a self,
+        session: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HoldFlushed> + Send + 'a>>;
+}
+
+/// What a start-up flush of one session's hold did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HoldFlushed {
+    /// How many held records it delivered (applied, or a duplicate).
+    pub delivered: usize,
+    /// How many it set aside (finally refused or parked, or no fact of the
+    /// hold's session): never delivered again.
+    pub set_aside: usize,
+    /// Why something stayed in the hold (a record of a newer ctxloom, a
+    /// hold another process is taking, one that does not read, a delivery
+    /// not settled); none when nothing is left.
+    pub left: Option<String>,
+}
+
+impl HoldFlushed {
+    /// Whether all the hold held reached the stream: nothing set aside and
+    /// nothing left.
+    pub fn whole(&self) -> bool {
+        self.set_aside == 0 && self.left.is_none()
+    }
+}

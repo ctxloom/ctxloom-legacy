@@ -141,6 +141,9 @@ impl Wiring {
                     <runs::RunEvent as Payload>::from_any(&event)
                 {
                     row["cause"] = format!("{:?}", ended.cause).into();
+                    if let Some(code) = ended.exit_code {
+                        row["exit_code"] = code.into();
+                    }
                 }
                 events.push(row);
             }

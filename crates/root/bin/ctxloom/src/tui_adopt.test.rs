@@ -16,6 +16,10 @@
 //!   reported, so it is held in the session's hold; the exit's attempt
 //!   reaches a new daemon and delivers the held start, then the exit, in
 //!   order.
+//! - A TUI's exit held while no daemon serves (OD-59 (2)): the frontend
+//!   exits, its exit report in the session's hold and its locks let go; the
+//!   next daemon's start delivers that hold before its sweep judges the run,
+//!   so the run ends with the TUI's own exit code, never `runner-lost`.
 //!
 //! Nothing is timed: each step waits, bounded, for what the store, the stub
 //! or the files say happened.
@@ -30,13 +34,15 @@ use super::library::Project;
 use crate::tests::files;
 
 /// The TUI: it records its harp and directory, says it started, and runs
-/// until `release` is beside it.
+/// until `release` is beside it, then exits with the code `tui-exit` beside
+/// it says (none: 0).
 const TUI: &str = r#"here="$(dirname "$0")"
 echo "${CTXLOOM_SESSION##*/}" > "$here/tui-harp"
 pwd -P > "$here/tui-cwd"
 : > "$here/tui-started"
 i=0
 while [ ! -e "$here/release" ] && [ "$i" -lt 1200 ]; do sleep 0.1; i=$((i+1)); done
+exit "$(cat "$here/tui-exit" 2>/dev/null || echo 0)"
 "#;
 
 /// What holds the daemon's single-instance lock while `unblock` is not
@@ -190,6 +196,14 @@ impl Rig {
                 )
             })
             .collect()
+    }
+
+    /// The events of `harp`'s first run, each as `test session-events`
+    /// prints it.
+    fn run_rows(&self, harp: &str) -> Vec<Value> {
+        let ran = self.run(&["test", "session-events", harp, "--run", "1"]);
+        assert_eq!(ran.code, 0, "{}", ran.said());
+        ran.json().as_array().cloned().unwrap_or_default()
     }
 
     fn types(&self, harp: &str, run: bool) -> Vec<String> {
@@ -452,6 +466,82 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     assert!(
         run.iter()
             .any(|(t, cause)| t == "RunEnded" && cause == "RunnerExit"),
+        "{run:?}"
+    );
+    rig.stop();
+}
+
+// OD-59 (2), owner 2026-11-16 ("ALLOW the check"), FORCED: the daemon is
+// killed under a live TUI and no daemon can start (a blocker holds its
+// single-instance lock, waiting on it BEFORE the kill), so the TUI's exit
+// report is HELD in the session's hold and the frontend exits, its locks let
+// go. A daemon then started (by the next command) finds the run's owner gone
+// at its start: its sweep delivers the session's hold first, so the run ends
+// as the report says, with the TUI's own exit code, `runner-exit`, and never
+// `runner-lost`.
+#[test]
+fn test_a_tui_exit_held_while_no_daemon_serves_ends_its_run_with_its_exit_code() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    if !on_path("flock") {
+        eprintln!(
+            "SKIP test_a_tui_exit_held_while_no_daemon_serves_ends_its_run_with_its_exit_code: no flock"
+        );
+        return;
+    }
+    let session = rig.start_session(&[]);
+    let harp = rig.harp();
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    wait(&rig.log(), "the start recorded", || {
+        rig.types(&harp, true)
+            .iter()
+            .any(|t| t == "RunnerStartedRecorded")
+    });
+    let blocker = rig.bin.join("blocks-daemons");
+    files::put_program(&blocker, BLOCKS_DAEMONS);
+    let unblock = rig.bin.join("unblock");
+    let mut blocking = std::process::Command::new(&blocker)
+        .args([
+            rig.home_file("daemon/daemon.lock").as_os_str(),
+            unblock.as_os_str(),
+        ])
+        .spawn()
+        .expect("the blocker starts");
+    let killed = rig.kill_daemon();
+    // The TUI exits 3 while no daemon can serve: its exit report is held.
+    files::put(rig.bin.join("tui-exit"), "3");
+    rig.release_tui();
+    let ran = finished(session);
+    let held = rig.home_file("held");
+    assert!(
+        files::children(&held)
+            .iter()
+            .any(|path| path.extension().is_some_and(|e| e == "held")),
+        "the exit report is held: {}",
+        ran.said()
+    );
+    assert!(
+        rig.events(&harp, true).iter().all(|(t, _)| t != "RunEnded"),
+        "nothing ended the run yet: {:?}",
+        rig.events(&harp, true)
+    );
+    files::put(&unblock, "go");
+    let _ = blocking.wait();
+    // The next command starts a new daemon, whose start judges the run.
+    let listed = rig.run(&["session", "list"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    assert_ne!(rig.daemon_pid(), Some(killed), "another daemon");
+    assert_eq!(rig.ended(&harp), "runner-exit", "{}", rig.log());
+    let run = rig.run_rows(&harp);
+    let ends: Vec<&Value> = run.iter().filter(|e| e["type"] == "RunEnded").collect();
+    assert_eq!(ends.len(), 1, "{run:?}");
+    assert_eq!(ends[0]["cause"], "RunnerExit", "{run:?}\n{}", rig.log());
+    assert_eq!(ends[0]["exit_code"], 3, "the TUI's own exit code: {run:?}");
+    assert!(
+        !run.iter().any(|e| e["type"] == "RunnerLostRecorded"),
         "{run:?}"
     );
     rig.stop();

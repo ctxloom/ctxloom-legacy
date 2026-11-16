@@ -44,8 +44,8 @@ pub use one_shot::{
     STOP_GRACE_MS,
 };
 pub use ports::{
-    ChildHomes, ChildPlans, ChildWorkspaces, Ears, ForLaunch, HandOff, HandOffs, HostedEngine,
-    Kept, Monotonic, Transcripts,
+    ChildHomes, ChildPlans, ChildWorkspaces, Ears, ForLaunch, HandOff, HandOffs, HoldFlushed,
+    HostedEngine, Kept, Monotonic, StartHolds, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
 pub use terminal::{

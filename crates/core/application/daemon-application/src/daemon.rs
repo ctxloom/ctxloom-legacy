@@ -247,6 +247,12 @@ pub struct Daemon<E: Edge> {
     /// owner 2026-11-14): another daemon's, their owner alive; their end
     /// path is this daemon's ([`crate::adopt`]).
     pub(crate) adopted: BTreeMap<String, crate::adopt::Adopted>,
+    /// What delivers a judged run's session's hold at the start, before
+    /// the sweep judges it (OD-59 (2), the named exception,
+    /// [`crate::StartHolds`]); none, nothing is delivered.
+    // Red: read once the start's sweep flushes (the next commit).
+    #[allow(dead_code)]
+    start_holds: Option<Arc<dyn crate::StartHolds>>,
 }
 
 /// The ports a [`Daemon`] is built over.
@@ -346,7 +352,16 @@ impl<E: Edge> Daemon<E> {
             guided_once: false,
             guided: BTreeMap::new(),
             adopted: BTreeMap::new(),
+            start_holds: None,
         }
+    }
+
+    /// The daemon, its start-up sweep delivering, through `holds`, the hold
+    /// of each session whose run it judges, before it judges it (OD-59 (2):
+    /// the ONE named exception to "the daemon never reads a hold").
+    pub fn flushing_at_start(mut self, holds: Arc<dyn crate::StartHolds>) -> Daemon<E> {
+        self.start_holds = Some(holds);
+        self
     }
 
     /// The daemon, timing a hand-over's period by `clock` (OD-54).

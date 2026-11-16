@@ -435,3 +435,174 @@ async fn a_start_tried_again_adopts_a_run_once() {
     let said = rig.said.lock().unwrap();
     assert_eq!(said.iter().filter(|l| l.contains("adopted")).count(), 1);
 }
+
+/// The hold of the TUI's session, as the start-up flush reaches it (OD-59
+/// (2)): what it delivers when flushed (the frontend's exit report, held
+/// while no daemon served), what it answers, and whom it was asked for.
+struct Hold {
+    edge: Arc<TestEdge>,
+    who: runs_application::Identity,
+    /// The exit report it holds, delivered when flushed; none, it delivers
+    /// nothing.
+    exit: Option<runs::RecordRunExited>,
+    answer: crate::HoldFlushed,
+    asked: Mutex<Vec<String>>,
+}
+
+impl crate::StartHolds for Hold {
+    fn flush<'a>(
+        &'a self,
+        session: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::HoldFlushed> + Send + 'a>> {
+        Box::pin(async move {
+            self.asked.lock().unwrap().push(session.to_string());
+            if let (TUI, Some(exit)) = (session, &self.exit) {
+                runs_application::Facts::new(Arc::clone(&self.edge))
+                    .record(
+                        &self.who,
+                        runs_application::RunnerFact::RunExited(exit.clone()),
+                    )
+                    .await
+                    .unwrap();
+            }
+            self.answer.clone()
+        })
+    }
+}
+
+impl Rig {
+    fn hold(&self, exit: Option<runs::RecordRunExited>, answer: crate::HoldFlushed) -> Arc<Hold> {
+        Arc::new(Hold {
+            edge: Arc::clone(&self.edge),
+            who: self.who(),
+            exit,
+            answer,
+            asked: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+fn exited_with(code: i32) -> Option<runs::RecordRunExited> {
+    Some(runs::RecordRunExited { code, signal: 0 })
+}
+
+/// The exit code each of the run's ends carries.
+async fn exit_codes(rig: &Rig) -> Vec<Option<i32>> {
+    rig.run_ends()
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::RunEnded(ended) => Some(ended.exit_code),
+            _ => None,
+        })
+        .collect()
+}
+
+// OD-59 (2), owner 2026-11-16 ("ALLOW the check"): a TUI frontend that
+// exited while no daemon served left its exit report in its session's hold,
+// and its locks free. The next daemon's start delivers that session's hold
+// BEFORE its sweep judges the run, so the run ends as the report says (its
+// exit code, `runner-exit`, through the adoption's end path: the incarnation
+// ended and the checkout let go), never `runner-lost`.
+#[tokio::test]
+async fn the_start_delivers_a_held_exit_report_before_it_judges_the_run() {
+    let rig = Rig::new(LockProbe::Unproven, LockProbe::Free);
+    rig.prepared(true).await;
+    let hold = rig.hold(
+        exited_with(3),
+        crate::HoldFlushed {
+            delivered: 1,
+            ..crate::HoldFlushed::default()
+        },
+    );
+    let mut daemon = rig
+        .daemon()
+        .flushing_at_start(Arc::clone(&hold) as Arc<dyn crate::StartHolds>);
+    let swept = daemon
+        .start_up(&rig.edge.store, rig.edge.catalog())
+        .await
+        .unwrap();
+    assert!(swept.is_empty(), "its exit was held, not lost: {swept:?}");
+    assert_eq!(*hold.asked.lock().unwrap(), [TUI.to_string()]);
+    assert!(
+        daemon
+            .end_the_adopted(&rig.edge.store, rig.edge.catalog())
+            .await
+    );
+    assert_eq!(causes(&rig.run_ends().await), [runs::EndCause::RunnerExit]);
+    assert_eq!(
+        exit_codes(&rig).await,
+        [Some(3)],
+        "the frontend's own exit code"
+    );
+    assert_eq!(
+        rig.incarnations_ended().await,
+        [(1, "runner-exit".to_string())]
+    );
+    assert_eq!(rig.removed(), [format!("/work {CHECKOUT}")]);
+    let said = rig.said.lock().unwrap().join("\n");
+    assert!(said.contains("its hold delivered at the start"), "{said}");
+    assert!(!said.contains("runner-lost"), "{said}");
+}
+
+// A hold the start cannot deliver whole (a record of a newer ctxloom, one
+// that does not read, one set aside) leaves the run to the sweep as before:
+// `runner-lost`, and the log says why the hold did not save it.
+#[tokio::test]
+async fn a_hold_the_start_cannot_deliver_leaves_the_run_lost_and_says_so() {
+    let rig = Rig::new(LockProbe::Unproven, LockProbe::Free);
+    rig.prepared(true).await;
+    let hold = rig.hold(
+        None,
+        crate::HoldFlushed {
+            left: Some("held by a newer ctxloom (v9.0.0)".to_string()),
+            ..crate::HoldFlushed::default()
+        },
+    );
+    let mut daemon = rig
+        .daemon()
+        .flushing_at_start(Arc::clone(&hold) as Arc<dyn crate::StartHolds>);
+    let swept = daemon
+        .start_up(&rig.edge.store, rig.edge.catalog())
+        .await
+        .unwrap();
+    assert_eq!(swept.len(), 1, "{swept:?}");
+    assert_eq!(causes(&rig.run_ends().await), [runs::EndCause::RunnerLoss]);
+    assert_eq!(*hold.asked.lock().unwrap(), [TUI.to_string()]);
+    let said = rig.said.lock().unwrap().join("\n");
+    assert!(
+        said.contains("ended runner-lost without what its hold held")
+            && said.contains("held by a newer ctxloom (v9.0.0)"),
+        "{said}"
+    );
+}
+
+// The start reads no hold of a session whose run it does not judge, and a
+// hold that held nothing says nothing.
+#[tokio::test]
+async fn the_start_asks_only_the_judged_runs_holds_and_an_empty_one_says_nothing() {
+    let rig = Rig::new(LockProbe::Unproven, LockProbe::Held);
+    let hold = rig.hold(None, crate::HoldFlushed::default());
+    let mut daemon = rig
+        .daemon()
+        .flushing_at_start(Arc::clone(&hold) as Arc<dyn crate::StartHolds>);
+    daemon
+        .start_up(&rig.edge.store, rig.edge.catalog())
+        .await
+        .unwrap();
+    assert!(
+        hold.asked.lock().unwrap().is_empty(),
+        "no run, no hold read"
+    );
+    rig.prepared(true).await;
+    let mut daemon = rig
+        .daemon()
+        .flushing_at_start(Arc::clone(&hold) as Arc<dyn crate::StartHolds>);
+    daemon
+        .start_up(&rig.edge.store, rig.edge.catalog())
+        .await
+        .unwrap();
+    assert_eq!(*hold.asked.lock().unwrap(), [TUI.to_string()]);
+    let said = rig.said.lock().unwrap().join("\n");
+    assert!(!said.contains("its hold"), "{said}");
+}
