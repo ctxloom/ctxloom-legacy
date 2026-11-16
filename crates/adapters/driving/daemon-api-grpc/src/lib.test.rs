@@ -202,6 +202,27 @@ impl Calls for Scripted {
     }
 }
 
+/// At most this many of a watch's events are read: more is a watch that
+/// never ends.
+const WATCH_BOUND: usize = 16;
+
+/// A watch's events, read to its end, which must come within
+/// [`WATCH_BOUND`] of them. Bounded, as daemon-application's tests read
+/// theirs, so a stream that never ends fails its test at once instead of
+/// growing a `Vec` until the machine has no memory left (a mutant did that
+/// twice on 2026-11-15, to about 70 GB).
+async fn watched(stream: &mut tonic::Streaming<v1::RunEvent>) -> Vec<v1::RunEvent> {
+    let mut events = Vec::new();
+    while let Some(event) = stream.message().await.unwrap() {
+        events.push(event);
+        assert!(
+            events.len() < WATCH_BOUND,
+            "the watch never ended: {events:?}"
+        );
+    }
+    events
+}
+
 /// A run's events as the scripted `WatchRun` streams them: two, then its
 /// end, each as the stream is read.
 fn run_events() -> Vec<v1::RunEvent> {
@@ -609,11 +630,7 @@ async fn the_runs_are_served_and_a_watch_streams_every_event() {
         .await
         .unwrap()
         .into_inner();
-    let mut events = Vec::new();
-    while let Some(event) = stream.message().await.unwrap() {
-        events.push(event);
-    }
-    assert_eq!(events, run_events());
+    assert_eq!(watched(&mut stream).await, run_events());
 }
 
 // A watch is gated as every call is: without the user bearer, a bare

@@ -8,7 +8,7 @@ use daemon_application::{HostRequest, TerminalHost, TerminalPlaced, TerminalTold
 use daemon_proto::v1;
 use run_ports::{Launch, LaunchKind, Stdio, TurnCommand};
 
-use crate::server::tests::fixture;
+use crate::server::tests::{fixture, watched};
 
 const ROOT: &str = "0195f0a4-7b1e-7000-8000-000000000001";
 const SESSION: &str = "projects/calm-quiet-heron/sessions/amber-quiet-heron";
@@ -164,11 +164,7 @@ async fn a_terminal_run_is_prepared_in_its_project_and_answered_with_its_launch(
     // The session is closed, then its frontend reports the exit.
     rig.terminals.stop(ROOT, "closed");
     rig.told.lock().unwrap()[0].done(vec![notice("after")]);
-    let events: Vec<v1::RunEvent> = api
-        .watch_run(v1::WatchRunRequest { name })
-        .await
-        .unwrap()
-        .collect();
+    let events = watched(api.watch_run(v1::WatchRunRequest { name }).await.unwrap());
     assert_eq!(events.len(), 2, "{events:?}");
     assert!(matches!(
         &events[0].event,

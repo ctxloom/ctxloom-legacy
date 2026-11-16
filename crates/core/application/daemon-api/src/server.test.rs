@@ -320,6 +320,24 @@ pub(crate) fn resolve(commit: &str, name: &str) -> v1::ResolveProjectRequest {
     }
 }
 
+/// At most this many of a watch's events are read: more is a watch that
+/// never ends.
+const WATCH_BOUND: usize = 16;
+
+/// A watch's events, read to its end, which must come within
+/// [`WATCH_BOUND`] of them. Bounded, as daemon-application's tests read
+/// theirs, so a watch that never ends fails its test at once instead of
+/// growing a `Vec` until the machine has no memory left (a mutant did that
+/// twice on 2026-11-15, to about 70 GB).
+pub(crate) fn watched(watch: impl Iterator<Item = v1::RunEvent>) -> Vec<v1::RunEvent> {
+    let events: Vec<v1::RunEvent> = watch.take(WATCH_BOUND).collect();
+    assert!(
+        events.len() < WATCH_BOUND,
+        "the watch never ended: {events:?}"
+    );
+    events
+}
+
 /// The typed refusal of an error, decoded as `T`, and its code.
 /// The refusal's status and message, held to be of type `T`: a refusal of
 /// another type fails the test, never decoded as `T` by accident.

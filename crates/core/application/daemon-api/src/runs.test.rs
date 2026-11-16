@@ -8,7 +8,7 @@ use daemon_application::{HostRequest, OneShotControl, OneShotHost, OneShots, Tol
 use daemon_proto::v1;
 use run_application::{Answer, Done, Placement, RunError};
 
-use crate::server::tests::{fixture, refused};
+use crate::server::tests::{fixture, refused, watched};
 use crate::ApiError;
 
 const ROOT: &str = "0195f0a4-7b1e-7000-8000-000000000001";
@@ -128,11 +128,7 @@ async fn a_one_shot_is_hosted_in_its_project_and_answered_once_placed() {
         .unwrap();
     assert_eq!(got.session, SESSION);
     assert_eq!(got.name, name);
-    let events: Vec<v1::RunEvent> = api
-        .watch_run(v1::WatchRunRequest { name })
-        .await
-        .unwrap()
-        .collect();
+    let events = watched(api.watch_run(v1::WatchRunRequest { name }).await.unwrap());
     assert_eq!(events.len(), 2, "its reply and its end: {events:?}");
     assert_eq!(
         events[0].event,
