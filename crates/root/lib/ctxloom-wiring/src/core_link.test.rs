@@ -701,3 +701,238 @@ async fn an_ask_recorded_in_process_is_answered_over_loopback_and_projected() {
         "{unexposed:?}"
     );
 }
+
+// Owner ruling 2026-11-16: only the daemon's core resumes owed policy work
+// at start, and only it registers the alarm consumers' policies; a CLI
+// command's core (`InProcessCore::start`) scans no policy source.
+mod resume_at_start {
+    use std::sync::{Arc, Mutex};
+
+    use angzarr_embedded::angzarr_ports::Uuid as CommandId;
+    use angzarr_embedded::angzarr_ports::{
+        ListStreams, PositionKey, PositionStore, Processed, Slice, SnapshotStore, StoreError,
+        StreamRef, Write, Written,
+    };
+    use angzarr_embedded::testing::MemoryStore;
+    use angzarr_embedded::v1::{Cover, EventPage, Snapshot, Uuid};
+    use angzarr_embedded::EventStore;
+    use run_ports::Edge as _;
+
+    use super::an_ask;
+    use crate::{InProcessCore, Projectors};
+
+    /// What a start asked of the store that only a resume asks: every
+    /// stream listed, each domain's streams, each handler's record.
+    #[derive(Default, Debug)]
+    struct Asked {
+        listed: usize,
+        covered: Vec<String>,
+        processed: Vec<String>,
+    }
+
+    /// A memory store that counts the scans a resume makes; clones share
+    /// the store and the count.
+    #[derive(Clone, Default)]
+    struct Counting {
+        inner: MemoryStore,
+        asked: Arc<Mutex<Asked>>,
+    }
+
+    impl Counting {
+        fn asked(&self) -> std::sync::MutexGuard<'_, Asked> {
+            self.asked.lock().unwrap()
+        }
+
+        fn forget(&self) {
+            *self.asked() = Asked::default();
+        }
+    }
+
+    impl EventStore for Counting {
+        async fn write(&self, write: Write<'_>) -> Result<Written, StoreError> {
+            self.inner.write(write).await
+        }
+
+        async fn read(
+            &self,
+            stream: StreamRef<'_>,
+            from: u64,
+            to: Option<u64>,
+        ) -> Result<Slice, StoreError> {
+            self.inner.read(stream, from, to).await
+        }
+
+        async fn find_command(
+            &self,
+            stream: StreamRef<'_>,
+            command_id: CommandId,
+        ) -> Result<Vec<EventPage>, StoreError> {
+            self.inner.find_command(stream, command_id).await
+        }
+
+        async fn covers(&self, domain: &str) -> Result<Vec<Cover>, StoreError> {
+            self.asked().covered.push(domain.to_string());
+            self.inner.covers(domain).await
+        }
+    }
+
+    impl SnapshotStore for Counting {
+        async fn read_snapshot(
+            &self,
+            stream: StreamRef<'_>,
+        ) -> Result<Option<Snapshot>, StoreError> {
+            self.inner.read_snapshot(stream).await
+        }
+
+        async fn write_snapshot(
+            &self,
+            stream: StreamRef<'_>,
+            snapshot: &Snapshot,
+        ) -> Result<(), StoreError> {
+            self.inner.write_snapshot(stream, snapshot).await
+        }
+    }
+
+    impl PositionStore for Counting {
+        async fn position(&self, key: PositionKey<'_>) -> Result<u64, StoreError> {
+            self.inner.position(key).await
+        }
+    }
+
+    impl ListStreams for Counting {
+        async fn list_streams(&self) -> Result<Vec<Cover>, StoreError> {
+            self.asked().listed += 1;
+            self.inner.list_streams().await
+        }
+    }
+
+    impl Processed for Counting {
+        async fn processed(&self, handler: &str) -> Result<Vec<(Cover, u64)>, StoreError> {
+            self.asked().processed.push(handler.to_string());
+            self.inner.processed(handler).await
+        }
+    }
+
+    fn ask_cover() -> Cover {
+        Cover {
+            domain: approvals::APPROVALS_DOMAIN.to_string(),
+            root: Some(Uuid::from_bytes([5; 16])),
+            edition: None,
+        }
+    }
+
+    /// A store holding one ask whose arming is owed: recorded by a core
+    /// with no alarm consumer, so no policy has handled it yet.
+    async fn an_owed_arming() -> Counting {
+        let store = Counting::default();
+        let core =
+            InProcessCore::start_consuming(store.clone(), |_| Projectors::default(), &[]).await;
+        core.edge()
+            .handle(approvals::fact_book(
+                ask_cover(),
+                &an_ask(),
+                "approval:r:toolu_1",
+            ))
+            .await
+            .unwrap();
+        drop(core);
+        assert!(
+            store
+                .covers(scheduler::SCHEDULER_DOMAIN)
+                .await
+                .unwrap()
+                .is_empty(),
+            "nothing armed yet"
+        );
+        store.forget();
+        store
+    }
+
+    // A CLI command's core starts without a resume: it lists no stream,
+    // scans no domain and reads no handler's record.
+    #[tokio::test]
+    async fn a_command_cores_start_scans_no_policy_source() {
+        let store = an_owed_arming().await;
+        let core = InProcessCore::start(store.clone()).await;
+        let asked = store.asked();
+        assert_eq!(asked.listed, 0, "{asked:?}");
+        assert!(asked.covered.is_empty(), "{asked:?}");
+        assert!(asked.processed.is_empty(), "{asked:?}");
+        drop(asked);
+        drop(core);
+    }
+
+    // So the owed arming stays owed through a command core's start, and the
+    // daemon's next start pays it: the ask's alarm is armed.
+    #[tokio::test]
+    async fn owed_policy_work_waits_for_the_daemons_start() {
+        let store = an_owed_arming().await;
+        drop(InProcessCore::start(store.clone()).await);
+        assert!(
+            store
+                .covers(scheduler::SCHEDULER_DOMAIN)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a command core's start armed nothing"
+        );
+        let daemon = InProcessCore::start_with(store.clone(), |_| Projectors::default()).await;
+        assert_eq!(
+            store
+                .covers(scheduler::SCHEDULER_DOMAIN)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "the daemon's start armed the ask's alarm"
+        );
+        drop(daemon);
+    }
+
+    // The daemon's core resumes at start: every policy source is scanned,
+    // the approvals' (the arming) and the scheduler's (the delivery).
+    #[tokio::test]
+    async fn the_daemons_core_start_scans_every_policy_source() {
+        let store = an_owed_arming().await;
+        let core = InProcessCore::start_with(store.clone(), |_| Projectors::default()).await;
+        let asked = store.asked();
+        assert_eq!(asked.listed, 1, "{asked:?}");
+        assert!(
+            asked
+                .covered
+                .contains(&approvals::APPROVALS_DOMAIN.to_string()),
+            "{asked:?}"
+        );
+        assert!(
+            asked
+                .covered
+                .contains(&scheduler::SCHEDULER_DOMAIN.to_string()),
+            "{asked:?}"
+        );
+        drop(asked);
+        drop(core);
+    }
+
+    // A command core registers no alarm consumer either: an ask committed
+    // through it (none is, in production: every ask is the daemon's) arms
+    // nothing in process.
+    #[tokio::test]
+    async fn a_command_core_registers_no_alarm_consumer() {
+        let store = Counting::default();
+        let core = InProcessCore::start(store.clone()).await;
+        core.edge()
+            .handle(approvals::fact_book(
+                ask_cover(),
+                &an_ask(),
+                "approval:r:toolu_1",
+            ))
+            .await
+            .unwrap();
+        assert!(store
+            .covers(scheduler::SCHEDULER_DOMAIN)
+            .await
+            .unwrap()
+            .is_empty());
+        drop(core);
+    }
+}
