@@ -402,6 +402,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "approvals"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "angzarr-diagnostic",
+ "angzarr-embedded",
+ "angzarr-embedded-macros",
+ "approvals-proto",
+ "mutants",
+ "prost",
+ "serde_json",
+ "sessions",
+ "sha2 0.10.9",
+ "uuid",
+]
+
+[[package]]
+name = "approvals-proto"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "prost",
+ "prost-types",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3289,6 +3315,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
 dependencies = [
  "base64ct",
+]
+
+[[package]]
+name = "pending-approvals"
+version = "0.1.0"
+dependencies = [
+ "angzarr-embedded",
+ "approvals",
+ "daemon-proto",
+ "held-projection",
+ "mutants",
+ "prost",
+ "uuid",
 ]
 
 [[package]]
