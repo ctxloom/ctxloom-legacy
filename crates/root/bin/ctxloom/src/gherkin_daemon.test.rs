@@ -6,7 +6,8 @@
 //! `cli/trust.feature` and `cli/session_approvals.feature`; and the
 //! architecture rulings T13-T30: `cli/mcp_serve.feature` and
 //! `cli/atomic_writes.feature`; and the shutdown (OD-62, OD-63):
-//! `cli/shutdown.feature`.
+//! `cli/shutdown.feature`; and step 8 (approvals and trust), whose harness
+//! (notes, started commands, other projects, a terminal acted at) is real.
 //!
 //! RED BY DESIGN. The spec is committed before the daemon is reworked to
 //! it, so every step here that the existing harness cannot already take is a
@@ -3095,8 +3096,51 @@ fn told_untrusted(_: &mut World, _path: String) {
 }
 
 #[then("the project is listed as trusted by her, just now")]
-fn trusted_by_her(_: &mut World) {
-    red("the project is listed as trusted by her, just now")
+fn trusted_by_her(w: &mut World) {
+    let listed = run_now(w, &["trust", "list", "--format", "json"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    let trusts = listed.json()["trusts"].clone();
+    assert_eq!(
+        trusts.as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        listed.said()
+    );
+    trusted_by_the_user(&trusts[0], &listed);
+    let granted = trusts[0]["grant_time"]
+        .as_str()
+        .and_then(|t| {
+            time::OffsetDateTime::parse(t, &time::format_description::well_known::Rfc3339).ok()
+        })
+        .unwrap_or_else(|| panic!("no grant time: {}", listed.said()));
+    let ago = time::OffsetDateTime::now_utc() - granted;
+    assert!(
+        ago < time::Duration::minutes(5) && ago > time::Duration::minutes(-1),
+        "granted {ago} ago: {}",
+        listed.said()
+    );
+}
+
+/// The login of the user running the test, as the binary is given it.
+fn login() -> String {
+    ["USER", "LOGNAME", "USERNAME"]
+        .iter()
+        .find_map(|name| crate::tests::host_var(name).filter(|v| !v.is_empty()))
+        .map(|v| v.to_string_lossy().into_owned())
+        .expect("the test runs as a user with a login")
+}
+
+/// `trust`, a listed trust, was given by the user running the test, at a
+/// time it says.
+fn trusted_by_the_user(trust: &Value, listed: &crate::tests::Ran) {
+    assert_eq!(trust["trusted"], true, "{}", listed.said());
+    assert_eq!(
+        trust["actor"].as_str(),
+        Some(login().as_str()),
+        "{}",
+        listed.said()
+    );
+    assert!(trust["grant_time"].is_string(), "{}", listed.said());
 }
 
 #[then("her assistant ran as the program the project names")]
@@ -3147,8 +3191,16 @@ fn config_saying(setting: &str) -> String {
 }
 
 #[then("the project is listed as trusted by the user running ctxloom, with the time it was given")]
-fn listed_trusted(_: &mut World) {
-    red("the project is listed as trusted, with its actor and time")
+fn listed_trusted(w: &mut World) {
+    let listed = w.ran().clone();
+    let trusts = listed.json()["trusts"].clone();
+    assert_eq!(
+        trusts.as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        listed.said()
+    );
+    trusted_by_the_user(&trusts[0], &listed);
 }
 
 // -------------------------------------------------- approvals (ruling 142)
@@ -3416,7 +3468,13 @@ fn run_at_terminal_changed(w: &mut World, line: String, setting: String, answer:
     drop(stdin);
     let mut ran = finished(child, DAEMON_WAIT);
     reader.join().expect("stderr drained");
-    ran.stderr = text(&said);
+    // What the command said after its question: the question itself is
+    // the terminal's, not the command's answer.
+    let said = text(&said);
+    ran.stderr = match said.rfind("[y/N] ").or_else(|| said.rfind("[Y/n] ")) {
+        Some(at) => said[at + "[y/N] ".len()..].to_string(),
+        None => said,
+    };
     w.common.line = line;
     w.common.ran = Some(ran);
 }

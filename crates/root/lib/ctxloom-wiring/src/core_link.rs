@@ -28,6 +28,7 @@ use runs::RunAggregate;
 use sessions::{NameClaimAggregate, ProjectAggregate, ProjectNameAggregate, SessionAggregate};
 use std::num::NonZeroU32;
 use trees::TreeAggregate;
+use trust::TrustAggregate;
 
 /// How many times the kernel runs a fact that keeps losing its race before it
 /// parks it. In process nothing is far away, so no backoff separates the runs.
@@ -79,12 +80,14 @@ impl<S: Store + Processed + ListStreams + Send + Sync> Stores for CoreStores<S> 
 /// each a handle on a fold another driver (a catch-up) may share, run inline
 /// after every commit of its sources, and what a `HandleSync` names. A core
 /// a CLI command runs registers none (its folds would be partial, and it
-/// serves no `HandleSync`); the daemon's registers all three.
+/// serves no `HandleSync`); the daemon's registers all four.
 #[derive(Clone, Default)]
 pub struct Projectors {
     pub board: Option<daemon_board::Boards>,
     pub pending: Option<pending_messages::PendingMessages>,
     pub index: Option<session_index::SessionIndexes>,
+    /// The projects' trusts (step 8 U1).
+    pub trusts: Option<trust_index::TrustIndexes>,
 }
 
 impl Projectors {
@@ -99,6 +102,7 @@ impl Projectors {
             board: Some(daemon_board::Boards::filled(fill())),
             pending: Some(pending_messages::PendingMessages::filled(fill())),
             index: Some(session_index::SessionIndexes::filled(fill())),
+            trusts: Some(trust_index::TrustIndexes::filled(fill())),
         }
     }
 
@@ -120,6 +124,11 @@ impl Projectors {
             registry
                 .projector_handler(&session_index::SOURCES, index)
                 .expect("the session index registers");
+        }
+        if let Some(trusts) = self.trusts {
+            registry
+                .projector_handler(&trust_index::SOURCES, trusts)
+                .expect("the trust index registers");
         }
     }
 }
@@ -211,9 +220,9 @@ impl<S> InProcessCore<S>
 where
     S: Store + Processed + ListStreams + Send + Sync + 'static,
 {
-    /// The application over `store`: the sessions, runs and trees aggregates
-    /// registered; sessions and runs exposed to the network (the container
-    /// bridge reaches them) and trees to loopback; the kernel's retries off,
+    /// The application over `store`: the sessions, runs, trees and trust
+    /// aggregates registered; sessions and runs exposed to the network (the
+    /// container bridge reaches them) and trees and trust to loopback; the kernel's retries off,
     /// so a fact at the race cap is parked at once.
     pub async fn start(store: S) -> InProcessCore<S> {
         InProcessCore::start_with(store, |_| Projectors::default()).await
@@ -249,10 +258,15 @@ where
         registry
             .aggregate::<ProjectNameAggregate>(ProjectNameAggregate::default)
             .expect("the project-names aggregate registers");
+        // A project's trust (step 8 U1): the user's, on loopback alone.
+        registry
+            .aggregate::<TrustAggregate>(TrustAggregate::default)
+            .expect("the trust aggregate registers");
         let exposed = BTreeMap::from([
             (sessions::SESSION_DOMAIN.to_string(), Expose::Ip),
             (runs::RUN_DOMAIN.to_string(), Expose::Ip),
             (trees::TREE_DOMAIN.to_string(), Expose::Loopback),
+            (trust::TRUST_DOMAIN.to_string(), Expose::Loopback),
         ]);
         let retries = OnRetryable {
             max_retries: 0,

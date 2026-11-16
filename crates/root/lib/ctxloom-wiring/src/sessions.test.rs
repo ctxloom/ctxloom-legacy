@@ -70,6 +70,57 @@ fn test_the_nouns_include_session_and_a_hidden_hook() {
     );
 }
 
+// Step 8 U1: `trust` is a noun of its own, shown.
+#[test]
+fn test_the_nouns_include_trust_with_its_list_verb() {
+    let nouns = commands().nouns();
+    let trust = nouns
+        .iter()
+        .find(|n| n.get_name() == super::TRUST_NOUN)
+        .expect("trust");
+    assert!(!trust.is_hide_set());
+    assert!(trust.get_subcommands().any(|v| v.get_name() == "list"));
+}
+
+// A trust is given only on an explicit yes: a bare Enter is a no.
+#[test]
+fn test_only_y_or_yes_is_a_yes_to_trust() {
+    for yes in ["y\n", "Y", " yes \n", "YES"] {
+        assert!(super::said_yes(yes), "{yes:?}");
+    }
+    for no in ["", "\n", "n", "no", "yess", "sure"] {
+        assert!(!super::said_yes(no), "{no:?}");
+    }
+}
+
+/// An environment of `vars` alone.
+fn env_of(vars: &[(&str, &str)]) -> process_env::EnvSnapshot {
+    let base = crate::tests::host_snapshot();
+    process_env::EnvSnapshot::from_parts(
+        base.flavor(),
+        Ok(base.temp_dir().to_path_buf()),
+        base.temp_dir().to_path_buf(),
+        vars.iter()
+            .map(|(n, v)| (std::ffi::OsString::from(n), std::ffi::OsString::from(v)))
+            .collect::<Vec<_>>(),
+    )
+}
+
+// A trust's actor is the login the environment says: USER, else LOGNAME,
+// else Windows' USERNAME; none said, empty.
+#[test]
+fn test_the_users_login_is_read_from_user_then_logname_then_username() {
+    let login = |vars: &[(&str, &str)]| super::user_login(&env_of(vars));
+    assert_eq!(
+        login(&[("USER", "alice"), ("LOGNAME", "bob"), ("USERNAME", "carol")]),
+        "alice"
+    );
+    assert_eq!(login(&[("LOGNAME", "bob"), ("USERNAME", "carol")]), "bob");
+    assert_eq!(login(&[("USERNAME", "carol")]), "carol");
+    assert_eq!(login(&[("USER", ""), ("LOGNAME", "bob")]), "bob");
+    assert_eq!(login(&[]), "");
+}
+
 #[test]
 fn test_a_bare_session_is_its_default_verb_not_its_usage() {
     let noun = commands()

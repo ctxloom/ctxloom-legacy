@@ -32,6 +32,7 @@ mod project;
 mod run;
 mod search;
 mod shown;
+mod trust;
 mod views;
 pub mod write;
 mod yamlout;
@@ -66,6 +67,7 @@ pub use package::{
 pub use project::{Library, Outcome, RunSettings};
 pub use run::{AssembleRequest, Previewed, RunRequest};
 pub use search::SearchRequest;
+pub use trust::{HeldBack, CTXLOOM_BUNDLE_PATH};
 pub use views::*;
 pub use write::requests::*;
 pub use write::views::*;

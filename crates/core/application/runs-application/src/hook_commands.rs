@@ -7,8 +7,8 @@
 //! gRPC code and key.
 //!
 //! `handle` and `handle_sync` are served (the trait's other operations
-//! answer UNIMPLEMENTED by its defaults), and only the session and run
-//! domains are reachable. `handle_sync` (angzarr's SIMPLE mode, T16) is the kernel's:
+//! answer UNIMPLEMENTED by its defaults), and only the session, run and
+//! trust domains are reachable. `handle_sync` (angzarr's SIMPLE mode, T16) is the kernel's:
 //! answered once the projectors it names (the read models registered in the
 //! kernel, S32) have projected its events, with what each answered.
 
@@ -33,13 +33,19 @@ impl<E: Edge> EdgeCommands<E> {
     }
 }
 
-/// Reach is the session stream's domain and the run stream's, on this
-/// machine: a hook sends its facts to its session, and a hosted one-shot's
-/// command its stop to its run (U4); what each caller may send there is its
-/// gate's allowlist's to say.
+/// Reach is the session stream's domain, the run stream's and a project's
+/// trust's, on this machine: a hook sends its facts to its session, a hosted
+/// one-shot's command its stop to its run (U4), and the user her trust in a
+/// project (step 8 U1); what each caller may send there is its gate's
+/// allowlist's to say.
 impl<E: Edge> Served for EdgeCommands<E> {
     fn reach(&self, domain: &str) -> Reach {
-        match domain == sessions::SESSION_DOMAIN || domain == runs::RUN_DOMAIN {
+        let reached = [
+            sessions::SESSION_DOMAIN,
+            runs::RUN_DOMAIN,
+            trust::TRUST_DOMAIN,
+        ];
+        match reached.contains(&domain) {
             true => Reach::Loopback,
             false => Reach::None,
         }

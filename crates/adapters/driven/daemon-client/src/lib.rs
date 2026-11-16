@@ -162,15 +162,45 @@ pub fn warnings_in(metadata: &MetadataMap) -> Vec<v1::Notice> {
         .collect()
 }
 
+/// `google.rpc.ErrorInfo`'s args (its `metadata`; its key, field 1, and
+/// domain, field 2, are not read).
+#[derive(Clone, PartialEq, Message)]
+struct ErrorInfo {
+    #[prost(map = "string, string", tag = "3")]
+    metadata: std::collections::HashMap<String, String>,
+}
+
+/// The typed refusal a coordinator's refused command names by its type
+/// alone (its ErrorInfo's `refusal_type` arg: the status carries no
+/// object, step 8 U1), as that type with no fields.
+fn named_refusal(details: &[prost_types::Any]) -> Option<prost_types::Any> {
+    let key = angzarr_embedded::angzarr_proto::v1::reason_args::REFUSAL_TYPE;
+    details
+        .iter()
+        .filter(|any| any.type_url.ends_with("/google.rpc.ErrorInfo"))
+        .filter_map(|any| ErrorInfo::decode(any.value.as_slice()).ok())
+        .find_map(|info| info.metadata.get(key).cloned())
+        .filter(|name| !name.is_empty())
+        .map(|name| prost_types::Any {
+            type_url: format!("type.googleapis.com/{name}"),
+            value: Vec::new(),
+        })
+}
+
 /// What `status`, answered to `method`, came to.
 pub fn called(method: &str, status: &Status) -> Called {
+    let details = RpcStatus::decode(status.details())
+        .map(|rpc| rpc.details)
+        .unwrap_or_default();
     // A typed refusal is the one detail that is no `google.rpc.ErrorInfo`
-    // (angzarr's own statuses, UNAUTHENTICATED's among them, carry one).
-    if let Some(refusal) = RpcStatus::decode(status.details()).ok().and_then(|rpc| {
-        rpc.details
-            .into_iter()
-            .find(|any| !any.type_url.ends_with("/google.rpc.ErrorInfo"))
-    }) {
+    // (angzarr's own statuses, UNAUTHENTICATED's among them, carry one);
+    // the coordinator's refusal of a command names its type alone.
+    let typed = details
+        .iter()
+        .find(|any| !any.type_url.ends_with("/google.rpc.ErrorInfo"))
+        .cloned()
+        .or_else(|| named_refusal(&details));
+    if let Some(refusal) = typed {
         return Called::Refused {
             code: status.code() as i32,
             refusal,
@@ -306,6 +336,19 @@ impl DaemonApi for DaemonClient {
             request,
             self.destroying
         )
+    }
+
+    async fn get_trust(&self, request: v1::GetTrustRequest) -> Result<v1::Trust, Called> {
+        // A preview reads the project's config in the daemon: a destroy's
+        // deadline, as an assembly's.
+        call!(self, get_trust, "GetTrust", request, self.destroying)
+    }
+
+    async fn list_trusts(
+        &self,
+        request: v1::ListTrustsRequest,
+    ) -> Result<v1::ListTrustsResponse, Called> {
+        call!(self, list_trusts, "ListTrusts", request)
     }
 
     async fn create_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Called> {

@@ -51,6 +51,9 @@ impl World {
         registry
             .aggregate::<runs::RunAggregate>(runs::RunAggregate::default)
             .unwrap();
+        registry
+            .aggregate::<trust::TrustAggregate>(trust::TrustAggregate::default)
+            .unwrap();
         Arc::new(World {
             registry,
             store: MemoryStore::default(),

@@ -355,7 +355,7 @@ pub fn run<S: SessionService + ImportService + WorktreeUse>(
 }
 
 /// A call to the daemon that came to nothing: its diagnostic and its exit.
-fn call_failure(error: CallError) -> Failure {
+pub(crate) fn call_failure(error: CallError) -> Failure {
     let exit = error.exit();
     Failure::new(error, exit, Vec::new())
 }
@@ -385,7 +385,7 @@ fn listing(
 }
 
 /// A fault of the command line itself.
-fn fault(fault: CliFault) -> Failure {
+pub(crate) fn fault(fault: CliFault) -> Failure {
     let exit = fault.exit();
     Failure::new(fault, exit, Vec::new())
 }
@@ -403,7 +403,7 @@ fn failure(error: AppError) -> Failure {
 }
 
 /// The answer written, or why it could not be.
-fn wrote(written: io::Result<()>) -> Result<(), Failure> {
+pub(crate) fn wrote(written: io::Result<()>) -> Result<(), Failure> {
     written.map_err(|e| {
         fault(CliFault::Output {
             ext_err_txt: e.to_string(),

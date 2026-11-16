@@ -527,3 +527,60 @@ async fn a_simple_request_to_a_domain_not_exposed_is_hidden() {
         .unwrap_err();
     assert!(matches!(refused, Unserved::Hidden { .. }), "{refused:?}");
 }
+
+// Step 8 U1: the daemon's core holds a project's trust, on loopback, and a
+// SIMPLE request naming `trust-index` is answered the project's trust.
+#[tokio::test]
+async fn a_trust_granted_through_the_edge_is_answered_by_the_trust_index() {
+    use prost::Message as _;
+    let mut kept = Projectors::default();
+    let core = InProcessCore::start_with(MemoryStore::default(), |store| {
+        kept = Projectors::filled(store);
+        kept.clone()
+    })
+    .await;
+    let name = "projects/calm-quiet-heron/trust";
+    let grant = trust::GrantTrust {
+        name: name.to_string(),
+        project_id: "calm-otter".to_string(),
+        etag: "e".to_string(),
+        current_etag: "e".to_string(),
+        actor: trust::Actor {
+            user: "alice".to_string(),
+        },
+    };
+    let cover = Cover {
+        domain: trust::TRUST_DOMAIN.to_string(),
+        root: Some(trust::trust_root(name)),
+        edition: None,
+    };
+    let book = sessions::keyed_book(cover, &grant, "grant");
+    let synced = core
+        .edge()
+        .serve_sync(
+            book.clone(),
+            vec!["trust-index".to_string()],
+            Arrival::Loopback,
+        )
+        .await
+        .unwrap();
+    let trust = daemon_proto::v1::Trust::decode(
+        synced.projections[0]
+            .projection
+            .as_ref()
+            .expect("the index's view")
+            .value
+            .as_slice(),
+    )
+    .unwrap();
+    assert_eq!(trust.name, name);
+    assert!(trust.trusted);
+    assert_eq!(kept.trusts.unwrap().index().trusted_now().len(), 1);
+    // The network never reaches a trust.
+    let hidden = core
+        .edge()
+        .serve_sync(book, vec!["trust-index".to_string()], Arrival::Ip)
+        .await
+        .unwrap_err();
+    assert!(matches!(hidden, Unserved::Hidden { .. }), "{hidden:?}");
+}

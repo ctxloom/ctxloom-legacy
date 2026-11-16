@@ -42,7 +42,11 @@
 //!   `Daemon.warnings`;
 //! - [`HandingOver`]: a daemon asked to drain while it hosts children
 //!   warns at once what it does with them (OD-54), in the same
-//!   `Daemon.warnings`.
+//!   `Daemon.warnings`;
+//! - `GetTrust` and `ListTrusts` (step 8 U1): a project's trust previewed
+//!   at its registered root ([`Trusts`]) and the projects trusted now, from
+//!   the warm trust index; the user's grant and revoke ([`TrustWrites`])
+//!   through the coordinator's `HandleSync` on `trust-index`.
 
 mod caller;
 mod client;
@@ -56,6 +60,7 @@ mod server;
 mod session_client;
 mod start_up;
 mod terminal;
+mod trust;
 
 pub use caller::{
     launch_lock_name, urgency_of, Caller, ChildWrites, Launch, Written, DELEGATION_LIMIT,
@@ -74,6 +79,7 @@ pub use runs::RunStream;
 pub use server::{About, Answer, Api, Assemblies, Calls, Harps, Hosting, Parts, SessionStates};
 pub use session_client::{Client, Removed, RequestIds, SessionReads, SessionRemovals};
 pub use start_up::StartUpIncomplete;
+pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).

@@ -32,8 +32,8 @@ pub struct RunSettings {
 
 /// The library, over its ports.
 pub struct Library {
-    content: Arc<dyn ContentRepo>,
-    files: Arc<dyn ConfigFiles>,
+    pub(crate) content: Arc<dyn ContentRepo>,
+    pub(crate) files: Arc<dyn ConfigFiles>,
     pub(crate) environ: Vec<(String, String)>,
     pub(crate) ports: Option<WritePorts>,
     remotes: Option<Rc<dyn RemoteLibrary>>,

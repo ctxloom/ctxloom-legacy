@@ -961,6 +961,7 @@ dependencies = [
  "setup-cli",
  "surface-ports",
  "tasks-ports",
+ "time",
  "tokio",
  "worktree-git",
 ]
@@ -1101,6 +1102,8 @@ dependencies = [
  "tasks-ports",
  "tokio",
  "trees",
+ "trust",
+ "trust-index",
  "uuid",
  "worktree-git",
 ]
@@ -1192,6 +1195,9 @@ dependencies = [
  "sessions-application",
  "sessions-proto",
  "tokio",
+ "trust",
+ "trust-index",
+ "trust-proto",
  "uuid",
 ]
 
@@ -1236,6 +1242,8 @@ dependencies = [
  "session-policies",
  "sessions",
  "tokio",
+ "trust",
+ "trust-index",
  "uuid",
 ]
 
@@ -3925,6 +3933,7 @@ dependencies = [
  "sessions",
  "surface-ports",
  "tokio",
+ "trust",
  "uuid",
 ]
 
@@ -3987,6 +3996,7 @@ dependencies = [
  "surface-ports",
  "tokio",
  "trees",
+ "trust",
  "uuid",
 ]
 
@@ -5520,6 +5530,41 @@ dependencies = [
  "prost",
  "runs-proto",
  "uuid",
+]
+
+[[package]]
+name = "trust"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "angzarr-diagnostic",
+ "angzarr-embedded",
+ "angzarr-embedded-macros",
+ "mutants",
+ "prost",
+ "sessions",
+ "trust-proto",
+]
+
+[[package]]
+name = "trust-index"
+version = "0.1.0"
+dependencies = [
+ "angzarr-embedded",
+ "daemon-proto",
+ "held-projection",
+ "mutants",
+ "prost",
+ "trust",
+]
+
+[[package]]
+name = "trust-proto"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "prost",
+ "prost-types",
 ]
 
 [[package]]

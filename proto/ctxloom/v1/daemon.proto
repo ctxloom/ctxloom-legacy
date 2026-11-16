@@ -8,7 +8,8 @@ syntax = "proto3";
 // GetTranscript and AssembleContext (its fragments and tags); slice 4 adds
 // CreateHandOff and DeleteHandOff (a child's launch, U3), CreateRun for a
 // ONE_SHOT run, GetRun and WatchRun (U4), and CreateRun for a TERMINAL run,
-// answered with its launch (U5); every other method answers UNIMPLEMENTED.
+// answered with its launch (U5); step 8 U1 adds GetTrust and ListTrusts; every
+// other method answers UNIMPLEMENTED.
 //
 // THE USER'S DAEMON'S API (T1-T30; the owner's API rulings Q1-Q13; rulings
 // 146, 147). It MIRRORS THE COMMAND LINE (T22): the CLI's nouns are AIP
@@ -41,7 +42,7 @@ syntax = "proto3";
 //   session launch <owner> ...            sessions.LaunchChild      session-index
 //                                         (after CreateHandOff)
 //   session approvals answer <ask> <d>    approvals.AnswerApproval  pending-approvals
-//   trust [--remote <name>]               trust.GrantTrust          trust-index
+//   trust                                 trust.GrantTrust          trust-index
 //   trust --undo                          trust.RevokeTrust         trust-index
 //   a one-shot's signal (API Q11)         runs.RequestStop          (Handle)
 //   the frontend's TUI start and exit     runs.RecordRunnerStarted, (Handle, facts)
@@ -201,9 +202,12 @@ service Ctxloom {
   rpc WaitApproval(WaitApprovalRequest) returns (Approval);
   // endregion
 
-  // region trusts: `trusts/{trust}` (`project-{project}`, `remote-{id}`)
+  // region trusts: `projects/{project}/trust` (a singleton sub-resource,
+  // AIP-156; D2, S58)
   // The preview of `trust`: what it allows, and the etag `GrantTrust` names.
   rpc GetTrust(GetTrustRequest) returns (Trust);
+  // The projects the user trusts now (no parent): a revoked trust is not
+  // listed.
   rpc ListTrusts(ListTrustsRequest) returns (ListTrustsResponse);
   // endregion
 
@@ -1013,12 +1017,13 @@ message TrustSetting {
   string value = 2;
 }
 
-// A trust: a project's or a remote's, until revoked (S23).
+// A project's trust, until revoked (S23).
 message Trust {
-  // `trusts/project-{project}` (the project's harp) or `trusts/remote-{id}`.
+  // `projects/{project}/trust`, `{project}` the project's harp.
   string name = 1;
   bool trusted = 2;
-  // What it allows (the project-only settings, a `ctxloom` bundle).
+  // What it allows: the project-only settings, and a project `ctxloom`
+  // bundle (path `bundles/ctxloom`).
   repeated TrustSetting settings = 3;
   string actor = 4;
   google.protobuf.Timestamp grant_time = 5;
@@ -1027,6 +1032,7 @@ message Trust {
 }
 
 message GetTrustRequest {
+  // `projects/{project}/trust`.
   string name = 1;
 }
 

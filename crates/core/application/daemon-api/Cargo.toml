@@ -30,6 +30,10 @@ session-index.workspace = true
 # The destroy's commands to the children and the owner (M3).
 session-policies.workspace = true
 session-ports.workspace = true
+# A project's trust (step 8 U1): its commands, its name and root, and the
+# warm index `GetTrust` and `ListTrusts` read.
+trust.workspace = true
+trust-index.workspace = true
 sessions.workspace = true
 sessions-application.workspace = true
 sessions-proto.workspace = true
@@ -42,6 +46,8 @@ mutants.workspace = true
 run-ports = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 prost-types.workspace = true
+# The trust commands' wire form, which a test decodes a sent book's into.
+trust-proto.workspace = true
 
 [features]
 # `diagnostic_samples`, for other crates' catalog tests.

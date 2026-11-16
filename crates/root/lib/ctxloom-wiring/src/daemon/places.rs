@@ -190,6 +190,43 @@ impl daemon_api::Assemblies for ProjectAssemblies {
     }
 }
 
+/// What trusting a project would allow (step 8 U1), read in the daemon as
+/// a process at the project's REGISTERED root reads its configuration and
+/// bundles: its own layer's project-only settings and its own `ctxloom`
+/// bundle, with ctxloom's `home`.
+pub(crate) struct ProjectTrusts {
+    pub(crate) home: PathBuf,
+    pub(crate) temp: PathBuf,
+}
+
+impl daemon_api::Trusts for ProjectTrusts {
+    fn settings(&self, root: &str) -> Result<Vec<daemon_proto::v1::TrustSetting>, ApiError> {
+        let vars: Vec<(OsString, OsString)> = vec![
+            ("CTXLOOM_ROOT".into(), root.into()),
+            ("HOME".into(), self.home.as_os_str().to_os_string()),
+        ];
+        let snapshot = EnvSnapshot::from_parts(
+            os::host().flavor(),
+            Ok(PathBuf::from(root)),
+            self.temp.clone(),
+            vars,
+        );
+        let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
+            detail: e.code().to_string(),
+        };
+        let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| failed(&e))?;
+        let library = crate::library::build(&wiring, None).map_err(|e| failed(&e))?;
+        let held = library.trust_settings().map_err(|e| failed(&e))?;
+        Ok(held
+            .into_iter()
+            .map(|held| daemon_proto::v1::TrustSetting {
+                path: held.path,
+                value: held.value,
+            })
+            .collect())
+    }
+}
+
 /// An assembly as the API's message: its context, the fragments it used,
 /// and a notice for each fragment or tag named that nothing holds.
 fn assembled_context(

@@ -17,6 +17,9 @@ run-ports.workspace = true
 runs.workspace = true
 runs-application.workspace = true
 sessions.workspace = true
+# The test edge (`fakes`, test-support) registers the trust aggregate too,
+# so a daemon's start-up catch-up of the trust index is tested over it.
+trust.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

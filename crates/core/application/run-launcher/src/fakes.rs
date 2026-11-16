@@ -57,6 +57,10 @@ impl TestEdge {
         registry
             .aggregate::<sessions::ProjectAggregate>(sessions::ProjectAggregate::default)
             .unwrap();
+        // A project's trust (step 8 U1), which the daemon's trust index folds.
+        registry
+            .aggregate::<trust::TrustAggregate>(trust::TrustAggregate::default)
+            .unwrap();
         TestEdge {
             registry,
             store: MemoryStore::default(),

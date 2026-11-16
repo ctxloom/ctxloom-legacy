@@ -239,6 +239,8 @@ pub enum Rejection {
     /// The runs domain's (a child's launch judged before its hand-off is
     /// written, S10).
     Runs(runs::RunRejection),
+    /// The trust domain's (a grant whose preview is stale, step 8 U1).
+    Trust(trust::TrustRejection),
 }
 
 impl Rejection {
@@ -249,6 +251,7 @@ impl Rejection {
             Rejection::Sessions(sessions) => Report::of(sessions),
             Rejection::Removal(removal) => Report::of(removal),
             Rejection::Runs(runs) => Report::of(runs),
+            Rejection::Trust(trust) => Report::of(trust),
         }
     }
 }
@@ -473,8 +476,14 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
             runs::LaunchRefusals,
         ]
     );
-    ran.and_then(|typed| runs::RunRejection::try_from(&typed).ok())
-        .map(Rejection::Runs)
+    if let Some(ran) = ran.and_then(|typed| runs::RunRejection::try_from(&typed).ok()) {
+        return Some(Rejection::Runs(ran));
+    }
+    let trusted: Option<angzarr_embedded::markup::TypedRefusal> =
+        typed_as!(refusal, [trust::PlanStale]);
+    trusted
+        .and_then(|typed| trust::TrustRejection::try_from(&typed).ok())
+        .map(Rejection::Trust)
 }
 
 fn decode<T: Message + Default>(refusal: &Any) -> Option<T> {

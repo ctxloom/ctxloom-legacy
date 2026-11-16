@@ -77,6 +77,10 @@ runs.workspace = true
 scheduler.workspace = true
 scheduler-loop.workspace = true
 trees.workspace = true
+# A project's trust (step 8 U1): its aggregate and the index the daemon
+# registers and keeps warm.
+trust.workspace = true
+trust-index.workspace = true
 runs-application.workspace = true
 run-ports.workspace = true
 run-application.workspace = true

@@ -95,6 +95,27 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("AssembleContext")) }
     }
 
+    /// `GetTrust` (step 8 U1): a project's trust, what trusting it would
+    /// allow and the etag of that. The default is a daemon that does not
+    /// serve it.
+    fn get_trust(
+        &self,
+        request: v1::GetTrustRequest,
+    ) -> impl Future<Output = Result<v1::Trust, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("GetTrust")) }
+    }
+
+    /// `ListTrusts` (step 8 U1): the projects trusted now. The default is a
+    /// daemon that does not serve it.
+    fn list_trusts(
+        &self,
+        request: v1::ListTrustsRequest,
+    ) -> impl Future<Output = Result<v1::ListTrustsResponse, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("ListTrusts")) }
+    }
+
     /// `CreateRun` (U4, T7): a ONE_SHOT run hosted by the daemon, answered
     /// once it is placed (its run and session made, its engine about to
     /// start) or ended before that (its `end`). The default is a daemon

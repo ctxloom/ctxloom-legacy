@@ -155,6 +155,23 @@ fn the_user_may_report_a_terminal_s_start_and_exit_and_no_other_runner_fact() {
     }
 }
 
+// Step 8 U1: the user gives and takes back a project's trust, as commands
+// of the trust domain, and as nothing else.
+#[test]
+fn the_user_may_grant_and_revoke_a_projects_trust_as_commands() {
+    let list = user_allowlist();
+    for type_url in [url::<trust::GrantTrust>(), url::<trust::RevokeTrust>()] {
+        assert!(
+            list.permits_body(BodyKind::Command, &type_url).is_ok(),
+            "{type_url}"
+        );
+        assert!(
+            list.permits_body(BodyKind::Fact, &type_url).is_err(),
+            "{type_url}"
+        );
+    }
+}
+
 // The gate keeps the digest alone: nothing it renders is the bearer.
 #[test]
 fn the_gate_shows_no_bearer() {

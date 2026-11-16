@@ -17,7 +17,8 @@
 //!   details` (S11); a failure is INTERNAL.
 //! - `GetTranscript` and `AssembleContext` are served (slice 3), and
 //!   `CreateRun`, `GetRun` and `WatchRun` (U4): a watch's events pumped from
-//!   a blocking thread into its stream.
+//!   a blocking thread into its stream; `GetTrust` and `ListTrusts` (step 8
+//!   U1).
 //! - `DeleteSession` and `SweepSessions` are served only in a
 //!   `session-destroy` build (M5, the feature of the same name); every other
 //!   RPC is the generated default, UNIMPLEMENTED, to the user bearer alone
@@ -378,6 +379,26 @@ impl Ctxloom for Served {
     ) -> Result<Response<v1::AssembledContext>, Status> {
         self.answer(request, |calls, message| async move {
             calls.assemble_context(message).await
+        })
+        .await
+    }
+
+    async fn get_trust(
+        &self,
+        request: Request<v1::GetTrustRequest>,
+    ) -> Result<Response<v1::Trust>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.get_trust(message).await
+        })
+        .await
+    }
+
+    async fn list_trusts(
+        &self,
+        request: Request<v1::ListTrustsRequest>,
+    ) -> Result<Response<v1::ListTrustsResponse>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.list_trusts(message).await
         })
         .await
     }

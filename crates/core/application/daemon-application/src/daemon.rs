@@ -53,6 +53,9 @@ pub struct Folds {
     pub board: Boards,
     pub pending: PendingMessages,
     pub index: SessionIndexes,
+    /// The trusts given (step 8 U1): what `GetTrust` and `ListTrusts`
+    /// read.
+    pub trusts: trust_index::TrustIndexes,
 }
 
 /// A child the daemon hosts: its run, the runner's identity, its control,
@@ -206,6 +209,7 @@ pub struct Daemon<E: Edge> {
     pub(crate) board: CatchUp<Boards>,
     pending: CatchUp<PendingMessages>,
     index: CatchUp<SessionIndexes>,
+    trusts: CatchUp<trust_index::TrustIndexes>,
     launches: CatchUp<PendingModel>,
     /// Each hosted child's environment, by its session's stable id: its
     /// launcher's, taken from the hand-off at its first start (S6, D-N45),
@@ -345,6 +349,7 @@ impl<E: Edge> Daemon<E> {
             board: daemon_board::caught_up(folds.board),
             pending: pending_messages::caught_up(folds.pending),
             index: session_index::SessionIndex::caught_up(folds.index),
+            trusts: trust_index::caught_up(folds.trusts),
             launches: pending_launches::catch_up(),
             envs: BTreeMap::new(),
             hosted: BTreeMap::new(),
@@ -513,7 +518,7 @@ impl<E: Edge> Daemon<E> {
 
     /// The daemon's FIRST step (T18), before the root publishes it: every
     /// read model it plans and answers from caught up with the store's log
-    /// (the board, the pending messages, the session index), then every run
+    /// (the board, the pending messages, the session index, the trust index), then every run
     /// the store holds caught up,
     /// and the ones whose owner is gone ended (the sweep every launcher
     /// runs: `RecordLaunchOrphaned` for one owed a runner, `RecordRunnerLost` for one
@@ -547,6 +552,10 @@ impl<E: Edge> Daemon<E> {
             .step(store, catalog)
             .await
             .map_err(|e| format!("the session index's catch-up: {e:?}"))?;
+        self.trusts
+            .step(store, catalog)
+            .await
+            .map_err(|e| format!("the trust index's catch-up: {e:?}"))?;
         self.sweep(store, catalog).await
     }
 
@@ -880,6 +889,7 @@ impl<E: Edge> Daemon<E> {
         let board = self.board.step_if_changed(store, catalog).await;
         let pending = self.pending.step_if_changed(store, catalog).await;
         let _ = self.index.step_if_changed(store, catalog).await;
+        let _ = self.trusts.step_if_changed(store, catalog).await;
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
         }

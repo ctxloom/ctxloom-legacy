@@ -425,7 +425,9 @@ impl Project {
             .env("USERPROFILE", &self.home)
             .env("TMPDIR", crate::tests::temp_root())
             .current_dir(cwd);
-        for name in ["PATH", "SystemRoot"] {
+        // The user's login passes as it is, so what ctxloom records as her
+        // (a trust's actor, step 8 U1) is the account running the test.
+        for name in ["PATH", "SystemRoot", "USER", "LOGNAME", "USERNAME"] {
             if let Some(value) = crate::tests::host_var(name) {
                 command.env(name, value);
             }

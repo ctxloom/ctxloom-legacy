@@ -2029,6 +2029,51 @@ is on its stream is passed over; a book from 0 with another first event is
 folded afresh; a book past where it is is a gap, read from the store first,
 else left for the catch-up).
 
+## Trust (step 8 U1, ruling 142; plan `approvals-trust-step8.plan.md` §0)
+
+Step 8 U1 adds three crates: `core/wire/trust-proto` (from
+`proto/ctxloom/trust/v1/trust.proto`), `core/domain/trust` (the trust
+aggregate) and `core/read-model/trust-index` (its projector). A project's
+trust is `projects/{harp}/trust` (D2, S58), one stream per project, rooted on
+the UUIDv5 of that name in `sessions::NAMESPACE` (`trust::trust_root`, as
+every ctxloom root is; the proto draft's "URL namespace" wording is not
+used). `GrantTrust` names the etag its preview showed and `current_etag`, the
+etag of the settings now; the aggregate refuses `trust-plan-stale`
+(`PlanStale`, FAILED_PRECONDITION) when they differ. Both etags and the
+actor are the CLIENT's (D13: nothing stamps yet): the user's `Caller` asks
+`GetTrust` again just before it sends, and the actor is her login (`USER`,
+else `LOGNAME`, else `USERNAME`; the wiring's `sessions::user_login`).
+Granting what is trusted, or revoking what is not, records nothing; a trust
+lasts until `RevokeTrust` (S23). There is no remote trust (D5).
+
+The daemon serves `GetTrust` (what trusting the project would allow, read at
+its REGISTERED root through daemon-api's `Trusts` port, the wiring's
+`ProjectTrusts` over `Library::trust_settings`: the project layer's
+ruling-46 keys, from `strip_project_only`, which now returns each path with
+its value, and a project `ctxloom` bundle as `bundles/ctxloom`; sorted by
+path, and `daemon_api::etag_of` of them, a length-prefixed UUIDv5) and
+`ListTrusts` (the projects trusted NOW, from the warm `trust-index`; a revoked
+trust is not listed). Both refuse while the daemon drains, as every new call
+does. The index is registered in the daemon's kernel (`Projectors::trusts`)
+and caught up at the start and each round (daemon-application's
+`Folds::trusts`). The trust domain is exposed on loopback alone, and the
+coordinator reaches it (runs-application's `EdgeCommands::reach`), with
+`GrantTrust` and `RevokeTrust` on the user allowlist. The coordinator
+refuses a command naming its refusal's TYPE alone (its ErrorInfo's
+`refusal_type`): daemon-client reads that back as a typed refusal of that
+type with no fields, so `trust-plan-stale` reaches the CLI as a refusal
+(exit 20).
+
+`ctxloom trust [--yes] [--undo]` and `trust list` are session-cli's second
+noun (`session_cli::trust`, a bare-runs group): it previews (`GetTrust`); at
+a terminal (or the stood-in `CTXLOOM_TEST_TERMINAL`) it asks `[y/N]` on
+stderr and only `y`/`yes` grants; off one it prints the preview and changes
+nothing (exit 1 under `--detailed-exitcode` when the apply would change
+something); `--yes` applies. The grant and revoke are `HandleSync` on
+projector `trust-index`, keyed once per call. Nothing enforces trust yet:
+the launch check, the prompt pass-over and a cross-project child's trust are
+U2 and later units. `trust-plan-stale`'s text is DRAFT.
+
 ## Storage is angzarr-store-sqlite
 
 ctxloom's store is ONE per user (owner T14): angzarr-store-sqlite's

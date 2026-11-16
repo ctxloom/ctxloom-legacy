@@ -39,13 +39,13 @@ impl StdTerminal {
 /// A terminal stood in by the tests' variable: only in a binary built for
 /// them.
 #[cfg(feature = "test-support")]
-fn stood_in(env: &EnvSnapshot) -> bool {
+pub(crate) fn stood_in(env: &EnvSnapshot) -> bool {
     env.non_empty("CTXLOOM_TEST_TERMINAL").is_some()
 }
 
 /// The shipped binary has no stand-in.
 #[cfg(not(feature = "test-support"))]
-fn stood_in(_: &EnvSnapshot) -> bool {
+pub(crate) fn stood_in(_: &EnvSnapshot) -> bool {
     false
 }
 

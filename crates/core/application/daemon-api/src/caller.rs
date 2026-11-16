@@ -77,15 +77,17 @@ macro_rules! on_daemon {
     }};
 }
 
+pub(crate) use on_daemon;
+
 /// A session, or the user, as the daemon's client.
 pub struct Caller<D> {
-    daemons: D,
+    pub(crate) daemons: D,
     /// The project a target harp is of.
-    project: ProjectName,
+    pub(crate) project: ProjectName,
     /// The session this caller is; none: the user.
     me: Option<SessionName>,
     env: v1::EnvVars,
-    ids: RequestIds,
+    pub(crate) ids: RequestIds,
     /// Mints a child's harp where a launch names none.
     names: Option<RequestIds>,
     /// The launch locks a launch holds from before its `CreateHandOff` to

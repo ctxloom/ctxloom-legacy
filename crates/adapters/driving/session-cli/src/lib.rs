@@ -22,6 +22,7 @@
 //! ctxloom session send <harp> {inform|wake|steer} "<text>" [--id <id>]
 //! ctxloom session clear <harp>
 //! ctxloom session close <harp>
+//! ctxloom trust [--yes] | trust --undo [--yes] | trust list   (the second noun, step 8 U1)
 //! ```
 //!
 //! The child verbs (slice 4 U3, S2, S19) are the user's: each is the session
@@ -55,6 +56,7 @@ mod error;
 mod proto_json;
 mod render;
 mod run;
+mod trust;
 
 use clap::{Args, Command, Subcommand};
 
@@ -64,6 +66,7 @@ pub use error::{CliFault, EN_US};
 #[cfg(feature = "session-destroy")]
 pub use run::destroy;
 pub use run::{child, is_child, is_destroy, is_read, read, run, Done, Failure};
+pub use trust::{trust, trust_noun, Asking, Trust, TrustVerb};
 
 /// The `session` noun, shaped for mounting on the command line.
 pub fn noun() -> Command {

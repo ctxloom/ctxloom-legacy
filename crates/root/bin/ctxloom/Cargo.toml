@@ -117,6 +117,8 @@ run-ports.workspace = true
 # A session's hold, written as a hook writes it (s4-Q14, H4).
 fact-spool.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "net"] }
+# A trust's grant time, read back as RFC 3339 text (step 8 U1).
+time.workspace = true
 
 [lints]
 workspace = true

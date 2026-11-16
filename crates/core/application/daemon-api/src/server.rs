@@ -171,6 +171,16 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("AssembleContext")) })
     }
+    /// `GetTrust` (step 8 U1); as `GetTranscript`.
+    fn get_trust(&self, request: v1::GetTrustRequest) -> Answer<'_, v1::Trust> {
+        let _ = request;
+        Box::pin(async { Err(not_served("GetTrust")) })
+    }
+    /// `ListTrusts` (step 8 U1); as `GetTranscript`.
+    fn list_trusts(&self, request: v1::ListTrustsRequest) -> Answer<'_, v1::ListTrustsResponse> {
+        let _ = request;
+        Box::pin(async { Err(not_served("ListTrusts")) })
+    }
     /// `CreateRun` (U4); as `GetTranscript`.
     fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
         let _ = request;
@@ -306,6 +316,20 @@ impl<E: Edge + 'static> Calls for Api<E> {
         })
     }
 
+    fn get_trust(&self, request: v1::GetTrustRequest) -> Answer<'_, v1::Trust> {
+        Box::pin(async move {
+            self.open()?;
+            Api::get_trust(self, request).await
+        })
+    }
+
+    fn list_trusts(&self, request: v1::ListTrustsRequest) -> Answer<'_, v1::ListTrustsResponse> {
+        Box::pin(async move {
+            self.open()?;
+            Api::list_trusts(self, request).await
+        })
+    }
+
     fn get_run(&self, request: v1::GetRunRequest) -> Answer<'_, v1::Run> {
         Box::pin(async move {
             self.open()?;
@@ -344,6 +368,9 @@ pub struct Api<E> {
     /// The interactive sessions the daemon prepares (U5); none, a TERMINAL
     /// `CreateRun` fails.
     pub(crate) terminals: Option<Arc<daemon_application::Terminals>>,
+    /// Where a trust is read (step 8 U1); none, `GetTrust` and `ListTrusts`
+    /// fail.
+    pub(crate) trusting: Option<crate::Trusting>,
 }
 
 impl<E: Edge> Api<E> {
@@ -355,6 +382,16 @@ impl<E: Edge> Api<E> {
             one_shots: None,
             hand_offs: None,
             terminals: None,
+            trusting: None,
+        }
+    }
+
+    /// The API, its trusts read through `trusting` (step 8 U1).
+    #[must_use]
+    pub fn trusting(self, trusting: crate::Trusting) -> Api<E> {
+        Api {
+            trusting: Some(trusting),
+            ..self
         }
     }
 

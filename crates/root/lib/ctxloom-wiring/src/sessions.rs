@@ -18,9 +18,67 @@ use crate::{Commands, HoldingRecording, HookRecording, HookSink, RunIds, Session
 /// The nouns these commands own.
 pub(crate) const NOUNS: [&str; 2] = ["session", "hook"];
 
-/// The two nouns, shaped like the command line's own.
+/// The trust noun (step 8 U1), session-cli's second: a client of the
+/// daemon, as the child verbs are.
+pub(crate) const TRUST_NOUN: &str = "trust";
+
+/// The nouns, shaped like the command line's own.
 pub(crate) fn nouns() -> Vec<Command> {
-    vec![shaped(session_cli::noun()), shaped(hook_cli::noun())]
+    vec![
+        shaped(session_cli::noun()),
+        shaped(hook_cli::noun()),
+        shaped(session_cli::trust_noun()),
+    ]
+}
+
+/// The person at this process's terminal, asked yes or no (`[y/N]`: only
+/// `y` or `yes` is a yes); a terminal stood in under test-support
+/// (`CTXLOOM_TEST_TERMINAL`), its answers on standard input.
+struct TrustTerminal {
+    stood_in: bool,
+}
+
+impl session_cli::Asking for TrustTerminal {
+    // Reads the process's own terminal, which a unit test cannot be given;
+    // the acceptance tests stand one in.
+    #[cfg_attr(test, mutants::skip)]
+    fn is_terminal(&self) -> bool {
+        use std::io::IsTerminal;
+        self.stood_in || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal())
+    }
+
+    // Reads the process's own standard input (see above).
+    #[cfg_attr(test, mutants::skip)]
+    fn confirm(&self, question: &str) -> bool {
+        use std::io::BufRead;
+        let mut err = std::io::stderr();
+        let _ = write!(err, "{question} [y/N] ");
+        let _ = err.flush();
+        let mut line = String::new();
+        match std::io::stdin().lock().read_line(&mut line) {
+            Ok(0) | Err(_) => false,
+            Ok(_) => said_yes(&line),
+        }
+    }
+}
+
+/// Whether `line`, what she typed at a `[y/N]` question, is a yes: `y` or
+/// `yes`, in any case; anything else, a bare Enter too, is a no.
+fn said_yes(line: &str) -> bool {
+    matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+/// The user's login as this process's environment says it (`USER`, else
+/// `LOGNAME`, else Windows' `USERNAME`): the actor a trust is recorded with
+/// (one principal; nothing stamps yet, D13). None said, empty.
+pub(crate) fn user_login(env: &process_env::EnvSnapshot) -> String {
+    ["USER", "LOGNAME", "USERNAME"]
+        .iter()
+        .find_map(|name| {
+            env.non_empty(name)
+                .map(|v| v.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default()
 }
 
 /// `noun`'s own matches.
@@ -110,6 +168,28 @@ impl Commands {
         self.closing(answer, call.format(), catalog, err)
     }
 
+    /// `trust ...` (step 8 U1): the user's verdict on this project's own
+    /// settings, through her daemon, asked at her terminal.
+    pub(crate) fn trust(
+        &mut self,
+        call: &Call<'_>,
+        catalog: &Catalog,
+        out: &mut dyn Write,
+        err: &mut dyn Write,
+    ) -> Result<Exit, Failure> {
+        let command = session_cli::Trust::from_arg_matches(matches_of(call, TRUST_NOUN))
+            .unwrap_or_else(|e| unreachable!("clap parsed it: {e}"));
+        let format = call.format();
+        let wiring = Wiring::new(Arc::clone(&self.env)).map_err(|e| failed(Box::new(e)))?;
+        let caller = crate::daemon::child_caller(&wiring, &self.version)?;
+        let asking = TrustTerminal {
+            stood_in: crate::interview::stood_in(&self.env),
+        };
+        let user = user_login(&self.env);
+        let ran = session_cli::trust(&command, &caller, &user, &asking, format, out);
+        said(ran, format, catalog, err)
+    }
+
     /// `session ...` on the sessions use cases, which [`Commands::session`]
     /// closes after.
     fn session_on_use_cases(
@@ -148,27 +228,7 @@ impl Commands {
             let service = self.sessions().map_err(failed)?;
             session_cli::run(&command, service, format, out)
         };
-        match ran {
-            Ok(done) => {
-                for line in &done.lines {
-                    let _ = writeln!(err, "{PROG}: {line}");
-                }
-                for notice in &done.notices {
-                    say_warning(&**notice, PROG, format, catalog, err);
-                }
-                Ok(if done.would_change {
-                    Exit::WOULD_CHANGE
-                } else {
-                    Exit::OK
-                })
-            }
-            Err(failure) => {
-                for line in &failure.lines {
-                    let _ = writeln!(err, "{PROG}: {line}");
-                }
-                Err(Failure::boxed(failure.failure.cause, failure.failure.exit))
-            }
-        }
+        said(ran, format, catalog, err)
     }
 
     /// `hook ...`: an engine's callback. Stdout is the engine's input and
@@ -247,6 +307,38 @@ impl Commands {
             )
         })?;
         Ok(Exit::OK)
+    }
+}
+
+/// What a `session` or `trust` command came to, said: its dead letters and
+/// notices on `err`, and its exit (a preview that would change something,
+/// 1 under `--detailed-exitcode`).
+fn said(
+    ran: Result<session_cli::Done, session_cli::Failure>,
+    format: Format,
+    catalog: &Catalog,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    match ran {
+        Ok(done) => {
+            for line in &done.lines {
+                let _ = writeln!(err, "{PROG}: {line}");
+            }
+            for notice in &done.notices {
+                say_warning(&**notice, PROG, format, catalog, err);
+            }
+            Ok(if done.would_change {
+                Exit::WOULD_CHANGE
+            } else {
+                Exit::OK
+            })
+        }
+        Err(failure) => {
+            for line in &failure.lines {
+                let _ = writeln!(err, "{PROG}: {line}");
+            }
+            Err(Failure::boxed(failure.failure.cause, failure.failure.exit))
+        }
     }
 }
 

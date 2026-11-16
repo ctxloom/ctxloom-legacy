@@ -490,7 +490,7 @@ async fn start(
         .hosting_one_shots(Arc::clone(one_shots)),
         fs,
         (home, temp),
-        (&engines, terminals),
+        (&engines, terminals, kept),
     );
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
@@ -640,18 +640,33 @@ async fn started_up<E: run_ports::Edge>(
     }
 }
 
+/// Where the daemon's API reads a trust (step 8 U1): a project's previewed
+/// at its registered root over `home` and `temp`, and the trust index `kept`
+/// registered in the kernel.
+fn trusting(kept: &Projectors, (home, temp): (&Path, &Path)) -> daemon_api::Trusting {
+    daemon_api::Trusting {
+        trusts: Arc::new(super::places::ProjectTrusts {
+            home: home.to_path_buf(),
+            temp: temp.to_path_buf(),
+        }),
+        index: kept.trusts.clone().unwrap_or_default(),
+    }
+}
+
 /// The API the daemon serves: `api`, a project's context assembled from its
 /// registered root (slice 3 step 6), and a child's hand-off planned, judged
 /// and kept here (slice 4 U3), over `home`, `temp` and the `engines` its
 /// children are hosted on, and the interactive sessions `terminals`
-/// prepares (U5).
+/// prepares (U5), and the trusts it reads through `kept`'s trust index
+/// (step 8 U1).
 fn served(
     api: daemon_api::Api<CoreEdge>,
     fs: &Arc<dyn Fs>,
     (home, temp): (&Path, &Path),
-    (engines, terminals): (
+    (engines, terminals, kept): (
         &[daemon_application::HostedEngine],
         &Arc<daemon_application::Terminals>,
+        &Projectors,
     ),
 ) -> Arc<dyn daemon_api::Calls> {
     Arc::new(
@@ -661,7 +676,9 @@ fn served(
                 home: home.to_path_buf(),
                 temp: temp.to_path_buf(),
             }))
-            .handing_off(super::files::api_hand_offs(fs, (home, temp), engines)),
+            .handing_off(super::files::api_hand_offs(fs, (home, temp), engines))
+            // The trusts it reads (step 8 U1).
+            .trusting(trusting(kept, (home, temp))),
     )
 }
 
@@ -833,6 +850,7 @@ fn launcher(
             board: kept.board.clone().unwrap_or_default(),
             pending: kept.pending.clone().unwrap_or_default(),
             index: kept.index.clone().unwrap_or_default(),
+            trusts: kept.trusts.clone().unwrap_or_default(),
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })

@@ -624,7 +624,11 @@ fn test_the_source_words_are_stable() {
 
 // ruling 46: a project layer cannot name the program to run, a credentials
 // file, or the host's own session home
-fn stripped(text: &str) -> (Vec<String>, Value) {
+fn pair(path: &str, value: &str) -> (String, String) {
+    (path.to_string(), value.to_string())
+}
+
+fn stripped(text: &str) -> (Vec<(String, String)>, Value) {
     let mut layer = cfg(text);
     let removed = strip_project_only(&mut layer);
     (removed, layer)
@@ -638,9 +642,9 @@ fn a_project_layer_loses_the_command_the_auth_file_and_a_host_session_home() {
     assert_eq!(
         removed,
         [
-            "engines.claude-code.command",
-            "engines.claude-code.session_home",
-            "engines.claude-code.auth.file"
+            pair("engines.claude-code.command", "/tmp/evil"),
+            pair("engines.claude-code.session_home", "host"),
+            pair("engines.claude-code.auth.file", "/x/creds.json"),
         ]
     );
     assert_eq!(
@@ -649,10 +653,22 @@ fn a_project_layer_loses_the_command_the_auth_file_and_a_host_session_home() {
     );
 }
 
+// step 8 U1: a command that is no text is still taken out, said as empty
+#[test]
+fn a_command_that_is_no_text_is_taken_out_and_said_as_empty() {
+    let (removed, layer) = stripped("engines:\n  opencode:\n    command: [a, b]\n");
+    assert_eq!(removed, [pair("engines.opencode.command", "")]);
+    assert!(layer
+        .get("engines")
+        .and_then(|e| e.get("opencode"))
+        .and_then(|b| b.get("command"))
+        .is_none());
+}
+
 #[test]
 fn a_file_only_auth_leaves_no_empty_auth_behind() {
     let (removed, layer) = stripped("engines:\n  claude-code:\n    auth:\n      file: /x\n");
-    assert_eq!(removed, ["engines.claude-code.auth.file"]);
+    assert_eq!(removed, [pair("engines.claude-code.auth.file", "/x")]);
     assert!(layer
         .get("engines")
         .and_then(|e| e.get("claude-code"))
@@ -701,7 +717,7 @@ fn test_a_project_layer_loses_an_agent_s_host_session_home() {
     let (removed, layer) = stripped(
         "agents:\n  dev:\n    session_home: host\n    runtime: host\n  calm:\n    session_home: session\n",
     );
-    assert_eq!(removed, ["agents.dev.session_home"]);
+    assert_eq!(removed, [pair("agents.dev.session_home", "host")]);
     assert_eq!(
         layer,
         cfg("agents:\n  dev:\n    runtime: host\n  calm:\n    session_home: session\n")

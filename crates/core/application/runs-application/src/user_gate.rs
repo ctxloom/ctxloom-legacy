@@ -53,7 +53,8 @@ fn url<M: angzarr_embedded::markup::DomainMessage>() -> String {
 /// the runs domain's `RequestStop` (U4: a hosted one-shot's command stops
 /// its run on a signal, API Q11), and the facts a frontend reports of the
 /// terminal session it started (U5, S17: `RecordRunnerStarted`, `RecordRunExited`,
-/// `RecordLaunchFailed`).
+/// `RecordLaunchFailed`), and a project's trust given and taken back (step 8
+/// U1: `GrantTrust`, `RevokeTrust`).
 pub fn user_allowlist() -> Allowlist {
     let commands = <sessions::SessionAggregate as Domain>::Command::type_urls();
     let facts = <sessions::SessionAggregate as Domain>::Fact::type_urls();
@@ -69,10 +70,15 @@ pub fn user_allowlist() -> Allowlist {
     ]
     .into_iter()
     .map(|url| (BodyKind::Fact, url));
+    // Step 8 U1: the user's trust in a project, given and taken back.
+    let trust = [url::<trust::GrantTrust>(), url::<trust::RevokeTrust>()]
+        .into_iter()
+        .map(|url| (BodyKind::Command, url));
     commands
         .chain(facts)
         .chain(std::iter::once(stop))
         .chain(reports)
+        .chain(trust)
         .fold(Allowlist::none(), |list, (kind, url)| list.send(kind, url))
 }
 

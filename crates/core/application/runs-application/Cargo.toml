@@ -17,6 +17,9 @@ prost.workspace = true
 run-ports.workspace = true
 runs.workspace = true
 sessions.workspace = true
+# The user may send a project's trust (step 8 U1): its commands are on
+# the user allowlist.
+trust.workspace = true
 sha2.workspace = true
 surface-ports.workspace = true
 trees.workspace = true

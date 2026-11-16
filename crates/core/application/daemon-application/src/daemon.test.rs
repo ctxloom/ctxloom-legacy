@@ -721,6 +721,30 @@ async fn the_daemons_end_stops_its_one_shots() {
     assert_eq!(stops.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
+/// The trust named `name`, granted by the user through `edge` (step 8 U1).
+async fn trusted(edge: &TestEdge, name: &str) {
+    let grant = trust::GrantTrust {
+        name: name.to_string(),
+        project_id: "calm-otter".to_string(),
+        etag: "e".to_string(),
+        current_etag: "e".to_string(),
+        actor: trust::Actor {
+            user: "alice".to_string(),
+        },
+    };
+    let cover = angzarr_embedded::v1::Cover {
+        domain: trust::TRUST_DOMAIN.to_string(),
+        root: Some(trust::trust_root(name)),
+        edition: None,
+    };
+    edge.serve(
+        sessions::keyed_book(cover, &grant, "grant"),
+        run_ports::Arrival::Loopback,
+    )
+    .await
+    .unwrap();
+}
+
 // The owner's condition on a FRESH daemon: every read model it plans and
 // answers from (the session index, its transcripts included, the board and
 // the pending messages) is caught up with the store's log at its start,
@@ -731,8 +755,9 @@ async fn the_daemons_end_stops_its_one_shots() {
 async fn a_fresh_daemon_catches_every_read_model_up_before_its_first_round() {
     let edge = Arc::new(TestEdge::new());
     // What a previous daemon left: a session, a prompt its hook recorded,
-    // and a message to it.
+    // a message to it, and a project's trust (step 8 U1).
     mint(&edge, CHILD, "kid", "claude-code", None).await;
+    trusted(&edge, "projects/calm-quiet-heron/trust").await;
     let prompt = CommandBook {
         cover: Some(session_cover(CHILD)),
         page: Some(angzarr_embedded::v1::CommandPage {
@@ -820,5 +845,10 @@ async fn a_fresh_daemon_catches_every_read_model_up_before_its_first_round() {
         folds.pending.pending().pending(CHILD).len(),
         1,
         "its pending message is folded at the start"
+    );
+    assert_eq!(
+        folds.trusts.index().trusted_now().len(),
+        1,
+        "the trust a previous daemon recorded is listed at the start"
     );
 }

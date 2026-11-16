@@ -642,17 +642,24 @@ fn session_home_of(binding: &Value, block: Option<&Value>) -> Sourced<String> {
 /// Ruling 46: what a PROJECT layer may not say. `engines.<e>.command` and
 /// `engines.<e>.auth.file` are honoured only from the home-layer config, and
 /// `session_home: host` only through a trust check no layer reading can make:
-/// each is taken out of `layer` and its dotted path returned, so the loader
-/// can warn. `session_home: host` is taken out at either level, an
+/// each is taken out of `layer` and its dotted path returned with what it
+/// said (a value that is no text, as empty), so the loader can warn and a
+/// trust's preview can show it (step 8 U1). `session_home: host` is taken out at either level, an
 /// agent's (`agents.<a>.session_home`) as an engine block's. Nothing else is
 /// touched.
-pub fn strip_project_only(layer: &mut Value) -> Vec<String> {
+pub fn strip_project_only(layer: &mut Value) -> Vec<(String, String)> {
+    let said = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
     let mut removed = Vec::new();
     if let Some(Value::Map(agents)) = layer.get_mut("agents") {
         for (agent, binding) in agents.iter_mut() {
             if binding.get("session_home").and_then(Value::as_str) == Some("host") {
                 binding.remove("session_home");
-                removed.push(format!("agents.{agent}.session_home"));
+                removed.push((format!("agents.{agent}.session_home"), "host".to_string()));
             }
         }
     }
@@ -662,17 +669,17 @@ pub fn strip_project_only(layer: &mut Value) -> Vec<String> {
     for (engine, block) in engines.iter_mut() {
         let at = |key: &str| format!("engines.{engine}.{key}");
         if block.get("command").is_some() {
+            removed.push((at("command"), said(block.get("command"))));
             block.remove("command");
-            removed.push(at("command"));
         }
         if block.get("session_home").and_then(Value::as_str) == Some("host") {
             block.remove("session_home");
-            removed.push(at("session_home"));
+            removed.push((at("session_home"), "host".to_string()));
         }
         if let Some(auth @ Value::Map(_)) = block.get_mut("auth") {
             if auth.get("file").is_some() {
+                removed.push((at("auth.file"), said(auth.get("file"))));
                 auth.remove("file");
-                removed.push(at("auth.file"));
             }
             if auth.as_map().is_some_and(<[_]>::is_empty) {
                 block.remove("auth");

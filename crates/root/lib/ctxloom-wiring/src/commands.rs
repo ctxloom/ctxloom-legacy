@@ -544,6 +544,9 @@ impl Commands {
         if noun == "container" {
             return crate::isolation::container(&self.env, call, catalog, out);
         }
+        if noun == sessions::TRUST_NOUN {
+            return self.trust(call, catalog, out, err);
+        }
         if SESSION_NOUNS.contains(&noun) {
             if noun == "session" {
                 return self.session(call, catalog, out, err);

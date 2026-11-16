@@ -24,6 +24,9 @@ run-ports.workspace = true
 runs.workspace = true
 runs-application.workspace = true
 session-index.workspace = true
+# The trust index the API reads, caught up at the start and each round
+# (step 8 U1).
+trust-index.workspace = true
 session-policies.workspace = true
 sessions.workspace = true
 uuid.workspace = true
@@ -33,6 +36,7 @@ angzarr-embedded = { workspace = true, features = ["test-support"] }
 run-launcher = { workspace = true, features = ["test-support"] }
 run-ports = { workspace = true, features = ["test-support"] }
 mutants.workspace = true
+trust.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

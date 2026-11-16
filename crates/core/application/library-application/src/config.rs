@@ -82,7 +82,7 @@ pub fn load(
     for layer in &layers {
         let mut value = read_layer(layer, notices)?;
         if project_path.as_deref() == Some(layer.path.as_str()) {
-            for key in engines::strip_project_only(&mut value) {
+            for (key, _) in engines::strip_project_only(&mut value) {
                 notices.push(Notice::text(format!(
                     "{key} in {} is ignored: a project's config cannot set it (ruling 46); put it in your home config ({})",
                     layer.path,
@@ -129,7 +129,7 @@ pub fn load(
 
 /// The path of the project's own config file, when there is a project and it
 /// is a file apart from the home's.
-fn read_layer(layer: &LayerText, notices: &mut Vec<Notice>) -> Result<Value, AppError> {
+pub(crate) fn read_layer(layer: &LayerText, notices: &mut Vec<Notice>) -> Result<Value, AppError> {
     let read = layer::read(&layer.text).map_err(|e| match e {
         ConfigError::Syntax { cause } => AppError::ConfigUnparsable {
             path: layer.path.clone(),

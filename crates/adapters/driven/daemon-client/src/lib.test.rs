@@ -473,6 +473,61 @@ fn an_error_info_detail_is_no_typed_refusal() {
     assert_eq!(super::called("GetDaemon", &status), Called::Unauthenticated);
 }
 
+// Step 8 U1: the coordinator refuses a command naming its refusal's TYPE
+// alone, in its ErrorInfo's `refusal_type` (no object): read back as a
+// typed refusal of that type, with no fields, under the status's code.
+#[test]
+fn a_refusal_the_coordinator_names_by_its_type_reads_back_as_that_refusal() {
+    let info = |metadata: &[(&str, &str)]| {
+        let info = super::ErrorInfo {
+            metadata: metadata
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        };
+        prost_types::Any {
+            type_url: "type.googleapis.com/google.rpc.ErrorInfo".to_string(),
+            value: info.encode_to_vec(),
+        }
+    };
+    let status_of = |details: Vec<prost_types::Any>| {
+        let rpc = RpcStatus {
+            code: Code::FailedPrecondition as i32,
+            message: "ANGZARR_REASON_COMMAND_REFUSED".to_string(),
+            details,
+        };
+        Status::with_details(
+            Code::FailedPrecondition,
+            "ANGZARR_REASON_COMMAND_REFUSED",
+            Bytes::from(rpc.encode_to_vec()),
+        )
+    };
+    let named = status_of(vec![info(&[(
+        "refusal_type",
+        "ctxloom.trust.v1.PlanStale",
+    )])]);
+    assert_eq!(
+        super::called("HandleSync", &named),
+        Called::Refused {
+            code: Code::FailedPrecondition as i32,
+            refusal: prost_types::Any {
+                type_url: "type.googleapis.com/ctxloom.trust.v1.PlanStale".to_string(),
+                value: Vec::new(),
+            },
+        }
+    );
+    // An ErrorInfo naming no refusal is no refusal.
+    for unnamed in [info(&[]), info(&[("refusal_type", "")])] {
+        assert!(
+            matches!(
+                super::called("HandleSync", &status_of(vec![unnamed])),
+                Called::Failed { .. }
+            ),
+            "an ErrorInfo naming no type"
+        );
+    }
+}
+
 // A destroy has a deadline of its own, longer than a read's: one that takes
 // longer than `within` is still answered within `destroying`, and one that
 // outlasts that too is unreachable.
