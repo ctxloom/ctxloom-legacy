@@ -94,3 +94,33 @@ Feature: shutdown — stop every running ctxloom of this user, as an installer m
       Given a ctxloom daemon is serving for this home, hosting a child "brisk-copper-moth" that does not end its turn
       When the daemon is sent SIGTERM twice
       Then the hosted engines were ended cleanly before the daemon exited
+
+  Rule: A shutdown is done only once the holds are empty
+
+    Scenario: A shutdown delivers what is held before it stops the daemon
+      # new: owner ruling 2026-11-16 ("flush before install"): a hold an older binary wrote is delivered before the install.
+      Given an initialized ctxloom project
+      And a session "amber-swift-owl" whose prompt its hook held while an older daemon served
+      And a ctxloom daemon of this version is serving for this home
+      When I run "ctxloom shutdown now"
+      Then the command succeeds
+      And the output says "delivered 1 held fact"
+      And nothing is held for "amber-swift-owl"
+      And the session's transcript holds the prompt, once
+
+    Scenario: Held facts no daemon can take are named, and the shutdown declines
+      # new: owner ruling 2026-11-16 ("flush before install"): a hold left undelivered declines the install.
+      Given an initialized ctxloom project
+      And a session "amber-swift-owl" whose prompt is held
+      And no ctxloom daemon is serving for this home
+      When I run "ctxloom shutdown now"
+      Then the command exits with code 20
+      And it warns "ctxloom-wiring-shutdown-held", naming "amber-swift-owl (1 fact)"
+      And no daemon was started
+
+    Scenario: A hold's set-aside part does not block a shutdown
+      # new: owner ruling 2026-11-16 ("flush before install"): a set-aside part is never delivered again.
+      Given an initialized ctxloom project
+      And a session's hold has only a set-aside part
+      When I run "ctxloom shutdown now"
+      Then the command succeeds
