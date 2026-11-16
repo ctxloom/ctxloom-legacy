@@ -78,9 +78,10 @@ impl scheduler_ports::Clock for SystemClock {
 /// (`scheduler::delivery!`, which hands it `RecordAlarmReached`).
 pub type AlarmConsumer = fn(&mut Registry);
 
-/// Every domain that arms alarms, registered in every core so a trigger's
-/// arming runs wherever it commits, and resumed at each start: the
-/// approvals' expiry (step 8 U5, D12).
+/// Every domain that arms alarms, registered in the daemon's core alone
+/// (owner ruling 2026-11-16: the daemon commits every trigger, an ask and
+/// its answer or withdrawal alike) and resumed at its start: the approvals'
+/// expiry (step 8 U5, D12). A CLI command's core registers none.
 pub const ALARM_CONSUMERS: &[AlarmConsumer] = &[approvals_expiry];
 
 /// The approvals' expiry (step 8 U5): an ask arms `approval-expiry:<ask>`
@@ -96,23 +97,41 @@ fn approvals_expiry(registry: &mut Registry) {
 }
 
 /// The core's one store, as the application resolves it: every call's key
-/// is `()`, and it is resumed at start (as `OneStore`), shared with the core
-/// that keeps it, so it can be closed once the application is let go.
-pub struct CoreStores<S>(Arc<S>);
+/// is `()`, shared with the core that keeps it, so it can be closed once
+/// the application is let go. The daemon's is resumed at start (as
+/// `OneStore`); a CLI command's never is (owner ruling 2026-11-16).
+pub struct CoreStores<S> {
+    store: Arc<S>,
+    resumed: Resume,
+}
+
+/// Whether a core resumes, at its start, the policy work its store owes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Resume {
+    /// The daemon's core: every policy source scanned, the owed steps run.
+    AtStart,
+    /// A CLI command's core: nothing scanned. It registers no policy and
+    /// commits nothing a policy's source holds, so it owes none.
+    Never,
+}
 
 impl<S: Store + Processed + ListStreams + Send + Sync> Stores for CoreStores<S> {
     type Key = ();
     type Store = Arc<S>;
 
     async fn store(&self, _key: &()) -> Result<Arc<S>, StoreError> {
-        Ok(Arc::clone(&self.0))
+        Ok(Arc::clone(&self.store))
     }
 
-    // The resume at start runs the policy work a crash (or a policy new to
-    // a domain with history) left owed: an alarm fired and not yet
-    // delivered is delivered (`core_link.test.rs`).
+    // The daemon's resume at start runs the policy work a crash (or a
+    // policy new to a domain with history) left owed: an alarm fired and
+    // not yet delivered is delivered (`scheduling.test.rs`). Its cost grows
+    // with the sources' history, which a CLI command's core never pays.
     fn at_start(&self) -> Vec<()> {
-        vec![()]
+        match self.resumed {
+            Resume::AtStart => vec![()],
+            Resume::Never => Vec::new(),
+        }
     }
 }
 
@@ -276,17 +295,21 @@ impl<S> InProcessCore<S>
 where
     S: Store + Processed + ListStreams + Send + Sync + 'static,
 {
-    /// The application over `store`: the sessions, runs, trees, trust and
-    /// scheduler aggregates registered, and every domain that arms alarms
-    /// ([`ALARM_CONSUMERS`]); sessions and runs exposed to the network (the
-    /// container bridge reaches them) and trees and trust to loopback; the kernel's retries off,
-    /// so a fact at the race cap is parked at once.
+    /// A CLI command's core over `store`: the sessions, runs, trees, trust,
+    /// approvals and scheduler aggregates registered; sessions and runs
+    /// exposed to the network (the container bridge reaches them) and
+    /// trees, trust and approvals to loopback; the kernel's retries off, so
+    /// a fact at the race cap is parked at once. No read model, no policy
+    /// (no alarm consumer), and no resume at start (owner ruling
+    /// 2026-11-16): the daemon's core alone pays for owed policy work.
     pub async fn start(store: S) -> InProcessCore<S> {
-        InProcessCore::start_with(store, |_| Projectors::default()).await
+        InProcessCore::begin(store, |_| Projectors::default(), &[], Resume::Never).await
     }
 
-    /// [`InProcessCore::start`], with the read models `projectors` builds
-    /// (given the store it will keep) registered in its kernel (S32).
+    /// The daemon's core: [`InProcessCore::start`]'s, with the read models
+    /// `projectors` builds (given the store it will keep) registered in its
+    /// kernel (S32), every domain that arms alarms ([`ALARM_CONSUMERS`]),
+    /// and the policy work its store owes resumed at start.
     pub async fn start_with(
         store: S,
         projectors: impl FnOnce(&Arc<S>) -> Projectors,
@@ -300,6 +323,15 @@ where
         store: S,
         projectors: impl FnOnce(&Arc<S>) -> Projectors,
         consumers: &[AlarmConsumer],
+    ) -> InProcessCore<S> {
+        InProcessCore::begin(store, projectors, consumers, Resume::AtStart).await
+    }
+
+    async fn begin(
+        store: S,
+        projectors: impl FnOnce(&Arc<S>) -> Projectors,
+        consumers: &[AlarmConsumer],
+        resumed: Resume,
     ) -> InProcessCore<S> {
         let store = Arc::new(store);
         let mut registry = Registry::new();
@@ -363,7 +395,11 @@ where
             max_backoff: Duration::ZERO,
             jitter: 0.0,
         };
-        let app = App::builder(CoreStores(Arc::clone(&store)), registry)
+        let stores = CoreStores {
+            store: Arc::clone(&store),
+            resumed,
+        };
+        let app = App::builder(stores, registry)
             .exposed(exposed.clone())
             .on_retryable(retries)
             .start()

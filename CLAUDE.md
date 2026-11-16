@@ -2021,7 +2021,8 @@ drafts), named `projects/{project harp}/sessions/{harp}` (`SessionRecord.name`,
 `sessions::SessionName`) once its project is named (the `projects` aggregate,
 S54), its title the one set (S55); the session with its pending messages;
 the session's state. A CLI command's core registers none
-(`InProcessCore::start`); the daemon's does (`start_with`, `Projectors::
+(`InProcessCore::start`, which also registers no policy and resumes
+nothing at start); the daemon's does (`start_with`, `Projectors::
 filled`). There is ONE fold per read model: `core/read-model/held-projection`'s
 `Held` is a shared handle, the same instance the kernel runs inline and the
 daemon's catch-up drives, each page folded once (one before where the fold
@@ -2148,11 +2149,12 @@ expired in its own decide and arms nothing), and `ApprovalAnswered` or
 aggregate re-checks against its own state (still waiting, its own alarm, the
 instant it armed) before it records `ApprovalExpired`; the waiting tool then
 answers the DRAFT `mcp-server-approval-expired`. Both policies are ONE entry
-of `core_link::ALARM_CONSUMERS` (`approvals_expiry`). COST, measured and
-open (raised with the owner): every core start, a CLI command's included,
-resumes the policies' source streams (angzarr-embedded's `Kernel::resume`),
-so a CLI start over 1000 settled asks took about 1.1 s (12 ms with no
-consumer; 31 ms over 100), growing faster than the history.
+of `core_link::ALARM_CONSUMERS` (`approvals_expiry`). Only the daemon's
+core resumes owed policy work at start (owner ruling 2026-11-16; below), so
+the resume's cost, which grows faster than the sources' history (the
+daemon's start over 1000 settled asks takes over a second; angzarr-
+embedded's quadratic resume is being fixed upstream), is the daemon's
+alone: a CLI command's core start is under a millisecond at any history.
 
 The daemon serves `CreateApproval` (D10: the session's run, engine, agent
 and `approval_timeout` are the child it hosts, daemon-application's `Asker`,
@@ -2211,16 +2213,29 @@ one keeps its name (Q-B).
 
 The scheduler's crates (`core/domain/scheduler`, `core/read-model/
 scheduler-due`, `core/application/scheduler-loop`, `core/ports/
-scheduler-ports`; design `scheduler.plan.md`) are wired. EVERY core
-(`core_link::InProcessCore::start_with`, a CLI command's and the daemon's)
+scheduler-ports`; design `scheduler.plan.md`) are wired. Every core
 registers `SchedulerAggregate`, exposed to nobody (its streams are written by
-policies and the clock loop alone), and then each domain that arms alarms,
-`core_link::ALARM_CONSUMERS` (an `AlarmConsumer` is a `fn(&mut Registry)`
-registering the consumer's arm/cancel policy towards the scheduler and its
-`scheduler::delivery!` policy), so a trigger's arming runs wherever it
-commits. Its one entry is the approvals' expiry (U5, above). `CoreStores::at_start` is the
-resume at start, which delivers an alarm fired and not delivered (a crash
-between the two hops, or a delivery policy new to a store with history).
+policies and the clock loop alone). Only the DAEMON's core
+(`core_link::InProcessCore::start_with`) then registers each domain that
+arms alarms, `core_link::ALARM_CONSUMERS` (an `AlarmConsumer` is a `fn(&mut
+Registry)` registering the consumer's arm/cancel policy towards the
+scheduler and its `scheduler::delivery!` policy), and resumes at start
+(`CoreStores::at_start`, `Resume::AtStart`), which runs the policy work its
+store owes: an alarm fired and not delivered is delivered (a crash between
+the two hops, or a delivery policy new to a store with history), an ask
+recorded and not armed is armed. Its one entry is the approvals' expiry (U5,
+above). A CLI command's core (`InProcessCore::start`) registers no alarm
+consumer, no policy at all, and resumes nothing (`Resume::Never`: it lists
+no stream and scans no policy source; owner ruling 2026-11-16). That is
+correct because nothing a CLI process commits is a policy's source: the
+policies' sources are the approvals' and the scheduler's streams, and every
+ask, answer, withdrawal and alarm is the daemon's (the hook gate, the
+daemon API's `CreateApproval` and answers, the scheduler loop); a CLI
+process commits only the sessions domains' (`sessions-application`'s
+registry, which holds no policy), and no production CLI process starts an
+`InProcessCore` at all (`run` and the session verbs are the daemon's
+clients). Work a core without the consumers left owed waits for the
+daemon's next start (`core_link.test.rs`'s `resume_at_start`).
 The daemon's core also registers the due model (`Projectors::due`, the
 wiring's `scheduling::SchedulerDues`: `scheduler_due::Due` held by
 `held-projection`, so the kernel's inline fold and the loop's catch-up are
