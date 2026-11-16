@@ -71,12 +71,38 @@ pub enum Infrastructure {
 }
 
 impl Infrastructure {
-    /// Every infrastructure error, in the order the table above lists them.
-    pub const ALL: [Infrastructure; 12] = [Infrastructure::Unknown; 12];
+    /// Every infrastructure error, in the order the enum lists them.
+    pub const ALL: [Infrastructure; 12] = [
+        Infrastructure::SessionUnknown,
+        Infrastructure::Parked,
+        Infrastructure::Conflict,
+        Infrastructure::Failed,
+        Infrastructure::Malformed,
+        Infrastructure::Unimplemented,
+        Infrastructure::Unauthenticated,
+        Infrastructure::Unavailable,
+        Infrastructure::TimedOut,
+        Infrastructure::Exhausted,
+        Infrastructure::Unknown,
+        Infrastructure::DataLoss,
+    ];
 
-    /// The status this error travels with.
+    /// The status this error travels with: the one place it is named.
     pub fn code(self) -> Code {
-        Code::Unknown
+        match self {
+            Infrastructure::SessionUnknown => Code::NotFound,
+            Infrastructure::Parked => Code::Internal,
+            Infrastructure::Conflict => Code::Aborted,
+            Infrastructure::Failed => Code::Internal,
+            Infrastructure::Malformed => Code::InvalidArgument,
+            Infrastructure::Unimplemented => Code::Unimplemented,
+            Infrastructure::Unauthenticated => Code::Unauthenticated,
+            Infrastructure::Unavailable => Code::Unavailable,
+            Infrastructure::TimedOut => Code::DeadlineExceeded,
+            Infrastructure::Exhausted => Code::ResourceExhausted,
+            Infrastructure::Unknown => Code::Unknown,
+            Infrastructure::DataLoss => Code::DataLoss,
+        }
     }
 
     /// The status's number on the wire.
@@ -88,16 +114,35 @@ impl Infrastructure {
     /// status (in the status's message, or its `google.rpc.ErrorInfo`
     /// reason), if it has one.
     pub fn key(self) -> Option<&'static str> {
-        None
+        match self {
+            Infrastructure::SessionUnknown => Some(NO_SUCH_SESSION),
+            Infrastructure::Parked => Some(DEAD_LETTERED),
+            _ => None,
+        }
     }
 
     /// The infrastructure error an answer of status `status` names, given
     /// the texts that may carry its key (`keys`: the status's message and
     /// its reason), or `None` when it names none (a business refusal's
-    /// status, OK, CANCELLED, a number that is no status).
+    /// status, OK, CANCELLED, a number that is no status). A passed deadline
+    /// is that, whatever the texts; a dead letter is keyed under INTERNAL
+    /// alone; the no-such-session key names its error under any other
+    /// status; otherwise the status names the error it alone travels with.
     pub fn read(status: i32, keys: &[&str]) -> Option<Infrastructure> {
-        let _ = (status, keys, NO_SUCH_SESSION);
-        None
+        let code = Code::from_number(status)?;
+        let keyed = |key: &str| keys.contains(&key);
+        if code == Infrastructure::TimedOut.code() {
+            return Some(Infrastructure::TimedOut);
+        }
+        if code == Infrastructure::Parked.code() && keyed(DEAD_LETTERED) {
+            return Some(Infrastructure::Parked);
+        }
+        if keyed(NO_SUCH_SESSION) {
+            return Some(Infrastructure::SessionUnknown);
+        }
+        Infrastructure::ALL
+            .into_iter()
+            .find(|error| error.key().is_none() && error.code() == code)
     }
 }
 

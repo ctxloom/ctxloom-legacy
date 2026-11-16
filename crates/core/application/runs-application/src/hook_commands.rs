@@ -20,7 +20,7 @@ use angzarr_coordinator::{Caller, Commands, Reach, Served, Synced};
 use angzarr_embedded::angzarr_router::error::CodedError;
 use angzarr_embedded::v1::CommandBook;
 use angzarr_embedded::{Failure, Recovery, Rejected};
-use run_ports::{Arrival, Edge, Unserved};
+use run_ports::{Arrival, Edge, Infrastructure, Unserved};
 
 /// The kernel behind the edge, as the coordinator's command half.
 pub struct EdgeCommands<E: Edge> {
@@ -72,11 +72,12 @@ impl Refusal for EdgeFailure {
 /// A kernel failure as its key, args and status: a refusal under its own
 /// (the status the domain's refusal declared); a failure the kernel codes under a
 /// spec key as that key; a malformed book an invalid-argument status; anything else
-/// INTERNAL under its own code.
+/// INTERNAL under its own code. Every status this side names is an
+/// infrastructure error's ([`Infrastructure`], the tree's one root).
 fn coded_of(failure: &Failure<Rejected>) -> Coded {
     let from_router = |coded: CodedError| {
         Coded::new(
-            Code::from_number(coded.grpc as i32).unwrap_or(Code::Internal),
+            Code::from_number(coded.grpc as i32).unwrap_or(Infrastructure::Failed.code()),
             coded.code,
             coded.extras,
         )
@@ -86,22 +87,23 @@ fn coded_of(failure: &Failure<Rejected>) -> Coded {
         Failure::Kernel(kernel) => match kernel.as_coded() {
             Some(coded) => from_router(coded),
             None => {
-                let code = match kernel.recovery() {
-                    Recovery::Invalid => Code::InvalidArgument,
-                    _ => Code::Internal,
+                let error = match kernel.recovery() {
+                    Recovery::Invalid => Infrastructure::Malformed,
+                    _ => Infrastructure::Failed,
                 };
-                Coded::from_diagnostic(code, failure)
+                Coded::from_diagnostic(error.code(), failure)
             }
         },
-        other => Coded::from_diagnostic(Code::Internal, other),
+        other => Coded::from_diagnostic(Infrastructure::Failed.code(), other),
     }
 }
 
 /// The answer to a capture fact addressed to a session the daemon has no
 /// record of: capture.proto's `FactSessionUnknown`, its full name the key
 /// ([`run_ports::NO_SUCH_SESSION`]), the session's root its arg, under
-/// the not-found status (a fact is never refused, so no `(refusal_status)` declares it:
-/// it is the listener's own answer, as the kernel's spec keys are).
+/// the status [`Infrastructure::SessionUnknown`] names (a fact is never
+/// refused, so no `(refusal_status)` declares it: it is an infrastructure
+/// error, the listener's own answer, as the kernel's spec keys are).
 fn no_such_session_answer(book: &CommandBook) -> Coded {
     let session = book
         .cover
@@ -111,7 +113,7 @@ fn no_such_session_answer(book: &CommandBook) -> Coded {
         .map(|root| root.to_string())
         .unwrap_or_default();
     Coded::new(
-        Code::NotFound,
+        Infrastructure::SessionUnknown.code(),
         run_ports::NO_SUCH_SESSION,
         [("session".to_string(), session)],
     )

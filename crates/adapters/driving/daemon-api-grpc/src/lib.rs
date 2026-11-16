@@ -30,7 +30,7 @@ use std::task::{Context, Poll};
 
 use angzarr_coordinator::{Arrival, Credential, Gate, Unauthenticated};
 use angzarr_coordinator_grpc::{bearer, status_of};
-use daemon_api::{ApiError, Calls};
+use daemon_api::{ApiError, Calls, Infrastructure};
 use daemon_proto::service::ctxloom_server::{Ctxloom, CtxloomServer};
 use daemon_proto::v1;
 use prost::Message;
@@ -253,11 +253,19 @@ fn status_of_error(error: ApiError) -> Status {
             };
             Status::with_details(code, message, Bytes::from(details.encode_to_vec()))
         }
-        ApiError::Failed { detail } => Status::internal(detail),
-        ApiError::Unimplemented { method } => {
-            Status::unimplemented(format!("{method} is not served yet"))
-        }
+        ApiError::Failed { detail } => infrastructure(Infrastructure::Failed, detail),
+        ApiError::Unimplemented { method } => infrastructure(
+            Infrastructure::Unimplemented,
+            format!("{method} is not served yet"),
+        ),
     }
+}
+
+/// An infrastructure error, said `message`, as the status the tree's one
+/// root ([`Infrastructure`]) names for it: a status this service never
+/// spells itself.
+fn infrastructure(error: Infrastructure, message: impl Into<String>) -> Status {
+    Status::new(Code::from_i32(error.status()), message)
 }
 
 impl Served {
@@ -279,7 +287,7 @@ impl Served {
         let runtime = tokio::runtime::Handle::current();
         let answered = tokio::task::spawn_blocking(move || runtime.block_on(call(calls, message)))
             .await
-            .map_err(|joined| Status::internal(joined.to_string()))?;
+            .map_err(|joined| infrastructure(Infrastructure::Failed, joined.to_string()))?;
         answered.map(Response::new).map_err(status_of_error)
     }
 }

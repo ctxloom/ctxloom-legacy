@@ -30,6 +30,9 @@
 //! | a plaintext (`http://`) endpoint, never dialed           | `Unavailable` |
 //! | any other status (unauthenticated, permission denied, not found, ...) | `Refused` |
 //!
+//! Each status is read back through `run_ports::Infrastructure`, the
+//! infrastructure tree's one root, which names them; the sink names none.
+//!
 //! The bearer is a secret: the sink's `Debug` withholds it, and every detail
 //! it produces has the bearer's text scrubbed out.
 //!
@@ -48,16 +51,13 @@ use angzarr_embedded::v1::{CommandBook, DeliveryOutcome};
 use angzarr_proto_transport_distributed::v1::command_handler_coordinator_service_client::CommandHandlerCoordinatorServiceClient;
 use angzarr_proto_transport_distributed::v1::CommandResult;
 use prost::Message;
-use run_ports::{parse_endpoint, Bearer, Delivery, FactSink, PublicCert};
+use run_ports::{parse_endpoint, Bearer, Delivery, FactSink, Infrastructure, PublicCert};
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tonic::{Code, Request, Status};
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
-
-/// The reason key of a fact the kernel dead-lettered.
-const DEAD_LETTERED: &str = "ANGZARR_REASON_FACT_DEAD_LETTERED";
 
 /// `google.rpc.Status`, the message a status's details travel in.
 #[derive(Clone, PartialEq, Message)]
@@ -231,23 +231,31 @@ fn delivery_of_result(result: &CommandResult) -> Delivery {
     }
 }
 
-/// What a failed call's status means to its sender.
+/// What a failed call's status means to its sender: the infrastructure
+/// error it names, read back through the tree's one root
+/// ([`Infrastructure::read`], its key the message or the reason), as a
+/// delivery; anything else (a business refusal's status) is refused.
 fn delivery_of_code(code: Code, message: &str, reason: &str) -> Delivery {
     let detail = format!("{code:?}: {message}");
-    match code {
-        Code::DeadlineExceeded => Delivery::TimedOut,
-        Code::Internal if message == DEAD_LETTERED || reason == DEAD_LETTERED => Delivery::Parked,
+    match Infrastructure::read(code as i32, &[message, reason]) {
+        Some(Infrastructure::TimedOut) => Delivery::TimedOut,
+        Some(Infrastructure::Parked) => Delivery::Parked,
         // The daemon has no record of the fact's session (s4-Q14, H3).
-        _ if message == run_ports::NO_SUCH_SESSION || reason == run_ports::NO_SUCH_SESSION => {
-            Delivery::NoSuchSession
-        }
-        Code::Unavailable
-        | Code::Aborted
-        | Code::ResourceExhausted
-        | Code::Unknown
-        | Code::Internal
-        | Code::DataLoss => Delivery::Unavailable { detail },
-        _ => Delivery::Refused { detail },
+        Some(Infrastructure::SessionUnknown) => Delivery::NoSuchSession,
+        Some(
+            Infrastructure::Unavailable
+            | Infrastructure::Conflict
+            | Infrastructure::Exhausted
+            | Infrastructure::Unknown
+            | Infrastructure::Failed
+            | Infrastructure::DataLoss,
+        ) => Delivery::Unavailable { detail },
+        Some(
+            Infrastructure::Malformed
+            | Infrastructure::Unimplemented
+            | Infrastructure::Unauthenticated,
+        )
+        | None => Delivery::Refused { detail },
     }
 }
 

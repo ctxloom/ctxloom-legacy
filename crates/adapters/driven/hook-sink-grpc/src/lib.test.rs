@@ -15,7 +15,9 @@ use angzarr_proto_transport_distributed::v1::{
     CommandResult, CommandSyncResult, HandleSyncRequest,
 };
 use hook_tls::{Clock, Minter, SystemClock};
-use run_ports::{Bearer, CertMint, CertNames, Delivery, FactSink, HookCertificate, Token};
+use run_ports::{
+    Bearer, CertMint, CertNames, Delivery, FactSink, HookCertificate, Token, DEAD_LETTERED,
+};
 use tonic::transport::{Identity, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 use tonic_health::pb::health_server::HealthServer;

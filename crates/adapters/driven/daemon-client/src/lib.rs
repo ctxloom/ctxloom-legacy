@@ -21,10 +21,10 @@ use daemon_ports::{Called, DaemonApi, RunEvents, Synced};
 use daemon_proto::service::ctxloom_client::CtxloomClient;
 use daemon_proto::v1;
 use prost::Message;
-use run_ports::{parse_endpoint, Discovery, PublicCert, Token};
+use run_ports::{parse_endpoint, Discovery, Infrastructure, PublicCert, Token};
 use tonic::metadata::MetadataMap;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
-use tonic::{Code, Request, Status};
+use tonic::{Request, Status};
 
 /// The service's own path, for a method a status names.
 const SERVICE: &str = "/ctxloom.v1.Ctxloom/";
@@ -176,16 +176,19 @@ pub fn called(method: &str, status: &Status) -> Called {
             refusal,
         };
     }
-    match status.code() {
-        Code::Unauthenticated => Called::Unauthenticated,
-        Code::Unimplemented => Called::Unimplemented {
+    // Any other status is read back through the infrastructure tree's one
+    // root, which names it (by its number: no key is read).
+    let code = status.code() as i32;
+    match Infrastructure::read(code, &[]) {
+        Some(Infrastructure::Unauthenticated) => Called::Unauthenticated,
+        Some(Infrastructure::Unimplemented) => Called::Unimplemented {
             method: format!("{SERVICE}{method}"),
         },
-        Code::Unavailable | Code::DeadlineExceeded => Called::Unreachable {
+        Some(Infrastructure::Unavailable | Infrastructure::TimedOut) => Called::Unreachable {
             detail: status.message().to_string(),
         },
-        code => Called::Failed {
-            code: code as i32,
+        _ => Called::Failed {
+            code,
             detail: status.message().to_string(),
         },
     }

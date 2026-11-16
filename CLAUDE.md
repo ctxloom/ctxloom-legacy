@@ -1167,15 +1167,25 @@ with its root:
   conflict's ABORTED (angzarr's own spec keys, their status the
   `AngzarrReason` surface in angzarr's protos), a malformed book, a store or
   kernel failure (INTERNAL), an unserved method (UNIMPLEMENTED). Their
-  status MAY be named in Rust, but only at a root of this tree. There is no
-  single root yet; the roots today are `runs_application::hook_commands::
-  coded_of` and `no_such_session_answer` (the hook listener: a kernel
-  failure's INVALID_ARGUMENT or INTERNAL, an unknown session's NOT_FOUND)
-  and `daemon_api_grpc`'s `status_of_error` (the daemon API: `ApiError::
-  Failed` INTERNAL, `Unimplemented`); clients read them back in one place
-  each (`hook_sink_grpc`'s `delivery_of_code`, `daemon_client::called`). PROPOSED, not built: one root, an `Infrastructure` enum in
-  run-ports naming each error and its code once, which both listeners
-  answer through.
+  status MAY be named in Rust, but only at its ONE root:
+  `run_ports::Infrastructure` (`crates/core/ports/run-ports/src/
+  infrastructure.rs`), an enum naming each error with its status once
+  (`code()`, angzarr's transport-free `Code`; `status()`, its number) and,
+  where one status carries two, its reason key (`key()`: `SessionUnknown`
+  NO_SUCH_SESSION, `Parked` angzarr's `DEAD_LETTERED`). Both listeners
+  answer through it: the hook listener's command half
+  (`runs_application::hook_commands`: a kernel failure's `Malformed` or
+  `Failed`, an unknown session's `SessionUnknown`) and the daemon's service
+  (`daemon_api_grpc`'s `status_of_error`: `ApiError::Failed`,
+  `Unimplemented`; through `daemon_api`'s re-export, as a driving adapter
+  reaches no port). Both clients read an answer back through
+  `Infrastructure::read(status, keys)` (`hook_sink_grpc`'s
+  `delivery_of_code`, `daemon_client::called`), each mapping the error to
+  its own outcome. The workspace test
+  `test_no_status_is_spelled_in_rust_but_at_the_infrastructure_root` refuses
+  a gRPC status by name (`Code::<Name>`, tonic's `Status::<name>(`) in any
+  Rust source but the root; a `*.test.rs` file, which plays the wire's
+  other end, may spell one. No status or message on the wire changed.
 
 A command refuses with a typed refusal MESSAGE of ctxloom's own protos
 (`proto/ctxloom/...`, and the scheduler's under `proto/io/angzarr/scheduler`),
