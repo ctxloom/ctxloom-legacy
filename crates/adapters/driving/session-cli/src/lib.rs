@@ -58,6 +58,7 @@ mod approvals;
 mod proto_json;
 mod render;
 mod run;
+mod text;
 mod trust;
 
 use clap::{Args, Command, Subcommand};

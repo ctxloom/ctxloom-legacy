@@ -26,6 +26,7 @@ use serde::Serialize;
 
 use crate::error::CliFault;
 use crate::run::{call_failure, fault, wrote, Done, Failure};
+use crate::text::Text;
 use crate::{AnswerArgs, Approvals, ApprovalsVerb, Asking, Session, SessionVerb};
 
 /// What an `allow-always` writes, or would: as the config's writer says it.
@@ -162,7 +163,11 @@ async fn answered<A: ApprovalAnswers>(
                 ),
                 Format::Text => preview_text(&ask, &plan, &apply, out),
             })?;
-            let question = format!("Write {} into {}, and allow it?", plan.rule, plan.path);
+            let question = Text::AlwaysQuestion {
+                rule: plan.rule.clone(),
+                path: plan.path.clone(),
+            }
+            .said();
             if !(asking.is_terminal() && asking.confirm(&question)) {
                 return Ok(Done {
                     would_change: !asking.is_terminal(),
@@ -194,10 +199,24 @@ async fn answered<A: ApprovalAnswers>(
         Format::Text => match &kept {
             Some(plan) => writeln!(
                 out,
-                "{ask}: answered {}, and {} written into {}",
-                args.option, plan.rule, plan.path
+                "{}",
+                Text::AnsweredWritten {
+                    ask: ask.clone(),
+                    option: args.option.clone(),
+                    rule: plan.rule.clone(),
+                    path: plan.path.clone(),
+                }
+                .said()
             ),
-            None => writeln!(out, "{ask}: answered {}", args.option),
+            None => writeln!(
+                out,
+                "{}",
+                Text::Answered {
+                    ask: ask.clone(),
+                    option: args.option.clone(),
+                }
+                .said()
+            ),
         },
     })?;
     Ok(Done::default())
@@ -209,16 +228,20 @@ fn label(option: &v1::ApprovalOption, approval: &v1::Approval) -> String {
     if !option.label.is_empty() {
         return option.label.clone();
     }
-    match option.id.as_str() {
-        "allow-once" => "Allow once".to_string(),
-        "allow-session" => format!("Allow {} for the rest of this session", option.rule),
-        "allow-always" => format!(
-            "Always allow {}: writes it into agents.{}.engines.{}.permissions (previewed first)",
-            option.rule, approval.agent, approval.engine
-        ),
-        "deny" => "Deny".to_string(),
-        other => other.to_string(),
-    }
+    let text = match option.id.as_str() {
+        "allow-once" => Text::LabelAllowOnce,
+        "allow-session" => Text::LabelAllowSession {
+            rule: option.rule.clone(),
+        },
+        "allow-always" => Text::LabelAllowAlways {
+            rule: option.rule.clone(),
+            agent: approval.agent.clone(),
+            engine: approval.engine.clone(),
+        },
+        "deny" => Text::LabelDeny,
+        other => return other.to_string(),
+    };
+    text.said()
 }
 
 /// The harp a session's resource name ends with.
@@ -230,30 +253,33 @@ fn harp_of(name: &str) -> &str {
 /// run, its options and how to answer it.
 fn listing_text(listed: &v1::ListApprovalsResponse, out: &mut dyn Write) -> std::io::Result<()> {
     if listed.approvals.is_empty() {
-        return writeln!(out, "no ask is waiting");
+        return writeln!(out, "{}", Text::NoneWaiting.said());
     }
     for approval in &listed.approvals {
         let ask = daemon_api::ask_of(approval);
-        writeln!(
-            out,
-            "{} asks to run {}: {}",
-            harp_of(&approval.child),
-            approval.tool_name,
-            approval.input_excerpt
-        )?;
-        let until = approval
-            .expire_time
-            .as_ref()
-            .map(|t| format!(", denied at {} unless answered", t.seconds))
-            .unwrap_or_default();
-        writeln!(out, "  ask {ask}, under {}{until}", harp_of(&approval.root))?;
+        let asks = Text::Asks {
+            child: harp_of(&approval.child).to_string(),
+            tool: approval.tool_name.clone(),
+            input: approval.input_excerpt.clone(),
+        };
+        writeln!(out, "{}", asks.said())?;
+        let (ask, root) = (ask.to_string(), harp_of(&approval.root).to_string());
+        let under = match approval.expire_time.as_ref() {
+            Some(t) => Text::AskUnderUntil {
+                ask: ask.clone(),
+                root,
+                seconds: t.seconds,
+            },
+            None => Text::AskUnder {
+                ask: ask.clone(),
+                root,
+            },
+        };
+        writeln!(out, "  {}", under.said())?;
         for option in &approval.options {
             writeln!(out, "  {:<15} {}", option.id, label(option, approval))?;
         }
-        writeln!(
-            out,
-            "  answer: ctxloom session approvals answer {ask} <option> [\"<message>\"]"
-        )?;
+        writeln!(out, "  {}", Text::AnswerWith { ask }.said())?;
     }
     Ok(())
 }
@@ -265,13 +291,17 @@ fn preview_text(
     apply: &str,
     out: &mut dyn Write,
 ) -> std::io::Result<()> {
-    writeln!(
-        out,
-        "{ask}: allow-always would write {} into {}:",
-        plan.rule, plan.path
-    )?;
+    let would = Text::AlwaysWould {
+        ask: ask.to_string(),
+        rule: plan.rule.clone(),
+        path: plan.path.clone(),
+    };
+    writeln!(out, "{}", would.said())?;
     writeln!(out, "  {}: {}", plan.key, plan.document)?;
-    writeln!(out, "To write it and allow the ask: {apply}")
+    let apply = Text::AlwaysApply {
+        apply: apply.to_string(),
+    };
+    writeln!(out, "{}", apply.said())
 }
 
 #[cfg(test)]

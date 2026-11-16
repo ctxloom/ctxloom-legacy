@@ -2169,7 +2169,8 @@ is answered `{}` by the server's own reader of its input
 (`mcp_server::pump`), before rmcp sees it.
 
 `session approvals [<harp>]` lists this project's waiting asks (text form
-DRAFT, texts.md §6); `session approvals answer <ask|harp> <option>
+DRAFT, texts.md §6; its words, claude's option labels and `trust`'s text
+are session-cli's catalog, `session_cli::text::Text`, ruling after U4); `session approvals answer <ask|harp> <option>
 ["<message>"] [--yes]` names an ask by its name, or by its asking session's
 harp while exactly one waits (`daemon-api-approval-ambiguous` naming each,
 `daemon-api-approval-none-waiting`: client-side, DRAFT), and sends

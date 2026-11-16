@@ -24,6 +24,7 @@ use daemon_proto::v1;
 
 use crate::error::CliFault;
 use crate::run::{call_failure, fault, wrote, Done, Failure};
+use crate::text::Text;
 
 /// The `trust` noun, shaped for mounting on the command line.
 pub fn trust_noun() -> Command {
@@ -101,10 +102,11 @@ pub fn trust<W: TrustWrites>(
                 Format::Text => preview_text(&shown, command.undo, out),
             })?;
             let question = match command.undo {
-                false => "Trust this project, allowing what is shown above?",
-                true => "Take back your trust in this project?",
-            };
-            if !(would_change && asking.is_terminal() && asking.confirm(question)) {
+                false => Text::TrustQuestion,
+                true => Text::TrustUndoQuestion,
+            }
+            .said();
+            if !(would_change && asking.is_terminal() && asking.confirm(&question)) {
                 return Ok(Done {
                     would_change: would_change && !asking.is_terminal(),
                     ..Done::default()
@@ -126,53 +128,56 @@ pub fn trust<W: TrustWrites>(
 
 /// The preview in text: the trust, and what trusting it allows.
 fn preview_text(shown: &v1::Trust, undo: bool, out: &mut dyn Write) -> std::io::Result<()> {
+    let name = shown.name.clone();
     let state = match shown.trusted {
-        true => "trusted",
-        false => "not trusted",
+        true => Text::Trusted { name },
+        false => Text::NotTrusted { name },
     };
-    writeln!(out, "{}: {state}", shown.name)?;
+    writeln!(out, "{}", state.said())?;
     match shown.settings.is_empty() {
-        true => writeln!(
-            out,
-            "This project's own config says nothing that reaches past it."
-        )?,
+        true => writeln!(out, "{}", Text::TrustNothing.said())?,
         false => {
-            writeln!(out, "Trusting it allows this project's own:")?;
+            writeln!(out, "{}", Text::TrustAllows.said())?;
             for setting in &shown.settings {
                 writeln!(out, "  {}: {}", setting.path, setting.value)?;
             }
         }
     }
     match (undo, shown.trusted) {
-        (false, false) => writeln!(out, "To trust it: ctxloom trust --yes"),
-        (true, true) => writeln!(out, "To take your trust back: ctxloom trust --undo --yes"),
+        (false, false) => writeln!(out, "{}", Text::TrustApply.said()),
+        (true, true) => writeln!(out, "{}", Text::TrustUndoApply.said()),
         _ => Ok(()),
     }
 }
 
 /// A grant or a revoke, said in text.
 fn applied_text(applied: &Trusted, out: &mut dyn Write) -> std::io::Result<()> {
+    let name = applied.trust.name.clone();
     let said = match (applied.trust.trusted, applied.applied) {
-        (true, true) => "trusted",
-        (true, false) => "already trusted",
-        (false, true) => "no longer trusted",
-        (false, false) => "not trusted",
+        (true, true) => Text::Trusted { name },
+        (true, false) => Text::AlreadyTrusted { name },
+        (false, true) => Text::NoLongerTrusted { name },
+        (false, false) => Text::NotTrusted { name },
     };
-    writeln!(out, "{}: {said}", applied.trust.name)
+    writeln!(out, "{}", said.said())
 }
 
 /// `trust list` in text: each project trusted, by whom and since when.
 fn listed_text(listed: &v1::ListTrustsResponse, out: &mut dyn Write) -> std::io::Result<()> {
     if listed.trusts.is_empty() {
-        return writeln!(out, "No project is trusted.");
+        return writeln!(out, "{}", Text::NoneTrusted.said());
     }
     for trust in &listed.trusts {
-        let since = trust
-            .grant_time
-            .as_ref()
-            .map(|t| format!(" since {}", t.seconds))
-            .unwrap_or_default();
-        writeln!(out, "{}  by {}{since}", trust.name, trust.actor)?;
+        let (name, actor) = (trust.name.clone(), trust.actor.clone());
+        let line = match trust.grant_time.as_ref() {
+            Some(t) => Text::TrustedBySince {
+                name,
+                actor,
+                seconds: t.seconds,
+            },
+            None => Text::TrustedBy { name, actor },
+        };
+        writeln!(out, "{}", line.said())?;
     }
     Ok(())
 }
