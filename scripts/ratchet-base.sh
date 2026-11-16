@@ -62,9 +62,12 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT TERM HUP
 
+# The first commit is taken with `sed -n 1p`, never `head -n 1`: head closes
+# the pipe early, git log dies of SIGPIPE, and pipefail with set -e ends the
+# script there without a word (exit 141).
 emitter=
 if ! g -C "$top" grep -q GHERKIN_RATCHET "$base_sha" -- "$runner"; then
-    emitter=$(g -C "$top" log --reverse --format=%H -S GHERKIN_RATCHET HEAD -- "$runner" | head -n 1)
+    emitter=$(g -C "$top" log --reverse --format=%H -S GHERKIN_RATCHET HEAD -- "$runner" | sed -n 1p)
     if [ -z "$emitter" ]; then
         echo "FAIL ratchet-base: $short cannot list its scenarios, and HEAD has no commit that teaches it (GHERKIN_RATCHET)" >&2
         exit 1
@@ -74,7 +77,7 @@ fi
 # taught by the commit that taught HEAD's.
 chooser=
 if [ -n "$ids" ] && ! g -C "$top" grep -q GHERKIN_SCENARIO "$base_sha" -- "$runner"; then
-    chooser=$(g -C "$top" log --reverse --format=%H -S GHERKIN_SCENARIO HEAD -- "$runner" | head -n 1)
+    chooser=$(g -C "$top" log --reverse --format=%H -S GHERKIN_SCENARIO HEAD -- "$runner" | sed -n 1p)
     if [ -z "$chooser" ]; then
         echo "FAIL ratchet-base: $short cannot run one scenario alone, and HEAD has no commit that teaches it (GHERKIN_SCENARIO)" >&2
         exit 1
