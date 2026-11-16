@@ -1,7 +1,6 @@
 # world: base
 # Ported from cli/bundle.feature (rev f36e8dfb2)
-# NOT ported: the Rules tagged @pending (every Rule but the first), and the first
-#   Rule's create scenario (its `is valid YAML` step has no definition yet).
+# NOT ported: the Rules tagged @pending (every Rule but the first).
 # OD-23 (owner, 2026-11-16, "amend the count"): the listing holds the created
 #   bundle AND the built-in `ctxloom` (origin `ctxloom/builtin`, ruling 127).
 # OD-40 (aip/catalog and aip/remotes, 2026-11-13; OQ-19): the JSON steps read
@@ -62,7 +61,6 @@ Feature: bundle — the container authored content lives in, and everything that
     below reads the FILE, because "Created bundle: …" is printed from the
     argument and is equally true of a create that wrote zero bytes.
 
-    @pending
     Scenario: Creating a bundle writes a manifest carrying its seeded content
       Given an initialized ctxloom project
       When Alice starts a bundle for the team's shared guidance:
