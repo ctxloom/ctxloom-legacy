@@ -91,6 +91,9 @@ pub(super) struct State {
     /// What the project's own config says besides its agent (trust.feature:
     /// `<dotted key>: <value>`), kept when a step rewrites that config.
     project_says: Vec<String>,
+    /// The project's config defines no agent: the home's is the one a
+    /// launch uses (session_approvals.feature's allow-always).
+    no_project_agents: bool,
     /// The asks the scenario's scripted claude made (step 8 U4): each
     /// through `ctxloom mcp serve`, as claude calls its approval prompt.
     asks: Vec<Ask>,
@@ -244,6 +247,9 @@ fn stub_claude(w: &mut World, body: &str) -> PathBuf {
         "default_agent: default".to_string(),
     ];
     entries.extend(w.daemon_spec.project_says.iter().cloned());
+    if w.daemon_spec.no_project_agents {
+        entries.retain(|entry| !entry.starts_with("agents."));
+    }
     // A Given that set what the project says ([`project_says`]) is its
     // config; otherwise the stub's agent over what the config already says.
     let config = match w.daemon_spec.project_says.is_empty() {
@@ -5291,6 +5297,11 @@ fn child_asking(w: &mut World, child: &str, owner: &str, tool: &str, text: &str)
         });
     }
     ask(w, child, tool, text);
+}
+
+#[given("the project's config defines no agent of its own")]
+fn no_project_agents(w: &mut World) {
+    w.daemon_spec.no_project_agents = true;
 }
 
 #[given(

@@ -44,10 +44,11 @@ Feature: session approvals — a child's permission ask, answered by the user
   The rule is the tool and its exact input: `Bash(<command>)` for Bash, and
   `<Tool>(<path>)` for a tool that takes a file's path (Read, Write, Edit,
   MultiEdit, NotebookEdit). Any other tool's ask offers `allow-once` and
-  `deny` alone. `allow-always` writes into the config layer that already
-  holds the agent's engine block, else the project's; an agent with no
-  permissions document of its own starts from its engine's default one, so
-  nothing of that is lost; and the config is written before the ask is
+  `deny` alone. `allow-always` writes where it takes effect: into the
+  project's definition of the agent when the project defines it (which
+  replaces the home's of the same name whole), else into the home's; it
+  starts from that definition's own permissions document, and one with none
+  starts from its engine's default one, so nothing of that is lost; and the config is written before the ask is
   answered, so an ask that is settled in between keeps the written rule and
   says so.
 
@@ -323,8 +324,8 @@ Feature: session approvals — a child's permission ask, answered by the user
       Then the command succeeds
       And the output contains "Bash(rm -rf build/)"
 
-    Scenario: allow-always writes into the layer that already holds the agent's engine block
-      # new: where an "always" is written.
+    Scenario: allow-always writes into the project's definition of the agent, which replaces the home's
+      # new: where an "always" is written (owner ruling after U4: where it takes effect).
       Given an initialized ctxloom project
       And the home already has the file ".ctxloom/config.yaml":
         """
@@ -336,6 +337,29 @@ Feature: session approvals — a child's permission ask, answered by the user
                 permissions:
                   defaultMode: default
         """
+      And a child "brisk-copper-moth" of "amber-quiet-heron" whose engine has asked to run "Bash" with "rm -rf build/"
+      When I run "ctxloom session approvals answer brisk-copper-moth allow-always --yes"
+      Then the command succeeds
+      And the file ".ctxloom/config.yaml" contains "Bash(rm -rf build/)"
+      And the file ".ctxloom/config.yaml" contains "defaultMode: acceptEdits"
+      And the home file ".ctxloom/config.yaml" does not contain "Bash(rm -rf build/)"
+      And the home file ".ctxloom/config.yaml" contains "defaultMode: default"
+
+    Scenario: allow-always writes into the home's definition of the agent when the project defines none
+      # new: where an "always" is written (owner ruling after U4: where it takes effect).
+      Given an initialized ctxloom project
+      And the home already has the file ".ctxloom/config.yaml":
+        """
+        schema_version: 9
+        agents:
+          default:
+            engine: claude-code
+            engines:
+              claude-code:
+                permissions:
+                  defaultMode: default
+        """
+      And the project's config defines no agent of its own
       And a child "brisk-copper-moth" of "amber-quiet-heron" whose engine has asked to run "Bash" with "rm -rf build/"
       When I run "ctxloom session approvals answer brisk-copper-moth allow-always --yes"
       Then the command succeeds

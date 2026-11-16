@@ -63,11 +63,20 @@ fn with_yes_it_writes_the_rule_over_the_engines_default_document_once() {
     assert_eq!(mem.config(Scope::Project).unwrap(), text);
 }
 
-const HOME: &str = "schema_version: 9\nagents:\n  default:\n    engines:\n      claude-code:\n        permissions:\n          defaultMode: default\n          allow:\n            - Read(a)\n";
+const HOME: &str = "schema_version: 9\nagents:\n  default:\n    engine: claude-code\n    engines:\n      claude-code:\n        permissions:\n          defaultMode: default\n          allow:\n            - Read(a)\n";
+
+/// A project that defines no agent: the home's `default` is the one a
+/// launch uses.
+const NO_AGENT: &str = "schema_version: 9\ndefault_agent: default\n";
 
 #[test]
-fn it_writes_into_the_layer_that_holds_the_agents_block() {
-    let (library, mem) = world(&[HOME, PROJECT]);
+fn it_writes_into_the_homes_definition_when_the_project_defines_no_such_agent() {
+    let (library, mem) = world(&[HOME, NO_AGENT]);
+    let shown = library
+        .allow_always(&plain(), "default", "claude-code", RULE, false)
+        .result
+        .unwrap();
+    assert_eq!(shown.path, library_home_path(&mem), "the preview names it");
     let written = library
         .allow_always(&plain(), "default", "claude-code", RULE, true)
         .result
@@ -90,19 +99,53 @@ fn library_home_path(mem: &Mem) -> String {
     mem.layer_path(Scope::Home)
 }
 
-const BOTH: &str = "schema_version: 9\nagents:\n  default:\n    engine: claude-code\n    engines:\n      claude-code:\n        model: haiku\ndefault_agent: default\n";
-
+/// The project's own `default`, which holds no block for the engine: it
+/// replaces the home's whole, so the home's block is no launch's.
 #[test]
-fn the_projects_block_wins_when_both_layers_hold_one() {
-    let (library, mem) = world(&[HOME, BOTH]);
-    library
+fn it_writes_into_the_projects_definition_when_the_project_defines_the_agent() {
+    let (library, mem) = world(&[HOME, PROJECT]);
+    let shown = library
+        .allow_always(&plain(), "default", "claude-code", RULE, false)
+        .result
+        .unwrap();
+    assert!(
+        shown.path.ends_with(".ctxloom/config.yaml") && shown.path != library_home_path(&mem),
+        "{}",
+        shown.path
+    );
+    let written = library
         .allow_always(&plain(), "default", "claude-code", RULE, true)
         .result
         .unwrap();
-    assert!(mem
-        .config(Scope::Project)
-        .unwrap()
-        .contains("Bash(rm -rf build/)"));
+    // Not the home's document: the project's agent has none of its own, so
+    // it starts from the engine's default, as its launch does.
+    assert_eq!(
+        written.document,
+        r#"{"defaultMode":"acceptEdits","allow":["Bash(rm -rf build/)"]}"#
+    );
+    let project = mem.config(Scope::Project).unwrap();
+    assert!(project.contains("Bash(rm -rf build/)"), "{project}");
+    assert!(!project.contains("Read(a)"), "{project}");
+    let home = mem.config(Scope::Home).unwrap();
+    assert!(!home.contains("Bash("), "{home}");
+}
+
+const BOTH: &str = "schema_version: 9\nagents:\n  default:\n    engine: claude-code\n    engines:\n      claude-code:\n        model: haiku\n        permissions:\n          allow:\n            - Edit(b)\ndefault_agent: default\n";
+
+#[test]
+fn the_projects_block_is_the_start_when_it_holds_a_document() {
+    let (library, mem) = world(&[HOME, BOTH]);
+    let written = library
+        .allow_always(&plain(), "default", "claude-code", RULE, true)
+        .result
+        .unwrap();
+    assert_eq!(
+        written.document,
+        r#"{"allow":["Edit(b)","Bash(rm -rf build/)"]}"#
+    );
+    let project = mem.config(Scope::Project).unwrap();
+    assert!(project.contains("Bash(rm -rf build/)"), "{project}");
+    assert!(project.contains("model: haiku"), "{project}");
     assert!(!mem.config(Scope::Home).unwrap().contains("Bash("));
 }
 

@@ -2176,17 +2176,17 @@ harp while exactly one waits (`daemon-api-approval-ambiguous` naming each,
 `AnswerApproval` through `HandleSync` on `pending-approvals`; a refusal the
 coordinator names by type alone is said with the ask as the daemon has it.
 An `allow-always` of a claude ask writes its rule into the asking agent's
-`agents.<a>.engines.<e>.permissions` `allow` (`Library::allow_always`): into
-the layer that holds the agent's block for the engine (the project's, else
-the home's), else the project's; from that layer's own document, else the
-effective one (so `defaultMode` is kept). Q3's order: the ask checked
+`agents.<a>.engines.<e>.permissions` `allow` (`Library::allow_always`)
+WHERE IT TAKES EFFECT (owner ruling after U4): a project's agent replaces
+the home's of the same name whole, so into the project's definition when
+the project defines the agent, else the home's (defined by neither, the
+project's); from that definition's own document for the engine, else the
+effective one, which is then its engine's default (so `defaultMode` is
+kept); the preview names the file. Q3's order: the ask checked
 waiting, the rule written, then the ask answered; off a terminal without
 `--yes` it previews (exit 1 under `--detailed-exitcode`), at one it asks
 `[y/N]`; a rule written for an ask settled meanwhile stays,
-`daemon-api-approval-rule-kept` (exit 20, DRAFT). Cost: an agent binding of
-a higher layer replaces a lower one's whole, so a rule written into the
-home's block reaches a launch only where the project binds no agent of that
-name. A new session's chosen name may not begin `ask-`
+`daemon-api-approval-rule-kept` (exit 20, DRAFT). A new session's chosen name may not begin `ask-`
 (`sessions::validate_session_name`, `sessions-harp-invalid` reason
 `reserved`, refused by the caller before anything is written); an existing
 one keeps its name (Q-B).

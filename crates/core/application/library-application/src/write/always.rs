@@ -1,15 +1,14 @@
-//! An ask's `allow-always` (step 8 U4, owner Q3): the rule the ask implies
-//! (`Bash(rm -rf build/)`) written into the asking agent's
-//! `agents.<agent>.engines.<engine>.permissions` `allow`, so every later
-//! launch carries it (T21 regenerates the session home's settings from the
-//! config at each). Written into the config layer that already holds the
-//! agent's block for the engine (the project's, else the home's), else the
-//! project's; starting from that layer's own document for the block, else
-//! the EFFECTIVE one, so an agent with none of its own keeps its engine's
-//! default (`defaultMode: acceptEdits`). (An agent binding of a higher
-//! layer replaces a lower one's whole, so a rule written into the home's
-//! block reaches a launch only where the project binds no agent of that
-//! name.)
+//! An ask's `allow-always` (step 8 U4, owner Q3, and its ruling after U4):
+//! the rule the ask implies (`Bash(rm -rf build/)`) written into the asking
+//! agent's `agents.<agent>.engines.<engine>.permissions` `allow`, so every
+//! later launch carries it (T21 regenerates the session home's settings from
+//! the config at each). Written WHERE IT TAKES EFFECT: an agent defined by
+//! the project replaces the home's of the same name whole, so the rule goes
+//! into the project's definition when the project defines the agent, else
+//! the home's (else, defined by neither, the project's). It starts from that
+//! definition's own document for the engine, else the effective one, which
+//! is then that definition's engine default (`defaultMode: acceptEdits`), so
+//! nothing a launch had is lost. The preview names the file.
 //! Without `yes` it is the preview: nothing written.
 
 use angzarr_yaml::Value;
@@ -54,14 +53,9 @@ fn allowing(document: Option<Value>, rule: &str) -> Value {
     document
 }
 
-/// Whether the agents section `agents` holds `agent`'s block for `engine`.
-fn holds_block(agents: &Option<Value>, agent: &str, engine: &str) -> bool {
-    agents
-        .as_ref()
-        .and_then(|a| a.get(agent))
-        .and_then(|entry| entry.get("engines"))
-        .and_then(|blocks| blocks.get(engine))
-        .is_some()
+/// Whether the agents section `agents` defines `agent`.
+fn defines(agents: &Option<Value>, agent: &str) -> bool {
+    agents.as_ref().and_then(|a| a.get(agent)).is_some()
 }
 
 impl Library {
@@ -118,15 +112,13 @@ impl Project {
             self.agents_of(Scope::Project)?,
             self.agents_of(Scope::Home)?,
         );
-        let (scope, layer) = match (
-            holds_block(&project, agent, engine),
-            holds_block(&home, agent, engine),
-        ) {
+        // The definition a launch uses: the project's replaces the home's.
+        let (scope, layer) = match (defines(&project, agent), defines(&home, agent)) {
             (false, true) => (Scope::Home, home),
             _ => (Scope::Project, project),
         };
-        // The layer's own document for the block, when it holds one; else
-        // the effective one (the agent's, or its engine's default).
+        // That definition's own document for the engine, when it holds one;
+        // else the effective one, which is then its engine's default.
         let held = layer
             .as_ref()
             .and_then(|a| a.get(agent))
