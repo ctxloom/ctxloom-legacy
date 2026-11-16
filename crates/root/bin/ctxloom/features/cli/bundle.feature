@@ -1,5 +1,9 @@
+# world: base
 # Ported from cli/bundle.feature (rev f36e8dfb2)
-# NOT ported: any of it yet (the Feature is @pending).
+# NOT ported: the Rules tagged @pending (every Rule but the first), and the first
+#   Rule's create scenario (its `is valid YAML` step has no definition yet).
+# OD-23 (owner, 2026-11-16, "amend the count"): the listing holds the created
+#   bundle AND the built-in `ctxloom` (origin `ctxloom/builtin`, ruling 127).
 # OD-40 (aip/catalog and aip/remotes, 2026-11-13; OQ-19): the JSON steps read
 #   the AIP resources of library.proto (design §5.1): a listing is `ListBundlesResponse` (`{bundles: [...]}`), a bundle is named
 #   `projects/{project}/bundles/<b>` (selected by suffix, `[name$=...]`), `show`'s
@@ -8,7 +12,6 @@
 #   `MoveBundleResponse` (`applied`, `path`; B4's).
 
 @doc
-@pending
 Feature: bundle — the container authored content lives in, and everything that reads or moves one
 
   Covers: `ctxloom bundle list`, `bundle show`, `bundle view` (including the
@@ -59,6 +62,7 @@ Feature: bundle — the container authored content lives in, and everything that
     below reads the FILE, because "Created bundle: …" is printed from the
     argument and is equally true of a create that wrote zero bytes.
 
+    @pending
     Scenario: Creating a bundle writes a manifest carrying its seeded content
       Given an initialized ctxloom project
       When Alice starts a bundle for the team's shared guidance:
@@ -96,6 +100,7 @@ Feature: bundle — the container authored content lives in, and everything that
       And the output reports "bundles[name$=/bundles/demo].version" as "<the version>"
       And the output reports "bundles[name$=/bundles/demo].fragment_count" as "<the fragment count>"
       And the output reports "bundles[name$=/bundles/demo].command_count" as "<the command count>"
+      And the output reports "bundles[name$=/bundles/ctxloom].origin" as "<the built-in>"
       # Move the manifest and the summary has to move with it.
       When I run "ctxloom bundle edit demo --version 2.0.0 --add-fragment testing"
       Then the command succeeds
@@ -105,10 +110,10 @@ Feature: bundle — the container authored content lives in, and everything that
 
       @json-default
       Examples: no --format at all takes the derived default off a terminal; an explicit one wins in both directions
-        | flags         | bundle count            | the version   | the fragment count    | the command count | the version after edit | the fragment count after edit |
-        |               | 1                        | 1.0.0         | 1                      | 1                  | 2.0.0                   | 2                              |
-        | --format json | 1                        | 1.0.0         | 1                      | 1                  | 2.0.0                   | 2                              |
-        | --format text | Installed bundles (1):  | demo (v1.0.0) | Contains: 1 fragment  | 1 command          | demo (v2.0.0)           | Contains: 2 fragments          |
+        | flags         | bundle count           | the version   | the fragment count   | the command count | the built-in                | the version after edit | the fragment count after edit |
+        |               | 2                      | 1.0.0         | 1                    | 1                 | BUILTIN                     | 2.0.0                  | 2                             |
+        | --format json | 2                      | 1.0.0         | 1                    | 1                 | BUILTIN                     | 2.0.0                  | 2                             |
+        | --format text | Installed bundles (2): | demo (v1.0.0) | Contains: 1 fragment | 1 command         | ctxloom (v1.0.0) [built-in] | demo (v2.0.0)          | Contains: 2 fragments         |
 
     # The bare noun answers the question somebody typing it has, through the
     # same seam `ctxloom remote` and `ctxloom deps` use.
@@ -119,15 +124,17 @@ Feature: bundle — the container authored content lives in, and everything that
       Then the command succeeds
       And the output reports "bundles" having "<bundle count>" entries
       And the output reports "bundles[name$=/bundles/demo].version" as "<the version>"
+      And the output reports "bundles[name$=/bundles/ctxloom].origin" as "<the built-in>"
       And the output does not contain "Available Commands:"
 
       @json-default
       Examples: no --format at all takes the derived default off a terminal; an explicit one wins in both directions
-        | flags         | bundle count           | the version   |
-        |               | 1                       | 1.0.0         |
-        | --format json | 1                       | 1.0.0         |
-        | --format text | Installed bundles (1): | demo (v1.0.0) |
+        | flags         | bundle count           | the version   | the built-in                |
+        |               | 2                      | 1.0.0         | BUILTIN                     |
+        | --format json | 2                      | 1.0.0         | BUILTIN                     |
+        | --format text | Installed bundles (2): | demo (v1.0.0) | ctxloom (v1.0.0) [built-in] |
 
+  @pending
   Rule: Show renders the container's structure, never an item's body
 
     `show` is the map: which sections exist, how many entries each holds, what
@@ -203,6 +210,7 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | 2              |
         | --format text | Fragments (2): |
 
+  @pending
   Rule: View hands back bytes, and `#path` drills from the container into one item
 
     Without a path, `view` dumps the bundle's stored YAML verbatim. With one,
@@ -313,6 +321,7 @@ Feature: bundle — the container authored content lives in, and everything that
       Then the command succeeds
       And the output contains "FRAGMENT-BODY-testing"
 
+  @pending
   Rule: Editing a bundle changes the manifest, and a no-op edit says it changed nothing
 
     The flag form of `edit` is the scriptable one: it sets metadata and
@@ -381,6 +390,7 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | false              |
         | --format text | No changes made.   |
 
+  @pending
   Rule: A bundle travels as its tree, and an import never clobbers without being told to
 
     Export copies the bundle as-is; import copies it back. "Observable" is the
@@ -453,6 +463,7 @@ Feature: bundle — the container authored content lives in, and everything that
       And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" does not contain "LOCAL-EDIT-MARKER"
       And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" contains "acceptance fixture bundle"
 
+  @pending
   Rule: A push lands the bundle's whole tree in the remote's repository
 
     `bundle push` writes every file of the authored tree to the remote's
@@ -482,6 +493,7 @@ Feature: bundle — the container authored content lives in, and everything that
       # the repository's history rather than replacing it.
       And the remote "team" holds file "fragments/demo-frag.md" of bundle "demo" containing "Demo fragment content."
 
+  @pending
   Rule: A move relocates the bundle, and the source goes only once the destination holds it
 
     `bundle move --to` takes a configured remote name or an existing
@@ -526,6 +538,7 @@ Feature: bundle — the container authored content lives in, and everything that
       And the output contains "neither a configured remote nor an existing directory"
       And the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" contains "# Example Fragment"
 
+  @pending
   Rule: An authored bundle is not an installed dependency
 
     A local bundle is authored here; a dependency is pinned in the lockfile
@@ -545,6 +558,7 @@ Feature: bundle — the container authored content lives in, and everything that
       When I run "ctxloom deps unhold demo"
       Then the command succeeds
 
+  @pending
   Rule: ctxloom's built-in bundle is listed under its origin, read-only, and a project bundle of the same name overrides it
 
     ctxloom ships one bundle in the binary (owner rulings 110, 111, narrowed
@@ -594,6 +608,7 @@ Feature: bundle — the container authored content lives in, and everything that
       When I run "ctxloom bundle list --format text"
       Then the output contains "ctxloom (v1.0.0) [built-in]"
 
+  @pending
   Rule: Removal reports first and destroys only when told to
 
     `remove` is the destroyer, and its bare form is a preview: it names what
