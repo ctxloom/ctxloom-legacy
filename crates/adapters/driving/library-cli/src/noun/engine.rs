@@ -49,6 +49,7 @@ pub(crate) fn engine(parent: &str, row: &EngineRow) -> v1::Engine {
         }),
         auth: Some(auth(&row.auth)),
         agents: row.agents.iter().map(engine_agent).collect(),
+        approval_timeout: api::text(&row.approval_timeout.value, row.approval_timeout.source),
     }
 }
 

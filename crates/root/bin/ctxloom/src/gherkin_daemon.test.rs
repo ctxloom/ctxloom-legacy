@@ -194,14 +194,32 @@ fn start_daemon_serving(w: &mut World, idle: u64, more: &[&str]) {
 const PROJECT_CONFIG: &str =
     "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\ndefault_agent: dev\n";
 
+/// [`PROJECT_CONFIG`]'s agent over what the project config already says
+/// (a Given's `engines.claude-code.approval_timeout`, say), so the stub's
+/// agent never takes a setting a step wrote away; none said, none but the
+/// schema, or agents of its own, [`PROJECT_CONFIG`] itself.
+fn project_config_over(said: Option<String>) -> String {
+    let said = said.unwrap_or_default();
+    let own = said
+        .lines()
+        .filter(|line| !line.starts_with("schema_version:"))
+        .any(|line| !line.trim().is_empty());
+    // One that names agents of its own is the stub's agent alone, as ever.
+    let agents = said.lines().any(|line| line.starts_with("agents:"));
+    if !own || agents {
+        return PROJECT_CONFIG.to_string();
+    }
+    let agent = PROJECT_CONFIG.split_once('\n').map_or("", |(_, rest)| rest);
+    format!("{said}{agent}")
+}
+
 /// Point claude-code at the stub `body` in the scenario's home (it runs
 /// with `$here` its own directory); the stub's directory.
 fn stub_claude(w: &mut World, body: &str) -> PathBuf {
     let dir = w.common.project.home().join("fake-claude");
     files::put_program(dir.join("claude"), body);
-    w.common
-        .project
-        .write(".ctxloom/config.yaml", PROJECT_CONFIG);
+    let config = project_config_over(w.common.project.read(".ctxloom/config.yaml"));
+    w.common.project.write(".ctxloom/config.yaml", &config);
     w.daemon_spec.stub = Some(dir.join("claude"));
     write_home_config(w);
     dir
@@ -3593,14 +3611,46 @@ fn exits_uncancelled(_: &mut World, _child: String) {
     red("a child's engine exits with its ask waiting (step 8, U5/U6)")
 }
 
-#[then(expr = "the child's claude was not given {string}")]
-fn claude_not_given(_: &mut World, _name: String) {
-    red("a claude child's environment without MCP_TOOL_TIMEOUT (step 8, U6)")
+/// The hosted child stub's environment, once it has written it: each
+/// variable's value by its name.
+fn child_env(w: &World) -> std::collections::BTreeMap<String, String> {
+    let env = until(w, "the child's environment", DAEMON_WAIT, |w| {
+        files::read(stub_dir(w).join("child-env")).ok()
+    });
+    env.lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
 }
 
+#[then(expr = "the child's claude was not given {string}")]
+fn claude_not_given(w: &mut World, name: String) {
+    let env = child_env(w);
+    assert!(
+        !env.contains_key(&name),
+        "{name} was given: {:?}",
+        env.get(&name)
+    );
+}
+
+// Q12 (step 8): a claude child's MCP_TOOL_TIMEOUT, in milliseconds, past
+// the ask's approval_timeout.
 #[then(expr = "the child's claude was given {string} above {string}")]
-fn claude_given_above(_: &mut World, _name: String, _floor: String) {
-    red("a claude child's MCP_TOOL_TIMEOUT past its approval_timeout (step 8, U6)")
+fn claude_given_above(w: &mut World, name: String, floor: String) {
+    let env = child_env(w);
+    let given: u64 = env
+        .get(&name)
+        .unwrap_or_else(|| {
+            panic!(
+                "{name} was not given: {:?}; the daemon's log:\n{}",
+                env.keys(),
+                daemon_log_text(w)
+            )
+        })
+        .parse()
+        .unwrap_or_else(|e| panic!("{name} is no number: {e}"));
+    let floor: u64 = floor.parse().expect("the floor is a number");
+    assert!(given > floor, "{name}={given}, not above {floor}");
 }
 
 #[then("the child's session home registers no PermissionRequest hook of ctxloom's")]

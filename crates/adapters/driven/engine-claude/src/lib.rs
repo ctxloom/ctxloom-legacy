@@ -36,8 +36,9 @@ pub use advice::{ClaudeNotice, EN_US};
 pub use child::{launcher_environment, transcripts_of};
 pub use codec::Codec;
 pub use drive::{
-    CONTEXT_PROMPT_FILE, COPY_IN_ALLOWLIST, ENV_ALLOWLIST, INTERACTIVE_ENV_ALLOWLIST,
-    MCP_CONFIG_FILE,
+    mcp_tool_timeout, CONTEXT_PROMPT_FILE, COPY_IN_ALLOWLIST, ENV_ALLOWLIST,
+    INTERACTIVE_ENV_ALLOWLIST, MCP_CONFIG_FILE, MCP_TOOL_TIMEOUT, MCP_TOOL_TIMEOUT_FLOOR,
+    MCP_TOOL_TIMEOUT_MARGIN,
 };
 
 /// The engine's name.

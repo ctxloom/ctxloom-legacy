@@ -3084,7 +3084,25 @@ takes effect; a project write of `host` is refused,
 `library-application-write-session-home-host-in-project` (exit 20, its fix
 the same write with `--home`), and writes nothing. A binding replaces a
 lower layer's whole, so an agent the project also binds says `host` only
-once the project's binding is gone. `auth` is THE auth setting: `none`, `login` (the
+once the project's binding is gone. `approval_timeout` (OD-41, D16, step 8
+U3) is how long an ask of the engine's child waits for an answer, the
+engine's alone (no agent says it; a project layer may): a span
+(`schema::engine_block`'s `Pat::Span`, ctxloom-lib's `duration-text`, as
+`daemon.drain_timeout`) or `now` (zero: every ask denied at once), unsaid
+`5m` (`engines::APPROVAL_TIMEOUT_DEFAULT`, 300 s; one that does not read,
+under `--degraded`, is the default too). `Effective::approval_timeout` holds
+it as written with its layer (`engine` or `default`), shown by `engine show`
+(text and the `Engine`'s field 8) and the dry run's Settings and
+`settings.approval_timeout` (`AgentSettings` field 7); `Drive`'s and
+`run_ports::EngineSettings`'s `approval_timeout` is the span, read with the
+plan at every launch and re-host (T21) into run-application's `HostedChild`
+(its `settings`). On claude a child's turn (a hosted child's or a
+one-shot's, never the terminal's) is given `MCP_TOOL_TIMEOUT`, the timeout
+plus 60 s in milliseconds, only when the timeout is over 300 s (owner ruling
+Q12; `engine_claude::mcp_tool_timeout`), set in `drive::environment`, so it
+is owned (ruling 78b: a permit for it is ignored); at 300 s or under it is
+not set, and a permit may give one. `docs/config/permissions.md` is the page.
+Nothing asks yet (U4). `auth` is THE auth setting: `none`, `login` (the
 human's own login shared in place), `token` (the engine's built-in variables),
 or a source `{env: NAME|[NAMES], file: PATH}`; a name that is not a variable
 name is refused without being repeated; a file is only a primary session's.
@@ -3103,7 +3121,8 @@ holds what is in engine `e`'s vocabulary (`permissions` is that engine's own
 document, passed verbatim, rulings 133-139; written only there, ruling 136);
 `runtime`, `env` and `profiles` stay on the agent. There is no engine-neutral
 posture (ruling 134): `permissions` at the project level and on an agent
-(its `approver`, `approval_timeout`, `sandbox`, `network`) is an unknown key.
+(its `approver`, `approval_timeout`, `sandbox`, `network`) is an unknown key
+(an ask's wait is the engine block's `approval_timeout`, above).
 Hard migrate: flat `agents.<n>.model`/`effort` and an engine-keyed
 `agents.<n>.permissions.<e>` are unknown keys. `effective_on(config, agent,
 X)` is `run --engine X`: the agent's block for X, else X's defaults (no flag),

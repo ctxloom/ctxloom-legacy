@@ -182,3 +182,43 @@ fn the_child_carries_its_agents_surfaces() {
     let child = hosted_child(&planned, "claude-code", &drivable(), CLAUDE, &env(&[]));
     assert_eq!(child.surfaces.0.deny_tools, ["Bash"]);
 }
+
+// OD-41 (T21): the engine's approval_timeout is read with the child's plan,
+// at each launch and re-host, and carried in its settings; `now` is zero.
+#[test]
+fn the_child_is_started_with_its_engines_approval_timeout() {
+    for (said, carried) in [
+        (std::time::Duration::from_secs(3600), 3600),
+        (std::time::Duration::ZERO, 0),
+    ] {
+        let mut plan = previewed("claude-code", builtin(), 0);
+        plan.plan.drive.approval_timeout = said;
+        let child = hosted_child(&plan, "claude-code", &drivable(), CLAUDE, &env(&[]));
+        assert_eq!(child.settings.approval_timeout.as_secs(), carried);
+    }
+    // Unsaid, the config's default, which is the port's.
+    let child = hosted_child(
+        &previewed("claude-code", builtin(), 0),
+        "claude-code",
+        &drivable(),
+        CLAUDE,
+        &env(&[]),
+    );
+    assert_eq!(
+        child.settings.approval_timeout,
+        run_ports::APPROVAL_TIMEOUT_DEFAULT
+    );
+    assert_eq!(
+        library_application::APPROVAL_TIMEOUT_DEFAULT,
+        run_ports::APPROVAL_TIMEOUT_DEFAULT
+    );
+    // A child on an engine the plan did not resolve runs on that engine's
+    // own settings, the default wait among them.
+    let mut plan = previewed("claude-code", builtin(), 0);
+    plan.plan.drive.approval_timeout = std::time::Duration::from_secs(9);
+    let other = hosted_child(&plan, "opencode", &drivable(), CLAUDE, &env(&[]));
+    assert_eq!(
+        other.settings.approval_timeout,
+        run_ports::APPROVAL_TIMEOUT_DEFAULT
+    );
+}

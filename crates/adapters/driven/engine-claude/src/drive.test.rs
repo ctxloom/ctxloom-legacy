@@ -2006,3 +2006,103 @@ fn a_hook_claude_cannot_narrow_refuses_the_launch() {
         "{refused:?}"
     );
 }
+
+// ---- MCP_TOOL_TIMEOUT (owner ruling Q12, step 8) ----
+
+// Over 300 seconds, the limit is the ask's time plus a minute, in
+// milliseconds; at or under it (`now` among them), none.
+#[test]
+fn an_mcp_tool_timeout_is_set_only_past_three_hundred_seconds() {
+    use crate::{mcp_tool_timeout, MCP_TOOL_TIMEOUT_FLOOR, MCP_TOOL_TIMEOUT_MARGIN};
+    use std::time::Duration;
+    assert_eq!(MCP_TOOL_TIMEOUT_FLOOR, Duration::from_secs(300));
+    assert_eq!(MCP_TOOL_TIMEOUT_MARGIN, Duration::from_secs(60));
+    assert_eq!(
+        mcp_tool_timeout(Duration::from_secs(3600)).as_deref(),
+        Some("3660000")
+    );
+    assert_eq!(
+        mcp_tool_timeout(Duration::from_secs(301)).as_deref(),
+        Some("361000")
+    );
+    for under in [0, 2, 299, 300] {
+        assert_eq!(
+            mcp_tool_timeout(Duration::from_secs(under)),
+            None,
+            "{under}"
+        );
+    }
+}
+
+// A child's turn is given the limit its approval_timeout needs, over
+// whatever the caller had; the terminal session, which asks at its own
+// terminal, never is; at the default, neither is.
+#[test]
+fn a_childs_turn_is_given_an_mcp_tool_timeout_past_a_long_approval_timeout() {
+    let mut asked = request();
+    asked.env = env(&[("PATH", "/usr/bin"), ("MCP_TOOL_TIMEOUT", "1000")]);
+    asked.settings.approval_timeout = std::time::Duration::from_secs(3600);
+    let turn = Claude::new().drive_turn(&asked).unwrap();
+    assert_eq!(
+        turn.env.get(crate::MCP_TOOL_TIMEOUT).map(String::as_str),
+        Some("3660000")
+    );
+    let child = crate::child::child_command(&run_ports::ChildSpec {
+        home: asked.home.clone(),
+        context_path: asked.context_path.clone(),
+        env: asked.env.clone(),
+        user_home: None,
+        cwd: asked.cwd.clone(),
+        model: String::new(),
+        effort: String::new(),
+        settings: asked.settings.clone(),
+        resume: None,
+        session_id: None,
+        permissions: run_ports::ChildPermissions::default(),
+    })
+    .unwrap();
+    assert_eq!(
+        child.env.get(crate::MCP_TOOL_TIMEOUT).map(String::as_str),
+        Some("3660000")
+    );
+    let mut terminal = asked.clone();
+    terminal.prompt = String::new();
+    let tui = Claude::new().drive_interactive(&terminal).unwrap();
+    assert!(!tui.env.contains_key(crate::MCP_TOOL_TIMEOUT), "{tui:?}");
+    let mut default = request();
+    default.env = env(&[("PATH", "/usr/bin")]);
+    let turn = Claude::new().drive_turn(&default).unwrap();
+    assert!(!turn.env.contains_key(crate::MCP_TOOL_TIMEOUT), "{turn:?}");
+}
+
+// Set by ctxloom, the name is owned (ruling 78b): a permit for it is
+// ignored, never the engine's; unset, a permit may still give one.
+#[test]
+fn a_set_mcp_tool_timeout_is_owned_and_no_permit_replaces_it() {
+    let caller = env(&[
+        ("PATH", "/usr/bin"),
+        ("CTXLOOM_PERMIT_MCP_TOOL_TIMEOUT", "1000"),
+    ]);
+    let mut asked = request();
+    asked.env = caller.clone();
+    asked.settings.approval_timeout = std::time::Duration::from_secs(3600);
+    let mut turn = Claude::new().drive_turn(&asked).unwrap();
+    let ignored = run_ports::apply_permits(&caller, &mut turn.env, &[]);
+    assert_eq!(
+        turn.env.get(crate::MCP_TOOL_TIMEOUT).map(String::as_str),
+        Some("3660000")
+    );
+    assert!(
+        matches!(ignored.as_slice(), [run_ports::Ignored::Owned { permit }] if permit == "CTXLOOM_PERMIT_MCP_TOOL_TIMEOUT"),
+        "{ignored:?}"
+    );
+    let mut default = request();
+    default.env = caller.clone();
+    let mut turn = Claude::new().drive_turn(&default).unwrap();
+    let ignored = run_ports::apply_permits(&caller, &mut turn.env, &[]);
+    assert!(ignored.is_empty(), "{ignored:?}");
+    assert_eq!(
+        turn.env.get(crate::MCP_TOOL_TIMEOUT).map(String::as_str),
+        Some("1000")
+    );
+}

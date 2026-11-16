@@ -986,6 +986,10 @@ fn test_a_dry_run_shows_each_setting_with_the_place_that_said_it() {
             value: "session".to_string(),
             source: "default",
         },
+        approval_timeout: library_application::SourcedValue {
+            value: "5m".to_string(),
+            source: "default",
+        },
         env: EnvSetting {
             value: sv(&["HTTPS_PROXY", "ALPHA"]),
             source: "agent",
@@ -1020,6 +1024,7 @@ fn test_a_dry_run_shows_each_setting_with_the_place_that_said_it() {
             "               passed to claude-code verbatim; ctxloom does not check it\n",
             "  runtime      host  (agents.dev; replaces engines.claude-code container-rootless: weakens isolation)\n",
             "  session_home  session  (default)\n",
+            "  approval_timeout  5m  (default)\n",
             "  env          HTTPS_PROXY  (engines.claude-code), ALPHA  (agents.dev)\n",
             "\n=== Profiles ===\n",
         )),
@@ -1052,7 +1057,7 @@ fn test_a_dry_run_shows_each_setting_with_the_place_that_said_it() {
     });
     assert!(
         shown_plan.contains(
-            "  runtime      container-rootless  (runtime)\n  session_home  session  (default)\n  env          none  (default)\n"
+            "  runtime      container-rootless  (runtime)\n  session_home  session  (default)\n  approval_timeout  5m  (default)\n  env          none  (default)\n"
         ),
         "{shown_plan}"
     );
@@ -1087,6 +1092,10 @@ fn test_a_dry_run_of_the_default_agent_names_its_place_in_full() {
         },
         session_home: library_application::SourcedValue {
             value: "session".to_string(),
+            source: "default",
+        },
+        approval_timeout: library_application::SourcedValue {
+            value: "5m".to_string(),
             source: "default",
         },
         env: EnvSetting {
@@ -1148,6 +1157,10 @@ fn test_a_permissions_document_is_shown_as_written_and_said_unchecked() {
         },
         session_home: library_application::SourcedValue {
             value: "session".to_string(),
+            source: "default",
+        },
+        approval_timeout: library_application::SourcedValue {
+            value: "5m".to_string(),
             source: "default",
         },
         env: EnvSetting {
@@ -1313,6 +1326,10 @@ fn settings(model: Option<&str>) -> library_application::AgentSettings {
             value: "session".to_string(),
             source: "default",
         },
+        approval_timeout: library_application::SourcedValue {
+            value: "5m".to_string(),
+            source: "default",
+        },
         env: library_application::EnvSetting {
             value: Vec::new(),
             source: "default",
@@ -1336,4 +1353,30 @@ fn test_a_built_in_bundle_is_listed_under_its_origin() {
     bundle_list(&mut out, &list).unwrap();
     let text = String::from_utf8(out).unwrap();
     assert!(text.contains("  testing (v1.2.0) [built-in]\n"), "{text}");
+}
+
+// OD-41 (D16): the dry run's Settings name the engine block that said an
+// approval_timeout, as written.
+#[test]
+fn test_a_dry_runs_settings_name_the_engine_block_of_its_approval_timeout() {
+    let said = library_application::AgentSettings {
+        approval_timeout: library_application::SourcedValue {
+            value: st("now"),
+            source: "engine",
+        },
+        ..settings(None)
+    };
+    let shown_plan = shown(|out| {
+        dry_run(
+            out,
+            &DryRun {
+                settings: Some(said),
+                ..plan()
+            },
+        )
+    });
+    assert!(
+        shown_plan.contains("\n  approval_timeout  now  (engines.claude-code)\n"),
+        "{shown_plan}"
+    );
 }

@@ -69,6 +69,9 @@ pub struct AgentSettings {
     /// Whose home the engine runs on (`session` | `host`): the agent's own,
     /// else its engine block's, else `session` (owner ruling of 2026-11-13).
     pub session_home: SourcedValue<String>,
+    /// How long an ask of the engine waits for an answer, as written (a
+    /// span, or `now`): the engine block's, else `5m` (OD-41, D16).
+    pub approval_timeout: SourcedValue<String>,
 }
 
 /// The engine's own permissions document an agent runs with (owner rulings
@@ -132,6 +135,8 @@ pub struct EngineRow {
     pub runtime: SourcedValue<String>,
     pub env: SourcedValue<Vec<String>>,
     pub auth: AuthSetting,
+    /// How long an ask of the engine waits for an answer (OD-41, D16).
+    pub approval_timeout: SourcedValue<String>,
     pub agents: Vec<EngineAgent>,
 }
 
@@ -188,6 +193,7 @@ impl Project {
             runtime: sourced(&shared.runtime),
             env: sourced(&shared.env),
             auth: self.auth_setting(engine, &shared.auth),
+            approval_timeout: sourced(&shared.approval_timeout),
             agents,
         })
     }
@@ -309,6 +315,7 @@ pub(crate) fn settings_of(effective: &Effective) -> AgentSettings {
                 .collect(),
         },
         session_home: sourced(&effective.session_home),
+        approval_timeout: sourced(&effective.approval_timeout),
     }
 }
 
