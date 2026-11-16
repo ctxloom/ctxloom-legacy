@@ -1831,7 +1831,14 @@ fn two_sigterms_stop_a_busy_daemon_whose_home_was_removed() {
         w.log().contains("SIGTERM: asked to drain").then_some(())
     });
     let stub_dir = world.stub_dir.clone();
-    files::remove_tree(world.project.home().join(".ctxloom"));
+    // The home goes from its path at once (a rename), so the busy daemon,
+    // still writing as it drains, cannot refill it under a removal walking
+    // the tree (which then fails, the directory not empty); what it held is
+    // removed after, its writers' leavings being no part of the test.
+    let home = world.project.home().join(".ctxloom");
+    let gone = world.project.home().join(".ctxloom.removed");
+    files::rename(&home, &gone);
+    let _ = files::fs().remove_dir_all(&gone);
     let _ = std::process::Command::new("kill")
         .args(["-TERM", &pid.to_string()])
         .status();
