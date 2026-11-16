@@ -627,6 +627,126 @@ fn test_a_shutdown_with_a_span_waits_it_out_for_a_live_tui_then_stops_it() {
     rig.stop();
 }
 
+/// What the daemon's drain says in its log when it hosts nothing and stays
+/// for a live frontend it told (owner, 2026-11-16, PREVENT the early exit).
+const STAYS_FOR_FRONTENDS: &str = "draining: hosting nothing, it stays for the live frontends";
+
+impl Rig {
+    /// The home config with `daemon.drain_timeout: <timeout>`.
+    fn drain_timeout(&self, timeout: &str) {
+        self.project.write_home(
+            ".ctxloom/config.yaml",
+            &format!(
+                "schema_version: 9\neditor:\n  command: \"true\"\ndaemon:\n  drain_timeout: {timeout}\n"
+            ),
+        );
+    }
+
+    /// A live TUI's session, started and its start recorded: the command,
+    /// its harp and the daemon serving it.
+    fn live_tui(&self) -> (Child, String, u64) {
+        let session = self.start_session(&[]);
+        let harp = self.harp();
+        wait(&self.log(), "the TUI's start", || {
+            files::exists(self.bin.join("tui-started"))
+        });
+        wait(&self.log(), "the start recorded", || {
+            self.types(&harp, true)
+                .iter()
+                .any(|t| t == "RunnerStartedRecorded")
+        });
+        let daemon = self.daemon_pid().expect("a daemon serves");
+        (session, harp, daemon)
+    }
+
+    /// The daemon `daemon`, sent SIGTERM (a drain), seen at the round that
+    /// would have exited it: hosting nothing, it says it stays for the
+    /// live frontends, or it has exited (the early exit, which fails).
+    fn drained_staying(&self, daemon: u64) {
+        send(daemon, "-TERM");
+        wait(&self.log(), "the drain's round with nothing hosted", || {
+            self.log().contains(STAYS_FOR_FRONTENDS) || !alive(daemon)
+        });
+        assert!(
+            alive(daemon) && self.log().contains(STAYS_FOR_FRONTENDS),
+            "the draining daemon exited before its live frontend ended: {}",
+            self.log()
+        );
+    }
+
+    /// The holds of the home (their `.held` files).
+    fn holds(&self) -> Vec<PathBuf> {
+        files::children(self.home_file("held"))
+            .into_iter()
+            .filter(|path| path.extension().is_some_and(|e| e == "held"))
+            .collect()
+    }
+}
+
+// The owner's ruling of 2026-11-16, PREVENT the early drain exit, FORCED:
+// a draining daemon that hosts nothing does not exit while a live frontend
+// it told of remains (the round that would have exited it says so), so the
+// frontend's last report, its TUI's exit, reaches THIS daemon: nothing is
+// held, no second daemon starts, the run ends `runner-exit` with the TUI's
+// own code, and the daemon exits once the frontend has ended.
+#[test]
+fn test_a_draining_daemon_stays_for_a_live_frontend_until_its_last_report() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    // The drain's time outlasts the test: only the frontend's end lets the
+    // daemon go.
+    rig.drain_timeout("1h");
+    let (session, harp, daemon) = rig.live_tui();
+    rig.drained_staying(daemon);
+    // Its human exits the TUI, code 3: the frontend reports, and ends.
+    files::put(rig.bin.join("tui-exit"), "3");
+    rig.release_tui();
+    let ran = finished(session);
+    assert!(
+        !ran.stderr.contains("for the next daemon"),
+        "the exit report reached the daemon: {}",
+        ran.said()
+    );
+    wait(&rig.log(), "the drained daemon's exit", || !alive(daemon));
+    assert_eq!(rig.holds(), Vec::<PathBuf>::new(), "nothing is held");
+    assert_eq!(
+        rig.log().matches(" serving at ").count(),
+        1,
+        "no second daemon: {}",
+        rig.log()
+    );
+    let run = rig.run_rows(&harp);
+    let ends: Vec<&Value> = run.iter().filter(|e| e["type"] == "RunEnded").collect();
+    assert_eq!(ends.len(), 1, "{run:?}");
+    assert_eq!(ends[0]["cause"], "RunnerExit", "{run:?}\n{}", rig.log());
+    assert_eq!(ends[0]["exit_code"], 3, "the TUI's own exit code: {run:?}");
+    rig.stop();
+}
+
+// A frontend that dies without reporting does not hold a draining daemon
+// for the drain's whole time: its lock reads free (the kernel let it go
+// with the process), so the daemon, hosting nothing, exits.
+#[test]
+fn test_a_draining_daemon_does_not_stay_for_a_frontend_that_died() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    rig.drain_timeout("1h");
+    let (mut session, _harp, daemon) = rig.live_tui();
+    rig.drained_staying(daemon);
+    // The frontend killed outright: it reports nothing.
+    let _ = session.kill();
+    let _ = session.wait();
+    wait(&rig.log(), "the drained daemon's exit", || !alive(daemon));
+    assert!(
+        rig.log().contains("exited"),
+        "it exited as a daemon exits: {}",
+        rig.log()
+    );
+    rig.stop();
+}
+
 // A failing test leaves nothing of ctxloom running (2026-11-15, U8r: two
 // test daemons a panicked TUI test left blocked the next commit's gate for
 // half an hour). A rig dropped under a live TUI, as a panic drops it, ends
