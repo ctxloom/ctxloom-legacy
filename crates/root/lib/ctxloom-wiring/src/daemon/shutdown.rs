@@ -3,7 +3,7 @@
 //! stop before it replaces the binary): the daemon and the live
 //! interactive frontends, which outlive their daemon (U5's adoption).
 //!
-//! `<when>` is a span of the one grammar (`library::config::span`: `15m`,
+//! `<when>` is a span of the one grammar (ctxloom-lib's `duration-text`: `15m`,
 //! `1h30m`, `now`); none given, the home config's `daemon.drain_timeout`,
 //! else [`daemon_application::HAND_OVER_PERIOD`]. A span that is not `now`
 //! DRAINS the daemon within it (`daemon stop --drain`'s request, its
@@ -199,7 +199,7 @@ pub(crate) fn run(
         .subcommand_matches(NOUN)
         .and_then(|matches| matches.get_one::<String>("when").cloned());
     let period = match &when {
-        Some(text) => library::config::span::parse(text).map_err(|cause| {
+        Some(text) => duration_text::parse(text).map_err(|cause| {
             Failure::new(
                 ShutdownError::BadWhen {
                     value: text.clone(),

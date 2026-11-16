@@ -444,7 +444,7 @@ impl Config {
     /// 2026-11-15): `daemon.drain_timeout`, a span or `now`; none when it
     /// is not said (or, read with `--degraded`, does not read).
     pub fn drain_timeout(&self) -> Option<std::time::Duration> {
-        library::config::span::parse(&self.text("daemon.drain_timeout")).ok()
+        duration_text::parse(&self.text("daemon.drain_timeout")).ok()
     }
 
     /// Where a session's outputs go, as written: `output.dir`, else

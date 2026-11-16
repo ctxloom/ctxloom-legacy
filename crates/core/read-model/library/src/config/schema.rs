@@ -109,7 +109,7 @@ impl Pat {
         match self {
             Pat::Duration => durations(s, &["ns", "us", "\u{b5}s", "ms", "s", "m", "h"]),
             Pat::Age => age(s),
-            Pat::Span => super::span::parse(s).is_ok(),
+            Pat::Span => duration_text::parse(s).is_ok(),
             Pat::ListWindow => s == "all" || s == "0" || age(s),
             Pat::PrefixKey => {
                 let mut chars = s.chars();

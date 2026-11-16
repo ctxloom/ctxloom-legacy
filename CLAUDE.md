@@ -1206,7 +1206,8 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-build `7547415e` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
 - angzarr-platform `5f39b330`;
-- taskloom's crates `2db3ddf7` and ctxloom-lib's `2486af2a`, built on the
+- taskloom's crates `2db3ddf7` and ctxloom-lib's `c909e925` (its branch
+  `feat/duration-now`, `now` in `duration-text`, to merge into its main), built on the
   same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
@@ -1792,8 +1793,8 @@ drain, logged `SIGTERM: asked to drain`; a second is the
 plain stop, `--even-if-live`, ruling 114's stop of each engine). A drain is
 never refused for what the daemon hosts; `even_if_live` wins over it. Its
 TIMEOUT is the first that says: the request's `drain_timeout_seconds`, the
-home config's `daemon.drain_timeout` (a span of the one grammar or `now`,
-`library::config::span`; home layer only, `HOME_ONLY`), READ AGAIN AT EACH
+home config's `daemon.drain_timeout` (a span of the one grammar,
+ctxloom-lib's `duration-text`, whose `now` is zero; home layer only, `HOME_ONLY`), READ AGAIN AT EACH
 ROUND (`Shared::drain_period`, `Daemon::hand_over_within`; logged `the drain
 waits <n>s from its start`), so a change written while it drains (the
 config is no client of the daemon, so nothing refuses the write) is the
@@ -1858,8 +1859,8 @@ after the drained one adopts it (U5), or `ctxloom shutdown` asks it to stop.
 SHUTDOWN (owner, 2026-11-15, OD-62; `ctxloom-wiring`'s `daemon/shutdown.rs`).
 `ctxloom shutdown [<duration> | now]` stops every running ctxloom of this
 home, as an installer must before it replaces the binary. Its time is a
-span of the one grammar (`library::config::span`: ctxloom-lib's
-`duration-text`, `15m`, `1h30m`, `90s`, `0s`, and the word `now`, zero);
+span of the one grammar (ctxloom-lib's `duration-text`, read directly:
+`15m`, `1h30m`, `90s`, `0s`, and its word `now`, zero);
 none given, `daemon.drain_timeout`, else five minutes; one that is no span
 is refused before anything is asked, `ctxloom-wiring-shutdown-bad-time`
 (exit 20). A time that is not zero DRAINS the daemon serving within it
