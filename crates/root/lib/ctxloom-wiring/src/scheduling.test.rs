@@ -376,28 +376,7 @@ fn the_production_core_registers_the_scheduler_and_the_system_clock_reads_now() 
         })
         .await;
         let dues = kept.due.clone().unwrap();
-        let target = Stream {
-            domain: DUMMY_DOMAIN.to_string(),
-            root: vec![7; 16],
-            edition: None,
-        };
-        let cover = Cover {
-            domain: SCHEDULER_DOMAIN.to_string(),
-            root: Some(stream_for(&target)),
-            edition: None,
-        };
-        let arm = scheduler::ArmAlarm {
-            target,
-            alarm_id: "a".to_string(),
-            at: at(5),
-        };
-        core.edge()
-            .handle(CommandBook::command_of(
-                cover,
-                &scheduler::SchedulerCommand::from(arm),
-            ))
-            .await
-            .unwrap_or_else(|failure| panic!("{failure:?}"));
+        arm(&core, "a", 5).await;
         let due =
             scheduler_due::ReadsDue::read_due(&dues, |due| due.due_at_or_before(&at(5)).len());
         assert_eq!(due, 1, "the kernel folded the arming inline");
@@ -413,4 +392,66 @@ fn the_production_core_registers_the_scheduler_and_the_system_clock_reads_now() 
         (now.seconds - system).abs() <= 1,
         "{now:?} against {system}"
     );
+}
+
+/// Arm `alarm_id` at `seconds` for dummy 7 on `core`, by hand.
+async fn arm(core: &Core, alarm_id: &str, seconds: i64) {
+    let target = Stream {
+        domain: DUMMY_DOMAIN.to_string(),
+        root: vec![7; 16],
+        edition: None,
+    };
+    let cover = Cover {
+        domain: SCHEDULER_DOMAIN.to_string(),
+        root: Some(stream_for(&target)),
+        edition: None,
+    };
+    let arm = scheduler::ArmAlarm {
+        target,
+        alarm_id: alarm_id.to_string(),
+        at: at(seconds),
+    };
+    core.edge()
+        .handle(CommandBook::command_of(
+            cover,
+            &scheduler::SchedulerCommand::from(arm),
+        ))
+        .await
+        .unwrap_or_else(|failure| panic!("{failure:?}"));
+}
+
+// A stream another process wrote first (a CLI command's core, which folds
+// no due model): the daemon's kernel, handed only its own commit, reads the
+// pages before it from the store, so the model holds both alarms at once,
+// before any catch-up.
+#[test]
+fn an_arming_after_another_processs_reads_what_that_one_wrote() {
+    let (fs, runtime) = home();
+    runtime.block_on(async {
+        let store = ctxloom_store_sqlite::Stores::new(fs.clone(), "/home/u")
+            .open()
+            .await
+            .unwrap();
+        let other = InProcessCore::start(store).await;
+        let (core, dues) = core_over(&fs, CONSUMERS).await;
+        arm(&other, "first", 5).await;
+        arm(&core, "second", 6).await;
+        let ids = scheduler_due::ReadsDue::read_due(&dues, |due| {
+            due.due_at_or_before(&at(10))
+                .into_iter()
+                .map(|alarm| alarm.alarm_id)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(ids, vec!["first".to_string(), "second".to_string()]);
+        drop(dues);
+        other.close().await.unwrap();
+        core.close().await.unwrap();
+    });
+}
+
+// The due model answers no resource message: nothing asks for one.
+#[test]
+fn the_due_model_has_no_view() {
+    use held_projection::Model as _;
+    assert_eq!(super::DueFold::default().view(&Cover::default()), None);
 }
