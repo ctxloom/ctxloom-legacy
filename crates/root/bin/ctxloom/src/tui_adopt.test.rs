@@ -395,8 +395,9 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     files::put(&gate, "wait");
     let session = rig.start_session(&[]);
     let harp = rig.harp();
-    rig.kill_daemon();
-    // No daemon can start: its single-instance lock is held.
+    // No daemon can start: its single-instance lock is held, by a blocker
+    // waiting on it BEFORE the daemon is killed, so it takes the lock ahead
+    // of the daemon the frontend's watch starts at once.
     let blocker = rig.bin.join("blocks-daemons");
     files::put_program(&blocker, BLOCKS_DAEMONS);
     let unblock = rig.bin.join("unblock");
@@ -407,13 +408,17 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
         ])
         .spawn()
         .expect("the blocker starts");
+    rig.kill_daemon();
     files::remove(&gate);
     wait(&rig.log(), "the TUI's start", || {
         files::exists(rig.bin.join("tui-started"))
     });
     let held = rig.home_file("held");
+    // Its hold, not the hold's lock (taken before the hold is written).
     wait(&rig.log(), "the start held", || {
-        !files::children(&held).is_empty()
+        files::children(&held)
+            .iter()
+            .any(|path| path.extension().is_some_and(|e| e == "held"))
     });
     files::put(&unblock, "go");
     let _ = blocking.wait();

@@ -51,7 +51,7 @@ use crate::{
 /// takes every urgency over its engine's stream (D15). The composition
 /// root's `hosted_engines` is held to this list by its test, so an engine
 /// given a child adapter is granted here too.
-pub const CHILD_ENGINES: &[&str] = &["claude-code"];
+pub const CHILD_ENGINES: &[&str] = &["claude-code", "opencode"];
 
 /// The engine a child runs on when neither its launch nor its daemon names
 /// one.

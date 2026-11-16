@@ -1514,7 +1514,13 @@ recorded` (`already recorded` for a duplicate), `closed` (`already
 closed`), `launched, a child of <owner>`. Their refusals are the domain's
 words (`daemon_api::rejection_of` maps the sessions and runs domains'
 typed refusals: `sessions-session-closed`, `sessions-session-unknown`,
-`runs-no-credential`, ...), exit 20. The hidden `daemon
+`runs-no-credential`, ...), exit 20. A send's urgency is judged on the
+target's engine (`session_policies::supported`, OD-58): a hosted child on
+an engine with a child adapter, `session_policies::CHILD_ENGINES`
+(claude-code and opencode; the wiring's `hosted_engines` is held to it by
+its test), takes inform, wake and steer, and is woken by its children's
+notices; any other session takes an inform alone
+(`sessions-urgency-unsupported`). The hidden `daemon
 launch|send|close|clear` are gone (hard migrate); `daemon resolve` stays
 hidden. A launch (`Caller::launch`; the MCP tool `child_launch` too, its
 owner the calling session, its harp minted when it names none,
