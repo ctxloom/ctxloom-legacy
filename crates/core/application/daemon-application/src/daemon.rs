@@ -983,11 +983,13 @@ impl<E: Edge> Daemon<E> {
                     let session = mint.claim.command.session.clone();
                     mint.mint.command.workspace = self.axis_of(&session, &mint.mint.command);
                 }
-                // Its output folder, where its plan left it to its project
-                // (a child in another project, step 8 U2b): that project's
-                // `output.dir`, as its config says, and its own harp. One
-                // that cannot be read is a launch that cannot be made.
-                if mint.mint.command.output_dir.is_empty() {
+                // Its output folder, which its plan leaves to its project:
+                // that project's `output.dir`, as its config says, and its
+                // OWN harp, whether its owner's project or another (step 8
+                // U2b; owner ruling 2026-11-16: one rule for every
+                // session). One that cannot be read is a launch that cannot
+                // be made.
+                {
                     let session = mint.claim.command.session.clone();
                     match self.output_of(&session, &mint.mint.command) {
                         Ok(dir) => mint.mint.command.output_dir = dir,

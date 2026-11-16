@@ -2115,13 +2115,14 @@ and CLOSES its child there (the cascade, `cascade:<owner>:<child>`, sent to
 the child's project), the child's plan tells each turn it ends to its owner
 (`notice:...`, in the owner's project) and ends it on its owner when it
 closes (`child-ended:...`); its hosted run is ended, its engine exits and
-its hand-off is removed, as within one project. Its outputs are its OWN
-project's: the plan mints it with no output folder of its owner's, and the
-daemon reads that project's `output.dir` there (`ChildPlans::output_root`,
-the wiring's `child_output_root`, with the env its launcher handed),
-`<its root>/<output.dir>/<its harp>`; one that cannot be read is a launch
-that failed (its owner told). A child of the owner's own project keeps its
-outputs in its owner's folder, as before. The owner's side addresses it by
+its hand-off is removed, as within one project. Its outputs are its OWN,
+as every session's (owner ruling 2026-11-16: one rule, its owner's
+project or another): the plan mints it with no output folder
+(session-policies' `launch`), and the daemon reads its project's
+`output.dir` there (`ChildPlans::output_root`, the wiring's
+`child_output_root`, with the env its launcher handed),
+`<its root>/<output.dir>/<its harp>`, never its owner's folder; one that
+cannot be read is a launch that failed (its owner told). The owner's side addresses it by
 its full name (`projects/<its project>/sessions/<harp>`, the launch's
 answer); a bare harp is the caller's project's. Its asks are the root's
 project's (Q-A, U4).
@@ -3271,7 +3272,9 @@ facts. `sync.on_run: missing` makes the run (one-shot, session, init's
 interview) pull before it is planned, the same pull `manage install` ends
 with; a failed pull is a notice and the run goes on (a dry run does not
 pull). A session's outputs are `<project root>/<output.dir>/<harp>`
-(`output.dir` relative to the project root unless absolute), no longer
+(`output.dir` relative to the project root unless absolute), a hosted
+child's too, under its own harp in the project it is minted in (owner
+ruling 2026-11-16), no longer
 `~/Documents/ctxloom/<basename>/<harp>`; nothing gitignores them, and a
 harp never changes, so nothing moves the folder (S55). A first init at a terminal asks for `output.dir`
 before the interview (suggesting `ctxloom/`, saying outputs are committable)

@@ -314,10 +314,12 @@ pub struct Mint {
 
 /// The launch (K2): the owner's `ChildLaunched` mints the child, for its
 /// owner, in the target store, its name claimed first (as every mint's is).
-/// `output_dir` is where the target project puts the child's outputs (the
-/// application's, from the target's config). Keyed `claim:<owner>:<child>`
-/// and `mint:<owner>:<child>`.
-pub fn launch(owner: &SessionRef, launched: &ChildLaunched, output_dir: &str) -> Option<Mint> {
+/// Its output folder is left empty: every child keeps its outputs in its
+/// OWN folder, `<output.dir>/<its harp>` of the project it is minted in,
+/// its owner's project or another (owner ruling 2026-11-16), which the
+/// daemon reads from that project's config (step 8 U2b). Keyed
+/// `claim:<owner>:<child>` and `mint:<owner>:<child>`.
+pub fn launch(owner: &SessionRef, launched: &ChildLaunched) -> Option<Mint> {
     let child = launched.child.as_ref()?;
     let key = |what: &str| format!("{what}:{}:{}", owner.session, child.session);
     let session = session_cover(&child.session)?;
@@ -345,7 +347,7 @@ pub fn launch(owner: &SessionRef, launched: &ChildLaunched, output_dir: &str) ->
                 harp: launched.harp.clone(),
                 project_id: child.project_id.clone(),
                 project_dir: launched.child_root.clone(),
-                output_dir: output_dir.to_string(),
+                output_dir: String::new(),
                 engine: launched.engine.clone(),
                 origin: Origin::Agent,
                 started_at: None,

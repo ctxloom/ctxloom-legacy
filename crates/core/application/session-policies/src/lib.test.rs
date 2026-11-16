@@ -261,7 +261,7 @@ fn launched() -> ChildLaunched {
 // K2, D19: the child is claimed and minted in the TARGET store, for its owner.
 #[test]
 fn a_launch_mints_the_child_in_the_target_store_for_its_owner() {
-    let mint = launch(&at(OWNER), &launched(), "/out/kid").unwrap();
+    let mint = launch(&at(OWNER), &launched()).unwrap();
     assert_eq!(mint.claim.project_id, "far-heron");
     assert_eq!(mint.claim.key, format!("claim:{OWNER}:{CHILD}"));
     // Slice 2 B3: the name's claim is rooted where its session is, on the
@@ -277,7 +277,8 @@ fn a_launch_mints_the_child_in_the_target_store_for_its_owner() {
             harp: "kid".to_string(),
             project_id: "far-heron".to_string(),
             project_dir: "/work/far".to_string(),
-            output_dir: "/out/kid".to_string(),
+            // Left to its project's config, read by the daemon.
+            output_dir: String::new(),
             engine: "opencode".to_string(),
             origin: Origin::Agent,
             started_at: None,

@@ -252,16 +252,8 @@ fn launches(scene: &Scene<'_>, steps: &mut Vec<Step>) {
                 .any(|c| c.session.as_ref() == Some(child));
             match scene.board.session(&child.session) {
                 None if held => {
-                    // A child of this project keeps its outputs with its
-                    // owner's; one in another project in that project's
-                    // folder, which its config says: the daemon reads it
-                    // there (step 8 U2b), so none is planned here.
-                    let output_dir = match child.project_id == scene.project_id {
-                        true => owner.output_dir.as_str(),
-                        false => "",
-                    };
                     let (Some(mint), Some(failed)) = (
-                        launch(&owner_ref, launched, output_dir),
+                        launch(&owner_ref, launched),
                         launch_failed(&owner_ref, child, "sessions-launch-refused"),
                     ) else {
                         continue;
