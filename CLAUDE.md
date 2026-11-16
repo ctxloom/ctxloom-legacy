@@ -1830,9 +1830,16 @@ project's names (`ResolveProject`, `GetProject`: a command that only names
 its project, as a config change's json does, starts no work and lands) with
 the typed `DaemonDraining` (`daemon-api-draining`, naming its stamp and
 what it hosts, wording a DRAFT; `Api::open`): new runs and launches
-(`CreateRun`, `CreateHandOff`), a run's watch, the session reads and
-destroys, the transcript and the assembly; the hooks' facts and the
-frontends' reports (the coordinator, not the service) still land. Its loop hands over(`Daemon::hand_over`): it starts no child and delivers no message
+(`CreateRun`, `CreateHandOff`), the session reads and destroys, the
+transcript and the assembly; the hooks' facts and the frontends' reports
+(the coordinator, not the service) still land, and so do the calls on work
+a client already started, which start none (OD-62 refuses NEW
+invocations): `WatchRun` (a one-shot's client watches its run only once
+`CreateRun` answered, so a drain asked in between refused it, exit 20, where
+the period's stop is 143; a frontend's watch of its run likewise; an
+unknown run is `RunNotFound`), `DeleteHandOff` (the withdrawal of a
+hand-off whose launch the drain refused), and a one-shot's `RequestStop`
+(the coordinator's `Handle`). Its loop hands over(`Daemon::hand_over`): it starts no child and delivers no message
 (`Step::delivers`; what is pending is the next daemon's), but the guidance
 below; each hosted child bound to its native session with no turn in
 flight (and no guidance of its own still pending) is ended once; its exit

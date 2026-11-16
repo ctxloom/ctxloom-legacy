@@ -203,11 +203,17 @@ fn not_served(method: &str) -> ApiError {
     }
 }
 
-/// Every call but `GetDaemon`, `StopDaemon` and the project's names
-/// (`ResolveProject`, `GetProject`) is taken only while the daemon is open
-/// ([`Api::open`]): a draining one refuses it. The names are served while it
-/// drains (owner, 2026-11-15): a command that only names its project (a
-/// config change, which must land while a drain runs) starts no work.
+/// Every call but `GetDaemon`, `StopDaemon`, the project's names
+/// (`ResolveProject`, `GetProject`) and the calls on work a client already
+/// started (`WatchRun`, `DeleteHandOff`) is taken only while the daemon is
+/// open ([`Api::open`]): a draining one refuses it. The names are served
+/// while it drains (owner, 2026-11-15): a command that only names its
+/// project (a config change, which must land while a drain runs) starts no
+/// work. Nor does a watch of a run it already hosts (its client opens it
+/// only once `CreateRun` answered, so a drain asked in between would
+/// otherwise refuse the one-shot the period then stops), or the withdrawal
+/// of a hand-off whose launch the drain refused (OD-62: NEW invocations
+/// are refused).
 impl<E: Edge + 'static> Calls for Api<E> {
     fn warnings(&self) -> Vec<v1::Notice> {
         Api::warnings(self)
@@ -308,10 +314,7 @@ impl<E: Edge + 'static> Calls for Api<E> {
     }
 
     fn watch_run(&self, request: v1::WatchRunRequest) -> Answer<'_, crate::RunStream> {
-        Box::pin(async move {
-            self.open()?;
-            Api::watch_run(self, request).await
-        })
+        Box::pin(Api::watch_run(self, request))
     }
 
     fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
@@ -322,10 +325,7 @@ impl<E: Edge + 'static> Calls for Api<E> {
     }
 
     fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
-        Box::pin(async move {
-            self.open()?;
-            Api::delete_hand_off(self, request).await
-        })
+        Box::pin(Api::delete_hand_off(self, request))
     }
 }
 
@@ -519,8 +519,9 @@ impl<E: Edge> Api<E> {
     }
 
     /// Whether the daemon takes a new call: not once it was asked to drain
-    /// (OD-54, or a SIGTERM), when every call but `GetDaemon`, `StopDaemon`
-    /// and the project's names is refused
+    /// (OD-54, or a SIGTERM), when every call but `GetDaemon`, `StopDaemon`,
+    /// the project's names and the calls on work already started
+    /// (`WatchRun`, `DeleteHandOff`) is refused
     /// `DaemonDraining`, naming its stamp and what it still hosts.
     pub(crate) fn open(&self) -> Result<(), ApiError> {
         if !self.parts.hosting.draining() {

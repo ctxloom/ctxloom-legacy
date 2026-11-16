@@ -559,7 +559,9 @@ async fn stop_daemon_even_if_live_wins_over_a_drain() {
 // the daemon's stamp and the sessions it still hosts; GetDaemon
 // answers, and StopDaemon judges as it always does (an escalation's
 // `even_if_live` still reaches it). The names (ResolveProject, GetProject)
-// are served (owner, 2026-11-15: a config change lands while it drains).
+// are served (owner, 2026-11-15: a config change lands while it drains), as
+// are the calls on work already started (`WatchRun`, `DeleteHandOff`: runs'
+// and hand_off's tests).
 #[tokio::test]
 async fn a_draining_daemon_refuses_every_new_call_but_its_own_two_and_the_names() {
     use crate::Calls;
