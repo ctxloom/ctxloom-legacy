@@ -51,7 +51,14 @@ and the `mock` engines) ONCE per nextest run by the setup script
 `scripts/nextest-build-binaries.sh` (`.config/nextest.toml`), which names it
 and the companion stub in `CTXLOOM_TEST_BINARY` and
 `CTXLOOM_TEST_COMPANION_STUB`; `binary()` builds for itself only without
-them (owner ruling 144: once per test PROCESS cost about 2.3 s a test). The `mock` and `mock-*` engines exist only under
+them (owner ruling 144: once per test PROCESS cost about 2.3 s a test). No process
+a test starts outlives it: the acceptance tests' `Project` ends, when it is
+dropped (a panic's unwinding too), every process its `start_*` started that
+is still its running child (SIGTERM, ten seconds, then SIGKILL; `ps` and
+`kill`, so unix only), before its home is removed; a left frontend would
+keep its daemon serving, or start another (2026-11-15, U8r). nextest's
+leak-timeout cannot see these: a daemon's stdio is null and a frontend's
+is piped to the test process, not to nextest. The `mock` and `mock-*` engines exist only under
 `test-support` (`library::config::schema::ENGINES` and the wiring's
 `engines()`): a plain build knows claude-code and opencode alone, and `just
 build` proves it by running `scripts/plain-engines-check.sh` against the plain
@@ -1599,7 +1606,11 @@ makes its own directory again (owner, 2026-11-14; j000100's exit is deleting
 `~/.ctxloom`): its log's directory is made as it starts (`logger`) and a line
 said once it is gone is dropped, and a discovery file whose directory is gone
 is not published again; so a daemon whose home was deleted exits on its lock
-and leaves nothing there. A replaced lock (its directory still there) is
+and leaves nothing there. It also exits, each tick, once its home's ctxloom
+directory (`<home>/.ctxloom`, its store's) is gone (`DaemonFiles::home_gone`,
+OD-60), because the lock may be elsewhere: the account's, while
+`CTXLOOM_HOME` names another home (`just install`'s `~/.ctxloom-rs`), or a
+test's own place. A replaced lock (its directory still there) is
 logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
@@ -3273,7 +3284,13 @@ outcomes.json and judges them with the gates' own `_mutants-verdict`
 against `mutation_thresholds`, writing `scores.json` (per tier: killed,
 viable, percent, threshold, pass), uploaded as `mutation-scores` and
 appended to the run's summary. A tier below its threshold fails the score
-job, after the scores are kept.
+job, after the scores are kept. Each shard first asks whether the mutation
+run's memory cap (below) can be had on its runner; where no systemd user
+scope can be made, that shard runs deliberately UNCAPPED
+(`MUTANTS_MEMORY_MAX=none`, said in the step summary): the runner's VM is
+the job's alone, so a runaway mutant fails that shard and nothing else.
+`mutants-shard <k/n> [out] [package]` with a package narrows the run to that
+one crate (`0/1` for all of it), how one crate's mutants are run whole.
 
 The release profile (owner ruling 2026-11-12, Cargo.toml's
 `[profile.release]`) is fat LTO, one codegen unit, opt-level 3,
@@ -3341,6 +3358,15 @@ judges every worktree of the repository and deletes the record of each whose
 directory it cannot see, so a gate run in the dev container, which mounts only
 the checkout, cut every other worktree on the host off from the repository
 (2026-11-12).
+
+Each throwaway's lock (`target/.staged-tree.lock`, `.ratchet-base.lock`,
+`.mutants-batch.lock`) is a descriptor bash opens without close-on-exec and
+`flock`s; the gate holds it, and what it runs is started without it (`9>&-`,
+`7>&-`, `8>&-`), so nothing that outlives the gate (a test's detached
+daemon) holds the next run's lock. The staged tree's recipe inherited it
+until 2026-11-15 (U8r: two leaked test daemons held a commit's
+`test-staged` for half an hour); `scripts/scratch-tree-lock.selftest.sh`
+(`just selftest`) holds `_scratch-tree` to it through procfs (Linux).
 
 lefthook runs the gates one at a time, stopping at the first failure, and
 shows each gate's pass line and any failure's extract. Gates 1 to 5 run in
@@ -3415,7 +3441,26 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    `.cargo/mutants.toml` or a lowered threshold. cargo mutants runs in a
    session of its own (`setsid`), and whatever it leaves running (a
    process a test spawned whose stop a mutant broke) is killed and named
-   in the gate's log; the verdict does not change. The last run's mutants.out (each
+   in the gate's log; the verdict does not change. Every cargo-mutants
+   run (`mutants-staged`, so `mutants-batch`, `closeout` and
+   `closeout-ratchet`, and `mutants-shard`) is under a MEMORY CAP,
+   `gates/memory-cap.sh` (owner ruling of 2026-11-15, after a runaway
+   daemon-application mutant grew to about 70 GB twice and the global OOM
+   took the editor's whole user scope with every session in it): a
+   transient systemd user scope with `MemoryMax=` the justfile's
+   `mutants_memory_max` (16G, env `MUTANTS_MEMORY_MAX`), `MemorySwapMax=`
+   `mutants_swap_max` (2G, env `MUTANTS_SWAP_MAX`) and
+   `OOMPolicy=continue`, so the cap's OOM killer kills the runaway test
+   alone (its mutant is caught) and the run goes on; the default policy
+   would stop the whole run. The command starts only once the scope's
+   `memory.max` is seen set, and the log ends with the scope's memory peak
+   and any OOM kill. A shell with no `XDG_RUNTIME_DIR` (an agent's) gets
+   `/run/user/<uid>` when its bus is there; with no user bus the gate FAILS
+   before anything is built, naming the fix, and never runs uncapped
+   unasked: `MUTANTS_MEMORY_MAX=none` is the opt-out, stated in the run's
+   output. Plain test runs (`just test`, `land-ratchet`) are not capped.
+   Its self-test is `scripts/memory-cap.selftest.sh` (`just selftest`).
+   The last run's mutants.out (each
    mutant's log, outcomes.json) is kept in target/logs/mutants-staged/. Red
    tests fail it on every branch (no mutant can be judged against failing
    tests), as does a run that found mutants and tested fewer: a mutation

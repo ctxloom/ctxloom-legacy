@@ -346,3 +346,28 @@ fn a_lock_file_replaced_or_removed_under_its_holder_is_no_longer_held() {
     assert!(!files.still_holds(&held), "replaced by another");
     assert!(files.still_holds(&replaced));
 }
+
+// OD-60: a daemon whose home is deleted exits, the single-instance lock
+// elsewhere or not; so its files say when the home's ctxloom directory is
+// gone, and only then.
+#[test]
+fn the_home_is_gone_only_once_its_ctxloom_directory_is() {
+    let (root, home) = home();
+    let fs = fixtures::fs();
+    let elsewhere = root.root().join("account");
+    let files = DaemonFiles::with_instance(
+        fs.clone(),
+        &home,
+        instance_lock_path(&home, Some(&elsewhere)),
+    );
+    let _held = files.hold_instance(Duration::ZERO).expect("held");
+    fs.create_dir_all(&home.join(".ctxloom"), os::Mode::from_bits(0o700))
+        .unwrap();
+    assert!(!files.home_gone(), "its home is there");
+    fs.remove_dir_all(&home).unwrap();
+    assert!(files.home_gone(), "its home was removed");
+    assert!(
+        fs.exists(&elsewhere.join("daemon.lock")).unwrap(),
+        "the lock elsewhere is left"
+    );
+}

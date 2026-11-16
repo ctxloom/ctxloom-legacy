@@ -166,6 +166,16 @@ impl DaemonFiles {
         }
     }
 
+    /// Whether the daemon's ctxloom directory (`<home>/.ctxloom`, its
+    /// store's) is gone: its home deleted (j000100's exit, a test's
+    /// temporary home), which the single-instance lock does not always say,
+    /// as it may be elsewhere (the account's, while `CTXLOOM_HOME` names
+    /// another home; a test's own place). What cannot be told is there.
+    pub(crate) fn home_gone(&self) -> bool {
+        let ctxloom = self.dir.parent().unwrap_or(&self.dir);
+        matches!(self.fs.exists(ctxloom), Ok(false))
+    }
+
     /// The daemon's directory, made if missing and held to 0700 whoever made
     /// it (the single-instance lock may have, with the default mode; an older
     /// install's may be wider). Windows has no modes (M8).

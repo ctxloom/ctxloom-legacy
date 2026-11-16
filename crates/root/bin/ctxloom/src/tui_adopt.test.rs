@@ -229,6 +229,17 @@ impl Rig {
     }
 }
 
+impl Drop for Rig {
+    /// A failing test lets its TUI and its blocker end (each runs until a
+    /// file beside it says so); its project then ends what it started that
+    /// still runs (`Project`'s drop) and removes the home, on which any
+    /// daemon left exits.
+    fn drop(&mut self) {
+        files::put(self.bin.join("release"), "go");
+        files::put(self.bin.join("unblock"), "go");
+    }
+}
+
 /// Wait, bounded, for `ready`; `what` names it when it never comes.
 fn wait(log: &str, what: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + WAIT;
@@ -512,4 +523,36 @@ fn test_a_shutdown_with_a_span_waits_it_out_for_a_live_tui_then_stops_it() {
     );
     let _ = finished(session);
     rig.stop();
+}
+
+// A failing test leaves nothing of ctxloom running (2026-11-15, U8r: two
+// test daemons a panicked TUI test left blocked the next commit's gate for
+// half an hour). A rig dropped under a live TUI, as a panic drops it, ends
+// its frontend (which would otherwise keep, or start again, a daemon) and so
+// the daemon too, before and once its home is removed.
+#[test]
+fn test_a_rig_dropped_under_a_live_tui_leaves_no_frontend_or_daemon() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    let harp = rig.harp();
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    wait(&rig.log(), "the start recorded", || {
+        rig.types(&harp, true)
+            .iter()
+            .any(|t| t == "RunnerStartedRecorded")
+    });
+    let frontend = u64::from(session.id());
+    let daemon = rig.daemon_pid().expect("a daemon serves");
+    drop(rig);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while (alive(frontend) || alive(daemon)) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!alive(frontend), "the frontend outlived its test");
+    assert!(!alive(daemon), "the daemon outlived its test");
+    drop(session);
 }

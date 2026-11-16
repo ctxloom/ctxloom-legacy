@@ -772,6 +772,40 @@ fn a_daemon_whose_home_is_removed_exits_and_writes_nothing_there_again() {
     );
 }
 
+// OD-60: a daemon whose home is deleted exits even when its single-instance
+// lock is elsewhere (the account's, while `CTXLOOM_HOME` names another home:
+// `just install`'s `~/.ctxloom-rs`), so nothing but the home says it is
+// gone; a test's daemon so never outlives its temporary home.
+#[test]
+fn a_daemon_whose_home_is_removed_exits_with_its_lock_elsewhere() {
+    let world = World::new();
+    let account = world.project.home().join("account");
+    let mut env = ENV.to_vec();
+    env.push((INSTANCE_DIR, account.to_str().unwrap()));
+    let mut daemon = Killed(
+        world
+            .project
+            .start_with(&env, &["daemon", "serve", "--idle-seconds", "30"]),
+    );
+    world.until("the discovery file at the account's place", |_| {
+        files::read_bytes(account.join("daemon.discovery"))
+            .ok()
+            .filter(|b| !b.is_empty())
+    });
+    let home = world.project.home().join(".ctxloom");
+    files::remove_tree(&home);
+    let code = exited_within(&mut daemon.0, Duration::from_secs(20));
+    assert_eq!(code, Some(0), "it exits once its home is gone");
+    assert!(
+        !files::exists(&home),
+        "the daemon made its removed home again"
+    );
+    assert!(
+        files::exists(account.join("daemon.lock")),
+        "the lock elsewhere is left"
+    );
+}
+
 // Ruling 131: a store is closed, never dropped. A daemon's exit lets go of
 // everything that holds its store (the listener's tasks, the launcher, the
 // read models it registered) before it closes it, so its log never says it

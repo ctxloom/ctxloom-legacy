@@ -45,6 +45,8 @@ staged_tree := "../.{name}.staged"
 feature_rules := ""
 features_prepare := ""
 mutation_thresholds := "crates=90"
+mutants_memory_max := "16G"
+mutants_swap_max := "2G"
 workspace_wide := "Cargo.toml"
 red_judge := "_judge"
 [no-exit-message]
