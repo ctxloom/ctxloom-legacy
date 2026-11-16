@@ -1892,7 +1892,22 @@ every interactive session (`frontend::client_terminal`) holds
 by the file `<pid>.stop` beside it, which it looks for every 200 ms
 (`watch_for_stop`): it then requests its `Stop` (the TUI asked to stop, then
 killed after its grace, as a SIGTERM to it does, ruling 114), reports its
-end and exits, said `asked to stop by `ctxloom shutdown``. A dead
+end and exits, said `asked to stop by `ctxloom shutdown``. A drain TELLS
+each live frontend at once (OD-63, its spec held): the file `<pid>.notice`
+beside its lock (`liveness::FrontendNotice`: a `stop_at: <epoch seconds>|none`
+line, then the text; a later one replaces it), which the frontend shows on
+its terminal's stderr as `ctxloom: <text>` once per notice (`Watch::look`).
+`ctxloom shutdown <span>` tells it with no `stop_at` (it asks the stop
+itself at the span's end); a SIGTERM's drain tells it with `stop_at` its
+start plus the timeout, told again when the timeout changes while the
+daemon lives, and the frontend stops itself then (said `the drain ctxloom
+was told of ended: ...`), since a daemon hosting nothing has exited by
+then. The notice text (`shutdown::notice_text`, "ctxloom is shutting down:
+this session will be stopped in <span>; finish and exit") and both stop
+sentences are DRAFTS (OD-63). Under `test-support`, the daemon directory's
+`test-deaf-to-stop` makes a daemon take a stop and a drain and ignore them,
+and `test-shutdown-stop-wait` (seconds) shortens `STOP_WAIT`, so a test
+sees the exit 10. A dead
 frontend's lock reads free and its files are taken away by the next look;
 no process id is trusted and no signal is sent to one (Windows alike). The
 shutdown reaches the daemon without the version check (`Reach::observing`),

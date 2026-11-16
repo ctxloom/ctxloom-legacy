@@ -510,18 +510,30 @@ fn test_a_shutdown_with_a_span_waits_it_out_for_a_live_tui_then_stops_it() {
         files::exists(rig.bin.join("tui-started"))
     });
     let shut = rig.run(&["shutdown", "2s"]);
-    if shut.code != 0 {
-        rig.release_tui();
-        let ran = finished(session);
-        panic!("DEBUG {}\nSESSION {}", shut.said(), ran.said());
-    }
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), rig.log());
     assert!(
         shut.stdout.contains("after the drain's 2s, still running")
             && shut.stdout.contains("asked the frontend pid"),
         "{}",
         shut.said()
     );
-    let _ = finished(session);
+    let told = shut
+        .stdout
+        .find("told the frontend pid")
+        .unwrap_or_else(|| panic!("the frontend was told at once: {}", shut.said()));
+    let after = shut
+        .stdout
+        .find("after the drain's 2s")
+        .expect("said above");
+    assert!(told < after, "told at the drain's start: {}", shut.said());
+    let ran = finished(session);
+    assert!(
+        ran.stderr.contains(
+            "ctxloom: ctxloom is shutting down: this session will be stopped in 2s; finish and exit"
+        ),
+        "its terminal showed the notice: {}",
+        ran.said()
+    );
     rig.stop();
 }
 
@@ -555,4 +567,61 @@ fn test_a_rig_dropped_under_a_live_tui_leaves_no_frontend_or_daemon() {
     assert!(!alive(frontend), "the frontend outlived its test");
     assert!(!alive(daemon), "the daemon outlived its test");
     drop(session);
+}
+
+/// Send `signal` to `pid`, whatever comes of it (it may have exited).
+fn send(pid: u64, signal: &str) {
+    let _ = std::process::Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .status();
+}
+
+/// A live TUI's daemon sent SIGTERM twice, its ctxloom home removed first
+/// when `home_removed`: the daemon exits within a bound (ruling 114).
+fn two_sigterms_under_a_live_tui(home_removed: bool) {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    let harp = rig.harp();
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    wait(&rig.log(), "the start recorded", || {
+        rig.types(&harp, true)
+            .iter()
+            .any(|t| t == "RunnerStartedRecorded")
+    });
+    let daemon = rig.daemon_pid().expect("a daemon serves");
+    if home_removed {
+        files::remove_tree(rig.project.home().join(".ctxloom"));
+    }
+    send(daemon, "-TERM");
+    send(daemon, "-TERM");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while alive(daemon) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let outlived = alive(daemon);
+    if outlived {
+        send(daemon, "-KILL");
+    }
+    rig.release_tui();
+    let _ = finished(session);
+    assert!(!outlived, "the daemon outlived two SIGTERMs by 30s");
+}
+
+// Ruling 114, FORCED (2026-11-15: a test's daemon hosting a leaked
+// frontend's session ignored two SIGTERMs): the daemon of a live TUI
+// exits on two SIGTERMs.
+#[test]
+fn test_two_sigterms_stop_the_daemon_of_a_live_tui() {
+    two_sigterms_under_a_live_tui(false);
+}
+
+// The same with the ctxloom home removed first, as a test's temporary
+// home is.
+#[test]
+fn test_two_sigterms_stop_the_daemon_of_a_live_tui_whose_home_was_removed() {
+    two_sigterms_under_a_live_tui(true);
 }

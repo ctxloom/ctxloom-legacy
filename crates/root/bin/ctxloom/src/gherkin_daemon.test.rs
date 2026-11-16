@@ -5,8 +5,7 @@
 //! and trust and approvals (ruling 142): `journeys/j002800_trusting_a_project.feature`,
 //! `cli/trust.feature` and `cli/session_approvals.feature`; and the
 //! architecture rulings T13-T30: `cli/mcp_serve.feature` and
-//! `cli/atomic_writes.feature`; and the shutdown (OD-62, OD-63):
-//! `cli/shutdown.feature`.
+//! `cli/atomic_writes.feature`.
 //!
 //! RED BY DESIGN. The spec is committed before the daemon is reworked to
 //! it, so every step here that the existing harness cannot already take is a
@@ -77,13 +76,6 @@ pub(super) struct State {
     hooks: Vec<crate::tests::Ran>,
     /// No daemon can start while the session's assistant starts (OD-59).
     start_blocked: bool,
-    /// The home config's `daemon.drain_timeout`, as a step said it
-    /// (shutdown.feature): every home config the steps write carries it.
-    drain_timeout: Option<String>,
-    /// The stub claude the home config names, once one is set.
-    stub: Option<PathBuf>,
-    /// What the interactive session's command came to, once it ended.
-    session_ran: Option<crate::tests::Ran>,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -194,25 +186,14 @@ fn stub_claude(w: &mut World, body: &str) -> PathBuf {
     w.common
         .project
         .write(".ctxloom/config.yaml", PROJECT_CONFIG);
-    w.daemon_spec.stub = Some(dir.join("claude"));
-    write_home_config(w);
+    w.common.project.write_home(
+        ".ctxloom/config.yaml",
+        &format!(
+            "schema_version: 9\neditor:\n  command: \"true\"\nengines:\n  claude-code:\n    command: {}\n",
+            dir.join("claude").display()
+        ),
+    );
     dir
-}
-
-/// The home config the steps write: the stub claude's (when one is set),
-/// and the drain timeout a step said (shutdown.feature).
-fn write_home_config(w: &World) {
-    let mut config = "schema_version: 9\neditor:\n  command: \"true\"\n".to_string();
-    if let Some(stub) = &w.daemon_spec.stub {
-        config.push_str(&format!(
-            "engines:\n  claude-code:\n    command: {}\n",
-            stub.display()
-        ));
-    }
-    if let Some(timeout) = &w.daemon_spec.drain_timeout {
-        config.push_str(&format!("daemon:\n  drain_timeout: {timeout}\n"));
-    }
-    w.common.project.write_home(".ctxloom/config.yaml", &config);
 }
 
 /// The interactive session's stub: it says it started, then runs until
@@ -4013,17 +3994,11 @@ fn hosted_again(w: &mut World) {
 
 #[then("after five minutes the child's turn in flight was cut and the daemon has exited")]
 fn cut_after_the_period(w: &mut World) {
-    cut_after(w, HAND_OVER_SECONDS);
-}
-
-/// The drain's period, `seconds` long, cut the child's turn in flight and
-/// handed it over, and the daemon exited, saying nothing serves.
-fn cut_after(w: &mut World, seconds: &str) {
     assert_eq!(exit_of_daemon(w), Some(0), "{}", daemon_log_text(w));
     let log = daemon_log_text(w);
     assert!(
         log.contains(&format!(
-            "{CHILD}: still busy after {seconds}s: its turn in flight cut, handed over"
+            "{CHILD}: still busy after {HAND_OVER_SECONDS}s: its turn in flight cut, handed over"
         )),
         "{log}"
     );
@@ -4075,253 +4050,6 @@ fn listed_says_nothing_of_the_start_up(w: &mut World) {
     let listed = run_now(w, &["session", "list"]);
     assert_eq!(listed.code, 0, "{}", listed.said());
     assert!(!listed.stderr.contains("start-up"), "{}", listed.said());
-}
-
-// --------------------------------------- `ctxloom shutdown` (OD-62, OD-63)
-
-#[then("after two seconds the child's turn in flight was cut and the daemon has exited")]
-fn cut_after_two_seconds(w: &mut World) {
-    cut_after(w, "2");
-}
-
-#[then("after one second the child's turn in flight was cut and the daemon has exited")]
-fn cut_after_one_second(w: &mut World) {
-    cut_after(w, "1");
-}
-
-#[then("within a few seconds the child's turn in flight was cut and the daemon has exited")]
-fn cut_within_a_few_seconds(w: &mut World) {
-    // The drain's timeout was changed to 1s while it drained: the period,
-    // timed from its start, has long passed.
-    cut_after(w, "1");
-}
-
-/// The value a `daemon.drain_timeout: <value>` step names.
-fn drain_timeout_of(said: &str) -> String {
-    said.strip_prefix("daemon.drain_timeout: ")
-        .unwrap_or_else(|| panic!("a drain timeout: {said:?}"))
-        .to_string()
-}
-
-#[given(expr = "the home config says {string}")]
-fn home_config_says(w: &mut World, said: String) {
-    w.daemon_spec.drain_timeout = Some(drain_timeout_of(&said));
-    write_home_config(w);
-}
-
-#[when(expr = "the home config is changed to say {string}")]
-fn home_config_changed(w: &mut World, said: String) {
-    w.daemon_spec.drain_timeout = Some(drain_timeout_of(&said));
-    write_home_config(w);
-}
-
-#[then(expr = "{string} succeeds and shows the new timeout")]
-fn shows_the_new_timeout(w: &mut World, line: String) {
-    let words: Vec<&str> = line
-        .strip_prefix("ctxloom ")
-        .expect("a ctxloom line")
-        .split_whitespace()
-        .collect();
-    let shown = run_now(w, &words);
-    assert_eq!(shown.code, 0, "{}", shown.said());
-    let timeout = w.daemon_spec.drain_timeout.clone().expect("a new timeout");
-    assert!(
-        shown.stdout.contains("drain_timeout") && shown.stdout.contains(&timeout),
-        "{timeout}: {}",
-        shown.said()
-    );
-}
-
-/// Send the daemon the scenario started `signal`.
-fn signal_daemon(w: &World, signal: &str) {
-    let pid = w
-        .daemon_spec
-        .daemon
-        .as_ref()
-        .expect("the scenario started a daemon")
-        .id();
-    let sent = std::process::Command::new("kill")
-        .args([&format!("-{signal}"), &pid.to_string()])
-        .status()
-        .expect("kill runs");
-    assert!(sent.success(), "the daemon was sent SIG{signal}");
-}
-
-/// Wait for the daemon's log to say `line`.
-fn logged(w: &World, line: &str) {
-    until(w, &format!("the log's {line:?}"), DAEMON_WAIT, |w| {
-        daemon_log_text(w).contains(line).then_some(())
-    });
-}
-
-#[when("the daemon is sent SIGTERM")]
-fn sent_sigterm(w: &mut World) {
-    signal_daemon(w, "TERM");
-    logged(w, "SIGTERM: asked to drain");
-}
-
-#[when("the daemon is sent SIGTERM twice")]
-fn sent_sigterm_twice(w: &mut World) {
-    sent_sigterm(w);
-    // The second once the first was heard: two at once may be one.
-    signal_daemon(w, "TERM");
-    logged(w, "SIGTERM again: asked to stop even if live");
-}
-
-#[then(expr = "{string} reports it draining")]
-fn reports_draining(w: &mut World, line: String) {
-    assert_eq!(line, "ctxloom daemon status --format json");
-    until(w, "the daemon to say it drains", DAEMON_WAIT, |w| {
-        let status = run_now(w, &["daemon", "status", "--format", "json"]);
-        assert_eq!(status.code, 0, "{}", status.said());
-        (status.json()["draining"] == true).then_some(())
-    });
-}
-
-#[then(expr = "{string} exits with code {int}, naming {string}")]
-fn exits_naming(w: &mut World, line: String, code: i32, name: String) {
-    let words: Vec<&str> = line
-        .strip_prefix("ctxloom ")
-        .expect("a ctxloom line")
-        .split_whitespace()
-        .collect();
-    let ran = run_now(w, &words);
-    assert_eq!(ran.code, code, "{}", ran.said());
-    assert!(ran.stderr.contains(&name), "{name}: {}", ran.said());
-}
-
-#[then(expr = "the error names {string}")]
-fn error_names(w: &mut World, name: String) {
-    let ran = w.common.ran();
-    assert!(ran.stderr.contains(&name), "{name}: {}", ran.said());
-}
-
-#[given("a ctxloom daemon is serving for this home that does not exit when asked")]
-fn serving_deaf_to_stop(w: &mut World) {
-    start_daemon(w);
-    // It takes a stop and ignores it (test-support), and the shutdown waits
-    // for it two seconds, not thirty.
-    files::put(daemon_dir(w).join("test-deaf-to-stop"), "");
-    files::put(daemon_dir(w).join("test-shutdown-stop-wait"), "2");
-}
-
-#[then("the error names the daemon's pid")]
-fn error_names_the_pid(w: &mut World) {
-    let pid = w
-        .daemon_spec
-        .daemon
-        .as_ref()
-        .expect("the scenario started a daemon")
-        .id();
-    let ran = w.common.ran();
-    assert!(
-        ran.stderr.contains("ctxloom-wiring-shutdown-incomplete")
-            || ran.stderr.contains(&format!("pid {pid}")),
-        "{}",
-        ran.said()
-    );
-    assert!(ran.stderr.contains(&format!("pid {pid}")), "{}", ran.said());
-}
-
-#[given(expr = "an interactive session {string} is running in a terminal")]
-fn session_in_a_terminal(w: &mut World, harp: String) {
-    primary_running(w, harp);
-}
-
-/// What the interactive session's command came to: waited for once (the
-/// shutdown that stopped it has returned).
-fn session_ran(w: &mut World) -> crate::tests::Ran {
-    if w.daemon_spec.session_ran.is_none() {
-        let child = w.daemon_spec.run.take().expect("the session's command");
-        w.daemon_spec.session_ran = Some(crate::tests::Ran::of(
-            child.wait_with_output().expect("it ends"),
-        ));
-    }
-    w.daemon_spec.session_ran.clone().expect("it ran")
-}
-
-#[then(expr = "the session's human was told at once {string}")]
-fn human_told(w: &mut World, text: String) {
-    let ran = w.common.ran().clone();
-    let told = ran
-        .stdout
-        .find(&format!(": {text}"))
-        .filter(|_| ran.stdout.contains("told the frontend pid"))
-        .unwrap_or_else(|| panic!("the frontend was told: {}", ran.said()));
-    let after = ran
-        .stdout
-        .find("after the drain's")
-        .unwrap_or_else(|| panic!("the drain's end said: {}", ran.said()));
-    assert!(told < after, "told at the drain's start: {}", ran.said());
-    let session = session_ran(w);
-    assert!(
-        session.stderr.contains(&format!("ctxloom: {text}")),
-        "its terminal showed it: {}",
-        session.said()
-    );
-}
-
-#[then(
-    "the output says the session's frontend still ran after the drain's 2s, and was asked to stop"
-)]
-fn frontend_asked_after_the_drain(w: &mut World) {
-    let ran = w.common.ran();
-    let still = ran
-        .stdout
-        .find("after the drain's 2s, still running")
-        .unwrap_or_else(|| panic!("{}", ran.said()));
-    assert!(
-        ran.stdout[still..].contains("frontends pid"),
-        "{}",
-        ran.said()
-    );
-    let asked = ran
-        .stdout
-        .find("asked the frontend pid")
-        .unwrap_or_else(|| panic!("{}", ran.said()));
-    assert!(
-        still < asked,
-        "asked once the drain had ended: {}",
-        ran.said()
-    );
-}
-
-#[then("the session's engine was stopped and its end recorded")]
-fn engine_stopped_and_recorded(w: &mut World) {
-    let session = session_ran(w);
-    assert!(
-        session
-            .stderr
-            .contains("asked to stop by `ctxloom shutdown`: the session's engine was stopped"),
-        "{}",
-        session.said()
-    );
-    let project = w.common.project.dir().to_path_buf();
-    assert_eq!(
-        tui_record(w, &project, "asked").trim(),
-        "asked",
-        "its engine was asked to stop: {}",
-        session.said()
-    );
-    let harp = tui_record(w, &project, "tui-harp").trim().to_string();
-    // The incarnation its resume owed has ended (the seeded one had too).
-    until(w, "the session's end recorded", DAEMON_WAIT, |w| {
-        let ran = run_now(w, &["test", "session-events", &harp]);
-        let types: Vec<String> = if ran.code == 0 {
-            ran.json()
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|e| e["type"].as_str().map(str::to_string))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let owed = types.iter().rposition(|t| t == "IncarnationOwed");
-        let ended = types.iter().rposition(|t| t == "IncarnationEnded");
-        matches!((owed, ended), (Some(owed), Some(ended)) if ended > owed).then_some(())
-    });
 }
 
 // ------------------------------------- a daemon lost under a session (OD-59)

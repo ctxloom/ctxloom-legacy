@@ -1771,3 +1771,107 @@ fn a_second_sigterm_is_the_plain_stop() {
         "the child ended"
     );
 }
+
+// Ruling 114, FORCED (2026-11-15: a test's `daemon serve` outlived its
+// removed home for 43 minutes, two SIGTERMs ignored): an idle daemon sent
+// SIGTERM twice, the second at once, reaches the plain stop and exits
+// within a bound. The signals are sent; nothing is waited for between.
+#[test]
+fn two_sigterms_at_once_stop_an_idle_daemon_within_a_bound() {
+    let world = World::new();
+    let (daemon, _) = served(&world);
+    let mut daemon = Killed(daemon);
+    let pid = daemon.0.id();
+    signal(pid, "-TERM");
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(20)),
+        Some(0),
+        "two SIGTERMs stop it; its log:\n{}",
+        world.log()
+    );
+}
+
+// The same with its home removed first (OD-60's exit racing the signals):
+// whichever is heard first, the daemon exits within the bound.
+#[test]
+fn two_sigterms_stop_an_idle_daemon_whose_home_was_removed() {
+    let world = World::new();
+    let (daemon, _) = served(&world);
+    let mut daemon = Killed(daemon);
+    let pid = daemon.0.id();
+    files::remove_tree(world.project.home().join(".ctxloom"));
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(20)),
+        Some(0),
+        "it exits"
+    );
+}
+
+// A daemon hosting a child whose turn will not end (its engine deaf, the
+// drain an hour), its home removed, then sent SIGTERM twice: it ends what
+// it hosts and exits within the bound, never waiting out the drain.
+#[test]
+fn two_sigterms_stop_a_busy_daemon_whose_home_was_removed() {
+    let world = World::new();
+    world.drain_timeout("1h");
+    files::put(world.stub_dir.join("deaf"), "");
+    let mut daemon = a_busy_child(&world, None);
+    let pid = daemon_pid(&world).expect("a daemon serves");
+    signal(pid, "-TERM");
+    world.until("the daemon draining", |w| {
+        w.log().contains("SIGTERM: asked to drain").then_some(())
+    });
+    let stub_dir = world.stub_dir.clone();
+    files::remove_tree(world.project.home().join(".ctxloom"));
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "it exits"
+    );
+    assert!(files::exists(stub_dir.join("exited")), "the child ended");
+}
+
+// `ctxloom shutdown` never kills: a daemon that does not exit when asked
+// (test-support's `test-deaf-to-stop`, its stop wait two seconds by
+// `test-shutdown-stop-wait`) is named, by its pid, and the command fails
+// (exit 10, `ctxloom-wiring-shutdown-incomplete`); the daemon still runs.
+#[test]
+fn a_shutdown_names_a_daemon_that_does_not_exit_and_fails() {
+    let world = World::new();
+    let mut daemon = Killed(
+        world
+            .project
+            .start_with(&ENV, &["daemon", "serve", "--idle-seconds", "60"]),
+    );
+    world.until("the daemon serving", |w| w.serving().then_some(()));
+    let dir = world.project.home().join(".ctxloom/daemon");
+    files::put(dir.join("test-deaf-to-stop"), "");
+    files::put(dir.join("test-shutdown-stop-wait"), "2");
+    let shut = world.run(&["shutdown", "now"]);
+    assert_eq!(shut.code, 10, "{}\n{}", shut.said(), world.log());
+    let pid = daemon.0.id();
+    assert!(
+        shut.stderr.contains("ctxloom-wiring-shutdown-incomplete")
+            || shut.stderr.contains("still runs"),
+        "{}",
+        shut.said()
+    );
+    assert!(shut.stderr.contains(&format!("{pid}")), "{}", shut.said());
+    assert!(
+        exited_within(&mut daemon.0, Duration::from_millis(200)).is_none(),
+        "it was never killed"
+    );
+    files::remove(dir.join("test-deaf-to-stop"));
+}

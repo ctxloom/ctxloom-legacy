@@ -74,7 +74,6 @@ pub(crate) const CLUSTERS: &[Cluster] = &[
         name: "daemon",
         files: &[
             "cli/daemon.feature",
-            "cli/shutdown.feature",
             "cli/session_children.feature",
             "cli/mcp_serve.feature",
             "cli/run.feature",

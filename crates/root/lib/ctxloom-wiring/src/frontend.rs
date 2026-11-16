@@ -357,13 +357,20 @@ pub(crate) fn client_terminal(
     let mut done = runtime.block_on(async {
         let mut said = Vec::new();
         let stopped = std::sync::Arc::new(Mutex::new(None::<StopCause>));
+        // The watch runs IN this future, on the command's main thread, never
+        // spawned: it writes its notices to stderr, whose std lock that
+        // thread holds for the command's whole run (the binary's `main`), so
+        // from the runtime's one worker the write would wait for the
+        // command's end, and the worker with it: the signals it hears (ruling
+        // 114), the stop, the session itself (2026-11-15: a frontend told of
+        // a drain hung for good, SIGTERM ignored).
         let watching = match &held {
-            Ok(_) => Some(tokio::spawn(watch_for_stop(
+            Ok(_) => Some(watch_for_stop(
                 liveness::FrontendLocks::new(wiring.fs(), wiring.home()),
                 pid,
                 stop.clone(),
                 std::sync::Arc::clone(&stopped),
-            ))),
+            )),
             Err(e) => {
                 said.push(Notice::text(format!(
                     "cannot hold this frontend's lock ({e:?}): `ctxloom shutdown` will not find it"
@@ -398,12 +405,9 @@ pub(crate) fn client_terminal(
             request: request.clone(),
             request_id: crate::daemon::request_id(),
         };
-        let mut done = terminal(wiring, stamp, &asked, &stop).await;
+        let mut done = beside(terminal(wiring, stamp, &asked, &stop), watching).await;
         if let Some(hearing) = hearing {
             hearing.abort();
-        }
-        if let Some(watching) = watching {
-            watching.abort();
         }
         let cause = *stopped.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(cause) = cause {
@@ -418,6 +422,25 @@ pub(crate) fn client_terminal(
     done
 }
 
+/// `main`'s output, `aside` polled beside it until it ends or `main` does
+/// (then dropped), both on the polling thread.
+async fn beside<T>(
+    main: impl std::future::Future<Output = T>,
+    aside: Option<impl std::future::Future<Output = ()>>,
+) -> T {
+    let mut main = std::pin::pin!(main);
+    let mut aside = std::pin::pin!(aside);
+    std::future::poll_fn(|cx| {
+        if let Some(running) = aside.as_mut().as_pin_mut() {
+            if running.poll(cx).is_ready() {
+                aside.set(None);
+            }
+        }
+        main.as_mut().poll(cx)
+    })
+    .await
+}
+
 /// Why a frontend stopped its TUI by itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StopCause {
@@ -428,6 +451,8 @@ enum StopCause {
 }
 
 impl StopCause {
+    /// What the session's end says of why (the `DrainEnded` sentence is a
+    /// DRAFT, OD-63).
     fn said(self) -> &'static str {
         match self {
             StopCause::Asked => {
