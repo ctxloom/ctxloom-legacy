@@ -119,8 +119,24 @@ fn an_enqueued_run_is_owed_a_runner() {
             incarnation: 1,
             mode: RunMode::OneShot,
             launcher_lock: lock_of(1),
+            project_dir: String::new(),
+            harp: String::new(),
         }
     );
+}
+
+// A run owed a runner is listed with its session's place once its mint is
+// seen: a daemon that adopts it lets its checkout go in that project.
+#[test]
+fn a_run_owed_a_runner_is_listed_with_its_sessions_place() {
+    let model = fold(&[
+        minted(1, "amber-swift-owl"),
+        enqueued(1, 1, RunMode::Interactive),
+    ]);
+    let launches = model.launches();
+    assert_eq!(launches.len(), 1);
+    assert_eq!(launches[0].project_dir, "/work/p1");
+    assert_eq!(launches[0].harp, "amber-swift-owl");
 }
 
 #[test]
