@@ -765,3 +765,39 @@ fn the_warnings_in_metadata_are_its_notices_in_order() {
         [standing("one"), standing("two")]
     );
 }
+
+// One root for infrastructure errors (owner, 2026-11-14): each error the
+// daemon answers through `run_ports::Infrastructure` is read back from its
+// status alone, as the client read it before the root.
+#[test]
+fn each_infrastructure_error_the_daemon_answers_is_read_back() {
+    use run_ports::Infrastructure;
+    for error in Infrastructure::ALL {
+        let status = Status::new(Code::from_i32(error.status()), "said");
+        let called = super::called("GetDaemon", &status);
+        match error {
+            Infrastructure::Unauthenticated => assert_eq!(called, Called::Unauthenticated),
+            Infrastructure::Unimplemented => assert_eq!(
+                called,
+                Called::Unimplemented {
+                    method: format!("{}GetDaemon", super::SERVICE)
+                }
+            ),
+            Infrastructure::Unavailable | Infrastructure::TimedOut => assert_eq!(
+                called,
+                Called::Unreachable {
+                    detail: "said".to_string()
+                },
+                "{error:?}"
+            ),
+            _ => assert_eq!(
+                called,
+                Called::Failed {
+                    code: error.status(),
+                    detail: "said".to_string()
+                },
+                "{error:?}"
+            ),
+        }
+    }
+}

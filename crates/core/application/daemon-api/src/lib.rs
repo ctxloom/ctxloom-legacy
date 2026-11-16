@@ -67,6 +67,9 @@ pub use destroy::{Places, Purges};
 pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
 pub use hand_over::HandingOver;
 pub use refusal::{rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection};
+/// The infrastructure tree's one root (owner, 2026-11-14), for the daemon's
+/// service, which answers an error that is no refusal through it.
+pub use run_ports::Infrastructure;
 pub use runs::RunStream;
 pub use server::{About, Answer, Api, Assemblies, Calls, Harps, Hosting, Parts, SessionStates};
 pub use session_client::{Client, Removed, RequestIds, SessionReads, SessionRemovals};

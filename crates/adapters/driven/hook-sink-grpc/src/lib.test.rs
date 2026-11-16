@@ -839,3 +839,63 @@ fn a_fact_of_no_such_session_over_the_wire_is_answered_so() {
         Delivery::NoSuchSession
     );
 }
+
+// One root for infrastructure errors (owner, 2026-11-14): a status a
+// listener answers through `run_ports::Infrastructure` (its code, and its
+// key as the message) is read back as the delivery each error means.
+fn answered(error: run_ports::Infrastructure) -> Status {
+    Status::new(
+        Code::from_i32(error.status()),
+        error.key().unwrap_or("said"),
+    )
+}
+
+#[test]
+fn each_infrastructure_error_reads_back_as_its_delivery() {
+    use run_ports::Infrastructure;
+    for error in Infrastructure::ALL {
+        let status = answered(error);
+        let delivery = delivery_of_code(status.code(), status.message(), "");
+        let kind = match &delivery {
+            Delivery::NoSuchSession => "no such session",
+            Delivery::Parked => "parked",
+            Delivery::TimedOut => "timed out",
+            Delivery::Unavailable { .. } => "unavailable",
+            Delivery::Refused { .. } => "refused",
+            other => panic!("{error:?}: {other:?}"),
+        };
+        let expected = match error {
+            Infrastructure::SessionUnknown => "no such session",
+            Infrastructure::Parked => "parked",
+            Infrastructure::TimedOut => "timed out",
+            Infrastructure::Conflict
+            | Infrastructure::Failed
+            | Infrastructure::Unavailable
+            | Infrastructure::Exhausted
+            | Infrastructure::Unknown
+            | Infrastructure::DataLoss => "unavailable",
+            Infrastructure::Malformed
+            | Infrastructure::Unimplemented
+            | Infrastructure::Unauthenticated => "refused",
+        };
+        assert_eq!(kind, expected, "{error:?}");
+    }
+}
+
+#[test]
+fn the_keyed_infrastructure_errors_read_back_over_the_wire() {
+    use run_ports::Infrastructure;
+    for (error, expected) in [
+        (Infrastructure::SessionUnknown, Delivery::NoSuchSession),
+        (Infrastructure::Parked, Delivery::Parked),
+    ] {
+        let status = answered(error);
+        let message: &'static str = error.key().expect("a keyed error");
+        let server = serve(Answer::Fail(status.code(), message));
+        assert_eq!(
+            server.sink().deliver(CommandBook::default(), BUDGET),
+            expected,
+            "{error:?}"
+        );
+    }
+}

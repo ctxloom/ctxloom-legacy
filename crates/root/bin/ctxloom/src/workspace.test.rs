@@ -299,6 +299,161 @@ fn test_no_refusal_status_is_spelled_in_the_rust_sources() {
     assert!(hits.is_empty(), "a status is spelled in Rust: {hits:#?}");
 }
 
+/// The one root of the infrastructure tree (owner, 2026-11-14): the one
+/// source that may name a gRPC status. Its own `*.test.rs` is a test file.
+const INFRASTRUCTURE_ROOT: &str = "crates/core/ports/run-ports/src/infrastructure.rs";
+
+/// The spellings of a gRPC status in Rust: a code by name (tonic's
+/// `Code`, angzarr's `Code` and the router's `GrpcCode` alike) and tonic's
+/// status constructors. Built from the bare names, so this file holds none.
+fn status_spellings() -> Vec<String> {
+    let codes = [
+        "Cancelled",
+        "Unknown",
+        "InvalidArgument",
+        "DeadlineExceeded",
+        "NotFound",
+        "AlreadyExists",
+        "PermissionDenied",
+        "ResourceExhausted",
+        "FailedPrecondition",
+        "Aborted",
+        "OutOfRange",
+        "Unimplemented",
+        "Internal",
+        "Unavailable",
+        "DataLoss",
+        "Unauthenticated",
+    ];
+    let constructors = [
+        "cancelled",
+        "unknown",
+        "invalid_argument",
+        "deadline_exceeded",
+        "not_found",
+        "already_exists",
+        "permission_denied",
+        "resource_exhausted",
+        "failed_precondition",
+        "aborted",
+        "out_of_range",
+        "unimplemented",
+        "internal",
+        "unavailable",
+        "data_loss",
+        "unauthenticated",
+    ];
+    codes
+        .iter()
+        .map(|code| format!("Code::{code}"))
+        .chain(constructors.iter().map(|ctor| format!("Status::{ctor}(")))
+        .collect()
+}
+
+/// The spellings of a status found in `text`.
+fn spelled_statuses(text: &str) -> Vec<String> {
+    status_spellings()
+        .into_iter()
+        .filter(|term| text.contains(term.as_str()))
+        .collect()
+}
+
+/// Whether `path` (relative to the repository) may spell a status: the
+/// infrastructure root, or a test file (`*.test.rs`), which plays the other
+/// end of the wire (a fake daemon's arbitrary answer) and asserts what it
+/// reads.
+fn may_spell_a_status(rel: &str) -> bool {
+    rel == INFRASTRUCTURE_ROOT || rel.ends_with(".test.rs")
+}
+
+/// No Rust source but the infrastructure root spells a gRPC status (the
+/// two trees: a business refusal's status is its proto's
+/// `(refusal_status)`, above; an infrastructure error's is named once, at
+/// `run_ports::Infrastructure`). And the root does name them, so the
+/// allowance is not vacuous.
+#[test]
+fn test_no_status_is_spelled_in_rust_but_at_the_infrastructure_root() {
+    let root = super::repo_root();
+    let mut all = Vec::new();
+    files(&root.join("crates"), &mut all);
+    let mut scanned = 0;
+    let mut hits = Vec::new();
+    for path in all {
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(&root)
+            .expect("under the root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if may_spell_a_status(&rel) {
+            continue;
+        }
+        let Ok(text) = files::read(&path) else {
+            continue;
+        };
+        scanned += 1;
+        for term in spelled_statuses(&text) {
+            hits.push(format!("{rel}: {term}"));
+        }
+    }
+    assert!(scanned > 100, "scanned only {scanned} Rust files");
+    assert!(
+        hits.is_empty(),
+        "a status is spelled outside {INFRASTRUCTURE_ROOT}: {hits:#?}"
+    );
+    let named = spelled_statuses(&files::read(root.join(INFRASTRUCTURE_ROOT)).expect("the root"));
+    assert!(
+        named.contains(&format!("Code::{}", "NotFound")),
+        "the root names no status: {named:?}"
+    );
+}
+
+#[test]
+fn test_the_status_scan_allows_the_root_and_test_files_alone() {
+    assert!(may_spell_a_status(INFRASTRUCTURE_ROOT));
+    assert!(may_spell_a_status(
+        "crates/adapters/driven/hook-sink-grpc/src/lib.test.rs"
+    ));
+    for elsewhere in [
+        "crates/adapters/driven/hook-sink-grpc/src/lib.rs",
+        "crates/core/ports/run-ports/src/sink.rs",
+        "crates/core/ports/run-ports/src/infrastructure.rs.bak",
+        "crates/other/run-ports/src/infrastructure.rs",
+    ] {
+        assert!(!may_spell_a_status(elsewhere), "{elsewhere}");
+    }
+}
+
+#[test]
+fn test_the_status_scan_finds_each_spelling() {
+    let stray = format!("let code = tonic::Code::{};", "NotFound");
+    assert_eq!(
+        spelled_statuses(&stray),
+        vec![format!("Code::{}", "NotFound")]
+    );
+    let grpc = format!("GrpcCode::{}", "Aborted");
+    assert_eq!(
+        spelled_statuses(&grpc),
+        vec![format!("Code::{}", "Aborted")]
+    );
+    let built = format!("Err(Status::{}(\"x\"))", "internal");
+    assert_eq!(
+        spelled_statuses(&built),
+        vec![format!("Status::{}(", "internal")]
+    );
+    for clean in [
+        "Code::from_i32(error.status())",
+        "Status::new(code, message)",
+        "Status::with_details(code, message, details)",
+        "ExitCode::FAILURE",
+        "RpcStatus::decode(bytes)",
+    ] {
+        assert!(spelled_statuses(clean).is_empty(), "{clean}");
+    }
+}
+
 /// A test that spawns the binary in a directory of its own, with a cleared
 /// environment, must hand it the temporary root it made that directory under
 /// (`TMPDIR`). The binary finds its project by walking up from the working

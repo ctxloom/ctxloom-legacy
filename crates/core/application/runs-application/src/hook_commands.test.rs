@@ -8,7 +8,7 @@ use std::sync::Arc;
 use angzarr_coordinator::angzarr_coordinator_base::{Code, Refusal};
 use angzarr_coordinator::{Commands, Coordinator, Credential, Served};
 use angzarr_embedded::v1::{Cover, DeliveryOutcome, Uuid};
-use run_ports::{Bearer, Edge, Token};
+use run_ports::{Bearer, Edge, Infrastructure, Token};
 
 use crate::fakes::{command_book, fact_book, KernelEdge, World};
 use crate::{EdgeCommands, EdgeFailure, UserGate};
@@ -170,6 +170,11 @@ async fn a_fact_the_kernel_parks_is_answered_with_its_spec_key() {
     let coded = parked.coded();
     assert_eq!(coded.key, "ANGZARR_REASON_FACT_DEAD_LETTERED");
     assert_eq!(coded.code, Code::Internal);
+    assert_eq!(
+        Infrastructure::read(coded.code.number(), &[&coded.key]),
+        Some(Infrastructure::Parked),
+        "read back through the infrastructure root"
+    );
 }
 
 #[tokio::test]
@@ -179,6 +184,7 @@ async fn an_unknown_domain_is_answered_the_way_the_kernel_answers_a_malformed_bo
     let coded = commands.unknown_domain("nowhere").coded();
     assert_eq!(coded.code, Code::InvalidArgument);
     assert!(coded.key.contains("unknown-domain"), "{}", coded.key);
+    assert_eq!(coded.code, Infrastructure::Malformed.code());
     assert_eq!(
         coded.args.get("domain").map(String::as_str),
         Some("nowhere")
@@ -345,6 +351,11 @@ async fn a_capture_fact_to_a_session_with_no_record_is_answered_no_such_session(
     let coded = refused.coded();
     assert_eq!(coded.key, run_ports::NO_SUCH_SESSION);
     assert_eq!(coded.code, Code::NotFound, "the typed answer's own status");
+    assert_eq!(
+        Infrastructure::read(coded.code.number(), &[&coded.key]),
+        Some(Infrastructure::SessionUnknown),
+        "answered through the infrastructure root"
+    );
     assert_eq!(pages(&world, &session_cover(&nobody)).await, 0);
     let mine = session_cover(&world.me.identity.session);
     let answered = session

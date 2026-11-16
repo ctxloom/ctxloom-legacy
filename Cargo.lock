@@ -3932,6 +3932,7 @@ dependencies = [
 name = "run-ports"
 version = "0.1.0"
 dependencies = [
+ "angzarr-coordinator",
  "angzarr-diagnostic",
  "angzarr-embedded",
  "base64 0.22.1",

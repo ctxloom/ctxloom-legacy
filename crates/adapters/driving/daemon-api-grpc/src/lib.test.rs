@@ -6,7 +6,7 @@
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
-use daemon_api::{Answer, ApiError, ApiRefusal, Calls};
+use daemon_api::{Answer, ApiError, ApiRefusal, Calls, Infrastructure};
 use daemon_proto::service::ctxloom_client::CtxloomClient;
 use daemon_proto::v1;
 use prost::Message;
@@ -349,6 +349,11 @@ async fn a_failure_is_internal() {
         .await
         .unwrap_err();
     assert_eq!(status.code(), Code::Internal);
+    assert_eq!(
+        Infrastructure::read(status.code() as i32, &[]),
+        Some(Infrastructure::Failed),
+        "answered through the infrastructure root"
+    );
 }
 
 // Every RPC not served is UNIMPLEMENTED, to the user bearer alone (a plain
@@ -362,6 +367,11 @@ async fn an_rpc_not_served_is_unimplemented_to_the_user_bearer() {
         .await
         .unwrap_err();
     assert_eq!(status.code(), Code::Unimplemented);
+    assert_eq!(
+        Infrastructure::read(status.code() as i32, &[]),
+        Some(Infrastructure::Unimplemented),
+        "answered through the infrastructure root"
+    );
 }
 
 // Slice 3: GetTranscript and AssembleContext are served, each its use
@@ -808,4 +818,24 @@ async fn a_told_service_tells_each_requests_path() {
             "/ctxloom.v1.Ctxloom/GetSession"
         ]
     );
+}
+
+// One root for infrastructure errors (owner, 2026-11-14): an error that is
+// no refusal is answered under the status `Infrastructure` names for it, its
+// message unchanged.
+#[test]
+fn an_error_that_is_no_refusal_is_answered_through_the_infrastructure_root() {
+    let failed = super::status_of_error(ApiError::Failed {
+        detail: "the store broke".to_string(),
+    });
+    assert_eq!(failed.code() as i32, Infrastructure::Failed.status());
+    assert_eq!(failed.message(), "the store broke");
+    let unserved = super::status_of_error(ApiError::Unimplemented {
+        method: "CreateRun".to_string(),
+    });
+    assert_eq!(
+        unserved.code() as i32,
+        Infrastructure::Unimplemented.status()
+    );
+    assert_eq!(unserved.message(), "CreateRun is not served yet");
 }
