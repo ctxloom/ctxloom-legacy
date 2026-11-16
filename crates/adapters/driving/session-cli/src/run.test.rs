@@ -2381,6 +2381,8 @@ fn a_launch_names_its_owner_child_agent_engine_and_task() {
             "reviewer",
             "--engine",
             "claude-code",
+            "--project",
+            "../api",
             "review the change",
         ],
     );
@@ -2400,6 +2402,7 @@ fn a_launch_names_its_owner_child_agent_engine_and_task() {
                 engine: "claude-code".to_string(),
                 agent: "reviewer".to_string(),
                 task: "review the change".to_string(),
+                project: Some("../api".to_string()),
             }
         )]
     );

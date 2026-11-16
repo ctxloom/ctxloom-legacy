@@ -50,7 +50,10 @@ impl<E: Edge> Api<E> {
     ) -> Result<v1::Run, ApiError> {
         let terminals = Arc::clone(self.terminals()?);
         let project = self.host_project(&request.parent).await?;
-        let (asked, flags) = run_application::client::asked_of(&request);
+        let (asked, mut flags) = run_application::client::asked_of(&request);
+        // The project's trust is the daemon's to read, never the client's
+        // to say (step 8 U2).
+        flags.trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
         let env = request
             .env
             .clone()

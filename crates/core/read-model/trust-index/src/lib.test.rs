@@ -217,3 +217,31 @@ fn a_stream_it_holds_nothing_of_has_no_view() {
     };
     assert!(index.view(&cover).is_none());
 }
+
+// Step 8 U2: a launch asks whether the project it is in, by its id (a
+// worktree shares its primary's), is trusted now.
+#[test]
+fn a_project_is_trusted_by_its_id_only_while_its_trust_stands() {
+    let mut index = TrustIndex::new();
+    assert!(!index.trusts("id-amber"));
+    index
+        .project(&on(
+            "amber",
+            TRUST_DOMAIN,
+            0,
+            vec![granted("amber", "alice")],
+        ))
+        .unwrap();
+    assert!(index.trusts("id-amber"));
+    assert!(!index.trusts("id-birch"));
+    assert!(!index.trusts(""));
+    index
+        .project(&on(
+            "amber",
+            TRUST_DOMAIN,
+            1,
+            vec![revoked("amber", "alice")],
+        ))
+        .unwrap();
+    assert!(!index.trusts("id-amber"));
+}

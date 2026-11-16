@@ -822,6 +822,7 @@ where
             drivable_engines: self.launcher.engines(),
             credential: self.credential(engine, settings, interactive),
             fatal_findings: u32::try_from(previewed.fatal.len()).unwrap_or(u32::MAX),
+            untrusted_settings: previewed.plan.untrusted.clone(),
         };
         // The run's own lock, taken before its enqueue is visible (ruling 92):
         // no other process ever sees it owed a runner with its lock free.

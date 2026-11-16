@@ -123,6 +123,29 @@ async fn the_evidence_reaches_the_runs_decision_and_its_refusal_comes_back_whole
     );
 }
 
+// Step 8 U2: the untrusted settings of the evidence reach the run's
+// decision, refused by their paths, and nothing is journaled.
+#[tokio::test]
+async fn the_untrusted_settings_reach_the_runs_decision() {
+    let edge = Arc::new(KernelEdge::new());
+    let enqueuer = Enqueuer::new(Arc::clone(&edge));
+    let request = EnqueueRequest {
+        mode: runs::RunMode::OneShot,
+        evidence: Evidence {
+            untrusted_settings: vec!["engines.claude-code.command".to_string()],
+            ..Evidence::passing("claude-code")
+        },
+        ..request()
+    };
+    let refused = enqueuer.enqueue(request).await.unwrap_err();
+    assert_eq!(
+        refused,
+        EnqueueError::Refused(runs::RunRejection::UntrustedProjectSettings {
+            paths: "engines.claude-code.command".to_string(),
+        })
+    );
+}
+
 // Ruling 73f (the proposal for a refused run's residue): the run's decision
 // needs no session to exist, so the enqueue can be sent before a name is
 // claimed or the session minted, and a refused run leaves neither.

@@ -14,7 +14,8 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
 
 use init_application::{
-    Added, Companions, Ended, LaunchFailure, NotAdded, PromptFailure, Prompts, Sessions, Terminal,
+    Added, Companions, Ended, LaunchFailure, NotAdded, PromptFailure, PromptRead, Prompts,
+    Sessions, Terminal,
 };
 use library_application::{Flags, RunRequest};
 use process_env::EnvSnapshot;
@@ -166,20 +167,33 @@ impl Prompts for SetupSessions<'_> {
     /// The setup interview as the project's catalog holds it now (a project
     /// bundle `ctxloom` overrides the built-in one whole), read from a library
     /// built when it is asked, so a first init's reads the new project.
-    fn setup_interview(&self) -> Result<String, PromptFailure> {
+    fn setup_interview(&self) -> Result<PromptRead, PromptFailure> {
         let failed = |cause: init_application::Failure| PromptFailure {
             cause,
             exit: Exit::FAILED,
         };
         let wiring = Wiring::new(Arc::clone(self.env)).map_err(|e| failed(Box::new(e)))?;
-        let library = crate::library::build(&wiring, None).map_err(|e| failed(Box::new(e)))?;
-        library
-            .operational_prompt(self.flags, library::builtin::SETUP_INTERVIEW_NAME)
-            .result
-            .map_err(|e| PromptFailure {
-                exit: e.exit(),
-                cause: Box::new(e),
-            })
+        let library = crate::library::build(&wiring, None)
+            .map_err(|e| failed(Box::new(e)))?
+            // A project `ctxloom` bundle replaces the interview only once
+            // the user trusts the project: her daemon is asked, once (D4).
+            .with_trust(crate::daemon::trust_ask(&wiring, self.stamp));
+        let read = library.operational_prompt(self.flags, library::builtin::SETUP_INTERVIEW_NAME);
+        let text = read.result.map_err(|e| PromptFailure {
+            exit: e.exit(),
+            cause: Box::new(e),
+        })?;
+        Ok(PromptRead {
+            text,
+            notices: read
+                .notices
+                .into_iter()
+                .filter(|notice| {
+                    matches!(notice, library_application::Notice::PromptUntrusted { .. })
+                })
+                .map(|notice| Box::new(notice) as init_application::Failure)
+                .collect(),
+        })
     }
 
     /// Each enabled registered companion's setup guidance, asked through

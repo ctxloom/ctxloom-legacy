@@ -11,6 +11,7 @@ fn config(text: &str) -> Config {
         raw: value.clone(),
         value,
         source: Source::Project,
+        held_back: Vec::new(),
     }
 }
 

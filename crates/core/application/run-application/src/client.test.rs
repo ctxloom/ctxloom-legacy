@@ -27,6 +27,7 @@ fn asked() -> Asked {
             degraded: true,
             config_set: vec!["a=b".to_string()],
             no_companions: true,
+            trusted: false,
         },
         request: OneShot {
             run: RunRequest {

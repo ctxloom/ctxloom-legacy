@@ -931,6 +931,7 @@ fn plan() -> DryRun {
         settings: None,
         settings_agent: st("dev"),
         surfaces: Default::default(),
+        untrusted: Vec::new(),
     }
 }
 

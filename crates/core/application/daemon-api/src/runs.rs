@@ -85,7 +85,10 @@ impl<E: Edge> Api<E> {
     async fn create_one_shot(&self, request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
         let one_shots = Arc::clone(self.one_shots()?);
         let project = self.host_project(&request.parent).await?;
-        let (one_shot, flags) = run_application::client::asked_of(&request);
+        let (one_shot, mut flags) = run_application::client::asked_of(&request);
+        // The project's trust is the daemon's to read, never the client's
+        // to say (step 8 U2).
+        flags.trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
         let env = request
             .env
             .clone()

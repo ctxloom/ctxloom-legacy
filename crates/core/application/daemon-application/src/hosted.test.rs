@@ -200,6 +200,7 @@ impl ChildPlans for Plans {
         _agent: &str,
         _: &str,
         _: &BTreeMap<String, String>,
+        _trusted: bool,
     ) -> Result<Previewed, String> {
         Ok(Previewed {
             plan: DryRun {
@@ -227,6 +228,7 @@ impl ChildPlans for Plans {
                 settings: None,
                 settings_agent: String::new(),
                 surfaces: Default::default(),
+                untrusted: Vec::new(),
             },
             fatal: Vec::new(),
         })
@@ -869,8 +871,9 @@ impl ChildPlans for Permitted {
         _agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
+        trusted: bool,
     ) -> Result<Previewed, String> {
-        let mut previewed = Plans.preview(engine, "", project_dir, env)?;
+        let mut previewed = Plans.preview(engine, "", project_dir, env, trusted)?;
         previewed.plan.permissions = Some(DOCUMENT.to_string());
         Ok(previewed)
     }
@@ -919,8 +922,9 @@ impl ChildPlans for Surfaced {
         _agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
+        trusted: bool,
     ) -> Result<Previewed, String> {
-        let mut previewed = Plans.preview(engine, "", project_dir, env)?;
+        let mut previewed = Plans.preview(engine, "", project_dir, env, trusted)?;
         previewed.plan.surfaces.deny_tools = vec!["Bash".to_string()];
         Ok(previewed)
     }
@@ -1188,6 +1192,7 @@ async fn an_owner_is_told_its_childs_launch_failed() {
             _: &str,
             _: &str,
             _: &BTreeMap<String, String>,
+            _: bool,
         ) -> Result<Previewed, String> {
             Err("library-application-no-agent".to_string())
         }
@@ -1322,9 +1327,10 @@ impl ChildPlans for ForAgent {
         agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
+        trusted: bool,
     ) -> Result<Previewed, String> {
         self.0.lock().unwrap().push(agent.to_string());
-        Plans.preview(engine, agent, project_dir, env)
+        Plans.preview(engine, agent, project_dir, env, trusted)
     }
 
     fn git_user(
@@ -1695,6 +1701,70 @@ impl crate::ChildWorkspaces for AllCheckouts {
     }
 }
 
+/// A plan of the child that records whether its project was trusted.
+struct TrustSeen(Arc<Mutex<Vec<bool>>>);
+
+impl ChildPlans for TrustSeen {
+    fn preview(
+        &self,
+        engine: &str,
+        agent: &str,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+        trusted: bool,
+    ) -> Result<Previewed, String> {
+        self.0.lock().unwrap().push(trusted);
+        Plans.preview(engine, agent, project_dir, env, trusted)
+    }
+
+    fn git_user(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Option<run_ports::GitUser> {
+        Plans.git_user(project_dir, env)
+    }
+}
+
+// Step 8 U2 (ruling 142): a hosted child is planned with its project's
+// trust as the daemon's index has it, so a trusted project's own settings
+// apply to it and an untrusted one's are held back.
+#[tokio::test]
+async fn a_hosted_child_is_planned_with_its_projects_trust() {
+    for grant in [false, true] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut world = World::new(Box::new(TrustSeen(Arc::clone(&seen))));
+        world.name_project().await;
+        if grant {
+            let name = "projects/calm-quiet-heron/trust";
+            let granted = trust::GrantTrust {
+                name: name.to_string(),
+                project_id: "calm-otter".to_string(),
+                etag: "e".to_string(),
+                current_etag: "e".to_string(),
+                actor: trust::Actor {
+                    user: "alice".to_string(),
+                },
+            };
+            let cover = Cover {
+                domain: trust::TRUST_DOMAIN.to_string(),
+                root: Some(trust::trust_root(name)),
+                edition: None,
+            };
+            world
+                .edge
+                .handle(sessions::keyed_book(cover, &granted, "grant"))
+                .await
+                .unwrap();
+        }
+        world.mint(OWNER, "boss", None).await;
+        world.mint(CHILD, "kid", Some(OWNER)).await;
+        world.tick().await;
+        assert_eq!(world.daemon.hosting(), 1, "hosted");
+        assert_eq!(*seen.lock().unwrap(), [grant]);
+    }
+}
+
 /// A plan of the child whose agent `dev` works in a worktree.
 struct WorktreePlans;
 
@@ -1705,8 +1775,9 @@ impl ChildPlans for WorktreePlans {
         agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
+        trusted: bool,
     ) -> Result<Previewed, String> {
-        let mut previewed = Plans.preview(engine, agent, project_dir, env)?;
+        let mut previewed = Plans.preview(engine, agent, project_dir, env, trusted)?;
         previewed.plan.axes.0 = "worktree".to_string();
         previewed.plan.agent = "dev".to_string();
         Ok(previewed)

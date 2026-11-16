@@ -43,6 +43,15 @@ pub(crate) fn serve(
     let session = session.to_string_lossy().into_owned();
     let wiring = Wiring::new(Arc::clone(env)).map_err(|e| Failure::new(e, Exit::FAILED))?;
     let locks = crate::daemon::launch_locks(&wiring);
+    // `child_launch`'s `project`: relative to the session's own project
+    // root, `CTXLOOM_ROOT` (step 8 Q-C), never the engine's working
+    // directory, which may be a scratch checkout; none set, the server's.
+    let base = env
+        .non_empty(run_ports::ROOT_VARIABLE)
+        .map(std::path::PathBuf::from)
+        .or_else(|| env.cwd().ok())
+        .unwrap_or_default();
+    let resolver = crate::daemon::project_resolver(&wiring, base);
     let caller = Caller::new(
         SessionReach {
             wiring: Arc::new(wiring),
@@ -54,7 +63,12 @@ pub(crate) fn serve(
     )
     // `child_launch` names a child that names none, and holds its launch
     // lock while it is made (slice 4 U3).
-    .map(|caller| caller.naming(Box::new(crate::session_name)).holding(locks))
+    .map(|caller| {
+        caller
+            .naming(Box::new(crate::session_name))
+            .holding(locks)
+            .resolving(resolver)
+    })
     .map_err(|e| {
         let exit = cli_support::ExitClass::exit(&e);
         Failure::new(e, exit)

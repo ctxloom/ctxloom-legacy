@@ -473,6 +473,7 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
             runs::NoCredential,
             runs::FileOnlyCredential,
             runs::UnknownEngine,
+            runs::UntrustedProjectSettings,
             runs::LaunchRefusals,
         ]
     );

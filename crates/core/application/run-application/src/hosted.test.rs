@@ -45,6 +45,7 @@ fn previewed(engine: &str, auth: Sourced<AuthSource>, fatal: usize) -> Previewed
             settings: None,
             settings_agent: String::new(),
             surfaces: surface_ports::Inputs::default(),
+            untrusted: vec!["engines.claude-code.command".to_string()],
         },
         fatal: vec![row; fatal],
     }
@@ -100,6 +101,7 @@ fn the_evidence_is_a_one_shot_childs_judged_on_the_environment_sent() {
     assert_eq!(evidence.engine, "claude-code");
     assert_eq!(evidence.drivable_engines, drivable());
     assert_eq!(evidence.fatal_findings, 2);
+    assert_eq!(evidence.untrusted_settings, ["engines.claude-code.command"]);
     let credential = evidence.credential.expect("a child's credential is judged");
     assert!(credential.accepted_set);
     assert!(!credential.file_only);

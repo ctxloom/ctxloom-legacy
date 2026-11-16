@@ -82,13 +82,16 @@ pub struct Kept {
 /// project would make it, on `engine`, with `env` (its launcher's
 /// environment). The error is the plan's code.
 pub trait ChildPlans: Send + Sync {
-    /// The plan for `agent` (empty: the project's default).
+    /// The plan for `agent` (empty: the project's default), the project's
+    /// own project-only settings applied only when the user `trusted` it
+    /// (step 8 U2; otherwise held back, and named in the plan).
     fn preview(
         &self,
         engine: &str,
         agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
+        trusted: bool,
     ) -> Result<Previewed, String>;
 
     /// The user's git identity in the project at `project_dir`, as git

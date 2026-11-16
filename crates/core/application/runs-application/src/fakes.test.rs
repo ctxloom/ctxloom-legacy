@@ -286,6 +286,7 @@ impl World {
                 },
                 fatal_findings: 0,
                 launcher_lock: String::new(),
+                untrusted_settings: Vec::new(),
             },
         ))
         .await

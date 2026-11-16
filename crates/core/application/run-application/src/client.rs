@@ -123,6 +123,7 @@ pub fn asked_of(request: &v1::CreateRunRequest) -> (OneShot, Flags) {
         degraded: globals.degraded,
         config_set: globals.config_set,
         no_companions: globals.no_companions,
+        trusted: false,
     };
     (one_shot, flags)
 }

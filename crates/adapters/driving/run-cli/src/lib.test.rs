@@ -111,6 +111,7 @@ fn go(line: &[&str], format: Option<Format>, piped: Option<&str>, service: &mut 
             degraded: true,
             no_companions: false,
             config_set: Vec::new(),
+            trusted: false,
         },
     };
     let catalog = Catalog::en_us(&[library_application::EN_US, crate::EN_US]).unwrap();

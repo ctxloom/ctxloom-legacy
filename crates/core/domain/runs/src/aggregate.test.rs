@@ -145,6 +145,7 @@ fn enqueue() -> EnqueueRun {
         credential: not_asked(),
         fatal_findings: 0,
         launcher_lock: launcher_lock(),
+        untrusted_settings: Vec::new(),
     }
 }
 
@@ -948,6 +949,65 @@ fn two_failing_checks_are_one_launch_refused_holding_both_in_check_order() {
     assert_eq!(code, "runs-launch-refused");
     assert_eq!(args["count"], "2");
     assert_eq!(run.event_count(), 0);
+}
+
+// Step 8 U2 (ruling 142, D3): the untrusted project-only settings this
+// launch reads are the typed UntrustedProjectSettings, naming each path,
+// and nothing is journaled.
+#[test]
+fn untrusted_project_settings_refuse_the_launch_naming_each_path() {
+    for mode in [RunMode::OneShot, RunMode::Interactive, RunMode::Structured] {
+        let mut run = Run::new();
+        let cmd = EnqueueRun {
+            mode,
+            untrusted_settings: vec![
+                "agents.default.session_home".to_string(),
+                "engines.claude-code.command".to_string(),
+            ],
+            ..one_shot()
+        };
+        let rejection = run.rejection(cmd);
+        assert_eq!(
+            rejection,
+            RunRejection::UntrustedProjectSettings {
+                paths: "agents.default.session_home, engines.claude-code.command".to_string(),
+            },
+            "{mode:?}"
+        );
+        let (code, args) = said(&rejection);
+        assert_eq!(code, "runs-untrusted-project-settings");
+        assert_eq!(
+            args["paths"],
+            "agents.default.session_home, engines.claude-code.command"
+        );
+        assert_eq!(run.event_count(), 0);
+    }
+}
+
+// Owner Q9: the trust check is the LAST, so beside another refusal it is
+// one LaunchRefusals holding both, the untrusted settings after the rest.
+#[test]
+fn untrusted_settings_are_the_last_refusal_of_a_launch_refused() {
+    let mut run = Run::new();
+    let cmd = EnqueueRun {
+        prompt_given: false,
+        credential: accepting(false),
+        untrusted_settings: vec!["engines.claude-code.command".to_string()],
+        ..one_shot()
+    };
+    assert_eq!(
+        run.rejection(cmd),
+        RunRejection::LaunchRefused {
+            refusals: vec![
+                RunRejection::NoPrompt,
+                no_credential(),
+                RunRejection::UntrustedProjectSettings {
+                    paths: "engines.claude-code.command".to_string(),
+                },
+            ],
+            fatal_findings: 0,
+        }
+    );
 }
 
 // Ruling 73d: an engine nobody drives has no credential policy, so its

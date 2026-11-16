@@ -161,6 +161,9 @@ pub struct LaunchArgs {
     /// The child's engine (default: claude-code)
     #[arg(long, value_name = "ENGINE")]
     pub engine: Option<String>,
+    /// The ctxloom project the child works in (default: the owner's); it must be one you trust
+    #[arg(long, value_name = "DIR")]
+    pub project: Option<String>,
 }
 
 /// How a message is acted on.

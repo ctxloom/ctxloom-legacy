@@ -7,11 +7,15 @@
 //!
 //! 1. the owner: a session its warm index holds in the project, else the
 //!    sessions domain's `SessionUnknown` ("there is no session named ...");
-//! 2. the child's plan: its project's dry run on its engine (none asked: its
+//! 2. the project the child works in: the owner's, or the one the launch
+//!    names (step 8 Q1), which must be registered and, when it is another
+//!    project, trusted (`sessions-untrusted-target`, D8);
+//! 3. the child's plan: its project's dry run on its engine (none asked: its
 //!    agent's configured one, the config's default engine for an agent
 //!    naming none, which the answer names) and agent, in the environment
 //!    the launch sent ([`HandOffs::plan`], the root's);
-//! 3. its credential, as the child's enqueue will judge it: the runs
+//! 4. its credential and its project's untrusted settings, as the child's
+//!    enqueue will judge them: the runs
 //!    aggregate's own pre-launch checks (`runs::pre_launch_refusal`, rulings
 //!    53, 73e), refused with the typed refusal the enqueue would answer
 //!    (`runs-no-credential`, `runs-file-only-credential`, ...).
@@ -34,8 +38,12 @@ use crate::server::{invalid, Api};
 /// What a hand-off is made for: the child of a project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandingOff {
-    /// The project's registered root.
+    /// The registered root of the project the child works in (its owner's,
+    /// or the one its launch named, step 8 Q1).
     pub root: String,
+    /// Whether the user trusts that project (step 8 U2): only then do its
+    /// own project-only settings apply to the child's plan.
+    pub trusted: bool,
     /// The child's stable id.
     pub child: String,
     pub engine: String,
@@ -65,6 +73,8 @@ pub struct Planned {
     pub credential: runs::CredentialEvidence,
     /// How many fatal findings its plan has.
     pub fatal_findings: u32,
+    /// The untrusted project-only settings its launch reads (step 8 U2).
+    pub untrusted_settings: Vec<String>,
     /// What it is to be handed.
     pub content: HandOffContent,
 }
@@ -82,6 +92,26 @@ pub trait HandOffs: Send + Sync {
 
     /// Delete the hand-off of `child`, and its mark, if there are any.
     fn delete(&self, child: &str) -> Result<(), String>;
+}
+
+/// The project a child works in: the one its launch named (`project`),
+/// registered, else its owner's (`own`, `own_row`; step 8, owner Q1).
+fn target_of(
+    project: &str,
+    own: &ProjectName,
+    own_row: &session_index::ProjectRow,
+    index: &session_index::SessionIndex,
+) -> Result<(ProjectName, session_index::ProjectRow), ApiError> {
+    if project.is_empty() {
+        return Ok((own.clone(), own_row.clone()));
+    }
+    let target = ProjectName::parse(project).map_err(|rejection| invalid(project, &rejection))?;
+    let row = index.project_named_by(target.harp()).ok_or_else(|| {
+        ApiError::from(ApiRefusal::of(&v1::ProjectNotFound {
+            name: project.to_string(),
+        }))
+    })?;
+    Ok((target, row))
 }
 
 /// The collection a hand-off's name has under its project.
@@ -120,6 +150,7 @@ impl<E: run_ports::Edge> Api<E> {
                 name: request.parent.clone(),
             }))
         })?;
+        let (target, target_row) = target_of(&request.project, &project, &row, &index)?;
         let owner = SessionName::new(project.harp(), &request.owner)
             .ok()
             .and_then(|owner| index.find_by_id(&owner.uid()));
@@ -133,8 +164,22 @@ impl<E: run_ports::Edge> Api<E> {
             )
             .into());
         }
+        // A child in another project works there only once the user trusts
+        // it (D8): refused before anything is planned or written.
+        let trusted = self.trusts(&target_row.project_id);
+        if target_row.project_id != row.project_id && !trusted {
+            let untrusted = sessions::UntrustedTarget {
+                root: target_row.root.clone(),
+            };
+            return Err(ApiRefusal::typed(
+                &angzarr_embedded::markup::TypedRefusal::of(&untrusted),
+                <sessions::UntrustedTarget as sessions::Refusal>::REFUSAL_STATUS,
+            )
+            .into());
+        }
         let handing = HandingOff {
-            root: row.root.clone(),
+            root: target_row.root.clone(),
+            trusted,
             child: child.clone(),
             engine: request.engine.clone(),
             agent: request.agent.clone(),
@@ -148,7 +193,7 @@ impl<E: run_ports::Edge> Api<E> {
         };
         let planned = hand_offs.plan(&handing).map_err(|code| {
             ApiError::from(ApiRefusal::of(&v1::ConfigUnreadable {
-                root: row.root.clone(),
+                root: target_row.root.clone(),
                 detail: code,
             }))
         })?;
@@ -162,6 +207,7 @@ impl<E: run_ports::Edge> Api<E> {
             credential: planned.credential,
             fatal_findings: planned.fatal_findings,
             launcher_lock: String::new(),
+            untrusted_settings: planned.untrusted_settings,
         };
         if let Some((refusal, status)) = runs::pre_launch_refusal(&checks) {
             return Err(ApiRefusal::typed(&refusal, status).into());
@@ -170,6 +216,7 @@ impl<E: run_ports::Edge> Api<E> {
         Ok(v1::HandOff {
             name: format!("{project}{HAND_OFFS}{child}"),
             engine: planned.engine,
+            project: target.to_string(),
         })
     }
 
@@ -208,7 +255,7 @@ impl<E: run_ports::Edge> Api<E> {
         }
         Ok(v1::HandOff {
             name: request.name,
-            engine: String::new(),
+            ..v1::HandOff::default()
         })
     }
 }

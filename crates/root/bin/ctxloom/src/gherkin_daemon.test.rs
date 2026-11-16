@@ -14,7 +14,7 @@
 //! stub that FAILS, naming itself: nothing is implemented. Each stub becomes
 //! a real step with the milestone that builds what it asserts.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::time::{Duration, Instant};
 
@@ -88,6 +88,9 @@ pub(super) struct State {
     /// A command a step started and left running (`I start ...`), for a
     /// later step to wait for.
     started: Option<Child>,
+    /// What the project's own config says besides its agent (trust.feature:
+    /// `<dotted key>: <value>`), kept when a step rewrites that config.
+    project_says: Vec<String>,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -199,9 +202,16 @@ const PROJECT_CONFIG: &str =
 fn stub_claude(w: &mut World, body: &str) -> PathBuf {
     let dir = w.common.project.home().join("fake-claude");
     files::put_program(dir.join("claude"), body);
-    w.common
-        .project
-        .write(".ctxloom/config.yaml", PROJECT_CONFIG);
+    let mut entries = vec![
+        "agents.default.engine: claude-code".to_string(),
+        "default_agent: default".to_string(),
+    ];
+    entries.extend(w.daemon_spec.project_says.iter().cloned());
+    let config = match w.daemon_spec.project_says.is_empty() {
+        true => PROJECT_CONFIG.to_string(),
+        false => config_of(&entries),
+    };
+    w.common.project.write(".ctxloom/config.yaml", &config);
     w.daemon_spec.stub = Some(dir.join("claude"));
     write_home_config(w);
     dir
@@ -261,6 +271,7 @@ fn interactive_session(w: &mut World) {
 /// conversation (a new id), as claude's own does. It ends when its input
 /// does.
 const CHILD_STUB: &str = r#"here=$(dirname "$0")
+pwd >> "$here/child-cwds"
 printf '%s\n' "$*" >> "$here/child-args"
 env > "$here/child-env"
 n=1
@@ -489,8 +500,17 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         tui_in_both(w, step);
         return true;
     }
-    let stubbed = text.contains("at her terminal, and answers yes when asked")
-        || text.contains("says yes at her terminal");
+    if text.contains("says yes at her terminal") {
+        // Her terminal, stood in for: she says yes when asked (U1).
+        w.before_run();
+        let mut env = env_of(w);
+        env.push(("CTXLOOM_TEST_TERMINAL".to_string(), "1".to_string()));
+        let words = line_words(step);
+        let args: Vec<&str> = words.iter().map(String::as_str).collect();
+        w.common.ran = Some(w.common.project.run_input(&args, "yes\n", &env_pairs(&env)));
+        return true;
+    }
+    let stubbed = text.contains("at her terminal, and answers yes when asked");
     if stubbed {
         red(text);
     }
@@ -3081,18 +3101,80 @@ fn child_given_curated(w: &mut World, _child: String) {
 
 // ------------------------------------------------------ trust (ruling 142)
 
+/// The program a cloned project's own config names as Alice's assistant,
+/// the `n`th version of it: a stub that records it ran, and answers.
+fn their_program(w: &World, n: u32) -> PathBuf {
+    w.adopt_scratch().join(format!("their-{n}")).join("claude")
+}
+
+/// The upstream repository Alice cloned her project from.
+fn upstream(w: &World) -> PathBuf {
+    w.adopt_scratch().join("upstream")
+}
+
+/// The cloned project's config, naming the `n`th version of its program.
+fn cloned_config(w: &World, n: u32) -> String {
+    config_of(&[
+        "agents.default.engine: claude-code".to_string(),
+        "default_agent: default".to_string(),
+        format!(
+            "engines.claude-code.command: {}",
+            their_program(w, n).display()
+        ),
+    ])
+}
+
+/// Commit `config` upstream as the project's own config.
+fn commit_upstream(w: &World, config: &str, message: &str) {
+    let up = upstream(w);
+    files::put(up.join(".ctxloom/config.yaml"), config);
+    w.git(&up, &["add", "-A"]);
+    w.git(&up, &["commit", "-q", "-m", message]);
+}
+
 #[given(
     "Alice has cloned a project whose own ctxloom config names the program that runs as her assistant"
 )]
-fn cloned_project(_: &mut World) {
-    red("Alice has cloned a project whose config names its own assistant program")
+fn cloned_project(w: &mut World) {
+    for n in [1, 2] {
+        let program = their_program(w, n);
+        files::put_program(
+            &program,
+            &format!(": > \"$(dirname \"$0\")/ran\"\n{}", answering_stub()),
+        );
+    }
+    let up = upstream(w);
+    files::mkdirs(&up);
+    w.git(&up, &["init", "-q"]);
+    commit_upstream(w, &cloned_config(w, 1), "the project");
+    // Her clone: the project's directory, its tree the upstream's.
+    let dir = w.common.project.dir().to_path_buf();
+    w.git(&dir, &["init", "-q"]);
+    w.git(
+        &dir,
+        &["remote", "add", "origin", &up.display().to_string()],
+    );
+    w.git(&dir, &["fetch", "-q", "origin"]);
+    w.git(&dir, &["checkout", "-q", "-f", "-B", "main", "origin/main"]);
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
 }
 
 #[then(
     regex = r#"^she is told the project's own "([^"]+)" waits for her trust, and that `ctxloom trust` is how to give it$"#
 )]
-fn told_untrusted(_: &mut World, _path: String) {
-    red("she is told the project-only setting waits for her trust")
+fn told_untrusted(w: &mut World, path: String) {
+    let ran = w.ran().clone();
+    assert_eq!(ran.code, 20, "{}", ran.said());
+    let envelope = super::adopt::envelope_of(w);
+    assert_eq!(
+        envelope["code"],
+        "runs-untrusted-project-settings",
+        "{}",
+        ran.said()
+    );
+    assert!(ran.said().contains(&path), "{}", ran.said());
+    assert!(ran.said().contains("ctxloom trust"), "{}", ran.said());
 }
 
 #[then("the project is listed as trusted by her, just now")]
@@ -3143,51 +3225,112 @@ fn trusted_by_the_user(trust: &Value, listed: &crate::tests::Ran) {
     assert!(trust["grant_time"].is_string(), "{}", listed.said());
 }
 
+/// Whether the `n`th version of the cloned project's program ran.
+fn their_program_ran(w: &World, n: u32) -> bool {
+    files::exists(
+        their_program(w, n)
+            .parent()
+            .expect("in a directory")
+            .join("ran"),
+    )
+}
+
 #[then("her assistant ran as the program the project names")]
-fn ran_projects_program(_: &mut World) {
-    red("her assistant ran as the program the project names")
+fn ran_projects_program(w: &mut World) {
+    assert!(their_program_ran(w, 1), "{}", w.ran().said());
 }
 
 #[given("Alice has trusted the cloned project")]
-fn has_trusted(_: &mut World) {
-    red("Alice has trusted the cloned project")
+fn has_trusted(w: &mut World) {
+    w.before_run();
+    let env = env_of(w);
+    let ran = w
+        .common
+        .project
+        .run_with(&env_pairs(&env), &["trust", "--yes"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
 }
 
 #[given("a pull changes the program the project names")]
-fn pull_changes(_: &mut World) {
-    red("a pull changes the program the project names")
+fn pull_changes(w: &mut World) {
+    commit_upstream(w, &cloned_config(w, 2), "another program");
+    let dir = w.common.project.dir().to_path_buf();
+    w.git(&dir, &["pull", "-q", "--ff-only", "origin", "main"]);
 }
 
 #[then("her assistant ran as the program the project names now")]
-fn ran_projects_program_now(_: &mut World) {
-    red("her assistant ran as the program the project names now")
+fn ran_projects_program_now(w: &mut World) {
+    assert!(their_program_ran(w, 2), "{}", w.ran().said());
+    assert!(!their_program_ran(w, 1), "the old program ran");
 }
 
 #[given(expr = "an initialized ctxloom project whose project config says {string}")]
 fn project_says(w: &mut World, setting: String) {
     w.common.project = crate::tests::library::Project::initialized();
+    w.daemon_spec.project_says = vec![setting.clone()];
+    // Its default agent on claude-code, so a launch reads that engine's
+    // block and the agent's own.
+    w.common.project.write(
+        ".ctxloom/config.yaml",
+        &config_of(&[
+            "agents.default.engine: claude-code".to_string(),
+            "default_agent: default".to_string(),
+            setting,
+        ]),
+    );
+    // A one-shot's assistant, should the launch run: the home config's
+    // stub, which answers (never an engine on the host's PATH).
+    let stub = assistant_dir(w).join("claude");
+    files::put_program(&stub, &answering_stub());
+    w.daemon_spec.stub = Some(stub);
+    write_home_config(w);
     w.common
-        .project
-        .write(".ctxloom/config.yaml", &config_saying(&setting));
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+}
+
+/// A project config at the current schema saying each of `entries`, a
+/// dotted key and its value (`engines.claude-code.command: /opt/x`), nested
+/// as YAML writes it, keys that share a prefix under one parent.
+fn config_of(entries: &[String]) -> String {
+    #[derive(Default)]
+    struct Node(std::collections::BTreeMap<String, (Option<String>, Node)>);
+    fn render(node: &Node, depth: usize, out: &mut String) {
+        for (key, (value, children)) in &node.0 {
+            let indent = "  ".repeat(depth);
+            match value {
+                Some(value) => out.push_str(&format!("{indent}{key}: {value}\n")),
+                None => {
+                    out.push_str(&format!("{indent}{key}:\n"));
+                    render(children, depth + 1, out);
+                }
+            }
+        }
+    }
+    let mut root = Node::default();
+    for entry in entries {
+        let (path, value) = entry
+            .split_once(": ")
+            .unwrap_or_else(|| panic!("{entry:?} is `<dotted key>: <value>`"));
+        let keys: Vec<&str> = path.split('.').collect();
+        let mut node = &mut root;
+        for (depth, key) in keys.iter().enumerate() {
+            let slot = node.0.entry((*key).to_string()).or_default();
+            if depth + 1 == keys.len() {
+                slot.0 = Some(value.to_string());
+            }
+            node = &mut slot.1;
+        }
+    }
+    let mut yaml = crate::tests::library::MINIMAL_CONFIG.to_string();
+    render(&root, 0, &mut yaml);
+    yaml
 }
 
 /// A project config at the current schema that says `setting`, a dotted
 /// key and its value (`engines.claude-code.command: /opt/their-claude`),
 /// nested as YAML writes it.
 fn config_saying(setting: &str) -> String {
-    let (path, value) = setting
-        .split_once(": ")
-        .unwrap_or_else(|| panic!("{setting:?} is `<dotted key>: <value>`"));
-    let mut yaml = crate::tests::library::MINIMAL_CONFIG.to_string();
-    let keys: Vec<&str> = path.split('.').collect();
-    for (depth, key) in keys.iter().enumerate() {
-        let indent = "  ".repeat(depth);
-        match depth + 1 == keys.len() {
-            true => yaml.push_str(&format!("{indent}{key}: {value}\n")),
-            false => yaml.push_str(&format!("{indent}{key}:\n")),
-        }
-    }
-    yaml
+    config_of(&[setting.to_string()])
 }
 
 #[then("the project is listed as trusted by the user running ctxloom, with the time it was given")]
@@ -3279,9 +3422,13 @@ fn beside(w: &World, name: &str) -> PathBuf {
 #[given(expr = "a second project {string} beside this one, initialized with ctxloom")]
 fn second_project_beside(w: &mut World, name: String) {
     let dir = beside(w, &name);
+    // Its default agent on claude-code, as `init` seeds one.
     files::put(
         dir.join(".ctxloom/config.yaml"),
-        crate::tests::library::MINIMAL_CONFIG,
+        config_of(&[
+            "agents.default.engine: claude-code".to_string(),
+            "default_agent: default".to_string(),
+        ]),
     );
     // An id of its own, as `init` mints one: never this project's.
     files::put(
@@ -3488,31 +3635,95 @@ fn run_at_terminal_changed(w: &mut World, line: String, setting: String, answer:
     expr = "the engine of {string} calls {string} for {string} with project {string} and task {string}"
 )]
 fn tool_call_with_project(
-    _: &mut World,
-    _owner: String,
-    _tool: String,
-    _child: String,
-    _project: String,
-    _task: String,
+    w: &mut World,
+    owner: String,
+    tool: String,
+    child: String,
+    project: String,
+    task: String,
 ) {
-    red("child_launch's project (step 8, Q1)")
+    hosting_daemon(w);
+    w.before_run();
+    // The engine's session is told its project's root, as every engine is
+    // (`CTXLOOM_ROOT`): a relative `project` is relative to it (Q-C).
+    let root = w.common.project.dir().display().to_string();
+    w.common.set_env("CTXLOOM_ROOT", root);
+    engine_calls(
+        w,
+        &owner,
+        &tool,
+        json!({"name": child, "project": project, "task": task}),
+    );
 }
 
 #[then(expr = "the tool failed with {string}, naming {string}")]
-fn tool_failed_naming(_: &mut World, _code: String, _named: String) {
-    red("a tool's refusal, naming what it refused (step 8, Q1)")
+fn tool_failed_naming(w: &mut World, code: String, named: String) {
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    assert_eq!(answered["isError"], true, "{answered}");
+    let said = answered.to_string();
+    assert!(said.contains(&code), "{answered}");
+    assert!(said.contains(&named), "{answered}");
 }
 
 #[then(expr = "the tool answered with the child's session, named under the project {string}")]
-fn tool_answered_in_project(_: &mut World, _project: String) {
-    red("child_launch's child, named in the project it works in (step 8, Q1)")
+fn tool_answered_in_project(w: &mut World, project: String) {
+    let session = tool_session(w);
+    // The project's name, as its trust's preview names it there.
+    let previewed = run_in_dir(w, &beside(w, &project), &["trust", "--format", "json"]);
+    let trust = previewed.json()["name"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a trust's name: {}", previewed.said()))
+        .to_string();
+    let parent = trust.trim_end_matches("/trust");
+    assert!(
+        session["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with(&format!("{parent}/sessions/"))),
+        "{session} is not named under {parent}"
+    );
+}
+
+/// `args` run in the directory `dir`, in the scenario's environment.
+fn run_in_dir(w: &World, dir: &Path, args: &[&str]) -> crate::tests::Ran {
+    let env = env_of(w);
+    let env: Vec<(&str, &str)> = env
+        .iter()
+        .filter(|(k, _)| k != "CTXLOOM_ROOT")
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    w.common.project.run_in_with(dir, &env, args)
 }
 
 #[then(
     expr = "the child {string} of {string} ran its first turn on {string}, in the root of {string}"
 )]
-fn first_turn_in_project(_: &mut World, _c: String, _o: String, _task: String, _p: String) {
-    red("a child in another project ran its first turn there (step 8, Q1)")
+fn first_turn_in_project(
+    w: &mut World,
+    child: String,
+    owner: String,
+    task: String,
+    project: String,
+) {
+    turn_on(w, &task);
+    let dir = beside(w, &project);
+    let shown_child = until(w, "the child minted", DAEMON_WAIT, |w| {
+        let ran = run_in_dir(w, &dir, &["session", "show", &child, "--format", "json"]);
+        (ran.code == 0).then(|| ran.json())
+    });
+    assert_eq!(
+        shown_child["owner"],
+        shown(w, &owner)["name"],
+        "{shown_child}"
+    );
+    let stub = w.daemon_spec.stub.clone().expect("the stub child");
+    let cwds =
+        files::read(stub.parent().expect("a directory").join("child-cwds")).unwrap_or_default();
+    assert!(
+        cwds.lines()
+            .any(|cwd| files::canonical(cwd) == files::canonical(&dir)),
+        "the child ran in {cwds:?}, not {}",
+        dir.display()
+    );
 }
 
 #[when(expr = "its engine sends {string} to ctxloom's MCP server before {string}")]

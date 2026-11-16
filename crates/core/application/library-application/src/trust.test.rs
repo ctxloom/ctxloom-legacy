@@ -90,3 +90,102 @@ fn a_project_layer_that_does_not_parse_is_refused() {
     .library();
     assert!(library.trust_settings().is_err());
 }
+
+/// A project layer saying every project-only key, for its default agent's
+/// engine and for another agent's.
+const SAYS_ALL: &str = "schema_version: 9\ndefault_agent: default\nagents:\n  default:\n    engine: claude-code\n    session_home: host\n  other:\n    engine: opencode\n    session_home: host\nengines:\n  claude-code:\n    command: /opt/their-claude\n    auth:\n      file: ~/their-login\n  opencode:\n    command: /opt/their-opencode\n";
+
+fn says_all() -> crate::Library {
+    Setup {
+        layers: &[CONFIG, SAYS_ALL],
+        ..Setup::default()
+    }
+    .library()
+}
+
+fn planned(library: &crate::Library, flags: &crate::Flags) -> crate::DryRun {
+    library
+        .dry_run(flags, &crate::RunRequest::default())
+        .result
+        .unwrap()
+        .plan
+}
+
+// Step 8 U2, owner Q8: an untrusted project's held-back settings are named
+// by the plan only where THIS launch reads them, its engine's block and its
+// agent's; the plan runs without them (so the credential is read without a
+// held-back auth.file, Q9).
+#[test]
+fn an_untrusted_plan_names_the_held_back_settings_its_launch_reads() {
+    let plan = planned(&says_all(), &crate::fakes::plain());
+    assert_eq!(
+        plan.untrusted,
+        [
+            "agents.default.session_home",
+            "engines.claude-code.auth.file",
+            "engines.claude-code.command",
+        ]
+    );
+    assert_ne!(plan.drive.command, "/opt/their-claude");
+    assert_eq!(plan.drive.session_home, "session");
+    assert!(
+        !format!("{:?}", plan.drive.auth).contains("their-login"),
+        "{:?}",
+        plan.drive.auth
+    );
+}
+
+// Owner Q8: a launch on the other engine reads that engine's block alone.
+#[test]
+fn a_launch_on_another_engine_reads_that_engines_block() {
+    let request = crate::RunRequest {
+        engine: "opencode".to_string(),
+        ..crate::RunRequest::default()
+    };
+    let plan = says_all()
+        .dry_run(&crate::fakes::plain(), &request)
+        .result
+        .unwrap()
+        .plan;
+    assert_eq!(
+        plan.untrusted,
+        ["agents.default.session_home", "engines.opencode.command"]
+    );
+}
+
+// S23: a trusted project's own settings apply, and nothing is held back or
+// said.
+#[test]
+fn a_trusted_project_keeps_its_own_settings() {
+    let library = says_all();
+    let flags = crate::Flags {
+        trusted: true,
+        ..crate::fakes::plain()
+    };
+    let previewed = library.dry_run(&flags, &crate::RunRequest::default());
+    assert!(
+        previewed
+            .notices
+            .iter()
+            .all(|n| !n.to_string().contains("is ignored")),
+        "{:?}",
+        previewed.notices
+    );
+    let plan = previewed.result.unwrap().plan;
+    assert!(plan.untrusted.is_empty(), "{:?}", plan.untrusted);
+    assert_eq!(plan.drive.command, "/opt/their-claude");
+    assert_eq!(plan.drive.session_home, "host");
+}
+
+// The home layer is the user's own: nothing of it is ever held back.
+#[test]
+fn the_home_layer_holds_nothing_back() {
+    let library = Setup {
+        layers: &[SAYS_ALL, CONFIG],
+        ..Setup::default()
+    }
+    .library();
+    let plan = planned(&library, &crate::fakes::plain());
+    assert!(plan.untrusted.is_empty(), "{:?}", plan.untrusted);
+    assert_eq!(plan.drive.command, "/opt/their-claude");
+}

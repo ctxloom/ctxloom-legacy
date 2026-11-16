@@ -646,6 +646,12 @@ pub struct DryRun {
     /// one's is empty. Not shown by a dry run.
     #[serde(skip)]
     pub surfaces: surface_ports::Inputs,
+    /// The project-only settings this launch reads (its engine's block and
+    /// its agent's, owner Q8) that an untrusted project's own layer said and
+    /// the config held back (step 8 U2, ruling 142): their dotted paths,
+    /// sorted. The run's enqueue is refused on them. Not shown by a dry run.
+    #[serde(skip)]
+    pub untrusted: Vec<String>,
 }
 
 /// What `context assemble` answers (Go's `assemble_context` result).

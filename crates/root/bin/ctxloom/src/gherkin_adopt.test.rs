@@ -493,7 +493,7 @@ fn an_assistant(w: &mut World) {
 
 /// The error's json envelope: the last json document on the error stream
 /// (the warnings a run said before it, one json line each, come first).
-fn envelope_of(w: &World) -> serde_json::Value {
+pub(super) fn envelope_of(w: &World) -> serde_json::Value {
     serde_json::Deserializer::from_str(&w.ran().stderr)
         .into_iter::<serde_json::Value>()
         .map(|value| value.expect("the error stream is json documents"))

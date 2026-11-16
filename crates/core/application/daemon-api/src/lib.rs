@@ -63,7 +63,8 @@ mod terminal;
 mod trust;
 
 pub use caller::{
-    launch_lock_name, urgency_of, Caller, ChildWrites, Launch, Written, DELEGATION_LIMIT,
+    launch_lock_name, urgency_of, Caller, ChildWrites, Launch, ProjectResolver, Written,
+    DELEGATION_LIMIT,
 };
 pub use client::{
     newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,

@@ -185,6 +185,7 @@ pub async fn enqueued_by(edge: &TestEdge, session: &str, harp: &str, launcher_lo
         },
         fatal_findings: 0,
         launcher_lock: launcher_lock.to_string(),
+        untrusted_settings: Vec::new(),
     }
     .into();
     edge.handle(command_book(run_cover(session), enqueue.to_any()))

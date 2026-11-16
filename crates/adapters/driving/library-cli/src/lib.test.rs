@@ -190,6 +190,7 @@ pub(crate) fn go_in(line: &[&str], how: How, layers: &[&str], names: &dyn Names)
             degraded: how.degraded,
             no_companions: false,
             config_set: Vec::new(),
+            trusted: false,
         },
     };
     let catalog = Catalog::en_us(&[library_application::EN_US]).unwrap();
@@ -335,6 +336,7 @@ fn test_running_a_noun_the_line_does_not_name_is_refused() {
             degraded: false,
             no_companions: false,
             config_set: Vec::new(),
+            trusted: false,
         },
     };
     let library = Setup::default().library();
@@ -375,6 +377,7 @@ fn test_an_answer_that_cannot_be_written_fails_with_its_cause() {
             degraded: false,
             no_companions: false,
             config_set: Vec::new(),
+            trusted: false,
         },
     };
     let library = Setup::default().library();

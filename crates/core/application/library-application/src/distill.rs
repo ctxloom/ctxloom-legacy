@@ -209,7 +209,7 @@ impl Project {
     /// What distilling the item `reference` is to ask, read from its bundle
     /// as it is now.
     fn distill_ask(
-        &self,
+        &mut self,
         kind: Kind,
         reference: &str,
         force: bool,
@@ -248,12 +248,14 @@ impl Project {
         if !force && body.distilled_state() == DistilledState::Fresh {
             return Ok(Ask::Done(done("fresh")));
         }
+        let done = done("distilled");
+        let (content, digest) = (body.content.clone(), body.source_digest.clone());
         let instruction = self.operational_prompt(library::builtin::DISTILL_NAME, builtins)?;
         Ok(Ask::Model {
-            done: done("distilled"),
-            request: distill::request(&instruction, &body.content),
-            digest: body.source_digest.clone(),
-            body: body.content.clone(),
+            done,
+            request: distill::request(&instruction, &content),
+            digest,
+            body: content,
         })
     }
 }

@@ -25,6 +25,13 @@ pub struct Flags {
     pub config_set: Vec<String>,
     /// `--no-companions`.
     pub no_companions: bool,
+    /// Whether the user trusts the project (step 8 U2, ruling 142): the
+    /// daemon's verdict, from its trust index, for a launch it makes. Only
+    /// then does the project layer's own project-only settings (ruling 46's
+    /// keys) apply; otherwise they are held back, said, and named in
+    /// [`Config::held_back`]. Never the client's to say: no flag or variable
+    /// sets it, and every in-process verb holds them back (until T13).
+    pub trusted: bool,
 }
 
 /// Where a session's outputs go when `output.dir` names nowhere: `ctxloom/`
@@ -61,6 +68,10 @@ pub struct Config {
     /// What the files and overrides set, without the shipped registry.
     pub raw: Value,
     pub source: Source,
+    /// The project-only settings the project layer said and an untrusted
+    /// project holds back (ruling 46's keys): their dotted paths, in the
+    /// order they were found. Empty for a trusted project.
+    pub held_back: Vec<String>,
 }
 
 /// Load the configuration: the layers, the environment's overrides, the
@@ -79,10 +90,12 @@ pub fn load(
     let mut violations: Vec<String> = Vec::new();
     let mut shape_failure = false;
     let mut values = Vec::new();
+    let mut held_back = Vec::new();
     for layer in &layers {
         let mut value = read_layer(layer, notices)?;
-        if project_path.as_deref() == Some(layer.path.as_str()) {
+        if project_path.as_deref() == Some(layer.path.as_str()) && !flags.trusted {
             for (key, _) in engines::strip_project_only(&mut value) {
+                held_back.push(key.clone());
                 notices.push(Notice::text(format!(
                     "{key} in {} is ignored: a project's config cannot set it (ruling 46); put it in your home config ({})",
                     layer.path,
@@ -124,6 +137,7 @@ pub fn load(
         value: merged,
         raw,
         source: files.source(),
+        held_back,
     })
 }
 

@@ -47,6 +47,10 @@ pub struct Evidence {
     /// How many fatal startup findings the plan refused the run for (ruling
     /// 73h: a count; the findings themselves stay the library's).
     pub fatal_findings: u32,
+    /// The project-only settings this launch reads that its project's own
+    /// config says and the user has not trusted (step 8 U2, ruling 142):
+    /// their dotted paths. Empty when the project is trusted.
+    pub untrusted_settings: Vec<String>,
 }
 
 /// What a child's run authenticates with (ruling 53).
@@ -72,6 +76,7 @@ impl Evidence {
             drivable_engines: vec![engine.to_string()],
             credential: None,
             fatal_findings: 0,
+            untrusted_settings: Vec::new(),
         }
     }
 }
@@ -116,6 +121,7 @@ impl<E: Edge> Enqueuer<E> {
             credential: credential(request.evidence.credential.unwrap_or_default()),
             fatal_findings: request.evidence.fatal_findings,
             launcher_lock: request.launcher_lock,
+            untrusted_settings: request.evidence.untrusted_settings,
         };
         let book = CommandBook::command_of(cover, &runs::RunCommand::from(enqueue));
         self.edge.handle(book).await.map_err(refused)?;

@@ -133,13 +133,15 @@ pub fn interview(
     }
     // Read as the project is now, after the scaffold; a refusal launches
     // nothing and asks nothing.
-    let opening = prompts.setup_interview().map_err(|refused| LaunchFailure {
+    let read = prompts.setup_interview().map_err(|refused| LaunchFailure {
         cause: refused.cause,
         exit: refused.exit,
     })?;
-    let opening = composed(opening, &prompts.companion_guidance());
+    let opening = composed(read.text, &prompts.companion_guidance());
     let mut ended = sessions.interview(&opening)?;
-    let mut notices = std::mem::take(&mut ended.notices);
+    // What reading the interview noticed, first.
+    let mut notices = read.notices;
+    notices.append(&mut ended.notices);
     let outcome = if !ended.clean() {
         Outcome::Interrupted { code: ended.code }
     } else if !terminal.confirm(RESTART_QUESTION) {

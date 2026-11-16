@@ -51,7 +51,16 @@ pub struct Library {
     /// The model distill asks ([`Library::with_distiller`]); none wired,
     /// distill fails.
     pub(crate) distiller: Option<Rc<dyn crate::distill::Distiller>>,
+    /// Where the user's trust of the project is asked when a flag does not
+    /// say it ([`Library::with_trust`]); none, an untrusted project.
+    pub(crate) trust: Option<TrustAsk>,
 }
+
+/// Whether the user trusts the project, asked of her daemon (step 8 U2, D4:
+/// one `GetTrust`, which may start one): asked only where it decides
+/// something, a project `ctxloom` bundle that would replace an operational
+/// prompt.
+pub type TrustAsk = Rc<dyn Fn() -> bool>;
 
 /// A project opened.
 pub struct Project {
@@ -82,6 +91,8 @@ pub struct Project {
     pub(crate) engines: Vec<Arc<dyn run_ports::Engine>>,
     /// What each engine cannot carry.
     pub(crate) hook_losses: crate::losses::HookLosses,
+    /// Where the user's trust of the project is asked ([`TrustAsk`]).
+    pub(crate) trust: Option<TrustAsk>,
 }
 
 impl Library {
@@ -104,7 +115,16 @@ impl Library {
             engines: Vec::new(),
             hook_losses: crate::losses::HookLosses::new(),
             distiller: None,
+            trust: None,
         }
+    }
+
+    /// The library asking `trust` whether the user trusts the project, where
+    /// its flags do not say so and the answer decides something (step 8 U2,
+    /// D4: a project `ctxloom` bundle replacing an operational prompt).
+    pub fn with_trust(mut self, trust: TrustAsk) -> Library {
+        self.trust = Some(trust);
+        self
     }
 
     /// The library showing a run's plan to `engines`, each saying what it
@@ -280,6 +300,7 @@ impl Library {
             companion_bundles: None,
             engines: self.engines.clone(),
             hook_losses: self.hook_losses.clone(),
+            trust: self.trust.clone(),
         })
     }
 }

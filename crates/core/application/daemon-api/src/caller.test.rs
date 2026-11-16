@@ -58,8 +58,25 @@ impl DaemonApi for Fake {
         unreachable!("a session's call never stops a daemon (OD-3)")
     }
 
-    async fn resolve_project(&self, _: v1::ResolveProjectRequest) -> Result<v1::Project, Called> {
-        unreachable!("a session's project is its name's (OD-2)")
+    // Only a launch into another project resolves one (step 8 Q1): the
+    // directory's, `bold-api-pine`.
+    async fn resolve_project(&self, r: v1::ResolveProjectRequest) -> Result<v1::Project, Called> {
+        self.ask(&format!("resolve {}", r.cwd));
+        Ok(v1::Project {
+            name: "projects/bold-api-pine".to_string(),
+            uid: r.project_id,
+            root: r.root,
+            ..v1::Project::default()
+        })
+    }
+
+    async fn get_trust(&self, r: v1::GetTrustRequest) -> Result<v1::Trust, Called> {
+        self.ask(&format!("trust {}", r.name));
+        Ok(v1::Trust {
+            name: r.name,
+            trusted: true,
+            ..v1::Trust::default()
+        })
     }
 
     async fn get_project(&self, r: v1::GetProjectRequest) -> Result<v1::Project, Called> {
@@ -127,8 +144,16 @@ impl DaemonApi for Fake {
 
     async fn create_hand_off(&self, r: v1::CreateHandOffRequest) -> Result<v1::HandOff, Called> {
         self.ask(&format!(
-            "hand-off {} {} {} {} {}",
-            r.parent, r.hand_off_id, r.owner, r.engine, r.agent
+            "hand-off {} {} {} {} {}{}",
+            r.parent,
+            r.hand_off_id,
+            r.owner,
+            r.engine,
+            r.agent,
+            match r.project.is_empty() {
+                true => String::new(),
+                false => format!(" into {}", r.project),
+            }
         ));
         assert!(r.env.is_some(), "the caller's environment is sent");
         // The engine asked, else the agent's: here, opencode.
@@ -139,6 +164,7 @@ impl DaemonApi for Fake {
         Ok(v1::HandOff {
             name: format!("{}/handOffs/{}", r.parent, r.hand_off_id),
             engine,
+            project: r.project,
         })
     }
 
@@ -614,6 +640,11 @@ async fn a_launch_is_the_hand_off_then_the_owners_launch_child() {
     assert_eq!(launched.prompt, "review the change");
     assert_eq!(launched.requester, None);
     assert_eq!(launched.delegation_limit, super::DELEGATION_LIMIT);
+    // Its owner's project: the same project, its trust unread (step 8).
+    let trust = launched.trust.expect("a trust");
+    assert!(trust.same_project);
+    assert!(!trust.trusted);
+    assert_eq!(launched.child_project_id, "calm-otter");
     // Ruling 4: none asked, the engine the daemon planned it on (its
     // agent's).
     assert_eq!(launched.engine, "opencode");
@@ -628,6 +659,86 @@ async fn a_launch_is_the_hand_off_then_the_owners_launch_child() {
             child.uid()
         ))]
     );
+}
+
+// Step 8 Q1, D8: a launch into another project registers it (the
+// caller's resolution of the directory), hands off into it, and names the
+// child there: its project's id and root, and the daemon's word on the
+// target's trust.
+#[tokio::test]
+async fn a_launch_into_another_project_names_the_child_there_with_its_trust() {
+    let world = World::new();
+    let resolved = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&resolved);
+    let caller = world.user(false).resolving(Arc::new(move |dir: &str| {
+        seen.lock().unwrap().push(dir.to_string());
+        Ok(v1::ResolveProjectRequest {
+            cwd: "/work/api".to_string(),
+            project_id: "api-otter".to_string(),
+            root: "/work/api".to_string(),
+            ..v1::ResolveProjectRequest::default()
+        })
+    }));
+    let written = caller
+        .launch(&super::Launch {
+            owner: Some("amber-quiet-heron".to_string()),
+            harp: Some("brisk-copper-moth".to_string()),
+            project: Some("../api".to_string()),
+            ..super::Launch::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(*resolved.lock().unwrap(), ["../api"]);
+    let child =
+        sessions::SessionName::parse("projects/bold-api-pine/sessions/brisk-copper-moth").unwrap();
+    assert_eq!(written.id, child.uid());
+    let asked = world.asked();
+    assert_eq!(asked[0], "1:resolve /work/api");
+    assert!(
+        asked.contains(&format!(
+            "2:hand-off projects/calm-quiet-heron {} amber-quiet-heron   into projects/bold-api-pine",
+            child.uid()
+        )),
+        "{asked:?}"
+    );
+    assert!(
+        asked.contains(&"2:trust projects/bold-api-pine/trust".to_string()),
+        "{asked:?}"
+    );
+    let commands = world.commands();
+    let [launched] = commands.as_slice() else {
+        panic!("one launch: {commands:?}");
+    };
+    let launched = wire::LaunchChild::decode(launched.value.as_slice()).unwrap();
+    assert_eq!(launched.child_project_id, "api-otter");
+    assert_eq!(launched.child_root, "/work/api");
+    assert_eq!(launched.child_session, child.uid());
+    let trust = launched.trust.expect("a trust");
+    assert!(!trust.same_project);
+    assert!(trust.trusted);
+}
+
+// A caller that resolves no directory refuses a launch into another
+// project, as a directory in no project is refused, and asks nothing.
+#[tokio::test]
+async fn a_launch_into_another_project_with_no_resolution_is_refused() {
+    let world = World::new();
+    let refused = world
+        .user(false)
+        .launch(&super::Launch {
+            owner: Some("amber-quiet-heron".to_string()),
+            harp: Some("brisk-copper-moth".to_string()),
+            project: Some("/nowhere".to_string()),
+            ..super::Launch::default()
+        })
+        .await;
+    let Err(CallError::Refused(crate::Rejection::Api(crate::ApiRejection::ProjectUnknown { cwd }))) =
+        refused
+    else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(cwd, "/nowhere");
+    assert!(world.asked().is_empty(), "{:?}", world.asked());
 }
 
 // A refused LaunchChild takes its hand-off back: a refused launch leaves

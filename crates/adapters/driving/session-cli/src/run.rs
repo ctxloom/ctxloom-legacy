@@ -200,6 +200,7 @@ pub fn child<W: ChildWrites>(
                     engine: args.engine.clone().unwrap_or_default(),
                     agent: args.agent.clone().unwrap_or_default(),
                     task: args.task.clone().unwrap_or_default(),
+                    project: args.project.clone(),
                 };
                 let written = writes.launch(&launch).await.map_err(call_failure)?;
                 let said = match written.applied {

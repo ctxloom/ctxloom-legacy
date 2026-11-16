@@ -56,7 +56,8 @@ const SESSION_LIST: &str = include_str!("../tools/session_list.md");
 const SESSION_SHOW: &str = include_str!("../tools/session_show.md");
 const TRANSCRIPT_SHOW: &str = include_str!("../tools/transcript_show.md");
 const CONTEXT_ASSEMBLE: &str = include_str!("../tools/context_assemble.md");
-// The owner's approved text (slice 4 U3).
+// The owner's approved text (slice 4 U3), with step 8's sentence on
+// `project` (texts.md §7, DRAFT until the owner approves it, D14).
 const CHILD_LAUNCH: &str = include_str!("../tools/child_launch.md");
 const CHILD_SEND: &str = include_str!("../tools/child_send.md");
 const CHILD_CLOSE: &str = include_str!("../tools/child_close.md");
@@ -113,7 +114,8 @@ pub fn tools() -> Vec<Tool> {
                 json!({
                     "name": {"type": "string", "description": "The child's name, a harp (default: one minted)"},
                     "agent": {"type": "string", "description": "The agent it is planned for (default: the project's)"},
-                    "task": {"type": "string", "description": "Its first task (default: none; it waits for its first message)"}
+                    "task": {"type": "string", "description": "Its first task (default: none; it waits for its first message)"},
+                    "project": {"type": "string", "description": "The directory of the ctxloom project the child works in, relative to your project's root; omit it for your own project."}
                 }),
                 &[],
             ),
@@ -261,6 +263,7 @@ pub(crate) async fn dispatch<D: Daemons>(
                 engine: String::new(),
                 agent: optional("agent").unwrap_or_default().to_string(),
                 task: optional("task").unwrap_or_default().to_string(),
+                project: optional("project").map(str::to_string),
             };
             let written = caller.launch(&launch).await.map_err(failed)?;
             Ok(vec![json_text(&written.session)])

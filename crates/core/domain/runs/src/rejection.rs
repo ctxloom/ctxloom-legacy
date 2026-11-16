@@ -30,6 +30,10 @@ pub enum RunRejection {
     /// A run on an engine this build cannot drive (ruling 73c): `known` are
     /// the ones it drives, comma separated.
     UnknownEngine { name: String, known: String },
+    /// A launch that reads project-only settings (ruling 46's keys, D3) the
+    /// project's own config says and the user has not trusted (step 8 U2,
+    /// ruling 142): `paths`, their dotted paths, comma separated, sorted.
+    UntrustedProjectSettings { paths: String },
     /// A launch refused for more than one reason, or for one beside the plan's
     /// fatal findings (rulings 73, 73b, 73c): each refusal, in check order;
     /// `fatal_findings`, how many fatal findings the plan had too (the library says
@@ -69,6 +73,9 @@ impl Diagnostic for RunRejection {
             RunRejection::FileOnlyCredential { .. } => code!("file-only-credential"),
             RunRejection::NoPrompt => code!("no-prompt"),
             RunRejection::UnknownEngine { .. } => code!("unknown-engine"),
+            RunRejection::UntrustedProjectSettings { .. } => {
+                code!("untrusted-project-settings")
+            }
             RunRejection::LaunchRefused { .. } => code!("launch-refused"),
         }
     }
@@ -85,6 +92,9 @@ impl Diagnostic for RunRejection {
                 ("name", name.as_str().into()),
                 ("known", known.as_str().into()),
             ],
+            RunRejection::UntrustedProjectSettings { paths } => {
+                vec![("paths", paths.as_str().into())]
+            }
             RunRejection::LaunchRefused {
                 refusals,
                 fatal_findings,
@@ -128,6 +138,9 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(RunRejection::UnknownEngine {
             name: "bogus".to_string(),
             known: "claude-code, opencode".to_string(),
+        }),
+        Box::new(RunRejection::UntrustedProjectSettings {
+            paths: "engines.claude-code.command".to_string(),
         }),
         Box::new(RunRejection::LaunchRefused {
             refusals: vec![RunRejection::NoPrompt],

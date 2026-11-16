@@ -101,6 +101,17 @@ impl<E: run_ports::Edge> crate::Api<E> {
         })
     }
 
+    /// Whether the user trusts the project `project_id` now (step 8 U2):
+    /// what a launch the daemon makes in it is planned with, so a trusted
+    /// project's own settings apply and an untrusted one's are held back
+    /// and refuse the launch that reads them. A daemon that reads no trust
+    /// trusts nothing.
+    pub(crate) fn trusts(&self, project_id: &str) -> bool {
+        self.trusting
+            .as_ref()
+            .is_some_and(|trusting| trusting.index.index().trusts(project_id))
+    }
+
     /// `GetTrust` (step 8 U1): the trust `request.name` names
     /// (`projects/{harp}/trust`), what trusting it would allow read at the
     /// project's REGISTERED root, the etag of that, and whether, by whom and

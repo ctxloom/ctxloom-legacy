@@ -109,6 +109,8 @@ async fn a_daemon_that_reads_no_trust_fails_both_calls() {
     assert!(matches!(got, Err(ApiError::Failed { .. })), "{got:?}");
     let listed = f.api.list_trusts(v1::ListTrustsRequest::default()).await;
     assert!(matches!(listed, Err(ApiError::Failed { .. })), "{listed:?}");
+    // Nor does it trust any project a launch is made in.
+    assert!(!f.api.trusts("calm-otter"));
 }
 
 /// `command` to the project's trust stream, through the world's kernel.
@@ -169,6 +171,9 @@ async fn a_granted_trust_is_listed_and_shown_until_it_is_revoked() {
         .unwrap();
     assert!(shown.trusted);
     assert_eq!(shown.actor, "alice");
+    // What a launch in the project is planned with (step 8 U2).
+    assert!(api.trusts("calm-otter"));
+    assert!(!api.trusts("another-project"));
     let revoke = trust::RevokeTrust {
         name: NAME.to_string(),
         project_id: "calm-otter".to_string(),
@@ -184,6 +189,7 @@ async fn a_granted_trust_is_listed_and_shown_until_it_is_revoked() {
         .await
         .unwrap();
     assert!(listed.trusts.is_empty(), "{listed:?}");
+    assert!(!api.trusts("calm-otter"));
 }
 
 #[tokio::test]

@@ -229,9 +229,11 @@ where
             child_root: owner.project_dir.clone(),
             harp: request.harp.clone(),
             engine: request.engine.clone(),
+            // The owner's own project: the target's trust is unread (a child
+            // in another project is the daemon's launch, step 8 D8).
             trust: TargetTrust {
                 same_project: true,
-                trusted: true,
+                trusted: false,
             },
             delegation_limit: request.delegation_limit,
             requester: None,

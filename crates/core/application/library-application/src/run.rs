@@ -409,6 +409,12 @@ impl Project {
         let fatal = rows.iter().filter(|r| r.fatal).cloned().collect();
         let surfaces = self.surfaces_of(request, &selection, &package);
         self.say_shadowed(&surfaces);
+        let settings_agent = selection
+            .agent
+            .as_ref()
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        let untrusted = read_by_launch(&self.config.held_back, &engine, &settings_agent);
         let plan = DryRun {
             agent: request.agent.clone(),
             workspace: request.workspace.clone(),
@@ -430,12 +436,9 @@ impl Project {
             permissions,
             drive,
             settings,
-            settings_agent: selection
-                .agent
-                .as_ref()
-                .map(|a| a.name.clone())
-                .unwrap_or_default(),
+            settings_agent,
             surfaces,
+            untrusted,
         };
         Ok(Previewed { plan, fatal })
     }
@@ -698,6 +701,25 @@ fn runtime_notice(effective: &Effective) -> Option<Notice> {
         ),
         remedy,
     })
+}
+
+/// Of the settings an untrusted project held back (`held`), the ones a
+/// launch on `engine` for the agent `agent` reads (owner Q8): its engine's
+/// block and its agent's; another engine's or agent's refuses nothing.
+/// Sorted, each once.
+fn read_by_launch(held: &[String], engine: &str, agent: &str) -> Vec<String> {
+    let engine_block = format!("engines.{engine}.");
+    let agent_block = format!("agents.{agent}.");
+    let mut read: Vec<String> = held
+        .iter()
+        .filter(|path| {
+            path.starts_with(&engine_block) || (!agent.is_empty() && path.starts_with(&agent_block))
+        })
+        .cloned()
+        .collect();
+    read.sort();
+    read.dedup();
+    read
 }
 
 #[cfg(test)]

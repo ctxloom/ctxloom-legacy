@@ -173,6 +173,7 @@ impl daemon_api::Assemblies for ProjectAssemblies {
             degraded: globals.degraded,
             config_set: globals.config_set,
             no_companions: globals.no_companions,
+            trusted: false,
         };
         let asked = library_application::AssembleRequest {
             profiles: request.profiles.clone(),

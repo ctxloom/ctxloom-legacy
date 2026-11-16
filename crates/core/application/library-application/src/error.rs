@@ -461,6 +461,10 @@ pub enum Notice {
     /// session's engine registers ctxloom's own MCP server under: shadowed
     /// by it (OD-6, owner 2026-11-13).
     McpServerShadowed { name: String },
+    /// The project's own `ctxloom` bundle replaces the operational prompt
+    /// `prompt` (`setup-interview`, `distill`), and the user has not trusted
+    /// the project, so the built-in one was used (step 8 U2, D4).
+    PromptUntrusted { prompt: String },
     /// A run's checkout was left in place at its end (work in it, or one
     /// that would not go): by path and branch, and why.
     CheckoutLeft {
@@ -515,6 +519,7 @@ impl Diagnostic for Notice {
             Notice::WorkspaceUnavailable { .. } => code!("notice-workspace-unavailable"),
             Notice::SessionHomeHost { .. } => code!("notice-session-home-host"),
             Notice::McpServerShadowed { .. } => code!("notice-mcp-server-shadowed"),
+            Notice::PromptUntrusted { .. } => code!("notice-prompt-untrusted"),
             Notice::CheckoutLeft { .. } => code!("notice-checkout-left"),
             Notice::StaleDistilled { .. } => code!("stale-distilled"),
             Notice::RuntimeOverride { change, .. } => match change {
@@ -588,6 +593,7 @@ impl Diagnostic for Notice {
                 ("place", place.as_str().into()),
             ],
             Notice::McpServerShadowed { name } => vec![("name", name.as_str().into())],
+            Notice::PromptUntrusted { prompt } => vec![("prompt", prompt.as_str().into())],
             Notice::CheckoutLeft {
                 path,
                 branch,
@@ -810,6 +816,9 @@ fn notice_samples() -> Vec<Box<dyn Diagnostic>> {
             place: s("engines.claude-code"),
         }),
         Box::new(Notice::McpServerShadowed { name: s("ctxloom") }),
+        Box::new(Notice::PromptUntrusted {
+            prompt: s("setup-interview"),
+        }),
         Box::new(Notice::CheckoutLeft {
             path: s("/h/.ctxloom/worktrees/calm-otter/amber-swift-owl/reviewer"),
             branch: s("ctxloom/amber-swift-owl/reviewer"),

@@ -477,6 +477,7 @@ impl daemon_api::HandOffs for ApiHandOffs {
             &request.agent,
             &request.root,
             &caller,
+            request.trusted,
         )?;
         // None asked: the engine the plan resolved for the agent (its own,
         // else the config's default engine).
@@ -508,6 +509,7 @@ impl daemon_api::HandOffs for ApiHandOffs {
                 accepted_set: credential.accepted_set,
             },
             fatal_findings: child.evidence.fatal_findings,
+            untrusted_settings: child.evidence.untrusted_settings.clone(),
             content: daemon_api::HandOffContent {
                 env: engine_claude::launcher_environment(&child.settings, &caller),
                 launcher: super::settings_places(&caller),

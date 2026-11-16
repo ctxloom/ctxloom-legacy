@@ -56,9 +56,11 @@ pub use interview::{
 /// ctxloom's `resources/commands/ctxloom-init.md`), unless the project has a
 /// bundle of its own named `ctxloom`, which overrides it whole.
 pub trait Prompts {
-    /// The setup interview's body, or why there is none to read (a project
-    /// `ctxloom` bundle without one, or that cannot be read).
-    fn setup_interview(&self) -> Result<String, PromptFailure>;
+    /// The setup interview's body and what reading it noticed (a project
+    /// `ctxloom` bundle passed over for the built-in one, untrusted: step 8
+    /// U2, D4), or why there is none to read (a project `ctxloom` bundle
+    /// without one, or that cannot be read).
+    fn setup_interview(&self) -> Result<PromptRead, PromptFailure>;
 
     /// Each enabled registered companion's `init.setup_guidance`, in order
     /// (j000300): what the interview carries after ctxloom's own. A
@@ -67,6 +69,24 @@ pub trait Prompts {
     #[cfg_attr(test, mutants::skip)]
     fn companion_guidance(&self) -> Vec<String> {
         Vec::new()
+    }
+}
+
+/// A prompt as read: its body, and what reading it noticed, for the error
+/// stream.
+#[derive(Debug, Default)]
+pub struct PromptRead {
+    pub text: String,
+    pub notices: Vec<Failure>,
+}
+
+impl From<String> for PromptRead {
+    /// A body read with nothing noticed.
+    fn from(text: String) -> PromptRead {
+        PromptRead {
+            text,
+            notices: Vec::new(),
+        }
     }
 }
 
@@ -270,9 +290,14 @@ impl Init {
     }
 }
 
-/// `init prompt`: the interview body, as Go prints it (a line after it).
-pub fn prompt(prompts: &dyn Prompts) -> Result<String, PromptFailure> {
-    Ok(format!("{}\n", prompts.setup_interview()?))
+/// `init prompt`: the interview body, as Go prints it (a line after it),
+/// and what reading it noticed.
+pub fn prompt(prompts: &dyn Prompts) -> Result<PromptRead, PromptFailure> {
+    let read = prompts.setup_interview()?;
+    Ok(PromptRead {
+        text: format!("{}\n", read.text),
+        notices: read.notices,
+    })
 }
 
 #[cfg(test)]

@@ -10,12 +10,14 @@ use crate::{personal_name, prompt, PromptFailure, Prompts};
 struct Catalog(Option<&'static str>, RefCell<u32>);
 
 impl Prompts for Catalog {
-    fn setup_interview(&self) -> Result<String, PromptFailure> {
+    fn setup_interview(&self) -> Result<crate::PromptRead, PromptFailure> {
         *self.1.borrow_mut() += 1;
-        self.0.map(str::to_string).ok_or_else(|| PromptFailure {
-            cause: Box::new(deps_application::AppError::DefaultNeedsName),
-            exit: Exit::REFUSED,
-        })
+        self.0
+            .map(|t| t.to_string().into())
+            .ok_or_else(|| PromptFailure {
+                cause: Box::new(deps_application::AppError::DefaultNeedsName),
+                exit: Exit::REFUSED,
+            })
     }
 }
 
@@ -25,7 +27,7 @@ impl Prompts for Catalog {
 #[test]
 fn the_prompt_is_the_catalog_s_setup_interview() {
     let catalog = Catalog(Some("THE BODY"), RefCell::default());
-    assert_eq!(prompt(&catalog).expect("held"), "THE BODY\n");
+    assert_eq!(prompt(&catalog).expect("held").text, "THE BODY\n");
     assert_eq!(*catalog.1.borrow(), 1);
 }
 

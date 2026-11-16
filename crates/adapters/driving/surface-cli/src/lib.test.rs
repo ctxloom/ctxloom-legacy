@@ -244,6 +244,7 @@ mod commands_run {
                 degraded: false,
                 no_companions: false,
                 config_set: Vec::new(),
+                trusted: false,
             },
         };
         let mut err = Vec::new();
@@ -277,6 +278,7 @@ mod commands_run {
                 degraded: false,
                 no_companions: false,
                 config_set: Vec::new(),
+                trusted: false,
             },
         };
         let failure = run(
@@ -313,6 +315,7 @@ mod commands_run {
                 degraded: false,
                 no_companions: false,
                 config_set: Vec::new(),
+                trusted: false,
             },
         };
         let mut out = Vec::new();
@@ -628,6 +631,7 @@ mod commands_run {
                 degraded: false,
                 no_companions: false,
                 config_set: Vec::new(),
+                trusted: false,
             },
         };
         let mut out = Vec::new();

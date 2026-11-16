@@ -84,6 +84,7 @@ impl ChildPlans for Plans {
         _agent: &str,
         _: &str,
         _: &BTreeMap<String, String>,
+        _trusted: bool,
     ) -> Result<Previewed, String> {
         self.0.lock().unwrap().push(engine.to_string());
         Err("library-application-no-agent".to_string())

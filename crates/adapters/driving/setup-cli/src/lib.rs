@@ -258,9 +258,16 @@ fn init(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     if sub.subcommand_matches("prompt").is_some() {
-        let body = init_application::prompt(uses.prompts)
+        let read = init_application::prompt(uses.prompts)
             .map_err(|refused| Failure::boxed(refused.cause, refused.exit))?;
-        write!(out, "{body}").map_err(output)?;
+        // Said with their remedy: a passed-over prompt names `ctxloom trust`.
+        let notices: Vec<angzarr_diagnostic::Report> = read
+            .notices
+            .iter()
+            .map(|notice| angzarr_diagnostic::Report::of(notice.as_ref()))
+            .collect();
+        say_notices(&notices, PROG, format, catalog, err);
+        write!(out, "{}", read.text).map_err(output)?;
         return Ok(Exit::OK);
     }
     let request = InitRequest {

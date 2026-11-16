@@ -95,12 +95,15 @@ impl LibraryCommands {
             let wiring = Wiring::new(Arc::clone(&self.env))?;
             // Distill's model: a one-shot on no context (plan step 5,
             // OD-38), hosted by a daemon of this binary's stamp (U4).
-            let library = build(&wiring, self.remotes.clone())?.with_distiller(Rc::new(
-                crate::distiller::OneShotDistiller {
+            let library = build(&wiring, self.remotes.clone())?
+                .with_distiller(Rc::new(crate::distiller::OneShotDistiller {
                     env: Arc::clone(wiring.env()),
                     stamp: self.version.clone(),
-                },
-            ));
+                }))
+                // A project `ctxloom` bundle replaces distill's prompt only
+                // once the user trusts the project: her daemon is asked,
+                // once, where it decides (step 8 U2, D4).
+                .with_trust(crate::daemon::trust_ask(&wiring, &self.version));
             self.library = Some(library);
         }
         Ok(self

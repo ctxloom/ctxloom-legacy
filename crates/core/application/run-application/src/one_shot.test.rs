@@ -192,6 +192,7 @@ struct ScriptedPlan {
     asked: Arc<Mutex<Vec<RunRequest>>>,
     axis: String,
     agent: String,
+    untrusted: Vec<String>,
 }
 
 impl Planner for ScriptedPlan {
@@ -236,6 +237,7 @@ impl Planner for ScriptedPlan {
                 deny_tools: vec!["PLANNED-DENY".to_string()],
                 ..Default::default()
             },
+            untrusted: self.untrusted.clone(),
         };
         Outcome {
             result: Ok(Previewed {
@@ -484,6 +486,8 @@ struct Script {
     /// How the launcher's workspaces port answers; none: the launcher has
     /// none.
     workspaces: Option<Arc<run_launcher::fakes::ScriptedWorkspaces>>,
+    /// The untrusted project settings the plan says the launch reads.
+    untrusted: &'static [&'static str],
 }
 
 impl Script {
@@ -511,6 +515,7 @@ impl Script {
             axis: "",
             agent: "",
             workspaces: None,
+            untrusted: &[],
         }
     }
 }
@@ -600,6 +605,7 @@ fn rig(script: Script) -> Rig {
             asked: Arc::clone(&asked),
             axis: script.axis.to_string(),
             agent: script.agent.to_string(),
+            untrusted: script.untrusted.iter().map(ToString::to_string).collect(),
         }),
         identity: Box::new(FixedProject(script.project_error)),
         names: Box::new(ScriptedNames(
@@ -835,6 +841,46 @@ async fn a_one_shot_with_no_prompt_refuses_before_a_session_exists() {
             "{prompt:?}: {error:?}"
         );
         assert_eq!(error.code(), "runs-no-prompt");
+        assert_eq!(error.exit(), Exit::REFUSED);
+        assert!(rig.records.names("amber-swift-owl").is_empty());
+        assert!(rig.runner.seen.lock().unwrap().is_empty());
+    }
+}
+
+// Step 8 U2 (ruling 142): the untrusted project settings the plan says the
+// launch reads are its evidence, and the run is refused on them before a
+// session exists, a one-shot and the terminal alike.
+#[tokio::test]
+async fn untrusted_project_settings_refuse_the_run_before_a_session_exists() {
+    for interactive in [false, true] {
+        let mut rig = rig(Script {
+            untrusted: &["engines.fake.command"],
+            ..Script::answering()
+        });
+        let error = match interactive {
+            false => rig
+                .runs
+                .one_shot(&Flags::default(), &ask())
+                .await
+                .result
+                .err(),
+            true => rig
+                .runs
+                .interactive(&Flags::default(), &ask())
+                .await
+                .result
+                .err(),
+        }
+        .expect("refused");
+        assert!(
+            matches!(
+                &error,
+                RunError::Refused(runs::RunRejection::UntrustedProjectSettings { paths })
+                    if paths == "engines.fake.command"
+            ),
+            "{error:?}"
+        );
+        assert_eq!(error.code(), "runs-untrusted-project-settings");
         assert_eq!(error.exit(), Exit::REFUSED);
         assert!(rig.records.names("amber-swift-owl").is_empty());
         assert!(rig.runner.seen.lock().unwrap().is_empty());

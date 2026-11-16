@@ -93,7 +93,18 @@ pub struct Caller<D> {
     /// The launch locks a launch holds from before its `CreateHandOff` to
     /// after its `LaunchChild` (T6); none, a launch holds none.
     locks: Option<Arc<dyn RunLocks>>,
+    /// What a launch into another project (`--project <dir>`, the tool's
+    /// `project`, step 8 Q1) registers that project with: the directory as
+    /// given, resolved where the caller resolves it (the CLI's working
+    /// directory; a session's project root, Q-C); none, such a launch is
+    /// refused.
+    projects: Option<Arc<ProjectResolver>>,
 }
+
+/// A directory's project as `ResolveProject` registers it: refused
+/// `daemon-api-project-unknown` for a directory in no ctxloom project.
+pub type ProjectResolver =
+    dyn Fn(&str) -> Result<v1::ResolveProjectRequest, CallError> + Send + Sync;
 
 /// The name of the launch lock of the child `child` (its stable id), among
 /// the run locks: what a launch holds while it is made, and the daemon's
@@ -127,6 +138,9 @@ pub struct Launch {
     pub agent: String,
     /// Its first task; empty, none.
     pub task: String,
+    /// The directory of the ctxloom project it works in (step 8 Q1); none,
+    /// the owner's.
+    pub project: Option<String>,
 }
 
 /// `name`, refused as no session's name.
@@ -210,6 +224,7 @@ impl<D: Daemons> Caller<D> {
             ids,
             names: None,
             locks: None,
+            projects: None,
         })
     }
 
@@ -231,7 +246,18 @@ impl<D: Daemons> Caller<D> {
             ids,
             names: None,
             locks: None,
+            projects: None,
         })
+    }
+
+    /// This caller, a launch into another project registering it through
+    /// `projects` (step 8 Q1).
+    #[must_use]
+    pub fn resolving(self, projects: Arc<ProjectResolver>) -> Caller<D> {
+        Caller {
+            projects: Some(projects),
+            ..self
+        }
     }
 
     /// This caller, each launch holding its launch lock among `locks` (T6:
@@ -517,7 +543,17 @@ impl<D: Daemons> Caller<D> {
             (None, Some(names)) => names(),
             (None, None) => String::new(),
         };
-        let project = owner.project();
+        // The project the child works in: the one the launch names, as the
+        // daemon registers it (step 8 Q1), else its owner's.
+        let target = match &launch.project {
+            Some(dir) => Some(self.registered(dir).await?),
+            None => None,
+        };
+        let project = match &target {
+            Some(target) => ProjectName::parse(&target.name)
+                .map_err(|rejection| not_a_name(&target.name, &reason_of(&rejection)))?,
+            None => owner.project(),
+        };
         let child = project
             .session(&harp)
             .map_err(|rejection| not_a_name(&harp, &reason_of(&rejection)))?;
@@ -532,8 +568,13 @@ impl<D: Daemons> Caller<D> {
             None => None,
         };
         let request_id = (self.ids)();
+        let into = LaunchInto {
+            owner: &owner,
+            child: &child,
+            target: target.as_ref(),
+        };
         let (session, applied) = on_daemon!(self, |api| self
-            .launched(api, &owner, &child, &launch.engine, launch, &request_id)
+            .launched(api, &into, &launch.engine, launch, &request_id)
             .await)?;
         Ok(Written {
             session,
@@ -542,16 +583,28 @@ impl<D: Daemons> Caller<D> {
         })
     }
 
-    /// One launch of `child` for `owner` on `api`.
+    /// The project at the directory `dir` (a launch's `--project`), as the
+    /// daemon registers it: its name, id and root.
+    async fn registered(&self, dir: &str) -> Result<v1::Project, CallError> {
+        let resolve = self.projects.as_ref().ok_or_else(|| {
+            CallError::Refused(Rejection::Api(ApiRejection::ProjectUnknown {
+                cwd: dir.to_string(),
+            }))
+        })?;
+        let request = resolve(dir)?;
+        on_daemon!(self, |api| api.resolve_project(request.clone()).await)
+    }
+
+    /// One launch of `into`'s child for its owner on `api`.
     async fn launched(
         &self,
         api: &D::Api,
-        owner: &SessionName,
-        child: &SessionName,
+        into: &LaunchInto<'_>,
         engine: &str,
         launch: &Launch,
         request_id: &str,
     ) -> Result<(v1::Session, bool), Called> {
+        let (owner, child) = (into.owner, into.child);
         let parent = owner.project().to_string();
         let hand_off = api
             .create_hand_off(v1::CreateHandOffRequest {
@@ -560,6 +613,10 @@ impl<D: Daemons> Caller<D> {
                 owner: owner.harp().to_string(),
                 engine: engine.to_string(),
                 agent: launch.agent.clone(),
+                project: into
+                    .target
+                    .map(|target| target.name.clone())
+                    .unwrap_or_default(),
                 request_id: request_id.to_string(),
                 env: Some(self.env.clone()),
             })
@@ -571,9 +628,7 @@ impl<D: Daemons> Caller<D> {
             (true, false) => engine.to_string(),
             (true, true) => session_policies::CHILD_ENGINE.to_string(),
         };
-        let launched = self
-            .launch_child(api, owner, child, &engine, &launch.task)
-            .await;
+        let launched = self.launch_child(api, into, &engine, &launch.task).await;
         let applied = match launched {
             Ok(applied) => applied,
             Err(refused @ Called::Refused { .. }) => {
@@ -602,31 +657,58 @@ impl<D: Daemons> Caller<D> {
         Ok((session, applied))
     }
 
-    /// The owner's `LaunchChild` of `child`: whether it was applied now.
+    /// The owner's `LaunchChild` of `into`'s child: whether it was applied
+    /// now. The child's project, its root and the target's trust are the
+    /// daemon's answers (D8): its owner's project and root, or the project
+    /// the launch named, registered, and whether the user trusts it.
     async fn launch_child(
         &self,
         api: &D::Api,
-        owner: &SessionName,
-        child: &SessionName,
+        into: &LaunchInto<'_>,
         engine: &str,
         task: &str,
     ) -> Result<bool, Called> {
-        let project = api
+        let (owner, child) = (into.owner, into.child);
+        let own = api
             .get_project(v1::GetProjectRequest {
                 name: owner.project().to_string(),
             })
             .await?;
         let held = self.read(api, owner).await?;
+        let (project_id, root, trust) = match into.target {
+            Some(target) if target.uid != own.uid => {
+                let trusted = api
+                    .get_trust(v1::GetTrustRequest {
+                        name: trust::TrustName::of(child.project()).to_string(),
+                    })
+                    .await?
+                    .trusted;
+                (
+                    target.uid.clone(),
+                    target.root.clone(),
+                    TargetTrust {
+                        same_project: false,
+                        trusted,
+                    },
+                )
+            }
+            // Its owner's project: its trust is unread.
+            _ => (
+                own.uid,
+                held.project_root,
+                TargetTrust {
+                    same_project: true,
+                    trusted: false,
+                },
+            ),
+        };
         let command = LaunchChild {
-            child_project_id: project.uid,
+            child_project_id: project_id,
             child_session: child.uid(),
-            child_root: held.project_root,
+            child_root: root,
             harp: child.harp().to_string(),
             engine: engine.to_string(),
-            trust: TargetTrust {
-                same_project: true,
-                trusted: true,
-            },
+            trust,
             delegation_limit: DELEGATION_LIMIT,
             requester: self.requester(api).await?,
             prompt: task.to_string(),
@@ -634,6 +716,14 @@ impl<D: Daemons> Caller<D> {
         let key = format!("launch:{}:{}", owner.uid(), child.uid());
         Ok(self.write(api, owner, &command, &key).await?.1)
     }
+}
+
+/// A launch's owner and child, and the project it named (none: the
+/// owner's).
+struct LaunchInto<'a> {
+    owner: &'a SessionName,
+    child: &'a SessionName,
+    target: Option<&'a v1::Project>,
 }
 
 /// The child verbs a command sends as the user (`session launch|send|clear|

@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use daemon_proto::v1;
+use run_ports::Edge as _;
 
 use crate::server::tests::{fixture, refused, resolve, Fixture, COMMIT};
 use crate::{HandOffContent, HandOffs, HandingOff, Planned};
@@ -22,6 +23,8 @@ struct Kept {
     deleted: Mutex<Vec<String>>,
     credential_set: bool,
     unplanned: bool,
+    /// The untrusted settings the plan says its launch reads.
+    untrusted: Vec<String>,
 }
 
 impl HandOffs for Kept {
@@ -45,6 +48,7 @@ impl HandOffs for Kept {
                 accepted_set: self.credential_set,
             },
             fatal_findings: 0,
+            untrusted_settings: self.untrusted.clone(),
             content: HandOffContent {
                 env: request.env.clone(),
                 launcher: BTreeMap::new(),
@@ -305,4 +309,190 @@ async fn a_draining_daemon_withdraws_a_hand_off_made_before_the_drain() {
     let (_, draining): (_, v1::DaemonDraining) =
         refused(calls.create_hand_off(create("amber-quiet-heron")).await);
     assert!(draining.harps.is_empty(), "{draining:?}");
+}
+
+// ---------------------------------------- step 8 U2: trust and the target
+
+/// The second project, `api`, as `ResolveProject` registers it.
+const API: &str = "projects/bold-api-pine";
+const API_ROOT: &str = "/work/api";
+
+/// A fixture whose two projects are registered (this one and `api`), whose
+/// owner is minted in this one, its hand-offs `kept`, its trusts read from
+/// a warm index: `trusted` names the project ids the user has trusted.
+async fn two_projects(
+    kept: &Arc<Kept>,
+    trusted: &[&str],
+) -> (Fixture, crate::Api<crate::server::tests::World>) {
+    let f = fixture(vec!["calm-quiet-heron", "bold-api-pine"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.api
+        .resolve_project(v1::ResolveProjectRequest {
+            cwd: API_ROOT.to_string(),
+            project_id: "api-otter".to_string(),
+            root: API_ROOT.to_string(),
+            ..v1::ResolveProjectRequest::default()
+        })
+        .await
+        .unwrap();
+    f.mint("amber-quiet-heron").await;
+    let index = trust_index::TrustIndexes::default();
+    for (n, id) in trusted.iter().enumerate() {
+        let harp = match *id {
+            "api-otter" => "bold-api-pine",
+            _ => "calm-quiet-heron",
+        };
+        let name = format!("projects/{harp}/trust");
+        let grant = trust::GrantTrust {
+            name: name.clone(),
+            project_id: (*id).to_string(),
+            etag: "e".to_string(),
+            current_etag: "e".to_string(),
+            actor: trust::Actor {
+                user: "alice".to_string(),
+            },
+        };
+        let cover = angzarr_embedded::v1::Cover {
+            domain: trust::TRUST_DOMAIN.to_string(),
+            root: Some(trust::trust_root(&name)),
+            edition: None,
+        };
+        f.world
+            .handle(sessions::keyed_book(cover, &grant, &format!("grant-{n}")))
+            .await
+            .unwrap();
+    }
+    let mut caught = trust_index::caught_up(index.clone());
+    caught
+        .step(&f.world.store, f.world.registry.catalog())
+        .await
+        .unwrap();
+    f.catch_up().await;
+    let api = f
+        .restarted()
+        .await
+        .handing_off(Arc::clone(kept) as Arc<dyn HandOffs>)
+        .trusting(crate::Trusting {
+            trusts: Arc::new(NoSettings),
+            index,
+        });
+    (f, api)
+}
+
+struct NoSettings;
+
+impl crate::Trusts for NoSettings {
+    fn settings(&self, _: &str) -> Result<Vec<v1::TrustSetting>, crate::ApiError> {
+        Ok(Vec::new())
+    }
+}
+
+fn into(project: &str) -> v1::CreateHandOffRequest {
+    v1::CreateHandOffRequest {
+        project: project.to_string(),
+        ..create("amber-quiet-heron")
+    }
+}
+
+// The child of an untrusted project is planned untrusted, and the
+// untrusted settings its launch reads refuse it as its enqueue would, before
+// its hand-off is written.
+#[tokio::test]
+async fn a_hand_off_reading_untrusted_settings_is_refused_and_writes_nothing() {
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        untrusted: vec!["engines.opencode.command".to_string()],
+        ..Kept::default()
+    });
+    let (_f, api) = two_projects(&kept, &[]).await;
+    let refused = api.create_hand_off(create("amber-quiet-heron")).await;
+    let Err(crate::ApiError::Refused(refusal)) = refused else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(
+        crate::rejection_of(&refusal.refusal),
+        Some(crate::Rejection::Runs(
+            runs::RunRejection::UntrustedProjectSettings {
+                paths: "engines.opencode.command".to_string(),
+            }
+        ))
+    );
+    assert!(!kept.planned.lock().unwrap()[0].trusted);
+    assert!(kept.written.lock().unwrap().is_empty());
+}
+
+// A trusted project's child is planned trusted (S23).
+#[tokio::test]
+async fn a_trusted_projects_child_is_planned_trusted() {
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        ..Kept::default()
+    });
+    let (_f, api) = two_projects(&kept, &[crate::server::tests::PROJECT]).await;
+    let made = api
+        .create_hand_off(create("amber-quiet-heron"))
+        .await
+        .unwrap();
+    assert_eq!(made.project, PARENT);
+    assert!(kept.planned.lock().unwrap()[0].trusted);
+}
+
+// D8, Q1: a child launched into another project the user has not trusted
+// is refused naming that project's root, before anything is planned or
+// written.
+#[tokio::test]
+async fn a_hand_off_into_an_untrusted_project_is_refused_and_writes_nothing() {
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        ..Kept::default()
+    });
+    let (_f, api) = two_projects(&kept, &[crate::server::tests::PROJECT]).await;
+    let refused = api.create_hand_off(into(API)).await;
+    let Err(crate::ApiError::Refused(refusal)) = refused else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(
+        crate::rejection_of(&refusal.refusal),
+        Some(crate::Rejection::Sessions(
+            sessions::SessionRejection::UntrustedTarget {
+                root: API_ROOT.to_string(),
+            }
+        ))
+    );
+    assert!(kept.planned.lock().unwrap().is_empty());
+    assert!(kept.written.lock().unwrap().is_empty());
+}
+
+// Once the user trusts it, the child is planned at that project's root,
+// trusted, and the hand-off names the project it works in.
+#[tokio::test]
+async fn a_hand_off_into_a_trusted_project_is_planned_there() {
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        ..Kept::default()
+    });
+    let (_f, api) = two_projects(&kept, &["api-otter"]).await;
+    let made = api.create_hand_off(into(API)).await.unwrap();
+    assert_eq!(made.project, API);
+    assert_eq!(made.name, format!("{PARENT}/handOffs/{CHILD}"));
+    let planned = kept.planned.lock().unwrap().clone();
+    assert_eq!(planned[0].root, API_ROOT);
+    assert!(planned[0].trusted);
+    // Naming its own project is no other project.
+    let (_f, api) = two_projects(&kept, &[]).await;
+    assert!(api.create_hand_off(into(PARENT)).await.is_ok());
+}
+
+// A project nobody registered is not found, and nothing is written.
+#[tokio::test]
+async fn a_hand_off_into_a_project_nobody_registered_is_not_found() {
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        ..Kept::default()
+    });
+    let (_f, api) = two_projects(&kept, &[]).await;
+    let (_, missing): (_, v1::ProjectNotFound) =
+        refused(api.create_hand_off(into("projects/far-away-heron")).await);
+    assert_eq!(missing.name, "projects/far-away-heron");
+    assert!(kept.written.lock().unwrap().is_empty());
 }

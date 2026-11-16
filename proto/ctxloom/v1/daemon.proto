@@ -808,6 +808,17 @@ message CreateHandOffRequest {
   string engine = 4;
   // The agent the child is planned for (empty: the project's default).
   string agent = 5;
+  // The project the child works in, `projects/{project}` (empty: `parent`,
+  // the owner's; step 8, owner Q1). The CLI resolves `session launch
+  // --project <dir>` through `ResolveProject` (cwd the directory) and names
+  // the result; the MCP server resolves the `child_launch` tool's `project`,
+  // a directory relative to the calling session's project root
+  // (`CTXLOOM_ROOT`, Q-C), the same way. The child is planned on that
+  // project's config (its agents, engines and project-only keys), runs in
+  // its root, and is minted in it; its agent is looked up there. A project
+  // the user has not trusted is refused (`sessions.UntrustedTarget`, D8),
+  // and nothing is written.
+  string project = 6;
   string request_id = 90;
   // The child's environment (S7, S10).
   EnvVars env = 94;
@@ -826,6 +837,8 @@ message HandOff {
   // configured engine (an agent naming none, the config's default engine).
   // What its `LaunchChild` names.
   string engine = 2;
+  // The project the child works in, `projects/{project}`.
+  string project = 3;
 }
 
 // endregion

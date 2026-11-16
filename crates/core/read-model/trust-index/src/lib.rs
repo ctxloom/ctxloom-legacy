@@ -114,6 +114,16 @@ impl TrustIndex {
         self.rows.values().find(|row| row.name == name).cloned()
     }
 
+    /// Whether the project `project_id` is trusted now (step 8 U2: what a
+    /// launch in it is judged by). An empty id is no project's.
+    pub fn trusts(&self, project_id: &str) -> bool {
+        !project_id.is_empty()
+            && self
+                .rows
+                .values()
+                .any(|row| row.trusted && row.project_id == project_id)
+    }
+
     /// The trusts given now, by name: a revoked one is not among them.
     pub fn trusted_now(&self) -> Vec<TrustRow> {
         let mut rows: Vec<TrustRow> = self

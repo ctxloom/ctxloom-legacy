@@ -52,6 +52,7 @@ pub(crate) fn run_on(library: &Library, line: &[&str], how: How) -> Ran {
             degraded: how.degraded,
             no_companions: false,
             config_set: Vec::new(),
+            trusted: false,
         },
     };
     let catalog = Catalog::en_us(&[library_application::EN_US]).unwrap();

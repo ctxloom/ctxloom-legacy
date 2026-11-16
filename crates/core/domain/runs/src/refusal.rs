@@ -14,7 +14,7 @@ use angzarr_embedded::markup::TypedRefusal;
 
 use crate::{
     AlreadyEnqueued, FileOnlyCredential, LaunchRefusals, NoCredential, NoPrompt, NoRun,
-    NotItsStream, RunIsEnded, RunRejection, TurnInFlight, UnknownEngine,
+    NotItsStream, RunIsEnded, RunRejection, TurnInFlight, UnknownEngine, UntrustedProjectSettings,
 };
 
 /// What a command handler fails with for `rejection`: the typed refusal
@@ -70,6 +70,9 @@ impl TryFrom<&TypedRefusal> for RunRejection {
         if let Some(FileOnlyCredential { engine, variables }) = refusal.object() {
             return Ok(RunRejection::FileOnlyCredential { engine, variables });
         }
+        if let Some(UntrustedProjectSettings { paths }) = refusal.object() {
+            return Ok(RunRejection::UntrustedProjectSettings { paths });
+        }
         if refusal.object::<NoPrompt>().is_some() {
             return Ok(RunRejection::NoPrompt);
         }
@@ -92,6 +95,7 @@ fn launch_refused(aggregate: LaunchRefusals) -> RunRejection {
         no_credential,
         file_only_credential,
         fatal_findings,
+        untrusted_project_settings,
     } = aggregate;
     let refusals =
         no_prompt
@@ -118,6 +122,11 @@ fn launch_refused(aggregate: LaunchRefusals) -> RunRejection {
                 |FileOnlyCredential { engine, variables }| RunRejection::FileOnlyCredential {
                     engine,
                     variables,
+                },
+            ))
+            .chain(untrusted_project_settings.into_iter().map(
+                |UntrustedProjectSettings { paths }| RunRejection::UntrustedProjectSettings {
+                    paths,
                 },
             ))
             .collect();

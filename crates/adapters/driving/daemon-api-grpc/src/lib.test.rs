@@ -140,6 +140,7 @@ impl Calls for Scripted {
             Ok(v1::HandOff {
                 name: format!("{}/handOffs/{}", request.parent, request.hand_off_id),
                 engine: String::new(),
+                project: request.project,
             })
         })
     }

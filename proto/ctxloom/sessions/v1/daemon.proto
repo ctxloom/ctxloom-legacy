@@ -51,7 +51,8 @@ message Child {
 message TargetTrust {
   // The child works in the owner's own project (a worktree shares its id).
   bool same_project = 1;
-  // The target passed the trust check (posture, MCP servers).
+  // The user has trusted the target project (trust-index, read by the
+  // daemon for a child in another project, D8). Unread when same_project.
   bool trusted = 2;
 }
 

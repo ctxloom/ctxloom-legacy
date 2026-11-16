@@ -86,20 +86,32 @@ struct Launches {
     launched: Mutex<Vec<&'static str>>,
     /// The project's catalog has no setup interview (owner ruling 128).
     no_prompt: bool,
+    /// Reading the interview noticed something (step 8 U2: a project
+    /// `ctxloom` bundle passed over, untrusted).
+    noticed: bool,
 }
 
 /// The setup interview the fake catalog holds.
 const INTERVIEW: &str = "THE CATALOG'S SETUP INTERVIEW";
 
 impl init_application::Prompts for Launches {
-    fn setup_interview(&self) -> Result<String, init_application::PromptFailure> {
+    fn setup_interview(
+        &self,
+    ) -> Result<init_application::PromptRead, init_application::PromptFailure> {
         if self.no_prompt {
             return Err(init_application::PromptFailure {
                 cause: Box::new(deps_application::AppError::DefaultNeedsName),
                 exit: Exit::REFUSED,
             });
         }
-        Ok(INTERVIEW.to_string())
+        let mut read = init_application::PromptRead::from(INTERVIEW.to_string());
+        if self.noticed {
+            read.notices
+                .push(Box::new(sessions_application::AppError::NoSession {
+                    harp: "a-notice".to_string(),
+                }));
+        }
+        Ok(read)
     }
 }
 
@@ -870,6 +882,49 @@ fn init_prompt_prints_the_interview_and_nothing_else() {
     assert_eq!(r.exit.unwrap(), Exit::OK);
     assert_eq!(r.out, format!("{INTERVIEW}\n"));
     assert_eq!(r.err, "");
+}
+
+// Step 8 U2 (D4): what reading the interview noticed is said beside it,
+// with its remedy, and the interview is printed as ever.
+#[test]
+fn init_prompt_says_what_reading_it_noticed_with_its_remedy() {
+    let sessions = Launches {
+        noticed: true,
+        ..Launches::default()
+    };
+    for format in [Format::Json, Format::Text] {
+        let mut out = Vec::new();
+        let r = go_with(
+            &["init", "prompt"],
+            format,
+            none,
+            &mut out,
+            &Person::default(),
+            &sessions,
+        );
+        assert_eq!(r.exit.unwrap(), Exit::OK);
+        assert_eq!(String::from_utf8(out).unwrap(), format!("{INTERVIEW}\n"));
+        assert!(r.err.contains("no session named a-notice"), "{}", r.err);
+        assert!(
+            r.err.contains("ctxloom session list --all"),
+            "the remedy: {}",
+            r.err
+        );
+    }
+    let mut out = Vec::new();
+    let json = go_with(
+        &["init", "prompt"],
+        Format::Json,
+        none,
+        &mut out,
+        &Person::default(),
+        &sessions,
+    );
+    assert!(
+        json.err.contains("sessions-application-no-session"),
+        "{}",
+        json.err
+    );
 }
 
 // Owner ruling 128: a catalog with no setup interview (a project bundle

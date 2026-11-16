@@ -91,6 +91,7 @@ message EnqueueRun {
     refuses: "ctxloom.runs.v1.FileOnlyCredential"
     refuses: "ctxloom.runs.v1.NoPrompt"
     refuses: "ctxloom.runs.v1.UnknownEngine"
+    refuses: "ctxloom.runs.v1.UntrustedProjectSettings"
     refuses: "ctxloom.runs.v1.LaunchRefusals"
   };
 
@@ -136,6 +137,13 @@ message EnqueueRun {
   // 59, 109), deleted with the engine-neutral posture by owner ruling 134.
   reserved 13;
   reserved "posture";
+  // The project-only settings (ruling 46's keys, D3) this run's project layer
+  // says and the user has not trusted (trust-index, read by the daemon for a
+  // one-shot, a terminal session and a child alike), of those THIS launch
+  // reads (owner Q8: its engine's block and its agent's): their dotted
+  // paths, sorted. Empty when there are none, or the project is trusted.
+  // Evidence, like the fields above: `RunEnqueued` carries none of it.
+  repeated string untrusted_settings = 14;
 }
 
 // A child's credential, as the run application found it (ruling 53 and owner
@@ -519,6 +527,18 @@ message FileOnlyCredential {
   string variables = 2;
 }
 
+// A launch whose project's own config says settings that reach past the
+// project, and that the user has not trusted (ruling 142, S24, D3)
+// (`runs-untrusted-project-settings`). Refused by EnqueueRun's `decide` from
+// `untrusted_settings`, the LAST of its checks (owner Q9), before any name is
+// claimed or session minted.
+message UntrustedProjectSettings {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  // The dotted paths, comma separated, sorted.
+  string paths = 1;
+}
+
 // A one-shot with no prompt from any door: it would ask nothing (ruling 73c).
 message NoPrompt {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
@@ -554,6 +574,7 @@ message LaunchRefusals {
   // deleted with the engine-neutral posture by owner ruling 134.
   reserved 6;
   reserved "unenforced_posture";
+  repeated UntrustedProjectSettings untrusted_project_settings = 7;
 }
 
 // endregion refusals

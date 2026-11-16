@@ -114,7 +114,7 @@ fn every_tool_offered_is_described_in_the_approved_words() {
         ("session_show", "Show one session as the daemon has it: its state, owner, children and pending messages."),
         ("transcript_show", "Show a session's transcript, its lines as its hooks have delivered them so far."),
         ("context_assemble", "Load the fragments you chose from this project's premise index, by the names it lists."),
-        ("child_launch", "Launch a child of yours: a session of its own, run by the user's daemon, that takes its task as its first turn and stays open between tasks until you close it. Give it its task when you launch it, or send it one after: a child with no task sits idle. Prefer children launched this way to your engine's own subagents; each is a recorded, resumable session of its own that the user can see and steer."),
+        ("child_launch", "Launch a child of yours: a session of its own, run by the user's daemon, that takes its task as its first turn and stays open between tasks until you close it. Give it its task when you launch it, or send it one after: a child with no task sits idle. To have it work in another ctxloom project, give that project's directory as `project` (relative to your own project's root); it runs there on that project's own config, and only once the user has trusted that project. Prefer children launched this way to your engine's own subagents; each is a recorded, resumable session of its own that the user can see and steer."),
         ("child_send", "Send one of your children a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn)."),
         ("child_close", "Close one of your children: its engine is ended, and it takes no more messages."),
         ("child_clear", "Clear one of your children's conversation, as its engine's own /clear does."),
@@ -205,9 +205,25 @@ impl daemon_api::DaemonApi for Launching {
     }
     async fn resolve_project(
         &self,
-        _: daemon_proto::v1::ResolveProjectRequest,
+        r: daemon_proto::v1::ResolveProjectRequest,
     ) -> Result<daemon_proto::v1::Project, daemon_api::Called> {
-        unreachable!()
+        self.0.lock().unwrap().push(format!("resolve {}", r.root));
+        Ok(daemon_proto::v1::Project {
+            name: "projects/bold-api-pine".to_string(),
+            uid: r.project_id,
+            root: r.root,
+            ..daemon_proto::v1::Project::default()
+        })
+    }
+    async fn get_trust(
+        &self,
+        r: daemon_proto::v1::GetTrustRequest,
+    ) -> Result<daemon_proto::v1::Trust, daemon_api::Called> {
+        Ok(daemon_proto::v1::Trust {
+            name: r.name,
+            trusted: true,
+            ..daemon_proto::v1::Trust::default()
+        })
     }
     async fn get_project(
         &self,
@@ -247,10 +263,11 @@ impl daemon_api::DaemonApi for Launching {
         self.0
             .lock()
             .unwrap()
-            .push(format!("hand-off {} {}", r.owner, r.agent));
+            .push(format!("hand-off {} {}{}", r.owner, r.agent, r.project));
         Ok(daemon_proto::v1::HandOff {
             name: format!("{}/handOffs/{}", r.parent, r.hand_off_id),
             engine: String::new(),
+            project: r.project,
         })
     }
     async fn handle_sync(
@@ -306,5 +323,50 @@ async fn child_launch_launches_the_sessions_own_child() {
     assert_eq!(
         session["name"],
         "projects/calm-quiet-heron/sessions/minted-child-name"
+    );
+}
+
+// Step 8 Q1, Q-C: `child_launch`'s `project` is the directory of the
+// project the child works in, resolved as the caller resolves it (a
+// session's own project root), and the child is named there.
+#[tokio::test]
+async fn child_launch_with_a_project_launches_the_child_there() {
+    let daemons = Launching::default();
+    let resolved = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&resolved);
+    let caller = daemon_api::Caller::new(
+        daemons.clone(),
+        "projects/calm-quiet-heron/sessions/amber-quiet-heron",
+        daemon_proto::v1::EnvVars::default(),
+        Box::new(|| "id-1".to_string()),
+    )
+    .unwrap_or_else(|_| panic!("a name"))
+    .resolving(std::sync::Arc::new(move |dir: &str| {
+        seen.lock().unwrap().push(dir.to_string());
+        Ok(daemon_proto::v1::ResolveProjectRequest {
+            project_id: "api-otter".to_string(),
+            root: "/work/api".to_string(),
+            ..daemon_proto::v1::ResolveProjectRequest::default()
+        })
+    }));
+    let answered = super::dispatch(
+        &caller,
+        "child_launch",
+        &args(json!({"name": "brisk-copper-moth", "project": "../api", "task": "t"})),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("launched"));
+    assert_eq!(*resolved.lock().unwrap(), ["../api"]);
+    let session: serde_json::Value = serde_json::from_str(&answered[0]).unwrap();
+    assert_eq!(
+        session["name"],
+        "projects/bold-api-pine/sessions/brisk-copper-moth"
+    );
+    assert_eq!(
+        daemons.0.lock().unwrap()[..2],
+        [
+            "resolve /work/api".to_string(),
+            "hand-off amber-quiet-heron projects/bold-api-pine".to_string(),
+        ]
     );
 }

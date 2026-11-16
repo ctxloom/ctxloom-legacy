@@ -21,12 +21,14 @@ struct Catalog {
 const SETUP_INTERVIEW: &str = "THE CATALOG'S SETUP INTERVIEW";
 
 impl Prompts for Catalog {
-    fn setup_interview(&self) -> Result<String, PromptFailure> {
+    fn setup_interview(&self) -> Result<crate::PromptRead, PromptFailure> {
         *self.asked.borrow_mut() += 1;
-        self.text.map(str::to_string).ok_or_else(|| PromptFailure {
-            cause: Box::new(deps_application::AppError::DefaultNeedsName),
-            exit: Exit::REFUSED,
-        })
+        self.text
+            .map(|t| t.to_string().into())
+            .ok_or_else(|| PromptFailure {
+                cause: Box::new(deps_application::AppError::DefaultNeedsName),
+                exit: Exit::REFUSED,
+            })
     }
 
     fn companion_guidance(&self) -> Vec<String> {

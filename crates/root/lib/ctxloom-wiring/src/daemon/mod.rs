@@ -874,13 +874,79 @@ pub(crate) fn child_caller<'a>(
         Box::new(request_id),
     )
     .map(|caller| {
+        // `session launch --project <dir>`: the directory as the shell's
+        // working directory names it (step 8 Q1).
+        let base = wiring.env().cwd().unwrap_or_default();
         caller
             .naming(Box::new(crate::session_name))
             .holding(launch_locks(wiring))
+            .resolving(project_resolver(wiring, base))
     })
     .map_err(|e| {
         let exit = e.exit();
         Failure::new(e, exit)
+    })
+}
+
+/// Whether the user trusts the project `wiring` is in (step 8 U2, D4), as
+/// the library asks it where the answer decides something: ONE `GetTrust`
+/// of her daemon of this `stamp` (reached, or started), asked when the
+/// library asks. Outside a project, or with no answer, it is untrusted.
+pub(crate) fn trust_ask(wiring: &Wiring, stamp: &str) -> library_application::TrustAsk {
+    let (env, stamp) = (Arc::clone(wiring.env()), stamp.to_string());
+    std::rc::Rc::new(move || {
+        let Ok(wiring) = Wiring::new(Arc::clone(&env)) else {
+            return false;
+        };
+        let Ok(caller) = child_caller(&wiring, &stamp) else {
+            return false;
+        };
+        block_on(caller.get_trust())
+            .ok()
+            .and_then(Result::ok)
+            .is_some_and(|trust| trust.trusted)
+    })
+}
+
+/// What a launch into another project (step 8 Q1) registers it with: the
+/// directory as given, relative to `base` unless it is absolute, read as a
+/// command run there reads its project (its own `.ctxloom`, never the
+/// caller's `CTXLOOM_ROOT`), its id minted at its root where nothing has
+/// named it, as a launch's own project's is. A directory in no ctxloom
+/// project is refused, `daemon-api-project-unknown`.
+pub(crate) fn project_resolver(wiring: &Wiring, base: PathBuf) -> Arc<daemon_api::ProjectResolver> {
+    let env = Arc::clone(wiring.env());
+    let home = wiring.home().to_path_buf();
+    let user_home = wiring.user_home();
+    Arc::new(move |dir: &str| {
+        let at = base.join(dir);
+        let vars: Vec<(OsString, OsString)> = env
+            .vars()
+            .filter(|(name, _)| *name != OsStr::new(run_ports::ROOT_VARIABLE))
+            .map(|(name, value)| (name.to_os_string(), value.to_os_string()))
+            .collect();
+        let there = EnvSnapshot::from_parts(
+            env.flavor(),
+            Ok(at.clone()),
+            env.temp_dir().to_path_buf(),
+            vars,
+        );
+        let unknown = || {
+            daemon_api::CallError::Refused(daemon_api::Rejection::Api(
+                daemon_api::ApiRejection::ProjectUnknown {
+                    cwd: at.display().to_string(),
+                },
+            ))
+        };
+        let wiring = Wiring::at(Arc::new(there), home.clone()).with_user_home(user_home.clone());
+        match wiring.library_registration(crate::Minting::AtRoot) {
+            Ok(Some(registration)) => Ok(registration),
+            Ok(None) => Err(unknown()),
+            Err(e) => Err(daemon_api::CallError::Call(daemon_ports::Called::Failed {
+                code: 0,
+                detail: angzarr_diagnostic::Diagnostic::code(&e).to_string(),
+            })),
+        }
     })
 }
 
@@ -1114,6 +1180,7 @@ pub(crate) fn child_plan(
     agent: &str,
     project_dir: &str,
     env: &BTreeMap<String, String>,
+    trusted: bool,
 ) -> Result<library_application::Previewed, String> {
     let mut vars: Vec<(OsString, OsString)> = env
         .iter()
@@ -1136,8 +1203,12 @@ pub(crate) fn child_plan(
         engine: engine.to_string(),
         ..library_application::RunRequest::default()
     };
+    let flags = library_application::Flags {
+        trusted,
+        ..library_application::Flags::default()
+    };
     library
-        .dry_run(&library_application::Flags::default(), &request)
+        .dry_run(&flags, &request)
         .result
         .map_err(|e| code(&e))
 }

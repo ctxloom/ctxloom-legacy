@@ -1095,7 +1095,11 @@ impl<E: Edge> Daemon<E> {
         };
         let handed = self.child_env(&at.session);
         let env = handed.env.clone();
-        let child = match self.plan_child(&hosted_engine, &handed.agent, project_dir, &env) {
+        // The child's project's trust, as the daemon's index has it now
+        // (step 8 U2): its own settings apply only once the user trusts it.
+        let trusted = self.trusts.projector().index().trusts(project_id);
+        let child = match self.plan_child(&hosted_engine, &handed.agent, project_dir, &env, trusted)
+        {
             Ok(child) => child,
             Err(code) => {
                 (self.say)(&format!("{harp}: not planned: {code}"));
@@ -1268,9 +1272,16 @@ impl<E: Edge> Daemon<E> {
     /// planned (its start says why).
     fn axis_of(&mut self, session: &str, mint: &sessions::MintSession) -> Option<String> {
         let handed = self.hand_offs.read(session)?;
+        let trusted = self.trusts.projector().index().trusts(&mint.project_id);
         let previewed = self
             .plans
-            .preview(&mint.engine, &handed.agent, &mint.project_dir, &handed.env)
+            .preview(
+                &mint.engine,
+                &handed.agent,
+                &mint.project_dir,
+                &handed.env,
+                trusted,
+            )
             .ok()?;
         Some(
             run_launcher::Axis::of(&previewed.plan.axes.0)
@@ -1352,8 +1363,11 @@ impl<E: Edge> Daemon<E> {
         agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
+        trusted: bool,
     ) -> Result<Planned, String> {
-        let previewed = self.plans.preview(engine.name(), agent, project_dir, env)?;
+        let previewed = self
+            .plans
+            .preview(engine.name(), agent, project_dir, env, trusted)?;
         let plan = &previewed.plan;
         let agent = [&plan.agent, &plan.settings_agent]
             .into_iter()

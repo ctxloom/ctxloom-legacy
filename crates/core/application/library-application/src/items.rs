@@ -110,13 +110,29 @@ impl Library {
 
 impl Project {
     pub(crate) fn operational_prompt(
-        &self,
+        &mut self,
         name: &str,
         builtins: bool,
     ) -> Result<String, AppError> {
         let bundle = library::builtin::BUNDLE;
+        // A project's own `ctxloom` bundle replaces the prompts ctxloom's
+        // own work runs on (ruling 128) only once the user trusts the
+        // project (step 8 U2, D4): until then it is passed over for the
+        // built-in, and said.
+        let overrides = builtins
+            && !self.no_project()
+            && !self.catalog.is_builtin(bundle)
+            && (self.catalog.lookup(bundle).is_ok() || self.unreadable.contains_key(bundle));
+        let passed_over = overrides
+            && !self.flags.trusted
+            && !self.trust.as_ref().is_some_and(|trusted| trusted());
+        if passed_over {
+            self.notices.push(Notice::PromptUntrusted {
+                prompt: name.to_string(),
+            });
+        }
         let shipped;
-        let entry = if self.no_project() && builtins {
+        let entry = if (self.no_project() || passed_over) && builtins {
             shipped = library::builtin::entries(&|_| false);
             shipped.iter().find(|e| e.name == bundle).ok_or_else(|| {
                 AppError::cause(CatalogError::BundleNotFound {

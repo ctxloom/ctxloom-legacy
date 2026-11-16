@@ -1272,8 +1272,17 @@ impl ChildPlans for Plans {
         agent: &str,
         project_dir: &str,
         env: &BTreeMap<String, String>,
+        trusted: bool,
     ) -> Result<library_application::Previewed, String> {
-        super::child_plan(&self.home, &self.temp, engine, agent, project_dir, env)
+        super::child_plan(
+            &self.home,
+            &self.temp,
+            engine,
+            agent,
+            project_dir,
+            env,
+            trusted,
+        )
     }
 
     fn git_user(

@@ -29,7 +29,7 @@ use crate::{
 use crate::{AlreadyEnqueued, NoRun, NotItsStream, RunIsEnded, TurnInFlight};
 use crate::{
     CredentialEvidence, FileOnlyCredential, LaunchRefusals, NoCredential, NoPrompt, Refusal,
-    RunMode, UnknownEngine,
+    RunMode, UnknownEngine, UntrustedProjectSettings,
 };
 use crate::{InterruptRequested, TurnUrgency};
 
@@ -149,6 +149,16 @@ fn launchable(cmd: &EnqueueRun) -> Result<(), RunRejection> {
     if driven {
         refusals.extend(credential(&cmd.engine, &cmd.credential));
     }
+    // The last check (owner Q9): the untrusted project-only settings this
+    // launch reads (step 8 U2, ruling 142).
+    if !cmd.untrusted_settings.is_empty() {
+        let mut paths = cmd.untrusted_settings.clone();
+        paths.sort();
+        paths.dedup();
+        refusals.push(RunRejection::UntrustedProjectSettings {
+            paths: paths.join(", "),
+        });
+    }
     match (refusals.len(), cmd.fatal_findings) {
         (0, 0) => Ok(()),
         (1, 0) => Err(refusals.remove(0)),
@@ -227,6 +237,7 @@ pub(crate) fn enqueue_refusal(
             NotItsStream => NotItsStream,
             NoCredential{engine, variables} => NoCredential,
             FileOnlyCredential{engine, variables} => FileOnlyCredential,
+            UntrustedProjectSettings{paths} => UntrustedProjectSettings,
             NoPrompt => NoPrompt,
             UnknownEngine{name, known} => UnknownEngine
         ]
@@ -242,6 +253,7 @@ fn launch_refused(refusals: Vec<RunRejection>, fatal_findings: u32) -> LaunchRef
         no_credential: Vec::new(),
         file_only_credential: Vec::new(),
         fatal_findings,
+        untrusted_project_settings: Vec::new(),
     };
     for refusal in refusals {
         match refusal {
@@ -257,6 +269,9 @@ fn launch_refused(refusals: Vec<RunRejection>, fatal_findings: u32) -> LaunchRef
             RunRejection::FileOnlyCredential { engine, variables } => message
                 .file_only_credential
                 .push(FileOnlyCredential { engine, variables }),
+            RunRejection::UntrustedProjectSettings { paths } => message
+                .untrusted_project_settings
+                .push(UntrustedProjectSettings { paths }),
             // The checks raise nothing else.
             _ => {}
         }
@@ -276,6 +291,7 @@ impl RunAggregate {
             FileOnlyCredential,
             NoPrompt,
             UnknownEngine,
+            UntrustedProjectSettings,
             LaunchRefusals
         )
     )]

@@ -3,7 +3,8 @@
 //! read for the engine's settings, the context, the model and the effort, and
 //! the evidence the child's enqueue is judged on (rulings 53, 73e, 73f), made
 //! exactly as a one-shot child's: the engine and the engines driven, the plan's
-//! fatal findings, its posture, and the child's credential by the names of the
+//! fatal findings, the untrusted project settings it reads (step 8 U2),
+//! and the child's credential by the names of the
 //! variables in the environment its launcher sent (S6). Names and yes-or-no
 //! only leave here: no value of the environment is in the evidence.
 
@@ -61,6 +62,7 @@ pub fn hosted_child(
             env,
         )),
         fatal_findings: u32::try_from(previewed.fatal.len()).unwrap_or(u32::MAX),
+        untrusted_settings: previewed.plan.untrusted.clone(),
     };
     HostedChild {
         context: plan.context.clone(),

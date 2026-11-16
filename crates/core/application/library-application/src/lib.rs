@@ -64,7 +64,7 @@ pub use package::{
     EnginePackage, PackageRequest, PackagedCommand, PackagedFile, PackagedHook, PackagedMcp,
     PackagedSkill,
 };
-pub use project::{Library, Outcome, RunSettings};
+pub use project::{Library, Outcome, RunSettings, TrustAsk};
 pub use run::{AssembleRequest, Previewed, RunRequest};
 pub use search::SearchRequest;
 pub use trust::{HeldBack, CTXLOOM_BUNDLE_PATH};
