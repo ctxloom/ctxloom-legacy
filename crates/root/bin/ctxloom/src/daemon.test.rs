@@ -1882,3 +1882,187 @@ fn a_shutdown_names_a_daemon_that_does_not_exit_and_fails() {
     );
     files::remove(dir.join("test-deaf-to-stop"));
 }
+
+// ----------------- flush before install (owner ruling, 2026-11-16)
+//
+// `ctxloom shutdown` delivers the home's holds through the daemon before it
+// stops it, or confirms they are empty, before it reports done: a hold an
+// older binary wrote carries type URLs a newer daemon may not know. A hold
+// left undelivered is named, by session and count, and is a decline (20),
+// so an installer does not replace the binary. A hold's set-aside part is
+// never delivered again, and does not block.
+
+const USER_PROMPT_SUBMIT: &str =
+    include_str!("../../../../adapters/driven/engine-claude/src/fixtures/user_prompt_submit.json");
+
+impl World {
+    /// The holds' directory of the home.
+    fn held_dir(&self) -> std::path::PathBuf {
+        self.project.home().join(".ctxloom/held")
+    }
+
+    /// The files of the holds' directory, by name, sorted.
+    fn held_files(&self) -> Vec<String> {
+        let mut names: Vec<String> = files::children(self.held_dir())
+            .iter()
+            .filter_map(|p| p.file_name()?.to_str().map(str::to_string))
+            .filter(|name| name.contains(".held"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The stamp the discovery file advertises, if any.
+    fn advertised(&self) -> Option<String> {
+        let bytes =
+            files::read_bytes(self.project.home().join(".ctxloom/daemon/daemon.discovery")).ok()?;
+        run_ports::Discovery::decode(&bytes).map(|found| found.stamp)
+    }
+
+    /// A session `harp`, ended, its lock free: its resource name, named in
+    /// process (no daemon reached).
+    fn seeded(&self, harp: &str) -> String {
+        let seeded = self.run(&[
+            "test",
+            "seed-session",
+            harp,
+            "--lock",
+            "free",
+            "--transcript",
+        ]);
+        assert_eq!(seeded.code, 0, "{}", seeded.said());
+        let named = self.run(&["test", "session-name", harp]);
+        assert_eq!(named.code, 0, "{}", named.said());
+        named.stdout.trim().to_string()
+    }
+
+    /// `name`'s UserPromptSubmit hook, held: fired while a daemon of an
+    /// older version serves (H-Q1), which then goes.
+    fn prompt_held(&self, name: &str) {
+        let older = [
+            ("CTXLOOM_DAEMON_IDLE_SECONDS", "60"),
+            ("CTXLOOM_TEST_STAMP", OLDER_STAMP),
+        ];
+        let mut daemon = Killed(
+            self.project
+                .start_with(&older, &["daemon", "serve", "--idle-seconds", "60"]),
+        );
+        self.until("the older daemon advertised", |w| {
+            (w.advertised().as_deref() == Some(OLDER_STAMP)).then_some(())
+        });
+        let mut hook = self.project.start_talking(
+            &[
+                ("CTXLOOM_DAEMON_IDLE_SECONDS", "60"),
+                ("CTXLOOM_SESSION", name),
+            ],
+            &["hook", "claude-code", "execute", "UserPromptSubmit"],
+        );
+        crate::tests::feed(hook.stdin.take().expect("stdin"), USER_PROMPT_SUBMIT);
+        let ran = crate::tests::Ran::of(hook.wait_with_output().expect("the hook finishes"));
+        assert_eq!(ran.code, 0, "{}", ran.said());
+        assert!(ran.stderr.contains("hook-cli-held"), "{}", ran.said());
+        // The older daemon goes (it was asked to drain; killed outright
+        // here, so nothing waits on it).
+        let _ = daemon.0.kill();
+        let _ = daemon.0.wait();
+        assert_eq!(self.held_files().len(), 1, "{:?}", self.held_files());
+    }
+
+    /// A daemon of this version serving, idle a minute.
+    fn serving_this(&self) -> Killed {
+        let daemon = Killed(
+            self.project
+                .start_with(&ENV, &["daemon", "serve", "--idle-seconds", "60"]),
+        );
+        self.until("this version's daemon serving", |w| {
+            (w.advertised().is_some_and(|stamp| stamp != OLDER_STAMP) && w.serving()).then_some(())
+        });
+        daemon
+    }
+}
+
+// A shutdown with live held records delivers them through the daemon
+// before it stops it, then reports done (exit 0): nothing is left held,
+// and the session's transcript has the prompt.
+#[test]
+fn a_shutdown_delivers_what_is_held_before_it_stops_the_daemon() {
+    let world = World::new();
+    let name = world.seeded(OWNER);
+    world.prompt_held(&name);
+    let mut daemon = world.serving_this();
+    let shut = world.run(&["shutdown", "now"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), world.log());
+    assert!(
+        shut.stdout.contains("delivered 1 held fact"),
+        "{}",
+        shut.said()
+    );
+    assert!(
+        shut.stdout.contains("held: nothing undelivered"),
+        "{}",
+        shut.said()
+    );
+    assert_eq!(
+        world.held_files(),
+        Vec::<String>::new(),
+        "delivered, none set aside"
+    );
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "{}",
+        world.log()
+    );
+    let transcript = world.ok(&["session", "transcript", "show", OWNER, "--format", "json"]);
+    assert!(
+        transcript
+            .to_string()
+            .contains("Run the shell command: echo hi"),
+        "the held prompt was recorded: {transcript}"
+    );
+}
+
+// Records no daemon can take (none serves to deliver them to, and shutdown
+// starts none) are named, with their session and count, and the shutdown
+// is declined (exit 20): the hold is kept.
+#[test]
+fn a_shutdown_names_what_it_could_not_deliver_and_declines() {
+    let world = World::new();
+    let name = world.seeded(OWNER);
+    world.prompt_held(&name);
+    let shut = world.run(&["shutdown", "now", "--format", "json"]);
+    assert_eq!(shut.code, 20, "{}\n{}", shut.said(), world.log());
+    assert!(
+        shut.stderr.contains("ctxloom-wiring-shutdown-held"),
+        "{}",
+        shut.said()
+    );
+    assert!(
+        shut.stderr.contains(&format!("{OWNER} (1 fact)")),
+        "{}",
+        shut.said()
+    );
+    assert!(!world.serving(), "no daemon was started");
+    assert_eq!(world.held_files().len(), 1, "the hold is kept");
+}
+
+// A hold's set-aside part (never delivered again, so no type URL in it is
+// ever decoded) does not block: nothing running, nothing live held, done.
+#[test]
+fn a_set_aside_hold_does_not_block_a_shutdown() {
+    let world = World::new();
+    files::mkdirs(world.held_dir());
+    files::put(
+        world
+            .held_dir()
+            .join("5f0c7a52-1111-5111-8111-000000000001.held.corrupt-1"),
+        "not a record",
+    );
+    let shut = world.run(&["shutdown", "now"]);
+    assert_eq!(shut.code, 0, "{}", shut.said());
+    assert!(
+        shut.stdout.contains("held: nothing undelivered"),
+        "{}",
+        shut.said()
+    );
+}

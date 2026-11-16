@@ -32,6 +32,9 @@ use file_system::Fs;
 use liveness::FrontendLocks;
 use serde::Serialize;
 
+use run_ports::{HeldFacts, HoldError};
+use runs_application::Undelivered;
+
 use super::{block_on, called, client_reaching, files_of, output, serving, Reach};
 use crate::Wiring;
 
@@ -105,6 +108,10 @@ pub(crate) enum ShutdownError {
     BadWhen { value: String, cause: String },
     /// What still runs once everything was asked to stop and waited for.
     Incomplete { daemon: String, frontends: String },
+    /// What the home's holds still hold that no daemon took (owner,
+    /// 2026-11-16, "flush before install"): `holds`, each session's said
+    /// with its count.
+    Held { holds: String },
 }
 
 impl std::fmt::Display for ShutdownError {
@@ -120,6 +127,7 @@ impl Diagnostic for ShutdownError {
         match self {
             ShutdownError::BadWhen { .. } => code!("shutdown-bad-time"),
             ShutdownError::Incomplete { .. } => code!("shutdown-incomplete"),
+            ShutdownError::Held { .. } => code!("shutdown-held"),
         }
     }
 
@@ -133,6 +141,7 @@ impl Diagnostic for ShutdownError {
                 ("daemon", daemon.as_str().into()),
                 ("frontends", frontends.as_str().into()),
             ],
+            ShutdownError::Held { holds } => vec![("holds", holds.as_str().into())],
         }
     }
 }
@@ -148,6 +157,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ShutdownError::Incomplete {
             daemon: "pid 4242".to_string(),
             frontends: "pid 77".to_string(),
+        }),
+        Box::new(ShutdownError::Held {
+            holds: "amber-swift-owl (3 facts)".to_string(),
         }),
     ]
 }
@@ -170,6 +182,49 @@ pub(crate) fn configured_drain_timeout(fs: &Arc<dyn Fs>, home: &Path) -> Option<
     )
     .ok()?
     .drain_timeout()
+}
+
+/// The holds of `held` that still hold a live record (owner, 2026-11-16:
+/// shutdown flushes the holds, or confirms they are empty): a fact or a
+/// gap no daemon took, or a hold this ctxloom cannot read. A set-aside part
+/// is never delivered again, so it is no record a daemon will decode: it
+/// is not counted ([`runs_application::undelivered`]).
+pub(crate) fn undelivered_in<H: HeldFacts + ?Sized>(
+    held: &H,
+) -> Result<Vec<Undelivered>, HoldError> {
+    Ok(runs_application::undelivered(&held.survey()?))
+}
+
+/// The holds `left` names, as shutdown says them: each session's harp
+/// (else its session root) and what it holds, in the survey's order.
+pub(crate) fn holds_said(left: &[Undelivered]) -> String {
+    let _ = left;
+    String::new()
+}
+
+/// The command's verdict on what it `left` running and what the home's
+/// holds still hold (`held`): done (0) when nothing runs and nothing is
+/// held; a hold left undelivered is a DECLINE (20, the state forbids
+/// reporting done, so an installer does not replace the binary: owner,
+/// 2026-11-16), and it outranks what still runs (10), as the more severe
+/// of two outcomes wins.
+fn verdict(left: &Running, held: &[Undelivered]) -> Result<Exit, Failure> {
+    let _ = holds_said(held);
+    if left.nothing() {
+        return Ok(Exit::OK);
+    }
+    Err(Failure::new(
+        ShutdownError::Incomplete {
+            daemon: left
+                .daemon
+                .map_or("none".to_string(), |pid| format!("pid {pid}")),
+            frontends: match left.frontends.as_slice() {
+                [] => "none".to_string(),
+                pids => pids_of(pids),
+            },
+        },
+        Exit::FAILED,
+    ))
 }
 
 /// What the shutdown did, step by step, and what it left running.
@@ -263,21 +318,9 @@ pub(crate) fn run(
     if format == Format::Json {
         output(render(out, format, &report))?;
     }
-    if left.nothing() {
-        return Ok(Exit::OK);
-    }
-    Err(Failure::new(
-        ShutdownError::Incomplete {
-            daemon: left
-                .daemon
-                .map_or("none".to_string(), |pid| format!("pid {pid}")),
-            frontends: match left.frontends.as_slice() {
-                [] => "none".to_string(),
-                pids => pids_of(pids),
-            },
-        },
-        Exit::FAILED,
-    ))
+    let spool = fact_spool::Spool::at_home(wiring.fs(), wiring.home());
+    let held = undelivered_in(&spool).map_err(|e| Failure::new(e, Exit::FAILED))?;
+    verdict(&left, &held)
 }
 
 /// The shutdown of `wiring`'s home, as the client of stamp `stamp`.

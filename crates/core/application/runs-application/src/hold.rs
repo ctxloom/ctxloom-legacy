@@ -607,6 +607,34 @@ fn own_book(fact: &HeldFact, session: &Uuid) -> Option<CommandBook> {
     (body.origin.as_ref()?.external_id == fact.external_id).then_some(book)
 }
 
+/// What a session's hold still holds that a daemon has not taken (owner,
+/// 2026-11-16, "flush before install"): its live records, the facts and
+/// gaps a flush would deliver, and whether it is in a format this ctxloom
+/// cannot read. Its set-aside part is not counted: it is never delivered
+/// again, so it holds nothing a daemon will decode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Undelivered {
+    /// The session root the hold is named by.
+    pub root: uuid::Uuid,
+    /// The session's resource name, as the hold's first fact names it.
+    pub session: Option<String>,
+    pub facts: u64,
+    pub gaps: u64,
+    /// The hold is in a format this ctxloom cannot read: what it holds is
+    /// not known, and no flush of this ctxloom delivers it.
+    pub unreadable: bool,
+}
+
+/// The holds of `survey` that still hold a live record, in its order: a
+/// fact or a gap not yet delivered, or a hold this ctxloom cannot read.
+/// None is the home's holds EMPTY, as `ctxloom shutdown` must find them
+/// before an install replaces the binary; a set-aside part alone, or a
+/// torn tail with no record before it, is empty.
+pub fn undelivered(survey: &[run_ports::HoldSummary]) -> Vec<Undelivered> {
+    let _ = survey;
+    Vec::new()
+}
+
 #[cfg(test)]
 #[path = "hold.test.rs"]
 mod tests;

@@ -538,6 +538,7 @@ selftest:
     @{{TOP}}/scripts/commit-msg.selftest.sh
     @{{TOP}}/scripts/release-package.selftest.sh
     @{{TOP}}/scripts/mcp-env-probe.selftest.sh
+    @{{TOP}}/scripts/install-shutdown.selftest.sh
 
 # Run the ctxloom binary (cargo run, quiet) with the given arguments.
 [group('dev')]

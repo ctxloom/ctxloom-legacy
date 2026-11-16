@@ -1353,3 +1353,91 @@ fn a_frontends_report_left_unsettled_is_held() {
     );
     assert_eq!(ids_held(&memory), [run_report(1, false).external_id]);
 }
+
+// ------------------------------------- "empty", as shutdown judges it
+
+fn summary(root: &str) -> HoldSummary {
+    HoldSummary {
+        root: uuid::Uuid::parse_str(root).unwrap(),
+        session: None,
+        facts: 0,
+        gaps: 0,
+        bytes: 0,
+        stamps: Vec::new(),
+        oldest: None,
+        set_aside: 0,
+        unreadable: false,
+        bad_tail: false,
+    }
+}
+
+// Owner, 2026-11-16 ("flush before install"): a hold's live records are
+// undelivered, a fact or a gap alike (a flush delivers both); a hold this
+// ctxloom cannot read is undelivered too, its contents unknown.
+#[test]
+fn a_holds_live_records_are_undelivered() {
+    let facts = HoldSummary {
+        session: Some(NAME.to_string()),
+        facts: 3,
+        ..summary(SESSION_ME)
+    };
+    let gaps = HoldSummary {
+        gaps: 1,
+        ..summary(SESSION_OTHER)
+    };
+    let unreadable = HoldSummary {
+        unreadable: true,
+        bytes: 12,
+        ..summary("00000000-0000-0000-0000-000000000003")
+    };
+    assert_eq!(
+        undelivered(&[facts, gaps, unreadable]),
+        vec![
+            Undelivered {
+                root: root(),
+                session: Some(NAME.to_string()),
+                facts: 3,
+                gaps: 0,
+                unreadable: false,
+            },
+            Undelivered {
+                root: uuid::Uuid::parse_str(SESSION_OTHER).unwrap(),
+                session: None,
+                facts: 0,
+                gaps: 1,
+                unreadable: false,
+            },
+            Undelivered {
+                root: uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap(),
+                session: None,
+                facts: 0,
+                gaps: 0,
+                unreadable: true,
+            },
+        ]
+    );
+}
+
+// A set-aside part is never delivered again, so it holds nothing a daemon
+// will decode: it is empty, and so is a torn tail with no record before it
+// (the next take cuts it).
+#[test]
+fn a_set_aside_part_or_a_torn_tail_alone_is_empty() {
+    let aside = HoldSummary {
+        set_aside: 2,
+        ..summary(SESSION_ME)
+    };
+    let torn = HoldSummary {
+        bad_tail: true,
+        bytes: 20,
+        ..summary(SESSION_OTHER)
+    };
+    assert_eq!(undelivered(&[aside, torn]), Vec::<Undelivered>::new());
+    // Beside live records, a set-aside part changes nothing of the count.
+    let both = HoldSummary {
+        set_aside: 1,
+        facts: 2,
+        ..summary(SESSION_ME)
+    };
+    assert_eq!(undelivered(&[both])[0].facts, 2);
+}
