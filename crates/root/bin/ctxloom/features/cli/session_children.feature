@@ -128,6 +128,32 @@ Feature: session launch, send, clear and close — a child of a session, run by 
       When its orchestrator launches a child "brisk-copper-moth"
       Then the child "brisk-copper-moth" was given ANTHROPIC_API_KEY, and not CLAUDE_CODE_OAUTH_TOKEN
 
+  Rule: A child in another project is whole there
+
+    Scenario: A child in another project keeps its outputs in that project's output folder
+      # new: step 8 U2b.
+      Given an initialized ctxloom project
+      And Alice has exported her assistant's token
+      And a session "amber-quiet-heron" that is still running
+      And a second project "api" beside this one, initialized with ctxloom, whose config says "output.dir: notes"
+      And I run "ctxloom trust --yes" in the project "api"
+      When I run 'ctxloom session launch amber-quiet-heron --name brisk-copper-moth --project ../api "review the change"'
+      And I run "ctxloom session show brisk-copper-moth --format json" in the project "api"
+      Then the output reports "output_dir" as "notes/brisk-copper-moth" in the project "api"
+
+    Scenario: Each turn a child in another project ends is told to its owner
+      # new: step 8 U2b.
+      Given a child "brisk-copper-moth" of "amber-quiet-heron" in the project "api" that is open and idle
+      When I run 'ctxloom session send projects/<api>/sessions/brisk-copper-moth wake "check the tests"'
+      Then "amber-quiet-heron" lists "child brisk-copper-moth finished its turn" as waiting for a turn
+
+    Scenario: Closing an owner closes the child it holds in another project
+      # new: step 8 U2b.
+      Given a child "brisk-copper-moth" of "amber-quiet-heron" in the project "api" that is open and idle
+      When I run "ctxloom session close amber-quiet-heron"
+      Then the command succeeds
+      And the child "brisk-copper-moth" of the project "api" is listed as closed, its engine has exited and its hand-off file is gone
+
   Rule: A message reaches the child by its urgency, once
 
     Scenario: A send with no urgency is a usage error, and starts no daemon

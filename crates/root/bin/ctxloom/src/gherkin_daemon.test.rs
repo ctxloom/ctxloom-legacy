@@ -91,6 +91,9 @@ pub(super) struct State {
     /// What the project's own config says besides its agent (trust.feature:
     /// `<dotted key>: <value>`), kept when a step rewrites that config.
     project_says: Vec<String>,
+    /// The turns a hosted child had taken when its Given was done (step 8
+    /// U2b): a later step's turns are those after them.
+    turns_before: Option<usize>,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -3466,6 +3469,108 @@ fn second_project_beside(w: &mut World, name: String) {
     );
 }
 
+#[given(
+    expr = "a second project {string} beside this one, initialized with ctxloom, whose config says {string}"
+)]
+fn second_project_saying(w: &mut World, name: String, says: String) {
+    let dir = beside(w, &name);
+    files::put(
+        dir.join(".ctxloom/config.yaml"),
+        config_of(&[
+            "agents.default.engine: claude-code".to_string(),
+            "default_agent: default".to_string(),
+            says,
+        ]),
+    );
+    files::put(
+        dir.join(crate::tests::library::PROJECT_MARKER),
+        format!("{name}-fixture-project\n"),
+    );
+}
+
+/// `ctxloom args` in the project `name` beside this one, now, with the
+/// scenario's environment.
+fn run_in_beside(w: &World, name: &str, args: &[&str]) -> crate::tests::Ran {
+    let env = env_of(w);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    w.common.project.run_in_with(&beside(w, name), &env, args)
+}
+
+/// The session `harp` of the project `name` beside this one, as its
+/// `session show` has it.
+fn shown_beside(w: &World, name: &str, harp: &str) -> Value {
+    let ran = run_in_beside(w, name, &["session", "show", harp, "--format", "json"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    ran.json()
+}
+
+// Step 8 U2b: the owner's child launched into the trusted project `name`
+// beside this one, its first turn ended and told to its owner. The child's
+// full name, `projects/<{name}>/sessions/<child>` as a command line writes
+// it, is that project's harp and the child's.
+#[given(expr = "a child {string} of {string} in the project {string} that is open and idle")]
+fn child_of_idle_beside(w: &mut World, child: String, owner: String, name: String) {
+    assert_eq!(
+        (child.as_str(), owner.as_str()),
+        ("brisk-copper-moth", "amber-quiet-heron"),
+        "the child and owner the harness hosts"
+    );
+    if !files::exists(
+        w.common
+            .project
+            .dir()
+            .join(crate::tests::library::PROJECT_MARKER),
+    ) {
+        w.common.project = crate::tests::library::Project::initialized();
+    }
+    second_project_beside(w, name.clone());
+    let trusted = run_in_beside(w, &name, &["trust", "--yes"]);
+    assert_eq!(trusted.code, 0, "{}", trusted.said());
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+    start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+    let dir = stub_claude(w, CHILD_STUB);
+    let seeded = run_now(w, &["test", "seed-session", &owner]);
+    assert_eq!(seeded.code, 0, "{}", seeded.said());
+    let mut env = env_of(w);
+    env.push(("ANTHROPIC_API_KEY".to_string(), "a-key".to_string())); // gitleaks:allow
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let project = format!("../{name}");
+    let launched = w.common.project.run_with(
+        &env,
+        &[
+            "session",
+            "launch",
+            &owner,
+            "--name",
+            &child,
+            "--project",
+            &project,
+            "a task",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(launched.code, 0, "{}", launched.said());
+    until(w, "the child's first turn", DAEMON_WAIT, |_| {
+        files::exists(dir.join("child-turn")).then_some(())
+    });
+    first_turn_ended(w);
+    // Its full name is its project's harp and its own.
+    let named = run_in_beside(w, &name, &["test", "project-name"]);
+    assert_eq!(named.code, 0, "{}", named.said());
+    let full = format!("{}/sessions/{child}", named.stdout.trim());
+    assert_eq!(
+        launched.json()["name"],
+        Value::String(full.clone()),
+        "the launch answered its full name"
+    );
+    w.common
+        .aliases
+        .push((format!("projects/<{name}>/sessions/{child}"), full));
+    w.daemon_spec.turns_before = Some(turns(w).len());
+}
+
 #[given(expr = "an empty directory {string} beside this project")]
 fn empty_directory_beside(w: &mut World, name: String) {
     files::mkdirs(beside(w, &name));
@@ -3501,6 +3606,63 @@ fn note_ask(w: &mut World, path: String, label: String) {
         .to_string();
     let ask = name.rsplit('/').next().unwrap_or(&name).to_string();
     w.common.note(&label, &ask);
+}
+
+// A path the output reports, as the project `name` beside this one has it:
+// that project's directory (as written, or as the platform resolves it),
+// then `relative`.
+#[then(expr = "the output reports {string} as {string} in the project {string}")]
+fn reports_in_project(w: &mut World, path: String, relative: String, name: String) {
+    let ran = w.common.ran();
+    let doc: Value = serde_json::from_str(&ran.stdout)
+        .unwrap_or_else(|e| panic!("not json ({e}): {}", ran.said()));
+    let reported = PathBuf::from(crate::tests::library::reports_as(&doc, &path));
+    let dir = beside(w, &name);
+    assert!(
+        [dir.clone(), files::canonical(&dir)]
+            .iter()
+            .any(|root| reported == root.join(&relative)),
+        "{path} is {}, not {relative} of {}: {}",
+        reported.display(),
+        dir.display(),
+        ran.said()
+    );
+}
+
+// Each turn the child took since its Given ended is told to `owner`, a
+// message waiting for its turn that says `text`: one for every turn its
+// engine took, and at least one turn taken since.
+#[then(expr = "{string} lists {string} as waiting for a turn")]
+fn owner_lists_waiting(w: &mut World, owner: String, text: String) {
+    let before = w.daemon_spec.turns_before.unwrap_or(0);
+    until(w, &format!("{owner} told of each turn"), DAEMON_WAIT, |w| {
+        let taken = turns(w).len();
+        let told = shown(w, &owner)["pending"]
+            .as_array()
+            .map(|pending| {
+                pending
+                    .iter()
+                    .filter(|m| m["text"].as_str().is_some_and(|t| t.contains(&text)))
+                    .count()
+            })
+            .unwrap_or(0);
+        (taken > before && told == taken).then_some(())
+    });
+}
+
+#[then(
+    regex = r#"^the child "([^"]+)" of the project "([^"]+)" is listed as closed, its engine has exited and its hand-off file is gone$"#
+)]
+fn child_ended_beside(w: &mut World, child: String, name: String) {
+    until(w, "the child closed", DAEMON_WAIT, |w| {
+        (shown_beside(w, &name, &child)["closed"] == Value::Bool(true)).then_some(())
+    });
+    until(w, "the child's engine exited", DAEMON_WAIT, |w| {
+        files::exists(stub_dir(w).join("child-exited")).then_some(())
+    });
+    until(w, "the child's hand-off gone", DAEMON_WAIT, |w| {
+        hand_offs(w).is_empty().then_some(())
+    });
 }
 
 #[then(expr = "the output reports {string} as the project's harp under {string}, then {string}")]
