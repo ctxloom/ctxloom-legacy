@@ -2013,12 +2013,13 @@ fn a_shutdown_delivers_what_is_held_before_it_stops_the_daemon() {
         "{}",
         world.log()
     );
-    let transcript = world.ok(&["session", "transcript", "show", OWNER, "--format", "json"]);
+    // Its json is a line a record (D27).
+    let transcript = world.run(&["session", "transcript", "show", OWNER, "--format", "json"]);
+    assert_eq!(transcript.code, 0, "{}", transcript.said());
     assert!(
-        transcript
-            .to_string()
-            .contains("Run the shell command: echo hi"),
-        "the held prompt was recorded: {transcript}"
+        transcript.stdout.contains("Run the shell command: echo hi"),
+        "the held prompt was recorded: {}",
+        transcript.said()
     );
 }
 
