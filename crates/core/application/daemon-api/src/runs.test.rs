@@ -226,3 +226,97 @@ async fn a_daemon_that_hosts_no_one_shot_fails_its_runs() {
         "{answered:?}"
     );
 }
+
+/// A host that places each one-shot and keeps it running, its `Told` kept
+/// for the test to end it when it chooses.
+struct Placing(Arc<Mutex<Option<Told>>>);
+
+impl OneShotHost for Placing {
+    fn host(&self, _: HostRequest, told: Told) -> Box<dyn OneShotControl> {
+        told.placed(&Placement {
+            run: ROOT.to_string(),
+            session: "s".to_string(),
+            name: SESSION.to_string(),
+            harp: "amber-quiet-heron".to_string(),
+            engine: "claude-code".to_string(),
+        });
+        *self.0.lock().unwrap() = Some(told);
+        Box::new(Nothing)
+    }
+}
+
+// The drain/`WatchRun` race (2026-11-15's flake of
+// `a_one_shot_still_running_after_the_period_is_stopped`, exit 20 not
+// 143): the one-shot's client watches its run only once `CreateRun` has
+// answered, so a drain asked in between came first. A watch of a run the
+// daemon already hosts starts no work (OD-62 refuses NEW invocations), so
+// the draining daemon serves it, and the client hears its run stopped at
+// the period, its end as the stop says.
+#[tokio::test]
+async fn a_draining_daemon_serves_the_watch_of_a_run_it_already_hosts() {
+    use crate::Calls;
+    let f = fixture(vec![]);
+    let told = Arc::new(Mutex::new(None));
+    let hosted = Arc::new(OneShots::new(Box::new(Placing(Arc::clone(&told)))));
+    let api = f.restarted().await.hosting_one_shots(Arc::clone(&hosted));
+    let calls: &dyn Calls = &api;
+    let run = calls.create_run(one_shot("users/me")).await.unwrap();
+    assert!(run.end.is_none(), "placed, still running");
+    calls
+        .stop_daemon(v1::StopDaemonRequest {
+            drain: true,
+            ..v1::StopDaemonRequest::default()
+        })
+        .await
+        .unwrap();
+    let watch = calls
+        .watch_run(v1::WatchRunRequest {
+            name: run.name.clone(),
+        })
+        .await
+        .map_err(|error| format!("{error:?}"))
+        .expect("a draining daemon serves the watch of a run it hosts");
+    assert!(hosted.stop(ROOT, "SIGTERM"));
+    told.lock().unwrap().take().expect("hosted").done(Done {
+        result: Err(RunError::EmptyAnswer),
+        notices: Vec::new(),
+    });
+    let events = watched(watch);
+    assert!(
+        matches!(
+            events.first().and_then(|e| e.event.as_ref()),
+            Some(v1::run_event::Event::Stop(_))
+        ),
+        "its stop first: {events:?}"
+    );
+    let Some(v1::run_event::Event::End(end)) = events.last().and_then(|e| e.event.clone()) else {
+        panic!("its end last: {events:?}");
+    };
+    assert_eq!(end.code, "run-application-stopped", "{end:?}");
+    assert_eq!(end.exit, 143, "{end:?}");
+}
+
+// A watch of a run the draining daemon does not host is told the run is
+// not found, as an open daemon tells it: nothing is started either way.
+#[tokio::test]
+async fn a_draining_daemon_answers_the_watch_of_a_run_it_does_not_host_not_found() {
+    use crate::Calls;
+    let f = fixture(vec![]);
+    let (hosted, _) = one_shots(false);
+    let api = f.restarted().await.hosting_one_shots(hosted);
+    let calls: &dyn Calls = &api;
+    calls
+        .stop_daemon(v1::StopDaemonRequest {
+            drain: true,
+            ..v1::StopDaemonRequest::default()
+        })
+        .await
+        .unwrap();
+    let name = "projects/calm-quiet-heron/runs/nope".to_string();
+    let watch = calls
+        .watch_run(v1::WatchRunRequest { name: name.clone() })
+        .await
+        .map(|_| "a watch");
+    let (_, missing): (_, v1::RunNotFound) = refused(watch);
+    assert_eq!(missing.name, name);
+}

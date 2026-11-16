@@ -265,3 +265,44 @@ async fn a_hand_off_on_an_engine_asked_is_planned_on_it() {
     assert_eq!(made.engine, "claude-code");
     assert_eq!(kept.planned.lock().unwrap()[0].engine, "claude-code");
 }
+
+// A launch whose hand-off was made before the drain began, and whose
+// `LaunchChild` the drain then refused, withdraws its hand-off: the
+// withdrawal starts no work (OD-62 refuses NEW invocations), so the
+// draining daemon serves it, and no environment of a child that will never
+// start is left for the sweep to find.
+#[tokio::test]
+async fn a_draining_daemon_withdraws_a_hand_off_made_before_the_drain() {
+    use crate::Calls;
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        ..Kept::default()
+    });
+    let (_f, api) = with_owner(&kept).await;
+    let calls: &dyn Calls = &api;
+    let made = calls
+        .create_hand_off(create("amber-quiet-heron"))
+        .await
+        .unwrap();
+    calls
+        .stop_daemon(v1::StopDaemonRequest {
+            drain: true,
+            ..v1::StopDaemonRequest::default()
+        })
+        .await
+        .unwrap();
+    let withdrawn = calls
+        .delete_hand_off(v1::DeleteHandOffRequest {
+            name: made.name.clone(),
+            ..v1::DeleteHandOffRequest::default()
+        })
+        .await
+        .map_err(|error| format!("{error:?}"))
+        .expect("a draining daemon withdraws a hand-off");
+    assert_eq!(withdrawn.name, made.name);
+    assert_eq!(*kept.deleted.lock().unwrap(), [CHILD.to_string()]);
+    assert!(kept.written.lock().unwrap().is_empty(), "nothing left");
+    let (_, draining): (_, v1::DaemonDraining) =
+        refused(calls.create_hand_off(create("amber-quiet-heron")).await);
+    assert!(draining.harps.is_empty(), "{draining:?}");
+}
