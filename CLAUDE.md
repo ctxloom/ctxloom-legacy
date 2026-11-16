@@ -3472,6 +3472,38 @@ until 2026-11-15 (U8r: two leaked test daemons held a commit's
 `test-staged` for half an hour); `scripts/scratch-tree-lock.selftest.sh`
 (`just selftest`) holds `_scratch-tree` to it through procfs (Linux).
 
+Whole-workspace test runs are serialized MACHINE-WIDE (2026-11-16: up to
+three agents share one machine, and two memory-capped runs at once can
+still take all its RAM; two global OOMs did). `gates/tests-lock.sh
+<label> <command>...` runs the command under a `flock` on one file per
+user, `${XDG_CACHE_HOME:-$HOME/.cache}/ctxloom/gates/workspace-tests.lock`
+(`TESTS_LOCK_FILE` overrides it, the self-tests' seam), never under
+`$XDG_RUNTIME_DIR`, which an agent's shell often lacks or sets itself and
+which goes when the last session ends; the path names no repository, so
+the gates' copies in taskloom and annals would share it. Its takers:
+`_test-workspace` (so `just test`, `test-staged`'s workspace leg, and
+`push-check`'s and `merge-check`'s), outside `_run` so a wait is said on
+the terminal and the gate's time is the run's; `_tests --workspace` itself
+(so `closeout`'s, `closeout-ratchet`'s and `land-ratchet`'s test legs,
+through `just test`); and `scripts/ratchet-base.sh`, which runs itself again
+under it once its cached list is not there, before its `.ratchet-base.lock`.
+A run of named packages (`test-pkg`, `test-staged`'s changed crates) and the
+mutation run take none. A waiter says once on stderr `wait <label>: ...`,
+naming the lock and the holder's pid, label and directory (which the
+holder writes into the file), and waits with no timeout: the kernel lets a
+flock go when its holder dies, so a wait is only ever on a live run. A
+holder exports `GATES_TESTS_LOCK_HELD=<the file>`, and a taker inside its
+run takes nothing (nesting never deadlocks); its descriptor (8) is closed
+for the command (`8>&-`), so a test's daemon never holds it. With no
+`flock` (macOS, Windows' Git Bash on CI, where each job has its own VM) the
+lock is skipped and said once, `note <label>: flock is not on PATH ...`.
+`scripts/tests-lock.selftest.sh` (`just selftest`) runs two concurrent
+`just test`s on a fixture with a fake cargo (serialized, one wait line
+naming the holder), a run nested in a holder, the descriptor through
+procfs, `_tests <package>` while the lock is held, and no `flock`.
+`gates/` is a copy of the shared gates repository: the change is to be
+ported there (`gates/MIGRATING.md`).
+
 lefthook runs the gates one at a time, stopping at the first failure, and
 shows each gate's pass line and any failure's extract. Gates 1 to 5 run in
 pre-commit (the private recipes `fmt-staged`, `secrets-scan-staged`,

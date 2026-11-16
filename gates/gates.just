@@ -49,7 +49,9 @@
 #
 # and this recipe, which the hooks call: `lint` (clippy, through `_run`).
 #
-# Needs bash, git, jq, flock, setsid, ps and pkill (util-linux, procps),
+# Needs bash, git, jq, flock, setsid, ps and pkill (util-linux, procps; with
+# no flock the whole-workspace test lock alone is skipped, and said, so that
+# `test` runs on macOS and Windows),
 # systemd-run and journalctl with a reachable systemd user manager (the
 # mutation run's and the test gates' memory caps), cargo-nextest, cargo-deny, cargo-mutants, gitleaks and lefthook. A missing
 # tool fails its gate; nothing skips.
@@ -252,12 +254,12 @@ _extract-trailers log rc:
     cat "$1"
 
 # Every test in the workspace, by cargo-nextest (`_tests`), every feature of
-# `feature_rules` on.
+# `feature_rules` on, under the machine-wide test lock (`_test-workspace`).
 [no-exit-message]
 [group('check')]
 [doc("Every test in the workspace (nextest)")]
 test: (_require-nextest "test")
-    @just --justfile '{{gates_root}}/justfile' _run test workspace tests just --justfile '{{gates_root}}/justfile' _tests --workspace
+    @just --justfile '{{gates_root}}/justfile' _test-workspace test workspace
 
 # Test what the commit changes: lefthook's pre-commit step. Runs the OWN
 # tests of every crate with a staged change, and no dependent's (owner ruling
@@ -373,8 +375,7 @@ _test-affected scope:
         fi
     done < <(git diff --cached --name-only --no-renames -z HEAD)
     if [ -n "$whole" ]; then
-        exec just --justfile "$root/justfile" _run test-staged "workspace: $whole is staged" tests \
-            just --justfile "$root/justfile" _tests --workspace
+        exec just --justfile "$root/justfile" _test-workspace test-staged "workspace: $whole is staged"
     fi
     if [ "${#selected[@]}" -eq 0 ]; then
         echo "ok   test-staged (nothing to test: the staged change is in no crate's sources or manifest)"
@@ -438,6 +439,13 @@ _test-affected scope:
 # built (121, the cap's FAIL line and its fix said); `tests_memory_max`
 # `none` (TESTS_MEMORY_MAX=none) opts out, said in the log. Any exit of the
 # capped run outside the codes above (the cap not taking) is 121 too.
+#
+# A whole-workspace run (`--workspace`) runs under the machine-wide test lock
+# (gates/tests-lock.sh: one flock per user, so two agents' workspace runs on
+# one machine never overlap; a waiter says so once), taken after the cap is
+# had and around the capped run. Its callers through `_test-workspace`
+# already hold it, and inside their run it is not taken again. A run of
+# named packages takes no lock.
 [positional-arguments]
 [no-exit-message]
 _tests +packages:
@@ -446,8 +454,10 @@ _tests +packages:
     root='{{gates_root}}'
     cap=(env MEMORY_CAP_OPT_OUT=TESTS_MEMORY_MAX "$root/gates/memory-cap.sh" tests '{{tests_memory_max}}' '{{tests_swap_max}}')
     "${cap[@]}" --check || exit 121
+    lock=()
+    [ "$1" != --workspace ] || lock=("$root/gates/tests-lock.sh" tests)
     rc=0
-    "${cap[@]}" just --justfile "$root/justfile" _tests-capped "$@" || rc=$?
+    ${lock[@]+"${lock[@]}"} "${cap[@]}" just --justfile "$root/justfile" _tests-capped "$@" || rc=$?
     case "$rc" in
         0|100|101|120|121) exit "$rc" ;;
         *) echo "the capped test run exited $rc: not a test failure"; exit 121 ;;
@@ -894,12 +904,16 @@ push-check remote *lefthook:
     done
     [ "$tested" = 1 ] || echo "ok   push-check (no push to $remote/${default:-?}: nothing to test)"
 
-# Inside a commit's tree (`_commit-tree`): every test of the workspace, as
-# the gate named.
+# Every test of the workspace, as the gate named: `test`, `test-staged`'s
+# workspace leg, and inside a commit's tree (`_commit-tree`) `push-check`'s
+# and `merge-check`'s. Under the machine-wide test lock
+# (gates/tests-lock.sh), taken outside `_run` so that a run waiting on it
+# says so on the terminal, not in the gate's log, and so that the gate's
+# duration is the run's, not the wait's.
 [positional-arguments]
 [no-exit-message]
 _test-workspace gate scope:
-    @just --justfile '{{gates_root}}/justfile' _run "$1" "$2" tests just --justfile '{{gates_root}}/justfile' _tests --workspace
+    @'{{gates_root}}/gates/tests-lock.sh' "$1" just --justfile '{{gates_root}}/justfile' _run "$1" "$2" tests just --justfile '{{gates_root}}/justfile' _tests --workspace
 
 # lefthook's post-merge step. A fast-forward runs no hook git has, so no
 # hook can refuse one; this checks the default branch just after one. When a

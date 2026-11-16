@@ -61,7 +61,9 @@ mutants_swap_max := env("MUTANTS_SWAP_MAX", "2G")
 # The test gates' memory cap, the same scope (owner ruling of 2026-11-16):
 # every run of the gates' `_tests` (`test`, `test-pkg`, `test-staged`, and
 # the test leg of `closeout`, `closeout-ratchet` and `land-ratchet`) and the
-# ratchet base's feature runner (scripts/ratchet-base.sh). TESTS_MEMORY_MAX=none
+# ratchet base's feature runner (scripts/ratchet-base.sh); the whole-workspace
+# ones of them also under the machine-wide test lock (gates/tests-lock.sh,
+# one at a time per machine; `test-pkg` takes none). TESTS_MEMORY_MAX=none
 # opts out, said in the run's log; TESTS_MEMORY_MAX and TESTS_SWAP_MAX change
 # the cap.
 tests_memory_max := env("TESTS_MEMORY_MAX", "16G")
@@ -513,7 +515,7 @@ clean-target:
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, exec-mode check, path deps, mcp-env probe, install shutdown")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -528,6 +530,7 @@ selftest:
     @{{TOP}}/scripts/tests-exit.selftest.sh
     @{{TOP}}/scripts/test-staged.selftest.sh
     @{{TOP}}/scripts/scratch-tree-lock.selftest.sh
+    @{{TOP}}/scripts/tests-lock.selftest.sh
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
     @{{TOP}}/scripts/dev-local.selftest.sh
     @{{TOP}}/scripts/path-deps-check.selftest.sh

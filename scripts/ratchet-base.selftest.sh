@@ -14,6 +14,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL ratchet-base.selftest: $*" >&2; exit 1; }
+# The script takes a test lock of its own, never the machine's
+# (gates/tests-lock.sh), and is inside no other run's.
+export TESTS_LOCK_FILE=$tmp/workspace-tests.lock
+unset GATES_TESTS_LOCK_HELD
 
 runner=crates/root/bin/ctxloom/src/gherkin_features.test.rs
 fx=$tmp/fx

@@ -28,6 +28,11 @@ mkdir -p "$fx/gates"
 cp "$gates" "$fx/gates/gates.just"
 cp "$(dirname "$gates")/drop-worktree.sh" "$fx/gates/drop-worktree.sh"
 cp "$(dirname "$gates")/memory-cap.sh" "$fx/gates/memory-cap.sh"
+cp "$(dirname "$gates")/tests-lock.sh" "$fx/gates/tests-lock.sh"
+# The fixture's workspace runs take a test lock of their own, never the
+# machine's (gates/tests-lock.sh), and are inside no other run's.
+export TESTS_LOCK_FILE=$tmp/workspace-tests.lock
+unset GATES_TESTS_LOCK_HELD
 cat > "$fx/justfile" <<'J'
 TOP := `git rev-parse --show-toplevel`
 import 'gates/gates.just'

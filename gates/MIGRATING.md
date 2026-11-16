@@ -28,6 +28,21 @@ once:
 lefthook install          # or: just hooks-install
 ```
 
+## The machine-wide test lock (2026-11-16)
+
+Every whole-workspace test run takes one flock per user,
+`${XDG_CACHE_HOME:-$HOME/.cache}/ctxloom/gates/workspace-tests.lock`
+(`gates/tests-lock.sh`), so two agents' runs on one machine never overlap.
+A repository copying it takes `gates/tests-lock.sh`, the `_tests` and
+`_test-workspace` changes in `gates/gates.just` (`test` and
+`test-staged`'s workspace leg now go through `_test-workspace`), its
+`scripts/ratchet-base.sh` re-run under the lock if it has that script,
+the copy of `tests-lock.sh` into each fixture self-test that copies
+`memory-cap.sh` (with `TESTS_LOCK_FILE` set to a file of the fixture's), and
+`scripts/tests-lock.selftest.sh` into its `just selftest`. Keep the lock's
+path as it is: the memory the lock guards is the machine's, so taskloom's
+and annals' runs must take the same file as ctxloom's.
+
 ## The commit-msg hook (owner ruling 170)
 
 `gates/lefthook.yml` names a `commit-msg` hook: `just commit-msg-check

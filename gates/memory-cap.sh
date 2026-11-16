@@ -6,7 +6,8 @@
 # Its callers: every cargo-mutants run (`mutants_memory_max`) and every
 # test gate's run (`_tests`, so `test`, `test-pkg`, `test-staged` and the
 # test leg of `closeout`, `closeout-ratchet` and `land-ratchet`:
-# `tests_memory_max`, owner ruling of 2026-11-16).
+# `tests_memory_max`, owner ruling of 2026-11-16). A cap bounds one run;
+# gates/tests-lock.sh keeps two whole-workspace runs from overlapping.
 #
 # Why (2026-11-15): a cargo-mutants mutant whose test grew without bound
 # filled all RAM and swap twice; the kernel's global OOM killer took the
