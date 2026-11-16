@@ -465,10 +465,17 @@ async fn status_and_stop_start_no_daemon() {
 async fn a_drain_asks_the_serving_daemon_to_hand_over_and_starts_none() {
     let mut daemons = Fakes::new();
     daemons.serving = false;
-    assert_eq!(outside(&daemons).drain("v0.2.0-b").await.unwrap(), None);
+    assert_eq!(
+        outside(&daemons).drain("v0.2.0-b", None).await.unwrap(),
+        None
+    );
     assert!(daemons.asked().is_empty());
     daemons.serving = true;
-    assert!(outside(&daemons).drain("v0.2.0-b").await.unwrap().is_some());
+    assert!(outside(&daemons)
+        .drain("v0.2.0-b", None)
+        .await
+        .unwrap()
+        .is_some());
     assert_eq!(daemons.asked(), ["0:drain v0.2.0-b false"]);
     assert_eq!(daemons.names(), ["daemon"]);
     assert_eq!(daemons.reaches(), 0, "it starts no daemon");

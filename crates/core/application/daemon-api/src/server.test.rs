@@ -102,6 +102,8 @@ pub(crate) struct Loop {
     stopped: Mutex<Vec<bool>>,
     /// The stamps it was asked to drain for, in order.
     drained: Mutex<Vec<String>>,
+    /// The timeouts each drain was asked with, in order.
+    within: Mutex<Vec<Option<std::time::Duration>>>,
     /// How many reads asked for a fresh round.
     freshened: Mutex<u32>,
     /// Why its start-up catch-up failed, while it stands (OD-52).
@@ -125,12 +127,17 @@ impl Hosting for Loop {
         self.stopped.lock().unwrap().push(end_hosted);
     }
 
-    fn drain(&self, successor: &str) {
+    fn drain(&self, successor: &str, within: Option<std::time::Duration>) {
         self.drained.lock().unwrap().push(successor.to_string());
+        self.within.lock().unwrap().push(within);
     }
 
     fn draining(&self) -> Option<String> {
         self.drained.lock().unwrap().first().cloned()
+    }
+
+    fn hand_over_seconds(&self) -> u64 {
+        300
     }
 
     fn fresh(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
@@ -202,7 +209,6 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
                 nanos: 0,
             },
             idle_limit_seconds: 600,
-            hand_over_seconds: 300,
         },
         places: Arc::new(Arc::clone(&places)) as Arc<dyn crate::Places>,
         purges: Arc::clone(&world) as Arc<dyn crate::Purges>,
@@ -466,6 +472,27 @@ async fn stop_daemon_asked_to_drain_hands_over_what_it_hosts_and_ends_none() {
     );
     assert_eq!(daemon.draining_for, "v0.2.0-b");
     assert_eq!(daemon.runs.len(), 1, "it still hosts its child");
+    assert_eq!(
+        *f.hosting.within.lock().unwrap(),
+        [None],
+        "the configured timeout"
+    );
+}
+
+// Owner, 2026-11-15 (`ctxloom shutdown <duration>`): a drain asked with a
+// timeout hands it to the loop, which waits that long for what it hosts.
+#[tokio::test]
+async fn a_drain_asked_with_a_timeout_hands_it_to_the_loop() {
+    let f = hosting_a_child();
+    let asked = v1::StopDaemonRequest {
+        drain_timeout_seconds: Some(900),
+        ..drain_for("v0.2.0-b")
+    };
+    f.api.stop_daemon(asked).await.unwrap();
+    assert_eq!(
+        *f.hosting.within.lock().unwrap(),
+        [Some(std::time::Duration::from_secs(900))]
+    );
 }
 
 // OD-54 (2): the drain warns AT ONCE: its answer (and GetDaemon's, while it
@@ -512,13 +539,14 @@ async fn stop_daemon_even_if_live_wins_over_a_drain() {
     assert!(f.hosting.drained.lock().unwrap().is_empty());
 }
 
-// s4-Q4: once asked to drain, every new call but GetDaemon and StopDaemon
-// is refused `DaemonDraining` (a precondition), naming the daemon's stamp,
-// the stamp it hands over to, and the sessions it still hosts; GetDaemon
+// s4-Q4: once asked to drain, every new call but GetDaemon, StopDaemon and
+// the project's names is refused `DaemonDraining` (a precondition), naming
+// the daemon's stamp, the asker's, and the sessions it still hosts; GetDaemon
 // answers, and StopDaemon judges as it always does (an escalation's
-// `even_if_live` still reaches it).
+// `even_if_live` still reaches it). The names (ResolveProject, GetProject)
+// are served (owner, 2026-11-15: a config change lands while it drains).
 #[tokio::test]
-async fn a_draining_daemon_refuses_every_new_call_but_its_own_two() {
+async fn a_draining_daemon_refuses_every_new_call_but_its_own_two_and_the_names() {
     use crate::Calls;
     let f = hosting_a_child();
     let calls: &dyn Calls = &f.api;
@@ -532,20 +560,22 @@ async fn a_draining_daemon_refuses_every_new_call_but_its_own_two() {
         successor: "v0.2.0-b".to_string(),
         harps: vec!["brisk-copper-moth".to_string()],
     };
-    let (code, draining): (_, v1::DaemonDraining) =
-        refused(calls.resolve_project(resolve(COMMIT, "")).await);
-    assert_eq!(
-        code,
-        <v1::DaemonDraining as daemon_proto::Refusal>::REFUSAL_STATUS
+    assert!(
+        calls.resolve_project(resolve(COMMIT, "")).await.is_ok(),
+        "the project's names are served while it drains"
     );
-    assert_eq!(draining, expected);
     let listed = calls
         .list_sessions(v1::ListSessionsRequest {
             parent: "projects/-".to_string(),
             ..v1::ListSessionsRequest::default()
         })
         .await;
-    assert_eq!(refused::<v1::DaemonDraining>(listed).1, expected);
+    let (code, draining): (_, v1::DaemonDraining) = refused(listed);
+    assert_eq!(
+        code,
+        <v1::DaemonDraining as daemon_proto::Refusal>::REFUSAL_STATUS
+    );
+    assert_eq!(draining, expected);
     let created = calls.create_run(v1::CreateRunRequest::default()).await;
     assert_eq!(refused::<v1::DaemonDraining>(created).1, expected);
     let handed = calls

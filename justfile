@@ -96,11 +96,17 @@ build:
 # ~/.ctxloom-rs, so Go's ~/.ctxloom is never read. Its hooks call `ctxloom`,
 # the running binary's file name (ruling 163), which leads the engine's PATH.
 # Idempotent: a file already as it should be is left alone and said so. One
-# line per action.
+# line per action. One ctxloom version runs at a time (owner, OD-62): before
+# a changed binary replaces the installed one, the NEW binary asks every
+# running ctxloom of the home to stop, `ctxloom shutdown [when]` (the daemon
+# drained within `when`, else the home config's `daemon.drain_timeout`,
+# else five minutes; then each live TUI frontend and the daemon asked the
+# plain stop): `just install` drains, `just install now` stops everything at
+# once. What will not stop is said, and the install goes on.
 [group('install')]
-[doc("Build the plain binary and install it as ~/.local/bin/ctxloom (home ~/.ctxloom-rs)")]
+[doc("Build the plain binary and install it as ~/.local/bin/ctxloom (home ~/.ctxloom-rs): install [when], when a duration or now")]
 [no-exit-message]
-install:
+install when="":
     #!/usr/bin/env bash
     set -euo pipefail
     terse=(-q --message-format=short)
@@ -118,6 +124,14 @@ install:
     if cmp -s "$built" "$program"; then
         echo "ok   unchanged $program"
     else
+        # Every running ctxloom of the home asked to stop first, by the new
+        # binary (an older one may know no `shutdown`).
+        when={{quote(when)}}
+        if CTXLOOM_HOME="$HOME/.ctxloom-rs" "$built" shutdown ${when:+"$when"} --format text | sed 's/^/ok   shutdown: /'; [ "${PIPESTATUS[0]}" = 0 ]; then
+            echo "ok   nothing of ctxloom runs"
+        else
+            echo "note some of ctxloom still runs (said above); installing anyway"
+        fi
         # Beside it, then renamed over it: a running ctxloom keeps its file.
         install -m 0755 "$built" "$program.new"
         mv -f "$program.new" "$program"
@@ -155,9 +169,9 @@ install:
 # no USERPROFILE (`just install` and `just build` hold the same build to them
 # on unix). Unverified: written without a Windows machine to run it on.
 [group('install')]
-[doc("On Windows (Git Bash): install ctxloom.exe in %LOCALAPPDATA%\\Programs\\ctxloom, CTXLOOM_HOME a user variable")]
+[doc("On Windows (Git Bash): install ctxloom.exe in %LOCALAPPDATA%\\Programs\\ctxloom, CTXLOOM_HOME a user variable: install-windows [when]")]
 [no-exit-message]
-install-windows:
+install-windows when="":
     #!/usr/bin/env bash
     set -euo pipefail
     case "$(uname -s)" in
@@ -180,6 +194,14 @@ install-windows:
     if cmp -s "$built" "$program"; then
         echo "ok   unchanged $program"
     else
+        # Every running ctxloom of the home asked to stop first, by the new
+        # binary, as `just install` does (OD-62).
+        when={{quote(when)}}
+        if CTXLOOM_HOME="$USERPROFILE\\.ctxloom-rs" "$built" shutdown ${when:+"$when"} --format text | sed 's/^/ok   shutdown: /'; [ "${PIPESTATUS[0]}" = 0 ]; then
+            echo "ok   nothing of ctxloom runs"
+        else
+            echo "note some of ctxloom still runs (said above); installing anyway"
+        fi
         rm -f "$program.old" 2>/dev/null || true
         [ -e "$program" ] && mv -f "$program" "$program.old"
         cp "$built" "$program.new"

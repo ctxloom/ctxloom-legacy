@@ -66,6 +66,9 @@ const LAST_WORD: Duration = Duration::from_secs(10);
 /// that serves then.
 const WATCH_AGAIN: Duration = Duration::from_millis(250);
 
+/// How often a frontend looks for a stop `ctxloom shutdown` asked of it.
+const STOP_LOOK: Duration = Duration::from_millis(200);
+
 /// The stack of the thread a prepared session is driven on, as a main
 /// thread's is.
 const SESSION_STACK: usize = 16 * 1024 * 1024;
@@ -345,8 +348,28 @@ pub(crate) fn client_terminal(
         }
     };
     let (stop, heard) = (host_launcher::Stop::new(), Heard::default());
+    // Its frontend lock, held for its life (owner, 2026-11-15): how
+    // `ctxloom shutdown` finds it, and asks it to stop.
+    let frontends = liveness::FrontendLocks::new(wiring.fs(), wiring.home());
+    let pid = std::process::id();
+    let held = frontends.hold(pid);
     let mut done = runtime.block_on(async {
         let mut said = Vec::new();
+        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watching = match &held {
+            Ok(_) => Some(tokio::spawn(watch_for_stop(
+                liveness::FrontendLocks::new(wiring.fs(), wiring.home()),
+                pid,
+                stop.clone(),
+                std::sync::Arc::clone(&stopped),
+            ))),
+            Err(e) => {
+                said.push(Notice::text(format!(
+                    "cannot hold this frontend's lock ({e:?}): `ctxloom shutdown` will not find it"
+                )));
+                None
+            }
+        };
         // Made on the runtime, before anything is launched.
         let hearing = match wiring.fs().os().signals(&signals::HEARD) {
             Ok(signals) => Some(tokio::spawn(signals::forward(
@@ -378,12 +401,41 @@ pub(crate) fn client_terminal(
         if let Some(hearing) = hearing {
             hearing.abort();
         }
+        if let Some(watching) = watching {
+            watching.abort();
+        }
+        if stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            said.push(Notice::text(
+                "asked to stop by `ctxloom shutdown`: the session's engine was stopped".to_string(),
+            ));
+        }
         said.append(&mut done.notices);
         done.notices = said;
         done
     });
+    drop(held);
     heard.overrule(&mut done.result);
     done
+}
+
+/// Watch for a stop `ctxloom shutdown` asks of the frontend `pid`: once it
+/// is asked, `stop` is requested (the TUI asked to stop, then killed after
+/// its grace, as a SIGTERM to the frontend does, ruling 114) and `asked`
+/// set.
+async fn watch_for_stop(
+    frontends: liveness::FrontendLocks,
+    pid: u32,
+    stop: host_launcher::Stop,
+    asked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    loop {
+        tokio::time::sleep(STOP_LOOK).await;
+        if frontends.stop_asked(pid) {
+            asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            stop.request();
+            return;
+        }
+    }
 }
 
 /// The session: created, then started and followed (see the module).

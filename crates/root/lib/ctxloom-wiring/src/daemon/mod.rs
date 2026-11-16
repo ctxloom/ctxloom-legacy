@@ -1,7 +1,7 @@
 //! The user daemon (D18), as the hidden `ctxloom daemon` noun:
 //!
 //! - `serve`: be the daemon ([`serve`]); a client spawns it ([`ensure`]);
-//! - `status`, `stop`: whether one serves, and ask it to drain and exit;
+//! - `status`, `stop`: whether one serves, and ask it to stop or drain;
 //! - `resolve`: register this project with it, or recheck it (tests and
 //!   diagnosis).
 //!
@@ -15,6 +15,7 @@ pub(crate) mod flush;
 pub(crate) mod heard;
 mod places;
 mod serve;
+pub(crate) mod shutdown;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -315,9 +316,9 @@ pub(crate) fn run(
             // Its warnings (a drain's hand-over among them) are heard from
             // the stop's answer, as every call's (OD-55), and said at once.
             match drain {
-                // OD-54 (3): handed over as a newer client's drain hands it,
-                // for this client's own stamp.
-                true => block_on(client.drain(own_stamp(env, stamp)))?,
+                // OD-54 (3): handed over within the configured timeout, for
+                // this client's own stamp.
+                true => block_on(client.drain(own_stamp(env, stamp), None))?,
                 false => block_on(client.stop(even_if_live))?,
             }
             .map_err(called)?;

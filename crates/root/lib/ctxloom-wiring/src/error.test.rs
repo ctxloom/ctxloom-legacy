@@ -77,6 +77,8 @@ fn the_samples_are_the_same_whether_or_not_test_support_is_built() {
             "ctxloom-wiring-store",
             "ctxloom-wiring-store",
             "ctxloom-wiring-held-set-aside",
+            "ctxloom-wiring-shutdown-bad-time",
+            "ctxloom-wiring-shutdown-incomplete",
         ]
     );
 }

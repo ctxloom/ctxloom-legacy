@@ -28,7 +28,7 @@ fn test_a_config_using_every_key_correctly_has_no_violation() {
 fn test_an_unknown_top_level_key_is_named_with_the_keys_there_are() {
     assert_eq!(
         texts("schema_version: 8\nzzz: 1\n"),
-        ["unknown key `zzz` in config.yaml: ctxloom does not know it (known keys at the top level: agents, companions, config, default_agent, delegation, editor, engines, isolation_base, isolation_devcontainer_service, isolation_engines, isolation_images, isolation_memory_limit, isolation_pids_limit, legacy, non_tty_format, output, runtime, schema_version, session_purge_age, session_reap_age, session_transcript_retention, shell_timeout, sync, ui, workspace)"]
+        ["unknown key `zzz` in config.yaml: ctxloom does not know it (known keys at the top level: agents, companions, config, daemon, default_agent, delegation, editor, engines, isolation_base, isolation_devcontainer_service, isolation_engines, isolation_images, isolation_memory_limit, isolation_pids_limit, legacy, non_tty_format, output, runtime, schema_version, session_purge_age, session_reap_age, session_transcript_retention, shell_timeout, sync, ui, workspace)"]
     );
     // The inline profiles block, the native mcp block and the retired turn cap
     // are keys the schema does not describe.
@@ -737,4 +737,22 @@ fn test_home_only_keys_are_taken_out_of_a_layer() {
     assert!(validate(&parse("legacy:\n  go: present\n")).is_empty());
     assert!(validate(&parse("legacy:\n  go: retired\n")).is_empty());
     assert_eq!(validate(&parse("legacy:\n  go: true\n")).len(), 1);
+}
+
+// Owner, 2026-11-15: `daemon.drain_timeout` is a span of the one grammar,
+// or `now`, and the home config's alone (taken out of a project layer).
+#[test]
+fn test_the_drain_timeout_is_a_span_said_by_the_home_config_alone() {
+    for good in ["5m", "1h30m", "90s", "0s", "now"] {
+        let doc = parse(&format!("daemon:\n  drain_timeout: {good}\n"));
+        assert!(validate(&doc).is_empty(), "{good}");
+    }
+    for bad in ["soon", "5", "-1m", "true", "500ms"] {
+        let doc = parse(&format!("daemon:\n  drain_timeout: {bad}\n"));
+        assert_eq!(validate(&doc).len(), 1, "{bad}");
+    }
+    assert_eq!(validate(&parse("daemon:\n  other: 5m\n")).len(), 1);
+    let mut layer = parse("daemon:\n  drain_timeout: 2m\nworkspace: none\n");
+    assert_eq!(take_home_only(&mut layer), ["daemon.drain_timeout"]);
+    assert_eq!(layer, parse("workspace: none\n"));
 }

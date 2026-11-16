@@ -2366,6 +2366,42 @@ async fn the_hand_over_period_is_the_one_given_timed_from_the_hand_over() {
     assert_eq!(world.engine.asked.lock().unwrap().ends, 1);
 }
 
+// Owner, 2026-11-15: a timeout changed while the drain runs (the root
+// reads `daemon.drain_timeout` again at each round) is honoured by the
+// drain in progress, still timed from the hand-over's start: shortened, a
+// busy child is handed over at the new period's end; lengthened, it waits.
+#[tokio::test]
+async fn a_period_changed_during_the_drain_is_the_drains() {
+    use std::time::Duration;
+    let files = Files::default();
+    let mut world = hosting_from(&files, &ForAgent::default()).await;
+    busy_child(&mut world).await;
+    world.daemon.hand_over();
+    world.tick().await;
+    world.clock.pass(Duration::from_secs(10));
+    world.daemon.hand_over_within(Duration::from_secs(600));
+    world.clock.pass(crate::HAND_OVER_PERIOD);
+    world.tick().await;
+    assert_eq!(
+        world.engine.asked.lock().unwrap().ends,
+        0,
+        "lengthened: it waits"
+    );
+    assert_eq!(world.daemon.hand_over_period(), Duration::from_secs(600));
+    world.daemon.hand_over_within(Duration::from_secs(30));
+    world.tick().await;
+    assert_eq!(
+        world.engine.asked.lock().unwrap().ends,
+        1,
+        "shortened: past it"
+    );
+    let log = world.said.lock().unwrap().join("\n");
+    assert!(
+        log.contains("kid: still busy after 30s: its turn in flight cut, handed over"),
+        "{log}"
+    );
+}
+
 // OD-54 (2): the drain warns at once, in the daemon's log: each busy
 // child steered, and when it is handed over at the latest.
 #[tokio::test]

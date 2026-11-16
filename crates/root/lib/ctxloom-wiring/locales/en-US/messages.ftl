@@ -16,3 +16,9 @@ ctxloom-wiring-test-findings = { $count } fatal findings
 # s4-Q14 (H3): DRAFT wording, the owner's to approve. A command's flush of
 # the home's holds could never deliver these (said once a session).
 ctxloom-wiring-held-set-aside = set aside { $count } held facts of { $session }, which will never be recorded: { $why }; they are kept beside the session's hold under ~/.ctxloom/held, and not delivered again
+# Owner, 2026-11-15 (OD-62): `ctxloom shutdown`. DRAFT wording, the owner's
+# to approve.
+ctxloom-wiring-shutdown-bad-time = { $value } is not a time to drain within: { $ext_err_txt }
+ctxloom-wiring-shutdown-bad-time-fix = give a duration such as 15m, 1h30m or 90s, or `now` to stop everything at once
+ctxloom-wiring-shutdown-incomplete = ctxloom still runs after it was asked to stop: the daemon { $daemon }; frontends { $frontends }
+ctxloom-wiring-shutdown-incomplete-fix = stop each one named yourself (`kill <pid>` asks it to stop), then run `ctxloom shutdown now` again

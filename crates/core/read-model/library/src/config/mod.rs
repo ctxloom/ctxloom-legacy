@@ -14,6 +14,7 @@ pub mod engines;
 pub mod layer;
 pub mod overrides;
 pub mod schema;
+pub mod span;
 pub mod typed;
 
 /// The generation this build reads and writes.

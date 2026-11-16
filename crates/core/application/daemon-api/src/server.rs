@@ -46,11 +46,15 @@ pub trait Hosting: Send + Sync {
     fn idle_seconds(&self) -> u64;
     /// Ask it to stop: drain, or end what it hosts first (`end_hosted`).
     fn stop(&self, end_hosted: bool);
-    /// Ask it to hand what it hosts over to the daemon of the stamp
-    /// `successor` and exit (OD-3 extended, s4-Q4).
-    fn drain(&self, successor: &str);
-    /// The stamp it hands over to, once it was asked to drain.
+    /// Ask it to hand what it hosts over to the next daemon and exit
+    /// (OD-54), for the ctxloom of the stamp `successor`, waiting `within`
+    /// for what it hosts (none: its configured `daemon.drain_timeout`).
+    fn drain(&self, successor: &str, within: Option<std::time::Duration>);
+    /// The stamp it was asked to drain for, once it was.
     fn draining(&self) -> Option<String>;
+    /// How long the drain in progress waits for a busy child, in seconds
+    /// (the period the loop last read; OD-54, owner 2026-11-15).
+    fn hand_over_seconds(&self) -> u64;
     /// Wait for its next round, which catches its read models up with what
     /// other processes committed, so a read answers what was committed
     /// before it was asked (bounded: a round that does not come is waited
@@ -91,9 +95,6 @@ pub struct About {
     pub version: String,
     pub start_time: Timestamp,
     pub idle_limit_seconds: u64,
-    /// How long a drain waits for a busy child before it hands it over
-    /// anyway, its turn cut (OD-54), in seconds.
-    pub hand_over_seconds: u64,
 }
 
 /// The API's ports, composed by the root.
@@ -202,8 +203,11 @@ fn not_served(method: &str) -> ApiError {
     }
 }
 
-/// Every call but `GetDaemon` and `StopDaemon` is taken only while the
-/// daemon is open ([`Api::open`]): a draining one refuses it.
+/// Every call but `GetDaemon`, `StopDaemon` and the project's names
+/// (`ResolveProject`, `GetProject`) is taken only while the daemon is open
+/// ([`Api::open`]): a draining one refuses it. The names are served while it
+/// drains (owner, 2026-11-15): a command that only names its project (a
+/// config change, which must land while a drain runs) starts no work.
 impl<E: Edge + 'static> Calls for Api<E> {
     fn warnings(&self) -> Vec<v1::Notice> {
         Api::warnings(self)
@@ -218,17 +222,11 @@ impl<E: Edge + 'static> Calls for Api<E> {
     }
 
     fn resolve_project(&self, request: v1::ResolveProjectRequest) -> Answer<'_, v1::Project> {
-        Box::pin(async move {
-            self.open()?;
-            Api::resolve_project(self, request).await
-        })
+        Box::pin(Api::resolve_project(self, request))
     }
 
     fn get_project(&self, request: v1::GetProjectRequest) -> Answer<'_, v1::Project> {
-        Box::pin(async move {
-            self.open()?;
-            Api::get_project(self, request).await
-        })
+        Box::pin(Api::get_project(self, request))
     }
 
     fn get_session(&self, request: v1::GetSessionRequest) -> Answer<'_, v1::Session> {
@@ -513,14 +511,15 @@ impl<E: Edge> Api<E> {
                 daemon: self.parts.about.version.clone(),
                 successor,
                 harps,
-                seconds: self.parts.about.hand_over_seconds,
+                seconds: self.parts.hosting.hand_over_seconds(),
             }
             .notice(),
         )
     }
 
     /// Whether the daemon takes a new call: not once it was asked to drain
-    /// (s4-Q4), when every call but `GetDaemon` and `StopDaemon` is refused
+    /// (OD-54, or a SIGTERM), when every call but `GetDaemon`, `StopDaemon`
+    /// and the project's names is refused
     /// `DaemonDraining`, naming both stamps and what it still hosts.
     pub(crate) fn open(&self) -> Result<(), ApiError> {
         let Some(successor) = self.parts.hosting.draining() else {
@@ -542,15 +541,19 @@ impl<E: Edge> Api<E> {
 
     /// `StopDaemon`: refused `DaemonHosting` while it hosts live runs,
     /// unless `even_if_live`, which ends them first (S12), or `drain`
-    /// (s4-Q4), which hands them over to the daemon of the asking
-    /// `version`, never refused for them. Answers the daemon as it was
+    /// (OD-54), which hands them over to the next daemon within the asked
+    /// `drain_timeout_seconds` (else the configured one), never refused for
+    /// them. Answers the daemon as it was
     /// asked to stop.
     pub async fn stop_daemon(
         &self,
         request: v1::StopDaemonRequest,
     ) -> Result<v1::Daemon, ApiError> {
         if request.drain && !request.even_if_live {
-            self.parts.hosting.drain(&request.version);
+            let within = request
+                .drain_timeout_seconds
+                .map(std::time::Duration::from_secs);
+            self.parts.hosting.drain(&request.version, within);
             return Ok(self.daemon());
         }
         let daemon = self.daemon();

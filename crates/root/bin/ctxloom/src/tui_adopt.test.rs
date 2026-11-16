@@ -476,7 +476,7 @@ fn test_a_shutdown_now_stops_a_live_tuis_frontend_and_the_daemon() {
         shut.said()
     );
     let _ = finished(session);
-    assert!(!alive(daemon), "the daemon stopped");
+    wait(&rig.log(), "the stopped daemon's exit", || !alive(daemon));
     assert_eq!(rig.ended(&harp), "runner-exit", "{}", rig.log());
     rig.stop();
 }

@@ -460,6 +460,7 @@ impl Extension for Commands {
         nouns.extend(container_cli::nouns());
         nouns.extend(sessions::nouns());
         nouns.push(crate::daemon::noun());
+        nouns.push(crate::daemon::shutdown::noun());
         #[cfg(feature = "test-support")]
         nouns.push(crate::test_commands::noun());
         nouns
@@ -513,6 +514,11 @@ impl Commands {
         }
         if noun == crate::daemon::NOUN {
             return crate::daemon::run(&self.env, &self.version, call, catalog, out);
+        }
+        if noun == crate::daemon::shutdown::NOUN {
+            let wiring = Wiring::new(Arc::clone(&self.env))
+                .map_err(|e| Failure::new(e, cli_support::Exit::FAILED))?;
+            return crate::daemon::shutdown::run(&wiring, &self.version, call, out);
         }
         let verb_of = |noun: &str| {
             call.matches

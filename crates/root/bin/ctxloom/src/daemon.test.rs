@@ -1708,3 +1708,37 @@ fn a_sigterm_drains_the_daemon_and_a_changed_timeout_is_the_drains() {
         "{log}"
     );
 }
+
+// A second SIGTERM is the plain stop (`--even-if-live`): the draining
+// daemon ends what it hosts (each engine asked to stop, ruling 114) and
+// exits, without waiting out its drain's timeout.
+#[test]
+fn a_second_sigterm_is_the_plain_stop() {
+    let world = World::new();
+    world.drain_timeout("1h");
+    files::put(world.stub_dir.join("deaf"), "");
+    let mut daemon = a_busy_child(&world, None);
+    let pid = daemon_pid(&world).expect("a daemon serves");
+    signal(pid, "-TERM");
+    world.until("the daemon draining", |w| {
+        w.log().contains("SIGTERM: asked to drain").then_some(())
+    });
+    signal(pid, "-TERM");
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(30)),
+        Some(0),
+        "{}",
+        world.log()
+    );
+    assert!(
+        world
+            .log()
+            .contains("SIGTERM again: asked to stop even if live"),
+        "{}",
+        world.log()
+    );
+    assert!(
+        files::exists(world.stub_dir.join("exited")),
+        "the child ended"
+    );
+}

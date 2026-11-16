@@ -2872,6 +2872,7 @@ dependencies = [
  "angzarr-presentation",
  "angzarr-yaml",
  "crc32fast",
+ "duration-text",
  "flate2",
  "sha2 0.10.9",
  "strsim",
