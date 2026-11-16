@@ -94,7 +94,7 @@ pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).
-pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Synced, Unreached};
+pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Synced, Unreached, Until};
 
 /// This crate's en-US messages, its name first.
 pub const EN_US: (&str, &str) = (

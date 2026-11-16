@@ -32,6 +32,16 @@ use crate::Say;
 /// (its expiry, U5) comes before the wait's deadline.
 pub const WAIT_MARGIN: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// When the wait for `asked` gives up: its recorded expiry and
+/// [`WAIT_MARGIN`], one instant however often the call is retried (U5: the
+/// expiry is the daemon's alarm, so this is only a backstop). Every ask the
+/// daemon answers has an expiry; one without would end its wait at once.
+pub(crate) fn wait_until(asked: &v1::Approval) -> daemon_api::Until {
+    let mut until = asked.expire_time.unwrap_or_default();
+    until.seconds += i64::try_from(WAIT_MARGIN.as_secs()).unwrap_or(i64::MAX);
+    until
+}
+
 /// The reasons claude gave for the calls it cancelled, by the call's
 /// JSON-RPC id (its text): heard on the transport, read by the call that
 /// was cancelled.

@@ -455,3 +455,178 @@ fn the_due_model_has_no_view() {
     use held_projection::Model as _;
     assert_eq!(super::DueFold::default().view(&Cover::default()), None);
 }
+
+// The approvals' expiry (step 8 U5, D11, D12): production's consumers, an
+// ask recorded through the core, the scheduler on a fake clock.
+mod approvals {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use angzarr_embedded::v1::{CommandBook, Cover, Uuid};
+    use angzarr_embedded::{CommandBookExt as _, Payload as _, StreamRef, Timestamp};
+    use approvals::{
+        claude_options, fact_book, AnswerApproval, ApprovalCommand, ApprovalEvent,
+        RecordApprovalAsked, SessionRef, APPROVALS_DOMAIN,
+    };
+    use run_ports::Edge as _;
+    use scheduler_ports::FakeClock;
+
+    use super::{at, core_over, home, log, scheduler, Core};
+    use crate::core_link::ALARM_CONSUMERS;
+
+    fn cover(n: u8) -> Cover {
+        Cover {
+            domain: APPROVALS_DOMAIN.to_string(),
+            root: Some(Uuid::from_bytes([n; 16])),
+            edition: None,
+        }
+    }
+
+    pub(super) fn asked(n: u8, timeout_seconds: u32) -> RecordApprovalAsked {
+        let session = |id: &str| SessionRef {
+            project_id: "p-1".to_string(),
+            session: id.to_string(),
+        };
+        RecordApprovalAsked {
+            ask_id: format!("ask-tidy-wren{n}"),
+            child: session("child"),
+            run: "r-1".to_string(),
+            engine: "claude-code".to_string(),
+            root: session("root"),
+            tool_name: "Bash".to_string(),
+            input_excerpt: r#"{"command":"touch hi.txt"}"#.to_string(),
+            input_bytes: 26,
+            input_sha256: "abc".to_string(),
+            timeout_seconds,
+            engine_request_id: format!("toolu_{n}"),
+            options: claude_options("Bash", r#"{"command":"touch hi.txt"}"#),
+            name: format!("projects/amber/approvals/ask-tidy-wren{n}"),
+            child_name: "projects/amber/sessions/brisk".to_string(),
+            root_name: "projects/amber/sessions/root".to_string(),
+            agent: "default".to_string(),
+        }
+    }
+
+    /// Ask `n`, on `core`, with `timeout_seconds`; when its time runs out.
+    pub(super) async fn ask(core: &Core, n: u8, timeout_seconds: u32) -> Timestamp {
+        core.edge()
+            .handle(fact_book(
+                cover(n),
+                &asked(n, timeout_seconds),
+                &format!("ask:{n}"),
+            ))
+            .await
+            .unwrap_or_else(|failure| panic!("{failure:?}"));
+        let cover = cover(n);
+        let stream = StreamRef::try_from(&cover).unwrap();
+        let book = angzarr_embedded::EventStore::read(core.store(), stream, 0, None)
+            .await
+            .unwrap();
+        let recorded = book.pages[0].meta.as_ref().unwrap().recorded_at.unwrap();
+        approvals::expiry_at(recorded, timeout_seconds)
+    }
+
+    pub(super) async fn answer(core: &Core, n: u8) {
+        let command: ApprovalCommand = AnswerApproval {
+            ask_id: format!("ask-tidy-wren{n}"),
+            option: "allow-once".to_string(),
+            message: String::new(),
+        }
+        .into();
+        core.edge()
+            .handle(CommandBook::command_of(cover(n), &command))
+            .await
+            .unwrap_or_else(|failure| panic!("{failure:?}"));
+    }
+
+    /// How many times ask `n` recorded it expired.
+    async fn expired(core: &Core, n: u8) -> usize {
+        let cover = cover(n);
+        let stream = StreamRef::try_from(&cover).unwrap();
+        angzarr_embedded::EventStore::read(core.store(), stream, 0, None)
+            .await
+            .unwrap()
+            .pages
+            .into_iter()
+            .filter_map(|page| match page.body {
+                Some(angzarr_embedded::v1::event_page::Body::Event(event)) => Some(event),
+                _ => None,
+            })
+            .filter(|event| {
+                matches!(
+                    ApprovalEvent::from_any(event),
+                    Ok(ApprovalEvent::ApprovalExpired(_))
+                )
+            })
+            .count()
+    }
+
+    // An ask nobody answers is expired by its alarm at its time, once, and
+    // not a moment before.
+    #[test]
+    fn an_ask_nobody_answers_is_expired_by_its_alarm_at_its_time() {
+        let (fs, runtime) = home();
+        runtime.block_on(async {
+            let (core, dues) = core_over(&fs, ALARM_CONSUMERS).await;
+            let expires = ask(&core, 1, 300).await;
+            let before = Timestamp {
+                seconds: expires.seconds - 1,
+                nanos: expires.nanos,
+            };
+            let clock = Arc::new(FakeClock::at(before.seconds));
+            clock.set(before);
+            let (said, say) = log();
+            let mut scheduler = scheduler(&core, dues, &clock, say);
+            scheduler.ticked_at(before).await;
+            assert_eq!(expired(&core, 1).await, 0, "not yet");
+            clock.set(expires);
+            scheduler.wake();
+            scheduler.fired(1).await;
+            assert_eq!(expired(&core, 1).await, 1);
+            assert!(
+                said.lock()
+                    .unwrap()
+                    .iter()
+                    .any(|line| line.starts_with("alarm fired: ")
+                        && line.contains("approval-expiry:")),
+                "{:?}",
+                said.lock().unwrap()
+            );
+            // Its time past again changes nothing.
+            clock.set(at(expires.seconds + 60));
+            scheduler.wake();
+            scheduler.ticked_at(at(expires.seconds + 60)).await;
+            assert_eq!(expired(&core, 1).await, 1);
+            assert!(scheduler.stop(Duration::from_secs(10)).await);
+            core.close().await.unwrap();
+        });
+    }
+
+    // An answered ask's alarm is cancelled: its time passing expires
+    // nothing, and no alarm fires.
+    #[test]
+    fn an_answered_ask_is_never_expired() {
+        let (fs, runtime) = home();
+        runtime.block_on(async {
+            let (core, dues) = core_over(&fs, ALARM_CONSUMERS).await;
+            let expires = ask(&core, 2, 300).await;
+            answer(&core, 2).await;
+            let clock = Arc::new(FakeClock::at(expires.seconds + 1));
+            let (said, say) = log();
+            let mut scheduler = scheduler(&core, dues, &clock, say);
+            scheduler.ticked_at(at(expires.seconds + 1)).await;
+            assert_eq!(expired(&core, 2).await, 0);
+            assert!(
+                !said
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|line| line.starts_with("alarm fired")),
+                "{:?}",
+                said.lock().unwrap()
+            );
+            assert!(scheduler.stop(Duration::from_secs(10)).await);
+            core.close().await.unwrap();
+        });
+    }
+}

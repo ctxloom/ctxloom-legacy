@@ -316,13 +316,13 @@ impl daemon_api::DaemonApi for Asking {
     async fn wait_approval(
         &self,
         r: daemon_proto::v1::WaitApprovalRequest,
-        within: std::time::Duration,
+        until: daemon_api::Until,
     ) -> Result<daemon_proto::v1::Approval, daemon_api::Called> {
         self.seen
             .lock()
             .unwrap()
             .calls
-            .push(format!("wait {} {}", r.name, within.as_secs()));
+            .push(format!("wait {} until {}", r.name, until.seconds));
         match &self.settled {
             Some(settled) => Ok(settled.clone()),
             None => std::future::pending().await,
@@ -355,6 +355,14 @@ fn approval(state: &str, kind: &str, option: &str) -> daemon_proto::v1::Approval
         option: option.to_string(),
         option_kind: kind.to_string(),
         timeout_seconds: 300,
+        ask_time: Some(daemon_api::Until {
+            seconds: 1000,
+            nanos: 0,
+        }),
+        expire_time: Some(daemon_api::Until {
+            seconds: 1300,
+            nanos: 0,
+        }),
         uid: "0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b".to_string(),
         options: vec![daemon_proto::v1::ApprovalOption {
             id: "allow-session".to_string(),
@@ -558,7 +566,8 @@ async fn an_ask_is_recorded_waited_on_and_answered_as_claude_reads_it() {
         seen.lock().unwrap().calls,
         [
             r#"create Bash toolu_2 {"command":"rm -rf build/"}"#.to_string(),
-            "wait projects/calm-quiet-heron/approvals/ask-tidy-wren 360".to_string(),
+            // Its recorded expiry and the margin, by the wall clock (U5).
+            "wait projects/calm-quiet-heron/approvals/ask-tidy-wren until 1360".to_string(),
         ]
     );
     engine.end().await;

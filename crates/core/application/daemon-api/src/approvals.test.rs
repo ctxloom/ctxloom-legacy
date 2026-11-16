@@ -445,13 +445,13 @@ impl DaemonApi for Fake {
     async fn wait_approval(
         &self,
         r: v1::WaitApprovalRequest,
-        within: std::time::Duration,
+        until: crate::Until,
     ) -> Result<v1::Approval, Called> {
         self.0
             .lock()
             .unwrap()
             .asked
-            .push(format!("wait {} {}", r.name, within.as_secs()));
+            .push(format!("wait {} {}", r.name, until.seconds));
         Ok(v1::Approval::default())
     }
     async fn handle(&self, book: CommandBook) -> Result<bool, Called> {
@@ -773,7 +773,10 @@ async fn a_sessions_ask_wait_and_withdrawal_reach_the_daemon_as_its_own() {
     caller
         .wait_approval(
             "projects/calm-quiet-heron/approvals/ask-a-b",
-            std::time::Duration::from_secs(360),
+            crate::Until {
+                seconds: 360,
+                nanos: 0,
+            },
         )
         .await
         .unwrap();

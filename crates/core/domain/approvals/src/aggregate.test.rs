@@ -314,3 +314,138 @@ fn a_withdrawal_of_no_ask_records_nothing() {
     );
     let _ = Any::default();
 }
+
+// Its expiry (U5, D11): the scheduler's reached alarm, re-checked against
+// the ask's own state.
+mod expiry {
+    use angzarr_embedded::Timestamp;
+    use scheduler::RecordAlarmReached;
+
+    use super::{answer, ask, asked_with, bash, cover, fact, ASK};
+    use crate::{
+        expiry_alarm, ApprovalEvent, ApprovalExpired, ApprovalsRejection, RecordApprovalWithdrawn,
+        Status,
+    };
+
+    fn ours() -> String {
+        expiry_alarm(&[9; 16])
+    }
+
+    fn reached(alarm_id: &str, at: Timestamp) -> RecordAlarmReached {
+        RecordAlarmReached {
+            alarm_id: alarm_id.to_string(),
+            at,
+        }
+    }
+
+    #[test]
+    fn an_ask_with_a_time_runs_out_at_its_recording_plus_its_time() {
+        let mut harness = ask();
+        fact(
+            &mut harness,
+            asked_with(300, bash()),
+            "approval:r-1:toolu_1",
+        );
+        let state = harness.state().state().clone();
+        assert_eq!(state.alarm_id, ours());
+        assert_eq!(
+            state.alarm_id,
+            format!("approval-expiry:{}", uuid::Uuid::from_bytes([9; 16]))
+        );
+        // The harness's first sample is its start plus one.
+        assert_eq!(
+            state.expires,
+            Some(Timestamp {
+                seconds: 401,
+                nanos: 0
+            })
+        );
+    }
+
+    #[test]
+    fn an_ask_with_no_time_arms_nothing() {
+        let mut harness = ask();
+        fact(&mut harness, asked_with(0, bash()), "approval:r-1:toolu_1");
+        let state = harness.state().state().clone();
+        assert_eq!(state.alarm_id, "");
+        assert_eq!(state.expires, None);
+    }
+
+    #[test]
+    fn its_own_alarm_at_its_instant_expires_a_waiting_ask_once() {
+        let mut harness = ask();
+        fact(
+            &mut harness,
+            asked_with(300, bash()),
+            "approval:r-1:toolu_1",
+        );
+        let at = harness.state().state().expires.unwrap();
+        assert_eq!(
+            fact(&mut harness, reached(&ours(), at), "alarm:a"),
+            vec![ApprovalEvent::ApprovalExpired(ApprovalExpired {})]
+        );
+        assert_eq!(harness.state().state().status, Status::Expired);
+        assert_eq!(fact(&mut harness, reached(&ours(), at), "alarm:b"), vec![]);
+        assert_eq!(
+            answer(&mut harness, "allow-once", ""),
+            Err(ApprovalsRejection::ApprovalSettled {
+                ask_id: ASK.to_string(),
+                how: "expired".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn another_alarm_another_instant_or_a_settled_ask_records_nothing() {
+        let mut harness = ask();
+        let early = Timestamp {
+            seconds: 401,
+            nanos: 0,
+        };
+        assert_eq!(
+            fact(&mut harness, reached(&ours(), early), "none-asked"),
+            vec![]
+        );
+        fact(
+            &mut harness,
+            asked_with(300, bash()),
+            "approval:r-1:toolu_1",
+        );
+        let at = harness.state().state().expires.unwrap();
+        assert_eq!(
+            fact(&mut harness, reached("approval-expiry:other", at), "other"),
+            vec![]
+        );
+        let before = Timestamp {
+            seconds: at.seconds - 1,
+            nanos: 0,
+        };
+        assert_eq!(
+            fact(&mut harness, reached(&ours(), before), "instant"),
+            vec![]
+        );
+        answer(&mut harness, "allow-once", "").unwrap();
+        assert_eq!(fact(&mut harness, reached(&ours(), at), "answered"), vec![]);
+
+        let mut harness = ask();
+        fact(
+            &mut harness,
+            asked_with(300, bash()),
+            "approval:r-1:toolu_1",
+        );
+        let at = harness.state().state().expires.unwrap();
+        fact(
+            &mut harness,
+            RecordApprovalWithdrawn {
+                ask_id: ASK.to_string(),
+                reason: "steered".to_string(),
+            },
+            "withdrawn",
+        );
+        assert_eq!(
+            fact(&mut harness, reached(&ours(), at), "withdrawn-reach"),
+            vec![]
+        );
+        let _ = cover();
+    }
+}

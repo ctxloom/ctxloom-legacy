@@ -212,3 +212,22 @@ fn each_denial_reports_its_args() {
     );
     assert_eq!(Denied::ByUser.args().len(), 0);
 }
+
+// U5: the wait ends at the ask's recorded expiry and the margin, an
+// instant, so a retry on a new daemon cannot wait a second span.
+#[test]
+fn the_wait_ends_at_the_recorded_expiry_and_the_margin() {
+    let mut asked = approval("waiting", "", "");
+    asked.timeout_seconds = 300;
+    asked.expire_time = Some(daemon_api::Until {
+        seconds: 1_300,
+        nanos: 7,
+    });
+    assert_eq!(
+        wait_until(&asked),
+        daemon_api::Until {
+            seconds: 1_360,
+            nanos: 7
+        }
+    );
+}

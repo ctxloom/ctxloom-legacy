@@ -13,6 +13,9 @@ angzarr-diagnostic.workspace = true
 angzarr-embedded-macros.workspace = true
 approvals-proto.workspace = true
 prost.workspace = true
+# An ask's expiry is the scheduler's alarm (U5: the arm policy towards it,
+# its delivery, and the reached fact the aggregate handles).
+scheduler.workspace = true
 # An ask's input is the engine's JSON text: read for the rule it implies
 # (pure computation, as surface-ports' serde_json is).
 serde_json.workspace = true

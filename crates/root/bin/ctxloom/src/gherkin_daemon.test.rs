@@ -3425,9 +3425,14 @@ fn listed_trusted(w: &mut World) {
 
 // -------------------------------------------------- approvals (ruling 142)
 
+/// The scenario's asks' time runs out: its `approval_timeout` is short, and
+/// the daemon's scheduler ends each ask by its alarm (U5), so this waits,
+/// bounded, until none is waiting any more.
 #[when("the ask's time runs out")]
-fn ask_expires(_: &mut World) {
-    red("the ask's time runs out")
+fn ask_expires(w: &mut World) {
+    until(w, "the ask's time to run out", DAEMON_WAIT, |w| {
+        waiting_asks(w, None).is_empty().then_some(())
+    });
 }
 
 #[then(regex = r#"^the child's claude was launched with "([^"]+)" "([^"]+)"$"#)]
@@ -3820,9 +3825,11 @@ fn opencode_answered_kind(_: &mut World, _kind: String) {
     red("an opencode child's request answered with an option of its kind (step 8, U7)")
 }
 
+/// The asking engine exits where it waits: its MCP server killed with it,
+/// so nothing cancels the call and nothing withdraws the ask.
 #[when(regex = r#"^"([^"]+)"'s engine exits without cancelling its approval prompt call$"#)]
-fn exits_uncancelled(_: &mut World, _child: String) {
-    red("a child's engine exits with its ask waiting (step 8, U5/U6)")
+fn exits_uncancelled(w: &mut World, _child: String) {
+    the_ask(w, None).mcp.kill();
 }
 
 /// The hosted child stub's environment, once it has written it: each
@@ -5382,6 +5389,17 @@ fn allowed(answer: &Value, ask: &Ask, rule: Option<(&str, &str)>) {
     }
 }
 
+/// `answer` is claude's deny of an ask whose time ran out
+/// (`mcp-server-approval-expired`, DRAFT).
+fn expired_answer(answer: &Value) {
+    assert_eq!(answer["behavior"], "deny", "{answer}");
+    let said = answer["message"].as_str().unwrap_or_default();
+    assert!(
+        said.contains("No one answered this permission request within"),
+        "{answer}"
+    );
+}
+
 /// `rule` (`Bash(rm -rf build/)`) as its tool and its content.
 fn rule_parts(rule: &str) -> (&str, &str) {
     rule.strip_suffix(')')
@@ -5421,7 +5439,7 @@ fn engine_told(w: &mut World, what: String) {
         assert!(said.contains("at once"), "{answer}");
         assert!(said.contains("approval_timeout is now"), "{answer}");
     } else if what == "not to run it, because no answer came in time" {
-        red("an ask's expiry through the scheduler (step 8, U5)")
+        expired_answer(&prompt_answer(the_ask(w, None)));
     } else {
         panic!("no such answer to tell: {what}");
     }
@@ -5515,7 +5533,8 @@ fn cancelled_unanswered(w: &mut World) {
 #[when(regex = r#"^(Alice runs "[^"]+"|Alice runs '[^']+'|nobody answers within the ask's time)$"#)]
 fn approval_answered_by(w: &mut World, who: String) {
     let Some(quoted) = who.strip_prefix("Alice runs ") else {
-        red("an ask's expiry through the scheduler (step 8, U5)")
+        // Nobody answers: the ask's short time runs out (U5).
+        return ask_expires(w);
     };
     let line = quoted[1..quoted.len() - 1].to_string();
     w.before_line(&line);
@@ -5546,7 +5565,7 @@ fn tool_answered_engine(w: &mut World, answer: String) {
         let message = said["message"].as_str().unwrap_or_default();
         assert!(message.contains("user denied"), "{said}");
     } else if answer == r#"{"behavior":"deny"}, saying no answer came in time"# {
-        red("an ask's expiry through the scheduler (step 8, U5)")
+        expired_answer(&said);
     } else {
         panic!("no such answer: {answer}");
     }

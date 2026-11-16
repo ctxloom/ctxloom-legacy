@@ -27,6 +27,11 @@ use daemon_proto::v1;
 
 pub use prost_types::Any;
 
+/// When a wait ends, by the wall clock: an ask's recorded expiry and a
+/// margin (step 8 U5). An instant, not a span, so a call retried on a new
+/// daemon ends when the first would have, never a whole span later.
+pub type Until = daemon_proto::google::protobuf::Timestamp;
+
 /// The daemon's `Ctxloom` service, as a client calls it. Each method is
 /// one RPC; the ones not served yet are not here.
 pub trait DaemonApi: Send + Sync {
@@ -150,15 +155,16 @@ pub trait DaemonApi: Send + Sync {
     }
 
     /// `WaitApproval` (step 8 U4, S27): an ask, answered once it is settled,
-    /// waited for at most `within` (its own deadline: the ask's time and a
-    /// margin, never a read's). The default is a daemon that does not serve
-    /// it.
+    /// waited for until `until` (its own deadline: the ask's recorded
+    /// expiry and a margin, never a read's; U5: the expiry is the daemon's
+    /// alarm, so the deadline is only a backstop). The default is a daemon
+    /// that does not serve it.
     fn wait_approval(
         &self,
         request: v1::WaitApprovalRequest,
-        within: std::time::Duration,
+        until: Until,
     ) -> impl Future<Output = Result<v1::Approval, Called>> + Send {
-        let _ = (request, within);
+        let _ = (request, until);
         async { Err(unserved("WaitApproval")) }
     }
 

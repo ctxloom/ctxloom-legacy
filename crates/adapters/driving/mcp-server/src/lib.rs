@@ -168,10 +168,9 @@ where
             .map_err(failed)?;
         let settled = match asked.state.as_str() {
             "waiting" => {
-                let within = std::time::Duration::from_secs(u64::from(asked.timeout_seconds))
-                    + approval::WAIT_MARGIN;
+                let until = approval::wait_until(&asked);
                 tokio::select! {
-                    waited = self.caller.wait_approval(&asked.name, within) => waited.map_err(failed)?,
+                    waited = self.caller.wait_approval(&asked.name, until) => waited.map_err(failed)?,
                     () = context.ct.cancelled() => {
                         let id = serde_json::to_value(&context.id)
                             .map(|id| id.to_string())

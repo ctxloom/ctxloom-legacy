@@ -2138,8 +2138,21 @@ the tool and its exact input, `Bash(<command>)` or `<Tool>(<path>)` for
 Read, Write, Edit, MultiEdit (`file_path`) and NotebookEdit
 (`notebook_path`), offering `allow-once`, `allow-session`, `allow-always`
 and `deny`; any other tool offers `allow-once` and `deny` alone (Q5).
-Expiry by the scheduler's alarm is U5's, not built here: an ask nobody
-answers waits until its `WaitApproval`'s deadline passes.
+An ask ends by its alarm (U5; S26, D11, D12): `approvals::ArmsExpiry`
+(the approvals' policy towards the scheduler) arms `approval-expiry:<the
+ask's stream root>` at the instant `ApprovalAsked` was recorded plus its
+`timeout_seconds` (`approvals::expiry_at`; an ask with no time, `now`, is
+expired in its own decide and arms nothing), and `ApprovalAnswered` or
+`ApprovalWithdrawn` cancels it; `approvals::DeliverToApprovals`
+(`scheduler::delivery!`) hands the ask `RecordAlarmReached`, which the
+aggregate re-checks against its own state (still waiting, its own alarm, the
+instant it armed) before it records `ApprovalExpired`; the waiting tool then
+answers the DRAFT `mcp-server-approval-expired`. Both policies are ONE entry
+of `core_link::ALARM_CONSUMERS` (`approvals_expiry`). COST, measured and
+open (raised with the owner): every core start, a CLI command's included,
+resumes the policies' source streams (angzarr-embedded's `Kernel::resume`),
+so a CLI start over 1000 settled asks took about 1.1 s (12 ms with no
+consumer; 31 ms over 100), growing faster than the history.
 
 The daemon serves `CreateApproval` (D10: the session's run, engine, agent
 and `approval_timeout` are the child it hosts, daemon-application's `Asker`,
@@ -2149,7 +2162,9 @@ id); read back from the ask's own stream), `GetApproval` (unknown:
 `approvals-approval-unknown`), `ListApprovals` (a project's asks, oldest
 first, under a root, waiting) and `WaitApproval` (answered once settled,
 read afresh each round; the gRPC edge awaits it, so a caller that hangs up
-drops it; the client's deadline is the ask's timeout plus a minute). Every
+drops it; the client's deadline is an INSTANT, `daemon_ports::Until`, the
+ask's recorded expiry plus a minute, `mcp_server`'s `wait_until`, so a wait
+retried on a new daemon ends when the first would have). Every
 approvals call is served while the daemon drains (D6). The kernel registers
 both aggregates (approvals on loopback, the names not exposed) and the
 pending approvals (`Projectors::approvals`, `Folds::approvals`); the
@@ -2203,8 +2218,7 @@ policies and the clock loop alone), and then each domain that arms alarms,
 `core_link::ALARM_CONSUMERS` (an `AlarmConsumer` is a `fn(&mut Registry)`
 registering the consumer's arm/cancel policy towards the scheduler and its
 `scheduler::delivery!` policy), so a trigger's arming runs wherever it
-commits. The list is EMPTY: ctxloom registers no kernel policy in production
-yet; approvals' expiry (U5) is its first entry. `CoreStores::at_start` is the
+commits. Its one entry is the approvals' expiry (U5, above). `CoreStores::at_start` is the
 resume at start, which delivers an alarm fired and not delivered (a crash
 between the two hops, or a delivery policy new to a store with history).
 The daemon's core also registers the due model (`Projectors::due`, the

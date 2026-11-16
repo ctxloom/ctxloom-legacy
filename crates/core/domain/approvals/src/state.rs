@@ -50,4 +50,9 @@ pub struct Ask {
     pub tool_name: String,
     pub options: Vec<ApprovalOption>,
     pub status: Status,
+    /// Its expiry alarm's id (`approval-expiry:<ask>`); empty for an ask
+    /// with no time.
+    pub alarm_id: String,
+    /// When it runs out: recorded plus its time; none with no time.
+    pub expires: Option<angzarr_embedded::Timestamp>,
 }

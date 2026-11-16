@@ -79,9 +79,21 @@ impl scheduler_ports::Clock for SystemClock {
 pub type AlarmConsumer = fn(&mut Registry);
 
 /// Every domain that arms alarms, registered in every core so a trigger's
-/// arming runs wherever it commits, and resumed at each start. None yet:
-/// approvals' expiry (step 8 U5) is the first.
-pub const ALARM_CONSUMERS: &[AlarmConsumer] = &[];
+/// arming runs wherever it commits, and resumed at each start: the
+/// approvals' expiry (step 8 U5, D12).
+pub const ALARM_CONSUMERS: &[AlarmConsumer] = &[approvals_expiry];
+
+/// The approvals' expiry (step 8 U5): an ask arms `approval-expiry:<ask>`
+/// for its time, its answer or withdrawal cancels it, and the alarm reached
+/// is delivered to the ask, which expires if it still waits. Its aggregate
+/// is the core's own.
+fn approvals_expiry(registry: &mut Registry) {
+    registry
+        .policy(approvals::ArmsExpiry)
+        .expect("the approvals' expiry arming registers")
+        .policy(approvals::DeliverToApprovals)
+        .expect("the approvals' expiry delivery registers");
+}
 
 /// The core's one store, as the application resolves it: every call's key
 /// is `()`, and it is resumed at start (as `OneStore`), shared with the core

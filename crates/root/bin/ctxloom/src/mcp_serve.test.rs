@@ -191,6 +191,15 @@ impl Mcp {
     }
 }
 
+impl Mcp {
+    /// Killed where it is, as its engine's exit takes it: nothing it was
+    /// calling is cancelled or answered.
+    pub(crate) fn kill(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 impl Drop for Mcp {
     fn drop(&mut self) {
         let _ = self.child.kill();

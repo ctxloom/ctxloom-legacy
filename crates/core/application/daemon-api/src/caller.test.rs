@@ -176,6 +176,24 @@ impl DaemonApi for Fake {
         })
     }
 
+    async fn wait_approval(
+        &self,
+        r: v1::WaitApprovalRequest,
+        until: daemon_ports::Until,
+    ) -> Result<v1::Approval, Called> {
+        self.ask(&format!("wait {} until {}", r.name, until.seconds));
+        if self.dying.lock().unwrap().contains(&self.n) {
+            return Err(Called::Unreachable {
+                detail: "killed while it waited".to_string(),
+            });
+        }
+        Ok(v1::Approval {
+            name: r.name,
+            state: "expired".to_string(),
+            ..v1::Approval::default()
+        })
+    }
+
     async fn handle_sync(
         &self,
         book: CommandBook,
@@ -961,4 +979,27 @@ async fn a_second_launch_of_a_child_while_the_first_is_made_is_refused() {
     );
     drop(first);
     caller.launch(&a_launch()).await.unwrap();
+}
+
+// U5: a wait retried on a new daemon (the first died while it waited) ends
+// at the same instant as the first would have, never a second span later.
+#[tokio::test]
+async fn a_wait_retried_on_a_new_daemon_ends_when_the_first_would_have() {
+    let w = World::new();
+    w.dying.lock().unwrap().push(1);
+    let caller = w.caller(false);
+    let name = "projects/calm-quiet-heron/approvals/ask-tidy-wren";
+    let until = daemon_ports::Until {
+        seconds: 1_360,
+        nanos: 0,
+    };
+    let waited = caller.wait_approval(name, until).await.unwrap();
+    assert_eq!(waited.state, "expired");
+    assert_eq!(
+        w.asked(),
+        [
+            format!("1:wait {name} until 1360"),
+            format!("2:wait {name} until 1360"),
+        ]
+    );
 }

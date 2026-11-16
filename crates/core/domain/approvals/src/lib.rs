@@ -1,8 +1,8 @@
 //! The approvals domain (step 8 U4, ruling 142): the permission ask of a
 //! session the daemon runs (a child or a one-shot), routed to the HUMAN
 //! (S25), answered once with one of the options it offers, withdrawn when
-//! its engine cancels it, or expired when its time runs out (S26; the alarm
-//! that ends it is U5's). One stream per ask, rooted on the UUIDv5 of its
+//! its engine cancels it, or expired when its time runs out (S26: by its alarm,
+//! through the scheduler, [`ArmsExpiry`] and [`DeliverToApprovals`], U5). One stream per ask, rooted on the UUIDv5 of its
 //! asking session and its key ([`ask_root`]); its name, `ask-<adjective>-
 //! <noun>` (D9, Q7), unique among the asks of its project by a claim
 //! stream of its own in `approval-names` ([`name_root`]).
@@ -23,6 +23,7 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/ctxloom.approvals.v1.domain.rs"));
 }
 mod aggregate;
+mod expiry;
 mod names;
 mod options;
 mod refusal;
@@ -40,6 +41,7 @@ pub type ApprovalNameCommand = ApprovalNameStateCommand;
 pub type ApprovalNameEvent = ApprovalNameStateEvent;
 
 pub use aggregate::ApprovalAggregate;
+pub use expiry::{expiry_alarm, expiry_at, ArmsExpiry, DeliverToApprovals, EXPIRY_ALARM_PREFIX};
 pub use generated::*;
 pub use names::{ApprovalNameAggregate, NameClaim};
 pub use options::{

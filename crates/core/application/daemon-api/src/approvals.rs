@@ -589,16 +589,17 @@ impl<D: Daemons> Caller<D> {
     }
 
     /// The approval tool's wait (S27): the approval named `name`, once it
-    /// is settled, waited for at most `within`.
+    /// is settled, waited for until `until` (U5: one instant, so a wait
+    /// retried on a new daemon ends when the first would have).
     pub async fn wait_approval(
         &self,
         name: &str,
-        within: std::time::Duration,
+        until: daemon_ports::Until,
     ) -> Result<v1::Approval, CallError> {
         let request = v1::WaitApprovalRequest {
             name: name.to_string(),
         };
-        on_daemon!(self, |api| api.wait_approval(request.clone(), within).await)
+        on_daemon!(self, |api| api.wait_approval(request.clone(), until).await)
     }
 
     /// The approval tool's call cancelled by its engine (claude's

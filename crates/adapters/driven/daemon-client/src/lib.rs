@@ -249,6 +249,18 @@ fn chain(error: &dyn std::error::Error) -> String {
     text
 }
 
+/// What is left until `until` by the system's clock; nothing once past.
+fn remaining(until: daemon_ports::Until) -> Duration {
+    let until = std::time::UNIX_EPOCH
+        + Duration::new(
+            u64::try_from(until.seconds).unwrap_or(0),
+            u32::try_from(until.nanos).unwrap_or(0),
+        );
+    until
+        .duration_since(std::time::SystemTime::now())
+        .unwrap_or(Duration::ZERO)
+}
+
 /// One call: `$method` of the client with `$message`, its status read back,
 /// within the client's deadline for a read (or `$within`).
 macro_rules! call {
@@ -380,11 +392,18 @@ impl DaemonApi for DaemonClient {
     async fn wait_approval(
         &self,
         request: v1::WaitApprovalRequest,
-        within: Duration,
+        until: daemon_ports::Until,
     ) -> Result<v1::Approval, Called> {
-        // The caller's own deadline (the ask's time and a margin), never a
-        // read's: an ask waits as long as the user takes within its time.
-        call!(self, wait_approval, "WaitApproval", request, within)
+        // The caller's own deadline (the ask's recorded expiry and a
+        // margin), never a read's: an ask waits as long as the user takes
+        // within its time, and a retry ends when the first call would have.
+        call!(
+            self,
+            wait_approval,
+            "WaitApproval",
+            request,
+            remaining(until)
+        )
     }
 
     async fn create_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Called> {
