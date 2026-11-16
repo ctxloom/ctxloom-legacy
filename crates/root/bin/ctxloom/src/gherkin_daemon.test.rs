@@ -91,6 +91,24 @@ pub(super) struct State {
     /// What the project's own config says besides its agent (trust.feature:
     /// `<dotted key>: <value>`), kept when a step rewrites that config.
     project_says: Vec<String>,
+    /// The asks the scenario's scripted claude made (step 8 U4): each
+    /// through `ctxloom mcp serve`, as claude calls its approval prompt.
+    asks: Vec<Ask>,
+    /// The engine side of an MCP server a step talks to as claude does.
+    engine: Option<crate::tests::mcp_serve::Mcp>,
+    /// What a step's discovery probe was answered.
+    discovered: Option<Value>,
+}
+
+/// An ask the scripted claude made: its server, the call's id, and the
+/// tool and input it asked with.
+pub(super) struct Ask {
+    mcp: crate::tests::mcp_serve::Mcp,
+    id: u64,
+    tool: String,
+    input: Value,
+    /// What the server answered the call, once read.
+    answered: Option<Value>,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -242,6 +260,14 @@ fn stub_claude(w: &mut World, body: &str) -> PathBuf {
 /// and the drain timeout a step said (shutdown.feature).
 fn write_home_config(w: &World) {
     let mut config = "schema_version: 9\neditor:\n  command: \"true\"\n".to_string();
+    // The agents a Given wrote into the home config are kept (step 8 U4:
+    // the layer an allow-always writes into).
+    config.push_str(&agents_block(
+        &w.common
+            .project
+            .read_home(".ctxloom/config.yaml")
+            .unwrap_or_default(),
+    ));
     if let Some(stub) = &w.daemon_spec.stub {
         config.push_str(&format!(
             "engines:\n  claude-code:\n    command: {}\n",
@@ -252,6 +278,24 @@ fn write_home_config(w: &World) {
         config.push_str(&format!("daemon:\n  drain_timeout: {timeout}\n"));
     }
     w.common.project.write_home(".ctxloom/config.yaml", &config);
+}
+
+/// The `agents:` block of the config `text`, its lines up to the next
+/// top-level key; none, empty.
+fn agents_block(text: &str) -> String {
+    let mut block = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let top = !line.starts_with(' ') && !line.is_empty();
+        if top {
+            inside = line.starts_with("agents:");
+        }
+        if inside {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    block
 }
 
 /// The interactive session's stub: it says it started, then runs until
@@ -3375,23 +3419,6 @@ fn listed_trusted(w: &mut World) {
 
 // -------------------------------------------------- approvals (ruling 142)
 
-#[given(
-    regex = r#"^a child "([^"]+)" of "([^"]+)" whose engine has asked to run "([^"]+)" with "((?:[^"\\]|\\.)*)"$"#
-)]
-fn child_asked(_: &mut World, _child: String, _owner: String, _tool: String, _input: String) {
-    red("a child whose engine has asked to run a tool")
-}
-
-#[then(regex = r"^the child's engine was told (.+)$")]
-fn engine_told(_: &mut World, _what: String) {
-    red("the child's engine was told the answer")
-}
-
-#[then(expr = "no ask is waiting under {string}")]
-fn none_waiting(_: &mut World, _root: String) {
-    red("no ask is waiting under the root")
-}
-
 #[when("the ask's time runs out")]
 fn ask_expires(_: &mut World) {
     red("the ask's time runs out")
@@ -3762,56 +3789,6 @@ fn first_turn_in_project(
         "the child ran in {cwds:?}, not {}",
         dir.display()
     );
-}
-
-#[when(expr = "its engine sends {string} to ctxloom's MCP server before {string}")]
-fn sends_before_initialize(_: &mut World, _method: String, _before: String) {
-    red("the MCP server answers server/discover (step 8, U4)")
-}
-
-#[then("the server answered it with an empty result")]
-fn answered_empty(_: &mut World) {
-    red("the MCP server answered server/discover (step 8, U4)")
-}
-
-#[then("the engine went on to initialize the server and list its tools")]
-fn initialized_after_discover(_: &mut World) {
-    red("the MCP server initialized after server/discover (step 8, U4)")
-}
-
-#[when(expr = "the engine sends {string} for that call")]
-fn engine_cancels(_: &mut World, _notification: String) {
-    red("the MCP server hears notifications/cancelled (step 8, U4)")
-}
-
-#[then("the server sent no answer for the cancelled call, and still serves the engine's next call")]
-fn cancelled_unanswered(_: &mut World) {
-    red("a cancelled approval prompt call is answered nothing (step 8, U4)")
-}
-
-#[given(regex = r#"^"([^"]+)"'s engine has also asked to run "([^"]+)" with "([^"]*)"$"#)]
-fn also_asked(_: &mut World, _child: String, _tool: String, _input: String) {
-    red("a second ask of one child (step 8, U4/U6)")
-}
-
-#[when(regex = r#"^"([^"]+)"'s engine asks to run "([^"]+)" with "([^"]*)"$"#)]
-fn engine_asks(_: &mut World, _child: String, _tool: String, _input: String) {
-    red("a child's engine asks (step 8, U4/U6)")
-}
-
-#[then(expr = "an ask is still waiting under {string}")]
-fn still_waiting(_: &mut World, _root: String) {
-    red("an ask still waiting under its root (step 8, U4)")
-}
-
-#[then(expr = "the output reports the ask's {string} as 300 seconds after its {string}")]
-fn expires_after(_: &mut World, _expire: String, _asked: String) {
-    red("an ask's default time (step 8, U3/U4)")
-}
-
-#[then("the child's engine cancelled its approval prompt call")]
-fn engine_cancelled(_: &mut World) {
-    red("a steered claude cancels its approval prompt call (step 8, U4/U6)")
 }
 
 #[given(
@@ -4295,16 +4272,6 @@ fn registers_mcp(w: &mut World, command: String, name: String) {
     assert_eq!(registered.join(" "), command, "{engine}");
 }
 
-#[when("its engine lists the tools of ctxloom's MCP server")]
-fn lists_tools(_: &mut World) {
-    red("its engine lists ctxloom's MCP tools")
-}
-
-#[then(regex = r"^the tools are (.+)$")]
-fn tools_are(_: &mut World, _t: String) {
-    red("the MCP tools are the spec's")
-}
-
 /// The resource name of the session `harp` of the scenario's project.
 fn session_name(w: &World, harp: &str) -> String {
     w.common
@@ -4444,23 +4411,6 @@ fn tool_edit(_: &mut World) {
 #[then("the daemon applied the new text, and no editor was started")]
 fn applied_text(_: &mut World) {
     red("the daemon applied the new text without an editor")
-}
-
-#[given(
-    regex = r#"^a claude child "([^"]+)" of "([^"]+)" whose engine calls "approval_prompt" for "([^"]+)" with "([^"]*)"$"#
-)]
-fn approval_prompt_called(_: &mut World, _c: String, _o: String, _t: String, _i: String) {
-    red("a claude child calls approval_prompt")
-}
-
-#[when(regex = r#"^(Alice runs "[^"]+"|Alice runs '[^']+'|nobody answers within the ask's time)$"#)]
-fn approval_answered_by(_: &mut World, _w: String) {
-    red("the ask is answered, or times out")
-}
-
-#[then(regex = r"^the tool answered the engine (.+)$")]
-fn tool_answered_engine(_: &mut World, _a: String) {
-    red("the approval tool answered the engine")
 }
 
 #[given(expr = "a child {string} whose engine runs in a container")]
@@ -5231,4 +5181,447 @@ fn start_then_exit(w: &mut World) {
         .filter(|t| matches!(*t, "RunnerStartedRecorded" | "RunEnded"))
         .collect();
     assert_eq!(order, ["RunnerStartedRecorded", "RunEnded"], "{run:?}");
+}
+
+// ------------------------------------- step 8 U4: the asks, as claude makes them
+
+/// The input claude gives a tool it asks to run with `text`: a Bash
+/// command, a path tool's file, else `text` read as the JSON it is (its
+/// `\"` unescaped).
+fn ask_input(tool: &str, text: &str) -> Value {
+    match tool {
+        "Bash" => json!({"command": text}),
+        "NotebookEdit" => json!({"notebook_path": text}),
+        "Read" | "Write" | "Edit" | "MultiEdit" => json!({"file_path": text}),
+        _ => serde_json::from_str(&text.replace("\\\"", "\""))
+            .unwrap_or_else(|_| json!({"text": text})),
+    }
+}
+
+/// The waiting asks `session approvals [<root>]` lists now.
+fn waiting_asks(w: &World, root: Option<&str>) -> Vec<Value> {
+    let mut args = vec!["session", "approvals"];
+    args.extend(root);
+    args.extend(["--format", "json"]);
+    let ran = run_now(w, &args);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    ran.json()["approvals"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The scripted claude of `child` asks to run `tool` with `text`: its
+/// approval prompt called through `ctxloom mcp serve`, started as the
+/// engine starts it (the child's session in its environment), and waited
+/// for until the ask is listed or, settled at once, answered.
+fn ask(w: &mut World, child: &str, tool: &str, text: &str) {
+    let me = session_name(w, child);
+    let env = env_of(w);
+    let mut mcp =
+        crate::tests::mcp_serve::Mcp::for_session(&w.common.project, &me, &env_pairs(&env));
+    let input = ask_input(tool, text);
+    let n = w.daemon_spec.asks.len() + 1;
+    let before = waiting_asks(w, None).len();
+    let id = mcp.start_call(
+        "approval_prompt",
+        json!({"tool_name": tool, "input": input, "tool_use_id": format!("toolu_{n}")}),
+    );
+    w.daemon_spec.asks.push(Ask {
+        mcp,
+        id,
+        tool: tool.to_string(),
+        input,
+        answered: None,
+    });
+    let deadline = Instant::now() + DAEMON_WAIT;
+    loop {
+        if waiting_asks(w, None).len() > before {
+            return;
+        }
+        let ask = w.daemon_spec.asks.last_mut().expect("the ask");
+        if let Some(answered) = ask
+            .mcp
+            .answer_to(&json!(ask.id), Duration::from_millis(100))
+        {
+            ask.answered = Some(answered);
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the ask was never listed; the daemon's log:\n{}",
+            daemon_log_text(w)
+        );
+    }
+}
+
+/// The scenario's child, hosted in the middle of a turn (claude asks from
+/// inside one), on the project's default agent; then its ask. The
+/// harness's own pair is hosted as every daemon scenario hosts it; any
+/// other is a child of its own owner, seeded, beside it.
+fn child_asking(w: &mut World, child: &str, owner: &str, tool: &str, text: &str) {
+    // The project's default agent, as the spec's allow-always names it.
+    if w.daemon_spec.project_says.is_empty() {
+        w.daemon_spec
+            .project_says
+            .push("default_agent: default".to_string());
+    }
+    if w.daemon_spec.daemon.is_none() {
+        w.common
+            .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
+        start_daemon_idling(w, DEFAULT_IDLE_SECONDS);
+        stub_claude(w, CHILD_STUB);
+    }
+    files::put(stub_dir(w).join("hold"), "once");
+    if (child, owner) == ("brisk-copper-moth", "amber-quiet-heron") {
+        hosted_child(w);
+    } else {
+        let taken = turns(w).len();
+        let seeded = run_now(w, &["test", "seed-session", owner]);
+        assert_eq!(seeded.code, 0, "{}", seeded.said());
+        let mut env = env_of(w);
+        env.push(("ANTHROPIC_API_KEY".to_string(), "a-key".to_string())); // gitleaks:allow
+        let launched = w.common.project.run_with(
+            &env_pairs(&env),
+            &["session", "launch", owner, "--name", child, "a task"],
+        );
+        assert_eq!(launched.code, 0, "{}", launched.said());
+        until(w, "the second child's first turn", DAEMON_WAIT, |w| {
+            (turns(w).len() > taken).then_some(())
+        });
+    }
+    ask(w, child, tool, text);
+}
+
+#[given(
+    regex = r#"^a child "([^"]+)" of "([^"]+)" whose engine has asked to run "([^"]+)" with "((?:[^"\\]|\\.)*)"$"#
+)]
+fn child_asked(w: &mut World, child: String, owner: String, tool: String, input: String) {
+    child_asking(w, &child, &owner, &tool, &input);
+}
+
+#[given(
+    regex = r#"^a claude child "([^"]+)" of "([^"]+)" whose engine calls "approval_prompt" for "([^"]+)" with "([^"]*)"$"#
+)]
+fn approval_prompt_called(
+    w: &mut World,
+    child: String,
+    owner: String,
+    tool: String,
+    input: String,
+) {
+    child_asking(w, &child, &owner, &tool, &input);
+}
+
+#[given(regex = r#"^"([^"]+)"'s engine has also asked to run "([^"]+)" with "([^"]*)"$"#)]
+fn also_asked(w: &mut World, child: String, tool: String, input: String) {
+    ask(w, &child, &tool, &input);
+}
+
+#[when(regex = r#"^"([^"]+)"'s engine asks to run "([^"]+)" with "([^"]*)"$"#)]
+fn engine_asks(w: &mut World, child: String, tool: String, input: String) {
+    ask(w, &child, &tool, &input);
+}
+
+/// What claude's approval prompt answered `ask`, once it has: the JSON its
+/// text says.
+fn prompt_answer(ask: &mut Ask) -> Value {
+    if ask.answered.is_none() {
+        ask.answered = ask.mcp.answer_to(&json!(ask.id), DAEMON_WAIT);
+    }
+    let answered = ask.answered.clone().unwrap_or_else(|| {
+        panic!(
+            "the approval prompt never answered; it said {:?}",
+            ask.mcp.said
+        )
+    });
+    let result = &answered["result"];
+    assert_ne!(result["isError"], true, "the tool failed: {answered}");
+    crate::tests::mcp_serve::answered_json(result)
+}
+
+/// The scenario's ask an answer names: the one whose command is `command`,
+/// else the last made.
+fn the_ask<'a>(w: &'a mut World, command: Option<&str>) -> &'a mut Ask {
+    let asks = &mut w.daemon_spec.asks;
+    let at = match command {
+        Some(command) => asks
+            .iter()
+            .position(|a| a.input["command"] == command)
+            .unwrap_or_else(|| panic!("no ask ran {command:?}")),
+        None => asks.len().checked_sub(1).expect("an ask was made"),
+    };
+    &mut asks[at]
+}
+
+/// `answer` is claude's allow of `ask`'s input unchanged, with the session
+/// rule `rule` (`Tool(content)`) when one is named, else with none.
+fn allowed(answer: &Value, ask: &Ask, rule: Option<(&str, &str)>) {
+    assert_eq!(answer["behavior"], "allow", "{answer}");
+    assert_eq!(answer["updatedInput"], ask.input, "{answer}");
+    match rule {
+        None => assert!(answer.get("updatedPermissions").is_none(), "{answer}"),
+        Some((tool, content)) => {
+            let given = &answer["updatedPermissions"][0];
+            assert_eq!(given["destination"], "session", "{answer}");
+            assert_eq!(given["behavior"], "allow", "{answer}");
+            assert_eq!(given["rules"][0]["toolName"], tool, "{answer}");
+            assert_eq!(given["rules"][0]["ruleContent"], content, "{answer}");
+        }
+    }
+}
+
+/// `rule` (`Bash(rm -rf build/)`) as its tool and its content.
+fn rule_parts(rule: &str) -> (&str, &str) {
+    rule.strip_suffix(')')
+        .and_then(|r| r.split_once('('))
+        .unwrap_or_else(|| panic!("{rule:?} is no rule"))
+}
+
+#[then(regex = r"^the child's engine was told (.+)$")]
+fn engine_told(w: &mut World, what: String) {
+    let quoted = |text: &str| -> Option<String> {
+        let start = text.find('"')? + 1;
+        let end = start + text[start..].find('"')?;
+        Some(text[start..end].to_string())
+    };
+    if what == "to run the tool" {
+        let ask = the_ask(w, None);
+        let answer = prompt_answer(ask);
+        allowed(&answer, ask, None);
+    } else if let Some(rest) = what.strip_prefix("to run the tool, and to allow ") {
+        let rule = quoted(rest).expect("a rule");
+        let ask = the_ask(w, None);
+        let answer = prompt_answer(ask);
+        allowed(&answer, ask, Some(rule_parts(&rule)));
+    } else if let Some(rest) = what.strip_prefix("to run ") {
+        let command = quoted(rest).expect("a command");
+        let ask = the_ask(w, Some(&command));
+        let answer = prompt_answer(ask);
+        allowed(&answer, ask, None);
+    } else if let Some(rest) = what.strip_prefix("not to run it, with the message ") {
+        let message = quoted(rest).expect("a message");
+        let answer = prompt_answer(the_ask(w, None));
+        assert_eq!(answer, json!({"behavior": "deny", "message": message}));
+    } else if what == "not to run it, because every ask is denied at once" {
+        let answer = prompt_answer(the_ask(w, None));
+        assert_eq!(answer["behavior"], "deny", "{answer}");
+        let said = answer["message"].as_str().unwrap_or_default();
+        assert!(said.contains("at once"), "{answer}");
+        assert!(said.contains("approval_timeout is now"), "{answer}");
+    } else if what == "not to run it, because no answer came in time" {
+        red("an ask's expiry through the scheduler (step 8, U5)")
+    } else {
+        panic!("no such answer to tell: {what}");
+    }
+}
+
+#[then(expr = "no ask is waiting under {string}")]
+fn none_waiting(w: &mut World, root: String) {
+    until(w, "no ask waiting", DAEMON_WAIT, |w| {
+        waiting_asks(w, Some(&root)).is_empty().then_some(())
+    });
+}
+
+#[then(expr = "an ask is still waiting under {string}")]
+fn still_waiting(w: &mut World, root: String) {
+    assert!(!waiting_asks(w, Some(&root)).is_empty(), "no ask waits");
+}
+
+/// Seconds since the epoch of an RFC 3339 instant (`2026-11-16T10:00:00Z`,
+/// any fraction dropped), as proto3 JSON writes a Timestamp.
+fn epoch_seconds(text: &str) -> i64 {
+    let digits = |from: usize, to: usize| -> i64 {
+        text.get(from..to)
+            .and_then(|d| d.parse().ok())
+            .unwrap_or_else(|| panic!("{text:?} is no RFC 3339 instant"))
+    };
+    let (y, m, d) = (digits(0, 4), digits(5, 7), digits(8, 10));
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    days * 86_400 + digits(11, 13) * 3600 + digits(14, 16) * 60 + digits(17, 19)
+}
+
+#[then(expr = "the output reports the ask's {string} as 300 seconds after its {string}")]
+fn expires_after(w: &mut World, expire: String, asked: String) {
+    let doc = w.common.json();
+    let at = |field: &str| {
+        let text = doc["approvals"][0][field]
+            .as_str()
+            .unwrap_or_else(|| panic!("no {field}: {doc}"))
+            .to_string();
+        epoch_seconds(&text)
+    };
+    assert_eq!(at(&expire) - at(&asked), 300, "{doc}");
+}
+
+#[then("the child's engine cancelled its approval prompt call")]
+fn engine_cancelled(w: &mut World) {
+    // The scripted claude: a steer's interrupt reaches the stub, and claude
+    // cancels its pending approval prompt call (P0 Q5), as its MCP client.
+    until(w, "the child's turn interrupted", DAEMON_WAIT, |w| {
+        files::exists(stub_dir(w).join("interrupted")).then_some(())
+    });
+    cancel_the_ask(w);
+}
+
+/// The last ask's call cancelled, as claude cancels it: its
+/// `notifications/cancelled`, with claude's reason.
+fn cancel_the_ask(w: &mut World) {
+    let ask = the_ask(w, None);
+    let id = ask.id;
+    ask.mcp.send(json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": id, "reason": "AbortError: remote-cancel"}
+    }));
+}
+
+#[when(expr = "the engine sends {string} for that call")]
+fn engine_cancels(w: &mut World, notification: String) {
+    assert_eq!(notification, "notifications/cancelled");
+    cancel_the_ask(w);
+}
+
+#[then("the server sent no answer for the cancelled call, and still serves the engine's next call")]
+fn cancelled_unanswered(w: &mut World) {
+    let ask = the_ask(w, None);
+    let listed = ask.mcp.request("tools/list", json!({}));
+    assert!(listed["result"]["tools"].is_array(), "{listed}");
+    assert_eq!(
+        ask.mcp
+            .answer_to(&json!(ask.id), Duration::from_millis(500)),
+        None,
+        "the cancelled call was answered"
+    );
+}
+
+#[when(regex = r#"^(Alice runs "[^"]+"|Alice runs '[^']+'|nobody answers within the ask's time)$"#)]
+fn approval_answered_by(w: &mut World, who: String) {
+    let Some(quoted) = who.strip_prefix("Alice runs ") else {
+        red("an ask's expiry through the scheduler (step 8, U5)")
+    };
+    let line = quoted[1..quoted.len() - 1].to_string();
+    w.before_line(&line);
+    w.before_run();
+    w.common.run_lines_at(None, &line, "");
+}
+
+#[then(regex = r"^the tool answered the engine (.+)$")]
+fn tool_answered_engine(w: &mut World, answer: String) {
+    let ask = the_ask(w, None);
+    let said = prompt_answer(ask);
+    if let Some(rest) = answer.strip_prefix(r#"{"behavior":"allow"} with the input unchanged"#) {
+        let rule = rest.strip_prefix(", and a session rule for ").map(|r| {
+            r.split('"')
+                .filter(|p| !p.trim().is_empty())
+                .collect::<Vec<_>>()
+        });
+        match rule.as_deref() {
+            None => allowed(&said, ask, None),
+            Some([tool, content]) => allowed(&said, ask, Some((tool, content))),
+            Some(other) => panic!("no such rule: {other:?}"),
+        }
+    } else if let Some(rest) = answer.strip_prefix(r#"{"behavior":"deny"} with the message "#) {
+        let message = rest.trim_matches('"');
+        assert_eq!(said, json!({"behavior": "deny", "message": message}));
+    } else if answer == r#"{"behavior":"deny"}, saying the user denied it"# {
+        assert_eq!(said["behavior"], "deny", "{said}");
+        let message = said["message"].as_str().unwrap_or_default();
+        assert!(message.contains("user denied"), "{said}");
+    } else if answer == r#"{"behavior":"deny"}, saying no answer came in time"# {
+        red("an ask's expiry through the scheduler (step 8, U5)")
+    } else {
+        panic!("no such answer: {answer}");
+    }
+    let _ = &ask.tool;
+}
+
+#[when("its engine lists the tools of ctxloom's MCP server")]
+fn lists_tools(w: &mut World) {
+    let me = session_name(w, "amber-quiet-heron");
+    let env = env_of(w);
+    let mut mcp =
+        crate::tests::mcp_serve::Mcp::for_session(&w.common.project, &me, &env_pairs(&env));
+    w.daemon_spec.tool = Some(mcp.request("tools/list", json!({})));
+    w.daemon_spec.engine = Some(mcp);
+}
+
+#[then(regex = r"^the tools are (.+)$")]
+fn tools_are(w: &mut World, tools: String) {
+    let mut wanted: Vec<String> = tools
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect();
+    wanted.sort();
+    let listed = w.daemon_spec.tool.clone().expect("the tools were listed");
+    let mut names: Vec<String> = listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no tools: {listed}"))
+        .iter()
+        .map(|t| t["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, wanted);
+}
+
+#[when(expr = "its engine sends {string} to ctxloom's MCP server before {string}")]
+fn sends_before_initialize(w: &mut World, method: String, before: String) {
+    assert_eq!(
+        (method.as_str(), before.as_str()),
+        ("server/discover", "initialize")
+    );
+    let me = session_name(w, "amber-quiet-heron");
+    let mut env = env_of(w);
+    env.push(("CTXLOOM_SESSION".to_string(), me));
+    let mut mcp = crate::tests::mcp_serve::Mcp::spawn(&w.common.project, &env_pairs(&env));
+    // claude 2.1.322's probe (P0 Q11): a STRING id, before `initialize`.
+    let id = json!("server-discover-probe-1");
+    mcp.send(json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "server/discover",
+        "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}
+    }));
+    w.daemon_spec.discovered = mcp.answer_to(&id, DAEMON_WAIT);
+    w.daemon_spec.engine = Some(mcp);
+}
+
+#[then("the server answered it with an empty result")]
+fn answered_empty(w: &mut World) {
+    let discovered = w
+        .daemon_spec
+        .discovered
+        .clone()
+        .expect("the probe was answered");
+    assert_eq!(discovered["id"], "server-discover-probe-1", "{discovered}");
+    assert_eq!(discovered["result"], json!({}), "{discovered}");
+}
+
+#[then("the engine went on to initialize the server and list its tools")]
+fn initialized_after_discover(w: &mut World) {
+    let mcp = w.daemon_spec.engine.as_mut().expect("the engine's server");
+    let init = mcp.request(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "claude-code", "version": "2.1.322"}
+        }),
+    );
+    assert_eq!(init["result"]["serverInfo"]["name"], "ctxloom", "{init}");
+    mcp.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+    let listed = mcp.request("tools/list", json!({}));
+    assert_eq!(
+        listed["result"]["tools"].as_array().map(Vec::len),
+        Some(9),
+        "{listed}"
+    );
 }

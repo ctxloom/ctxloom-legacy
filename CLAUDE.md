@@ -2110,6 +2110,87 @@ daemon's answers (`same_project`; `trusted`, GetTrust's, unread for the
 owner's own project). Not yet: a cross-project child's outputs go to its
 owner's output folder; its asks are the root's project's (Q-A, U4).
 
+## Approvals (step 8 U4, ruling 142; plan `approvals-trust-step8.plan.md` §0)
+
+Step 8 U4 adds three crates: `core/wire/approvals-proto` (from
+`proto/ctxloom/approvals/v1/approvals.proto`, compiled for the first time;
+it keeps its own `SessionRef`, one package per wire crate), `core/domain/
+approvals` (the approval and approval-names aggregates) and
+`core/read-model/pending-approvals` (their projector). An ask is a session's
+permission ask (a claude child's or one-shot's, routed through ctxloom's MCP
+approval prompt): one stream per ask, rooted on UUIDv5(the asking session's
+id, its key `approval:<run>:<request id>`, `approvals::ask_root`), so a
+redelivered ask is one; its NAME is `ask-<adjective>-<noun>` (D9, Q7:
+harp-names' two-word mint, `ask-` before it), claimed in `approval-names`
+on the root of its resource name `projects/{project}/approvals/{ask}` under
+its ROOT's project (Q-A). `RecordApprovalAsked` (a fact, the daemon's own)
+records it once with its options; a timeout of 0 (`approval_timeout: now`,
+D16) records it expired in the same decide. `RecordApprovalWithdrawn` (a
+fact, `mcp serve`'s on claude's `notifications/cancelled`) withdraws a
+waiting ask. `AnswerApproval` (the user's) names one of its options:
+refused `approvals-approval-unknown`, `-approval-settled` (`answered
+(<option>)`, `expired`, `withdrawn`), `-option-not-offered` (naming those
+offered) or `-message-not-relayed` (a message with an ACP option, Q6). The
+fact journals the approval's, the child's and the root's resource names and
+the asking agent, so the projection is the `ctxloom.v1.Approval` resource.
+claude's options are ctxloom's (`approvals::claude_options`): the rule is
+the tool and its exact input, `Bash(<command>)` or `<Tool>(<path>)` for
+Read, Write, Edit, MultiEdit (`file_path`) and NotebookEdit
+(`notebook_path`), offering `allow-once`, `allow-session`, `allow-always`
+and `deny`; any other tool offers `allow-once` and `deny` alone (Q5).
+Expiry by the scheduler's alarm is U5's, not built here: an ask nobody
+answers waits until its `WaitApproval`'s deadline passes.
+
+The daemon serves `CreateApproval` (D10: the session's run, engine, agent
+and `approval_timeout` are the child it hosts, daemon-application's `Asker`,
+told the API each round through `Hosting::asker`; a session it does not
+host is `daemon-api-session-not-hosted`; idempotent on (session, request
+id); read back from the ask's own stream), `GetApproval` (unknown:
+`approvals-approval-unknown`), `ListApprovals` (a project's asks, oldest
+first, under a root, waiting) and `WaitApproval` (answered once settled,
+read afresh each round; the gRPC edge awaits it, so a caller that hangs up
+drops it; the client's deadline is the ask's timeout plus a minute). Every
+approvals call is served while the daemon drains (D6). The kernel registers
+both aggregates (approvals on loopback, the names not exposed) and the
+pending approvals (`Projectors::approvals`, `Folds::approvals`); the
+coordinator reaches the approvals domain; the user allowlist adds
+`AnswerApproval` and `RecordApprovalWithdrawn`.
+
+`ctxloom mcp serve` offers `approval_prompt` (`TOOL_NAMES` 9; DRAFT
+description `tools/approval_prompt.md`): `CreateApproval`, then
+`WaitApproval`, answered in claude's verified shape (P0):
+`{"behavior":"allow","updatedInput":<input>}`, with the session rule
+(`updatedPermissions`, destination `session`) for allow-session and
+allow-always, or `{"behavior":"deny","message"}` (the user's message, else
+the DRAFT `mcp-server-approval-denied`, `-expired`, `-denied-at-once`). A
+cancelled call is withdrawn with claude's reason and answered nothing (rmcp
+drops it). claude's `server/discover` (a string id, before `initialize`)
+is answered `{}` by the server's own reader of its input
+(`mcp_server::pump`), before rmcp sees it.
+
+`session approvals [<harp>]` lists this project's waiting asks (text form
+DRAFT, texts.md §6); `session approvals answer <ask|harp> <option>
+["<message>"] [--yes]` names an ask by its name, or by its asking session's
+harp while exactly one waits (`daemon-api-approval-ambiguous` naming each,
+`daemon-api-approval-none-waiting`: client-side, DRAFT), and sends
+`AnswerApproval` through `HandleSync` on `pending-approvals`; a refusal the
+coordinator names by type alone is said with the ask as the daemon has it.
+An `allow-always` of a claude ask writes its rule into the asking agent's
+`agents.<a>.engines.<e>.permissions` `allow` (`Library::allow_always`): into
+the layer that holds the agent's block for the engine (the project's, else
+the home's), else the project's; from that layer's own document, else the
+effective one (so `defaultMode` is kept). Q3's order: the ask checked
+waiting, the rule written, then the ask answered; off a terminal without
+`--yes` it previews (exit 1 under `--detailed-exitcode`), at one it asks
+`[y/N]`; a rule written for an ask settled meanwhile stays,
+`daemon-api-approval-rule-kept` (exit 20, DRAFT). Cost: an agent binding of
+a higher layer replaces a lower one's whole, so a rule written into the
+home's block reaches a launch only where the project binds no agent of that
+name. A new session's chosen name may not begin `ask-`
+(`sessions::validate_session_name`, `sessions-harp-invalid` reason
+`reserved`, refused by the caller before anything is written); an existing
+one keeps its name (Q-B).
+
 ## Storage is angzarr-store-sqlite
 
 ctxloom's store is ONE per user (owner T14): angzarr-store-sqlite's

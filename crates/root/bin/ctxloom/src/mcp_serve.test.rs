@@ -16,9 +16,10 @@ use serde_json::{json, Value};
 
 use super::library::Project;
 
-/// The tools the server offers, sorted: not the approval prompt until
-/// approvals are built (OD-1).
-const TOOLS: [&str; 8] = [
+/// The tools the server offers, sorted (the approval prompt since step 8
+/// U4).
+const TOOLS: [&str; 9] = [
+    "approval_prompt",
     "child_clear",
     "child_close",
     "child_launch",
@@ -89,7 +90,8 @@ impl Mcp {
         mcp
     }
 
-    fn send(&mut self, message: Value) {
+    /// `message`, one JSON-RPC line, sent; nothing waited for.
+    pub(crate) fn send(&mut self, message: Value) {
         let stdin = self.stdin.as_mut().expect("stdin is open");
         writeln!(stdin, "{message}").expect("the server reads its stdin");
         stdin.flush().expect("flushed");
@@ -114,6 +116,42 @@ impl Mcp {
                 .unwrap_or_else(|e| panic!("stdout is JSON-RPC only, not {line:?}: {e}"));
             if message.get("id") == Some(&json!(id)) {
                 return message;
+            }
+        }
+    }
+
+    /// `tools/call` of `tool` with `arguments` sent, its answer not waited
+    /// for: the call's id, which [`Mcp::answer_to`] waits on.
+    pub(crate) fn start_call(&mut self, tool: &str, arguments: Value) -> u64 {
+        self.next += 1;
+        let id = self.next;
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        }));
+        id
+    }
+
+    /// The answer to the call `id` (a JSON-RPC id), once it comes, at most
+    /// `within`: whatever it said before is looked through first.
+    pub(crate) fn answer_to(&mut self, id: &Value, within: Duration) -> Option<Value> {
+        let answered = |line: &String| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .filter(|message| message.get("id") == Some(id))
+        };
+        if let Some(found) = self.said.iter().find_map(answered) {
+            return Some(found);
+        }
+        let deadline = Instant::now() + within;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let line = self.lines.recv_timeout(left).ok()?;
+            self.said.push(line.clone());
+            if let Some(found) = answered(&line) {
+                return Some(found);
             }
         }
     }
