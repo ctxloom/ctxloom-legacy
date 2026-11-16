@@ -66,9 +66,20 @@ pub(crate) fn flush_holds(wiring: &Wiring, stamp: &str) -> Flushed {
 
 /// [`flush_holds`] to the daemon `found` names, live and this home's.
 pub(crate) fn flush_to(wiring: &Wiring, own: &str, found: &run_ports::Discovery) -> Flushed {
+    flush_within(wiring, own, found, FLUSH_BOUND)
+}
+
+/// [`flush_to`] within `bound` in all (`ctxloom shutdown`'s is longer than
+/// a command's on its way in).
+pub(crate) fn flush_within(
+    wiring: &Wiring,
+    own: &str,
+    found: &run_ports::Discovery,
+    bound: Duration,
+) -> Flushed {
     let held = fact_spool::Spool::at_home(wiring.fs(), wiring.home());
     let sink = daemon_sink(found.clone());
-    let clock = Deadline(Instant::now() + FLUSH_BOUND);
+    let clock = Deadline(Instant::now() + bound);
     flush_with(&held, &clock, own, &found.stamp, &sink)
 }
 
@@ -168,11 +179,15 @@ pub(crate) fn notices(flushed: &Flushed) -> Vec<HeldSetAside> {
 /// The session a notice names: its harp, as its hold's first fact names
 /// it, else its session root.
 fn session_said(flushed: &SessionFlush) -> String {
-    flushed
-        .session
-        .as_deref()
+    harp_or_root(flushed.session.as_deref(), &flushed.root)
+}
+
+/// A hold's session as it is said: the harp of `session` (its resource
+/// name, as the hold's first fact names it), else the hold's `root`.
+pub(crate) fn harp_or_root(session: Option<&str>, root: &uuid::Uuid) -> String {
+    session
         .and_then(|name| sessions::SessionName::parse(name).ok())
-        .map_or_else(|| flushed.root.to_string(), |name| name.harp().to_string())
+        .map_or_else(|| root.to_string(), |name| name.harp().to_string())
 }
 
 /// Why a record was set aside, as the notice says it (PROPOSAL, the

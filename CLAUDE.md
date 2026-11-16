@@ -1900,9 +1900,28 @@ busy children). Then, `now` at once: each live interactive frontend is
 asked to stop and waited for (`FRONTENDS_WAIT`, 20 s), then the daemon
 serving then (a frontend's report may have started one) the plain stop
 (`--even-if-live`) and waited for (`STOP_WAIT`, 30 s). Each step is said
-as it happens (text; json: `{drain_seconds, steps}` at the end). Nothing is
+as it happens (text; json: `{drain_seconds, steps, held}` at the end). Nothing is
 killed: what still runs is said, `ctxloom-wiring-shutdown-incomplete`
-(exit 10, the daemon's and the frontends' pids); all stopped, exit 0. A
+(exit 10, the daemon's and the frontends' pids); all stopped, exit 0.
+FLUSH BEFORE INSTALL (owner ruling 2026-11-16; N1 renames run facts' types,
+and a hold stores each fact by type URL): shutdown delivers the home's
+holds through the daemon serving (`daemon::flush::flush_within`,
+`FLUSH_WAIT` 30 s; never a daemon started for it, so an old hold never
+meets a newer daemon) at its start, once the frontends of a drain have
+ended, and before the plain stop, saying what it delivered (and what it
+set aside, H3's notice). Then it judges the holds
+(`shutdown::undelivered_in`, `runs_application::undelivered` over the
+spool's survey): EMPTY when no hold has a live record, a fact or a gap a
+flush would deliver, or is in a format this ctxloom cannot read; a hold's
+set-aside part is never delivered again, holds nothing a daemon will
+decode, and does not count (doctor reports it). Not empty is said, each
+session's harp and count (`held, undelivered: <harp> (3 facts); ...`;
+else `held: nothing undelivered`), and declines the command,
+`ctxloom-wiring-shutdown-held` (exit 20: the state forbids reporting
+done; it outranks what still runs, 10), its fix running the old binary's
+`ctxloom session list` (its daemon takes them on its way in) and
+`ctxloom doctor`; the wording is a DRAFT. No alias table; the accepted
+cost: a stuck hold blocks an install. A
 frontend is found by its lock (`liveness::FrontendLocks`): the frontend of
 every interactive session (`frontend::client_terminal`) holds
 `<home>/.ctxloom/frontends/<pid>.lock` for its life, and is asked to stop
@@ -1933,7 +1952,10 @@ so a new binary stops an older daemon; an older daemon ignores the timeout
 field and drains within its own. `just install [when]` (and
 `install-windows [when]`) runs the NEW binary's `shutdown` before a
 changed binary replaces the installed one (`just install now`: at once),
-says what will not stop, and installs anyway. A daemon's exit lets its
+through `scripts/install-shutdown.sh` (its self-test in `just selftest`):
+what will not stop (any failure, 10) is said and the install goes on; a
+DECLINE (20-29: holds left undelivered, or a time that is no span) is
+`FAIL install: ...` and the installed binary is not replaced. A daemon's exit lets its
 runtime go within `RUNTIME_END` (5 s, `Runtime::shutdown_timeout`), never
 waited on for good: a live frontend's session keeps a blocking task (its
 `WatchRun`) that a plain drop waited out for the frontend's life, every
@@ -2697,7 +2719,9 @@ they look and change nothing). The frontend (slice 4 U5, `ctxloom-wiring`'s
 `frontend.rs`) flushes at its start (its reach's flush on the way in) and
 again once its exit is reported (`daemon::flush::flush_holds(&wiring,
 stamp)`: the daemon serving the home, none started; what it set aside said
-as the command ends). The daemon never reads
+as the command ends). `ctxloom shutdown` flushes them too, and declines
+while one is left with a live record (SHUTDOWN, flush before install).
+The daemon never reads
 a hold. A hook that holds because its daemon is older only holds: it asks
 no daemon to drain (H-Q6's nudge is gone, OD-62).
 A GAP (the owner: a gap is delivered into the transcript) is a fact a

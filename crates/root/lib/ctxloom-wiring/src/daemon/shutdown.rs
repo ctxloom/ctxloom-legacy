@@ -17,6 +17,19 @@
 //! for, and the daemon serving then is asked the plain stop
 //! (`--even-if-live`: its engines stopped, ruling 114), waited for. Nothing
 //! is killed. What still runs is said, and the command fails (10).
+//!
+//! Flush before install (owner ruling, 2026-11-16): a hold an older binary
+//! wrote carries type URLs a newer daemon may not know, so the home's holds
+//! are delivered through the daemon serving (none is ever started for it)
+//! at the start, once the frontends have ended, and before the plain stop;
+//! then the holds are judged. They are EMPTY when no hold has a live record
+//! (a fact or a gap a flush would deliver, or a hold in a format this
+//! ctxloom cannot read); a hold's set-aside part is never delivered again,
+//! so it holds nothing a daemon will decode, and does not count. A hold
+//! left undelivered is named, by session and count, and declines the
+//! shutdown (20, `shutdown-held`: the state forbids reporting done), which
+//! outranks what still runs (10); the installers refuse to replace the
+//! binary on a decline.
 
 use std::io::Write;
 use std::path::Path;
@@ -35,7 +48,10 @@ use serde::Serialize;
 use run_ports::{HeldFacts, HoldError};
 use runs_application::Undelivered;
 
-use super::{block_on, called, client_reaching, files_of, output, serving, Reach};
+use super::{
+    block_on, called, client_reaching, files_of, flush, output, own_stamp, serving, serving_here,
+    Reach,
+};
 use crate::Wiring;
 
 /// The noun.
@@ -52,6 +68,11 @@ const FRONTENDS_WAIT: Duration = Duration::from_secs(20);
 
 /// How long the daemon asked the plain stop is waited for.
 const STOP_WAIT: Duration = Duration::from_secs(30);
+
+/// How long one flush of the home's holds may take, in all: longer than a
+/// command's on its way in ([`flush::FLUSH_BOUND`]), as a shutdown is no
+/// command anyone waits on to type the next.
+const FLUSH_WAIT: Duration = Duration::from_secs(30);
 
 /// How often what still runs is looked at.
 const LOOK: Duration = Duration::from_millis(100);
@@ -198,8 +219,51 @@ pub(crate) fn undelivered_in<H: HeldFacts + ?Sized>(
 /// The holds `left` names, as shutdown says them: each session's harp
 /// (else its session root) and what it holds, in the survey's order.
 pub(crate) fn holds_said(left: &[Undelivered]) -> String {
-    let _ = left;
-    String::new()
+    left.iter()
+        .map(|hold| {
+            let who = flush::harp_or_root(hold.session.as_deref(), &hold.root);
+            if hold.unreadable {
+                return format!("{who} (in a format this ctxloom cannot read)");
+            }
+            let mut what = Vec::new();
+            if hold.facts > 0 {
+                what.push(counted(hold.facts, "fact"));
+            }
+            if hold.gaps > 0 {
+                what.push(counted(hold.gaps, "gap"));
+            }
+            format!("{who} ({})", what.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// `count` of `what`, plural when it is not one.
+fn counted(count: u64, what: &str) -> String {
+    match count {
+        1 => format!("1 {what}"),
+        n => format!("{n} {what}s"),
+    }
+}
+
+/// A hold left undelivered, in the json report's `held`.
+#[derive(Debug, Serialize)]
+struct HeldSaid {
+    session: String,
+    facts: u64,
+    gaps: u64,
+    unreadable: bool,
+}
+
+impl HeldSaid {
+    fn of(hold: &Undelivered) -> HeldSaid {
+        HeldSaid {
+            session: flush::harp_or_root(hold.session.as_deref(), &hold.root),
+            facts: hold.facts,
+            gaps: hold.gaps,
+            unreadable: hold.unreadable,
+        }
+    }
 }
 
 /// The command's verdict on what it `left` running and what the home's
@@ -209,7 +273,14 @@ pub(crate) fn holds_said(left: &[Undelivered]) -> String {
 /// 2026-11-16), and it outranks what still runs (10), as the more severe
 /// of two outcomes wins.
 fn verdict(left: &Running, held: &[Undelivered]) -> Result<Exit, Failure> {
-    let _ = holds_said(held);
+    if !held.is_empty() {
+        return Err(Failure::new(
+            ShutdownError::Held {
+                holds: holds_said(held),
+            },
+            Exit::REFUSED,
+        ));
+    }
     if left.nothing() {
         return Ok(Exit::OK);
     }
@@ -234,6 +305,8 @@ struct Report {
     drain_seconds: u64,
     /// Each step, as it was said.
     steps: Vec<String>,
+    /// The holds still holding a live record once everything stopped.
+    held: Vec<HeldSaid>,
 }
 
 impl Render for Report {
@@ -306,6 +379,7 @@ pub(crate) fn run(
     let mut report = Report {
         drain_seconds: period.as_secs(),
         steps: Vec::new(),
+        held: Vec::new(),
     };
     let mut say = |line: String| {
         if format == Format::Text {
@@ -315,11 +389,19 @@ pub(crate) fn run(
     };
     let shut = Shutdown { wiring, stamp };
     let left = shut.down(period, &mut say)?;
+    // Owner, 2026-11-16 ("flush before install"): done only once the
+    // holds are empty, what a flush delivered gone and nothing live left.
+    let spool = fact_spool::Spool::at_home(wiring.fs(), wiring.home());
+    let held = undelivered_in(&spool).map_err(|e| Failure::new(e, Exit::FAILED))?;
+    if held.is_empty() {
+        say("held: nothing undelivered".to_string());
+    } else {
+        say(format!("held, undelivered: {}", holds_said(&held)));
+    }
+    report.held = held.iter().map(HeldSaid::of).collect();
     if format == Format::Json {
         output(render(out, format, &report))?;
     }
-    let spool = fact_spool::Spool::at_home(wiring.fs(), wiring.home());
-    let held = undelivered_in(&spool).map_err(|e| Failure::new(e, Exit::FAILED))?;
     verdict(&left, &held)
 }
 
@@ -368,6 +450,44 @@ impl Shutdown<'_> {
         STOP_WAIT
     }
 
+    /// Deliver the home's holds to the daemon serving now, if one does
+    /// (none is started: owner, 2026-11-16), within [`FLUSH_WAIT`]; what
+    /// it delivered is said, and what it set aside is said as the command
+    /// ends (H3's notice).
+    fn flush(&self, say: &mut dyn FnMut(String)) {
+        let Ok(Some(found)) = serving_here(self.wiring, &files_of(self.wiring)) else {
+            return;
+        };
+        let own = own_stamp(self.wiring.env(), self.stamp);
+        let flushed = flush::flush_within(self.wiring, own, &found, FLUSH_WAIT);
+        match &flushed {
+            flush::Flushed::Done(done) => {
+                let (mut delivered, mut sessions) = (0, 0);
+                for session in done {
+                    let went = session.flushed.len() - session.set_aside().len();
+                    if went > 0 {
+                        delivered += went;
+                        sessions += 1;
+                    }
+                }
+                if delivered > 0 {
+                    say(format!(
+                        "delivered {} of {} to the daemon (pid {})",
+                        counted(delivered as u64, "held fact"),
+                        counted(sessions, "session"),
+                        found.pid
+                    ));
+                }
+            }
+            flush::Flushed::Older { daemon } => say(format!(
+                "the daemon is ctxloom {daemon}, newer than this one: what is held is left for it"
+            )),
+            flush::Flushed::Failed(e) => say(format!("the holds could not be read: {e}")),
+            flush::Flushed::NotServing => {}
+        }
+        flush::to_say(flush::notices(&flushed));
+    }
+
     /// A client of the daemon serving, starting none.
     fn client(&self) -> daemon_api::Client<Reach<'_>> {
         client_reaching(self.wiring, Reach::new(self.wiring, self.stamp).observing())
@@ -382,6 +502,7 @@ impl Shutdown<'_> {
             return Ok(at_first);
         }
         say(format!("running: {}", at_first.said()));
+        self.flush(say);
         if !period.is_zero() {
             self.tell_frontends(&at_first.frontends, period, say);
             if at_first.daemon.is_some() {
@@ -400,7 +521,17 @@ impl Shutdown<'_> {
                     }
                 ));
             }
-            let after = self.wait(period, Running::nothing)?;
+            // The frontends' last reports reach the daemon, or its holds,
+            // as they end; those are delivered while it still serves.
+            let deadline = Instant::now() + period;
+            let ended = self.wait(period, |running| running.frontends.is_empty())?;
+            if ended.frontends.is_empty() && !at_first.frontends.is_empty() {
+                self.flush(say);
+            }
+            let after = self.wait(
+                deadline.saturating_duration_since(Instant::now()),
+                Running::nothing,
+            )?;
             if after.nothing() {
                 say("drained: everything ended".to_string());
                 return Ok(after);
@@ -457,6 +588,8 @@ impl Shutdown<'_> {
                 ));
             }
         }
+        // What the frontends held as they ended, delivered before the stop.
+        self.flush(say);
         if let Some(stopped) = block_on(self.client().stop(true))?.map_err(called)? {
             say(format!(
                 "asked the daemon (pid {}) to stop even if live",

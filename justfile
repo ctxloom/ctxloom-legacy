@@ -119,7 +119,11 @@ build:
 # drained within `when`, else the home config's `daemon.drain_timeout`,
 # else five minutes; then each live TUI frontend and the daemon asked the
 # plain stop): `just install` drains, `just install now` stops everything at
-# once. What will not stop is said, and the install goes on.
+# once. What will not stop is said, and the install goes on. Shutdown
+# delivers the home's holds first (owner ruling 2026-11-16, "flush before
+# install"): one it could not deliver is a decline, and the installed
+# binary is NOT replaced (scripts/install-shutdown.sh, its self-test in
+# `just selftest`).
 [group('install')]
 [doc("Build the plain binary and install it as ~/.local/bin/ctxloom (home ~/.ctxloom-rs): install [when], when a duration or now")]
 [no-exit-message]
@@ -142,13 +146,9 @@ install when="":
         echo "ok   unchanged $program"
     else
         # Every running ctxloom of the home asked to stop first, by the new
-        # binary (an older one may know no `shutdown`).
-        when={{quote(when)}}
-        if CTXLOOM_HOME="$HOME/.ctxloom-rs" "$built" shutdown ${when:+"$when"} --format text | sed 's/^/ok   shutdown: /'; [ "${PIPESTATUS[0]}" = 0 ]; then
-            echo "ok   nothing of ctxloom runs"
-        else
-            echo "note some of ctxloom still runs (said above); installing anyway"
-        fi
+        # binary (an older one may know no `shutdown`); a decline (held
+        # facts no daemon took) leaves the installed binary as it is.
+        "{{TOP}}/scripts/install-shutdown.sh" "$built" "$HOME/.ctxloom-rs" {{quote(when)}}
         # Beside it, then renamed over it: a running ctxloom keeps its file.
         install -m 0755 "$built" "$program.new"
         mv -f "$program.new" "$program"
@@ -212,13 +212,9 @@ install-windows when="":
         echo "ok   unchanged $program"
     else
         # Every running ctxloom of the home asked to stop first, by the new
-        # binary, as `just install` does (OD-62).
-        when={{quote(when)}}
-        if CTXLOOM_HOME="$USERPROFILE\\.ctxloom-rs" "$built" shutdown ${when:+"$when"} --format text | sed 's/^/ok   shutdown: /'; [ "${PIPESTATUS[0]}" = 0 ]; then
-            echo "ok   nothing of ctxloom runs"
-        else
-            echo "note some of ctxloom still runs (said above); installing anyway"
-        fi
+        # binary, as `just install` does (OD-62), and not replaced on a
+        # decline.
+        "{{TOP}}/scripts/install-shutdown.sh" "$built" "$USERPROFILE\\.ctxloom-rs" {{quote(when)}}
         rm -f "$program.old" 2>/dev/null || true
         [ -e "$program" ] && mv -f "$program" "$program.old"
         cp "$built" "$program.new"
@@ -517,7 +513,7 @@ clean-target:
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, exec-mode check, path deps, mcp-env probe")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, exec-mode check, path deps, mcp-env probe, install shutdown")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh

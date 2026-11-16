@@ -631,8 +631,17 @@ pub struct Undelivered {
 /// before an install replaces the binary; a set-aside part alone, or a
 /// torn tail with no record before it, is empty.
 pub fn undelivered(survey: &[run_ports::HoldSummary]) -> Vec<Undelivered> {
-    let _ = survey;
-    Vec::new()
+    survey
+        .iter()
+        .filter(|hold| hold.facts > 0 || hold.gaps > 0 || hold.unreadable)
+        .map(|hold| Undelivered {
+            root: hold.root,
+            session: hold.session.clone(),
+            facts: hold.facts,
+            gaps: hold.gaps,
+            unreadable: hold.unreadable,
+        })
+        .collect()
 }
 
 #[cfg(test)]
