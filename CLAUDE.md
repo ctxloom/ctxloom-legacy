@@ -701,7 +701,11 @@ DAEMON DYING UNDER A LIVE TUI (owner 2026-11-14; `daemon-application`'s
 `adopt.rs`): a new daemon ADOPTS, at its start, every run its sweep leaves
 (owed a runner or started, its owner alive by its locks: the session's
 lock, or the run's own the frontend holds; at the start nothing is the
-daemon's own, so every survivor is another's), said in its log, and takes
+daemon's own, so every survivor is another's; each with its session's
+place, project and harp, from its mint, `pending-launches`' `PendingLaunch`
+as its `StartedRun`, so a run owed a runner whose start and exit reports
+were both held, flushed at the start, lets its checkout go in its own
+project), said in its log, and takes
 over its END PATH each round (`Daemon::end_the_adopted`): the run's end
 (the frontend's exit report, or its `RecordLaunchFailed`) ends the incarnation
 (`runner-exit`, or `launch-failed` never started) and lets its checkout go

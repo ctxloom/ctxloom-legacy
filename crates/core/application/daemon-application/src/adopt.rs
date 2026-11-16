@@ -49,8 +49,9 @@ const RUNNER_EXIT: &str = "runner-exit";
 const LAUNCH_FAILED: &str = "launch-failed";
 
 /// A run this daemon adopted: where its owner's locks are, as the store
-/// said them at its start (a run owed a runner knows its session's place
-/// once its start is recorded).
+/// said them at its start (its session's place is its mint's, for a run owed
+/// a runner as for one started, so one started and ended before it was ever
+/// listed started still lets its checkout go in its project).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Adopted {
     pub(crate) run: Uuid,
@@ -102,8 +103,8 @@ impl<E: Edge> Daemon<E> {
                 run: launch.run.clone(),
                 session: launch.session.clone(),
                 incarnation: launch.incarnation,
-                project_dir: String::new(),
-                harp: String::new(),
+                project_dir: launch.project_dir.clone(),
+                harp: launch.harp.clone(),
                 launcher_lock: launch.launcher_lock.clone(),
             });
         }
@@ -148,7 +149,7 @@ impl<E: Edge> Daemon<E> {
         if self.adopted.is_empty() {
             return false;
         }
-        // Where a run owed a runner at the start is, once it started.
+        // Where a run is, once its session's mint is seen.
         let started = match self.caught_up_launches(store, catalog).await {
             Ok((_, started)) => started,
             Err(why) => {
@@ -217,6 +218,8 @@ impl<E: Edge> Daemon<E> {
                     incarnation: adopted.incarnation,
                     mode: runs::RunMode::Interactive,
                     launcher_lock: adopted.launcher_lock.clone(),
+                    project_dir: adopted.project_dir.clone(),
+                    harp: adopted.harp.clone(),
                 }];
                 if let Err(why) = self.swept(&owed, &[]).await {
                     (self.say)(&format!("{}: its sweep failed: {why}", adopted.session));

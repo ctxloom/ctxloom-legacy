@@ -13,7 +13,7 @@
 //! current harp (where its session's lock is): a launcher that finds one
 //! whose session's lock is free knows its owner is gone. A run owed a runner
 //! carries its launcher's lock (`launcher_lock`, rulings 86, 92) for the same
-//! judgement.
+//! judgement, and its session's place too, once its mint is seen.
 //!
 //! An incarnation a session owes (`IncarnationOwed`) is listed until its run is enqueued: the policy
 //! session to run does that, so the launcher acts on [`Pending::launches`]
@@ -44,6 +44,12 @@ pub struct PendingLaunch {
     /// The run's own lock, held by its launcher until the runner is started
     /// (rulings 86, 92): a run owed a runner whose lock is free is an orphan.
     pub launcher_lock: String,
+    /// The session's project directory and harp, as its stream says them now
+    /// (its mint's); empty until its mint is seen. A run adopted while owed a
+    /// runner lets its checkout go in this project once it ends, even when
+    /// it was started and ended before it was ever listed as started.
+    pub project_dir: String,
+    pub harp: String,
 }
 
 /// A run whose runner was started and that has not ended, with where its
@@ -220,13 +226,18 @@ impl Pending {
         self.runs
             .iter()
             .filter_map(|((session, incarnation), stage)| match stage {
-                Stage::Waiting(mode, lock) => Some(PendingLaunch {
-                    run: runs::run_root(session, *incarnation),
-                    session: session.clone(),
-                    incarnation: *incarnation,
-                    mode: *mode,
-                    launcher_lock: lock.clone(),
-                }),
+                Stage::Waiting(mode, lock) => {
+                    let place = self.places.get(session).cloned().unwrap_or_default();
+                    Some(PendingLaunch {
+                        run: runs::run_root(session, *incarnation),
+                        session: session.clone(),
+                        incarnation: *incarnation,
+                        mode: *mode,
+                        launcher_lock: lock.clone(),
+                        project_dir: place.project_dir,
+                        harp: place.harp,
+                    })
+                }
                 Stage::Started(_) | Stage::Past => None,
             })
             .collect()
