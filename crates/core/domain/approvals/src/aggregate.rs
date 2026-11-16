@@ -92,6 +92,7 @@ impl ApprovalAggregate {
             name: fact.name,
             child_name: fact.child_name,
             root_name: fact.root_name,
+            agent: fact.agent,
         };
         let mut events = vec![pack_message(&asked)];
         if at_once {

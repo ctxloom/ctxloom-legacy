@@ -297,7 +297,7 @@ fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
         SESSION.to_string(),
         "0195f0a4-7b1e-7000-8000-000000000009".to_string(),
     );
-    shared.tell(vec![child], std::time::Instant::now());
+    shared.tell(vec![child], Vec::new(), std::time::Instant::now());
     assert_eq!(
         kinds(&shared.hosted()),
         [
@@ -320,6 +320,37 @@ fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
         [("000000000009", Kind::Child)],
         "the one-shot ended, with no round since"
     );
+}
+
+// Step 8 U4: an ask is recorded with what the round says of the session
+// that asks (its run, engine, agent and timeout); one it does not host has
+// none.
+#[test]
+fn an_asker_is_the_rounds_hosted_child_of_that_session() {
+    use daemon_api::Hosting;
+    let one_shots = Arc::new(daemon_application::OneShots::new(Box::new(Kept(Arc::new(
+        Mutex::new(Vec::new()),
+    )))));
+    let shared = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        one_shots,
+        unsaid(),
+    );
+    let asker = |session: &str| daemon_application::Asker {
+        session: session.to_string(),
+        run: format!("run-of-{session}"),
+        engine: "claude-code".to_string(),
+        agent: "default".to_string(),
+        approval_timeout: std::time::Duration::from_secs(300),
+    };
+    assert_eq!(shared.asker("s-1"), None);
+    shared.tell(
+        Vec::new(),
+        vec![asker("s-1"), asker("s-2")],
+        std::time::Instant::now(),
+    );
+    assert_eq!(shared.asker("s-2"), Some(asker("s-2")));
+    assert_eq!(shared.asker("s-3"), None);
 }
 
 /// Each hosted run's root's last twelve digits, and its kind.

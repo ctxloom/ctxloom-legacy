@@ -116,6 +116,52 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("ListTrusts")) }
     }
 
+    /// `CreateApproval` (step 8 U4, D10): a session's permission ask
+    /// recorded by the daemon, which fills what only it knows (the run, the
+    /// engine, the root, the timeout, the name and the options); a retry of
+    /// the same request is the same approval. The default is a daemon that
+    /// does not serve it.
+    fn create_approval(
+        &self,
+        request: v1::CreateApprovalRequest,
+    ) -> impl Future<Output = Result<v1::Approval, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("CreateApproval")) }
+    }
+
+    /// `GetApproval` (step 8 U4): an ask, by its name. The default is a
+    /// daemon that does not serve it.
+    fn get_approval(
+        &self,
+        request: v1::GetApprovalRequest,
+    ) -> impl Future<Output = Result<v1::Approval, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("GetApproval")) }
+    }
+
+    /// `ListApprovals` (step 8 U4): a project's asks. The default is a
+    /// daemon that does not serve it.
+    fn list_approvals(
+        &self,
+        request: v1::ListApprovalsRequest,
+    ) -> impl Future<Output = Result<v1::ListApprovalsResponse, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("ListApprovals")) }
+    }
+
+    /// `WaitApproval` (step 8 U4, S27): an ask, answered once it is settled,
+    /// waited for at most `within` (its own deadline: the ask's time and a
+    /// margin, never a read's). The default is a daemon that does not serve
+    /// it.
+    fn wait_approval(
+        &self,
+        request: v1::WaitApprovalRequest,
+        within: std::time::Duration,
+    ) -> impl Future<Output = Result<v1::Approval, Called>> + Send {
+        let _ = (request, within);
+        async { Err(unserved("WaitApproval")) }
+    }
+
     /// `CreateRun` (U4, T7): a ONE_SHOT run hosted by the daemon, answered
     /// once it is placed (its run and session made, its engine about to
     /// start) or ended before that (its `end`). The default is a daemon

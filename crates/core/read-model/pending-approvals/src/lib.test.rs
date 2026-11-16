@@ -37,6 +37,7 @@ fn asked(ask: &str, root: &str, timeout: u32) -> ApprovalEvent {
         name: format!("projects/amber/approvals/{ask}"),
         child_name: "projects/amber/sessions/brisk".to_string(),
         root_name: format!("projects/amber/sessions/{root}"),
+        agent: "default".to_string(),
     })
 }
 
@@ -118,6 +119,7 @@ fn an_ask_is_listed_waiting_with_what_it_asks_and_when_it_runs_out() {
     assert_eq!(resource.state, "waiting");
     assert_eq!(resource.uid, uid(1));
     assert_eq!(resource.timeout_seconds, 300);
+    assert_eq!(resource.agent, "default");
     assert_eq!(resource.ask_time.map(|t| t.seconds), Some(1001));
     assert_eq!(resource.expire_time.map(|t| t.seconds), Some(1301));
     let options: Vec<(&str, &str, &str)> = resource

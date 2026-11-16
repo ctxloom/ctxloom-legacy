@@ -584,3 +584,120 @@ async fn a_trust_granted_through_the_edge_is_answered_by_the_trust_index() {
         .unwrap_err();
     assert!(matches!(hidden, Unserved::Hidden { .. }), "{hidden:?}");
 }
+
+/// An ask of the session `c` under the root `o`.
+fn an_ask() -> approvals::RecordApprovalAsked {
+    let reference = |session: &str| approvals::SessionRef {
+        project_id: "calm-otter".to_string(),
+        session: session.to_string(),
+    };
+    approvals::RecordApprovalAsked {
+        ask_id: "ask-tidy-wren".to_string(),
+        child: reference("c"),
+        run: "r".to_string(),
+        engine: "claude-code".to_string(),
+        root: reference("o"),
+        tool_name: "Bash".to_string(),
+        input_excerpt: "{}".to_string(),
+        input_bytes: 2,
+        input_sha256: "x".to_string(),
+        timeout_seconds: 300,
+        engine_request_id: "toolu_1".to_string(),
+        options: approvals::claude_options("Bash", r#"{"command":"ls"}"#),
+        name: "projects/calm-quiet-heron/approvals/ask-tidy-wren".to_string(),
+        child_name: "projects/calm-quiet-heron/sessions/c".to_string(),
+        root_name: "projects/calm-quiet-heron/sessions/o".to_string(),
+        agent: "default".to_string(),
+    }
+}
+
+// Step 8 U4: the daemon's core holds the asks and their names; the ask is
+// recorded in process, projected into the pending approvals, and its answer
+// is a loopback SIMPLE request answered the ask as the pending approvals
+// have it; the network reaches no ask, and no one outside reaches a name.
+#[tokio::test]
+async fn an_ask_recorded_in_process_is_answered_over_loopback_and_projected() {
+    use prost::Message as _;
+    let mut kept = Projectors::default();
+    let core = InProcessCore::start_with(MemoryStore::default(), |store| {
+        kept = Projectors::filled(store);
+        kept.clone()
+    })
+    .await;
+    let asked = an_ask();
+    let cover = Cover {
+        domain: approvals::APPROVALS_DOMAIN.to_string(),
+        root: Some(angzarr_embedded::v1::Uuid::from_bytes([5; 16])),
+        edition: None,
+    };
+    core.edge()
+        .handle(approvals::fact_book(
+            cover.clone(),
+            &asked,
+            "approval:r:toolu_1",
+        ))
+        .await
+        .unwrap();
+    let pending = kept.approvals.clone().unwrap();
+    assert_eq!(
+        pending
+            .index()
+            .listed("projects/calm-quiet-heron", None, true)
+            .len(),
+        1
+    );
+    let answer = approvals::AnswerApproval {
+        ask_id: "ask-tidy-wren".to_string(),
+        option: "allow-once".to_string(),
+        message: String::new(),
+    };
+    let book = sessions::keyed_book(cover, &answer, "answer:1");
+    let synced = core
+        .edge()
+        .serve_sync(
+            book.clone(),
+            vec!["pending-approvals".to_string()],
+            Arrival::Loopback,
+        )
+        .await
+        .unwrap();
+    let answered = daemon_proto::v1::Approval::decode(
+        synced.projections[0]
+            .projection
+            .as_ref()
+            .expect("the pending approvals' view")
+            .value
+            .as_slice(),
+    )
+    .unwrap();
+    assert_eq!(answered.state, "answered");
+    assert_eq!(answered.option, "allow-once");
+    let hidden = core
+        .edge()
+        .serve_sync(book, vec!["pending-approvals".to_string()], Arrival::Ip)
+        .await
+        .unwrap_err();
+    assert!(matches!(hidden, Unserved::Hidden { .. }), "{hidden:?}");
+    let claim = approvals::ClaimApprovalName {
+        project_id: "calm-otter".to_string(),
+        ask_id: "ask-pale-moth".to_string(),
+        approval: "a".to_string(),
+    };
+    let names = Cover {
+        domain: approvals::APPROVAL_NAMES_DOMAIN.to_string(),
+        root: Some(angzarr_embedded::v1::Uuid::from_bytes([6; 16])),
+        edition: None,
+    };
+    let unexposed = core
+        .edge()
+        .serve(
+            sessions::keyed_book(names, &claim, "claim"),
+            Arrival::Loopback,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(unexposed, Unserved::Hidden { .. }),
+        "{unexposed:?}"
+    );
+}

@@ -56,6 +56,7 @@ fn asked_with(timeout: u32, options: Vec<ApprovalOption>) -> RecordApprovalAsked
         name: "projects/amber/approvals/ask-tidy-wren".to_string(),
         child_name: "projects/amber/sessions/brisk".to_string(),
         root_name: "projects/amber/sessions/root".to_string(),
+        agent: "default".to_string(),
     }
 }
 
@@ -153,6 +154,7 @@ fn asked_event(fact: RecordApprovalAsked) -> ApprovalEvent {
         name: fact.name,
         child_name: fact.child_name,
         root_name: fact.root_name,
+        agent: fact.agent,
     })
 }
 

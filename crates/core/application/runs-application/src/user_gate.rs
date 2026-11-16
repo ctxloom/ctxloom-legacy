@@ -54,7 +54,8 @@ fn url<M: angzarr_embedded::markup::DomainMessage>() -> String {
 /// its run on a signal, API Q11), and the facts a frontend reports of the
 /// terminal session it started (U5, S17: `RecordRunnerStarted`, `RecordRunExited`,
 /// `RecordLaunchFailed`), and a project's trust given and taken back (step 8
-/// U1: `GrantTrust`, `RevokeTrust`).
+/// U1: `GrantTrust`, `RevokeTrust`), and an ask answered and withdrawn (step
+/// 8 U4: `AnswerApproval`, `RecordApprovalWithdrawn`).
 pub fn user_allowlist() -> Allowlist {
     let commands = <sessions::SessionAggregate as Domain>::Command::type_urls();
     let facts = <sessions::SessionAggregate as Domain>::Fact::type_urls();
@@ -74,11 +75,19 @@ pub fn user_allowlist() -> Allowlist {
     let trust = [url::<trust::GrantTrust>(), url::<trust::RevokeTrust>()]
         .into_iter()
         .map(|url| (BodyKind::Command, url));
+    // Step 8 U4: the user's answer to an ask, and an engine's withdrawal of
+    // its ask (`mcp serve`, on `notifications/cancelled`). The ask itself
+    // is the daemon's own (`CreateApproval`, D10), never sent.
+    let approvals = [
+        (BodyKind::Command, url::<approvals::AnswerApproval>()),
+        (BodyKind::Fact, url::<approvals::RecordApprovalWithdrawn>()),
+    ];
     commands
         .chain(facts)
         .chain(std::iter::once(stop))
         .chain(reports)
         .chain(trust)
+        .chain(approvals)
         .fold(Allowlist::none(), |list, (kind, url)| list.send(kind, url))
 }
 

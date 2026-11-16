@@ -54,6 +54,14 @@ impl World {
         registry
             .aggregate::<trust::TrustAggregate>(trust::TrustAggregate::default)
             .unwrap();
+        registry
+            .aggregate::<approvals::ApprovalAggregate>(approvals::ApprovalAggregate::default)
+            .unwrap();
+        registry
+            .aggregate::<approvals::ApprovalNameAggregate>(
+                approvals::ApprovalNameAggregate::default,
+            )
+            .unwrap();
         Arc::new(World {
             registry,
             store: MemoryStore::default(),
@@ -108,9 +116,14 @@ pub(crate) struct Loop {
     /// The timeouts each drain was asked with, in order.
     within: Mutex<Vec<Option<std::time::Duration>>>,
     /// How many reads asked for a fresh round.
-    freshened: Mutex<u32>,
+    pub(crate) freshened: Mutex<u32>,
     /// Why its start-up catch-up failed, while it stands (OD-52).
     start_up: Mutex<Option<String>>,
+    /// The sessions it hosts, as their asks are recorded (step 8 U4).
+    pub(crate) askers: Mutex<Vec<daemon_application::Asker>>,
+    /// What each read asking for a fresh round brings, in turn (a round's
+    /// catch-up, as a test stands it in).
+    pub(crate) rounds: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Hosting for Loop {
@@ -143,8 +156,24 @@ impl Hosting for Loop {
         300
     }
 
+    fn asker(&self, session: &str) -> Option<daemon_application::Asker> {
+        self.askers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|asker| asker.session == session)
+            .cloned()
+    }
+
     fn fresh(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         *self.freshened.lock().unwrap() += 1;
+        let round = {
+            let mut rounds = self.rounds.lock().unwrap();
+            (!rounds.is_empty()).then(|| rounds.remove(0))
+        };
+        if let Some(round) = round {
+            round();
+        }
         Box::pin(async {})
     }
 

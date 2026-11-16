@@ -173,6 +173,9 @@ message RecordApprovalAsked {
   string name = 13;
   string child_name = 14;
   string root_name = 15;
+  // The agent the asking session was planned for: whose
+  // `agents.<agent>.engines.<engine>.permissions` an `allow-always` writes.
+  string agent = 16;
 }
 
 // The ask was withdrawn because its turn was interrupted (a steer). Recorded
@@ -240,6 +243,9 @@ message ApprovalAsked {
   string name = 13;
   string child_name = 14;
   string root_name = 15;
+  // The agent the asking session was planned for: whose
+  // `agents.<agent>.engines.<engine>.permissions` an `allow-always` writes.
+  string agent = 16;
 }
 
 message ApprovalAnswered {

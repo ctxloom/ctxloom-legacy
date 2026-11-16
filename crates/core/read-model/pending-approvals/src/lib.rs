@@ -61,6 +61,8 @@ pub struct ApprovalRow {
     pub root_name: String,
     pub run: String,
     pub engine: String,
+    /// The agent the asking session was planned for.
+    pub agent: String,
     pub tool_name: String,
     pub input_excerpt: String,
     pub engine_request_id: String,
@@ -111,6 +113,7 @@ impl ApprovalRow {
             uid: self.uid.clone(),
             option_kind: self.option_kind.clone(),
             timeout_seconds: self.timeout_seconds,
+            agent: self.agent.clone(),
         }
     }
 }
@@ -181,6 +184,7 @@ impl ApprovalIndex {
                             root_name: asked.root_name,
                             run: asked.run,
                             engine: asked.engine,
+                            agent: asked.agent,
                             tool_name: asked.tool_name,
                             input_excerpt: asked.input_excerpt,
                             engine_request_id: asked.engine_request_id,

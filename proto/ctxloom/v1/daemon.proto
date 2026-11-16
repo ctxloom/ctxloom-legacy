@@ -1048,6 +1048,9 @@ message Approval {
   // How long it waits, in seconds (its engine's `approval_timeout`; 0 is
   // `now`).
   uint32 timeout_seconds = 16;
+  // The agent the asking session was planned for (what `allow-always`
+  // writes into, `agents.<agent>.engines.<engine>.permissions`).
+  string agent = 17;
 }
 
 message CreateApprovalRequest {

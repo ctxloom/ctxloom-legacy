@@ -172,6 +172,27 @@ fn the_user_may_grant_and_revoke_a_projects_trust_as_commands() {
     }
 }
 
+// Step 8 U4: the user answers an ask (a command) and an engine withdraws
+// one (a fact); the ask itself and its name's claim are the daemon's own.
+#[test]
+fn the_user_may_answer_an_ask_and_withdraw_one_and_never_ask_or_claim() {
+    let list = user_allowlist();
+    let answer = url::<approvals::AnswerApproval>();
+    assert!(list.permits_body(BodyKind::Command, &answer).is_ok());
+    assert!(list.permits_body(BodyKind::Fact, &answer).is_err());
+    let withdrawn = url::<approvals::RecordApprovalWithdrawn>();
+    assert!(list.permits_body(BodyKind::Fact, &withdrawn).is_ok());
+    assert!(list.permits_body(BodyKind::Command, &withdrawn).is_err());
+    for kind in [BodyKind::Command, BodyKind::Fact] {
+        for type_url in [
+            url::<approvals::RecordApprovalAsked>(),
+            url::<approvals::ClaimApprovalName>(),
+        ] {
+            assert!(list.permits_body(kind, &type_url).is_err(), "{type_url}");
+        }
+    }
+}
+
 // The gate keeps the digest alone: nothing it renders is the bearer.
 #[test]
 fn the_gate_shows_no_bearer() {

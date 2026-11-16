@@ -351,6 +351,42 @@ impl DaemonApi for DaemonClient {
         call!(self, list_trusts, "ListTrusts", request)
     }
 
+    async fn create_approval(
+        &self,
+        request: v1::CreateApprovalRequest,
+    ) -> Result<v1::Approval, Called> {
+        // An ask is minted, claimed and recorded before it is answered: a
+        // write's deadline, as a run's.
+        call!(
+            self,
+            create_approval,
+            "CreateApproval",
+            request,
+            self.destroying
+        )
+    }
+
+    async fn get_approval(&self, request: v1::GetApprovalRequest) -> Result<v1::Approval, Called> {
+        call!(self, get_approval, "GetApproval", request)
+    }
+
+    async fn list_approvals(
+        &self,
+        request: v1::ListApprovalsRequest,
+    ) -> Result<v1::ListApprovalsResponse, Called> {
+        call!(self, list_approvals, "ListApprovals", request)
+    }
+
+    async fn wait_approval(
+        &self,
+        request: v1::WaitApprovalRequest,
+        within: Duration,
+    ) -> Result<v1::Approval, Called> {
+        // The caller's own deadline (the ask's time and a margin), never a
+        // read's: an ask waits as long as the user takes within its time.
+        call!(self, wait_approval, "WaitApproval", request, within)
+    }
+
     async fn create_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Called> {
         // A run is planned (its dependencies pulled, when `sync.on_run`
         // asks), enqueued and placed before it is answered: a destroy's

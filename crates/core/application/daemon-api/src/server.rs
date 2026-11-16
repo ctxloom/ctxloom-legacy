@@ -63,6 +63,13 @@ pub trait Hosting: Send + Sync {
     /// Why its start-up catch-up (or its sweep) failed, while no later
     /// catch-up has succeeded (OD-52): it serves anyway, and says so.
     fn start_up_failed(&self) -> Option<String>;
+    /// What the session `session` (its stable id), which it hosts, asks
+    /// with (step 8 U4): its run, engine, agent and `approval_timeout`, as
+    /// of the last round; none for a session it does not host.
+    fn asker(&self, session: &str) -> Option<daemon_application::Asker> {
+        let _ = session;
+        None
+    }
 }
 
 /// A project's context, assembled as a process in it would (slice 3 step
@@ -181,6 +188,29 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("ListTrusts")) })
     }
+    /// `CreateApproval` (step 8 U4); as `GetTranscript`.
+    fn create_approval(&self, request: v1::CreateApprovalRequest) -> Answer<'_, v1::Approval> {
+        let _ = request;
+        Box::pin(async { Err(not_served("CreateApproval")) })
+    }
+    /// `GetApproval` (step 8 U4); as `GetTranscript`.
+    fn get_approval(&self, request: v1::GetApprovalRequest) -> Answer<'_, v1::Approval> {
+        let _ = request;
+        Box::pin(async { Err(not_served("GetApproval")) })
+    }
+    /// `ListApprovals` (step 8 U4); as `GetTranscript`.
+    fn list_approvals(
+        &self,
+        request: v1::ListApprovalsRequest,
+    ) -> Answer<'_, v1::ListApprovalsResponse> {
+        let _ = request;
+        Box::pin(async { Err(not_served("ListApprovals")) })
+    }
+    /// `WaitApproval` (step 8 U4); as `GetTranscript`.
+    fn wait_approval(&self, request: v1::WaitApprovalRequest) -> Answer<'_, v1::Approval> {
+        let _ = request;
+        Box::pin(async { Err(not_served("WaitApproval")) })
+    }
     /// `CreateRun` (U4); as `GetTranscript`.
     fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
         let _ = request;
@@ -223,7 +253,9 @@ fn not_served(method: &str) -> ApiError {
 /// only once `CreateRun` answered, so a drain asked in between would
 /// otherwise refuse the one-shot the period then stops), or the withdrawal
 /// of a hand-off whose launch the drain refused (OD-62: NEW invocations
-/// are refused).
+/// are refused). Every approvals call is served while it drains too (D6):
+/// an ask comes only from a session it already hosts, and its answer is
+/// that session's held work.
 impl<E: Edge + 'static> Calls for Api<E> {
     fn warnings(&self) -> Vec<v1::Notice> {
         Api::warnings(self)
@@ -351,6 +383,25 @@ impl<E: Edge + 'static> Calls for Api<E> {
     fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
         Box::pin(Api::delete_hand_off(self, request))
     }
+
+    fn create_approval(&self, request: v1::CreateApprovalRequest) -> Answer<'_, v1::Approval> {
+        Box::pin(Api::create_approval(self, request))
+    }
+
+    fn get_approval(&self, request: v1::GetApprovalRequest) -> Answer<'_, v1::Approval> {
+        Box::pin(Api::get_approval(self, request))
+    }
+
+    fn list_approvals(
+        &self,
+        request: v1::ListApprovalsRequest,
+    ) -> Answer<'_, v1::ListApprovalsResponse> {
+        Box::pin(Api::list_approvals(self, request))
+    }
+
+    fn wait_approval(&self, request: v1::WaitApprovalRequest) -> Answer<'_, v1::Approval> {
+        Box::pin(Api::wait_approval(self, request))
+    }
 }
 
 /// The use cases of the daemon's API.
@@ -371,6 +422,9 @@ pub struct Api<E> {
     /// Where a trust is read (step 8 U1); none, `GetTrust` and `ListTrusts`
     /// fail.
     pub(crate) trusting: Option<crate::Trusting>,
+    /// Where an ask is recorded and read (step 8 U4); none, the approvals
+    /// calls fail.
+    pub(crate) approving: Option<crate::Approving>,
 }
 
 impl<E: Edge> Api<E> {
@@ -383,6 +437,16 @@ impl<E: Edge> Api<E> {
             hand_offs: None,
             terminals: None,
             trusting: None,
+            approving: None,
+        }
+    }
+
+    /// The API, its asks recorded and read through `approving` (step 8 U4).
+    #[must_use]
+    pub fn approving(self, approving: crate::Approving) -> Api<E> {
+        Api {
+            approving: Some(approving),
+            ..self
         }
     }
 

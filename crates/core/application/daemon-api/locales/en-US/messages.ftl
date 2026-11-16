@@ -29,3 +29,11 @@ daemon-api-launch-lock = a child's launch lock could not be taken: { $ext_err_tx
 daemon-api-start-up-incomplete = the daemon's start-up catch-up failed: { $why }; what it shows (sessions, transcripts, what it hosts) may be missing events until a later catch-up succeeds
 daemon-api-start-up-incomplete-fix = the daemon tries the catch-up again each round, and this warning clears once one succeeds; the daemon's log (daemon/daemon.log under ctxloom's home) says why it failed
 daemon-api-handing-over = the daemon, ctxloom { $daemon }, is shutting down: { $harps } will be handed over to the next daemon; a child busy in a turn has been steered to end it, and is handed over within { $seconds } seconds at the latest, its turn in flight cut; the next daemon resumes each in its own conversation
+# Step 8 U4: DRAFT wording (texts.md §5, D14), the owner's to approve.
+daemon-api-session-not-hosted = { $name } is no session this daemon runs, so its ask was not recorded
+daemon-api-approval-ambiguous = { $harp } has { $count } asks waiting ({ $asks }), so its name does not say which you mean; nothing was answered.
+daemon-api-approval-ambiguous-fix = Name the ask itself: `ctxloom session approvals answer <ask> <option>`, with one of { $asks }.
+daemon-api-approval-none-waiting = { $harp } has no ask waiting, so nothing was answered.
+daemon-api-approval-none-waiting-fix = List what waits with `ctxloom session approvals`, and name the ask (`ask-...`) to answer one that is settled or another session's.
+daemon-api-approval-rule-kept = { $rule } was written into { $path }, but { $ask_id } was already { $how }, so the ask was not answered; the rule stays, and every later launch carries it.
+daemon-api-approval-rule-kept-fix = Take the rule out of { $path } if you did not mean to keep it.

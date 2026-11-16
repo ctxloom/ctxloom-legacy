@@ -678,7 +678,12 @@ fn served(
             }))
             .handing_off(super::files::api_hand_offs(fs, (home, temp), engines))
             // The trusts it reads (step 8 U1).
-            .trusting(trusting(kept, (home, temp))),
+            .trusting(trusting(kept, (home, temp)))
+            // The asks it records and reads (step 8 U4).
+            .approving(daemon_api::Approving {
+                index: kept.approvals.clone().unwrap_or_default(),
+                names: Arc::new(FreshAskNames),
+            }),
     )
 }
 
@@ -851,6 +856,7 @@ fn launcher(
             pending: kept.pending.clone().unwrap_or_default(),
             index: kept.index.clone().unwrap_or_default(),
             trusts: kept.trusts.clone().unwrap_or_default(),
+            approvals: kept.approvals.clone().unwrap_or_default(),
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })
@@ -887,7 +893,7 @@ async fn run<E: run_ports::Edge>(
     let mut stopping = false;
     let mut handing_over = false;
     loop {
-        shared.tell(launcher.hosted_runs(), quiet_since);
+        shared.tell(launcher.hosted_runs(), launcher.askers(), quiet_since);
         if !files.still_holds(held) {
             said(
                 say,
@@ -1047,6 +1053,8 @@ struct Round {
     endpoint: String,
     /// Each hosted child's session id and run root.
     children: Vec<(String, String)>,
+    /// What each hosted child's ask is recorded with (step 8 U4).
+    askers: Vec<daemon_application::Asker>,
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
@@ -1108,9 +1116,15 @@ impl Shared {
 
     /// What the round found it hosts: its children, each its session id
     /// and run root.
-    fn tell(&self, children: Vec<(String, String)>, quiet_since: Instant) {
+    fn tell(
+        &self,
+        children: Vec<(String, String)>,
+        askers: Vec<daemon_application::Asker>,
+        quiet_since: Instant,
+    ) {
         let mut round = self.round();
         round.children = children;
+        round.askers = askers;
         round.quiet_since = Some(quiet_since);
     }
 
@@ -1162,6 +1176,14 @@ impl daemon_api::Hosting for Shared {
                 }
             })
             .collect()
+    }
+
+    fn asker(&self, session: &str) -> Option<daemon_application::Asker> {
+        self.round()
+            .askers
+            .iter()
+            .find(|asker| asker.session == session)
+            .cloned()
     }
 
     fn idle_seconds(&self) -> u64 {
@@ -1231,6 +1253,22 @@ struct FreshHarps;
 impl daemon_api::Harps for FreshHarps {
     fn fresh(&self) -> Vec<String> {
         crate::fresh_project_harps()
+    }
+}
+
+/// How many ask names one ask tries before it fails.
+const ASK_NAME_TRIES: usize = 8;
+
+/// Fresh ask names (step 8 U4, Q7): harp-names' two-word mints, as a
+/// task's id (`tidy-wren`); the daemon prefixes `ask-`.
+struct FreshAskNames;
+
+impl daemon_api::AskNames for FreshAskNames {
+    fn fresh(&self) -> Vec<String> {
+        use ports::Mint as _;
+        (0..ASK_NAME_TRIES)
+            .map(|_| harp_names::HarpNames.mint())
+            .collect()
     }
 }
 

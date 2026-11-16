@@ -88,6 +88,8 @@ pub struct Projectors {
     pub index: Option<session_index::SessionIndexes>,
     /// The projects' trusts (step 8 U1).
     pub trusts: Option<trust_index::TrustIndexes>,
+    /// The permission asks (step 8 U4).
+    pub approvals: Option<pending_approvals::PendingApprovals>,
 }
 
 impl Projectors {
@@ -103,6 +105,7 @@ impl Projectors {
             pending: Some(pending_messages::PendingMessages::filled(fill())),
             index: Some(session_index::SessionIndexes::filled(fill())),
             trusts: Some(trust_index::TrustIndexes::filled(fill())),
+            approvals: Some(pending_approvals::PendingApprovals::filled(fill())),
         }
     }
 
@@ -129,6 +132,11 @@ impl Projectors {
             registry
                 .projector_handler(&trust_index::SOURCES, trusts)
                 .expect("the trust index registers");
+        }
+        if let Some(approvals) = self.approvals {
+            registry
+                .projector_handler(&pending_approvals::SOURCES, approvals)
+                .expect("the pending approvals register");
         }
     }
 }
@@ -262,11 +270,23 @@ where
         registry
             .aggregate::<TrustAggregate>(TrustAggregate::default)
             .expect("the trust aggregate registers");
+        // The permission asks and their names (step 8 U4): an answer and a
+        // withdrawal are the user's, on loopback; the ask and its name's
+        // claim are the daemon's own.
+        registry
+            .aggregate::<approvals::ApprovalAggregate>(approvals::ApprovalAggregate::default)
+            .expect("the approvals aggregate registers");
+        registry
+            .aggregate::<approvals::ApprovalNameAggregate>(
+                approvals::ApprovalNameAggregate::default,
+            )
+            .expect("the approval names aggregate registers");
         let exposed = BTreeMap::from([
             (sessions::SESSION_DOMAIN.to_string(), Expose::Ip),
             (runs::RUN_DOMAIN.to_string(), Expose::Ip),
             (trees::TREE_DOMAIN.to_string(), Expose::Loopback),
             (trust::TRUST_DOMAIN.to_string(), Expose::Loopback),
+            (approvals::APPROVALS_DOMAIN.to_string(), Expose::Loopback),
         ]);
         let retries = OnRetryable {
             max_retries: 0,
