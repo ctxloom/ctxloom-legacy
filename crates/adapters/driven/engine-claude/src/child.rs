@@ -71,6 +71,9 @@ pub(crate) fn child_command(spec: &ChildSpec) -> Result<TurnCommand, EngineError
         model: spec.model.clone(),
         effort: spec.effort.clone(),
         settings: spec.settings.clone(),
+        // A hosted child is always launched with its context, so ctxloom's
+        // server, and its approval prompt, ride it.
+        approval_prompt: true,
     };
     let mut command = TurnCommand::new(drive::program(&request));
     command.args = [
@@ -89,6 +92,10 @@ pub(crate) fn child_command(spec: &ChildSpec) -> Result<TurnCommand, EngineError
     // The servers its launch carries, as a turn's and the terminal's.
     drive::push_mcp_config(&mut command.args, &request);
     drive::push_settings(&mut command.args, &request);
+    // Its asks wait on the user through ctxloom's approval prompt (step 8).
+    if request.approval_prompt {
+        drive::push_approval_prompt(&mut command.args);
+    }
     drive::push_model_and_effort(&mut command.args, &request)?;
     if let Some(native_id) = &spec.resume {
         command.args.push("--resume".to_string());

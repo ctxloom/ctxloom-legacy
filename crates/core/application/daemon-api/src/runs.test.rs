@@ -42,6 +42,7 @@ impl OneShotHost for Scripted {
                 name: SESSION.to_string(),
                 harp: "amber-quiet-heron".to_string(),
                 engine: "claude-code".to_string(),
+                ..Default::default()
             });
             told.done(Done {
                 result: Ok(Answer {
@@ -239,6 +240,7 @@ impl OneShotHost for Placing {
             name: SESSION.to_string(),
             harp: "amber-quiet-heron".to_string(),
             engine: "claude-code".to_string(),
+            ..Default::default()
         });
         *self.0.lock().unwrap() = Some(told);
         Box::new(Nothing)

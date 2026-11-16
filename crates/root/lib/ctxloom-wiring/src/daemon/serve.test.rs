@@ -267,6 +267,7 @@ impl daemon_application::OneShotHost for Kept {
             name: "projects/calm-otter/sessions/harp-1".to_string(),
             harp: "harp-1".to_string(),
             engine: "claude-code".to_string(),
+            ..Default::default()
         });
         self.0.lock().unwrap().push(told);
         Box::new(NoStop)
@@ -351,6 +352,26 @@ fn an_asker_is_the_rounds_hosted_child_of_that_session() {
     );
     assert_eq!(shared.asker("s-2"), Some(asker("s-2")));
     assert_eq!(shared.asker("s-3"), None);
+}
+
+// Step 8 (D7): one-shots ask too, so a live one-shot the daemon hosts is an
+// asker beside the round's children.
+#[test]
+fn a_live_one_shot_is_an_asker_too() {
+    use daemon_api::Hosting;
+    let one_shots = Arc::new(daemon_application::OneShots::new(Box::new(Kept(Arc::new(
+        Mutex::new(Vec::new()),
+    )))));
+    let shared = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        Arc::clone(&one_shots),
+        unsaid(),
+    );
+    assert_eq!(shared.asker(SESSION), None);
+    one_shots.create(daemon_application::HostRequest::default());
+    let asker = shared.asker(SESSION).expect("the one-shot asks");
+    assert_eq!(asker.run, "0195f0a4-7b1e-7000-8000-000000000001");
+    assert_eq!(asker.engine, "claude-code");
 }
 
 /// Each hosted run's root's last twelve digits, and its kind.

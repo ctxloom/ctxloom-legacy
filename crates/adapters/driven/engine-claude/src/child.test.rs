@@ -187,6 +187,8 @@ fn the_child_command_streams_both_ways_and_echoes_what_it_is_given() {
             "/nowhere/home/ctxloom-mcp.json",
             "--settings",
             "/nowhere/home/ctxloom-hooks.json",
+            "--permission-prompt-tool",
+            "mcp__ctxloom__approval_prompt",
         ]
     );
     assert!(command.stdin.is_empty());

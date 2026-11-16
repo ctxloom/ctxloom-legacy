@@ -1178,12 +1178,16 @@ impl daemon_api::Hosting for Shared {
             .collect()
     }
 
+    /// A hosted child's, else a live one-shot's (step 8, D7: one-shots ask
+    /// too).
     fn asker(&self, session: &str) -> Option<daemon_application::Asker> {
-        self.round()
+        let child = self
+            .round()
             .askers
             .iter()
             .find(|asker| asker.session == session)
-            .cloned()
+            .cloned();
+        child.or_else(|| self.one_shots.asker(session))
     }
 
     fn idle_seconds(&self) -> u64 {

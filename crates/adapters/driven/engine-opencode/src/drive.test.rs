@@ -29,6 +29,7 @@ fn request() -> TurnRequest {
         model: String::new(),
         effort: String::new(),
         settings: EngineSettings::default(),
+        approval_prompt: true,
     }
 }
 

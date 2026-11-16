@@ -469,6 +469,11 @@ impl Engine for ScriptedEngine {
         if !request.effort.is_empty() {
             command.args.push(format!("--effort={}", request.effort));
         }
+        // A turn offered no approval prompt says so (step 8: a launch with
+        // no context carries no ctxloom server).
+        if !request.approval_prompt {
+            command.args.push("--no-approval-prompt".to_string());
+        }
         command.env = request.env.clone();
         command.stdin = request.prompt.clone().into_bytes();
         command.cwd = request.cwd.clone();

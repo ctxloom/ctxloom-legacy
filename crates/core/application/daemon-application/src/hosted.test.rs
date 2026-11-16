@@ -2583,6 +2583,7 @@ impl crate::OneShotHost for Working {
             name: "projects/calm-quiet-heron/sessions/quick-fox".to_string(),
             harp: "quick-fox".to_string(),
             engine: ENGINE.to_string(),
+            ..Default::default()
         });
         Box::new(Stopped(Arc::clone(&self.0)))
     }
