@@ -332,6 +332,16 @@ fn an_owners_child_runs_its_turns_tells_its_owner_and_ends_with_the_owners_close
         "the child's native id is bound"
     );
     assert_eq!(owner["children"], Value::Array(vec![child["name"].clone()]));
+    // Its outputs are its OWN folder, `<output.dir>/<its harp>`, never its
+    // owner's (owner ruling 2026-11-16: one rule for every session).
+    let outputs = std::path::PathBuf::from(child["output_dir"].as_str().unwrap_or(""));
+    let dir = world.project.dir().to_path_buf();
+    assert!(
+        [dir.clone(), files::canonical(&dir)]
+            .iter()
+            .any(|root| outputs == root.join("ctxloom").join(CHILD)),
+        "{child}"
+    );
 
     sees_its_launchers_environment_and_its_projects_context(&world);
 

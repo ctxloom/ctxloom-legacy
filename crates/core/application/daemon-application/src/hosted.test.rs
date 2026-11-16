@@ -2755,6 +2755,13 @@ impl ChildPlans for Outputs {
 /// A world whose owner launched its child into the project `far-heron` at
 /// `/far` (trusted), its output roots read by `outputs`, ticked thrice.
 async fn launched_across(outputs: Outputs) -> World {
+    launched_into(outputs, "far-heron", "/far", false).await
+}
+
+/// A world whose owner launched its child into the project `project` at
+/// `root` (its own when `same_project`), its output roots read by
+/// `outputs`, ticked thrice.
+async fn launched_into(outputs: Outputs, project: &str, root: &str, same_project: bool) -> World {
     let mut world = World::new(Box::new(outputs));
     world.name_project().await;
     world.mint(OWNER, "boss", None).await;
@@ -2762,13 +2769,13 @@ async fn launched_across(outputs: Outputs) -> World {
         .handle(
             OWNER,
             sessions::LaunchChild {
-                child_project_id: "far-heron".to_string(),
+                child_project_id: project.to_string(),
                 child_session: CHILD.to_string(),
-                child_root: "/far".to_string(),
+                child_root: root.to_string(),
                 harp: "kid".to_string(),
                 engine: ENGINE.to_string(),
                 trust: sessions::TargetTrust {
-                    same_project: false,
+                    same_project,
                     trusted: true,
                 },
                 delegation_limit: 1,
@@ -2811,6 +2818,36 @@ async fn a_child_in_another_project_keeps_its_outputs_in_its_projects_folder() {
         *asked.lock().unwrap(),
         [("/far".to_string(), Some("/usr/bin".to_string()))]
     );
+}
+
+// Owner ruling 2026-11-16: a child of its owner's own project keeps its
+// outputs in its OWN folder, `<output.dir>/<its harp>`, never its owner's
+// (`/work/out`): one rule for every child, as for every session.
+#[tokio::test]
+async fn a_child_in_its_owners_project_keeps_its_outputs_in_its_own_folder() {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let world = launched_into(
+        Outputs {
+            asked: Arc::clone(&asked),
+            root: Some("/work/ctxloom"),
+        },
+        "calm-otter",
+        "/work",
+        true,
+    )
+    .await;
+    let minted: Vec<String> = world
+        .session_events(CHILD)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::SessionMinted(minted) => Some(minted.output_dir),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(minted, ["/work/ctxloom/kid".to_string()]);
+    assert_eq!(asked.lock().unwrap().len(), 1, "read in its project once");
+    assert_eq!(asked.lock().unwrap()[0].0, "/work");
 }
 
 // Step 8 U2b: a child whose project's output folder cannot be read is not

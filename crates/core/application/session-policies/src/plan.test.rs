@@ -265,7 +265,9 @@ fn a_launched_child_not_yet_minted_is_launched() {
     };
     assert_eq!(mint.claim.key, format!("claim:{OWNER}:{CHILD}"));
     assert_eq!(mint.mint.command.owner, Some(at(OWNER)));
-    assert_eq!(mint.mint.command.output_dir, "/work/out");
+    // Its own folder, never its owner's (`/work/out`, owner ruling
+    // 2026-11-16): the daemon reads it from its project's config.
+    assert_eq!(mint.mint.command.output_dir, "");
     assert_eq!(failed.key, format!("launch-failed:{OWNER}:{CHILD}"));
     assert_eq!(failed.project_id, PROJECT);
 }
