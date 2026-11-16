@@ -513,13 +513,17 @@ async fn command(edge: &TestEdge, session: &str, command: sessions::SessionComma
     edge.handle(book).await.unwrap();
 }
 
-/// A daemon over `OWNER`, which launched `CHILD` (an opencode child, whose
-/// incarnation has ended) with a first task: the task is a WAKE, and a
-/// child off claude takes an inform alone, so the session refuses it each
-/// time it is sent. What the daemon logs.
+/// An engine with no child adapter (not in `CHILD_ENGINES`, OD-58).
+const NO_CHILD_ADAPTER: &str = "mock";
+
+/// A daemon over `OWNER`, which launched `CHILD` (a child on an engine with
+/// no child adapter, whose incarnation has ended) with a first task: the
+/// task is a WAKE, and such a child takes an inform alone, so the session
+/// refuses it each time it is sent. What the daemon logs.
 async fn a_refused_first_task(edge: &Arc<TestEdge>) -> (Daemon<TestEdge>, Arc<Mutex<Vec<String>>>) {
+    assert!(!session_policies::CHILD_ENGINES.contains(&NO_CHILD_ADAPTER));
     mint(edge, OWNER, "boss", "claude-code", None).await;
-    mint(edge, CHILD, "kid", "opencode", Some(OWNER)).await;
+    mint(edge, CHILD, "kid", NO_CHILD_ADAPTER, Some(OWNER)).await;
     runs_application::Facts::new(Arc::clone(edge))
         .incarnation_ended(CHILD, 1, "runner-exit")
         .await
@@ -532,7 +536,7 @@ async fn a_refused_first_task(edge: &Arc<TestEdge>) -> (Daemon<TestEdge>, Arc<Mu
             child_session: CHILD.to_string(),
             child_root: "/work".to_string(),
             harp: "kid".to_string(),
-            engine: "opencode".to_string(),
+            engine: NO_CHILD_ADAPTER.to_string(),
             trust: sessions::TargetTrust {
                 same_project: true,
                 trusted: false,
