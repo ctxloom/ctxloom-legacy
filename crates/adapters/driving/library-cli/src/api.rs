@@ -71,6 +71,10 @@ pub(crate) fn settings(settings: &AgentSettings) -> v1::AgentSettings {
                 .collect(),
         }),
         session_home: text(&settings.session_home.value, settings.session_home.source),
+        approval_timeout: text(
+            &settings.approval_timeout.value,
+            settings.approval_timeout.source,
+        ),
     }
 }
 

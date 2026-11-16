@@ -301,6 +301,8 @@ pub(crate) fn settings_of(
             }
         },
         env: drive.env.clone(),
+        // Read with the plan, once per launch and re-host (T21, OD-41).
+        approval_timeout: drive.approval_timeout,
     }
 }
 

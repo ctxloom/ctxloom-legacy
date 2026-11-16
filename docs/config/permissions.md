@@ -67,6 +67,44 @@ tools can reach them, so ctxloom writes each one again, whole, from your
 config at every launch (a new session, a child's turn, a resume). An edit the
 agent makes to its own permissions never carries into a launch.
 
+## How long an ask waits: `engines.<engine>.approval_timeout`
+
+When the engine's own rules say "ask" for a tool call of a child (a session
+the daemon hosts, or a one-shot), the ask waits for your answer for the
+engine's `approval_timeout`; then it is denied, and the engine is told that no
+answer came in time (OD-41). It is the engine's setting, shared by all of its
+agents; no agent overrides it:
+
+    engines:
+      claude-code:
+        approval_timeout: 15m
+
+- The value is a span in the config's one grammar: one or more links of a
+  number and a unit, `90s`, `5m`, `1h30m` or `1.5h`, in whole seconds. A
+  bare number has no unit and is refused.
+- `now` denies every ask at once, and nothing ever waits (D16). Use it for a
+  session nobody watches.
+- Unset, an ask waits 300 seconds (`5m`).
+
+The value is read with the rest of the engine's settings when a child is
+launched, and again when it is hosted again (T21). A change to the config
+reaches the next launch, never a child already running. `engine show` and
+the Settings section of `run --dry-run` give the value and the layer that
+said it (`engines.<engine>`, or `default`).
+
+On claude-code, an ask is a call to ctxloom's own approval tool, and claude
+stops waiting for an MCP tool call after a limit of its own. When
+`approval_timeout` is over 300 seconds, ctxloom gives the child
+`MCP_TOOL_TIMEOUT`, in milliseconds, of the timeout plus 60 seconds. Then
+the ask expires, and its call is answered, before claude gives up on the
+call. At 300 seconds or less, the variable is not set (owner ruling Q12).
+When ctxloom sets it, it is a name ctxloom owns: a
+`CTXLOOM_PERMIT_MCP_TOOL_TIMEOUT` is ignored, and the run says so. A terminal
+session asks at its own terminal and is never given it.
+
+(Asks themselves, `session approvals`, are step 8's next units; until they
+land, the key is read and shown but nothing asks.)
+
 ## claude-code
 
 The block is claude's `permissions` settings object, exactly as claude's own
@@ -153,10 +191,12 @@ refused (exit 20) until they are moved.
   claude's, and has not been verified against a live claude.
 - opencode's `mode: build|plan|auto` has no replacement in the block: it was
   never passed to opencode. Write opencode's own `permission` rules instead.
-- `permissions.approver`, `permissions.approval_timeout`,
-  `permissions.sandbox` and `permissions.network`, at the project level and
-  on an agent, are deleted, with no replacement in ctxloom. Say the intent in
-  the engine's own words instead:
+- `permissions.approval_timeout`, at the project level and on an agent, is
+  deleted. Its replacement is the engine block's `approval_timeout` (above),
+  which is the engine's, never an agent's.
+- `permissions.approver`, `permissions.sandbox` and `permissions.network`, at
+  the project level and on an agent, are deleted, with no replacement in
+  ctxloom. Say the intent in the engine's own words instead:
   - who answers a prompt: claude's `defaultMode` (`dontAsk` denies what
     would prompt, `auto` lets its classifier decide) and
     `permissions.denyInsteadOfPrompting`; opencode's `ask`/`deny` effects;

@@ -183,6 +183,7 @@ mod read {
                     "keys": [{"variable": "HTTPS_PROXY", "source": "engine"}],
                 },
                 "session_home": {"value": "session", "source": "default"},
+                "approval_timeout": {"value": "5m", "source": "default"},
             })
         );
         // A run with no agent has no settings, and an empty selection prints

@@ -756,3 +756,30 @@ fn test_the_drain_timeout_is_a_span_said_by_the_home_config_alone() {
     assert_eq!(take_home_only(&mut layer), ["daemon.drain_timeout"]);
     assert_eq!(layer, parse("workspace: none\n"));
 }
+
+// OD-41 (D16): `engines.<e>.approval_timeout` is a span of the one grammar,
+// or `now`, of every engine's block; said in a project layer too (it is not
+// one of ruling 46's keys, nor the home config's alone).
+#[test]
+fn test_an_engines_approval_timeout_is_a_span_or_now() {
+    for good in ["5m", "1h", "90s", "2s", "0s", "now"] {
+        for engine in ["claude-code", "opencode"] {
+            let doc = parse(&format!(
+                "engines:\n  {engine}:\n    approval_timeout: {good}\n"
+            ));
+            assert!(validate(&doc).is_empty(), "{engine} {good}");
+        }
+    }
+    for bad in ["soon", "300", "-1m", "true", "500ms", "\"\""] {
+        let doc = parse(&format!(
+            "engines:\n  claude-code:\n    approval_timeout: {bad}\n"
+        ));
+        assert_eq!(validate(&doc).len(), 1, "{bad}");
+    }
+    let mut layer = parse("engines:\n  claude-code:\n    approval_timeout: 2s\n");
+    assert!(take_home_only(&mut layer).is_empty());
+    // An agent's binding has no such key (ruling 134's `approval_timeout`
+    // under `permissions` is gone; this one is the engine's).
+    let agent = parse("agents:\n  a:\n    approval_timeout: 5m\n");
+    assert_eq!(validate(&agent).len(), 1);
+}

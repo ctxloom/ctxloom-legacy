@@ -77,7 +77,9 @@ pub use login::{LinkState, LoginLinks};
 pub use permit::{apply_permits, permits, Ignored, Permits, PERMIT_PREFIX};
 pub use program::{check_batch_arguments, is_batch_file, BatchArguments, ProgramNotFound};
 pub use records::{check_rel, RecordsError, SessionRecords};
-pub use settings::{AuthSetting, CredentialPolicy, EngineSettings, SessionHome};
+pub use settings::{
+    AuthSetting, CredentialPolicy, EngineSettings, SessionHome, APPROVAL_TIMEOUT_DEFAULT,
+};
 pub use sink::{Delivery, FactSink, NO_SUCH_SESSION};
 pub use tls::{CertError, CertMint, CertNames, HookCertificate, PublicCert};
 pub use token::{Token, TokenError, TokenHash, TokenSource, EN_US};
