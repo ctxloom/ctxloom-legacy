@@ -3550,7 +3550,11 @@ ratchet-base <base>` (`scripts/ratchet-base.sh`): only the runner's tests
 base's tip, in a throwaway worktree `.<checkout>.ratchet-base` beside the
 checkout (target dir `target/ratchet-base`), cached by sha at
 `target/ratchet/<sha>.list`; a base from before the list gets the runner
-commit that taught it applied, and says so. On main the base has no red
+commit that taught it applied, and says so (that commit is the first line of
+a `git log` read with `sed -n 1p`, never `head -n 1`, whose early close
+killed git log with SIGPIPE and, under pipefail, the script with a silent
+141; `scripts/ratchet-base.selftest.sh` forces it with a log longer than a
+pipe buffer). On main the base has no red
 scenario, so the ratchet is the plain closeout. Exit 0, 1 (a gate, a new red,
 or no base list), 2 (usage). Held by `scripts/closeout-ratchet.selftest.sh`
 (`just selftest`).
