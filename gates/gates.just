@@ -740,7 +740,11 @@ _scratch-tree source +recipe:
         "${scrub[@]}" git -C "$tree" apply --index --binary --whitespace=nowarn "$scratch/staged.patch"
     fi
     cd "$tree"
-    "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/staged" "GATE_LOG_DIR=$top/target/logs" just --justfile "$tree/justfile" "$@"
+    # The lock is this shell's alone (9>&-): bash opens it without
+    # close-on-exec, so a recipe given it would hand it to everything it
+    # starts, and a process that outlives the gate (a test's detached
+    # daemon) would hold the next commit's gate (2026-11-15).
+    "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/staged" "GATE_LOG_DIR=$top/target/logs" just --justfile "$tree/justfile" "$@" 9>&-
 
 # The red-on-branches rule: red tests may be committed on any branch but the
 # default one, and never reach it. `test-commit` allows them off it;

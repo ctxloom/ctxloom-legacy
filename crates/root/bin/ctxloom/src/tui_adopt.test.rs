@@ -229,6 +229,17 @@ impl Rig {
     }
 }
 
+impl Drop for Rig {
+    /// A failing test lets its TUI and its blocker end (each runs until a
+    /// file beside it says so); its project then ends what it started that
+    /// still runs (`Project`'s drop) and removes the home, on which any
+    /// daemon left exits.
+    fn drop(&mut self) {
+        files::put(self.bin.join("release"), "go");
+        files::put(self.bin.join("unblock"), "go");
+    }
+}
+
 /// Wait, bounded, for `ready`; `what` names it when it never comes.
 fn wait(log: &str, what: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + WAIT;

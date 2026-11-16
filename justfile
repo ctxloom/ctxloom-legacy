@@ -493,7 +493,7 @@ clean-target:
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, closeout, closeout-ratchet, ltk rules, output budget, tests exit, test-staged, exec-mode check, path deps, mcp-env probe")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, closeout, closeout-ratchet, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, exec-mode check, path deps, mcp-env probe")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -505,6 +505,7 @@ selftest:
     @{{TOP}}/scripts/output-budget.selftest.sh
     @{{TOP}}/scripts/tests-exit.selftest.sh
     @{{TOP}}/scripts/test-staged.selftest.sh
+    @{{TOP}}/scripts/scratch-tree-lock.selftest.sh
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
     @{{TOP}}/scripts/dev-local.selftest.sh
     @{{TOP}}/scripts/path-deps-check.selftest.sh

@@ -772,7 +772,7 @@ fn launcher(
 
 /// Tick until the daemon is asked to stop, its single-instance lock file
 /// is no longer the one it holds (`held`: removed or replaced, so it
-/// excludes nobody), another daemon's discovery replaced its own (`own`, in
+/// excludes nobody), its home's ctxloom directory is gone, another daemon's discovery replaced its own (`own`, in
 /// `files`), or it has had nothing to do for its idle time. A discovery file that is gone is published again: the daemon
 /// still holds the single-instance lock, and a client finds it by the file (M11).
 async fn run<E: run_ports::Edge>(
@@ -795,6 +795,13 @@ async fn run<E: run_ports::Edge>(
                 say,
                 "the single-instance lock file was replaced or removed: exiting",
             );
+            return Ok(());
+        }
+        // Its home deleted (OD-60): the lock may be elsewhere (the
+        // account's, while `CTXLOOM_HOME` names another home), so the home
+        // says it itself. The line is dropped with the log's directory.
+        if files.home_gone() {
+            said(say, "the daemon's home was removed: exiting");
             return Ok(());
         }
         match advertised(own, files.discovery().as_ref()) {
