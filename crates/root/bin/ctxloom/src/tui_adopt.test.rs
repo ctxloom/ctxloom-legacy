@@ -499,7 +499,11 @@ fn test_a_shutdown_with_a_span_waits_it_out_for_a_live_tui_then_stops_it() {
         files::exists(rig.bin.join("tui-started"))
     });
     let shut = rig.run(&["shutdown", "2s"]);
-    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), rig.log());
+    if shut.code != 0 {
+        rig.release_tui();
+        let ran = finished(session);
+        panic!("DEBUG {}\nSESSION {}", shut.said(), ran.said());
+    }
     assert!(
         shut.stdout.contains("after the drain's 2s, still running")
             && shut.stdout.contains("asked the frontend pid"),

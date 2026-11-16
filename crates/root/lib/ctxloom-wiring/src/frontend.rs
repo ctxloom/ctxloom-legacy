@@ -66,7 +66,8 @@ const LAST_WORD: Duration = Duration::from_secs(10);
 /// that serves then.
 const WATCH_AGAIN: Duration = Duration::from_millis(250);
 
-/// How often a frontend looks for a stop `ctxloom shutdown` asked of it.
+/// How often a frontend looks for a stop `ctxloom shutdown` asked of it,
+/// and for a notice it was told.
 const STOP_LOOK: Duration = Duration::from_millis(200);
 
 /// The stack of the thread a prepared session is driven on, as a main
@@ -355,7 +356,7 @@ pub(crate) fn client_terminal(
     let held = frontends.hold(pid);
     let mut done = runtime.block_on(async {
         let mut said = Vec::new();
-        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = std::sync::Arc::new(Mutex::new(None::<StopCause>));
         let watching = match &held {
             Ok(_) => Some(tokio::spawn(watch_for_stop(
                 liveness::FrontendLocks::new(wiring.fs(), wiring.home()),
@@ -404,10 +405,9 @@ pub(crate) fn client_terminal(
         if let Some(watching) = watching {
             watching.abort();
         }
-        if stopped.load(std::sync::atomic::Ordering::SeqCst) {
-            said.push(Notice::text(
-                "asked to stop by `ctxloom shutdown`: the session's engine was stopped".to_string(),
-            ));
+        let cause = *stopped.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cause) = cause {
+            said.push(Notice::text(cause.said().to_string()));
         }
         said.append(&mut done.notices);
         done.notices = said;
@@ -418,20 +418,100 @@ pub(crate) fn client_terminal(
     done
 }
 
-/// Watch for a stop `ctxloom shutdown` asks of the frontend `pid`: once it
-/// is asked, `stop` is requested (the TUI asked to stop, then killed after
-/// its grace, as a SIGTERM to the frontend does, ruling 114) and `asked`
-/// set.
+/// Why a frontend stopped its TUI by itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopCause {
+    /// `ctxloom shutdown` asked it to (its stop file).
+    Asked,
+    /// The drain it was told of ended (its notice's `stop_at`).
+    DrainEnded,
+}
+
+impl StopCause {
+    fn said(self) -> &'static str {
+        match self {
+            StopCause::Asked => {
+                "asked to stop by `ctxloom shutdown`: the session's engine was stopped"
+            }
+            StopCause::DrainEnded => {
+                "the drain ctxloom was told of ended: the session's engine was stopped"
+            }
+        }
+    }
+}
+
+/// What a frontend watching for a stop has been told (owner, 2026-11-15,
+/// OD-63): the notice it showed last, whose `stop_at` stands even once its
+/// file is gone.
+#[derive(Default)]
+struct Watch {
+    told: Option<liveness::FrontendNotice>,
+}
+
+impl Watch {
+    /// One look, at `now` (seconds since the epoch): whether a stop was
+    /// asked, and the notice its file holds. What to show its human (a
+    /// notice not shown yet), and why to stop, if it should.
+    fn look(
+        &mut self,
+        stop_asked: bool,
+        notice: Option<liveness::FrontendNotice>,
+        now: u64,
+    ) -> (Option<String>, Option<StopCause>) {
+        let show = match notice {
+            Some(notice) if self.told.as_ref() != Some(&notice) => {
+                let text = notice.text.clone();
+                self.told = Some(notice);
+                Some(text)
+            }
+            _ => None,
+        };
+        let ended = self
+            .told
+            .as_ref()
+            .and_then(|told| told.stop_at)
+            .is_some_and(|at| at <= now);
+        let cause = if stop_asked {
+            Some(StopCause::Asked)
+        } else if ended {
+            Some(StopCause::DrainEnded)
+        } else {
+            None
+        };
+        (show, cause)
+    }
+}
+
+/// Watch for what `ctxloom shutdown` (or a daemon's SIGTERM drain) tells
+/// or asks of the frontend `pid`: each notice told is shown at once on its
+/// terminal (its standard error, which its human sees above the TUI); once
+/// a stop is asked, or the drain told of ends, `stop` is requested (the TUI
+/// asked to stop, then killed after its grace, as a SIGTERM to the frontend
+/// does, ruling 114) and `stopped` says why.
 async fn watch_for_stop(
     frontends: liveness::FrontendLocks,
     pid: u32,
     stop: host_launcher::Stop,
-    asked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stopped: Arc<Mutex<Option<StopCause>>>,
 ) {
+    let mut watch = Watch::default();
     loop {
         tokio::time::sleep(STOP_LOOK).await;
-        if frontends.stop_asked(pid) {
-            asked.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (show, cause) = watch.look(
+            frontends.stop_asked(pid),
+            frontends.notice(pid),
+            crate::daemon::shutdown::epoch_seconds(),
+        );
+        if let Some(text) = show {
+            use std::io::Write;
+            let mut err = std::io::stderr();
+            let _ = writeln!(err, "\r\nctxloom: {text}\r");
+            let _ = err.flush();
+        }
+        if let Some(cause) = cause {
+            *stopped
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cause);
             stop.request();
             return;
         }

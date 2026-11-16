@@ -170,7 +170,7 @@ pub(crate) fn serve(
         said(&say, &format!("serving at {endpoint}"));
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
-        let terminated = hear_terminate(&fs, &shared, &say);
+        let terminated = hear_terminate((&fs, home), &shared, &say);
         let result = run(
             &mut launcher,
             &core,
@@ -252,13 +252,36 @@ fn configured_drain_timeout(fs: &Arc<dyn Fs>, home: &Path) -> Reader {
     Box::new(move || super::shutdown::configured_drain_timeout(&fs, &home))
 }
 
+/// Whether the daemon is to ignore a stop and a drain: only under
+/// test-support, while its switch is there.
+#[cfg(feature = "test-support")]
+fn deaf_to_stop(files: &DaemonFiles) -> bool {
+    files.deaf_to_stop()
+}
+
+#[cfg(not(feature = "test-support"))]
+fn deaf_to_stop(_: &DaemonFiles) -> bool {
+    false
+}
+
+/// How often a SIGTERM's drain looks again at its timeout, to tell the live
+/// frontends a changed one.
+const RETELL_LOOK: Duration = Duration::from_secs(1);
+
 /// Hear SIGTERM for the daemon's life (owner, 2026-11-15): the first asks
 /// it to drain within its configured timeout, as
 /// `daemon stop --drain` does; a second is the plain stop, ending what it
 /// hosts (`--even-if-live`, ruling 114's stop of each engine). None heard
 /// when the platform cannot listen (said in the log).
+///
+/// The drain also TELLS each live interactive frontend of `home` at once
+/// (owner, 2026-11-15, OD-63) when it will be stopped: at the drain's
+/// timeout from its start, by itself (its notice's `stop_at`), as no
+/// daemon may be serving then (one hosting nothing exits at once). A
+/// timeout changed while the drain runs is told again while the daemon
+/// lives.
 fn hear_terminate(
-    fs: &Arc<dyn Fs>,
+    (fs, home): (&Arc<dyn Fs>, &Path),
     shared: &Arc<Shared>,
     say: &Say,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -273,16 +296,53 @@ fn hear_terminate(
         }
     };
     let (shared, say) = (Arc::clone(shared), Arc::clone(say));
+    let frontends = liveness::FrontendLocks::new(Arc::clone(fs), home);
     Some(tokio::spawn(async move {
         let _ = signals.recv().await;
         said(&say, "SIGTERM: asked to drain");
         daemon_api::Hosting::drain(shared.as_ref(), None);
         shared.wake.notify_one();
-        let _ = signals.recv().await;
+        let started = super::shutdown::epoch_seconds();
+        let mut told = None;
+        loop {
+            let period = shared.drain_period();
+            if told != Some(period) {
+                told = Some(period);
+                tell_frontends(&frontends, started + period.as_secs(), &say);
+            }
+            // `recv` is a poll of the signal source: cancelled by the
+            // timeout, it loses no signal.
+            if tokio::time::timeout(RETELL_LOOK, signals.recv())
+                .await
+                .is_ok()
+            {
+                break;
+            }
+        }
         said(&say, "SIGTERM again: asked to stop even if live");
         daemon_api::Hosting::stop(shared.as_ref(), true);
         shared.wake.notify_one();
     }))
+}
+
+/// Tell each live frontend that it will be stopped at `stop_at` (seconds
+/// since the epoch), by itself; each said in the log.
+fn tell_frontends(frontends: &liveness::FrontendLocks, stop_at: u64, say: &Say) {
+    let left =
+        std::time::Duration::from_secs(stop_at.saturating_sub(super::shutdown::epoch_seconds()));
+    for pid in frontends.live() {
+        let notice = liveness::FrontendNotice {
+            text: super::shutdown::notice_text(left),
+            stop_at: Some(stop_at),
+        };
+        match frontends.tell(pid, &notice) {
+            Ok(()) => said(
+                say,
+                &format!("told the frontend pid {pid}: {}", notice.text),
+            ),
+            Err(e) => said(say, &format!("cannot tell the frontend pid {pid}: {e}")),
+        }
+    }
 }
 
 /// What the daemon says of itself, fixed at its start (`started_at` its
@@ -818,7 +878,10 @@ async fn run<E: run_ports::Edge>(
                 return Ok(());
             }
         }
-        if let Some(end_hosted) = shared.take_stop() {
+        // Under test-support, a daemon told to be deaf takes a stop and a
+        // drain and ignores them (`ctxloom shutdown`'s what-will-not-stop).
+        let deaf = deaf_to_stop(files);
+        if let Some(end_hosted) = shared.take_stop().filter(|_| !deaf) {
             if end_hosted {
                 said(say, "asked to stop even if live: ending what it hosts");
                 launcher.end_all();
@@ -828,7 +891,7 @@ async fn run<E: run_ports::Edge>(
         // Asked to drain (`daemon stop --drain`, `ctxloom shutdown`, a
         // SIGTERM; OD-54): it hands what it hosts over to the next daemon,
         // and exits once it hosts nothing.
-        if !handing_over && daemon_api::Hosting::draining(shared.as_ref()) {
+        if !handing_over && !deaf && daemon_api::Hosting::draining(shared.as_ref()) {
             said(say, "asked to drain: handing what it hosts over");
             launcher.hand_over();
             handing_over = true;

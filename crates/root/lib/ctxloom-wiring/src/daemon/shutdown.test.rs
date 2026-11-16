@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use file_system::Rooted;
 
-use super::{configured_drain_timeout, Running, ShutdownError};
+use super::{
+    configured_drain_timeout, epoch_seconds, notice_text, span_text, Running, ShutdownError,
+};
 
 fn home(fs: &Rooted, config: Option<&str>) -> std::path::PathBuf {
     let home = std::path::PathBuf::from(os::host().flavor().from_top("/home/u"));
@@ -92,4 +94,48 @@ fn the_errors_are_a_decline_and_a_failure() {
         frontends: "none".to_string(),
     };
     assert_eq!(left.code(), "ctxloom-wiring-shutdown-incomplete");
+}
+
+// A span is said as the one grammar writes it, longest unit first.
+#[test]
+fn a_span_is_said_longest_unit_first() {
+    for (seconds, text) in [
+        (0, "0s"),
+        (1, "1s"),
+        (2, "2s"),
+        (59, "59s"),
+        (60, "1m"),
+        (300, "5m"),
+        (3_600, "1h"),
+        (5_400, "1h30m"),
+        (3_661, "1h1m1s"),
+        (86_400, "1d"),
+        (90_061, "1d1h1m1s"),
+    ] {
+        assert_eq!(span_text(Duration::from_secs(seconds)), text, "{seconds}");
+        assert_eq!(
+            duration_text::parse(text),
+            Ok(Duration::from_secs(seconds)),
+            "{text} reads back"
+        );
+    }
+}
+
+// What a live frontend's human is told when a drain starts (OD-63).
+#[test]
+fn a_frontend_is_told_when_it_will_be_stopped() {
+    assert_eq!(
+        notice_text(Duration::from_secs(120)),
+        "ctxloom is shutting down: this session will be stopped in 2m; finish and exit"
+    );
+}
+
+#[test]
+fn the_epoch_seconds_are_the_hosts_clock() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let read = epoch_seconds();
+    assert!(read >= now && read <= now + 5, "{read} {now}");
 }

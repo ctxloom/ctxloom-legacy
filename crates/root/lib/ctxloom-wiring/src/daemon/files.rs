@@ -388,6 +388,24 @@ impl DaemonFiles {
         named && self.fs.remove_file(&self.path(DIE_AT)).is_ok()
     }
 
+    /// The test-support switch that makes the daemon deaf to a stop and a
+    /// drain (`test-deaf-to-stop`): while it is there, each is taken and
+    /// ignored, so `ctxloom shutdown` finds a daemon that will not exit.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn deaf_to_stop(&self) -> bool {
+        self.fs.exists(&self.path(DEAF_TO_STOP)).unwrap_or(false)
+    }
+
+    /// The test-support wait `ctxloom shutdown` gives a daemon it asked the
+    /// plain stop (`test-shutdown-stop-wait`, its one line whole seconds);
+    /// none, or one that does not read, is none.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn shutdown_stop_wait(&self) -> Option<std::time::Duration> {
+        let bytes = self.fs.read(&self.path(SHUTDOWN_STOP_WAIT)).ok()?;
+        let seconds = String::from_utf8_lossy(&bytes).trim().parse().ok()?;
+        Some(std::time::Duration::from_secs(seconds))
+    }
+
     /// The test-support switch that fails the daemon's start-up catch-up
     /// (OD-52, `test-start-up-fails`): while it is there, every start-up
     /// attempt (the start's, and each round's again) fails, its why the
@@ -516,6 +534,14 @@ const DIE_AT: &str = "test-die-at";
 /// The test-support switch that fails a daemon's start-up catch-up (OD-52).
 #[cfg(feature = "test-support")]
 const START_UP_FAILS: &str = "test-start-up-fails";
+
+/// The test-support switch that makes the daemon ignore a stop and a drain.
+#[cfg(feature = "test-support")]
+const DEAF_TO_STOP: &str = "test-deaf-to-stop";
+
+/// The test-support wait of `ctxloom shutdown` for a daemon it stopped.
+#[cfg(feature = "test-support")]
+const SHUTDOWN_STOP_WAIT: &str = "test-shutdown-stop-wait";
 
 /// A hand-off's text: its header, then a `NAME=value` line per variable of
 /// the child's environment, a `@NAME=value` line per place of its

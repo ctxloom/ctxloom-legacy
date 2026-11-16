@@ -22,7 +22,7 @@
 
 mod frontends;
 
-pub use frontends::{FrontendHeld, FrontendLocks};
+pub use frontends::{FrontendHeld, FrontendLocks, FrontendNotice};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

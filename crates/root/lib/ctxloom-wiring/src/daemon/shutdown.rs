@@ -7,7 +7,9 @@
 //! `1h30m`, `now`); none given, the home config's `daemon.drain_timeout`,
 //! else [`daemon_application::HAND_OVER_PERIOD`]. A span that is not `now`
 //! DRAINS the daemon within it (`daemon stop --drain`'s request, its
-//! timeout this one), and waits for the daemon to exit and the frontends to
+//! timeout this one), TELLS each live frontend at once that it will be
+//! stopped then (its notice, which it shows its human: owner, 2026-11-15,
+//! OD-63), and waits for the daemon to exit and the frontends to
 //! end, at most that long (the daemon then a grace longer, as its period's
 //! end stops what it still hosts). Then, `now` at once: each live frontend
 //! is asked to stop (its stop file, [`liveness::FrontendLocks`]; it stops
@@ -50,6 +52,40 @@ const STOP_WAIT: Duration = Duration::from_secs(30);
 
 /// How often what still runs is looked at.
 const LOOK: Duration = Duration::from_millis(100);
+
+/// What a live frontend's human is told when a drain starts (owner,
+/// 2026-11-15, OD-63; a DRAFT wording): it will be stopped once `left` has
+/// passed.
+pub(crate) fn notice_text(left: Duration) -> String {
+    format!(
+        "ctxloom is shutting down: this session will be stopped in {}; finish and exit",
+        span_text(left)
+    )
+}
+
+/// `span` as the one grammar writes it, longest unit first, whole seconds:
+/// `2s`, `5m`, `1h30m`, `0s`.
+pub(crate) fn span_text(span: Duration) -> String {
+    let mut left = span.as_secs();
+    let mut text = String::new();
+    for (unit, length) in [("d", 86_400), ("h", 3_600), ("m", 60), ("s", 1)] {
+        if left >= length {
+            text.push_str(&format!("{}{unit}", left / length));
+            left %= length;
+        }
+    }
+    if text.is_empty() {
+        text.push_str("0s");
+    }
+    text
+}
+
+/// Seconds since the epoch, on this host's clock.
+pub(crate) fn epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
 
 /// The noun as the command line has it.
 pub(crate) fn noun() -> Command {
@@ -277,6 +313,18 @@ impl Shutdown<'_> {
         }
     }
 
+    /// How long the daemon asked the plain stop is waited for:
+    /// [`STOP_WAIT`], or, under test-support, the daemon directory's
+    /// `test-shutdown-stop-wait` (seconds), so a test of a daemon that will
+    /// not stop waits less.
+    fn stop_wait(&self) -> Duration {
+        #[cfg(feature = "test-support")]
+        if let Some(wait) = files_of(self.wiring).shutdown_stop_wait() {
+            return wait;
+        }
+        STOP_WAIT
+    }
+
     /// A client of the daemon serving, starting none.
     fn client(&self) -> daemon_api::Client<Reach<'_>> {
         client_reaching(self.wiring, Reach::new(self.wiring, self.stamp).observing())
@@ -292,6 +340,7 @@ impl Shutdown<'_> {
         }
         say(format!("running: {}", at_first.said()));
         if !period.is_zero() {
+            self.tell_frontends(&at_first.frontends, period, say);
             if at_first.daemon.is_some() {
                 let drained = block_on(self.client().drain(Some(period)))?.map_err(called)?;
                 let hosts: Vec<String> = drained
@@ -328,6 +377,22 @@ impl Shutdown<'_> {
         self.stop_what_remains(say)
     }
 
+    /// Tell each of `frontends` it will be stopped once `period` has passed
+    /// (its notice: no `stop_at`, as this shutdown asks it then).
+    fn tell_frontends(&self, frontends: &[u32], period: Duration, say: &mut dyn FnMut(String)) {
+        let locks = self.frontends();
+        let notice = liveness::FrontendNotice {
+            text: notice_text(period),
+            stop_at: None,
+        };
+        for pid in frontends {
+            match locks.tell(*pid, &notice) {
+                Ok(()) => say(format!("told the frontend pid {pid}: {}", notice.text)),
+                Err(e) => say(format!("cannot tell the frontend pid {pid}: {e}")),
+            }
+        }
+    }
+
     /// Ask each live frontend to stop, then the daemon serving the plain
     /// stop, waiting for each; what still runs after.
     fn stop_what_remains(&self, say: &mut dyn FnMut(String)) -> Result<Running, Failure> {
@@ -354,11 +419,12 @@ impl Shutdown<'_> {
                 "asked the daemon (pid {}) to stop even if live",
                 stopped.pid
             ));
-            let after = self.wait(STOP_WAIT, |running| running.daemon.is_none())?;
+            let within = self.stop_wait();
+            let after = self.wait(within, |running| running.daemon.is_none())?;
             if after.daemon.is_some() {
                 say(format!(
                     "after {}s, the daemon still serves",
-                    STOP_WAIT.as_secs()
+                    within.as_secs()
                 ));
             }
         }
