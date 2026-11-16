@@ -229,6 +229,17 @@ impl Rig {
     }
 }
 
+impl Drop for Rig {
+    /// A failing test lets its TUI and its blocker end (each runs until a
+    /// file beside it says so); its project then ends what it started that
+    /// still runs (`Project`'s drop) and removes the home, on which any
+    /// daemon left exits.
+    fn drop(&mut self) {
+        files::put(self.bin.join("release"), "go");
+        files::put(self.bin.join("unblock"), "go");
+    }
+}
+
 /// Wait, bounded, for `ready`; `what` names it when it never comes.
 fn wait(log: &str, what: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + WAIT;
@@ -395,8 +406,9 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     files::put(&gate, "wait");
     let session = rig.start_session(&[]);
     let harp = rig.harp();
-    rig.kill_daemon();
-    // No daemon can start: its single-instance lock is held.
+    // No daemon can start: its single-instance lock is held, by a blocker
+    // waiting on it BEFORE the daemon is killed, so it takes the lock ahead
+    // of the daemon the frontend's watch starts at once.
     let blocker = rig.bin.join("blocks-daemons");
     files::put_program(&blocker, BLOCKS_DAEMONS);
     let unblock = rig.bin.join("unblock");
@@ -407,13 +419,17 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
         ])
         .spawn()
         .expect("the blocker starts");
+    rig.kill_daemon();
     files::remove(&gate);
     wait(&rig.log(), "the TUI's start", || {
         files::exists(rig.bin.join("tui-started"))
     });
     let held = rig.home_file("held");
+    // Its hold, not the hold's lock (taken before the hold is written).
     wait(&rig.log(), "the start held", || {
-        !files::children(&held).is_empty()
+        files::children(&held)
+            .iter()
+            .any(|path| path.extension().is_some_and(|e| e == "held"))
     });
     files::put(&unblock, "go");
     let _ = blocking.wait();
@@ -439,4 +455,173 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
         "{run:?}"
     );
     rig.stop();
+}
+
+// Owner, 2026-11-15 (OD-62): `ctxloom shutdown now` asks a live TUI's
+// frontend to stop (a frontend outlives its daemon, so the daemon alone is
+// not enough), then the daemon the plain stop: the TUI is stopped as a
+// SIGTERM to its frontend would stop it (ruling 114), its end is recorded,
+// and nothing of ctxloom runs after.
+#[test]
+fn test_a_shutdown_now_stops_a_live_tuis_frontend_and_the_daemon() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    let harp = rig.harp();
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    wait(&rig.log(), "the start recorded", || {
+        rig.types(&harp, true)
+            .iter()
+            .any(|t| t == "RunnerStartedRecorded")
+    });
+    let daemon = rig.daemon_pid().expect("a daemon serves");
+    let shut = rig.run(&["shutdown", "now"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), rig.log());
+    assert!(
+        shut.stdout.contains("asked the frontend pid"),
+        "{}",
+        shut.said()
+    );
+    assert!(
+        shut.stdout
+            .contains("stopped: nothing of ctxloom is running"),
+        "{}",
+        shut.said()
+    );
+    let _ = finished(session);
+    wait(&rig.log(), "the stopped daemon's exit", || !alive(daemon));
+    assert_eq!(rig.ended(&harp), "runner-exit", "{}", rig.log());
+    rig.stop();
+}
+
+// A drain leaves a TUI to its human for the drain's whole timeout (no TUI
+// is handed over): `ctxloom shutdown 2s` waits the two seconds, says the
+// frontend still runs, then asks it to stop.
+#[test]
+fn test_a_shutdown_with_a_span_waits_it_out_for_a_live_tui_then_stops_it() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    let shut = rig.run(&["shutdown", "2s"]);
+    assert_eq!(shut.code, 0, "{}\n{}", shut.said(), rig.log());
+    assert!(
+        shut.stdout.contains("after the drain's 2s, still running")
+            && shut.stdout.contains("asked the frontend pid"),
+        "{}",
+        shut.said()
+    );
+    let told = shut
+        .stdout
+        .find("told the frontend pid")
+        .unwrap_or_else(|| panic!("the frontend was told at once: {}", shut.said()));
+    let after = shut
+        .stdout
+        .find("after the drain's 2s")
+        .expect("said above");
+    assert!(told < after, "told at the drain's start: {}", shut.said());
+    let ran = finished(session);
+    assert!(
+        ran.stderr.contains(
+            "ctxloom: ctxloom is shutting down: this session will be stopped in 2s; finish and exit"
+        ),
+        "its terminal showed the notice: {}",
+        ran.said()
+    );
+    rig.stop();
+}
+
+// A failing test leaves nothing of ctxloom running (2026-11-15, U8r: two
+// test daemons a panicked TUI test left blocked the next commit's gate for
+// half an hour). A rig dropped under a live TUI, as a panic drops it, ends
+// its frontend (which would otherwise keep, or start again, a daemon) and so
+// the daemon too, before and once its home is removed.
+#[test]
+fn test_a_rig_dropped_under_a_live_tui_leaves_no_frontend_or_daemon() {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    let harp = rig.harp();
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    wait(&rig.log(), "the start recorded", || {
+        rig.types(&harp, true)
+            .iter()
+            .any(|t| t == "RunnerStartedRecorded")
+    });
+    let frontend = u64::from(session.id());
+    let daemon = rig.daemon_pid().expect("a daemon serves");
+    drop(rig);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while (alive(frontend) || alive(daemon)) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!alive(frontend), "the frontend outlived its test");
+    assert!(!alive(daemon), "the daemon outlived its test");
+    drop(session);
+}
+
+/// Send `signal` to `pid`, whatever comes of it (it may have exited).
+fn send(pid: u64, signal: &str) {
+    let _ = std::process::Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .status();
+}
+
+/// A live TUI's daemon sent SIGTERM twice, its ctxloom home removed first
+/// when `home_removed`: the daemon exits within a bound (ruling 114).
+fn two_sigterms_under_a_live_tui(home_removed: bool) {
+    let Some(rig) = rig() else {
+        return;
+    };
+    let session = rig.start_session(&[]);
+    let harp = rig.harp();
+    wait(&rig.log(), "the TUI's start", || {
+        files::exists(rig.bin.join("tui-started"))
+    });
+    wait(&rig.log(), "the start recorded", || {
+        rig.types(&harp, true)
+            .iter()
+            .any(|t| t == "RunnerStartedRecorded")
+    });
+    let daemon = rig.daemon_pid().expect("a daemon serves");
+    if home_removed {
+        files::remove_tree(rig.project.home().join(".ctxloom"));
+    }
+    send(daemon, "-TERM");
+    send(daemon, "-TERM");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while alive(daemon) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let outlived = alive(daemon);
+    if outlived {
+        send(daemon, "-KILL");
+    }
+    rig.release_tui();
+    let _ = finished(session);
+    assert!(!outlived, "the daemon outlived two SIGTERMs by 30s");
+}
+
+// Ruling 114, FORCED (2026-11-15: a test's daemon hosting a leaked
+// frontend's session ignored two SIGTERMs): the daemon of a live TUI
+// exits on two SIGTERMs.
+#[test]
+fn test_two_sigterms_stop_the_daemon_of_a_live_tui() {
+    two_sigterms_under_a_live_tui(false);
+}
+
+// The same with the ctxloom home removed first, as a test's temporary
+// home is.
+#[test]
+fn test_two_sigterms_stop_the_daemon_of_a_live_tui_whose_home_was_removed() {
+    two_sigterms_under_a_live_tui(true);
 }

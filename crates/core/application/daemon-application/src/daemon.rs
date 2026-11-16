@@ -362,6 +362,19 @@ impl<E: Edge> Daemon<E> {
         self
     }
 
+    /// Wait `period` from the hand-over's start, from now on: the drain in
+    /// progress honours a timeout changed while it runs (owner, 2026-11-15:
+    /// the root reads `daemon.drain_timeout` again at each round).
+    pub fn hand_over_within(&mut self, period: std::time::Duration) {
+        self.hand_over_period = period;
+    }
+
+    /// How long a hand-over waits for a busy child (the period it was last
+    /// told).
+    pub fn hand_over_period(&self) -> std::time::Duration {
+        self.hand_over_period
+    }
+
     /// The daemon, placing each child where its agent's `workspace` says
     /// (s4-Q11) through `workspaces`, and letting a lost child's checkout
     /// go at its start's sweep (OD-19).
@@ -385,7 +398,7 @@ impl<E: Edge> Daemon<E> {
         self
     }
 
-    /// Hand what it hosts over to the next daemon (OD-3 extended, s4-Q4):
+    /// Hand what it hosts over to the next daemon (OD-54; `ctxloom shutdown`, a SIGTERM):
     /// from its next round on it starts no child and delivers no message
     /// but the drain's guidance, and each child it hosts with no turn in
     /// flight is ended, its incarnation ended `drained` and its hand-off

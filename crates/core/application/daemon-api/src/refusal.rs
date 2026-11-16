@@ -135,11 +135,10 @@ pub enum ApiRejection {
         runs: u64,
         harps: Vec<String>,
     },
-    /// A call to a daemon asked to drain (s4-Q4): its stamp, the stamp it
-    /// hands over to, and the sessions of the runs it still hosts.
+    /// A call to a daemon asked to drain (OD-54): its stamp and the
+    /// sessions of the runs it still hosts.
     Draining {
         daemon: String,
-        successor: String,
         harps: Vec<String>,
     },
     /// A configured age (`session_purge_age`) that is neither an age nor a
@@ -194,11 +193,10 @@ impl Diagnostic for ApiRejection {
             ApiRejection::DaemonHosting { runs, harps } => {
                 vec![("runs", (*runs).into()), ("harps", harps.join(", ").into())]
             }
-            ApiRejection::Draining {
-                daemon,
-                successor,
-                harps,
-            } => draining_args(daemon, successor, harps),
+            ApiRejection::Draining { daemon, harps } => vec![
+                ("daemon", daemon.as_str().into()),
+                ("harps", harps.join(", ").into()),
+            ],
             ApiRejection::AgeInvalid { key, value } => {
                 vec![
                     ("key", key.as_str().into()),
@@ -226,21 +224,6 @@ impl ExitClass for ApiRejection {
     fn exit(&self) -> Exit {
         Exit::REFUSED
     }
-}
-
-/// The args of `daemon-api-draining`, the server's refusal and the
-/// client's alike: the draining daemon's stamp, its successor's, and the
-/// sessions it still hosts.
-pub(crate) fn draining_args<'a>(
-    daemon: &'a str,
-    successor: &'a str,
-    harps: &[String],
-) -> Vec<(&'a str, Arg)> {
-    vec![
-        ("daemon", daemon.into()),
-        ("successor", successor.into()),
-        ("harps", harps.join(", ").into()),
-    ]
 }
 
 /// A typed refusal, as the rejection of its own crate.
@@ -391,7 +374,6 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
         "ctxloom.v1.DaemonDraining" => decode::<v1::DaemonDraining>(refusal).and_then(|r| {
             api(ApiRejection::Draining {
                 daemon: r.version,
-                successor: r.successor,
                 harps: r.harps,
             })
         }),
@@ -537,7 +519,6 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(ApiRejection::Draining {
             daemon: "v0.1.0-abc".to_string(),
-            successor: "v0.2.0-def".to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
         }),
         Box::new(ApiRejection::AgeInvalid {

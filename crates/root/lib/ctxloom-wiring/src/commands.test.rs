@@ -541,7 +541,9 @@ fn a_command_in_a_project_with_a_store_of_its_own_is_refused() {
     ));
 }
 
-// T18: the daemon hosts a child on claude or opencode, each by its name.
+// T18: the daemon hosts a child on claude or opencode, each by its name;
+// OD-58: they are the engines granted every urgency, so a child adapter
+// added here is granted there too.
 #[test]
 fn the_daemon_hosts_children_on_claude_and_opencode() {
     let env = EnvSnapshot::of([("HOME", "/nowhere")]);
@@ -551,6 +553,7 @@ fn the_daemon_hosts_children_on_claude_and_opencode() {
         .map(|engine| engine.name().to_string())
         .collect();
     assert_eq!(names, ["claude-code", "opencode"]);
+    assert_eq!(names, session_policies::CHILD_ENGINES);
 }
 
 /// What `engine` prepares for a child's home at `/h` (no context, no

@@ -169,8 +169,8 @@ pub fn daemon(daemon: &v1::Daemon) -> Value {
         .u32("clients", daemon.clients)
         .u64("idle_seconds", daemon.idle_seconds)
         .u64("idle_limit_seconds", daemon.idle_limit_seconds)
-        .text("draining_for", &daemon.draining_for)
         .list("warnings", daemon.warnings.iter().map(notice).collect())
+        .flag("draining", daemon.draining)
         .done()
 }
 

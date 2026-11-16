@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use daemon_application::{ChildHomes, Ears, HandOffs};
 use run_ports::{ChildObservation, Exit};
@@ -225,7 +226,11 @@ async fn a_read_waits_for_a_round_started_after_it_was_asked() {
     let one_shots = Arc::new(daemon_application::OneShots::new(Box::new(Kept(
         Arc::default(),
     ))));
-    let shared = super::Shared::new(session_index::SessionIndexes::default(), one_shots);
+    let shared = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        one_shots,
+        unsaid(),
+    );
     let running = shared.round_starts();
     let mut read = shared.fresh();
     assert!(!ready(&mut read), "no round since it was asked");
@@ -284,6 +289,7 @@ fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
     let shared = super::Shared::new(
         session_index::SessionIndexes::default(),
         Arc::clone(&one_shots),
+        unsaid(),
     );
     one_shots.create(daemon_application::HostRequest::default());
     // The round, as the loop tells it: its children.
@@ -324,4 +330,68 @@ fn kinds(
         .iter()
         .map(|run| (&run.run[run.run.len() - 12..], run.kind()))
         .collect()
+}
+
+/// A drain's period with no config saying one: the default, five minutes.
+fn unsaid() -> super::Period {
+    super::Period {
+        default: daemon_application::HAND_OVER_PERIOD,
+        configured: Box::new(|| None),
+    }
+}
+
+// Owner, 2026-11-15: a drain's period is the one its request asked
+// (`ctxloom shutdown <duration>`), else the home config's (read again each
+// time, so a change while it drains is the drain's), else the default; the
+// hand-over's warning says the same.
+#[test]
+fn a_drains_period_is_the_requests_else_the_configs_else_the_default() {
+    use daemon_api::Hosting;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let one_shots = || {
+        Arc::new(daemon_application::OneShots::new(Box::new(Kept(
+            Arc::default(),
+        ))))
+    };
+    let said = Arc::new(AtomicU64::new(0));
+    let config = Arc::clone(&said);
+    let shared = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        one_shots(),
+        super::Period {
+            default: Duration::from_secs(300),
+            configured: Box::new(move || match config.load(Ordering::SeqCst) {
+                0 => None,
+                seconds => Some(Duration::from_secs(seconds)),
+            }),
+        },
+    );
+    assert_eq!(shared.drain_period(), Duration::from_secs(300));
+    said.store(60, Ordering::SeqCst);
+    assert_eq!(
+        shared.drain_period(),
+        Duration::from_secs(60),
+        "the config's"
+    );
+    shared.drain(None);
+    said.store(5, Ordering::SeqCst);
+    assert_eq!(shared.drain_period(), Duration::from_secs(5), "read again");
+    assert_eq!(shared.hand_over_seconds(), 5);
+    let asked = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        one_shots(),
+        super::Period {
+            default: Duration::from_secs(300),
+            configured: Box::new(|| Some(Duration::from_secs(60))),
+        },
+    );
+    assert!(!asked.draining());
+    asked.drain(Some(Duration::from_secs(900)));
+    asked.drain(Some(Duration::from_secs(1)));
+    assert_eq!(
+        asked.drain_period(),
+        Duration::from_secs(900),
+        "the first ask's"
+    );
+    assert!(asked.draining());
 }

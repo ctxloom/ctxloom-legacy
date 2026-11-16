@@ -89,7 +89,7 @@ impl Diagnostic for LibError {
 /// One value of every error here, for a catalog test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
-    vec![
+    let samples: Vec<Box<dyn Diagnostic>> = vec![
         Box::new(LibError::NoHome {
             variable: "HOME".to_string(),
         }),
@@ -123,7 +123,11 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
             count: 2,
             why: "the daemon refused it".to_string(),
         }),
-    ]
+    ];
+    samples
+        .into_iter()
+        .chain(crate::daemon::shutdown::samples())
+        .collect()
 }
 
 #[cfg(test)]

@@ -10,7 +10,10 @@ use run_application::frontend::Report;
 use run_application::{Done, Ended, RunError};
 use run_ports::{Delivery, Launch, LaunchKind, Stdio, TurnCommand};
 
-use super::{events_of, external_id_of, project_of, report_book, reported_of, seen_in};
+use super::{
+    beside, events_of, external_id_of, project_of, report_book, reported_of, seen_in, StopCause,
+    Watch,
+};
 
 const RUN: &str = "0195f0a4-7b1e-7000-8000-000000000001";
 const SESSION: &str = "0195f0a4-7b1e-7000-8000-000000000002";
@@ -225,4 +228,108 @@ fn a_reports_external_id_is_its_books() {
         external_id_of(&angzarr_embedded::v1::CommandBook::default()),
         ""
     );
+}
+
+fn told(stop_at: Option<u64>) -> liveness::FrontendNotice {
+    liveness::FrontendNotice {
+        text: "ctxloom is shutting down: this session will be stopped in 2s; finish and exit"
+            .to_string(),
+        stop_at,
+    }
+}
+
+// A notice is shown once, when it is first seen or replaced; nothing is
+// shown or stopped for none (owner, 2026-11-15, OD-63).
+#[test]
+fn a_frontend_shows_each_notice_once() {
+    let mut watch = Watch::default();
+    assert_eq!(watch.look(false, None, 10), (None, None));
+    assert_eq!(
+        watch.look(false, Some(told(None)), 10),
+        (Some(told(None).text), None)
+    );
+    assert_eq!(
+        watch.look(false, Some(told(None)), 11),
+        (None, None),
+        "once"
+    );
+    let later = liveness::FrontendNotice {
+        text: "another".to_string(),
+        stop_at: None,
+    };
+    assert_eq!(
+        watch.look(false, Some(later), 12),
+        (Some("another".to_string()), None),
+        "a replaced notice is shown again"
+    );
+}
+
+// A stop asked stops it at once; a notice's `stop_at` stops it once its
+// time has come, even once its file is gone, and not before.
+#[test]
+fn a_frontend_stops_when_asked_or_when_the_drain_told_of_ends() {
+    let mut watch = Watch::default();
+    assert_eq!(watch.look(true, None, 0), (None, Some(StopCause::Asked)));
+    let mut watch = Watch::default();
+    let _ = watch.look(false, Some(told(Some(100))), 98);
+    assert_eq!(watch.look(false, None, 99), (None, None), "not yet");
+    assert_eq!(
+        watch.look(false, None, 100),
+        (None, Some(StopCause::DrainEnded)),
+        "its time came: the file being gone changes nothing"
+    );
+    assert_eq!(
+        watch.look(true, None, 100),
+        (None, Some(StopCause::Asked)),
+        "an ask is said as one"
+    );
+}
+
+#[test]
+fn a_frontend_says_why_it_stopped() {
+    assert!(StopCause::Asked.said().contains("ctxloom shutdown"));
+    assert!(StopCause::DrainEnded.said().contains("drain"));
+}
+
+// FORCED (2026-11-15): the command's main thread holds std's stderr lock for
+// its whole run, and the frontend's watch writes its notices to stderr. Run
+// beside the session, on the thread that polls it (the lock's holder), the
+// write is made at once and the session ends; spawned on the runtime's one
+// worker, it waited for the lock for good.
+#[test]
+fn a_watch_beside_the_session_writes_while_the_command_holds_stderr() {
+    use std::io::Write;
+    let (tell, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let runtime = super::run_runtime().expect("a runtime");
+        let held = std::io::stderr().lock();
+        let wrote = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marked = std::sync::Arc::clone(&wrote);
+        let out = runtime.block_on(beside(
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                7
+            },
+            Some(async move {
+                let _ = writeln!(std::io::stderr(), "a notice");
+                marked.store(true, std::sync::atomic::Ordering::SeqCst);
+            }),
+        ));
+        drop(held);
+        let _ = tell.send((out, wrote.load(std::sync::atomic::Ordering::SeqCst)));
+    });
+    assert_eq!(
+        heard.recv_timeout(std::time::Duration::from_secs(20)),
+        Ok((7, true))
+    );
+}
+
+// What runs beside ends when the session does, unfinished.
+#[test]
+fn what_runs_beside_the_session_is_dropped_when_it_ends() {
+    let runtime = super::run_runtime().expect("a runtime");
+    let out = runtime.block_on(beside(async { 3 }, Some(std::future::pending::<()>())));
+    assert_eq!(out, 3);
+    let none: Option<std::future::Ready<()>> = None;
+    assert_eq!(runtime.block_on(beside(async { 4 }, none)), 4);
 }

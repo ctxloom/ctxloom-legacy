@@ -66,6 +66,10 @@ const LAST_WORD: Duration = Duration::from_secs(10);
 /// that serves then.
 const WATCH_AGAIN: Duration = Duration::from_millis(250);
 
+/// How often a frontend looks for a stop `ctxloom shutdown` asked of it,
+/// and for a notice it was told.
+const STOP_LOOK: Duration = Duration::from_millis(200);
+
 /// The stack of the thread a prepared session is driven on, as a main
 /// thread's is.
 const SESSION_STACK: usize = 16 * 1024 * 1024;
@@ -345,8 +349,35 @@ pub(crate) fn client_terminal(
         }
     };
     let (stop, heard) = (host_launcher::Stop::new(), Heard::default());
+    // Its frontend lock, held for its life (owner, 2026-11-15): how
+    // `ctxloom shutdown` finds it, and asks it to stop.
+    let frontends = liveness::FrontendLocks::new(wiring.fs(), wiring.home());
+    let pid = std::process::id();
+    let held = frontends.hold(pid);
     let mut done = runtime.block_on(async {
         let mut said = Vec::new();
+        let stopped = std::sync::Arc::new(Mutex::new(None::<StopCause>));
+        // The watch runs IN this future, on the command's main thread, never
+        // spawned: it writes its notices to stderr, whose std lock that
+        // thread holds for the command's whole run (the binary's `main`), so
+        // from the runtime's one worker the write would wait for the
+        // command's end, and the worker with it: the signals it hears (ruling
+        // 114), the stop, the session itself (2026-11-15: a frontend told of
+        // a drain hung for good, SIGTERM ignored).
+        let watching = match &held {
+            Ok(_) => Some(watch_for_stop(
+                liveness::FrontendLocks::new(wiring.fs(), wiring.home()),
+                pid,
+                stop.clone(),
+                std::sync::Arc::clone(&stopped),
+            )),
+            Err(e) => {
+                said.push(Notice::text(format!(
+                    "cannot hold this frontend's lock ({e:?}): `ctxloom shutdown` will not find it"
+                )));
+                None
+            }
+        };
         // Made on the runtime, before anything is launched.
         let hearing = match wiring.fs().os().signals(&signals::HEARD) {
             Ok(signals) => Some(tokio::spawn(signals::forward(
@@ -374,16 +405,142 @@ pub(crate) fn client_terminal(
             request: request.clone(),
             request_id: crate::daemon::request_id(),
         };
-        let mut done = terminal(wiring, stamp, &asked, &stop).await;
+        let mut done = beside(terminal(wiring, stamp, &asked, &stop), watching).await;
         if let Some(hearing) = hearing {
             hearing.abort();
+        }
+        let cause = *stopped.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cause) = cause {
+            said.push(Notice::text(cause.said().to_string()));
         }
         said.append(&mut done.notices);
         done.notices = said;
         done
     });
+    drop(held);
     heard.overrule(&mut done.result);
     done
+}
+
+/// `main`'s output, `aside` polled beside it until it ends or `main` does
+/// (then dropped), both on the polling thread.
+async fn beside<T>(
+    main: impl std::future::Future<Output = T>,
+    aside: Option<impl std::future::Future<Output = ()>>,
+) -> T {
+    let mut main = std::pin::pin!(main);
+    let mut aside = std::pin::pin!(aside);
+    std::future::poll_fn(|cx| {
+        if let Some(running) = aside.as_mut().as_pin_mut() {
+            if running.poll(cx).is_ready() {
+                aside.set(None);
+            }
+        }
+        main.as_mut().poll(cx)
+    })
+    .await
+}
+
+/// Why a frontend stopped its TUI by itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopCause {
+    /// `ctxloom shutdown` asked it to (its stop file).
+    Asked,
+    /// The drain it was told of ended (its notice's `stop_at`).
+    DrainEnded,
+}
+
+impl StopCause {
+    /// What the session's end says of why (the `DrainEnded` sentence is a
+    /// DRAFT, OD-63).
+    fn said(self) -> &'static str {
+        match self {
+            StopCause::Asked => {
+                "asked to stop by `ctxloom shutdown`: the session's engine was stopped"
+            }
+            StopCause::DrainEnded => {
+                "the drain ctxloom was told of ended: the session's engine was stopped"
+            }
+        }
+    }
+}
+
+/// What a frontend watching for a stop has been told (owner, 2026-11-15,
+/// OD-63): the notice it showed last, whose `stop_at` stands even once its
+/// file is gone.
+#[derive(Default)]
+struct Watch {
+    told: Option<liveness::FrontendNotice>,
+}
+
+impl Watch {
+    /// One look, at `now` (seconds since the epoch): whether a stop was
+    /// asked, and the notice its file holds. What to show its human (a
+    /// notice not shown yet), and why to stop, if it should.
+    fn look(
+        &mut self,
+        stop_asked: bool,
+        notice: Option<liveness::FrontendNotice>,
+        now: u64,
+    ) -> (Option<String>, Option<StopCause>) {
+        let show = match notice {
+            Some(notice) if self.told.as_ref() != Some(&notice) => {
+                let text = notice.text.clone();
+                self.told = Some(notice);
+                Some(text)
+            }
+            _ => None,
+        };
+        let ended = self
+            .told
+            .as_ref()
+            .and_then(|told| told.stop_at)
+            .is_some_and(|at| at <= now);
+        let cause = if stop_asked {
+            Some(StopCause::Asked)
+        } else if ended {
+            Some(StopCause::DrainEnded)
+        } else {
+            None
+        };
+        (show, cause)
+    }
+}
+
+/// Watch for what `ctxloom shutdown` (or a daemon's SIGTERM drain) tells
+/// or asks of the frontend `pid`: each notice told is shown at once on its
+/// terminal (its standard error, which its human sees above the TUI); once
+/// a stop is asked, or the drain told of ends, `stop` is requested (the TUI
+/// asked to stop, then killed after its grace, as a SIGTERM to the frontend
+/// does, ruling 114) and `stopped` says why.
+async fn watch_for_stop(
+    frontends: liveness::FrontendLocks,
+    pid: u32,
+    stop: host_launcher::Stop,
+    stopped: Arc<Mutex<Option<StopCause>>>,
+) {
+    let mut watch = Watch::default();
+    loop {
+        tokio::time::sleep(STOP_LOOK).await;
+        let (show, cause) = watch.look(
+            frontends.stop_asked(pid),
+            frontends.notice(pid),
+            crate::daemon::shutdown::epoch_seconds(),
+        );
+        if let Some(text) = show {
+            use std::io::Write;
+            let mut err = std::io::stderr();
+            let _ = writeln!(err, "\r\nctxloom: {text}\r");
+            let _ = err.flush();
+        }
+        if let Some(cause) = cause {
+            *stopped
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cause);
+            stop.request();
+            return;
+        }
+    }
 }
 
 /// The session: created, then started and followed (see the module).

@@ -94,6 +94,24 @@ fn hosting(script: Script) -> (OneShots, Arc<Mutex<Vec<Told>>>, Arc<AtomicUsize>
     (one_shots, told, stops)
 }
 
+/// At most this many of a watch's events are read: more is a watch that
+/// never ends.
+const WATCH_BOUND: usize = 16;
+
+/// A watch's events, read to its end, which must come within
+/// [`WATCH_BOUND`] of them. Bounded, so a watch that never ends (its cursor
+/// stuck, or an event made up each call) fails its test at once instead of
+/// growing a `Vec` until the machine has no memory left: such a mutant did
+/// that twice on 2026-11-15, to about 70 GB.
+fn watched(watch: impl Iterator<Item = v1::RunEvent>) -> Vec<v1::RunEvent> {
+    let events: Vec<v1::RunEvent> = watch.take(WATCH_BOUND).collect();
+    assert!(
+        events.len() < WATCH_BOUND,
+        "the watch never ended: {events:?}"
+    );
+    events
+}
+
 fn kinds(events: &[v1::RunEvent]) -> Vec<&'static str> {
     events
         .iter()
@@ -141,7 +159,7 @@ fn test_a_watch_gives_every_event_from_the_first_then_none() {
     let Created::Placed(placed) = one_shots.create(request()) else {
         panic!("placed");
     };
-    let events: Vec<v1::RunEvent> = one_shots.watch(&placed.run).expect("hosted").collect();
+    let events = watched(one_shots.watch(&placed.run).expect("hosted"));
     assert_eq!(kinds(&events), ["notice", "reply", "end"]);
     let Some(v1::run_event::Event::Reply(reply)) = &events[1].event else {
         panic!("a reply");
@@ -152,7 +170,7 @@ fn test_a_watch_gives_every_event_from_the_first_then_none() {
     };
     assert_eq!(*end, run_application::client::answered());
     // A second watch, later, gives the same.
-    assert_eq!(one_shots.watch(&placed.run).unwrap().count(), 3);
+    assert_eq!(watched(one_shots.watch(&placed.run).unwrap()).len(), 3);
     assert!(one_shots.watch("no-such-run").is_none());
     assert!(one_shots.get("no-such-run").is_none());
 }
@@ -189,7 +207,7 @@ fn test_a_stop_is_asked_once_said_to_its_watchers_and_ends_the_run_as_the_signal
     assert!(one_shots.unstopped().is_empty());
     // Its turn answered anyway (the stop raced its end): the stop says.
     told.lock().unwrap()[0].done(answer("too late"));
-    let events: Vec<v1::RunEvent> = one_shots.watch(&placed.run).unwrap().collect();
+    let events = watched(one_shots.watch(&placed.run).unwrap());
     assert_eq!(kinds(&events), ["stop", "notice", "end"]);
     let Some(v1::run_event::Event::Stop(stop)) = &events[0].event else {
         panic!("a stop");
@@ -226,7 +244,7 @@ fn test_stop_all_stops_every_live_one_as_a_sigterm() {
     assert!(one_shots.wait_ended(Duration::from_millis(1)));
     let ends: Vec<i32> = (1..=2)
         .map(|n| {
-            let events: Vec<v1::RunEvent> = one_shots.watch(&placement(n).run).unwrap().collect();
+            let events = watched(one_shots.watch(&placement(n).run).unwrap());
             match &events.last().unwrap().event {
                 Some(v1::run_event::Event::End(end)) => end.exit,
                 _ => panic!("an end"),

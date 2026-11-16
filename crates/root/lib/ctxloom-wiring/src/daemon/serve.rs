@@ -74,7 +74,9 @@ pub(crate) struct Pace {
     /// How often it looks at the store.
     pub(crate) poll: Duration,
     /// How long a drain waits for a busy child before it hands it over
-    /// anyway, its turn cut (OD-54; `daemon_application::HAND_OVER_PERIOD`).
+    /// anyway, its turn cut, when neither the drain's request nor the home
+    /// config's `daemon.drain_timeout` says (OD-54;
+    /// `daemon_application::HAND_OVER_PERIOD`).
     pub(crate) hand_over: Duration,
 }
 
@@ -114,7 +116,7 @@ pub(crate) fn serve(
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
-    runtime.block_on(async move {
+    let served = runtime.block_on(async move {
         let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
         let store = Stores::new(Arc::clone(&fs), home.to_path_buf())
             .open()
@@ -135,10 +137,7 @@ pub(crate) fn serve(
         dies_at_steps(&core.edge(), &files);
         // What the loop shares with the API's use cases (slice 2 step 5).
         let one_shots = one_shots_over(&core, home, &temp);
-        let shared = Arc::new(Shared::new(
-            kept.index.clone().unwrap_or_default(),
-            Arc::clone(&one_shots),
-        ));
+        let shared = shared_over(&kept, &one_shots, (&fs, home), pace);
         let terminals = terminals_over(&core, home, &temp);
         let started = start(
             &fs,
@@ -169,6 +168,9 @@ pub(crate) fn serve(
         };
         let endpoint = own.endpoint.clone();
         said(&say, &format!("serving at {endpoint}"));
+        // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
+        // stop (`--even-if-live`); heard for the daemon's life.
+        let terminated = hear_terminate((&fs, home), &shared, &say);
         let result = run(
             &mut launcher,
             &core,
@@ -177,6 +179,9 @@ pub(crate) fn serve(
             &say,
         )
         .await;
+        if let Some(terminated) = terminated {
+            terminated.abort();
+        }
         files.withdraw_own(&own);
         // Every holder of the store let go before the close (ruling 131):
         // the launcher (its edge and its folds), the edge, the listener's
@@ -210,7 +215,37 @@ pub(crate) fn serve(
             said(&say, &format!("the store did not close: {unclosed}"));
         }
         result
-    })
+    });
+    // Its runtime let go within a bound, never waited on for good: a live
+    // frontend's session keeps a blocking task (its `WatchRun`, waiting on
+    // the session's thread, which waits on the frontend) that a plain drop
+    // waits out for the frontend's life, and every SIGTERM meanwhile is
+    // taken by the runtime's handler and heard by nothing (2026-11-15: a
+    // test's daemon outlived its home 43 minutes; ruling 114). What is left
+    // ends with the process.
+    runtime.shutdown_timeout(RUNTIME_END);
+    served
+}
+
+/// How long the daemon's exit waits for its runtime's blocking tasks.
+const RUNTIME_END: Duration = Duration::from_secs(5);
+
+/// What the loop shares with its API, its drain's period read from
+/// `pace`'s default and `home`'s config.
+fn shared_over(
+    kept: &Projectors,
+    one_shots: &Arc<OneShots>,
+    (fs, home): (&Arc<dyn Fs>, &Path),
+    pace: Pace,
+) -> Arc<Shared> {
+    Arc::new(Shared::new(
+        kept.index.clone().unwrap_or_default(),
+        Arc::clone(one_shots),
+        Period {
+            default: pace.hand_over,
+            configured: configured_drain_timeout(fs, home),
+        },
+    ))
 }
 
 /// The daemon's monotonic clock (OD-54): the time since its process made it.
@@ -219,6 +254,106 @@ struct ProcessClock(Instant);
 impl daemon_application::Monotonic for ProcessClock {
     fn now(&self) -> Duration {
         self.0.elapsed()
+    }
+}
+
+/// The home config's `daemon.drain_timeout` (owner, 2026-11-15), read
+/// afresh each time it is asked ([`super::shutdown::configured_drain_timeout`]).
+fn configured_drain_timeout(fs: &Arc<dyn Fs>, home: &Path) -> Reader {
+    let (fs, home) = (Arc::clone(fs), home.to_path_buf());
+    Box::new(move || super::shutdown::configured_drain_timeout(&fs, &home))
+}
+
+/// Whether the daemon is to ignore a stop and a drain: only under
+/// test-support, while its switch is there.
+#[cfg(feature = "test-support")]
+fn deaf_to_stop(files: &DaemonFiles) -> bool {
+    files.deaf_to_stop()
+}
+
+#[cfg(not(feature = "test-support"))]
+fn deaf_to_stop(_: &DaemonFiles) -> bool {
+    false
+}
+
+/// How often a SIGTERM's drain looks again at its timeout, to tell the live
+/// frontends a changed one.
+const RETELL_LOOK: Duration = Duration::from_secs(1);
+
+/// Hear SIGTERM for the daemon's life (owner, 2026-11-15): the first asks
+/// it to drain within its configured timeout, as
+/// `daemon stop --drain` does; a second is the plain stop, ending what it
+/// hosts (`--even-if-live`, ruling 114's stop of each engine). None heard
+/// when the platform cannot listen (said in the log).
+///
+/// The drain also TELLS each live interactive frontend of `home` at once
+/// (owner, 2026-11-15, OD-63) when it will be stopped: at the drain's
+/// timeout from its start, by itself (its notice's `stop_at`), as no
+/// daemon may be serving then (one hosting nothing exits at once). A
+/// timeout changed while the drain runs is told again while the daemon
+/// lives.
+fn hear_terminate(
+    (fs, home): (&Arc<dyn Fs>, &Path),
+    shared: &Arc<Shared>,
+    say: &Say,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let mut signals = match fs.os().signals(&[os::Signal::Terminate]) {
+        Ok(signals) => signals,
+        Err(e) => {
+            said(
+                say,
+                &format!("cannot listen for SIGTERM ({e}): a SIGTERM ends the daemon"),
+            );
+            return None;
+        }
+    };
+    let (shared, say) = (Arc::clone(shared), Arc::clone(say));
+    let frontends = liveness::FrontendLocks::new(Arc::clone(fs), home);
+    Some(tokio::spawn(async move {
+        let _ = signals.recv().await;
+        said(&say, "SIGTERM: asked to drain");
+        daemon_api::Hosting::drain(shared.as_ref(), None);
+        shared.wake.notify_one();
+        let started = super::shutdown::epoch_seconds();
+        let mut told = None;
+        loop {
+            let period = shared.drain_period();
+            if told != Some(period) {
+                told = Some(period);
+                tell_frontends(&frontends, started + period.as_secs(), &say);
+            }
+            // `recv` is a poll of the signal source: cancelled by the
+            // timeout, it loses no signal.
+            if tokio::time::timeout(RETELL_LOOK, signals.recv())
+                .await
+                .is_ok()
+            {
+                break;
+            }
+        }
+        said(&say, "SIGTERM again: asked to stop even if live");
+        daemon_api::Hosting::stop(shared.as_ref(), true);
+        shared.wake.notify_one();
+    }))
+}
+
+/// Tell each live frontend that it will be stopped at `stop_at` (seconds
+/// since the epoch), by itself; each said in the log.
+fn tell_frontends(frontends: &liveness::FrontendLocks, stop_at: u64, say: &Say) {
+    let left =
+        std::time::Duration::from_secs(stop_at.saturating_sub(super::shutdown::epoch_seconds()));
+    for pid in frontends.live() {
+        let notice = liveness::FrontendNotice {
+            text: super::shutdown::notice_text(left),
+            stop_at: Some(stop_at),
+        };
+        match frontends.tell(pid, &notice) {
+            Ok(()) => said(
+                say,
+                &format!("told the frontend pid {pid}: {}", notice.text),
+            ),
+            Err(e) => said(say, &format!("cannot tell the frontend pid {pid}: {e}")),
+        }
     }
 }
 
@@ -233,7 +368,6 @@ fn about(stamp: &str, started_at: i64, pace: Pace) -> daemon_api::About {
             nanos: 0,
         },
         idle_limit_seconds: pace.idle.as_secs(),
-        hand_over_seconds: pace.hand_over.as_secs(),
     }
 }
 
@@ -710,7 +844,7 @@ fn launcher(
 
 /// Tick until the daemon is asked to stop, its single-instance lock file
 /// is no longer the one it holds (`held`: removed or replaced, so it
-/// excludes nobody), another daemon's discovery replaced its own (`own`, in
+/// excludes nobody), its home's ctxloom directory is gone, another daemon's discovery replaced its own (`own`, in
 /// `files`), or it has had nothing to do for its idle time. A discovery file that is gone is published again: the daemon
 /// still holds the single-instance lock, and a client finds it by the file (M11).
 async fn run<E: run_ports::Edge>(
@@ -735,6 +869,13 @@ async fn run<E: run_ports::Edge>(
             );
             return Ok(());
         }
+        // Its home deleted (OD-60): the lock may be elsewhere (the
+        // account's, while `CTXLOOM_HOME` names another home), so the home
+        // says it itself. The line is dropped with the log's directory.
+        if files.home_gone() {
+            said(say, "the daemon's home was removed: exiting");
+            return Ok(());
+        }
         match advertised(own, files.discovery().as_ref()) {
             Advertised::Ours => {}
             Advertised::Gone => match files.republish(own) {
@@ -756,25 +897,35 @@ async fn run<E: run_ports::Edge>(
                 return Ok(());
             }
         }
-        if let Some(end_hosted) = shared.take_stop() {
+        // Under test-support, a daemon told to be deaf takes a stop and a
+        // drain and ignores them (`ctxloom shutdown`'s what-will-not-stop).
+        let deaf = deaf_to_stop(files);
+        if let Some(end_hosted) = shared.take_stop().filter(|_| !deaf) {
             if end_hosted {
                 said(say, "asked to stop even if live: ending what it hosts");
                 launcher.end_all();
             }
             stopping = true;
         }
-        // Asked to drain by a client of a newer version (s4-Q4): it hands
-        // what it hosts over to that version's daemon, and exits once it
-        // hosts nothing.
-        if !handing_over {
-            if let Some(successor) = daemon_api::Hosting::draining(shared.as_ref()) {
+        // Asked to drain (`daemon stop --drain`, `ctxloom shutdown`, a
+        // SIGTERM; OD-54): it hands what it hosts over to the next daemon,
+        // and exits once it hosts nothing.
+        if !handing_over && !deaf && daemon_api::Hosting::draining(shared.as_ref()) {
+            said(say, "asked to drain: handing what it hosts over");
+            launcher.hand_over();
+            handing_over = true;
+            stopping = true;
+        }
+        // The drain's timeout, read again each round (owner, 2026-11-15): a
+        // `daemon.drain_timeout` changed while it drains is the drain's.
+        if handing_over {
+            let period = shared.drain_period();
+            if period != launcher.hand_over_period() {
                 said(
                     say,
-                    &format!("asked to drain for ctxloom {successor}: handing what it hosts over"),
+                    &format!("the drain waits {}s from its start", period.as_secs()),
                 );
-                launcher.hand_over();
-                handing_over = true;
-                stopping = true;
+                launcher.hand_over_within(period);
             }
         }
         let draining = stopping;
@@ -861,6 +1012,8 @@ struct Shared {
     /// Why its start-up catch-up (or its sweep) failed, while no later one
     /// has succeeded (OD-52).
     start_up: Mutex<Option<String>>,
+    /// Where a drain's period comes from.
+    period: Period,
 }
 
 #[derive(Default)]
@@ -871,19 +1024,34 @@ struct Round {
     quiet_since: Option<Instant>,
     /// Asked to stop; `true` to end what it hosts first.
     stop: Option<bool>,
-    /// Asked to drain (s4-Q4): the stamp it hands what it hosts over to,
-    /// the first it was asked for.
-    drain: Option<String>,
+    /// Asked to drain (OD-54).
+    drain: bool,
+    /// The timeout the drain was asked with (`ctxloom shutdown <duration>`),
+    /// none for the configured one.
+    drain_within: Option<Duration>,
+}
+
+/// Reads the home config's drain timeout afresh.
+type Reader = Box<dyn Fn() -> Option<Duration> + Send + Sync>;
+
+/// Where a drain's period comes from, the first that says: the drain's own
+/// request, the home config's `daemon.drain_timeout` (read each time), the
+/// daemon's default.
+struct Period {
+    default: Duration,
+    configured: Reader,
 }
 
 impl Shared {
     fn new(
         index: session_index::SessionIndexes,
         one_shots: Arc<daemon_application::OneShots>,
+        period: Period,
     ) -> Shared {
         Shared {
             index,
             one_shots,
+            period,
             state: Mutex::new(Round::default()),
             started: Mutex::new(0),
             done: tokio::sync::watch::Sender::new(0),
@@ -927,6 +1095,15 @@ impl Shared {
 
     fn take_stop(&self) -> Option<bool> {
         self.round().stop.take()
+    }
+
+    /// How long the drain waits for what it hosts: as it was asked, else
+    /// as the home config says now, else the default.
+    fn drain_period(&self) -> Duration {
+        let asked = self.round().drain_within;
+        asked
+            .or_else(|| (self.period.configured)())
+            .unwrap_or(self.period.default)
     }
 }
 
@@ -972,15 +1149,20 @@ impl daemon_api::Hosting for Shared {
         round.stop = Some(end_hosted || round.stop.unwrap_or(false));
     }
 
-    fn drain(&self, successor: &str) {
+    fn drain(&self, within: Option<Duration>) {
         let mut round = self.round();
-        if round.drain.is_none() {
-            round.drain = Some(successor.to_string());
+        if !round.drain {
+            round.drain = true;
+            round.drain_within = within;
         }
     }
 
-    fn draining(&self) -> Option<String> {
-        self.round().drain.clone()
+    fn hand_over_seconds(&self) -> u64 {
+        self.drain_period().as_secs()
+    }
+
+    fn draining(&self) -> bool {
+        self.round().drain
     }
 
     /// The next round to START after this call (so its catch-up reads what

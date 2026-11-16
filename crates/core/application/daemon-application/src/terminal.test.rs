@@ -93,6 +93,24 @@ impl RunnerLauncher for Finder {
     }
 }
 
+/// At most this many of a watch's events are read: more is a watch that
+/// never ends.
+const WATCH_BOUND: usize = 16;
+
+/// A watch's events, read to its end, which must come within
+/// [`WATCH_BOUND`] of them. Bounded, so a watch that never ends (its cursor
+/// stuck, or an event made up each call) fails its test at once instead of
+/// growing a `Vec` until the machine has no memory left: such a mutant did
+/// that twice on 2026-11-15, to about 70 GB.
+fn watched(watch: impl Iterator<Item = v1::RunEvent>) -> Vec<v1::RunEvent> {
+    let events: Vec<v1::RunEvent> = watch.take(WATCH_BOUND).collect();
+    assert!(
+        events.len() < WATCH_BOUND,
+        "the watch never ended: {events:?}"
+    );
+    events
+}
+
 /// A host that tells, inside its own call, what it is scripted to: each
 /// session prepared as its run (`Some`), or ended before its launch
 /// (`None`); it keeps each `Told`, so the test ends it. Every order is
@@ -340,13 +358,13 @@ fn test_create_answers_the_prepared_launch_and_its_watch_streams_the_stop_and_th
     assert!(terminals.stop("run-1", "closed"));
     let told = last_told(&host);
     told.done(vec![end(0)]);
-    let watched: Vec<v1::RunEvent> = terminals.watch("run-1").unwrap().collect();
-    assert_eq!(watched.len(), 2);
+    let events = watched(terminals.watch("run-1").unwrap());
+    assert_eq!(events.len(), 2);
     assert!(matches!(
-        watched[0].event,
+        events[0].event,
         Some(v1::run_event::Event::Stop(_))
     ));
-    assert_eq!(watched[1], end(0));
+    assert_eq!(events[1], end(0));
     assert_eq!(terminals.hosting(), 0);
     // Ended, it is told no stop.
     assert!(!terminals.stop("run-1", "closed"));
@@ -362,7 +380,7 @@ fn test_a_stop_told_twice_is_one_stop() {
     assert!(terminals.stop("run-1", "closed"));
     assert!(terminals.stop("run-1", "closed"));
     last_told(&host).done(Vec::new());
-    assert_eq!(terminals.watch("run-1").unwrap().count(), 1);
+    assert_eq!(watched(terminals.watch("run-1").unwrap()).len(), 1);
 }
 
 #[test]

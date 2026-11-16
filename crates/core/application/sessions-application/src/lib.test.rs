@@ -1133,7 +1133,49 @@ fn the_urgencies_a_send_gives_as_evidence() {
         [Inform, Wake, Steer]
     );
     assert_eq!(crate::urgencies_of(false, "claude-code"), [Inform]);
-    assert_eq!(crate::urgencies_of(true, "opencode"), [Inform]);
+    assert_eq!(
+        crate::urgencies_of(true, "opencode"),
+        [Inform, Wake, Steer],
+        "OD-58: opencode's child adapter"
+    );
+    assert_eq!(crate::urgencies_of(false, "opencode"), [Inform]);
+}
+
+// OD-58: `session send` to a child hosted on opencode is accepted for a
+// wake and a steer, as one on claude-code is.
+#[test]
+fn a_wake_and_a_steer_to_an_opencode_child_are_recorded() {
+    let mut svc = service();
+    svc.seed(HERE, 1, "amber-swift-owl", NOW - DAY, None);
+    let store = svc.stores.stores.get(HERE).unwrap();
+    crate::fakes::run(
+        store,
+        2,
+        NOW - DAY + 5,
+        sessions::MintSession {
+            harp: "brisk-copper-moth".to_string(),
+            project_id: HERE.to_string(),
+            project_dir: "/work/proj".to_string(),
+            output_dir: "/work/proj/out".to_string(),
+            engine: "opencode".to_string(),
+            origin: sessions::Origin::Agent,
+            started_at: None,
+            depth: 1,
+            owner: Some(sessions::SessionRef {
+                project_id: HERE.to_string(),
+                session: uuid::Uuid::from_bytes([1; 16]).hyphenated().to_string(),
+            }),
+            workspace: None,
+        },
+    );
+    for (id, urgency) in [
+        ("m1", sessions::Urgency::Wake),
+        ("m2", sessions::Urgency::Steer),
+    ] {
+        let sent = ready(svc.send(send("brisk-copper-moth", id, urgency, "go")))
+            .unwrap_or_else(|refused| panic!("{urgency:?}: {refused:?}"));
+        assert!(sent.recorded, "{urgency:?}");
+    }
 }
 
 // ------------------------------------------------------------------ a project's harp (S54)

@@ -74,8 +74,8 @@ pub(super) struct State {
     settings: Option<String>,
     /// The hooks the session's assistant fired across its daemon's kill.
     hooks: Vec<crate::tests::Ran>,
-    /// The child an older daemon hosts is open and idle already (U8).
-    older_hosting: bool,
+    /// No daemon can start while the session's assistant starts (OD-59).
+    start_blocked: bool,
 }
 
 /// A hook the session's assistant fired (s4-Q14, H2): what it came to, how
@@ -441,8 +441,21 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         tui_session(w, step, false);
         return true;
     }
+    if text.contains("in a worktree, and its daemon is killed outright while it works") {
+        w.git_backed();
+        tui_session(w, step, true);
+        return true;
+    }
     if text.contains("its daemon is killed outright while it works") {
         tui_session(w, step, true);
+        return true;
+    }
+    if text.contains("its daemon is killed outright before the assistant starts") {
+        tui_gated(w, step, false);
+        return true;
+    }
+    if text == "Alice runs her assistant interactively:" && w.daemon_spec.start_blocked {
+        tui_gated(w, step, true);
         return true;
     }
     if text.contains("in both projects at once") {
@@ -1356,10 +1369,6 @@ const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 #[given(expr = "a child {string} that is open and idle")]
 fn child_idle(w: &mut World, child: String) {
     assert_eq!(child, "brisk-copper-moth", "the child the harness hosts");
-    // The older daemon's child is open and idle already.
-    if w.daemon_spec.older_hosting {
-        return;
-    }
     idle_child(w);
 }
 
@@ -3877,7 +3886,7 @@ fn import_converged(_: &mut World, _bundle: String) {
     red("bundle import --force converged")
 }
 
-// ------------------------------------------------------ the drain (U8, U8b)
+// ------------------------------------------------------------ the drain (U8b)
 
 /// The hand-over's period a scenario's daemon is given, in seconds: what
 /// stands for the five minutes (`daemon serve --hand-over-seconds`).
@@ -3885,24 +3894,6 @@ const HAND_OVER_SECONDS: &str = "2";
 
 /// The drain's guidance, as the daemon steers a busy child with it.
 const DRAIN_GUIDANCE: &str = "ctxloom is being upgraded: finish the step you are on and end your turn; you will be resumed in this conversation.";
-
-#[given(
-    expr = "a ctxloom daemon of an older version is serving for this home, hosting a child {string}"
-)]
-fn serving_older_hosting(w: &mut World, child: String) {
-    assert_eq!(child, CHILD, "the child the harness hosts");
-    // Every command until the child is open and idle is the older daemon's
-    // own version, so none asks it to drain.
-    w.common.set_env(STAMP_VARIABLE, OLDER_STAMP.to_string());
-    start_daemon_stamped(w, OLDER_STAMP);
-    hosted_child(w);
-    first_turn_ended(w);
-    until(w, "the child bound to its conversation", DAEMON_WAIT, |w| {
-        (shown(w, CHILD)["native_session"] == "S1").then_some(())
-    });
-    w.common.env.retain(|(name, _)| name != STAMP_VARIABLE);
-    w.daemon_spec.older_hosting = true;
-}
 
 #[given(
     expr = "a ctxloom daemon is serving for this home, hosting a child {string} with a turn in flight"
@@ -3937,26 +3928,6 @@ fn serving_hosting_deaf(w: &mut World, child: String) {
     hosted_child(w);
 }
 
-/// This ctxloom's own stamp, as `--version` says it.
-fn own_stamp(w: &World) -> String {
-    let ran = run_now(w, &["--version"]);
-    assert_eq!(ran.code, 0, "{}", ran.said());
-    ran.stdout
-        .split_whitespace()
-        .last()
-        .expect("a stamp")
-        .to_string()
-}
-
-#[then(regex = r#"^the error names "([^"]+)", both versions, and "([^"]+)"$"#)]
-fn error_names_both_versions(w: &mut World, code: String, harp: String) {
-    let own = own_stamp(w);
-    let ran = w.common.ran();
-    for part in [code.as_str(), OLDER_STAMP, own.as_str(), harp.as_str()] {
-        assert!(ran.stderr.contains(part), "{part}: {}", ran.said());
-    }
-}
-
 /// Wait, bounded, for the daemon the scenario started to exit; its code.
 fn exit_of_daemon(w: &mut World) -> Option<i32> {
     let deadline = Instant::now() + DAEMON_WAIT;
@@ -3978,17 +3949,6 @@ fn exit_of_daemon(w: &mut World) -> Option<i32> {
     }
 }
 
-#[then("the older daemon has exited, and the child's hand-off is kept")]
-fn older_exited_hand_off_kept(w: &mut World) {
-    assert_eq!(exit_of_daemon(w), Some(0), "{}", daemon_log_text(w));
-    assert!(
-        files::exists(stub_dir(w).join("child-exited")),
-        "the child ended; the daemon's log:\n{}",
-        daemon_log_text(w)
-    );
-    assert_eq!(hand_offs(w).len(), 1, "its hand-off is kept");
-}
-
 /// The child started again by the next daemon, resuming its own
 /// conversation (`--resume S1`), where its first start resumed none.
 fn rehosted_resuming(w: &World) {
@@ -3997,12 +3957,6 @@ fn rehosted_resuming(w: &World) {
         !starts[0].contains("--resume") && starts[1].contains("--resume S1"),
         "its own conversation resumed: {starts:?}"
     );
-}
-
-#[then("the child was re-hosted resuming its own conversation, and takes the turn")]
-fn rehosted_and_takes_the_turn(w: &mut World) {
-    rehosted_resuming(w);
-    turn_on(w, "next task");
 }
 
 #[then(regex = r#"^it warns "([^"]+)", naming "([^"]+)"$"#)]
@@ -4096,4 +4050,219 @@ fn listed_says_nothing_of_the_start_up(w: &mut World) {
     let listed = run_now(w, &["session", "list"]);
     assert_eq!(listed.code, 0, "{}", listed.said());
     assert!(!listed.stderr.contains("start-up"), "{}", listed.said());
+}
+
+// ------------------------------------- a daemon lost under a session (OD-59)
+
+/// What waits for `$1` (a lock) and holds it until `$2` is there.
+const WAITS_FOR_LOCK: &str = r#"exec flock -w 60 "$1" sh -c 'i=0; while [ ! -e "$0" ] && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done' "$2"
+"#;
+
+/// Whether `lock` is held by another process now (`flock -n` cannot take it).
+fn lock_held(lock: &std::path::Path) -> bool {
+    std::process::Command::new("flock")
+        .args(["-n", lock.to_str().expect("utf-8"), "true"])
+        .status()
+        .is_ok_and(|status| !status.success())
+}
+
+/// The session of the step (`ctxloom run` on a stood-in terminal), its
+/// frontend held at the test-support gate between the daemon's answer to its
+/// plan and its start report, where its daemon is killed outright (forced:
+/// the frontend's launch record, never a wait for a race). Unless `block`,
+/// the next command starts a new daemon while the frontend still waits; with
+/// `block`, no daemon can start (its single-instance lock held) until the
+/// start report is held. Then the TUI runs, is released, and the command is
+/// waited for.
+fn tui_gated(w: &mut World, step: &cucumber::gherkin::Step, block: bool) {
+    files::put_program(assistant_dir(w).join("claude"), &tui_stub());
+    let release = assistant_dir(w).join("release");
+    let env = tui_env(w);
+    let gate = w.common.project.home().join(".ctxloom/test-frontend-gate");
+    files::put(&gate, "wait");
+    w.before_run();
+    let words = line_words(step);
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    let child = w.common.project.start_with(&env_pairs(&env), &args);
+    let launch = w
+        .common
+        .project
+        .home()
+        .join(".ctxloom/test-frontend-launch.json");
+    wait_for(w, "the frontend's launch", || files::exists(&launch));
+    let pid = discovery_now(w).pid;
+    let unblock = assistant_dir(w).join("unblock");
+    // The blocker waits on the daemon's single-instance lock BEFORE the
+    // daemon is killed, so it takes the lock as the kill lets it go, ahead
+    // of the daemon the frontend's watch starts at once.
+    let blocking = block.then(|| {
+        let lock = daemon_dir(w).join("daemon.lock");
+        let holder = assistant_dir(w).join("blocks-daemons");
+        files::put_program(&holder, WAITS_FOR_LOCK);
+        std::process::Command::new(&holder)
+            .args([lock.as_os_str(), unblock.as_os_str()])
+            .spawn()
+            .expect("the blocker starts")
+    });
+    let killed = std::process::Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(killed.success(), "the daemon was killed");
+    wait_for(w, "the killed daemon's end", || !alive(pid));
+    w.daemon_spec.killed_pid = Some(pid);
+    if block {
+        let lock = daemon_dir(w).join("daemon.lock");
+        wait_for(w, "the daemon's lock held", || lock_held(&lock));
+    } else {
+        // A new daemon starts, and sweeps, while the frontend waits.
+        let listed = run_now(w, &["session", "list"]);
+        assert_eq!(listed.code, 0, "{}", listed.said());
+    }
+    files::remove(&gate);
+    let project = w.common.project.dir().to_path_buf();
+    let started = assistant_dir(w)
+        .join(project.file_name().unwrap())
+        .join("tui-started");
+    wait_for(w, "the TUI's start", || files::exists(&started));
+    if let Some(mut holding) = blocking {
+        // Its hold, not the hold's lock (taken before the hold is written).
+        wait_for(w, "the session's start held", || {
+            files::children(held_dir(w))
+                .iter()
+                .any(|path| path.extension().is_some_and(|e| e == "held"))
+        });
+        files::put(&unblock, "go");
+        let _ = holding.wait();
+    }
+    files::put(&release, "go");
+    w.common.ran = Some(crate::tests::Ran::of(
+        child.wait_with_output().expect("ctxloom finishes"),
+    ));
+}
+
+#[given("no ctxloom daemon can be started while her assistant starts")]
+fn unstartable_at_the_start(w: &mut World) {
+    w.daemon_spec.start_blocked = true;
+}
+
+/// The events of `harp`'s session (`run`: its first run's), each its type
+/// and its cause (an end's; empty otherwise).
+fn caused_events(w: &World, harp: &str, run: bool) -> Vec<(String, String)> {
+    let mut args = vec!["test", "session-events", harp];
+    if run {
+        args.extend(["--run", "1"]);
+    }
+    let ran = run_now(w, &args);
+    if ran.code != 0 {
+        return Vec::new();
+    }
+    ran.json()
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|e| {
+            (
+                e["type"].as_str().unwrap_or_default().to_string(),
+                e["cause"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Her session's incarnation ended, once its end is recorded: each cause.
+fn incarnations_ended(w: &World) -> Vec<String> {
+    let harp = w.harp();
+    let ended = || -> Vec<String> {
+        caused_events(w, &harp, false)
+            .into_iter()
+            .filter(|(t, _)| t == "IncarnationEnded")
+            .map(|(_, cause)| cause)
+            .collect()
+    };
+    wait_for(w, "her session's end", || !ended().is_empty());
+    ended()
+}
+
+/// Her session's exit ended it once: its incarnation `runner-exit`, its run
+/// ended once on its exit, never swept as lost.
+fn exit_ended_it_once(w: &World) {
+    assert_eq!(
+        incarnations_ended(w),
+        ["runner-exit"],
+        "{}",
+        daemon_log_text(w)
+    );
+    let run = caused_events(w, &w.harp(), true);
+    let ends: Vec<&str> = run
+        .iter()
+        .filter(|(t, _)| t == "RunEnded")
+        .map(|(_, cause)| cause.as_str())
+        .collect();
+    assert_eq!(ends, ["RunnerExit"], "{run:?}");
+    assert!(
+        !run.iter().any(|(t, _)| t == "RunnerLostRecorded"),
+        "{run:?}"
+    );
+}
+
+#[then("the next daemon took her session over, and her session's exit ended it once")]
+fn taken_over(w: &mut World) {
+    let killed = w.daemon_spec.killed_pid.expect("a daemon was killed");
+    assert_ne!(discovery_now(w).pid, killed, "another daemon");
+    let log = daemon_log_text(w);
+    assert!(log.contains("adopted its run"), "{log}");
+    exit_ended_it_once(w);
+}
+
+#[then("her session's checkout was let go")]
+fn checkout_let_go(w: &mut World) {
+    let project = w.common.project.dir().to_path_buf();
+    let checkout = tui_record(w, &project, "tui-cwd").trim().to_string();
+    assert!(
+        checkout.contains("/.ctxloom/worktrees/"),
+        "the assistant worked in its checkout: {checkout}"
+    );
+    wait_for(w, "the checkout let go", || !files::exists(&checkout));
+    let listed = w.git(&project, &["worktree", "list", "--porcelain"]);
+    assert!(!listed.contains(&checkout), "its worktree record: {listed}");
+}
+
+#[then("her session was never ended as orphaned, and its exit ended it once")]
+fn never_orphaned(w: &mut World) {
+    exit_ended_it_once(w);
+    let run = caused_events(w, &w.harp(), true);
+    assert_eq!(
+        run.iter()
+            .filter(|(t, _)| t == "RunnerStartedRecorded")
+            .count(),
+        1,
+        "{run:?}"
+    );
+}
+
+#[then("the command succeeds, saying her session's start was held")]
+fn succeeds_held(w: &mut World) {
+    let ran = w.ran();
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    assert!(
+        ran.stderr
+            .contains("held the session's start for the next daemon: "),
+        "{}\nthe daemon's log:\n{}",
+        ran.said(),
+        daemon_log_text(w)
+    );
+}
+
+#[then("the next daemon recorded her session's start, then its exit, in that order")]
+fn start_then_exit(w: &mut World) {
+    exit_ended_it_once(w);
+    let run = caused_events(w, &w.harp(), true);
+    let order: Vec<&str> = run
+        .iter()
+        .map(|(t, _)| t.as_str())
+        .filter(|t| matches!(*t, "RunnerStartedRecorded" | "RunEnded"))
+        .collect();
+    assert_eq!(order, ["RunnerStartedRecorded", "RunEnded"], "{run:?}");
 }

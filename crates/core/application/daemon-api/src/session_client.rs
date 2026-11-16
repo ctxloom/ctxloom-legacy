@@ -184,18 +184,22 @@ impl<D: Daemons> Client<D> {
         }
     }
 
-    /// `daemon stop --drain` (OD-54): ask the serving daemon to hand what it
-    /// hosts over to the next daemon (of `version`, this client's stamp)
-    /// and exit, as a newer client's drain does; none serving, nothing.
-    /// Its answer carries the drain's warning (`Daemon.warnings`).
-    pub async fn drain(&self, version: &str) -> Result<Option<v1::Daemon>, CallError> {
+    /// `daemon stop --drain` and `ctxloom shutdown` (OD-54): ask the serving
+    /// daemon to hand what it hosts over to the next daemon and exit,
+    /// waiting `within` for it (none: its configured `daemon.drain_timeout`);
+    /// none serving, nothing. Its answer carries the drain's warning
+    /// (`Daemon.warnings`).
+    pub async fn drain(
+        &self,
+        within: Option<std::time::Duration>,
+    ) -> Result<Option<v1::Daemon>, CallError> {
         let Some(api) = self.daemons.serving().await.map_err(CallError::Unreached)? else {
             return Ok(None);
         };
         let request = v1::StopDaemonRequest {
             name: "daemon".to_string(),
             drain: true,
-            version: version.to_string(),
+            drain_timeout_seconds: within.map(|within| within.as_secs()),
             env: Some(self.env.clone()),
             ..v1::StopDaemonRequest::default()
         };

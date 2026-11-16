@@ -395,11 +395,11 @@ fn gone_within(pid: u32, within: Duration) -> bool {
 const NEWER: &str = "v99.0.0-abcdef0";
 
 // OD-3 (owner, 2026-11-14): a session's call of a NEWER version meets an
-// idle daemon of an older one: the old daemon is asked to drain (it ends
-// nothing) and exits, this binary starts its own, and the call is answered
+// idle daemon of an older one: the old daemon is asked to stop (never a
+// drain, OD-62; it hosts nothing, so it ends nothing) and exits, this binary starts its own, and the call is answered
 // there.
 #[test]
-fn test_a_newer_sessions_call_drains_an_idle_older_daemon_and_is_answered_by_its_own() {
+fn test_a_newer_sessions_call_stops_an_idle_older_daemon_and_is_answered_by_its_own() {
     if !super::files::exists("/proc/self/stat") {
         return;
     }
@@ -413,7 +413,7 @@ fn test_a_newer_sessions_call_drains_an_idle_older_daemon_and_is_answered_by_its
     assert_eq!(listed["sessions"][0]["name"], me.as_str(), "{listed}");
     assert!(
         gone_within(old.pid, Duration::from_secs(20)),
-        "the old daemon drained and exited"
+        "the old daemon stopped and exited"
     );
     let new = discovered(&world.project);
     // The daemon this binary started (the test stamp is the client's

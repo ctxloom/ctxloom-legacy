@@ -151,6 +151,15 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}/${{ needs.plan.outputs.n }}
         run: |
+          # The mutation run's memory cap (gates/memory-cap.sh) is a systemd
+          # user scope. A hosted runner may have no user manager to make one;
+          # this runner's VM is the job's alone (no one's sessions to take
+          # down: a runaway mutant fails this shard), so there the run is
+          # deliberately UNCAPPED, said in the summary, rather than failed.
+          if ! gates/memory-cap.sh mutants-shard "$(just --evaluate mutants_memory_max)" "$(just --evaluate mutants_swap_max)" --check; then
+              export MUTANTS_MEMORY_MAX=none
+              echo "shard $SHARD: no systemd user scope on this runner: mutation run UNCAPPED (MUTANTS_MEMORY_MAX=none)" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           start=$(date +%s)
           rc=0
           just mutants-shard "$SHARD" target/logs/mutants-shard || rc=$?

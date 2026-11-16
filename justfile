@@ -21,7 +21,7 @@ import 'gates/dev-local.just'
 # from the same ctxloom-lib commit the workspace pins (arch_lint_rev, kept
 # equal to Cargo.toml's by `_arch-lint-ready`'s check) and installed once per
 # commit into the user's cache, shared by every worktree.
-arch_lint_rev := "2486af2a0a832191bbbc212c62f153e8c92693e0"
+arch_lint_rev := "c909e9257e9d126d7828a47cecee03b8fedfe9f5"
 arch_lint_root := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") / ".cache") / "ctxloom-arch-lint" / arch_lint_rev
 arch_lint := arch_lint_root / "bin/arch-lint"
 
@@ -50,6 +50,14 @@ red_judge := ""
 # root/bin at 0 reports its survivors and refuses nothing: the composition root
 # holds no logic, and the binary's wiring is shown by running it, not by unit
 # tests.
+# The mutation run's memory cap (gates/memory-cap.sh): a systemd user scope
+# with MemoryMax and MemorySwapMax, OOMPolicy=continue, so a mutant whose test
+# grows without bound is killed by the cap's OOM killer (caught) instead of
+# filling the machine (2026-11-15). MUTANTS_MEMORY_MAX=none opts out, said in
+# the run's log; MUTANTS_MEMORY_MAX and MUTANTS_SWAP_MAX change the cap.
+mutants_memory_max := env("MUTANTS_MEMORY_MAX", "16G")
+mutants_swap_max := env("MUTANTS_SWAP_MAX", "2G")
+
 mutation_thresholds := "crates/core/domain=90 crates/core/read-model=90 crates/core/ports=90 crates/core/application=90 crates/adapters=90 crates/root/lib=0 crates/root/bin=0"
 
 # Staged paths outside any crate that can change what every crate builds or
@@ -96,11 +104,17 @@ build:
 # ~/.ctxloom-rs, so Go's ~/.ctxloom is never read. Its hooks call `ctxloom`,
 # the running binary's file name (ruling 163), which leads the engine's PATH.
 # Idempotent: a file already as it should be is left alone and said so. One
-# line per action.
+# line per action. One ctxloom version runs at a time (owner, OD-62): before
+# a changed binary replaces the installed one, the NEW binary asks every
+# running ctxloom of the home to stop, `ctxloom shutdown [when]` (the daemon
+# drained within `when`, else the home config's `daemon.drain_timeout`,
+# else five minutes; then each live TUI frontend and the daemon asked the
+# plain stop): `just install` drains, `just install now` stops everything at
+# once. What will not stop is said, and the install goes on.
 [group('install')]
-[doc("Build the plain binary and install it as ~/.local/bin/ctxloom (home ~/.ctxloom-rs)")]
+[doc("Build the plain binary and install it as ~/.local/bin/ctxloom (home ~/.ctxloom-rs): install [when], when a duration or now")]
 [no-exit-message]
-install:
+install when="":
     #!/usr/bin/env bash
     set -euo pipefail
     terse=(-q --message-format=short)
@@ -118,6 +132,14 @@ install:
     if cmp -s "$built" "$program"; then
         echo "ok   unchanged $program"
     else
+        # Every running ctxloom of the home asked to stop first, by the new
+        # binary (an older one may know no `shutdown`).
+        when={{quote(when)}}
+        if CTXLOOM_HOME="$HOME/.ctxloom-rs" "$built" shutdown ${when:+"$when"} --format text | sed 's/^/ok   shutdown: /'; [ "${PIPESTATUS[0]}" = 0 ]; then
+            echo "ok   nothing of ctxloom runs"
+        else
+            echo "note some of ctxloom still runs (said above); installing anyway"
+        fi
         # Beside it, then renamed over it: a running ctxloom keeps its file.
         install -m 0755 "$built" "$program.new"
         mv -f "$program.new" "$program"
@@ -155,9 +177,9 @@ install:
 # no USERPROFILE (`just install` and `just build` hold the same build to them
 # on unix). Unverified: written without a Windows machine to run it on.
 [group('install')]
-[doc("On Windows (Git Bash): install ctxloom.exe in %LOCALAPPDATA%\\Programs\\ctxloom, CTXLOOM_HOME a user variable")]
+[doc("On Windows (Git Bash): install ctxloom.exe in %LOCALAPPDATA%\\Programs\\ctxloom, CTXLOOM_HOME a user variable: install-windows [when]")]
 [no-exit-message]
-install-windows:
+install-windows when="":
     #!/usr/bin/env bash
     set -euo pipefail
     case "$(uname -s)" in
@@ -180,6 +202,14 @@ install-windows:
     if cmp -s "$built" "$program"; then
         echo "ok   unchanged $program"
     else
+        # Every running ctxloom of the home asked to stop first, by the new
+        # binary, as `just install` does (OD-62).
+        when={{quote(when)}}
+        if CTXLOOM_HOME="$USERPROFILE\\.ctxloom-rs" "$built" shutdown ${when:+"$when"} --format text | sed 's/^/ok   shutdown: /'; [ "${PIPESTATUS[0]}" = 0 ]; then
+            echo "ok   nothing of ctxloom runs"
+        else
+            echo "note some of ctxloom still runs (said above); installing anyway"
+        fi
         rm -f "$program.old" 2>/dev/null || true
         [ -e "$program" ] && mv -f "$program" "$program.old"
         cp "$built" "$program.new"
@@ -360,19 +390,26 @@ mutants-batch base="" head="HEAD":
 # mutants.out and its cargo-mutants exit (`exit`) go to `out`. Exit 0 when
 # cargo mutants judged (its 0, 2 missed or 3 timed out); its own code
 # otherwise (4: the tests fail unmutated). `mutants-score` judges the shards
-# together.
+# together. `package` narrows the run to that one crate (`0/1` for all of
+# it): how one crate's mutants are run whole, as for a runaway mutant's hunt.
+# It runs under the mutation run's memory cap (`mutants_memory_max`,
+# gates/memory-cap.sh) and says the scope's memory peak.
 [group('closeout')]
-[doc("One shard of a whole-workspace mutation run: mutants-shard <k/n> [out]")]
+[doc("One shard of a mutation run (the workspace, or one package): mutants-shard <k/n> [out] [package]")]
 [no-exit-message]
-mutants-shard shard out="target/logs/mutants-shard": _mutants-no-features
+mutants-shard shard out="target/logs/mutants-shard" package="": _mutants-no-features
     #!/usr/bin/env bash
     set -euo pipefail
     out='{{out}}'
     case "$out" in /*) ;; *) out={{TOP}}/$out ;; esac
     rm -rf "$out"
     mkdir -p "$out"
+    {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' --check
+    scope=(--workspace)
+    [ -z '{{package}}' ] || scope=(--package '{{package}}')
     rc=0
-    cargo mutants --dir {{TOP}} --in-place --workspace --shard '{{shard}}' --output "$out" --colors never || rc=$?
+    {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' \
+        cargo mutants --dir {{TOP}} --in-place "${scope[@]}" --shard '{{shard}}' --output "$out" --colors never || rc=$?
     echo "$rc" > "$out/exit"
     found=$(jq '.total_mutants // 0' "$out/mutants.out/outcomes.json" 2>/dev/null || echo 0)
     echo "mutants-shard {{shard}}: cargo mutants exit $rc, $found mutants"
@@ -471,18 +508,20 @@ clean-target:
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, closeout, closeout-ratchet, ltk rules, output budget, tests exit, test-staged, exec-mode check, path deps, mcp-env probe")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, exec-mode check, path deps, mcp-env probe")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
     @{{TOP}}/scripts/mutants-batch.selftest.sh
     @{{TOP}}/scripts/mutants-verdict.selftest.sh
+    @{{TOP}}/scripts/memory-cap.selftest.sh
     @{{TOP}}/scripts/closeout.selftest.sh
     @{{TOP}}/scripts/closeout-ratchet.selftest.sh
     @{{TOP}}/scripts/ltk-rules-check.sh
     @{{TOP}}/scripts/output-budget.selftest.sh
     @{{TOP}}/scripts/tests-exit.selftest.sh
     @{{TOP}}/scripts/test-staged.selftest.sh
+    @{{TOP}}/scripts/scratch-tree-lock.selftest.sh
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
     @{{TOP}}/scripts/dev-local.selftest.sh
     @{{TOP}}/scripts/path-deps-check.selftest.sh

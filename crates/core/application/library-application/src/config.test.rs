@@ -84,6 +84,26 @@ fn test_go_ctxloom_is_present_unless_legacy_go_says_retired() {
     );
 }
 
+// daemon.drain_timeout (owner, 2026-11-15): the span it says, `now` none
+// at all; unsaid, none (the daemon's own default stands).
+#[test]
+fn test_the_drain_timeout_is_the_span_the_config_says() {
+    use std::time::Duration;
+    assert_eq!(config("editor:\n  command: vim\n").drain_timeout(), None);
+    assert_eq!(
+        config("daemon:\n  drain_timeout: 2m\n").drain_timeout(),
+        Some(Duration::from_secs(120))
+    );
+    assert_eq!(
+        config("daemon:\n  drain_timeout: now\n").drain_timeout(),
+        Some(Duration::ZERO)
+    );
+    assert_eq!(
+        config("daemon:\n  drain_timeout: soon\n").drain_timeout(),
+        None
+    );
+}
+
 // output.dir (rulings 89, 106): `ctxloom/` unless it says otherwise, as it
 // was written (the project root it is relative to is the caller's).
 #[test]

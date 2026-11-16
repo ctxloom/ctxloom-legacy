@@ -136,7 +136,7 @@ async fn another_stamp_is_refused_by_a_busy_daemon() {
     let refused = reconcile(&daemon, "0.2.0+b", "0.1.0+a").await.unwrap_err();
     assert_eq!(
         refused,
-        SkewError::Busy {
+        SkewError::Mismatch {
             own: "0.2.0+b".to_string(),
             daemon: "0.1.0+a".to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
@@ -163,7 +163,7 @@ async fn a_stop_refused_for_live_runs_is_a_busy_daemon() {
     };
     let refused = reconcile(&daemon, "0.2.0+b", "0.1.0+a").await.unwrap_err();
     assert!(
-        matches!(&refused, SkewError::Busy { harps, .. } if harps == &["brisk-copper-moth"]),
+        matches!(&refused, SkewError::Mismatch { harps, .. } if harps == &["brisk-copper-moth"]),
         "{refused:?}"
     );
 }
@@ -172,7 +172,7 @@ async fn a_stop_refused_for_live_runs_is_a_busy_daemon() {
 const OLDER: &str = "v0.1.0-a1";
 const NEWER: &str = "v0.2.0-b2";
 
-/// A daemon that answers a drain as one that still hosts `hosted` does.
+/// A daemon that hosts `hosted`.
 fn hosting(hosted: Vec<&'static str>) -> Daemon {
     Daemon {
         hosted,
@@ -180,58 +180,39 @@ fn hosting(hosted: Vec<&'static str>) -> Daemon {
     }
 }
 
-// s4-Q4 (OD-3 extended): a client of a NEWER version meeting a daemon that
-// hosts live runs asks it to drain for its own stamp (never
-// `even_if_live`), and its call is refused (exit 20), naming both stamps
-// and the sessions it still hosts; the next call, once it has exited,
-// starts the client's own.
+// OD-61/OD-62 (owner, 2026-11-15): no client drains a daemon for its
+// version. A NEWER client meeting a busy older daemon is refused as by any
+// busy daemon of another stamp (its fix the plain stop), and asks nothing
+// of it; an older client alike.
 #[tokio::test]
-async fn a_newer_client_asks_a_busy_daemon_to_drain_and_is_refused_meanwhile() {
-    let daemon = hosting(vec!["brisk-copper-moth"]);
-    let refused = reconcile(&daemon, NEWER, OLDER).await.unwrap_err();
-    assert_eq!(
-        refused,
-        SkewError::Draining {
-            own: NEWER.to_string(),
-            daemon: OLDER.to_string(),
-            harps: vec!["brisk-copper-moth".to_string()],
-        }
-    );
-    assert_eq!(refused.exit(), Exit::REFUSED);
-    assert_eq!(
-        angzarr_diagnostic::Diagnostic::code(&refused),
-        "daemon-api-draining"
-    );
-    let stops = daemon.stops.lock().unwrap();
-    assert_eq!(stops.len(), 1, "asked once");
-    assert!(stops[0].drain, "asked to drain");
-    assert!(!stops[0].even_if_live, "nothing it hosts is ended");
-    assert_eq!(stops[0].version, NEWER, "for the client's own stamp");
-    assert_eq!(stops[0].name, "daemon");
+async fn no_client_drains_a_busy_daemon_of_another_version() {
+    for (own, theirs) in [(NEWER, OLDER), (OLDER, NEWER)] {
+        let daemon = hosting(vec!["brisk-copper-moth"]);
+        let refused = reconcile(&daemon, own, theirs).await.unwrap_err();
+        assert_eq!(
+            refused,
+            SkewError::Mismatch {
+                own: own.to_string(),
+                daemon: theirs.to_string(),
+                harps: vec!["brisk-copper-moth".to_string()],
+            }
+        );
+        assert!(daemon.stops.lock().unwrap().is_empty(), "{own}");
+    }
 }
 
-// A newer client meeting an idle older daemon asks it to drain too: hosting
-// nothing, it exits at once, and the client starts its own.
+// A newer client meeting an idle older daemon stops it plainly (never a
+// drain), and starts its own.
 #[tokio::test]
-async fn a_newer_client_drains_an_idle_daemon_and_starts_its_own() {
+async fn a_newer_client_stops_an_idle_daemon_plainly() {
     let daemon = Daemon::default();
     assert_eq!(
         reconcile(&daemon, NEWER, OLDER).await,
         Ok(Reconciled::Stopped)
     );
     let stops = daemon.stops.lock().unwrap();
-    assert!(stops.len() == 1 && stops[0].drain, "{stops:?}");
-}
-
-// Only a newer version drains (the semver-only "newer", confirmed): an
-// OLDER client meeting a busy newer daemon is refused as by any busy daemon
-// of another stamp, and asks nothing of it.
-#[tokio::test]
-async fn an_older_client_never_drains_a_newer_daemon() {
-    let daemon = hosting(vec!["brisk-copper-moth"]);
-    let refused = reconcile(&daemon, OLDER, NEWER).await.unwrap_err();
-    assert!(matches!(refused, SkewError::Busy { .. }), "{refused:?}");
-    assert!(daemon.stops.lock().unwrap().is_empty());
+    assert_eq!(stops.len(), 1, "{stops:?}");
+    assert!(!stops[0].drain && !stops[0].even_if_live, "{stops:?}");
 }
 
 // A daemon that cannot be asked is a failure (exit 10).
@@ -321,14 +302,18 @@ async fn a_stop_names_the_daemon_and_its_override() {
 // Each error displays as its code and its args.
 #[test]
 fn the_errors_display_their_code_and_args() {
-    let busy = SkewError::Busy {
+    let busy = SkewError::Mismatch {
         own: "0.2.0+b".to_string(),
         daemon: "0.1.0+a".to_string(),
         harps: vec!["brisk-copper-moth".to_string(), "calm-otter".to_string()],
     };
     assert_eq!(
         busy.to_string(),
-        "daemon-api-version-skew-busy own=0.2.0+b daemon=0.1.0+a harps=\"brisk-copper-moth, calm-otter\""
+        "daemon-api-version-skew own=0.2.0+b daemon=0.1.0+a harps=\"brisk-copper-moth, calm-otter\""
+    );
+    assert_eq!(
+        mismatch("0.2.0+b", "0.1.0+a").to_string(),
+        "daemon-api-version-skew own=0.2.0+b daemon=0.1.0+a harps=nothing"
     );
     let failed = Called::Failed {
         code: 13,
@@ -366,6 +351,16 @@ fn mismatch(own: &str, daemon: &str) -> SkewError {
     SkewError::Mismatch {
         own: own.to_string(),
         daemon: daemon.to_string(),
+        harps: Vec::new(),
+    }
+}
+
+/// The refusal of a busy daemon of another stamp, hosting the child.
+fn busy(own: &str, daemon: &str) -> SkewError {
+    SkewError::Mismatch {
+        own: own.to_string(),
+        daemon: daemon.to_string(),
+        harps: vec!["brisk-copper-moth".to_string()],
     }
 }
 
@@ -381,10 +376,10 @@ async fn a_sessions_call_uses_a_daemon_of_its_own_stamp() {
 }
 
 // OD-3: a session's call of a NEWER version, meeting an idle older daemon,
-// asks it to drain (a stop that ends nothing: never `even_if_live`), so the
-// caller starts its own and its call goes there.
+// asks it to stop (a stop that ends nothing: never `even_if_live`, never a
+// drain), so the caller starts its own and its call goes there.
 #[tokio::test]
-async fn a_newer_sessions_call_drains_an_idle_older_daemon() {
+async fn a_newer_sessions_call_stops_an_idle_older_daemon() {
     let daemon = Daemon::default();
     assert_eq!(
         reconcile_session(&daemon, NEW, OLD).await,
@@ -392,42 +387,29 @@ async fn a_newer_sessions_call_drains_an_idle_older_daemon() {
     );
     assert_eq!(*daemon.asked.lock().unwrap(), ["get", "stop"]);
     let stops = daemon.stops.lock().unwrap();
-    assert!(!stops[0].even_if_live, "a drain ends nothing it hosts");
-    assert!(stops[0].drain, "asked to drain");
+    assert!(!stops[0].even_if_live, "a stop that ends nothing it hosts");
+    assert!(!stops[0].drain, "never a drain (OD-62)");
 }
 
-// OD-3 extended (s4-Q4): a session's call of a newer version, meeting an
-// older daemon that hosts runs, asks it to drain (never `even_if_live`: it
-// ends nothing of what it hosts, each child being handed over), as a hook
-// that holds for it does (H-Q6); the call is refused meanwhile, naming both
-// stamps and what it still hosts (exit 20).
+// OD-62: a session's call of a newer version, meeting an older daemon that
+// hosts runs, is refused, naming both stamps (exit 20), and asks it nothing.
 #[tokio::test]
-async fn a_newer_sessions_call_asks_a_busy_older_daemon_to_drain() {
+async fn a_newer_sessions_call_is_refused_by_a_busy_older_daemon() {
     let daemon = Daemon {
         hosted: vec!["brisk-copper-moth"],
         ..Daemon::default()
     };
     let refused = reconcile_session(&daemon, NEW, OLD).await.unwrap_err();
-    assert_eq!(
-        refused,
-        SkewError::Draining {
-            own: NEW.to_string(),
-            daemon: OLD.to_string(),
-            harps: vec!["brisk-copper-moth".to_string()],
-        }
-    );
+    assert_eq!(refused, busy(NEW, OLD));
     assert_eq!(refused.exit(), Exit::REFUSED);
-    let stops = daemon.stops.lock().unwrap();
-    assert_eq!(stops.len(), 1);
-    assert!(stops[0].drain && !stops[0].even_if_live, "{stops:?}");
-    assert_eq!(stops[0].version, NEW);
+    assert!(daemon.stops.lock().unwrap().is_empty());
 }
 
-// A daemon that refuses the drain for its runs (DaemonHosting: one of a
-// ctxloom from before the drain, which takes it for a plain stop): the call
-// is refused as by a busy daemon, and nothing it hosts is ended.
+// A daemon that refuses the stop for its runs (DaemonHosting: a run started
+// between the look and the stop): the call is refused as by a busy daemon,
+// and nothing it hosts is ended.
 #[tokio::test]
-async fn a_run_started_between_the_look_and_the_drain_refuses_the_call() {
+async fn a_run_started_between_the_look_and_the_stop_refuses_the_call() {
     let daemon = Daemon {
         stop: Some(Called::Refused {
             code: 9,
@@ -440,13 +422,13 @@ async fn a_run_started_between_the_look_and_the_drain_refuses_the_call() {
         ..Daemon::default()
     };
     let refused = reconcile_session(&daemon, NEW, OLD).await.unwrap_err();
-    assert_eq!(refused, mismatch(NEW, OLD));
+    assert_eq!(refused, busy(NEW, OLD));
     assert_eq!(*daemon.asked.lock().unwrap(), ["get", "stop"]);
     assert!(!daemon.stops.lock().unwrap()[0].even_if_live);
 }
 
-// A daemon gone between the discovery and the look (it drained and exited,
-// or was killed) cannot be asked: a failed call, which the caller meets by
+// A daemon gone between the discovery and the look (it exited, or was
+// killed) cannot be asked: a failed call, which the caller meets by
 // starting its own.
 #[tokio::test]
 async fn a_daemon_gone_before_it_is_asked_is_a_failed_call() {
@@ -466,7 +448,7 @@ async fn a_daemon_gone_before_it_is_asked_is_a_failed_call() {
 }
 
 // A session's call of an OLDER version, or of the same version built
-// otherwise, never drains the daemon (no ping-pong between two binaries):
+// otherwise, never stops the daemon (no ping-pong between two binaries):
 // it is refused, typed, and the daemon asked nothing.
 #[tokio::test]
 async fn a_sessions_call_not_newer_than_the_daemon_asks_it_nothing() {

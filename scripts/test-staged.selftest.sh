@@ -57,6 +57,8 @@ feature_rules := ""
 features_prepare := ""
 red_judge := ""
 mutation_thresholds := "crates=90"
+mutants_memory_max := "16G"
+mutants_swap_max := "2G"
 workspace_wide := "Cargo.toml"
 J
 a() { printf 'pub fn one() -> u32 { %s }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn own() { assert!(super::one() > 0); }\n}\n' "$1" > "$fx/crates/a/src/lib.rs"; }

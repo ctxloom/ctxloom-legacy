@@ -1303,3 +1303,38 @@ Feature: run — assembling a project's context and handing it to an engine
       Then the command succeeds
       And the assistant was never stopped
       And the command started a new daemon, and reported the assistant's exit to it once
+
+    Scenario: A daemon killed under her session is replaced, and her session's exit ends it and lets its checkout go
+      # new: owner ruling OD-59 (2026-11-15): the next daemon adopts a live session.
+      Given Alice has a project that has never used ctxloom
+      And Alice has set ctxloom up in her project
+      When Alice runs her assistant interactively in a worktree, and its daemon is killed outright while it works:
+        """
+        ctxloom run --workspace worktree
+        """
+      Then the command succeeds
+      And the next daemon took her session over, and her session's exit ended it once
+      And her session's checkout was let go
+
+    Scenario: A daemon killed before her assistant starts leaves her session to start
+      # new: owner ruling OD-59 (2026-11-15): the start-report race orphans nothing.
+      Given Alice has a project that has never used ctxloom
+      And Alice has set ctxloom up in her project
+      When Alice runs her assistant interactively, and its daemon is killed outright before the assistant starts:
+        """
+        ctxloom run
+        """
+      Then the command succeeds
+      And her session was never ended as orphaned, and its exit ended it once
+
+    Scenario: What her session reports while no daemon can take it is kept, and reaches the next daemon in order
+      # new: owner ruling OD-59 (2026-11-15): the frontend's reports are held.
+      Given Alice has a project that has never used ctxloom
+      And Alice has set ctxloom up in her project
+      And no ctxloom daemon can be started while her assistant starts
+      When Alice runs her assistant interactively:
+        """
+        ctxloom run
+        """
+      Then the command succeeds, saying her session's start was held
+      And the next daemon recorded her session's start, then its exit, in that order

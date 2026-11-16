@@ -81,6 +81,8 @@ fn shown(path: &str) -> &str {
 enum Pat {
     Duration,
     Age,
+    /// A span of ctxloom-lib's grammar, or `now` ([`super::span`]).
+    Span,
     ListWindow,
     PrefixKey,
     MemoryLimit,
@@ -94,6 +96,7 @@ impl Pat {
         match self {
             Pat::Duration => "^[0-9]+(\\.[0-9]+)?(ns|us|\u{b5}s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u{b5}s|ms|s|m|h))*$",
             Pat::Age => "^[0-9]+(d|w|h|m|s)$",
+            Pat::Span => "now, or a span such as 5m, 1h30m or 1.5h",
             Pat::ListWindow => "^(all|0|[0-9]+(d|w|h|m|s))$",
             Pat::PrefixKey => "^ctrl[-+].$",
             Pat::MemoryLimit => "^\\s*([0-9]+(\\.[0-9]+)?\\s*([kKmMgGtT]([iI]?[bB])?|[bB])?|[uU][nN][lL][iI][mM][iI][tT][eE][dD])\\s*$",
@@ -106,6 +109,7 @@ impl Pat {
         match self {
             Pat::Duration => durations(s, &["ns", "us", "\u{b5}s", "ms", "s", "m", "h"]),
             Pat::Age => age(s),
+            Pat::Span => duration_text::parse(s).is_ok(),
             Pat::ListWindow => s == "all" || s == "0" || age(s),
             Pat::PrefixKey => {
                 let mut chars = s.chars();
@@ -351,6 +355,13 @@ fn root() -> Node {
                 "legacy",
                 object(vec![("go", choice(&["present", "retired"]))]),
             ),
+            // Owner, 2026-11-15: how long a drain (`ctxloom shutdown`, a
+            // SIGTERM to the daemon) waits for what it hosts before it
+            // stops what remains; the home config's alone.
+            (
+                "daemon",
+                object(vec![("drain_timeout", pattern(Pat::Span))]),
+            ),
             ("workspace", choice(&["none", "worktree"])),
             ("runtime", choice(RUNTIMES)),
             // Owner ruling 134: no engine-neutral `permissions` (approver,
@@ -551,10 +562,11 @@ fn node_at(path: &[String]) -> Option<std::borrow::Cow<'static, Node>> {
 }
 
 /// Every violation of `doc`.
-/// The keys only the home config may say (owner ruling 162): `legacy.go`,
+/// The keys only the home config may say: `legacy.go` (owner ruling 162),
 /// whether Go ctxloom runs on this machine, which a checked-out repository
-/// cannot know.
-pub const HOME_ONLY: &[(&str, &str)] = &[("legacy", "go")];
+/// cannot know; `daemon.drain_timeout` (owner, 2026-11-15), the user's one
+/// daemon's, which no project owns.
+pub const HOME_ONLY: &[(&str, &str)] = &[("legacy", "go"), ("daemon", "drain_timeout")];
 
 /// Take each of [`HOME_ONLY`] out of a PROJECT layer and return its dotted
 /// path, so the loader can refuse it (and `--degraded` never reads it); a

@@ -20,6 +20,10 @@
 //! 93), is held by its enqueuer until its runner is started; its file is
 //! removed when it is let go, so it is a dead holder's alone that reads free.
 
+mod frontends;
+
+pub use frontends::{FrontendHeld, FrontendLocks, FrontendNotice};
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

@@ -69,6 +69,9 @@ pub(crate) struct Project {
     /// Directories every run's `PATH` starts with (a companion's program),
     /// unless the run names a `PATH` of its own.
     path_first: std::sync::Mutex<Vec<PathBuf>>,
+    /// The processes its `start_*` started, ended when it is dropped if
+    /// they still run (see its `Drop`).
+    started: std::sync::Mutex<Vec<u32>>,
 }
 
 impl Project {
@@ -114,6 +117,7 @@ impl Project {
             gos_catalog: false,
             program: None,
             path_first: std::sync::Mutex::new(Vec::new()),
+            started: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -363,6 +367,7 @@ impl Project {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
+            .map(|child| self.started(child))
             .expect("ctxloom starts")
     }
 
@@ -379,6 +384,7 @@ impl Project {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
+            .map(|child| self.started(child))
             .expect("ctxloom starts")
     }
 
@@ -392,7 +398,17 @@ impl Project {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
+            .map(|child| self.started(child))
             .expect("ctxloom starts")
+    }
+
+    /// `child`, its pid kept to be ended when the project is dropped.
+    fn started(&self, child: std::process::Child) -> std::process::Child {
+        self.started
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(child.id());
+        child
     }
 
     fn spawn(&self, cwd: &Path, env: &[(&str, &str)], args: &[&str]) -> Ran {
@@ -449,6 +465,66 @@ impl Project {
         }
         out
     }
+}
+
+/// How long a process a test started, still running when its project is
+/// dropped, is given to stop when asked, before it is killed.
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl Drop for Project {
+    /// No process a test started outlives it (2026-11-15, U8r): a test that
+    /// panics drops its children without ending them, and a frontend left so
+    /// keeps its daemon serving, or starts another. Each one still running,
+    /// and still this process's child (a pid given up and reused is another
+    /// process's), is asked to stop (SIGTERM, on which a run ends its engine
+    /// and records its end, ruling 114), given [`STOP_GRACE`], then killed;
+    /// all before the home is removed. Where `ps` and `kill` are not
+    /// (Windows) nothing is asked.
+    fn drop(&mut self) {
+        let pids = std::mem::take(
+            &mut *self
+                .started
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        let running: Vec<u32> = pids.into_iter().filter(|pid| running_child(*pid)).collect();
+        if running.is_empty() {
+            return;
+        }
+        for pid in &running {
+            signal(*pid, "-TERM");
+        }
+        let deadline = std::time::Instant::now() + STOP_GRACE;
+        while std::time::Instant::now() < deadline && running.iter().any(|pid| running_child(*pid))
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        for pid in running.iter().filter(|pid| running_child(**pid)) {
+            signal(*pid, "-KILL");
+        }
+    }
+}
+
+/// Whether `pid` is a child of this process that has not exited (a zombie,
+/// not yet waited for, has).
+fn running_child(pid: u32) -> bool {
+    let Ok(out) = Command::new("ps")
+        .args(["-o", "ppid=,stat=", "-p", &pid.to_string()])
+        .output()
+    else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut words = text.split_whitespace();
+    words.next().and_then(|ppid| ppid.parse::<u32>().ok()) == Some(std::process::id())
+        && words.next().is_some_and(|stat| !stat.starts_with('Z'))
+}
+
+/// Send `signal` (`-TERM`, `-KILL`) to `pid`, whatever comes of it.
+fn signal(pid: u32, signal: &str) {
+    let _ = Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .output();
 }
 
 /// `text` with each path that starts at one of `tokens` spelled with `/`: the

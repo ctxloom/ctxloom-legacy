@@ -51,7 +51,14 @@ and the `mock` engines) ONCE per nextest run by the setup script
 `scripts/nextest-build-binaries.sh` (`.config/nextest.toml`), which names it
 and the companion stub in `CTXLOOM_TEST_BINARY` and
 `CTXLOOM_TEST_COMPANION_STUB`; `binary()` builds for itself only without
-them (owner ruling 144: once per test PROCESS cost about 2.3 s a test). The `mock` and `mock-*` engines exist only under
+them (owner ruling 144: once per test PROCESS cost about 2.3 s a test). No process
+a test starts outlives it: the acceptance tests' `Project` ends, when it is
+dropped (a panic's unwinding too), every process its `start_*` started that
+is still its running child (SIGTERM, ten seconds, then SIGKILL; `ps` and
+`kill`, so unix only), before its home is removed; a left frontend would
+keep its daemon serving, or start another (2026-11-15, U8r). nextest's
+leak-timeout cannot see these: a daemon's stdio is null and a frontend's
+is piped to the test process, not to nextest. The `mock` and `mock-*` engines exist only under
 `test-support` (`library::config::schema::ENGINES` and the wiring's
 `engines()`): a plain build knows claude-code and opencode alone, and `just
 build` proves it by running `scripts/plain-engines-check.sh` against the plain
@@ -706,7 +713,8 @@ no end once that was seen) is a kill, `RunExited{signal: 9}` keyed
 started whose own lock is left free is the sweep's (`launch-orphaned`).
 The idle count's sweep (`live_runs`) leaves an adopted run to it. A
 draining daemon leaves TUIs untouched, so the daemon after it adopts them
-and the two never act on one run. Accepted residual: the checkout's files
+and the two never act on one run (`ctxloom shutdown` asks the TUIs'
+frontends themselves to stop: SHUTDOWN). Accepted residual: the checkout's files
 a `session_home: host` launch placed are not known to the adopter (none
 taken out first), so such a checkout is left, said. A frontend killed
 between the plan and its start report leaves its run lock FREE: the next
@@ -1205,7 +1213,8 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-build `7547415e` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
 - angzarr-platform `5f39b330`;
-- taskloom's crates `2db3ddf7` and ctxloom-lib's `2486af2a`, built on the
+- taskloom's crates `2db3ddf7` and ctxloom-lib's `c909e925` (its branch
+  `feat/duration-now`, `now` in `duration-text`, to merge into its main), built on the
   same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
@@ -1365,7 +1374,8 @@ under ctxloom's own `<home>/.ctxloom/worktrees/`, never the project; the
 port's never-forced `remove`, worktree-git's, never a prune; one holding
 work is left and said in the log). A CHILD whose last incarnation was lost
 (the board's `last_end` is `orphaned`) or handed over by a draining daemon
-(`drained`, `session_policies::ENDED_DRAINED`; DRAIN below), not closed or owed another,
+(`drained`, `session_policies::ENDED_DRAINED`; DRAIN below: `daemon stop
+--drain`, `ctxloom shutdown`, a SIGTERM), not closed or owed another,
 with a native session bound, is RE-HOSTED by the plan's step
 `rehost:<child>:<n+1>` (`daemon-application`'s `rehost.rs`): the sessions
 command `RehostSession{recent_rehosts, cause}` owes `IncarnationOwed{n+1,
@@ -1514,7 +1524,13 @@ recorded` (`already recorded` for a duplicate), `closed` (`already
 closed`), `launched, a child of <owner>`. Their refusals are the domain's
 words (`daemon_api::rejection_of` maps the sessions and runs domains'
 typed refusals: `sessions-session-closed`, `sessions-session-unknown`,
-`runs-no-credential`, ...), exit 20. The hidden `daemon
+`runs-no-credential`, ...), exit 20. A send's urgency is judged on the
+target's engine (`session_policies::supported`, OD-58): a hosted child on
+an engine with a child adapter, `session_policies::CHILD_ENGINES`
+(claude-code and opencode; the wiring's `hosted_engines` is held to it by
+its test), takes inform, wake and steer, and is woken by its children's
+notices; any other session takes an inform alone
+(`sessions-urgency-unsupported`). The hidden `daemon
 launch|send|close|clear` are gone (hard migrate); `daemon resolve` stays
 hidden. A launch (`Caller::launch`; the MCP tool `child_launch` too, its
 owner the calling session, its harp minted when it names none,
@@ -1590,7 +1606,11 @@ makes its own directory again (owner, 2026-11-14; j000100's exit is deleting
 `~/.ctxloom`): its log's directory is made as it starts (`logger`) and a line
 said once it is gone is dropped, and a discovery file whose directory is gone
 is not published again; so a daemon whose home was deleted exits on its lock
-and leaves nothing there. A replaced lock (its directory still there) is
+and leaves nothing there. It also exits, each tick, once its home's ctxloom
+directory (`<home>/.ctxloom`, its store's) is gone (`DaemonFiles::home_gone`,
+OD-60), because the lock may be elsewhere: the account's, while
+`CTXLOOM_HOME` names another home (`just install`'s `~/.ctxloom-rs`), or a
+test's own place. A replaced lock (its directory still there) is
 logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
@@ -1758,46 +1778,61 @@ the write's request id (S8) is not sent yet, so a retry on a new daemon of
 a removal that applied answers `SessionNotFound`. Not yet clients: the
 library, config, deps, init, doctor and run.
 
-VERSION SKEW (M3): a client whose stamp is not the serving daemon's asks it
-(`GetDaemon`); hosting nothing, it is stopped (`StopDaemon`), waited out and
-the client starts its own; hosting live runs, the command is refused,
-`daemon-api-version-skew-busy` (exit 20, naming both stamps and the harps,
-fix `ctxloom daemon stop --even-if-live`), unless the client is of a NEWER
-version (`daemon_api::newer`, semver only): then it asks the daemon to
-DRAIN (below). `daemon resolve` reconciles
+VERSION SKEW (M3; owner OD-61/OD-62, 2026-11-15: ONE ctxloom version runs
+at a time, and nothing drains a daemon for its version): a client whose
+stamp is not the serving daemon's asks it (`GetDaemon`); hosting nothing,
+it is stopped (a plain `StopDaemon`), waited out and the client starts its
+own; hosting live runs, the command is refused, `daemon-api-version-skew`
+(`SkewError::Mismatch`, exit 20, naming both stamps and the harps, fix
+`ctxloom daemon stop`, `--even-if-live` ending what it hosts), whatever the
+two versions. Nothing passes one version's work to another's: a newer
+client's automatic drain, H-Q6's hook nudge, the successor version
+(`StopDaemonRequest.version`, field 4, `Daemon.draining_for`, field 10, and
+`DaemonDraining.successor`, field 2, all reserved), `daemon-api-version-skew-busy`
+and `daemon-api-draining` on this path are gone; a hook held for an older
+daemon only holds. An
+install stops every running ctxloom first (SHUTDOWN, below). `daemon resolve` reconciles
 first, and the child verbs as every client reaching through `Reach` does;
 under `test-support`, `CTXLOOM_TEST_STAMP` names the client's stamp.
 
-DRAIN (OD-3 extended, s4-Q4; U8). A client of a newer version than the
-serving daemon sends `StopDaemon{drain: true, version: <its stamp>}`
-(`daemon_api::reconcile`, the CLI's and a session's call alike; a hook that
-holds because its daemon is older does too, once per hook, fire and forget
-within `HEALTH_WAIT`, H-Q6 (b): `HookReach::ask_to_drain`,
-`daemon::ask_to_drain`). A drain is never refused for what the daemon
-hosts; `even_if_live` wins over it. Hosting nothing, the daemon exits at
-once and the client starts its own (`Reconciled::Stopped`); hosting runs,
-the client's call is refused `daemon-api-draining` (exit 20, naming both
-stamps and the harps it still hosts; `SkewError::Draining`), and the next
-command, once it has exited, starts the new daemon. `ctxloom daemon stop
---drain` (OD-54 (3)) asks the same of the serving daemon, whatever its
-version, for the client's own stamp (`Client::drain`): answered at once,
-exit 0, the daemon handing over and exiting, the next command's daemon
-re-hosting; `--drain` with `--even-if-live` is a usage error (clap's
+DRAIN (OD-54; owner 2026-11-15). A daemon drains when it is asked: `ctxloom
+daemon stop --drain` (`Client::drain`, `StopDaemon{drain: true}`),
+`ctxloom shutdown [<duration>]`
+(SHUTDOWN, below; the same request with `drain_timeout_seconds`, field 5)
+or a SIGTERM to the daemon (serve.rs's `hear_terminate`: the first is the
+drain, logged `SIGTERM: asked to drain`; a second is the
+plain stop, `--even-if-live`, ruling 114's stop of each engine). A drain is
+never refused for what the daemon hosts; `even_if_live` wins over it. Its
+TIMEOUT is the first that says: the request's `drain_timeout_seconds`, the
+home config's `daemon.drain_timeout` (a span of the one grammar,
+ctxloom-lib's `duration-text`, whose `now` is zero; home layer only, `HOME_ONLY`), READ AGAIN AT EACH
+ROUND (`Shared::drain_period`, `Daemon::hand_over_within`; logged `the drain
+waits <n>s from its start`), so a change written while it drains (the
+config is no client of the daemon, so nothing refuses the write) is the
+drain's, still timed from its start; else the daemon's default,
+`daemon_application::HAND_OVER_PERIOD` (five minutes; `daemon serve
+--hand-over-seconds`, hidden, sets that default, a test's short one).
+Hosting nothing, the daemon exits at once. `--drain` with `--even-if-live` is a usage error (clap's
 `conflicts_with`, exit 20); nothing new under `--detailed-exitcode`. The
 drain WARNS AT ONCE (OD-54 (2)): while a daemon drains and hosts
 anything, its `Daemon.warnings` (StopDaemon's answer and GetDaemon's)
-carry `daemon-api-handing-over` (`daemon_api::HandingOver`: both stamps,
-the harps, the period in seconds, `About.hand_over_seconds`; wording
-approved), and it rides every answer's metadata as the start-up's does
-(OD-55): the asking command hears it from the stop's answer (the
-`daemon-api-draining` refusal it then raises carries nothing of its own),
-a later call's `DaemonDraining` refusal carries it too, and each says it on
-stderr as it ends, once; its log says each busy child as it is steered. The draining daemon
-(`Hosting::drain`/`draining`, `Daemon.draining_for`, said by `daemon
-status`) refuses every new call but `GetDaemon` and `StopDaemon` with the
-typed `DaemonDraining` (`Api::open`, the same code); the hooks' facts and the
-frontends' reports (the coordinator) still land. Its loop hands over
-(`Daemon::hand_over`): it starts no child and delivers no message
+carry `daemon-api-handing-over` (`daemon_api::HandingOver`: its stamp, the
+harps, the period in seconds, `Hosting::hand_over_seconds`, the timeout as
+the loop reads it now; its successor version gone, OD-62, so its wording
+is a DRAFT again), and it rides every
+answer's metadata as the start-up's does (OD-55): the asking command hears
+it from the stop's answer, a later call's `DaemonDraining` refusal carries
+it too, and each says it on stderr as it ends, once; its log says each
+busy child as it is steered. The draining daemon
+(`Hosting::drain`/`draining`, `Daemon.draining`, field 12, said by
+`daemon status`) refuses every new call but `GetDaemon`, `StopDaemon` and the
+project's names (`ResolveProject`, `GetProject`: a command that only names
+its project, as a config change's json does, starts no work and lands) with
+the typed `DaemonDraining` (`daemon-api-draining`, naming its stamp and
+what it hosts, wording a DRAFT; `Api::open`): new runs and launches
+(`CreateRun`, `CreateHandOff`), a run's watch, the session reads and
+destroys, the transcript and the assembly; the hooks' facts and the
+frontends' reports (the coordinator, not the service) still land. Its loop hands over(`Daemon::hand_over`): it starts no child and delivers no message
 (`Step::delivers`; what is pending is the next daemon's), but the guidance
 below; each hosted child bound to its native session with no turn in
 flight (and no guidance of its own still pending) is ended once; its exit
@@ -1817,9 +1852,8 @@ delivery a draining daemon lets through, to that run while the guidance is
 pending) and fed as any steer (the turn in flight interrupted, the guidance
 its next turn); the child is ended once that turn ends. A child still
 hosted once the hand-over's period has passed on the daemon's clock
-(`daemon_application::HAND_OVER_PERIOD`, five minutes; `Daemon::clocked`
-over the `Monotonic` port, the root's its process's `Instant`, a test's a
-fake; `daemon serve --hand-over-seconds`, hidden, a test's short one) is
+(its timeout, above; `Daemon::clocked` over the `Monotonic` port, the
+root's its process's `Instant`, a test's a fake) is
 handed over AUTOMATICALLY (OD-54 (2)): ended once, its turn in flight cut,
 its incarnation `drained`, its hand-off kept, and said in the log
 (`<harp>: still busy after <n>s: its turn in flight cut, handed over`); no
@@ -1829,10 +1863,68 @@ never bound to its engine's session is ended at the period too and,
 having no conversation, is not re-hosted; a guidance still pending when
 the period cuts its child (never delivered) is delivered by the next
 daemon, as a steer to the re-hosted child. `daemon stop --even-if-live` is
-the escalation (its children end `runner-exit` and are not re-hosted). A
-daemon of a ctxloom from before the drain takes it for a plain stop and
-refuses it for its runs (`DaemonHosting`), which the client reads as a busy
-daemon, as before.
+the escalation (its children end `runner-exit` and are not re-hosted).
+TUIs are not handed over: a frontend outlives its daemon, and the daemon
+after the drained one adopts it (U5), or `ctxloom shutdown` asks it to stop.
+
+SHUTDOWN (owner, 2026-11-15, OD-62; `ctxloom-wiring`'s `daemon/shutdown.rs`).
+`ctxloom shutdown [<duration> | now]` stops every running ctxloom of this
+home, as an installer must before it replaces the binary. Its time is a
+span of the one grammar (ctxloom-lib's `duration-text`, read directly:
+`15m`, `1h30m`, `90s`, `0s`, and its word `now`, zero);
+none given, `daemon.drain_timeout`, else five minutes; one that is no span
+is refused before anything is asked, `ctxloom-wiring-shutdown-bad-time`
+(exit 20). A time that is not zero DRAINS the daemon serving within it
+(the drain's request, its timeout this one), then waits, at most that long,
+for the daemon to exit AND the live frontends to end (a TUI is left to its
+human for the whole time), and for the daemon a grace longer
+(`DRAIN_GRACE`, 30 s: its period's end stops its one-shots and cuts its
+busy children). Then, `now` at once: each live interactive frontend is
+asked to stop and waited for (`FRONTENDS_WAIT`, 20 s), then the daemon
+serving then (a frontend's report may have started one) the plain stop
+(`--even-if-live`) and waited for (`STOP_WAIT`, 30 s). Each step is said
+as it happens (text; json: `{drain_seconds, steps}` at the end). Nothing is
+killed: what still runs is said, `ctxloom-wiring-shutdown-incomplete`
+(exit 10, the daemon's and the frontends' pids); all stopped, exit 0. A
+frontend is found by its lock (`liveness::FrontendLocks`): the frontend of
+every interactive session (`frontend::client_terminal`) holds
+`<home>/.ctxloom/frontends/<pid>.lock` for its life, and is asked to stop
+by the file `<pid>.stop` beside it, which it looks for every 200 ms
+(`watch_for_stop`): it then requests its `Stop` (the TUI asked to stop, then
+killed after its grace, as a SIGTERM to it does, ruling 114), reports its
+end and exits, said `asked to stop by `ctxloom shutdown``. A drain TELLS
+each live frontend at once (OD-63, its spec held): the file `<pid>.notice`
+beside its lock (`liveness::FrontendNotice`: a `stop_at: <epoch seconds>|none`
+line, then the text; a later one replaces it), which the frontend shows on
+its terminal's stderr as `ctxloom: <text>` once per notice (`Watch::look`).
+`ctxloom shutdown <span>` tells it with no `stop_at` (it asks the stop
+itself at the span's end); a SIGTERM's drain tells it with `stop_at` its
+start plus the timeout, told again when the timeout changes while the
+daemon lives, and the frontend stops itself then (said `the drain ctxloom
+was told of ended: ...`), since a daemon hosting nothing has exited by
+then. The notice text (`shutdown::notice_text`, "ctxloom is shutting down:
+this session will be stopped in <span>; finish and exit") and both stop
+sentences are DRAFTS (OD-63). Under `test-support`, the daemon directory's
+`test-deaf-to-stop` makes a daemon take a stop and a drain and ignore them,
+and `test-shutdown-stop-wait` (seconds) shortens `STOP_WAIT`, so a test
+sees the exit 10. A dead
+frontend's lock reads free and its files are taken away by the next look;
+no process id is trusted and no signal is sent to one (Windows alike). The
+shutdown reaches the daemon without the version check (`Reach::observing`),
+so a new binary stops an older daemon; an older daemon ignores the timeout
+field and drains within its own. `just install [when]` (and
+`install-windows [when]`) runs the NEW binary's `shutdown` before a
+changed binary replaces the installed one (`just install now`: at once),
+says what will not stop, and installs anyway. A daemon's exit lets its
+runtime go within `RUNTIME_END` (5 s, `Runtime::shutdown_timeout`), never
+waited on for good: a live frontend's session keeps a blocking task (its
+`WatchRun`) that a plain drop waited out for the frontend's life, every
+SIGTERM meanwhile taken by tokio's handler and heard by nothing (2026-11-15,
+ruling 114). A frontend's watch for its stop and notices runs beside its
+session in the main thread's future (`frontend::beside`), never spawned:
+that thread holds std's stderr lock for the whole command (the binary's
+`main`), so a notice written from the runtime's one worker hung it, and
+the signals and the stop with it.
 
 PROJECT REGISTRATION (owner, 2026-11-12). `ResolveProject` is
 register-or-recheck: the client sends what IT resolved (`Wiring::
@@ -2588,8 +2680,8 @@ they look and change nothing). The frontend (slice 4 U5, `ctxloom-wiring`'s
 again once its exit is reported (`daemon::flush::flush_holds(&wiring,
 stamp)`: the daemon serving the home, none started; what it set aside said
 as the command ends). The daemon never reads
-a hold. A hook that holds because its daemon is older asks it to drain
-(H-Q6, U8; DRAIN).
+a hold. A hook that holds because its daemon is older only holds: it asks
+no daemon to drain (H-Q6's nudge is gone, OD-62).
 A GAP (the owner: a gap is delivered into the transcript) is a fact a
 hold dropped past its bound: its gap record is delivered, in its place in
 the order, as `RecordCaptureGap` (`capture.proto`: the dropped fact's
@@ -2746,19 +2838,18 @@ has it (s3-Q4), its command id keyed by an id minted once per call (a
 message's, a clear's; a close's `close:<uid>`), so the one retry on a new
 daemon is a DUPLICATE. The answer is the session-index projection, or
 `GetSession` when none came back. A session's call never ends what a
-daemon hosts (OD-3, owner 2026-11-13/14; `Reach::never_stopping`,
-`daemon_api::reconcile_session`): meeting an IDLE daemon of an OLDER
-version (`daemon_api::newer`: the stamps' `MAJOR.MINOR.PATCH[-pre]` by
-semver precedence; the hash and a dirty build's time order nothing, so two
-builds of one version are neither), it asks it to drain (`StopDaemon`,
-never `even_if_live`: its loop ticks no new child, its discovery is
-withdrawn, and its listener's stop answers the calls in flight within
-`STOP_GRACE`), waits it out, starts its own and is answered there; a busy
-one is asked to drain too, handing its runs over (DRAIN, above), and the
-call is refused meanwhile `daemon-api-draining`; one that refuses the drain
-for its runs (a ctxloom before it, `DaemonHosting`), or one of an older or
-the same version, refuses the call `daemon-api-version-skew`, naming both
-stamps, and is asked nothing. Under test-support, a
+daemon hosts (OD-3, owner 2026-11-13/14; OD-62, 2026-11-15;
+`Reach::never_stopping`, `daemon_api::reconcile_session`): meeting an IDLE
+daemon of an OLDER version (`daemon_api::newer`: the stamps'
+`MAJOR.MINOR.PATCH[-pre]` by semver precedence; the hash and a dirty
+build's time order nothing, so two builds of one version are neither), it
+asks it the plain stop (`StopDaemon`, never `even_if_live` and never a
+drain: its loop ticks no new child, its discovery is withdrawn, and its
+listener's stop answers the calls in flight within `STOP_GRACE`), waits it
+out, starts its own and is answered there; a busy one (or one that refuses
+the stop for its runs, `DaemonHosting`), or one of an older or the same
+version, refuses the call `daemon-api-version-skew`, naming both stamps,
+and is asked no drain. Under test-support, a
 `test-die-after-apply` file in the daemon's directory kills the daemon once
 a client's `HandleSync` is applied and before it answers
 (`serve.rs`'s `Dying`, taken by the daemon that finds it), and `ctxloom test
@@ -2958,6 +3049,7 @@ prerelease, no `schema_version` bump: each old key is an ordinary unknown key
 | `output_dir` (top level, unread) | `output.dir` | `ctxloom/` |
 | (new, ruling 162) | `legacy.go: present\|retired` (home config only) | `present` |
 | (new, owner ruling of 2026-11-12) | `config.premised: on-demand\|always` | `on-demand` |
+| (new, owner 2026-11-15, OD-62) | `daemon.drain_timeout: <span>\|now` (home config only; DRAIN) | `5m` |
 
 `config.premised` says when a fragment with a premise loads (owner ruling of
 2026-11-12; `library::compose::Premised`, read by `Config::premised`):
@@ -3216,7 +3308,13 @@ outcomes.json and judges them with the gates' own `_mutants-verdict`
 against `mutation_thresholds`, writing `scores.json` (per tier: killed,
 viable, percent, threshold, pass), uploaded as `mutation-scores` and
 appended to the run's summary. A tier below its threshold fails the score
-job, after the scores are kept.
+job, after the scores are kept. Each shard first asks whether the mutation
+run's memory cap (below) can be had on its runner; where no systemd user
+scope can be made, that shard runs deliberately UNCAPPED
+(`MUTANTS_MEMORY_MAX=none`, said in the step summary): the runner's VM is
+the job's alone, so a runaway mutant fails that shard and nothing else.
+`mutants-shard <k/n> [out] [package]` with a package narrows the run to that
+one crate (`0/1` for all of it), how one crate's mutants are run whole.
 
 The release profile (owner ruling 2026-11-12, Cargo.toml's
 `[profile.release]`) is fat LTO, one codegen unit, opt-level 3,
@@ -3284,6 +3382,15 @@ judges every worktree of the repository and deletes the record of each whose
 directory it cannot see, so a gate run in the dev container, which mounts only
 the checkout, cut every other worktree on the host off from the repository
 (2026-11-12).
+
+Each throwaway's lock (`target/.staged-tree.lock`, `.ratchet-base.lock`,
+`.mutants-batch.lock`) is a descriptor bash opens without close-on-exec and
+`flock`s; the gate holds it, and what it runs is started without it (`9>&-`,
+`7>&-`, `8>&-`), so nothing that outlives the gate (a test's detached
+daemon) holds the next run's lock. The staged tree's recipe inherited it
+until 2026-11-15 (U8r: two leaked test daemons held a commit's
+`test-staged` for half an hour); `scripts/scratch-tree-lock.selftest.sh`
+(`just selftest`) holds `_scratch-tree` to it through procfs (Linux).
 
 lefthook runs the gates one at a time, stopping at the first failure, and
 shows each gate's pass line and any failure's extract. Gates 1 to 5 run in
@@ -3358,7 +3465,26 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    `.cargo/mutants.toml` or a lowered threshold. cargo mutants runs in a
    session of its own (`setsid`), and whatever it leaves running (a
    process a test spawned whose stop a mutant broke) is killed and named
-   in the gate's log; the verdict does not change. The last run's mutants.out (each
+   in the gate's log; the verdict does not change. Every cargo-mutants
+   run (`mutants-staged`, so `mutants-batch`, `closeout` and
+   `closeout-ratchet`, and `mutants-shard`) is under a MEMORY CAP,
+   `gates/memory-cap.sh` (owner ruling of 2026-11-15, after a runaway
+   daemon-application mutant grew to about 70 GB twice and the global OOM
+   took the editor's whole user scope with every session in it): a
+   transient systemd user scope with `MemoryMax=` the justfile's
+   `mutants_memory_max` (16G, env `MUTANTS_MEMORY_MAX`), `MemorySwapMax=`
+   `mutants_swap_max` (2G, env `MUTANTS_SWAP_MAX`) and
+   `OOMPolicy=continue`, so the cap's OOM killer kills the runaway test
+   alone (its mutant is caught) and the run goes on; the default policy
+   would stop the whole run. The command starts only once the scope's
+   `memory.max` is seen set, and the log ends with the scope's memory peak
+   and any OOM kill. A shell with no `XDG_RUNTIME_DIR` (an agent's) gets
+   `/run/user/<uid>` when its bus is there; with no user bus the gate FAILS
+   before anything is built, naming the fix, and never runs uncapped
+   unasked: `MUTANTS_MEMORY_MAX=none` is the opt-out, stated in the run's
+   output. Plain test runs (`just test`, `land-ratchet`) are not capped.
+   Its self-test is `scripts/memory-cap.selftest.sh` (`just selftest`).
+   The last run's mutants.out (each
    mutant's log, outcomes.json) is kept in target/logs/mutants-staged/. Red
    tests fail it on every branch (no mutant can be judged against failing
    tests), as does a run that found mutants and tested fewer: a mutation

@@ -17,7 +17,7 @@ use sessions::{
     SESSION_DOMAIN,
 };
 
-use crate::{plan, supported, Fed, RunAt, Scene, Step, CHILD_ENGINE};
+use crate::{plan, supported, Fed, RunAt, Scene, Step, CHILD_ENGINE, CHILD_ENGINES};
 
 const PROJECT: &str = "calm-otter";
 const OWNER: &str = "0a0a0a0a-0a0a-0a0a-0a0a-0a0a0a0a0a0a";
@@ -559,25 +559,73 @@ fn each_turn_a_child_ended_is_told_to_its_owner() {
     );
 }
 
-// A daemon child takes every urgency; a primary only an inform for now.
+// OD-58: a daemon child on an engine with a child adapter (claude-code and
+// opencode) takes every urgency; one on any other engine, and a primary on
+// any, only an inform for now.
 #[test]
 fn the_urgencies_a_session_takes() {
+    let every = [Urgency::Inform, Urgency::Wake, Urgency::Steer];
     let mut child = sessions::SessionState {
         engine: CHILD_ENGINE.to_string(),
         owner: Some(at(OWNER)),
         ..sessions::SessionState::default()
     };
+    assert_eq!(supported(&child), every);
+    child.engine = "opencode".to_string();
+    assert_eq!(supported(&child), every, "opencode's child adapter");
+    child.engine = "mock".to_string();
+    assert_eq!(supported(&child), [Urgency::Inform], "no child adapter");
+    assert_eq!(CHILD_ENGINES, ["claude-code", "opencode"]);
+    for engine in CHILD_ENGINES {
+        let primary = sessions::SessionState {
+            engine: engine.to_string(),
+            ..sessions::SessionState::default()
+        };
+        assert_eq!(supported(&primary), [Urgency::Inform], "{engine}");
+    }
+}
+
+// OD-58: an owner that is itself a hosted child on opencode, re-hosted (its
+// host was lost), is WOKEN by its child's notice, as one on claude-code is.
+#[test]
+fn a_rehosted_opencode_owner_is_woken_by_its_childs_notice() {
+    let mut world = World::with_child().hosting(vec![
+        enqueued(),
+        queued(&["m1"], TurnUrgency::Wake),
+        RunEvent::TurnCompletedRecorded(TurnCompletedRecorded {
+            turn: 1,
+            native_key: String::new(),
+            answer_ref: String::new(),
+            exit_code: 0,
+            message_ids: vec!["m1".to_string()],
+        }),
+    ]);
+    let grand = "0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b";
+    if let SessionEvent::SessionMinted(owner) = &mut world.owner[0] {
+        owner.engine = "opencode".to_string();
+        owner.depth = 1;
+        owner.owner = Some(at(grand));
+    }
+    world.owner.extend([
+        incarnation_ended(1, "orphaned"),
+        SessionEvent::IncarnationOwed(IncarnationOwed {
+            incarnation: 2,
+            reason: sessions::REHOSTED.to_string(),
+        }),
+    ]);
+    let key = format!("notice:{CHILD}:1:1");
+    let steps = world.plan();
+    let notice: SendMessage = command(
+        steps
+            .iter()
+            .find(|s| s.key() == key)
+            .unwrap_or_else(|| panic!("{:?}", keys(&steps))),
+    );
+    assert_eq!(notice.urgency, Urgency::Wake);
     assert_eq!(
-        supported(&child),
+        notice.supported,
         [Urgency::Inform, Urgency::Wake, Urgency::Steer]
     );
-    child.engine = "opencode".to_string();
-    assert_eq!(supported(&child), [Urgency::Inform]);
-    let primary = sessions::SessionState {
-        engine: CHILD_ENGINE.to_string(),
-        ..sessions::SessionState::default()
-    };
-    assert_eq!(supported(&primary), [Urgency::Inform]);
 }
 
 // One board holds every project's sessions (T14): a plan is its project's

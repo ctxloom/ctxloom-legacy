@@ -24,7 +24,9 @@
 
 mod plan;
 
-pub use plan::{plan, supported, Fed, RunAt, Scene, Sent, Step, CHILD_ENGINE, ENDED_DRAINED};
+pub use plan::{
+    plan, supported, Fed, RunAt, Scene, Sent, Step, CHILD_ENGINE, CHILD_ENGINES, ENDED_DRAINED,
+};
 
 use angzarr_embedded::markup::DomainMessage;
 use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Cover, Fact, FactOrigin, Uuid};
