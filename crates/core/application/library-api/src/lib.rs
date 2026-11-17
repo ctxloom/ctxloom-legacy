@@ -15,6 +15,7 @@
 //!   for it;
 //! - [`premise`]: the premise index an edge renders after an assembly.
 
+pub mod deps;
 mod locate;
 pub mod names;
 mod notice;

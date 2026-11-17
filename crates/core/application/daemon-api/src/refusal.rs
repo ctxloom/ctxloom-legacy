@@ -712,3 +712,28 @@ pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
         },
     }
 }
+
+/// A deps use case's error (step 10a U2, `remote list`, `deps list`) as a
+/// read answers it: an adapter's or a file's failure is a failure; a
+/// read model's decline (a lock or a registry that does not read) rides
+/// as `LibraryDeclined`, its cause the decline's own code and args, until
+/// the deps read models' declines have messages of their own (E5's
+/// remainder, escalated: a wire change).
+pub(crate) fn deps_error(error: &deps_application::AppError) -> ApiError {
+    use exit_code::ExitClass;
+    let declined = |d: &dyn angzarr_diagnostic::Diagnostic| {
+        ApiError::Refused(ApiRefusal::of(&daemon_proto::v1::LibraryDeclined {
+            cause: Some(daemon_proto::v1::Cause {
+                code: d.code().to_string(),
+                args: run_application::client::flat_args(d),
+            }),
+        }))
+    };
+    match error {
+        deps_application::AppError::Declined(cause) => declined(cause.as_ref()),
+        _ if error.exit() == exit_code::Exit::REFUSED => declined(error),
+        _ => ApiError::Failed {
+            detail: angzarr_diagnostic::Diagnostic::code(error).to_string(),
+        },
+    }
+}

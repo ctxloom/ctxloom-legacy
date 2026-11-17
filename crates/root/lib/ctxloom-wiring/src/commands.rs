@@ -596,7 +596,18 @@ impl Commands {
             setup: &wired.surface,
             flags: call.globals.clone(),
         };
-        deps_cli::run(&wired.deps, &refresh, &names, noun, call, catalog, out, err)
+        let served = crate::library::DaemonServed { env, version };
+        deps_cli::run(
+            &wired.deps,
+            &refresh,
+            &names,
+            &served,
+            noun,
+            call,
+            catalog,
+            out,
+            err,
+        )
     }
 }
 

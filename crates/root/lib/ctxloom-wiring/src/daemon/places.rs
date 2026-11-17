@@ -227,6 +227,25 @@ impl daemon_api::Libraries for ProjectLibraries {
         read(&library);
         Ok(())
     }
+
+    fn read_deps(
+        &self,
+        dir: &str,
+        env: &[(String, String)],
+        read: &mut dyn FnMut(&deps_application::Deps),
+    ) -> Result<(), ApiError> {
+        let at = if dir.is_empty() {
+            self.home.display().to_string()
+        } else {
+            dir.to_string()
+        };
+        let wiring = self.at(&at, env);
+        let deps = crate::commands::build_deps(&wiring).map_err(|e| ApiError::Failed {
+            detail: angzarr_diagnostic::Diagnostic::code(&e).to_string(),
+        })?;
+        read(&deps);
+        Ok(())
+    }
 }
 
 /// What trusting a project would allow (step 8 U1), read in the daemon as

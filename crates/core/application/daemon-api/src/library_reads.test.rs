@@ -71,6 +71,22 @@ impl Libraries for Opened {
         read(&library);
         Ok(())
     }
+
+    fn read_deps(
+        &self,
+        dir: &str,
+        env: &[(String, String)],
+        read: &mut dyn FnMut(&deps_application::Deps),
+    ) -> Result<(), ApiError> {
+        self.0.lock().unwrap().push((dir.to_string(), env.to_vec()));
+        let fx = deps_application::fakes::Fixture::new();
+        fx.origin("origin", "file:///srv/origin.git");
+        if dir.ends_with("/corrupt") {
+            fx.files.set_lock("not: [a lock");
+        }
+        read(&fx.deps);
+        Ok(())
+    }
 }
 
 fn path(value: &str) -> Option<v1::EnvVars> {
@@ -359,6 +375,17 @@ impl Libraries for WithAgent {
         read(&library);
         Ok(())
     }
+
+    fn read_deps(
+        &self,
+        _: &str,
+        _: &[(String, String)],
+        _: &mut dyn FnMut(&deps_application::Deps),
+    ) -> Result<(), ApiError> {
+        Err(ApiError::Failed {
+            detail: "no deps here".to_string(),
+        })
+    }
 }
 
 // Step 10a U2: `run --dry-run` is `CreateRun` with `validate_only`, planned
@@ -449,4 +476,53 @@ async fn a_preview_outside_git_is_refused_before_it_is_planned() {
         "{refusal:?}"
     );
     assert!(opened.0.lock().unwrap().is_empty());
+}
+
+// Step 10a U2: the deps reads are answered as the library's, observed
+// first, at the caller's directory; a lock that does not read is a decline
+// (exit 20), its cause the read model's own diagnostic.
+#[tokio::test]
+async fn a_deps_read_is_observed_then_answered_and_a_decline_carries_its_cause() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits {
+        work_tree: Some(ROOT.to_string()),
+        ..Gits::default()
+    });
+    let opened = Arc::new(Opened::default());
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
+        .observing(observing(&f.world, &gits));
+    let read = api
+        .list_remotes(v1::ListRemotesRequest {
+            parent: "projects/calm-quiet-heron".to_string(),
+            cwd: "/work/calm-wt".to_string(),
+            ..v1::ListRemotesRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        read.answer.remotes[0].name,
+        "projects/calm-quiet-heron/remotes/origin"
+    );
+    assert_eq!(opened.0.lock().unwrap()[0].0, "/work/calm-wt");
+    let refused = api
+        .list_dependencies(v1::ListDependenciesRequest {
+            parent: "projects/calm-quiet-heron".to_string(),
+            cwd: "/work/corrupt".to_string(),
+            ..v1::ListDependenciesRequest::default()
+        })
+        .await
+        .unwrap_err();
+    let ApiError::Refused(refusal) = refused else {
+        panic!("{refused:?}");
+    };
+    let report = crate::library_refusals::rejection(&refusal.refusal).unwrap();
+    assert!(
+        angzarr_diagnostic::Diagnostic::code(&report).starts_with("deps-"),
+        "{report:?}"
+    );
 }

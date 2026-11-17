@@ -384,6 +384,10 @@ macro_rules! served_read {
 }
 use served_read;
 
+impl deps_cli::Served for DaemonServed {
+    deps_cli::served_reads!(served_read);
+}
+
 /// Whether `noun`'s verb in `call` is a read the daemon answers (step 10a
 /// U2), whose home step is the daemon's own; every other verb still runs
 /// in process, and takes it here first.

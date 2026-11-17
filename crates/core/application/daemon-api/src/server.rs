@@ -428,7 +428,32 @@ impl<E: Edge + 'static> Calls for Api<E> {
     // The library's reads served (step 10a U2, D12), from library-api's
     // table: each observed first, then answered by its use case.
     library_api::served!(served_library_reads);
+    // The deps reads served (step 10a U2), as the library's.
+    library_api::deps_served!(served_deps_reads);
 }
+
+/// [`Api`]'s served deps reads, from `library_api::deps_served!`: each
+/// taken only while the daemon is open, observed first, then answered by
+/// `library_api::deps::$method`.
+macro_rules! served_deps_reads {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> Answer<'_, daemon_ports::Read<v1::$response>> {
+                Box::pin(async move {
+                    self.open()?;
+                    self.deps_read(&request, |deps, parent| {
+                        library_api::deps::$method(deps, parent, &request)
+                    })
+                    .await
+                })
+            }
+        )*
+    };
+}
+use served_deps_reads;
 
 /// [`Api`]'s served library reads, from `library_api::served!`: each taken
 /// only while the daemon is open (`GetConfig` while it drains too),

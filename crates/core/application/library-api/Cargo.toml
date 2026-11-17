@@ -16,6 +16,8 @@ ctxloom-ports.workspace = true
 daemon-proto.workspace = true
 # The library's use cases a read is answered by (U2).
 library-application.workspace = true
+# The remotes' and the lock's use cases the deps reads are answered by (U2).
+deps-application.workspace = true
 serde_json.workspace = true
 # A notice the daemon said, rebuilt from its code and flattened args.
 run-application.workspace = true
@@ -28,6 +30,8 @@ run-ports.workspace = true
 sessions.workspace = true
 
 [dev-dependencies]
+deps-application = { workspace = true, features = ["test-support"] }
+deps-ports.workspace = true
 library-application = { workspace = true, features = ["test-support"] }
 angzarr-embedded = { workspace = true, features = ["test-support"] }
 library-domain-proto.workspace = true

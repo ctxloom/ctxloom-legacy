@@ -86,6 +86,32 @@ impl Names for Project {
     }
 }
 
+/// The daemon's reads in the tests: answered as the daemon answers them
+/// (library-api's deps reads), over the fixture's dependencies, under
+/// [`PARENT`].
+struct ServedBy<'a>(&'a deps_application::Deps);
+
+/// [`ServedBy`]'s reads, from [`served_reads!`](crate::served_reads).
+macro_rules! served_by_library_api {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                _: &str,
+                request: daemon_proto::v1::$request,
+            ) -> Result<(daemon_proto::v1::$response, Vec<daemon_proto::v1::Notice>), Failure> {
+                let outcome = library_api::deps::$method(self.0, PARENT, &request);
+                let read = outcome.result.map_err(IntoFailure::into_failure)?;
+                Ok((read, Vec::new()))
+            }
+        )*
+    };
+}
+
+impl Served for ServedBy<'_> {
+    crate::served_reads!(served_by_library_api);
+}
+
 /// A resource name under [`PARENT`].
 fn named(rest: &str) -> String {
     format!("{PARENT}/{rest}")
@@ -110,7 +136,15 @@ fn go_refreshing(fx: &Fixture, refresh: &FakeRefresh, line: &[&str], how: How) -
     .expect("a catalog");
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let exit = run(
-        &fx.deps, refresh, &Project, &noun, &call, &catalog, &mut out, &mut err,
+        &fx.deps,
+        refresh,
+        &Project,
+        &ServedBy(&fx.deps),
+        &noun,
+        &call,
+        &catalog,
+        &mut out,
+        &mut err,
     )
     .map(|exit| exit.code(true))
     .map_err(|f| (f.cause.code().to_string(), f.exit.code(true)));

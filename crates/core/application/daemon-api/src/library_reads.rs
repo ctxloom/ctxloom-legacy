@@ -17,6 +17,7 @@
 //! directory, in an environment, opens it.
 
 use daemon_proto::v1;
+use deps_application::Deps;
 use library_application::{AppError, Flags, Library, Outcome};
 use run_ports::Edge;
 use sessions::ProjectName;
@@ -36,6 +37,15 @@ pub trait Libraries: Send + Sync {
         dir: &str,
         env: &[(String, String)],
         read: &mut dyn FnMut(&Library),
+    ) -> Result<(), ApiError>;
+
+    /// `read` over the project's dependencies (its remotes and its lock)
+    /// a process at `dir`, in `env`, opens (step 10a U2's deps reads).
+    fn read_deps(
+        &self,
+        dir: &str,
+        env: &[(String, String)],
+        read: &mut dyn FnMut(&Deps),
     ) -> Result<(), ApiError>;
 }
 
@@ -121,13 +131,76 @@ impl<E: Edge> Api<E> {
         request: &Q,
         answer: impl FnOnce(&Library, &Flags, &str) -> Outcome<R>,
     ) -> Result<daemon_ports::Read<R>, ApiError> {
+        let site = self.read_site(request).await?;
+        let mut answer = Some(answer);
+        let mut outcome = None;
+        site.libraries.read(&site.at, &site.env, &mut |library| {
+            if let Some(answer) = answer.take() {
+                outcome = Some(answer(library, &site.flags, &site.parent));
+            }
+        })?;
+        let outcome = outcome.ok_or_else(|| ApiError::Failed {
+            detail: "the library was not read".to_string(),
+        })?;
+        let mut said = site.said;
+        said.extend(
+            outcome
+                .notices
+                .iter()
+                .map(run_application::client::notice_of),
+        );
+        let answer = outcome.result.map_err(|error| read_error(&error))?;
+        Ok(daemon_ports::Read {
+            answer,
+            notices: said,
+        })
+    }
+
+    /// Answer a deps read (`remote list`, `deps list`; step 10a U2) as
+    /// [`Api::library_read`] answers a library read: its project resolved,
+    /// its trees observed, then `answer` over the project's dependencies
+    /// at its directory, under the parent it was asked under.
+    pub(crate) async fn deps_read<Q: LibraryRequest, R>(
+        &self,
+        request: &Q,
+        answer: impl FnOnce(&Deps, &str) -> deps_application::Outcome<R>,
+    ) -> Result<daemon_ports::Read<R>, ApiError> {
+        let site = self.read_site(request).await?;
+        let mut answer = Some(answer);
+        let mut outcome = None;
+        site.libraries.read_deps(&site.at, &site.env, &mut |deps| {
+            if let Some(answer) = answer.take() {
+                outcome = Some(answer(deps, &site.parent));
+            }
+        })?;
+        let outcome = outcome.ok_or_else(|| ApiError::Failed {
+            detail: "the dependencies were not read".to_string(),
+        })?;
+        let mut said = site.said;
+        said.extend(outcome.notices.iter().map(|notice| v1::Notice {
+            code: angzarr_diagnostic::Diagnostic::code(notice).to_string(),
+            args: run_application::client::flat_args(notice),
+            text: notice.to_string(),
+        }));
+        let answer = outcome
+            .result
+            .map_err(|error| crate::refusal::deps_error(&error))?;
+        Ok(daemon_ports::Read {
+            answer,
+            notices: said,
+        })
+    }
+
+    /// Where a read is answered: its parent, the directory and environment
+    /// it is read at, its flags, and what its observation said.
+    async fn read_site<Q: LibraryRequest>(&self, request: &Q) -> Result<ReadSite<'_>, ApiError> {
         let (parent, project) = parent_of(request.target()).ok_or_else(|| {
             ApiError::from(ApiRefusal::of(&v1::NameInvalid {
                 name: request.target().to_string(),
                 reason: "shape".to_string(),
             }))
         })?;
-        let libraries = self.libraries.as_ref().ok_or_else(|| ApiError::Failed {
+        let libraries = self.libraries.as_deref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon reads no library".to_string(),
         })?;
         let env = pairs(request.env());
@@ -142,31 +215,26 @@ impl<E: Edge> Api<E> {
         };
         let root = libraries.root(&dir, &env);
         let site = project.zip(root.as_deref().or(registered.as_deref()));
-        let mut said = self.observed(site, request.env()).await?;
-        let flags = flags_of(request.globals());
-        let at = root.unwrap_or(dir);
-        let mut answer = Some(answer);
-        let mut outcome = None;
-        libraries.read(&at, &env, &mut |library| {
-            if let Some(answer) = answer.take() {
-                outcome = Some(answer(library, &flags, &parent));
-            }
-        })?;
-        let outcome = outcome.ok_or_else(|| ApiError::Failed {
-            detail: "the library was not read".to_string(),
-        })?;
-        said.extend(
-            outcome
-                .notices
-                .iter()
-                .map(run_application::client::notice_of),
-        );
-        let answer = outcome.result.map_err(|error| read_error(&error))?;
-        Ok(daemon_ports::Read {
-            answer,
-            notices: said,
+        let said = self.observed(site, request.env()).await?;
+        Ok(ReadSite {
+            libraries,
+            parent,
+            at: root.unwrap_or(dir),
+            env,
+            flags: flags_of(request.globals()),
+            said,
         })
     }
+}
+
+/// Where a read is answered ([`Api::read_site`]).
+struct ReadSite<'a> {
+    libraries: &'a dyn Libraries,
+    parent: String,
+    at: String,
+    env: Vec<(String, String)>,
+    flags: Flags,
+    said: Vec<v1::Notice>,
 }
 
 impl<E: Edge> Api<E> {

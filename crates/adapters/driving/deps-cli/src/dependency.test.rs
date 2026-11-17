@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use deps_application::{ExecDelta, FileChange, ItemChange};
+use deps_application::{DepRow, ExecDelta, FileChange, ItemChange};
 
 use super::*;
 

@@ -285,7 +285,9 @@ fn test_doctor_fails_without_the_token_and_passes_with_it() {
 #[test]
 fn test_a_dependency_command_is_run_over_the_home() {
     let world = World::new("deps");
-    let (code, out, _) = run_line(&mut world.commands(), &["remote", "list"]);
+    // A verb still in process (`remote list` and `deps list` are the
+    // daemon's since step 10a U2, and a unit test starts no daemon).
+    let (code, out, _) = run_line(&mut world.commands(), &["deps", "check"]);
     assert_eq!(code, 0);
     assert!(!out.is_empty());
 }

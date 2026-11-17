@@ -3,29 +3,9 @@
 //! discover.
 
 use daemon_proto::v1;
-use deps_application::{
-    Browsed, Created, DefaultSet, Discovered, EditedRemote, RemoteListing, RemoveResult,
-};
+use deps_application::{Browsed, Created, DefaultSet, Discovered, EditedRemote, RemoveResult};
 
 use crate::api::{count, item_kind, remote_name};
-
-/// `remote list`: `ListRemotesResponse`, each remote saying whether it is
-/// the default (OQ-7: printed true or false).
-pub(crate) fn listed(parent: &str, listing: &RemoteListing) -> v1::ListRemotesResponse {
-    v1::ListRemotesResponse {
-        remotes: listing
-            .remotes
-            .iter()
-            .map(|row| v1::Remote {
-                name: remote_name(parent, &row.name),
-                url: row.url.clone(),
-                default: Some(row.name == listing.default),
-                ..Default::default()
-            })
-            .collect(),
-        ..v1::ListRemotesResponse::default()
-    }
-}
 
 /// `remote create`: `CreateRemoteResponse`, the remote with the forge it was
 /// bound to (`forge`, as asked); a clone that failed is a notice alone.
