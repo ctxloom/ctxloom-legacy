@@ -21,8 +21,8 @@ use cucumber::{given, then, when};
 use serde_json::{json, Value};
 
 use super::World;
-use crate::tests::files;
 use crate::tests::gherkin_common::CommonWorld;
+use crate::tests::{files, procs};
 
 /// The variable a client gives the daemon it spawns as its idle time.
 const IDLE_VARIABLE: &str = "CTXLOOM_DAEMON_IDLE_SECONDS";
@@ -519,26 +519,28 @@ fn assistant_dir(w: &World) -> PathBuf {
 /// What the stub assistant of a hosted one-shot records of itself before
 /// it answers or works: its parent (the process that started it), and
 /// whether its session's lock was held by another process while it ran
-/// (`held`; `unknown` where no `flock` is there to ask).
-const RECORDS_ITSELF: &str = r#"here="$(dirname "$0")"
+/// (`held` or `free`).
+fn records_itself() -> String {
+    let free = procs::lock_free_condition(r#""$lock""#);
+    format!(
+        r#"here="$(dirname "$0")"
 echo "$PPID" > "$here/ppid"
-echo "${CTXLOOM_SESSION##*/}" > "$here/watched-harp"
-lock="${CTXLOOM_ROOT}/.ctxloom/sessions/${CTXLOOM_SESSION##*/}.lock"
-if command -v flock >/dev/null 2>&1; then
-  if flock -n "$lock" true 2>/dev/null; then echo free > "$here/lock-probe"; else echo held > "$here/lock-probe"; fi
-else
-  echo unknown > "$here/lock-probe"
-fi
-"#;
+echo "${{CTXLOOM_SESSION##*/}}" > "$here/watched-harp"
+lock="${{CTXLOOM_ROOT}}/.ctxloom/sessions/${{CTXLOOM_SESSION##*/}}.lock"
+if {free}; then echo free > "$here/lock-probe"; else echo held > "$here/lock-probe"; fi
+"#
+    )
+}
 
 /// A hosted one-shot's stub turn: it records itself, takes its prompt from
 /// its input, and answers (engine-claude's stream).
 fn answering_stub() -> String {
     format!(
-        r#"{RECORDS_ITSELF}cat > /dev/null
+        r#"{records}cat > /dev/null
 echo '{{"type":"system","subtype":"init","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
 echo '{{"type":"result","subtype":"success","is_error":false,"result":"J001000-CHILD-REPLY","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
-"#
+"#,
+        records = records_itself()
     )
 }
 
@@ -547,11 +549,12 @@ echo '{{"type":"result","subtype":"success","is_error":false,"result":"J001000-C
 /// asked and exits.
 fn working_stub() -> String {
     format!(
-        r#"{RECORDS_ITSELF}trap 'echo asked > "$here/asked"; exit 0' TERM
+        r#"{records}trap 'echo asked > "$here/asked"; exit 0' TERM
 echo "$$" > "$here/pid.tmp" && mv "$here/pid.tmp" "$here/pid"
 sleep 30 &
 wait
-"#
+"#,
+        records = records_itself()
     )
 }
 
@@ -666,13 +669,8 @@ fn asked_and_gone(w: &World) {
         daemon_log_text(w)
     );
     let pid = recorded(w, "pid");
-    let alive = std::process::Command::new("kill")
-        .args(["-0", &pid])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("kill runs");
     assert!(
-        !alive.success(),
+        !procs::alive(pid.parse().expect("a pid")),
         "the assistant ({pid}) outlived the command"
     );
     ran_under_the_daemon(w);
@@ -723,7 +721,7 @@ fn hosted_working_one_shot(w: &mut World) {
 /// sessions keep their own.
 fn tui_stub() -> String {
     format!(
-        r#"{RECORDS_ITSELF}p="$here/$(basename "$CTXLOOM_ROOT")"
+        r#"{records}p="$here/$(basename "$CTXLOOM_ROOT")"
 mkdir -p "$p"
 printf '%s\n' "$@" > "$p/tui-args"
 env -0 > "$p/tui-env"
@@ -734,7 +732,8 @@ trap 'echo asked > "$p/asked"' TERM
 i=0
 while [ ! -e "$here/release" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 exit "$(cat "$here/tui-exit" 2>/dev/null || echo 0)"
-"#
+"#,
+        records = records_itself()
     )
 }
 
@@ -820,17 +819,7 @@ fn tui_session(w: &mut World, step: &cucumber::gherkin::Step, kill: bool) {
 /// command typed spawned is its child until that command exits, and is
 /// reaped only then).
 fn alive(pid: u32) -> bool {
-    if let Ok(stat) = files::read(format!("/proc/{pid}/stat")) {
-        let state = stat
-            .rfind(')')
-            .and_then(|end| stat[end + 1..].split_whitespace().next());
-        return state.is_some_and(|state| state != "Z");
-    }
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    procs::alive(u64::from(pid))
 }
 
 /// The types of the events of `harp`'s first run, as the store holds them.
@@ -1016,9 +1005,10 @@ fn alices_session_running(w: &mut World, harp: String) {
 }
 
 /// Alice's assistant on her terminal, as far as its session's liveness
-/// goes: a process that holds the session's lock until released.
-const HOLDS_LOCK: &str = r#"exec flock -n "$1" sh -c 'i=0; while [ ! -e "$0" ] && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done' "$2"
-"#;
+/// goes: a process that holds the session's lock (free now) until released.
+fn holds_lock() -> String {
+    procs::holds_lock(0, 900)
+}
 
 #[given(regex = r#"^Alice's session "([^"]+)" is running, with a child "([^"]+)" working for it$"#)]
 fn alices_session_with_child(w: &mut World, owner: String, child: String) {
@@ -1041,7 +1031,7 @@ fn alices_session_with_child(w: &mut World, owner: String, child: String) {
         .join(format!(".ctxloom/sessions/{owner}.lock"));
     let release = dir.join("release");
     let holder = dir.join("holds-lock");
-    files::put_program(&holder, HOLDS_LOCK);
+    files::put_program(&holder, &holds_lock());
     let assistant = std::process::Command::new(&holder)
         .args([lock.as_os_str(), release.as_os_str()])
         .spawn()
@@ -1682,11 +1672,12 @@ fn ten_hooks_at_once(w: &mut World) {
 /// fixture beside it) before it answers.
 fn hooking_stub() -> String {
     format!(
-        r#"{RECORDS_ITSELF}cat > /dev/null
+        r#"{records}cat > /dev/null
 ctxloom hook claude-code execute UserPromptSubmit < "$here/prompt.json" > /dev/null 2>&1 || true
 echo '{{"type":"system","subtype":"init","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
 echo '{{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"9d764b45-a56a-48d7-ac9d-c2a16c5669f1"}}'
-"#
+"#,
+        records = records_itself()
     )
 }
 
@@ -2708,9 +2699,9 @@ fn frontend_lock(w: &mut World) {
     // The command typed held it while the TUI ran (the stub probed it), and
     // let it go: the session no longer reads live.
     let probe = recorded(w, "lock-probe");
-    assert!(
-        probe == "held" || probe == "unknown",
-        "the session's lock was not held while the TUI ran: {probe}"
+    assert_eq!(
+        probe, "held",
+        "the session's lock was not held while the TUI ran"
     );
     let launch = frontend_launch(w);
     let lock = launch["session_lock"].as_str().expect("its lock");
@@ -2718,12 +2709,10 @@ fn frontend_lock(w: &mut World) {
         lock.ends_with(&format!("/{}.lock", w.harp())),
         "the launch names the session's lock: {lock}"
     );
-    if let Ok(free) = std::process::Command::new("flock")
-        .args(["-n", lock, "true"])
-        .status()
-    {
-        assert!(free.success(), "the lock was let go after the TUI exited");
-    }
+    assert!(
+        !procs::lock_held(std::path::Path::new(lock)),
+        "the lock was let go after the TUI exited"
+    );
 }
 
 #[then("the daemon recorded the assistant's start and its exit, each once")]
@@ -4038,8 +4027,16 @@ fn cut_after_the_period(w: &mut World) {
 }
 
 /// The drain's period, `seconds` long, cut the child's turn in flight and
-/// handed it over, and the daemon exited, saying nothing serves.
+/// handed it over, and the daemon exited, nothing saying it serves. A
+/// command run since may have started the next daemon (any command starts
+/// one where none serves): that one is not the daemon that drained.
 fn cut_after(w: &mut World, seconds: &str) {
+    let drained = w
+        .daemon_spec
+        .daemon
+        .as_ref()
+        .expect("the scenario started a daemon")
+        .id();
     assert_eq!(exit_of_daemon(w), Some(0), "{}", daemon_log_text(w));
     let log = daemon_log_text(w);
     assert!(
@@ -4052,7 +4049,13 @@ fn cut_after(w: &mut World, seconds: &str) {
         files::exists(stub_dir(w).join("child-exited")),
         "the child ended"
     );
-    assert!(!serving_now(w), "nothing says it serves");
+    let status = run_now(w, &["daemon", "status", "--format", "json"]);
+    assert_eq!(status.code, 0, "{}", status.said());
+    assert_ne!(
+        status.json()["pid"].as_u64(),
+        Some(u64::from(drained)),
+        "nothing says the drained daemon serves"
+    );
 }
 
 #[then("the next daemon hosts the child again, resuming its own conversation")]
@@ -4349,15 +4352,13 @@ fn engine_stopped_and_recorded(w: &mut World) {
 // ------------------------------------- a daemon lost under a session (OD-59)
 
 /// What waits for `$1` (a lock) and holds it until `$2` is there.
-const WAITS_FOR_LOCK: &str = r#"exec flock -w 60 "$1" sh -c 'i=0; while [ ! -e "$0" ] && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done' "$2"
-"#;
+fn waits_for_lock() -> String {
+    procs::holds_lock(60, 900)
+}
 
-/// Whether `lock` is held by another process now (`flock -n` cannot take it).
+/// Whether `lock` is held by another process now.
 fn lock_held(lock: &std::path::Path) -> bool {
-    std::process::Command::new("flock")
-        .args(["-n", lock.to_str().expect("utf-8"), "true"])
-        .status()
-        .is_ok_and(|status| !status.success())
+    procs::lock_held(lock)
 }
 
 /// The session of the step (`ctxloom run` on a stood-in terminal), its
@@ -4392,7 +4393,7 @@ fn tui_gated(w: &mut World, step: &cucumber::gherkin::Step, block: bool) {
     let blocking = block.then(|| {
         let lock = daemon_dir(w).join("daemon.lock");
         let holder = assistant_dir(w).join("blocks-daemons");
-        files::put_program(&holder, WAITS_FOR_LOCK);
+        files::put_program(&holder, &waits_for_lock());
         std::process::Command::new(&holder)
             .args([lock.as_os_str(), unblock.as_os_str()])
             .spawn()
@@ -4662,7 +4663,7 @@ fn kill_and_block(w: &mut World) {
     let lock = daemon_dir(w).join("daemon.lock");
     let unblock = dir.join("unblock");
     let holder = dir.join("blocks-daemons");
-    files::put_program(&holder, WAITS_FOR_LOCK);
+    files::put_program(&holder, &waits_for_lock());
     let blocker = std::process::Command::new(&holder)
         .args([lock.as_os_str(), unblock.as_os_str()])
         .spawn()
