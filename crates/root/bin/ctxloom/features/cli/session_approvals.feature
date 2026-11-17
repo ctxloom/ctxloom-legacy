@@ -52,20 +52,13 @@ Feature: session approvals — a child's permission ask, answered by the user
   answered, so an ask that is settled in between keeps the written rule and
   says so.
 
-  An opencode ask offers the options of its ACP permission request, by
-  kind (`allow_once` is `allow-once`, `allow_always` is `allow-always`,
-  `reject_once` is `deny`, `reject_always` is `deny-always`), and the answer
-  is relayed to opencode as the request's own option of that kind; nothing
-  is written. ACP's answer carries no text, so a message given with an
-  opencode answer is refused.
-
   IN TIME. An ask waits for its engine's `engines.<e>.approval_timeout`, a
   span (`90s`, `5m`), 300 seconds when unset; then it is denied, and the
   engine is told no answer came in time. `approval_timeout: now` denies
   every ask at once. An ask whose turn is interrupted (a steer) is withdrawn
-  at once: claude cancels its call, and ctxloom answers opencode's request
-  `cancelled`; it is listed no more, and an answer to it is refused. An ask
-  whose session ends without withdrawing it waits out its time.
+  at once: claude cancels its call; it is listed no more, and an answer to
+  it is refused. An ask whose session ends without withdrawing it waits
+  out its time.
 
   WHERE AN ASK IS HEARD, by engine:
 
@@ -74,9 +67,6 @@ Feature: session approvals — a child's permission ask, answered by the user
                                     already runs, which waits on the daemon
                                     (with `MCP_TOOL_TIMEOUT` past the ask's
                                     time when that is over 300 seconds)
-    opencode child or one-shot      ACP `session/request_permission`, on the
-                                    daemon's own connection to `opencode acp`
-                                    (a one-shot runs over ACP for its one turn)
     no hook point                   the mock engine, and every interactive
                                     session: the human answers on the
                                     terminal, and nothing is routed
@@ -91,8 +81,8 @@ Feature: session approvals — a child's permission ask, answered by the user
 
   Every ask below is asked by the engine itself, through the path that
   engine uses (a scripted claude calling `ctxloom mcp serve`'s approval
-  prompt, a scripted `opencode acp` sending its request); an ask's name is
-  read from the listing (`I note ...`), never chosen.
+  prompt); an ask's name is read from the listing (`I note ...`), never
+  chosen.
 
   Rule: An ask waits, listed with its options, until it is answered
 
