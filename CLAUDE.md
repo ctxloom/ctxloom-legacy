@@ -2576,7 +2576,8 @@ built:
   profile's eleven, the config's not-a-mapping and unwritable) is its own
   message, `ctxloom.v1.Library<Catalog|Profile|Config><Variant>`, its args
   its fields, both ways from one table (`read_model_declines!` in
-  `library_refusals.rs`, keyed by the diagnostic's code); `LibraryDeclined`
+  `library_refusals.rs`, keyed by the diagnostic's code; the deps read
+  models' declines are rows of the same table); `LibraryDeclined`
   is left for a cause no read declines with (a write's, typed with 10b).
 - Notices: a library read's own notices (the observation's, then the use
   case's) ride the response metadata key `ctxloom-notice-bin`
@@ -2641,10 +2642,21 @@ built:
   the ID, as Go's view did) and `GetProfile` their fields as YAML under
   `# <Kind>: <id>`, keys sorted, empty ones left out, references short
   (library-cli's `viewed_by_the_daemon`, `read_back::{body,skill,mcp,
-  profile}_view`), `ListRemotes` (`remote list`), `ListDependencies`
-  (`deps list`; a read model's decline, a lock or registry that does not
-  read, rides as `LibraryDeclined`, its cause the decline's code and args,
-  daemon-api's `refusal::deps_error`), `ListFragments`,
+  profile}_view`; a profile's `select_tags`, `fragments`, `hooks` and
+  `deny_tools` among them, below; library-application's `bundle_view` of
+  an item answers its data alone, `Viewed`, no content), `ListRemotes`
+  (`remote list`), `BrowseRemote` (`remote show`: what a remote publishes,
+  read from its cached clone as before, cloned first where none is cached;
+  `library_api::deps::browse_remote`, the remote's ID read back from its
+  name exactly; owner ruling 2026-11-17; no profiles, as before and as
+  Go), `ListDependencies` (`deps list`); a deps read's decline, a lock or
+  registry that does not read, is its own typed refusal, the deps read
+  models' ten (`ctxloom.v1.Deps<Variant>`: unreadable, too-new, too-old,
+  bad-shape, forge-type, unknown-forge, no-repository, lock-empty,
+  lock-key, lock-unreadable; E5, `read_model_declines!` beside the
+  library's), and its failure (a remote that cannot be browsed) is said
+  in its own diagnostic (`ApiError::diagnosed`, exit 10; daemon-api's
+  `refusal::deps_error`), `ListFragments`,
   `ListCommands`, `GetFragment`, `GetCommand` (`fragment|command
   list|show`), `GetPremiseIndex` (`fragment premises`), `ListSkills`,
   `GetSkill` (`skill list|show`), `ListCompanions` (`companion list`, the
@@ -2720,9 +2732,21 @@ built:
   a daemon already serving); with no daemon in time a hook says nothing of
   the library and reads nothing in process.
 
-Still in process: `remote show`, which is `BrowseRemote` (what a remote
-publishes), not in the service (`GetRemote` is the registration alone;
-escalated, a wire change), and `loadout`.
+- A profile's message (owner ruling 2026-11-17) carries its `select_tags`
+  (11), `fragments` (12, `ProfileFragment{fragment, priority}`: an item
+  reference by its resource name, a bare name as written), `hooks` (13,
+  `ProfileHooks{unified, ext}`, field for field the library's
+  `HooksConfig`, each hook a `ProfileHook`, field for field the library's
+  `Hook`, read by `HooksConfig::read`; an entry no hook reads from left
+  out, as the package leaves it) and `deny_tools` (14), all OPTIONAL.
+  `profile show` prints them (Fragments, `(priority N)` where set; Select
+  tags; Denied tools; Hooks, each under its document path, `unified.<e>` or
+  `ext.<engine>.<e>`, on one line in YAML's flow form, keys sorted; Go
+  printed none of them), and a profile's one-item `bundle view` gives them
+  in the document's shape, keys sorted, references short.
+
+Still in process: `loadout` (the service has no `GetLoadout` read yet;
+escalated, a wire change).
 
 ## Storage is angzarr-store-sqlite
 
@@ -3173,7 +3197,8 @@ library's `bundle` noun and owns `remote` and `deps`.
   `users/me`). A Remote is `<parent>/remotes/<r>`, a Dependency
   `<parent>/dependencies/<16 hex of SHA-256 of its identity>`
   (`deps::lock::dependency_id`, OQ-15). `remote show` is
-  `BrowseRemoteResponse` (a browsed bundle has no resource name), `remote
+  `BrowseRemoteResponse` (the daemon's `BrowseRemote`, mapped by
+  library-api's `deps::browsed`; a browsed bundle has no resource name), `remote
   discover` `DiscoverRemotesResponse`, `deps pull` `PullDependenciesResponse`
   (one `results` list by `State`, no status or counts: an empty pull is
   `{}`), `deps check [ref]` one `CheckDependenciesResponse` (rows by
