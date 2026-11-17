@@ -245,6 +245,16 @@ impl Rig {
             .expect("the blocker starts")
     }
 
+    /// Wait for the single-instance lock to be held: by the blocker, as
+    /// nothing else can have started since the daemon died (the caller
+    /// holds back what could).
+    fn daemons_blocked(&self) {
+        let lock = self.home_file("daemon/daemon.lock");
+        wait(&self.log(), "the daemon's lock held", || {
+            procs::lock_held(&lock)
+        });
+    }
+
     fn release_tui(&self) {
         files::put(self.bin.join("release"), "go");
     }
@@ -278,6 +288,23 @@ fn wait(log: &str, what: &str, mut ready: impl FnMut() -> bool) {
             "{what} never came; the daemon's log:\n{log}"
         );
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// A process stopped (SIGSTOP) until this is dropped (SIGCONT), so it
+/// does nothing meanwhile: a test's failing assertion lets it go on too.
+struct Frozen(u64);
+
+impl Frozen {
+    fn stop(pid: u64) -> Frozen {
+        send(pid, "-STOP");
+        Frozen(pid)
+    }
+}
+
+impl Drop for Frozen {
+    fn drop(&mut self) {
+        send(self.0, "-CONT");
     }
 }
 
@@ -412,16 +439,17 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     files::put(&gate, "wait");
     let session = rig.start_session(&[]);
     let harp = rig.harp();
-    // FORCED (the race of 2026-11-17, under load): the daemon is killed and
-    // the blocker comes as late as it can, after the frontend's start
-    // report had every chance to start a daemon of its own.
+    // No daemon can start: its single-instance lock is held by a blocker,
+    // and the frontend, held at its gate, asks for none until it is. The
+    // blocker comes as late as it can, once the daemon is dead (FORCED: a
+    // blocker taking the lock in a race with the daemon the frontend's
+    // start report starts lost it under load, 2026-11-17), so the gate,
+    // never the blocker's speed, is what orders it.
     rig.kill_daemon();
-    files::remove(&gate);
-    wait(&rig.log(), "a second daemon", || {
-        rig.log().matches("serving at").count() >= 2
-    });
     let mut blocking = rig.block_daemons();
     let unblock = rig.bin.join("unblock");
+    rig.daemons_blocked();
+    files::remove(&gate);
     wait(&rig.log(), "the TUI's start", || {
         files::exists(rig.bin.join("tui-started"))
     });
@@ -481,14 +509,17 @@ fn test_a_tui_exit_held_while_no_daemon_serves_ends_its_run_with_its_exit_code()
             .iter()
             .any(|t| t == "RunnerStartedRecorded")
     });
-    // FORCED (the same race): the blocker comes as late as it can, after
-    // the frontend's broken watch had every chance to start a daemon.
+    // The frontend is FROZEN while its daemon is killed and the blocker
+    // takes the single-instance lock: its broken watch, opened again on the
+    // next daemon, would otherwise start one in a race with the blocker
+    // (lost under load, 2026-11-17). The blocker comes as late as it can,
+    // once the daemon is dead, so the freeze, never its speed, orders it.
+    let frozen = Frozen::stop(u64::from(session.id()));
     let killed = rig.kill_daemon();
-    wait(&rig.log(), "a second daemon", || {
-        rig.log().matches("serving at").count() >= 2
-    });
     let mut blocking = rig.block_daemons();
     let unblock = rig.bin.join("unblock");
+    rig.daemons_blocked();
+    drop(frozen);
     // The TUI exits 3 while no daemon can serve: its exit report is held.
     files::put(rig.bin.join("tui-exit"), "3");
     rig.release_tui();
