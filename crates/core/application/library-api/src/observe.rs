@@ -29,6 +29,17 @@ pub trait CheckoutHarps: Send + Sync {
     fn harp(&self, tree: &str) -> Result<String, Failure>;
 }
 
+/// git as a read's caller runs it: on the caller's `PATH`, in the caller's
+/// environment (protos.md §2), and the home whose library every read reads
+/// beside its project's.
+pub trait Observers: Send + Sync {
+    /// The observer of a read whose caller's environment is `env`.
+    fn observer(&self, env: &[(String, String)]) -> Box<dyn TreeObserver>;
+
+    /// The home's library directory (its `.ctxloom`), when it has one.
+    fn home_tree(&self) -> Option<String>;
+}
+
 /// The tree a read is of.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Site {
@@ -44,6 +55,16 @@ pub enum Site {
 }
 
 impl Site {
+    /// The library of the checkout of `project` at `root`: its `.ctxloom`.
+    pub fn checkout(project: ProjectName, root: &str) -> Site {
+        let tree = format!("{}/.ctxloom", root.trim_end_matches(['/', '\\']));
+        Site::Checkout {
+            project,
+            root: root.to_string(),
+            tree,
+        }
+    }
+
     /// The tree's directory, its `.ctxloom`.
     pub fn tree(&self) -> &str {
         match self {
@@ -135,6 +156,36 @@ impl<E: Edge> Observations<E> {
             .into_iter()
             .collect();
         Ok(Observed { tree, notices })
+    }
+}
+
+impl<E: Edge> Observations<E> {
+    /// A read's observations (U2): the project's checkout at `root`, then
+    /// the home's library, each through git in the caller's environment
+    /// `env`. A home whose library is in no work tree (made one by its
+    /// first read, G2; or one git ignores) is not observed. What both are
+    /// to say, in order.
+    pub async fn observe_read(
+        &self,
+        observers: &dyn Observers,
+        env: &[(String, String)],
+        project: Option<(ProjectName, &str)>,
+    ) -> Result<Vec<LibraryApiNotice>, ReadError> {
+        let observer = observers.observer(env);
+        let mut notices = Vec::new();
+        if let Some((project, root)) = project {
+            let site = Site::checkout(project, root);
+            notices.extend(self.observe(observer.as_ref(), &site).await?.notices);
+        }
+        if let Some(home) = observers.home_tree() {
+            let held = observer.work_tree(&home)?.is_some()
+                && observer.check_ignore(&home, "config.yaml")?.is_none();
+            if held {
+                let site = Site::Home { tree: home };
+                notices.extend(self.observe(observer.as_ref(), &site).await?.notices);
+            }
+        }
+        Ok(notices)
     }
 }
 

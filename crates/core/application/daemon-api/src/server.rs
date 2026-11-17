@@ -86,6 +86,16 @@ pub trait Assemblies: Send + Sync {
     ) -> Result<v1::AssembledContext, ApiError>;
 }
 
+/// What a library read observes first (step 10a U2): the trees as last
+/// observed (the kernel's `library-checkout`), each checkout's harp, and
+/// git as the read's caller runs it.
+#[derive(Clone)]
+pub struct Observing {
+    pub checkouts: library_checkout::LibraryCheckouts,
+    pub harps: Arc<dyn library_api::CheckoutHarps>,
+    pub observers: Arc<dyn library_api::Observers>,
+}
+
 /// A session's state now, from its liveness lock in its project.
 pub trait SessionStates: Send + Sync {
     fn state(&self, project_dir: &str, harp: &str) -> State;
@@ -427,6 +437,12 @@ pub struct Api<E> {
     /// Where an ask is recorded and read (step 8 U4); none, the approvals
     /// calls fail.
     pub(crate) approving: Option<crate::Approving>,
+    /// What a library read observes first (step 10a U2), and git as its
+    /// caller runs it; none, a read observes nothing.
+    observing: Option<(
+        library_api::Observations<E>,
+        Arc<dyn library_api::Observers>,
+    )>,
 }
 
 impl<E: Edge> Api<E> {
@@ -440,7 +456,63 @@ impl<E: Edge> Api<E> {
             terminals: None,
             trusting: None,
             approving: None,
+            observing: None,
         }
+    }
+
+    /// The API, each library read observing its trees first through
+    /// `observing` (step 10a U2), recorded through its own edge.
+    #[must_use]
+    pub fn observing(self, observing: Observing) -> Api<E> {
+        let observations = library_api::Observations::new(
+            Arc::clone(&self.parts.edge),
+            observing.checkouts,
+            observing.harps,
+        );
+        Api {
+            observing: Some((observations, observing.observers)),
+            ..self
+        }
+    }
+
+    /// A library read's observations (step 10a U2): the project's checkout
+    /// at `root` (none: a read outside a project), then the home's
+    /// library, through git in the caller's environment `env`, as the
+    /// notices they say. A tree outside git, or one git ignores, refuses
+    /// the read with the library domain's own refusal; git missing, too
+    /// old or failing fails it.
+    pub(crate) async fn observed(
+        &self,
+        project: Option<(ProjectName, &str)>,
+        env: Option<&v1::EnvVars>,
+    ) -> Result<Vec<v1::Notice>, ApiError> {
+        let Some((observations, observers)) = &self.observing else {
+            return Ok(Vec::new());
+        };
+        let env: Vec<(String, String)> = env
+            .iter()
+            .flat_map(|env| env.vars.iter())
+            .map(|var| (var.name.clone(), var.value.clone()))
+            .collect();
+        let said = observations
+            .observe_read(observers.as_ref(), &env, project)
+            .await
+            .map_err(|error| match error {
+                library_api::ReadError::Refused(rejection) => {
+                    ApiError::Refused(crate::library_refusal(&rejection))
+                }
+                library_api::ReadError::Failed(failure) => ApiError::Failed {
+                    detail: failure.code().to_string(),
+                },
+            })?;
+        Ok(said
+            .iter()
+            .map(|notice| v1::Notice {
+                code: angzarr_diagnostic::Diagnostic::code(notice).to_string(),
+                args: run_application::client::flat_args(notice),
+                text: notice.to_string(),
+            })
+            .collect())
     }
 
     /// The API, its asks recorded and read through `approving` (step 8 U4).
@@ -555,7 +627,13 @@ impl<E: Edge> Api<E> {
         let assemblies = self.assemblies.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon makes no assembly".to_string(),
         })?;
-        assemblies.assemble(&root, &request)
+        // The read observes its trees first (step 10a U2).
+        let said = self
+            .observed(Some((name.clone(), &root)), request.env.as_ref())
+            .await?;
+        let mut assembled = assemblies.assemble(&root, &request)?;
+        assembled.notices.extend(said);
+        Ok(assembled)
     }
 
     /// `GetDaemon`: the daemon, what it hosts and its idle time. Never its

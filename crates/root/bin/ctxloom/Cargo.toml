@@ -16,6 +16,8 @@ container-cli.workspace = true
 isolation-application.workspace = true
 worktree-git.workspace = true
 library-git.workspace = true
+library-api.workspace = true
+library-tree.workspace = true
 tasks-ports.workspace = true
 config-files.workspace = true
 content-fs.workspace = true
@@ -89,6 +91,8 @@ test-support = [
     "isolation-application/test-support",
     "worktree-git/test-support",
     "library-git/test-support",
+    "library-api/test-support",
+    "library-tree/test-support",
     "init-application/test-support",
     "tasks-ports/test-support",
     "scheduler/test-support",

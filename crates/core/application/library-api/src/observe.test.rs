@@ -352,3 +352,146 @@ async fn git_failing_fails_the_read() {
     assert!(matches!(failed, ReadError::Failed(_)));
     assert_eq!(*under.world.handled.lock().unwrap(), 0);
 }
+
+/// git as the caller runs it: a fresh table each read, the environment it
+/// was asked with kept.
+struct Callers {
+    git: Box<dyn Fn() -> Git + Send + Sync>,
+    home: Option<String>,
+    env: Mutex<Vec<Vec<(String, String)>>>,
+}
+
+impl super::Observers for Callers {
+    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
+        self.env.lock().unwrap().push(env.to_vec());
+        Box::new((self.git)())
+    }
+
+    fn home_tree(&self) -> Option<String> {
+        self.home.clone()
+    }
+}
+
+fn callers(git: impl Fn() -> Git + Send + Sync + 'static, home: Option<&str>) -> Callers {
+    Callers {
+        git: Box::new(git),
+        home: home.map(str::to_string),
+        env: Mutex::new(Vec::new()),
+    }
+}
+
+fn home_events_root() -> angzarr_embedded::v1::Uuid {
+    TreeName::home(HARP).unwrap().root()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_read_observes_its_checkout_then_the_home_in_the_callers_environment() {
+    let under = under();
+    let callers = callers(|| Git::at("c1", "t1"), Some("/h/.ctxloom"));
+    let env = vec![("PATH".to_string(), "/usr/bin".to_string())];
+    let project = ProjectName::new("calm-otter").unwrap();
+    let notices = under
+        .observations
+        .observe_read(&callers, &env, Some((project, "/work/demo")))
+        .await
+        .unwrap();
+    assert!(notices.is_empty());
+    assert_eq!(*callers.env.lock().unwrap(), vec![env]);
+    assert_eq!(events(&under.world).await.len(), 1);
+    let home = Cover {
+        domain: LIBRARY_DOMAIN.to_string(),
+        root: Some(home_events_root()),
+        edition: None,
+    };
+    assert_eq!(under.world.events(&home, 0).await.unwrap().len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_home_in_no_work_tree_or_one_git_ignores_is_not_observed() {
+    for git in [
+        Box::new(|| Git {
+            work_tree: None,
+            ..Git::at("c1", "t1")
+        }) as Box<dyn Fn() -> Git + Send + Sync>,
+        Box::new(|| {
+            let mut git = Git::at("c1", "t1");
+            git.ignored = Some(IgnoreRule {
+                source: "/h/.gitignore".to_string(),
+                line: 1,
+                pattern: ".ctxloom".to_string(),
+            });
+            git
+        }),
+    ] {
+        let under = under();
+        let callers = Callers {
+            git,
+            home: Some("/h/.ctxloom".to_string()),
+            env: Mutex::new(Vec::new()),
+        };
+        under
+            .observations
+            .observe_read(&callers, &[], None)
+            .await
+            .unwrap();
+        assert_eq!(*under.world.handled.lock().unwrap(), 0);
+        assert_eq!(*under.harps.0.lock().unwrap(), 0);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_refused_checkout_observes_no_home_and_says_why() {
+    let under = under();
+    let callers = callers(Git::default, Some("/h/.ctxloom"));
+    let project = ProjectName::new("calm-otter").unwrap();
+    let refused = under
+        .observations
+        .observe_read(&callers, &[], Some((project, "/work/demo")))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        refused,
+        ReadError::Refused(LibraryTreeRejection::NotInGit { .. })
+    ));
+    assert_eq!(*under.world.handled.lock().unwrap(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn both_trees_say_their_motion() {
+    let under = under();
+    let callers = callers(
+        || {
+            let mut git = Git::at("c1", "t1");
+            git.motion = Some(Motion::Merging);
+            git
+        },
+        Some("/h/.ctxloom"),
+    );
+    let project = ProjectName::new("calm-otter").unwrap();
+    let notices = under
+        .observations
+        .observe_read(&callers, &[], Some((project, "/work/demo/")))
+        .await
+        .unwrap();
+    let roots: Vec<String> = notices
+        .into_iter()
+        .map(|notice| match notice {
+            LibraryApiNotice::TreeInMotion { root, .. } => root,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(roots, vec!["/work/demo/.ctxloom", "/h/.ctxloom"]);
+}
+
+#[test]
+fn a_checkouts_library_is_its_ctxloom() {
+    let project = ProjectName::new("calm-otter").unwrap();
+    assert_eq!(
+        Site::checkout(project.clone(), "/work/demo"),
+        Site::Checkout {
+            project,
+            root: "/work/demo".to_string(),
+            tree: "/work/demo/.ctxloom".to_string(),
+        }
+    );
+}

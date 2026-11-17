@@ -31,6 +31,8 @@ pub(crate) struct World {
     pub(crate) registry: Registry,
     pub(crate) store: MemoryStore,
     samples: Mutex<Samples>,
+    /// The library trees as last observed, projected inline (step 10a U2).
+    pub(crate) checkouts: library_checkout::LibraryCheckouts,
 }
 
 impl World {
@@ -62,10 +64,18 @@ impl World {
                 approvals::ApprovalNameAggregate::default,
             )
             .unwrap();
+        registry
+            .aggregate::<library_tree::LibraryAggregate>(library_tree::LibraryAggregate::default)
+            .unwrap();
+        let checkouts = library_checkout::LibraryCheckouts::default();
+        registry
+            .projector_handler(&library_checkout::SOURCES, checkouts.clone())
+            .unwrap();
         Arc::new(World {
             registry,
             store: MemoryStore::default(),
             samples: Mutex::new(Samples::starting_at(1_000)),
+            checkouts,
         })
     }
 }
@@ -1179,4 +1189,192 @@ async fn assemble_context_is_made_at_the_projects_registered_root() {
         .await,
     );
     assert_eq!(invalid.reason, "shape");
+}
+
+/// git as a read's caller would run it, from a table: the project's work
+/// tree (none: outside git), the operation in progress, and the
+/// environment each read was observed in.
+#[derive(Default)]
+struct Gits {
+    work_tree: Option<String>,
+    motion: Option<ctxloom_ports::Motion>,
+    envs: std::sync::Mutex<Vec<Vec<(String, String)>>>,
+}
+
+struct TableGit {
+    work_tree: Option<String>,
+    motion: Option<ctxloom_ports::Motion>,
+}
+
+impl ctxloom_ports::TreeObserver for TableGit {
+    fn work_tree(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+        Ok(self.work_tree.clone())
+    }
+    fn check_ignore(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<Option<ctxloom_ports::IgnoreRule>, ctxloom_ports::TreeError> {
+        Ok(None)
+    }
+    fn init_repository(&self, _: &str, _: Option<&str>) -> Result<(), ctxloom_ports::TreeError> {
+        Ok(())
+    }
+    fn head(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+        Ok(Some("c1".to_string()))
+    }
+    fn library_tree(&self, _: &str, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+        Ok(Some("t1".to_string()))
+    }
+    fn status(
+        &self,
+        _: &str,
+        _: &[&str],
+    ) -> Result<Vec<ctxloom_ports::StatusEntry>, ctxloom_ports::TreeError> {
+        Ok(Vec::new())
+    }
+    fn diff_tree(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[&str],
+    ) -> Result<Vec<ctxloom_ports::TreeChange>, ctxloom_ports::TreeError> {
+        Ok(Vec::new())
+    }
+    fn blob_ids(
+        &self,
+        _: &str,
+        _: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::TreeError> {
+        Ok(Default::default())
+    }
+    fn in_motion(
+        &self,
+        _: &str,
+    ) -> Result<Option<ctxloom_ports::Motion>, ctxloom_ports::TreeError> {
+        Ok(self.motion)
+    }
+}
+
+impl library_api::Observers for Gits {
+    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
+        self.envs.lock().unwrap().push(env.to_vec());
+        Box::new(TableGit {
+            work_tree: self.work_tree.clone(),
+            motion: self.motion,
+        })
+    }
+
+    fn home_tree(&self) -> Option<String> {
+        None
+    }
+}
+
+struct OneHarp;
+
+impl library_api::CheckoutHarps for OneHarp {
+    fn harp(&self, _: &str) -> Result<String, ctxloom_ports::Failure> {
+        Ok("brisk-copper-moth".to_string())
+    }
+}
+
+fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
+    crate::Observing {
+        checkouts: world.checkouts.clone(),
+        harps: Arc::new(OneHarp),
+        observers: Arc::clone(gits) as Arc<dyn library_api::Observers>,
+    }
+}
+
+// Step 10a U2: AssembleContext is a library read, so it observes the
+// project's tree first, in the caller's environment, and records its
+// baseline once; a git operation in progress is said beside its answer.
+#[tokio::test]
+async fn assemble_context_observes_the_projects_library_first() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits {
+        work_tree: Some(ROOT.to_string()),
+        motion: Some(ctxloom_ports::Motion::Merging),
+        ..Gits::default()
+    });
+    let assemblies = Arc::new(Assembling::default());
+    let api = f
+        .restarted()
+        .await
+        .assembling(Arc::clone(&assemblies) as Arc<dyn crate::Assemblies>)
+        .observing(observing(&f.world, &gits));
+    let request = v1::AssembleContextRequest {
+        name: "projects/calm-quiet-heron".to_string(),
+        env: Some(v1::EnvVars {
+            vars: vec![v1::EnvVar {
+                name: "PATH".to_string(),
+                value: "/usr/bin".to_string(),
+            }],
+        }),
+        ..v1::AssembleContextRequest::default()
+    };
+    let made = api.assemble_context(request.clone()).await.unwrap();
+    assert_eq!(made.notices.len(), 1, "{:?}", made.notices);
+    assert_eq!(made.notices[0].code, "library-api-notice-tree-in-motion");
+    assert!(
+        made.notices[0].text.contains("merging"),
+        "{:?}",
+        made.notices
+    );
+    api.assemble_context(request).await.unwrap();
+    assert_eq!(
+        *gits.envs.lock().unwrap(),
+        vec![vec![("PATH".to_string(), "/usr/bin".to_string())]; 2]
+    );
+    let tree = library_tree::TreeName::checkout(
+        sessions::ProjectName::new("calm-quiet-heron").unwrap(),
+        "brisk-copper-moth",
+    )
+    .unwrap();
+    let cover = Cover {
+        domain: library_tree::LIBRARY_DOMAIN.to_string(),
+        root: Some(tree.root()),
+        edition: None,
+    };
+    assert_eq!(f.world.events(&cover, 0).await.unwrap().len(), 1);
+}
+
+// Step 10a U2 (G1): a library read outside git is refused with the library
+// domain's own refusal, under its message's status, before anything is
+// assembled.
+#[tokio::test]
+async fn assemble_context_outside_git_is_refused_before_it_assembles() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits::default());
+    let assemblies = Arc::new(Assembling::default());
+    let api = f
+        .restarted()
+        .await
+        .assembling(Arc::clone(&assemblies) as Arc<dyn crate::Assemblies>)
+        .observing(observing(&f.world, &gits));
+    let refused = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    let Err(ApiError::Refused(refusal)) = refused else {
+        panic!("not refused: {refused:?}");
+    };
+    assert_eq!(refusal.code, crate::refusal::tests::not_in_git_status());
+    let rejection = crate::rejection_of(&refusal.refusal);
+    assert_eq!(
+        rejection,
+        Some(crate::Rejection::Library(
+            library_tree::LibraryTreeRejection::NotInGit {
+                root: ROOT.to_string()
+            }
+        ))
+    );
+    assert!(assemblies.0.lock().unwrap().is_empty());
 }

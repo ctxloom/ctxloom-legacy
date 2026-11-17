@@ -21,7 +21,7 @@ pub use locate::refusal;
 #[cfg(any(test, feature = "test-support"))]
 pub use notice::diagnostic_samples;
 pub use notice::{LibraryApiNotice, EN_US};
-pub use observe::{CheckoutHarps, Observations, Observed, ReadError, Site};
+pub use observe::{CheckoutHarps, Observations, Observed, Observers, ReadError, Site};
 pub use reconcile::{sight, Sight, PATHSPEC};
 
 #[cfg(test)]
