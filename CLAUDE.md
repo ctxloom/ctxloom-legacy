@@ -1257,8 +1257,8 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `5cee822b` on angzarr-router `bec0c2bf`;
 - angzarr-build `bd02654f` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `5f39b330`;
-- taskloom's crates `546c54ad` and ctxloom-lib's `ac623050` (on its main), built
+- angzarr-platform `8e4aa9a1`;
+- taskloom's crates `2b1e6032` and ctxloom-lib's `30e916fa` (on its main), built
   on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
@@ -1680,11 +1680,15 @@ matched as the platform compares names (`os::Flavor::env_key`, so Windows'
 `Path` passes), and the spawner's `CTXLOOM_HOME` only when it set one;
 NEVER the spawner's `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` or XDG
 bases (its confinement: the daemon's home is the account's), nor anything
-else of the spawner's. It is started DETACHED (`os::process::spawn_detached`:
-`setsid` on unix, so it leads a session of its own with no controlling
-terminal; `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, breaking away from
-a job, on Windows), so no hangup, Ctrl-C or kill of the client's group
-reaches it; proved on Linux through procfs (its session id is its pid, and
+else of the spawner's. It is started DETACHED (`os::process::spawn_detached` of an
+`os::process::Detach`, its stdio null: `setsid` on unix, so it leads a
+session of its own with no controlling terminal, and every descriptor above
+stderr close-on-exec; `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`,
+breaking away from a job, on Windows, with a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`
+naming its three standard handles alone), so no hangup, Ctrl-C or kill of
+the client's group reaches it, and it holds no handle of the client's (a
+test's output pipes end when the client exits, not when the daemon idles
+out); proved on Linux through procfs (its session id is its pid, and
 none of those variables is in its environment), unverified on macOS and
 Windows. IDLENESS counts the runs started and not ended (M9:
 `Daemon::live_runs`, from `pending-launches`, any process's: the CLI's

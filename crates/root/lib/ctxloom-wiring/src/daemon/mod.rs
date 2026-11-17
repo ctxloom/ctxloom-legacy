@@ -1075,7 +1075,7 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    let mut command = std::process::Command::new(exe);
+    let mut command = os::process::Detach::new(exe);
     command.args(["daemon", "serve"]);
     if let Some(idle) = env.utf8(IDLE_VARIABLE) {
         command.args(["--idle-seconds", idle]);
@@ -1094,17 +1094,13 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     if let Some(account) = account_home(env) {
         kept.push((ACCOUNT_HOME_VARIABLE.into(), account.into_os_string()));
     }
-    command
-        .env_clear()
-        .envs(kept)
-        .current_dir(wiring.home())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    command.env_clear().envs(kept).current_dir(wiring.home());
     // DETACHED (T3, M8): a session of its own on unix (setsid), no console
     // and a process group of its own on Windows, so neither this terminal's
-    // hangup or Ctrl-C nor a kill of this command's group reaches it;
-    // dropped, not waited for: it outlives this command.
+    // hangup or Ctrl-C nor a kill of this command's group reaches it; its
+    // stdio null (the default) and no other handle of this command's
+    // inherited, so a reader of this command's output sees its end when the
+    // command exits; dropped, not waited for: it outlives this command.
     if os::process::spawn_detached(command).is_err() {
         return;
     }
