@@ -21,3 +21,7 @@ mutants.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# `diagnostic_samples`, for other crates' catalog tests.
+test-support = []

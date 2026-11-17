@@ -52,7 +52,14 @@ impl World {
         if files::exists(self.adopt_scratch().join("bin/claude")) {
             return;
         }
-        self.common.project = crate::tests::library::Project::bare();
+        // A fresh project, as the scenario's Given made it: in git when it
+        // said so (step 10, G1).
+        let in_git = files::exists(self.common.project.dir().join(".git"));
+        self.common.project = if in_git {
+            crate::tests::library::Project::bare_in_git()
+        } else {
+            crate::tests::library::Project::bare()
+        };
         super::adopt::claude_code(self);
         super::adopt::token(self);
         self.common.set_env("CTXLOOM_ROOT", String::new());

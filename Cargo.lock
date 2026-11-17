@@ -968,6 +968,7 @@ dependencies = [
  "isolation-application",
  "library",
  "library-application",
+ "library-git",
  "mcp-server",
  "os",
  "process-env",
@@ -1093,6 +1094,7 @@ dependencies = [
  "library-checkout",
  "library-cli",
  "library-domain-proto",
+ "library-git",
  "library-tree",
  "liveness",
  "mcp-server",
@@ -2095,6 +2097,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-cli"
+version = "0.1.0"
+dependencies = [
+ "file-system",
+ "fixture-program",
+ "os",
+ "process-env",
+ "run-within",
+]
+
+[[package]]
 name = "globset"
 version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2980,6 +2993,21 @@ dependencies = [
  "angzarr-build",
  "prost",
  "prost-types",
+]
+
+[[package]]
+name = "library-git"
+version = "0.1.0"
+dependencies = [
+ "angzarr-diagnostic",
+ "ctxloom-ports",
+ "file-system",
+ "fixture-program",
+ "git-cli",
+ "mutants",
+ "os",
+ "process-env",
+ "run-within",
 ]
 
 [[package]]
@@ -3873,6 +3901,7 @@ dependencies = [
  "deps-ports",
  "file-system",
  "fixture-program",
+ "git-cli",
  "os",
  "process-env",
  "run-within",
@@ -6247,6 +6276,7 @@ dependencies = [
  "ctxloom-ports",
  "file-system",
  "fixture-program",
+ "git-cli",
  "isolation-ports",
  "mutants",
  "os",

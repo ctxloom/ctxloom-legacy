@@ -29,12 +29,13 @@
 
 mod companions;
 mod error;
+mod git;
 mod interview;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-pub use ctxloom_ports::{Failure, Scaffold, UserFiles};
+pub use ctxloom_ports::{Failure, Scaffold, TreeObserver, UserFiles};
 use deps_application::{CreateRequest, Deps, Notice};
 use exit_code::Exit;
 use serde::Serialize;
@@ -45,6 +46,9 @@ pub use companions::{
     NotAdded, Question, BY_NAME_ID, COMPANIONS_BY_NAME,
 };
 pub use error::InitError;
+#[cfg(any(test, feature = "test-support"))]
+pub use git::diagnostic_samples;
+pub use git::{ensure_repository, GitInitialized, EN_US};
 pub use interview::{
     interview, Ended, Interviewed, LaunchFailure, Outcome, Sessions, Terminal, RESTART_COMMAND,
     RESTART_QUESTION,
@@ -166,6 +170,10 @@ pub struct Initialized {
     /// register), for the error stream.
     #[serde(skip)]
     pub notices: Vec<Notice>,
+    /// That init made the directory a git repository (G1), for the error
+    /// stream.
+    #[serde(skip)]
+    pub git: Option<GitInitialized>,
 }
 
 /// The names the `--remote` repositories are registered under.
@@ -182,6 +190,8 @@ pub struct Init {
     files: Arc<dyn UserFiles>,
     deps: Rc<Deps>,
     create: Box<dyn Create>,
+    /// What git sees, and the project's directory (G1); none, no git step.
+    repository: Option<(Arc<dyn TreeObserver>, String)>,
 }
 
 impl Init {
@@ -196,10 +206,26 @@ impl Init {
             files,
             deps,
             create,
+            repository: None,
         }
     }
 
+    /// The use case making `dir`, the project's directory, a git repository
+    /// when it is in none (step 10, G1), through `observer`.
+    pub fn with_repository(mut self, observer: Arc<dyn TreeObserver>, dir: &str) -> Init {
+        self.repository = Some((observer, dir.to_string()));
+        self
+    }
+
+    /// `init`: the directory made a git repository when it is in none
+    /// (before anything is scaffolded, so a missing git leaves nothing), the
+    /// project scaffolded unless it is there, and the remotes registered.
     pub fn init(&self, request: &InitRequest) -> Result<Initialized, InitError> {
+        let git = match &self.repository {
+            Some((observer, dir)) => ensure_repository(observer.as_ref(), dir)
+                .map_err(|e| InitError::Git(e.into_failure()))?,
+            None => None,
+        };
         let app_dir = self.scaffold.app_dir();
         let existed = self.files.is_dir(&app_dir).map_err(InitError::Files)?;
         let mut done = Initialized {
@@ -207,6 +233,7 @@ impl Init {
             existed,
             remotes: Vec::new(),
             notices: Vec::new(),
+            git,
         };
         // The use cases over the project as it is: a new one's once it is
         // written (those built before saw no project and found the home).

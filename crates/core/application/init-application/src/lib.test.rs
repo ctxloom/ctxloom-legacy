@@ -452,6 +452,71 @@ mod init {
         assert!(done.remotes.is_empty());
     }
 
+    /// `init_with` over the git observer `fake`, the project at `/work`.
+    fn in_git(present: bool, creator: Rc<Creator>, fake: Arc<crate::git::tests::Fake>) -> Init {
+        init_with(Ok(present), creator, Fixture::new()).with_repository(fake, "/work")
+    }
+
+    // Step 10, G1: a first init outside git makes the directory a
+    // repository, says so, and scaffolds; inside one, it runs no git init.
+    #[test]
+    fn a_first_init_outside_git_makes_the_directory_a_repository_and_scaffolds() {
+        let fake = Arc::new(crate::git::tests::Fake::default());
+        let creator = Rc::new(Creator::default());
+        let done = in_git(false, creator.clone(), fake.clone())
+            .init(&InitRequest::default())
+            .expect("ok");
+        assert_eq!(done.git, Some(crate::GitInitialized));
+        assert_eq!(
+            *fake.made.lock().unwrap(),
+            vec![("/work".to_string(), None)]
+        );
+        assert_eq!(creator.made.get(), 1);
+        let inside = Arc::new(crate::git::tests::Fake {
+            top: Some("/".to_string()),
+            ..Default::default()
+        });
+        let done = in_git(false, Rc::new(Creator::default()), inside.clone())
+            .init(&InitRequest::default())
+            .expect("ok");
+        assert_eq!(done.git, None);
+        assert!(inside.made.lock().unwrap().is_empty());
+    }
+
+    // A project from before G1 is made a repository by a re-run, its
+    // configuration left alone.
+    #[test]
+    fn a_rerun_outside_git_makes_the_directory_a_repository_and_scaffolds_nothing() {
+        let fake = Arc::new(crate::git::tests::Fake::default());
+        let creator = Rc::new(Creator::default());
+        let done = in_git(true, creator.clone(), fake.clone())
+            .init(&InitRequest::default())
+            .expect("ok");
+        assert!(done.existed);
+        assert_eq!(done.git, Some(crate::GitInitialized));
+        assert_eq!(creator.made.get(), 0);
+    }
+
+    // G11: with no git, init fails before it scaffolds anything.
+    #[test]
+    fn without_git_init_fails_before_it_scaffolds_anything() {
+        let fake = Arc::new(crate::git::tests::Fake {
+            missing: true,
+            ..Default::default()
+        });
+        let creator = Rc::new(Creator::default());
+        let error = in_git(false, creator.clone(), fake.clone())
+            .init(&InitRequest::default())
+            .expect_err("fails");
+        assert!(matches!(error, InitError::Git(_)), "{error:?}");
+        assert_eq!(
+            angzarr_diagnostic::Diagnostic::code(&error),
+            "library-git-git-missing"
+        );
+        assert_eq!(creator.made.get(), 0);
+        assert_eq!(*fake.asked.lock().unwrap(), vec!["/work".to_string()]);
+    }
+
     #[test]
     fn a_directory_that_cannot_be_inspected_is_the_adapters_failure() {
         let error = init(Err("denied"))
@@ -470,7 +535,11 @@ mod error {
     fn each_variant_is_its_cause_as_itself() {
         let cause = || Box::new(deps_application::AppError::DefaultNeedsName);
         let want = cause();
-        for error in [InitError::Files(cause()), InitError::Create(cause())] {
+        for error in [
+            InitError::Files(cause()),
+            InitError::Create(cause()),
+            InitError::Git(cause()),
+        ] {
             assert_eq!(error.code(), want.code());
             assert_eq!(error.args().len(), want.args().len());
             assert!(error.to_string().contains(want.code()));
@@ -489,7 +558,11 @@ mod error {
         };
         let want = cause();
         assert_eq!(want.args().len(), 1, "the cause has an arg to carry");
-        for error in [InitError::Files(cause()), InitError::Create(cause())] {
+        for error in [
+            InitError::Files(cause()),
+            InitError::Create(cause()),
+            InitError::Git(cause()),
+        ] {
             assert_eq!(error.code(), want.code());
             let args = error.args();
             assert_eq!(args.len(), 1);

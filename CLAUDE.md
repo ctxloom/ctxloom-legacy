@@ -76,6 +76,9 @@ the architecture; there is no other table of crates.
 - `core/ports`: traits the core needs from outside.
 - `core/application`: command and query handlers.
 - `adapters/driven`: port implementations (stores, clock, git).
+- `adapters/support`: infrastructure driven adapters share, depending on no
+  other workspace crate, each listed in `arch-rules.toml`'s `[classes]
+  support` (step 10, G9: `git-cli`, the one git runner).
 - `adapters/driving`: the CLI (and later gRPC, MCP): translation only.
 - `root/lib`: the composition root's wiring as a library (`ctxloom-wiring`).
 - `root/bin`: the `ctxloom` binary, the composition root.
@@ -1333,7 +1336,13 @@ exited cannot hang the caller. The program's environment is exactly the one
 the adapter gives; its tests need `run-within`'s `test-support`, which waits
 out ETXTBSY. Limits (os::process's): a descendant that calls `setsid` or
 `setpgid` escapes the kill, and the program runs in a process group of its
-own, so a Ctrl-C at the terminal does not reach it: a caller that must stop
+own, so a Ctrl-C at the terminal does not reach it. The git adapters
+(`remote-git`, `worktree-git`, `library-git`) share ONE git runner, the
+support crate `git-cli` (G9): the environment scrubbed of the variables git
+calls repository-local (`git rev-parse --local-env-vars`, asked once; every
+`GIT_*` when it cannot be asked), never interactive (`GIT_TERMINAL_PROMPT=0`,
+empty `GIT_ASKPASS` and `SSH_ASKPASS`), under `run-within`; each adapter
+says a failure in its own words. A caller that must stop
 a run on a signal hears it (`Os::signals`) and requests the `Stop` it ran the
 program with (`run_within_stopped_by`: the tree asked to stop, `stop_grace`,
 then killed; the outcome `stopped`).
@@ -2423,6 +2432,54 @@ store: `{"tree", "events": [{type, sequence, baseline, head_before,
 head_after, in_motion, changes: [{path, status, from_path?, oid?}]}]}`,
 `"tree": null` where no checkout harp was minted; it mints and records
 nothing.
+
+## git holds the library (step 10, U12; plan `t13-step10.plan.md` G1, G2, G9, G11)
+
+A library tree (a project checkout's `.ctxloom`, the home's) is in git, and
+what ctxloom knows of it is what git says: ctxloom-ports' `TreeObserver`
+(the work tree a directory is in, the ignore rule that ignores a path, a
+repository made, the commit checked out, the library's tree in a commit,
+`status --porcelain=v2 -z -uall --renames`, `diff-tree -r -M`, each file's
+object id by `hash-object --stdin-paths`, nothing stored, and the git
+operation in progress by `rev-parse --git-path` of `rebase-merge`,
+`rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` and
+`index.lock`), every path relative to the directory asked about
+(QUESTIONS.md I). `adapters/driven/library-git`'s `GitTrees` implements it,
+git on the caller's `PATH` in the caller's environment, every invocation
+`git --no-optional-locks -c core.longpaths=true`, so a read writes nothing
+into `.git`. It asks git its version once: none on the `PATH` is
+`library-git-git-missing`, older than 2.25 `library-git-git-too-old` (G11,
+QUESTIONS.md F), both failures, exit 10; a version line it cannot read is
+not judged.
+
+- `init` makes the directory it is run in a git repository when it is in
+  no work tree (G1: unasked, committing nothing), BEFORE it scaffolds, so a
+  missing git leaves nothing (exit 10); a directory below a repository's
+  root is in git, and left alone. It says
+  `init-application-notice-git-initialized` (`init_application::
+  ensure_repository`, `Init::with_repository`). `config create` takes the
+  same step before it writes (QUESTIONS.md E; `Library::
+  with_repository_step`, its notice `Notice::Git` in init's words).
+- The HOME is made a repository at its first read (G2, QUESTIONS.md B):
+  every library command first takes `library_application::
+  ensure_home_repository` over the home's `.ctxloom` (the wiring's
+  `library::home_repository`, which is also where git missing fails a read,
+  exit 10; a home with no `.ctxloom` yet is passed over). In no work tree,
+  or in one that ignores its `config.yaml` (a dotfiles repository ignoring
+  `.ctxloom`, QUESTIONS.md C: then nested), it is `git init`ed with the
+  ALLOWLIST `.gitignore` (`HOME_GITIGNORE`: `/*` then `!/.gitignore
+  !/config.yaml !/remotes.yaml !/lock.yaml !/content/`), written first and
+  only where there is none (once there it is hers), committing nothing;
+  any other work tree (her own repository at `.ctxloom`, or a dotfiles one
+  keeping it) is used as it is.
+- NOT built here (10a's other units): the read's refusal of a project
+  outside git or one git ignores (`library-tree-not-in-git`,
+  `library-tree-library-ignored`, the library domain's, U0, answered by
+  the daemon's reads, U2), the observation of a tree and `ctxloom test
+  library-events` (U0, U2), the home's notice
+  `library-api-notice-home-repository-made` (U2, the daemon's first read),
+  and the reads moving into the daemon, which then takes the home step per
+  home. ctxloom commits nowhere yet (G3, the home's commits, are 10b's).
 
 ## Storage is angzarr-store-sqlite
 

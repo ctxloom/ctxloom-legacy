@@ -281,6 +281,11 @@ fn init(
         .init
         .init(&request)
         .map_err(|e| failure(e, Exit::FAILED))?;
+    // The directory made a git repository (step 10, G1): said first, as it
+    // was done first.
+    if let Some(made) = &done.git {
+        say_warning(made, PROG, format, catalog, err);
+    }
     if done.existed {
         // A re-run is no refusal: the directory is kept and init goes on, to
         // the remotes it was given, the token guide and the interview.
