@@ -295,9 +295,6 @@ impl TreeObserver for GitTrees {
 
     fn blob_ids(&self, dir: &str, paths: &[&str]) -> Result<BTreeMap<String, String>, TreeError> {
         let dir_path = Path::new(dir);
-        if paths.is_empty() {
-            return Ok(BTreeMap::new());
-        }
         let args = ["hash-object", "--stdin-paths"];
         if paths.iter().any(|p| p.contains(['\n', '\r'])) {
             return Err(TreeError::Failed(Box::new(LibraryGitError::Failed {
@@ -306,6 +303,17 @@ impl TreeObserver for GitTrees {
                 ext_err_txt: "a path holds a line break, which hash-object cannot be given"
                     .to_string(),
             })));
+        }
+        // A path with no file is left out (absent), never fed to git, which
+        // would fail the whole call on it.
+        let present: Vec<&str> = paths
+            .iter()
+            .copied()
+            .filter(|p| self.fs.exists(&dir_path.join(p)).unwrap_or(false))
+            .collect();
+        let paths = present.as_slice();
+        if paths.is_empty() {
+            return Ok(BTreeMap::new());
         }
         // git reads the names from its repository's root, whatever the
         // directory it runs in: each is given whole.

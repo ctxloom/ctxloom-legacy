@@ -1,0 +1,354 @@
+//! The observation over the real library aggregate and its checkouts
+//! projected inline, on an in-memory store: what a read records, and what
+//! it refuses before anything is named or recorded.
+
+use std::sync::{Arc, Mutex};
+
+use angzarr_embedded::testing::{MemoryStore, Samples};
+use angzarr_embedded::v1::{CommandBook, Cover, EventBook, EventPage};
+use angzarr_embedded::{
+    Answered, Failure, Handled, Kernel, OnRetryable, Registry, Rejected, Sampled, StoreError,
+    StreamRef,
+};
+use ctxloom_ports::{IgnoreRule, Motion, PathStatus};
+use library_checkout::LibraryCheckouts;
+use library_tree::{LibraryTreeRejection, TreeName, LIBRARY_DOMAIN};
+use run_ports::{Edge, Unserved};
+use sessions::ProjectName;
+
+use super::{CheckoutHarps, Observations, ReadError, Site};
+use crate::fakes::Git;
+use crate::LibraryApiNotice;
+
+const BUNDLE: &str = "content/bundles/v2/demo/bundle.yaml";
+const HARP: &str = "brisk-copper-moth";
+
+/// The kernel with the library aggregate and its checkouts, over memory.
+struct World {
+    registry: Registry,
+    store: MemoryStore,
+    samples: Mutex<Samples>,
+    /// How many books it was handed.
+    handled: Mutex<u32>,
+}
+
+impl World {
+    fn new(checkouts: &LibraryCheckouts) -> Arc<World> {
+        let mut registry = Registry::new();
+        registry
+            .aggregate::<library_tree::LibraryAggregate>(library_tree::LibraryAggregate::default)
+            .unwrap();
+        registry
+            .projector_handler(&library_checkout::SOURCES, checkouts.clone())
+            .unwrap();
+        Arc::new(World {
+            registry,
+            store: MemoryStore::default(),
+            samples: Mutex::new(Samples::starting_at(1_000)),
+            handled: Mutex::new(0),
+        })
+    }
+}
+
+impl Edge for World {
+    async fn serve(&self, book: CommandBook, _: run_ports::Arrival) -> Result<Answered, Unserved> {
+        self.handle(book).await.map_err(Unserved::Failed)
+    }
+
+    async fn handle(&self, book: CommandBook) -> Result<Answered, Failure<Rejected>> {
+        *self.handled.lock().unwrap() += 1;
+        let sampled: Sampled = self.samples.lock().unwrap().next_sample();
+        let kernel = Kernel::new(&self.registry).on_retryable(OnRetryable {
+            max_retries: 0,
+            ..OnRetryable::default()
+        });
+        let cover = book.cover.clone();
+        let handled: Handled = kernel.handle_any(&self.store, book, &sampled).await?;
+        let events = handled
+            .books()
+            .into_iter()
+            .find(|book| book.cover == cover)
+            .unwrap_or(EventBook {
+                cover,
+                ..EventBook::default()
+            });
+        Ok(Answered {
+            events: Some(events),
+            delivery: handled.delivery(),
+        })
+    }
+
+    async fn events(&self, cover: &Cover, from: u64) -> Result<Vec<EventPage>, StoreError> {
+        let stream = StreamRef::try_from(cover)?;
+        let slice =
+            angzarr_embedded::angzarr_ports::EventStore::read(&self.store, stream, from, None)
+                .await?;
+        Ok(slice.pages)
+    }
+}
+
+/// A harp minted once, counted.
+#[derive(Default)]
+struct Harps(Mutex<u32>);
+
+impl CheckoutHarps for Harps {
+    fn harp(&self, _tree: &str) -> Result<String, ctxloom_ports::Failure> {
+        *self.0.lock().unwrap() += 1;
+        Ok(HARP.to_string())
+    }
+}
+
+fn site() -> Site {
+    Site::Checkout {
+        project: ProjectName::new("calm-otter").unwrap(),
+        root: "/work/demo".to_string(),
+        tree: "/work/demo/.ctxloom".to_string(),
+    }
+}
+
+fn tree() -> TreeName {
+    TreeName::checkout(ProjectName::new("calm-otter").unwrap(), HARP).unwrap()
+}
+
+struct Under {
+    world: Arc<World>,
+    checkouts: LibraryCheckouts,
+    harps: Arc<Harps>,
+    observations: Observations<World>,
+}
+
+fn under() -> Under {
+    let checkouts = LibraryCheckouts::default();
+    let world = World::new(&checkouts);
+    let harps = Arc::new(Harps::default());
+    let observations = Observations::new(
+        Arc::clone(&world),
+        checkouts.clone(),
+        Arc::clone(&harps) as Arc<dyn CheckoutHarps>,
+    );
+    Under {
+        world,
+        checkouts,
+        harps,
+        observations,
+    }
+}
+
+/// The tree's events, as its stream holds them.
+async fn events(world: &World) -> Vec<EventPage> {
+    let cover = Cover {
+        domain: LIBRARY_DOMAIN.to_string(),
+        root: Some(tree().root()),
+        edition: None,
+    };
+    world.events(&cover, 0).await.unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_first_read_records_the_baseline_and_a_read_that_sees_nothing_new_records_nothing() {
+    let under = under();
+    let git = Git::at("c1", "t1");
+    let observed = under.observations.observe(&git, &site()).await.unwrap();
+    assert_eq!(observed.tree, tree());
+    assert!(observed.notices.is_empty());
+    under.observations.observe(&git, &site()).await.unwrap();
+    assert_eq!(events(&under.world).await.len(), 1);
+    assert_eq!(*under.world.handled.lock().unwrap(), 1);
+    let held = under
+        .checkouts
+        .checkouts()
+        .tree(&tree().root())
+        .cloned()
+        .unwrap();
+    assert!(held.baselined);
+    assert_eq!(held.head, "c1");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_change_is_recorded_once_by_the_read_that_sees_it() {
+    let under = under();
+    under
+        .observations
+        .observe(&Git::at("c1", "t1"), &site())
+        .await
+        .unwrap();
+    let edited = Git::at("c1", "t1")
+        .file(BUNDLE, "b2")
+        .says(BUNDLE, PathStatus::Modified);
+    under.observations.observe(&edited, &site()).await.unwrap();
+    under.observations.observe(&edited, &site()).await.unwrap();
+    assert_eq!(events(&under.world).await.len(), 2);
+    let held = under
+        .checkouts
+        .checkouts()
+        .tree(&tree().root())
+        .cloned()
+        .unwrap();
+    assert_eq!(held.dirty.get(BUNDLE).map(String::as_str), Some("b2"));
+    assert_eq!(held.token(BUNDLE), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn two_reads_that_see_one_change_against_one_state_record_it_once() {
+    // Forced: both sights are made against the state before either is
+    // recorded, as two reads at once make them.
+    let under = under();
+    under
+        .observations
+        .observe(&Git::at("c1", "t1"), &site())
+        .await
+        .unwrap();
+    let edited = Git::at("c1", "t1")
+        .file(BUNDLE, "b2")
+        .says(BUNDLE, PathStatus::Modified);
+    let held = under
+        .checkouts
+        .checkouts()
+        .tree(&tree().root())
+        .cloned()
+        .unwrap();
+    let first = crate::sight(&edited, "/work/demo/.ctxloom", &tree(), &held).unwrap();
+    let second = crate::sight(&edited, "/work/demo/.ctxloom", &tree(), &held).unwrap();
+    for sight in [first, second] {
+        let fact = sight.fact.unwrap();
+        under
+            .world
+            .handle(library_tree::observation_book(&tree(), &fact))
+            .await
+            .unwrap();
+    }
+    assert_eq!(events(&under.world).await.len(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_read_outside_git_is_refused_before_its_checkout_is_named() {
+    let under = under();
+    let git = Git::default();
+    let refused = under.observations.observe(&git, &site()).await.unwrap_err();
+    assert!(matches!(
+        refused,
+        ReadError::Refused(LibraryTreeRejection::NotInGit { ref root }) if root == "/work/demo"
+    ));
+    assert_eq!(*under.harps.0.lock().unwrap(), 0);
+    assert_eq!(*under.world.handled.lock().unwrap(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_read_of_a_library_git_ignores_is_refused_before_its_checkout_is_named() {
+    let under = under();
+    let mut git = Git::at("c1", "t1");
+    git.ignored = Some(IgnoreRule {
+        source: ".gitignore".to_string(),
+        line: 1,
+        pattern: ".ctxloom/".to_string(),
+    });
+    let refused = under.observations.observe(&git, &site()).await.unwrap_err();
+    assert!(matches!(
+        refused,
+        ReadError::Refused(LibraryTreeRejection::LibraryIgnored { .. })
+    ));
+    assert_eq!(*under.harps.0.lock().unwrap(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_home_is_observed_without_the_project_checks() {
+    let under = under();
+    let git = Git {
+        work_tree: None,
+        ..Git::at("c1", "t1")
+    };
+    let home = Site::Home {
+        tree: "/h/.ctxloom".to_string(),
+    };
+    let observed = under.observations.observe(&git, &home).await.unwrap();
+    assert_eq!(observed.tree, TreeName::home(HARP).unwrap());
+    assert!(!git.calls().iter().any(|c| c == "work_tree"));
+    assert_eq!(home.tree(), "/h/.ctxloom");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_read_during_a_git_operation_says_so_naming_the_tree() {
+    let under = under();
+    let mut git = Git::at("c1", "t1");
+    git.motion = Some(Motion::Rebasing);
+    let observed = under.observations.observe(&git, &site()).await.unwrap();
+    assert_eq!(
+        observed.notices,
+        vec![LibraryApiNotice::TreeInMotion {
+            motion: Motion::Rebasing,
+            root: "/work/demo/.ctxloom".to_string(),
+        }]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn git_failing_fails_the_read() {
+    struct Broken;
+    impl ctxloom_ports::TreeObserver for Broken {
+        fn work_tree(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+            Ok(Some("/work/demo".to_string()))
+        }
+        fn check_ignore(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<IgnoreRule>, ctxloom_ports::TreeError> {
+            Ok(None)
+        }
+        fn init_repository(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<(), ctxloom_ports::TreeError> {
+            Ok(())
+        }
+        fn head(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+            Ok(None)
+        }
+        fn library_tree(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<String>, ctxloom_ports::TreeError> {
+            Ok(None)
+        }
+        fn status(
+            &self,
+            _: &str,
+            _: &[&str],
+        ) -> Result<Vec<ctxloom_ports::StatusEntry>, ctxloom_ports::TreeError> {
+            Ok(Vec::new())
+        }
+        fn diff_tree(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &[&str],
+        ) -> Result<Vec<ctxloom_ports::TreeChange>, ctxloom_ports::TreeError> {
+            Ok(Vec::new())
+        }
+        fn blob_ids(
+            &self,
+            _: &str,
+            _: &[&str],
+        ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::TreeError> {
+            Ok(Default::default())
+        }
+        fn in_motion(&self, _: &str) -> Result<Option<Motion>, ctxloom_ports::TreeError> {
+            Err(ctxloom_ports::TreeError::GitMissing(Box::new(
+                LibraryTreeRejection::NotInGit {
+                    root: "stand-in".to_string(),
+                },
+            )))
+        }
+    }
+    let under = under();
+    let failed = under
+        .observations
+        .observe(&Broken, &site())
+        .await
+        .unwrap_err();
+    assert!(matches!(failed, ReadError::Failed(_)));
+    assert_eq!(*under.world.handled.lock().unwrap(), 0);
+}

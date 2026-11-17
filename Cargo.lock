@@ -2942,6 +2942,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "library-api"
+version = "0.1.0"
+dependencies = [
+ "angzarr-diagnostic",
+ "angzarr-embedded",
+ "ctxloom-ports",
+ "library-checkout",
+ "library-domain-proto",
+ "library-tree",
+ "mutants",
+ "prost",
+ "run-ports",
+ "sessions",
+ "tokio",
+]
+
+[[package]]
 name = "library-application"
 version = "0.1.0"
 dependencies = [
