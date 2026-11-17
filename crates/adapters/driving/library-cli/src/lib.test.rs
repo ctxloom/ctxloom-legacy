@@ -532,3 +532,65 @@ fn test_an_answer_that_cannot_be_written_fails_with_its_cause() {
 
 #[path = "write.test.rs"]
 pub(crate) mod write_verbs;
+
+/// `line`'s noun and whether its verb is the daemon's read.
+fn is_served(line: &[&str]) -> bool {
+    let program = clap::Command::new("ctxloom").subcommands(crate::nouns());
+    let matches = program
+        .try_get_matches_from(std::iter::once("ctxloom").chain(line.iter().copied()))
+        .unwrap_or_else(|e| panic!("{line:?}: {e}"));
+    let (noun, sub) = matches.subcommand().expect("a noun");
+    crate::is_served_read(noun, sub)
+}
+
+// Step 10a U2: the daemon's reads take its home step, not the caller's;
+// every other verb runs in process, and its caller takes it.
+#[test]
+fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
+    for line in [
+        &["bundle"][..],
+        &["bundle", "ls"],
+        &["bundle", "show", "demo"],
+        &["bundle", "view", "demo#fragments/x"],
+        &["fragment", "show", "demo#fragments/x"],
+        &["fragment", "premises"],
+        &["command", "list"],
+        &["skill", "show", "demo#skills/x"],
+        &["profile"],
+        &["agent", "show", "dev"],
+        &["engine", "list"],
+        &["companion", "list"],
+        &["config"],
+        &["config", "show"],
+        &["context", "assemble"],
+        &["mcp", "server", "list"],
+        &["mcp", "server", "show", "x"],
+        &["search", "go"],
+        &["run", "--dry-run", "hello"],
+    ] {
+        assert!(is_served(line), "{line:?} is served");
+    }
+    for line in [
+        &["bundle", "create", "demo"][..],
+        &["fragment", "distill", "demo#fragments/x"],
+        &["profile", "create", "dev"],
+        &["agent", "default"],
+        &["companion", "add", "acme"],
+        &["config", "edit"],
+        &["mcp", "server", "edit", "demo#mcp/x"],
+        &["loadout"],
+        &["run", "hello"],
+    ] {
+        assert!(!is_served(line), "{line:?} runs in process");
+    }
+    // Every verb the table names is a verb of its noun.
+    for (noun, verbs) in crate::SERVED_VERBS {
+        let command = crate::nouns()
+            .into_iter()
+            .find(|c| c.get_name() == *noun)
+            .unwrap_or_else(|| panic!("{noun}"));
+        for verb in *verbs {
+            assert!(command.find_subcommand(verb).is_some(), "{noun} {verb}");
+        }
+    }
+}

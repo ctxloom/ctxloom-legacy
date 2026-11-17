@@ -266,6 +266,48 @@ pub(crate) fn verb<'a>(sub: &'a ArgMatches, default: &'a str) -> (&'a str, &'a A
     }
 }
 
+/// The verbs, by noun, whose answer is the daemon's read (step 10a U2):
+/// the daemon takes the home step before it reads, so the caller takes
+/// none of its own; every other verb runs in process. A noun's bare form
+/// is its default verb's ([`is_served_read`]).
+pub const SERVED_VERBS: &[(&str, &[&str])] = &[
+    ("config", &["show"]),
+    ("bundle", &["list", "show", "view"]),
+    ("fragment", &["list", "show", "premises"]),
+    ("command", &["list", "show"]),
+    ("skill", &["list", "show"]),
+    ("profile", &["list", "show"]),
+    ("agent", &["list", "show"]),
+    ("engine", &["list", "show"]),
+    ("companion", &["list"]),
+    ("context", &["assemble"]),
+];
+
+/// Whether `noun`, given its matches `sub`, is a read the daemon answers
+/// (step 10a U2): a verb of [`SERVED_VERBS`] (a bare noun its default's),
+/// `mcp server list|show`, `search`, and `run --dry-run`.
+pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
+    match noun {
+        "mcp" => matches!(
+            sub.subcommand(),
+            Some(("server", server)) if matches!(verb(server, "list").0, "list" | "show")
+        ),
+        "search" => true,
+        "run" => cli_support::flag(sub, "dry-run"),
+        _ => {
+            let default = match noun {
+                "config" => "show",
+                "context" => "assemble",
+                _ => "list",
+            };
+            let (asked, _) = verb(sub, default);
+            SERVED_VERBS
+                .iter()
+                .any(|(served, verbs)| *served == noun && verbs.contains(&asked))
+        }
+    }
+}
+
 fn dispatch(
     cx: &Context<'_>,
     noun: &str,

@@ -389,14 +389,12 @@ impl deps_cli::Served for DaemonServed {
 }
 
 /// Whether `noun`'s verb in `call` is a read the daemon answers (step 10a
-/// U2), whose home step is the daemon's own; every other verb still runs
-/// in process, and takes it here first.
+/// U2, `library_cli::is_served_read`), whose home step is the daemon's own; every
+/// other verb still runs in process, and takes it here first.
 fn served(noun: &str, call: &Call<'_>) -> bool {
-    let verb = call
-        .matches
+    call.matches
         .subcommand_matches(noun)
-        .map(|sub| sub.subcommand_name().unwrap_or("list"));
-    noun == "bundle" && verb == Some("list")
+        .is_some_and(|sub| library_cli::is_served_read(noun, sub))
 }
 
 impl Extension for LibraryCommands {
