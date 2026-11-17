@@ -231,6 +231,20 @@ impl Rig {
         cause.remove(0)
     }
 
+    /// The blocker: what holds the daemon's single-instance lock until
+    /// `unblock` is beside it, so no daemon can start, started now.
+    fn block_daemons(&self) -> Child {
+        let blocker = self.bin.join("blocks-daemons");
+        files::put_program(&blocker, &blocks_daemons());
+        std::process::Command::new(&blocker)
+            .args([
+                self.home_file("daemon/daemon.lock").as_os_str(),
+                self.bin.join("unblock").as_os_str(),
+            ])
+            .spawn()
+            .expect("the blocker starts")
+    }
+
     fn release_tui(&self) {
         files::put(self.bin.join("release"), "go");
     }
@@ -398,21 +412,16 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     files::put(&gate, "wait");
     let session = rig.start_session(&[]);
     let harp = rig.harp();
-    // No daemon can start: its single-instance lock is held, by a blocker
-    // waiting on it BEFORE the daemon is killed, so it takes the lock ahead
-    // of the daemon the frontend's watch starts at once.
-    let blocker = rig.bin.join("blocks-daemons");
-    files::put_program(&blocker, &blocks_daemons());
-    let unblock = rig.bin.join("unblock");
-    let mut blocking = std::process::Command::new(&blocker)
-        .args([
-            rig.home_file("daemon/daemon.lock").as_os_str(),
-            unblock.as_os_str(),
-        ])
-        .spawn()
-        .expect("the blocker starts");
+    // FORCED (the race of 2026-11-17, under load): the daemon is killed and
+    // the blocker comes as late as it can, after the frontend's start
+    // report had every chance to start a daemon of its own.
     rig.kill_daemon();
     files::remove(&gate);
+    wait(&rig.log(), "a second daemon", || {
+        rig.log().matches("serving at").count() >= 2
+    });
+    let mut blocking = rig.block_daemons();
+    let unblock = rig.bin.join("unblock");
     wait(&rig.log(), "the TUI's start", || {
         files::exists(rig.bin.join("tui-started"))
     });
@@ -472,17 +481,14 @@ fn test_a_tui_exit_held_while_no_daemon_serves_ends_its_run_with_its_exit_code()
             .iter()
             .any(|t| t == "RunnerStartedRecorded")
     });
-    let blocker = rig.bin.join("blocks-daemons");
-    files::put_program(&blocker, &blocks_daemons());
-    let unblock = rig.bin.join("unblock");
-    let mut blocking = std::process::Command::new(&blocker)
-        .args([
-            rig.home_file("daemon/daemon.lock").as_os_str(),
-            unblock.as_os_str(),
-        ])
-        .spawn()
-        .expect("the blocker starts");
+    // FORCED (the same race): the blocker comes as late as it can, after
+    // the frontend's broken watch had every chance to start a daemon.
     let killed = rig.kill_daemon();
+    wait(&rig.log(), "a second daemon", || {
+        rig.log().matches("serving at").count() >= 2
+    });
+    let mut blocking = rig.block_daemons();
+    let unblock = rig.bin.join("unblock");
     // The TUI exits 3 while no daemon can serve: its exit report is held.
     files::put(rig.bin.join("tui-exit"), "3");
     rig.release_tui();
