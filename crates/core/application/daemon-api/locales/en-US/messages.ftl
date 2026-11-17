@@ -13,6 +13,9 @@ daemon-api-daemon-hosting-fix = wait for them to end, or end them with it: ctxlo
 # version is gone).
 daemon-api-draining = the serving daemon, ctxloom { $daemon }, is shutting down and takes no new call; it still hosts: { $harps }
 daemon-api-draining-fix = run the command again once it has exited (the next daemon resumes each child it handed over); to stop what it hosts now: ctxloom shutdown now
+# Owner ruling 2026-11-17: DRAFT wording, the owner's to approve.
+daemon-api-home-gone = the daemon's home { $home } is gone, so it creates nothing there and is exiting
+daemon-api-home-gone-fix = run the command again: it starts a fresh daemon
 daemon-api-age-invalid = { $key } { $value } is neither an age nor a date
 daemon-api-age-invalid-fix = give an age such as 90d, 1h30m or 1.5d, or a date such as 2026-01-01
 daemon-api-config-unreadable = the configuration of the project at { $root } does not read: { $ext_err_txt }

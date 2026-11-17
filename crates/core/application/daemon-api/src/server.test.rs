@@ -134,6 +134,8 @@ pub(crate) struct Loop {
     /// What each read asking for a fresh round brings, in turn (a round's
     /// catch-up, as a test stands it in).
     pub(crate) rounds: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+    /// The daemon's home's ctxloom directory, once a test removed it.
+    pub(crate) home_gone: Mutex<Option<String>>,
 }
 
 impl Hosting for Loop {
@@ -189,6 +191,10 @@ impl Hosting for Loop {
 
     fn start_up_failed(&self) -> Option<String> {
         self.start_up.lock().unwrap().clone()
+    }
+
+    fn home_gone(&self) -> Option<String> {
+        self.home_gone.lock().unwrap().clone()
     }
 }
 
@@ -645,6 +651,52 @@ async fn a_draining_daemon_refuses_every_new_call_but_its_own_two_and_the_names(
     let (_, hosting): (_, v1::DaemonHosting) =
         refused(calls.stop_daemon(v1::StopDaemonRequest::default()).await);
     assert_eq!(hosting.harps, ["brisk-copper-moth"]);
+}
+
+// The owner's ruling of 2026-11-17: once the daemon's home is gone, a call
+// that would create files there (`CreateRun`, `CreateHandOff`) is refused
+// `DaemonHomeGone` (a precondition), naming the home; a read is served.
+#[tokio::test]
+async fn a_daemon_whose_home_is_gone_refuses_every_call_that_would_create_there() {
+    use crate::Calls;
+    let f = hosting_a_child();
+    let calls: &dyn Calls = &f.api;
+    *f.hosting.home_gone.lock().unwrap() = Some("/home/u/.ctxloom".to_string());
+    let expected = v1::DaemonHomeGone {
+        home: "/home/u/.ctxloom".to_string(),
+    };
+    let created = calls.create_run(v1::CreateRunRequest::default()).await;
+    let (code, gone): (_, v1::DaemonHomeGone) = refused(created);
+    assert_eq!(
+        code,
+        <v1::DaemonHomeGone as daemon_proto::Refusal>::REFUSAL_STATUS
+    );
+    assert_eq!(gone, expected);
+    let handed = calls
+        .create_hand_off(v1::CreateHandOffRequest::default())
+        .await;
+    assert_eq!(refused::<v1::DaemonHomeGone>(handed).1, expected);
+    assert!(calls.get_daemon().await.is_ok(), "a read is served");
+}
+
+// A refusal for a gone home is told in this crate's words
+// (`daemon-api-home-gone`), a decline.
+#[test]
+fn a_home_gone_refusal_is_told_in_its_words() {
+    let refusal = ApiRefusal::of(&v1::DaemonHomeGone {
+        home: "/home/u/.ctxloom".to_string(),
+    });
+    let rejection = crate::rejection_of(&refusal.refusal).expect("known");
+    assert_eq!(
+        rejection,
+        crate::Rejection::Api(crate::ApiRejection::HomeGone {
+            home: "/home/u/.ctxloom".to_string(),
+        })
+    );
+    assert_eq!(
+        rejection.report().to_string(),
+        "daemon-api-home-gone home=/home/u/.ctxloom"
+    );
 }
 
 // A daemon's refusal of a call while it drains is told in this crate's

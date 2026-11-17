@@ -6,8 +6,8 @@ use std::path::Path;
 
 use super::{
     account_home, caller_env, caller_wiring, daemon_env, daemon_home, instance_lock, logger,
-    request_id, ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND,
-    SPAWN_WAIT,
+    request_id, under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT,
+    HOOK_BOUND, SPAWN_WAIT,
 };
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -251,11 +251,11 @@ fn each_request_id_is_fresh() {
     assert!(uuid::Uuid::parse_str(&one).is_ok(), "{one}");
 }
 
-// j000100's exit: the daemon's log is made where it starts, and a line said
-// once its directory is gone (its home deleted) is dropped, never a reason
-// to make the directory again; a line said where it still is is appended.
+// j000100's exit: the daemon's log is opened where it starts and written
+// through that handle, never made again by its path (owner, 2026-11-17): a
+// line said once the log, or its home, is removed makes nothing there.
 #[test]
-fn the_log_is_made_at_the_start_and_a_line_whose_directory_is_gone_is_dropped() {
+fn the_log_is_opened_at_the_start_and_never_made_again() {
     let root = crate::fixtures::root();
     let home = root.root().join("home");
     let log = home.join(".ctxloom/daemon/daemon.log");
@@ -267,6 +267,9 @@ fn the_log_is_made_at_the_start_and_a_line_whose_directory_is_gone_is_dropped() 
     say("serving");
     let text = crate::fixtures::fs().read_to_string(&log).unwrap();
     assert!(text.ends_with(" serving\n"), "{text}");
+    crate::fixtures::fs().remove_file(&log).unwrap();
+    say("the discovery file was removed: exiting");
+    assert!(!crate::fixtures::exists(&log), "the log made again");
     crate::fixtures::remove_dir(home.join(".ctxloom"));
     say("the single-instance lock file was replaced or removed: exiting");
     say("exited");
@@ -331,4 +334,19 @@ fn a_callers_process_has_ctxlooms_home_and_keeps_the_callers_own() {
     if os::host().flavor() == os::Flavor::Unix {
         assert_eq!(wiring.user_home().as_deref(), Some(Path::new("/caller")));
     }
+}
+
+// The daemon log's path as a person reads it is `~` and the rest joined by
+// the platform's separator: never a mix of `/` and `\` on Windows.
+#[test]
+fn a_path_under_the_home_is_said_with_the_platforms_separator() {
+    let below = Path::new(".ctxloom").join("daemon").join("daemon.log");
+    assert_eq!(
+        under_home(os::Flavor::Unix, &below),
+        "~/.ctxloom/daemon/daemon.log"
+    );
+    assert_eq!(
+        under_home(os::Flavor::Windows, &below),
+        r"~\.ctxloom\daemon\daemon.log"
+    );
 }

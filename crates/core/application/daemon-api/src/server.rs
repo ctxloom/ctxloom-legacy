@@ -63,6 +63,10 @@ pub trait Hosting: Send + Sync {
     /// Why its start-up catch-up (or its sweep) failed, while no later
     /// catch-up has succeeded (OD-52): it serves anyway, and says so.
     fn start_up_failed(&self) -> Option<String>;
+    /// The daemon's home's ctxloom directory, once it is gone (OD-60; owner
+    /// ruling 2026-11-17: the daemon never makes a file in its home again
+    /// once it has started); none while it is there, or cannot be told.
+    fn home_gone(&self) -> Option<String>;
     /// What the session `session` (its stable id), which it hosts, asks
     /// with (step 8 U4): its run, engine, agent and `approval_timeout`, as
     /// of the last round; none for a session it does not host.
@@ -365,7 +369,7 @@ impl<E: Edge + 'static> Calls for Api<E> {
 
     fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
         Box::pin(async move {
-            self.open()?;
+            self.creating()?;
             Api::create_run(self, request).await
         })
     }
@@ -397,7 +401,7 @@ impl<E: Edge + 'static> Calls for Api<E> {
 
     fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
         Box::pin(async move {
-            self.open()?;
+            self.creating()?;
             Api::create_hand_off(self, request).await
         })
     }
@@ -793,6 +797,24 @@ impl<E: Edge> Api<E> {
                 .collect(),
         })
         .into())
+    }
+
+    /// Whether the daemon takes a call that would create files under its
+    /// home (`CreateRun`, `CreateHandOff`: hand-offs and their marks, run
+    /// locks, a child's or one-shot's session directory and checkout): as
+    /// [`open`](Self::open), and not once its home is gone, when it is
+    /// refused `DaemonHomeGone` before anything is planned or written (owner,
+    /// 2026-11-17); the loop exits on its next round on the same look. A
+    /// launch the loop makes itself (a `LaunchChild`'s) is looked at by the
+    /// loop's own round first (`serve::why_it_exits`). The accepted
+    /// residual: a call already past this look while the home is removed
+    /// can still make a file there.
+    pub(crate) fn creating(&self) -> Result<(), ApiError> {
+        self.open()?;
+        match self.parts.hosting.home_gone() {
+            None => Ok(()),
+            Some(home) => Err(ApiRefusal::of(&v1::DaemonHomeGone { home }).into()),
+        }
     }
 
     /// `StopDaemon`: refused `DaemonHosting` while it hosts live runs,

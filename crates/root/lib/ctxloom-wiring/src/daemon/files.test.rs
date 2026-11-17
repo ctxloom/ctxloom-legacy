@@ -91,28 +91,6 @@ fn a_daemon_withdraws_its_own_advertisement_and_never_anothers() {
     files.withdraw_own(&sample());
 }
 
-// j000100's exit: a serving daemon whose advertisement is gone advertises
-// itself again only where its directory still is; one whose directory was
-// removed (its home deleted) makes nothing again.
-#[test]
-fn a_gone_advertisement_is_published_again_only_where_its_directory_still_is() {
-    let (root, home) = home();
-    let files = files(&root, &home);
-    files.publish(&sample()).unwrap();
-    files.withdraw();
-    assert!(
-        files.republish(&sample()).unwrap(),
-        "its directory is there"
-    );
-    assert_eq!(files.discovery(), Some(sample()));
-    fixtures::remove_dir(home.join(".ctxloom"));
-    assert!(
-        !files.republish(&sample()).unwrap(),
-        "its directory is gone"
-    );
-    assert!(!fixtures::exists(home.join(".ctxloom")), "made again");
-}
-
 // The single-instance lock makes the directory first, with the default mode: the
 // publish holds it to 0700 all the same.
 #[test]
@@ -214,19 +192,22 @@ fn a_hand_off_is_the_users_alone_and_read_for_the_childs_life() {
     };
     files.hand_off(CHILD, &sent).unwrap();
     let path = files.dir().join("launch").join(CHILD);
-    assert_eq!(
-        fixtures::fs().metadata(&path).unwrap().mode.unwrap().bits(),
-        0o600
-    );
-    assert_eq!(
-        fixtures::fs()
-            .metadata(&files.dir().join("launch"))
-            .unwrap()
-            .mode
-            .unwrap()
-            .bits(),
-        0o700
-    );
+    // Mode bits are unix's alone.
+    if os::host().flavor() == os::Flavor::Unix {
+        assert_eq!(
+            fixtures::fs().metadata(&path).unwrap().mode.unwrap().bits(),
+            0o600
+        );
+        assert_eq!(
+            fixtures::fs()
+                .metadata(&files.dir().join("launch"))
+                .unwrap()
+                .mode
+                .unwrap()
+                .bits(),
+            0o700
+        );
+    }
     assert_eq!(files.read_hand_off(CHILD), Some(sent.clone()));
     assert_eq!(files.read_hand_off(CHILD), Some(sent.clone()), "read again");
     files.delete_hand_off(CHILD);

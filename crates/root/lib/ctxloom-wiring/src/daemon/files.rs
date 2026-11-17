@@ -172,8 +172,19 @@ impl DaemonFiles {
     /// as it may be elsewhere (the account's, while `CTXLOOM_HOME` names
     /// another home; a test's own place). What cannot be told is there.
     pub(crate) fn home_gone(&self) -> bool {
-        let ctxloom = self.dir.parent().unwrap_or(&self.dir);
-        matches!(self.fs.exists(ctxloom), Ok(false))
+        matches!(self.fs.exists(self.ctxloom_dir()), Ok(false))
+    }
+
+    /// The daemon's ctxloom directory as a person reads it, once it is gone
+    /// ([`home_gone`](Self::home_gone)); none while it is there.
+    pub(crate) fn gone_home(&self) -> Option<String> {
+        self.home_gone()
+            .then(|| self.ctxloom_dir().display().to_string())
+    }
+
+    /// The daemon's ctxloom directory, `<home>/.ctxloom` (its store's).
+    fn ctxloom_dir(&self) -> &Path {
+        self.dir.parent().unwrap_or(&self.dir)
     }
 
     /// The daemon's directory, made if missing and held to 0700 whoever made
@@ -194,31 +205,6 @@ impl DaemonFiles {
             &discovery.encode(),
             Perms::Exact(Mode::from_bits(FILE_MODE)),
         )
-    }
-
-    /// Advertise `discovery` again, as [`publish`](Self::publish) does, but
-    /// only where its directory still is: whether it was written. A daemon
-    /// whose directory was removed (its home deleted, j000100's exit) makes
-    /// nothing again; it exits on the lock it no longer holds.
-    pub(crate) fn republish(&self, discovery: &Discovery) -> std::io::Result<bool> {
-        // No directory is made: one removed between a look and a write is
-        // the write's NotFound, the same answer.
-        if !self.fs.exists(self.instance_dir())? {
-            return Ok(false);
-        }
-        // A re-advertise is a publish to U6's kill switch, as it was when it
-        // went through `publish`.
-        #[cfg(feature = "test-support")]
-        self.die_while_publishing(discovery);
-        match self.fs.write_atomic(
-            &self.discovery_path(),
-            &discovery.encode(),
-            Perms::Exact(Mode::from_bits(FILE_MODE)),
-        ) {
-            Ok(()) => Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(e),
-        }
     }
 
     /// Under test-support, killed outright while the discovery file is

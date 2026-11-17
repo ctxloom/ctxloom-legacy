@@ -278,14 +278,17 @@ fn shared_over(
     (fs, home): (&Arc<dyn Fs>, &Path),
     pace: Pace,
 ) -> Arc<Shared> {
-    Arc::new(Shared::new(
-        kept.index.clone().unwrap_or_default(),
-        Arc::clone(one_shots),
-        Period {
-            default: pace.hand_over,
-            configured: configured_drain_timeout(fs, home),
-        },
-    ))
+    Arc::new(
+        Shared::new(
+            kept.index.clone().unwrap_or_default(),
+            Arc::clone(one_shots),
+            Period {
+                default: pace.hand_over,
+                configured: configured_drain_timeout(fs, home),
+            },
+        )
+        .watching(DaemonFiles::new(Arc::clone(fs), home)),
+    )
 }
 
 /// The daemon's monotonic clock (OD-54): the time since its process made it.
@@ -949,8 +952,8 @@ fn stays_for(live: &[u32], within: bool, plain: bool) -> bool {
 /// Tick until the daemon is asked to stop, its single-instance lock file
 /// is no longer the one it holds (`held`: removed or replaced, so it
 /// excludes nobody), its home's ctxloom directory is gone, another daemon's discovery replaced its own (`own`, in
-/// `files`), or it has had nothing to do for its idle time. A discovery file that is gone is published again: the daemon
-/// still holds the single-instance lock, and a client finds it by the file (M11).
+/// `files`) or was removed, or it has had nothing to do for its idle time
+/// ([`why_it_exits`]). It never advertises itself again (owner, 2026-11-17).
 async fn run<E: run_ports::Edge>(
     launcher: &mut Daemon<E>,
     core: &InProcessCore<SqliteStore>,
@@ -972,40 +975,9 @@ async fn run<E: run_ports::Edge>(
     let mut staying = Staying::for_the(frontends);
     loop {
         shared.tell(launcher.hosted_runs(), launcher.askers(), quiet_since);
-        if !files.still_holds(held) {
-            said(
-                say,
-                "the single-instance lock file was replaced or removed: exiting",
-            );
+        if let Some(why) = why_it_exits(files, own, held) {
+            said(say, why);
             return Ok(());
-        }
-        // Its home deleted (OD-60): the lock may be elsewhere (the
-        // account's, while `CTXLOOM_HOME` names another home), so the home
-        // says it itself. The line is dropped with the log's directory.
-        if files.home_gone() {
-            said(say, "the daemon's home was removed: exiting");
-            return Ok(());
-        }
-        match advertised(own, files.discovery().as_ref()) {
-            Advertised::Ours => {}
-            Advertised::Gone => match files.republish(own) {
-                Ok(true) => said(say, "the discovery file was gone: advertised again"),
-                Ok(false) => said(
-                    say,
-                    "the discovery file's directory was gone: not advertised again",
-                ),
-                Err(e) => said(
-                    say,
-                    &format!("the discovery file was gone, and cannot be written: {e}"),
-                ),
-            },
-            Advertised::Replaced => {
-                said(
-                    say,
-                    "another daemon's discovery replaced this one's: exiting",
-                );
-                return Ok(());
-            }
         }
         // Under test-support, a daemon told to be deaf takes a stop and a
         // drain and ignores them (`ctxloom shutdown`'s what-will-not-stop).
@@ -1201,7 +1173,13 @@ struct Shared {
     start_up: Mutex<Option<String>>,
     /// Where a drain's period comes from.
     period: Period,
+    /// The daemon's home's ctxloom directory, once it is gone (OD-60, owner
+    /// 2026-11-17), looked at each time it is asked.
+    home_gone: HomeGone,
 }
+
+/// Where [`Shared`] looks for its home: none while it is there.
+type HomeGone = Box<dyn Fn() -> Option<String> + Send + Sync>;
 
 #[derive(Default)]
 struct Round {
@@ -1246,6 +1224,15 @@ impl Shared {
             done: tokio::sync::watch::Sender::new(0),
             wake: tokio::sync::Notify::new(),
             start_up: Mutex::new(None),
+            home_gone: Box::new(|| None),
+        }
+    }
+
+    /// The same, looking at `files`' home for whether it is gone.
+    fn watching(self, files: DaemonFiles) -> Shared {
+        Shared {
+            home_gone: Box::new(move || files.gone_home()),
+            ..self
         }
     }
 
@@ -1372,6 +1359,10 @@ impl daemon_api::Hosting for Shared {
         self.round().drain
     }
 
+    fn home_gone(&self) -> Option<String> {
+        (self.home_gone)()
+    }
+
     /// The next round to START after this call (so its catch-up reads what
     /// was committed before it), waited for within [`FRESH_WAIT`].
     fn fresh(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
@@ -1431,13 +1422,37 @@ impl daemon_api::AskNames for FreshAskNames {
     }
 }
 
+/// Why the daemon exits at this tick, by what its files say: its
+/// single-instance lock file is no longer the one it holds (`held`), its
+/// home's ctxloom directory is gone (OD-60), or its discovery file is not
+/// its own advertisement (`own`); none while all are as it left them.
+fn why_it_exits(files: &DaemonFiles, own: &Discovery, held: &Instance) -> Option<&'static str> {
+    if !files.still_holds(held) {
+        return Some("the single-instance lock file was replaced or removed: exiting");
+    }
+    // Its home deleted (OD-60): the lock may be elsewhere (the account's,
+    // while `CTXLOOM_HOME` names another home), so the home says it itself.
+    if files.home_gone() {
+        return Some("the daemon's home was removed: exiting");
+    }
+    match advertised(own, files.discovery().as_ref()) {
+        Advertised::Ours => None,
+        // Removed (owner, 2026-11-17): never advertised again, since a
+        // daemon makes nothing in its home once started, and a home being
+        // deleted is emptied depth-first while it is still there. The next
+        // client starts a fresh daemon.
+        Advertised::Gone => Some("the discovery file was removed: exiting"),
+        Advertised::Replaced => Some("another daemon's discovery replaced this one's: exiting"),
+    }
+}
+
 /// What a serving daemon's discovery file says of it, at a tick.
 #[derive(Debug, PartialEq, Eq)]
 enum Advertised {
     /// Its own advertisement: nothing to do.
     Ours,
-    /// None (removed, or its home's directory removed): it advertises
-    /// itself again, since it still holds the single-instance lock.
+    /// None (removed, or its home's directory removed): it exits, and makes
+    /// nothing in its home again (owner, 2026-11-17).
     Gone,
     /// Another daemon's: it lost the single-instance lock (its lock file was replaced),
     /// so it exits.

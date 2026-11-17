@@ -224,7 +224,8 @@ service Ctxloom {
   // A child's hand-off (T6, S10): `projects/{project}/handOffs/{child}`,
   // created before `LaunchChild`: the daemon checks the owner, plans the
   // child and judges its credential BEFORE it writes anything, so a refused
-  // launch leaves nothing.
+  // launch leaves nothing. Refused `DaemonHomeGone` once the daemon's home
+  // is gone (owner, 2026-11-17).
   rpc CreateHandOff(CreateHandOffRequest) returns (HandOff) {
     option (google.api.method_signature) = "parent,hand_off_id";
   }
@@ -237,7 +238,8 @@ service Ctxloom {
   // (-- region runs: `projects/{project}/runs/{run}` --)
   // `run --dry-run` is `validate_only`; `run --one-shot` creates a hosted
   // run (then `WatchRun`); `run` creates a TERMINAL run, whose `Run` holds
-  // the `Launch` the frontend starts.
+  // the `Launch` the frontend starts. Refused `DaemonHomeGone` once the
+  // daemon's home is gone (owner, 2026-11-17).
   rpc CreateRun(CreateRunRequest) returns (Run) {
     option (google.api.method_signature) = "parent";
   }
@@ -1888,6 +1890,17 @@ message DaemonDraining {
   reserved "successor";
   // The sessions of the runs it still hosts.
   repeated string harps = 3;
+}
+
+// A call that would create files under the daemon's home (`CreateHandOff`,
+// `CreateRun`) once that home's ctxloom directory is gone (owner,
+// 2026-11-17: the daemon never makes a file in its home again once it has
+// started; OD-60): nothing is created, and the daemon exits on its next
+// round. `home` is the ctxloom directory that is gone.
+message DaemonHomeGone {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string home = 1;
 }
 
 // `DeleteSession` refused: nothing was removed. It carries the PLAN (owner,

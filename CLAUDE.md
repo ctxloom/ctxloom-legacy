@@ -1264,8 +1264,8 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `5cee822b` on angzarr-router `bec0c2bf`;
 - angzarr-build `bd02654f` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `5f39b330`;
-- taskloom's crates `546c54ad` and ctxloom-lib's `ac623050` (on its main), built
+- angzarr-platform `8e4aa9a1`;
+- taskloom's crates `2b1e6032` and ctxloom-lib's `30e916fa` (on its main), built
   on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
@@ -1680,20 +1680,34 @@ daemons at once). `daemon status`, `daemon stop`, a hook's rediscovery and a
 client's `ensure` all ask the health check, never the lock, so a daemon that
 holds the lock and does not answer (stopped, hung) is not serving, and a
 stale port another process took is never handed anything. A serving daemon
-looks at its discovery file each tick: gone, it publishes it again (it still
-holds the single-instance lock) where its directory still is
-(`DaemonFiles::republish`); naming another daemon (its lock file was replaced, and
-another took it), it exits, and withdraws only its OWN advertisement
-(`DaemonFiles::withdraw_own`), never the other's. Once started, a daemon never
-makes its own directory again (owner, 2026-11-14; j000100's exit is deleting
-`~/.ctxloom`): its log's directory is made as it starts (`logger`) and a line
-said once it is gone is dropped, and a discovery file whose directory is gone
-is not published again; so a daemon whose home was deleted exits on its lock
-and leaves nothing there. It also exits, each tick, once its home's ctxloom
+looks at its discovery file each tick (`serve::why_it_exits`): gone, it
+exits and does NOT advertise itself again (owner ruling 2026-11-17; the
+accepted cost: no self-heal of a hand-deleted discovery file, the next
+client starts a fresh daemon); naming another daemon (its lock file was
+replaced, and another took it), it exits, and withdraws only its OWN
+advertisement (`DaemonFiles::withdraw_own`), never the other's. Once started,
+a daemon never creates or re-creates a file in its home (owner, 2026-11-14
+and 2026-11-17; j000100's exit is deleting `~/.ctxloom`, which `rm -rf`
+empties depth-first while the directory is still there): its log is opened
+once as it starts (`logger`, its directory made first) and every line is
+written through that handle, never reopened by its path, and the discovery
+file is published once; so a daemon whose home was deleted exits and leaves
+nothing there. It also exits, each tick, once its home's ctxloom
 directory (`<home>/.ctxloom`, its store's) is gone (`DaemonFiles::home_gone`,
 OD-60), because the lock may be elsewhere: the account's, while
 `CTXLOOM_HOME` names another home (`just install`'s `~/.ctxloom-rs`), or a
-test's own place. A replaced lock (its directory still there) is
+test's own place. A call that would create files under its home
+(`CreateRun`, `CreateHandOff`: hand-offs and their `.launching` marks, run
+locks, a session's directory and checkout) passes one gate first,
+daemon-api's `Api::creating` (owner ruling 2026-11-17): once the home is gone
+(`Hosting::home_gone`, the wiring's `Shared` asking `DaemonFiles::gone_home`)
+it is refused `ctxloom.v1.DaemonHomeGone` (FAILED_PRECONDITION,
+`daemon-api-home-gone`, its fix: run the command again), nothing planned or
+written, and the loop exits on its next round on the same look; a launch the
+loop makes itself (a `LaunchChild`'s) follows the round's own look
+(`why_it_exits`). Accepted residual: a call already past the gate, or a
+round already past its look, while the home is being removed can still make
+a file there. A replaced lock (its directory still there) is
 logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
@@ -1705,11 +1719,15 @@ matched as the platform compares names (`os::Flavor::env_key`, so Windows'
 `Path` passes), and the spawner's `CTXLOOM_HOME` only when it set one;
 NEVER the spawner's `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` or XDG
 bases (its confinement: the daemon's home is the account's), nor anything
-else of the spawner's. It is started DETACHED (`os::process::spawn_detached`:
-`setsid` on unix, so it leads a session of its own with no controlling
-terminal; `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, breaking away from
-a job, on Windows), so no hangup, Ctrl-C or kill of the client's group
-reaches it; proved on Linux through procfs (its session id is its pid, and
+else of the spawner's. It is started DETACHED (`os::process::spawn_detached` of an
+`os::process::Detach`, its stdio null: `setsid` on unix, so it leads a
+session of its own with no controlling terminal, and every descriptor above
+stderr close-on-exec; `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`,
+breaking away from a job, on Windows, with a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`
+naming its three standard handles alone), so no hangup, Ctrl-C or kill of
+the client's group reaches it, and it holds no handle of the client's (a
+test's output pipes end when the client exits, not when the daemon idles
+out); proved on Linux through procfs (its session id is its pid, and
 none of those variables is in its environment), unverified on macOS and
 Windows. IDLENESS counts the runs started and not ended (M9:
 `Daemon::live_runs`, from `pending-launches`, any process's: the CLI's

@@ -676,12 +676,30 @@ impl<'a> Reach<'a> {
         let log = files.log_path();
         match self.wiring.env().home().map(PathBuf::from) {
             Some(home) => match log.strip_prefix(&home) {
-                Ok(below) => format!("~/{}", below.display()),
+                Ok(below) => under_home(self.wiring.env().flavor(), below),
                 Err(_) => log.display().to_string(),
             },
             None => log.display().to_string(),
         }
     }
+}
+
+/// `below`, a path relative to the home, as a person reads it under `~`:
+/// `~` and each of its components joined by `flavor`'s separator (`/`, or
+/// `\` on Windows), so a Windows path never mixes the two.
+fn under_home(flavor: os::Flavor, below: &Path) -> String {
+    let separator = match flavor {
+        os::Flavor::Unix => "/",
+        os::Flavor::Windows => "\\",
+    };
+    std::iter::once("~".to_string())
+        .chain(
+            below
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned()),
+        )
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
 /// A refusal of the wiring's, as the reach declines.
@@ -1026,23 +1044,20 @@ pub(crate) fn request_id() -> String {
     uuid::Uuid::now_v7().to_string()
 }
 
-/// A log line writer: each line appended to `path` with its time, through
-/// the file-system seam. Nothing it is given holds a secret. The log's
-/// directory is made here, as the daemon starts, and never again: a line
-/// said once it is gone (the user deleted her ctxloom home, j000100's exit)
-/// is dropped, so a daemon's exit never makes the home it was removed from.
+/// A log line writer: each line appended with its time to `path`, opened
+/// once, here, as the daemon starts (its directory made first), through the
+/// file-system seam, and written through that handle for the daemon's life:
+/// never reopened or made again by its path (owner, 2026-11-17), so a line
+/// said once its home is gone (the user deleted her ctxloom home, j000100's
+/// exit) makes nothing there. A log that cannot be opened says nothing.
+/// Nothing it is given holds a secret.
 fn logger(fs: Arc<dyn Fs>, path: PathBuf) -> Box<dyn FnMut(&str) + Send> {
     if let Some(dir) = path.parent() {
         let _ = fs.create_dir_all(dir, Mode::from_bits(0o700));
     }
+    let mut file = fs.open(&path, Open::Append(Mode::from_bits(0o600))).ok();
     Box::new(move |line: &str| {
-        let in_place = path
-            .parent()
-            .is_none_or(|dir| fs.exists(dir).unwrap_or(false));
-        if !in_place {
-            return;
-        }
-        if let Ok(mut file) = fs.open(&path, Open::Append(Mode::from_bits(0o600))) {
+        if let Some(file) = file.as_mut() {
             let seconds = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs());
@@ -1114,7 +1129,7 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    let mut command = std::process::Command::new(exe);
+    let mut command = os::process::Detach::new(exe);
     command.args(["daemon", "serve"]);
     if let Some(idle) = env.utf8(IDLE_VARIABLE) {
         command.args(["--idle-seconds", idle]);
@@ -1133,17 +1148,13 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     if let Some(account) = account_home(env) {
         kept.push((ACCOUNT_HOME_VARIABLE.into(), account.into_os_string()));
     }
-    command
-        .env_clear()
-        .envs(kept)
-        .current_dir(wiring.home())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    command.env_clear().envs(kept).current_dir(wiring.home());
     // DETACHED (T3, M8): a session of its own on unix (setsid), no console
     // and a process group of its own on Windows, so neither this terminal's
-    // hangup or Ctrl-C nor a kill of this command's group reaches it;
-    // dropped, not waited for: it outlives this command.
+    // hangup or Ctrl-C nor a kill of this command's group reaches it; its
+    // stdio null (the default) and no other handle of this command's
+    // inherited, so a reader of this command's output sees its end when the
+    // command exits; dropped, not waited for: it outlives this command.
     if os::process::spawn_detached(command).is_err() {
         return;
     }
