@@ -192,19 +192,22 @@ fn a_hand_off_is_the_users_alone_and_read_for_the_childs_life() {
     };
     files.hand_off(CHILD, &sent).unwrap();
     let path = files.dir().join("launch").join(CHILD);
-    assert_eq!(
-        fixtures::fs().metadata(&path).unwrap().mode.unwrap().bits(),
-        0o600
-    );
-    assert_eq!(
-        fixtures::fs()
-            .metadata(&files.dir().join("launch"))
-            .unwrap()
-            .mode
-            .unwrap()
-            .bits(),
-        0o700
-    );
+    // Mode bits are unix's alone.
+    if os::host().flavor() == os::Flavor::Unix {
+        assert_eq!(
+            fixtures::fs().metadata(&path).unwrap().mode.unwrap().bits(),
+            0o600
+        );
+        assert_eq!(
+            fixtures::fs()
+                .metadata(&files.dir().join("launch"))
+                .unwrap()
+                .mode
+                .unwrap()
+                .bits(),
+            0o700
+        );
+    }
     assert_eq!(files.read_hand_off(CHILD), Some(sent.clone()));
     assert_eq!(files.read_hand_off(CHILD), Some(sent.clone()), "read again");
     files.delete_hand_off(CHILD);
