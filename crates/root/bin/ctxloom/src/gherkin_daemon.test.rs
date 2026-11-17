@@ -81,8 +81,13 @@ pub(super) struct State {
     /// The home config's `daemon.drain_timeout`, as a step said it
     /// (shutdown.feature): every home config the steps write carries it.
     drain_timeout: Option<String>,
-    /// The stub claude the home config names, once one is set.
+    /// The stub claude, once one is set: the one the home config names,
+    /// or, when [`State::stub_on_path`], the one the default `claude` is.
     stub: Option<PathBuf>,
+    /// The stub is reached on the scenario's PATH as the default command
+    /// `claude`, and no config names it ([`project_says`]: an untrusted
+    /// read reports claude-code's command as the default's, trust.feature).
+    stub_on_path: bool,
     /// What the interactive session's command came to, once it ended.
     session_ran: Option<crate::tests::Ran>,
     /// A command a step started and left running (`I start ...`), for a
@@ -275,6 +280,7 @@ fn stub_claude(w: &mut World, body: &str) -> PathBuf {
     };
     w.common.project.write(".ctxloom/config.yaml", &config);
     w.daemon_spec.stub = Some(dir.join("claude"));
+    w.daemon_spec.stub_on_path = false;
     write_home_config(w);
     dir
 }
@@ -291,7 +297,12 @@ fn write_home_config(w: &World) {
             .read_home(".ctxloom/config.yaml")
             .unwrap_or_default(),
     ));
-    if let Some(stub) = &w.daemon_spec.stub {
+    if let Some(stub) = w
+        .daemon_spec
+        .stub
+        .as_ref()
+        .filter(|_| !w.daemon_spec.stub_on_path)
+    {
         config.push_str(&format!(
             "engines:\n  claude-code:\n    command: {}\n",
             stub.display()
@@ -3528,11 +3539,16 @@ fn project_says(w: &mut World, setting: String) {
             setting,
         ]),
     );
-    // A one-shot's assistant, should the launch run: the home config's
-    // stub, which answers (never an engine on the host's PATH).
-    let stub = assistant_dir(w).join("claude");
+    // A one-shot's assistant, should the launch run: the stub, which
+    // answers, first on the scenario's PATH as `claude`, so the default
+    // command runs it (never an engine on the host's PATH) and no config
+    // names it: an untrusted read reports the command as the default's.
+    let bin = assistant_dir(w);
+    let stub = bin.join("claude");
     files::put_program(&stub, &answering_stub());
+    w.common.project.put_on_path(&bin);
     w.daemon_spec.stub = Some(stub);
+    w.daemon_spec.stub_on_path = true;
     write_home_config(w);
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
