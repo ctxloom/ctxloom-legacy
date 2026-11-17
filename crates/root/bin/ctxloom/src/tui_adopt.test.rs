@@ -779,6 +779,14 @@ fn two_sigterms_under_a_live_tui(home_removed: bool) {
         files::remove_tree(rig.project.home().join(".ctxloom"));
     }
     send(daemon, "-TERM");
+    // The second once the first was heard, where its log can say so: two
+    // sent at once may be one (a signal pending is not queued again). A
+    // daemon whose home is gone keeps no log, and exits for its home.
+    if !home_removed {
+        wait(&rig.log(), "the first SIGTERM heard", || {
+            rig.log().contains("SIGTERM: asked to drain")
+        });
+    }
     send(daemon, "-TERM");
     let deadline = Instant::now() + Duration::from_secs(30);
     while alive(daemon) && Instant::now() < deadline {
