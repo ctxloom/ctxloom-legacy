@@ -165,6 +165,15 @@ impl SetupUseCases {
                 crate::library::build(wiring, None)?,
                 Arc::clone(wiring.env()),
             )),
+        )
+        // The directory init is run in made a git repository when it is in
+        // none (step 10, G1), by git on her PATH.
+        .with_repository(
+            Arc::new(library_git::GitTrees::new(
+                Arc::clone(&fs),
+                Arc::clone(wiring.env()),
+            )),
+            &around.cwd.display().to_string(),
         );
         Ok(SetupUseCases {
             auth: Auth::new(Arc::new(ProcessEnv::from_snapshot(wiring.env()))),

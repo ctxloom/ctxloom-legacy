@@ -23,6 +23,7 @@ mod error;
 /// In-memory ports, for this crate's tests and a driving adapter's.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fakes;
+mod home_repository;
 mod items;
 mod json;
 mod losses;
@@ -51,6 +52,7 @@ pub use engine_noun::{
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{AppError, Notice, EN_US};
+pub use home_repository::{ensure_home_repository, HomeRepository, HOME_GITIGNORE};
 pub use items::Kind as ItemKind;
 pub use library::companion::{program as companion_program, State as CompanionState};
 #[allow(unused_imports)]
@@ -64,7 +66,7 @@ pub use package::{
     EnginePackage, PackageRequest, PackagedCommand, PackagedFile, PackagedHook, PackagedMcp,
     PackagedSkill,
 };
-pub use project::{Library, Outcome, RunSettings, TrustAsk};
+pub use project::{Library, Outcome, RepositoryStep, RunSettings, TrustAsk};
 pub use run::{AssembleRequest, Previewed, RunRequest};
 pub use search::SearchRequest;
 pub use trust::{HeldBack, CTXLOOM_BUNDLE_PATH};

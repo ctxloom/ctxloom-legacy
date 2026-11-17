@@ -103,7 +103,10 @@ impl LibraryCommands {
                 // A project `ctxloom` bundle replaces distill's prompt only
                 // once the user trusts the project: her daemon is asked,
                 // once, where it decides (step 8 U2, D4).
-                .with_trust(crate::daemon::trust_ask(&wiring, &self.version));
+                .with_trust(crate::daemon::trust_ask(&wiring, &self.version))
+                // `config create` makes the directory a git repository as
+                // init does (step 10, G1, QUESTIONS.md E).
+                .with_repository_step(repository_step(&wiring));
             self.library = Some(library);
         }
         Ok(self
@@ -111,6 +114,43 @@ impl LibraryCommands {
             .as_ref()
             .unwrap_or_else(|| unreachable!("just built")))
     }
+}
+
+/// The git observer of `wiring`'s process: git on its `PATH`, in its
+/// environment (step 10, U12).
+pub(crate) fn observer(wiring: &Wiring) -> library_git::GitTrees {
+    library_git::GitTrees::new(wiring.fs(), Arc::clone(wiring.env()))
+}
+
+/// init's git step over the directory the command was run in, for `config
+/// create`.
+fn repository_step(wiring: &Wiring) -> library_application::RepositoryStep {
+    let observer = observer(wiring);
+    let dir = wiring.surroundings().cwd.display().to_string();
+    Rc::new(move || {
+        init_application::ensure_repository(&observer, &dir)
+            .map(|made| made.map(|notice| Box::new(notice) as run_ports::Advice))
+    })
+}
+
+/// What every library command takes first (step 10, U12; QUESTIONS.md B):
+/// the home's library made a git repository at its first read (G2), which
+/// also asks git its version, so git missing or too old fails the command
+/// (exit 10) before it reads anything. A home with no library yet has
+/// nothing to make one of. (The project's own tree is the read's, which the
+/// library domain observes and refuses outside git: U0, U2.)
+pub(crate) fn home_repository(wiring: &Wiring) -> Result<(), Failure> {
+    let app = wiring.home().join(".ctxloom");
+    let is_dir = wiring
+        .fs()
+        .metadata(&app)
+        .is_ok_and(|meta| meta.kind == Kind::Dir);
+    if !is_dir {
+        return Ok(());
+    }
+    library_application::ensure_home_repository(&observer(wiring), &app.display().to_string())
+        .map(|_| ())
+        .map_err(|e| Failure::boxed(e.into_failure(), Exit::FAILED))
 }
 
 pub(crate) fn build(
@@ -264,6 +304,9 @@ impl Extension for LibraryCommands {
             version: self.version.clone(),
             minting: minting(noun),
         };
+        home_repository(
+            &Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))?,
+        )?;
         let library = self.wired().map_err(|e| Failure::new(e, Exit::FAILED))?;
         library_cli::run(library, &names, noun, call, catalog, out, err)
     }

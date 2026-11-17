@@ -266,10 +266,23 @@ impl World {
     /// Make the project a git repository, once, with one commit.
     fn git_backed(&self) {
         let project = self.common.project.dir();
-        if files::exists(project.join(".git")) {
+        let in_git = files::exists(project.join(".git"));
+        // A repository with a commit is the harness's (or hers): used as it
+        // is. One `ctxloom init` made has none yet (step 10, G1: it commits
+        // nothing), so it gets the first commit here.
+        if in_git
+            && self
+                .common
+                .project
+                .git_output(project, &["rev-parse", "-q", "--verify", "HEAD"])
+                .status
+                .success()
+        {
             return;
         }
-        self.git(project, &["init", "-q"]);
+        if !in_git {
+            self.git(project, &["init", "-q"]);
+        }
         files::put(project.join("README.md"), "hello\n");
         self.git(project, &["add", "README.md"]);
         self.git(project, &["commit", "-q", "-m", "initial"]);
