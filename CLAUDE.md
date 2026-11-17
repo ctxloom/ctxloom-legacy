@@ -1657,7 +1657,18 @@ nothing there. It also exits, each tick, once its home's ctxloom
 directory (`<home>/.ctxloom`, its store's) is gone (`DaemonFiles::home_gone`,
 OD-60), because the lock may be elsewhere: the account's, while
 `CTXLOOM_HOME` names another home (`just install`'s `~/.ctxloom-rs`), or a
-test's own place. A replaced lock (its directory still there) is
+test's own place. A call that would create files under its home
+(`CreateRun`, `CreateHandOff`: hand-offs and their `.launching` marks, run
+locks, a session's directory and checkout) passes one gate first,
+daemon-api's `Api::creating` (owner ruling 2026-11-17): once the home is gone
+(`Hosting::home_gone`, the wiring's `Shared` asking `DaemonFiles::gone_home`)
+it is refused `ctxloom.v1.DaemonHomeGone` (FAILED_PRECONDITION,
+`daemon-api-home-gone`, its fix: run the command again), nothing planned or
+written, and the loop exits on its next round on the same look; a launch the
+loop makes itself (a `LaunchChild`'s) follows the round's own look
+(`why_it_exits`). Accepted residual: a call already past the gate, or a
+round already past its look, while the home is being removed can still make
+a file there. A replaced lock (its directory still there) is
 logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)

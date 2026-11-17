@@ -658,8 +658,11 @@ impl<E: Edge> Api<E> {
     /// residual: a call already past this look while the home is removed
     /// can still make a file there.
     pub(crate) fn creating(&self) -> Result<(), ApiError> {
-        // Red: the home is not looked at yet.
-        self.open()
+        self.open()?;
+        match self.parts.hosting.home_gone() {
+            None => Ok(()),
+            Some(home) => Err(ApiRefusal::of(&v1::DaemonHomeGone { home }).into()),
+        }
     }
 
     /// `StopDaemon`: refused `DaemonHosting` while it hosts live runs,
