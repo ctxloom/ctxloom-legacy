@@ -465,6 +465,9 @@ fn a_childs_ask_waits_on_the_users_answer_through_the_approval_prompt() {
 
 #[test]
 fn an_owners_child_runs_its_turns_tells_its_owner_and_ends_with_the_owners_close() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let seeded = world.run(&["test", "seed-session", OWNER]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
@@ -580,6 +583,9 @@ fn an_owners_child_runs_its_turns_tells_its_owner_and_ends_with_the_owners_close
 // anything is written: no hand-off, no child, nothing started.
 #[test]
 fn a_child_launched_with_no_credential_is_refused_and_leaves_nothing() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let seeded = world.run(&["test", "seed-session", OWNER]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
@@ -601,6 +607,9 @@ fn a_child_launched_with_no_credential_is_refused_and_leaves_nothing() {
 
 #[test]
 fn the_daemon_noun_is_hidden_and_a_stop_with_no_daemon_does_nothing() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let help = world.run(&["--help"]);
     assert!(!help.stdout.contains("daemon"), "{}", help.stdout);
@@ -661,6 +670,9 @@ fn field(bytes: &[u8], number: u64) -> Option<Vec<u8>> {
 // `daemon.endpoint` line file is gone.
 #[test]
 fn a_serving_daemon_advertises_its_stamp_and_a_new_bearer_in_a_private_discovery_file() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let stamp = world.ok(&["version", "--format", "json"])["version"]
         .as_str()
@@ -772,6 +784,9 @@ fn a_daemon_that_holds_the_instance_lock_but_does_not_answer_is_not_serving() {
 // not advertise itself again; the next command starts a fresh one.
 #[test]
 fn a_daemon_whose_discovery_file_is_removed_exits_and_advertises_nothing_again() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (mut daemon, _) = served(&world);
     let path = world
@@ -795,6 +810,9 @@ fn a_daemon_whose_discovery_file_is_removed_exits_and_advertises_nothing_again()
 // single-instance lock, so it exits, and leaves the other's file as it is.
 #[test]
 fn a_daemon_whose_discovery_file_names_another_exits_and_leaves_it() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (mut daemon, first) = served(&world);
     let path = world
@@ -840,6 +858,9 @@ const INSTANCE_DIR: &str = "CTXLOOM_TEST_INSTANCE_DIR";
 // on.
 #[test]
 fn a_client_on_another_ctxloom_home_is_refused_naming_both_and_starts_no_daemon() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let account = world.project.home().join("account");
     let other = world.project.home().join("other-home");
@@ -894,6 +915,9 @@ fn a_client_on_another_ctxloom_home_is_refused_naming_both_and_starts_no_daemon(
 // (and a client then starts one that holds the new file).
 #[test]
 fn a_daemon_whose_lock_file_is_replaced_exits() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (mut daemon, _) = served(&world);
     let lock = world.project.home().join(".ctxloom/daemon/daemon.lock");
@@ -916,6 +940,9 @@ fn a_daemon_whose_lock_file_is_replaced_exits() {
 // the journey's step reads at once and so passes only when it wins the race.
 #[test]
 fn a_daemon_whose_home_is_removed_exits_and_writes_nothing_there_again() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (mut daemon, _) = served(&world);
     let home = world.project.home().join(".ctxloom");
@@ -950,6 +977,9 @@ fn a_daemon_whose_home_is_removed_exits_and_writes_nothing_there_again() {
 // gone; a test's daemon so never outlives its temporary home.
 #[test]
 fn a_daemon_whose_home_is_removed_exits_with_its_lock_elsewhere() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let account = world.project.home().join("account");
     let mut env = ENV.to_vec();
@@ -984,6 +1014,9 @@ fn a_daemon_whose_home_is_removed_exits_with_its_lock_elsewhere() {
 // did not close, and the store's file is left with no log beside it.
 #[test]
 fn a_daemons_exit_closes_its_store() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (mut daemon, _) = served(&world);
     let _ = world.run(&["daemon", "stop"]);
@@ -1040,6 +1073,9 @@ fn repository(world: &World, message: &str) -> String {
 // its pid, endpoint and full stamp; another bearer is a bare UNAUTHENTICATED.
 #[test]
 fn a_daemon_serves_its_api_to_the_user_bearer_alone() {
+    if !files::runs_scripts() {
+        return;
+    }
     use daemon_ports::{Called, DaemonApi};
     let world = World::new();
     let (mut daemon, bytes) = served(&world);
@@ -1075,6 +1111,9 @@ fn a_daemon_serves_its_api_to_the_user_bearer_alone() {
 // exits, as every exit does.
 #[test]
 fn a_daemon_whose_start_fails_closes_its_store() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let dir = world
         .project
@@ -1104,6 +1143,9 @@ fn a_daemon_whose_start_fails_closes_its_store() {
 // naming the registered project.
 #[test]
 fn a_project_is_registered_then_rechecked_by_its_root_commit() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let root = repository(&world, "first");
     let first = world.run(&["daemon", "resolve", "--format", "json"]);
@@ -1140,6 +1182,9 @@ fn a_project_is_registered_then_rechecked_by_its_root_commit() {
 // and starts its own.
 #[test]
 fn a_client_of_another_version_stops_an_idle_daemon_and_starts_its_own() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (mut daemon, bytes) = served(&world);
     let old = run_ports::Discovery::decode(&bytes).unwrap();
@@ -1172,6 +1217,9 @@ const ACCOUNT_HOME: &str = "CTXLOOM_TEST_ACCOUNT_HOME";
 // the account's, and it names the account's home as the one it serves.
 #[test]
 fn a_daemons_home_is_its_accounts_never_the_home_it_was_started_with() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let account = world.project.home().to_path_buf();
     let moved = account.join("moved-home");
@@ -1234,6 +1282,9 @@ fn proc_of(pid: u32) -> Option<(u32, Vec<String>)> {
 // account's). Linux alone: procfs is how it is seen.
 #[test]
 fn a_daemon_a_client_starts_is_detached_and_given_none_of_its_homes() {
+    if !files::runs_scripts() {
+        return;
+    }
     if !files::exists("/proc/self/stat") {
         return;
     }
@@ -1263,6 +1314,9 @@ fn a_daemon_a_client_starts_is_detached_and_given_none_of_its_homes() {
 // 113) and its settings start from hers (ruling 169).
 #[test]
 fn a_hosted_childs_home_is_set_up_as_a_cli_runs_is() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     repository(&world, "first");
     let dir = world.project.dir().to_path_buf();
@@ -1358,6 +1412,9 @@ const OLDER_STAMP: &str = "v0.0.1-abc0";
 // its child is not ended.
 #[test]
 fn a_newer_command_meeting_a_busy_older_daemon_is_refused_and_drains_nothing() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let older = [("CTXLOOM_TEST_STAMP", OLDER_STAMP)];
     let seeded = world.run_also(&older, &["test", "seed-session", OWNER]);
@@ -1428,6 +1485,9 @@ fn a_newer_command_meeting_a_busy_older_daemon_is_refused_and_drains_nothing() {
 // test-support switch `test-start-up-fails`, there until the test removes it.
 #[test]
 fn a_daemon_whose_start_up_catch_up_fails_serves_and_says_so_until_one_succeeds() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let switch = world
         .project
@@ -1577,6 +1637,9 @@ fn rehosted_resuming(world: &World) {
 // re-hosts it, resuming its own conversation.
 #[test]
 fn a_drain_steers_a_busy_child_to_end_its_turn_then_hands_it_over() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let mut daemon = a_busy_child(&world, None);
     drain_asked(&world);
@@ -1616,6 +1679,9 @@ fn a_drain_steers_a_busy_child_to_end_its_turn_then_hands_it_over() {
 // its own conversation.
 #[test]
 fn a_child_still_busy_after_the_period_is_handed_over_automatically() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     files::put(world.stub_dir.join("deaf"), "");
     let mut daemon = a_busy_child(&world, Some("2"));
@@ -1646,6 +1712,9 @@ fn a_child_still_busy_after_the_period_is_handed_over_automatically() {
 // stopping nothing.
 #[test]
 fn a_stop_both_draining_and_even_if_live_is_refused() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let refused = world.run(&["daemon", "stop", "--drain", "--even-if-live"]);
     assert_eq!(refused.code, 20, "{}", refused.said());
@@ -1666,6 +1735,9 @@ while [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 // naming SIGTERM; the daemon says so in its log and exits.
 #[test]
 fn a_one_shot_still_running_after_the_period_is_stopped() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let dir = world.project.home().join("one-shot");
     files::put_program(dir.join("claude"), WORKING_ONE_SHOT);
@@ -1741,6 +1813,9 @@ fn daemon_pid(world: &World) -> Option<u32> {
 // says so and succeeds, starting nothing.
 #[test]
 fn a_shutdown_with_nothing_running_says_so() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let shut = world.run(&["shutdown", "now"]);
     assert_eq!(shut.code, 0, "{}", shut.said());
@@ -1756,6 +1831,9 @@ fn a_shutdown_with_nothing_running_says_so() {
 // at once: an idle daemon exits, and the command says nothing runs.
 #[test]
 fn a_shutdown_now_stops_the_daemon_at_once() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let mut daemon = Killed(
         world
@@ -1788,6 +1866,9 @@ fn a_shutdown_now_stops_the_daemon_at_once() {
 // (exit 20), naming what was given; the daemon serves on.
 #[test]
 fn a_shutdown_time_that_is_no_span_is_refused() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let refused = world.run(&["shutdown", "soon", "--format", "json"]);
     assert_eq!(refused.code, 20, "{}", refused.said());
@@ -1805,6 +1886,9 @@ fn a_shutdown_time_that_is_no_span_is_refused() {
 // command's daemon re-hosts it on its own conversation.
 #[test]
 fn a_shutdown_with_a_span_drains_within_it() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     world.drain_timeout("1h");
     files::put(world.stub_dir.join("deaf"), "");
@@ -1838,6 +1922,9 @@ fn a_shutdown_with_a_span_drains_within_it() {
 // be the config setting").
 #[test]
 fn a_bare_shutdown_drains_within_the_configured_timeout() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     world.drain_timeout("1s");
     files::put(world.stub_dir.join("deaf"), "");
@@ -1871,6 +1958,9 @@ fn a_bare_shutdown_drains_within_the_configured_timeout() {
 // no client of the daemon), and the drain in progress honours it.
 #[test]
 fn a_sigterm_drains_the_daemon_and_a_changed_timeout_is_the_drains() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     world.drain_timeout("1h");
     files::put(world.stub_dir.join("deaf"), "");
@@ -1915,6 +2005,9 @@ fn a_sigterm_drains_the_daemon_and_a_changed_timeout_is_the_drains() {
 // exits, without waiting out its drain's timeout.
 #[test]
 fn a_second_sigterm_is_the_plain_stop() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     world.drain_timeout("1h");
     files::put(world.stub_dir.join("deaf"), "");
@@ -1950,6 +2043,9 @@ fn a_second_sigterm_is_the_plain_stop() {
 // within a bound. The signals are sent; nothing is waited for between.
 #[test]
 fn two_sigterms_at_once_stop_an_idle_daemon_within_a_bound() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (daemon, _) = served(&world);
     let mut daemon = Killed(daemon);
@@ -1970,6 +2066,9 @@ fn two_sigterms_at_once_stop_an_idle_daemon_within_a_bound() {
 // whichever is heard first, the daemon exits within the bound.
 #[test]
 fn two_sigterms_stop_an_idle_daemon_whose_home_was_removed() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let (daemon, _) = served(&world);
     let mut daemon = Killed(daemon);
@@ -1993,6 +2092,9 @@ fn two_sigterms_stop_an_idle_daemon_whose_home_was_removed() {
 // it hosts and exits within the bound, never waiting out the drain.
 #[test]
 fn two_sigterms_stop_a_busy_daemon_whose_home_was_removed() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     world.drain_timeout("1h");
     files::put(world.stub_dir.join("deaf"), "");
@@ -2028,6 +2130,9 @@ fn two_sigterms_stop_a_busy_daemon_whose_home_was_removed() {
 // (exit 10, `ctxloom-wiring-shutdown-incomplete`); the daemon still runs.
 #[test]
 fn a_shutdown_names_a_daemon_that_does_not_exit_and_fails() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let mut daemon = Killed(
         world
@@ -2158,6 +2263,9 @@ impl World {
 // and the session's transcript has the prompt.
 #[test]
 fn a_shutdown_delivers_what_is_held_before_it_stops_the_daemon() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let name = world.seeded(OWNER);
     world.prompt_held(&name);
@@ -2200,6 +2308,9 @@ fn a_shutdown_delivers_what_is_held_before_it_stops_the_daemon() {
 // is declined (exit 20): the hold is kept.
 #[test]
 fn a_shutdown_names_what_it_could_not_deliver_and_declines() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let name = world.seeded(OWNER);
     world.prompt_held(&name);
@@ -2223,6 +2334,9 @@ fn a_shutdown_names_what_it_could_not_deliver_and_declines() {
 // ever decoded) does not block: nothing running, nothing live held, done.
 #[test]
 fn a_set_aside_hold_does_not_block_a_shutdown() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     files::mkdirs(world.held_dir());
     files::put(
@@ -2276,6 +2390,9 @@ impl World {
 // hand-off is removed.
 #[test]
 fn a_child_in_another_project_tells_its_owner_and_ends_with_its_close() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let seeded = world.run(&["test", "seed-session", OWNER]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());

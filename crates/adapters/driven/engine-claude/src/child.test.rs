@@ -18,6 +18,23 @@ use run_ports::{
 use crate::child::{child_command, detail_of};
 use crate::Claude;
 
+/// Whether this host runs the tests' fake programs: unix, the one flavor
+/// `fixture_program::install_program` does not refuse as `Unsupported`, with
+/// the `sh` (and links) they need. Elsewhere the asking test is skipped and
+/// says so on stderr, `SKIP <test>: <why>`, never silently; the same test
+/// runs unchanged on unix.
+fn runs_scripts() -> bool {
+    if os::host().flavor() == os::Flavor::Unix {
+        return true;
+    }
+    let test = std::thread::current();
+    eprintln!(
+        "SKIP {}: its fake programs are sh scripts (unix only)",
+        test.name().unwrap_or("a test")
+    );
+    false
+}
+
 /// The fake claude. Its session id is `S1`, `S2` after a `/clear`; it
 /// writes every line it is given to `input.log` beside it.
 const STUB: &str = r#"#!/bin/sh
@@ -279,6 +296,9 @@ fn a_childs_command_applies_no_permit_of_its_own() {
 // set is what runs, never the command rebuilt.
 #[test]
 fn a_child_starts_its_launch_as_it_is() {
+    if !runs_scripts() {
+        return;
+    }
     let dir = Rooted::temp().unwrap();
     let path = fixture_program::install_program(&dir, &os::fixture("/claude"), STUB).unwrap();
     let asked = spec("claude-as-configured");
@@ -376,6 +396,9 @@ fn a_childs_transcripts_are_under_its_config_dir_by_its_working_directory() {
 
 #[test]
 fn a_child_carries_many_turns_in_one_process() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     assert_eq!(
         running.next(),
@@ -437,6 +460,9 @@ fn a_child_carries_many_turns_in_one_process() {
 
 #[test]
 fn a_steer_during_a_delta_interrupts_and_overtakes_a_held_wake() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running
@@ -493,6 +519,9 @@ fn a_steer_during_a_delta_interrupts_and_overtakes_a_held_wake() {
 
 #[test]
 fn a_clear_rotates_the_native_id() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running
@@ -521,6 +550,9 @@ fn a_clear_rotates_the_native_id() {
 
 #[test]
 fn an_end_mid_turn_interrupts_it_and_answers_what_was_held() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running
@@ -560,6 +592,9 @@ fn an_end_mid_turn_interrupts_it_and_answers_what_was_held() {
 
 #[test]
 fn an_engine_that_exits_mid_turn_fails_the_turn_with_what_it_said() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running
@@ -601,6 +636,9 @@ fn an_engine_that_exits_mid_turn_fails_the_turn_with_what_it_said() {
 
 #[test]
 fn an_engine_deaf_to_its_input_end_is_stopped_after_the_grace() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(DEAF);
     assert_eq!(
         running.next(),
@@ -619,6 +657,9 @@ fn an_engine_deaf_to_its_input_end_is_stopped_after_the_grace() {
 
 #[test]
 fn a_missing_program_starts_nothing() {
+    if !runs_scripts() {
+        return;
+    }
     let dir = Rooted::temp().unwrap();
     let missing = fixture_program::install_program(&dir, &os::fixture("/claude"), "")
         .unwrap()
@@ -633,6 +674,9 @@ fn a_missing_program_starts_nothing() {
 
 #[test]
 fn a_dropped_control_closes_the_engines_input_and_it_exits() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     let StartedChild {
@@ -665,6 +709,9 @@ fn the_exit_detail_is_a_failed_wait_else_stderr() {
 
 #[test]
 fn the_pid_is_the_engines_own() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     // The init is written after the pid file.
     assert!(matches!(running.next(), ChildObservation::Started { .. }));
@@ -678,6 +725,9 @@ fn the_pid_is_the_engines_own() {
 
 #[test]
 fn an_interrupt_asks_a_turn_in_flight_and_nothing_when_idle() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     assert!(!running.child.control.interrupt().unwrap());
