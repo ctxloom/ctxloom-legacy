@@ -3265,7 +3265,8 @@ ruling 144; required: a missing nextest fails the gate),
 `just lint` (clippy, warnings denied), `just lint-deps` (cargo-deny) and
 `just lint-os`; `just test-pkg <crate>...` is the quick loop, `just fmt` and
 `just fmt-check` cover this workspace's crates only, `just run` runs the
-binary, `just clean-target` is the only way to drop `target/`, and `just
+binary, `just clean-target` is the only way to drop this checkout's
+`target/` (and `just trim-targets`, below, other worktrees'), and `just
 selftest` checks the scripts. Raw `cargo build|test|clippy|fmt|deny|clean|
 run|mutants`, `nextest`, `rustc`, `lefthook run`, `gitleaks`, and any
 `--no-verify` or `LEFTHOOK=`/`SKIP=` skip of the hooks are blocked by ltk
@@ -3277,6 +3278,35 @@ target/logs/<gate>.log)` and at most 40 lines of extract (only failing tests,
 the first 20 diagnostics, survivors capped, each with a `+K more` tail).
 `scripts/output-budget.selftest.sh` holds that budget. Read the log for the
 rest; `VERBOSE=1 just <gate>` shows the full output.
+
+Every `just` build shares compiler output through sccache (owner ruling of
+2026-11-16: each worktree's `target/` had grown to 120-180G). The gates
+(`gates/gates.just`) export `CARGO_INCREMENTAL=0` (sccache cannot cache an
+incremental compile; no `target/*/incremental`) and `RUSTC_WRAPPER`, the
+pinned sccache (the justfile's `sccache_version`, 0.19.0: `cargo install
+--locked sccache@0.19.0` into `~/.cargo/bin`; `SCCACHE_BASEDIRS` needs
+0.14.0 or newer), with `SCCACHE_DIR` `~/.cache/ctxloom-sccache` of the user's own home
+from the password database, not `$HOME`, which a ctxloom session moves
+(`CTXLOOM_SCCACHE_DIR` replaces it), an LRU capped at `SCCACHE_CACHE_SIZE=40G`, its
+own server on the unix socket `SCCACHE_SERVER_UDS` there, and
+`SCCACHE_BASEDIRS` the parent of each of the repository's worktrees
+(`CTXLOOM_SCCACHE_BASEDIRS` replaces it), to every recipe, script, mutation
+run and throwaway worktree. `gates/sccache.sh` checks the version and starts
+the server as the justfile is evaluated (so no test gate's memory-cap scope
+starts it): a missing or other sccache fails EVERY recipe, its fix the
+install line. The opt-out is `CTXLOOM_SCCACHE=off`, stated (an empty
+`RUSTC_WRAPPER`); on a GitHub Actions runner (`GITHUB_ACTIONS=true`) off is
+the default. Each worktree keeps its own `target/`. Measured limit: sccache
+hashes a Rust compile's working directory and `CARGO_MANIFEST_DIR` verbatim
+(basedirs rewrite only C/C++ compiles), so a dependency's compile is shared
+between worktrees and a workspace crate's is not; bin, build-script and
+proc-macro crates (the linker's) are never cached. `just trim-targets
+[base] [--dry-run]` (`scripts/trim-targets.sh`) clears the `target/` of
+every worktree whose HEAD is in `base` (default `origin/daemon/integration`)
+that no running process uses (cwd, executable or open file, from `/proc`)
+and that has no tracked change, untracked file or git lock, one line each
+saying what it removed or kept and why. Both are self-tested in `just
+selftest` (`scripts/sccache.selftest.sh`, `scripts/trim-targets.selftest.sh`).
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each
 test in a process of its own; SLOW at 30 s and killed at 120 s
@@ -3357,7 +3387,11 @@ ctxloom's go-final, go-installed on a cache miss only, for
 `ltk-rules-check.sh`), `gate-logs` (the logs dumped and uploaded on a
 failure) and `package-binary`, and its reusable workflows `binaries.yml` and
 `release.yml`, all pinned at ONE commit of its main (bump them together).
-Every action is pinned to a commit, every tool to a version. Linux
+Every action is pinned to a commit, every tool to a version. Every
+workflow sets `CTXLOOM_SCCACHE=off` and each job that builds says so (a
+hosted runner's cache starts empty; rust-cache keeps `target/`); ctxloom/ci's
+reusable binaries workflow, which takes no env, is off by the justfile's
+`GITHUB_ACTIONS` default. Linux
 (`ubuntu-24.04`; it moves into the dev container once that image is
 published, a commented `container:` line marks the place) runs every gate
 but mutation: `just build`, `fmt-check`, `lint`, `lint-os`, `lint-deps`,
