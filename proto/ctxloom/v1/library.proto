@@ -3369,8 +3369,9 @@ message BrowsedItem {
 // `remote show <remote> [--recursive]` (AIP-136, `:browse`; `--recursive`
 // changes nothing today and is not in the request).
 message BrowseRemoteRequest {
-  // The Remote, `projects/{p}/remotes/{r}`.
-  string name = 1;
+  // The Remote to browse, by its resource name, `projects/{p}/remotes/{r}`
+  // (its ID as typed, read back exactly).
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Remote"];
   // The most results to answer in one page (AIP-158); 0 is the server's
   // choice. Every page is the whole list today.
   int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
@@ -3389,6 +3390,7 @@ message BrowseRemoteRequest {
   string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `BrowseRemote` answers: the remote and the bundles it publishes.
 // was: Browsed (`count`, the list's length, and `warnings`, never filled,
 // dropped).
 message BrowseRemoteResponse {

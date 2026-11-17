@@ -68,6 +68,7 @@ macro_rules! served_reads {
     ($each:ident) => {
         $each! {
             list_remotes (ListRemotes) ListRemotesRequest.parent => ListRemotesResponse,
+            browse_remote (BrowseRemote) BrowseRemoteRequest.name => BrowseRemoteResponse,
             list_dependencies (ListDependencies) ListDependenciesRequest.parent => ListDependenciesResponse,
         }
     };
@@ -255,13 +256,15 @@ fn remote(
             })?;
         }
         "show" => {
-            let browsed = answer(cx, deps.remote_show(&text_arg(args, "remote")), err)?;
-            respond(
-                cx,
-                out,
-                |parent| remote::browsed(parent, &browsed),
-                |out| text::remote_show(out, &browsed),
-            )?;
+            // The daemon's BrowseRemote (step 10a U2, owner ruling
+            // 2026-11-17), its text from the message.
+            let under = library_api::names::named_target("remotes", &text_arg(args, "remote"));
+            let read = cx
+                .served
+                .browse_remote(&under, v1::BrowseRemoteRequest::default());
+            served(cx, read, out, err, |browsed, out| {
+                text::remote_show(out, &read_back::browsed(browsed))
+            })?;
         }
         "create" => {
             let forge = text_arg(args, "forge");

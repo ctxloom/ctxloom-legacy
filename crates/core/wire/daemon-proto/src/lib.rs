@@ -110,6 +110,7 @@ macro_rules! library_reads {
             list_engines (ListEngines) ListEnginesRequest.parent => ListEnginesResponse,
             list_companions (ListCompanions) ListCompanionsRequest.parent => ListCompanionsResponse,
             get_remote (GetRemote) GetRemoteRequest.name => Remote,
+            browse_remote (BrowseRemote) BrowseRemoteRequest.name => BrowseRemoteResponse,
             list_remotes (ListRemotes) ListRemotesRequest.parent => ListRemotesResponse,
             list_dependencies (ListDependencies) ListDependenciesRequest.parent => ListDependenciesResponse,
             get_config (GetConfig) GetConfigRequest.name => Config,

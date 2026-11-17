@@ -54,3 +54,42 @@ fn a_lock_that_does_not_read_is_declined() {
         "{read:?}"
     );
 }
+
+// Step 10a U2 (owner ruling 2026-11-17): `BrowseRemote` answers what a
+// remote publishes, its name read back exactly; a remote nobody registered
+// is the use case's own refusal.
+#[test]
+fn a_remote_is_browsed_by_its_name_and_an_unknown_one_is_refused() {
+    let fx = Fixture::new();
+    fx.origin("origin", URL);
+    let browsed = super::browse_remote(
+        &fx.deps,
+        PARENT,
+        &daemon_proto::v1::BrowseRemoteRequest {
+            name: format!("{PARENT}/remotes/origin"),
+            ..Default::default()
+        },
+    )
+    .result
+    .unwrap();
+    assert_eq!(browsed.remote, "projects/calm-otter/remotes/origin");
+    assert_eq!(browsed.url, URL);
+    assert_eq!(browsed.items.len(), 1);
+    let demo = &browsed.items[0];
+    assert_eq!((demo.item.as_str(), demo.path.as_str()), ("demo", "demo"));
+    assert_eq!(demo.kind, daemon_proto::v1::ItemKind::Bundle as i32);
+    assert_eq!(demo.pull_reference, Fixture::reference(URL, "demo"));
+    let unknown = super::browse_remote(
+        &fx.deps,
+        PARENT,
+        &daemon_proto::v1::BrowseRemoteRequest {
+            name: format!("{PARENT}/remotes/nope"),
+            ..Default::default()
+        },
+    )
+    .result;
+    assert!(
+        matches!(unknown, Err(deps_application::AppError::Browse { ref remote, .. }) if remote == "nope"),
+        "{unknown:?}"
+    );
+}

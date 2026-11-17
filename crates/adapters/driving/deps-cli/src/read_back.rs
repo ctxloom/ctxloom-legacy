@@ -3,7 +3,7 @@
 //! for line as it printed the view the use case answered in process.
 
 use daemon_proto::v1;
-use deps_application::{DepRow, DepsListing, RemoteListing, RemoteRow};
+use deps_application::{BrowseItem, Browsed, DepRow, DepsListing, RemoteListing, RemoteRow};
 
 /// The last segment of a resource name after `/<collection>/`, or the name.
 fn id_in<'a>(name: &'a str, collection: &str) -> &'a str {
@@ -31,6 +31,32 @@ pub(crate) fn remotes(listed: &v1::ListRemotesResponse) -> RemoteListing {
         count: remotes.len() as u64,
         remotes,
         default,
+    }
+}
+
+/// A `remote show` as its view: the remote by its ID, each bundle it
+/// publishes by its ID, path and pull reference.
+pub(crate) fn browsed(browsed: &v1::BrowseRemoteResponse) -> Browsed {
+    let items: Vec<BrowseItem> = browsed
+        .items
+        .iter()
+        .map(|item| BrowseItem {
+            name: item.item.clone(),
+            kind: match library_api::resources::kind_word(item.kind) {
+                "" => "bundle",
+                word => word,
+            },
+            path: item.path.clone(),
+            is_dir: true,
+            pull_ref: item.pull_reference.clone(),
+        })
+        .collect();
+    Browsed {
+        remote: id_in(&browsed.remote, "remotes").to_string(),
+        url: browsed.url.clone(),
+        count: items.len() as u64,
+        items,
+        warnings: Vec::new(),
     }
 }
 

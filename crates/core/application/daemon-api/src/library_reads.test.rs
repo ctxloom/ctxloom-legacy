@@ -526,3 +526,49 @@ async fn a_deps_read_is_observed_then_answered_and_a_decline_carries_its_cause()
         "{report:?}"
     );
 }
+
+// Step 10a U2 (owner ruling 2026-11-17): `remote show` is `BrowseRemote`,
+// a deps read; a remote that cannot be browsed is a failure said in the
+// use case's own words (its code and args), not an internal one.
+#[tokio::test]
+async fn a_remote_is_browsed_as_a_deps_read_and_its_failure_keeps_its_words() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits {
+        work_tree: Some(ROOT.to_string()),
+        ..Gits::default()
+    });
+    let opened = Arc::new(Opened::default());
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
+        .observing(observing(&f.world, &gits));
+    let read = api
+        .browse_remote(v1::BrowseRemoteRequest {
+            name: "projects/calm-quiet-heron/remotes/origin".to_string(),
+            cwd: "/work/calm-wt".to_string(),
+            ..v1::BrowseRemoteRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        read.answer.remote,
+        "projects/calm-quiet-heron/remotes/origin"
+    );
+    assert_eq!(read.answer.items[0].item, "demo");
+    let failed = api
+        .browse_remote(v1::BrowseRemoteRequest {
+            name: "projects/calm-quiet-heron/remotes/nope".to_string(),
+            cwd: "/work/calm-wt".to_string(),
+            ..v1::BrowseRemoteRequest::default()
+        })
+        .await
+        .unwrap_err();
+    let ApiError::Diagnosed { code, args } = failed else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(code, "deps-application-browse");
+    assert!(args.iter().any(|arg| arg.value == "nope"), "{args:?}");
+}

@@ -496,6 +496,13 @@ service Ctxloom {
   rpc ListRemotes(ListRemotesRequest) returns (ListRemotesResponse) {
     option (google.api.method_signature) = "parent";
   }
+  // `remote show`: what a remote publishes (its bundles), read from its
+  // cached clone as `remote show` always read it (cloned first where none
+  // is cached); nothing is installed (AIP-136, a resource-based custom
+  // method, `:browse`; step 10a U2, owner ruling 2026-11-17).
+  rpc BrowseRemote(BrowseRemoteRequest) returns (BrowseRemoteResponse) {
+    option (google.api.method_signature) = "name";
+  }
   // `remote create`.
   rpc CreateRemote(CreateRemoteRequest) returns (CreateRemoteResponse);
   // `remote edit`: one change per call.
@@ -538,7 +545,7 @@ service Ctxloom {
   rpc SearchLibrary(SearchLibraryRequest) returns (SearchLibraryResponse);
 
   // The rest of the CLI, drafted with the milestone that ports each, by
-  // these rules (S33): hooks; remotes' BrowseRemote, DiscoverRemotes;
+  // these rules (S33): hooks; remotes' DiscoverRemotes;
   // dependencies' PullDependencies, UpgradeDependencies, CheckDependencies,
   // ExplainDependency (B4's, their shapes on a ruling: library.proto's
   // closing note); PushBundle (T26

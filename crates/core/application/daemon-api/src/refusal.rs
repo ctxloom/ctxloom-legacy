@@ -713,8 +713,9 @@ pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
     }
 }
 
-/// A deps use case's error (step 10a U2, `remote list`, `deps list`) as a
-/// read answers it: an adapter's or a file's failure is a failure; a
+/// A deps use case's error (step 10a U2, `remote list|show`, `deps list`)
+/// as a read answers it: an adapter's or a file's failure is a failure in
+/// its own words ([`ApiError::diagnosed`]); a
 /// read model's decline (a lock or a registry that does not read) rides
 /// as `LibraryDeclined`, its cause the decline's own code and args, until
 /// the deps read models' declines have messages of their own (E5's
@@ -732,8 +733,9 @@ pub(crate) fn deps_error(error: &deps_application::AppError) -> ApiError {
     match error {
         deps_application::AppError::Declined(cause) => declined(cause.as_ref()),
         _ if error.exit() == exit_code::Exit::REFUSED => declined(error),
-        _ => ApiError::Failed {
-            detail: angzarr_diagnostic::Diagnostic::code(error).to_string(),
-        },
+        // A failure (a clone that cannot be browsed, a file that does not
+        // read) said in its own words (step 10a U2: `remote show`'s
+        // `deps-application-browse`), exit 10 as in process.
+        _ => ApiError::diagnosed(error),
     }
 }
