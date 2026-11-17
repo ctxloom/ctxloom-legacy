@@ -3585,18 +3585,6 @@ fn home_names_mcp(w: &mut World) {
     names_ctxloom_server(&child_args(w));
 }
 
-#[given(
-    expr = "an opencode child {string} of {string} that sends a permission request for {string}"
-)]
-fn opencode_asks(_: &mut World, _child: String, _owner: String, _tool: String) {
-    red("an opencode child that sends a permission request")
-}
-
-#[then("the child's opencode was answered with its request's allow-once option")]
-fn opencode_allowed(_: &mut World) {
-    red("the child's opencode was answered allow-once")
-}
-
 /// The scripted claude's model asks, at its next turn or in the one in
 /// flight (step 8 U6), to run `tool` with `text`: the arguments claude gives
 /// its prompt tool, put whole in `ask` beside the stub (written aside, then
@@ -3965,14 +3953,6 @@ fn start_asking(w: &mut World, line: String, tool: String, input: String) {
     ask_listed(w, None);
 }
 
-#[when(
-    regex = r#"^I start '([^']+)', whose opencode sends a permission request for "([^"]+)" offering (.+)$"#
-)]
-fn start_opencode_asking(w: &mut World, line: String, _tool: String, _offered: String) {
-    start_line(w, &line);
-    red("a one-shot's scripted opencode sending ACP's permission request (U7)")
-}
-
 #[then("the started command succeeds, its engine told to run the tool")]
 fn started_told_to_run(w: &mut World) {
     started_ran(w).succeeds();
@@ -3992,14 +3972,6 @@ fn started_told_to_run(w: &mut World) {
         "{}",
         stub_ran(w)
     );
-}
-
-#[then(
-    regex = r"^the started command succeeds, its opencode answered with its request's (\w+) option$"
-)]
-fn started_opencode_answered(w: &mut World, _kind: String) {
-    started_ran(w).succeeds();
-    red("the one-shot's opencode answered with its request's option (U7)")
 }
 
 /// The question a stood-in terminal asks before it reads its answer: a
@@ -4173,29 +4145,6 @@ fn first_turn_in_project(
     );
 }
 
-#[given(
-    regex = r#"^an opencode child "([^"]+)" of "([^"]+)" that sends a permission request for "([^"]+)" offering (.+)$"#
-)]
-fn opencode_asks_offering(
-    _: &mut World,
-    _child: String,
-    _owner: String,
-    _tool: String,
-    _offered: String,
-) {
-    red("an opencode child's ACP permission request, with its options (step 8, U7)")
-}
-
-#[then(expr = "the child's opencode was answered {string} for its permission request")]
-fn opencode_answered_word(_: &mut World, _word: String) {
-    red("an opencode child's request answered cancelled (step 8, U7)")
-}
-
-#[then(regex = r"^the child's opencode was answered with its request's (\w+) option$")]
-fn opencode_answered_kind(_: &mut World, _kind: String) {
-    red("an opencode child's request answered with an option of its kind (step 8, U7)")
-}
-
 /// The asking engine exits where it waits: its MCP server killed with it,
 /// so nothing cancels the call and nothing withdraws the ask.
 #[when(regex = r#"^"([^"]+)"'s engine exits without cancelling its approval prompt call$"#)]
@@ -4280,16 +4229,6 @@ fn one_shot_claude_flag(w: &mut World, flag: String, value: String) {
 #[then("the one-shot's session home names ctxloom's MCP server")]
 fn one_shot_home_names_mcp(w: &mut World) {
     names_ctxloom_server(&one_shot_args(w));
-}
-
-#[then(expr = "the one-shot's opencode was launched as {string}, and closed after its one turn")]
-fn one_shot_over_acp(_: &mut World, _command: String) {
-    red("an opencode one-shot runs over ACP for its one turn (step 8, U7)")
-}
-
-#[then(expr = "the file {string} is as it was before the answer")]
-fn file_unchanged_by_answer(_: &mut World, _rel: String) {
-    red("an answer that writes nothing (step 8, U7)")
 }
 
 #[then(

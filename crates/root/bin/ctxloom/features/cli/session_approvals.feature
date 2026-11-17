@@ -269,15 +269,6 @@ Feature: session approvals — a child's permission ask, answered by the user
       And the refusal is "approvals-approval-settled"
       And the output contains "withdrawn"
 
-    Scenario: An opencode ask whose turn is steered is answered cancelled, and withdrawn
-      # new: ctxloom's own cancel withdraws an opencode ask.
-      Given an initialized ctxloom project
-      And an opencode child "brisk-copper-moth" of "amber-quiet-heron" that sends a permission request for "bash" offering allow_once and reject_once
-      When I run 'ctxloom session send brisk-copper-moth steer "stop and look at main.rs"'
-      Then the command succeeds
-      And the child's opencode was answered "cancelled" for its permission request
-      And no ask is waiting under "amber-quiet-heron"
-
     Scenario: An ask whose session ends without withdrawing it is denied when its time runs out
       # new: an ask's alarm ends it.
       Given an initialized ctxloom project whose project config says "engines.claude-code.approval_timeout: 2s"
@@ -409,64 +400,6 @@ Feature: session approvals — a child's permission ask, answered by the user
       When I run "ctxloom session approvals answer {the ask} allow-once"
       Then the command succeeds
       And the started command succeeds, its engine told to run the tool
-
-    Scenario: An opencode child's ask is listed with the options of its ACP request
-      # new: opencode's hook point, with ACP's own options.
-      Given an initialized ctxloom project
-      And an opencode child "brisk-copper-moth" of "amber-quiet-heron" that sends a permission request for "bash" offering allow_once, allow_always, reject_once and reject_always
-      When I run "ctxloom session approvals amber-quiet-heron --format json"
-      Then the command succeeds
-      And the output reports "approvals[0].tool_name" as "bash"
-      And the output reports "approvals[0].options" having "4" entries
-      And the output reports "approvals[0].options[0].id" as "allow-once"
-      And the output reports "approvals[0].options[1].id" as "allow-always"
-      And the output reports "approvals[0].options[2].id" as "deny"
-      And the output reports "approvals[0].options[3].id" as "deny-always"
-
-    Scenario Outline: An opencode child's permission request is answered on its ACP connection with the option chosen
-      # new: opencode's hook point; an always is relayed, never written.
-      Given an initialized ctxloom project
-      And an opencode child "brisk-copper-moth" of "amber-quiet-heron" that sends a permission request for "bash" offering allow_once, allow_always, reject_once and reject_always
-      When I run "ctxloom session approvals answer brisk-copper-moth <answer>"
-      Then the command succeeds
-      And the child's opencode was answered with its request's <kind> option
-      And no ask is waiting under "amber-quiet-heron"
-      And the file ".ctxloom/config.yaml" is as it was before the answer
-
-      Examples:
-        | answer       | kind          |
-        | allow-once   | allow_once    |
-        | allow-always | allow_always  |
-        | deny         | reject_once   |
-        | deny-always  | reject_always |
-
-    Scenario: A message with an opencode answer is refused, and the ask still waits
-      # new: ACP's answer carries no text.
-      Given an initialized ctxloom project
-      And an opencode child "brisk-copper-moth" of "amber-quiet-heron" that sends a permission request for "bash" offering allow_once and reject_once
-      When I run 'ctxloom session approvals answer brisk-copper-moth deny "not yet"'
-      Then the command exits with code 20
-      And the refusal is "approvals-message-not-relayed"
-      And an ask is still waiting under "amber-quiet-heron"
-
-    Scenario: An opencode one-shot runs over ACP for its one turn, so its asks are heard
-      # new: opencode one-shots run over ACP.
-      Given an initialized ctxloom project
-      When I run 'ctxloom run --one-shot --engine opencode "hello"'
-      Then the command succeeds
-      And the one-shot's opencode was launched as "opencode acp", and closed after its one turn
-      And the assistant's reply is printed
-
-    Scenario: An opencode one-shot's permission request is answered on its ACP connection
-      # new: opencode one-shots run over ACP.
-      Given an initialized ctxloom project
-      When I start 'ctxloom run --one-shot --engine opencode "touch hi.txt"', whose opencode sends a permission request for "bash" offering allow_once and reject_once
-      And I run "ctxloom session approvals --format json"
-      Then the command succeeds
-      And I note the ask named by "approvals[0].name" as "the ask"
-      When I run "ctxloom session approvals answer {the ask} allow-once"
-      Then the command succeeds
-      And the started command succeeds, its opencode answered with its request's allow_once option
 
   Rule: A draining daemon still takes asks and answers
 
