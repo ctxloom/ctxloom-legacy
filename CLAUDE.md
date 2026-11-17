@@ -2169,16 +2169,27 @@ Trust is ENFORCED (step 8 U2). The daemon reads it (`TrustIndex::trusts`, by
 project id) for every launch it makes, a one-shot, a terminal session, a
 hand-off and a hosted child's start, and plans it with
 `library_application::Flags::trusted` (never the client's to say: no flag or
-variable sets it). Untrusted, `config::load` holds ruling 46's four keys back
-from the project layer as before (`Config::held_back`, the notice as before),
-and the plan names those THIS launch reads (`DryRun::untrusted`: its engine's
+variable sets it). It gates EVERY library read the daemon serves too (step
+10a U7, D7: daemon-api's `read_site`, the project's id from
+`registered_project`, a read under `users/me` untrusted), so `engine show`
+before `trust --yes` and after `--undo` holds them back, and between shows
+them. Untrusted, `config::load` holds ruling 46's four keys back from the
+project layer (`Config::held_back`), each said as the typed notice
+`library-application-notice-untrusted-setting` (`Notice::UntrustedSetting`:
+`path`, `file`, `home_file`; its `-fix` names `ctxloom trust` and the home
+config), which replaced ruling 46's untyped "a project's config cannot set
+it" warning (deleted, U7), and the plan names those THIS launch reads (`DryRun::untrusted`: its engine's
 block and its agent's, owner Q8), which are `EnqueueRun.untrusted_settings`
 (field 14): the runs aggregate refuses them LAST of its checks (Q9),
 `runs-untrusted-project-settings` (`UntrustedProjectSettings{paths}`,
 FAILED_PRECONDITION; `LaunchRefusals` field 7); the credential
 evidence is read with them held back, so an untrusted `auth.file` is reported
 once. Trusted, the project's own keys apply until the trust is revoked (S23).
-In-process library verbs still hold them back (until T13). A project's own
+An in-process library verb (a write, until 10b) is planned untrusted and
+holds them back with the same notice; init's interview read and distill's
+prompt are still read in process and ask the daemon one `GetTrust`
+(`Library::with_trust`), since no served read answers an operational prompt
+yet. A project's own
 `ctxloom` bundle replaces an operational prompt (init's interview, distill's)
 only once the project is trusted (D4): `Project::operational_prompt` passes it
 over for the built-in otherwise, with the notice
@@ -3865,7 +3876,8 @@ reaches the engine is still the document verbatim, in its written order; no
 flat model/effort, no `approver`, no "Headless posture".
 `engines.<e>.command`, `auth.file` and `session_home: host` (an engine
 block's or an agent's, `agents.<a>.session_home`) in a project layer are
-taken out with a warning (`strip_project_only`, ruling 46).
+held back until the user trusts the project (`strip_project_only`, ruling
+46; the notice `library-application-notice-untrusted-setting`, U7).
 An agent's references are resource names (design §2, B2's references): its
 `engine` `<parent>/engines/<e>`, each of its `profiles` B1's profile name
 (`library-cli`'s `catalog::profile_ref`; one that names no place keeps its
