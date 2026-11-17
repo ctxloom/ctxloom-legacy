@@ -198,6 +198,7 @@ lease() {
         esac
     done
     [ -n "$branch" ] || usage
+    case "$wait" in ''|*[!0-9]*) usage ;; esac
     git check-ref-format --branch "$branch" > /dev/null 2>&1 || die "'$branch' is not a branch name"
     [ -n "$owner" ] || owner=$(owner_pid)
     start=$(start_of "$owner")
@@ -214,16 +215,16 @@ lease() {
         # An existing slot before one not yet made, each in number order.
         for pass in existing absent; do
             for n in $(seq "$count"); do
-                s=$(state_of "$n")
-                case "$pass:$s" in existing:absent|absent:clean|absent:dirty*|absent:orphan|absent:foreign) continue ;; esac
+                p=$(path_of "$n")
+                case "$pass" in existing) [ -e "$p" ] || continue ;; absent) [ ! -e "$p" ] || continue ;; esac
                 held "$n" && continue
+                s=$(state_of "$n")
                 case "$s" in
                     dirty:*) [ -n "$told" ] || say "slot-$n passed over: free, but holds uncommitted work (${s#dirty:} files) at $(path_of "$n")"; continue ;;
                     orphan) [ -n "$told" ] || say "slot-$n passed over: free, but its detached HEAD is in no ref (commit it to a branch) at $(path_of "$n")"; continue ;;
                     foreign) [ -n "$told" ] || say "slot-$n passed over: $(path_of "$n") exists and is not a worktree of this repository"; continue ;;
                 esac
                 hpid=$(take "$n" "$owner" "$start") || continue
-                p=$(path_of "$n")
                 # Taken: is it still clean (another may have worked in it between)?
                 s=$(state_of "$n")
                 case "$s" in clean|absent) ;; *) stop_holder "$n" "$hpid"; continue ;; esac
