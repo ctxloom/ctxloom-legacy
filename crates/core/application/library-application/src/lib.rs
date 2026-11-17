@@ -36,7 +36,6 @@ mod shown;
 mod trust;
 mod views;
 pub mod write;
-mod yamlout;
 
 pub use agents::ENGINES;
 pub use companions::CompanionInit;

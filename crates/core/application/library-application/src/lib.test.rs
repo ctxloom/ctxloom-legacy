@@ -682,12 +682,18 @@ fn test_viewing_a_bundle_dumps_its_tree_or_one_item() {
     assert!(whole.content.starts_with("==> bundle.yaml <==\n"));
     assert!(!whole.item);
     let item = ok(library.bundle_view(&plain(), "demo#fragments/dist", true));
-    assert_eq!(item.content, "# (distilled version)\nshort form\n");
+    assert!(
+        matches!(&item.viewed, crate::Viewed::Body { body, distilled: true, .. } if body == "short form\n"),
+        "{:?}",
+        item.viewed
+    );
     assert!(item.distilled);
+    assert!(item.item);
     let mcp = ok(library.bundle_view(&plain(), "demo#mcp/tree-sitter", false));
-    assert_eq!(
-        mcp.content,
-        "# MCP Server: tree-sitter\ncommand: tree-sitter\nargs:\n  - --stdio\n"
+    assert!(
+        matches!(&mcp.viewed, crate::Viewed::Mcp(row) if row.command == "tree-sitter" && row.args == ["--stdio"]),
+        "{:?}",
+        mcp.viewed
     );
     assert!(matches!(
         library

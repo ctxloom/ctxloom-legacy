@@ -221,7 +221,9 @@ fn test_viewing_one_item_of_each_kind() {
     ];
     let library = with(&[("one", one), ("two", two)], &[CONFIG]).library();
     let only = ok(library.bundle_view(&plain(), "one#mcp/anything", false));
-    assert_eq!(only.content, "# MCP Server: only\ncommand: c\n");
+    assert_eq!(viewed_mcp(&only), ("only", "c"));
+    // An item's view is its data alone (step 10a U2): no content is drawn.
+    assert_eq!(only.content, "");
     assert!(matches!(
         library
             .bundle_view(&plain(), "two#mcp/missing", false)
@@ -229,19 +231,21 @@ fn test_viewing_one_item_of_each_kind() {
         Err(AppError::ViewMissing { .. })
     ));
     let named = ok(library.bundle_view(&plain(), "two#mcp/b", false));
-    assert_eq!(named.content, "# MCP Server: b\ncommand: d\n");
-    // A command without a trailing newline gets one; the distilled form is
-    // only taken when asked for and there is one.
+    assert_eq!(viewed_mcp(&named), ("b", "d"));
+    // The distilled form is only taken when asked for and there is one.
     let raw = ok(library.bundle_view(&plain(), "two#commands/p", false));
-    assert_eq!(raw.content, "PROMPT-NO-NEWLINE\n");
+    assert_eq!(body(&raw), ("PROMPT-NO-NEWLINE".to_string(), false));
     let short = ok(library.bundle_view(&plain(), "two#commands/p", true));
-    assert_eq!(short.content, "# (distilled version)\nshort\n");
+    assert_eq!(body(&short), ("short\n".to_string(), true));
     let nodistilled = ok(library.bundle_view(&plain(), "two#fragments/f", true));
-    assert_eq!(nodistilled.content, "plain\n");
+    assert_eq!(body(&nodistilled), ("plain\n".to_string(), false));
     let profile = ok(library.bundle_view(&plain(), "two#profiles/pr", false));
+    let crate::Viewed::Profile(shown) = &profile.viewed else {
+        panic!("a profile: {:?}", profile.viewed);
+    };
     assert_eq!(
-        profile.content,
-        "# Profile: pr\ndescription: d\nbundles:\n  - two\n"
+        (shown.description.as_str(), &shown.bundles[..]),
+        ("d", &["two".to_string()][..])
     );
     assert!(matches!(
         library
@@ -250,7 +254,11 @@ fn test_viewing_one_item_of_each_kind() {
         Err(AppError::ViewMissing { .. })
     ));
     let skill = ok(library.bundle_view(&plain(), "two#skills/s", false));
-    assert_eq!(skill.content, "# Skill: s\ntags:\n  - t\nnotes: nn\n");
+    let crate::Viewed::Skill { name, skill } = &skill.viewed else {
+        panic!("a skill: {:?}", skill.viewed);
+    };
+    assert_eq!((name.as_str(), skill.notes.as_str()), ("s", "nn"));
+    assert_eq!(skill.tags, ["t"]);
     assert!(matches!(
         library
             .bundle_view(&plain(), "two#skills/none", false)
@@ -1900,4 +1908,22 @@ fn test_a_dry_run_carries_the_engines_approval_timeout_with_its_layer() {
         "dev",
     );
     assert_eq!(now.drive.approval_timeout, std::time::Duration::ZERO);
+}
+
+/// A viewed MCP server's name and command.
+fn viewed_mcp(view: &crate::BundleView) -> (&str, &str) {
+    match &view.viewed {
+        crate::Viewed::Mcp(row) => (row.name.as_str(), row.command.as_str()),
+        other => panic!("an mcp server: {other:?}"),
+    }
+}
+
+/// A viewed fragment's or command's body, and whether it is distilled.
+fn body(view: &crate::BundleView) -> (String, bool) {
+    match &view.viewed {
+        crate::Viewed::Body {
+            body, distilled, ..
+        } => (body.clone(), *distilled),
+        other => panic!("a body: {other:?}"),
+    }
 }

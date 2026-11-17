@@ -334,10 +334,18 @@ fn test_bundle_show_says_a_stale_form_and_view_serves_its_original() {
         .bundle_view(&plain(), "demo#fragments/dist", true)
         .result
         .unwrap();
-    assert_eq!(viewed.content, "edited\n");
+    assert!(
+        matches!(&viewed.viewed, crate::Viewed::Body { body, distilled: false, .. } if body == "edited\n"),
+        "{:?}",
+        viewed.viewed
+    );
     let fresh = library()
         .bundle_view(&plain(), "demo#fragments/dist", true)
         .result
         .unwrap();
-    assert_eq!(fresh.content, "# (distilled version)\nshort form\n");
+    assert!(
+        matches!(&fresh.viewed, crate::Viewed::Body { body, distilled: true, .. } if body == "short form\n"),
+        "{:?}",
+        fresh.viewed
+    );
 }
