@@ -6,7 +6,8 @@ use std::path::Path;
 
 use super::{
     account_home, daemon_env, daemon_home, instance_lock, logger, per_call_env, request_id,
-    ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
+    under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND,
+    SPAWN_WAIT,
 };
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -325,4 +326,19 @@ fn a_per_call_environment_names_its_own_home_by_the_platforms_home_variable() {
             "{flavor:?} {caller}"
         );
     }
+}
+
+// The daemon log's path as a person reads it is `~` and the rest joined by
+// the platform's separator: never a mix of `/` and `\` on Windows.
+#[test]
+fn a_path_under_the_home_is_said_with_the_platforms_separator() {
+    let below = Path::new(".ctxloom").join("daemon").join("daemon.log");
+    assert_eq!(
+        under_home(os::Flavor::Unix, &below),
+        "~/.ctxloom/daemon/daemon.log"
+    );
+    assert_eq!(
+        under_home(os::Flavor::Windows, &below),
+        r"~\.ctxloom\daemon\daemon.log"
+    );
 }

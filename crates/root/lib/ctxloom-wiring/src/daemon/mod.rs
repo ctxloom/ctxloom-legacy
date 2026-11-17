@@ -676,12 +676,30 @@ impl<'a> Reach<'a> {
         let log = files.log_path();
         match self.wiring.env().home().map(PathBuf::from) {
             Some(home) => match log.strip_prefix(&home) {
-                Ok(below) => format!("~/{}", below.display()),
+                Ok(below) => under_home(self.wiring.env().flavor(), below),
                 Err(_) => log.display().to_string(),
             },
             None => log.display().to_string(),
         }
     }
+}
+
+/// `below`, a path relative to the home, as a person reads it under `~`:
+/// `~` and each of its components joined by `flavor`'s separator (`/`, or
+/// `\` on Windows), so a Windows path never mixes the two.
+fn under_home(flavor: os::Flavor, below: &Path) -> String {
+    let separator = match flavor {
+        os::Flavor::Unix => "/",
+        os::Flavor::Windows => "\\",
+    };
+    std::iter::once("~".to_string())
+        .chain(
+            below
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned()),
+        )
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
 /// A refusal of the wiring's, as the reach declines.
