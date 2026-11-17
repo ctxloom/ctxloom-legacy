@@ -446,11 +446,9 @@ fn test_a_dry_run_whose_daemon_cannot_start_fails_with_the_clients_error() {
                 "named {named}, {format}: {}",
                 ran.said()
             );
-            assert!(
-                ran.said().contains("~/.ctxloom/daemon/daemon.log"),
-                "named {named}, {format}: {}",
-                ran.said()
-            );
+            // The log's path as the platform separates it (`\` is one on
+            // Windows too).
+            ran.contains_as_platform("~/.ctxloom/daemon/daemon.log");
         }
     }
 }

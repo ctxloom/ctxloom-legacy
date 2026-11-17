@@ -113,10 +113,14 @@ fn her_own_worktree_is_listed_unmerged_and_dirty_and_ctxlooms_are_not() {
         .join("reviewer");
     f.add("ctxloom/amber-quiet-heron/reviewer", &scratch);
     let listed = f.listed();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    // The path is git's spelling (`C:/a/b` on Windows, where `stale` is
+    // `C:\a\b`), so it is read as a path, which takes `/` and `\` alike there.
+    assert_eq!(Path::new(&listed[0].path), stale, "{listed:?}");
     assert_eq!(
         listed,
         [ForeignWorktree {
-            path: stale.display().to_string(),
+            path: listed[0].path.clone(),
             branch: "stale-feature".to_string(),
             merged: Some(false),
             dirty: Some(true),
