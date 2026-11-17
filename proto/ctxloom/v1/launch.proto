@@ -21,10 +21,14 @@ syntax = "proto3";
 // that asked for it.
 package ctxloom.v1;
 
+import "google/api/field_behavior.proto";
+
 // One variable of the engine's environment.
 message EnvVar {
-  string name = 1;
-  string value = 2;
+  // The variable's name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // Its value. A launch's values can be credentials: never logged.
+  string value = 2 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // How the launch's holder stops it (ruling 114), when asked to.
@@ -44,15 +48,19 @@ message StopPolicy {
 // `WatchRun` name (owner ruling s4-Q2). One store holds them all (T14): nothing routes by the
 // project id, which names the project the session belongs to.
 message LaunchAt {
+  // The project the session belongs to (names, never routes).
   string project_id = 1;
   // The session's stable id (its stream root, UUID text).
   string session = 2;
+  // The session's harp.
   string harp = 3;
   // The run's id, and the incarnation of the session it is.
   string run = 4;
+  // The incarnation of the session this run is.
   uint32 incarnation = 5;
 }
 
+// One engine process to start, computed by the daemon alone.
 message Launch {
   // The protocol on a hosted launch's stdin and stdout.
   enum Stdio {
@@ -70,6 +78,7 @@ message Launch {
 
   // Which consumer starts it, and how.
   enum Kind {
+    // Unset (proto3's zero value).
     KIND_UNSPECIFIED = 0;
     // The interactive TUI: started by the frontend on the user's terminal,
     // inherited stdio, in the frontend's process group (a Ctrl-C reaches it),
@@ -89,7 +98,9 @@ message Launch {
     EDITOR = 4;
   }
 
+  // Which run it starts.
   LaunchAt at = 1;
+  // Which consumer starts it, and how.
   Kind kind = 2;
   // The engine's name (claude-code, opencode; under test-support, mock).
   string engine = 3;
@@ -122,6 +133,8 @@ message Launch {
   // EDITOR launch names none.
   string session_lock = 9;
 
+  // The protocol on a hosted launch's stdin and stdout.
   Stdio stdio = 10;
+  // How its holder stops it when asked.
   StopPolicy stop = 11;
 }

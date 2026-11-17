@@ -124,24 +124,33 @@ import "google/protobuf/field_mask.proto";
 import "google/protobuf/struct.proto";
 import "ctxloom/v1/needs.proto";
 
-// region shared
+// (-- region shared --)
 
 // A value and the config place that said it (ruling 72): `agent`, `engine`,
 // `project` or `default`. was: SourcedValue.
 message SourcedText {
-  string value = 1;
-  string source = 2;
+  // The value in effect; empty when no layer set it (the engine's own
+  // default).
+  string value = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The layer that said it: `agent`, `engine`, `project` or `default`.
+  string source = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// A list and the config place that said it (ruling 72): `agent`, `engine`,
+// `project` or `default`.
 message SourcedList {
-  repeated string value = 1;
-  string source = 2;
+  // The list in effect, as written.
+  repeated string value = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The layer that said it: `agent`, `engine`, `project` or `default`.
+  string source = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // An engine's own document (rulings 133-139), as written; none is unset.
 message SourcedDocument {
-  google.protobuf.Value value = 1;
-  string source = 2;
+  // The document as the config holds it; unset when no layer gave one.
+  google.protobuf.Value value = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The layer that said it: `agent`, `engine`, `project` or `default`.
+  string source = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // The runtime an agent runs in, and what its own replaced (never silent):
@@ -149,33 +158,56 @@ message SourcedDocument {
 // layer, `change` how they differ (`weakens`, `strengthens`,
 // `ownership-swap`). was: RuntimeSetting.
 message RuntimeSetting {
-  string value = 1;
-  string source = 2;
-  string overrides = 3;
-  string overrides_source = 4;
-  string change = 5;
+  // The runtime the agent runs in (`host`, `container-rootless`,
+  // `container-rootful`).
+  string value = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The layer that said it: `agent`, `engine`, `project` or `default`.
+  string source = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The runtime that would have stood had this layer said nothing; empty when
+  // nothing was replaced.
+  string overrides = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The layer `overrides` came from.
+  string overrides_source = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // How the value differs from `overrides`: `weakens`, `strengthens` or
+  // `ownership-swap`; empty when nothing was replaced.
+  string change = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // One name of an agent's env and the layer that said it. was: EnvKey
 // (`name` -> `variable`, AIP-122).
 message EnvKey {
-  string variable = 1;
-  string source = 2;
+  // The variable's name (a name only, never its value).
+  string variable = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The layer that added it: the engine block's, or the agent's own.
+  string source = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // The names a launch passes through (ruling 66). was: EnvSetting.
 message EnvSetting {
-  repeated string value = 1;
-  string source = 2;
-  repeated EnvKey keys = 3;
+  // Every variable name the launch passes through, the engine block's then
+  // the agent's own added (ruling 66).
+  repeated string value = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The highest layer that said any of the list.
+  string source = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Each name of `value` with the layer that added it.
+  repeated EnvKey keys = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // What an agent resolves to on an engine. was: AgentSettings.
 message AgentSettings {
+  // The model passed to the engine (`--model`); no value, the engine's own
+  // default.
   SourcedText model = 1;
+  // The effort level passed to the engine (claude's `--effort`); no value,
+  // the engine's own default.
   SourcedText effort = 2;
+  // The engine's own permissions document, passed to it verbatim and never
+  // checked (rulings 133-139); none, the engine's default document.
   SourcedDocument permissions = 3;
+  // The runtime the agent runs in, and what it replaced.
   RuntimeSetting runtime = 4;
+  // The variable names the launch passes through, each with its layer (ruling
+  // 66).
   EnvSetting env = 5;
   // Whose home the engine runs on (`session` | `host`): the agent's own,
   // else its engine block's, else `session` (owner ruling of 2026-11-13,
@@ -189,13 +221,18 @@ message AgentSettings {
 
 // An engine surface an agent's selection cannot reach. was: NotCarried.
 message NotCarried {
-  string engine = 1;
-  string surface = 2;
-  string event = 3;
-  string reason = 4;
+  // The engine that cannot carry it (`claude-code`, `opencode`).
+  string engine = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The surface kind lost: `hooks` today (only hooks are judged).
+  string surface = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The unified hook event the engine has no form for (`session_end`,
+  // `permission_ask`, ...).
+  string event = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Why the engine cannot carry it, in the engine adapter's words.
+  string reason = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
-// What a write answers (OQ-8, OQ-9): the fields every per-method response
+// (-- What a write answers (OQ-8, OQ-9): the fields every per-method response
 // repeats, at the same numbers. This message is not used itself; it
 // documents the shape.
 //   2 path            the one atomic operation's target (T25)
@@ -203,12 +240,14 @@ message NotCarried {
 //   4 detail          what the preview would change. was: Preview.detail
 //   5 apply_command   the exact command that applies. was: apply
 //   6 changes         an edit's changes; empty, nothing changed
-//   90 needs, 91 etag, 92 notices
+//   90 needs, 91 etag, 92 notices --)
 
-// endregion
+// (-- endregion --)
 
-// region bundles: ctxloom.dev/Bundle
+// (-- region bundles: ctxloom.dev/Bundle --)
 
+// A bundle: a directory of fragments, commands, skills, MCP servers, profiles
+// and hooks with its `bundle.yaml`, from one origin.
 message Bundle {
   option (google.api.resource) = {
     type: "ctxloom.dev/Bundle"
@@ -220,7 +259,9 @@ message Bundle {
     plural: "bundles"
   };
 
+  // How much of a bundle to answer (AIP-157).
   enum View {
+    // Unset: BASIC for a List, FULL for a Get.
     VIEW_UNSPECIFIED = 0;
     // `bundle list`.
     BASIC = 1;
@@ -232,6 +273,7 @@ message Bundle {
 
   // Where a bundle comes from.
   enum Origin {
+    // Unset (proto3's zero value); never answered.
     ORIGIN_UNSPECIFIED = 0;
     // The project's own (`.ctxloom/content/bundles/...`).
     PROJECT = 1;
@@ -255,29 +297,39 @@ message Bundle {
   string commit = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY: its bundle.yaml.
   string path = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
-  string version = 6;
+  // The bundle's version, as its `bundle.yaml` says it (`bundle edit
+  // --version`).
+  string version = 6 [(google.api.field_behavior) = OPTIONAL];
   // FULL.
-  string author = 7;
-  string description = 8;
-  repeated string tags = 9;
+  string author = 7 [(google.api.field_behavior) = OPTIONAL];
+  // The bundle's description (`bundle create|edit --description`).
+  string description = 8 [(google.api.field_behavior) = OPTIONAL];
+  // The bundle's own tags, which its fragments and commands inherit.
+  repeated string tags = 9 [(google.api.field_behavior) = OPTIONAL];
   // FULL.
-  string notes = 10;
+  string notes = 10 [(google.api.field_behavior) = OPTIONAL];
   // FULL.
-  string installation = 11;
+  string installation = 11 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY counts.
   uint32 fragment_count = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
-  uint32 command_count = 13;
+  // How many commands it holds.
+  uint32 command_count = 13 [(google.api.field_behavior) = OUTPUT_ONLY];
   // was: mcp_count.
-  uint32 mcp_server_count = 14;
-  uint32 profile_count = 15;
-  uint32 skill_count = 16;
+  uint32 mcp_server_count = 14 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // How many profiles it holds.
+  uint32 profile_count = 15 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // FULL: how many skills it holds.
+  uint32 skill_count = 16 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, a remote bundle's: always printed when known.
   optional bool held = 17 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, FULL: each child summarised by its name (OQ-14).
   repeated BundleItem fragments = 20 [(google.api.field_behavior) = OUTPUT_ONLY];
-  repeated BundleItem commands = 21;
-  repeated BundleItem skills = 22;
-  repeated BundleItem mcp_servers = 23;
+  // OUTPUT_ONLY, FULL: each command, summarised by its name.
+  repeated BundleItem commands = 21 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // OUTPUT_ONLY, FULL: each skill, summarised by its name.
+  repeated BundleItem skills = 22 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // OUTPUT_ONLY, FULL: each MCP server, summarised by its name.
+  repeated BundleItem mcp_servers = 23 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, FULL: Profile names.
   repeated string profiles = 24 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, FULL: hook labels.
@@ -286,6 +338,8 @@ message Bundle {
   repeated BundleFile files = 26 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, CONTENT: the distilled forms were asked.
   optional bool distilled = 27 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
@@ -294,205 +348,376 @@ message Bundle {
 // ShownMcp.
 message BundleItem {
   // The child's resource name.
-  string item = 1;
-  repeated string tags = 2;
+  string item = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The child's own tags.
+  repeated string tags = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Commands.
-  string description = 3;
+  string description = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Fragments, commands: the first line.
-  string preview = 4;
-  DistilledState distilled = 5;
+  string preview = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Fragments, commands: the distilled form against its source (T30).
+  DistilledState distilled = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Printed true or false (OQ-7).
-  optional bool no_distill = 6;
+  optional bool no_distill = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Fragments.
-  string premise = 7;
+  string premise = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
   // MCP servers.
-  string command = 8;
-  repeated string args = 9;
+  string command = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // MCP servers: the command's arguments.
+  repeated string args = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
   // MCP servers: values included, as shown today (OQ-17).
-  map<string, string> env = 10;
-  string notes = 11;
-  string installation = 12;
+  map<string, string> env = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Skills, MCP servers: the child's notes, for a human reader.
+  string notes = 11 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // MCP servers: the setup the server asks of a human.
+  string installation = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Skills.
-  string path = 13;
+  string path = 13 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // One file of `bundle view <bundle>`.
 message BundleFile {
-  string path = 1;
-  string content = 2;
+  // The file's path in the bundle's tree.
+  string path = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The file's text.
+  string content = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `bundle show <bundle>` (FULL) and `bundle view <bundle>` (CONTENT).
 message GetBundleRequest {
+  // The Bundle to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Bundle"];
-  Bundle.View view = 2;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  Bundle.View view = 2 [(google.api.field_behavior) = OPTIONAL];
   // `--distilled`: a distilled form where one is fresh.
-  bool prefer_distilled = 3;
+  bool prefer_distilled = 3 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `bundle list`.
 message ListBundlesRequest {
   // `projects/{project}` answers the whole catalog, every origin (a lint
   // exception to AIP-132's "parent identifies the type", design §1.2);
   // `projects/{project}/remotes/-` every remote bundle alone (AIP-159).
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Bundle"];
-  Bundle.View view = 2;
-  int32 page_size = 80;
-  string page_token = 81;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  Bundle.View view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The bundles of the catalog, every origin.
 message ListBundlesResponse {
+  // The Bundle resources of this page.
   repeated Bundle bundles = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `bundle create <name> [--description]`: a new local bundle.
 message CreateBundleRequest {
+  // The parent to create the Bundle under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Bundle"];
-  string bundle_id = 2;
+  // The new Bundle's ID, the last segment of its name: the item-id grammar,
+  // `^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`.
+  string bundle_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Bundle to create, as its own fields say it.
   Bundle bundle = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0133::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `bundle create` did.
 message CreateBundleResponse {
+  // The Bundle created (on a preview, as it would be).
   Bundle bundle = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `bundle edit <bundle>`: one change to its `bundle.yaml` per call.
 message UpdateBundleRequest {
+  // The Bundle to change, named by its `name`: only the field `update_mask`
+  // names is written.
   Bundle bundle = 1 [(google.api.field_behavior) = REQUIRED];
   // Exactly ONE path (T29); more is refused `OneChangePerCall`.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0134::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `bundle edit` did.
 message UpdateBundleResponse {
+  // The Bundle after the change (on a preview, as it would be).
   Bundle bundle = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `bundle remove <bundle> [--yes]`.
 message DeleteBundleRequest {
+  // The Bundle to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Bundle"];
-  string request_id = 90;
-  string etag = 91;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
   // Without `--yes`: the preview.
-  bool validate_only = 92;
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0135::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // A delete answers the resource as it was.
 message DeleteBundleResponse {
+  // The Bundle removed, as it was.
   Bundle bundle = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `bundle export <bundle> <dest>` (AIP-136).
 message ExportBundleRequest {
-  string name = 1;
-  string destination = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The Bundle to export, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // Where the bundle's tree lands (`DEST-DIR`, or `--output` for the tree's
+  // own path).
+  string destination = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: {status, name, source, dest}.
 message ExportBundleResponse {
+  // The Bundle exported, by its resource name.
   string bundle = 1;
+  // The bundle's directory it was copied from.
   string source = 2;
+  // Where the exported tree is.
   string destination = 3;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `bundle import <path> [--force]` (AIP-136, on the collection).
 message ImportBundleRequest {
-  string parent = 1;
-  string source = 2;
-  bool force = 3;
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  // The project (or `users/me`) the bundle is imported into.
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
+  // A bundle tree: its directory, or its `bundle.yaml`.
+  string source = 2 [(google.api.field_behavior) = REQUIRED];
+  // Overwrite a bundle of the same name (`--force`).
+  bool force = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The bundle imported, with its counts. was: {status, source, dest,
 // version, fragments, commands, mcp}.
 message ImportBundleResponse {
+  // The Bundle imported (on a preview, as it would be).
   Bundle bundle = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `bundle move <bundle> --to` (AIP-136; Move is its exception for
 // imperative verbs). The bundle under its new name. was: {status, dest}.
 message MoveBundleRequest {
-  string name = 1;
+  // The Bundle to move, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
   // The new parent (a project or a remote).
-  string destination = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  string destination = 2 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `bundle move` did: the bundle under its new name.
 message MoveBundleResponse {
+  // The Bundle under its new name.
   Bundle bundle = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `bundle push <bundle> [remote] [--message] [--pr]` (AIP-136; B4, the
 // owner's rulings on the B4 draft, 2026-11-13).
 message PushBundleRequest {
+  // The local Bundle to push, by its resource name.
   string name = 1;
+  // The Remote to push to, by its resource name; empty, the default remote.
   string remote = 2;
   // INPUT_ONLY: the commit's (and the pull request's) title; empty, the
   // default `Update bundle: <name>`. was: --message.
@@ -500,9 +725,15 @@ message PushBundleRequest {
   // INPUT_ONLY: open a pull request on the forge instead of committing to
   // the default branch. was: --pr.
   bool pull_request = 4;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What a push did. was: Pushed (`status`, `create_pr`, `commit_sha`,
@@ -511,6 +742,7 @@ message PushBundleResponse {
   // What a push did. was: status (`pushed`, `pr-created`) and create_pr,
   // which only echoed --pr (AIP-216: an outcome is a state).
   enum State {
+    // Unset (proto3's zero value).
     STATE_UNSPECIFIED = 0;
     // One commit on the remote's default branch.
     COMMITTED = 1;
@@ -525,7 +757,9 @@ message PushBundleResponse {
   string path = 2;
   // Printed true: a push has no preview yet.
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
   // OUTPUT_ONLY: the Remote, `projects/{p}/remotes/{r}`. was: its config name.
   string remote = 6;
@@ -542,16 +776,23 @@ message PushBundleResponse {
   // OUTPUT_ONLY: the pull request's page; set only for PULL_REQUEST_OPENED.
   // was: pr_url.
   string pull_request_url = 12;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
-// endregion
+// (-- endregion --)
 
-// region fragments and commands: ctxloom.dev/Fragment, ctxloom.dev/Command
+// (-- region fragments and commands: ctxloom.dev/Fragment, ctxloom.dev/Command --)
 
+// A fragment's or command's distilled form, judged against its source (T30).
 enum DistilledState {
+  // Unset (proto3's zero value); never answered.
   DISTILLED_STATE_UNSPECIFIED = 0;
   // No distilled form.
   NONE = 1;
@@ -561,12 +802,18 @@ enum DistilledState {
   STALE = 3;
 }
 
+// How much of an item to answer (AIP-157), shared by fragments, commands,
+// skills and profiles.
 enum ItemView {
+  // Unset: BASIC for a List, FULL for a Get.
   ITEM_VIEW_UNSPECIFIED = 0;
+  // A list row (`<noun> list`).
   BASIC = 1;
+  // Everything (`<noun> show`).
   FULL = 2;
 }
 
+// A fragment: a piece of context a profile composes into an engine's context.
 message Fragment {
   option (google.api.resource) = {
     type: "ctxloom.dev/Fragment"
@@ -585,20 +832,28 @@ message Fragment {
   // OUTPUT_ONLY: the bundle's tags, then its own.
   repeated string tags = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // FULL. was: ItemShow.content.
-  string body = 4;
+  string body = 4 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY.
   DistilledState distilled = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
-  optional bool no_distill = 6;
-  string premise = 7;
+  // It opted out of distillation (`no_distill: true` in its front matter): no
+  // distilled form is made or served. Printed true or false (OQ-7).
+  optional bool no_distill = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The premise that says when it applies (`config.premised: on-demand` holds
+  // it back and lists it in the premise index); empty, it always loads.
+  string premise = 7 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY: the first line.
   string preview = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, FULL: the body served is the distilled form.
   bool body_is_distilled = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
   string path = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// A command: a saved prompt an engine offers as a slash command, and `run
+// --command` runs.
 message Command {
   option (google.api.resource) = {
     type: "ctxloom.dev/Command"
@@ -612,267 +867,557 @@ message Command {
 
   // IDENTIFIER: a Bundle pattern + `/commands/{command}`.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
-  string reference = 2;
-  repeated string tags = 3;
-  string body = 4;
-  DistilledState distilled = 5;
-  optional bool no_distill = 6;
-  string description = 7;
-  string preview = 8;
-  bool body_is_distilled = 9;
-  string path = 10;
+  // The canonical reference. was: ref (`demo#commands/x`).
+  string reference = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The bundle's tags, then its own.
+  repeated string tags = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // FULL: the command's text. was: ItemShow.content.
+  string body = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The distilled form against its source (T30).
+  DistilledState distilled = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // It opted out of distillation (`no_distill: true` in its front matter): no
+  // distilled form is made or served. Printed true or false (OQ-7).
+  optional bool no_distill = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The command's description, as its front matter says it.
+  string description = 7 [(google.api.field_behavior) = OPTIONAL];
+  // The body's first line.
+  string preview = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // FULL: the body served is the distilled form.
+  bool body_is_distilled = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Its `.md` file.
+  string path = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `fragment show <ref>`.
 message GetFragmentRequest {
+  // The Fragment to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Fragment"];
-  ItemView view = 2;
-  bool prefer_distilled = 3;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // `--distilled`: serve a body in its distilled form where that form is
+  // fresh.
+  bool prefer_distilled = 3 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `fragment list [--bundle]`.
 message ListFragmentsRequest {
   // A bundle, or `projects/{project}/bundles/-` (AIP-159).
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Fragment"];
-  repeated string tags = 2;
-  ItemView view = 3;
-  int32 page_size = 80;
-  string page_token = 81;
+  // Only fragments carrying every one of these tags; empty, all.
+  repeated string tags = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The fragments under the parent.
 message ListFragmentsResponse {
+  // The Fragment resources of this page.
   repeated Fragment fragments = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `fragment create <bundle>#fragments/<name>`: the editor opened on its
+// template, the bundle made when nobody has it.
 message CreateFragmentRequest {
+  // The parent to create the Fragment under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Fragment"];
-  string fragment_id = 2;
+  // The new Fragment's ID, the last segment of its name: the item-id grammar,
+  // `^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`.
+  string fragment_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Fragment to create, as its own fields say it.
   Fragment fragment = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0133::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `fragment create` did.
 message CreateFragmentResponse {
+  // The Fragment created (on a preview, as it would be).
   Fragment fragment = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
   // The bundle was made for it. was: ItemCreated.bundle_created.
   bool bundle_created = 7;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `fragment edit <ref> [--no-distill]`.
 message UpdateFragmentRequest {
+  // The Fragment to change, named by its `name`: only the field `update_mask`
+  // names is written.
   Fragment fragment = 1 [(google.api.field_behavior) = REQUIRED];
+  // The one field path to change (T29); a mask of more than one is refused
+  // `OneChangePerCall`.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0134::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `fragment edit` did.
 message UpdateFragmentResponse {
+  // The Fragment after the change (on a preview, as it would be).
   Fragment fragment = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `fragment remove <ref> [--yes]`.
 message DeleteFragmentRequest {
+  // The Fragment to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Fragment"];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0135::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `fragment remove` did.
 message DeleteFragmentResponse {
+  // The Fragment removed, as it was.
   Fragment fragment = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `fragment distill` (T30, the distill step's): the `.distilled.md` alone,
 // recording the source's digest; `clear` removes it.
 message DistillFragmentRequest {
-  string name = 1;
-  bool clear = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  EnvVars env = 94;
-  Globals globals = 96;
+  // The Fragment to distill, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // Remove the distilled form instead of writing one.
+  bool clear = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `fragment distill` did.
 message DistillFragmentResponse {
+  // The Fragment whose distilled form was written or cleared.
   Fragment fragment = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `fragment draft-premise` (the distill step's).
 message DraftFragmentPremiseRequest {
-  string name = 1;
-  string request_id = 90;
-  bool validate_only = 92;
-  EnvVars env = 94;
-  Globals globals = 96;
+  // The Fragment whose premise to draft, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `fragment draft-premise` did.
 message DraftFragmentPremiseResponse {
+  // The Fragment with its premise drafted (on a preview, as it would be).
   Fragment fragment = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `command show <ref>`.
 message GetCommandRequest {
+  // The Command to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Command"];
-  ItemView view = 2;
-  bool prefer_distilled = 3;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // `--distilled`: serve a body in its distilled form where that form is
+  // fresh.
+  bool prefer_distilled = 3 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `command list [--bundle]`.
 message ListCommandsRequest {
+  // The parent whose Command resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Command"];
-  repeated string tags = 2;
-  ItemView view = 3;
-  int32 page_size = 80;
-  string page_token = 81;
+  // Only commands carrying every one of these tags; empty, all.
+  repeated string tags = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The commands under the parent.
 message ListCommandsResponse {
+  // The Command resources of this page.
   repeated Command commands = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `command create <bundle>#commands/<name>`: the editor opened on its
+// template, the bundle made when nobody has it.
 message CreateCommandRequest {
+  // The parent to create the Command under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Command"];
-  string command_id = 2;
+  // The new Command's ID, the last segment of its name: the item-id grammar,
+  // `^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`.
+  string command_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Command to create, as its own fields say it.
   Command command = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0133::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `command create` did.
 message CreateCommandResponse {
+  // The Command created (on a preview, as it would be).
   Command command = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The bundle was made for it. was: ItemCreated.bundle_created.
   bool bundle_created = 7;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `command edit <ref> [--no-distill]`.
 message UpdateCommandRequest {
+  // The Command to change, named by its `name`: only the field `update_mask`
+  // names is written.
   Command command = 1 [(google.api.field_behavior) = REQUIRED];
+  // The one field path to change (T29); a mask of more than one is refused
+  // `OneChangePerCall`.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0134::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `command edit` did.
 message UpdateCommandResponse {
+  // The Command after the change (on a preview, as it would be).
   Command command = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `command remove <ref> [--yes]`.
 message DeleteCommandRequest {
+  // The Command to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Command"];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0135::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `command remove` did.
 message DeleteCommandResponse {
+  // The Command removed, as it was.
   Command command = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `command distill <ref>`: the `.distilled.md` alone, recording the source's
+// digest; `clear` removes it.
 message DistillCommandRequest {
-  string name = 1;
-  bool clear = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  EnvVars env = 94;
-  Globals globals = 96;
+  // The Command to distill, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // Remove the distilled form instead of writing one.
+  bool clear = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `command distill` did.
 message DistillCommandResponse {
+  // The Command whose distilled form was written or cleared.
   Command command = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
@@ -880,9 +1425,12 @@ message DistillCommandResponse {
 message PremiseEntry {
   // The Fragment's name. was: PremiseRow.name.
   string fragment = 1;
+  // Its premise: when it applies.
   string premise = 2;
 }
 
+// The premise index: the fragments a premise holds back, each with its
+// premise, and the instruction that ends an assembled context.
 message PremiseIndex {
   option (google.api.resource) = {
     type: "ctxloom.dev/PremiseIndex"
@@ -893,25 +1441,34 @@ message PremiseIndex {
 
   // `projects/{project}/premiseIndex`.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
+  // The instruction the index opens with, telling the agent to load a
+  // fragment it chooses with `ctxloom fragment show <name>`.
   string instruction = 2;
+  // Each fragment with a premise, by name, sorted, each once.
   repeated PremiseEntry fragments = 3;
 }
 
+// `fragment premises`.
 message GetPremiseIndexRequest {
+  // The PremiseIndex to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/PremiseIndex"];
 }
 
-// endregion
+// (-- endregion --)
 
-// region skills: ctxloom.dev/Skill
+// (-- region skills: ctxloom.dev/Skill --)
 
+// One file of a skill's directory.
 message SkillFile {
-  string path = 1;
-  string sha256 = 2;
+  // Its path in the skill's directory.
+  string path = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The SHA-256 of its bytes, in lowercase hexadecimal.
+  string sha256 = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // The sidecar's `executable:` list (owner 2026-11-12). was: mode.
-  bool executable = 3;
+  bool executable = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// A skill: a directory with its `SKILL.md`, which an engine offers the agent.
 message Skill {
   option (google.api.resource) = {
     type: "ctxloom.dev/Skill"
@@ -925,135 +1482,261 @@ message Skill {
 
   // IDENTIFIER: a Bundle pattern + `/skills/{skill}`.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
-  string description = 2;
-  repeated string tags = 3;
+  // The `description` of its `SKILL.md`.
+  string description = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The skill's tags.
+  repeated string tags = 3 [(google.api.field_behavior) = OPTIONAL];
   // FULL.
-  string license = 4;
-  string compatibility = 5;
-  repeated string allowed_tools = 6;
-  string body = 7;
+  string license = 4 [(google.api.field_behavior) = OPTIONAL];
+  // FULL: the `compatibility` of its `SKILL.md`.
+  string compatibility = 5 [(google.api.field_behavior) = OPTIONAL];
+  // FULL: the `allowed-tools` of its `SKILL.md`.
+  repeated string allowed_tools = 6 [(google.api.field_behavior) = OPTIONAL];
+  // FULL: the text of its `SKILL.md` after the front matter.
+  string body = 7 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY, FULL.
   repeated SkillFile files = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
   uint32 file_count = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
-  string notes = 10;
+  // The skill's notes, for a human reader.
+  string notes = 10 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY: the directory.
   string path = 11 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `skill show <ref>`.
 message GetSkillRequest {
+  // The Skill to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Skill"];
-  ItemView view = 2;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `skill list`.
 message ListSkillsRequest {
+  // The parent whose Skill resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Skill"];
-  ItemView view = 2;
-  int32 page_size = 80;
-  string page_token = 81;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The skills under the parent.
 message ListSkillsResponse {
+  // The Skill resources of this page.
   repeated Skill skills = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `skill create <bundle>#skills/<name>`: its `SKILL.md` scaffolded, no editor
+// opened.
 message CreateSkillRequest {
+  // The parent to create the Skill under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Skill"];
-  string skill_id = 2;
+  // The new Skill's ID, the last segment of its name: the item-id grammar,
+  // `^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`.
+  string skill_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Skill to create, as its own fields say it.
   Skill skill = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0133::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `skill create` did.
 message CreateSkillResponse {
+  // The Skill created (on a preview, as it would be).
   Skill skill = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `skill remove <ref> [--yes]`.
 message DeleteSkillRequest {
+  // The Skill to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Skill"];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0135::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `skill remove` did.
 message DeleteSkillResponse {
+  // The Skill removed, as it was.
   Skill skill = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `skill export` (AIP-136): the skill as one zip.
 message ExportSkillRequest {
-  string name = 1;
-  string destination = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The Skill to export, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // Where the zip is written (`--output`); empty, the default.
+  string destination = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `skill export` did.
 message ExportSkillResponse {
+  // The Skill exported, by its resource name.
   string skill = 1;
+  // The zip written.
   string zip_path = 2;
+  // The zip's size in bytes (a JSON string, OQ-12).
   uint64 bytes = 3;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `skill import` (AIP-136, on the collection).
 message ImportSkillRequest {
-  string parent = 1;
-  string source = 2;
-  bool force = 3;
-  string request_id = 90;
-  bool validate_only = 92;
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  // The Bundle the skill is imported into.
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
+  // The skill's zip.
+  string source = 2 [(google.api.field_behavior) = REQUIRED];
+  // Overwrite a skill of the same name (`--force`).
+  bool force = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `skill import` did.
 message ImportSkillResponse {
+  // The Skill imported (on a preview, as it would be).
   Skill skill = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
-// endregion
+// (-- endregion --)
 
-// region MCP servers: ctxloom.dev/McpServer
+// (-- region MCP servers: ctxloom.dev/McpServer --)
 
+// An MCP server a bundle registers: a stdio command or a remote endpoint.
 message McpServer {
   option (google.api.resource) = {
     type: "ctxloom.dev/McpServer"
@@ -1067,73 +1750,125 @@ message McpServer {
 
   // IDENTIFIER: a Bundle pattern + `/mcpServers/{mcp_server}`.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
-  string command = 2;
-  repeated string args = 3;
+  // The command that launches a stdio server (`mcp server set --command`).
+  string command = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The command's arguments (`--arg`, repeatable).
+  repeated string args = 3 [(google.api.field_behavior) = OPTIONAL];
   // Values included, as `mcp server show` prints them today (OQ-17: kept).
-  map<string, string> env = 4;
-  string url = 5;
+  map<string, string> env = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The endpoint of a remote server, http or https (`--url`).
+  string url = 5 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY: the Companion that serves it.
   string served_by = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
-  string notes = 7;
-  string installation = 8;
+  // Notes, for a human reader (`--notes`).
+  string notes = 7 [(google.api.field_behavior) = OPTIONAL];
+  // The setup the server asks of a human (`--installation`).
+  string installation = 8 [(google.api.field_behavior) = OPTIONAL];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `mcp server show <ref>`.
 message GetMcpServerRequest {
+  // The McpServer to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/McpServer"];
 }
 
+// `mcp server list`, and `mcp server show <short name>`.
 message ListMcpServersRequest {
   // A bundle, or `projects/{project}/bundles/-`.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/McpServer"];
   // `mcp server show <short name>`: the servers of every bundle with this
   // ID (a typed filter, API Q8); none matching is an empty list and the
   // existing notice.
-  string mcp_server_id = 2;
-  int32 page_size = 80;
-  string page_token = 81;
+  string mcp_server_id = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The MCP servers under the parent.
 message ListMcpServersResponse {
+  // The McpServer resources of this page.
   repeated McpServer mcp_servers = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
 // `mcp server set|edit`: create-on-update for a client-named resource
 // (AIP-134 `allow_missing`).
 message UpdateMcpServerRequest {
+  // The McpServer to change (or create), named by its `name`: only the field
+  // `update_mask` names is written.
   McpServer mcp_server = 1 [(google.api.field_behavior) = REQUIRED];
+  // The one field path to change (T29); a mask of more than one is refused
+  // `OneChangePerCall`.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
-  bool allow_missing = 3;
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // Create the server when its bundle has none of that name (AIP-134).
+  bool allow_missing = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0134::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `mcp server set|edit` did.
 message UpdateMcpServerResponse {
+  // The McpServer after the change (on a preview, as it would be).
   McpServer mcp_server = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
   // It did not exist: the update created it. was: status `created`.
   bool created = 7;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
-// endregion
+// (-- endregion --)
 
-// region profiles: ctxloom.dev/Profile
+// (-- region profiles: ctxloom.dev/Profile --)
 
+// A profile: the bundles, parents and exclusions an agent's context is
+// composed from.
 message Profile {
   option (google.api.resource) = {
     type: "ctxloom.dev/Profile"
@@ -1148,200 +1883,381 @@ message Profile {
   // IDENTIFIER: a Bundle pattern + `/profiles/{profile}`; a project's own
   // are in its bundle `project`.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
-  string description = 2;
+  // The profile's description (`--description`).
+  string description = 2 [(google.api.field_behavior) = OPTIONAL];
   // Profile names. was: the asks.
-  repeated string parents = 3;
-  repeated string tags = 4;
+  repeated string parents = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The profile's own tags: descriptive, they select nothing.
+  repeated string tags = 4 [(google.api.field_behavior) = OPTIONAL];
   // Bundle names.
-  repeated string bundles = 5;
+  repeated string bundles = 5 [(google.api.field_behavior) = OPTIONAL];
   // FULL.
-  map<string, string> variables = 6;
-  repeated string exclude_fragments = 7;
+  map<string, string> variables = 6 [(google.api.field_behavior) = OPTIONAL];
+  // Fragment names it leaves out of what its bundles give
+  // (`--exclude-fragment`).
+  repeated string exclude_fragments = 7 [(google.api.field_behavior) = OPTIONAL];
   // was: exclude_mcp.
-  repeated string exclude_mcp_servers = 8;
+  repeated string exclude_mcp_servers = 8 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY: a default profile, printed true or false (OQ-7).
   optional bool default = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
   string path = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `profile show <name>`.
 message GetProfileRequest {
+  // The Profile to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Profile"];
-  ItemView view = 2;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `profile list`.
 message ListProfilesRequest {
+  // The parent whose Profile resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Profile"];
-  ItemView view = 2;
-  int32 page_size = 80;
-  string page_token = 81;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The profiles under the parent.
 message ListProfilesResponse {
+  // The Profile resources of this page.
   repeated Profile profiles = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `profile create <name>`.
 message CreateProfileRequest {
+  // The parent to create the Profile under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Profile"];
-  string profile_id = 2;
+  // The new Profile's ID, the last segment of its name: the item-id grammar,
+  // `^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`.
+  string profile_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Profile to create, as its own fields say it.
   Profile profile = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0133::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `profile create` did.
 message CreateProfileResponse {
+  // The Profile created (on a preview, as it would be).
   Profile profile = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `profile edit <name>`: flags patch it, none opens it in the editor.
 message UpdateProfileRequest {
+  // The Profile to change, named by its `name`: only the field `update_mask`
+  // names is written.
   Profile profile = 1 [(google.api.field_behavior) = REQUIRED];
+  // The one field path to change (T29); a mask of more than one is refused
+  // `OneChangePerCall`.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0134::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `profile edit` did.
 message UpdateProfileResponse {
+  // The Profile after the change (on a preview, as it would be).
   Profile profile = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `profile remove <name> [--yes]`.
 message DeleteProfileRequest {
+  // The Profile to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Profile"];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0135::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `profile remove` did.
 message DeleteProfileResponse {
+  // The Profile removed, as it was.
   Profile profile = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `profile export <name> <dest>` (AIP-136).
 message ExportProfileRequest {
-  string name = 1;
-  string destination = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The Profile to export, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The directory its file is written into.
+  string destination = 2 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `profile export` did.
 message ExportProfileResponse {
+  // The Profile exported, by its resource name.
   string profile = 1;
+  // The profile's file it was copied from.
   string source = 2;
+  // The file written.
   string destination = 3;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `profile import <path> [--force] [--bundle]` (AIP-136, on the collection).
 message ImportProfileRequest {
-  string parent = 1;
-  string source = 2;
-  bool force = 3;
-  string request_id = 90;
-  bool validate_only = 92;
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  // The local Bundle to import into; the project bundle by default.
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
+  // The profile's YAML file.
+  string source = 2 [(google.api.field_behavior) = REQUIRED];
+  // Overwrite a profile of the same name (`--force`).
+  bool force = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `profile import` did.
 message ImportProfileResponse {
+  // The Profile imported (on a preview, as it would be).
   Profile profile = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
-// endregion
+// (-- endregion --)
 
-// region agents: ctxloom.dev/Agent
+// (-- region agents: ctxloom.dev/Agent --)
 
 // An agent's block for one engine (ruling 57): what is in that engine's
 // vocabulary. was: agents.<n>.engines.<e>.
 message AgentEngine {
+  // The model passed to the engine (`--model`); empty, the engine's own
+  // default.
   string model = 1;
+  // The effort level passed to the engine; claude takes
+  // `low|medium|high|xhigh|max`; empty, the engine's own default.
   string effort = 2;
   // The engine's own document, verbatim (rulings 133-139).
   google.protobuf.Value permissions = 3;
 }
 
+// Who asks for a required command.
 message RequirementSource {
-  string kind = 1;
-  string reference = 2;
+  // `bundle` (its `requires_commands`) or `mcp` (a stdio server's command).
+  string kind = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The bundle's reference, or the MCP server's name.
+  string reference = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// A command an agent needs on its PATH, and who asks for it.
 message Requirement {
-  string command = 1;
-  repeated RequirementSource sources = 2;
+  // The program's name.
+  string command = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Each bundle or MCP server that asks for it.
+  repeated RequirementSource sources = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // What an agent resolves to (its settings flattened, as today). was:
 // ResolvedAgent.
 message ResolvedAgent {
-  repeated string profiles = 1;
+  // The profiles composed, in order.
+  repeated string profiles = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
   // The Engine's name.
-  string engine = 2;
-  SourcedText model = 3;
-  SourcedText effort = 4;
-  SourcedDocument permissions = 5;
-  RuntimeSetting runtime = 6;
-  EnvSetting env = 7;
-  string context = 8;
-  repeated string fragments = 9;
-  string driving = 10;
+  string engine = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The model, with the layer that said it.
+  SourcedText model = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The effort level, with the layer that said it.
+  SourcedText effort = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The engine's own permissions document, with the layer that said it;
+  // passed verbatim, never checked.
+  SourcedDocument permissions = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The runtime, and what it replaced.
+  RuntimeSetting runtime = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The variable names passed through, each with its layer.
+  EnvSetting env = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The context the agent's profiles assemble.
+  string context = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The fragments that context composes, by canonical reference.
+  repeated string fragments = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // How the agent is driven: `conversational` or `oneshot`.
+  string driving = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Was the engine block's bare word; now the effective value with the
   // layer that said it (owner ruling of 2026-11-13).
   reserved 11;
-  string command = 12;
-  SourcedText session_home = 13;
+  // The program the engine block runs, else the engine's own name.
+  string command = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Whose home the engine runs on (`session` | `host`), with the layer that
+  // said it.
+  SourcedText session_home = 13 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// An agent: a binding of an engine to the profiles its context is composed
+// from (`agents.<n>` of the config).
 message Agent {
   option (google.api.resource) = {
     type: "ctxloom.dev/Agent"
@@ -1351,182 +2267,329 @@ message Agent {
     plural: "agents"
   };
 
+  // How much of an agent to answer (AIP-157).
   enum View {
+    // Unset: BASIC for a List, FULL for a Get.
     VIEW_UNSPECIFIED = 0;
+    // A list row (`agent list`): the binding as written.
     BASIC = 1;
+    // `agent show`: the binding and what it resolves to.
     FULL = 2;
   }
 
   // IDENTIFIER: `projects/{project}/agents/{agent}`, `users/me/agents/{agent}`.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // The Engine's name.
-  string engine = 2;
+  string engine = 2 [(google.api.field_behavior) = OPTIONAL];
   // Profile names.
-  repeated string profiles = 3;
-  string runtime = 4;
-  string driving = 5;
-  repeated string env = 6;
+  repeated string profiles = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The runtime axis as the binding says it (`host`, `container-rootless`,
+  // `container-rootful`); empty, the project's default.
+  string runtime = 4 [(google.api.field_behavior) = OPTIONAL];
+  // How the agent is driven, as the binding says it: `conversational` or
+  // `oneshot`.
+  string driving = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The bare variable names the binding passes through to the engine
+  // (`--env`), added to its engine block's.
+  repeated string env = 6 [(google.api.field_behavior) = OPTIONAL];
   // Keyed by engine ID, so `engines.<e>.model` keeps its path.
-  map<string, AgentEngine> engines = 7;
+  map<string, AgentEngine> engines = 7 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY: the default agent, printed true or false (OQ-7).
   optional bool default = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
   // `session` | `host`, as the agent's binding says it; unset, its engine
   // block's (owner ruling of 2026-11-13).
-  string session_home = 9;
+  string session_home = 9 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY, FULL.
   ResolvedAgent resolved = 20 [(google.api.field_behavior) = OUTPUT_ONLY];
-  string resolution_error = 21;
-  repeated Requirement requirements = 22;
-  string requirements_error = 23;
-  repeated NotCarried not_carried = 24;
+  // FULL: why the agent did not resolve; empty when it did.
+  string resolution_error = 21 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // FULL: the commands it needs on its PATH, and who asks for each.
+  repeated Requirement requirements = 22 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // FULL: why its requirements could not be read; empty when they were.
+  string requirements_error = 23 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // FULL: what its engine cannot carry of what its profiles configure.
+  repeated NotCarried not_carried = 24 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `agent show <name>`.
 message GetAgentRequest {
+  // The Agent to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Agent"];
-  Agent.View view = 2;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  Agent.View view = 2 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `agent list`.
 message ListAgentsRequest {
+  // The parent whose Agent resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Agent"];
-  Agent.View view = 2;
-  int32 page_size = 80;
-  string page_token = 81;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  Agent.View view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The agents under the parent.
 message ListAgentsResponse {
+  // The Agent resources of this page.
   repeated Agent agents = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `agent create <name>` (never an upsert: a name taken is refused).
 message CreateAgentRequest {
+  // The parent to create the Agent under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Agent"];
-  string agent_id = 2;
+  // The new Agent's ID, the last segment of its name: its config key,
+  // verbatim (one name segment, no `/`).
+  string agent_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Agent to create, as its own fields say it.
   Agent agent = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0133::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `agent create` did.
 message CreateAgentResponse {
+  // The Agent created (on a preview, as it would be).
   Agent agent = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `agent edit <name>` (an engine swap that loses something is previewed
+// without `--yes`).
 message UpdateAgentRequest {
+  // The Agent to change, named by its `name`: only the field `update_mask`
+  // names is written.
   Agent agent = 1 [(google.api.field_behavior) = REQUIRED];
+  // The one field path to change (T29); a mask of more than one is refused
+  // `OneChangePerCall`.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0134::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // An engine swap's preview adds `from`, `to` and `not_carried`. was:
 // AgentWritten, SwapPreview.
 message UpdateAgentResponse {
+  // The Agent after the change (on a preview, as it would be).
   Agent agent = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
   // The Engine names of a swap.
   string from = 7;
+  // The Engine name swapped to.
   string to = 8;
+  // What the new engine cannot carry that the old one did.
   repeated NotCarried not_carried = 9;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `agent remove <name> [--yes]`.
 message DeleteAgentRequest {
+  // The Agent to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Agent"];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0135::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `agent remove` did.
 message DeleteAgentResponse {
+  // The Agent removed, as it was.
   Agent agent = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `agent default <agent>` (AIP-136).
 message SetDefaultAgentRequest {
   // The project (or `users/me`).
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
   // The Agent's name.
-  string agent = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  string agent = 2 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `agent default` did.
 message SetDefaultAgentResponse {
   // The Agent's name.
   string agent = 1;
   // It is defined (a default may name an agent nobody defined).
   bool defined = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
-// endregion
+// (-- endregion --)
 
-// region engines: ctxloom.dev/Engine (read-only, ruling 43)
+// (-- region engines: ctxloom.dev/Engine (read-only, ruling 43) --)
 
 // Where an engine's credential comes from: a word (`none`, `login`,
 // `token`), or a source of variables and a file. A name or a path, never a
 // value. was: AuthSetting.value.
 message AuthValue {
+  // `none`, `login` or `token`; empty when it is a source.
   string word = 1;
+  // A source's variable names (names only).
   repeated string env = 2;
+  // A source's file path (a primary session's alone).
   string file = 3;
 }
 
 // was: AuthSetting.
 message EngineAuth {
+  // Whether the credential the source names is there.
   enum State {
+    // Unset (proto3's zero value).
     STATE_UNSPECIFIED = 0;
+    // A variable it names is set (`via` names it).
     PRESENT = 1;
+    // None of its variables is set.
     MISSING = 2;
+    // The source asks for no variable (`none`, `login`).
     NOT_NEEDED = 3;
   }
 
+  // The auth setting in effect.
   AuthValue value = 1;
+  // The layer that said it: `engine`, `project` or `default`.
   string source = 2;
-  State state = 3;
+  // Whether its credential is there.
+  State state = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // The variable's name or the file's path that authenticates.
   string via = 4;
 }
@@ -1538,14 +2601,24 @@ message EngineAuth {
 message EngineAgent {
   // The Agent's name.
   string agent = 1;
+  // The model on this engine, with the layer that said it.
   SourcedText model = 2;
+  // The effort level on this engine, with the layer that said it.
   SourcedText effort = 3;
+  // The engine's own permissions document, with the layer that said it;
+  // passed verbatim, never checked.
   SourcedDocument permissions = 4;
+  // The runtime, and what it replaced.
   RuntimeSetting runtime = 5;
+  // The variable names passed through, each with its layer.
   EnvSetting env = 6;
+  // Whose home the engine runs on (`session` | `host`), with the layer that
+  // said it.
   SourcedText session_home = 7;
 }
 
+// An engine ctxloom drives (`claude-code`, `opencode`), with its effective
+// settings: read-only, its block written with `config edit`.
 message Engine {
   option (google.api.resource) = {
     type: "ctxloom.dev/Engine"
@@ -1559,34 +2632,54 @@ message Engine {
   // `users/me/engines/{engine}`. Everything else is OUTPUT_ONLY: derived
   // from the layered config.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
+  // The program it runs (`engines.<e>.command`, home layer only), default its
+  // own name.
   SourcedText command = 2;
+  // Whose home it runs on (`session` | `host`).
   SourcedText session_home = 3;
+  // The runtime its agents run in by default.
   SourcedText runtime = 4;
+  // The variable names its block passes through.
   SourcedList env = 5;
+  // Where its credential comes from, and whether it is there.
   EngineAuth auth = 6;
+  // Each agent bound to it or with a block for it, and what it resolves to
+  // here.
   repeated EngineAgent agents = 7;
   // `approval_timeout`, as written, else `5m` (OD-41, D16).
   SourcedText approval_timeout = 8;
 }
 
+// `engine show <engine>`.
 message GetEngineRequest {
+  // The Engine to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Engine"];
 }
 
+// `engine list`.
 message ListEnginesRequest {
+  // The parent whose Engine resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Engine"];
-  int32 page_size = 80;
-  string page_token = 81;
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The engines ctxloom drives.
 message ListEnginesResponse {
+  // The Engine resources of this page.
   repeated Engine engines = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
-// endregion
+// (-- endregion --)
 
-// region companions: ctxloom.dev/Companion
+// (-- region companions: ctxloom.dev/Companion --)
 
 // A companion is registered by NAME alone (OD-10, owner 2026-11-13): its
 // program is found where the agent runs, so no path or command is held.
@@ -1602,6 +2695,7 @@ message Companion {
   // Whether a registered companion contributes (OD-9:
   // `companions.<n>.state`, a word in the config).
   enum State {
+    // Unset (proto3's zero value).
     STATE_UNSPECIFIED = 0;
     // It is asked for its loadout, and what it gives is used: the default.
     ENABLED = 1;
@@ -1621,80 +2715,148 @@ message Companion {
   // OUTPUT_ONLY: its program resolves on the PATH where it is asked,
   // printed true or false. was: exists.
   optional bool resolves = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Whether it contributes (`companions.<n>.state`).
   State state = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `companion list`.
 message ListCompanionsRequest {
+  // The parent whose Companion resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Companion"];
-  int32 page_size = 80;
-  string page_token = 81;
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The registered companions.
 message ListCompanionsResponse {
+  // The Companion resources of this page.
   repeated Companion companions = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `companion add <name>`: registered by name, after its program on the PATH
+// answers.
 message CreateCompanionRequest {
+  // The parent to create the Companion under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Companion"];
-  string companion_id = 2;
+  // The new Companion's ID, the last segment of its name: its config key,
+  // verbatim (one name segment, no `/`).
+  string companion_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Companion to create, as its own fields say it.
   Companion companion = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: CompanionAdded{name, command, added}.
 message CreateCompanionResponse {
+  // The Companion created (on a preview, as it would be).
   Companion companion = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `companion remove <name> [--yes]`.
 message DeleteCompanionRequest {
+  // The Companion to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Companion"];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: CompanionRemoved{name, removed}, Preview.
 message DeleteCompanionResponse {
+  // The Companion removed, as it was.
   Companion companion = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `companion enable <name>` (OD-9; AIP-136: a resource-based custom method
 // answers the resource).
 message EnableCompanionRequest {
-  string name = 1;
-  string request_id = 90;
-  Globals globals = 96;
+  // The Companion to enable, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `companion disable <name>` (OD-9).
 message DisableCompanionRequest {
-  string name = 1;
-  string request_id = 90;
-  Globals globals = 96;
+  // The Companion to disable, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
-// endregion
+// (-- endregion --)
 
-// region remotes: ctxloom.dev/Remote
+// (-- region remotes: ctxloom.dev/Remote --)
 
+// A remote: a git repository of bundles the project registers
+// (`remotes.yaml`).
 message Remote {
   option (google.api.resource) = {
     type: "ctxloom.dev/Remote"
@@ -1705,108 +2867,213 @@ message Remote {
 
   // IDENTIFIER: `projects/{project}/remotes/{remote}`.
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
-  string url = 2;
-  string forge = 3;
+  // The repository's URL.
+  string url = 2 [(google.api.field_behavior) = REQUIRED];
+  // The forge it is bound to (`--forge`): `github`, `git`, or a configured
+  // `forges:` label; empty resolves from the URL's host.
+  string forge = 3 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY: the default remote, printed true or false (OQ-7). was:
   // RemoteListing.default (one name).
   optional bool default = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// One remote's registration (`remote show` is `BrowseRemote`, which adds what
+// it publishes).
 message GetRemoteRequest {
+  // The Remote to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Remote"];
 }
 
+// `remote list`.
 message ListRemotesRequest {
+  // The parent whose Remote resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Remote"];
-  int32 page_size = 80;
-  string page_token = 81;
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The project's remotes.
 message ListRemotesResponse {
+  // The Remote resources of this page.
   repeated Remote remotes = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
+// `remote create <name> <url> [--forge]`.
 message CreateRemoteRequest {
+  // The parent to create the Remote under.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Remote"];
-  string remote_id = 2;
+  // The new Remote's ID, the last segment of its name: its config key,
+  // verbatim (one name segment, no `/`).
+  string remote_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The Remote to create, as its own fields say it.
   Remote remote = 3 [(google.api.field_behavior) = REQUIRED];
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The warning of today's `Created` is a notice.
 message CreateRemoteResponse {
+  // The Remote created (on a preview, as it would be).
   Remote remote = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `remote edit <remote> [--name] [--url] [--forge]`: one change per call.
 message UpdateRemoteRequest {
+  // The Remote to change, named by its `name`: only the field `update_mask`
+  // names is written.
   Remote remote = 1 [(google.api.field_behavior) = REQUIRED];
+  // The one field path to change (T29); a mask of more than one is refused
+  // `OneChangePerCall`.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The remote after the write and its `changes`, no `before` (OQ-18).
 message UpdateRemoteResponse {
+  // The Remote after the change (on a preview, as it would be).
   Remote remote = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
+// `remote remove <name> [--yes]`.
 message DeleteRemoteRequest {
+  // The Remote to delete, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Remote"];
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `remote remove` did (the default cleared when it was the default).
 message DeleteRemoteResponse {
+  // The Remote removed, as it was.
   Remote remote = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `remote default [r] [--clear]` (AIP-136).
 message SetDefaultRemoteRequest {
-  string parent = 1;
+  // The project whose default remote to set.
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
   // The Remote's name; empty clears it.
-  string remote = 2;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  string remote = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `remote default` did.
 message SetDefaultRemoteResponse {
   // The Remote's name; empty, none.
   string remote = 1;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
@@ -1828,8 +3095,12 @@ message BrowsedItem {
 message BrowseRemoteRequest {
   // The Remote, `projects/{p}/remotes/{r}`.
   string name = 1;
-  int32 page_size = 80;
-  string page_token = 81;
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: Browsed (`count`, the list's length, and `warnings`, never filled,
@@ -1837,20 +3108,27 @@ message BrowseRemoteRequest {
 message BrowseRemoteResponse {
   // The Remote, `projects/{p}/remotes/{r}`. was: its config name.
   string remote = 1;
+  // The repository's URL.
   string url = 2;
+  // The bundles it publishes.
   repeated BrowsedItem items = 3;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
 // A repository a forge search found, not registered (so no resource name).
 // was: DiscoveredRepo.
 message DiscoveredRepository {
+  // The repository's owner on the forge.
   string owner = 1;
   // The repository's name on the forge. was: name (AIP-122).
   string repository = 2;
+  // The repository's description on the forge.
   string description = 3;
   // was: stars (AIP-141; uint32, OQ-12).
   uint32 star_count = 4;
+  // The repository's URL.
   string url = 5;
   // `github` today; the same words as Remote.forge.
   string forge = 6;
@@ -1861,29 +3139,40 @@ message DiscoveredRepository {
 // `remote discover [query] [--source] [--limit] [--stars]` (AIP-136,
 // stateless).
 message DiscoverRemotesRequest {
+  // The project the search is for.
   string parent = 1;
+  // The words to search the forge for.
   string query = 2;
   // The forge searched. was: --source.
   string source = 3;
   // was: --stars.
   uint32 min_star_count = 4;
   // was: --limit (its 30 the default page).
-  int32 page_size = 80;
-  string page_token = 81;
-  Globals globals = 96;
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: Discovered (`count`, the list's length, and `errors`, never filled,
 // dropped).
 message DiscoverRemotesResponse {
+  // The repositories found.
   repeated DiscoveredRepository repositories = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
-// endregion
+// (-- endregion --)
 
-// region dependencies: ctxloom.dev/Dependency
+// (-- region dependencies: ctxloom.dev/Dependency --)
 
+// A dependency: one entry of the project's lock (`lock.yaml`), a remote
+// bundle pinned at a commit.
 message Dependency {
   option (google.api.resource) = {
     type: "ctxloom.dev/Dependency"
@@ -1901,6 +3190,8 @@ message Dependency {
   string bundle = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY. was: sha.
   string commit = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The constraint it was pinned under, as written (a sha, a tag, an exact
+  // version or a branch).
   string constraint = 5;
   // Printed true or false (OQ-7).
   optional bool held = 6;
@@ -1910,47 +3201,76 @@ message Dependency {
   string url = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `deps list`.
 message ListDependenciesRequest {
+  // The parent whose Dependency resources to list.
   string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Dependency"];
-  int32 page_size = 80;
-  string page_token = 81;
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// The lock's entries.
 message ListDependenciesResponse {
+  // The Dependencie resources of this page.
   repeated Dependency dependencies = 1;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
 // `deps hold <ref>` (AIP-136): the dependency, held.
 message HoldDependencyRequest {
-  string name = 1;
-  string request_id = 90;
-  Globals globals = 96;
+  // The Dependency to hold, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `deps unhold <ref>`, `deps hold --undo`.
 message ReleaseDependencyRequest {
-  string name = 1;
-  string request_id = 90;
-  Globals globals = 96;
+  // The Dependency to release, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // How an item or a file differs between two pins. was: pin_changes::Change
 // (a word). Shared by ItemChange and FileChange.
 enum ChangeKind {
+  // Unset (proto3's zero value).
   CHANGE_KIND_UNSPECIFIED = 0;
+  // Present at the new pin only.
   ADDED = 1;
+  // Present at the old pin only.
   REMOVED = 2;
+  // Present at both, and different.
   MODIFIED = 3;
 }
 
 // What a hook or MCP server executes or dials; env and header values are
 // fingerprints, never the value. was: ExecSpec.
 message ExecSpec {
+  // The program it runs.
   string command = 1;
+  // The program's arguments.
   repeated string args = 2;
+  // Each variable's name and a fingerprint of its value.
   map<string, string> env = 3;
+  // The endpoint a remote MCP server dials.
   string url = 4;
+  // Each HTTP header's name and a fingerprint of its value.
   map<string, string> headers = 5;
 }
 
@@ -1968,6 +3288,7 @@ message ItemChange {
   ItemKind kind = 1;
   // The item's ID in its bundle. was: name (AIP-122).
   string item = 2;
+  // How it differs.
   ChangeKind change = 3;
   // Hooks and MCP servers only.
   ExecDelta exec = 4;
@@ -1975,7 +3296,9 @@ message ItemChange {
 
 // One file of the tree that differs. was: FileChange.
 message FileChange {
+  // Its path in the bundle's tree.
   string path = 1;
+  // How it differs.
   ChangeKind change = 2;
   // A unified diff, for a script only.
   string diff = 3;
@@ -1988,7 +3311,10 @@ message PinChange {
   enum Compatibility {
     // A first pin: there is nothing to compare. was: compat absent.
     COMPATIBILITY_UNSPECIFIED = 0;
+    // Across a compatibility line: the major from 1.0.0, the minor of a
+    // 0.y.z, the patch of a 0.0.z (Cargo's caret rule).
     BREAKING = 1;
+    // Up within a compatibility line.
     COMPATIBLE = 2;
     // Nothing says (not semver, a pre-release, a move down, no change).
     UNKNOWN = 3;
@@ -1996,6 +3322,7 @@ message PinChange {
 
   // The lock identity. was: identity.
   string reference = 1;
+  // The repository's URL.
   string url = 2;
   // Empty for a first pin. was: from_sha.
   string old_commit = 3;
@@ -2005,8 +3332,11 @@ message PinChange {
   string old_version = 5;
   // was: to_version.
   string new_version = 6;
+  // What the move is worth to its dependants.
   Compatibility compatibility = 7;
+  // Each item that differs.
   repeated ItemChange items = 8;
+  // Each file of the tree that differs.
   repeated FileChange files = 9;
 }
 
@@ -2015,6 +3345,7 @@ message PinChange {
 message PullResult {
   // What a pull did with it. was: status (AIP-216).
   enum State {
+    // Unset (proto3's zero value).
     STATE_UNSPECIFIED = 0;
     // A first pin, installed.
     INSTALLED = 1;
@@ -2022,6 +3353,7 @@ message PullResult {
     REINSTALLED = 2;
     // At its pin and installed: kept at its locked commit. was: skipped.
     KEPT = 3;
+    // It could not be installed: `error` says why, `fix` what to do.
     FAILED = 4;
   }
 
@@ -2032,9 +3364,11 @@ message PullResult {
   string reference = 2;
   // BUNDLE today. was: type.
   ItemKind kind = 3;
-  State state = 4;
+  // What the pull did with it.
+  State state = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
   // FAILED only: why, and what to do.
   string error = 5;
+  // FAILED only: what to do.
   string fix = 6;
 }
 
@@ -2054,7 +3388,9 @@ message ConstraintChange {
 // A repository whose state a reconciliation could not establish: its
 // references are kept (the evidence rule). was: UncheckedRemote.
 message UnreachableRemote {
+  // The repository's URL.
   string url = 1;
+  // Why its state could not be established.
   string reason = 2;
   // was: refs.
   repeated string references = 3;
@@ -2070,8 +3406,11 @@ message Reconciliation {
 
 // A kind of surface a refresh would be refused, and why. was: Refused.
 message RefusedKind {
+  // The surface kind refused (`hooks`, `mcp`, ...).
   string kind = 1;
+  // Why it would be refused.
   string reason = 2;
+  // What to do about it.
   string fix = 3;
 }
 
@@ -2092,20 +3431,26 @@ message RefreshEngine {
 message ProjectRefresh {
   // The directory nothing was written into.
   string target = 1;
+  // Each engine's part of the refresh.
   repeated RefreshEngine engines = 2;
 }
 
 // `deps pull [--force] [--lock=false] [--yes]` (AIP-136, collection `:pull`).
 message PullDependenciesRequest {
+  // The project whose dependencies to pull.
   string parent = 1;
   // Install every reference again. was: --force.
   bool force = 2;
   // Reconcile the lock with upstream; unset is true. was: --lock.
   optional bool lock = 3;
-  string request_id = 90;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
   // The project refresh's preview (`!--yes`); the pull itself applies.
-  bool validate_only = 92;
-  Globals globals = 96;
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: PullReport, flattened with refresh_skipped (`status`, `message` and
@@ -2117,6 +3462,7 @@ message PullDependenciesResponse {
   string path = 2;
   // Printed true: a pull always applies; only its refresh can be a preview.
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
   // `ctxloom deps pull --yes` when skipped_refresh would write or release
   // something.
@@ -2132,6 +3478,7 @@ message PullDependenciesResponse {
   repeated string unreachable_profiles = 9;
   // True when unreachable_profiles is not empty.
   bool incomplete = 10;
+  // Pins kept although the manifest now asks for another constraint.
   repeated ConstraintChange constraint_changes = 11;
   // What each first pin brings in.
   repeated PinChange changes = 12;
@@ -2139,8 +3486,13 @@ message PullDependenciesResponse {
   Reconciliation reconciliation = 13;
   // Set when the refresh was previewed and not written. was: refresh_skipped.
   ProjectRefresh skipped_refresh = 14;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
@@ -2150,6 +3502,7 @@ message DependencyCheck {
   // Where it stands. was: CheckReport's split into `updates` and
   // `unchecked`, and CheckedRef's `in_lockfile` and `up_to_date`.
   enum State {
+    // Unset (proto3's zero value).
     STATE_UNSPECIFIED = 0;
     // At the latest commit its constraint allows (`deps check <ref>` only:
     // a whole check lists no current entry).
@@ -2165,17 +3518,25 @@ message DependencyCheck {
 
   // How a constraint selects its commit. was: selector (a word).
   enum Selector {
+    // Unset (proto3's zero value).
     SELECTOR_UNSPECIFIED = 0;
+    // A commit.
     SHA = 1;
+    // A tag.
     TAG = 2;
+    // An exact version (no ranges yet).
     VERSION = 3;
+    // A branch's head.
     BRANCH = 4;
   }
 
   // Why an entry was not checked. was: reason (a word).
   enum UncheckedReason {
+    // Unset (proto3's zero value).
     UNCHECKED_REASON_UNSPECIFIED = 0;
+    // Its constraint does not read.
     UNPARSEABLE = 1;
+    // Its constraint resolves to no commit.
     UNRESOLVABLE = 2;
     // Its repository's clone could not be refreshed (see refresh_failures).
     NOT_REFRESHED = 3;
@@ -2187,7 +3548,8 @@ message DependencyCheck {
   string reference = 2;
   // BUNDLE today. was: type.
   ItemKind kind = 3;
-  State state = 4;
+  // Where it stands.
+  State state = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
   // The pinned commit. was: current_sha.
   string commit = 5;
   // CURRENT, OUTDATED. was: latest_sha.
@@ -2201,25 +3563,36 @@ message DependencyCheck {
   string resolved_version = 9;
   // UNCHECKED.
   string url = 10;
+  // UNCHECKED: why it was not checked.
   UncheckedReason reason = 11;
+  // UNCHECKED: the error that stopped the check.
   string error = 12;
 }
 
 // A clone that could not be refreshed before a check.
 message RefreshFailure {
+  // The repository's URL.
   string url = 1;
+  // Why its clone could not be refreshed.
   string error = 2;
 }
 
 // `deps check` and `deps check <ref>` (AIP-136, collection `:check`; one
 // method for both, OQ-B6).
 message CheckDependenciesRequest {
+  // The project whose dependencies to check.
   string parent = 1;
   // One reference (short or canonical) to check; empty, the whole closure.
   string reference = 2;
-  int32 page_size = 80;
-  string page_token = 81;
-  Globals globals = 96;
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: CheckReport (`missing_default_profiles` and `missing_defaults_error`,
@@ -2232,19 +3605,27 @@ message CheckDependenciesResponse {
   uint32 dependency_count = 2;
   // Entries with no commit recorded, not checked. was: skipped_empty.
   uint32 skipped_count = 3;
+  // Each clone that could not be refreshed before the check.
   repeated RefreshFailure refresh_failures = 4;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
 // `deps upgrade [reference] [--yes]` (AIP-136, collection `:upgrade`).
 message UpgradeDependenciesRequest {
+  // The project whose dependencies to upgrade.
   string parent = 1;
   // One reference whose pin alone moves; empty, every pin.
   string reference = 2;
-  string request_id = 90;
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
   // `!--yes`.
-  bool validate_only = 92;
-  Globals globals = 96;
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: UpgradeReport.
@@ -2254,6 +3635,7 @@ message UpgradeDependenciesResponse {
   string path = 2;
   // Printed true or false (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
   // On a preview that would move or drop a pin: `ctxloom deps upgrade
   // [reference] --yes` (OQ-8).
@@ -2267,15 +3649,22 @@ message UpgradeDependenciesResponse {
   bool incomplete = 8;
   // No dependency is declared here: nothing checked, no lockfile written.
   bool nothing_declared = 9;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
-// endregion
+// (-- endregion --)
 
-// region config: ctxloom.dev/Config
+// (-- region config: ctxloom.dev/Config --)
 
+// The layered config (`config.yaml`), a singleton of a project or of
+// `users/me`.
 message Config {
   option (google.api.resource) = {
     type: "ctxloom.dev/Config"
@@ -2285,7 +3674,9 @@ message Config {
     plural: "configs"
   };
 
+  // Which config to answer.
   enum View {
+    // Unset: EFFECTIVE.
     VIEW_UNSPECIFIED = 0;
     // `config show`: the layered config in effect.
     EFFECTIVE = 1;
@@ -2297,76 +3688,142 @@ message Config {
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // What `config show [section]` printed: `document.agents.default.engine`.
   google.protobuf.Value document = 2;
+  // The resource's etag (AIP-154), what a confirmed write of it names: a
+  // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
+// `config show [section] [--raw]`.
 message GetConfigRequest {
+  // The Config to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Config"];
-  Config.View view = 2;
+  // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
+  // for a Get.
+  Config.View view = 2 [(google.api.field_behavior) = OPTIONAL];
   // One top-level section (AIP-157 deprecates a read mask, AIP-161).
-  string section = 3;
-  Globals globals = 96;
+  string section = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `config set` (T29): one key per call.
 message UpdateConfigRequest {
-  string name = 1;
-  string path = 2;
-  string value = 3;
-  bool home = 4;
-  string request_id = 90;
-  string etag = 91;
-  bool validate_only = 92;
+  // The Config, `projects/{project}/config` or `users/me/config`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The key's dotted path (`agents.default.engine`).
+  string path = 2 [(google.api.field_behavior) = REQUIRED];
+  // The key's new value, as typed.
+  string value = 3 [(google.api.field_behavior) = REQUIRED];
+  // Write the home config instead of the project's.
+  bool home = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
+  // applied in one call.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // One answer to each need the preview asked (needs.proto); an apply that
+  // leaves one unanswered is refused `NeedsUnanswered`.
   // (-- api-linter: core::0134::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
-  repeated Answer answers = 93;
-  EnvVars env = 94;
-  Presentable presentable = 95;
-  Globals globals = 96;
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `config set` did.
 message UpdateConfigResponse {
+  // The Config after the change (on a preview, as it would be).
   Config config = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The edit's changes, one line each; empty, nothing changed.
   repeated string changes = 6;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
 // `config create` (AIP-136: AIP-156 forbids Create on a singleton).
 message ScaffoldConfigRequest {
-  string name = 1;
-  string request_id = 90;
-  bool validate_only = 92;
-  Globals globals = 96;
+  // The Config to scaffold, `projects/{project}/config` or `users/me/config`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What `config create` did.
 message ScaffoldConfigResponse {
+  // The Config scaffolded (on a preview, as it would be).
   Config config = 1;
+  // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // Whether the write was applied: false on a preview, and printed either way
+  // (OQ-7).
   optional bool applied = 3;
+  // What the preview would change, one line each.
   repeated string detail = 4;
+  // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the needs a person must answer before the apply
+  // (needs.proto); empty once applied.
   repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
   string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
 }
 
-// endregion
+// (-- endregion --)
 
-// region search: `projects/{project}:searchLibrary` (AIP-136, stateless)
+// (-- region search: `projects/{project}:searchLibrary` (AIP-136, stateless) --)
 
+// What kind of library item a row is.
 enum ItemKind {
+  // Unset: in a search, any kind.
   ITEM_KIND_UNSPECIFIED = 0;
+  // A bundle.
   BUNDLE = 1;
+  // A fragment.
   FRAGMENT = 2;
+  // A command.
   COMMAND = 3;
+  // A skill.
   SKILL = 4;
+  // An MCP server.
   MCP_SERVER = 5;
+  // A profile.
   PROFILE = 6;
   // A pin change's hook (B4, OQ-B5); a search never returns it.
   HOOK = 7;
@@ -2374,10 +3831,15 @@ enum ItemKind {
 
 // A local hit. was: a hit's `name` (-> `resource`), `type` (-> `kind`).
 message SearchHit {
+  // The item's resource name.
   string resource = 1;
+  // What kind of item it is.
   ItemKind kind = 2;
+  // Its tags.
   repeated string tags = 3;
+  // The bundle it is in.
   string source = 4;
+  // What of it matched the query.
   string match = 5;
 }
 
@@ -2386,33 +3848,63 @@ message SearchHit {
 message RemoteFound {
   // The Remote's name.
   string remote = 1;
+  // Its path in the remote.
   string item = 2;
+  // What kind of item it is.
   ItemKind kind = 3;
+  // Its tags.
   repeated string tags = 4;
+  // Its description.
   string description = 5;
+  // Its author.
   string author = 6;
+  // What `deps pull` (through a profile) would pin.
   string pull_reference = 7;
 }
 
+// `search [query] [--tag] [--type] [--local] [--remote]`.
 message SearchLibraryRequest {
+  // The project whose library to search.
   string parent = 1 [(google.api.field_behavior) = REQUIRED];
-  string query = 2;
-  repeated string tags = 3;
-  ItemKind kind = 4;
-  bool local = 5;
-  bool remote = 6;
-  int32 page_size = 80;
-  string page_token = 81;
-  Globals globals = 96;
+  // The words to search for; empty, every item.
+  string query = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Only items carrying every one of these tags (`--tag`).
+  repeated string tags = 3 [(google.api.field_behavior) = OPTIONAL];
+  // Only items of this kind (`--type`); unspecified, any.
+  ItemKind kind = 4 [(google.api.field_behavior) = OPTIONAL];
+  // Search the local library (`--local`); neither this nor `remote` (or
+  // both), both are searched.
+  bool local = 5 [(google.api.field_behavior) = OPTIONAL];
+  // Search the remotes (`--remote`); neither this nor `local` (or both), both
+  // are searched.
+  bool remote = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The most results to answer in one page (AIP-158); 0 is the server's
+  // choice. Every page is the whole list today.
+  int32 page_size = 80 [(google.api.field_behavior) = OPTIONAL];
+  // A previous response's `next_page_token`, to answer the page after it;
+  // empty, the first page.
+  string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// What a search found.
 message SearchLibraryResponse {
+  // The query searched for.
   string query = 1;
+  // The local hits.
   repeated SearchHit local = 2;
+  // The remotes' items found.
   repeated RemoteFound remote = 3;
+  // How many hits are answered, local and remote.
   uint32 count = 4;
+  // How many local hits the result cap left out (a notice says how to narrow
+  // the search).
   uint32 hidden_local = 5;
+  // The token of the next page (AIP-158); empty on the last. Every page is
+  // the whole list today, so it is always empty.
   string next_page_token = 80;
 }
 
-// endregion
+// (-- endregion --)

@@ -24,42 +24,56 @@ syntax = "proto3";
 //     or 1 with `--detailed-exitcode` when it would change something).
 package ctxloom.v1;
 
+import "google/api/field_behavior.proto";
 import "ctxloom/v1/launch.proto";
 
 // What the caller can present (sent on every write request).
 message Presentable {
   // It can ask a person: a CLI on a TTY, an eliciting MCP client.
-  bool can_ask = 1;
+  bool can_ask = 1 [(google.api.field_behavior) = OPTIONAL];
   // It can put a program on a person's terminal: a CLI on a TTY only.
-  bool can_launch = 2;
+  bool can_launch = 2 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // A message argument, for a client that renders its own text.
 message NeedArg {
+  // The arg's name, as the message's catalog entry uses it.
   string name = 1;
+  // Its value, as text.
   string value = 2;
 }
 
 // Confirm what the preview shows (a destroyer, an overwrite, a trust).
 message Confirm {
+  // The question, in en-US.
   string text = 1;
+  // Its catalog code, for a client that renders its own text.
   string code = 2;
+  // Its code's args.
   repeated NeedArg args = 3;
 }
 
 // Choose one of several.
 message Choose {
+  // The question, in en-US.
   string text = 1;
+  // Its catalog code, for a client that renders its own text.
   string code = 2;
+  // Its code's args.
   repeated NeedArg args = 3;
+  // The choices, one of which the answer names.
   repeated string choices = 4;
 }
 
 // Type a value, with a suggestion (init's `output.dir`).
 message Ask {
+  // The question, in en-US.
   string text = 1;
+  // Its catalog code, for a client that renders its own text.
   string code = 2;
+  // Its code's args.
   repeated NeedArg args = 3;
+  // The value suggested, taken when the person gives none.
   string suggestion = 4;
 }
 
@@ -68,26 +82,39 @@ message Ask {
 message Edit {
   // The document's file name, for an editor's highlighting.
   string file_name = 1;
+  // The document's text as it stands.
   string text = 2;
+  // The EDITOR launch on the document, set only when the request said
+  // `can_launch`.
   Launch launch = 3;
 }
 
+// One thing a person must answer before a write applies.
 message Need {
   // Unique within the preview.
   string id = 1;
   oneof kind {
+    // Confirm what the preview shows.
     Confirm confirm = 2;
+    // Choose one of several.
     Choose choose = 3;
+    // Type a value.
     Ask ask = 4;
+    // Edit a document.
     Edit edit = 5;
   }
 }
 
+// A person's answer to one need of a preview, sent with the apply.
 message Answer {
-  string need_id = 1;
+  // The need it answers (`Need.id`).
+  string need_id = 1 [(google.api.field_behavior) = REQUIRED];
   oneof answer {
+    // A `Confirm`'s answer.
     bool confirmed = 2;
+    // A `Choose`'s answer: one of its choices.
     string chosen = 3;
+    // An `Ask`'s answer.
     string text = 4;
     // The edited document.
     string edited = 5;
@@ -96,19 +123,29 @@ message Answer {
 
 // A notice said beside a result (a permit ignored, a stale distilled form).
 message Notice {
+  // The notice's catalog code (crate-prefixed).
   string code = 1;
+  // Its code's args.
   repeated NeedArg args = 2;
+  // The notice in en-US.
   string text = 3;
 }
 
 // The caller's environment (S7).
 message EnvVars {
-  repeated EnvVar vars = 1;
+  // Each variable, by name.
+  repeated EnvVar vars = 1 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The global flags (`library_application::Flags`).
 message Globals {
-  bool degraded = 1;
-  bool no_companions = 2;
-  repeated string config_set = 3;
+  // `--degraded`: what would refuse the call (a broken config, an
+  // unresolvable profile or bundle) is said as a warning instead.
+  bool degraded = 1 [(google.api.field_behavior) = OPTIONAL];
+  // `--no-companions`: no registered companion runs, so none contributes
+  // commands, hooks, MCP servers or context.
+  bool no_companions = 2 [(google.api.field_behavior) = OPTIONAL];
+  // `--config-set PATH=VALUE`: config values overridden for this call alone,
+  // in order.
+  repeated string config_set = 3 [(google.api.field_behavior) = OPTIONAL];
 }
