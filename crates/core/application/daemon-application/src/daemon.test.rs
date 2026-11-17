@@ -755,6 +755,67 @@ async fn trusted(edge: &TestEdge, name: &str) {
     .unwrap();
 }
 
+/// A library tree's baseline, as a previous daemon's read recorded it
+/// (step 10a U0): the tree.
+async fn observed(edge: &TestEdge) -> library_tree::TreeName {
+    let project = sessions::ProjectName::parse("projects/calm-quiet-heron").unwrap();
+    let tree = library_tree::TreeName::checkout(project, "brisk-copper-moth").unwrap();
+    let fact = library_tree::RecordTreeObserved {
+        name: tree.to_string(),
+        kind: library_tree::TreeKind::Checkout,
+        base_cause: String::new(),
+        head_before: String::new(),
+        head_after: "h-0".to_string(),
+        tree_after: "t-0".to_string(),
+        changes: Vec::new(),
+        dirty_after: Vec::new(),
+        baseline: true,
+        in_motion: None,
+    };
+    edge.serve(
+        library_tree::observation_book(&tree, &fact),
+        run_ports::Arrival::Loopback,
+    )
+    .await
+    .unwrap();
+    tree
+}
+
+// Step 10a U0: a fresh daemon holds the library trees a previous daemon
+// observed at its start, before its first round.
+#[tokio::test]
+async fn a_fresh_daemon_holds_the_library_trees_observed_before_its_first_round() {
+    let edge = Arc::new(TestEdge::new());
+    let tree = observed(&edge).await;
+    let folds = Folds::default();
+    let mut daemon = Daemon::new(Ports {
+        edge: Arc::clone(&edge),
+        engines: vec![hosted("claude-code")],
+        plans: Box::new(Plans::default()),
+        hand_offs: Box::new(NoHandOffs),
+        homes: Box::new(NoHomes),
+        ears: Box::new(Deaf),
+        run_locks: Arc::new(Locks(LockProbe::Free)),
+        place: Place {
+            home: "/home/u".to_string(),
+            program_dir: None,
+            os: "linux".to_string(),
+            user_home: None,
+        },
+        folds: folds.clone(),
+        say: Box::new(|_| {}),
+    });
+    let token = || {
+        folds
+            .checkouts
+            .checkouts()
+            .token(&tree.root(), "config.yaml")
+    };
+    assert_eq!(token(), None, "nothing folded yet");
+    daemon.start_up(&edge.store, edge.catalog()).await.unwrap();
+    assert_eq!(token(), Some(0), "the tree is held at the start");
+}
+
 // The owner's condition on a FRESH daemon: every read model it plans and
 // answers from (the session index, its transcripts included, the board and
 // the pending messages) is caught up with the store's log at its start,

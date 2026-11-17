@@ -2360,6 +2360,70 @@ the test and forced wakes, no sleep. Not proven: a real process kill (the
 daemon firing an alarm is proven end to end by session_approvals.feature's
 expiry scenario (an ask's alarm under a 2 s `approval_timeout`).
 
+## The library domain (step 10a U0; plan `t13-step10.plan.md`, G4 superseded)
+
+Step 10a U0 adds three crates on `proto/ctxloom/library/v1/library.proto`
+(the red spec's `protos.md`, amended for G4's supersession):
+`core/wire/library-domain-proto`, `core/domain/library-tree` (G10; the
+domain is `library`) and `core/read-model/library-checkout` (`Held`). One
+stream per library TREE (L1): a project checkout's `.ctxloom/`,
+`projects/{p}/checkouts/{c}/library`, rooted on the UUIDv5 of that name
+(`sessions::root_of`), or the home's, named `users/me/library` whatever
+home it is and rooted on `users/me/checkouts/{c}/library` (QUESTIONS B(a):
+each `CTXLOOM_HOME` a stream of its own; `library_tree::TreeName`). `{c}` is
+the checkout's harp in its `.ctxloom/state/checkout` (out of git, so a git
+worktree is a checkout of its own; L2): the wiring's `checkout_harp` reads
+it and mints nothing, `mint_checkout_harp` mints it once (`O_EXCL`, a file
+left empty re-minted), for U2's first read. Nothing holds a file's text, a
+config value or a key: paths, git object ids, statuses and request ids.
+
+An observation is a FACT, `RecordTreeObserved`, keyed `obs:{tree}:
+{H(last_cause)}:{head}:{H(sorted dirty)}` (L4, `observation_key`, SHA-256
+hex, each `path NUL oid NL` in path order; `observation_book` builds the
+keyed fact), so the same sight twice is a DUPLICATE and A to B to A to B
+never collides. A FACT CARRIES NO SEQUENCE (owner, G4 superseded): the event
+it records is given one, its page's, and `apply` (`PageContext::sequence`)
+folds each named path to `{last sequence, oid}` (`library_tree::Library`,
+the aggregate's and `library-checkout`'s ONE fold); a rename empties its
+`from_path`; a baseline clears them and sets `baseline_sequence`.
+`Library::token(path)` is the etag: the greatest sequence at or under the
+path, else the baseline's. `last_cause` is the page's causation (a fact's
+external id, a command's id). The aggregate records an observation only when
+it adds something: a tree's first is its baseline; a change already held at
+the same oid is dropped (an observation made against an older state records
+only what it adds); HEAD alone moving records nothing (QUESTIONS A), nor
+does a motion alone. `RecordStepDone` (the pending intent's next step ties
+its `observed` paths to its event's sequence) and `RecordStepFailed` record
+for a pending intent only. The five commands (`ReplaceFile`,
+`CreateDirectory`, `TrashPath`, `MovePath`, `RunSequence`, each with a
+`verb`) are decided on `Evidence` in order (git: `NotInGit`/
+`LibraryIgnored`; `TreeInMotion`; `BuiltinReadOnly`; the plan's
+`PlanRejected`, which speaks as the plan's own diagnostic, or
+`library-tree-tree-unreadable`), then existence as the record knows it
+(`ResourceExists`, `NoSuchResource`) and the token the caller saw
+(`seen_sequence`, `PlanStale`); each judges only what its `refuses` lists, a
+sequence's steps their tokens alone; they record a `ChangeIntended`, which
+moves no token. Nothing sends them before 10b (U3). The texts are 10a's and
+10b's accepted drafts. Departures from the approved proto, each forced by
+angzarr-build's domain layer and wire-compatible: `Step`'s arms and
+`TreeObserved`'s cause are `optional` fields (no `oneof` is mapped), each
+`in_motion` an `optional` enum; `Evidence.root` and `TreeInMotion.root`
+carry the root the texts name; `OneChangePerCall` waits for 10b (U8), as no
+command refuses it yet. Not built here: the observer (U12's git port, U2's
+reconcile), intent attribution and supersession (10b, U13), trash.
+
+The kernel registers the aggregate in every core, on loopback
+(`core_link`), the daemon's `library-checkout` (`Projectors::checkouts`,
+caught up at the start and each round, `Folds::checkouts`); the coordinator
+reaches the domain and the user allowlist holds its five commands and three
+facts (runs-application's `EdgeCommands::reach`, `user_allowlist`). Under
+`test-support` only, `ctxloom test library-events [--home] --format json`
+(QUESTIONS G) reads the cwd checkout's (or the home's) stream from the one
+store: `{"tree", "events": [{type, sequence, baseline, head_before,
+head_after, in_motion, changes: [{path, status, from_path?, oid?}]}]}`,
+`"tree": null` where no checkout harp was minted; it mints and records
+nothing.
+
 ## Storage is angzarr-store-sqlite
 
 ctxloom's store is ONE per user (owner T14): angzarr-store-sqlite's

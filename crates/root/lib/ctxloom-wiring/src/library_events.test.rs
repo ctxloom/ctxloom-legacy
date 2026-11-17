@@ -1,0 +1,180 @@
+//! The reader's document: each event with its sequence, each change with
+//! its oid, as library_changes.feature reads them.
+
+use angzarr_embedded::v1::{event_page, EventPage};
+use angzarr_embedded::Payload;
+use library_tree::{
+    Change, ChangeFailed, ChangeIntended, ChangeStatus, External, Intent, IntentSuperseded,
+    LibraryEvent, Motion, StepApplied, TreeName, TreeObserved,
+};
+use serde_json::json;
+
+use super::*;
+
+const FILE: &str = "content/bundles/v2/demo/fragments/example.md";
+
+fn page(sequence: u64, event: LibraryEvent) -> EventPage {
+    EventPage {
+        sequence,
+        body: Some(event_page::Body::Event(event.to_any())),
+        meta: None,
+    }
+}
+
+fn change(path: &str, status: ChangeStatus, to: &str, from_path: &str) -> Change {
+    Change {
+        path: path.to_string(),
+        status,
+        from_oid: "old".to_string(),
+        to_oid: to.to_string(),
+        from_path: from_path.to_string(),
+    }
+}
+
+fn observed(changes: Vec<Change>, in_motion: Option<Motion>) -> LibraryEvent {
+    LibraryEvent::TreeObserved(TreeObserved {
+        name: "users/me/library".to_string(),
+        external: Some(External {
+            head_before: "h-0".to_string(),
+            head_after: "h-1".to_string(),
+        }),
+        intended: None,
+        changes,
+        dirty_after: Vec::new(),
+        tree_after: "t".to_string(),
+        baseline: false,
+        in_motion,
+    })
+}
+
+#[test]
+fn an_observation_prints_its_sequence_commits_motion_and_changes() {
+    let tree = TreeName::home("brisk-copper-moth").unwrap();
+    let renamed = "content/bundles/v2/demo/fragments/renamed.md";
+    let doc = document(
+        Some(&tree),
+        &[page(
+            3,
+            observed(
+                vec![
+                    change(FILE, ChangeStatus::Deleted, "", ""),
+                    change(renamed, ChangeStatus::Renamed, "f1", FILE),
+                    change("config.yaml", ChangeStatus::TypeChanged, "c1", ""),
+                    change("lock.yaml", ChangeStatus::Added, "l1", ""),
+                    change("remotes.yaml", ChangeStatus::Modified, "r1", ""),
+                ],
+                Some(Motion::Merging),
+            ),
+        )],
+    );
+    assert_eq!(
+        doc,
+        json!({
+            "tree": "users/me/library",
+            "events": [{
+                "type": "TreeObserved",
+                "sequence": 3,
+                "baseline": false,
+                "head_before": "h-0",
+                "head_after": "h-1",
+                "in_motion": true,
+                "motion": "merging",
+                "changes": [
+                    {"path": FILE, "status": "deleted"},
+                    {"path": renamed, "status": "renamed", "from_path": FILE, "oid": "f1"},
+                    {"path": "config.yaml", "status": "type-changed", "oid": "c1"},
+                    {"path": "lock.yaml", "status": "added", "oid": "l1"},
+                    {"path": "remotes.yaml", "status": "modified", "oid": "r1"},
+                ],
+            }],
+        })
+    );
+}
+
+#[test]
+fn an_observation_of_no_motion_and_no_outside_cause_prints_empty_commits() {
+    let LibraryEvent::TreeObserved(mut ours) = observed(Vec::new(), None) else {
+        unreachable!()
+    };
+    ours.external = None;
+    ours.intended = Some("r-1".to_string());
+    ours.baseline = true;
+    let row = event_row(&page(0, LibraryEvent::TreeObserved(ours))).unwrap();
+    assert_eq!(row["in_motion"], json!(false));
+    assert!(row.get("motion").is_none());
+    assert_eq!(row["head_before"], json!(""));
+    assert_eq!(row["head_after"], json!(""));
+    assert_eq!(row["baseline"], json!(true));
+    assert_eq!(row["intended"], json!("r-1"));
+    assert_eq!(row["changes"], json!([]));
+}
+
+#[test]
+fn an_intent_and_its_steps_print_their_request() {
+    let intended = LibraryEvent::ChangeIntended(ChangeIntended {
+        intent: Intent {
+            request_id: "r-1".to_string(),
+            verb: "fragment edit".to_string(),
+            steps: Vec::new(),
+            base_cause: String::new(),
+            done: 0,
+        },
+    });
+    let applied = LibraryEvent::StepApplied(StepApplied {
+        request_id: "r-1".to_string(),
+        step: 2,
+        observed: Vec::new(),
+    });
+    let failed = LibraryEvent::ChangeFailed(ChangeFailed {
+        request_id: "r-2".to_string(),
+        step: 1,
+        ext_err_txt: "denied".to_string(),
+    });
+    let superseded = LibraryEvent::IntentSuperseded(IntentSuperseded {
+        request_id: "r-3".to_string(),
+        by_cause: "obs".to_string(),
+    });
+    let doc = document(
+        None,
+        &[
+            page(1, intended),
+            page(2, applied),
+            page(3, failed),
+            page(4, superseded),
+        ],
+    );
+    assert_eq!(
+        doc,
+        json!({
+            "tree": null,
+            "events": [
+                {"type": "ChangeIntended", "sequence": 1, "request_id": "r-1", "verb": "fragment edit"},
+                {"type": "StepApplied", "sequence": 2, "request_id": "r-1", "step": 2},
+                {"type": "ChangeFailed", "sequence": 3, "request_id": "r-2", "step": 1},
+                {"type": "IntentSuperseded", "sequence": 4, "request_id": "r-3"},
+            ],
+        })
+    );
+}
+
+#[test]
+fn a_page_with_no_event_is_not_printed_and_another_domains_is_its_type_alone() {
+    let empty = EventPage {
+        sequence: 0,
+        body: None,
+        meta: None,
+    };
+    assert!(event_row(&empty).is_none());
+    let other = EventPage {
+        sequence: 5,
+        body: Some(event_page::Body::Event(angzarr_embedded::Any {
+            type_url: "type.googleapis.com/ctxloom.trust.v1.TrustGranted".to_string(),
+            value: Vec::new(),
+        })),
+        meta: None,
+    };
+    assert_eq!(
+        event_row(&other),
+        Some(json!({"type": "TrustGranted", "sequence": 5}))
+    );
+}

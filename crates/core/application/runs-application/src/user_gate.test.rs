@@ -193,6 +193,46 @@ fn the_user_may_answer_an_ask_and_withdraw_one_and_never_ask_or_claim() {
     }
 }
 
+// Step 10a U0: the library domain's commands and facts (protos.md §1's
+// gate): an observation and a step's outcome as facts, the five operations
+// as commands, and none of them the other way round.
+#[test]
+fn the_user_may_send_the_library_domains_commands_and_facts() {
+    let list = user_allowlist();
+    let commands = [
+        url::<library_tree::ReplaceFile>(),
+        url::<library_tree::CreateDirectory>(),
+        url::<library_tree::TrashPath>(),
+        url::<library_tree::MovePath>(),
+        url::<library_tree::RunSequence>(),
+    ];
+    let facts = [
+        url::<library_tree::RecordTreeObserved>(),
+        url::<library_tree::RecordStepDone>(),
+        url::<library_tree::RecordStepFailed>(),
+    ];
+    for type_url in commands {
+        assert!(
+            list.permits_body(BodyKind::Command, &type_url).is_ok(),
+            "{type_url}"
+        );
+        assert!(
+            list.permits_body(BodyKind::Fact, &type_url).is_err(),
+            "{type_url}"
+        );
+    }
+    for type_url in facts {
+        assert!(
+            list.permits_body(BodyKind::Fact, &type_url).is_ok(),
+            "{type_url}"
+        );
+        assert!(
+            list.permits_body(BodyKind::Command, &type_url).is_err(),
+            "{type_url}"
+        );
+    }
+}
+
 // The gate keeps the digest alone: nothing it renders is the bearer.
 #[test]
 fn the_gate_shows_no_bearer() {

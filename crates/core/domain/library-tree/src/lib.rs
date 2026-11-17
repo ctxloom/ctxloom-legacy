@@ -35,7 +35,7 @@ pub type LibraryEvent = LibraryStateEvent;
 
 pub use aggregate::{LibraryAggregate, TREE_UNREADABLE};
 pub use generated::*;
-pub use key::observation_key;
+pub use key::{observation_book, observation_key};
 pub use name::{kind_of, tree_root, TreeName, CHECKOUT_FILE, HOME_TREE};
 pub use refusal::NotOurs;
 #[cfg(any(test, feature = "test-support"))]

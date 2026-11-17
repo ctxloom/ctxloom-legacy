@@ -73,6 +73,14 @@ enum TestVerb {
         #[arg(long)]
         run: Option<u32>,
     },
+    /// Print the events of the cwd's checkout's library stream (or, with
+    /// `--home`, the home's), as json: each event's type, cause, commits,
+    /// motion and changes
+    LibraryEvents {
+        /// The home's library stream instead
+        #[arg(long)]
+        home: bool,
+    },
     /// Print every stream of the one store, as json: each event's type,
     /// its payload's bytes, and what the record's readers ask of it
     Record,
@@ -251,6 +259,11 @@ pub(crate) fn run(
         TestVerb::SessionEvents { harp, run } => {
             let wiring = wiring().map_err(failed)?;
             let events = wiring.session_events(&harp, run).map_err(failed)?;
+            output(writeln!(out, "{events}"))
+        }
+        TestVerb::LibraryEvents { home } => {
+            let wiring = wiring().map_err(failed)?;
+            let events = wiring.library_events(home, version).map_err(failed)?;
             output(writeln!(out, "{events}"))
         }
         TestVerb::Record => {

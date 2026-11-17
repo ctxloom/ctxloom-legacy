@@ -8,6 +8,8 @@ ctxloom-wiring-store = cannot open the project store: { $error }
 ctxloom-wiring-daemon-other-home = the user's daemon serves the ctxloom home { $daemon_home }, not this command's { $home }: there is one daemon per OS user
 ctxloom-wiring-project-unnamed = the project at { $root } has no project id yet, and a dry run never makes one
 ctxloom-wiring-project-unnamed-fix = run `ctxloom init` in { $root } to give the project its id
+# Step 10a U0: not drafted in the red spec (a failure of the machine, exit 10).
+ctxloom-wiring-checkout = the library checkout's name at { $path } could not be read or written: { $ext_err_txt }
 ctxloom-wiring-daemon-other-home-fix = run the command with the ctxloom home { $daemon_home }, or stop that daemon from it (`ctxloom daemon stop`) before using { $home }
 ctxloom-wiring-seed = the test seed could not plant the session: { $ext_err_txt }
 ctxloom-wiring-test-refused = the test command { $verb } refused, as it always does

@@ -898,6 +898,7 @@ fn launcher(
             index: kept.index.clone().unwrap_or_default(),
             trusts: kept.trusts.clone().unwrap_or_default(),
             approvals: kept.approvals.clone().unwrap_or_default(),
+            checkouts: kept.checkouts.clone().unwrap_or_default(),
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })

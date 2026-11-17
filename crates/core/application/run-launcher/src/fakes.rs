@@ -61,6 +61,10 @@ impl TestEdge {
         registry
             .aggregate::<trust::TrustAggregate>(trust::TrustAggregate::default)
             .unwrap();
+        // A library tree (step 10a U0), which the daemon's checkouts fold.
+        registry
+            .aggregate::<library_tree::LibraryAggregate>(library_tree::LibraryAggregate::default)
+            .unwrap();
         TestEdge {
             registry,
             store: MemoryStore::default(),

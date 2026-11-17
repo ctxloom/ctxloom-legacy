@@ -9,6 +9,7 @@
 //!   opened over them.
 
 mod capture;
+mod checkout;
 mod commands;
 mod core_link;
 mod daemon;
@@ -18,6 +19,8 @@ mod frontend;
 mod interview;
 mod isolation;
 mod library;
+#[cfg(feature = "test-support")]
+mod library_events;
 mod mcp;
 mod oneshot;
 mod process_env;
@@ -66,6 +69,7 @@ pub use capture::{
     daemon_sink, Deadline, EdgeSink, HoldingRecording, HookReach, HookRecording, HookSink, RunIds,
     SessionIds, Unreachable,
 };
+pub use checkout::{checkout_file, checkout_harp, checkout_tree, mint_checkout_harp};
 pub use commands::{engines, Commands, Hooks};
 pub use core_link::{
     AlarmConsumer, CoreStores, InProcessCore, Projectors, SharedCore, SystemClock, Unclosed,

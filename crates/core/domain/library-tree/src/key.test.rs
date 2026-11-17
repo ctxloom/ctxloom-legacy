@@ -70,3 +70,42 @@ fn a_to_b_to_a_to_b_never_repeats_a_key_because_each_chains_on_the_last() {
     unique.dedup();
     assert_eq!(unique.len(), keys.len(), "{keys:?}");
 }
+
+#[test]
+fn an_observations_book_is_a_fact_on_the_trees_stream_keyed_by_what_it_saw() {
+    use angzarr_embedded::markup::DomainMessage as _;
+    use angzarr_embedded::v1::command_page;
+    let project = sessions::ProjectName::parse("projects/amber-quiet-heron").unwrap();
+    let tree = TreeName::checkout(project, "brisk-copper-moth").unwrap();
+    let fact = RecordTreeObserved {
+        name: tree.to_string(),
+        kind: crate::TreeKind::Checkout,
+        base_cause: "c-0".to_string(),
+        head_before: "h-0".to_string(),
+        head_after: "h-1".to_string(),
+        tree_after: "t".to_string(),
+        changes: Vec::new(),
+        dirty_after: vec![dirty("a", "1")],
+        baseline: false,
+        in_motion: None,
+    };
+    let book = observation_book(&tree, &fact);
+    let cover = book.cover.unwrap();
+    assert_eq!(cover.domain, crate::LIBRARY_DOMAIN);
+    assert_eq!(cover.root, Some(tree.root()));
+    let Some(command_page::Body::Fact(sent)) = book.page.unwrap().body else {
+        panic!("a fact")
+    };
+    let origin = sent.origin.unwrap();
+    assert_eq!(
+        origin.external_id,
+        observation_key(TREE, "c-0", "h-1", &[dirty("a", "1")])
+    );
+    assert!(!origin.description.is_empty());
+    let payload = sent.payload.unwrap();
+    let back = <library_domain_proto::v1::RecordTreeObserved as prost::Message>::decode(
+        payload.value.as_slice(),
+    )
+    .unwrap();
+    assert_eq!(back, fact.to_wire());
+}
