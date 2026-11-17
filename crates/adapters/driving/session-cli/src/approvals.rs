@@ -222,7 +222,7 @@ async fn answered<A: ApprovalAnswers>(
     Ok(Done::default())
 }
 
-/// The words a claude option is shown with (DRAFT, texts.md §6), or an
+/// The words a claude option is shown with (texts.md §6), or an
 /// ACP option's own label.
 fn label(option: &v1::ApprovalOption, approval: &v1::Approval) -> String {
     if !option.label.is_empty() {
@@ -249,7 +249,7 @@ fn harp_of(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or_default()
 }
 
-/// The listing in text (texts.md §6, DRAFT): each ask, what it asks to
+/// The listing in text (texts.md §6): each ask, what it asks to
 /// run, its options and how to answer it.
 fn listing_text(listed: &v1::ListApprovalsResponse, out: &mut dyn Write) -> std::io::Result<()> {
     if listed.approvals.is_empty() {

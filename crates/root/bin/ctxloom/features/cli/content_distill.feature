@@ -35,6 +35,12 @@ Feature: Distilling authored content — does the compression happen, is it kept
   distiller handed an empty item, and reading only what the distiller received
   would be satisfied by a run whose answer was thrown away.
 
+  The distiller runs on no context, so it is given no ctxloom MCP server and
+  no approval prompt (owner, 2026-11-16): a permission ask its engine makes
+  is never routed to `session approvals`, and claude's headless default
+  denies it. Distilling needs no tool; an agent whose rules would ask is
+  told no.
+
   Background:
     Given an initialized ctxloom project
     And the mock LLM responds "DISTILLED-BY-THE-CONFIGURED-LLM: retries, tokens, tenants, caches, webhooks, vaults"

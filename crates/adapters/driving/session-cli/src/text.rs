@@ -2,7 +2,7 @@
 //! ruling after U4): each a message of this crate's en-US catalog, its id the
 //! full code, filled from its args. The layout around them (an option's
 //! padded id, a setting's `path: value` line) stays the code's; every word a
-//! person reads is the catalog's. DRAFT texts (D14, texts.md §6).
+//! person reads is the catalog's. Step 8's texts (D14, texts.md §6), accepted verbatim (owner, 2026-11-16; reviewed before release).
 
 use std::fmt;
 

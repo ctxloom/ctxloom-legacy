@@ -35,7 +35,7 @@ pub fn validate(name: &str) -> Result<(), SessionRejection> {
 pub const RESERVED_PREFIX: &str = "ask-";
 
 /// The reason a session name beginning [`RESERVED_PREFIX`] is refused
-/// (DRAFT, texts.md §5b).
+/// (texts.md §5b).
 pub const RESERVED_REASON: &str = "reserved: names beginning ask- are an approval ask's";
 
 /// Whether `name` can be a NEW session's name: [`validate`]'s path rules,

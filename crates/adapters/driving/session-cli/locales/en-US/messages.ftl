@@ -7,7 +7,8 @@ session-cli-output = could not write the answer: { $ext_err_txt }
 session-cli-sweep-failed = { $count } sweep action(s) failed; the report says which
 session-cli-already-closed = { $harp } was already closed: the close changed nothing
 
-# What `session approvals` and `trust` say in text (step 8; DRAFT, texts.md §6).
+# What `session approvals` and `trust` say in text (step 8, texts.md §6):
+# accepted verbatim (owner, 2026-11-16; reviewed before release).
 session-cli-approvals-label-allow-once = Allow once
 session-cli-approvals-label-allow-session = Allow { $rule } for the rest of this session
 session-cli-approvals-label-allow-always = Always allow { $rule }: writes it into agents.{ $agent }.engines.{ $engine }.permissions (previewed first)

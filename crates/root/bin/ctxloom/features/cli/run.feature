@@ -277,7 +277,9 @@ Feature: run — assembling a project's context and handing it to an engine
     is one). It answers what context to give, so asking for context beside
     it (`--profile`, `--fragment`, `--tag`) is refused. Distilling content
     runs on it, so the distiller sees the item and nothing of the project's
-    guidance.
+    guidance. With no server it has no approval prompt either (owner,
+    2026-11-16): an ask its engine's permissions make is never routed to
+    `session approvals`, and claude's headless default denies it.
 
     Scenario: A dry run with no context composes nothing the profile would have given
       # new: owner OD-38 (2026-11-13)

@@ -108,7 +108,7 @@ pub(crate) fn intercepted(line: &str) -> Intercepted {
     }
 }
 
-/// Why an ask was denied, said to the model (DRAFT texts, texts.md §2).
+/// Why an ask was denied, said to the model (texts.md §2, accepted verbatim (owner, 2026-11-16; reviewed before release)).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Denied {
     /// The ask's time ran out; `timeout` as the config writes a span.

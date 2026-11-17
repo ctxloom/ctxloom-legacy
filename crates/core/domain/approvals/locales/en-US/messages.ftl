@@ -1,8 +1,8 @@
 # Messages for the crate's errors. Each id is an error's code, which begins with
 # the crate's name; the variables are its args.
 
-# DRAFT (step 8 U4, texts.md §5a): for the owner's approval with the slice's
-# other texts (D14).
+# Step 8 U4 (texts.md §5a, D14): accepted verbatim (owner, 2026-11-16;
+# reviewed before release).
 approvals-approval-unknown = { $ask_id } is no ask that was asked; nothing was answered.
 approvals-approval-unknown-fix = List what waits with `ctxloom session approvals`.
 approvals-approval-settled = { $ask_id } is already { $how }; nothing was answered.

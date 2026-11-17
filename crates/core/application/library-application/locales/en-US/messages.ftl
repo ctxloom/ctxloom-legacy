@@ -96,7 +96,7 @@ library-application-notice-session-home-host = { $engine } runs in your own home
 library-application-notice-session-home-host-fix = to give each run a session home of its own, remove session_home: host from { $place } in your home config
 library-application-notice-mcp-server-shadowed = the launch carries an MCP server named { $name }, and ctxloom's own server takes that name in every session: it shadows yours
 library-application-notice-mcp-server-shadowed-fix = give your server another name in its bundle (mcp/<name>.yaml)
-# DRAFT (step 8 texts.md §3), for the owner's approval (D14).
+# Step 8 texts.md §3 (D14): accepted verbatim (owner, 2026-11-16; reviewed before release).
 library-application-notice-prompt-untrusted = This project's own `ctxloom` bundle replaces ctxloom's { $prompt } prompt, but you have not trusted this project, so ctxloom used its built-in { $prompt } prompt.
 library-application-notice-prompt-untrusted-fix = Look at what trusting the project allows with `ctxloom trust`, then say yes to use the project's own prompts.
 library-application-notice-checkout-left = the session's checkout { $path } (branch { $branch }) was left in place: { $reason }

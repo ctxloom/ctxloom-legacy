@@ -128,8 +128,8 @@ fn every_tool_offered_is_described_in_the_approved_words() {
         ("child_send", "Send one of your children a message: inform (read at its next turn), wake (start a turn) or steer (interrupt its turn)."),
         ("child_close", "Close one of your children: its engine is ended, and it takes no more messages."),
         ("child_clear", "Clear one of your children's conversation, as its engine's own /clear does."),
-        // DRAFT (texts.md §1, step 8 U4): the owner approves it with the
-        // slice's texts (D14).
+        // texts.md §1 (step 8 U4, D14), accepted verbatim (owner,
+        // 2026-11-16; reviewed before release).
         ("approval_prompt", "Ask the user whether a tool call may run. Your engine calls this itself, as its permission prompt, when its permissions say to ask; you never need to call it. The call waits while the user decides from their own terminal, and answers with their choice: run it this once, run it for the rest of this session, always run it, or do not. If nobody answers in time, it is denied. A denial carries a message: read it, do not retry the same call unasked, and tell the user what you wanted to run and why."),
     ];
     let offered = tools();

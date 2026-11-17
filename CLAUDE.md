@@ -2102,7 +2102,8 @@ stderr and only `y`/`yes` grants; off one it prints the preview and changes
 nothing (exit 1 under `--detailed-exitcode` when the apply would change
 something); `--yes` applies. The grant and revoke are `HandleSync` on
 projector `trust-index`, keyed once per call. `trust-plan-stale`'s text is
-DRAFT.
+accepted as drafted (owner, 2026-11-16: every text step 8 drafted is
+accepted verbatim, for a full review before release).
 
 Trust is ENFORCED (step 8 U2). The daemon reads it (`TrustIndex::trusts`, by
 project id) for every launch it makes, a one-shot, a terminal session, a
@@ -2114,13 +2115,13 @@ and the plan names those THIS launch reads (`DryRun::untrusted`: its engine's
 block and its agent's, owner Q8), which are `EnqueueRun.untrusted_settings`
 (field 14): the runs aggregate refuses them LAST of its checks (Q9),
 `runs-untrusted-project-settings` (`UntrustedProjectSettings{paths}`,
-FAILED_PRECONDITION; `LaunchRefusals` field 7; DRAFT text); the credential
+FAILED_PRECONDITION; `LaunchRefusals` field 7); the credential
 evidence is read with them held back, so an untrusted `auth.file` is reported
 once. Trusted, the project's own keys apply until the trust is revoked (S23).
 In-process library verbs still hold them back (until T13). A project's own
 `ctxloom` bundle replaces an operational prompt (init's interview, distill's)
 only once the project is trusted (D4): `Project::operational_prompt` passes it
-over for the built-in otherwise, with the DRAFT notice
+over for the built-in otherwise, with the notice
 `library-application-notice-prompt-untrusted`, which `init prompt` says with
 its remedy. Where no flag says, the library asks `Library::with_trust` (the
 wiring's `daemon::trust_ask`: ONE `GetTrust` of the user's daemon, which may
@@ -2195,7 +2196,7 @@ expired in its own decide and arms nothing), and `ApprovalAnswered` or
 (`scheduler::delivery!`) hands the ask `RecordAlarmReached`, which the
 aggregate re-checks against its own state (still waiting, its own alarm, the
 instant it armed) before it records `ApprovalExpired`; the waiting tool then
-answers the DRAFT `mcp-server-approval-expired`. Both policies are ONE entry
+answers `mcp-server-approval-expired`. Both policies are ONE entry
 of `core_link::ALARM_CONSUMERS` (`approvals_expiry`). Only the daemon's
 core resumes owed policy work at start (owner ruling 2026-11-16; below), so
 the resume's cost, which grows faster than the sources' history (the
@@ -2223,24 +2224,24 @@ pending approvals (`Projectors::approvals`, `Folds::approvals`); the
 coordinator reaches the approvals domain; the user allowlist adds
 `AnswerApproval` and `RecordApprovalWithdrawn`.
 
-`ctxloom mcp serve` offers `approval_prompt` (`TOOL_NAMES` 9; DRAFT
+`ctxloom mcp serve` offers `approval_prompt` (`TOOL_NAMES` 9;
 description `tools/approval_prompt.md`): `CreateApproval`, then
 `WaitApproval`, answered in claude's verified shape (P0):
 `{"behavior":"allow","updatedInput":<input>}`, with the session rule
 (`updatedPermissions`, destination `session`) for allow-session and
 allow-always, or `{"behavior":"deny","message"}` (the user's message, else
-the DRAFT `mcp-server-approval-denied`, `-expired`, `-denied-at-once`). A
+`mcp-server-approval-denied`, `-expired`, `-denied-at-once`). A
 cancelled call is withdrawn with claude's reason and answered nothing (rmcp
 drops it). claude's `server/discover` (a string id, before `initialize`)
 is answered `{}` by the server's own reader of its input
 (`mcp_server::pump`), before rmcp sees it.
 
 `session approvals [<harp>]` lists this project's waiting asks (text form
-DRAFT, texts.md §6; its words, claude's option labels and `trust`'s text
+texts.md §6; its words, claude's option labels and `trust`'s text
 are session-cli's catalog, `session_cli::text::Text`, ruling after U4); `session approvals answer <ask|harp> <option>
 ["<message>"] [--yes]` names an ask by its name, or by its asking session's
 harp while exactly one waits (`daemon-api-approval-ambiguous` naming each,
-`daemon-api-approval-none-waiting`: client-side, DRAFT), and sends
+`daemon-api-approval-none-waiting`: client-side), and sends
 `AnswerApproval` through `HandleSync` on `pending-approvals`; a refusal the
 coordinator names by type alone is said with the ask as the daemon has it.
 An `allow-always` of a claude ask writes its rule into the asking agent's
@@ -2254,10 +2255,26 @@ kept); the preview names the file. Q3's order: the ask checked
 waiting, the rule written, then the ask answered; off a terminal without
 `--yes` it previews (exit 1 under `--detailed-exitcode`), at one it asks
 `[y/N]`; a rule written for an ask settled meanwhile stays,
-`daemon-api-approval-rule-kept` (exit 20, DRAFT). A new session's chosen name may not begin `ask-`
+`daemon-api-approval-rule-kept` (exit 20). A new session's chosen name may not begin `ask-`
 (`sessions::validate_session_name`, `sessions-harp-invalid` reason
 `reserved`, refused by the caller before anything is written); an existing
 one keeps its name (Q-B).
+
+Step 8 lands CLAUDE-ONLY (owner, 2026-11-16): an ask is routed only from a
+claude child or one-shot (its prompt tool, above). opencode's routing (U7:
+ACP `session/request_permission` relayed to the approvals, its one-shots
+over ACP, `opencode run` deleted) is parked on `daemon/s8-u7-opencode-acp`
+with its scenarios and the feature's opencode prose, to return once claude
+works through the daemon. Until then an opencode child's ACP permission
+request is refused, as before (daemon-application passes
+`run_ports::ChildPermissions::default()`, `Refuse`: fail closed), and an
+opencode one-shot is `opencode run`, which has no ask channel (every ask
+auto-rejected). The approvals domain already knows ACP's option kinds
+(`deny-always`, `-message-not-relayed`); nothing in this build records one.
+Nor does a launch with no context (the distiller's, `run --no-context`):
+it carries no ctxloom server and so no prompt tool, and claude's headless
+default denies its asks (owner ruling, 2026-11-16). An interactive session
+asks at its own terminal (S28); the mock engine asks nothing.
 
 ## The scheduler runs in the daemon (step 8 U5a; plan `approvals-trust-step8.plan.md` U5)
 
@@ -2313,8 +2330,9 @@ the resume's delivery and the holder, over a real store with
 (`InProcessCore::start_consuming`, crate-private; the fixture is a
 dev-dependency, never in any build of the binary), a `FakeClock` moved by
 the test and forced wakes, no sleep. Not proven: a real process kill (the
-"kill" aborts the loop's task and drops the core unclosed) and the binary's
-daemon firing an alarm (no production consumer arms one yet).
+"kill" aborts the loop's task and drops the core unclosed). The binary's
+daemon firing an alarm is proven end to end by session_approvals.feature's
+expiry scenario (an ask's alarm under a 2 s `approval_timeout`).
 
 ## Storage is angzarr-store-sqlite
 

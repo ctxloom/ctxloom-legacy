@@ -5752,7 +5752,7 @@ fn allowed(answer: &Value, ask: &Ask, rule: Option<(&str, &str)>) {
 }
 
 /// `answer` is claude's deny of an ask whose time ran out
-/// (`mcp-server-approval-expired`, DRAFT).
+/// (`mcp-server-approval-expired`).
 fn expired_answer(answer: &Value) {
     assert_eq!(answer["behavior"], "deny", "{answer}");
     let said = answer["message"].as_str().unwrap_or_default();

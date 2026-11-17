@@ -62,12 +62,12 @@ const SESSION_SHOW: &str = include_str!("../tools/session_show.md");
 const TRANSCRIPT_SHOW: &str = include_str!("../tools/transcript_show.md");
 const CONTEXT_ASSEMBLE: &str = include_str!("../tools/context_assemble.md");
 // The owner's approved text (slice 4 U3), with step 8's sentence on
-// `project` (texts.md §7, DRAFT until the owner approves it, D14).
+// `project` (texts.md §7, D14), accepted verbatim (owner, 2026-11-16; reviewed before release).
 const CHILD_LAUNCH: &str = include_str!("../tools/child_launch.md");
 const CHILD_SEND: &str = include_str!("../tools/child_send.md");
 const CHILD_CLOSE: &str = include_str!("../tools/child_close.md");
 const CHILD_CLEAR: &str = include_str!("../tools/child_clear.md");
-// DRAFT (texts.md §1, D14): the owner approves it with the slice's texts.
+// texts.md §1 (D14), accepted verbatim (owner, 2026-11-16; reviewed before release).
 const APPROVAL_PROMPT_TEXT: &str = include_str!("../tools/approval_prompt.md");
 
 /// A description as offered: the file's text without the newline that ends
