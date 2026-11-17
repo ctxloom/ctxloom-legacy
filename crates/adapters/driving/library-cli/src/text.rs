@@ -7,9 +7,9 @@ use std::io::{self, Write};
 use angzarr_presentation::text;
 use library_application::{
     AgentRow, AgentSettings, AgentShow, BundleList, BundleRow, BundleShow, BundleView,
-    CompanionRow, DryRun, EngineRow, EnvSetting, ItemList, ItemShow, McpList, McpShow, Premises,
-    ProfileList, ProfileShow, RemoteFound, RuntimeSetting, SearchResults, SkillList, SkillShow,
-    SourcedValue,
+    CompanionRow, DryRun, EngineRow, EnvSetting, Hook, ItemList, ItemShow, McpList, McpShow,
+    Premises, ProfileHooks, ProfileList, ProfileShow, RemoteFound, RuntimeSetting, SearchResults,
+    SkillList, SkillShow, SourcedValue,
 };
 
 use crate::inert::{body, field};
@@ -462,7 +462,17 @@ pub fn profile_show(out: &mut dyn Write, show: &ProfileShow) -> io::Result<()> {
     }
     bullets(out, "Parents", &show.parents)?;
     bullets(out, "Bundles", &show.bundles)?;
+    let fragments: Vec<String> = show
+        .fragments
+        .iter()
+        .map(|fragment| match fragment.priority {
+            0 => fragment.name.clone(),
+            priority => format!("{} (priority {priority})", fragment.name),
+        })
+        .collect();
+    bullets(out, "Fragments", &fragments)?;
     bullets(out, "Tags", &show.tags)?;
+    bullets(out, "Select tags", &show.select_tags)?;
     if !show.variables.is_empty() {
         writeln!(out, "Variables:")?;
         for (key, value) in &show.variables {
@@ -470,7 +480,94 @@ pub fn profile_show(out: &mut dyn Write, show: &ProfileShow) -> io::Result<()> {
         }
     }
     bullets(out, "Excluded fragments", &show.exclude_fragments)?;
-    bullets(out, "Excluded MCP servers", &show.exclude_mcp)
+    bullets(out, "Excluded MCP servers", &show.exclude_mcp)?;
+    bullets(out, "Denied tools", &show.deny_tools)?;
+    profile_hooks(out, &show.hooks)
+}
+
+/// A profile's hooks (step 10a U2, owner ruling 2026-11-17): each event
+/// under its document path (`unified.<event>`, `ext.<engine>.<event>`),
+/// each hook on one line in YAML's flow form, its keys sorted.
+fn profile_hooks(out: &mut dyn Write, hooks: &ProfileHooks) -> io::Result<()> {
+    let mut events: Vec<(String, &Vec<Hook>)> = hooks
+        .unified
+        .iter()
+        .map(|(event, list)| (format!("unified.{event}"), list))
+        .collect();
+    for (engine, native) in &hooks.ext {
+        events.extend(
+            native
+                .iter()
+                .map(|(event, list)| (format!("ext.{engine}.{event}"), list)),
+        );
+    }
+    if events.is_empty() {
+        return Ok(());
+    }
+    writeln!(out, "Hooks:")?;
+    for (path, list) in events {
+        writeln!(out, "  {}:", f(&path))?;
+        for hook in list {
+            writeln!(out, "    - {}", f(&json_flow(&hook_document(hook))))?;
+        }
+    }
+    Ok(())
+}
+
+/// A hook in its document's shape (`type:`, `async:`), every field it
+/// leaves empty left out; its event and name are where it is written.
+pub(crate) fn hook_document(hook: &Hook) -> serde_json::Value {
+    let mut set = serde_json::Map::new();
+    let mut text = |key: &str, value: &str| {
+        if !value.is_empty() {
+            set.insert(key.to_string(), serde_json::json!(value));
+        }
+    };
+    text("command", &hook.command);
+    text("prompt", &hook.prompt);
+    text("tool", &hook.tool);
+    text("type", &hook.kind);
+    for (key, list) in [("args", &hook.args), ("tags", &hook.tags)] {
+        if !list.is_empty() {
+            set.insert(key.to_string(), serde_json::json!(list));
+        }
+    }
+    if let Some(order) = hook.order {
+        set.insert("order".to_string(), serde_json::json!(order));
+    }
+    if hook.timeout != 0 {
+        set.insert("timeout".to_string(), serde_json::json!(hook.timeout));
+    }
+    for (key, flag) in [
+        ("async", hook.is_async),
+        ("pre_tool_fallback", hook.pre_tool_fallback),
+    ] {
+        if flag {
+            set.insert(key.to_string(), serde_json::json!(true));
+        }
+    }
+    serde_json::Value::Object(set)
+}
+
+/// A JSON value on one line in YAML's flow form, keys sorted.
+fn json_flow(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(json_flow).collect::<Vec<_>>().join(", ")
+        ),
+        serde_json::Value::Object(entries) => {
+            let mut sorted: Vec<(&String, &serde_json::Value)> = entries.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            let inner: Vec<String> = sorted
+                .iter()
+                .map(|(key, field)| format!("{key}: {}", json_flow(field)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        other => other.to_string(),
+    }
 }
 
 /// `agent list`.

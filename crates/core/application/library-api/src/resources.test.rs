@@ -136,3 +136,76 @@ fn a_premise_index_names_each_fragment() {
     );
     assert_eq!(index.fragments[1].fragment, "no reference");
 }
+
+// step 10a U2 (owner ruling 2026-11-17): a profile's message carries its
+// select_tags, fragments (an item reference by its resource name, a bare
+// name as written), hooks and deny_tools
+#[test]
+fn a_profile_s_message_carries_its_selecting_tags_fragments_hooks_and_denied_tools() {
+    use library_application::{FragmentRef, Hook, ProfileHooks, ProfileShow};
+    let hook = Hook {
+        event: "pre_tool".to_string(),
+        name: "0".to_string(),
+        order: Some(2),
+        command: "lint".to_string(),
+        kind: "command".to_string(),
+        args: vec!["--fix".to_string()],
+        timeout: 5,
+        is_async: true,
+        ..Hook::default()
+    };
+    let mut hooks = ProfileHooks::default();
+    hooks.unified.insert("pre_tool".to_string(), vec![hook]);
+    hooks
+        .ext
+        .entry("claude-code".to_string())
+        .or_default()
+        .insert("Notification".to_string(), vec![Hook::default()]);
+    let show = ProfileShow {
+        name: "dev".to_string(),
+        select_tags: vec!["go".to_string()],
+        fragments: vec![
+            FragmentRef {
+                name: "plain".to_string(),
+                priority: 0,
+            },
+            FragmentRef {
+                name: "demo#fragments/pri".to_string(),
+                priority: 3,
+            },
+        ],
+        hooks,
+        deny_tools: vec!["Bash".to_string()],
+        ..ProfileShow::default()
+    };
+    let profile = super::profile_shown("projects/p", &show);
+    assert_eq!(profile.select_tags, ["go"]);
+    let fragments: Vec<(&str, i64)> = profile
+        .fragments
+        .iter()
+        .map(|f| (f.fragment.as_str(), f.priority))
+        .collect();
+    assert_eq!(
+        fragments,
+        [("plain", 0), ("projects/p/bundles/demo/fragments/pri", 3)]
+    );
+    assert_eq!(profile.deny_tools, ["Bash"]);
+    let hooks = profile.hooks.expect("hooks");
+    let pre = &hooks.unified["pre_tool"].hooks[0];
+    assert_eq!(
+        (pre.event.as_str(), pre.name.as_str(), pre.order),
+        ("pre_tool", "0", Some(2))
+    );
+    assert_eq!(
+        (pre.command.as_str(), pre.kind.as_str(), pre.timeout),
+        ("lint", "command", 5)
+    );
+    assert_eq!(pre.args, ["--fix"]);
+    assert!(pre.is_async);
+    assert_eq!(
+        hooks.ext["claude-code"].events["Notification"].hooks.len(),
+        1
+    );
+    let none = super::profile_shown("projects/p", &ProfileShow::default());
+    assert_eq!(none.hooks, None, "a profile with no hooks carries none");
+}

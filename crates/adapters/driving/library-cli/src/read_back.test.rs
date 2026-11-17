@@ -197,3 +197,64 @@ fn a_profile_reads_back_by_the_name_typed_and_its_references_short() {
         library_application::NO_PROJECT_HINT
     );
 }
+
+// step 10a U2 (owner ruling 2026-11-17): a profile's selecting tags,
+// fragments (by their short references), hooks and denied tools read back
+// from its message, and its one-item view prints them in the document's
+// shape, keys sorted
+#[test]
+fn a_profile_s_fragments_hooks_and_denied_tools_read_back_and_view() {
+    let hook = v1::ProfileHook {
+        event: "pre_tool".to_string(),
+        name: "0".to_string(),
+        command: "lint".to_string(),
+        kind: "command".to_string(),
+        args: vec!["--fix".to_string()],
+        ..v1::ProfileHook::default()
+    };
+    let profile = v1::Profile {
+        name: "projects/p/bundles/demo/profiles/full".to_string(),
+        select_tags: vec!["go".to_string()],
+        fragments: vec![
+            v1::ProfileFragment {
+                fragment: "plain".to_string(),
+                priority: 0,
+            },
+            v1::ProfileFragment {
+                fragment: "projects/p/bundles/demo/fragments/pri".to_string(),
+                priority: 3,
+            },
+        ],
+        hooks: Some(v1::ProfileHooks {
+            unified: [(
+                "pre_tool".to_string(),
+                v1::ProfileHookList { hooks: vec![hook] },
+            )]
+            .into_iter()
+            .collect(),
+            ext: Default::default(),
+        }),
+        deny_tools: vec!["Bash".to_string()],
+        ..<v1::Profile as Default>::default()
+    };
+    let show = profile_show(&profile);
+    assert_eq!(show.select_tags, ["go"]);
+    let fragments: Vec<(&str, i64)> = show
+        .fragments
+        .iter()
+        .map(|f| (f.name.as_str(), f.priority))
+        .collect();
+    assert_eq!(fragments, [("plain", 0), ("demo#fragments/pri", 3)]);
+    let pre = &show.hooks.unified["pre_tool"][0];
+    assert_eq!(
+        (pre.command.as_str(), pre.kind.as_str()),
+        ("lint", "command")
+    );
+    assert_eq!(pre.args, ["--fix"]);
+    assert_eq!(show.deny_tools, ["Bash"]);
+    let view = super::profile_view("demo#profiles/full", &profile);
+    assert_eq!(
+        view.content,
+        "# Profile: full\ndeny_tools:\n  - Bash\nfragments:\n  - plain\n  - name: demo#fragments/pri\n    priority: 3\nhooks:\n  unified:\n    pre_tool:\n      - args:\n          - --fix\n        command: lint\n        type: command\nselect_tags:\n  - go\n"
+    );
+}

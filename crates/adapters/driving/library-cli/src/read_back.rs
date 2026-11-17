@@ -5,6 +5,8 @@
 //! the view the use case answered in process.
 
 use daemon_proto::google::protobuf::{value::Kind, Value};
+use std::collections::BTreeMap;
+
 use daemon_proto::v1;
 use library_application::{
     AgentRow, AgentSettings, AgentShow, AuthSetting, EngineAgent, EngineLine, EngineRow, EnvKey,
@@ -16,8 +18,9 @@ use library_application::{
     SearchHit, SearchResults, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
 };
 use library_application::{
-    CompanionRow, CompanionState, DistilledState, ItemList, ItemRow, ItemShow, PremiseRow,
-    Premises, ProfileList, ProfileRow, ProfileShow, SkillFileRow, SkillList, SkillRow, SkillShow,
+    CompanionRow, CompanionState, DistilledState, FragmentRef, Hook, ItemList, ItemRow, ItemShow,
+    PremiseRow, Premises, ProfileHooks, ProfileList, ProfileRow, ProfileShow, SkillFileRow,
+    SkillList, SkillRow, SkillShow,
 };
 
 /// The parent a resource name is under: its first two segments,
@@ -283,10 +286,61 @@ pub(crate) fn profile_show(profile: &v1::Profile) -> ProfileShow {
         variables: profile.variables.clone(),
         exclude_fragments: profile.exclude_fragments.clone(),
         exclude_mcp: profile.exclude_mcp_servers.clone(),
+        select_tags: profile.select_tags.clone(),
+        fragments: profile
+            .fragments
+            .iter()
+            .map(|fragment| FragmentRef {
+                name: library_api::names::short_reference(&fragment.fragment),
+                priority: fragment.priority,
+            })
+            .collect(),
+        hooks: profile
+            .hooks
+            .as_ref()
+            .map(profile_hooks)
+            .unwrap_or_default(),
+        deny_tools: profile.deny_tools.clone(),
         path: profile.path.clone(),
         bundle: library_api::names::short_reference(bundle),
         default: profile.default == Some(true),
         entry: String::new(),
+    }
+}
+
+/// A profile's hooks as the message says them, field for field.
+fn profile_hooks(hooks: &v1::ProfileHooks) -> ProfileHooks {
+    let events = |events: &BTreeMap<String, v1::ProfileHookList>| -> BTreeMap<String, Vec<Hook>> {
+        events
+            .iter()
+            .map(|(event, list)| (event.clone(), list.hooks.iter().map(hook).collect()))
+            .collect()
+    };
+    ProfileHooks {
+        unified: events(&hooks.unified),
+        ext: hooks
+            .ext
+            .iter()
+            .map(|(engine, native)| (engine.clone(), events(&native.events)))
+            .collect(),
+    }
+}
+
+/// One hook as the message says it.
+fn hook(hook: &v1::ProfileHook) -> Hook {
+    Hook {
+        event: hook.event.clone(),
+        name: hook.name.clone(),
+        order: hook.order,
+        tool: hook.tool.clone(),
+        kind: hook.kind.clone(),
+        command: hook.command.clone(),
+        args: hook.args.clone(),
+        prompt: hook.prompt.clone(),
+        timeout: hook.timeout,
+        is_async: hook.is_async,
+        pre_tool_fallback: hook.pre_tool_fallback,
+        tags: hook.tags.clone(),
     }
 }
 
@@ -920,9 +974,43 @@ pub(crate) fn mcp_view(ask: &str, server: &v1::McpServer) -> BundleView {
     )
 }
 
-/// A profile's `bundle view`: its composition, its parents and bundles by
-/// their short references.
+/// A profile's `bundle view`: its composition, its parents, bundles and
+/// fragments by their short references, its fragments and hooks in the
+/// document's shape (a fragment of no priority by its name alone).
 pub(crate) fn profile_view(ask: &str, profile: &v1::Profile) -> BundleView {
+    let shown = profile_show(profile);
+    let fragments: Vec<serde_json::Value> = shown
+        .fragments
+        .iter()
+        .map(|fragment| match fragment.priority {
+            0 => serde_json::json!(fragment.name),
+            priority => serde_json::json!({"name": fragment.name, "priority": priority}),
+        })
+        .collect();
+    let events = |events: &BTreeMap<String, Vec<Hook>>| -> serde_json::Value {
+        events
+            .iter()
+            .map(|(event, list)| {
+                let hooks: Vec<serde_json::Value> =
+                    list.iter().map(crate::text::hook_document).collect();
+                (event.clone(), serde_json::Value::Array(hooks))
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    };
+    let mut hooks = serde_json::Map::new();
+    if !shown.hooks.unified.is_empty() {
+        hooks.insert("unified".to_string(), events(&shown.hooks.unified));
+    }
+    if !shown.hooks.ext.is_empty() {
+        let ext: serde_json::Map<String, serde_json::Value> = shown
+            .hooks
+            .ext
+            .iter()
+            .map(|(engine, native)| (engine.clone(), events(native)))
+            .collect();
+        hooks.insert("ext".to_string(), ext.into());
+    }
     fields_view(
         ask,
         &format!("Profile: {}", id_in(&profile.name, "profiles")),
@@ -937,7 +1025,11 @@ pub(crate) fn profile_view(ask: &str, profile: &v1::Profile) -> BundleView {
                 "exclude_mcp",
                 serde_json::json!(profile.exclude_mcp_servers),
             ),
+            ("deny_tools", serde_json::json!(profile.deny_tools)),
+            ("fragments", serde_json::Value::Array(fragments)),
+            ("hooks", serde_json::Value::Object(hooks)),
             ("parents", serde_json::json!(shorts(&profile.parents))),
+            ("select_tags", serde_json::json!(profile.select_tags)),
             ("tags", serde_json::json!(profile.tags)),
             ("variables", serde_json::json!(profile.variables)),
         ],

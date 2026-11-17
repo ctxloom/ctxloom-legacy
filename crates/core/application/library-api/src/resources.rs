@@ -18,8 +18,8 @@ use library_application::{
     SkillList, SkillShow,
 };
 use library_application::{
-    AgentSettings, AgentShow, AuthSetting, EngineAgent, EngineRow, NotCarried, Requirement,
-    ResolvedAgent,
+    AgentSettings, AgentShow, AuthSetting, EngineAgent, EngineRow, FragmentRef, Hook, NotCarried,
+    ProfileHooks, Requirement, ResolvedAgent,
 };
 
 use crate::names::{bundle_name, bundle_ref, item_name, origin, profile_ref, reference_name};
@@ -711,7 +711,69 @@ pub fn profile_of(parent: &str, name: &str, show: &ProfileShow) -> v1::Profile {
         exclude_fragments: show.exclude_fragments.clone(),
         exclude_mcp_servers: show.exclude_mcp.clone(),
         path: show.path.clone(),
+        select_tags: show.select_tags.clone(),
+        fragments: show
+            .fragments
+            .iter()
+            .map(|fragment| profile_fragment(parent, fragment))
+            .collect(),
+        hooks: profile_hooks(&show.hooks),
+        deny_tools: show.deny_tools.clone(),
         ..<v1::Profile as Default>::default()
+    }
+}
+
+/// A fragment a profile names directly: an item reference by its
+/// resource name, any other text (a bare name) as written (OQ-16).
+pub fn profile_fragment(parent: &str, fragment: &FragmentRef) -> v1::ProfileFragment {
+    v1::ProfileFragment {
+        fragment: reference_name(parent, &fragment.name).unwrap_or_else(|| fragment.name.clone()),
+        priority: fragment.priority,
+    }
+}
+
+/// A profile's hooks, field for field (none when it declares none).
+pub fn profile_hooks(hooks: &ProfileHooks) -> Option<v1::ProfileHooks> {
+    if hooks.unified.is_empty() && hooks.ext.is_empty() {
+        return None;
+    }
+    let events = |events: &BTreeMap<String, Vec<Hook>>| -> BTreeMap<String, v1::ProfileHookList> {
+        events
+            .iter()
+            .map(|(event, hooks)| {
+                let hooks = hooks.iter().map(profile_hook).collect();
+                (event.clone(), v1::ProfileHookList { hooks })
+            })
+            .collect()
+    };
+    Some(v1::ProfileHooks {
+        unified: events(&hooks.unified),
+        ext: hooks
+            .ext
+            .iter()
+            .map(|(engine, native)| {
+                let events = events(native);
+                (engine.clone(), v1::ProfileEngineHooks { events })
+            })
+            .collect(),
+    })
+}
+
+/// One hook, field for field.
+pub fn profile_hook(hook: &Hook) -> v1::ProfileHook {
+    v1::ProfileHook {
+        event: hook.event.clone(),
+        name: hook.name.clone(),
+        order: hook.order,
+        tool: hook.tool.clone(),
+        kind: hook.kind.clone(),
+        command: hook.command.clone(),
+        args: hook.args.clone(),
+        prompt: hook.prompt.clone(),
+        timeout: hook.timeout,
+        is_async: hook.is_async,
+        pre_tool_fallback: hook.pre_tool_fallback,
+        tags: hook.tags.clone(),
     }
 }
 

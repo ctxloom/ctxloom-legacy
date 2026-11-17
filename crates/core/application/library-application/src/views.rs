@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+pub use library::model::Hook;
+pub use library::profile::{FragmentRef, ProfileHooks};
+
 fn no_text(s: &str) -> bool {
     s.is_empty()
 }
@@ -348,6 +351,18 @@ pub struct ProfileShow {
     pub exclude_fragments: Vec<String>,
     #[serde(skip_serializing_if = "no_items")]
     pub exclude_mcp: Vec<String>,
+    /// The fragment tags that select content (step 10a U2, owner ruling
+    /// 2026-11-17, as the four below).
+    #[serde(skip_serializing_if = "no_items")]
+    pub select_tags: Vec<String>,
+    /// The fragments it names directly, as written.
+    #[serde(skip)]
+    pub fragments: Vec<FragmentRef>,
+    /// Its hooks, each read as a hook.
+    #[serde(skip)]
+    pub hooks: ProfileHooks,
+    #[serde(skip_serializing_if = "no_items")]
+    pub deny_tools: Vec<String>,
     #[serde(skip_serializing_if = "no_text")]
     pub path: String,
     #[serde(skip_serializing_if = "no_text")]

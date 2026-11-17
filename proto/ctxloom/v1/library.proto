@@ -2017,9 +2017,80 @@ message Profile {
   optional bool default = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
   string path = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The fragment tags that select content (`select_tags:`), unlike `tags`
+  // (step 10a U2, owner ruling 2026-11-17).
+  repeated string select_tags = 11 [(google.api.field_behavior) = OPTIONAL];
+  // The fragments it names directly (`fragments:`), in the order written.
+  repeated ProfileFragment fragments = 12 [(google.api.field_behavior) = OPTIONAL];
+  // Its lifecycle hooks (`hooks:`), as the library reads them.
+  ProfileHooks hooks = 13 [(google.api.field_behavior) = OPTIONAL];
+  // The tools a session of it is denied (`deny_tools:`).
+  repeated string deny_tools = 14 [(google.api.field_behavior) = OPTIONAL];
   // The resource's etag (AIP-154), what a confirmed write of it names: a
   // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// A fragment a profile names directly (`fragments:`; the library's
+// `FragmentRef`).
+message ProfileFragment {
+  // The Fragment's resource name where the text names an item reference,
+  // else the text as written (a bare fragment name, or one that names no
+  // place, OQ-16).
+  string fragment = 1 [(google.api.field_behavior) = OPTIONAL];
+  // Its priority (`priority:`); 0 when none is written.
+  int64 priority = 2 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// A profile's lifecycle hooks, field for field the library's own
+// (`library::profile::HooksConfig`): neutral events, and an engine's own.
+message ProfileHooks {
+  // Neutral events (`pre_tool`, ...) to their hooks (`hooks.unified`).
+  map<string, ProfileHookList> unified = 1 [(google.api.field_behavior) = OPTIONAL];
+  // An engine's name to its native events' hooks (`hooks.ext`).
+  map<string, ProfileEngineHooks> ext = 2 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One engine's native events to their hooks (`hooks.ext.<engine>`).
+message ProfileEngineHooks {
+  // A native event's name to its hooks.
+  map<string, ProfileHookList> events = 1 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One event's hooks, in the order written.
+message ProfileHookList {
+  // The hooks.
+  repeated ProfileHook hooks = 1 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One hook a profile declares, field for field the library's `Hook`
+// (`library::model::Hook`, as `library::document::hook` reads it).
+message ProfileHook {
+  // The event it is on (its key).
+  string event = 1 [(google.api.field_behavior) = OPTIONAL];
+  // Its name within its event: its index there.
+  string name = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Its place among its event's hooks (`order:`); none when unwritten.
+  optional int64 order = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The tool class it is narrowed to (`tool:`).
+  string tool = 4 [(google.api.field_behavior) = OPTIONAL];
+  // Its kind (`type:`: `command`, `prompt`).
+  string kind = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The program it runs (`command:`).
+  string command = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The program's arguments (`args:`).
+  repeated string args = 7 [(google.api.field_behavior) = OPTIONAL];
+  // The prompt a prompt hook gives (`prompt:`).
+  string prompt = 8 [(google.api.field_behavior) = OPTIONAL];
+  // Its timeout in seconds (`timeout:`); 0 when none is written.
+  int64 timeout = 9 [(google.api.field_behavior) = OPTIONAL];
+  // Whether it runs without being waited for (`async:`).
+  bool is_async = 10 [(google.api.field_behavior) = OPTIONAL];
+  // Whether it falls back to a pre-tool hook where the engine has no
+  // narrower event (`pre_tool_fallback:`).
+  bool pre_tool_fallback = 11 [(google.api.field_behavior) = OPTIONAL];
+  // Its tags (`tags:`).
+  repeated string tags = 12 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `profile show <name>`.

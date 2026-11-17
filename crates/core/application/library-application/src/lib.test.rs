@@ -720,3 +720,33 @@ fn test_the_fake_content_repo_refuses_a_path_that_climbs() {
         .apply("demo", &[Change::Write(Put::file("ok.md", b"fine"))])
         .is_ok());
 }
+
+// step 10a U2 (owner ruling 2026-11-17): `profile show` gives a profile's
+// select_tags, fragments, hooks and deny_tools, as one-item `bundle view`
+// does
+#[test]
+fn test_a_profile_show_gives_its_selecting_tags_fragments_hooks_and_denied_tools() {
+    let full: &[(&str, &str)] = &[
+        ENVELOPE,
+        (
+            "profiles/full.yaml",
+            "select_tags: [go]\nfragments:\n  - plain\n  - name: demo#fragments/pri\n    priority: 3\nhooks:\n  unified:\n    pre_tool:\n      - command: lint\n        type: command\ndeny_tools: [Bash]\n",
+        ),
+    ];
+    let library = Setup {
+        bundles: &[("demo", DEMO), ("project", full)],
+        layers: &[CONFIG],
+        ..Setup::default()
+    }
+    .library();
+    let shown = ok(library.profile_show(&plain(), "full"));
+    assert_eq!(shown.select_tags, ["go"]);
+    let fragments: Vec<(&str, i64)> = shown
+        .fragments
+        .iter()
+        .map(|f| (f.name.as_str(), f.priority))
+        .collect();
+    assert_eq!(fragments, [("plain", 0), ("demo#fragments/pri", 3)]);
+    assert_eq!(shown.hooks.unified["pre_tool"][0].command, "lint");
+    assert_eq!(shown.deny_tools, ["Bash"]);
+}

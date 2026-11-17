@@ -724,7 +724,61 @@ fn profile_shown() -> ProfileShow {
         path: st("/p/dev.yaml"),
         bundle: st("proj"),
         default: true,
+        select_tags: Vec::new(),
+        fragments: Vec::new(),
+        hooks: Default::default(),
+        deny_tools: Vec::new(),
     }
+}
+
+// step 10a U2 (owner ruling 2026-11-17): a profile's fragments, selecting
+// tags, denied tools and hooks print too, each hook on one line in YAML's
+// flow form under its document path, keys sorted
+#[test]
+fn test_a_profile_show_prints_its_fragments_selecting_tags_denied_tools_and_hooks() {
+    use library_application::{FragmentRef, Hook};
+    let mut hooks = library_application::ProfileHooks::default();
+    hooks.unified.insert(
+        st("pre_tool"),
+        vec![Hook {
+            event: st("pre_tool"),
+            name: st("0"),
+            kind: st("command"),
+            command: st("lint"),
+            args: sv(&["--fix"]),
+            timeout: 5,
+            ..Hook::default()
+        }],
+    );
+    hooks.ext.entry(st("claude-code")).or_default().insert(
+        st("Notification"),
+        vec![Hook {
+            command: st("ping"),
+            is_async: true,
+            order: Some(1),
+            ..Hook::default()
+        }],
+    );
+    let full = ProfileShow {
+        select_tags: sv(&["go"]),
+        fragments: vec![
+            FragmentRef {
+                name: st("plain"),
+                priority: 0,
+            },
+            FragmentRef {
+                name: st("demo#fragments/pri"),
+                priority: 3,
+            },
+        ],
+        hooks,
+        deny_tools: sv(&["Bash"]),
+        ..profile_shown()
+    };
+    assert_eq!(
+        shown(|out| profile_show(out, &full)),
+        "Profile: dev\nPath: /p/dev.yaml\nBundle: proj\nDefault: yes\nDescription: Dev\nParents:\n  - base\nBundles:\n  - demo\nFragments:\n  - plain\n  - demo#fragments/pri (priority 3)\nTags:\n  - t\nSelect tags:\n  - go\nVariables:\n  k: v\nExcluded fragments:\n  - f\nExcluded MCP servers:\n  - m\nDenied tools:\n  - Bash\nHooks:\n  unified.pre_tool:\n    - {args: [--fix], command: lint, timeout: 5, type: command}\n  ext.claude-code.Notification:\n    - {async: true, command: ping, order: 1}\n"
+    );
 }
 
 // profile_show.go: every section when it has entries.
