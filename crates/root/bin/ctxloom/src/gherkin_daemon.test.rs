@@ -5817,7 +5817,26 @@ fn none_waiting(w: &mut World, root: String) {
 
 #[then(expr = "an ask is still waiting under {string}")]
 fn still_waiting(w: &mut World, root: String) {
-    assert!(!waiting_asks(w, Some(&root)).is_empty(), "no ask waits");
+    if !waiting_asks(w, Some(&root)).is_empty() {
+        return;
+    }
+    // A short `approval_timeout` (2 s) can run out before this step on a
+    // loaded machine: an ask gone only once its own recorded expiry has
+    // passed left by its time, not by its engine's exit (the scenario's
+    // last step reads it settled `expired`, never `withdrawn`).
+    let listed = w.common.json();
+    let expire = listed["approvals"][0]["expire_time"]
+        .as_str()
+        .map(epoch_seconds)
+        .unwrap_or_else(|| panic!("no ask waits, and none was listed with its expiry: {listed}"));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs();
+    assert!(
+        i64::try_from(now).expect("a time") >= expire,
+        "no ask waits, before its time ran out ({expire}): {listed}"
+    );
 }
 
 /// Seconds since the epoch of an RFC 3339 instant (`2026-11-16T10:00:00Z`,
