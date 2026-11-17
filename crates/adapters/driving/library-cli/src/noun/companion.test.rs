@@ -110,12 +110,27 @@ mod write {
         );
     }
 
-    // loadout_cmd.go (documented condition)
+    /// ctxloom's own loadout document, its structure and none of the
+    /// owner's text (D24, D8).
+    const LOADOUT: &str = "run:\n  version: 1.0.0\n  tags:\n    - core\n    - mcp\n    - isolation\n  author: ctxloom\n  mcp:\n    ctxloom:\n      served_by: session-endpoint\n";
+
+    // loadout_cmd.go (documented condition): the daemon's `GetLoadout`
+    // (step 10a U2), written from its message as the one yaml document,
+    // whatever the output format, json off a terminal too.
     #[test]
     fn test_loadout_is_the_one_yaml_document() {
         let (library, _) = world();
         let said = text(&library, &["loadout"]);
-        assert_eq!(said, library_application::LOADOUT);
+        assert_eq!(said, LOADOUT);
+        let off_a_terminal = run_on(
+            &library,
+            &["loadout"],
+            How {
+                explicit: None,
+                ..TEXT
+            },
+        );
+        assert_eq!(off_a_terminal.out, LOADOUT);
         let ran = run_on(
             &library,
             &["loadout", "--format", "yaml"],
@@ -124,7 +139,7 @@ mod write {
                 ..TEXT
             },
         );
-        assert_eq!(ran.out, library_application::LOADOUT);
+        assert_eq!(ran.out, LOADOUT);
         let ran = run_on(
             &library,
             &["loadout", "--format", "toml"],

@@ -101,6 +101,25 @@ impl Served for ServedBy<'_> {
         })
     }
 
+    /// The daemon's `GetLoadout`, as it answers one under `users/me`.
+    fn own_loadout(
+        &self,
+        request: v1::GetLoadoutRequest,
+    ) -> Result<(v1::Loadout, Vec<v1::Notice>), Failure> {
+        let outcome = library_api::reads::get_loadout(
+            self.library,
+            &library_application::Flags::default(),
+            "users/me",
+            &request,
+        );
+        let notices = outcome
+            .notices
+            .iter()
+            .map(library_api::reads::notice_of)
+            .collect();
+        Ok((outcome.result.map_err(failed)?, notices))
+    }
+
     fn assemble_context(
         &self,
         request: v1::AssembleContextRequest,
@@ -566,6 +585,7 @@ fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
         &["mcp", "server", "list"],
         &["mcp", "server", "show", "x"],
         &["search", "go"],
+        &["loadout"],
         &["run", "--dry-run", "hello"],
     ] {
         assert!(is_served(line), "{line:?} is served");
@@ -578,7 +598,6 @@ fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
         &["companion", "add", "acme"],
         &["config", "edit"],
         &["mcp", "server", "edit", "demo#mcp/x"],
-        &["loadout"],
         &["run", "hello"],
     ] {
         assert!(!is_served(line), "{line:?} runs in process");

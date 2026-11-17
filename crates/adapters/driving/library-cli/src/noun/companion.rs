@@ -1,6 +1,6 @@
 //! `companion`: list, and its writes, each as its API resource or its
 //! method's response (OD-40, design §3.9, §5.7); `loadout` (B2), the one
-//! fixed YAML document, unchanged.
+//! YAML document, written from the daemon's `Loadout` (step 10a U2).
 
 use library_application::{
     CompanionAdded, CompanionRemoved, CompanionState, CompanionStateSet, Removal,
@@ -155,14 +155,30 @@ fn removed(
     }
 }
 
-/// `loadout`: the one fixed YAML document. The value of `--format` is a
-/// document format here, and yaml is the only one there is.
-pub(crate) fn loadout(sub: &ArgMatches, out: &mut dyn Write) -> Result<Exit, Failure> {
+/// `loadout`: the daemon's `GetLoadout` (step 10a U2), written as the one
+/// YAML document. The value of `--format` is a document format here, and
+/// yaml is the only one there is, so the output format is never asked: the
+/// document is the answer, json or text alike.
+pub(crate) fn loadout(
+    cx: &Context<'_>,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
     let asked = given(sub, "format");
     if let Some(format) = asked.filter(|f| f != "yaml") {
         return Err(AppError::from(WriteError::LoadoutFormat { format }).into_failure());
     }
-    out.write_all(LOADOUT.as_bytes())
+    let request = v1::GetLoadoutRequest {
+        globals: cx.globals(),
+        ..v1::GetLoadoutRequest::default()
+    };
+    let (loadout, notices) = cx.served.own_loadout(request)?;
+    let said: Vec<library_application::Notice> =
+        notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    let document = library_application::loadout::document(&crate::read_back::loadout(&loadout));
+    out.write_all(document.as_bytes())
         .map_err(crate::output_failure)?;
     Ok(Exit::OK)
 }

@@ -757,6 +757,25 @@ pub(crate) fn search(found: &v1::SearchLibraryResponse) -> SearchResults {
     }
 }
 
+/// A `Loadout` as ctxloom's own loadout, its `run:` bundle field for
+/// field.
+pub(crate) fn loadout(loadout: &v1::Loadout) -> library_application::loadout::OwnLoadout {
+    let run = loadout.run.clone().unwrap_or_default();
+    library_application::loadout::OwnLoadout {
+        version: run.version,
+        tags: run.tags,
+        author: run.author,
+        mcp: run
+            .mcp_servers
+            .into_iter()
+            .map(|server| library_application::loadout::OwnServer {
+                id: server.id,
+                served_by: server.served_by,
+            })
+            .collect(),
+    }
+}
+
 /// A `config show` as its text: the document as YAML, keys sorted.
 pub(crate) fn config_text(config: &v1::Config) -> String {
     let document = config

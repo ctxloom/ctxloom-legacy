@@ -115,6 +115,7 @@ macro_rules! library_reads {
             list_dependencies (ListDependencies) ListDependenciesRequest.parent => ListDependenciesResponse,
             get_config (GetConfig) GetConfigRequest.name => Config,
             search_library (SearchLibrary) SearchLibraryRequest.parent => SearchLibraryResponse,
+            get_loadout (GetLoadout) GetLoadoutRequest.name => Loadout,
         }
     };
 }

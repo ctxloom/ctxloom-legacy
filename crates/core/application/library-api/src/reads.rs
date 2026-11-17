@@ -73,6 +73,7 @@ macro_rules! served {
             search_library (SearchLibrary) SearchLibraryRequest.parent => SearchLibraryResponse,
             get_config (GetConfig) GetConfigRequest.name => Config,
             get_bundle (GetBundle) GetBundleRequest.name => Bundle,
+            get_loadout (GetLoadout) GetLoadoutRequest.name => Loadout,
         }
     };
 }
@@ -206,6 +207,24 @@ pub fn get_premise_index(
     mapped(library.premises(flags), |premises| {
         resources::premise_index(parent, &premises)
     })
+}
+
+/// `GetLoadout`: ctxloom's own loadout, what it contributes to a session
+/// as its own companion; the same in every project, so nothing of the
+/// library is read.
+pub fn get_loadout(
+    _: &Library,
+    _: &Flags,
+    parent: &str,
+    _: &v1::GetLoadoutRequest,
+) -> Outcome<v1::Loadout> {
+    Outcome {
+        result: Ok(resources::loadout(
+            parent,
+            &library_application::loadout::own(),
+        )),
+        notices: Vec::new(),
+    }
 }
 
 /// `GetSkill`: the skill its name references, its files and their

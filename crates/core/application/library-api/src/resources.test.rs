@@ -209,3 +209,35 @@ fn a_profile_s_message_carries_its_selecting_tags_fragments_hooks_and_denied_too
     let none = super::profile_shown("projects/p", &ProfileShow::default());
     assert_eq!(none.hooks, None, "a profile with no hooks carries none");
 }
+
+#[test]
+fn a_loadout_is_its_run_bundle_field_for_field() {
+    use library_application::loadout::{OwnLoadout, OwnServer};
+    let own = OwnLoadout {
+        version: "2.0.0".into(),
+        tags: vec!["b".into(), "a".into()],
+        author: "someone".into(),
+        mcp: vec![
+            OwnServer {
+                id: "one".into(),
+                served_by: "session-endpoint".into(),
+            },
+            OwnServer {
+                id: "two".into(),
+                served_by: "elsewhere".into(),
+            },
+        ],
+    };
+    let loadout = super::loadout("projects/calm-otter", &own);
+    assert_eq!(loadout.name, "projects/calm-otter/loadout");
+    let run = loadout.run.unwrap();
+    assert_eq!(run.version, "2.0.0");
+    assert_eq!(run.tags, ["b", "a"]);
+    assert_eq!(run.author, "someone");
+    let servers: Vec<(&str, &str)> = run
+        .mcp_servers
+        .iter()
+        .map(|s| (s.id.as_str(), s.served_by.as_str()))
+        .collect();
+    assert_eq!(servers, [("one", "session-endpoint"), ("two", "elsewhere")]);
+}

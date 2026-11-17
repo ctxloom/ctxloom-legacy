@@ -110,7 +110,10 @@ and `config-files`. Files are the truth: a command plans the files, checks the
 tree still reads, then hands the changes to the port; a refused write has
 written nothing. A config write replaces the section it owns whole, never
 heals a file that does not parse. `loadout --format yaml` is the one yaml
-output; its prose is withheld until the owner rules (D24, D8).
+output; its prose is withheld until the owner rules (D24, D8): ctxloom's
+own loadout is data (`library::write::loadout::own`, its `run:` bundle's
+version, tags, author and `mcp` servers, no description, notes or
+fragment), written as the document by `loadout::document`.
 Every item verb takes one reference, `create` too (M3, M7): `fragment|command
 create <bundle>#<kind>s/<name>` (`Library::item_create_at`) opens the editor
 on its template and stores what the editor gives back (an editor that saves
@@ -2703,8 +2706,8 @@ built:
   process naming the list). The home step (G2) is the daemon's, at a read
   (`observe_read`), said as `library-api-notice-home-repository-made`; the
   caller takes none before a served read (`library_cli::is_served_read`,
-  its `SERVED_VERBS` table, `mcp server list|show`, `search` and `run
-  --dry-run`; one path), and a verb still in process takes it in process
+  its `SERVED_VERBS` table, `mcp server list|show`, `search`, `loadout`
+  and `run --dry-run`; one path), and a verb still in process takes it in process
   first.
 - Text prints CANONICAL forms (owner rulings 2026-11-17), as the message
   holds them, never the spelling written (no as-written field crosses the
@@ -2763,8 +2766,25 @@ built:
   printed none of them), and a profile's one-item `bundle view` gives them
   in the document's shape, keys sorted, references short.
 
-Still in process: `loadout` (the service has no `GetLoadout` read yet;
-escalated, a wire change).
+- `GetLoadout` (owner ruling 2026-11-17): `loadout` asks the daemon for
+  ctxloom's own `Loadout`, ALWAYS as `users/me/loadout` (the pattern
+  `projects/{p}/loadout` answers the same): it is the same in every project
+  and a companion probe asks it where there may be no project, git or
+  identity, so the CLI asks it through the wiring's `daemon::home_client`
+  (no project registered, minted or observed; library-cli's
+  `Served::own_loadout`, not a `served_reads!` row) and a bare directory is
+  left as it was; `GetLoadoutRequest{name, env, globals, cwd}` as every
+  library read; the resource its `run:` bundle, `LoadoutBundle{version,
+  tags, author, mcp_servers}`, each server `LoadoutMcpServer{id,
+  served_by}`, field for field `library::write::loadout::OwnLoadout`; no
+  field carries the withheld prose), answered by
+  `library_api::reads::get_loadout` (`resources::loadout`) after the home's
+  observation, as a `users/me` read; the CLI writes
+  the document from the message (`read_back::loadout`, then
+  `library_application::loadout::document`), whatever the output format,
+  after the read's notices. The in-process path (the `LOADOUT` constant
+  printed as it was) is gone; as a served read it needs a daemon. No
+  library read is left in process (U2 done).
 
 ## Storage is angzarr-store-sqlite
 

@@ -892,6 +892,13 @@ pub(crate) fn library_client<'a>(
     Ok(client_for(wiring, stamp, registration))
 }
 
+/// This command's client of the daemon for a read of the home's alone
+/// (`loadout`, step 10a U2): asked under `users/me`, wherever it is run,
+/// so no project is registered, minted or observed for it.
+pub(crate) fn home_client<'a>(wiring: &'a Wiring, stamp: &str) -> daemon_api::Client<Reach<'a>> {
+    client_for(wiring, stamp, None)
+}
+
 /// A client call's answer, or the failure it ends the command in, in its
 /// own class.
 pub(crate) fn answered<T>(

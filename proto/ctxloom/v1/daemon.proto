@@ -487,6 +487,11 @@ service Ctxloom {
   rpc EnableCompanion(EnableCompanionRequest) returns (Companion);
   // `companion disable`: it stays registered and contributes nothing.
   rpc DisableCompanion(DisableCompanionRequest) returns (Companion);
+  // `loadout`: ctxloom's own loadout, what it contributes to a session as
+  // its own companion (owner ruling 2026-11-17, step 10a U2).
+  rpc GetLoadout(GetLoadoutRequest) returns (Loadout) {
+    option (google.api.method_signature) = "name";
+  }
   // (-- endregion --)
 
   // (-- region remotes: `projects/{project}/remotes/{remote}` --)
@@ -554,7 +559,7 @@ service Ctxloom {
   // sequences; its response B4's); InstallManage, UninstallManage, CheckManage;
   // Materialize (T26, its record written first); Clean; RunDoctor;
   // GetAuthStatus; containers (Build and Prune as streaming custom
-  // methods, Scaffold, Check); SearchLibrary; GetLoadout.
+  // methods, Scaffold, Check).
 }
 
 // (-- region shared --)

@@ -57,9 +57,14 @@ pub use library::companion::{program as companion_program, State as CompanionSta
 #[allow(unused_imports)]
 pub use library::config::engines::{AuthSource, Drive, Source, Sourced, APPROVAL_TIMEOUT_DEFAULT};
 pub use library::distill::DistilledState;
-pub use library::write::loadout::DOCUMENT as LOADOUT;
 pub use library::write::mcp::McpPatch;
 pub use library::write::profile::ProfileEdit;
+
+/// ctxloom's own loadout (`GetLoadout`, step 10a U2): the daemon answers
+/// its data, the edge writes it as the loadout document.
+pub mod loadout {
+    pub use library::write::loadout::{document, own, OwnLoadout, OwnServer};
+}
 
 /// The premise index's words and how an assembly is sectioned, for the
 /// edge that renders the index after a context it was held back from (E2).

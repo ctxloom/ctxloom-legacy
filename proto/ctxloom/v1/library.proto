@@ -32,6 +32,7 @@ syntax = "proto3";
 //   ctxloom.dev/Dependency  projects/{project}/dependencies/{dependency}
 //   ctxloom.dev/Config      projects/{project}/config, users/me/config (singletons, AIP-156)
 //   ctxloom.dev/PremiseIndex projects/{project}/premiseIndex (a singleton)
+//   ctxloom.dev/Loadout     projects/{project}/loadout, users/me/loadout (singletons)
 //
 // ORIGIN IS IN THE NAME (OQ-4): a project's bundle and the built-in one are
 // `projects/{p}/bundles/{b}` (a project bundle named `ctxloom` overrides the
@@ -3105,6 +3106,67 @@ message DisableCompanionRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// ctxloom's OWN loadout (Go's `cmd/ctxloom/loadout.yaml`): what ctxloom, as
+// its own companion, contributes to a session, which `ctxloom loadout
+// --format yaml` prints as the loadout document (step 10a U2, owner ruling
+// 2026-11-17). Its prose (the bundle's description, the server's notes, the
+// `isolation-axes` fragment) is the owner's and withheld until the owner
+// rules (D24, D8), so no field carries it.
+message Loadout {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Loadout"
+    pattern: "projects/{project}/loadout"
+    pattern: "users/me/loadout"
+    singular: "loadout"
+    plural: "loadouts"
+  };
+
+  // `users/me/loadout`, as the CLI always asks it (the same in every
+  // project, and asked by a companion probe where there may be no project);
+  // `projects/{project}/loadout` answers the same.
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
+  // The document's `run:` bundle, consumed every session. It declares no
+  // `init:` section.
+  LoadoutBundle run = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// A loadout's `run:` bundle, each key the document declares.
+message LoadoutBundle {
+  // `version`.
+  string version = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // `tags`, in the document's order.
+  repeated string tags = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // `author`.
+  string author = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // `mcp`: each server, sorted by its key.
+  repeated LoadoutMcpServer mcp_servers = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// One server of a loadout's `mcp:` map.
+message LoadoutMcpServer {
+  // Its key in the map (`ctxloom`).
+  string id = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // What serves it (`session-endpoint`: the running session's endpoint, so
+  // nothing is launched).
+  string served_by = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// `loadout`.
+message GetLoadoutRequest {
+  // The Loadout to read, by its resource name.
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Loadout"];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // (-- endregion --)

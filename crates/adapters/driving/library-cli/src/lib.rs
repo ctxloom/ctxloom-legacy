@@ -30,7 +30,7 @@ mod prelude {
     pub(crate) use library_application::{
         AgentRequest, AgentRow, AgentWritten, AppError, BundleEditRequest, DefaultAgent, ItemKind,
         McpEdited, McpPatch, ProfileCreateRequest, ProfileEdit, ProfileEdited, SwapPreview,
-        WriteError, LOADOUT,
+        WriteError,
     };
 
     pub(crate) use crate::write::{
@@ -123,6 +123,16 @@ pub trait Served {
     /// the run's own; a project nothing has named is asked unnamed (a dry
     /// run never mints, owner ruling 2026-11-14).
     fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure>;
+
+    /// `loadout`: `GetLoadout`, always asked as `users/me/loadout`, its
+    /// notices beside it: ctxloom's own loadout is the same in every
+    /// project, and a companion probe asks it where there may be no
+    /// project, no git and no identity, so no project is resolved, named
+    /// or observed for it.
+    fn own_loadout(
+        &self,
+        request: v1::GetLoadoutRequest,
+    ) -> Result<(v1::Loadout, Vec<v1::Notice>), Failure>;
 }
 
 /// The reads this CLI asks the daemon, in the shape of
@@ -285,14 +295,14 @@ pub const SERVED_VERBS: &[(&str, &[&str])] = &[
 
 /// Whether `noun`, given its matches `sub`, is a read the daemon answers
 /// (step 10a U2): a verb of [`SERVED_VERBS`] (a bare noun its default's),
-/// `mcp server list|show`, `search`, and `run --dry-run`.
+/// `mcp server list|show`, `search`, `loadout`, and `run --dry-run`.
 pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
     match noun {
         "mcp" => matches!(
             sub.subcommand(),
             Some(("server", server)) if matches!(verb(server, "list").0, "list" | "show")
         ),
-        "search" => true,
+        "search" | "loadout" => true,
         "run" => cli_support::flag(sub, "dry-run"),
         _ => {
             let default = match noun {
@@ -349,7 +359,7 @@ fn dispatch(
             noun::companion::write(cx, verb(sub, "list"), out, err),
             || noun::companion::read(cx, out, err),
         ),
-        "loadout" => noun::companion::loadout(sub, out),
+        "loadout" => noun::companion::loadout(cx, sub, out, err),
         "search" => noun::search::read(cx, sub, out, err),
         "context" => noun::context::read(cx, verb(sub, "assemble").1, out, err),
         _ => noun::run::read(cx, sub, out, err),

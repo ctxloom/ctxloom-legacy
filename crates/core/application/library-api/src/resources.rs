@@ -964,6 +964,27 @@ pub fn premise_index(parent: &str, premises: &Premises) -> v1::PremiseIndex {
     }
 }
 
+/// `loadout`: ctxloom's own `Loadout` under `parent`, its `run:` bundle
+/// field for field.
+pub fn loadout(parent: &str, own: &library_application::loadout::OwnLoadout) -> v1::Loadout {
+    v1::Loadout {
+        name: format!("{parent}/loadout"),
+        run: Some(v1::LoadoutBundle {
+            version: own.version.clone(),
+            tags: own.tags.clone(),
+            author: own.author.clone(),
+            mcp_servers: own
+                .mcp
+                .iter()
+                .map(|server| v1::LoadoutMcpServer {
+                    id: server.id.clone(),
+                    served_by: server.served_by.clone(),
+                })
+                .collect(),
+        }),
+    }
+}
+
 /// `context assemble` (and the MCP server's `context_assemble`):
 /// `AssembledContext`, its profiles and fragments named under `parent`; one
 /// the catalog does not hold keeps the text it was asked by, as a fragment

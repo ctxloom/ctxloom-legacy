@@ -1,7 +1,7 @@
 use library_application::fakes::{Setup, ENVELOPE};
 use library_application::Flags;
 
-use super::{get_bundle, get_mcp_server, list_agents, list_profiles, list_skills};
+use super::{get_bundle, get_loadout, get_mcp_server, list_agents, list_profiles, list_skills};
 
 const PARENT: &str = "projects/calm-otter";
 
@@ -159,4 +159,41 @@ fn a_bundle_views_item_path_is_refused_as_the_view_refuses_it() {
         matches!(read, Err(library_application::AppError::ViewPath { .. })),
         "{read:?}"
     );
+}
+
+#[test]
+fn the_loadout_is_ctxloom_s_own_answered_under_the_parent() {
+    let read = get_loadout(
+        &library(&[AGENTS]),
+        &Flags::default(),
+        PARENT,
+        &Default::default(),
+    );
+    assert!(read.notices.is_empty());
+    let loadout = read.result.unwrap();
+    assert_eq!(loadout.name, "projects/calm-otter/loadout");
+    let run = loadout.run.expect("its run: bundle");
+    assert_eq!(run.version, "1.0.0");
+    assert_eq!(run.tags, ["core", "mcp", "isolation"]);
+    assert_eq!(run.author, "ctxloom");
+    assert_eq!(
+        run.mcp_servers,
+        [daemon_proto::v1::LoadoutMcpServer {
+            id: "ctxloom".into(),
+            served_by: "session-endpoint".into(),
+        }]
+    );
+}
+
+#[test]
+fn outside_a_project_the_loadout_is_the_home_s() {
+    let loadout = get_loadout(
+        &library(&[]),
+        &Flags::default(),
+        "users/me",
+        &Default::default(),
+    )
+    .result
+    .unwrap();
+    assert_eq!(loadout.name, "users/me/loadout");
 }

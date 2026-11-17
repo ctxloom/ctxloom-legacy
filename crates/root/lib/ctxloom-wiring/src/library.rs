@@ -355,6 +355,17 @@ impl library_cli::Served for DaemonServed {
         let client = crate::daemon::preview_client(&wiring, &self.version)?;
         crate::daemon::answered(client.preview_run(request))
     }
+
+    fn own_loadout(
+        &self,
+        request: daemon_proto::v1::GetLoadoutRequest,
+    ) -> Result<(daemon_proto::v1::Loadout, Vec<daemon_proto::v1::Notice>), Failure> {
+        use daemon_api::LibraryReads;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::home_client(&wiring, &self.version);
+        let read = crate::daemon::answered(client.get_loadout("/loadout", request))?;
+        Ok((read.answer, read.notices))
+    }
 }
 
 /// [`DaemonServed`]'s reads, from `library_cli::served_reads!`: each the
