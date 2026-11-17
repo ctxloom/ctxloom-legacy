@@ -3265,7 +3265,7 @@ ruling 144; required: a missing nextest fails the gate),
 `just lint-os`; `just test-pkg <crate>...` is the quick loop, `just fmt` and
 `just fmt-check` cover this workspace's crates only, `just run` runs the
 binary, `just clean-target` is the only way to drop this checkout's
-`target/` (and `just trim-targets`, below, other worktrees'), and `just
+`target/` (`just trim-targets`, below, sweeps the pool's by age), and `just
 selftest` checks the scripts. Raw `cargo build|test|clippy|fmt|deny|clean|
 run|mutants`, `nextest`, `rustc`, `lefthook run`, `gitleaks`, and any
 `--no-verify` or `LEFTHOOK=`/`SKIP=` skip of the hooks are blocked by ltk
@@ -3278,15 +3278,52 @@ the first 20 diagnostics, survivors capped, each with a `+K more` tail).
 `scripts/output-budget.selftest.sh` holds that budget. Read the log for the
 rest; `VERBOSE=1 just <gate>` shows the full output.
 
-Each worktree keeps its own `target/`. `just trim-targets
-[base] [--dry-run]` (`scripts/trim-targets.sh`) clears the `target/` of
-every worktree whose HEAD is in `base` (default `origin/daemon/integration`)
-that no running process uses (cwd, executable or open file, from `/proc`)
-and that has no tracked change, untracked file or git lock, one line each
-saying what it removed or kept and why, self-tested in `just selftest`
-(`scripts/trim-targets.selftest.sh`). No compiler cache is used, and
-`CARGO_INCREMENTAL` is cargo's default (owner ruling of 2026-11-16, after
-measuring: released sccache cannot share a workspace crate's compile
+Agents work in a POOL of three long-lived worktrees, each with a warm
+`target/` (owner ruling of 2026-11-16): `~/workspace/worktrees/ctxloom--slot-1`
+to `-3` of the user's own home (the justfile's `slot_root`, `slot_prefix`,
+`slot_count`; `CTXLOOM_SLOT_ROOT` replaces the root). Departure from the
+worktree layout rule (`~/workspace/worktrees/<project>--<branch-slug>`): a
+slot holds many branches in turn, so it is named by its number, not a
+branch. `just slot lease <branch> [--from <base>] [--wait <secs>] [--by
+<who>]` (`scripts/slot.sh`) takes the first free, clean slot (one already
+made before one not yet made, which `git worktree add` makes), switches it
+to the branch (made from `<base>` when neither it nor `origin/<branch>`
+exists) and prints its path alone on stdout; with every slot leased it says
+each one's holder and refuses, or with `--wait` retries until the time is
+up. A free slot holding uncommitted work (a crashed holder's) or a detached
+HEAD no ref holds is passed over, and said. The lease is an advisory
+`flock` on `<git common dir>/ctxloom-slots/slot-<n>.lock` held by a holder
+process of its own session that lives exactly as long as the lease's OWNER
+(the first ancestor not a shell or `just`: an agent's Claude Code process;
+`--holder <pid>` names another), checked by pid and start time, so a
+crashed agent's slot frees itself; `slot-<n>.lease` beside it says who,
+which branch and since when. Limit: subagents of one Claude Code process
+share its pid, so one of them that crashes keeps its lease until the
+process ends or it is released. `just slot release [<slot>]` (default: the
+slot `just` was run from) refuses a slot holding a tracked change or an
+untracked file, or whose HEAD is in no remote-tracking ref (unless
+`--allow-unpushed`), then detaches its HEAD (the branch is free for any
+checkout; files and `target/` stay warm), lets the lease go and sweeps the
+slot's `target/` (`--no-sweep` skips it). `just slot list` says each slot:
+leased (by whom, branch, since), free (where, clean or DIRTY, the last
+lease) or absent. A switch rebuilds only the crates the branch changed. The
+gates' own trees (the staged tree, the ratchet base, the mutants batch)
+keep their own target directories. `just trim-targets [--dry-run] [--days
+<n>] [<checkout>...]` (`scripts/trim-targets.sh`; no checkout: the slots)
+sweeps BY AGE what no build has used for `<n>` days (default 2): every unit
+whose fingerprint no build has read for that long, with its artifacts, by
+the released cargo-sweep pinned at `cargo_sweep_version` (0.8.0, `cargo
+install --locked cargo-sweep@0.8.0`; another version fails, naming the
+install line), and every rustc incremental directory not written for that
+long. A unit goes with its fingerprint, so cargo just rebuilds it. "Used"
+is the access time cargo's fingerprint read renews, about daily on a
+`relatime` mount (/home's); a `noatime` mount fails and removes nothing. A
+checkout whose cargo holds a `.cargo-lock` is kept, and said. Both are
+self-tested in `just selftest` (`scripts/slot.selftest.sh`,
+`scripts/trim-targets.selftest.sh`, which builds a fixture workspace and
+needs cargo-sweep; CI's Linux job installs it). No compiler cache is used,
+and `CARGO_INCREMENTAL` is cargo's default (owner ruling of 2026-11-16,
+after measuring: released sccache cannot share a workspace crate's compile
 between worktree paths).
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each

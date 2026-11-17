@@ -66,7 +66,7 @@ jobs:
       # outside the checkout, which rust-toolchain.toml does not reach.
       - uses: ctxloom/ci/.github/actions/setup-rust@fa01764571615bd3174313e84631bdd5c13a02e6 # main 2026-11-12
         with:
-          tools: just@1.40.0,cargo-nextest@0.9.146,cargo-deny@0.20.2
+          tools: just@1.40.0,cargo-nextest@0.9.146,cargo-deny@0.20.2,cargo-sweep@0.8.0
           targets: x86_64-pc-windows-gnu
       - uses: ctxloom/ci/.github/actions/setup-protoc@fa01764571615bd3174313e84631bdd5c13a02e6 # main 2026-11-12
       - uses: ctxloom/ci/.github/actions/setup-versionator@fa01764571615bd3174313e84631bdd5c13a02e6 # main 2026-11-12

@@ -69,6 +69,19 @@ mutants_swap_max := env("MUTANTS_SWAP_MAX", "2G")
 tests_memory_max := env("TESTS_MEMORY_MAX", "16G")
 tests_swap_max := env("TESTS_SWAP_MAX", "2G")
 
+# The worktree pool (owner ruling of 2026-11-16; scripts/slot.sh): slot_count
+# long-lived checkouts, slot_root/slot_prefix<n>, each with a warm target/,
+# leased one at a time. slot_root is ~/workspace/worktrees of the user's own
+# home, from the password database, not $HOME (an agent in a ctxloom session
+# runs with HOME its session home, ruling 112); CTXLOOM_SLOT_ROOT replaces
+# it. The sweep of their target/ (scripts/trim-targets.sh) is the released
+# cargo-sweep pinned at cargo_sweep_version (`cargo install --locked
+# cargo-sweep@0.8.0`); any other version fails it.
+slot_root := env("CTXLOOM_SLOT_ROOT", shell('eval "echo ~$(id -un)"') / "workspace/worktrees")
+slot_prefix := "ctxloom--slot-"
+slot_count := "3"
+cargo_sweep_version := "0.8.0"
+
 mutation_thresholds := "crates/core/domain=90 crates/core/read-model=90 crates/core/ports=90 crates/core/application=90 crates/adapters=90 crates/root/lib=0 crates/root/bin=0"
 
 # Staged paths outside any crate that can change what every crate builds or
@@ -537,21 +550,36 @@ ratchet-base base:
 clean-target:
     rm -rf {{TOP}}/target
 
-# Clear the target/ of every worktree of this repository that has landed
-# (its HEAD in `base`), that no running process uses, and that holds no
-# tracked change, untracked file or git lock (owner ruling of 2026-11-16):
-# scripts/trim-targets.sh, one line per worktree saying what it removed or
-# kept and why. Only target/ goes; a worktree that holds work is never
-# touched. `--dry-run` says the same and removes nothing.
+# The worktree pool (scripts/slot.sh, owner ruling of 2026-11-16): `slot
+# lease <branch> [--from <base>]` takes a free, clean slot, switches it to
+# the branch (made from <base> when new) and prints its path; `slot release
+# [<slot>]` (default: the slot `just` was run from) refuses while it holds
+# uncommitted or unpushed work (`--allow-unpushed`), detaches its HEAD, lets
+# the lease go and sweeps its target/; `slot list` says each slot's state.
+# The lease is a flock held for its owner's life, so a crashed agent's slot
+# frees itself.
 [group('setup')]
-[doc("Clear target/ of every landed, idle, clean worktree: trim-targets [base] [--dry-run]")]
+[doc("The worktree pool: slot lease <branch> [--from <base>] [--wait <secs>] [--by <who>] [--holder <pid>] | slot release [<slot>] [--allow-unpushed] [--no-sweep] | slot list")]
 [no-exit-message]
-trim-targets base="origin/daemon/integration" dry="":
-    @{{TOP}}/scripts/trim-targets.sh {{dry}} '{{base}}'
+[positional-arguments]
+slot *args:
+    @SLOT_ROOT='{{slot_root}}' SLOT_PREFIX='{{slot_prefix}}' SLOT_COUNT='{{slot_count}}' TRIM_SWEEP_VERSION='{{cargo_sweep_version}}' SLOT_FROM='{{invocation_directory()}}' {{TOP}}/scripts/slot.sh "$@"
+
+# Sweep the pool's target/ directories (or the checkouts given) of build
+# artifacts no build has used for --days (default 2), by age, with the
+# pinned cargo-sweep (scripts/trim-targets.sh): a removed unit goes with its
+# fingerprint, so cargo rebuilds it when next wanted. `--dry-run` says what
+# it would free and removes nothing.
+[group('setup')]
+[doc("Sweep the pool's target/ of artifacts unused for days: trim-targets [--dry-run] [--days <n>] [<checkout>...]")]
+[no-exit-message]
+[positional-arguments]
+trim-targets *args:
+    @SLOT_ROOT='{{slot_root}}' SLOT_PREFIX='{{slot_prefix}}' SLOT_COUNT='{{slot_count}}' TRIM_SWEEP_VERSION='{{cargo_sweep_version}}' {{TOP}}/scripts/trim-targets.sh "$@"
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown, trim-targets")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown, slot pool, trim-targets")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -574,7 +602,8 @@ selftest:
     @{{TOP}}/scripts/release-package.selftest.sh
     @{{TOP}}/scripts/mcp-env-probe.selftest.sh
     @{{TOP}}/scripts/install-shutdown.selftest.sh
-    @{{TOP}}/scripts/trim-targets.selftest.sh
+    @{{TOP}}/scripts/slot.selftest.sh
+    @TRIM_SWEEP_VERSION='{{cargo_sweep_version}}' {{TOP}}/scripts/trim-targets.selftest.sh
 
 # Run the ctxloom binary (cargo run, quiet) with the given arguments.
 [group('dev')]
