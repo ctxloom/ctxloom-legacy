@@ -820,3 +820,65 @@ async fn the_user_has_no_session_to_ask_as() {
     assert!(caller.create_approval("Bash", "{}", "t").await.is_err());
     assert!(seen.lock().unwrap().asked.is_empty());
 }
+
+// A settled ask's refusal is read back as the ask and how it was settled;
+// any other error is none.
+#[test]
+fn a_settled_refusal_is_read_back_as_its_ask_and_how() {
+    let expired = v1::Approval {
+        name: "projects/p/approvals/ask-a-b".to_string(),
+        state: "expired".to_string(),
+        ..v1::Approval::default()
+    };
+    let refused = settled_refusal(&expired).expect("a settled refusal");
+    assert_eq!(
+        settled_of(&refused),
+        Some(("ask-a-b".to_string(), "expired".to_string()))
+    );
+    let other = CallError::Refused(Rejection::Approvals(ApprovalsRejection::ApprovalUnknown {
+        ask_id: "ask-a-b".to_string(),
+    }));
+    assert_eq!(settled_of(&other), None);
+}
+
+// The client's approvals reads, as session-cli reaches them
+// (`ApprovalAnswers`): each asks the daemon.
+#[tokio::test]
+async fn the_answers_port_reads_through_the_daemon() {
+    let (caller, seen) = user();
+    ApprovalAnswers::list_approvals(&caller, None)
+        .await
+        .unwrap();
+    let got = ApprovalAnswers::approval(&caller, "ask-tidy-wren")
+        .await
+        .unwrap();
+    assert_eq!(
+        got.name,
+        "projects/calm-quiet-heron/approvals/ask-tidy-wren"
+    );
+    let asked = seen.lock().unwrap().asked.clone();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert!(asked[0].starts_with("list "), "{asked:?}");
+    assert!(asked[1].starts_with("get "), "{asked:?}");
+}
+
+// A stream's pages read from its start are a book whose next sequence
+// follows its last page; none, the next is 0.
+#[test]
+fn a_streams_pages_are_a_book_whose_next_follows_the_last() {
+    let cover = Cover {
+        domain: "approvals".to_string(),
+        root: None,
+        edition: None,
+    };
+    let page = |sequence| angzarr_embedded::v1::EventPage {
+        sequence,
+        ..angzarr_embedded::v1::EventPage::default()
+    };
+    assert_eq!(
+        book_of(&cover, vec![page(0), page(1), page(2)]).next_sequence,
+        3
+    );
+    assert_eq!(book_of(&cover, vec![page(0)]).next_sequence, 1);
+    assert_eq!(book_of(&cover, Vec::new()).next_sequence, 0);
+}

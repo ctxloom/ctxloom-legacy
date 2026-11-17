@@ -193,6 +193,69 @@ impl Calls for Scripted {
         })
     }
 
+    fn get_trust(&self, request: v1::GetTrustRequest) -> Answer<'_, v1::Trust> {
+        Box::pin(async move {
+            Ok(v1::Trust {
+                name: request.name,
+                ..v1::Trust::default()
+            })
+        })
+    }
+
+    fn list_trusts(&self, _: v1::ListTrustsRequest) -> Answer<'_, v1::ListTrustsResponse> {
+        Box::pin(async {
+            Ok(v1::ListTrustsResponse {
+                trusts: vec![v1::Trust {
+                    name: "projects/calm-otter/trust".to_string(),
+                    ..v1::Trust::default()
+                }],
+                ..v1::ListTrustsResponse::default()
+            })
+        })
+    }
+
+    fn create_approval(&self, request: v1::CreateApprovalRequest) -> Answer<'_, v1::Approval> {
+        Box::pin(async move {
+            Ok(v1::Approval {
+                name: format!("created/{}", request.engine_request_id),
+                ..v1::Approval::default()
+            })
+        })
+    }
+
+    fn get_approval(&self, request: v1::GetApprovalRequest) -> Answer<'_, v1::Approval> {
+        Box::pin(async move {
+            Ok(v1::Approval {
+                name: format!("got/{}", request.name),
+                ..v1::Approval::default()
+            })
+        })
+    }
+
+    fn list_approvals(
+        &self,
+        request: v1::ListApprovalsRequest,
+    ) -> Answer<'_, v1::ListApprovalsResponse> {
+        Box::pin(async move {
+            Ok(v1::ListApprovalsResponse {
+                approvals: vec![v1::Approval {
+                    name: format!("listed/{}", request.root),
+                    ..v1::Approval::default()
+                }],
+                ..v1::ListApprovalsResponse::default()
+            })
+        })
+    }
+
+    fn wait_approval(&self, request: v1::WaitApprovalRequest) -> Answer<'_, v1::Approval> {
+        Box::pin(async move {
+            Ok(v1::Approval {
+                name: format!("waited/{}", request.name),
+                ..v1::Approval::default()
+            })
+        })
+    }
+
     fn sweep_sessions(&self, _: v1::SweepSessionsRequest) -> Answer<'_, v1::SweepSessionsResponse> {
         Box::pin(async {
             Ok(v1::SweepSessionsResponse {
@@ -863,4 +926,74 @@ fn an_error_that_is_no_refusal_is_answered_through_the_infrastructure_root() {
         Infrastructure::Unimplemented.status()
     );
     assert_eq!(unserved.message(), "CreateRun is not served yet");
+}
+
+// Step 8: the trust and approvals RPCs are served, each its use case's
+// answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn the_trust_and_approvals_rpcs_are_served() {
+    let mut client = CtxloomClient::new(serve(Arc::default()).await);
+    let trust = client
+        .get_trust(with_bearer(
+            v1::GetTrustRequest {
+                name: "projects/calm-otter/trust".to_string(),
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(trust.name, "projects/calm-otter/trust");
+    let trusts = client
+        .list_trusts(with_bearer(v1::ListTrustsRequest::default(), BEARER))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(trusts.trusts.len(), 1, "{trusts:?}");
+    let created = client
+        .create_approval(with_bearer(
+            v1::CreateApprovalRequest {
+                engine_request_id: "toolu_1".to_string(),
+                ..v1::CreateApprovalRequest::default()
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(created.name, "created/toolu_1");
+    let got = client
+        .get_approval(with_bearer(
+            v1::GetApprovalRequest {
+                name: "ask-tidy-wren".to_string(),
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(got.name, "got/ask-tidy-wren");
+    let listed = client
+        .list_approvals(with_bearer(
+            v1::ListApprovalsRequest {
+                root: "amber-quiet-heron".to_string(),
+                ..v1::ListApprovalsRequest::default()
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(listed.approvals[0].name, "listed/amber-quiet-heron");
+    let waited = client
+        .wait_approval(with_bearer(
+            v1::WaitApprovalRequest {
+                name: "ask-tidy-wren".to_string(),
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(waited.name, "waited/ask-tidy-wren");
 }

@@ -2873,3 +2873,62 @@ async fn a_child_whose_projects_output_folder_cannot_be_read_is_not_launched() {
         "{said}"
     );
 }
+
+// Step 8 U4: a hosted child asks as the agent it was launched for (its
+// hand-off's), on the engine it is hosted on.
+#[tokio::test]
+async fn a_hosted_child_asks_as_the_agent_its_hand_off_names() {
+    let files = Files::default();
+    let plans = ForAgent::default();
+    let world = hosting_from(&files, &plans).await;
+    let askers = world.daemon.askers();
+    let [asker] = askers.as_slice() else {
+        panic!("one asker: {askers:?}");
+    };
+    assert_eq!(asker.session, CHILD);
+    assert_eq!(asker.engine, ENGINE);
+    assert_eq!(asker.agent, "reviewer");
+}
+
+/// A plan of the child that settles the agent `dev`.
+struct DevPlans;
+
+impl ChildPlans for DevPlans {
+    fn output_root(
+        &self,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        Plans.output_root(project_dir, env)
+    }
+
+    fn preview(
+        &self,
+        engine: &str,
+        agent: &str,
+        project_dir: &str,
+        env: &BTreeMap<String, String>,
+        trusted: bool,
+    ) -> Result<Previewed, String> {
+        let mut previewed = Plans.preview(engine, agent, project_dir, env, trusted)?;
+        previewed.plan.agent = "dev".to_string();
+        Ok(previewed)
+    }
+
+    fn git_user(&self, _: &str, _: &BTreeMap<String, String>) -> Option<run_ports::GitUser> {
+        None
+    }
+}
+
+// With no agent handed, a hosted child asks as the agent its plan settled.
+#[tokio::test]
+async fn a_hosted_child_with_no_handed_agent_asks_as_its_plans() {
+    let mut world = World::new(Box::new(DevPlans));
+    world.name_project().await;
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    let askers = world.daemon.askers();
+    assert_eq!(askers.len(), 1, "{askers:?}");
+    assert_eq!(askers[0].agent, "dev");
+}

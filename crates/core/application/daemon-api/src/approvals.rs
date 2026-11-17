@@ -88,6 +88,21 @@ pub fn settled_of(error: &CallError) -> Option<(String, String)> {
     }
 }
 
+/// The stream `cover` as the book of its `pages`, read from its start: its
+/// next sequence the one after the last page's.
+fn book_of(
+    cover: &Cover,
+    pages: Vec<angzarr_embedded::v1::EventPage>,
+) -> angzarr_embedded::v1::EventBook {
+    let next = pages.last().map_or(0, |page| page.sequence + 1);
+    angzarr_embedded::v1::EventBook {
+        cover: Some(cover.clone()),
+        pages,
+        next_sequence: next,
+        snapshot: None,
+    }
+}
+
 /// The ask an approval's name ends with.
 pub fn ask_of(approval: &v1::Approval) -> &str {
     approval.name.rsplit('/').next().unwrap_or_default()
@@ -236,13 +251,7 @@ impl<E: Edge> Api<E> {
             .events(cover, 0)
             .await
             .map_err(ApiError::failed)?;
-        let next = pages.last().map_or(0, |page| page.sequence + 1);
-        let book = angzarr_embedded::v1::EventBook {
-            cover: Some(cover.clone()),
-            pages,
-            next_sequence: next,
-            snapshot: None,
-        };
+        let book = book_of(cover, pages);
         let mut folded = pending_approvals::ApprovalIndex::new();
         folded.project(&book).map_err(ApiError::failed)?;
         let uid = cover

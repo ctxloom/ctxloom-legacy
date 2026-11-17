@@ -510,3 +510,19 @@ fn a_stale_plan_a_client_is_answered_reads_as_the_trust_domains_rejection() {
 fn cli_exit(error: &CallError) -> u8 {
     exit_code::ExitClass::exit(error).code(true)
 }
+
+// The client's trust reads, as session-cli reaches them (`TrustWrites`):
+// each asks the daemon.
+#[tokio::test]
+async fn the_trust_writes_port_reads_through_the_daemon() {
+    let (caller, seen) = user(false, true, vec!["e"]);
+    assert_eq!(
+        super::TrustWrites::get_trust(&caller).await.unwrap().name,
+        NAME
+    );
+    super::TrustWrites::list_trusts(&caller).await.unwrap();
+    assert_eq!(
+        seen.lock().unwrap().asked,
+        [format!("1:trust {NAME}"), "2:list".to_string()]
+    );
+}

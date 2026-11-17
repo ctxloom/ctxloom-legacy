@@ -66,6 +66,8 @@ pub trait Hosting: Send + Sync {
     /// What the session `session` (its stable id), which it hosts, asks
     /// with (step 8 U4): its run, engine, agent and `approval_timeout`, as
     /// of the last round; none for a session it does not host.
+    // Equivalent: its one mutant (`None`) is this default body.
+    #[cfg_attr(test, mutants::skip)]
     fn asker(&self, session: &str) -> Option<daemon_application::Asker> {
         let _ = session;
         None

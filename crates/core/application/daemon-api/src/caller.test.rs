@@ -1003,3 +1003,41 @@ async fn a_wait_retried_on_a_new_daemon_ends_when_the_first_would_have() {
         ]
     );
 }
+
+// Step 8 Q1: a `project` that resolves to the owner's own project is the
+// same project: its trust is unread, as with no project named.
+#[tokio::test]
+async fn a_launch_into_its_owners_own_project_is_the_same_project() {
+    let world = World::new();
+    let caller = world.user(false).resolving(Arc::new(|_: &str| {
+        Ok(v1::ResolveProjectRequest {
+            cwd: "/work/app".to_string(),
+            project_id: "calm-otter".to_string(),
+            root: "/work/app".to_string(),
+            ..v1::ResolveProjectRequest::default()
+        })
+    }));
+    caller
+        .launch(&super::Launch {
+            owner: Some("amber-quiet-heron".to_string()),
+            harp: Some("brisk-copper-moth".to_string()),
+            project: Some(".".to_string()),
+            ..super::Launch::default()
+        })
+        .await
+        .unwrap();
+    let asked = world.asked();
+    assert!(
+        !asked.iter().any(|a| a.contains(":trust ")),
+        "its trust is unread: {asked:?}"
+    );
+    let commands = world.commands();
+    let [launched] = commands.as_slice() else {
+        panic!("one launch: {commands:?}");
+    };
+    let launched = wire::LaunchChild::decode(launched.value.as_slice()).unwrap();
+    assert_eq!(launched.child_project_id, "calm-otter");
+    let trust = launched.trust.expect("a trust");
+    assert!(trust.same_project);
+    assert!(!trust.trusted);
+}

@@ -56,6 +56,10 @@ fn the_daemons_own_refusals_are_told_in_its_words() {
             Any::from_msg(&v1::RunNotFound::default()).unwrap(),
             "daemon-api-run-not-found",
         ),
+        (
+            Any::from_msg(&v1::SessionNotHosted::default()).unwrap(),
+            "daemon-api-session-not-hosted",
+        ),
     ] {
         assert_eq!(code_of(&refusal), code);
     }
