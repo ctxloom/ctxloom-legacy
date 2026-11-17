@@ -1,12 +1,11 @@
 //! `skill`: list and show, and its writes (B1), each json answer its AIP
 //! resource or method response (OD-40, design §5.3).
 
-use library_application::{
-    Removal, SkillCreated, SkillExported, SkillImported, SkillRemoved, SkillShow,
-};
+use library_application::{Removal, SkillCreated, SkillExported, SkillImported, SkillRemoved};
 
 use crate::catalog::{self, ok};
-use library_api::resources::{count, skill_name, skills};
+use crate::read_back;
+use library_api::resources::{count, skill_name};
 
 use crate::prelude::*;
 
@@ -16,59 +15,43 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
+    // Each the daemon's read (step 10a U2), its text from the message (D10).
     if verb == "show" {
-        let outcome = cx.library.skill_show(&cx.flags, &text_arg(sub, "ref"));
-        return catalog::answer(
-            cx,
-            outcome,
-            out,
-            err,
-            false,
-            shown,
-            |show, out, notes| {
-                let mut said = text::Notes(Vec::new());
-                let written = text::skill_show(out, &mut said, show);
-                notes.extend(said.0);
-                written
-            },
-            ok,
-        );
+        let under = library_api::names::reference_target(&text_arg(sub, "ref"));
+        let request = v1::GetSkillRequest {
+            globals: cx.globals(),
+            ..v1::GetSkillRequest::default()
+        };
+        let read = cx.served.get_skill(&under, request);
+        return served(cx, read, out, err, false, |skill, out, notes| {
+            let mut said = text::Notes(Vec::new());
+            let written = text::skill_show(out, &mut said, &read_back::skill_show(skill));
+            notes.extend(said.0);
+            written
+        });
     }
-    let outcome = cx.library.skill_list(&cx.flags, &text_arg(sub, "bundle"));
-    catalog::answer(
-        cx,
-        outcome,
-        out,
-        err,
-        false,
-        skills,
-        |list, out, _| text::skill_list(out, list),
-        ok,
-    )
-}
-
-/// `skill show`: the `Skill` (FULL), each file's executability its
-/// sidecar's.
-pub(crate) fn shown(parent: &str, show: &SkillShow) -> v1::Skill {
-    v1::Skill {
-        name: skill_name(parent, &show.bundle, &show.name),
-        description: show.description.clone(),
-        license: show.license.clone(),
-        compatibility: show.compatibility.clone(),
-        allowed_tools: show.allowed_tools.clone(),
-        body: show.body.clone(),
-        file_count: count(show.files.len() as u64),
-        files: show
-            .files
-            .iter()
-            .map(|file| v1::SkillFile {
-                path: file.path.clone(),
-                sha256: file.sha256.clone(),
-                executable: file.mode == "0755",
-            })
-            .collect(),
-        ..v1::Skill::default()
-    }
+    let bundle = text_arg(sub, "bundle");
+    let request = || v1::ListSkillsRequest {
+        globals: cx.globals(),
+        ..v1::ListSkillsRequest::default()
+    };
+    let under = match bundle.as_str() {
+        "" => String::new(),
+        bundle => library_api::names::bundle_target(bundle),
+    };
+    let read = cx.served.list_skills(&under, request());
+    served(cx, read, out, err, false, |listed, out, _| {
+        // A bundle that holds none: how many the others hold.
+        let total = match (bundle.as_str(), listed.skills.len()) {
+            ("", n) => n,
+            (_, 0) => cx
+                .served
+                .list_skills("", request())
+                .map_or(0, |(every, _)| every.skills.len()),
+            (_, n) => n,
+        };
+        text::skill_list(out, &read_back::skill_list(listed, &bundle, total))
+    })
 }
 
 pub(crate) fn write(

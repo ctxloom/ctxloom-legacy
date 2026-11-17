@@ -5,7 +5,10 @@
 //! the view the use case answered in process.
 
 use daemon_proto::v1;
-use library_application::{DistilledState, ItemList, ItemRow, ItemShow, PremiseRow, Premises};
+use library_application::{
+    DistilledState, ItemList, ItemRow, ItemShow, PremiseRow, Premises, SkillFileRow, SkillList,
+    SkillRow, SkillShow,
+};
 
 /// The parent a resource name is under: its first two segments,
 /// `projects/{p}` or `users/me`.
@@ -105,6 +108,66 @@ pub(crate) fn premises(index: &v1::PremiseIndex) -> Premises {
                 name: library_api::names::reference_under(parent, &entry.fragment)
                     .unwrap_or_else(|| entry.fragment.clone()),
                 premise: entry.premise.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// A skill's bundle and its own name, as its resource name says them.
+fn skill_parts(name: &str) -> (String, String) {
+    let parent = parent_of(name);
+    let reference =
+        library_api::names::reference_under(parent, name).unwrap_or_else(|| name.to_string());
+    reference_parts(&reference)
+}
+
+/// A `skill list` as its view: each skill below its bundle, filtered to
+/// `bundle_filter`, the catalog holding `total` of every bundle.
+pub(crate) fn skill_list(
+    listed: &v1::ListSkillsResponse,
+    bundle_filter: &str,
+    total: usize,
+) -> SkillList {
+    let rows = listed
+        .skills
+        .iter()
+        .map(|skill| {
+            let (bundle, id) = skill_parts(&skill.name);
+            SkillRow {
+                name: format!("{bundle}/{id}"),
+                display_name: skill.display_name.clone(),
+                description: skill.description.clone(),
+                tags: skill.tags.clone(),
+                source: bundle,
+                file_count: u64::from(skill.file_count),
+            }
+        })
+        .collect();
+    SkillList {
+        rows,
+        bundle_filter: bundle_filter.to_string(),
+        total,
+    }
+}
+
+/// A `skill show` as its view, each file's mode its executability.
+pub(crate) fn skill_show(skill: &v1::Skill) -> SkillShow {
+    let (bundle, name) = skill_parts(&skill.name);
+    SkillShow {
+        name,
+        bundle,
+        description: skill.description.clone(),
+        license: skill.license.clone(),
+        compatibility: skill.compatibility.clone(),
+        allowed_tools: skill.allowed_tools.clone(),
+        body: skill.body.clone(),
+        files: skill
+            .files
+            .iter()
+            .map(|file| SkillFileRow {
+                path: file.path.clone(),
+                sha256: file.sha256.clone(),
+                mode: if file.executable { "0755" } else { "0644" }.to_string(),
             })
             .collect(),
     }

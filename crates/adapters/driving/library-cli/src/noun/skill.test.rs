@@ -135,7 +135,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{Preview, SkillFileRow, SkillRow};
+    use library_application::{Preview, SkillFileRow, SkillRow, SkillShow};
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -167,7 +167,7 @@ mod mapping {
             total: 1,
         };
         assert_eq!(
-            json_of(&skills(PARENT, &list)),
+            json_of(&library_api::resources::skills(PARENT, &list)),
             json!({"skills": [{
                 "name": "projects/p/bundles/demo/skills/reviewer",
                 "description": "Reviews",
@@ -195,7 +195,7 @@ mod mapping {
             files: vec![file("SKILL.md", "0644"), file("run.sh", "0755")],
         };
         assert_eq!(
-            json_of(&shown(PARENT, &show)),
+            json_of(&library_api::resources::skill(PARENT, &show)),
             json!({
                 "name": "projects/p/bundles/demo/skills/reviewer",
                 "description": "Reviews",

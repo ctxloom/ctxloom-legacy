@@ -54,6 +54,7 @@ macro_rules! served {
             get_fragment (GetFragment) GetFragmentRequest.name => Fragment,
             get_command (GetCommand) GetCommandRequest.name => Command,
             get_premise_index (GetPremiseIndex) GetPremiseIndexRequest.name => PremiseIndex,
+            get_skill (GetSkill) GetSkillRequest.name => Skill,
         }
     };
 }
@@ -189,6 +190,20 @@ pub fn get_premise_index(
 ) -> Outcome<v1::PremiseIndex> {
     mapped(library.premises(flags), |premises| {
         resources::premise_index(parent, &premises)
+    })
+}
+
+/// `GetSkill`: the skill its name references, its files and their
+/// executability.
+pub fn get_skill(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::GetSkillRequest,
+) -> Outcome<v1::Skill> {
+    let reference = reference_of(parent, &request.name);
+    mapped(library.skill_show(flags, &reference), |show| {
+        resources::skill(parent, &show)
     })
 }
 

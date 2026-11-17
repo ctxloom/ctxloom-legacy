@@ -69,3 +69,54 @@ fn a_premise_index_reads_back_each_fragment_by_its_reference() {
     assert_eq!(premises.fragments[0].name, "demo#fragments/rules");
     assert_eq!(premises.fragments[0].premise, "when testing");
 }
+
+#[test]
+fn a_skill_listing_reads_back_each_skill_below_its_bundle() {
+    let listed = v1::ListSkillsResponse {
+        skills: vec![v1::Skill {
+            name: "users/me/remotes/acme/bundles/kit/skills/review".to_string(),
+            display_name: "reviewer".to_string(),
+            description: "Reviews".to_string(),
+            tags: vec!["t".to_string()],
+            file_count: 2,
+            ..v1::Skill::default()
+        }],
+        next_page_token: String::new(),
+    };
+    let list = skill_list(&listed, "acme/kit", 5);
+    assert_eq!(list.rows[0].name, "acme/kit/review");
+    assert_eq!(list.rows[0].source, "acme/kit");
+    assert_eq!(list.rows[0].display_name, "reviewer");
+    assert_eq!(list.rows[0].file_count, 2);
+    assert_eq!(list.bundle_filter, "acme/kit");
+    assert_eq!(list.total, 5);
+}
+
+#[test]
+fn a_shown_skill_reads_back_each_files_mode_from_its_executability() {
+    let skill = v1::Skill {
+        name: "projects/p/bundles/demo/skills/review".to_string(),
+        body: "BODY".to_string(),
+        files: vec![
+            v1::SkillFile {
+                path: "SKILL.md".to_string(),
+                sha256: "ab".to_string(),
+                executable: false,
+            },
+            v1::SkillFile {
+                path: "run.sh".to_string(),
+                sha256: "cd".to_string(),
+                executable: true,
+            },
+        ],
+        ..v1::Skill::default()
+    };
+    let show = skill_show(&skill);
+    assert_eq!(
+        (show.bundle.as_str(), show.name.as_str()),
+        ("demo", "review")
+    );
+    assert_eq!(show.body, "BODY");
+    assert_eq!(show.files[0].mode, "0644");
+    assert_eq!(show.files[1].mode, "0755");
+}

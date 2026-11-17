@@ -13,7 +13,7 @@ use daemon_proto::google::protobuf::{value::Kind, ListValue, Struct, Value};
 use daemon_proto::v1;
 use library_application::{
     AgentRow, Assembled, BundleList, BundleRow, DistilledState, ItemList, ItemShow, Located,
-    Premises, ProfileList, ProfileRow, SkillList,
+    Premises, ProfileList, ProfileRow, SkillList, SkillShow,
 };
 
 use crate::names::{bundle_name, bundle_ref, item_name, origin, profile_ref, reference_name};
@@ -231,6 +231,30 @@ pub fn skills(parent: &str, list: &SkillList) -> v1::ListSkillsResponse {
             })
             .collect(),
         next_page_token: String::new(),
+    }
+}
+
+/// `skill show`: the `Skill` (FULL), each file's executability its
+/// sidecar's.
+pub fn skill(parent: &str, show: &SkillShow) -> v1::Skill {
+    v1::Skill {
+        name: skill_name(parent, &show.bundle, &show.name),
+        description: show.description.clone(),
+        license: show.license.clone(),
+        compatibility: show.compatibility.clone(),
+        allowed_tools: show.allowed_tools.clone(),
+        body: show.body.clone(),
+        file_count: count(show.files.len() as u64),
+        files: show
+            .files
+            .iter()
+            .map(|file| v1::SkillFile {
+                path: file.path.clone(),
+                sha256: file.sha256.clone(),
+                executable: file.mode == "0755",
+            })
+            .collect(),
+        ..v1::Skill::default()
     }
 }
 

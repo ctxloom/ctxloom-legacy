@@ -136,6 +136,8 @@ macro_rules! served_reads {
             get_fragment (GetFragment) GetFragmentRequest.name => Fragment,
             get_command (GetCommand) GetCommandRequest.name => Command,
             get_premise_index (GetPremiseIndex) GetPremiseIndexRequest.name => PremiseIndex,
+            list_skills (ListSkills) ListSkillsRequest.parent => ListSkillsResponse,
+            get_skill (GetSkill) GetSkillRequest.name => Skill,
         }
     };
 }
