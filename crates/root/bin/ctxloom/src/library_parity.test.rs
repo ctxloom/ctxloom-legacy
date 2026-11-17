@@ -156,10 +156,12 @@ fn as_ruled(id: &str, golden: String) -> String {
     }
 }
 
-/// The rows whose text prints canonical forms (owner ruling 2026-11-17):
-/// a profile's bundle and parents, its bundles, an MCP server's bundle and
-/// a dry run's profiles are their resource names (`projects/{HARP}/...`), never the text written.
-/// profile.tsv and mcp.tsv mark them.
+/// The rows whose text prints canonical forms (owner ruling 2026-11-17,
+/// corrected the same day): a profile's bundle and parents, its bundles,
+/// an MCP server's bundle and a dry run's profiles are their SHORT library
+/// references (`demo`, `project#profiles/dev`), harp-free, as a person
+/// types them, never the text written. profile.tsv, mcp.tsv and run.tsv
+/// mark them.
 const CANONICAL_ROWS: [&str; 9] = [
     "run-dry-dev-text",
     "gold-run-dry-auto-text",
@@ -172,25 +174,22 @@ const CANONICAL_ROWS: [&str; 9] = [
     "gold-profile-show-curated-text",
 ];
 
-/// The parent every resource name of a row is printed under, the
-/// project's harp unsaid.
-const HARPLESS: &str = "projects/{HARP}";
-
-/// A bundle's resource name, as Go's text names it (`ctxloom+local:<b>`
-/// or bare).
-fn bundle_resource(text: &str) -> String {
-    let bundle = text.strip_prefix("ctxloom+local:").unwrap_or(text);
-    format!("{HARPLESS}/bundles/{bundle}")
+/// A bundle's short reference, as Go's text names it (`ctxloom+local:<b>`
+/// or bare): its catalog name.
+fn bundle_short(text: &str) -> String {
+    text.strip_prefix("ctxloom+local:")
+        .unwrap_or(text)
+        .to_string()
 }
 
-/// A profile's resource name, as Go's text names a parent (a project
-/// profile's bare name).
-fn profile_resource(text: &str) -> String {
-    format!("{HARPLESS}/bundles/project/profiles/{text}")
+/// A profile's short reference, as Go's text names a parent (a project
+/// profile's bare name): `project#profiles/<name>`.
+fn profile_short(text: &str) -> String {
+    format!("project#profiles/{text}")
 }
 
 /// Go's golden for a [`CANONICAL_ROWS`] row, its references as their
-/// resource names: `Bundle:` and `from bundle:` the bundle's, `parents:`
+/// short references: `Bundle:` and `from bundle:` the bundle's, `parents:`
 /// and a `Parents:` item a profile's, a `Bundles:` item a bundle's.
 fn as_canonical(id: &str, golden: String) -> String {
     if !CANONICAL_ROWS.contains(&id) {
@@ -203,16 +202,16 @@ fn as_canonical(id: &str, golden: String) -> String {
             let trimmed = line.trim_start();
             let indent = &line[..line.len() - trimmed.len()];
             if let Some(bundle) = trimmed.strip_prefix("Bundle: ") {
-                return format!("{indent}Bundle: {}", bundle_resource(bundle));
+                return format!("{indent}Bundle: {}", bundle_short(bundle));
             }
             if trimmed.starts_with("from bundle: ") {
                 let parts: Vec<String> = trimmed
                     .split(", ")
                     .map(|part| {
                         if let Some(b) = part.strip_prefix("from bundle: ") {
-                            format!("from bundle: {}", bundle_resource(b))
+                            format!("from bundle: {}", bundle_short(b))
                         } else if let Some(p) = part.strip_prefix("parents: ") {
-                            format!("parents: {}", profile_resource(p))
+                            format!("parents: {}", profile_short(p))
                         } else {
                             part.to_string()
                         }
@@ -230,7 +229,7 @@ fn as_canonical(id: &str, golden: String) -> String {
             }
             if section == "profiles" {
                 if let Some(p) = line.strip_prefix("  ") {
-                    return format!("  {}", profile_resource(p));
+                    return format!("  {}", profile_short(p));
                 }
                 return line.to_string();
             }
@@ -243,35 +242,13 @@ fn as_canonical(id: &str, golden: String) -> String {
                 return line.to_string();
             }
             match (section, line.strip_prefix("  - ")) {
-                ("parents", Some(p)) => format!("  - {}", profile_resource(p)),
-                ("bundles", Some(b)) => format!("  - {}", bundle_resource(b)),
+                ("parents", Some(p)) => format!("  - {}", profile_short(p)),
+                ("bundles", Some(b)) => format!("  - {}", bundle_short(b)),
                 _ => line.to_string(),
             }
         })
         .collect();
     lines.join("\n")
-}
-
-/// `text` with every `projects/<harp>` its resource names begin with as
-/// [`HARPLESS`].
-fn unharped(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(at) = rest.find("projects/") {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + "projects/".len()..];
-        let harp = after
-            .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
-            .unwrap_or(after.len());
-        if harp > 0 && after[harp..].starts_with('/') {
-            out.push_str(HARPLESS);
-        } else {
-            out.push_str(&rest[at..at + "projects/".len() + harp]);
-        }
-        rest = &after[harp..];
-    }
-    out.push_str(rest);
-    out
 }
 
 /// Go's golden as this build words it where the owner changed it: the schema
@@ -545,11 +522,6 @@ fn mismatch(row: &Row, project: &Project) -> Option<String> {
         return None;
     }
     let got = project.normalized(&ran.stdout);
-    let got = if CANONICAL_ROWS.contains(&row.id.as_str()) {
-        unharped(&got)
-    } else {
-        got
-    };
     if want.trim().is_empty() {
         return (!got.trim().is_empty()).then(|| format!("stdout should be empty: {got:?}"));
     }

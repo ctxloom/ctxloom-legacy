@@ -241,3 +241,51 @@ fn a_named_resource_text_reads_back_as_typed() {
         None
     );
 }
+
+#[test]
+fn test_a_resource_name_reads_as_its_short_reference() {
+    // Owner ruling 2026-11-17 (U2): text prints the short, harp-free
+    // reference a person types; json keeps the resource name.
+    for (name, short) in [
+        ("projects/able-baker/bundles/demo", "demo"),
+        ("users/me/bundles/demo", "demo"),
+        (
+            "projects/able-baker/remotes/vendor/bundles/kit",
+            "vendor/kit",
+        ),
+        (
+            "projects/able-baker/companions/tl/bundles/loadout",
+            "ctxloom+companion:tl",
+        ),
+        (
+            "projects/able-baker/bundles/project/profiles/dev",
+            "project#profiles/dev",
+        ),
+        (
+            "projects/able-baker/remotes/vendor/bundles/kit/profiles/reach",
+            "vendor/kit#profiles/reach",
+        ),
+        (
+            "projects/able-baker/bundles/demo/fragments/style",
+            "demo#fragments/style",
+        ),
+        (
+            "projects/able-baker/bundles/demo/commands/review",
+            "demo#commands/review",
+        ),
+        (
+            "projects/able-baker/bundles/demo/mcpServers/tree-sitter",
+            "demo#mcp/tree-sitter",
+        ),
+        ("projects/able-baker/bundles/demo/skills/s", "demo#skills/s"),
+        // A reference that names no place keeps its text (OQ-16).
+        ("https://example.com/x.git", "https://example.com/x.git"),
+        ("dev", "dev"),
+        (
+            "projects/able-baker/engines/claude-code",
+            "projects/able-baker/engines/claude-code",
+        ),
+    ] {
+        assert_eq!(super::short_reference(name), short, "{name}");
+    }
+}

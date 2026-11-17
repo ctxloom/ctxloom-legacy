@@ -322,8 +322,8 @@ fn test_a_parent_profiles_content_is_inherited_and_detaching_the_parent_takes_it
         let shown = with_flags(&project, &["profile", "show", "dev"], flags);
         shown.succeeds();
         if is_text(flags) {
-            // A reference is its resource name (owner ruling 2026-11-17).
-            shown.contains("/bundles/project/profiles/base\n");
+            // A reference is its short form (owner ruling 2026-11-17).
+            shown.contains("- project#profiles/base\n");
         } else {
             assert!(
                 reports_as(&shown.json(), "parents.0").ends_with("/bundles/project/profiles/base")
@@ -648,8 +648,8 @@ fn test_export_remove_and_re_import_a_profile() {
         let shown = with_flags(&project, &["profile", "show", "dev"], flags);
         if is_text(flags) {
             listed.contains("dev");
-            // A reference is its resource name (owner ruling 2026-11-17).
-            shown.contains("/bundles/demo\n");
+            // A reference is its short form (owner ruling 2026-11-17).
+            shown.contains("- demo\n");
         } else {
             assert!(reports_as(&listed.json(), "profiles.0.name")
                 .ends_with("/bundles/project/profiles/dev"));

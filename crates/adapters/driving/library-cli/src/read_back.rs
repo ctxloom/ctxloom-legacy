@@ -106,17 +106,25 @@ pub(crate) fn item_show(reference: &str, body: &str, distilled: bool, state: i32
     }
 }
 
+/// The short references (owner ruling 2026-11-17, step 10a U2) the
+/// resource names a message lists stand for, each as
+/// [`short_reference`](library_api::names::short_reference) reads it.
+fn shorts(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| library_api::names::short_reference(name))
+        .collect()
+}
+
 /// `fragment premises` as its view, each fragment by its reference.
 pub(crate) fn premises(index: &v1::PremiseIndex) -> Premises {
-    let parent = parent_of(&index.name);
     Premises {
         instruction: index.instruction.clone(),
         fragments: index
             .fragments
             .iter()
             .map(|entry| PremiseRow {
-                name: library_api::names::reference_under(parent, &entry.fragment)
-                    .unwrap_or_else(|| entry.fragment.clone()),
+                name: library_api::names::short_reference(&entry.fragment),
                 premise: entry.premise.clone(),
             })
             .collect(),
@@ -214,7 +222,7 @@ fn profile_parts(name: &str) -> (&str, &str) {
 /// The name a person types to reach a profile, read back from its resource
 /// name: a project profile's bare id, a project bundle's
 /// `ctxloom+local:<bundle>#profiles/<id>`, else (a remote's, a companion's)
-/// the resource name itself, its canonical form (owner ruling 2026-11-17).
+/// its short reference (owner ruling 2026-11-17).
 pub(crate) fn profile_ask(name: &str) -> String {
     let parent = parent_of(name);
     let (bundle, id) = profile_parts(name);
@@ -225,12 +233,12 @@ pub(crate) fn profile_ask(name: &str) -> String {
     if !catalog.contains(['/', ':']) && catalog != bundle {
         return format!("ctxloom+local:{catalog}#profiles/{id}");
     }
-    name.to_string()
+    library_api::names::short_reference(name)
 }
 
 /// A `profile list` as its view: each profile by the name a person types,
-/// its bundle, parents and bundles by their resource names (text prints
-/// canonical forms, owner ruling 2026-11-17).
+/// its bundle, parents and bundles by their short references (text prints
+/// canonical forms, the short reference; owner ruling 2026-11-17).
 pub(crate) fn profile_list(listed: &v1::ListProfilesResponse, in_project: bool) -> ProfileList {
     let rows = listed
         .profiles
@@ -241,13 +249,13 @@ pub(crate) fn profile_list(listed: &v1::ListProfilesResponse, in_project: bool) 
                 name: profile_ask(&profile.name),
                 display_name: id.to_string(),
                 description: profile.description.clone(),
-                parents: profile.parents.clone(),
+                parents: shorts(&profile.parents),
                 tags: profile.tags.clone(),
-                bundles: profile.bundles.clone(),
+                bundles: shorts(&profile.bundles),
                 default: profile.default == Some(true),
                 path: profile.path.clone(),
                 is_remote: false,
-                bundle: bundle.to_string(),
+                bundle: library_api::names::short_reference(bundle),
                 entry: String::new(),
             }
         })
@@ -269,14 +277,14 @@ pub(crate) fn profile_show(profile: &v1::Profile) -> ProfileShow {
     ProfileShow {
         name: profile_ask(&profile.name),
         description: profile.description.clone(),
-        parents: profile.parents.clone(),
+        parents: shorts(&profile.parents),
         tags: profile.tags.clone(),
-        bundles: profile.bundles.clone(),
+        bundles: shorts(&profile.bundles),
         variables: profile.variables.clone(),
         exclude_fragments: profile.exclude_fragments.clone(),
         exclude_mcp: profile.exclude_mcp_servers.clone(),
         path: profile.path.clone(),
-        bundle: bundle.to_string(),
+        bundle: library_api::names::short_reference(bundle),
         default: profile.default == Some(true),
         entry: String::new(),
     }
@@ -359,7 +367,7 @@ fn id_in<'a>(name: &'a str, collection: &str) -> &'a str {
 }
 
 /// An agent's binding as its row: its engine by its id, its profiles by
-/// their resource names (canonical forms, owner ruling 2026-11-17), each
+/// their short references (owner ruling 2026-11-17), each
 /// engine block on one line in YAML's flow form, keys sorted.
 pub(crate) fn agent_row(agent: &v1::Agent) -> AgentRow {
     let engine_lines = agent
@@ -386,7 +394,7 @@ pub(crate) fn agent_row(agent: &v1::Agent) -> AgentRow {
     AgentRow {
         name: id_in(&agent.name, "agents").to_string(),
         engine: id_in(&agent.engine, "engines").to_string(),
-        profiles: agent.profiles.clone(),
+        profiles: shorts(&agent.profiles),
         runtime: agent.runtime.clone(),
         driving: agent.driving.clone(),
         env: agent.env.clone(),
@@ -493,7 +501,7 @@ pub(crate) fn agent_show(agent: &v1::Agent) -> AgentShow {
     AgentShow {
         resolved: agent.resolved.as_ref().map(|resolved| ResolvedAgent {
             name: definition.name.clone(),
-            profiles: resolved.profiles.clone(),
+            profiles: shorts(&resolved.profiles),
             engine: id_in(&resolved.engine, "engines").to_string(),
             settings: settings_of(
                 resolved.model.as_ref(),
@@ -599,12 +607,12 @@ pub(crate) fn engine_rows(listed: &v1::ListEnginesResponse) -> Vec<EngineRow> {
     listed.engines.iter().map(engine_row).collect()
 }
 
-/// A server's own ID and its bundle's resource name, as its resource name
-/// (`<bundle>/mcpServers/<id>`) says them: the bundle printed so, its
-/// canonical form (owner ruling 2026-11-17).
+/// A server's own ID and its bundle's short reference, as its resource
+/// name (`<bundle>/mcpServers/<id>`) says them (owner ruling 2026-11-17:
+/// text prints the short reference).
 fn server_parts(name: &str) -> (String, String) {
     let (bundle, id) = name.rsplit_once("/mcpServers/").unwrap_or(("", name));
-    (id.to_string(), bundle.to_string())
+    (id.to_string(), library_api::names::short_reference(bundle))
 }
 
 /// An `mcp server list` as its view.
@@ -847,9 +855,9 @@ pub(crate) fn findings(run: &v1::Run) -> Vec<library_application::FindingRow> {
 }
 
 /// A `run --dry-run`'s `Run` as the plan its text is drawn from: its agent
-/// and engine by their IDs, its profiles as the message names them (their
-/// resource names, a canonical form, owner ruling 2026-11-17; configured
-/// text in a project nothing has named), the workspace axis and runtime it
+/// and engine by their IDs, its profiles by their short references (owner
+/// ruling 2026-11-17; configured text in a project nothing has named), the
+/// workspace axis and runtime it
 /// settles on, and the agent's settings with the agent they are of.
 pub(crate) fn dry_run(run: &v1::Run) -> library_application::DryRun {
     library_application::DryRun {
@@ -857,7 +865,7 @@ pub(crate) fn dry_run(run: &v1::Run) -> library_application::DryRun {
         workspace: run.workspace.clone(),
         runtime: run.runtime.clone(),
         engine: id_in(&run.engine, "engines").to_string(),
-        profiles: run.profiles.clone(),
+        profiles: shorts(&run.profiles),
         fragments: run.fragments.clone(),
         context: run.context.clone(),
         tokens: u64::from(run.tokens),

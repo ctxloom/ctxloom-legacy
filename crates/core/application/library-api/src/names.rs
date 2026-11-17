@@ -130,6 +130,44 @@ pub fn bundle_ref(parent: &str, text: &str) -> String {
     bundle_name(parent, text)
 }
 
+/// The kind directory a reference names an item of in `collection` ([`collection`]
+/// read back): `mcpServers` is `mcp`, the rest their own word.
+fn kind_dir(collection: &str) -> Option<&'static str> {
+    Some(match collection {
+        "fragments" => "fragments",
+        "commands" => "commands",
+        "skills" => "skills",
+        "mcpServers" => "mcp",
+        "profiles" => "profiles",
+        _ => return None,
+    })
+}
+
+/// The short library reference a resource name stands for (owner ruling
+/// 2026-11-17, step 10a U2): harp-free, as a person types it on the
+/// command line and text prints it: a bundle by its catalog name (`demo`,
+/// `<r>/<b>`, a companion's loadout by its companion), an item as
+/// `<bundle>#<kind>/<id>` (`project#profiles/dev`, `demo#mcp/x`). A name
+/// of any other shape (configured text that names no place, OQ-16; an
+/// engine, an agent) is its text.
+pub fn short_reference(name: &str) -> String {
+    let parent = match name.match_indices('/').nth(1) {
+        Some((offset, _)) => &name[..offset],
+        None => return name.to_string(),
+    };
+    let Some((bundle, rest)) = split_bundle(parent, name) else {
+        return name.to_string();
+    };
+    match rest.as_slice() {
+        [] => bundle,
+        [collection, id] => match kind_dir(collection) {
+            Some(dir) => format!("{bundle}#{dir}/{id}"),
+            None => name.to_string(),
+        },
+        _ => name.to_string(),
+    }
+}
+
 /// What a read's target says after its parent (step 10a U2): the bundle a
 /// command names, by its text as typed, so the daemon reads it back
 /// exactly ([`bundle_under`]): `/bundles/<b>`, `/remotes/<r>/bundles/<b>`

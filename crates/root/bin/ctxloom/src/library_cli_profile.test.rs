@@ -51,8 +51,8 @@ fn test_showing_a_profile_reads_its_composition_back() {
         let ran = run_with_flags(&project, &["profile", "show", "dev"], flags);
         ran.succeeds();
         if is_text(flags) {
-            // A reference is its resource name (owner ruling 2026-11-17).
-            ran.contains("Profile: dev").contains("/bundles/demo\n");
+            // A reference is its short form (owner ruling 2026-11-17).
+            ran.contains("Profile: dev").contains("- demo\n");
         } else {
             let doc = ran.json();
             assert!(
@@ -103,8 +103,8 @@ fn test_a_profile_show_names_its_parent() {
         let ran = run_with_flags(&project, &["profile", "show", "dev"], flags);
         ran.succeeds();
         if is_text(flags) {
-            // A reference is its resource name (owner ruling 2026-11-17).
-            ran.contains("/bundles/project/profiles/base\n");
+            // A reference is its short form (owner ruling 2026-11-17).
+            ran.contains("- project#profiles/base\n");
         } else {
             assert!(
                 reports_as(&ran.json(), "parents.0").ends_with("/bundles/project/profiles/base")
