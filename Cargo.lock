@@ -77,7 +77,7 @@ dependencies = [
 [[package]]
 name = "angzarr-build"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-build?rev=7547415ec7265c7c3c04d7d4c6903cd6b6da7fd0#7547415ec7265c7c3c04d7d4c6903cd6b6da7fd0"
+source = "git+https://github.com/angzarr-io/angzarr-build?rev=bd02654fa044b5c988821baec330753b8d61088a#bd02654fa044b5c988821baec330753b8d61088a"
 dependencies = [
  "angzarr-codegen",
  "angzarr-diagnostic",
@@ -88,7 +88,7 @@ dependencies = [
 [[package]]
 name = "angzarr-codegen"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-build?rev=7547415ec7265c7c3c04d7d4c6903cd6b6da7fd0#7547415ec7265c7c3c04d7d4c6903cd6b6da7fd0"
+source = "git+https://github.com/angzarr-io/angzarr-build?rev=bd02654fa044b5c988821baec330753b8d61088a#bd02654fa044b5c988821baec330753b8d61088a"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded-host-config",
@@ -152,7 +152,7 @@ source = "git+https://github.com/angzarr-io/angzarr?rev=f6fed5e53c1d17bf7d7c23c9
 [[package]]
 name = "angzarr-embedded"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=94f630a38f5fc79657fb09bbc73f7def27d31335#94f630a38f5fc79657fb09bbc73f7def27d31335"
+source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=5cee822bf063a6e070545d14c0ec0caf387022f3#5cee822bf063a6e070545d14c0ec0caf387022f3"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-ports",
@@ -166,7 +166,7 @@ dependencies = [
 [[package]]
 name = "angzarr-embedded-host"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=94f630a38f5fc79657fb09bbc73f7def27d31335#94f630a38f5fc79657fb09bbc73f7def27d31335"
+source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=5cee822bf063a6e070545d14c0ec0caf387022f3#5cee822bf063a6e070545d14c0ec0caf387022f3"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
@@ -191,7 +191,7 @@ dependencies = [
 [[package]]
 name = "angzarr-embedded-host-config"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=94f630a38f5fc79657fb09bbc73f7def27d31335#94f630a38f5fc79657fb09bbc73f7def27d31335"
+source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=5cee822bf063a6e070545d14c0ec0caf387022f3#5cee822bf063a6e070545d14c0ec0caf387022f3"
 dependencies = [
  "angzarr-yaml",
  "serde",
@@ -200,7 +200,7 @@ dependencies = [
 [[package]]
 name = "angzarr-embedded-macros"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=94f630a38f5fc79657fb09bbc73f7def27d31335#94f630a38f5fc79657fb09bbc73f7def27d31335"
+source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=5cee822bf063a6e070545d14c0ec0caf387022f3#5cee822bf063a6e070545d14c0ec0caf387022f3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -210,7 +210,7 @@ dependencies = [
 [[package]]
 name = "angzarr-embedded-runner"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=94f630a38f5fc79657fb09bbc73f7def27d31335#94f630a38f5fc79657fb09bbc73f7def27d31335"
+source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=5cee822bf063a6e070545d14c0ec0caf387022f3#5cee822bf063a6e070545d14c0ec0caf387022f3"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
@@ -324,7 +324,7 @@ dependencies = [
 [[package]]
 name = "angzarr-store-sqlite"
 version = "0.1.0"
-source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=94f630a38f5fc79657fb09bbc73f7def27d31335#94f630a38f5fc79657fb09bbc73f7def27d31335"
+source = "git+https://github.com/angzarr-io/angzarr-embedded?rev=5cee822bf063a6e070545d14c0ec0caf387022f3#5cee822bf063a6e070545d14c0ec0caf387022f3"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-ports",
@@ -676,7 +676,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "cli-support"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-presentation",
@@ -1554,7 +1554,7 @@ checksum = "669a445ee724c5c69b1b06fe0b63e70a1c84bc9bb7d9696cd4f4e3ec45050408"
 [[package]]
 name = "duration-text"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 dependencies = [
  "angzarr-diagnostic",
 ]
@@ -1687,7 +1687,7 @@ dependencies = [
 [[package]]
 name = "exit-code"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 
 [[package]]
 name = "fact-spool"
@@ -1745,7 +1745,7 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 [[package]]
 name = "fixture-program"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 dependencies = [
  "file-system",
  "os",
@@ -2103,7 +2103,7 @@ dependencies = [
 [[package]]
 name = "harp-names"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
+source = "git+https://github.com/ctxloom/taskloom?rev=546c54ad7b28ae64d3cba1442ef3c8e362a43e5e#546c54ad7b28ae64d3cba1442ef3c8e362a43e5e"
 dependencies = [
  "harp-core",
  "ports",
@@ -3411,7 +3411,7 @@ dependencies = [
 [[package]]
 name = "ports"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
+source = "git+https://github.com/ctxloom/taskloom?rev=546c54ad7b28ae64d3cba1442ef3c8e362a43e5e#546c54ad7b28ae64d3cba1442ef3c8e362a43e5e"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-ports",
@@ -3476,7 +3476,7 @@ dependencies = [
 [[package]]
 name = "process-env"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 dependencies = [
  "os",
 ]
@@ -3495,7 +3495,7 @@ dependencies = [
 [[package]]
 name = "project-dir"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 dependencies = [
  "angzarr-diagnostic",
  "file-system",
@@ -3504,7 +3504,7 @@ dependencies = [
 [[package]]
 name = "project-registry"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
+source = "git+https://github.com/ctxloom/taskloom?rev=546c54ad7b28ae64d3cba1442ef3c8e362a43e5e#546c54ad7b28ae64d3cba1442ef3c8e362a43e5e"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-yaml",
@@ -3949,7 +3949,7 @@ dependencies = [
 [[package]]
 name = "run-within"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 dependencies = [
  "angzarr-diagnostic",
  "file-system",
@@ -4708,7 +4708,7 @@ dependencies = [
 [[package]]
 name = "sqlite-store-opener"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/ctxloom-lib?rev=c909e9257e9d126d7828a47cecee03b8fedfe9f5#c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+source = "git+https://github.com/ctxloom/ctxloom-lib?rev=ac62305012e332066adeea7bd49e8b6a6ea561af#ac62305012e332066adeea7bd49e8b6a6ea561af"
 dependencies = [
  "angzarr-diagnostic",
  "angzarr-embedded",
@@ -5076,7 +5076,7 @@ dependencies = [
 [[package]]
 name = "system"
 version = "0.1.0"
-source = "git+https://github.com/ctxloom/taskloom?rev=2db3ddf78d50126a84661a1c17e2411540039387#2db3ddf78d50126a84661a1c17e2411540039387"
+source = "git+https://github.com/ctxloom/taskloom?rev=546c54ad7b28ae64d3cba1442ef3c8e362a43e5e#546c54ad7b28ae64d3cba1442ef3c8e362a43e5e"
 dependencies = [
  "ports",
  "prost-types",
