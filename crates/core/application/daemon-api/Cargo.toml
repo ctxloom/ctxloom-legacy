@@ -21,6 +21,11 @@ isolation-application.workspace = true
 # A library read's observation first (step 10a U2): the reconcile, the
 # checkouts it reconciles against, and the library domain's refusals.
 library-api.workspace = true
+# The premise index's words, rendered at a driving edge from the data an
+# assembly answers (E2).
+library.workspace = true
+# The library's use cases a read is answered by (step 10a U2).
+library-application.workspace = true
 library-checkout.workspace = true
 library-tree.workspace = true
 pending-messages.workspace = true
@@ -49,9 +54,11 @@ sessions-proto.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# A config that does not parse, as a refusal's cause (E5's tests).
+angzarr-yaml.workspace = true
 # A read's git, as a test stands it in (step 10a U2).
 ctxloom-ports.workspace = true
-library-application.workspace = true
+library-application = { workspace = true, features = ["test-support"] }
 angzarr-embedded = { workspace = true, features = ["test-support"] }
 mutants.workspace = true
 run-ports = { workspace = true, features = ["test-support"] }

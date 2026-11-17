@@ -51,6 +51,7 @@ use angzarr_diagnostic::Diagnostic;
 use angzarr_presentation::{Catalog, Format};
 use clap::ArgMatches;
 use cli_support::{one, say_notices};
+use daemon_proto::v1;
 use library_application::{AppError, Flags, ItemKind, Library, Notice};
 use serde::Serialize;
 
@@ -99,10 +100,26 @@ pub trait Names {
     }
 }
 
+/// The library reads the daemon answers (step 10a U2; D10: the CLI is the
+/// request and the render): each read's message, and the notices it said
+/// (the daemon's `NOTICE_METADATA`), or why it was not answered.
+pub trait Served {
+    /// Whether this command is in a project (else its reads are the
+    /// home's, `users/me`).
+    fn in_project(&self) -> bool;
+
+    /// `bundle list`: `ListBundles`.
+    fn list_bundles(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<(v1::ListBundlesResponse, Vec<v1::Notice>), Failure>;
+}
+
 /// Everything a command needs to answer.
 pub(crate) struct Context<'a> {
     library: &'a Library,
     names: &'a dyn Names,
+    served: &'a dyn Served,
     flags: Flags,
     format: Format,
     explicit: bool,
@@ -110,9 +127,11 @@ pub(crate) struct Context<'a> {
 }
 
 /// Run `noun` (given the matches of the whole line).
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     library: &Library,
     names: &dyn Names,
+    served: &dyn Served,
     noun: &str,
     call: &Call<'_>,
     catalog: &Catalog,
@@ -133,6 +152,7 @@ pub fn run(
     let cx = Context {
         library,
         names,
+        served,
         flags,
         format,
         explicit: call.explicit_format.is_some(),

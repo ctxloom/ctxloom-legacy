@@ -9,13 +9,18 @@
 //! - [`locate::refusal`]: a project's library outside git or ignored.
 //! - [`Observations`]: the two, recorded through the daemon's edge.
 //! - [`names`]: the library's resource names, the one naming every answer
-//!   gives.
+//!   gives;
+//! - [`resources`]: a library view as its API message, the one mapping;
+//! - [`reads`]: the reads the daemon serves, each over the library opened
+//!   for it.
 
 mod locate;
 pub mod names;
 mod notice;
 mod observe;
+pub mod reads;
 pub mod reconcile;
+pub mod resources;
 
 pub use locate::refusal;
 #[cfg(any(test, feature = "test-support"))]

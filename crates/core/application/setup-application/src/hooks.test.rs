@@ -283,3 +283,59 @@ fn test_the_decoded_event_rides_every_answer_kind() {
         assert!(answer.event.is_some(), "{native}");
     }
 }
+
+// O3 (owner 2026-11-17): the hooks read the library through the daemon
+// alone; one that did not answer in time leaves the engine's answer well
+// formed and empty of the library, with no read in process.
+struct NoDaemon;
+
+impl crate::HookLibrary for NoDaemon {
+    fn agents_and_profiles(&self) -> Option<(bool, bool)> {
+        None
+    }
+    fn skills(&self) -> Option<Vec<crate::HookSkill>> {
+        None
+    }
+}
+
+#[test]
+fn test_with_no_daemon_in_time_the_hooks_say_nothing_of_the_library() {
+    let w = crate::fakes::world("schema_version: 8\n");
+    let setup = w.setup.with_hook_library(Box::new(NoDaemon));
+    assert_eq!(
+        setup.session_start("claude-code", "{}").unwrap(),
+        "context=;notice=\n"
+    );
+    assert_eq!(
+        setup
+            .skill_mates("claude-code", r#"{"skill":"admit"}"#)
+            .unwrap(),
+        "context=;notice=\n"
+    );
+}
+
+#[test]
+fn test_a_listed_skill_s_bundle_is_its_name_before_skills() {
+    let listed = daemon_proto::v1::ListSkillsResponse {
+        skills: vec![
+            daemon_proto::v1::Skill {
+                name: "projects/p/remotes/acme/bundles/rules/skills/admit".to_string(),
+                tags: vec!["ctxloom:link_id=x".to_string()],
+                ..daemon_proto::v1::Skill::default()
+            },
+            daemon_proto::v1::Skill {
+                name: "not a skill's name".to_string(),
+                ..daemon_proto::v1::Skill::default()
+            },
+        ],
+        next_page_token: String::new(),
+    };
+    assert_eq!(
+        crate::hook_skills(&listed),
+        vec![crate::HookSkill {
+            name: "admit".to_string(),
+            bundle: "projects/p/remotes/acme/bundles/rules".to_string(),
+            tags: vec!["ctxloom:link_id=x".to_string()],
+        }]
+    );
+}

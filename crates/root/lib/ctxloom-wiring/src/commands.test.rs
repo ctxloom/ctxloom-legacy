@@ -224,7 +224,9 @@ fn test_every_engine_the_build_names_is_registered() {
 #[test]
 fn test_a_library_command_is_run_over_the_home() {
     let world = World::new("library");
-    let (code, out, err) = run_line(&mut world.commands(), &["bundle", "list"]);
+    // A read still in process (`bundle list` is the daemon's since step 10a
+    // U2, and a unit test starts no daemon).
+    let (code, out, err) = run_line(&mut world.commands(), &["fragment", "list"]);
     assert_eq!((code, out.as_str(), err.as_str()), (0, "{}\n", ""));
 }
 

@@ -173,7 +173,7 @@ impl Project {
     }
 
     /// `git init` in the project, then one commit of `paths`.
-    fn git_init_committing(&self, paths: &[&str]) {
+    pub(crate) fn git_init_committing(&self, paths: &[&str]) {
         self.git(&["init", "-q"]);
         let mut add = vec!["add", "--"];
         add.extend_from_slice(paths);

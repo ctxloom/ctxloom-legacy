@@ -430,6 +430,118 @@ impl<D: Daemons> SessionRemovals for Client<D> {
     }
 }
 
+/// The library reads a command (or a hook, O3) asks of its daemon (step
+/// 10a U2), each under this client's project (`users/me` outside one), at
+/// its working directory, with its environment and `globals` (E1); each
+/// answered with the notices the read said.
+#[allow(async_fn_in_trait)]
+pub trait LibraryReads {
+    /// `bundle list`'s read.
+    async fn list_bundles(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListBundlesResponse>, CallError>;
+
+    /// `agent list`'s read.
+    async fn list_agents(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListAgentsResponse>, CallError>;
+
+    /// `profile list`'s read.
+    async fn list_profiles(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListProfilesResponse>, CallError>;
+
+    /// `skill list`'s read, of every bundle.
+    async fn list_skills(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListSkillsResponse>, CallError>;
+}
+
+impl<D: Daemons> Client<D> {
+    /// The parent a library read is under: this client's project, as the
+    /// daemon names it, else the home's.
+    async fn library_parent_on(&self, api: &D::Api) -> Result<String, Called> {
+        match self.project.is_some() {
+            true => self.project(api).await,
+            false => Ok(HOME_PARENT.to_string()),
+        }
+    }
+}
+
+impl<D: Daemons> LibraryReads for Client<D> {
+    async fn list_bundles(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListBundlesResponse>, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::ListBundlesRequest {
+                parent: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                globals: Some(globals.clone()),
+                ..v1::ListBundlesRequest::default()
+            };
+            api.list_bundles(request).await
+        })
+        .await
+    }
+
+    async fn list_agents(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListAgentsResponse>, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::ListAgentsRequest {
+                parent: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                globals: Some(globals.clone()),
+                ..v1::ListAgentsRequest::default()
+            };
+            api.list_agents(request).await
+        })
+        .await
+    }
+
+    async fn list_profiles(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListProfilesResponse>, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::ListProfilesRequest {
+                parent: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                globals: Some(globals.clone()),
+                ..v1::ListProfilesRequest::default()
+            };
+            api.list_profiles(request).await
+        })
+        .await
+    }
+
+    async fn list_skills(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<crate::Read<v1::ListSkillsResponse>, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::ListSkillsRequest {
+                parent: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                globals: Some(globals.clone()),
+                ..v1::ListSkillsRequest::default()
+            };
+            api.list_skills(request).await
+        })
+        .await
+    }
+}
+
 #[cfg(test)]
 #[path = "session_client.test.rs"]
 mod tests;

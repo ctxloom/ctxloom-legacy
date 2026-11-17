@@ -2,9 +2,9 @@
 //! its method's response (OD-40, design §3.7, §5.6). `agent default` still
 //! answers in text only.
 
-use std::collections::BTreeMap;
-
 use library_application::{AgentShow, Removal, Requirement, ResolvedAgent};
+
+use library_api::resources::{agent, agent_name, agents, engine_ref};
 
 use crate::prelude::*;
 
@@ -136,82 +136,12 @@ fn default_agent(cx: &Context<'_>) -> String {
     }
 }
 
-/// An agent's resource name under `parent`.
-fn agent_name(parent: &str, agent: &str) -> String {
-    format!("{parent}/agents/{agent}")
-}
-
 /// An agent known by its name alone (a preview's, a removal's).
 fn named(parent: &str, agent: &str) -> v1::Agent {
     v1::Agent {
         name: agent_name(parent, agent),
         ..Default::default()
     }
-}
-
-/// `agent list`: `ListAgentsResponse`, every agent under `parent`.
-pub(crate) fn agents(parent: &str, rows: &[AgentRow], default: &str) -> v1::ListAgentsResponse {
-    v1::ListAgentsResponse {
-        agents: rows.iter().map(|row| agent(parent, row, default)).collect(),
-        next_page_token: String::new(),
-    }
-}
-
-/// The engine an agent references, by its resource name (design §2); an
-/// agent that names none names none.
-fn engine_ref(parent: &str, engine: &str) -> String {
-    if engine.is_empty() {
-        return String::new();
-    }
-    crate::noun::engine::engine_name(parent, engine)
-}
-
-/// An agent as its binding declares it (the BASIC view): its engine blocks
-/// keyed by engine, so `engines.<e>.model` keeps its path; its engine and
-/// profiles by their resource names (design §2: one that names no place
-/// keeps its configured text, OQ-16).
-pub(crate) fn agent(parent: &str, row: &AgentRow, default: &str) -> v1::Agent {
-    v1::Agent {
-        name: agent_name(parent, &row.name),
-        engine: engine_ref(parent, &row.engine),
-        profiles: row
-            .profiles
-            .iter()
-            .map(|profile| crate::catalog::profile_ref(parent, profile))
-            .collect(),
-        runtime: row.runtime.clone(),
-        driving: row.driving.clone(),
-        env: row.env.clone(),
-        session_home: row.session_home.clone(),
-        engines: blocks(&row.engines),
-        default: Some(row.name == default),
-        ..Default::default()
-    }
-}
-
-/// `agents.<n>.engines` as the config holds it: each engine's model, effort
-/// and permissions document, the document as written (rulings 133-139).
-fn blocks(engines: &serde_json::Value) -> BTreeMap<String, v1::AgentEngine> {
-    engines
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(engine, block)| {
-            let word = |key: &str| {
-                block
-                    .get(key)
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string()
-            };
-            let lined = v1::AgentEngine {
-                model: word("model"),
-                effort: word("effort"),
-                permissions: block.get("permissions").map(api::document),
-            };
-            (engine.clone(), lined)
-        })
-        .collect()
 }
 
 /// `agent show <agent>`: the `Agent` resource (the FULL view), its

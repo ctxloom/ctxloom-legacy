@@ -154,7 +154,7 @@ mod mapping {
 
     #[test]
     fn test_a_listed_skill_keeps_its_tags_and_file_count() {
-        let list = SkillList {
+        let list = library_application::SkillList {
             rows: vec![SkillRow {
                 name: "demo/reviewer".to_string(),
                 description: "Reviews".to_string(),
@@ -166,7 +166,7 @@ mod mapping {
             total: 1,
         };
         assert_eq!(
-            json_of(&listed(PARENT, &list)),
+            json_of(&skills(PARENT, &list)),
             json!({"skills": [{
                 "name": "projects/p/bundles/demo/skills/reviewer",
                 "description": "Reviews",

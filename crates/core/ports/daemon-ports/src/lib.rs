@@ -275,7 +275,36 @@ pub trait DaemonApi: Send + Sync {
         let _ = request;
         async { Err(unserved("SweepSessions")) }
     }
+
+    // The library's reads (step 10a U2, D12): one method each, from the one
+    // table; the default is a daemon that does not serve it.
+    daemon_proto::library_reads!(library_read_methods);
 }
+
+/// A library read's answer (step 10a U2): its message, and the notices the
+/// read said beside it (`daemon_proto::NOTICE_METADATA`), in order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Read<T> {
+    pub answer: T,
+    pub notices: Vec<v1::Notice>,
+}
+
+/// [`DaemonApi`]'s library reads, from `daemon_proto::library_reads!`.
+macro_rules! library_read_methods {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "` (step 10a U2), observed first in the daemon.")]
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> impl Future<Output = Result<Read<v1::$response>, Called>> + Send {
+                let _ = request;
+                async { Err(unserved(stringify!($rpc))) }
+            }
+        )*
+    };
+}
+use library_read_methods;
 
 /// A hosted run's events as `WatchRun` streams them (U4): each in order,
 /// none once the stream has ended (its `end` was the last), or what broke
@@ -416,6 +445,13 @@ pub enum Called {
     Unreachable { detail: String },
     /// Any other status: its gRPC code and the text it carried.
     Failed { code: i32, detail: String },
+    /// A failure the daemon said in a diagnostic of its own (step 10a U2:
+    /// `library-git-git-missing`, ...): its code and its args, as text,
+    /// said in its own catalog's words.
+    Diagnosed {
+        code: String,
+        args: Vec<(String, String)>,
+    },
 }
 
 impl Called {
@@ -444,6 +480,7 @@ impl Diagnostic for Called {
             Called::Unimplemented { .. } => code!("unimplemented"),
             Called::Unreachable { .. } => code!("unreachable"),
             Called::Failed { .. } => code!("failed"),
+            Called::Diagnosed { code, .. } => code,
         }
     }
 
@@ -457,6 +494,10 @@ impl Diagnostic for Called {
                 ("code", i64::from(*code).into()),
                 ("ext_err_txt", detail.as_str().into()),
             ],
+            Called::Diagnosed { args, .. } => args
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str().into()))
+                .collect(),
         }
     }
 }

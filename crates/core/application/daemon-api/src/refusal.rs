@@ -59,6 +59,13 @@ pub enum ApiError {
     Refused(ApiRefusal),
     /// Something broke (the store, the kernel): an internal failure.
     Failed { detail: String },
+    /// Failed, in a diagnostic of its own (step 10a U2: git missing or too
+    /// old, `library-git-*`): its code and its flattened args, which the
+    /// client is told so it says it in that diagnostic's words.
+    Diagnosed {
+        code: String,
+        args: Vec<v1::NeedArg>,
+    },
     /// Not served by this daemon (yet): `CreateRun` for a TERMINAL run until
     /// U5 builds it; answered UNIMPLEMENTED.
     Unimplemented { method: String },
@@ -69,6 +76,16 @@ impl ApiError {
     pub(crate) fn failed(cause: impl fmt::Debug) -> ApiError {
         ApiError::Failed {
             detail: format!("{cause:?}"),
+        }
+    }
+}
+
+impl ApiError {
+    /// A failure said in `cause`'s own code and args.
+    pub fn diagnosed(cause: &dyn Diagnostic) -> ApiError {
+        ApiError::Diagnosed {
+            code: cause.code().to_string(),
+            args: run_application::client::flat_args(cause),
         }
     }
 }
@@ -92,6 +109,7 @@ impl Diagnostic for ApiError {
         match self {
             ApiError::Refused(_) => code!("refused"),
             ApiError::Failed { .. } => code!("failed"),
+            ApiError::Diagnosed { code, .. } => code,
             ApiError::Unimplemented { .. } => code!("unimplemented"),
         }
     }
@@ -102,6 +120,10 @@ impl Diagnostic for ApiError {
                 vec![("ext_err_txt", refused.refusal.type_url.as_str().into())]
             }
             ApiError::Failed { detail } => vec![("ext_err_txt", detail.as_str().into())],
+            ApiError::Diagnosed { args, .. } => args
+                .iter()
+                .map(|arg| (arg.name.as_str(), arg.value.as_str().into()))
+                .collect(),
             ApiError::Unimplemented { method } => vec![("method", method.as_str().into())],
         }
     }
@@ -290,6 +312,9 @@ pub enum Rejection {
     /// The library domain's (a read of a tree outside git, or one git
     /// ignores: step 10a U2).
     Library(library_tree::LibraryTreeRejection),
+    /// A library read's use case's (E5): its own diagnostic, by the typed
+    /// refusal's type.
+    LibraryRead(Report),
 }
 
 impl Rejection {
@@ -303,6 +328,7 @@ impl Rejection {
             Rejection::Trust(trust) => Report::of(trust),
             Rejection::Approvals(approvals) => Report::of(approvals),
             Rejection::Library(library) => Report::of(library),
+            Rejection::LibraryRead(read) => read.clone(),
         }
     }
 }
@@ -478,7 +504,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 })
             })
         }
-        _ => domain_rejection(refusal),
+        _ => domain_rejection(refusal)
+            .or_else(|| crate::library_refusals::rejection(refusal).map(Rejection::LibraryRead)),
     }
 }
 
@@ -673,3 +700,15 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
 #[cfg(test)]
 #[path = "refusal.test.rs"]
 pub(crate) mod tests;
+
+/// A library use case's error (step 10a U2) as a read answers it: an
+/// adapter's failure is a failure; a decline is its typed refusal (E5).
+pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
+    use exit_code::ExitClass;
+    match crate::library_refusals::typed(error) {
+        Some(refused) if error.exit() != exit_code::Exit::FAILED => ApiError::Refused(refused),
+        _ => ApiError::Failed {
+            detail: angzarr_diagnostic::Diagnostic::code(error).to_string(),
+        },
+    }
+}

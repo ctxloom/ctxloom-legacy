@@ -162,9 +162,10 @@ impl<E: Edge> Observations<E> {
 impl<E: Edge> Observations<E> {
     /// A read's observations (U2): the project's checkout at `root`, then
     /// the home's library, each through git in the caller's environment
-    /// `env`. A home whose library is in no work tree (made one by its
-    /// first read, G2; or one git ignores) is not observed. What both are
-    /// to say, in order.
+    /// `env`. A home whose library is in no work tree, or in one that
+    /// ignores it, is made a repository of its own first (G2, the home
+    /// step, said once: `library-api-notice-home-repository-made`). What
+    /// both are to say, in order.
     pub async fn observe_read(
         &self,
         observers: &dyn Observers,
@@ -178,6 +179,12 @@ impl<E: Edge> Observations<E> {
             notices.extend(self.observe(observer.as_ref(), &site).await?.notices);
         }
         if let Some(home) = observers.home_tree() {
+            // The home step (G2, QUESTIONS.md B): the home's library made a
+            // repository of ctxloom's own files at its first read, once.
+            let made = library_application::ensure_home_repository(observer.as_ref(), &home)?;
+            if made == library_application::HomeRepository::Made {
+                notices.push(LibraryApiNotice::HomeRepositoryMade { path: home.clone() });
+            }
             let held = observer.work_tree(&home)?.is_some()
                 && observer.check_ignore(&home, "config.yaml")?.is_none();
             if held {

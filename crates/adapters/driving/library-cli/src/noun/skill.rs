@@ -2,10 +2,12 @@
 //! resource or method response (OD-40, design §5.3).
 
 use library_application::{
-    Removal, SkillCreated, SkillExported, SkillImported, SkillList, SkillRemoved, SkillShow,
+    Removal, SkillCreated, SkillExported, SkillImported, SkillRemoved, SkillShow,
 };
 
 use crate::catalog::{self, ok};
+use library_api::resources::{count, skill_name, skills};
+
 use crate::prelude::*;
 
 pub(crate) fn read(
@@ -39,45 +41,10 @@ pub(crate) fn read(
         out,
         err,
         false,
-        listed,
+        skills,
         |list, out, _| text::skill_list(out, list),
         ok,
     )
-}
-
-/// A skill's resource name.
-fn skill_name(parent: &str, bundle: &str, id: &str) -> String {
-    catalog::item_name(parent, bundle, "skills", id)
-}
-
-/// A count as the API's uint32 (OQ-12), saturating.
-fn count(n: u64) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
-}
-
-/// `skill list`: `ListSkillsResponse`.
-pub(crate) fn listed(parent: &str, list: &SkillList) -> v1::ListSkillsResponse {
-    v1::ListSkillsResponse {
-        skills: list
-            .rows
-            .iter()
-            .map(|row| {
-                // A row's name is `<bundle>/<skill>`, its source the bundle.
-                let id = row
-                    .name
-                    .strip_prefix(&format!("{}/", row.source))
-                    .unwrap_or(&row.name);
-                v1::Skill {
-                    name: skill_name(parent, &row.source, id),
-                    description: row.description.clone(),
-                    tags: row.tags.clone(),
-                    file_count: count(row.file_count),
-                    ..v1::Skill::default()
-                }
-            })
-            .collect(),
-        next_page_token: String::new(),
-    }
 }
 
 /// `skill show`: the `Skill` (FULL), each file's executability its

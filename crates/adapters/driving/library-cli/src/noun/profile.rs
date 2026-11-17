@@ -4,15 +4,16 @@
 //! json is asked for by name.
 
 use library_application::{
-    ProfileCreated, ProfileExported, ProfileImported, ProfileList, ProfileModified, ProfileRemoved,
-    ProfileRow, ProfileShow, Removal,
+    ProfileCreated, ProfileExported, ProfileImported, ProfileModified, ProfileRemoved, ProfileShow,
+    Removal,
 };
 
 use crate::catalog::{self, ok};
-use crate::prelude::*;
+use library_api::resources::{
+    profile_bundles, profile_id, profile_name, profile_parents, profiles,
+};
 
-/// The bundle a project's own profiles are items of.
-const PROJECT_BUNDLE: &str = "project";
+use crate::prelude::*;
 
 pub(crate) fn read(
     cx: &Context<'_>,
@@ -40,65 +41,10 @@ pub(crate) fn read(
         out,
         err,
         false,
-        listed,
+        profiles,
         |list, out, _| text::profile_list(out, list),
         ok,
     )
-}
-
-/// The profile's own name within its key (`<bundle>#profiles/<name>`).
-fn id_of(name: &str) -> &str {
-    name.split_once("#profiles/").map_or(name, |(_, id)| id)
-}
-
-/// A profile's resource name, below the bundle that ships it.
-fn profile_name(parent: &str, entry: &str, id: &str) -> String {
-    let entry = if entry.is_empty() {
-        PROJECT_BUNDLE
-    } else {
-        entry
-    };
-    catalog::item_name(parent, entry, "profiles", id)
-}
-
-/// `profile list`: `ListProfilesResponse`.
-pub(crate) fn listed(parent: &str, list: &ProfileList) -> v1::ListProfilesResponse {
-    v1::ListProfilesResponse {
-        profiles: list
-            .rows
-            .iter()
-            .map(|row| listed_row(parent, row))
-            .collect(),
-        next_page_token: String::new(),
-    }
-}
-
-fn listed_row(parent: &str, row: &ProfileRow) -> v1::Profile {
-    v1::Profile {
-        name: profile_name(parent, &row.entry, &row.display_name),
-        description: row.description.clone(),
-        parents: parents(parent, &row.parents),
-        tags: row.tags.clone(),
-        bundles: bundles(parent, &row.bundles),
-        default: Some(row.default),
-        path: row.path.clone(),
-        ..<v1::Profile as Default>::default()
-    }
-}
-
-/// A profile's parents as Profile names (OQ-16: one with no place keeps
-/// its text).
-fn parents(parent: &str, asks: &[String]) -> Vec<String> {
-    asks.iter()
-        .map(|ask| catalog::profile_ref(parent, ask))
-        .collect()
-}
-
-/// A profile's bundles as Bundle (or item) names.
-fn bundles(parent: &str, asks: &[String]) -> Vec<String> {
-    asks.iter()
-        .map(|ask| catalog::bundle_ref(parent, ask))
-        .collect()
 }
 
 /// `profile show`: the `Profile` (FULL).
@@ -107,7 +53,7 @@ pub(crate) fn shown(parent: &str, show: &ProfileShow) -> v1::Profile {
         default: Some(show.default),
         ..profile_of(
             parent,
-            &profile_name(parent, &show.entry, id_of(&show.name)),
+            &profile_name(parent, &show.entry, profile_id(&show.name)),
             show,
         )
     }
@@ -118,9 +64,9 @@ pub(crate) fn profile_of(parent: &str, name: &str, show: &ProfileShow) -> v1::Pr
     v1::Profile {
         name: name.to_string(),
         description: show.description.clone(),
-        parents: parents(parent, &show.parents),
+        parents: profile_parents(parent, &show.parents),
         tags: show.tags.clone(),
-        bundles: bundles(parent, &show.bundles),
+        bundles: profile_bundles(parent, &show.bundles),
         variables: show.variables.clone(),
         exclude_fragments: show.exclude_fragments.clone(),
         exclude_mcp_servers: show.exclude_mcp.clone(),
@@ -345,8 +291,8 @@ pub(crate) fn created(
         profile: Some(v1::Profile {
             name: profile_name(parent, &request.target, &made.name),
             description: request.description.clone(),
-            parents: parents(parent, &made.parents),
-            bundles: bundles(parent, &made.bundles),
+            parents: profile_parents(parent, &made.parents),
+            bundles: profile_bundles(parent, &made.bundles),
             path: made.path.clone(),
             ..<v1::Profile as Default>::default()
         }),

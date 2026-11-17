@@ -99,20 +99,19 @@ fn test_listings_say_why_they_are_empty() {
         list.rows.is_empty(),
         "the home's content is not a project's"
     );
-    assert!(list.no_root);
     assert!(list.hint.starts_with("No project here: run 'ctxloom init'"));
     let bare = Setup {
         no_root: true,
         ..with(&[], &[CONFIG])
     }
     .library();
+    // No bundles directory is no bundles (owner ruling 2026-11-17).
     let list = ok(bare.bundle_list(&plain()));
-    assert!(list.no_root);
+    assert!(list.rows.is_empty());
     assert!(list.hint.starts_with("Add remote bundles to a profile"));
     let rooted = ok(with(&[("demo", demo)], &[CONFIG])
         .library()
         .bundle_list(&plain()));
-    assert!(!rooted.no_root);
     assert_eq!(rooted.rows.len(), 1);
     let profiles = ok(home.profile_list(&plain()));
     assert!(profiles.hint.starts_with("No project here"));

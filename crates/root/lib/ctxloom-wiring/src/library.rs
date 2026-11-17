@@ -286,6 +286,55 @@ impl deps_cli::Names for DaemonNames {
     }
 }
 
+/// The library reads the daemon answers (step 10a U2), as this command
+/// asks them: its project's (registered at its root, minted there if it
+/// has no identity yet), at its working directory, with its environment.
+pub(crate) struct DaemonServed {
+    pub(crate) env: Arc<EnvSnapshot>,
+    pub(crate) version: String,
+}
+
+impl DaemonServed {
+    fn wiring(&self) -> Result<Wiring, Failure> {
+        Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))
+    }
+}
+
+impl library_cli::Served for DaemonServed {
+    fn in_project(&self) -> bool {
+        self.wiring()
+            .is_ok_and(|wiring| wiring.ctxloom_project().is_some())
+    }
+
+    fn list_bundles(
+        &self,
+        globals: &daemon_proto::v1::Globals,
+    ) -> Result<
+        (
+            daemon_proto::v1::ListBundlesResponse,
+            Vec<daemon_proto::v1::Notice>,
+        ),
+        Failure,
+    > {
+        use daemon_api::LibraryReads;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        let read = crate::daemon::answered(client.list_bundles(globals))?;
+        Ok((read.answer, read.notices))
+    }
+}
+
+/// Whether `noun`'s verb in `call` is a read the daemon answers (step 10a
+/// U2), whose home step is the daemon's own; every other verb still runs
+/// in process, and takes it here first.
+fn served(noun: &str, call: &Call<'_>) -> bool {
+    let verb = call
+        .matches
+        .subcommand_matches(noun)
+        .map(|sub| sub.subcommand_name().unwrap_or("list"));
+    noun == "bundle" && verb == Some("list")
+}
+
 impl Extension for LibraryCommands {
     fn nouns(&self) -> Vec<clap::Command> {
         library_cli::nouns()
@@ -304,11 +353,17 @@ impl Extension for LibraryCommands {
             version: self.version.clone(),
             minting: minting(noun),
         };
-        home_repository(
-            &Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))?,
-        )?;
+        if !served(noun, call) {
+            home_repository(
+                &Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))?,
+            )?;
+        }
+        let served = DaemonServed {
+            env: Arc::clone(&self.env),
+            version: self.version.clone(),
+        };
         let library = self.wired().map_err(|e| Failure::new(e, Exit::FAILED))?;
-        library_cli::run(library, &names, noun, call, catalog, out, err)
+        library_cli::run(library, &names, &served, noun, call, catalog, out, err)
     }
 }
 

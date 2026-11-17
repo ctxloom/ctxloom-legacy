@@ -123,6 +123,7 @@ import "google/api/resource.proto";
 import "google/protobuf/field_mask.proto";
 import "google/protobuf/struct.proto";
 import "ctxloom/v1/needs.proto";
+import "io/angzarr/v1/options.proto";
 
 // (-- region shared --)
 
@@ -392,6 +393,16 @@ message GetBundleRequest {
   Bundle.View view = 2 [(google.api.field_behavior) = OPTIONAL];
   // `--distilled`: a distilled form where one is fresh.
   bool prefer_distilled = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `bundle list`.
@@ -409,6 +420,16 @@ message ListBundlesRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The bundles of the catalog, every origin.
@@ -901,6 +922,16 @@ message GetFragmentRequest {
   // `--distilled`: serve a body in its distilled form where that form is
   // fresh.
   bool prefer_distilled = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `fragment list [--bundle]`.
@@ -918,6 +949,16 @@ message ListFragmentsRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The fragments under the parent.
@@ -1186,6 +1227,16 @@ message GetCommandRequest {
   // `--distilled`: serve a body in its distilled form where that form is
   // fresh.
   bool prefer_distilled = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `command list [--bundle]`.
@@ -1203,6 +1254,16 @@ message ListCommandsRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The commands under the parent.
@@ -1452,6 +1513,16 @@ message PremiseIndex {
 message GetPremiseIndexRequest {
   // The PremiseIndex to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/PremiseIndex"];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // (-- endregion --)
@@ -1514,6 +1585,16 @@ message GetSkillRequest {
   // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
   // for a Get.
   ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `skill list`.
@@ -1529,6 +1610,16 @@ message ListSkillsRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The skills under the parent.
@@ -1773,6 +1864,16 @@ message McpServer {
 message GetMcpServerRequest {
   // The McpServer to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/McpServer"];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `mcp server list`, and `mcp server show <short name>`.
@@ -1789,6 +1890,16 @@ message ListMcpServersRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The MCP servers under the parent.
@@ -1914,6 +2025,16 @@ message GetProfileRequest {
   // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
   // for a Get.
   ItemView view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `profile list`.
@@ -1929,6 +2050,16 @@ message ListProfilesRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The profiles under the parent.
@@ -2321,6 +2452,16 @@ message GetAgentRequest {
   // The view to answer (AIP-157); unspecified is BASIC for a List and FULL
   // for a Get.
   Agent.View view = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `agent list`.
@@ -2336,6 +2477,16 @@ message ListAgentsRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The agents under the parent.
@@ -2654,6 +2805,16 @@ message Engine {
 message GetEngineRequest {
   // The Engine to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Engine"];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `engine list`.
@@ -2666,6 +2827,16 @@ message ListEnginesRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The engines ctxloom drives.
@@ -2729,6 +2900,16 @@ message ListCompanionsRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The registered companions.
@@ -2885,6 +3066,16 @@ message Remote {
 message GetRemoteRequest {
   // The Remote to read, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Remote"];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `remote list`.
@@ -2897,6 +3088,16 @@ message ListRemotesRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The project's remotes.
@@ -3101,6 +3302,16 @@ message BrowseRemoteRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: Browsed (`count`, the list's length, and `warnings`, never filled,
@@ -3155,6 +3366,13 @@ message DiscoverRemotesRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: Discovered (`count`, the list's length, and `errors`, never filled,
@@ -3211,6 +3429,16 @@ message ListDependenciesRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // read is answered under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The lock's entries.
@@ -3705,6 +3933,13 @@ message GetConfigRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `config set` (T29): one key per call.
@@ -3887,6 +4122,13 @@ message SearchLibraryRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git on its `PATH` (E1, owner 2026-11-17).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What a search found.
@@ -3908,3 +4150,329 @@ message SearchLibraryResponse {
 }
 
 // (-- endregion --)
+
+// (-- region the library's read refusals (step 10a U2, E5, owner 2026-11-17):
+// one typed refusal per cause, each its `library-application-*` diagnostic,
+// mapped back by its TYPE (daemon-api's `library_refusals`). A cause a
+// refusal wraps (another crate's diagnostic) rides as its code and its
+// flattened args (`Cause`, decision 14.37), so it is rendered from its own
+// catalog. --)
+
+// A diagnostic a library read refusal wraps: its code, and its args
+// flattened (a nested cause's under `<name>.<arg>`).
+message Cause {
+  // The diagnostic's code.
+  string code = 1;
+  // Its args, flattened.
+  repeated NeedArg args = 2;
+}
+
+// `library-application-config-unparsable`: A config layer that is not YAML.
+message LibraryConfigUnparsable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 2;
+}
+
+// `library-application-config-newer`: A config layer written by a newer format than this build reads.
+message LibraryConfigNewer {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `found`, as the diagnostic says it.
+  uint64 found = 2;
+  // `current`, as the diagnostic says it.
+  uint64 current = 3;
+}
+
+// `library-application-config-older`: A config layer older than the oldest this build migrates.
+message LibraryConfigOlder {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `found`, as the diagnostic says it.
+  uint64 found = 2;
+  // `oldest`, as the diagnostic says it.
+  uint64 oldest = 3;
+}
+
+// `library-application-config-version-unreadable`: A config layer whose `schema_version` is not an integer.
+message LibraryConfigVersionUnreadable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+}
+
+// `library-application-config-unknown-key`: A config with a key the schema does not know: each violation.
+message LibraryConfigUnknownKey {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `violations`, as the diagnostic says it.
+  string violations = 1;
+}
+
+// `library-application-config-breaks-schema`: A config that breaks the schema otherwise: each violation.
+message LibraryConfigBreaksSchema {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `violations`, as the diagnostic says it.
+  string violations = 1;
+}
+
+// `library-application-unknown-section`: `config show <section>` of a section there is not.
+message LibraryUnknownSection {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `section`, as the diagnostic says it.
+  string section = 1;
+  // `available`, as the diagnostic says it.
+  string available = 2;
+}
+
+// `library-application-bundle-unreadable`: A bundle that is there and cannot be read.
+message LibraryBundleUnreadable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `ask`, as the diagnostic says it.
+  string ask = 1;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 2;
+}
+
+// `library-application-no-bundles-dir`: A project with no bundles directory.
+message LibraryNoBundlesDir {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+}
+
+// `library-application-view-path`: A `bundle view` path that is not `<kind>/<name>`.
+message LibraryViewPath {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 1;
+}
+
+// `library-application-view-missing`: An item a `bundle view` path names that the bundle lacks.
+message LibraryViewMissing {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `kind`, as the diagnostic says it.
+  string kind = 1;
+  // `name`, as the diagnostic says it.
+  string name = 2;
+}
+
+// `library-application-not-viewable`: A kind a bundle cannot show.
+message LibraryNotViewable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `dir`, as the diagnostic says it.
+  string dir = 1;
+  // `path`, as the diagnostic says it.
+  string path = 2;
+}
+
+// `library-application-item-missing`: An item not in its bundle: what is.
+message LibraryItemMissing {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `kind`, as the diagnostic says it.
+  string kind = 1;
+  // `name`, as the diagnostic says it.
+  string name = 2;
+  // `available`, as the diagnostic says it.
+  string available = 3;
+}
+
+// `library-application-operational-prompt-missing`: An operational prompt the project's own bundle of the built-in one's name lacks (ruling 128).
+message LibraryOperationalPromptMissing {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `bundle`, as the diagnostic says it.
+  string bundle = 1;
+  // `prompt`, as the diagnostic says it.
+  string prompt = 2;
+  // `dir`, as the diagnostic says it.
+  string dir = 3;
+}
+
+// `library-application-bad-reference`: A reference that is not `bundle#<kind>/name`.
+message LibraryBadReference {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `expected`, as the diagnostic says it.
+  string expected = 1;
+  // `got`, as the diagnostic says it.
+  string got = 2;
+}
+
+// `library-application-wrong-kind`: A reference of the wrong kind for the command.
+message LibraryWrongKind {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `ask`, as the diagnostic says it.
+  string ask = 1;
+  // `got`, as the diagnostic says it.
+  string got = 2;
+  // `want`, as the diagnostic says it.
+  string want = 3;
+  // `expected`, as the diagnostic says it.
+  string expected = 4;
+}
+
+// `library-application-unsupported-format`: An explicit `--format` the command does not honour.
+message LibraryUnsupportedFormat {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `command`, as the diagnostic says it.
+  string command = 1;
+  // `format`, as the diagnostic says it.
+  string format = 2;
+}
+
+// `library-application-skill-not-found`: A skill a bundle does not ship.
+message LibrarySkillNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+  // `bundle`, as the diagnostic says it.
+  string bundle = 2;
+}
+
+// `library-application-skill-name-not-found`: A skill no bundle ships.
+message LibrarySkillNameNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-application-no-bundle-named`: A `--bundle` that names no bundle.
+message LibraryNoBundleNamed {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+  // `known`, as the diagnostic says it.
+  string known = 2;
+}
+
+// `library-application-search-nothing`: A search with neither a query nor a tag.
+message LibrarySearchNothing {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+}
+
+// `library-application-search-type`: A search `--type` nobody recognizes.
+message LibrarySearchType {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `value`, as the diagnostic says it.
+  string value = 1;
+}
+
+// `library-application-search-remote`: `search --remote`, until the remotes arrive.
+message LibrarySearchRemote {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+}
+
+// `library-application-agent-not-found`: An agent nobody defined.
+message LibraryAgentNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-application-launch-no-agent`: A launch naming an agent nobody defined.
+message LibraryLaunchNoAgent {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-application-launch-no-project`: A launch with no project, so no default agent to bind.
+message LibraryLaunchNoProject {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+}
+
+// `library-application-launch-no-default`: A launch with agents but no default among them.
+message LibraryLaunchNoDefault {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+}
+
+// `library-application-launch-no-agents`: A launch with no agent configured at all.
+message LibraryLaunchNoAgents {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+}
+
+// `library-application-mcp-not-found`: An MCP server nobody ships.
+message LibraryMcpNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-application-unknown-engine`: An engine ctxloom does not drive.
+message LibraryUnknownEngine {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `engine`, as the diagnostic says it.
+  string engine = 1;
+  // `known`, as the diagnostic says it.
+  string known = 2;
+}
+
+// `library-application-engine-auth`: An engine's `auth` the schema refuses.
+message LibraryEngineAuth {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `engine`, as the diagnostic says it.
+  string engine = 1;
+  // `why`, as the diagnostic says it.
+  string why = 2;
+}
+
+// `library-application-compose`: A profile that cannot be composed.
+message LibraryCompose {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `profile`, as the diagnostic says it.
+  string profile = 1;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 2;
+}
+
+// `library-application-no-fragments`: A selection that loaded no fragment.
+message LibraryNoFragments {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `detail`, as the diagnostic says it.
+  string detail = 1;
+}
+
+// `library-application-agent-exclusive`: `--agent` with a flag it excludes.
+message LibraryAgentExclusive {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `other`, as the diagnostic says it.
+  string other = 1;
+}
+
+// `library-application-no-context-exclusive`: `--no-context` beside a flag that selects context (OD-38).
+message LibraryNoContextExclusive {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `other`, as the diagnostic says it.
+  string other = 1;
+}
+
+// `library-application-saved-command`: A saved command that cannot be loaded.
+message LibrarySavedCommand {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-application-workspace`: A `--workspace` that is neither none nor worktree.
+message LibraryWorkspace {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `value`, as the diagnostic says it.
+  string value = 1;
+}
+
+// `library-application-run-needs-dry-run`: A run that is not a dry run.
+message LibraryRunNeedsDryRun {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+}
+
+// `library-application` declining for another crate (a read model's or a
+// write's refusal, `AppError::Declined`), as that crate's own diagnostic:
+// typing each of those causes is the remainder of E5.
+message LibraryDeclined {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // The diagnostic that declined.
+  Cause cause = 1;
+}
+
+// (-- endregion --)
+

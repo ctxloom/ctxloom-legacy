@@ -14,6 +14,11 @@ angzarr-embedded.workspace = true
 ctxloom-ports.workspace = true
 # The API's messages a read answers with.
 daemon-proto.workspace = true
+# The library's use cases a read is answered by (U2).
+library-application.workspace = true
+serde_json.workspace = true
+# A notice the daemon said, rebuilt from its code and flattened args.
+run-application.workspace = true
 # The library domain: its fact, its names, its fold and its refusals.
 library-tree.workspace = true
 # The trees as last observed, what a read reconciles against.
@@ -23,6 +28,7 @@ run-ports.workspace = true
 sessions.workspace = true
 
 [dev-dependencies]
+library-application = { workspace = true, features = ["test-support"] }
 angzarr-embedded = { workspace = true, features = ["test-support"] }
 library-domain-proto.workspace = true
 library-tree = { workspace = true, features = ["test-support"] }

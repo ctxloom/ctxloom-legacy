@@ -59,9 +59,8 @@ pub struct BundleRow {
 #[derive(Clone, Debug)]
 pub struct BundleList {
     pub rows: Vec<BundleRow>,
-    /// The project has no bundles directory at all.
-    pub no_root: bool,
-    /// The hint for an empty listing.
+    /// The hint for an empty listing (a project with no bundles directory
+    /// is one with no bundles: owner ruling 2026-11-17).
     pub hint: String,
 }
 
@@ -675,6 +674,10 @@ pub struct Assembled {
     /// The context's token estimate.
     #[serde(skip)]
     pub tokens: u64,
+    /// What a premise held back, as data (E2): the index the context ends
+    /// with when the assembly rendered it, for a caller that renders it.
+    #[serde(skip)]
+    pub premised: Vec<library::premise::Entry>,
 }
 
 /// A fragment an assembly used: where it is (none when its bundle is none

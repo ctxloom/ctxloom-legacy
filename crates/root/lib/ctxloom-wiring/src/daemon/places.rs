@@ -226,15 +226,80 @@ impl daemon_api::Assemblies for ProjectAssemblies {
             profiles: request.profiles.clone(),
             fragments: request.fragments.clone(),
             tags: request.tags.clone(),
-            // For a session's `context_assemble` tool: its context rides the
-            // launch, where the server is offered (s3-Q5).
-            surface: library::premise::Surface::Launch,
+            // The index is the caller's to render, at its presentation (E2,
+            // owner 2026-11-17): answered as data.
+            surface: None,
         };
         let assembled = library
             .assemble(&flags, &asked)
             .result
             .map_err(|e| failed(&e))?;
         Ok(assembled_context(assembled))
+    }
+}
+
+/// The library a read is answered from (step 10a U2, E1): opened as a
+/// process at the caller's directory, in the caller's environment with
+/// ctxloom's `home` as the platform's home variable, would open it, the
+/// project's installed remote bundles in its catalog.
+pub(crate) struct ProjectLibraries {
+    pub(crate) home: PathBuf,
+    pub(crate) temp: PathBuf,
+}
+
+impl ProjectLibraries {
+    /// A process at `dir` in the caller's environment `env`.
+    fn at(&self, dir: &str, env: &[(String, String)]) -> Result<Wiring, ApiError> {
+        let flavor = os::host().flavor();
+        let home_var = flavor.env_key(flavor.home_var());
+        let mut vars: Vec<(OsString, OsString)> = env
+            .iter()
+            .filter(|(name, _)| flavor.env_key(name) != home_var)
+            .map(|(name, value)| (name.into(), value.into()))
+            .collect();
+        vars.push((
+            flavor.home_var().into(),
+            self.home.as_os_str().to_os_string(),
+        ));
+        let snapshot =
+            EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(dir)), self.temp.clone(), vars);
+        Wiring::new(Arc::new(snapshot)).map_err(|e| ApiError::Failed {
+            detail: angzarr_diagnostic::Diagnostic::code(&e).to_string(),
+        })
+    }
+}
+
+impl daemon_api::Libraries for ProjectLibraries {
+    fn root(&self, dir: &str, env: &[(String, String)]) -> Option<String> {
+        if dir.is_empty() {
+            return None;
+        }
+        let (_, app) = self.at(dir, env).ok()?.locate();
+        if !matches!(app.source, ctxloom_ports::Source::Project) {
+            return None;
+        }
+        app.path.parent().map(|root| root.display().to_string())
+    }
+
+    fn read(
+        &self,
+        dir: &str,
+        env: &[(String, String)],
+        read: &mut dyn FnMut(&library_application::Library),
+    ) -> Result<(), ApiError> {
+        let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
+            detail: e.code().to_string(),
+        };
+        let at = if dir.is_empty() {
+            self.home.display().to_string()
+        } else {
+            dir.to_string()
+        };
+        let wiring = self.at(&at, env)?;
+        let deps = std::rc::Rc::new(crate::commands::build_deps(&wiring).map_err(|e| failed(&e))?);
+        let library = crate::library::build(&wiring, Some(deps)).map_err(|e| failed(&e))?;
+        read(&library);
+        Ok(())
     }
 }
 
@@ -322,6 +387,14 @@ fn assembled_context(
         profiles: assembled.profiles.clone(),
         missing_fragments: assembled.missing_fragments.clone(),
         missing_tags: assembled.missing_tags.clone(),
+        premised: assembled
+            .premised
+            .iter()
+            .map(|entry| v1::PremiseEntry {
+                fragment: entry.name.clone(),
+                premise: entry.premise.clone(),
+            })
+            .collect(),
         context: assembled.context,
         notices,
     }

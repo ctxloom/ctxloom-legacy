@@ -108,3 +108,21 @@ fn test_a_reference_that_names_no_bundle_keeps_its_text() {
         "projects/calm-otter/bundles/demo"
     );
 }
+
+// A bundle's resource name reads back as the catalog name it was made of.
+#[test]
+fn a_bundle_s_name_reads_back_as_its_catalog_name() {
+    for catalog in ["demo", "acme/rules", "ctxloom+companion:acme-tool"] {
+        let name = super::bundle_name("projects/p", catalog);
+        assert_eq!(super::catalog_name("projects/p", &name), catalog, "{name}");
+    }
+    assert_eq!(super::catalog_name("users/me", "users/me/bundles/x"), "x");
+    assert_eq!(
+        super::catalog_name("projects/p", "other/thing"),
+        "other/thing"
+    );
+    assert_eq!(
+        super::catalog_name("projects/p", "projects/p/odd/x"),
+        "projects/p/odd/x"
+    );
+}

@@ -241,7 +241,7 @@ fn test_an_assembly_s_index_is_worded_for_its_surface() {
         &cat,
         &sel,
         &Options {
-            surface: Surface::Launch,
+            surface: Some(Surface::Launch),
             ..Options::default()
         },
     );
@@ -252,6 +252,41 @@ fn test_an_assembly_s_index_is_worded_for_its_surface() {
     );
     let rest = assemble(&cat, &sel, &Options::default());
     assert!(rest.context.contains(GO_INSTRUCTION), "{}", rest.context);
+}
+
+// E2 (owner, 2026-11-17): an assembly whose caller renders the index at
+// its own presentation carries no index in its context, only the data of
+// what was held back.
+#[test]
+fn test_an_assembly_with_no_surface_holds_its_index_back_as_data() {
+    let (cat, profile) = selection_fixture(true);
+    let sel = select(&[profile], &cat, &SelectRequest::default(), &mut Vec::new());
+    let options = Options {
+        surface: None,
+        ..Options::default()
+    };
+    let data = assemble(&cat, &sel, &options);
+    assert!(
+        !data.context.contains("Conditional guidance"),
+        "{}",
+        data.context
+    );
+    let entries = crate::compose::index_of(&data.premised);
+    assert!(!entries.is_empty());
+    let rest = assemble(&cat, &sel, &Options::default());
+    assert_eq!(
+        rest.context,
+        format!(
+            "{}{}{}",
+            data.context,
+            if data.context.is_empty() {
+                ""
+            } else {
+                crate::compose::SECTION_SEPARATOR
+            },
+            render(&entries)
+        )
+    );
 }
 
 // premise_test.go: TestRenderPremiseIndex_KeepsTheThreeMeasuredProperties

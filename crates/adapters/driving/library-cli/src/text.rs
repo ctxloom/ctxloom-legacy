@@ -21,17 +21,10 @@ fn f(s: &str) -> String {
     field(s, 256)
 }
 
-/// `bundle list`.
+/// `bundle list`. A project with no bundles directory is one with no
+/// bundles, said alike (owner ruling 2026-11-17: installing a bundle makes
+/// the directory; a read never does).
 pub fn bundle_list(out: &mut dyn Write, list: &BundleList) -> io::Result<()> {
-    if list.no_root {
-        if list.hint.starts_with("No project here") {
-            return writeln!(out, "{}", list.hint);
-        }
-        return writeln!(
-            out,
-            "No bundles directory found. Create one with: mkdir -p .ctxloom/content/bundles"
-        );
-    }
     if list.rows.is_empty() {
         writeln!(out, "No bundles installed.")?;
         return writeln!(out, "{}", list.hint);
@@ -41,6 +34,62 @@ pub fn bundle_list(out: &mut dyn Write, list: &BundleList) -> io::Result<()> {
         bundle_entry(out, row)?;
     }
     Ok(())
+}
+
+/// `bundle list` from the daemon's `ListBundlesResponse` (step 10a U2, D10:
+/// the message alone), line for line as [`bundle_list`] renders the view:
+/// each bundle by its catalog name (read back from its resource name), an
+/// empty catalog with the hint of a project, or of none.
+pub fn bundles(
+    out: &mut dyn Write,
+    listed: &daemon_proto::v1::ListBundlesResponse,
+    in_project: bool,
+) -> io::Result<()> {
+    let rows: Vec<BundleRow> = listed.bundles.iter().map(row_of).collect();
+    let hint = if in_project {
+        library_application::LISTING_HINT
+    } else {
+        library_application::NO_PROJECT_HINT
+    };
+    let list = BundleList {
+        rows,
+        hint: hint.to_string(),
+    };
+    bundle_list(out, &list)
+}
+
+/// A listed `Bundle` as the row its text is drawn from.
+fn row_of(bundle: &daemon_proto::v1::Bundle) -> BundleRow {
+    let parent = parent_of(&bundle.name);
+    let builtin = bundle.origin == daemon_proto::v1::bundle::Origin::Builtin as i32;
+    BundleRow {
+        name: library_api::names::catalog_name(parent, &bundle.name),
+        reference: bundle.reference.clone(),
+        path: bundle.path.clone(),
+        origin: if builtin {
+            "ctxloom/builtin".to_string()
+        } else {
+            String::new()
+        },
+        version: bundle.version.clone(),
+        description: bundle.description.clone(),
+        tags: bundle.tags.clone(),
+        fragment_count: u64::from(bundle.fragment_count),
+        command_count: u64::from(bundle.command_count),
+        mcp_count: u64::from(bundle.mcp_server_count),
+        profile_count: u64::from(bundle.profile_count),
+        held: bundle.held == Some(true),
+        commit: bundle.commit.clone(),
+    }
+}
+
+/// The parent a resource name is under: its first two segments,
+/// `projects/{p}` or `users/me`.
+fn parent_of(name: &str) -> &str {
+    match name.match_indices('/').nth(1) {
+        Some((offset, _)) => &name[..offset],
+        None => name,
+    }
 }
 
 fn contents(row: &BundleRow) -> Vec<String> {

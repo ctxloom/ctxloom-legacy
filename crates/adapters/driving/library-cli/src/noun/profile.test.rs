@@ -263,8 +263,8 @@ mod mapping {
 
     #[test]
     fn test_a_listed_profile_is_its_whole_row() {
-        let list = ProfileList {
-            rows: vec![ProfileRow {
+        let list = library_application::ProfileList {
+            rows: vec![library_application::ProfileRow {
                 name: "dev".to_string(),
                 display_name: "dev".to_string(),
                 description: "the dev one".to_string(),
@@ -280,7 +280,7 @@ mod mapping {
             hint: String::new(),
         };
         assert_eq!(
-            json_of(&listed(PARENT, &list)),
+            json_of(&profiles(PARENT, &list)),
             json!({"profiles": [{
                 "name": "projects/p/bundles/project/profiles/dev",
                 "description": "the dev one",

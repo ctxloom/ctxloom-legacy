@@ -1195,10 +1195,10 @@ async fn assemble_context_is_made_at_the_projects_registered_root() {
 /// tree (none: outside git), the operation in progress, and the
 /// environment each read was observed in.
 #[derive(Default)]
-struct Gits {
-    work_tree: Option<String>,
-    motion: Option<ctxloom_ports::Motion>,
-    envs: std::sync::Mutex<Vec<Vec<(String, String)>>>,
+pub(crate) struct Gits {
+    pub(crate) work_tree: Option<String>,
+    pub(crate) motion: Option<ctxloom_ports::Motion>,
+    pub(crate) envs: std::sync::Mutex<Vec<Vec<(String, String)>>>,
 }
 
 struct TableGit {
@@ -1279,7 +1279,7 @@ impl library_api::CheckoutHarps for OneHarp {
     }
 }
 
-fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
+pub(crate) fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
     crate::Observing {
         checkouts: world.checkouts.clone(),
         harps: Arc::new(OneHarp),

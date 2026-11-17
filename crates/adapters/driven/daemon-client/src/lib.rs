@@ -162,12 +162,47 @@ pub fn warnings_in(metadata: &MetadataMap) -> Vec<v1::Notice> {
         .collect()
 }
 
+/// The notices a library read's answer carries (step 10a U2,
+/// [`daemon_proto::NOTICE_METADATA`]), in order; one that does not decode
+/// is left out.
+pub fn notices_in(metadata: &MetadataMap) -> Vec<v1::Notice> {
+    metadata
+        .get_all_bin(daemon_proto::NOTICE_METADATA)
+        .iter()
+        .filter_map(|value| value.to_bytes().ok())
+        .filter_map(|bytes| v1::Notice::decode(bytes).ok())
+        .collect()
+}
+
 /// `google.rpc.ErrorInfo`'s args (its `metadata`; its key, field 1, and
 /// domain, field 2, are not read).
 #[derive(Clone, PartialEq, Message)]
 struct ErrorInfo {
+    #[prost(string, tag = "1")]
+    reason: String,
+    #[prost(string, tag = "2")]
+    domain: String,
     #[prost(map = "string, string", tag = "3")]
     metadata: std::collections::HashMap<String, String>,
+}
+
+/// The `ErrorInfo` domain of a failure the daemon says in a diagnostic of
+/// its own (daemon-api-grpc's): its reason is the diagnostic's code.
+const DIAGNOSED_DOMAIN: &str = "ctxloom.dev/diagnostic";
+
+/// The diagnostic a failure's details say it in, if they do.
+fn diagnosed(details: &[prost_types::Any]) -> Option<Called> {
+    let info = details
+        .iter()
+        .filter(|any| any.type_url.ends_with("/google.rpc.ErrorInfo"))
+        .filter_map(|any| ErrorInfo::decode(any.value.as_slice()).ok())
+        .find(|info| info.domain == DIAGNOSED_DOMAIN && !info.reason.is_empty())?;
+    let mut args: Vec<(String, String)> = info.metadata.into_iter().collect();
+    args.sort();
+    Some(Called::Diagnosed {
+        code: info.reason,
+        args,
+    })
 }
 
 /// The typed refusal a coordinator's refused command names by its type
@@ -205,6 +240,10 @@ pub fn called(method: &str, status: &Status) -> Called {
             code: status.code() as i32,
             refusal,
         };
+    }
+    // A failure said in a diagnostic of its own is that diagnostic.
+    if let Some(said) = diagnosed(&details) {
+        return said;
     }
     // Any other status is read back through the infrastructure tree's one
     // root, which names it (by its number: no key is read).
@@ -264,13 +303,13 @@ fn remaining(until: daemon_ports::Until) -> Duration {
 /// One call: `$method` of the client with `$message`, its status read back,
 /// within the client's deadline for a read (or `$within`).
 macro_rules! call {
-    ($self:ident, $method:ident, $name:literal, $message:expr) => {{
+    ($self:ident, $method:ident, $name:expr, $message:expr) => {{
         call!($self, $method, $name, $message, $self.within)
     }};
-    ($self:ident, $method:ident, $name:literal, $message:expr, $within:expr) => {{
+    ($self:ident, $method:ident, $name:expr, $message:expr, $within:expr) => {{
         call!($self, client, $method, $name, $message, $within)
     }};
-    ($self:ident, $client:ident, $method:ident, $name:literal, $message:expr, $within:expr) => {{
+    ($self:ident, $client:ident, $method:ident, $name:expr, $message:expr, $within:expr) => {{
         let within: Duration = $within;
         let mut client = $self.$client().await?;
         let request = $self.request($message)?;
@@ -500,7 +539,46 @@ impl DaemonApi for DaemonClient {
             self.destroying
         )
     }
+
+    // The library's reads (step 10a U2, D12), from the one table. A read
+    // observes its trees and may run companions in the daemon: an
+    // assembly's deadline.
+    daemon_proto::library_reads!(library_read_calls);
 }
+
+/// [`DaemonClient`]'s library reads, from `daemon_proto::library_reads!`.
+macro_rules! library_read_calls {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            async fn $method(
+                &self,
+                request: v1::$request,
+            ) -> Result<daemon_ports::Read<v1::$response>, Called> {
+                let within = self.destroying;
+                let mut client = self.client().await?;
+                let request = self.request(request)?;
+                match tokio::time::timeout(within, client.$method(request)).await {
+                    Ok(Ok(response)) => {
+                        self.heard(response.metadata());
+                        let notices = notices_in(response.metadata());
+                        Ok(daemon_ports::Read {
+                            answer: response.into_inner(),
+                            notices,
+                        })
+                    }
+                    Ok(Err(status)) => {
+                        self.heard(status.metadata());
+                        Err(came_to(stringify!($rpc), &status))
+                    }
+                    Err(_) => Err(Called::Unreachable {
+                        detail: format!("no answer within {within:?}"),
+                    }),
+                }
+            }
+        )*
+    };
+}
+use library_read_calls;
 
 /// A run's events as `WatchRun` streams them: a status that ends the
 /// stream early (the daemon gone) is what it came to.

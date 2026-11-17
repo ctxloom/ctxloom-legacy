@@ -272,7 +272,12 @@ fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
     )
     .with_os(wiring.os_name())
     .with_foreign(files)
-    .with_puller(Rc::new(DepsPuller(deps))))
+    .with_puller(Rc::new(DepsPuller(deps)))
+    // The hooks read the library through the daemon (O3), within their
+    // bound from when the use cases were wired, which a hook does first.
+    .with_hook_library(Box::new(
+        crate::hook_library::DaemonHookLibrary::starting_now(Arc::clone(wiring.env())),
+    )))
 }
 
 /// The engines' callbacks that answer through the setup use cases.

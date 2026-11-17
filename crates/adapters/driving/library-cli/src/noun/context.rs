@@ -62,6 +62,8 @@ pub(crate) fn assembled(parent: &str, assembled: &Assembled) -> v1::AssembledCon
             .collect(),
         missing_fragments: assembled.missing_fragments.clone(),
         missing_tags: assembled.missing_tags.clone(),
+        // Rendered into `context` already, at rest, in process.
+        premised: Vec::new(),
         notices: Vec::new(),
     }
 }

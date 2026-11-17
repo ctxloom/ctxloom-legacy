@@ -328,9 +328,8 @@ mod messages {
     };
     use serde_json::{json, Value};
 
-    use super::super::{
-        bundle, created, edited, exported, imported, listed, removed, shown, viewed,
-    };
+    use super::super::{bundle, created, edited, exported, imported, removed, shown, viewed};
+    use library_api::resources::bundles as listed;
 
     const P: &str = "projects/calm-otter";
 
@@ -376,7 +375,6 @@ mod messages {
         assert_eq!(as_json(bundle(P, &row())), expected);
         let list = BundleList {
             rows: vec![row()],
-            no_root: false,
             hint: String::new(),
         };
         assert_eq!(as_json(listed(P, &list)), json!({ "bundles": [expected] }));

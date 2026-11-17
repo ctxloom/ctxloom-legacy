@@ -61,6 +61,63 @@ pub use ctxloom::v1;
 /// for a list.
 pub const WARNING_METADATA: &str = "ctxloom-warning-bin";
 
+/// The response metadata key a library read's own notices ride on (step 10a
+/// U2, owner ruling 2026-11-17): every answer of a library Get, List or
+/// Search (`library_reads!`) carries one value per notice the read said (its
+/// observation's, `library-api-notice-tree-in-motion` and
+/// `-home-repository-made`, and the library's own), each a prost-encoded
+/// [`v1::Notice`], encoded as [`WARNING_METADATA`]'s are. Kept apart from
+/// the standing warnings: a notice is this call's, a warning the daemon's.
+/// AIP-131 has a Get answer its resource alone, so no message carries them.
+pub const NOTICE_METADATA: &str = "ctxloom-notice-bin";
+
+/// The library's reads (step 10a U2, D12): ONE table of the service's
+/// library Get, List and Search methods, which every layer they cross
+/// generates its part from, so a read is added in one line. Each row is
+/// `snake (Pascal) Request.target => Response`, the target the field that
+/// names what is read (a Get's `name`, a List's or a Search's `parent`);
+/// `$each` is the caller's macro, handed the whole table:
+///
+/// ```ignore
+/// macro_rules! port { ($($m:ident ($n:ident) $q:ident . $t:ident => $r:ident),* $(,)?) => { ... } }
+/// daemon_proto::library_reads!(port);
+/// ```
+///
+/// The layers: `daemon-ports`' `DaemonApi` (a default that answers the
+/// method unserved), `daemon-client`'s call, `daemon-api`'s `Calls` (each
+/// a library read observed first, then answered by `library-api`) and
+/// `daemon-api-grpc`'s handler.
+#[macro_export]
+macro_rules! library_reads {
+    ($each:ident) => {
+        $each! {
+            get_bundle (GetBundle) GetBundleRequest.name => Bundle,
+            list_bundles (ListBundles) ListBundlesRequest.parent => ListBundlesResponse,
+            get_fragment (GetFragment) GetFragmentRequest.name => Fragment,
+            list_fragments (ListFragments) ListFragmentsRequest.parent => ListFragmentsResponse,
+            get_command (GetCommand) GetCommandRequest.name => Command,
+            list_commands (ListCommands) ListCommandsRequest.parent => ListCommandsResponse,
+            get_premise_index (GetPremiseIndex) GetPremiseIndexRequest.name => PremiseIndex,
+            get_skill (GetSkill) GetSkillRequest.name => Skill,
+            list_skills (ListSkills) ListSkillsRequest.parent => ListSkillsResponse,
+            get_mcp_server (GetMcpServer) GetMcpServerRequest.name => McpServer,
+            list_mcp_servers (ListMcpServers) ListMcpServersRequest.parent => ListMcpServersResponse,
+            get_profile (GetProfile) GetProfileRequest.name => Profile,
+            list_profiles (ListProfiles) ListProfilesRequest.parent => ListProfilesResponse,
+            get_agent (GetAgent) GetAgentRequest.name => Agent,
+            list_agents (ListAgents) ListAgentsRequest.parent => ListAgentsResponse,
+            get_engine (GetEngine) GetEngineRequest.name => Engine,
+            list_engines (ListEngines) ListEnginesRequest.parent => ListEnginesResponse,
+            list_companions (ListCompanions) ListCompanionsRequest.parent => ListCompanionsResponse,
+            get_remote (GetRemote) GetRemoteRequest.name => Remote,
+            list_remotes (ListRemotes) ListRemotesRequest.parent => ListRemotesResponse,
+            list_dependencies (ListDependencies) ListDependenciesRequest.parent => ListDependenciesResponse,
+            get_config (GetConfig) GetConfigRequest.name => Config,
+            search_library (SearchLibrary) SearchLibraryRequest.parent => SearchLibraryResponse,
+        }
+    };
+}
+
 // The refusals' declared statuses, generated from the protos.
 include!(concat!(env!("OUT_DIR"), "/refusals.rs"));
 

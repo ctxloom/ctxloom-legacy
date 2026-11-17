@@ -837,6 +837,30 @@ pub(crate) fn library_parent_if_named(
     block_on(client.named_parent())?.map_err(called)
 }
 
+/// This command's client of the daemon for a library read (step 10a U2):
+/// its project registered at its root (its id minted there if it has none
+/// yet), else outside a project.
+pub(crate) fn library_client<'a>(
+    wiring: &'a Wiring,
+    stamp: &str,
+) -> Result<daemon_api::Client<Reach<'a>>, Failure> {
+    let registration = wiring
+        .library_registration(crate::Minting::AtRoot)
+        .map_err(|e| {
+            let exit = e.exit();
+            Failure::new(e, exit)
+        })?;
+    Ok(client_for(wiring, stamp, registration))
+}
+
+/// A client call's answer, or the failure it ends the command in, in its
+/// own class.
+pub(crate) fn answered<T>(
+    call: impl std::future::Future<Output = Result<T, daemon_api::CallError>>,
+) -> Result<T, Failure> {
+    block_on(call)?.map_err(called)
+}
+
 /// The parent the daemon names for `registration` (`users/me` for none).
 fn resolved_parent(
     wiring: &Wiring,
@@ -1024,6 +1048,15 @@ pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_
         return Some(found);
     }
     ensure_within(&wiring, env, wait);
+    serving(&wiring, &files).ok().flatten()
+}
+
+/// The daemon a hook's library read asks when it may start none (its
+/// environment names an endpoint, OD-13): the live one of this home its
+/// discovery file names, else none.
+pub(crate) fn hook_daemon_serving(env: &Arc<EnvSnapshot>) -> Option<run_ports::Discovery> {
+    let wiring = Wiring::new(Arc::clone(env)).ok()?;
+    let files = files_of(&wiring);
     serving(&wiring, &files).ok().flatten()
 }
 

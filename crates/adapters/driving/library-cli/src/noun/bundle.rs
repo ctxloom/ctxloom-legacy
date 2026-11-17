@@ -2,9 +2,11 @@
 //! AIP resource or method response (OD-40, design §5.1).
 
 use library_application::{
-    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved,
-    BundleRow, BundleShow, BundleView, Removal, Viewed,
+    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleRow,
+    BundleShow, BundleView, Removal, Viewed,
 };
+
+use library_api::resources::{bundle, count};
 
 use crate::catalog::{self, bundle_name, ok};
 use crate::prelude::*;
@@ -55,52 +57,30 @@ pub(crate) fn read(
                 ok,
             )
         }
-        _ => {
-            let outcome = cx.library.bundle_list(&cx.flags);
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                listed,
-                |list, out, _| text::bundle_list(out, list),
-                ok,
-            )
-        }
+        _ => listed_by_the_daemon(cx, out, err),
     }
 }
 
-/// `bundle list`: `ListBundlesResponse`, the whole catalog (design §1.2).
-pub(crate) fn listed(parent: &str, list: &BundleList) -> v1::ListBundlesResponse {
-    v1::ListBundlesResponse {
-        bundles: list.rows.iter().map(|row| bundle(parent, row)).collect(),
-        next_page_token: String::new(),
+/// `bundle list`, the daemon's `ListBundles` (step 10a U2): its notices
+/// said, then its message as json, or as text (D10, rendered from the
+/// message alone).
+fn listed_by_the_daemon(
+    cx: &Context<'_>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let (listed, notices) = cx
+        .served
+        .list_bundles(&library_api::reads::globals_of(&cx.flags))?;
+    let said: Vec<library_application::Notice> =
+        notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    if cx.format == Format::Json {
+        api::print(out, &listed).map_err(output_failure)?;
+    } else {
+        text::bundles(out, &listed, cx.served.in_project()).map_err(output_failure)?;
     }
-}
-
-/// A `bundle list` row as its `Bundle` (BASIC).
-pub(crate) fn bundle(parent: &str, row: &BundleRow) -> v1::Bundle {
-    v1::Bundle {
-        name: bundle_name(parent, &row.name),
-        origin: catalog::origin(&row.name, row.origin == "ctxloom/builtin") as i32,
-        reference: row.reference.clone(),
-        commit: row.commit.clone(),
-        path: row.path.clone(),
-        version: row.version.clone(),
-        description: row.description.clone(),
-        tags: row.tags.clone(),
-        fragment_count: count(row.fragment_count),
-        command_count: count(row.command_count),
-        mcp_server_count: count(row.mcp_count),
-        profile_count: count(row.profile_count),
-        ..v1::Bundle::default()
-    }
-}
-
-/// A count as the API's uint32 (OQ-12), saturating.
-fn count(n: u64) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
+    Ok(Exit::OK)
 }
 
 /// `bundle show`: the `Bundle` (FULL), each child summarised by its name

@@ -273,7 +273,7 @@ impl Project {
             agent.profiles.clone()
         };
         let set = self.resolve_profiles(&names, &mut findings)?;
-        let assembled = self.assemble_set(&set, &[], &[], Surface::AtRest, &mut findings);
+        let assembled = self.assemble_set(&set, &[], &[], Some(Surface::AtRest), &mut findings);
         let effective = self.effective_of(agent)?;
         let resolved = ResolvedAgent {
             name: agent.name.clone(),

@@ -23,10 +23,7 @@ pub(crate) fn read(
     )
 }
 
-/// An engine's resource name under `parent`.
-pub(crate) fn engine_name(parent: &str, engine: &str) -> String {
-    format!("{parent}/engines/{engine}")
-}
+pub(crate) use library_api::resources::engine_name;
 
 /// `engine list`: `ListEnginesResponse`, every engine under `parent`.
 pub(crate) fn engines(parent: &str, rows: &[EngineRow]) -> v1::ListEnginesResponse {

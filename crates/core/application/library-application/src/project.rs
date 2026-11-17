@@ -393,6 +393,14 @@ impl Library {
     }
 }
 
+/// What an empty listing says outside a project.
+pub const NO_PROJECT_HINT: &str =
+    "No project here: run 'ctxloom init' to set one up with its default content.";
+
+/// What an empty listing says in a project.
+pub const LISTING_HINT: &str =
+    "Add remote bundles to a profile (ctxloom profile create/modify), then ctxloom deps pull";
+
 impl Project {
     /// A reference with a registered remote's name spelled out
     /// (`origin/demo#profiles/dev`); any other as it is.
@@ -411,11 +419,9 @@ impl Project {
     /// What to say under an empty listing.
     pub(crate) fn listing_hint(&self) -> String {
         if self.no_project() {
-            "No project here: run 'ctxloom init' to set one up with its default content."
-                .to_string()
+            NO_PROJECT_HINT.to_string()
         } else {
-            "Add remote bundles to a profile (ctxloom profile create/modify), then ctxloom deps pull"
-                .to_string()
+            LISTING_HINT.to_string()
         }
     }
 }

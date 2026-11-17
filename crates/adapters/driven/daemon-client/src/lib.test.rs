@@ -256,6 +256,30 @@ impl Ctxloom for Fake {
             ..v1::AssembledContext::default()
         }))
     }
+
+    /// One agent, the read's notice beside it (step 10a U2).
+    async fn list_agents(
+        &self,
+        request: Request<v1::ListAgentsRequest>,
+    ) -> Result<Response<v1::ListAgentsResponse>, Status> {
+        self.admit(&request)?;
+        let mut response = Response::new(v1::ListAgentsResponse {
+            agents: vec![v1::Agent {
+                name: format!("{}/agents/dev", request.into_inner().parent),
+                ..<v1::Agent as Default>::default()
+            }],
+            next_page_token: String::new(),
+        });
+        let notice = v1::Notice {
+            code: "library-api-notice-tree-in-motion".to_string(),
+            ..v1::Notice::default()
+        };
+        response.metadata_mut().append_bin(
+            daemon_proto::NOTICE_METADATA,
+            tonic::metadata::MetadataValue::from_bytes(&notice.encode_to_vec()),
+        );
+        Ok(response)
+    }
 }
 
 /// The coordinator beside the service: a sync answers each projector named,
@@ -484,6 +508,7 @@ fn a_refusal_the_coordinator_names_by_its_type_reads_back_as_that_refusal() {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            ..super::ErrorInfo::default()
         };
         prost_types::Any {
             type_url: "type.googleapis.com/google.rpc.ErrorInfo".to_string(),
@@ -674,6 +699,24 @@ async fn a_transcript_and_an_assembly_are_answered() {
     assert_eq!(assembled.tokens, 7);
 }
 
+// Step 10a U2: a library read comes back with the notices its metadata
+// carried, in order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_library_read_comes_back_with_its_notices() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let client = DaemonClient::new(&found, WITHIN);
+    let read = client
+        .list_agents(v1::ListAgentsRequest {
+            parent: "projects/p".to_string(),
+            ..v1::ListAgentsRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(read.answer.agents[0].name, "projects/p/agents/dev");
+    let codes: Vec<&str> = read.notices.iter().map(|n| n.code.as_str()).collect();
+    assert_eq!(codes, ["library-api-notice-tree-in-motion"]);
+}
+
 // A sync is applied unless the coordinator found it a DUPLICATE, and carries
 // each projector's projection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -855,4 +898,43 @@ fn each_infrastructure_error_the_daemon_answers_is_read_back() {
             ),
         }
     }
+}
+
+// Step 10a U2: a failure the daemon said in a diagnostic of its own (its
+// ErrorInfo's reason the code, its metadata the args) is that diagnostic,
+// so a command says `library-git-git-missing` and exits 10.
+#[test]
+fn a_diagnosed_failure_is_its_diagnostic() {
+    let info = super::ErrorInfo {
+        reason: "library-git-git-too-old".to_string(),
+        domain: super::DIAGNOSED_DOMAIN.to_string(),
+        metadata: [("version".to_string(), "2.20.0".to_string())]
+            .into_iter()
+            .collect(),
+    };
+    let rpc = RpcStatus {
+        code: Code::Internal as i32,
+        message: "library-git-git-too-old".to_string(),
+        details: vec![prost_types::Any {
+            type_url: "type.googleapis.com/google.rpc.ErrorInfo".to_string(),
+            value: info.encode_to_vec(),
+        }],
+    };
+    let status = Status::with_details(
+        Code::Internal,
+        "library-git-git-too-old",
+        Bytes::from(rpc.encode_to_vec()),
+    );
+    let called = super::called("ListBundles", &status);
+    assert_eq!(
+        called,
+        Called::Diagnosed {
+            code: "library-git-git-too-old".to_string(),
+            args: vec![("version".to_string(), "2.20.0".to_string())],
+        }
+    );
+    let Called::Diagnosed { code, .. } = &called else {
+        panic!("{called:?}");
+    };
+    assert_eq!(code, "library-git-git-too-old");
 }

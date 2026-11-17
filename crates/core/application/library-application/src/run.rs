@@ -40,14 +40,28 @@ pub struct RunRequest {
 }
 
 /// What `context assemble` is asked.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AssembleRequest {
     pub profiles: Vec<String>,
     pub fragments: Vec<String>,
     pub tags: Vec<String>,
-    /// Where the assembly goes (s3-Q5): at rest for the CLI; a launch when
-    /// the daemon assembles for a session's `context_assemble` tool.
-    pub surface: library::premise::Surface,
+    /// Where the assembly goes (s3-Q5), which words the premise index
+    /// ending the context; none, the index is not rendered (E2, owner
+    /// 2026-11-17: the daemon answers it as data, `Assembled::premised`,
+    /// and the driving edge renders it).
+    pub surface: Option<library::premise::Surface>,
+}
+
+/// Nothing asked, at rest: the index rendered for the CLI.
+impl Default for AssembleRequest {
+    fn default() -> AssembleRequest {
+        AssembleRequest {
+            profiles: Vec::new(),
+            fragments: Vec::new(),
+            tags: Vec::new(),
+            surface: Some(library::premise::Surface::AtRest),
+        }
+    }
 }
 
 /// A dry run: the plan, and the findings the startup gate refuses on.
@@ -222,7 +236,7 @@ impl Project {
         set: &[ResolvedProfile],
         fragments: &[String],
         tags: &[String],
-        surface: Surface,
+        surface: Option<Surface>,
         findings: &mut Vec<Finding>,
     ) -> Package {
         let request = SelectRequest {
@@ -457,7 +471,7 @@ impl Project {
         let selection = self.selection(request)?;
         // The plan's context rides the launch, where ctxloom's server is
         // offered (s3-Q5).
-        let package = self.compose(&selection, Surface::Launch, findings)?;
+        let package = self.compose(&selection, Some(Surface::Launch), findings)?;
         Ok((selection, package))
     }
 
@@ -487,7 +501,7 @@ impl Project {
     fn compose(
         &mut self,
         selection: &Selection,
-        surface: Surface,
+        surface: Option<Surface>,
         findings: &mut Vec<Finding>,
     ) -> Result<Package, AppError> {
         if selection.profiles.is_empty()
@@ -590,6 +604,7 @@ impl Project {
             profiles_located,
             used,
             tokens: tokens::estimate(&package.context) as u64,
+            premised: library::compose::index_of(&package.premised),
         })
     }
 }

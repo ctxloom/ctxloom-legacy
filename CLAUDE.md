@@ -2529,17 +2529,60 @@ hand edit (2026-11-17, git 2.47, this machine: p95 46 ms and 50 ms; `status`
 alone is about 28 ms, so the margin is thin; the next mitigations are O7's
 untrackedCache or fsmonitor, or fewer `rev-parse` processes).
 
-NOT built yet, blocked on the wire (each an owner decision, U2's
-escalations): a library Get or List request carries no caller environment,
-global flags or working directory (`env = 94` exists only on writes,
-`AssembleContext` and `CreateRun`), so `bundle|fragment|...` reads, the
-worktree's own tree, `--degraded` and `--config-set` cannot be served yet;
-`AssembleContextRequest` cannot say a read at rest from a launch's tool
-(its premise wording differs), so `context assemble` stays in process; a
-dry run's text would render a permissions document from a `Struct`, losing
-the order it was written in; no RPC answers a hook's package read (O3).
-Until then the CLI's reads stay in process, the home step with them, and
-library_changes.feature's scenarios stay red.
+The owner's rulings of 2026-11-17 (E1, E2, E5, O3, the read notices) are
+built:
+
+- E1: every library read request (each Get, List, Search, Browse and
+  Discover of library.proto, and `AssembleContext`) carries `EnvVars env =
+  94`, `Globals globals = 96` and an optional `string cwd = 97`. A served
+  read (daemon-api `library_reads`) resolves its project by its harp, is
+  read at the caller's directory (else the registered root), finds the
+  checkout there as a process would (the root's `ProjectLibraries`; a git
+  worktree is a checkout of its own, L2), observes it and the home, then
+  opens the library in the caller's environment under its globals (never
+  `trusted`: U7).
+- E2: `AssembleContext` answers the context WITHOUT the premise index, and
+  what a premise held back as data (`AssembledContext.premised`); none of
+  `library::compose::Options.surface` / `AssembleRequest.surface` means
+  "the caller renders it". The MCP server's `context_assemble` renders it
+  on the launch (`daemon_api::render_premise_index`, `Shown::Launch`). The
+  words are still `library::premise`'s: the in-process launch package and
+  materialize render with them too.
+- E5: each decline of a library use case is a typed refusal of its own
+  (`ctxloom.v1.Library*`, library.proto, each with its `(refusal_status)`),
+  mapped back to its `library-application-*` diagnostic by its type alone
+  (`daemon_api::library_refusals`, `Rejection::LibraryRead`); a wrapped
+  cause rides as its code and flattened args (`ctxloom.v1.Cause`).
+  `AppError::Declined` (a read model's own refusal) is still one message,
+  `LibraryDeclined`, until those are typed.
+- Notices: a library read's own notices ride the response metadata key
+  `ctxloom-notice-bin` (`daemon_proto::NOTICE_METADATA`, one prost `Notice`
+  per value, apart from the standing warnings), carried to a client as
+  `daemon_ports::Read`.
+- D12: one table, `daemon_proto::library_reads!`, generates each layer's
+  part of every library read (the port's default, the client's call, the
+  API's `Calls` default, the gRPC handler); a served read overrides its
+  `Calls` method in `Api`.
+- Served: `ListBundles` (`bundle list`, the CLI the request and the render:
+  library-cli's `Served`, text from the message, `text::bundles`),
+  `ListAgents`, `ListProfiles`, `ListSkills`; the view-to-message mapping
+  of those is `library_api::resources`, the one mapping. The home step (G2)
+  is the daemon's, at a read (`observe_read`), said as
+  `library-api-notice-home-repository-made`; a verb still in process still
+  takes it in process first.
+- O3: the session-start nudge asks the daemon's `ListAgents` and
+  `ListProfiles`, the skill mates its `ListSkills` (the bundle from the
+  skill's resource name, the name its id), within the hook's bound,
+  degraded (setup-application's `HookLibrary`, the root's
+  `DaemonHookLibrary`; a hook whose environment names an endpoint asks only
+  a daemon already serving); with no daemon in time a hook says nothing of
+  the library and reads nothing in process.
+
+Still in process (U2's remainder): every other library read (`bundle
+show|view`, `fragment|command|skill|profile|agent|mcp|companion|engine
+list|show`, `search`, `config show`, `fragment premises`, `context
+assemble`, the deps reads) and `run --dry-run` (not yet `CreateRun
+{validate_only}`), so their library_changes.feature rows stay red.
 
 ## Storage is angzarr-store-sqlite
 

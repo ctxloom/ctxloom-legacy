@@ -13,12 +13,10 @@
 //! through [`written`]) and `config`. The other nouns still print their views, until
 //! their branch converts them.
 
-use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 use angzarr_presentation::Format;
 use cli_support::{say_notices, Exit};
-use daemon_proto::google::protobuf::{value::Kind, ListValue, Struct, Value};
 use daemon_proto::v1;
 use library_application::{AgentSettings, Notice, Outcome};
 use serde::Serialize;
@@ -116,31 +114,9 @@ pub(crate) fn not_carried(lost: &library_application::NotCarried) -> v1::NotCarr
     }
 }
 
-/// A free-form document as a `google.protobuf.Value` (OQ-11, owner ruling
-/// 2026-11-13): whatever was written, an object or not, for display.
-pub(crate) fn document(json: &serde_json::Value) -> Value {
-    value(json)
-}
-
-/// A JSON value as a `google.protobuf.Value` (numbers as doubles, OQ-11).
-fn value(json: &serde_json::Value) -> Value {
-    let kind = match json {
-        serde_json::Value::Null => Kind::NullValue(0),
-        serde_json::Value::Bool(b) => Kind::BoolValue(*b),
-        serde_json::Value::Number(n) => Kind::NumberValue(n.as_f64().unwrap_or_default()),
-        serde_json::Value::String(s) => Kind::StringValue(s.clone()),
-        serde_json::Value::Array(items) => Kind::ListValue(ListValue {
-            values: items.iter().map(value).collect(),
-        }),
-        serde_json::Value::Object(fields) => Kind::StructValue(Struct {
-            fields: fields
-                .iter()
-                .map(|(key, field)| (key.clone(), value(field)))
-                .collect::<BTreeMap<_, _>>(),
-        }),
-    };
-    Value { kind: Some(kind) }
-}
+/// A free-form document as a `google.protobuf.Value` (OQ-11): the one
+/// mapping, library-api's.
+pub(crate) use library_api::resources::document;
 
 #[cfg(test)]
 #[path = "api.test.rs"]

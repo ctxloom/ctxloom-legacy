@@ -246,7 +246,29 @@ pub trait Calls: Send + Sync {
     fn warnings(&self) -> Vec<v1::Notice> {
         Vec::new()
     }
+
+    // The library's reads (step 10a U2, D12), from the one table; each
+    // answers its message and the notices the read said. An edge that
+    // serves one fails it.
+    daemon_proto::library_reads!(library_read_calls);
 }
+
+/// [`Calls`]'s library reads, from `daemon_proto::library_reads!`.
+macro_rules! library_read_calls {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "` (step 10a U2); as `GetTranscript`.")]
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> Answer<'_, daemon_ports::Read<v1::$response>> {
+                let _ = request;
+                Box::pin(async { Err(not_served(stringify!($rpc))) })
+            }
+        )*
+    };
+}
+use library_read_calls;
 
 /// A call this edge does not serve, failed.
 fn not_served(method: &str) -> ApiError {
@@ -414,6 +436,56 @@ impl<E: Edge + 'static> Calls for Api<E> {
     fn wait_approval(&self, request: v1::WaitApprovalRequest) -> Answer<'_, v1::Approval> {
         Box::pin(Api::wait_approval(self, request))
     }
+
+    // The library's reads served (step 10a U2; O3's, the hooks'): each
+    // observed first, then answered by library-api's use case.
+    fn list_bundles(
+        &self,
+        request: v1::ListBundlesRequest,
+    ) -> Answer<'_, daemon_ports::Read<v1::ListBundlesResponse>> {
+        Box::pin(async move {
+            self.open()?;
+            self.library_read(&request, library_api::reads::list_bundles)
+                .await
+        })
+    }
+
+    fn list_agents(
+        &self,
+        request: v1::ListAgentsRequest,
+    ) -> Answer<'_, daemon_ports::Read<v1::ListAgentsResponse>> {
+        Box::pin(async move {
+            self.open()?;
+            self.library_read(&request, library_api::reads::list_agents)
+                .await
+        })
+    }
+
+    fn list_profiles(
+        &self,
+        request: v1::ListProfilesRequest,
+    ) -> Answer<'_, daemon_ports::Read<v1::ListProfilesResponse>> {
+        Box::pin(async move {
+            self.open()?;
+            self.library_read(&request, library_api::reads::list_profiles)
+                .await
+        })
+    }
+
+    fn list_skills(
+        &self,
+        request: v1::ListSkillsRequest,
+    ) -> Answer<'_, daemon_ports::Read<v1::ListSkillsResponse>> {
+        Box::pin(async move {
+            self.open()?;
+            // A bundle's own skills, when the parent names a bundle.
+            let bundle = crate::library_reads::bundle_of(&request.parent);
+            self.library_read(&request, |library, flags, parent| {
+                library_api::reads::list_skills(library, flags, parent, &bundle)
+            })
+            .await
+        })
+    }
 }
 
 /// The use cases of the daemon's API.
@@ -437,6 +509,9 @@ pub struct Api<E> {
     /// Where an ask is recorded and read (step 8 U4); none, the approvals
     /// calls fail.
     pub(crate) approving: Option<crate::Approving>,
+    /// Where a library read is answered from (step 10a U2); none, every
+    /// library read fails.
+    pub(crate) libraries: Option<Arc<dyn crate::Libraries>>,
     /// What a library read observes first (step 10a U2), and git as its
     /// caller runs it; none, a read observes nothing.
     observing: Option<(
@@ -456,6 +531,7 @@ impl<E: Edge> Api<E> {
             terminals: None,
             trusting: None,
             approving: None,
+            libraries: None,
             observing: None,
         }
     }
@@ -501,9 +577,7 @@ impl<E: Edge> Api<E> {
                 library_api::ReadError::Refused(rejection) => {
                     ApiError::Refused(crate::library_refusal(&rejection))
                 }
-                library_api::ReadError::Failed(failure) => ApiError::Failed {
-                    detail: failure.code().to_string(),
-                },
+                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
             })?;
         Ok(said
             .iter()
@@ -557,6 +631,16 @@ impl<E: Edge> Api<E> {
     pub fn handing_off(self, hand_offs: Arc<dyn crate::HandOffs>) -> Api<E> {
         Api {
             hand_offs: Some(hand_offs),
+            ..self
+        }
+    }
+
+    /// The API, its library reads answered through `libraries` (step 10a
+    /// U2).
+    #[must_use]
+    pub fn reading(self, libraries: Arc<dyn crate::Libraries>) -> Api<E> {
+        Api {
+            libraries: Some(libraries),
             ..self
         }
     }
@@ -616,14 +700,7 @@ impl<E: Edge> Api<E> {
     ) -> Result<v1::AssembledContext, ApiError> {
         let name = ProjectName::parse(&request.name)
             .map_err(|rejection| invalid(&request.name, &rejection))?;
-        self.parts.hosting.fresh().await;
-        let row = self.parts.index.index().project_named_by(name.harp());
-        let root = row.map(|row| row.root).filter(|root| !root.is_empty());
-        let root = root.ok_or_else(|| {
-            ApiError::from(ApiRefusal::of(&v1::ProjectNotFound {
-                name: request.name.clone(),
-            }))
-        })?;
+        let root = self.registered_root(&name).await?;
         let assemblies = self.assemblies.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon makes no assembly".to_string(),
         })?;
@@ -634,6 +711,20 @@ impl<E: Edge> Api<E> {
         let mut assembled = assemblies.assemble(&root, &request)?;
         assembled.notices.extend(said);
         Ok(assembled)
+    }
+
+    /// The root project `name` is registered at, from the warm index once
+    /// it is fresh; a project nobody registered is refused
+    /// `ProjectNotFound`.
+    pub(crate) async fn registered_root(&self, name: &ProjectName) -> Result<String, ApiError> {
+        self.parts.hosting.fresh().await;
+        let row = self.parts.index.index().project_named_by(name.harp());
+        let root = row.map(|row| row.root).filter(|root| !root.is_empty());
+        root.ok_or_else(|| {
+            ApiError::from(ApiRefusal::of(&v1::ProjectNotFound {
+                name: name.to_string(),
+            }))
+        })
     }
 
     /// `GetDaemon`: the daemon, what it hosts and its idle time. Never its

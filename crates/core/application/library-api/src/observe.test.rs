@@ -406,8 +406,12 @@ async fn a_read_observes_its_checkout_then_the_home_in_the_callers_environment()
     assert_eq!(under.world.events(&home, 0).await.unwrap().len(), 1);
 }
 
+// G2, the home step in the daemon (step 10a U2): a home whose library is in
+// no work tree, or in one that ignores it, is made a repository of its own
+// at its first read, and the read says so; one already a repository is
+// used as it is, and nothing is said.
 #[tokio::test(flavor = "current_thread")]
-async fn a_home_in_no_work_tree_or_one_git_ignores_is_not_observed() {
+async fn a_home_in_no_work_tree_or_one_git_ignores_is_made_a_repository_and_said() {
     for git in [
         Box::new(|| Git {
             work_tree: None,
@@ -415,6 +419,7 @@ async fn a_home_in_no_work_tree_or_one_git_ignores_is_not_observed() {
         }) as Box<dyn Fn() -> Git + Send + Sync>,
         Box::new(|| {
             let mut git = Git::at("c1", "t1");
+            git.work_tree = Some("/h".to_string());
             git.ignored = Some(IgnoreRule {
                 source: "/h/.gitignore".to_string(),
                 line: 1,
@@ -429,14 +434,36 @@ async fn a_home_in_no_work_tree_or_one_git_ignores_is_not_observed() {
             home: Some("/h/.ctxloom".to_string()),
             env: Mutex::new(Vec::new()),
         };
-        under
+        let said = under
             .observations
             .observe_read(&callers, &[], None)
             .await
             .unwrap();
-        assert_eq!(*under.world.handled.lock().unwrap(), 0);
-        assert_eq!(*under.harps.0.lock().unwrap(), 0);
+        assert_eq!(
+            said,
+            vec![LibraryApiNotice::HomeRepositoryMade {
+                path: "/h/.ctxloom".to_string()
+            }]
+        );
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_home_that_is_a_repository_already_is_used_as_it_is_and_nothing_said() {
+    let under = under();
+    let callers = callers(
+        || Git {
+            work_tree: Some("/h/.ctxloom".to_string()),
+            ..Git::at("c1", "t1")
+        },
+        Some("/h/.ctxloom"),
+    );
+    let said = under
+        .observations
+        .observe_read(&callers, &[], None)
+        .await
+        .unwrap();
+    assert!(said.is_empty(), "{said:?}");
 }
 
 #[tokio::test(flavor = "current_thread")]

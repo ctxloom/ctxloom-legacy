@@ -17,9 +17,7 @@ use serde::Serialize;
 
 use crate::{failed, output_failure, Context, Failure, PROG};
 
-pub(crate) use library_api::names::{
-    bundle_name, bundle_ref, item_name, origin, profile_ref, reference_name,
-};
+pub(crate) use library_api::names::{bundle_name, item_name, profile_ref, reference_name};
 
 /// A distilled form there or not.
 pub(crate) fn distilled(there: bool) -> i32 {

@@ -33,6 +33,26 @@ pub fn bundle_name(parent: &str, catalog: &str) -> String {
     }
 }
 
+/// The catalog name a bundle's resource name under `parent` stands for
+/// ([`bundle_name`] read back): `<b>`, `<r>/<b>` for a remote's, a
+/// companion's loadout by its companion; a name under no parent is its
+/// text.
+pub fn catalog_name(parent: &str, name: &str) -> String {
+    let Some(rest) = name
+        .strip_prefix(parent)
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
+        return name.to_string();
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    match segments.as_slice() {
+        ["bundles", bundle] => (*bundle).to_string(),
+        ["remotes", remote, "bundles", bundle] => format!("{remote}/{bundle}"),
+        ["companions", companion, "bundles", "loadout"] => format!("{COMPANION}{companion}"),
+        _ => name.to_string(),
+    }
+}
+
 /// Where a bundle of `catalog` name comes from; `builtin` when the catalog
 /// says it is ctxloom's own.
 pub fn origin(catalog: &str, builtin: bool) -> v1::bundle::Origin {

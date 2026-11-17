@@ -51,6 +51,44 @@ pub(crate) const PROJECT: &[(&str, &str)] = &[
 
 pub(crate) const AGENTS: &str = "schema_version: 9\ncompanions:\n  acme: {}\nagents:\n  dev:\n    engine: claude-code\n    profiles: [dev]\n    runtime: host\ndefault_agent: dev\n";
 
+/// The daemon's reads in the tests: answered as the daemon answers them
+/// (library-api's reads), over the same library, under the parent `names`
+/// gives.
+pub(crate) struct ServedBy<'a> {
+    pub(crate) library: &'a Library,
+    pub(crate) names: &'a dyn Names,
+}
+
+impl Served for ServedBy<'_> {
+    fn in_project(&self) -> bool {
+        self.names.parent().is_ok_and(|parent| parent != "users/me")
+    }
+
+    fn list_bundles(
+        &self,
+        globals: &v1::Globals,
+    ) -> Result<(v1::ListBundlesResponse, Vec<v1::Notice>), Failure> {
+        let parent = self.names.parent()?;
+        let flags = library_application::Flags {
+            degraded: globals.degraded,
+            no_companions: globals.no_companions,
+            config_set: globals.config_set.clone(),
+            trusted: false,
+        };
+        let outcome = library_api::reads::list_bundles(self.library, &flags, &parent);
+        let notices = outcome
+            .notices
+            .iter()
+            .map(|notice| v1::Notice {
+                code: notice.code().to_string(),
+                args: Vec::new(),
+                text: notice.to_string(),
+            })
+            .collect();
+        Ok((outcome.result.map_err(failed)?, notices))
+    }
+}
+
 /// What one invocation left behind.
 pub(crate) struct Ran {
     pub(crate) exit: Result<u8, String>,
@@ -195,9 +233,14 @@ pub(crate) fn go_in(line: &[&str], how: How, layers: &[&str], names: &dyn Names)
     };
     let catalog = Catalog::en_us(&[library_application::EN_US]).unwrap();
     let (mut out, mut err) = (Vec::new(), Vec::new());
+    let library = setup.library();
     let exit = run(
-        &setup.library(),
+        &library,
         names,
+        &ServedBy {
+            library: &library,
+            names,
+        },
         &noun,
         &call,
         &catalog,
@@ -342,8 +385,12 @@ fn test_running_a_noun_the_line_does_not_name_is_refused() {
     let library = Setup::default().library();
     let catalog = Catalog::en_us(&[library_application::EN_US]).unwrap();
     let (mut out, mut err) = (Vec::new(), Vec::new());
+    let served = ServedBy {
+        library: &library,
+        names: &Project,
+    };
     let wrong = run(
-        &library, &Project, "bundle", &call, &catalog, &mut out, &mut err,
+        &library, &Project, &served, "bundle", &call, &catalog, &mut out, &mut err,
     )
     .unwrap_err();
     assert_eq!(wrong.cause.code(), "library-application-search-nothing");
@@ -385,6 +432,10 @@ fn test_an_answer_that_cannot_be_written_fails_with_its_cause() {
     let failure = run(
         &library,
         &Project,
+        &ServedBy {
+            library: &library,
+            names: &Project,
+        },
         "companion",
         &call,
         &catalog,

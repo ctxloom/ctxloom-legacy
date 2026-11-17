@@ -801,6 +801,10 @@ message AssembleContextRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, owner 2026-11-17): the daemon
+  // resolves the project and its checkout from it (a git worktree is a
+  // checkout of its own, L2); empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // One fragment as the assembly used it.
@@ -823,11 +827,15 @@ message AssembledFragment {
 
 // An assembled context, and what it was composed from.
 message AssembledContext {
-  // The context's text, ending with the premise index of what a premise held
-  // back (`config.premised: on-demand`).
+  // The context's text. It does NOT end with the premise index (E2, owner
+  // 2026-11-17: how to view is presentation): what a premise held back is
+  // `premised`, data, and the caller renders the index (the CLI's `context
+  // assemble` at rest, the MCP server's `context_assemble` tool for a
+  // launch), appending it after a section separator.
   string context = 1;
-  // The context's token estimate: a count, so uint32 (OQ-12; drafted
-  // uint64, which proto3 JSON prints as a string).
+  // The token estimate of `context` as answered (the index not included):
+  // a count, so uint32 (OQ-12; drafted uint64, which proto3 JSON prints as
+  // a string).
   uint32 tokens = 2;
   // Each fragment the context used, and the form it used.
   repeated AssembledFragment fragments = 3;
@@ -838,6 +846,11 @@ message AssembledContext {
   repeated string missing_fragments = 5;
   // The tags asked for, when none of them matched a fragment.
   repeated string missing_tags = 6;
+  // The premise index as data (E2, `config.premised: on-demand`): each
+  // fragment a premise held back, by the reference its ask named, with its
+  // premise; sorted, each once. Empty under `always`, or when nothing was
+  // held back.
+  repeated PremiseEntry premised = 7;
   // `stale-distilled` for each distilled form whose digest did not match.
   repeated Notice notices = 92;
 }

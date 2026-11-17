@@ -717,6 +717,12 @@ fn served(
                 home: home.to_path_buf(),
                 temp: temp.to_path_buf(),
             }))
+            // The library's reads (step 10a U2): each at the caller's
+            // directory, in its environment.
+            .reading(Arc::new(super::places::ProjectLibraries {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+            }))
             .handing_off(super::files::api_hand_offs(fs, (home, temp), engines))
             // The trusts it reads (step 8 U1).
             .trusting(trusting(kept, (home, temp)))

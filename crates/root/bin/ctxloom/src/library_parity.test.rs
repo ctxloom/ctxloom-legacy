@@ -137,6 +137,25 @@ fn as_declared(id: &str, golden: String) -> String {
         .replace(&format!("0644  {SCRIPT}"), &format!("0755  {SCRIPT}"))
 }
 
+/// The rows whose answer the owner changed from Go's: `bundle list` of a
+/// project with no bundles directory says what an empty one says (owner
+/// ruling 2026-11-17: "in the event of no directory, we should create it or
+/// tell the user to install bundles, which would create it"; a read never
+/// creates it), not Go's `mkdir` line. bundle.tsv marks the rows.
+fn as_ruled(id: &str, golden: String) -> String {
+    match id {
+        "empty-bundle-list-text" => golden.replace(
+            "No bundles directory found. Create one with: mkdir -p .ctxloom/content/bundles",
+            &format!(
+                "No bundles installed.\n{}",
+                library_application::LISTING_HINT
+            ),
+        ),
+        "noproject-bundle-list-text" => format!("No bundles installed.\n{golden}"),
+        _ => golden,
+    }
+}
+
 /// Go's golden as this build words it where the owner changed it: the schema
 /// stamp (Go writes 8, this build 9; Go's bare-name companions list is read
 /// as generation 9's names, OD-10); and Go's boolean
@@ -397,7 +416,10 @@ fn mismatch(row: &Row, project: &Project) -> Option<String> {
     if !agreed {
         return Some(format!("exit {} (Go {go_exit}): {}", ran.code, ran.said()));
     }
-    let want = as_declared(&row.id, as_changed(&golden(&row.id, "stdout")));
+    let want = as_ruled(
+        &row.id,
+        as_declared(&row.id, as_changed(&golden(&row.id, "stdout"))),
+    );
     if !is_dry_run(&row.id) && carries_retired_llm(&want) {
         return None;
     }

@@ -235,6 +235,21 @@ struct RpcStatus {
     details: Vec<prost_types::Any>,
 }
 
+/// `google.rpc.ErrorInfo`, as googleapis defines it.
+#[derive(Clone, PartialEq, Message)]
+struct ErrorInfo {
+    #[prost(string, tag = "1")]
+    reason: String,
+    #[prost(string, tag = "2")]
+    domain: String,
+    #[prost(btree_map = "string, string", tag = "3")]
+    metadata: std::collections::BTreeMap<String, String>,
+}
+
+/// The `ErrorInfo` domain of a failure the daemon says in a diagnostic of
+/// its own: its reason is the diagnostic's code.
+pub const DIAGNOSED_DOMAIN: &str = "ctxloom.dev/diagnostic";
+
 /// `error` as the status the caller is answered.
 fn status_of_error(error: ApiError) -> Status {
     match error {
@@ -255,6 +270,25 @@ fn status_of_error(error: ApiError) -> Status {
             Status::with_details(code, message, Bytes::from(details.encode_to_vec()))
         }
         ApiError::Failed { detail } => infrastructure(Infrastructure::Failed, detail),
+        // A failure in a diagnostic of its own (step 10a U2): its code as a
+        // `google.rpc.ErrorInfo`'s reason, its args its metadata.
+        ApiError::Diagnosed { code, args } => {
+            let info = ErrorInfo {
+                reason: code.clone(),
+                domain: DIAGNOSED_DOMAIN.to_string(),
+                metadata: args.into_iter().map(|arg| (arg.name, arg.value)).collect(),
+            };
+            let status = Code::from_i32(Infrastructure::Failed.status());
+            let details = RpcStatus {
+                code: status as i32,
+                message: code.clone(),
+                details: vec![prost_types::Any {
+                    type_url: "type.googleapis.com/google.rpc.ErrorInfo".to_string(),
+                    value: info.encode_to_vec(),
+                }],
+            };
+            Status::with_details(status, code, Bytes::from(details.encode_to_vec()))
+        }
         ApiError::Unimplemented { method } => infrastructure(
             Infrastructure::Unimplemented,
             format!("{method} is not served yet"),
@@ -533,6 +567,58 @@ impl Ctxloom for Served {
             calls.sweep_sessions(message).await
         })
         .await
+    }
+
+    // The library's reads (step 10a U2, D12), from the one table: each
+    // answered with its message, the notices the read said riding as
+    // `NOTICE_METADATA` (owner ruling 2026-11-17).
+    daemon_proto::library_reads!(library_read_handlers);
+}
+
+/// [`Served`]'s library reads, from `daemon_proto::library_reads!`, in the
+/// shape `tonic::async_trait` gives the generated trait's methods.
+macro_rules! library_read_handlers {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method<'life0, 'async_trait>(
+                &'life0 self,
+                request: Request<v1::$request>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn Future<Output = Result<Response<v1::$response>, Status>>
+                        + Send
+                        + 'async_trait,
+                >,
+            >
+            where
+                'life0: 'async_trait,
+                Self: 'async_trait,
+            {
+                Box::pin(async move {
+                    let read = self
+                        .answer(request, |calls, message| async move {
+                            calls.$method(message).await
+                        })
+                        .await?
+                        .into_inner();
+                    let mut response = Response::new(read.answer);
+                    noticed(response.metadata_mut(), &read.notices);
+                    Ok(response)
+                })
+            }
+        )*
+    };
+}
+use library_read_handlers;
+
+/// `notices` added to `metadata`, one [`daemon_proto::NOTICE_METADATA`]
+/// value each, in order: a library read's own (step 10a U2).
+pub fn noticed(metadata: &mut MetadataMap, notices: &[v1::Notice]) {
+    for notice in notices {
+        metadata.append_bin(
+            daemon_proto::NOTICE_METADATA,
+            MetadataValue::from_bytes(&notice.encode_to_vec()),
+        );
     }
 }
 

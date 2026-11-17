@@ -75,9 +75,6 @@ impl Project {
                     )
                 })
                 .collect(),
-            // The built-in bundles are listed with or without the project's
-            // own bundles directory.
-            no_root: !self.has_root && self.catalog.entries().is_empty(),
             hint: self.listing_hint(),
         }
     }
