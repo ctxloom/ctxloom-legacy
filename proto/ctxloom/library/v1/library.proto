@@ -1,0 +1,505 @@
+syntax = "proto3";
+
+// The owner approved this shape with the step 10a red spec (2026-11-16,
+// night; rulings 132, 142; `step10a-red-spec/protos.md`, amended for the G4
+// supersession). Compiled by `library-domain-proto` (the wire types, step
+// 10 U0), handled by `library-tree` (the domain, G10) and projected by
+// `library-checkout` (`Held`).
+//
+// Two departures from the approved text, both forced by angzarr-build's
+// domain layer, which maps no `oneof` yet: `Step`'s arms and
+// `TreeObserved`'s cause are `optional` fields, exactly one of them set.
+// The wire is the one a oneof has (each arm its own field number), so a
+// later oneof reads every record written now. Each `in_motion` is an
+// `optional` enum (the domain layer maps a set enum alone; the wire is the
+// same). `Evidence` gains `root`, the tree's root as the application found
+// it, which `NotInGit` and `TreeInMotion` (10b's text names it) carry.
+// And `OneChangePerCall` (T29, D14) waits for 10b (U8), with the evidence
+// that raises it: the generator refuses a refusal no command refuses, and
+// no U0 command has a plan of several files to judge.
+//
+// THE LIBRARY: what ctxloom observed of a library TREE in git, and (from
+// 10b) what it intended to change there. A tree is a project checkout's
+// `.ctxloom/` or the home's `.ctxloom/`. Its content is a git pathspec
+// (L13): `content/bundles/v2/**`, `config.yaml`, `remotes.yaml`,
+// `lock.yaml`; never `sessions/`, `state/` or `cache/`.
+//
+// GIT HOLDS THE CONTENT (the amendment, 2026-11-16). Nothing here holds a
+// file's text, a config value or a key: a change is a path, how it changed,
+// and git's object ids. ctxloom hashes nothing of its own; every id is
+// git's (`hash-object --path`, so the repository's filters and its hash
+// algorithm apply).
+//
+// AN OBSERVATION IS A FACT (L5). Every read observes the tree first:
+//   - `rev-parse` for HEAD and the library's tree id;
+//   - `status --porcelain=v2 -z -uall --no-optional-locks` over the pathspec;
+//   - `hash-object --path` of each dirty path;
+//   - `diff-tree -M` between the last-seen and the current HEAD, when the
+//     tree id moved.
+// When anything differs from the state, ONE `RecordTreeObserved` lists
+// every change. A read that sees nothing new records nothing.
+//
+// EACH RESOURCE HAS A SEQUENCE (G4 superseded, owner 2026-11-16, night).
+// An event that names a path ties the path's git id to the event's own
+// sequence in this stream; the state and `library-checkout` fold
+// `{last sequence, oid}` per path, and a path's last sequence is the etag
+// a client is shown and sends back. A FACT CARRIES NO SEQUENCE: it says
+// what was seen, and the sequence is the one its event is recorded at.
+//
+// A GIT OPERATION IN PROGRESS (L11): `index.lock`, `MERGE_HEAD` or a
+// `rebase-*` directory (found by `rev-parse --git-path`). A read records
+// what it sees, marked `in_motion`, and says so. A write is refused
+// `TreeInMotion` (10b).
+package ctxloom.library.v1;
+
+import "io/angzarr/v1/options.proto";
+
+// Which kind of tree.
+enum TreeKind {
+  TREE_KIND_UNSPECIFIED = 0;
+  // `projects/{p}/checkouts/{c}/library`.
+  CHECKOUT = 1;
+  // `users/me/library`.
+  HOME = 2;
+}
+
+// How a path changed, as git says it.
+enum ChangeStatus {
+  CHANGE_STATUS_UNSPECIFIED = 0;
+  ADDED = 1;
+  MODIFIED = 2;
+  DELETED = 3;
+  // A rename git reports: `diff-tree -M`'s `R`, or porcelain v2's `2 R`
+  // for a staged rename. `from_path` is where it was. A move made without
+  // git is a DELETED and an ADDED (L7).
+  RENAMED = 4;
+  // A file became a symlink or the reverse (`T`).
+  TYPE_CHANGED = 5;
+}
+
+// One path that changed. Paths are relative to the tree's root (its
+// `.ctxloom/`), `/`-separated, whatever the platform.
+message Change {
+  string path = 1;
+  ChangeStatus status = 2;
+  // Absent for ADDED.
+  string from_oid = 3;
+  // Absent for DELETED.
+  string to_oid = 4;
+  // RENAMED only.
+  string from_path = 5;
+}
+
+// A path git sees differing from HEAD, and its blob id now (absent when
+// deleted).
+message DirtyPath {
+  string path = 1;
+  string oid = 2;
+}
+
+// Which git operation was in progress.
+enum Motion {
+  MOTION_UNSPECIFIED = 0;
+  // `index.lock` held.
+  INDEX_LOCKED = 1;
+  MERGING = 2;
+  REBASING = 3;
+  CHERRY_PICKING = 4;
+  REVERTING = 5;
+}
+
+// region state
+
+message LibraryState {
+  option (io.angzarr.v1.component) = {
+    component_name: "library"
+    aggregate: {domain: "library"}
+  };
+
+  // `projects/{p}/checkouts/{c}/library` or `users/me/library`.
+  string name = 1;
+  TreeKind kind = 2;
+  // The commit last seen; empty for a repository with none yet.
+  string head = 3;
+  // The library's tree id at `head`; empty when none.
+  string tree = 4;
+  // What git saw differing from `head`, by path.
+  map<string, string> dirty = 5;
+  // The cause last recorded: a fact's external id, or (10b) a command's id.
+  // The next observation's key chains on it (L4).
+  string last_cause = 6;
+  // 10b (U3): the intents not yet completed, by request id.
+  map<string, Intent> pending = 7;
+  // 10b (U8): trash slots, by request id.
+  map<string, Trashed> trashed = 8;
+  // G4 superseded: per path, the last event that named it. Folded by
+  // `apply` from each event's page sequence; never sent in a fact.
+  map<string, Resource> resources = 9;
+  // The sequence of the tree's last baseline: the token of every path no
+  // event has named since.
+  uint64 baseline_sequence = 10;
+}
+
+// A resource's place in the record (G4 superseded): the sequence of the
+// last event that named the path, and the git id that event gave it
+// (empty when it deleted the path or moved it away). The sequence is the
+// path's etag.
+message Resource {
+  uint64 sequence = 1;
+  string oid = 2;
+}
+
+// endregion
+
+// region facts
+
+// What a read saw, when it differs from the state. The external id is
+// `obs:{tree}:{H(last_cause)}:{head_after}:{H(sorted dirty)}`. It carries
+// NO sequence (owner: "external changes will come in as facts w/out
+// sequence numbers"): the `TreeObserved` it produces is given one when the
+// aggregate records it, and that is what each change's oid is tied to.
+message RecordTreeObserved {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.TreeObserved"]
+  };
+
+  string name = 1;
+  TreeKind kind = 2;
+  // The `last_cause` the observer read, so a fact made against an older
+  // state is recognised (its key differs, and the aggregate records what
+  // it adds to the state it has).
+  string base_cause = 3;
+  string head_before = 4;
+  string head_after = 5;
+  string tree_after = 6;
+  // Every change since the state, sorted by path.
+  repeated Change changes = 7;
+  // The whole dirty set after, sorted by path: the state's next `dirty`.
+  repeated DirtyPath dirty_after = 8;
+  // The tree's first observation (L16): `changes` lists what was dirty
+  // then, and nothing of what HEAD holds.
+  bool baseline = 9;
+  // None when no git operation was in progress.
+  optional Motion in_motion = 10;
+}
+
+// 10b (U3): a step of an intent was carried out, and what it left. No
+// sequence: its `StepApplied` is given one when recorded.
+message RecordStepDone {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.StepApplied"]
+  };
+
+  string request_id = 1;
+  uint32 step = 2;
+  repeated DirtyPath observed = 3;
+}
+
+// 10b (U3): a step failed; final.
+message RecordStepFailed {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.ChangeFailed"]
+  };
+
+  string request_id = 1;
+  uint32 step = 2;
+  // The OS's or git's own text, verbatim.
+  string ext_err_txt = 3;
+}
+
+// endregion
+
+// region commands (U0; first sent in 10b, U3)
+
+// What the application found before it sent the command; `decide` judges
+// it. Never a file's text.
+message Evidence {
+  // The tree still reads with the change applied (the plan's own check).
+  bool tree_reads = 1;
+  // A planning failure, as its diagnostic's code and args (L14).
+  optional PlanRejected plan_rejection = 2;
+  // The path is the built-in bundle's (ruling 127).
+  bool builtin = 3;
+  // None when no git operation is in progress.
+  optional Motion in_motion = 4;
+  // The tree is in a git work tree, and git does not ignore it (G1).
+  bool in_git = 5;
+  // When `in_git` is false because git ignores it: which rule.
+  optional LibraryIgnored ignored = 6;
+  // The tree's root as the application found it (the project's root, or
+  // the home's `.ctxloom`): what `NotInGit` names.
+  string root = 7;
+}
+
+// One step of an intent: exactly one of its fields is set (a oneof on the
+// wire; see the header).
+message Step {
+  optional ReplaceFile replace = 1;
+  optional CreateDirectory create = 2;
+  optional TrashPath trash = 3;
+  optional MovePath move = 4;
+}
+
+// Replace one file whole (or create it). `seen_sequence` is the etag the
+// caller read (G4 superseded: the path's last sequence, else the
+// baseline's), the command's one sequence, its staleness evidence;
+// `decide` compares it with the state's token for `path` and refuses
+// `PlanStale` when the path's sequence has moved.
+message ReplaceFile {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.ChangeIntended"]
+    refuses: "ctxloom.library.v1.PlanStale"
+    refuses: "ctxloom.library.v1.BuiltinReadOnly"
+    refuses: "ctxloom.library.v1.PlanRejected"
+    refuses: "ctxloom.library.v1.TreeInMotion"
+    refuses: "ctxloom.library.v1.NotInGit"
+    refuses: "ctxloom.library.v1.LibraryIgnored"
+  };
+
+  string name = 1;
+  // The CLI's verb (`fragment edit`, `config set` ...), for the record.
+  string verb = 2;
+  string path = 3;
+  // Was `string etag = 4` (a blob id, G4); the decimal etag the API shows.
+  uint64 seen_sequence = 4;
+  string new_oid = 5;
+  Evidence evidence = 6;
+}
+
+// A new directory, staged under `state/` then renamed in, never over
+// another (D3(a), D4).
+message CreateDirectory {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.ChangeIntended"]
+    refuses: "ctxloom.library.v1.ResourceExists"
+    refuses: "ctxloom.library.v1.BuiltinReadOnly"
+    refuses: "ctxloom.library.v1.PlanRejected"
+    refuses: "ctxloom.library.v1.TreeInMotion"
+    refuses: "ctxloom.library.v1.NotInGit"
+    refuses: "ctxloom.library.v1.LibraryIgnored"
+  };
+
+  string name = 1;
+  string verb = 2;
+  string path = 3;
+  repeated DirtyPath entries = 4;
+  Evidence evidence = 5;
+}
+
+// A path renamed into `state/trash/<request-id>/` (L12).
+message TrashPath {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.ChangeIntended"]
+    refuses: "ctxloom.library.v1.NoSuchResource"
+    refuses: "ctxloom.library.v1.PlanStale"
+    refuses: "ctxloom.library.v1.BuiltinReadOnly"
+    refuses: "ctxloom.library.v1.TreeInMotion"
+    refuses: "ctxloom.library.v1.NotInGit"
+    refuses: "ctxloom.library.v1.LibraryIgnored"
+  };
+
+  string name = 1;
+  string verb = 2;
+  string path = 3;
+  // The path's token as the caller read it (a bundle's, for a bundle).
+  uint64 seen_sequence = 4;
+  Evidence evidence = 5;
+}
+
+// ctxloom's own move: one rename, recorded as such (L7).
+message MovePath {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.ChangeIntended"]
+    refuses: "ctxloom.library.v1.NoSuchResource"
+    refuses: "ctxloom.library.v1.ResourceExists"
+    refuses: "ctxloom.library.v1.PlanStale"
+    refuses: "ctxloom.library.v1.TreeInMotion"
+    refuses: "ctxloom.library.v1.NotInGit"
+    refuses: "ctxloom.library.v1.LibraryIgnored"
+  };
+
+  string name = 1;
+  string verb = 2;
+  string from = 3;
+  string to = 4;
+  // `from`'s token as the caller read it.
+  uint64 seen_sequence = 5;
+  Evidence evidence = 6;
+}
+
+// A retryable atomic sequence (T28): its steps are in the intent, so a
+// retry resumes at the first step not done.
+message RunSequence {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.ChangeIntended"]
+    refuses: "ctxloom.library.v1.PlanStale"
+    refuses: "ctxloom.library.v1.PlanRejected"
+    refuses: "ctxloom.library.v1.TreeInMotion"
+    refuses: "ctxloom.library.v1.NotInGit"
+    refuses: "ctxloom.library.v1.LibraryIgnored"
+  };
+
+  string name = 1;
+  string verb = 2;
+  repeated Step steps = 3;
+  Evidence evidence = 4;
+}
+
+// endregion
+
+// region events
+
+// Where an observation's changes came from.
+message External {
+  string head_before = 1;
+  string head_after = 2;
+}
+
+// Recorded at a sequence of the tree's stream (its page's): `apply` sets
+// each change's `path` to `{that sequence, to_oid}` in `resources` (a
+// rename's `from_path` to `{that sequence, ""}`); a baseline resets
+// `resources` and sets `baseline_sequence` to it.
+message TreeObserved {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+
+  string name = 1;
+  // Its cause: exactly one of `external` and `intended` (a oneof on the
+  // wire; see the header).
+  // Made outside ctxloom: an editor, a commit, a checkout, a pull.
+  // ctxloom cannot tell which, and does not claim to.
+  optional External external = 2;
+  // 10b: the observation saw an intent's own new ids (U3's attribution).
+  optional string intended = 3;
+  repeated Change changes = 4;
+  repeated DirtyPath dirty_after = 5;
+  string tree_after = 6;
+  bool baseline = 7;
+  // None when no git operation was in progress.
+  optional Motion in_motion = 8;
+}
+
+// 10b: an intent, as recorded.
+message Intent {
+  string request_id = 1;
+  string verb = 2;
+  repeated Step steps = 3;
+  // The state's `last_cause` it was decided against.
+  string base_cause = 4;
+  // The steps done so far.
+  uint32 done = 5;
+}
+
+// 10b (U8): what a trash slot holds.
+message Trashed {
+  string request_id = 1;
+  repeated string paths = 2;
+}
+
+message ChangeIntended {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  Intent intent = 1;
+}
+
+// `apply` sets each `observed` path to `{this event's sequence, oid}`
+// (G4 superseded): a write of ctxloom's own moves its paths' tokens here.
+message StepApplied {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  string request_id = 1;
+  uint32 step = 2;
+  // `RecordStepDone.observed`, what the step left: every file under the
+  // step's path, its oid empty when the step deleted or moved it away.
+  repeated DirtyPath observed = 3;
+}
+
+message ChangeFailed {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  string request_id = 1;
+  uint32 step = 2;
+  string ext_err_txt = 3;
+}
+
+// A pending intent whose base an observation changed (Q6, U13).
+message IntentSuperseded {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  string request_id = 1;
+  string by_cause = 2;
+}
+
+// endregion
+
+// region refusals
+
+// What the caller read has changed: the path's sequence moved since the
+// token it sent (G4 superseded); preview again. `library-tree-plan-stale`.
+message PlanStale {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  string path = 1;
+  // Were git ids (G4); now the token sent and the path's token now.
+  uint64 seen = 2;
+  uint64 now = 3;
+}
+
+// `library-tree-resource-exists`.
+message ResourceExists {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_ALREADY_EXISTS;
+  string path = 1;
+}
+
+// `library-tree-no-such-resource`.
+message NoSuchResource {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  string path = 1;
+}
+
+// `library-tree-builtin-read-only` (ruling 127's text, moved).
+message BuiltinReadOnly {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  string bundle = 1;
+}
+
+// A planning failure, as the diagnostic the plan raised (L14). The person
+// is told that diagnostic's own message, from its own catalog.
+message PlanRejected {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  string code = 1;
+  map<string, string> args = 2;
+}
+
+// `library-tree-tree-in-motion` (L11).
+message TreeInMotion {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  Motion motion = 1;
+  // The tree's root, as `Evidence.root` named it.
+  string root = 2;
+}
+
+// The tree is in no git work tree (G1). `library-tree-not-in-git`. A READ
+// is refused with this same message (daemon.proto §2), so a person sees
+// one code whether they read or write.
+message NotInGit {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // The project's root, or the home's `.ctxloom`.
+  string root = 1;
+}
+
+// Git ignores the library (G1): `git check-ignore -v` of the tree's
+// `config.yaml`. `library-tree-library-ignored`. A read is refused with it
+// too. Added to U0's list: the plan names the condition, not the message.
+message LibraryIgnored {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // The ignore file, relative to the repository's root (`.gitignore`,
+  // `.git/info/exclude`, or the global excludes file's path).
+  string source = 1;
+  uint32 line = 2;
+  string pattern = 3;
+}
+
+// endregion

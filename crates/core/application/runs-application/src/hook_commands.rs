@@ -37,7 +37,8 @@ impl<E: Edge> EdgeCommands<E> {
 /// trust's, on this machine: a hook sends its facts to its session, a hosted
 /// one-shot's command its stop to its run (U4), the user her trust in a
 /// project (step 8 U1), and her answer to an ask, or an engine's withdrawal
-/// of one (step 8 U4); what each caller may send there is its gate's
+/// of one (step 8 U4), and a library tree's operations and observations
+/// (step 10a U0); what each caller may send there is its gate's
 /// allowlist's to say.
 impl<E: Edge> Served for EdgeCommands<E> {
     fn reach(&self, domain: &str) -> Reach {
@@ -46,6 +47,7 @@ impl<E: Edge> Served for EdgeCommands<E> {
             runs::RUN_DOMAIN,
             trust::TRUST_DOMAIN,
             approvals::APPROVALS_DOMAIN,
+            library_tree::LIBRARY_DOMAIN,
         ];
         match reached.contains(&domain) {
             true => Reach::Loopback,

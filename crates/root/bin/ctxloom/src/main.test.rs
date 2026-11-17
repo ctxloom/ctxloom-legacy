@@ -306,6 +306,9 @@ mod launch_exit;
 #[path = "library.test.rs"]
 mod library;
 
+#[path = "library_events.test.rs"]
+mod library_events;
+
 #[path = "library_cli.test.rs"]
 mod library_cli;
 

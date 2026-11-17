@@ -55,7 +55,11 @@ fn url<M: angzarr_embedded::markup::DomainMessage>() -> String {
 /// terminal session it started (U5, S17: `RecordRunnerStarted`, `RecordRunExited`,
 /// `RecordLaunchFailed`), and a project's trust given and taken back (step 8
 /// U1: `GrantTrust`, `RevokeTrust`), and an ask answered and withdrawn (step
-/// 8 U4: `AnswerApproval`, `RecordApprovalWithdrawn`).
+/// 8 U4: `AnswerApproval`, `RecordApprovalWithdrawn`), and the library
+/// domain's operations and facts (step 10a U0: the five commands, and
+/// `RecordTreeObserved`, `RecordStepDone`, `RecordStepFailed`; the daemon
+/// records them in process, and the coordinator's admission lists every
+/// message the user may send).
 pub fn user_allowlist() -> Allowlist {
     let commands = <sessions::SessionAggregate as Domain>::Command::type_urls();
     let facts = <sessions::SessionAggregate as Domain>::Fact::type_urls();
@@ -82,12 +86,22 @@ pub fn user_allowlist() -> Allowlist {
         (BodyKind::Command, url::<approvals::AnswerApproval>()),
         (BodyKind::Fact, url::<approvals::RecordApprovalWithdrawn>()),
     ];
+    // Step 10a U0: the library domain, read from its aggregate.
+    let library = <library_tree::LibraryAggregate as Domain>::Command::type_urls()
+        .into_iter()
+        .map(|url| (BodyKind::Command, url))
+        .chain(
+            <library_tree::LibraryAggregate as Domain>::Fact::type_urls()
+                .into_iter()
+                .map(|url| (BodyKind::Fact, url)),
+        );
     commands
         .chain(facts)
         .chain(std::iter::once(stop))
         .chain(reports)
         .chain(trust)
         .chain(approvals)
+        .chain(library)
         .fold(Allowlist::none(), |list, (kind, url)| list.send(kind, url))
 }
 

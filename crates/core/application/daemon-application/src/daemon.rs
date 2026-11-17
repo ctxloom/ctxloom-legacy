@@ -58,6 +58,9 @@ pub struct Folds {
     pub trusts: trust_index::TrustIndexes,
     /// The permission asks (step 8 U4): what the approvals calls read.
     pub approvals: pending_approvals::PendingApprovals,
+    /// The library trees as last observed (step 10a U0): what a read
+    /// reconciles against and answers each resource's etag from (U2).
+    pub checkouts: library_checkout::LibraryCheckouts,
 }
 
 /// A child the daemon hosts: its run, the runner's identity, its control,
@@ -249,6 +252,7 @@ pub struct Daemon<E: Edge> {
     index: CatchUp<SessionIndexes>,
     trusts: CatchUp<trust_index::TrustIndexes>,
     approvals: CatchUp<pending_approvals::PendingApprovals>,
+    checkouts: CatchUp<library_checkout::LibraryCheckouts>,
     launches: CatchUp<PendingModel>,
     /// Each hosted child's environment, by its session's stable id: its
     /// launcher's, taken from the hand-off at its first start (S6, D-N45),
@@ -390,6 +394,7 @@ impl<E: Edge> Daemon<E> {
             index: session_index::SessionIndex::caught_up(folds.index),
             trusts: trust_index::caught_up(folds.trusts),
             approvals: pending_approvals::caught_up(folds.approvals),
+            checkouts: library_checkout::caught_up(folds.checkouts),
             launches: pending_launches::catch_up(),
             envs: BTreeMap::new(),
             hosted: BTreeMap::new(),
@@ -608,6 +613,10 @@ impl<E: Edge> Daemon<E> {
             .step(store, catalog)
             .await
             .map_err(|e| format!("the pending approvals' catch-up: {e:?}"))?;
+        self.checkouts
+            .step(store, catalog)
+            .await
+            .map_err(|e| format!("the library checkouts' catch-up: {e:?}"))?;
         self.sweep(store, catalog).await
     }
 
@@ -943,6 +952,7 @@ impl<E: Edge> Daemon<E> {
         let _ = self.index.step_if_changed(store, catalog).await;
         let _ = self.trusts.step_if_changed(store, catalog).await;
         let _ = self.approvals.step_if_changed(store, catalog).await;
+        let _ = self.checkouts.step_if_changed(store, catalog).await;
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
         }

@@ -33,6 +33,9 @@ pub enum LibError {
     /// refused and writes nothing. (A command that must name its project
     /// mints the id at its root instead.)
     ProjectUnnamed { root: String },
+    /// A library tree's checkout harp (`.ctxloom/state/checkout`, L2) could
+    /// not be read, minted or written.
+    Checkout { path: String, detail: String },
 }
 
 impl cli_support::ExitClass for LibError {
@@ -64,6 +67,7 @@ impl Diagnostic for LibError {
             LibError::Project(cause) => cause.code(),
             LibError::DaemonOtherHome { .. } => code!("daemon-other-home"),
             LibError::ProjectUnnamed { .. } => code!("project-unnamed"),
+            LibError::Checkout { .. } => code!("checkout"),
         }
     }
 
@@ -82,6 +86,10 @@ impl Diagnostic for LibError {
                 ("daemon_home", daemon_home.as_str().into()),
             ],
             LibError::ProjectUnnamed { root } => vec![("root", root.as_str().into())],
+            LibError::Checkout { path, detail } => vec![
+                ("path", path.as_str().into()),
+                ("ext_err_txt", detail.as_str().into()),
+            ],
         }
     }
 }
@@ -106,6 +114,10 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(LibError::ProjectUnnamed {
             root: "/work/app".to_string(),
+        }),
+        Box::new(LibError::Checkout {
+            path: "/work/app/.ctxloom/state/checkout".to_string(),
+            detail: "permission denied".to_string(),
         }),
         Box::new(LibError::Store(StoreOpenError::Open(
             ctxloom_store_sqlite::OpenError::Unplaced {
