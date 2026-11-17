@@ -19,6 +19,7 @@ fn a_read_s_parent_is_its_project_or_the_home() {
     assert!(project.is_none());
     assert!(parent_of("bundles/demo").is_none());
     assert!(parent_of("projects/").is_none());
+    assert!(parent_of("projects//bundles").is_none());
 }
 
 #[test]
@@ -574,7 +575,8 @@ async fn a_remote_is_browsed_as_a_deps_read_and_its_failure_keeps_its_words() {
 }
 
 /// A library whose project's own config names the program claude-code runs
-/// (ruling 46's key), as a read opens it under whatever flags it is asked.
+/// (ruling 46's key), its home one agent on it, as a read opens it under
+/// whatever flags it is asked.
 struct SaysCommand;
 
 impl Libraries for SaysCommand {
@@ -590,7 +592,7 @@ impl Libraries for SaysCommand {
     ) -> Result<(), ApiError> {
         let library = Setup {
             layers: &[
-                "schema_version: 9\n",
+                "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\ndefault_agent: dev\n",
                 "schema_version: 9\nengines:\n  claude-code:\n    command: /opt/their-claude\n",
             ],
             ..Setup::default()
@@ -702,4 +704,71 @@ async fn a_trusted_projects_read_shows_its_own_setting() {
         ("/opt/their-claude", "engine")
     );
     assert!(read.notices.is_empty(), "{:?}", read.notices);
+}
+
+// A preview says what its read said beside the plan: git mid-merge in the
+// tree it observed.
+#[tokio::test]
+async fn a_preview_carries_the_notices_its_read_said() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits {
+        work_tree: Some(ROOT.to_string()),
+        motion: Some(ctxloom_ports::Motion::Merging),
+        ..Gits::default()
+    });
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::new(WithAgent::default()))
+        .observing(observing(&f.world, &gits));
+    let run = api
+        .create_run(v1::CreateRunRequest {
+            parent: "projects/calm-quiet-heron".to_string(),
+            mode: v1::run::Mode::Terminal as i32,
+            cwd: "/work/calm-wt".to_string(),
+            validate_only: true,
+            ..v1::CreateRunRequest::default()
+        })
+        .await
+        .unwrap();
+    let codes: Vec<&str> = run.notices.iter().map(|n| n.code.as_str()).collect();
+    assert_eq!(codes, ["library-api-notice-tree-in-motion"]);
+}
+
+fn preview() -> v1::CreateRunRequest {
+    v1::CreateRunRequest {
+        parent: "projects/calm-quiet-heron".to_string(),
+        mode: v1::run::Mode::Terminal as i32,
+        cwd: ROOT.to_string(),
+        validate_only: true,
+        ..v1::CreateRunRequest::default()
+    }
+}
+
+// Owner answer H: a preview on an untrusted project's own held-back
+// settings is refused as its launch would be; trusted, it is planned.
+#[tokio::test]
+async fn an_untrusted_projects_preview_is_refused_as_its_launch_would_be() {
+    let refused = reading_trusts(false).await.create_run(preview()).await;
+    let Err(ApiError::Refused(refusal)) = refused else {
+        panic!("not refused: {refused:?}");
+    };
+    assert!(
+        refusal
+            .refusal
+            .type_url
+            .ends_with("UntrustedProjectSettings"),
+        "{refusal:?}"
+    );
+    let planned = reading_trusts(true)
+        .await
+        .create_run(preview())
+        .await
+        .unwrap();
+    assert_eq!(
+        planned.engine,
+        "projects/calm-quiet-heron/engines/claude-code"
+    );
 }

@@ -715,11 +715,12 @@ pub(crate) mod tests;
 
 /// A library use case's error (step 10a U2) as a read answers it: an
 /// adapter's failure is a failure; a decline is its typed refusal (E5).
+/// Only a decline is typed (`library_refusals::typed`: every one it types
+/// exits refused, which its tests hold it to).
 pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
-    use exit_code::ExitClass;
     match crate::library_refusals::typed(error) {
-        Some(refused) if error.exit() != exit_code::Exit::FAILED => ApiError::Refused(refused),
-        _ => ApiError::Failed {
+        Some(refused) => ApiError::Refused(refused),
+        None => ApiError::Failed {
             detail: angzarr_diagnostic::Diagnostic::code(error).to_string(),
         },
     }

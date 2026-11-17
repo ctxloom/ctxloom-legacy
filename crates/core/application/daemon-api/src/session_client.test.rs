@@ -161,6 +161,29 @@ impl DaemonApi for Fake {
         self.names.lock().unwrap().push(r.project);
         Ok(v1::SweepSessionsResponse::default())
     }
+
+    async fn assemble_context(
+        &self,
+        r: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, Called> {
+        self.ask("assemble", r.env)?;
+        self.names.lock().unwrap().push(r.name);
+        self.names.lock().unwrap().push(format!("cwd {}", r.cwd));
+        Ok(v1::AssembledContext {
+            context: "ASSEMBLED".to_string(),
+            ..v1::AssembledContext::default()
+        })
+    }
+
+    async fn create_run(&self, r: v1::CreateRunRequest) -> Result<v1::Run, Called> {
+        self.ask(&format!("run {}", r.validate_only), r.env)?;
+        self.names.lock().unwrap().push(r.parent);
+        self.names.lock().unwrap().push(format!("cwd {}", r.cwd));
+        Ok(v1::Run {
+            context: "PLANNED".to_string(),
+            ..v1::Run::default()
+        })
+    }
 }
 
 /// The daemons a test reaches: `serving` says whether one serves at first;
@@ -686,4 +709,49 @@ async fn a_transcript_is_read_from_the_daemon_of_the_resolved_project() {
             "2:get-transcript"
         ]
     );
+}
+
+// Step 10a U2: an assembly and a dry run are asked of the daemon under the
+// library's parent (the resolved project, else the home), from the
+// caller's directory in its environment, a dry run validate-only; what the
+// daemon answers is answered.
+#[tokio::test]
+async fn an_assembly_and_a_dry_run_are_asked_under_the_library_parent_from_the_callers_place() {
+    use super::LibraryReads;
+    let daemons = Fakes::new();
+    let client = in_project(&daemons);
+    let assembled = client
+        .assemble_context(v1::AssembleContextRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(assembled.context, "ASSEMBLED");
+    let run = client
+        .preview_run(v1::CreateRunRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(run.context, "PLANNED");
+    assert_eq!(
+        daemons.asked(),
+        ["1:resolve", "1:assemble", "2:resolve", "2:run true"]
+    );
+    assert_eq!(
+        daemons.names(),
+        [
+            "p-1",
+            "projects/calm-otter",
+            "cwd /work",
+            "p-1",
+            "projects/calm-otter",
+            "cwd /work"
+        ]
+    );
+    let envs = daemons.template.envs.lock().unwrap().clone();
+    assert_eq!(envs[1], Some(env()));
+    assert_eq!(envs[3], Some(env()));
+    let home = Fakes::new();
+    outside(&home)
+        .assemble_context(v1::AssembleContextRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(home.names(), ["users/me", "cwd /tmp"]);
 }

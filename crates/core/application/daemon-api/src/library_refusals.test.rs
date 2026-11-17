@@ -122,3 +122,36 @@ fn a_deps_write_decline_still_rides_as_its_cause() {
         refused.refusal.type_url
     );
 }
+
+// Only a decline is typed: every error `typed` maps exits refused, so a
+// read answers no failure as a refusal (`refusal::app_error`).
+#[test]
+fn every_typed_decline_exits_refused() {
+    use exit_code::ExitClass;
+    for error in every() {
+        assert_eq!(error.exit(), exit_code::Exit::REFUSED, "{}", error.code());
+    }
+}
+
+#[test]
+fn an_arg_is_read_as_its_text_or_its_count_whatever_its_number() {
+    use angzarr_diagnostic::Arg;
+    let args = [
+        ("text", Arg::Str("words".to_string())),
+        ("uint", Arg::Uint(3)),
+        ("int", Arg::Int(-2)),
+        ("positive", Arg::Int(4)),
+    ];
+    assert_eq!(super::arg_text(&args, "text"), "words");
+    assert_eq!(super::arg_text(&args, "uint"), "3");
+    assert_eq!(super::arg_text(&args, "int"), "-2");
+    assert_eq!(super::arg_text(&args, "none"), "");
+    assert_eq!(super::arg_count(&args, "uint"), 3);
+    assert_eq!(super::arg_count(&args, "positive"), 4);
+    assert_eq!(
+        super::arg_count(&args, "int"),
+        0,
+        "a negative count is none"
+    );
+    assert_eq!(super::arg_count(&args, "text"), 0);
+}

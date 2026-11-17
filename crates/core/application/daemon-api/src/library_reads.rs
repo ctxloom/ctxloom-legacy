@@ -92,7 +92,8 @@ pub(crate) fn parent_of(target: &str) -> Option<(String, Option<ProjectName>)> {
     let mut segments = target.splitn(3, '/');
     let parent = match (segments.next(), segments.next()) {
         (Some("users"), Some("me")) => return Some(("users/me".to_string(), None)),
-        (Some("projects"), Some(harp)) if !harp.is_empty() => format!("projects/{harp}"),
+        // An empty harp is refused by the parse below.
+        (Some("projects"), Some(harp)) => format!("projects/{harp}"),
         _ => return None,
     };
     let name = ProjectName::parse(&parent).ok()?;

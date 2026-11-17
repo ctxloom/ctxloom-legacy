@@ -328,3 +328,43 @@ pub(crate) fn not_in_git_status() -> i32 {
         <library_tree::NotInGit as Refusal>::REFUSAL_STATUS,
     ) as i32
 }
+
+// Step 10a U2 (E5): a library read's decline is its typed refusal; an
+// adapter's failure is a failure.
+#[test]
+fn a_library_decline_is_refused_and_a_failure_failed() {
+    let declined = super::app_error(&library_application::AppError::NoBundlesDir);
+    let ApiError::Refused(refused) = declined else {
+        panic!("{declined:?}");
+    };
+    assert!(
+        refused.refusal.type_url.ends_with("LibraryNoBundlesDir"),
+        "{}",
+        refused.refusal.type_url
+    );
+    let failed = super::app_error(&library_application::AppError::Cause(Box::new(
+        library_application::AppError::NoBundlesDir,
+    )));
+    assert!(matches!(failed, ApiError::Failed { .. }), "{failed:?}");
+}
+
+// A deps error that is no read model's decline, but declines, rides as
+// `LibraryDeclined` with its own code; one that failed is said in its own
+// words.
+#[test]
+fn a_deps_decline_rides_as_its_cause_and_a_failure_keeps_its_words() {
+    let declined = super::deps_error(&deps_application::AppError::DefaultNeedsName);
+    let ApiError::Refused(refused) = declined else {
+        panic!("{declined:?}");
+    };
+    assert!(
+        refused
+            .refusal
+            .type_url
+            .ends_with("ctxloom.v1.LibraryDeclined"),
+        "{}",
+        refused.refusal.type_url
+    );
+    let failed = super::deps_error(&deps_application::AppError::DiscoverFailed);
+    assert!(matches!(failed, ApiError::Diagnosed { .. }), "{failed:?}");
+}
