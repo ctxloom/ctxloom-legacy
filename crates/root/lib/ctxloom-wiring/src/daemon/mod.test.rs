@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use super::{
-    account_home, daemon_env, daemon_home, instance_lock, logger, request_id,
+    account_home, daemon_env, daemon_home, instance_lock, logger, per_call_env, request_id,
     ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
 };
 
@@ -273,4 +273,41 @@ fn the_log_is_made_at_the_start_and_a_line_whose_directory_is_gone_is_dropped() 
         !crate::fixtures::exists(home.join(".ctxloom")),
         "made again"
     );
+}
+
+// A call the daemon serves for a project (an assembly, a child's plan) is read
+// with ctxloom's own home as the PLATFORM's home variable, over the caller's
+// of that name as the platform compares names: on Windows `USERPROFILE`
+// (whatever its case), never `HOME`, which a Windows wiring does not read.
+#[test]
+fn a_per_call_environment_names_its_own_home_by_the_platforms_home_variable() {
+    let own = Path::new("C:\\own");
+    for (flavor, caller) in [
+        (os::Flavor::Windows, "userprofile"),
+        (os::Flavor::Windows, "USERPROFILE"),
+        (os::Flavor::Unix, "HOME"),
+    ] {
+        let snapshot = per_call_env(
+            flavor,
+            ("C:\\work", Path::new("C:\\tmp"), own),
+            [(caller, "C:\\caller"), ("Ctxloom_Root", "C:\\elsewhere")],
+        );
+        assert_eq!(
+            snapshot.home(),
+            Some(own.as_os_str()),
+            "{flavor:?} {caller}"
+        );
+        assert_eq!(
+            snapshot.utf8("CTXLOOM_ROOT"),
+            Some("C:\\work"),
+            "{flavor:?}"
+        );
+        let wiring = crate::Wiring::new(std::sync::Arc::new(snapshot)).expect("a home");
+        assert_eq!(wiring.home(), own, "{flavor:?} {caller}");
+        assert_eq!(
+            wiring.user_home().as_deref(),
+            Some(own),
+            "{flavor:?} {caller}"
+        );
+    }
 }
