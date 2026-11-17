@@ -201,6 +201,7 @@ default-filter = '''
     | rdeps(fact-spool)
     | rdeps(git-cli)
     | rdeps(host-launcher)
+    | rdeps(library-git)
     | rdeps(liveness)
     | rdeps(remote-git)
     | rdeps(session-files)

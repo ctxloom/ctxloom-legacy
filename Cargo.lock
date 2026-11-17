@@ -2968,6 +2968,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "library-git"
+version = "0.1.0"
+dependencies = [
+ "angzarr-diagnostic",
+ "ctxloom-ports",
+ "file-system",
+ "fixture-program",
+ "git-cli",
+ "mutants",
+ "os",
+ "process-env",
+ "run-within",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
