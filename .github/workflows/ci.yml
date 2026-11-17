@@ -129,6 +129,8 @@ jobs:
         run: just --version; cargo nextest --version; protoc --version; node --version; jq --version; command -v versionator; echo "nextest profile $NEXTEST_PROFILE"
       - run: just build
       - name: just test (uncapped, TESTS_MEMORY_MAX=none)
+        env:
+          VERBOSE: "1"
         run: |
           echo "test gates: memory cap: none (TESTS_MEMORY_MAX=none): this runner's VM is the job's alone"
           just test
@@ -163,6 +165,8 @@ jobs:
         run: just --version; cargo nextest --version; protoc --version; jq --version; sh --version | head -n 1; command -v versionator; echo "nextest profile $NEXTEST_PROFILE"
       - run: just build
       - name: just test (uncapped, TESTS_MEMORY_MAX=none)
+        env:
+          VERBOSE: "1"
         run: |
           echo "test gates: memory cap: none (TESTS_MEMORY_MAX=none): this runner's VM is the job's alone"
           just test

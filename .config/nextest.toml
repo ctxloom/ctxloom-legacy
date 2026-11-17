@@ -147,6 +147,12 @@ test-group = 'ports'
 # once (the 20 cores shared among the 7 clusters); a host of fewer cores
 # runs 2 at once and was not measured. A cluster past its limit is hung, as
 # any test past 120 s is.
+# MEASUREMENT ONLY (reverted before the final commit): every cluster gets 600 s on Windows and macOS.
+[[profile.default.overrides]]
+platform = 'cfg(any(windows, target_os = "macos"))'
+filter = 'package(ctxloom) & test(/^tests::gherkin_features::clusters::/)'
+slow-timeout = { period = "60s", terminate-after = 10, grace-period = "10s" }
+
 [[profile.default.overrides]]
 filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::daemon)'
 slow-timeout = { period = "60s", terminate-after = 5, grace-period = "10s" }
