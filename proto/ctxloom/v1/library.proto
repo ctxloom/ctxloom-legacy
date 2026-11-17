@@ -4726,6 +4726,105 @@ message LibraryConfigUnwritable {
   string detail = 1;
 }
 
+// The deps read models' own declines (step 10a U2, E5): each diagnostic a
+// deps read (`remote list|show`, `deps list`) is declined with, as its own
+// message, its args its fields; mapped back to the diagnostic by its type.
+
+// `deps-unreadable`: A registry or lockfile that is not the document its kind is.
+message DepsUnreadable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 2;
+}
+
+// `deps-too-new`: A registry or lockfile written by a newer format than this build reads.
+message DepsTooNew {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `kind`, as the diagnostic says it.
+  string kind = 2;
+  // `found`, as the diagnostic says it.
+  uint64 found = 3;
+  // `current`, as the diagnostic says it.
+  uint64 current = 4;
+}
+
+// `deps-too-old`: A registry or lockfile older than the oldest format this build migrates.
+message DepsTooOld {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `kind`, as the diagnostic says it.
+  string kind = 2;
+  // `found`, as the diagnostic says it.
+  uint64 found = 3;
+  // `oldest`, as the diagnostic says it.
+  uint64 oldest = 4;
+}
+
+// `deps-bad-shape`: A part of a registry or lockfile that is not the shape it should be.
+message DepsBadShape {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `key`, as the diagnostic says it.
+  string key = 2;
+  // `detail`, as the diagnostic says it.
+  string detail = 3;
+}
+
+// `deps-forge-type`: A configured forge whose `type` is neither of the adapters.
+message DepsForgeType {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `forge`, as the diagnostic says it.
+  string forge = 1;
+  // `found`, as the diagnostic says it.
+  string found = 2;
+}
+
+// `deps-unknown-forge`: A forge label that names no configured or built-in forge.
+message DepsUnknownForge {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `label`, as the diagnostic says it.
+  string label = 1;
+}
+
+// `deps-no-repository`: A remote's address that names no repository.
+message DepsNoRepository {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `url`, as the diagnostic says it.
+  string url = 1;
+  // `detail`, as the diagnostic says it.
+  string detail = 2;
+}
+
+// `deps-lock-empty`: A lockfile present with no document in it.
+message DepsLockEmpty {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+}
+
+// `deps-lock-key`: A lock entry not keyed by its own bundle identity.
+message DepsLockKey {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `key`, as the diagnostic says it.
+  string key = 2;
+}
+
+// `deps-lock-unreadable`: A lockfile that cannot be read.
+message DepsLockUnreadable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `path`, as the diagnostic says it.
+  string path = 1;
+  // `detail`, as the diagnostic says it.
+  string detail = 2;
+}
 // `library-application` declining for another crate with a cause no read
 // declines with (a write's, typed with 10b's writes), as that crate's own
 // diagnostic.

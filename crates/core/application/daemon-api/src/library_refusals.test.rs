@@ -53,3 +53,72 @@ fn another_message_is_none_of_these() {
     let other = prost_types::Any::from_msg(&daemon_proto::v1::NameInvalid::default()).unwrap();
     assert!(rejection(&other).is_none());
 }
+
+/// The deps read models' declines a deps read can refuse with (step 10a
+/// U2, E5): the registry's and the lock's, as they are read.
+const DEPS_READ_DECLINES: [&str; 10] = [
+    "deps-unreadable",
+    "deps-too-new",
+    "deps-too-old",
+    "deps-bad-shape",
+    "deps-forge-type",
+    "deps-unknown-forge",
+    "deps-no-repository",
+    "deps-lock-empty",
+    "deps-lock-key",
+    "deps-lock-unreadable",
+];
+
+// E5 (coordinator, following it for the deps reads): each decline of a
+// deps read is a typed refusal of its own (`ctxloom.v1.Deps*`), not
+// `LibraryDeclined`, and its type alone maps it back to the same code and
+// args, a wrapped cause included.
+#[test]
+fn every_deps_read_decline_is_typed_and_round_trips_by_its_type() {
+    let samples: Vec<_> = deps_application::deps_diagnostic_samples()
+        .into_iter()
+        .filter(|d| DEPS_READ_DECLINES.contains(&d.code()))
+        .collect();
+    assert_eq!(samples.len(), DEPS_READ_DECLINES.len());
+    let mut types = std::collections::BTreeSet::new();
+    for sample in samples {
+        let want = Report::of(sample.as_ref());
+        let code = sample.code().to_string();
+        let error = deps_application::AppError::Declined(sample);
+        let crate::ApiError::Refused(refused) = crate::refusal::deps_error(&error) else {
+            panic!("{code} is refused");
+        };
+        assert!(
+            refused.refusal.type_url.contains("ctxloom.v1.Deps"),
+            "{code}: {}",
+            refused.refusal.type_url
+        );
+        assert!(types.insert(refused.refusal.type_url.clone()), "{code}");
+        // google.rpc.Code 9, the status every message declares.
+        assert_eq!(refused.code, 9, "{code}");
+        let back = rejection(&refused.refusal).expect("mapped back by its type");
+        assert_eq!(back.code(), code);
+        assert_eq!(back.to_string(), want.to_string(), "{code}");
+    }
+}
+
+// What no deps read declines with (a write's) still rides as its cause.
+#[test]
+fn a_deps_write_decline_still_rides_as_its_cause() {
+    let sample = deps_application::deps_diagnostic_samples()
+        .into_iter()
+        .find(|d| d.code() == "deps-remote-exists")
+        .unwrap();
+    let error = deps_application::AppError::Declined(sample);
+    let crate::ApiError::Refused(refused) = crate::refusal::deps_error(&error) else {
+        panic!("refused");
+    };
+    assert!(
+        refused
+            .refusal
+            .type_url
+            .ends_with("ctxloom.v1.LibraryDeclined"),
+        "{}",
+        refused.refusal.type_url
+    );
+}

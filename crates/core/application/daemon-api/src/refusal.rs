@@ -715,11 +715,11 @@ pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
 
 /// A deps use case's error (step 10a U2, `remote list|show`, `deps list`)
 /// as a read answers it: an adapter's or a file's failure is a failure in
-/// its own words ([`ApiError::diagnosed`]); a
-/// read model's decline (a lock or a registry that does not read) rides
-/// as `LibraryDeclined`, its cause the decline's own code and args, until
-/// the deps read models' declines have messages of their own (E5's
-/// remainder, escalated: a wire change).
+/// its own words ([`ApiError::diagnosed`]); a read model's decline (a
+/// lock or a registry that does not read) is its own typed refusal
+/// (`ctxloom.v1.Deps*`, E5, `library_refusals::read_decline`); any other
+/// decline (a write's, 10b) rides as `LibraryDeclined`, its cause the
+/// decline's own code and args.
 pub(crate) fn deps_error(error: &deps_application::AppError) -> ApiError {
     use exit_code::ExitClass;
     let declined = |d: &dyn angzarr_diagnostic::Diagnostic| {
@@ -731,7 +731,10 @@ pub(crate) fn deps_error(error: &deps_application::AppError) -> ApiError {
         }))
     };
     match error {
-        deps_application::AppError::Declined(cause) => declined(cause.as_ref()),
+        deps_application::AppError::Declined(cause) => {
+            crate::library_refusals::read_decline(cause.as_ref())
+                .map_or_else(|| declined(cause.as_ref()), ApiError::Refused)
+        }
         _ if error.exit() == exit_code::Exit::REFUSED => declined(error),
         // A failure (a clone that cannot be browsed, a file that does not
         // read) said in its own words (step 10a U2: `remote show`'s

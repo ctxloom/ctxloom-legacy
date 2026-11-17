@@ -425,9 +425,10 @@ pub fn rejection(refusal: &Any) -> Option<Report> {
 }
 
 /// The read models' own declines (E5's remainder, step 10a U2): each
-/// diagnostic a library read is declined with (`AppError::Declined`), by its
-/// code, as its own message (library.proto), its args its fields; and back
-/// by the message's type. One table, both ways.
+/// diagnostic a library read or a deps read is declined with
+/// (`AppError::Declined`), by its code, as its own message (library.proto),
+/// its args its fields; and back by the message's type. One table, both
+/// ways.
 macro_rules! read_model_declines {
     ($($code:literal => $message:ident { $($field:ident : $kind:ident),* }),* $(,)?) => {
         /// `declined`'s own typed refusal, when a read declines with it.
@@ -532,6 +533,24 @@ read_model_declines! {
     "library-profile-unreadable" => LibraryProfileUnreadable { name: str, ext_err_txt: str },
     "library-config-not-a-mapping" => LibraryConfigNotAMapping {  },
     "library-config-unwritable" => LibraryConfigUnwritable { detail: str },
+    // The deps read models' (the registry's and the lock's), as a deps read
+    // declines with them (`refusal::deps_error`).
+    "deps-unreadable" => DepsUnreadable { path: str, cause: nested },
+    "deps-too-new" => DepsTooNew { path: str, kind: str, found: uint, current: uint },
+    "deps-too-old" => DepsTooOld { path: str, kind: str, found: uint, oldest: uint },
+    "deps-bad-shape" => DepsBadShape { path: str, key: str, detail: str },
+    "deps-forge-type" => DepsForgeType { forge: str, found: str },
+    "deps-unknown-forge" => DepsUnknownForge { label: str },
+    "deps-no-repository" => DepsNoRepository { url: str, detail: str },
+    "deps-lock-empty" => DepsLockEmpty { path: str },
+    "deps-lock-key" => DepsLockKey { path: str, key: str },
+    "deps-lock-unreadable" => DepsLockUnreadable { path: str, detail: str },
+}
+
+/// A read model's decline (a library read's or a deps read's) as its own
+/// typed refusal, or none when no read declines with it (a write's).
+pub(crate) fn read_decline(declined: &dyn Diagnostic) -> Option<ApiRefusal> {
+    read_model_decline(declined)
 }
 
 /// One of every typed refusal, for the tests.
