@@ -423,6 +423,30 @@ hooks-install:
 test-pkg +packages: (_require-nextest "test-pkg")
     @just --justfile '{{TOP}}/justfile' _run test-pkg "{{packages}}" tests just --justfile '{{TOP}}/justfile' _tests {{packages}}
 
+# The reconcile's bench (step 10a U2, plan O7): a library read's observation
+# as the daemon makes it, on a repository of 100 000 files with 500 in
+# .ctxloom, its p95 held to 50 ms for a read that sees nothing new and one
+# that sees a hand edit. It builds its repository first (about half a
+# minute); each case's p50, p95 and max are printed, the full run in
+# target/logs/bench-reconcile.log.
+[group('check')]
+[doc("The reconcile's bench (O7): p95 under 50 ms on 100k files")]
+[no-exit-message]
+bench-reconcile: (_require-nextest "bench-reconcile")
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log='{{TOP}}/target/logs/bench-reconcile.log'
+    mkdir -p "$(dirname "$log")"
+    LIBRARY_BENCH=reconcile cargo nextest run --manifest-path '{{TOP}}/Cargo.toml' --package ctxloom-wiring \
+        --no-fail-fast --no-tests=fail --success-output immediate --failure-output immediate --hide-progress-bar \
+        --cargo-quiet -E 'test(a_reconcile_on_a_large_repository_is_within_its_budget)' > "$log" 2>&1
+    rc=$?
+    grep -E '^ *bench reconcile|over the budget' "$log" | sed 's/^ *//'
+    # A bench that skipped measured nothing.
+    [ "$rc" -ne 0 ] || grep -q 'bench reconcile' "$log" || rc=1
+    if [ "$rc" -eq 0 ]; then echo "ok   bench-reconcile (O7)"; else echo "FAIL bench-reconcile: exit $rc (full log: target/logs/bench-reconcile.log)"; fi
+    exit "$rc"
+
 # Mutation-test a batch (base..head; base defaults to the merge-base with main,
 # head to HEAD) in a throwaway worktree: scripts/mutants-batch.sh. Nothing else
 # runs cargo-mutants but the `mutants-staged` gate recipe it drives, and the

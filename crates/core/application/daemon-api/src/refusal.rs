@@ -287,6 +287,9 @@ pub enum Rejection {
     Trust(trust::TrustRejection),
     /// The approvals domain's (an answer refused, step 8 U4).
     Approvals(approvals::ApprovalsRejection),
+    /// The library domain's (a read of a tree outside git, or one git
+    /// ignores: step 10a U2).
+    Library(library_tree::LibraryTreeRejection),
 }
 
 impl Rejection {
@@ -299,6 +302,7 @@ impl Rejection {
             Rejection::Runs(runs) => Report::of(runs),
             Rejection::Trust(trust) => Report::of(trust),
             Rejection::Approvals(approvals) => Report::of(approvals),
+            Rejection::Library(library) => Report::of(library),
         }
     }
 }
@@ -543,9 +547,53 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
             approvals::MessageNotRelayed,
         ]
     );
-    answered
-        .and_then(|typed| approvals::ApprovalsRejection::try_from(&typed).ok())
-        .map(Rejection::Approvals)
+    if let Some(answered) =
+        answered.and_then(|typed| approvals::ApprovalsRejection::try_from(&typed).ok())
+    {
+        return Some(Rejection::Approvals(answered));
+    }
+    let library: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
+        refusal,
+        [
+            library_tree::NotInGit,
+            library_tree::LibraryIgnored,
+            library_tree::PlanRejected,
+        ]
+    );
+    library
+        .and_then(|typed| library_tree::LibraryTreeRejection::try_from(&typed).ok())
+        .map(Rejection::Library)
+}
+
+/// A library read's refusal (step 10a U2) as the daemon answers it: the
+/// library domain's own typed refusal, under the status its message
+/// declares, so one code reaches the person, read or write.
+pub fn library_refusal(rejection: &library_tree::LibraryTreeRejection) -> ApiRefusal {
+    use library_tree::{LibraryTreeRejection as Why, Refusal};
+    fn typed<M: angzarr_embedded::markup::DomainMessage + Refusal>(message: &M) -> ApiRefusal {
+        ApiRefusal::typed(
+            &angzarr_embedded::markup::TypedRefusal::of(message),
+            M::REFUSAL_STATUS,
+        )
+    }
+    match rejection.clone() {
+        Why::NotInGit { root } => typed(&library_tree::NotInGit { root }),
+        Why::LibraryIgnored {
+            source,
+            line,
+            pattern,
+        } => typed(&library_tree::LibraryIgnored {
+            source,
+            line,
+            pattern,
+        }),
+        Why::PlanRejected { code, args } => typed(&library_tree::PlanRejected { code, args }),
+        Why::TreeInMotion { motion, root } => typed(&library_tree::TreeInMotion { motion, root }),
+        Why::PlanStale { path, seen, now } => typed(&library_tree::PlanStale { path, seen, now }),
+        Why::ResourceExists { path } => typed(&library_tree::ResourceExists { path }),
+        Why::NoSuchResource { path } => typed(&library_tree::NoSuchResource { path }),
+        Why::BuiltinReadOnly { bundle } => typed(&library_tree::BuiltinReadOnly { bundle }),
+    }
 }
 
 fn decode<T: Message + Default>(refusal: &Any) -> Option<T> {
@@ -624,4 +672,4 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
 
 #[cfg(test)]
 #[path = "refusal.test.rs"]
-mod tests;
+pub(crate) mod tests;

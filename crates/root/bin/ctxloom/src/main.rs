@@ -103,6 +103,8 @@ fn diagnostic_samples() -> Vec<Box<dyn angzarr_diagnostic::Diagnostic>> {
     all.extend(isolation_application::diagnostic_samples());
     all.extend(worktree_git::diagnostic_samples());
     all.extend(library_git::diagnostic_samples());
+    all.extend(library_api::diagnostic_samples());
+    all.extend(library_tree::diagnostic_samples());
     all.extend(init_application::diagnostic_samples());
     all.extend(tasks_ports::diagnostic_samples());
     all.extend(container_cli::diagnostic_samples());

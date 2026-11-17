@@ -165,7 +165,8 @@ pub trait TreeObserver: Send + Sync {
     ) -> Result<Vec<TreeChange>, TreeError>;
 
     /// The object id git gives each file of `paths` as it is now (its
-    /// filters applied, nothing stored), by path.
+    /// filters applied, nothing stored), by path. A path with no file is
+    /// left out: absent.
     fn blob_ids(&self, dir: &str, paths: &[&str]) -> Result<BTreeMap<String, String>, TreeError>;
 
     /// The git operation in progress in `dir`'s repository, if any.

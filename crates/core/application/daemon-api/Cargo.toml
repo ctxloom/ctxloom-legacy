@@ -18,6 +18,11 @@ daemon-proto.workspace = true
 exit-code.workspace = true
 # The scratch worktrees a removal classifies and removes (slice 2 step 6).
 isolation-application.workspace = true
+# A library read's observation first (step 10a U2): the reconcile, the
+# checkouts it reconciles against, and the library domain's refusals.
+library-api.workspace = true
+library-checkout.workspace = true
+library-tree.workspace = true
 pending-messages.workspace = true
 prost.workspace = true
 # `session remove`'s one safe order, and the sweep's table, run here.
@@ -44,6 +49,8 @@ sessions-proto.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# A read's git, as a test stands it in (step 10a U2).
+ctxloom-ports.workspace = true
 library-application.workspace = true
 angzarr-embedded = { workspace = true, features = ["test-support"] }
 mutants.workspace = true

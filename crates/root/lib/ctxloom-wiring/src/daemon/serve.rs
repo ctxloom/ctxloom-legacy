@@ -724,6 +724,17 @@ fn served(
             .approving(daemon_api::Approving {
                 index: kept.approvals.clone().unwrap_or_default(),
                 names: Arc::new(FreshAskNames),
+            })
+            // Each library read observes its trees first (step 10a U2),
+            // reconciled against the checkouts its kernel projects.
+            .observing(daemon_api::Observing {
+                checkouts: kept.checkouts.clone().unwrap_or_default(),
+                harps: Arc::new(super::places::TreeHarps(Arc::clone(fs))),
+                observers: Arc::new(super::places::CallerGits {
+                    fs: Arc::clone(fs),
+                    home: home.to_path_buf(),
+                    temp: temp.to_path_buf(),
+                }),
             }),
     )
 }

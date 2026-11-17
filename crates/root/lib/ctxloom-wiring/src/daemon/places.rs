@@ -110,6 +110,59 @@ impl daemon_api::Places for ProjectPlaces {
     }
 }
 
+/// git as a library read's caller runs it (step 10a U2, protos.md §2): on
+/// the caller's `PATH`, in the caller's environment (git-cli scrubs its
+/// repository variables), over this process's filesystem; and the home's
+/// library, `<home>/.ctxloom`, when there is one.
+pub(crate) struct CallerGits {
+    pub(crate) fs: Arc<dyn Fs>,
+    pub(crate) home: PathBuf,
+    pub(crate) temp: PathBuf,
+}
+
+impl library_api::Observers for CallerGits {
+    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
+        let vars: Vec<(OsString, OsString)> = env
+            .iter()
+            .map(|(name, value)| (name.into(), value.into()))
+            .collect();
+        let snapshot = EnvSnapshot::from_parts(
+            os::host().flavor(),
+            Ok(self.home.clone()),
+            self.temp.clone(),
+            vars,
+        );
+        Box::new(library_git::GitTrees::new(
+            Arc::clone(&self.fs),
+            Arc::new(snapshot),
+        ))
+    }
+
+    fn home_tree(&self) -> Option<String> {
+        let app = self.home.join(".ctxloom");
+        let is_dir = self
+            .fs
+            .metadata(&app)
+            .is_ok_and(|meta| meta.kind == file_system::Kind::Dir);
+        is_dir.then(|| app.display().to_string())
+    }
+}
+
+/// Each checkout's harp, in its tree's `state/checkout`: minted at the
+/// tree's first read (L2), read back after.
+pub(crate) struct TreeHarps(pub(crate) Arc<dyn Fs>);
+
+impl library_api::CheckoutHarps for TreeHarps {
+    fn harp(&self, tree: &str) -> Result<String, ctxloom_ports::Failure> {
+        crate::checkout::mint_checkout_harp(
+            self.0.as_ref(),
+            std::path::Path::new(tree),
+            crate::session_name,
+        )
+        .map_err(|e| Box::new(e) as ctxloom_ports::Failure)
+    }
+}
+
 /// The daemon's one store, as the destroy purges it.
 pub(crate) struct StorePurges(pub(crate) Arc<SqliteStore>);
 
@@ -273,3 +326,7 @@ fn assembled_context(
         notices,
     }
 }
+
+#[cfg(test)]
+#[path = "reconcile_bench.test.rs"]
+mod reconcile_bench;

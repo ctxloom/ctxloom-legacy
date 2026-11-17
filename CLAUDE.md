@@ -2419,7 +2419,8 @@ angzarr-build's domain layer and wire-compatible: `Step`'s arms and
 `in_motion` an `optional` enum; `Evidence.root` and `TreeInMotion.root`
 carry the root the texts name; `OneChangePerCall` waits for 10b (U8), as no
 command refuses it yet. Not built here: the observer (U12's git port, U2's
-reconcile), intent attribution and supersession (10b, U13), trash.
+reconcile), intent attribution and supersession (10b, U13), trash. The observer and
+the reconcile are U2's (below, "A library read observes its trees first").
 
 The kernel registers the aggregate in every core, on loopback
 (`core_link`), the daemon's `library-checkout` (`Projectors::checkouts`,
@@ -2472,14 +2473,73 @@ not judged.
   only where there is none (once there it is hers), committing nothing;
   any other work tree (her own repository at `.ctxloom`, or a dotfiles one
   keeping it) is used as it is.
-- NOT built here (10a's other units): the read's refusal of a project
-  outside git or one git ignores (`library-tree-not-in-git`,
-  `library-tree-library-ignored`, the library domain's, U0, answered by
-  the daemon's reads, U2), the observation of a tree and `ctxloom test
-  library-events` (U0, U2), the home's notice
-  `library-api-notice-home-repository-made` (U2, the daemon's first read),
-  and the reads moving into the daemon, which then takes the home step per
-  home. ctxloom commits nowhere yet (G3, the home's commits, are 10b's).
+- NOT built here (10a's other units): the reads moving into the daemon,
+  which then takes the home step per home and says the home's notice
+  `library-api-notice-home-repository-made` (U2, blocked: below). ctxloom
+  commits nowhere yet (G3, the home's commits, are 10b's).
+- `TreeObserver::blob_ids` leaves out a path with no file (absent): the
+  reconcile asks the ids of paths it last saw dirty, some since taken away.
+
+## A library read observes its trees first (step 10a U2, in part)
+
+`core/application/library-api` is the daemon's library reads' crate. Its
+reconcile (`reconcile::sight`, pure over `TreeObserver`) asks git, in
+order: the operation in progress, HEAD and the library's tree id in it,
+`status` over the library's pathspec (`PATHSPEC`: `content/bundles/v2`,
+`config.yaml`, `remotes.yaml`, `lock.yaml`; L13), and the ids of every
+path that differs now or was dirty at the record's last sight; when the
+library's tree id moved it diffs the commits (`diff-tree -M`), and a
+last-seen commit git no longer has (or an empty HEAD) re-baselines. Each
+path is judged against what the record knew (its last dirty id, else the
+diff's, else "present at HEAD"): added, deleted, renamed where git paired
+it, type-changed, else modified; a tree's first sight is its baseline,
+what git sees uncommitted as git classes it. Nothing differing records
+nothing (no fact sent; HEAD alone moving is nothing, QUESTIONS A).
+`locate::refusal` is G1's: a project whose root is in no work tree is
+`library-tree-not-in-git`, one whose `.ctxloom/config.yaml` git ignores
+(`check-ignore` from the root) `library-tree-library-ignored`.
+`Observations::observe` runs both for a `Site` (a checkout's, or the
+home's, which takes no G1 check), naming the checkout first
+(`CheckoutHarps`: the wiring's `TreeHarps`, `mint_checkout_harp`) only
+after the refusal, reconciling against the kernel's `library-checkout`
+(projected inline, so the next read sees the last one's), and records the
+fact through the edge (`observation_book`); no lock is held across the
+recording: one sight twice against one state is a DUPLICATE, and one
+against a moved state records what it adds (forced in `observe.test.rs`).
+`observe_read` is a read's whole step: the project's checkout, then the
+home's library where it is in a work tree git does not ignore it in, in
+the caller's environment (`Observers`: the wiring's `CallerGits`, git on
+the request's `env` PATH). Its notices are `library-api-notice-tree-in-
+motion` and `-home-repository-made` (texts.md, accepted verbatim).
+`library_api::names` is the library's resource naming, one copy
+(library-cli re-exports it until each noun is served).
+
+The daemon's `Api::observing(Observing)` (serve.rs) makes `AssembleContext`
+(the MCP tool's read, today the one library read the daemon serves) observe
+first: a refusal is the library domain's own typed refusal under its
+message's status (`daemon_api::library_refusal`; `rejection_of` maps
+`NotInGit`, `LibraryIgnored` and `PlanRejected` back to
+`Rejection::Library`, exit 20), git missing or failing an internal failure,
+a motion a notice in `AssembledContext.notices`.
+
+`just bench-reconcile` (O7; `LIBRARY_BENCH=reconcile`, else the test says
+SKIP) times `sight` over `CallerGits` on 100 000 files with 500 in
+`.ctxloom`: p95 under 50 ms for a read seeing nothing new and one seeing a
+hand edit (2026-11-17, git 2.47, this machine: p95 46 ms and 50 ms; `status`
+alone is about 28 ms, so the margin is thin; the next mitigations are O7's
+untrackedCache or fsmonitor, or fewer `rev-parse` processes).
+
+NOT built yet, blocked on the wire (each an owner decision, U2's
+escalations): a library Get or List request carries no caller environment,
+global flags or working directory (`env = 94` exists only on writes,
+`AssembleContext` and `CreateRun`), so `bundle|fragment|...` reads, the
+worktree's own tree, `--degraded` and `--config-set` cannot be served yet;
+`AssembleContextRequest` cannot say a read at rest from a launch's tool
+(its premise wording differs), so `context assemble` stays in process; a
+dry run's text would render a permissions document from a `Struct`, losing
+the order it was written in; no RPC answers a hook's package read (O3).
+Until then the CLI's reads stay in process, the home step with them, and
+library_changes.feature's scenarios stay red.
 
 ## Storage is angzarr-store-sqlite
 

@@ -190,3 +190,48 @@ fn an_assembly_for_a_session_words_its_index_for_the_launch() {
     );
     assert!(!context.contains("ctxloom fragment show"), "{context}");
 }
+
+// Step 10a U2: a read's checkout is named once, in its tree's
+// `state/checkout`, and read back after.
+#[test]
+fn a_checkouts_harp_is_minted_once_into_its_tree() {
+    use library_api::CheckoutHarps;
+    let root = fixtures::root();
+    let tree = root.root().join("work/calm/.ctxloom");
+    fixtures::mkdirs(&tree);
+    let harps = super::TreeHarps(fixtures::fs());
+    let first = harps.harp(&tree.display().to_string()).unwrap();
+    let again = harps.harp(&tree.display().to_string()).unwrap();
+    assert_eq!(first, again);
+    let kept = fixtures::fs()
+        .read_to_string(&tree.join("state/checkout"))
+        .unwrap();
+    assert_eq!(kept.trim(), first);
+}
+
+// Step 10a U2: git as the read's caller runs it, on the caller's PATH (none
+// with git on it: git is missing, exit 10's failure); the home's library is
+// observed where the home has one.
+#[test]
+fn a_reads_git_is_the_callers_and_its_home_is_ctxloom_s_own() {
+    use library_api::Observers;
+    let root = fixtures::root();
+    let home = root.root().join("home");
+    fixtures::mkdirs(&home);
+    let gits = super::CallerGits {
+        fs: fixtures::fs(),
+        home: home.clone(),
+        temp: root.root().join("tmp"),
+    };
+    assert_eq!(gits.home_tree(), None);
+    fixtures::mkdirs(home.join(".ctxloom"));
+    assert_eq!(
+        gits.home_tree(),
+        Some(home.join(".ctxloom").display().to_string())
+    );
+    let empty = root.root().join("nowhere");
+    fixtures::mkdirs(&empty);
+    let observer = gits.observer(&[("PATH".to_string(), empty.display().to_string())]);
+    let missing = observer.work_tree(&home.display().to_string()).unwrap_err();
+    assert_eq!(missing.diagnostic().code(), "library-git-git-missing");
+}

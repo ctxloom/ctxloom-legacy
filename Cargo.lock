@@ -967,8 +967,10 @@ dependencies = [
  "init-application",
  "isolation-application",
  "library",
+ "library-api",
  "library-application",
  "library-git",
+ "library-tree",
  "mcp-server",
  "os",
  "process-env",
@@ -1090,6 +1092,7 @@ dependencies = [
  "isolation-application",
  "isolation-ports",
  "library",
+ "library-api",
  "library-application",
  "library-checkout",
  "library-cli",
@@ -1212,13 +1215,17 @@ dependencies = [
  "angzarr-embedded",
  "approvals",
  "approvals-proto",
+ "ctxloom-ports",
  "daemon-application",
  "daemon-board",
  "daemon-ports",
  "daemon-proto",
  "exit-code",
  "isolation-application",
+ "library-api",
  "library-application",
+ "library-checkout",
+ "library-tree",
  "mutants",
  "pending-approvals",
  "pending-messages",
@@ -2942,6 +2949,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "library-api"
+version = "0.1.0"
+dependencies = [
+ "angzarr-diagnostic",
+ "angzarr-embedded",
+ "ctxloom-ports",
+ "daemon-proto",
+ "library-checkout",
+ "library-domain-proto",
+ "library-tree",
+ "mutants",
+ "prost",
+ "run-ports",
+ "sessions",
+ "tokio",
+]
+
+[[package]]
 name = "library-application"
 version = "0.1.0"
 dependencies = [
@@ -2981,6 +3006,7 @@ dependencies = [
  "clap",
  "cli-support",
  "daemon-proto",
+ "library-api",
  "library-application",
  "serde",
  "serde_json",

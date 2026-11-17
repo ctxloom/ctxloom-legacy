@@ -342,6 +342,23 @@ fn a_files_object_id_is_gits_and_nothing_is_stored() {
     assert!(!stored.success(), "hash-object wrote the object");
 }
 
+#[test]
+fn a_path_with_no_file_is_left_out_of_the_ids() {
+    // The reconcile asks the ids of paths it last saw dirty, some since
+    // taken away: absent is an answer, never git's failure.
+    let repo = library();
+    put(repo.path(".ctxloom/config.yaml"), "here\n");
+    let ids = observer(&repo)
+        .blob_ids(&repo.dir(".ctxloom"), &["gone.yaml", "config.yaml"])
+        .unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(ids.get("config.yaml"), Some(&git_hash(&repo, "here\n")));
+    assert!(observer(&repo)
+        .blob_ids(&repo.dir(".ctxloom"), &["gone.yaml"])
+        .unwrap()
+        .is_empty());
+}
+
 fn git_hash(repo: &Repo, text: &str) -> String {
     put(repo.top.join("scratch"), text);
     crate::fixtures::git_in(
