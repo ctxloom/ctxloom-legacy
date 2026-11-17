@@ -1401,11 +1401,11 @@ fn why_it_exits(files: &DaemonFiles, own: &Discovery, held: &Instance) -> Option
     }
     match advertised(own, files.discovery().as_ref()) {
         Advertised::Ours => None,
-        // Gone: advertised again, as before (the forcing test's red).
-        Advertised::Gone => {
-            let _ = files.republish(own);
-            None
-        }
+        // Removed (owner, 2026-11-17): never advertised again, since a
+        // daemon makes nothing in its home once started, and a home being
+        // deleted is emptied depth-first while it is still there. The next
+        // client starts a fresh daemon.
+        Advertised::Gone => Some("the discovery file was removed: exiting"),
         Advertised::Replaced => Some("another daemon's discovery replaced this one's: exiting"),
     }
 }

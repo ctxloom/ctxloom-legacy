@@ -250,11 +250,11 @@ fn each_request_id_is_fresh() {
     assert!(uuid::Uuid::parse_str(&one).is_ok(), "{one}");
 }
 
-// j000100's exit: the daemon's log is made where it starts, and a line said
-// once its directory is gone (its home deleted) is dropped, never a reason
-// to make the directory again; a line said where it still is is appended.
+// j000100's exit: the daemon's log is opened where it starts and written
+// through that handle, never made again by its path (owner, 2026-11-17): a
+// line said once the log, or its home, is removed makes nothing there.
 #[test]
-fn the_log_is_made_at_the_start_and_a_line_whose_directory_is_gone_is_dropped() {
+fn the_log_is_opened_at_the_start_and_never_made_again() {
     let root = crate::fixtures::root();
     let home = root.root().join("home");
     let log = home.join(".ctxloom/daemon/daemon.log");
@@ -266,6 +266,9 @@ fn the_log_is_made_at_the_start_and_a_line_whose_directory_is_gone_is_dropped() 
     say("serving");
     let text = crate::fixtures::fs().read_to_string(&log).unwrap();
     assert!(text.ends_with(" serving\n"), "{text}");
+    crate::fixtures::fs().remove_file(&log).unwrap();
+    say("the discovery file was removed: exiting");
+    assert!(!crate::fixtures::exists(&log), "the log made again");
     crate::fixtures::remove_dir(home.join(".ctxloom"));
     say("the single-instance lock file was replaced or removed: exiting");
     say("exited");

@@ -767,30 +767,28 @@ fn a_daemon_that_holds_the_instance_lock_but_does_not_answer_is_not_serving() {
     let _ = daemon.wait();
 }
 
-// M11: the lock is the single-instance lock alone. A daemon whose discovery
-// file is removed still holds the lock, so it advertises itself again (it no
-// longer exits for want of one).
+// The owner's ruling of 2026-11-17: a daemon never makes a file in its home
+// again once started. One whose discovery file is removed exits, and does
+// not advertise itself again; the next command starts a fresh one.
 #[test]
-fn a_daemon_whose_discovery_file_is_removed_advertises_itself_again() {
+fn a_daemon_whose_discovery_file_is_removed_exits_and_advertises_nothing_again() {
     let world = World::new();
-    let (mut daemon, first) = served(&world);
+    let (mut daemon, _) = served(&world);
     let path = world
         .project
         .home()
         .join(".ctxloom/daemon/daemon.discovery");
     files::remove(&path);
-    let again = world.until("the discovery file again", |_| {
-        files::read_bytes(&path).ok().filter(|b| !b.is_empty())
-    });
-    assert_eq!(again, first, "the same daemon, advertised again");
-    assert_eq!(
-        exited_within(&mut daemon, Duration::ZERO),
-        None,
-        "it serves on"
+    let code = exited_within(&mut daemon, Duration::from_secs(20));
+    assert_eq!(code, Some(0), "it exits once its discovery file is gone");
+    assert!(!files::exists(&path), "advertised again");
+    assert!(
+        world
+            .log()
+            .contains("the discovery file was removed: exiting"),
+        "{}",
+        world.log()
     );
-    assert!(world.serving());
-    let _ = world.run(&["daemon", "stop"]);
-    let _ = daemon.wait();
 }
 
 // M11: a daemon whose discovery file names ANOTHER daemon has lost the

@@ -1641,16 +1641,19 @@ daemons at once). `daemon status`, `daemon stop`, a hook's rediscovery and a
 client's `ensure` all ask the health check, never the lock, so a daemon that
 holds the lock and does not answer (stopped, hung) is not serving, and a
 stale port another process took is never handed anything. A serving daemon
-looks at its discovery file each tick: gone, it publishes it again (it still
-holds the single-instance lock) where its directory still is
-(`DaemonFiles::republish`); naming another daemon (its lock file was replaced, and
-another took it), it exits, and withdraws only its OWN advertisement
-(`DaemonFiles::withdraw_own`), never the other's. Once started, a daemon never
-makes its own directory again (owner, 2026-11-14; j000100's exit is deleting
-`~/.ctxloom`): its log's directory is made as it starts (`logger`) and a line
-said once it is gone is dropped, and a discovery file whose directory is gone
-is not published again; so a daemon whose home was deleted exits on its lock
-and leaves nothing there. It also exits, each tick, once its home's ctxloom
+looks at its discovery file each tick (`serve::why_it_exits`): gone, it
+exits and does NOT advertise itself again (owner ruling 2026-11-17; the
+accepted cost: no self-heal of a hand-deleted discovery file, the next
+client starts a fresh daemon); naming another daemon (its lock file was
+replaced, and another took it), it exits, and withdraws only its OWN
+advertisement (`DaemonFiles::withdraw_own`), never the other's. Once started,
+a daemon never creates or re-creates a file in its home (owner, 2026-11-14
+and 2026-11-17; j000100's exit is deleting `~/.ctxloom`, which `rm -rf`
+empties depth-first while the directory is still there): its log is opened
+once as it starts (`logger`, its directory made first) and every line is
+written through that handle, never reopened by its path, and the discovery
+file is published once; so a daemon whose home was deleted exits and leaves
+nothing there. It also exits, each tick, once its home's ctxloom
 directory (`<home>/.ctxloom`, its store's) is gone (`DaemonFiles::home_gone`,
 OD-60), because the lock may be elsewhere: the account's, while
 `CTXLOOM_HOME` names another home (`just install`'s `~/.ctxloom-rs`), or a
