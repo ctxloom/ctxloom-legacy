@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use super::library::Project;
-use crate::tests::files;
+use crate::tests::{files, procs};
 
 /// The TUI: it records its harp and directory, says it started, and runs
 /// until `release` is beside it, then exits with the code `tui-exit` beside
@@ -46,9 +46,10 @@ exit "$(cat "$here/tui-exit" 2>/dev/null || echo 0)"
 "#;
 
 /// What holds the daemon's single-instance lock while `unblock` is not
-/// beside it, so no daemon can start (`flock`, the platform's lock).
-const BLOCKS_DAEMONS: &str = r#"exec flock -w 20 "$1" sh -c 'i=0; while [ ! -e "$0" ] && [ "$i" -lt 1200 ]; do sleep 0.1; i=$((i+1)); done' "$2"
-"#;
+/// beside it, so no daemon can start (the platform's lock).
+fn blocks_daemons() -> String {
+    procs::holds_lock(20, 1200)
+}
 
 /// How long any one thing is waited for.
 const WAIT: Duration = Duration::from_secs(60);
@@ -268,26 +269,7 @@ fn wait(log: &str, what: &str, mut ready: impl FnMut() -> bool) {
 
 /// Whether `pid` is there and not a zombie.
 fn alive(pid: u64) -> bool {
-    match files::read(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat
-            .rfind(')')
-            .and_then(|end| stat[end + 1..].split_whitespace().next())
-            .is_some_and(|state| state != "Z"),
-        Err(_) => std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success()),
-    }
-}
-
-/// Whether `program` is on the host's `PATH`.
-fn on_path(program: &str) -> bool {
-    std::process::Command::new("sh")
-        .args(["-c", &format!("command -v {program}")])
-        .stdout(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    procs::alive(pid)
 }
 
 fn finished(child: Child) -> super::Ran {
@@ -412,10 +394,6 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     let Some(rig) = rig() else {
         return;
     };
-    if !on_path("flock") {
-        eprintln!("SKIP test_the_frontends_reports_are_held_and_delivered_in_order: no flock");
-        return;
-    }
     let gate = rig.home_file("test-frontend-gate");
     files::put(&gate, "wait");
     let session = rig.start_session(&[]);
@@ -424,7 +402,7 @@ fn test_the_frontends_reports_are_held_and_delivered_in_order() {
     // waiting on it BEFORE the daemon is killed, so it takes the lock ahead
     // of the daemon the frontend's watch starts at once.
     let blocker = rig.bin.join("blocks-daemons");
-    files::put_program(&blocker, BLOCKS_DAEMONS);
+    files::put_program(&blocker, &blocks_daemons());
     let unblock = rig.bin.join("unblock");
     let mut blocking = std::process::Command::new(&blocker)
         .args([
@@ -484,12 +462,6 @@ fn test_a_tui_exit_held_while_no_daemon_serves_ends_its_run_with_its_exit_code()
     let Some(rig) = rig() else {
         return;
     };
-    if !on_path("flock") {
-        eprintln!(
-            "SKIP test_a_tui_exit_held_while_no_daemon_serves_ends_its_run_with_its_exit_code: no flock"
-        );
-        return;
-    }
     let session = rig.start_session(&[]);
     let harp = rig.harp();
     wait(&rig.log(), "the TUI's start", || {
@@ -501,7 +473,7 @@ fn test_a_tui_exit_held_while_no_daemon_serves_ends_its_run_with_its_exit_code()
             .any(|t| t == "RunnerStartedRecorded")
     });
     let blocker = rig.bin.join("blocks-daemons");
-    files::put_program(&blocker, BLOCKS_DAEMONS);
+    files::put_program(&blocker, &blocks_daemons());
     let unblock = rig.bin.join("unblock");
     let mut blocking = std::process::Command::new(&blocker)
         .args([
@@ -807,6 +779,14 @@ fn two_sigterms_under_a_live_tui(home_removed: bool) {
         files::remove_tree(rig.project.home().join(".ctxloom"));
     }
     send(daemon, "-TERM");
+    // The second once the first was heard, where its log can say so: two
+    // sent at once may be one (a signal pending is not queued again). A
+    // daemon whose home is gone keeps no log, and exits for its home.
+    if !home_removed {
+        wait(&rig.log(), "the first SIGTERM heard", || {
+            rig.log().contains("SIGTERM: asked to drain")
+        });
+    }
     send(daemon, "-TERM");
     let deadline = Instant::now() + Duration::from_secs(30);
     while alive(daemon) && Instant::now() < deadline {

@@ -187,4 +187,4 @@ pub(crate) fn files(context: &str, config: &str, program: &str) -> Vec<HomeFile>
 
 #[cfg(test)]
 #[path = "home.test.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -249,6 +249,9 @@ pub(crate) fn cargo_metadata() -> serde_json::Value {
 #[path = "files.test.rs"]
 pub(crate) mod files;
 
+#[path = "procs.test.rs"]
+pub(crate) mod procs;
+
 #[path = "catalog.test.rs"]
 mod catalog;
 
