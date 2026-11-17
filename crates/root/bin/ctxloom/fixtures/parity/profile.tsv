@@ -23,6 +23,7 @@ gold-profile-list-json	gold	profile list --format json
 gold-profile-list-text	gold	profile list --format text
 gold-profile-show-curated-json	gold	profile show golden-curated --format json
 # changed: owner 2026-11-17 (step 10a U2): text prints a reference as its short library reference, harp-free (library_parity's as_canonical)
+# changed: owner 2026-11-17 (step 10a U2): profile show prints select_tags, fragments, deny_tools and hooks, which Go's did not (library_parity's as_ruled)
 gold-profile-show-curated-text	gold	profile show golden-curated --format text
 # Envelope generations 0 to 4 (bundles/upgrade.go envelopeSteps): one model whatever the stamp
 gens-profile-legacy-json	gens	profile show legacy --format json

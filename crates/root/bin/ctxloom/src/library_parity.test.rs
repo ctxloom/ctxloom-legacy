@@ -141,9 +141,17 @@ fn as_declared(id: &str, golden: String) -> String {
 /// project with no bundles directory says what an empty one says (owner
 /// ruling 2026-11-17: "in the event of no directory, we should create it or
 /// tell the user to install bundles, which would create it"; a read never
-/// creates it), not Go's `mkdir` line. bundle.tsv marks the rows.
+/// creates it), not Go's `mkdir` line. And `profile show` prints a
+/// profile's selecting tags, fragments, denied tools and hooks (owner
+/// ruling 2026-11-17, step 10a U2), which Go's printed none of: the curated
+/// golden profile's, after the sections Go printed. bundle.tsv and
+/// profile.tsv mark the rows.
 fn as_ruled(id: &str, golden: String) -> String {
     match id {
+        "gold-profile-show-curated-text" => format!(
+            "{}\nSelect tags:\n  - ctxloom\nDenied tools:\n  - Task\nHooks:\n  unified.pre_tool:\n    - {{command: echo golden, type: command}}\n",
+            golden.trim_end()
+        ),
         "empty-bundle-list-text" => golden.replace(
             "No bundles directory found. Create one with: mkdir -p .ctxloom/content/bundles",
             &format!(
