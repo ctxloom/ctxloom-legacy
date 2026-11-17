@@ -1241,13 +1241,12 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr core `f6fed5e5` (`angzarr-diagnostic`, `angzarr-yaml`,
   `angzarr-presentation`; `angzarr-coordinator-grpc`'s `tls` feature, which
   `hook-listener` enables, is `Listener::tls`);
-- angzarr-embedded `94f630a3` on angzarr-router `bec0c2bf`;
-- angzarr-build `7547415e` (the markup generator, `angzarr-build` and
+- angzarr-embedded `5cee822b` on angzarr-router `bec0c2bf`;
+- angzarr-build `bd02654f` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
 - angzarr-platform `5f39b330`;
-- taskloom's crates `2db3ddf7` and ctxloom-lib's `c909e925` (on its main, `now` in
-  `duration-text`), built on the
-  same line,
+- taskloom's crates `546c54ad` and ctxloom-lib's `ac623050` (on its main), built
+  on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
