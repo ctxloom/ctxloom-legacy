@@ -67,6 +67,13 @@ mutants_memory_max := "16G"
 mutants_swap_max := "2G"
 tests_memory_max := "none"
 tests_swap_max := "0"
+sccache_mode := "off"
+sccache_opt_out := ""
+sccache_version := ""
+sccache_dir := ""
+sccache_cache_size := ""
+sccache_socket := ""
+sccache_basedirs := ""
 workspace_wide := "Cargo.toml"
 J
 a() { printf 'pub fn one() -> u32 { %s }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn own() { assert!(super::one() > 0); }\n}\n' "$1" > "$fx/crates/a/src/lib.rs"; }
