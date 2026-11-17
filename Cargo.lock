@@ -2090,6 +2090,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-cli"
+version = "0.1.0"
+dependencies = [
+ "file-system",
+ "fixture-program",
+ "os",
+ "process-env",
+ "run-within",
+]
+
+[[package]]
 name = "globset"
 version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3830,6 +3841,7 @@ dependencies = [
  "deps-ports",
  "file-system",
  "fixture-program",
+ "git-cli",
  "os",
  "process-env",
  "run-within",
@@ -6202,6 +6214,7 @@ dependencies = [
  "ctxloom-ports",
  "file-system",
  "fixture-program",
+ "git-cli",
  "isolation-ports",
  "mutants",
  "os",

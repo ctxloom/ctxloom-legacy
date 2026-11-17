@@ -756,47 +756,6 @@ fn test_an_inherited_git_dir_does_not_steer_the_repository() {
     );
 }
 
-#[test]
-fn test_which_variables_are_the_repository_s_own() {
-    let asked = Some(
-        ["GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_COUNT"]
-            .map(String::from)
-            .to_vec(),
-    );
-    for local in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_CONFIG_COUNT",
-        "GIT_CONFIG_KEY_0",
-        "GIT_CONFIG_VALUE_12",
-    ] {
-        assert!(command::is_local(local, &asked), "{local}");
-    }
-    for kept in [
-        "GIT_AUTHOR_NAME",
-        "GIT_SSH_COMMAND",
-        "PATH",
-        "HOME",
-        "GIT_CONFIG",
-    ] {
-        assert!(!command::is_local(kept, &asked), "{kept}");
-    }
-    // Without a counter, no numbered pair is the repository's.
-    let without = Some(vec!["GIT_DIR".to_string()]);
-    assert!(!command::is_local("GIT_CONFIG_KEY_0", &without));
-    // When git cannot be asked, every GIT_ variable goes.
-    assert!(command::is_local("GIT_AUTHOR_NAME", &None));
-    assert!(!command::is_local("HOME", &None));
-}
-
-#[test]
-fn test_the_local_variables_git_names_are_found() {
-    let names = command::local_variables()
-        .clone()
-        .expect("git can be asked");
-    assert!(names.iter().any(|n| n == "GIT_DIR"), "{names:?}");
-}
-
 // A clone clears the place it is made in first: that place is below the cache,
 // never the cache itself, an empty path (the working directory) or beyond. The
 // filesystem is a rooted one, so that a clone that is wrongly let through

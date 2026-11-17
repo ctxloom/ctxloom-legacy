@@ -141,6 +141,7 @@ deps = { path = "crates/core/read-model/deps" }
 pin-changes = { path = "crates/core/read-model/pin-changes" }
 deps-ports = { path = "crates/core/ports/deps-ports" }
 deps-application = { path = "crates/core/application/deps-application" }
+git-cli = { path = "crates/adapters/support/git-cli" }
 remote-git = { path = "crates/adapters/driven/remote-git" }
 deps-files = { path = "crates/adapters/driven/deps-files" }
 deps-cli = { path = "crates/adapters/driving/deps-cli" }

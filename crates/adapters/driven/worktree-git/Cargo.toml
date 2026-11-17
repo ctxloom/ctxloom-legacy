@@ -11,6 +11,7 @@ publish.workspace = true
 angzarr-diagnostic.workspace = true
 ctxloom-ports.workspace = true
 file-system.workspace = true
+git-cli.workspace = true
 isolation-ports.workspace = true
 os.workspace = true
 process-env.workspace = true

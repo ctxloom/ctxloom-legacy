@@ -76,6 +76,9 @@ the architecture; there is no other table of crates.
 - `core/ports`: traits the core needs from outside.
 - `core/application`: command and query handlers.
 - `adapters/driven`: port implementations (stores, clock, git).
+- `adapters/support`: infrastructure driven adapters share, depending on no
+  other workspace crate, each listed in `arch-rules.toml`'s `[classes]
+  support` (step 10, G9: `git-cli`, the one git runner).
 - `adapters/driving`: the CLI (and later gRPC, MCP): translation only.
 - `root/lib`: the composition root's wiring as a library (`ctxloom-wiring`).
 - `root/bin`: the `ctxloom` binary, the composition root.
@@ -1333,7 +1336,13 @@ exited cannot hang the caller. The program's environment is exactly the one
 the adapter gives; its tests need `run-within`'s `test-support`, which waits
 out ETXTBSY. Limits (os::process's): a descendant that calls `setsid` or
 `setpgid` escapes the kill, and the program runs in a process group of its
-own, so a Ctrl-C at the terminal does not reach it: a caller that must stop
+own, so a Ctrl-C at the terminal does not reach it. The git adapters
+(`remote-git`, `worktree-git`, `library-git`) share ONE git runner, the
+support crate `git-cli` (G9): the environment scrubbed of the variables git
+calls repository-local (`git rev-parse --local-env-vars`, asked once; every
+`GIT_*` when it cannot be asked), never interactive (`GIT_TERMINAL_PROMPT=0`,
+empty `GIT_ASKPASS` and `SSH_ASKPASS`), under `run-within`; each adapter
+says a failure in its own words. A caller that must stop
 a run on a signal hears it (`Os::signals`) and requests the `Stop` it ran the
 program with (`run_within_stopped_by`: the tree asked to stop, `stop_grace`,
 then killed; the outcome `stopped`).

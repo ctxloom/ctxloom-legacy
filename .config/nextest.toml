@@ -199,6 +199,7 @@ default-filter = '''
     | rdeps(engine-claude)
     | rdeps(engine-opencode)
     | rdeps(fact-spool)
+    | rdeps(git-cli)
     | rdeps(host-launcher)
     | rdeps(liveness)
     | rdeps(remote-git)
