@@ -71,13 +71,6 @@ mutants_memory_max := "16G"
 mutants_swap_max := "2G"
 tests_memory_max := "none"
 tests_swap_max := "0"
-sccache_mode := "off"
-sccache_opt_out := ""
-sccache_version := ""
-sccache_dir := ""
-sccache_cache_size := ""
-sccache_socket := ""
-sccache_basedirs := ""
 workspace_wide := "Cargo.toml"
 J
 # The fake cargo: `nextest run` logs `start|end <RUN> <ns>`, lists its own

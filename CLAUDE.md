@@ -3265,7 +3265,7 @@ ruling 144; required: a missing nextest fails the gate),
 `just lint-os`; `just test-pkg <crate>...` is the quick loop, `just fmt` and
 `just fmt-check` cover this workspace's crates only, `just run` runs the
 binary, `just clean-target` is the only way to drop this checkout's
-`target/` (and `just trim-targets`, below, other worktrees'), and `just
+`target/` (`just trim-targets`, below, sweeps the pool's by age), and `just
 selftest` checks the scripts. Raw `cargo build|test|clippy|fmt|deny|clean|
 run|mutants`, `nextest`, `rustc`, `lefthook run`, `gitleaks`, and any
 `--no-verify` or `LEFTHOOK=`/`SKIP=` skip of the hooks are blocked by ltk
@@ -3278,34 +3278,57 @@ the first 20 diagnostics, survivors capped, each with a `+K more` tail).
 `scripts/output-budget.selftest.sh` holds that budget. Read the log for the
 rest; `VERBOSE=1 just <gate>` shows the full output.
 
-Every `just` build shares compiler output through sccache (owner ruling of
-2026-11-16: each worktree's `target/` had grown to 120-180G). The gates
-(`gates/gates.just`) export `CARGO_INCREMENTAL=0` (sccache cannot cache an
-incremental compile; no `target/*/incremental`) and `RUSTC_WRAPPER`, the
-pinned sccache (the justfile's `sccache_version`, 0.19.0: `cargo install
---locked sccache@0.19.0` into `~/.cargo/bin`; `SCCACHE_BASEDIRS` needs
-0.14.0 or newer), with `SCCACHE_DIR` `~/.cache/ctxloom-sccache` of the user's own home
-from the password database, not `$HOME`, which a ctxloom session moves
-(`CTXLOOM_SCCACHE_DIR` replaces it), an LRU capped at `SCCACHE_CACHE_SIZE=40G`, its
-own server on the unix socket `SCCACHE_SERVER_UDS` there, and
-`SCCACHE_BASEDIRS` the parent of each of the repository's worktrees
-(`CTXLOOM_SCCACHE_BASEDIRS` replaces it), to every recipe, script, mutation
-run and throwaway worktree. `gates/sccache.sh` checks the version and starts
-the server as the justfile is evaluated (so no test gate's memory-cap scope
-starts it): a missing or other sccache fails EVERY recipe, its fix the
-install line. The opt-out is `CTXLOOM_SCCACHE=off`, stated (an empty
-`RUSTC_WRAPPER`); on a GitHub Actions runner (`GITHUB_ACTIONS=true`) off is
-the default. Each worktree keeps its own `target/`. Measured limit: sccache
-hashes a Rust compile's working directory and `CARGO_MANIFEST_DIR` verbatim
-(basedirs rewrite only C/C++ compiles), so a dependency's compile is shared
-between worktrees and a workspace crate's is not; bin, build-script and
-proc-macro crates (the linker's) are never cached. `just trim-targets
-[base] [--dry-run]` (`scripts/trim-targets.sh`) clears the `target/` of
-every worktree whose HEAD is in `base` (default `origin/daemon/integration`)
-that no running process uses (cwd, executable or open file, from `/proc`)
-and that has no tracked change, untracked file or git lock, one line each
-saying what it removed or kept and why. Both are self-tested in `just
-selftest` (`scripts/sccache.selftest.sh`, `scripts/trim-targets.selftest.sh`).
+Agents work in a POOL of three long-lived worktrees, each with a warm
+`target/` (owner ruling of 2026-11-16): `~/workspace/worktrees/ctxloom--slot-1`
+to `-3` of the user's own home (the justfile's `slot_root`, `slot_prefix`,
+`slot_count`; `CTXLOOM_SLOT_ROOT` replaces the root). Departure from the
+worktree layout rule (`~/workspace/worktrees/<project>--<branch-slug>`): a
+slot holds many branches in turn, so it is named by its number, not a
+branch. `just slot lease <branch> [--from <base>] [--wait <secs>] [--by
+<who>]` (`scripts/slot.sh`) takes the first free, clean slot (one already
+made before one not yet made, which `git worktree add` makes), switches it
+to the branch (made from `<base>` when neither it nor `origin/<branch>`
+exists) and prints its path alone on stdout; with every slot leased it says
+each one's holder and refuses, or with `--wait` retries until the time is
+up. A free slot holding uncommitted work (a crashed holder's) or a detached
+HEAD no ref holds is passed over, and said. The lease is an advisory
+`flock` on `<git common dir>/ctxloom-slots/slot-<n>.lock` held by a holder
+process of its own session that lives exactly as long as the lease's OWNER
+(the first ancestor not a shell or `just`: an agent's Claude Code process;
+`--holder <pid>` names another), checked by pid and start time, so a
+crashed agent's slot frees itself; `slot-<n>.lease` beside it says who,
+which branch and since when. Limit: subagents of one Claude Code process
+share its pid, so one of them that crashes keeps its lease until the
+process ends or it is released. `just slot release [<slot>]` (default: the
+slot `just` was run from) refuses a slot holding a tracked change or an
+untracked file, or whose HEAD is in no remote-tracking ref (unless
+`--allow-unpushed`), then detaches its HEAD (the branch is free for any
+checkout; files and `target/` stay warm), lets the lease go and sweeps the
+slot's `target/` (`--no-sweep` skips it). `just slot list` says each slot:
+leased (by whom, branch, since), free (where, clean or DIRTY, the last
+lease) or absent. A switch rebuilds only the crates the branch changed (measured
+2026-11-16, `just build` plus `test-pkg run-launcher sessions
+ctxloom-wiring`: 133 s cold, 102 s on a switch to a 32-commit branch, 35 s
+back; `target/` 8.4G, +5.6G, +1G; a sweep of the 15G after aging took 2 s
+and left 4.7G, the next build still fresh). The
+gates' own trees (the staged tree, the ratchet base, the mutants batch)
+keep their own target directories. `just trim-targets [--dry-run] [--days
+<n>] [<checkout>...]` (`scripts/trim-targets.sh`; no checkout: the slots)
+sweeps BY AGE what no build has used for `<n>` days (default 2): every unit
+whose fingerprint no build has read for that long, with its artifacts, by
+the released cargo-sweep pinned at `cargo_sweep_version` (0.8.0, `cargo
+install --locked cargo-sweep@0.8.0`; another version fails, naming the
+install line), and every rustc incremental directory not written for that
+long. A unit goes with its fingerprint, so cargo just rebuilds it. "Used"
+is the access time cargo's fingerprint read renews, about daily on a
+`relatime` mount (/home's); a `noatime` mount fails and removes nothing. A
+checkout whose cargo holds a `.cargo-lock` is kept, and said. Both are
+self-tested in `just selftest` (`scripts/slot.selftest.sh`,
+`scripts/trim-targets.selftest.sh`, which builds a fixture workspace and
+needs cargo-sweep; CI's Linux job installs it). No compiler cache is used,
+and `CARGO_INCREMENTAL` is cargo's default (owner ruling of 2026-11-16,
+after measuring: released sccache cannot share a workspace crate's compile
+between worktree paths).
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each
 test in a process of its own; SLOW at 30 s and killed at 120 s
@@ -3386,11 +3409,7 @@ ctxloom's go-final, go-installed on a cache miss only, for
 `ltk-rules-check.sh`), `gate-logs` (the logs dumped and uploaded on a
 failure) and `package-binary`, and its reusable workflows `binaries.yml` and
 `release.yml`, all pinned at ONE commit of its main (bump them together).
-Every action is pinned to a commit, every tool to a version. Every
-workflow sets `CTXLOOM_SCCACHE=off` and each job that builds says so (a
-hosted runner's cache starts empty; rust-cache keeps `target/`); ctxloom/ci's
-reusable binaries workflow, which takes no env, is off by the justfile's
-`GITHUB_ACTIONS` default. Linux
+Every action is pinned to a commit, every tool to a version. Linux
 (`ubuntu-24.04`; it moves into the dev container once that image is
 published, a commented `container:` line marks the place) runs every gate
 but mutation: `just build`, `fmt-check`, `lint`, `lint-os`, `lint-deps`,

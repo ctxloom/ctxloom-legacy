@@ -1,90 +1,91 @@
 #!/usr/bin/env bash
 # Self-test of scripts/trim-targets.sh (or $TRIM_TARGETS) against a fixture
-# repository with a worktree of each kind, each holding a target/: one
-# landed (its HEAD in the base), whose target/ alone is removed; one not
-# landed (a commit the base lacks); one with a tracked change; one with an
-# untracked file; one a running process uses (its working directory); one
-# git has locked. Every kept one is said with its reason, its target/ and
-# sources untouched, and no worktree or git record is removed. Also: a
-# worktree with no target/ is skipped and said; an unknown base and usage
-# are refused, removing nothing.
+# cargo workspace of two crates, `old` and `fresh`, built: `old`'s
+# fingerprints are aged 10 days (their access time) and its incremental cache
+# too (its write time), `fresh`'s are left as built. A dry run says what it
+# would free and removes nothing; the real run removes `old`'s units and
+# incremental cache alone, and the next build rebuilds `old` and not `fresh`
+# (the fingerprints still agree with what is left). A checkout whose cargo
+# build lock is held is kept and said; one without a target/ is skipped; the
+# pool's slots are the default checkouts; another cargo-sweep version, and
+# usage, are refused. Needs cargo and the pinned cargo-sweep on PATH
+# (TRIM_SWEEP_VERSION, the justfile's cargo_sweep_version; default 0.8.0).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 trim=${TRIM_TARGETS:-$here/trim-targets.sh}
+export TRIM_SWEEP_VERSION=${TRIM_SWEEP_VERSION:-0.8.0}
 tmp=$(mktemp -d)
-sleeper=
-cleanup() { [ -z "$sleeper" ] || kill "$sleeper" 2>/dev/null || true; rm -rf "$tmp"; }
+holder=
+cleanup() { [ -z "$holder" ] || kill "$holder" 2>/dev/null || true; rm -rf "$tmp"; }
 trap cleanup EXIT
 fail() { echo "FAIL trim-targets.selftest: $*" >&2; exit 1; }
-while IFS= read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
-g() { git -c user.name=t -c user.email=t@t -c init.defaultBranch=integ "$@"; }
+unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR RUSTC_WRAPPER
+has() { grep -qF -- "$2" <<< "$1" || fail "no line '$2' in: $1"; }
 
-repo=$tmp/repo
-g init -q "$repo"
-printf 'target/\n' > "$repo/.gitignore"
-echo one > "$repo/file"
-g -C "$repo" add .gitignore file
-g -C "$repo" commit -q -m one
-for name in landed unlanded dirty untracked inuse locked notarget; do
-    g -C "$repo" worktree add -q --detach "$tmp/$name" integ
+ws=$tmp/ws
+mkdir -p "$ws/old/src" "$ws/fresh/src" "$tmp/notarget"
+printf '[workspace]\nmembers = ["old", "fresh"]\nresolver = "2"\n' > "$ws/Cargo.toml"
+for c in old fresh; do
+    printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$c" > "$ws/$c/Cargo.toml"
+    printf 'pub fn %s() -> u32 { 1 }\n#[test]\nfn it() { assert_eq!(%s(), 1); }\n' "$c" "$c" > "$ws/$c/src/lib.rs"
 done
-for name in landed unlanded dirty untracked inuse locked; do
-    mkdir -p "$tmp/$name/target/debug"
-    echo build > "$tmp/$name/target/debug/out"
-done
-echo two > "$tmp/unlanded/file"
-g -C "$tmp/unlanded" commit -q -am two
-echo changed > "$tmp/dirty/file"
-echo new > "$tmp/untracked/new-source"
-g -C "$repo" worktree lock "$tmp/locked"
-(cd "$tmp/inuse" && exec sleep 300) &
-sleeper=$!
-# Wait, bounded, until the sleeper's working directory is the worktree.
-for _ in $(seq 50); do
-    [ "$(readlink "/proc/$sleeper/cwd" 2>/dev/null)" = "$tmp/inuse" ] && break
-    sleep 0.1
-done
+build() { (cd "$ws" && CARGO_INCREMENTAL=1 cargo build -q --offline --lib --tests 2>&1); }
+build > /dev/null || fail "the fixture does not build"
+# `old` unused for 10 days: its fingerprints' access time, its incremental
+# cache's write time.
+find "$ws/target/debug/.fingerprint" -path '*/old-*' -exec touch -a -d '10 days ago' {} +
+find "$ws/target/debug/incremental" -path '*/old-*' -exec touch -m -d '10 days ago' {} +
+units() { find "$ws/target/debug/deps" "$ws/target/debug/.fingerprint" "$ws/target/debug/incremental" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort; }
+ls -A "$ws/target/debug/incremental" | grep -q '^old-' || fail "the fixture made no incremental cache for old"
+all=$(units)
 
-has() { grep -qF -- "$1" <<< "$out" || fail "no line '$1' in: $out"; }
-# A dry run judges the same and removes nothing.
-out=$(TRIM_TARGETS_REPO=$repo "$trim" --dry-run integ 2>&1) || fail "dry run: exit $?: $out"
-has "would remove $tmp/landed/target ("
-has "trim-targets: (dry run) would have removed 1 target/ directories, kept 5"
-[ -f "$tmp/landed/target/debug/out" ] || fail "the dry run removed something"
+# A dry run says what it would free and removes nothing.
+out=$("$trim" --dry-run "$ws" "$tmp/notarget" 2>&1) || fail "dry run: exit $?: $out"
+has "$out" "would sweep $ws/target: "
+has "$out" "skip    $tmp/notarget: no target/"
+has "$out" "trim-targets: (dry run) would have swept 1 target/ directories of artifacts unused for 2 days, kept 0"
+[ "$(units)" = "$all" ] || fail "the dry run removed something"
 
-out=$(TRIM_TARGETS_REPO=$repo "$trim" integ 2>&1) || fail "exit $?: $out"
-has "removed $tmp/landed/target ("
-has "kept    $tmp/unlanded: HEAD "
-has "is not in integ (not landed)"
-has "kept    $tmp/dirty: tracked changes (1 files)"
-has "kept    $tmp/untracked: untracked files (1, work not yet added)"
-has "kept    $tmp/inuse: in use by pid $sleeper (sleep)"
-has "kept    $tmp/locked: locked (git worktree lock)"
-has "skip    $tmp/notarget: no target/"
-has "skip    $repo: no target/"
-has "trim-targets: removed 1 target/ directories, kept 5 (base integ, "
-[ ! -e "$tmp/landed/target" ] || fail "the landed worktree's target/ is still there"
-[ -f "$tmp/landed/file" ] || fail "the landed worktree's source was removed"
-for name in unlanded dirty untracked inuse locked; do
-    [ -f "$tmp/$name/target/debug/out" ] || fail "$name: its target/ was touched"
-done
-[ -f "$tmp/untracked/new-source" ] && [ "$(cat "$tmp/dirty/file")" = changed ] || fail "work was touched"
-[ "$(g -C "$repo" worktree list | grep -c '')" -eq 8 ] || fail "a worktree record went: $(g -C "$repo" worktree list)"
+# The real run removes old's units and cache alone.
+out=$("$trim" "$ws" 2>&1) || fail "exit $?: $out"
+has "$out" "swept   $ws/target: "
+has "$out" "trim-targets: swept 1 target/ directories of artifacts unused for 2 days, kept 0"
+left=$(units)
+grep -q '^old-' <<< "$left" && fail "old's artifacts are still there: $left"
+grep -q '^libold-' <<< "$left" && fail "old's rlib is still there: $left"
+grep -q '^fresh-' <<< "$left" || fail "fresh's artifacts were removed: $left"
+grep -q '^libfresh-' <<< "$left" || fail "fresh's rlib was removed: $left"
+# The next build rebuilds old and only old.
+out=$(cd "$ws" && CARGO_INCREMENTAL=1 cargo build --offline --lib --tests 2>&1) || fail "the rebuild failed: $out"
+has "$out" "Compiling old v0.1.0"
+grep -q "Compiling fresh" <<< "$out" && fail "fresh was rebuilt: $out"
 
-# Once the process is gone, that worktree is trimmed too; the rest stay.
-kill "$sleeper"; wait "$sleeper" 2>/dev/null || true; sleeper=
-out=$(TRIM_TARGETS_REPO=$repo "$trim" integ 2>&1) || fail "second run: exit $?: $out"
-has "removed $tmp/inuse/target ("
-has "trim-targets: removed 1 target/ directories, kept 4"
+# A checkout whose cargo is building is kept.
+flock "$ws/target/debug/.cargo-lock" sleep 60 < /dev/null > /dev/null 2>&1 &
+holder=$!
+for _ in $(seq 50); do flock -n "$ws/target/debug/.cargo-lock" true || break; sleep 0.1; done
+find "$ws/target/debug/.fingerprint" -path '*/fresh-*' -exec touch -a -d '10 days ago' {} +
+out=$("$trim" "$ws" 2>&1) || fail "while building: exit $?: $out"
+has "$out" "kept    $ws: building (cargo holds $ws/target/debug/.cargo-lock)"
+has "$out" "swept 0 target/ directories of artifacts unused for 2 days, kept 1"
+grep -q '^fresh-' <<< "$(units)" || fail "a building checkout was swept"
+kill "$holder"; wait "$holder" 2>/dev/null || true; holder=
 
-# An unknown base, and usage: refused, nothing removed.
+# The pool's slots are the default checkouts.
+mkdir -p "$tmp/pool/p--slot-2"
+out=$(SLOT_ROOT=$tmp/pool SLOT_PREFIX=p--slot- SLOT_COUNT=2 "$trim" --days 5 2>&1) || fail "the pool: exit $?: $out"
+has "$out" "skip    $tmp/pool/p--slot-1: no target/"
+has "$out" "skip    $tmp/pool/p--slot-2: no target/"
+has "$out" "unused for 5 days"
+
+# Another cargo-sweep version, and usage: refused, nothing removed.
 rc=0
-out=$(TRIM_TARGETS_REPO=$repo "$trim" no-such-base 2>&1) || rc=$?
-[ "$rc" -eq 1 ] || fail "unknown base: exit $rc, not 1: $out"
-has "FAIL trim-targets: base 'no-such-base' is not a commit"
+out=$(TRIM_SWEEP_VERSION=0.0.1 "$trim" "$ws" 2>&1) || rc=$?
+[ "$rc" -eq 1 ] || fail "another version: exit $rc, not 1: $out"
+has "$out" "FAIL trim-targets: cargo-sweep 0.0.1 is needed, found 'cargo-sweep $TRIM_SWEEP_VERSION' (fix: cargo install --locked cargo-sweep@0.0.1)"
 rc=0
-"$trim" > /dev/null 2>&1 || rc=$?
+"$trim" --days x > /dev/null 2>&1 || rc=$?
 [ "$rc" -eq 2 ] || fail "usage: exit $rc, not 2"
-[ -f "$tmp/dirty/target/debug/out" ] || fail "a refused run removed something"
+grep -q '^fresh-' <<< "$(units)" || fail "a refused run removed something"
 
-echo "ok   trim-targets.selftest (landed removed, dry run removes nothing; unlanded, dirty, untracked, in use, locked kept and said)"
+echo "ok   trim-targets.selftest (aged units and caches swept, fresh kept and not rebuilt, dry run removes nothing, building kept, pool default, version pinned)"

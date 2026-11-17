@@ -1,120 +1,116 @@
 #!/usr/bin/env bash
-# Clear the target/ of every worktree of this repository that has landed and
-# holds nothing: `trim-targets.sh [--dry-run] <base>` (`just trim-targets
-# [base] [--dry-run]`, owner
-# ruling of 2026-11-16: each worktree's target/ grew to 120-180G and three
-# agents' worktrees filled /home).
+# Sweep stale build artifacts out of the worktree pool's target/ directories
+# by age (owner ruling of 2026-11-16): `trim-targets.sh [--dry-run] [--days
+# <n>] [<checkout>...]` (`just trim-targets [--dry-run] [--days <n>]
+# [<checkout>...]`; no checkout: every slot of the pool, scripts/slot.sh).
+# Each branch a slot is switched to leaves the units it alone built (its test
+# executables, about 8G a switch); this removes, in each checkout's target/
+# (the gates' own trees under it, target/staged and target/ratchet-base,
+# included), what no build has used for <n> days (default 2):
 #
-# A worktree's target/ is removed only when ALL of these hold:
-#   - its HEAD is reachable from <base> (landed; default, in the justfile,
-#     origin/daemon/integration);
-#   - no running process uses it: none has its working directory, its
-#     executable or an open file under the worktree (read from /proc; a
-#     process this user cannot read is not seen);
-#   - it has no tracked change (staged or not), no untracked file that is not
-#     ignored (work not yet added), and git has not locked it.
-# Anything else is kept, and said why. Only target/ is removed: never a
-# source file, never the worktree, never its git record. A worktree with no
-# target/ is said and skipped. One line per worktree:
+#   - every unit whose fingerprint (target/**/.fingerprint/<unit>-<hash>) no
+#     build has read for <n> days, with everything of that hash in deps/,
+#     build/ and the profile directory: cargo-sweep's `sweep --time <n>`, the
+#     released tool at the pinned version (TRIM_SWEEP_VERSION, the
+#     justfile's cargo_sweep_version; another version, or none, fails, saying
+#     the install line). A unit is removed WITH its fingerprint, so cargo
+#     rebuilds it when a build next wants it, never trusts a half-removed one;
+#   - every rustc incremental directory (target/**/incremental/<crate>-<hash>)
+#     in which nothing was written for <n> days (rustc makes a new session
+#     directory at every compile of its crate, and an incremental cache it
+#     does not find it rebuilds).
 #
-#   removed <worktree>/target (<size>)
-#   kept    <worktree>: <why>
-#   skip    <worktree>: no target/
+# "Used" is the file's access time (cargo reads a fingerprint at every build
+# that has its unit): on a `relatime` mount (Linux's default; /home here) an
+# access time is renewed at most once a day, so <n> is good to about a day; a
+# `noatime` mount keeps none, so it FAILS there and removes nothing. A
+# checkout whose cargo is building (it holds target/**/.cargo-lock) is kept,
+# and said; a checkout without a target/ is skipped. One line each:
 #
-# then a summary line. `--dry-run` judges the same and removes nothing,
-# saying `would remove` for each it would. Without /proc (macOS) it cannot tell which processes
-# use a worktree, so it FAILS and removes nothing.
+#   swept   <checkout>/target: <before> -> <after>
+#   would sweep <checkout>/target: <before>, about <size> to free
+#   kept    <checkout>: building (cargo holds <lock>)
+#   skip    <checkout>: no target/
 #
-# Exit: 0; 1 when it cannot judge (no /proc, an unknown base); 2 on usage.
-# Environment: TRIM_TARGETS_REPO, the repository whose worktrees are judged
-# (default: the one holding this script; the self-test's seam).
+# then a summary line. `--dry-run` judges the same and removes nothing.
+#
+# Exit: 0; 1 when it cannot sweep (the tool, a noatime mount, a failed sweep);
+# 2 on usage. Environment: TRIM_SWEEP_VERSION (required), and for the pool
+# SLOT_ROOT, SLOT_PREFIX and SLOT_COUNT (the justfile gives them).
 # Self-test: scripts/trim-targets.selftest.sh (`just selftest`).
 set -euo pipefail
-dry=
-[ "${1:-}" = --dry-run ] && { dry=1; shift; }
-[ $# -eq 1 ] || { echo "usage: trim-targets.sh [--dry-run] <base>" >&2; exit 2; }
-base=$1
-here=$(cd "$(dirname "$0")" && pwd)
-repo=${TRIM_TARGETS_REPO:-$here/..}
-# Unset git's per-repository variables (a hook's GIT_DIR, GIT_INDEX_FILE),
-# so each `git -C <worktree>` reads that worktree.
-while IFS= read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
-# Out of every worktree, so this process uses none of them.
-cd /
-
-[ -d /proc/self/fd ] || { echo "FAIL trim-targets: no /proc: cannot tell which processes use a worktree, so nothing is removed" >&2; exit 1; }
-base_sha=$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}") \
-    || { echo "FAIL trim-targets: base '$base' is not a commit of $repo (fetch it?)" >&2; exit 1; }
-
-# Every path a running process uses: its cwd, its executable and its open
-# files, one per line (a process gone in between, or not ours, says nothing).
-used=$(
-    for p in /proc/[0-9]*; do
-        pid=${p#/proc/}
-        [ "$pid" = $$ ] && continue
-        for l in "$p/cwd" "$p/exe" "$p"/fd/*; do
-            t=$(readlink "$l" 2>/dev/null) || continue
-            printf '%s\t%s\n' "$pid" "$t"
-        done
-    done 2>/dev/null || true
-)
-
-# The process (pid and name) using a path under $1, if any.
-user_of() {
-    local hit pid
-    hit=$(awk -F'\t' -v d="$1" '$2 == d || index($2, d "/") == 1 { print $1; exit }' <<< "$used")
-    [ -n "$hit" ] || return 1
-    pid=$hit
-    echo "pid $pid ($(cat "/proc/$pid/comm" 2>/dev/null || echo gone))"
-}
-
-removed=0 kept=0
-worktrees=()
-locked=()
-cur=
-while IFS= read -r line; do
-    case "$line" in
-        "worktree "*) cur=${line#worktree }; worktrees+=("$cur") ;;
-        locked*) locked+=("$cur") ;;
+dry= days=2 checkouts=()
+usage() { echo "usage: trim-targets.sh [--dry-run] [--days <n>] [<checkout>...]" >&2; exit 2; }
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) dry=1; shift ;;
+        --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
+        -*) usage ;;
+        *) checkouts+=("$1"); shift ;;
     esac
-done < <(git -C "$repo" worktree list --porcelain)
+done
+case "$days" in ''|*[!0-9]*) usage ;; esac
+fail() { echo "FAIL trim-targets: $*" >&2; exit 1; }
 
-for wt in "${worktrees[@]}"; do
-    if [ ! -d "$wt/target" ]; then
-        echo "skip    $wt: no target/"
+want=${TRIM_SWEEP_VERSION:?TRIM_SWEEP_VERSION is the cargo-sweep pinned}
+have=$(cargo-sweep --version 2>/dev/null || true)
+[ "$have" = "cargo-sweep $want" ] \
+    || fail "cargo-sweep $want is needed, found '${have:-none}' (fix: cargo install --locked cargo-sweep@$want)"
+
+if [ ${#checkouts[@]} -eq 0 ]; then
+    : "${SLOT_ROOT:?SLOT_ROOT is the directory of the pool}" "${SLOT_PREFIX:?}"
+    for n in $(seq "${SLOT_COUNT:-3}"); do checkouts+=("$SLOT_ROOT/$SLOT_PREFIX$n"); done
+fi
+
+human() { numfmt --to=iec-i --suffix=B "$1"; }
+size_of() { du -sb "$1" 2>/dev/null | cut -f1; }
+swept=0 kept=0
+for c in "${checkouts[@]}"; do
+    t=$c/target
+    if [ ! -d "$t" ]; then
+        echo "skip    $c: no target/"
         continue
     fi
-    why=
-    for l in ${locked[@]+"${locked[@]}"}; do [ "$l" = "$wt" ] && why="locked (git worktree lock)"; done
-    if [ -z "$why" ]; then
-        head=$(git -C "$wt" rev-parse --verify --quiet HEAD) || why="no HEAD"
+    if findmnt -n -o OPTIONS -T "$t" 2>/dev/null | tr ',' '\n' | grep -qx noatime; then
+        fail "$t is on a noatime mount: no access time says what a build used, so nothing is removed"
     fi
-    if [ -z "$why" ] && ! git -C "$repo" merge-base --is-ancestor "$head" "$base_sha"; then
-        why="HEAD ${head:0:9} is not in $base (not landed)"
-    fi
-    if [ -z "$why" ] && u=$(user_of "$wt"); then
-        why="in use by $u"
-    fi
-    if [ -z "$why" ]; then
-        status=$(git -C "$wt" status --porcelain=v1 2>/dev/null) || why="git status failed"
-        if [ -z "$why" ] && grep -q '^[^?]' <<< "$status"; then
-            why="tracked changes ($(grep -c '^[^?]' <<< "$status") files)"
-        elif [ -z "$why" ] && grep -q '^??' <<< "$status"; then
-            why="untracked files ($(grep -c '^??' <<< "$status"), work not yet added)"
-        fi
-    fi
-    if [ -n "$why" ]; then
-        echo "kept    $wt: $why"
+    # Hold every cargo build lock under target/ for the sweep (a build that
+    # starts meanwhile waits); one held by a running cargo keeps the checkout.
+    busy=
+    fds=()
+    while IFS= read -r -d '' l; do
+        exec {fd}<"$l"
+        fds+=("$fd")
+        flock -n "$fd" || { busy=$l; break; }
+    done < <(find "$t" -name .cargo-lock -type f -print0 2>/dev/null)
+    if [ -n "$busy" ]; then
+        for fd in "${fds[@]}"; do exec {fd}<&-; done
+        echo "kept    $c: building (cargo holds $busy)"
         kept=$((kept + 1))
         continue
     fi
-    size=$(du -sh "$wt/target" 2>/dev/null | cut -f1)
-    if [ -n "$dry" ]; then
-        echo "would remove $wt/target (${size:-?})"
-    else
-        rm -rf "$wt/target"
-        echo "removed $wt/target (${size:-?})"
+    before=$(size_of "$t")
+    log=$(mktemp)
+    if ! (cd "$c" && CARGO_NET_OFFLINE=true cargo-sweep sweep ${dry:+--dry-run} --time "$days" "$c") > "$log" 2>&1; then
+        for fd in "${fds[@]}"; do exec {fd}<&-; done
+        tail -n 5 "$log" >&2; rm -f "$log"
+        fail "cargo-sweep failed in $c"
     fi
-    removed=$((removed + 1))
+    # cargo-sweep's own sum: "[INFO] Cleaned|Would clean: 1.2 GiB from ..."
+    sweep_said=$(grep -oE '(Cleaned|Would clean:) [0-9.]+ [KMGT]?i?B' "$log" | sed 's/^Would clean: //; s/^Cleaned //' | paste -sd+ - || true)
+    rm -f "$log"
+    stale=0
+    while IFS= read -r -d '' d; do
+        [ -z "$(find "$d" -maxdepth 1 -mtime "-$days" -print -quit)" ] || continue
+        stale=$((stale + $(size_of "$d")))
+        [ -n "$dry" ] || rm -rf "$d"
+    done < <(find "$t" -path '*/incremental/*' -prune -type d -print0 2>/dev/null)
+    for fd in "${fds[@]}"; do exec {fd}<&-; done
+    if [ -n "$dry" ]; then
+        echo "would sweep $c/target: $(human "$before"), about ${sweep_said:-0 B} of units and $(human "$stale") of incremental caches to free"
+    else
+        echo "swept   $c/target: $(human "$before") -> $(human "$(size_of "$t")")"
+    fi
+    swept=$((swept + 1))
 done
-echo "trim-targets: ${dry:+(dry run) would have }removed $removed target/ directories, kept $kept (base $base, ${base_sha:0:9})"
+echo "trim-targets: ${dry:+(dry run) would have }swept $swept target/ directories of artifacts unused for $days days, kept $kept"
