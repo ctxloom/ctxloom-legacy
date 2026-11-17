@@ -2518,13 +2518,22 @@ motion` and `-home-repository-made` (texts.md, accepted verbatim).
 `library_api::names` is the library's resource naming, one copy
 (library-cli re-exports it until each noun is served).
 
-The daemon's `Api::observing(Observing)` (serve.rs) makes `AssembleContext`
-(the MCP tool's read, today the one library read the daemon serves) observe
+The daemon's `Api::observing(Observing)` (serve.rs) makes every library
+read it serves (`Api::library_read`, `AssembleContext` among them) observe
 first: a refusal is the library domain's own typed refusal under its
 message's status (`daemon_api::library_refusal`; `rejection_of` maps
 `NotInGit`, `LibraryIgnored` and `PlanRejected` back to
-`Rejection::Library`, exit 20), git missing or failing an internal failure,
-a motion a notice in `AssembledContext.notices`.
+`Rejection::Library`, exit 20), a motion a notice. git failing is an
+internal failure; git MISSING or TOO OLD is a DIAGNOSED failure (step 10a
+U2, owner ruling 2026-11-17): `ApiError::Diagnosed {code, args}` (the
+`library-git` diagnostic's), answered FAILED_PRECONDITION
+(`run_ports::Infrastructure::Unmet`, never UNAVAILABLE, which a client
+reads as an unreachable daemon) carrying a `google.rpc.ErrorInfo` whose
+domain is `run_ports::DIAGNOSED` (`ctxloom.dev/diagnostic`), reason the
+code and metadata the args; the client reads it back as
+`Called::Diagnosed` (`daemon_client::called`, before any status is read),
+so the command says `library-git-git-missing` in its own catalog's words
+and exits 10.
 
 `just bench-reconcile` (O7; `LIBRARY_BENCH=reconcile`, else the test says
 SKIP) times `sight` over `CallerGits` on 100 000 files with 500 in
@@ -2549,9 +2558,14 @@ built:
   what a premise held back as data (`AssembledContext.premised`); none of
   `library::compose::Options.surface` / `AssembleRequest.surface` means
   "the caller renders it". The MCP server's `context_assemble` renders it
-  on the launch (`daemon_api::render_premise_index`, `Shown::Launch`). The
-  words are still `library::premise`'s: the in-process launch package and
-  materialize render with them too.
+  on the launch (`library_api::premise::render_premise_index`, re-exported
+  by daemon-api, `Shown::Launch`); the CLI's `context assemble` renders it
+  at rest (`Shown::AtRest`) and prints the message with the index in its
+  `context` and `premised` and `notices` emptied, as the in-process answer
+  printed it. The words are still `library::premise`'s (reached through
+  `library_application::premise`): the in-process launch package and
+  materialize render with them too, so the instruction text stays in the
+  core until those are served (10b/10c).
 - E5: each decline of a library use case is a typed refusal of its own
   (`ctxloom.v1.Library*`, library.proto, each with its `(refusal_status)`),
   mapped back to its `library-application-*` diagnostic by its type alone
@@ -2559,18 +2573,64 @@ built:
   cause rides as its code and flattened args (`ctxloom.v1.Cause`).
   `AppError::Declined` (a read model's own refusal) is still one message,
   `LibraryDeclined`, until those are typed.
-- Notices: a library read's own notices ride the response metadata key
-  `ctxloom-notice-bin` (`daemon_proto::NOTICE_METADATA`, one prost `Notice`
-  per value, apart from the standing warnings), carried to a client as
-  `daemon_ports::Read`.
+- Notices: a library read's own notices (the observation's, then the use
+  case's) ride the response metadata key `ctxloom-notice-bin`
+  (`daemon_proto::NOTICE_METADATA`, one prost `Notice` per value, apart
+  from the standing warnings), carried to a client as `daemon_ports::Read`
+  and said by the CLI before its answer, in its own catalog's words (by
+  code and args). Only an ANSWERED read carries them: a refused or failed
+  read says its refusal alone (accepted, as a status has no notices).
+  `AssembleContext`'s ride in `AssembledContext.notices` instead (the MCP
+  tool's answer is the message), where the MCP edge adds its own
+  `daemon-api-assembly-missing-fragment` / `-tag` for what it asked and
+  the catalog lacks (`daemon_api::missing_notices`).
+- No bundles directory (owner ruling 2026-11-17): a project with no
+  bundles directory lists as one with no bundles ("No bundles installed."
+  and its install hint, a project's or none's), never Go's mkdir line,
+  and a read creates nothing; installing a bundle makes the directory.
 - D12: one table, `daemon_proto::library_reads!`, generates each layer's
   part of every library read (the port's default, the client's call, the
-  API's `Calls` default, the gRPC handler); a served read overrides its
-  `Calls` method in `Api`.
-- Served: `ListBundles` (`bundle list`, the CLI the request and the render:
-  library-cli's `Served`, text from the message, `text::bundles`),
-  `ListAgents`, `ListProfiles`, `ListSkills`; the view-to-message mapping
-  of those is `library_api::resources`, the one mapping. The home step (G2)
+  API's `Calls` default, the gRPC handler, and daemon-api's `LibraryReads`,
+  the CLI's client: each `fn(under, request)`, its target the client's
+  parent, `projects/{harp}` else `users/me`, then `under`). What the daemon
+  SERVES is `library_api::served!` (each row's
+  `library_api::reads::$method(library, flags, parent, request)`), from
+  which `Api`'s `Calls` methods are generated; what the CLI asks is
+  library-cli's `served_reads!`, from which its `Served` trait, the
+  wiring's `DaemonServed` and the tests' `ServedBy` are generated. A read
+  is served by a row in each. `AssembleContext` is a library read too
+  (`Api::assemble_context` through `library_read`; `LibraryReads::
+  assemble_context`, `Served::assemble_context`); the daemon's
+  `Assemblies` port and the wiring's `ProjectAssemblies` are gone.
+- Targets: a command names what it reads by its text AS TYPED
+  (`library_api::names::bundle_target`, `reference_target`), read back
+  exactly in the daemon (`bundle_under`, `reference_under`: a remote's
+  bundle, a canonical reference with slashes, a reference of no valid
+  shape, `ctxloom+local:` all round trip, `%` and `/` escaped within one
+  segment), so the use case refuses it in its own words (`invalid
+  reference format`, `bundle not found: demo#fragments/testing`).
+- One per-call builder (U2's Deletes): every call the daemon serves is
+  read as `daemon::caller_wiring(home, temp, (dir, root), env)` (over
+  `caller_env`): a process at the caller's directory in the caller's
+  environment, ctxloom's home as its home and the caller's home kept as
+  its own; `root`, when given, its `CTXLOOM_ROOT` over the caller's. The
+  library reads' `ProjectLibraries`, the trust read's `ProjectTrusts`, the
+  sweep's settings, a child's plan (`child_library`) and a hosted run
+  (`oneshot::hosted_wiring`) are all made over it; `per_call_env` (which
+  set ctxloom's home as the caller's HOME) is gone.
+- Served: `ListBundles` (`bundle list`), `ListFragments`, `ListCommands`,
+  `GetFragment`, `GetCommand` (`fragment|command list|show`),
+  `GetPremiseIndex` (`fragment premises`), `ListSkills`, `GetSkill`
+  (`skill list|show`), `AssembleContext` (`context assemble`), and
+  `ListAgents`, `ListProfiles` (the hooks' alone, O3). The CLI is the
+  request and the render (D10): `library_cli::served` says the read's
+  notices, then prints the message as json or its text, drawn from the
+  message alone (library-cli's `read_back`: the message read back as the
+  view the text renderer prints, line for line); a one-bundle listing that
+  holds none asks the whole catalog too, for its "exist in other bundles"
+  line. The view-to-message mappings are `library_api::resources`, the
+  one mapping. With no daemon, a served read fails (`daemon-api-unreached`,
+  exit 10), text or json alike: a text answer no longer reaches no daemon. The home step (G2)
   is the daemon's, at a read (`observe_read`), said as
   `library-api-notice-home-repository-made`; a verb still in process still
   takes it in process first.
@@ -2584,11 +2644,12 @@ built:
   a daemon already serving); with no daemon in time a hook says nothing of
   the library and reads nothing in process.
 
-Still in process (U2's remainder): every other library read (`bundle
-show|view`, `fragment|command|skill|profile|agent|mcp|companion|engine
-list|show`, `search`, `config show`, `fragment premises`, `context
-assemble`, the deps reads) and `run --dry-run` (not yet `CreateRun
-{validate_only}`), so their library_changes.feature rows stay red.
+Still in process (U2's remainder): `bundle show|view`, `profile|agent|mcp|
+companion|engine list|show`, `search`, `config show`, the deps reads, and
+`run --dry-run` (not yet `CreateRun{validate_only}`, which still answers
+UNIMPLEMENTED: its text needs the plan's settled workspace and runtime and
+the agent its settings are of, which `Run` does not carry; escalated), so
+library_changes.feature's `run --dry-run` row stays red.
 
 ## Storage is angzarr-store-sqlite
 
@@ -2804,8 +2865,8 @@ ones (`lib.rs`'s dispatch and prelude, `api.rs`, `write.rs`'s helpers,
 `text.rs`, `commands.rs`, the harnesses `lib.test.rs`, `write.test.rs` and
 `library_cli.test.rs`) are not a noun's. A resource
 name's parent comes from `library_cli::Names`, asked only when a json
-answer prints one (text reaches no daemon; `run --dry-run`, below, asks
-always): the wiring's is the daemon's
+answer prints one (`run --dry-run`, below, asks always; a read the daemon
+serves, step 10a U2, reaches it text or json): the wiring's is the daemon's
 `ResolveProject` (`daemon_api::Client::library_parent`, the wiring's
 `daemon::library_parent`; OQ-2, so a json answer may start the daemon), or
 `users/me` outside a project, where no daemon is asked (OQ-3). ONE
@@ -3466,8 +3527,8 @@ project is its name's (`projects/{p}`, OD-2), never resolved from a cwd.
 Its reads are the service's (`GetTranscript` and `AssembleContext` are now
 served: the transcript from the warm index, refused `TranscriptEmpty` with
 no lines; the assembly at the project's REGISTERED root in the caller's
-environment, by the wiring's `ProjectAssemblies`, a missing fragment or tag
-a notice). Its writes are the domain's commands through the coordinator's
+environment, a library read (step 10a U2), its fragments named, a missing
+fragment or tag a notice the tool's edge adds). Its writes are the domain's commands through the coordinator's
 `HandleSync` (`DaemonApi::handle_sync`, `daemon-client` over angzarr's
 coordinator client), its `requester` the caller (project uid from
 `GetProject`, its own stable id), its evidence from the target as the daemon
