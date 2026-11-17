@@ -2795,7 +2795,15 @@ built:
   `library_application::loadout::document`), whatever the output format,
   after the read's notices. The in-process path (the `LOADOUT` constant
   printed as it was) is gone; as a served read it needs a daemon. No
-  library read is left in process (U2 done).
+  library read is left in process (U2 done), with ONE named exception
+  (D8, owner ruling 2026-11-17): the operational prompts, init's interview
+  (`SetupSessions::setup_interview`, the wiring's `interview.rs`) and
+  distill's instruction (`Project::operational_prompt` under
+  `fragment distill`), are still read in process through 10a, each asking
+  the daemon one `GetTrust` (`Library::with_trust`), because no RPC
+  answers an operational prompt; they are ruled to be served with 10b.
+  Ruling 128's behaviour is unchanged: a trusted project's own `ctxloom`
+  bundle replaces the prompt whole, and one lacking it is refused.
 
 ## Storage is angzarr-store-sqlite
 

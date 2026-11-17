@@ -167,6 +167,11 @@ impl Prompts for SetupSessions<'_> {
     /// The setup interview as the project's catalog holds it now (a project
     /// bundle `ctxloom` overrides the built-in one whole), read from a library
     /// built when it is asked, so a first init's reads the new project.
+    ///
+    /// The one library read of init's that runs in process (D8's named
+    /// exception, served with 10b): no RPC answers an operational prompt,
+    /// so the daemon is asked for trust alone, one `GetTrust`, and the
+    /// catalog is read here.
     fn setup_interview(&self) -> Result<PromptRead, PromptFailure> {
         let failed = |cause: init_application::Failure| PromptFailure {
             cause,
