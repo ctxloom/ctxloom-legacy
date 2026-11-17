@@ -1220,30 +1220,40 @@ pub(crate) fn child_git_user(
     crate::oneshot::git_user(&wiring, Path::new(project_dir))
 }
 
-/// The environment a call the daemon serves for the project at `root` is
-/// read in (S7), as a process in that project would read it: the caller's
-/// `env`, with the project as `CTXLOOM_ROOT` and ctxloom's `home` as the
-/// platform's home variable (`HOME`, `USERPROFILE` on Windows:
-/// `os::Flavor::home_var`, which [`Wiring::new`] reads), each over the
-/// caller's own of that name as the platform compares names.
-pub(crate) fn per_call_env<'a>(
+/// The environment of a call the daemon serves (S7; step 10a U2, the ONE
+/// builder every per-call read and run is made over): the caller's `env`
+/// as a process at `dir` (its working directory) sees it, `root`, when
+/// given, the project it is in, as `CTXLOOM_ROOT` over any the caller had
+/// (as the platform compares names).
+pub(crate) fn caller_env<'a>(
     flavor: os::Flavor,
-    (root, temp, home): (&str, &Path, &Path),
+    temp: &Path,
+    (dir, root): (&str, Option<&str>),
     env: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> EnvSnapshot {
-    let home_var = flavor.home_var();
-    let owned = [
-        flavor.env_key(run_ports::ROOT_VARIABLE),
-        flavor.env_key(home_var),
-    ];
+    let owned = flavor.env_key(run_ports::ROOT_VARIABLE);
     let mut vars: Vec<(OsString, OsString)> = env
         .into_iter()
-        .filter(|(name, _)| !owned.contains(&flavor.env_key(name)))
+        .filter(|(name, _)| root.is_none() || flavor.env_key(name) != owned)
         .map(|(name, value)| (name.into(), value.into()))
         .collect();
-    vars.push((run_ports::ROOT_VARIABLE.into(), root.into()));
-    vars.push((home_var.into(), home.as_os_str().to_os_string()));
-    EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(root)), temp.to_path_buf(), vars)
+    if let Some(root) = root {
+        vars.push((run_ports::ROOT_VARIABLE.into(), root.into()));
+    }
+    EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(dir)), temp.to_path_buf(), vars)
+}
+
+/// The wiring of a call the daemon serves: [`caller_env`]'s process, with
+/// ctxloom's `home` as its home (the caller's own home stays its own, so her
+/// login and settings are found under it, M4).
+pub(crate) fn caller_wiring<'a>(
+    home: &Path,
+    temp: &Path,
+    place: (&str, Option<&str>),
+    env: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Wiring {
+    let snapshot = caller_env(os::host().flavor(), temp, place, env);
+    Wiring::at(Arc::new(snapshot), home.to_path_buf())
 }
 
 /// The plan of a child of the project at `project_dir` (D18, D-N46): that
@@ -1308,14 +1318,14 @@ fn child_library(
     project_dir: &str,
     env: &BTreeMap<String, String>,
 ) -> Result<library_application::Library, String> {
-    let snapshot = per_call_env(
-        os::host().flavor(),
-        (project_dir, temp, home),
+    let wiring = caller_wiring(
+        home,
+        temp,
+        (project_dir, Some(project_dir)),
         env.iter()
             .map(|(name, value)| (name.as_str(), value.as_str())),
     );
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
-    let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| code(&e))?;
     crate::library::build(&wiring, None).map_err(|e| code(&e))
 }
 

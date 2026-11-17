@@ -625,18 +625,15 @@ pub(crate) fn hosted_wiring(
     temp: &Path,
     request: &daemon_application::HostRequest,
 ) -> Wiring {
-    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = request
-        .env
-        .iter()
-        .map(|(name, value)| (name.into(), value.into()))
-        .collect();
-    let snapshot = EnvSnapshot::from_parts(
-        os::host().flavor(),
-        Ok(std::path::PathBuf::from(&request.cwd)),
-        temp.to_path_buf(),
-        vars,
-    );
-    Wiring::at(Arc::new(snapshot), home.to_path_buf())
+    crate::daemon::caller_wiring(
+        home,
+        temp,
+        (&request.cwd, None),
+        request
+            .env
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    )
 }
 
 /// What a run the daemon hosts is planned and driven in (a hosted

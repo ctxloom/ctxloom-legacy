@@ -6,7 +6,6 @@
 //! ONE store, purged stream by stream (`sessions_application::purge`, head
 //! guarded). No second connection to the store is opened.
 
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,15 +36,11 @@ pub(crate) struct ProjectPlaces {
 impl ProjectPlaces {
     /// The caller's environment `env` (S7), as a process at `dir` sees it.
     fn snapshot(&self, dir: &str, env: &[(String, String)]) -> Arc<EnvSnapshot> {
-        let vars: Vec<(OsString, OsString)> = env
-            .iter()
-            .map(|(name, value)| (name.into(), value.into()))
-            .collect();
-        Arc::new(EnvSnapshot::from_parts(
+        Arc::new(super::caller_env(
             os::host().flavor(),
-            Ok(PathBuf::from(dir)),
-            self.temp.clone(),
-            vars,
+            &self.temp,
+            (dir, None),
+            pairs(env),
         ))
     }
 }
@@ -82,13 +77,13 @@ impl daemon_api::Places for ProjectPlaces {
     fn settings(&self, root: &str, env: &[(String, String)]) -> Box<dyn SweepConfig + Send> {
         // The project's layered configuration as a command run at its
         // registered root finds it, under this daemon's home.
+        let wiring = super::caller_wiring(&self.home, &self.temp, (root, Some(root)), pairs(env));
         let mut env: Vec<(String, String)> = env
             .iter()
             .filter(|(name, _)| name != "CTXLOOM_ROOT")
             .cloned()
             .collect();
         env.push(("CTXLOOM_ROOT".to_string(), root.to_string()));
-        let wiring = Wiring::at(self.snapshot(root, &env), self.home.clone());
         Box::new(SweepSettings::new(
             Arc::new(ConfigFilesFs::new(
                 Arc::clone(&self.fs),
@@ -110,6 +105,12 @@ impl daemon_api::Places for ProjectPlaces {
     }
 }
 
+/// `env` as name and value pairs.
+fn pairs(env: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
+    env.iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+}
+
 /// git as a library read's caller runs it (step 10a U2, protos.md §2): on
 /// the caller's `PATH`, in the caller's environment (git-cli scrubs its
 /// repository variables), over this process's filesystem; and the home's
@@ -122,16 +123,9 @@ pub(crate) struct CallerGits {
 
 impl library_api::Observers for CallerGits {
     fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
-        let vars: Vec<(OsString, OsString)> = env
-            .iter()
-            .map(|(name, value)| (name.into(), value.into()))
-            .collect();
-        let snapshot = EnvSnapshot::from_parts(
-            os::host().flavor(),
-            Ok(self.home.clone()),
-            self.temp.clone(),
-            vars,
-        );
+        let home = self.home.display().to_string();
+        let snapshot =
+            super::caller_env(os::host().flavor(), &self.temp, (&home, None), pairs(env));
         Box::new(library_git::GitTrees::new(
             Arc::clone(&self.fs),
             Arc::new(snapshot),
@@ -196,23 +190,8 @@ pub(crate) struct ProjectLibraries {
 
 impl ProjectLibraries {
     /// A process at `dir` in the caller's environment `env`.
-    fn at(&self, dir: &str, env: &[(String, String)]) -> Result<Wiring, ApiError> {
-        let flavor = os::host().flavor();
-        let home_var = flavor.env_key(flavor.home_var());
-        let mut vars: Vec<(OsString, OsString)> = env
-            .iter()
-            .filter(|(name, _)| flavor.env_key(name) != home_var)
-            .map(|(name, value)| (name.into(), value.into()))
-            .collect();
-        vars.push((
-            flavor.home_var().into(),
-            self.home.as_os_str().to_os_string(),
-        ));
-        let snapshot =
-            EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(dir)), self.temp.clone(), vars);
-        Wiring::new(Arc::new(snapshot)).map_err(|e| ApiError::Failed {
-            detail: angzarr_diagnostic::Diagnostic::code(&e).to_string(),
-        })
+    fn at(&self, dir: &str, env: &[(String, String)]) -> Wiring {
+        super::caller_wiring(&self.home, &self.temp, (dir, None), pairs(env))
     }
 }
 
@@ -221,7 +200,7 @@ impl daemon_api::Libraries for ProjectLibraries {
         if dir.is_empty() {
             return None;
         }
-        let (_, app) = self.at(dir, env).ok()?.locate();
+        let (_, app) = self.at(dir, env).locate();
         if !matches!(app.source, ctxloom_ports::Source::Project) {
             return None;
         }
@@ -242,7 +221,7 @@ impl daemon_api::Libraries for ProjectLibraries {
         } else {
             dir.to_string()
         };
-        let wiring = self.at(&at, env)?;
+        let wiring = self.at(&at, env);
         let deps = std::rc::Rc::new(crate::commands::build_deps(&wiring).map_err(|e| failed(&e))?);
         let library = crate::library::build(&wiring, Some(deps)).map_err(|e| failed(&e))?;
         read(&library);
@@ -261,17 +240,12 @@ pub(crate) struct ProjectTrusts {
 
 impl daemon_api::Trusts for ProjectTrusts {
     fn settings(&self, root: &str) -> Result<Vec<daemon_proto::v1::TrustSetting>, ApiError> {
-        // Read as a process there would, with ctxloom's home as the
-        // platform's home variable (`per_call_env`) and nothing else.
-        let snapshot = super::per_call_env(
-            os::host().flavor(),
-            (root, &self.temp, &self.home),
-            std::iter::empty(),
-        );
+        // Read as a process there would, with ctxloom's home and nothing
+        // else of an environment.
+        let wiring = super::caller_wiring(&self.home, &self.temp, (root, Some(root)), []);
         let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
             detail: e.code().to_string(),
         };
-        let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| failed(&e))?;
         let library = crate::library::build(&wiring, None).map_err(|e| failed(&e))?;
         let held = library.trust_settings().map_err(|e| failed(&e))?;
         Ok(held

@@ -5,8 +5,9 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use super::{
-    account_home, daemon_env, daemon_home, instance_lock, logger, per_call_env, request_id,
-    ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
+    account_home, caller_env, caller_wiring, daemon_env, daemon_home, instance_lock, logger,
+    request_id, ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND,
+    SPAWN_WAIT,
 };
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -287,39 +288,47 @@ fn a_projects_directory_is_read_lexically() {
     assert_eq!(super::lexical(Path::new("../x")), Path::new("../x"));
 }
 
-// A call the daemon serves for a project (an assembly, a child's plan) is read
-// with ctxloom's own home as the PLATFORM's home variable, over the caller's
-// of that name as the platform compares names: on Windows `USERPROFILE`
-// (whatever its case), never `HOME`, which a Windows wiring does not read.
+// Step 10a U2 (the one per-call builder): a call the daemon serves (a
+// library read, a child's plan, a hosted run) is read as a process at the
+// caller's directory in the caller's environment, with ctxloom's own home
+// as its home and the caller's home its own; a project named for it is its
+// `CTXLOOM_ROOT` over the caller's, as the platform compares names.
 #[test]
-fn a_per_call_environment_names_its_own_home_by_the_platforms_home_variable() {
+fn a_callers_process_has_ctxlooms_home_and_keeps_the_callers_own() {
     let own = Path::new("C:\\own");
-    for (flavor, caller) in [
-        (os::Flavor::Windows, "userprofile"),
-        (os::Flavor::Windows, "USERPROFILE"),
-        (os::Flavor::Unix, "HOME"),
+    for (flavor, caller, root) in [
+        (os::Flavor::Windows, "USERPROFILE", "Ctxloom_Root"),
+        (os::Flavor::Unix, "HOME", "CTXLOOM_ROOT"),
     ] {
-        let snapshot = per_call_env(
+        let env = [(caller, "C:\\caller"), (root, "C:\\elsewhere")];
+        let rooted = caller_env(
             flavor,
-            ("C:\\work", Path::new("C:\\tmp"), own),
-            [(caller, "C:\\caller"), ("Ctxloom_Root", "C:\\elsewhere")],
+            Path::new("C:\\tmp"),
+            ("C:\\work", Some("C:\\work")),
+            env,
         );
+        assert_eq!(rooted.utf8("CTXLOOM_ROOT"), Some("C:\\work"), "{flavor:?}");
         assert_eq!(
-            snapshot.home(),
-            Some(own.as_os_str()),
-            "{flavor:?} {caller}"
-        );
-        assert_eq!(
-            snapshot.utf8("CTXLOOM_ROOT"),
-            Some("C:\\work"),
+            rooted.home(),
+            Some(std::ffi::OsStr::new("C:\\caller")),
             "{flavor:?}"
         );
-        let wiring = crate::Wiring::new(std::sync::Arc::new(snapshot)).expect("a home");
-        assert_eq!(wiring.home(), own, "{flavor:?} {caller}");
+        assert_eq!(rooted.cwd().unwrap(), Path::new("C:\\work"));
+        let kept = caller_env(flavor, Path::new("C:\\tmp"), ("C:\\work", None), env);
         assert_eq!(
-            wiring.user_home().as_deref(),
-            Some(own),
-            "{flavor:?} {caller}"
+            kept.utf8("CTXLOOM_ROOT"),
+            Some("C:\\elsewhere"),
+            "{flavor:?}"
         );
+    }
+    let wiring = caller_wiring(
+        own,
+        Path::new("/tmp"),
+        ("/work", None),
+        [("HOME", "/caller")],
+    );
+    assert_eq!(wiring.home(), own);
+    if os::host().flavor() == os::Flavor::Unix {
+        assert_eq!(wiring.user_home().as_deref(), Some(Path::new("/caller")));
     }
 }
