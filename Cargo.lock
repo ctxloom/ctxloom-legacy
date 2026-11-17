@@ -2943,6 +2943,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "library-checkout"
+version = "0.1.0"
+dependencies = [
+ "angzarr-embedded",
+ "held-projection",
+ "library-domain-proto",
+ "library-tree",
+ "mutants",
+ "prost",
+]
+
+[[package]]
 name = "library-cli"
 version = "0.1.0"
 dependencies = [
@@ -2954,6 +2966,32 @@ dependencies = [
  "library-application",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "library-domain-proto"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "prost",
+ "prost-types",
+]
+
+[[package]]
+name = "library-tree"
+version = "0.1.0"
+dependencies = [
+ "angzarr-build",
+ "angzarr-diagnostic",
+ "angzarr-embedded",
+ "angzarr-embedded-macros",
+ "hex",
+ "library-domain-proto",
+ "mutants",
+ "prost",
+ "sessions",
+ "sha2 0.10.9",
+ "uuid",
 ]
 
 [[package]]

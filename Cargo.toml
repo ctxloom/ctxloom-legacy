@@ -96,6 +96,9 @@ trees = { path = "crates/core/domain/trees" }
 trust-proto = { path = "crates/core/wire/trust-proto" }
 trust = { path = "crates/core/domain/trust" }
 trust-index = { path = "crates/core/read-model/trust-index" }
+library-domain-proto = { path = "crates/core/wire/library-domain-proto" }
+library-tree = { path = "crates/core/domain/library-tree" }
+library-checkout = { path = "crates/core/read-model/library-checkout" }
 approvals-proto = { path = "crates/core/wire/approvals-proto" }
 approvals = { path = "crates/core/domain/approvals" }
 pending-approvals = { path = "crates/core/read-model/pending-approvals" }
