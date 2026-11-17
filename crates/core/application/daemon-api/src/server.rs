@@ -700,14 +700,17 @@ impl<E: Edge> Api<E> {
         Ok(assembled)
     }
 
-    /// The root project `name` is registered at, from the warm index once
-    /// it is fresh; a project nobody registered is refused
+    /// The root project `name` is registered at and its id, from the warm
+    /// index once it is fresh; a project nobody registered is refused
     /// `ProjectNotFound`.
-    pub(crate) async fn registered_root(&self, name: &ProjectName) -> Result<String, ApiError> {
+    pub(crate) async fn registered_project(
+        &self,
+        name: &ProjectName,
+    ) -> Result<(String, String), ApiError> {
         self.parts.hosting.fresh().await;
         let row = self.parts.index.index().project_named_by(name.harp());
-        let root = row.map(|row| row.root).filter(|root| !root.is_empty());
-        root.ok_or_else(|| {
+        let row = row.filter(|row| !row.root.is_empty());
+        row.map(|row| (row.root, row.project_id)).ok_or_else(|| {
             ApiError::from(ApiRefusal::of(&v1::ProjectNotFound {
                 name: name.to_string(),
             }))

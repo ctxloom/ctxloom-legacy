@@ -11,7 +11,9 @@
 //!    observes it and the home's library first (U2's reconcile: a tree
 //!    outside git, or one git ignores, refuses the read);
 //! 3. opens the library there in the caller's environment, under its
-//!    globals, and answers by `library-api`'s use case of the read.
+//!    globals and the project's trust as the daemon's index holds it (U7,
+//!    D7: an untrusted project's own project-only settings are held back
+//!    and said), and answers by `library-api`'s use case of the read.
 //!
 //! What the root composes is [`Libraries`]: the library as a process at a
 //! directory, in an environment, opens it.
@@ -97,7 +99,8 @@ pub(crate) fn parent_of(target: &str) -> Option<(String, Option<ProjectName>)> {
     Some((parent, Some(name)))
 }
 
-/// The global flags of a read, as the library's use cases take them.
+/// The global flags of a read, as the library's use cases take them: never
+/// trusted, which is the daemon's own verdict ([`Api::read_site`]).
 pub(crate) fn flags_of(globals: Option<&v1::Globals>) -> Flags {
     let globals = globals.cloned().unwrap_or_default();
     Flags {
@@ -205,9 +208,14 @@ impl<E: Edge> Api<E> {
         })?;
         let env = pairs(request.env());
         let registered = match &project {
-            Some(name) => Some(self.registered_root(name).await?),
+            Some(name) => Some(self.registered_project(name).await?),
             None => None,
         };
+        // Step 10a U7 (D7): the project's trust, as the daemon's index
+        // holds it, gates the read; never the client's to say. A read under
+        // `users/me` names no project, so it is untrusted.
+        let trusted = registered.as_ref().is_some_and(|(_, id)| self.trusts(id));
+        let registered = registered.map(|(root, _)| root);
         let dir = match (request.cwd(), &registered) {
             (cwd, _) if !cwd.is_empty() => cwd.to_string(),
             (_, Some(root)) => root.clone(),
@@ -221,7 +229,10 @@ impl<E: Edge> Api<E> {
             parent,
             at: root.unwrap_or(dir),
             env,
-            flags: flags_of(request.globals()),
+            flags: Flags {
+                trusted,
+                ..flags_of(request.globals())
+            },
             said,
         })
     }
@@ -241,8 +252,8 @@ impl<E: Edge> Api<E> {
     /// `CreateRun` with `validate_only`, `run --dry-run` (step 10a U2):
     /// the run planned as a library read is answered (its trees observed
     /// first, so a library outside git is refused), at the caller's
-    /// directory, in its environment, under the project's trust as the
-    /// daemon reads it (never the client's to say, step 8 U2), and judged
+    /// directory, in its environment, under the project's trust as every
+    /// read is (step 10a U7; never the client's to say, step 8 U2), and judged
     /// as the runs aggregate judges an enqueue on the untrusted project
     /// settings it reads (owner answer H: `runs-untrusted-project-settings`,
     /// beside the plan's fatal findings). Nothing is enqueued, minted or
@@ -250,7 +261,6 @@ impl<E: Edge> Api<E> {
     /// inside it) keeps its names unresolved (owner ruling 2026-11-14).
     pub async fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
         let project = self.host_project(&request.parent).await?;
-        let trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
         let unnamed = project.is_none()
             && !request.cwd.is_empty()
             && self
@@ -261,11 +271,7 @@ impl<E: Edge> Api<E> {
         let (asked, _) = run_application::client::asked_of(&request);
         let read = self
             .library_read(&request, |library, flags, _| {
-                let flags = Flags {
-                    trusted,
-                    ..flags.clone()
-                };
-                library.dry_run(&flags, &asked.run)
+                library.dry_run(flags, &asked.run)
             })
             .await?;
         let previewed = read.answer;

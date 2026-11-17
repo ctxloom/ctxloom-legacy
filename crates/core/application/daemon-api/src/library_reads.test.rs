@@ -572,3 +572,134 @@ async fn a_remote_is_browsed_as_a_deps_read_and_its_failure_keeps_its_words() {
     assert_eq!(code, "deps-application-browse");
     assert!(args.iter().any(|arg| arg.value == "nope"), "{args:?}");
 }
+
+/// A library whose project's own config names the program claude-code runs
+/// (ruling 46's key), as a read opens it under whatever flags it is asked.
+struct SaysCommand;
+
+impl Libraries for SaysCommand {
+    fn root(&self, dir: &str, _: &[(String, String)]) -> Option<String> {
+        Some(dir.to_string())
+    }
+
+    fn read(
+        &self,
+        _: &str,
+        _: &[(String, String)],
+        read: &mut dyn FnMut(&Library),
+    ) -> Result<(), ApiError> {
+        let library = Setup {
+            layers: &[
+                "schema_version: 9\n",
+                "schema_version: 9\nengines:\n  claude-code:\n    command: /opt/their-claude\n",
+            ],
+            ..Setup::default()
+        }
+        .library();
+        read(&library);
+        Ok(())
+    }
+
+    fn read_deps(
+        &self,
+        _: &str,
+        _: &[(String, String)],
+        _: &mut dyn FnMut(&deps_application::Deps),
+    ) -> Result<(), ApiError> {
+        Err(ApiError::Failed {
+            detail: "no deps here".to_string(),
+        })
+    }
+}
+
+struct NoSettings;
+
+impl crate::Trusts for NoSettings {
+    fn settings(&self, _: &str) -> Result<Vec<v1::TrustSetting>, ApiError> {
+        Ok(Vec::new())
+    }
+}
+
+/// The daemon over `SaysCommand`, its project registered, its trusts read
+/// from a warm index in which the user trusted it when `trusted`.
+async fn reading_trusts(trusted: bool) -> crate::Api<crate::server::tests::World> {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    let index = trust_index::TrustIndexes::default();
+    if trusted {
+        let name = "projects/calm-quiet-heron/trust".to_string();
+        let grant = trust::GrantTrust {
+            name: name.clone(),
+            project_id: crate::server::tests::PROJECT.to_string(),
+            etag: "e".to_string(),
+            current_etag: "e".to_string(),
+            actor: trust::Actor {
+                user: "alice".to_string(),
+            },
+        };
+        let cover = angzarr_embedded::v1::Cover {
+            domain: trust::TRUST_DOMAIN.to_string(),
+            root: Some(trust::trust_root(&name)),
+            edition: None,
+        };
+        f.world
+            .handle(sessions::keyed_book(cover, &grant, "grant"))
+            .await
+            .unwrap();
+    }
+    let mut caught = trust_index::caught_up(index.clone());
+    caught
+        .step(&f.world.store, f.world.registry.catalog())
+        .await
+        .unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits {
+        work_tree: Some(ROOT.to_string()),
+        ..Gits::default()
+    });
+    f.restarted()
+        .await
+        .reading(Arc::new(SaysCommand))
+        .observing(observing(&f.world, &gits))
+        .trusting(crate::Trusting {
+            trusts: Arc::new(NoSettings),
+            index,
+        })
+}
+
+fn engine_show() -> v1::GetEngineRequest {
+    v1::GetEngineRequest {
+        name: "projects/calm-quiet-heron/engines/claude-code".to_string(),
+        ..v1::GetEngineRequest::default()
+    }
+}
+
+// Step 10a U7 (D7): the daemon applies trust on every library read it
+// serves. An untrusted project's own project-only setting is held back,
+// and the read says so as its typed notice.
+#[tokio::test]
+async fn an_untrusted_projects_read_holds_its_own_setting_back_and_says_so() {
+    let api = reading_trusts(false).await;
+    let read = api.get_engine(engine_show()).await.unwrap();
+    let command = read.answer.command.unwrap();
+    assert_eq!(
+        (command.value.as_str(), command.source.as_str()),
+        ("claude", "default")
+    );
+    let said: Vec<&str> = read.notices.iter().map(|n| n.code.as_str()).collect();
+    assert_eq!(said, ["library-application-notice-untrusted-setting"]);
+}
+
+// Once the user trusts the project, the same read shows its setting and
+// holds nothing back.
+#[tokio::test]
+async fn a_trusted_projects_read_shows_its_own_setting() {
+    let api = reading_trusts(true).await;
+    let read = api.get_engine(engine_show()).await.unwrap();
+    let command = read.answer.command.unwrap();
+    assert_eq!(
+        (command.value.as_str(), command.source.as_str()),
+        ("/opt/their-claude", "engine")
+    );
+    assert!(read.notices.is_empty(), "{:?}", read.notices);
+}

@@ -26,7 +26,8 @@ pub struct Flags {
     /// `--no-companions`.
     pub no_companions: bool,
     /// Whether the user trusts the project (step 8 U2, ruling 142): the
-    /// daemon's verdict, from its trust index, for a launch it makes. Only
+    /// daemon's verdict, from its trust index, for a launch it makes and
+    /// every library read it serves (step 10a U7, D7). Only
     /// then does the project layer's own project-only settings (ruling 46's
     /// keys) apply; otherwise they are held back, said, and named in
     /// [`Config::held_back`]. Never the client's to say: no flag or variable
