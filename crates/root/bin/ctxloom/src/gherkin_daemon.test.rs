@@ -4027,8 +4027,16 @@ fn cut_after_the_period(w: &mut World) {
 }
 
 /// The drain's period, `seconds` long, cut the child's turn in flight and
-/// handed it over, and the daemon exited, saying nothing serves.
+/// handed it over, and the daemon exited, nothing saying it serves. A
+/// command run since may have started the next daemon (any command starts
+/// one where none serves): that one is not the daemon that drained.
 fn cut_after(w: &mut World, seconds: &str) {
+    let drained = w
+        .daemon_spec
+        .daemon
+        .as_ref()
+        .expect("the scenario started a daemon")
+        .id();
     assert_eq!(exit_of_daemon(w), Some(0), "{}", daemon_log_text(w));
     let log = daemon_log_text(w);
     assert!(
@@ -4041,7 +4049,13 @@ fn cut_after(w: &mut World, seconds: &str) {
         files::exists(stub_dir(w).join("child-exited")),
         "the child ended"
     );
-    assert!(!serving_now(w), "nothing says it serves");
+    let status = run_now(w, &["daemon", "status", "--format", "json"]);
+    assert_eq!(status.code, 0, "{}", status.said());
+    assert_ne!(
+        status.json()["pid"].as_u64(),
+        Some(u64::from(drained)),
+        "nothing says the drained daemon serves"
+    );
 }
 
 #[then("the next daemon hosts the child again, resuming its own conversation")]
