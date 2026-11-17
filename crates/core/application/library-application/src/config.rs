@@ -94,13 +94,15 @@ pub fn load(
     for layer in &layers {
         let mut value = read_layer(layer, notices)?;
         if project_path.as_deref() == Some(layer.path.as_str()) && !flags.trusted {
+            // Step 10a U7 (D7): held back until the user trusts the
+            // project, and said by its typed notice.
             for (key, _) in engines::strip_project_only(&mut value) {
                 held_back.push(key.clone());
-                notices.push(Notice::text(format!(
-                    "{key} in {} is ignored: a project's config cannot set it (ruling 46); put it in your home config ({})",
-                    layer.path,
-                    files.layer_path(Scope::Home)
-                )));
+                notices.push(Notice::UntrustedSetting {
+                    path: key,
+                    file: layer.path.clone(),
+                    home_file: files.layer_path(Scope::Home),
+                });
             }
         }
         let mut home_only = Vec::new();

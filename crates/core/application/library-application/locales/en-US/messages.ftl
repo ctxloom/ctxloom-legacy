@@ -99,6 +99,8 @@ library-application-notice-mcp-server-shadowed-fix = give your server another na
 # Step 8 texts.md §3 (D14): accepted verbatim (owner, 2026-11-16; reviewed before release).
 library-application-notice-prompt-untrusted = This project's own `ctxloom` bundle replaces ctxloom's { $prompt } prompt, but you have not trusted this project, so ctxloom used its built-in { $prompt } prompt.
 library-application-notice-prompt-untrusted-fix = Look at what trusting the project allows with `ctxloom trust`, then say yes to use the project's own prompts.
+library-application-notice-untrusted-setting = { $path } in { $file } is held back until you trust this project, so this answer is as if it were not set
+library-application-notice-untrusted-setting-fix = see what trusting the project allows with `ctxloom trust`, then say yes; or set it in your home config ({ $home_file })
 library-application-notice-checkout-left = the session's checkout { $path } (branch { $branch }) was left in place: { $reason }
 library-application-notice-checkout-left-fix = commit or discard its work; the session's next run re-enters it, and `ctxloom session remove` takes it once it is clean
 library-application-stale-distilled = the distilled form of the { $kind } { $reference } is stale: it does not match its source as it is now, or records no digest of it, so the original was used

@@ -468,6 +468,15 @@ pub enum Notice {
     /// `prompt` (`setup-interview`, `distill`), and the user has not trusted
     /// the project, so the built-in one was used (step 8 U2, D4).
     PromptUntrusted { prompt: String },
+    /// A project-only setting (ruling 46's keys) the project's own config
+    /// `file` says, held back because the user has not trusted the project
+    /// (step 10a U7, D7): the read answers as if it were not set. Its fix
+    /// names `home_file`, where the user may set it herself.
+    UntrustedSetting {
+        path: String,
+        file: String,
+        home_file: String,
+    },
     /// A run's checkout was left in place at its end (work in it, or one
     /// that would not go): by path and branch, and why.
     CheckoutLeft {
@@ -523,6 +532,7 @@ impl Diagnostic for Notice {
             Notice::SessionHomeHost { .. } => code!("notice-session-home-host"),
             Notice::McpServerShadowed { .. } => code!("notice-mcp-server-shadowed"),
             Notice::PromptUntrusted { .. } => code!("notice-prompt-untrusted"),
+            Notice::UntrustedSetting { .. } => code!("notice-untrusted-setting"),
             Notice::CheckoutLeft { .. } => code!("notice-checkout-left"),
             Notice::StaleDistilled { .. } => code!("stale-distilled"),
             Notice::RuntimeOverride { change, .. } => match change {
@@ -597,6 +607,15 @@ impl Diagnostic for Notice {
             ],
             Notice::McpServerShadowed { name } => vec![("name", name.as_str().into())],
             Notice::PromptUntrusted { prompt } => vec![("prompt", prompt.as_str().into())],
+            Notice::UntrustedSetting {
+                path,
+                file,
+                home_file,
+            } => vec![
+                ("path", path.as_str().into()),
+                ("file", file.as_str().into()),
+                ("home_file", home_file.as_str().into()),
+            ],
             Notice::CheckoutLeft {
                 path,
                 branch,
@@ -821,6 +840,11 @@ fn notice_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(Notice::McpServerShadowed { name: s("ctxloom") }),
         Box::new(Notice::PromptUntrusted {
             prompt: s("setup-interview"),
+        }),
+        Box::new(Notice::UntrustedSetting {
+            path: s("engines.claude-code.command"),
+            file: s("/p/.ctxloom/config.yaml"),
+            home_file: s("/h/.ctxloom/config.yaml"),
         }),
         Box::new(Notice::CheckoutLeft {
             path: s("/h/.ctxloom/worktrees/calm-otter/amber-swift-owl/reviewer"),

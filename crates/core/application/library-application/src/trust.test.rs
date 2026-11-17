@@ -167,7 +167,7 @@ fn a_trusted_project_keeps_its_own_settings() {
         previewed
             .notices
             .iter()
-            .all(|n| !n.to_string().contains("is ignored")),
+            .all(|n| !matches!(n, crate::Notice::UntrustedSetting { .. })),
         "{:?}",
         previewed.notices
     );
@@ -188,4 +188,66 @@ fn the_home_layer_holds_nothing_back() {
     let plan = planned(&library, &crate::fakes::plain());
     assert!(plan.untrusted.is_empty(), "{:?}", plan.untrusted);
     assert_eq!(plan.drive.command, "/opt/their-claude");
+}
+
+/// What `notices` held back, each as its typed notice says it: the
+/// setting's path, the file that said it, and the home config to set it in.
+fn untrusted(notices: &[crate::Notice]) -> Vec<(String, String, String)> {
+    notices
+        .iter()
+        .filter_map(|notice| match notice {
+            crate::Notice::UntrustedSetting {
+                path,
+                file,
+                home_file,
+            } => Some((path.clone(), file.clone(), home_file.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+// Step 10a U7 (D7): an untrusted project's held-back setting is said by its
+// typed notice, one per setting, wherever the configuration is read; ruling
+// 46's untyped "is ignored" warning is gone.
+#[test]
+fn an_untrusted_read_says_each_held_back_setting_as_its_typed_notice() {
+    let read = says_all().engine_show(&crate::fakes::plain(), "claude-code");
+    let said = untrusted(&read.notices);
+    let at = |path: &str| {
+        (
+            path.to_string(),
+            "/p/.ctxloom/layer-1.yaml".to_string(),
+            "/h/.ctxloom/config.yaml".to_string(),
+        )
+    };
+    assert_eq!(
+        said,
+        [
+            at("agents.default.session_home"),
+            at("agents.other.session_home"),
+            at("engines.claude-code.command"),
+            at("engines.claude-code.auth.file"),
+            at("engines.opencode.command"),
+        ]
+    );
+    let notice = read
+        .notices
+        .iter()
+        .find(|n| matches!(n, crate::Notice::UntrustedSetting { .. }))
+        .unwrap();
+    assert_eq!(
+        angzarr_diagnostic::Diagnostic::code(notice),
+        "library-application-notice-untrusted-setting"
+    );
+}
+
+// Trusted, nothing is held back, so nothing is said.
+#[test]
+fn a_trusted_read_says_no_setting_held_back() {
+    let flags = crate::Flags {
+        trusted: true,
+        ..crate::fakes::plain()
+    };
+    let read = says_all().engine_show(&flags, "claude-code");
+    assert!(untrusted(&read.notices).is_empty(), "{:?}", read.notices);
 }

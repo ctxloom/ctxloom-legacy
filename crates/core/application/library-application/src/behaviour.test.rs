@@ -1307,11 +1307,12 @@ fn test_a_dry_run_on_another_engine_takes_the_agent_s_block_for_it() {
     assert_eq!(lone.settings.unwrap().model.source, "default");
 }
 
-// owner ruling 46: the program an engine runs comes from the home layer only;
-// a project's own config cannot name it (nor a credentials file), and is told
-// so. Model, effort, permissions and a non-host runtime stay the project's.
+// owner ruling 46, step 10a U7: the program an engine runs comes from the
+// home layer until the user trusts the project; an untrusted project's own
+// config cannot name it (nor a credentials file), and is told so. Model,
+// effort, permissions and a non-host runtime stay the project's.
 #[test]
-fn test_a_project_config_cannot_set_the_engine_command_and_is_warned() {
+fn test_an_untrusted_project_config_cannot_set_the_engine_command_and_is_told() {
     let home = "schema_version: 9\nengines:\n  claude-code:\n    command: /home/u/bin/claude\n";
     let project = "schema_version: 9\nengines:\n  claude-code:\n    command: /tmp/evil\n    auth:\n      file: /tmp/creds\n      env: [TEAM_TOKEN]\nagents:\n  dev:\n    engine: claude-code\n    engines:\n      claude-code:\n        model: haiku\n    profiles: [p]\n";
     let files: &[(&str, &str)] = &[ENVELOPE, ("profiles/p.yaml", "description: p\n")];
@@ -1320,8 +1321,10 @@ fn test_a_project_config_cannot_set_the_engine_command_and_is_warned() {
     let ignored: Vec<String> = shown
         .notices
         .iter()
-        .map(ToString::to_string)
-        .filter(|n| n.contains("is ignored"))
+        .filter_map(|n| match n {
+            crate::Notice::UntrustedSetting { path, .. } => Some(path.clone()),
+            _ => None,
+        })
         .collect();
     assert_eq!(ignored.len(), 2, "{ignored:?}");
     assert!(
@@ -1341,7 +1344,7 @@ fn test_a_project_config_cannot_set_the_engine_command_and_is_warned() {
     assert!(none
         .notices
         .iter()
-        .all(|n| !n.to_string().contains("is ignored")));
+        .all(|n| !matches!(n, crate::Notice::UntrustedSetting { .. })));
 }
 
 // the runtime a launch settles on is the agent's own, else its engine's
@@ -1576,10 +1579,11 @@ fn test_an_agent_s_own_session_home_drives_the_launch_and_its_notice() {
     assert_eq!(settings.session_home.source, "agent");
 }
 
-// ruling 46 at either level: an agent's `session_home: host` in the project
-// layer is taken out with a warning, and the launch runs on a session home
+// ruling 46 at either level: an agent's `session_home: host` in an untrusted
+// project's layer is held back and said, and the launch runs on a session
+// home
 #[test]
-fn test_a_project_agent_s_host_session_home_is_ignored_and_warned() {
+fn test_an_untrusted_project_agent_s_host_session_home_is_held_back_and_said() {
     let project = "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n    session_home: host\n    profiles: [p]\n";
     let files: &[(&str, &str)] = &[ENVELOPE, ("profiles/p.yaml", "description: p\n")];
     let layers = ["schema_version: 9\n", project];
@@ -1588,8 +1592,10 @@ fn test_a_project_agent_s_host_session_home_is_ignored_and_warned() {
     let ignored: Vec<String> = shown
         .notices
         .iter()
-        .map(ToString::to_string)
-        .filter(|n| n.contains("is ignored"))
+        .filter_map(|n| match n {
+            crate::Notice::UntrustedSetting { path, .. } => Some(path.clone()),
+            _ => None,
+        })
         .collect();
     assert!(
         matches!(ignored.as_slice(), [one] if one.contains("agents.dev.session_home")),
