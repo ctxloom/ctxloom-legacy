@@ -120,3 +120,32 @@ fn a_shown_skill_reads_back_each_files_mode_from_its_executability() {
     assert_eq!(show.files[0].mode, "0644");
     assert_eq!(show.files[1].mode, "0755");
 }
+
+#[test]
+fn a_companion_listing_reads_back_each_by_its_name_program_and_state() {
+    let listed = v1::ListCompanionsResponse {
+        companions: vec![
+            v1::Companion {
+                name: "projects/p/companions/acme".to_string(),
+                bin: "ctxloom-acme".to_string(),
+                resolves: Some(true),
+                state: v1::companion::State::Disabled as i32,
+            },
+            v1::Companion {
+                name: "users/me/companions/gone".to_string(),
+                bin: "ctxloom-gone".to_string(),
+                resolves: Some(false),
+                state: v1::companion::State::Enabled as i32,
+            },
+        ],
+        next_page_token: String::new(),
+    };
+    let rows = companions(&listed);
+    assert_eq!(rows[0].name, "acme");
+    assert_eq!(rows[0].program, "ctxloom-acme");
+    assert!(rows[0].exists);
+    assert_eq!(rows[0].state, library_application::CompanionState::Disabled);
+    assert_eq!(rows[1].name, "gone");
+    assert!(!rows[1].exists);
+    assert_eq!(rows[1].state, library_application::CompanionState::Enabled);
+}

@@ -3,8 +3,10 @@
 //! fixed YAML document, unchanged.
 
 use library_application::{
-    CompanionAdded, CompanionRemoved, CompanionRow, CompanionState, CompanionStateSet, Removal,
+    CompanionAdded, CompanionRemoved, CompanionState, CompanionStateSet, Removal,
 };
+
+use library_api::resources::{companion_name, companion_state};
 
 use crate::prelude::*;
 
@@ -13,15 +15,15 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx.library.companion_list(&cx.flags);
-    resource(
-        cx,
-        outcome,
-        out,
-        err,
-        |parent, rows: &Vec<CompanionRow>| companions(parent, rows),
-        |out, rows| text::companion_list(out, rows),
-    )
+    // The daemon's read (step 10a U2), its text from the message (D10).
+    let request = v1::ListCompanionsRequest {
+        globals: cx.globals(),
+        ..v1::ListCompanionsRequest::default()
+    };
+    let read = cx.served.list_companions("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        text::companion_list(out, &crate::read_back::companions(listed))
+    })
 }
 
 pub(crate) fn write(
@@ -104,29 +106,6 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
-/// A companion's resource name under `parent`.
-fn companion_name(parent: &str, companion: &str) -> String {
-    format!("{parent}/companions/{companion}")
-}
-
-/// `companion list`: `ListCompanionsResponse`, every registered companion
-/// under `parent`, whether its program is there `resolves` (looked for,
-/// never run).
-pub(crate) fn companions(parent: &str, rows: &[CompanionRow]) -> v1::ListCompanionsResponse {
-    v1::ListCompanionsResponse {
-        companions: rows
-            .iter()
-            .map(|row| v1::Companion {
-                name: companion_name(parent, &row.name),
-                bin: row.program.clone(),
-                resolves: Some(row.exists),
-                state: state_of(row.state).into(),
-            })
-            .collect(),
-        next_page_token: String::new(),
-    }
-}
-
 /// `companion add`: the companion as registered (its program answered the
 /// probe, so it resolves), applied when the registration is new or changed
 /// one; the same registration again changes nothing.
@@ -143,21 +122,13 @@ fn added(parent: &str, done: &CompanionAdded) -> v1::CreateCompanionResponse {
     }
 }
 
-/// The resource's state for a registration's.
-fn state_of(state: CompanionState) -> v1::companion::State {
-    match state {
-        CompanionState::Enabled => v1::companion::State::Enabled,
-        CompanionState::Disabled => v1::companion::State::Disabled,
-    }
-}
-
 /// `companion enable|disable`: the companion, as it is now (AIP-136).
 fn set(parent: &str, done: &CompanionStateSet) -> v1::Companion {
     v1::Companion {
         name: companion_name(parent, &done.name),
         bin: done.program.clone(),
         resolves: None,
-        state: state_of(done.state).into(),
+        state: companion_state(done.state).into(),
     }
 }
 

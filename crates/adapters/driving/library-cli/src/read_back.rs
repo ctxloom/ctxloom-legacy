@@ -6,8 +6,8 @@
 
 use daemon_proto::v1;
 use library_application::{
-    DistilledState, ItemList, ItemRow, ItemShow, PremiseRow, Premises, SkillFileRow, SkillList,
-    SkillRow, SkillShow,
+    CompanionRow, CompanionState, DistilledState, ItemList, ItemRow, ItemShow, PremiseRow,
+    Premises, SkillFileRow, SkillList, SkillRow, SkillShow,
 };
 
 /// The parent a resource name is under: its first two segments,
@@ -171,6 +171,28 @@ pub(crate) fn skill_show(skill: &v1::Skill) -> SkillShow {
             })
             .collect(),
     }
+}
+
+/// A `companion list` as its rows: each by its own name, its program, and
+/// whether it was found on the `PATH` where it was asked.
+pub(crate) fn companions(listed: &v1::ListCompanionsResponse) -> Vec<CompanionRow> {
+    listed
+        .companions
+        .iter()
+        .map(|companion| CompanionRow {
+            name: companion
+                .name
+                .rsplit_once("/companions/")
+                .map_or(companion.name.as_str(), |(_, name)| name)
+                .to_string(),
+            program: companion.bin.clone(),
+            exists: companion.resolves == Some(true),
+            state: match v1::companion::State::try_from(companion.state) {
+                Ok(v1::companion::State::Disabled) => CompanionState::Disabled,
+                _ => CompanionState::Enabled,
+            },
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -55,6 +55,7 @@ macro_rules! served {
             get_command (GetCommand) GetCommandRequest.name => Command,
             get_premise_index (GetPremiseIndex) GetPremiseIndexRequest.name => PremiseIndex,
             get_skill (GetSkill) GetSkillRequest.name => Skill,
+            list_companions (ListCompanions) ListCompanionsRequest.parent => ListCompanionsResponse,
         }
     };
 }
@@ -204,6 +205,19 @@ pub fn get_skill(
     let reference = reference_of(parent, &request.name);
     mapped(library.skill_show(flags, &reference), |show| {
         resources::skill(parent, &show)
+    })
+}
+
+/// `ListCompanions`: every registered companion, its program looked for on
+/// the caller's `PATH` (never run).
+pub fn list_companions(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    _: &v1::ListCompanionsRequest,
+) -> Outcome<v1::ListCompanionsResponse> {
+    mapped(library.companion_list(flags), |rows| {
+        resources::companions(parent, &rows)
     })
 }
 

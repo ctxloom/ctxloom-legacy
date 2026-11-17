@@ -138,6 +138,7 @@ macro_rules! served_reads {
             get_premise_index (GetPremiseIndex) GetPremiseIndexRequest.name => PremiseIndex,
             list_skills (ListSkills) ListSkillsRequest.parent => ListSkillsResponse,
             get_skill (GetSkill) GetSkillRequest.name => Skill,
+            list_companions (ListCompanions) ListCompanionsRequest.parent => ListCompanionsResponse,
         }
     };
 }

@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use daemon_proto::google::protobuf::{value::Kind, ListValue, Struct, Value};
 use daemon_proto::v1;
 use library_application::{
-    AgentRow, Assembled, BundleList, BundleRow, DistilledState, ItemList, ItemShow, Located,
-    Premises, ProfileList, ProfileRow, SkillList, SkillShow,
+    AgentRow, Assembled, BundleList, BundleRow, CompanionRow, CompanionState, DistilledState,
+    ItemList, ItemShow, Located, Premises, ProfileList, ProfileRow, SkillList, SkillShow,
 };
 
 use crate::names::{bundle_name, bundle_ref, item_name, origin, profile_ref, reference_name};
@@ -255,6 +255,37 @@ pub fn skill(parent: &str, show: &SkillShow) -> v1::Skill {
             })
             .collect(),
         ..v1::Skill::default()
+    }
+}
+
+/// A companion's resource name under `parent`.
+pub fn companion_name(parent: &str, companion: &str) -> String {
+    format!("{parent}/companions/{companion}")
+}
+
+/// A companion's state as the API says it.
+pub fn companion_state(state: CompanionState) -> v1::companion::State {
+    match state {
+        CompanionState::Enabled => v1::companion::State::Enabled,
+        CompanionState::Disabled => v1::companion::State::Disabled,
+    }
+}
+
+/// `companion list`: `ListCompanionsResponse`, every registered companion
+/// under `parent`, whether its program is there `resolves` (looked for,
+/// never run).
+pub fn companions(parent: &str, rows: &[CompanionRow]) -> v1::ListCompanionsResponse {
+    v1::ListCompanionsResponse {
+        companions: rows
+            .iter()
+            .map(|row| v1::Companion {
+                name: companion_name(parent, &row.name),
+                bin: row.program.clone(),
+                resolves: Some(row.exists),
+                state: companion_state(row.state).into(),
+            })
+            .collect(),
+        next_page_token: String::new(),
     }
 }
 

@@ -2621,7 +2621,8 @@ built:
 - Served: `ListBundles` (`bundle list`), `ListFragments`, `ListCommands`,
   `GetFragment`, `GetCommand` (`fragment|command list|show`),
   `GetPremiseIndex` (`fragment premises`), `ListSkills`, `GetSkill`
-  (`skill list|show`), `AssembleContext` (`context assemble`), and
+  (`skill list|show`), `ListCompanions` (`companion list`, the programs
+  looked for on the caller's `PATH`), `AssembleContext` (`context assemble`), and
   `ListAgents`, `ListProfiles` (the hooks' alone, O3). The CLI is the
   request and the render (D10): `library_cli::served` says the read's
   notices, then prints the message as json or its text, drawn from the
@@ -2645,7 +2646,7 @@ built:
   the library and reads nothing in process.
 
 Still in process (U2's remainder): `bundle show|view`, `profile|agent|mcp|
-companion|engine list|show`, `search`, `config show`, the deps reads, and
+engine list|show`, `search`, `config show`, the deps reads, and
 `run --dry-run` (not yet `CreateRun{validate_only}`, which still answers
 UNIMPLEMENTED: its text needs the plan's settled workspace and runtime and
 the agent its settings are of, which `Run` does not carry; escalated), so
