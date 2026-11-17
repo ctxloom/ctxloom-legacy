@@ -8,8 +8,11 @@
 //!   as the one observation to record, or none.
 //! - [`locate::refusal`]: a project's library outside git or ignored.
 //! - [`Observations`]: the two, recorded through the daemon's edge.
+//! - [`names`]: the library's resource names, the one naming every answer
+//!   gives.
 
 mod locate;
+pub mod names;
 mod notice;
 mod observe;
 pub mod reconcile;

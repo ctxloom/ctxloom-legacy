@@ -12,6 +12,8 @@ angzarr-diagnostic.workspace = true
 angzarr-embedded.workspace = true
 # What git sees of a tree (U12's port).
 ctxloom-ports.workspace = true
+# The API's messages a read answers with.
+daemon-proto.workspace = true
 # The library domain: its fact, its names, its fold and its refusals.
 library-tree.workspace = true
 # The trees as last observed, what a read reconciles against.
