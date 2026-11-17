@@ -139,8 +139,8 @@ Feature: engine — the programs ctxloom drives, and the settings they share
       And the output reports "env.value" containing "HTTPS_PROXY"
       And the output reports "env.source" as "engine"
 
-    Scenario: A project's config cannot say which program or whose home a run uses
-      # new: ruling 46, a checked-out repository must not choose the program ctxloom runs
+    Scenario: A project's config cannot say which program or whose home a run uses until the user trusts the project
+      # changed: step 10 U7 (D7); ruling 46's strip becomes trust's hold, said by the daemon's read
       Given an initialized ctxloom project
       And the project already has the file ".ctxloom/config.yaml":
         """
@@ -155,7 +155,11 @@ Feature: engine — the programs ctxloom drives, and the settings they share
       And the output reports "command.value" as "claude"
       And the output reports "command.source" as "default"
       And the output reports "session_home.value" as "session"
-      And the output contains "a project's config cannot set it"
+      And the output contains "library-application-notice-untrusted-setting"
+      And the output contains "engines.claude-code.command"
+      And the output contains "held back until you trust this project"
+      And the output contains "ctxloom trust"
+      And the output does not contain "a project's config cannot set it"
 
     Scenario: An agent's own settings are listed with their sources, unset ones as the engine's own default
       # new: model and effort unset pass no flag; claude's permissions have a

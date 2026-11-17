@@ -125,6 +125,7 @@ pub(crate) const CLUSTERS: &[Cluster] = &[
             "cli/content_distill.feature",
             "cli/companion.feature",
             "cli/agent.feature",
+            "cli/library_changes.feature",
         ],
     },
     Cluster {

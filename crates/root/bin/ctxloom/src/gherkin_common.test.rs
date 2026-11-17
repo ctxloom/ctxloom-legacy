@@ -371,6 +371,29 @@ macro_rules! common_steps {
                 w.common_mut().project = Project::bare();
             }
 
+            /// A project from before git was required (step 10, G1).
+            #[given("an initialized ctxloom project outside git")]
+            fn initialized_outside_git(w: &mut World) {
+                w.common_mut().project = Project::configured_outside_git().named();
+            }
+
+            /// The repository is the project's parent; the home is outside it.
+            #[given("an initialized ctxloom project in a subdirectory of a git repository")]
+            fn initialized_in_a_subdirectory(w: &mut World) {
+                w.common_mut().project = Project::configured_in_a_subdirectory().named();
+            }
+
+            #[given("an empty project directory in a subdirectory of a git repository")]
+            fn empty_in_a_subdirectory(w: &mut World) {
+                w.common_mut().project = Project::bare_in_a_subdirectory();
+            }
+
+            /// Her live repository: `git init` and one empty commit.
+            #[given("an empty project directory that is a git repository")]
+            fn empty_in_git(w: &mut World) {
+                w.common_mut().project = Project::bare_in_git();
+            }
+
             /// Go's fixture bundle: a manifest, an example fragment and an
             /// example command (`Project::bundle`).
             #[given(expr = "a bundle {string} exists")]

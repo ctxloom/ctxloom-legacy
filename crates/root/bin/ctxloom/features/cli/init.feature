@@ -41,6 +41,13 @@ Feature: init — the setup interview, and what it does to a project that alread
   when conditional guidance loads, owner ruling of 2026-11-12) are
   answered before the interview.
 
+  GIT IS REQUIRED (step 10, G1). A project's library lives in git, and
+  every library command in a directory git does not hold is refused
+  (cli/library_changes.feature). So init makes the directory a git
+  repository when it is in none, unasked, and says so. It commits nothing:
+  what to commit, and when, stays hers. A directory already in a work tree,
+  the repository's root or below it, is left as it is.
+
   The interactive interview needs a terminal too. Off one, init resolves the
   engine and returns without launching anything, which is precisely what makes
   these scenarios hermetic. Before that it checks for the token every agent
@@ -174,6 +181,52 @@ Feature: init — the setup interview, and what it does to a project that alread
       Then the command succeeds
       And the output does not contain "[built-in"
 
+  Rule: Init makes the project a git repository when it is in none, and commits nothing
+
+    Scenario: A first init outside git runs git init, says so, and commits nothing
+      # new: step 10, G1 (owner, 2026-11-16): init runs git init unasked.
+      Given an empty project directory
+      And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
+      When I run "ctxloom init"
+      Then the command succeeds
+      And the output contains "made this directory a git repository"
+      And the file ".git/HEAD" exists
+      And the project's git repository has no commit
+      And the file ".ctxloom/config.yaml" exists
+      When I run "ctxloom bundle list"
+      Then the command succeeds
+
+    Scenario: A first init inside a git repository runs no git init
+      # new: step 10, G1; a work tree is enough.
+      Given an empty project directory in a subdirectory of a git repository
+      And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
+      When I run "ctxloom init"
+      Then the command succeeds
+      And the output does not contain "made this directory a git repository"
+      And the file ".git" does not exist
+      And the file ".ctxloom/config.yaml" exists
+
+    Scenario: Re-running init on a project outside git makes it a repository, and leaves its configuration alone
+      # new: step 10, G1; a project from before git was required.
+      Given an initialized ctxloom project outside git
+      And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
+      When I run "ctxloom init"
+      Then the command succeeds
+      And the output contains "ctxloom directory already exists"
+      And the output contains "made this directory a git repository"
+      And the file ".git/HEAD" exists
+      And the file ".ctxloom/config.yaml" contains "schema_version: 9"
+      And the file ".ctxloom/config.yaml" does not contain "engine:"
+
+    Scenario: With no git on the PATH, init fails before it scaffolds anything
+      # new: step 10, G11; git missing is exit 10.
+      Given an empty project directory
+      And git is not on the PATH
+      When I run "ctxloom init"
+      Then the command exits with code 10
+      And the error is "library-git-git-missing"
+      And the file ".ctxloom/config.yaml" does not exist
+
   Rule: Init never takes the agent token; without one it says how to create and export it, and carries on
 
     Every agent ctxloom launches authenticates with a long-lived token the
@@ -250,6 +303,7 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the output contains "prmopt"
       And the file ".ctxloom/config.yaml" does not exist
       And the file ".ctxloom/remotes.yaml" does not exist
+      And the file ".git" does not exist
       When I run "ctxloom config create"
       Then the command succeeds
       And the file ".ctxloom/config.yaml" exists
@@ -400,7 +454,8 @@ Feature: init — the setup interview, and what it does to a project that alread
 
     Scenario: A first init adds the companions she names, and refuses one she does not have
       # new: init offers to add companions by name.
-      Given an empty project directory
+      # changed: step 10, G1: the directory is already a repository, so "nothing outside .ctxloom" still holds.
+      Given an empty project directory that is a git repository
       And claude-code is the only engine installed, and nothing reaches the network
       And the "ltk" program is on Alice's machine
       And the "reprise" program is not on Alice's machine

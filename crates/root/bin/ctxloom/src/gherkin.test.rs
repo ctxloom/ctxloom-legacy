@@ -422,6 +422,9 @@ mod distill;
 #[path = "gherkin_separation.test.rs"]
 mod separation;
 
+#[path = "gherkin_library_changes.test.rs"]
+mod library_changes;
+
 // ------------------------------------------------------------------ given
 
 #[given(expr = "the environment variable {string} is set to {string}")]

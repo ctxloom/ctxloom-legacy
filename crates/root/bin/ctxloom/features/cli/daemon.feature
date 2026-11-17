@@ -95,6 +95,14 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
   redelivery is a duplicate. A daemon killed outright (SIGKILL) at any step
   comes back on the next call, and that call finds the record whole.
 
+  THE LIBRARY IS READ HERE (step 10). Every read of the library (bundles,
+  items, profiles, agents, engines, companions, remotes, dependencies, the
+  config, search, context assemble, the premise index, the loadout, a dry
+  run, and a hook's read) is the daemon's. It first observes the tree
+  through git and records what changed (cli/library_changes.feature), then
+  answers from the files, holding back what an untrusted project may not
+  say (cli/trust.feature). No command reads a library tree itself.
+
   IDLE. The daemon exits by itself once it has had no live run, no hosted
   child and no open client stream for ten minutes.
 
@@ -140,6 +148,10 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom session list                |
         | ctxloom session show amber-swift-owl |
         | ctxloom bundle list                 |
+        | ctxloom fragment list               |
+        | ctxloom context assemble            |
+        | ctxloom deps list                   |
+        | ctxloom engine show claude-code     |
         | ctxloom run --one-shot "hi"         |
         | ctxloom run                         |
         | ctxloom run --dry-run               |
@@ -319,6 +331,32 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       And the hook warns "hook-cli-held" for the prompt, within its bound
       And the prompt is held for "brisk-copper-moth", in a file only its owner can read
       And once a ctxloom daemon can be started and serves, the next command records the prompt in the session's transcript, once
+
+    Scenario: A hook's read of the library is the daemon's, and observes the tree as any read does
+      # new: step 10 O3, hooks read the library through the daemon.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And a session "brisk-copper-moth" that is still running
+      When the session's assistant fires its SessionStart hook
+      Then the hook exits 0, and says nothing was left unrecorded
+      When I run "ctxloom test library-events --format json"
+      Then the command succeeds
+      And the output reports "events" having "1" entries
+      And the output reports "events[0].baseline" as "true"
+
+    Scenario Outline: A hook whose library read no daemon answers within its bound answers the engine with nothing from the library
+      # new: step 10 O3, silence and the fact held, never an in-process read.
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And no ctxloom daemon can be started for this home
+      When the session's assistant fires its <hook> hook
+      Then the hook exits 0, within its bound
+      And the hook's answer to the engine is well formed, and carries no <library part>
+
+      Examples:
+        | hook                                  | library part                   |
+        | SessionStart                          | session-start notice           |
+        | PostToolUse, after the skill "admit"  | linked skills not yet invoked  |
 
   Rule: A hook holds its facts until a daemon that is up to date serves, and its session's next hook delivers them first, in the order held
 

@@ -119,7 +119,8 @@ Feature: What a start writes, and whose pins it reads
     # about nothing. (No CTXLOOM_NO_COMPANIONS here: the companion IS the
     # launch's source.)
     Scenario: A project-less start ignores a home lockfile that a project would abort on
-      Given an empty project directory
+      # changed: step 10, G1: the control's project is in git, so the startup gate is what judges it.
+      Given an empty project directory that is a git repository
       And the home config declares the agent "session-owner" bound to the mock engine
       And the home already has the file ".ctxloom/lock.yaml":
         """
@@ -156,7 +157,8 @@ Feature: What a start writes, and whose pins it reads
   @end-reason
   Scenario: A run refused by a fatal startup finding records why its session ended
     # substitution: exit codes per rulings 149, 152, 153 (21 fatal findings; Go's 3).
-    Given an empty project directory
+    # changed: step 10, G1: the project is in git, so the startup gate is what refuses it.
+    Given an empty project directory that is a git repository
     And the home config declares the agent "session-owner" bound to the mock engine
     And the project already has the file ".ctxloom/lock.yaml":
       """

@@ -1827,6 +1827,70 @@ fn stop_hook_fires(w: &mut World) {
     fire(w, "Stop", STOP);
 }
 
+const SESSION_START: &str =
+    include_str!("../../../../adapters/driven/engine-claude/src/fixtures/session_start.json");
+
+/// A hook that reads the library (step 10 O3): SessionStart (the
+/// session-start notices), or PostToolUse after a Skill call (the skill's
+/// link-group mates).
+#[when(
+    regex = r#"^the session's assistant fires its (SessionStart|PostToolUse, after the skill "([^"]+)") hook$"#
+)]
+fn library_hook_fires(w: &mut World, hook: String, skill: String) {
+    if hook == "SessionStart" {
+        fire(w, "SessionStart", SESSION_START);
+        return;
+    }
+    let payload = json!({
+        "session_id": "9d764b45-a56a-48d7-ac9d-c2a16c5669f1",
+        "hook_event_name": "PostToolUse",
+        "cwd": w.common.project.dir().to_str().expect("utf-8"),
+        "tool_name": "Skill",
+        "tool_input": {"skill": skill, "args": ""},
+        "tool_response": "ok",
+    });
+    fire(w, "PostToolUse", &payload.to_string());
+}
+
+#[then("the hook exits 0, within its bound")]
+fn hook_exits_within_bound(w: &mut World) {
+    let fired = fired(w);
+    assert_eq!(fired.ran.code, 0, "{}", fired.ran.said());
+    assert!(
+        fired.took <= HOOK_BOUND + PROCESS_SLACK,
+        "took {:?}: {}",
+        fired.took,
+        fired.ran.said()
+    );
+}
+
+/// What each library part of a hook's answer says, to find it absent:
+/// the session-start notice of a project with profiles and no agent, and
+/// the mates line of a completed skill (setup-application's hooks).
+fn library_part_marker(part: &str) -> &'static str {
+    match part {
+        "session-start notice" => "has profiles but no agents configured",
+        "linked skills not yet invoked" => "linked skills not yet invoked",
+        other => panic!("no library part {other:?} of a hook's answer"),
+    }
+}
+
+/// The engine's stdout is empty or one JSON document, and holds nothing of
+/// the library part named.
+#[then(regex = r"^the hook's answer to the engine is well formed, and carries no (.+)$")]
+fn hook_answer_without(w: &mut World, part: String) {
+    let marker = library_part_marker(&part);
+    let answer = fired(w).ran.stdout.trim().to_string();
+    if !answer.is_empty() {
+        let _: Value = serde_json::from_str(&answer)
+            .unwrap_or_else(|e| panic!("the answer is not JSON ({e}): {answer}"));
+    }
+    assert!(
+        !answer.contains(marker),
+        "the answer carries the {part}: {answer}"
+    );
+}
+
 /// The fixture's MessageDisplay, as piece `index` of ten of one message.
 fn piece(index: u32) -> String {
     let mut payload: Value = serde_json::from_str(MESSAGE_DISPLAY).expect("the fixture");
