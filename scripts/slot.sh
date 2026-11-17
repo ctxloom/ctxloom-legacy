@@ -2,7 +2,7 @@
 # The worktree pool (owner ruling of 2026-11-16): a few long-lived checkouts
 # of this repository, each with a warm target/, that an agent LEASES, switches
 # to its task's branch, works in, and RELEASES. A switch rebuilds only what
-# the branch changed (measured: about 70 s against about 130 s cold).
+# the branch changed (measured: 35-102 s against 133 s cold, CLAUDE.md).
 #
 #   slot.sh lease <branch> [--from <base>] [--wait <secs>] [--by <who>] [--holder <pid>]
 #   slot.sh release [<slot>] [--allow-unpushed] [--no-sweep]

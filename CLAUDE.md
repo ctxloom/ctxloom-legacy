@@ -3306,7 +3306,11 @@ untracked file, or whose HEAD is in no remote-tracking ref (unless
 checkout; files and `target/` stay warm), lets the lease go and sweeps the
 slot's `target/` (`--no-sweep` skips it). `just slot list` says each slot:
 leased (by whom, branch, since), free (where, clean or DIRTY, the last
-lease) or absent. A switch rebuilds only the crates the branch changed. The
+lease) or absent. A switch rebuilds only the crates the branch changed (measured
+2026-11-16, `just build` plus `test-pkg run-launcher sessions
+ctxloom-wiring`: 133 s cold, 102 s on a switch to a 32-commit branch, 35 s
+back; `target/` 8.4G, +5.6G, +1G; a sweep of the 15G after aging took 2 s
+and left 4.7G, the next build still fresh). The
 gates' own trees (the staged tree, the ratchet base, the mutants batch)
 keep their own target directories. `just trim-targets [--dry-run] [--days
 <n>] [<checkout>...]` (`scripts/trim-targets.sh`; no checkout: the slots)
