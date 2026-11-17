@@ -36,7 +36,7 @@ pub const DEAD_LETTERED: &str = "ANGZARR_REASON_FACT_DEAD_LETTERED";
 
 /// The `google.rpc.ErrorInfo` domain of a failure the daemon says in a
 /// diagnostic of its own (its reason the diagnostic's code): the key of
-/// [`Infrastructure::Unmet`] under FAILED_PRECONDITION.
+/// [`Infrastructure::Unmet`] under failed-precondition.
 pub const DIAGNOSED: &str = "ctxloom.dev/diagnostic";
 
 /// Each infrastructure error, with its status ([`Infrastructure::code`]) and,
@@ -75,7 +75,7 @@ pub enum Infrastructure {
     DataLoss,
     /// A precondition of the host unmet, said in a diagnostic of its own
     /// (git missing or too old, step 10a U2, owner ruling 2026-11-17):
-    /// FAILED_PRECONDITION, keyed [`DIAGNOSED`] (not UNAVAILABLE, which a
+    /// failed-precondition, keyed [`DIAGNOSED`] (not UNAVAILABLE, which a
     /// client reads as an unreachable daemon; not INTERNAL).
     Unmet,
 }

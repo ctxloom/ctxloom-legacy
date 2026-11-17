@@ -1075,7 +1075,7 @@ fn a_diagnosed_failure_carries_its_code_and_args() {
         }],
     });
     // Owner ruling 2026-11-17: a missing or too-old git is a precondition
-    // of the host unmet, FAILED_PRECONDITION; not INTERNAL, and not
+    // of the host unmet, failed-precondition; not INTERNAL, and not
     // UNAVAILABLE, which the client reads as an unreachable daemon.
     assert_eq!(status.code() as i32, Infrastructure::Unmet.status());
     assert_eq!(status.code(), tonic::Code::FailedPrecondition);

@@ -136,7 +136,7 @@ fn test_an_unkeyed_status_reads_as_its_unkeyed_error_whatever_other_text_it_carr
 #[test]
 fn test_a_diagnosed_key_is_unmet_only_under_failed_precondition() {
     // Owner ruling 2026-11-17: a host precondition unmet (git missing or
-    // too old) travels FAILED_PRECONDITION, told apart from a business
+    // too old) travels failed-precondition, told apart from a business
     // refusal of that status by its key; under another status the key
     // names no such error.
     assert_eq!(
