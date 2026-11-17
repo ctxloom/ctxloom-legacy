@@ -198,9 +198,15 @@ pub(crate) fn typed(error: &AppError) -> Option<ApiRefusal> {
             value: value.clone(),
         }),
         AppError::RunNeedsDryRun => ApiRefusal::of(&v1::LibraryRunNeedsDryRun {}),
-        AppError::Declined(declined) => ApiRefusal::of(&v1::LibraryDeclined {
-            cause: wire_cause(declined.as_ref()),
-        }),
+        // A read model's own decline is its own message; one no read
+        // declines with (a write's, 10b) the cause it carries.
+        AppError::Declined(declined) => {
+            read_model_decline(declined.as_ref()).unwrap_or_else(|| {
+                ApiRefusal::of(&v1::LibraryDeclined {
+                    cause: wire_cause(declined.as_ref()),
+                })
+            })
+        }
         AppError::Cause(_)
         | AppError::DistillFailed { .. }
         | AppError::DistillTruncated { .. }
@@ -413,8 +419,119 @@ pub fn rejection(refusal: &Any) -> Option<Report> {
                 .unwrap_or_default();
             report_of(&cause.code, &cause.args)
         }
-        _ => return None,
+        // A read model's own decline, else no library read's refusal.
+        name => return read_model_rejection(name, refusal),
     })
+}
+
+/// The read models' own declines (E5's remainder, step 10a U2): each
+/// diagnostic a library read is declined with (`AppError::Declined`), by its
+/// code, as its own message (library.proto), its args its fields; and back
+/// by the message's type. One table, both ways.
+macro_rules! read_model_declines {
+    ($($code:literal => $message:ident { $($field:ident : $kind:ident),* }),* $(,)?) => {
+        /// `declined`'s own typed refusal, when a read declines with it.
+        fn read_model_decline(declined: &dyn Diagnostic) -> Option<ApiRefusal> {
+            let args = declined.args();
+            match declined.code() {
+                $($code => Some(ApiRefusal::of(&v1::$message {
+                    $($field: to_wire!($kind, &args, stringify!($field)),)*
+                })),)*
+                _ => None,
+            }
+        }
+
+        /// The diagnostic a read model's typed decline is, by its type.
+        fn read_model_rejection(name: &str, refusal: &Any) -> Option<Report> {
+            $(
+                if name == concat!("ctxloom.v1.", stringify!($message)) {
+                    #[allow(unused_variables)]
+                    let r = decode::<v1::$message>(refusal)?;
+                    return Some(Report::new($code.to_string())
+                        $(.arg(stringify!($field), back!($kind, r.$field)))*);
+                }
+            )*
+            None
+        }
+    };
+}
+
+/// An arg of `args` as a field of `kind`.
+macro_rules! to_wire {
+    (str, $args:expr, $name:expr) => {
+        arg_text($args, $name)
+    };
+    (uint, $args:expr, $name:expr) => {
+        arg_count($args, $name)
+    };
+    (nested, $args:expr, $name:expr) => {
+        arg_cause($args, $name)
+    };
+}
+
+/// A field of `kind` back as its arg.
+macro_rules! back {
+    (str, $value:expr) => {
+        Arg::Str($value)
+    };
+    (uint, $value:expr) => {
+        Arg::Uint($value)
+    };
+    (nested, $value:expr) => {
+        nested($value)
+    };
+}
+
+/// The arg `name` as text (a number as its digits).
+fn arg_text(args: &[(&str, Arg)], name: &str) -> String {
+    match args.iter().find(|(n, _)| *n == name).map(|(_, a)| a) {
+        Some(Arg::Str(text)) => text.clone(),
+        Some(Arg::Uint(n)) => n.to_string(),
+        Some(Arg::Int(n)) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The arg `name` as a count.
+fn arg_count(args: &[(&str, Arg)], name: &str) -> u64 {
+    match args.iter().find(|(n, _)| *n == name).map(|(_, a)| a) {
+        Some(Arg::Uint(n)) => *n,
+        Some(Arg::Int(n)) => u64::try_from(*n).unwrap_or_default(),
+        _ => 0,
+    }
+}
+
+/// The arg `name`, a wrapped cause, as the wire's `Cause`.
+fn arg_cause(args: &[(&str, Arg)], name: &str) -> Option<v1::Cause> {
+    match args.iter().find(|(n, _)| *n == name).map(|(_, a)| a) {
+        Some(Arg::Nested(cause)) => wire_cause(cause.as_ref()),
+        _ => None,
+    }
+}
+
+read_model_declines! {
+    "library-catalog-bundle-not-found" => LibraryCatalogBundleNotFound { ask: str },
+    "library-catalog-ambiguous" => LibraryCatalogAmbiguous { ask: str, candidates: str },
+    "library-catalog-fragment-not-found" => LibraryCatalogFragmentNotFound { item: str, bundle: str },
+    "library-catalog-fragment-name-not-found" => LibraryCatalogFragmentNameNotFound { name: str },
+    "library-catalog-command-not-found" => LibraryCatalogCommandNotFound { item: str, bundle: str },
+    "library-catalog-command-name-not-found" => LibraryCatalogCommandNameNotFound { name: str },
+    "library-catalog-bad-item-ref" => LibraryCatalogBadItemRef { ask: str, kind: str, wanted: str },
+    "library-catalog-item-syntax" => LibraryCatalogItemSyntax { ask: str, cause: nested },
+    "library-catalog-item-not-bundle" => LibraryCatalogItemNotBundle { ask: str },
+    "library-profile-syntax" => LibraryProfileSyntax { cause: nested },
+    "library-profile-unknown-key" => LibraryProfileUnknownKey { key: str, line: uint, suggestion: str, near: uint, valid: str },
+    "library-profile-bad-value" => LibraryProfileBadValue { key: str, detail: str },
+    "library-profile-empty-fragment" => LibraryProfileEmptyFragment { line: uint },
+    "library-profile-cross-repo" => LibraryProfileCrossRepo { profile: str, reference: str },
+    "library-profile-bad-name" => LibraryProfileBadName { name: str },
+    "library-profile-not-found" => LibraryProfileNotFound { name: str },
+    "library-profile-circular" => LibraryProfileCircular { name: str },
+    "library-profile-depth-exceeded" => LibraryProfileDepthExceeded { max: uint },
+    "library-profile-parent" => LibraryProfileParent { parent: str, cause: nested },
+    "library-profile-unreadable" => LibraryProfileUnreadable { name: str, ext_err_txt: str },
+    "library-config-not-a-mapping" => LibraryConfigNotAMapping {  },
+    "library-config-unwritable" => LibraryConfigUnwritable { detail: str },
 }
 
 /// One of every typed refusal, for the tests.
@@ -554,6 +671,82 @@ pub(crate) fn every() -> Vec<AppError> {
         },
         AppError::RunNeedsDryRun,
         AppError::Declined(Box::new(AppError::NoBundlesDir)),
+        // Each read model's own decline (E5's remainder): its own message.
+        AppError::cause(library::CatalogError::BundleNotFound {
+            ask: "ask-x".to_string(),
+        }),
+        AppError::cause(library::CatalogError::Ambiguous {
+            ask: "ask-x".to_string(),
+            candidates: "a, b".to_string(),
+        }),
+        AppError::cause(library::CatalogError::FragmentNotFound {
+            item: "item-x".to_string(),
+            bundle: "bundle-x".to_string(),
+        }),
+        AppError::cause(library::CatalogError::FragmentNameNotFound {
+            name: "name-x".to_string(),
+        }),
+        AppError::cause(library::CatalogError::CommandNotFound {
+            item: "item-x".to_string(),
+            bundle: "bundle-x".to_string(),
+        }),
+        AppError::cause(library::CatalogError::CommandNameNotFound {
+            name: "name-x".to_string(),
+        }),
+        AppError::cause(library::CatalogError::BadItemRef {
+            ask: "ask-x".to_string(),
+            kind: "kind-x".to_string(),
+            wanted: "wanted-x".to_string(),
+        }),
+        AppError::cause(library::CatalogError::ItemSyntax {
+            ask: "ask-x".to_string(),
+            cause: library::RefError::Selector {
+                selector: "sel-x".to_string(),
+            },
+        }),
+        AppError::cause(library::CatalogError::ItemNotBundle {
+            ask: "ask-x".to_string(),
+        }),
+        AppError::cause(library::ProfileError::Syntax { cause: yaml() }),
+        AppError::cause(library::ProfileError::UnknownKey {
+            key: "key-x".to_string(),
+            line: 3,
+            suggestion: "bundles".to_string(),
+            valid: "a, b".to_string(),
+        }),
+        AppError::cause(library::ProfileError::BadValue {
+            key: "key-x".to_string(),
+            detail: "detail-x".to_string(),
+        }),
+        AppError::cause(library::ProfileError::EmptyFragment { line: 4 }),
+        AppError::cause(library::ProfileError::CrossRepo {
+            profile: "profile-x".to_string(),
+            reference: "reference-x".to_string(),
+        }),
+        AppError::cause(library::ProfileError::BadName {
+            name: "a#b".to_string(),
+        }),
+        AppError::cause(library::ProfileError::NotFound {
+            name: "name-x".to_string(),
+        }),
+        AppError::cause(library::ProfileError::Circular {
+            name: "name-x".to_string(),
+        }),
+        AppError::cause(library::ProfileError::DepthExceeded { max: 32 }),
+        AppError::cause(library::ProfileError::Parent {
+            parent: "parent-x".to_string(),
+            cause: Box::new(library::ProfileError::NotFound {
+                name: "name-x".to_string(),
+            }),
+        }),
+        AppError::cause(library::ProfileError::Unreadable {
+            name: "name-x".to_string(),
+            detail: "detail-x".to_string(),
+        }),
+        AppError::cause(library::ConfigError::NotAMapping),
+        AppError::cause(library::ConfigError::Unwritable {
+            detail: "detail-x".to_string(),
+        }),
     ]
 }
 

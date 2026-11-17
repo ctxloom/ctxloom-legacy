@@ -4469,9 +4469,193 @@ message LibraryRunNeedsDryRun {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
 }
 
-// `library-application` declining for another crate (a read model's or a
-// write's refusal, `AppError::Declined`), as that crate's own diagnostic:
-// typing each of those causes is the remainder of E5.
+// The read models' own declines (`AppError::Declined`, step 10a U2,
+// E5): each cause a library read can be declined with is its own typed
+// refusal, named for the `library` crate's diagnostic it carries.
+
+// `library-catalog-bundle-not-found`: No such bundle.
+message LibraryCatalogBundleNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `ask`, as the diagnostic says it.
+  string ask = 1;
+}
+
+// `library-catalog-ambiguous`: A name that more than one bundle answers to.
+message LibraryCatalogAmbiguous {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `ask`, as the diagnostic says it.
+  string ask = 1;
+  // `candidates`, as the diagnostic says it.
+  string candidates = 2;
+}
+
+// `library-catalog-fragment-not-found`: No such fragment in the bundle.
+message LibraryCatalogFragmentNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `item`, as the diagnostic says it.
+  string item = 1;
+  // `bundle`, as the diagnostic says it.
+  string bundle = 2;
+}
+
+// `library-catalog-fragment-name-not-found`: No fragment of that name in any bundle.
+message LibraryCatalogFragmentNameNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-catalog-command-not-found`: No such command in the bundle.
+message LibraryCatalogCommandNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `item`, as the diagnostic says it.
+  string item = 1;
+  // `bundle`, as the diagnostic says it.
+  string bundle = 2;
+}
+
+// `library-catalog-command-name-not-found`: No command of that name in any bundle.
+message LibraryCatalogCommandNameNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-catalog-bad-item-ref`: A selector that asks for the wrong kind of item.
+message LibraryCatalogBadItemRef {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `ask`, as the diagnostic says it.
+  string ask = 1;
+  // `kind`, as the diagnostic says it.
+  string kind = 2;
+  // `wanted`, as the diagnostic says it.
+  string wanted = 3;
+}
+
+// `library-catalog-item-syntax`: A `#` selector that does not parse.
+message LibraryCatalogItemSyntax {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `ask`, as the diagnostic says it.
+  string ask = 1;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 2;
+}
+
+// `library-catalog-item-not-bundle`: A reference that selects an item, asked for as a bundle.
+message LibraryCatalogItemNotBundle {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `ask`, as the diagnostic says it.
+  string ask = 1;
+}
+
+// `library-profile-syntax`: A profile that is not YAML the reader takes.
+message LibraryProfileSyntax {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 1;
+}
+
+// `library-profile-unknown-key`: A key a profile may not declare.
+message LibraryProfileUnknownKey {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `key`, as the diagnostic says it.
+  string key = 1;
+  // `line`, as the diagnostic says it.
+  uint64 line = 2;
+  // `suggestion`, as the diagnostic says it.
+  string suggestion = 3;
+  // `near`, as the diagnostic says it.
+  uint64 near = 4;
+  // `valid`, as the diagnostic says it.
+  string valid = 5;
+}
+
+// `library-profile-bad-value`: A profile key holding the wrong shape of value.
+message LibraryProfileBadValue {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `key`, as the diagnostic says it.
+  string key = 1;
+  // `detail`, as the diagnostic says it.
+  string detail = 2;
+}
+
+// `library-profile-empty-fragment`: A profile's `fragments` entry that names no fragment.
+message LibraryProfileEmptyFragment {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `line`, as the diagnostic says it.
+  uint64 line = 1;
+}
+
+// `library-profile-cross-repo`: A remote profile naming content outside its own repository.
+message LibraryProfileCrossRepo {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `profile`, as the diagnostic says it.
+  string profile = 1;
+  // `reference`, as the diagnostic says it.
+  string reference = 2;
+}
+
+// `library-profile-bad-name`: A profile name that cannot be one.
+message LibraryProfileBadName {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-profile-not-found`: No such profile.
+message LibraryProfileNotFound {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-profile-circular`: A profile that is its own ancestor.
+message LibraryProfileCircular {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+}
+
+// `library-profile-depth-exceeded`: A chain of parents deeper than the limit.
+message LibraryProfileDepthExceeded {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `max`, as the diagnostic says it.
+  uint64 max = 1;
+}
+
+// `library-profile-parent`: A parent that could not be resolved, and why.
+message LibraryProfileParent {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `parent`, as the diagnostic says it.
+  string parent = 1;
+  // `cause`, as the diagnostic says it.
+  Cause cause = 2;
+}
+
+// `library-profile-unreadable`: A profile that is there and cannot be read.
+message LibraryProfileUnreadable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `name`, as the diagnostic says it.
+  string name = 1;
+  // `ext_err_txt`, as the diagnostic says it.
+  string ext_err_txt = 2;
+}
+
+// `library-config-not-a-mapping`: A config layer that is not a mapping.
+message LibraryConfigNotAMapping {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+}
+
+// `library-config-unwritable`: A config that cannot be written.
+message LibraryConfigUnwritable {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // `detail`, as the diagnostic says it.
+  string detail = 1;
+}
+
+// `library-application` declining for another crate with a cause no read
+// declines with (a write's, typed with 10b's writes), as that crate's own
+// diagnostic.
 message LibraryDeclined {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
   // The diagnostic that declined.

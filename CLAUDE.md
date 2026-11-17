@@ -2571,8 +2571,13 @@ built:
   mapped back to its `library-application-*` diagnostic by its type alone
   (`daemon_api::library_refusals`, `Rejection::LibraryRead`); a wrapped
   cause rides as its code and flattened args (`ctxloom.v1.Cause`).
-  `AppError::Declined` (a read model's own refusal) is still one message,
-  `LibraryDeclined`, until those are typed.
+  A read model's own refusal (`AppError::Declined`) is typed per cause too:
+  each `library` diagnostic a read declines with (the catalog's nine, the
+  profile's eleven, the config's not-a-mapping and unwritable) is its own
+  message, `ctxloom.v1.Library<Catalog|Profile|Config><Variant>`, its args
+  its fields, both ways from one table (`read_model_declines!` in
+  `library_refusals.rs`, keyed by the diagnostic's code); `LibraryDeclined`
+  is left for a cause no read declines with (a write's, typed with 10b).
 - Notices: a library read's own notices (the observation's, then the use
   case's) ride the response metadata key `ctxloom-notice-bin`
   (`daemon_proto::NOTICE_METADATA`, one prost `Notice` per value, apart
