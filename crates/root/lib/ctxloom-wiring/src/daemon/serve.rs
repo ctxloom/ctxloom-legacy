@@ -172,10 +172,11 @@ pub(crate) fn serve(
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
         let terminated = hear_terminate((&fs, home), &shared, &say);
+        let frontends = liveness::FrontendLocks::new(Arc::clone(&fs), home);
         let result = run(
             &mut launcher,
             &core,
-            (&files, &own, &held),
+            (&files, &own, &held, &frontends),
             (pace, &shared, &terminals),
             &say,
         )
@@ -327,8 +328,9 @@ const RETELL_LOOK: Duration = Duration::from_secs(1);
 ///
 /// The drain also TELLS each live interactive frontend of `home` at once
 /// (owner, 2026-11-15, OD-63) when it will be stopped: at the drain's
-/// timeout from its start, by itself (its notice's `stop_at`), as no
-/// daemon may be serving then (one hosting nothing exits at once). A
+/// timeout from its start, by itself (its notice's `stop_at`), as nothing
+/// else asks it then. The draining daemon stays while a live frontend
+/// remains ([`stays_for`]), so the frontend's last reports reach it. A
 /// timeout changed while the drain runs is told again while the daemon
 /// lives.
 fn hear_terminate(
@@ -913,6 +915,23 @@ fn launcher(
     }))
 }
 
+/// How long past its drain's time a draining daemon that hosts nothing
+/// still stays for the live frontends of its home ([`stays_for`]): a
+/// frontend asked to stop then (by `ctxloom shutdown`, or by itself at its
+/// notice's `stop_at`) stops its TUI within its grace and reports its end
+/// (`shutdown`'s `FRONTENDS_WAIT`, 20 s), with a margin.
+const FRONTENDS_GRACE: Duration = Duration::from_secs(30);
+
+/// Whether a draining daemon that hosts nothing still stays (owner ruling,
+/// 2026-11-16: PREVENT the early drain exit): while a frontend of its home
+/// is live (`live`, by its lock: a frontend gone without reporting reads
+/// free, so it holds nothing) and its drain's time and [`FRONTENDS_GRACE`]
+/// after it have not passed (`within`), so a frontend's last reports reach
+/// a daemon. A plain stop (`plain`) never stays.
+fn stays_for(live: &[u32], within: bool, plain: bool) -> bool {
+    !plain && within && !live.is_empty()
+}
+
 /// Tick until the daemon is asked to stop, its single-instance lock file
 /// is no longer the one it holds (`held`: removed or replaced, so it
 /// excludes nobody), its home's ctxloom directory is gone, another daemon's discovery replaced its own (`own`, in
@@ -921,7 +940,12 @@ fn launcher(
 async fn run<E: run_ports::Edge>(
     launcher: &mut Daemon<E>,
     core: &InProcessCore<SqliteStore>,
-    (files, own, held): (&DaemonFiles, &Discovery, &Instance),
+    (files, own, held, frontends): (
+        &DaemonFiles,
+        &Discovery,
+        &Instance,
+        &liveness::FrontendLocks,
+    ),
     (pace, shared, terminals): (Pace, &Arc<Shared>, &daemon_application::Terminals),
     say: &Say,
 ) -> Result<(), String> {
@@ -931,6 +955,7 @@ async fn run<E: run_ports::Edge>(
     // when asked to drain (s4-Q4).
     let mut stopping = false;
     let mut handing_over = false;
+    let mut staying = Staying::for_the(frontends);
     loop {
         shared.tell(launcher.hosted_runs(), launcher.askers(), quiet_since);
         if !files.still_holds(held) {
@@ -977,6 +1002,7 @@ async fn run<E: run_ports::Edge>(
                 launcher.end_all();
             }
             stopping = true;
+            staying.plain = true;
         }
         // Asked to drain (`daemon stop --drain`, `ctxloom shutdown`, a
         // SIGTERM; OD-54): it hands what it hosts over to the next daemon,
@@ -986,6 +1012,7 @@ async fn run<E: run_ports::Edge>(
             launcher.hand_over();
             handing_over = true;
             stopping = true;
+            staying.began = Some(Instant::now());
         }
         // The drain's timeout, read again each round (owner, 2026-11-15): a
         // `daemon.drain_timeout` changed while it drains is the drain's.
@@ -1000,7 +1027,12 @@ async fn run<E: run_ports::Edge>(
             }
         }
         let draining = stopping;
-        if draining && launcher.hosting() == 0 {
+        // A drain's daemon stays for the live frontends of its home (owner
+        // ruling, 2026-11-16), so their last reports reach it.
+        if draining
+            && launcher.hosting() == 0
+            && !staying.stays(handing_over, shared.drain_period(), say)
+        {
             return Ok(());
         }
         // Armed before the round reads (S-N2): a commit during it is not
@@ -1045,6 +1077,76 @@ async fn run<E: run_ports::Edge>(
         // A read of the API asking for a fresh round wakes it too.
         let _ = tokio::time::timeout(pace.poll, either(commit, shared.wake.notified())).await;
     }
+}
+
+/// What a draining daemon that hosts nothing stays for: the live frontends
+/// of its home ([`stays_for`]).
+struct Staying<'a> {
+    frontends: &'a liveness::FrontendLocks,
+    /// When its drain began, on this process's clock.
+    began: Option<Instant>,
+    /// Asked the plain stop (never a drain's): it stays for no frontend.
+    plain: bool,
+    /// The live frontends it last said it stays for.
+    said_for: Vec<u32>,
+}
+
+impl<'a> Staying<'a> {
+    fn for_the(frontends: &'a liveness::FrontendLocks) -> Staying<'a> {
+        Staying {
+            frontends,
+            began: None,
+            plain: false,
+            said_for: Vec::new(),
+        }
+    }
+
+    /// Whether the daemon, hosting nothing and `handing_over` (a drain) or
+    /// stopping, stays this round, its drain's time `period`; said in the
+    /// log as the frontends it stays for change, and when it leaves any.
+    fn stays(&mut self, handing_over: bool, period: Duration, say: &Say) -> bool {
+        let live = match handing_over && !self.plain {
+            true => self.frontends.live(),
+            false => Vec::new(),
+        };
+        let within = self
+            .began
+            .is_some_and(|began| began.elapsed() < period + FRONTENDS_GRACE);
+        if !stays_for(&live, within, self.plain) {
+            if !live.is_empty() && !self.plain {
+                said(
+                    say,
+                    &format!(
+                        "after the drain's {}s and {}s more, the frontends {} still run: exiting",
+                        period.as_secs(),
+                        FRONTENDS_GRACE.as_secs(),
+                        pids_said(&live)
+                    ),
+                );
+            }
+            return false;
+        }
+        if live != self.said_for {
+            said(
+                say,
+                &format!(
+                    "draining: hosting nothing, it stays for the live frontends {} \
+                     (their last reports are this daemon's)",
+                    pids_said(&live)
+                ),
+            );
+            self.said_for = live;
+        }
+        true
+    }
+}
+
+/// Process ids as the log says them: `pid 1, pid 2`.
+fn pids_said(pids: &[u32]) -> String {
+    pids.iter()
+        .map(|pid| format!("pid {pid}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Whichever of `a` and `b` is ready first.

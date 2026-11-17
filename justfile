@@ -21,7 +21,7 @@ import 'gates/dev-local.just'
 # from the same ctxloom-lib commit the workspace pins (arch_lint_rev, kept
 # equal to Cargo.toml's by `_arch-lint-ready`'s check) and installed once per
 # commit into the user's cache, shared by every worktree.
-arch_lint_rev := "c909e9257e9d126d7828a47cecee03b8fedfe9f5"
+arch_lint_rev := "ac62305012e332066adeea7bd49e8b6a6ea561af"
 arch_lint_root := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") / ".cache") / "ctxloom-arch-lint" / arch_lint_rev
 arch_lint := arch_lint_root / "bin/arch-lint"
 
@@ -61,11 +61,42 @@ mutants_swap_max := env("MUTANTS_SWAP_MAX", "2G")
 # The test gates' memory cap, the same scope (owner ruling of 2026-11-16):
 # every run of the gates' `_tests` (`test`, `test-pkg`, `test-staged`, and
 # the test leg of `closeout`, `closeout-ratchet` and `land-ratchet`) and the
-# ratchet base's feature runner (scripts/ratchet-base.sh). TESTS_MEMORY_MAX=none
+# ratchet base's feature runner (scripts/ratchet-base.sh); the whole-workspace
+# ones of them also under the machine-wide test lock (gates/tests-lock.sh,
+# one at a time per machine; `test-pkg` takes none). TESTS_MEMORY_MAX=none
 # opts out, said in the run's log; TESTS_MEMORY_MAX and TESTS_SWAP_MAX change
 # the cap.
 tests_memory_max := env("TESTS_MEMORY_MAX", "16G")
 tests_swap_max := env("TESTS_SWAP_MAX", "2G")
+
+# The compiler cache (owner ruling of 2026-11-16; gates/gates.just exports
+# it, gates/sccache.sh checks it): every `just` build, test, lint, mutation
+# and ratchet base runs rustc through sccache, pinned at sccache_version
+# (SCCACHE_BASEDIRS needs 0.14.0 or newer; 0.19.0 is the newest release,
+# and the first whose basedirs also rewrite a compile's arguments, 0.18.0,
+# and Windows drive-letter values, 0.19.0), installed by
+# `cargo install --locked sccache@0.19.0` into ~/.cargo/bin. One cache for
+# every worktree, outside them all: ~/.cache/ctxloom-sccache of the user's
+# own home (CTXLOOM_SCCACHE_DIR replaces it), an LRU capped at 40G, served
+# by its own server on a unix socket there. SCCACHE_BASEDIRS is the parent directory of each
+# worktree of this repository (the worktrees root and the primary
+# checkout's parent), as when the server started; CTXLOOM_SCCACHE_BASEDIRS
+# replaces it. A missing or other sccache fails every recipe, with the fix.
+# The opt-out is CTXLOOM_SCCACHE=off, stated; on a GitHub Actions runner
+# (GITHUB_ACTIONS=true) it is the default, because a hosted runner's cache
+# would start empty every job and rust-cache already keeps target/ (ci.yml
+# and nightly.yml also set it and say so; ctxloom/ci's reusable binaries
+# workflow, which takes no env from its caller, gets it from this default).
+sccache_version := "0.19.0"
+sccache_opt_out := "CTXLOOM_SCCACHE=off"
+sccache_mode := env("CTXLOOM_SCCACHE", if env("GITHUB_ACTIONS", "") == "true" { "off" } else { "on" })
+# The user's own home, from the password database, not $HOME: an agent in a
+# ctxloom session runs with HOME its session home (ruling 112), and its
+# builds are to share the one cache all the same.
+sccache_dir := env("CTXLOOM_SCCACHE_DIR", if sccache_mode == "on" { shell('eval "echo ~$(id -un)"') / ".cache/ctxloom-sccache" } else { "" })
+sccache_socket := sccache_dir / "server.sock"
+sccache_cache_size := "40G"
+sccache_basedirs := env("CTXLOOM_SCCACHE_BASEDIRS", if sccache_mode == "on" { shell('"$1" basedirs "$2"', justfile_directory() / "gates/sccache.sh", justfile_directory()) } else { "" })
 
 mutation_thresholds := "crates/core/domain=90 crates/core/read-model=90 crates/core/ports=90 crates/core/application=90 crates/adapters=90 crates/root/lib=0 crates/root/bin=0"
 
@@ -399,6 +430,18 @@ mutants-batch base="" head="HEAD":
 # it): how one crate's mutants are run whole, as for a runaway mutant's hunt.
 # It runs under the mutation run's memory cap (`mutants_memory_max`,
 # gates/memory-cap.sh) and says the scope's memory peak.
+#
+# The ratchet (owner ruling 165): a shard holding mutants of the binary runs
+# its feature runner, so on a tree that carries red spec on purpose (an
+# integration branch) its unmutated baseline would fail (exit 4) and judge
+# nothing. Such a shard first makes the tree's own scenario list (`just
+# ratchet-base HEAD`, the runner alone in a throwaway worktree, cached by
+# sha), and when that list has red the run is given it as
+# GHERKIN_RATCHET_BASE: every run of the runner, the baseline and each
+# mutant's, is judged against it in the test (a new red fails it, the
+# tree's red passes), so the binary's tests still kill. A list with no red
+# (main) sets nothing: the plain gate. A shard with no mutant of the binary
+# runs no runner and makes no list.
 [group('closeout')]
 [doc("One shard of a mutation run (the workspace, or one package): mutants-shard <k/n> [out] [package]")]
 [no-exit-message]
@@ -412,8 +455,20 @@ mutants-shard shard out="target/logs/mutants-shard" package="": _mutants-no-feat
     {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' --check
     scope=(--workspace)
     [ -z '{{package}}' ] || scope=(--package '{{package}}')
+    ratchet=()
+    binary=$(cargo mutants --dir {{TOP}} --list --json "${scope[@]}" --shard '{{shard}}' \
+        | jq '[.[] | select(.package == "ctxloom")] | length')
+    if [ "$binary" -gt 0 ]; then
+        just --justfile {{TOP}}/justfile ratchet-base HEAD
+        list={{TOP}}/target/ratchet/$(git -C {{TOP}} rev-parse HEAD).list
+        red=$(grep -c '^red' "$list" || true)
+        if [ "$red" -gt 0 ]; then
+            ratchet=(env "GHERKIN_RATCHET_BASE=$list")
+            echo "mutants-shard {{shard}}: ratchet: the tree carries $red red scenarios; each feature-runner run is judged against them (GHERKIN_RATCHET_BASE)"
+        fi
+    fi
     rc=0
-    {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' \
+    "${ratchet[@]}" {{TOP}}/gates/memory-cap.sh mutants-shard '{{mutants_memory_max}}' '{{mutants_swap_max}}' \
         cargo mutants --dir {{TOP}} --in-place "${scope[@]}" --shard '{{shard}}' --output "$out" --colors never || rc=$?
     echo "$rc" > "$out/exit"
     found=$(jq '.total_mutants // 0' "$out/mutants.out/outcomes.json" 2>/dev/null || echo 0)
@@ -511,9 +566,21 @@ ratchet-base base:
 clean-target:
     rm -rf {{TOP}}/target
 
+# Clear the target/ of every worktree of this repository that has landed
+# (its HEAD in `base`), that no running process uses, and that holds no
+# tracked change, untracked file or git lock (owner ruling of 2026-11-16):
+# scripts/trim-targets.sh, one line per worktree saying what it removed or
+# kept and why. Only target/ goes; a worktree that holds work is never
+# touched. `--dry-run` says the same and removes nothing.
+[group('setup')]
+[doc("Clear target/ of every landed, idle, clean worktree: trim-targets [base] [--dry-run]")]
+[no-exit-message]
+trim-targets base="origin/daemon/integration" dry="":
+    @{{TOP}}/scripts/trim-targets.sh {{dry}} '{{base}}'
+
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, exec-mode check, path deps, mcp-env probe, install shutdown")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown, sccache, trim-targets")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -528,6 +595,7 @@ selftest:
     @{{TOP}}/scripts/tests-exit.selftest.sh
     @{{TOP}}/scripts/test-staged.selftest.sh
     @{{TOP}}/scripts/scratch-tree-lock.selftest.sh
+    @{{TOP}}/scripts/tests-lock.selftest.sh
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
     @{{TOP}}/scripts/dev-local.selftest.sh
     @{{TOP}}/scripts/path-deps-check.selftest.sh
@@ -535,6 +603,8 @@ selftest:
     @{{TOP}}/scripts/release-package.selftest.sh
     @{{TOP}}/scripts/mcp-env-probe.selftest.sh
     @{{TOP}}/scripts/install-shutdown.selftest.sh
+    @{{TOP}}/scripts/sccache.selftest.sh
+    @{{TOP}}/scripts/trim-targets.selftest.sh
 
 # Run the ctxloom binary (cargo run, quiet) with the given arguments.
 [group('dev')]

@@ -522,6 +522,18 @@ macro_rules! common_steps {
                 assert!(w.common().project.exists(&rel), "{rel} should exist");
             }
 
+            /// The file parses as YAML (angzarr-yaml, the reader ctxloom's
+            /// own documents go through); a parse error fails the step with it.
+            #[then(expr = "the file {string} is valid YAML")]
+            fn file_valid_yaml(w: &mut World, rel: String) {
+                let held = w
+                    .common()
+                    .project
+                    .read(&rel)
+                    .unwrap_or_else(|| panic!("{rel} should exist"));
+                angzarr_yaml::parse(&held).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            }
+
             #[then(expr = "the file {string} does not exist")]
             fn file_absent(w: &mut World, rel: String) {
                 w.common().project.file_is_absent(&rel);

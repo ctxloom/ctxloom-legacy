@@ -53,6 +53,17 @@ if [ -z "$ids" ] && [ -s "$cache" ]; then
     exit 0
 fi
 
+# The rest, the base's build and its feature runner, is a whole-workspace
+# run: the script runs again under the machine-wide test lock
+# (gates/tests-lock.sh; a wait on it is said on stderr), which a caller
+# already holding it does not take again. Before `.ratchet-base.lock`, so
+# every holder of both took the test lock first (one order: no deadlock),
+# and so the lock's descriptor is never this script's own.
+if [ -z "${RATCHET_BASE_UNDER_LOCK:-}" ]; then
+    RATCHET_BASE_UNDER_LOCK=1 exec "$here/../gates/tests-lock.sh" ratchet-base "$0" "$@"
+fi
+unset RATCHET_BASE_UNDER_LOCK
+
 exec 7> "$top/target/.ratchet-base.lock"
 flock 7
 runner=crates/root/bin/ctxloom/src/gherkin_features.test.rs

@@ -714,7 +714,11 @@ DAEMON DYING UNDER A LIVE TUI (owner 2026-11-14; `daemon-application`'s
 `adopt.rs`): a new daemon ADOPTS, at its start, every run its sweep leaves
 (owed a runner or started, its owner alive by its locks: the session's
 lock, or the run's own the frontend holds; at the start nothing is the
-daemon's own, so every survivor is another's), said in its log, and takes
+daemon's own, so every survivor is another's; each with its session's
+place, project and harp, from its mint, `pending-launches`' `PendingLaunch`
+as its `StartedRun`, so a run owed a runner whose start and exit reports
+were both held, flushed at the start, lets its checkout go in its own
+project), said in its log, and takes
 over its END PATH each round (`Daemon::end_the_adopted`): the run's end
 (the frontend's exit report, or its `RecordLaunchFailed`) ends the incarnation
 (`runner-exit`, or `launch-failed` never started) and lets its checkout go
@@ -1250,13 +1254,12 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr core `f6fed5e5` (`angzarr-diagnostic`, `angzarr-yaml`,
   `angzarr-presentation`; `angzarr-coordinator-grpc`'s `tls` feature, which
   `hook-listener` enables, is `Listener::tls`);
-- angzarr-embedded `94f630a3` on angzarr-router `bec0c2bf`;
-- angzarr-build `7547415e` (the markup generator, `angzarr-build` and
+- angzarr-embedded `5cee822b` on angzarr-router `bec0c2bf`;
+- angzarr-build `bd02654f` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
 - angzarr-platform `5f39b330`;
-- taskloom's crates `2db3ddf7` and ctxloom-lib's `c909e925` (on its main, `now` in
-  `duration-text`), built on the
-  same line,
+- taskloom's crates `546c54ad` and ctxloom-lib's `ac623050` (on its main), built
+  on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
@@ -1853,7 +1856,18 @@ config is no client of the daemon, so nothing refuses the write) is the
 drain's, still timed from its start; else the daemon's default,
 `daemon_application::HAND_OVER_PERIOD` (five minutes; `daemon serve
 --hand-over-seconds`, hidden, sets that default, a test's short one).
-Hosting nothing, the daemon exits at once. `--drain` with `--even-if-live` is a usage error (clap's
+Hosting nothing, the daemon exits at once, unless a live frontend of its
+home remains (owner ruling 2026-11-16, PREVENT the early drain exit; the
+wiring's `serve::stays_for`, `Staying`): a draining daemon then STAYS,
+logged `draining: hosting nothing, it stays for the live frontends pid
+<n>`, so a frontend's last reports (its TUI's exit) always reach a
+daemon and are never held for want of one; it exits once no frontend is
+live (a frontend gone without reporting reads free by its lock, so it
+holds nothing), or once the drain's time and `FRONTENDS_GRACE` (30 s:
+the frontends asked to stop then, by `ctxloom shutdown` or by their
+notice's `stop_at`, stop their TUI and report) have passed, said `after
+the drain's <n>s and 30s more, the frontends ... still run: exiting`. A
+plain stop (`--even-if-live`, the second SIGTERM) stays for none. `--drain` with `--even-if-live` is a usage error (clap's
 `conflicts_with`, exit 20); nothing new under `--detailed-exitcode`. The
 drain WARNS AT ONCE (OD-54 (2)): while a daemon drains and hosts
 anything, its `Daemon.warnings` (StopDaemon's answer and GetDaemon's)
@@ -1913,7 +1927,9 @@ the period cuts its child (never delivered) is delivered by the next
 daemon, as a steer to the re-hosted child. `daemon stop --even-if-live` is
 the escalation (its children end `runner-exit` and are not re-hosted).
 TUIs are not handed over: a frontend outlives its daemon, and the daemon
-after the drained one adopts it (U5), or `ctxloom shutdown` asks it to stop.
+after the drained one adopts it (U5), or `ctxloom shutdown` asks it to stop;
+a draining daemon stays while one is live (above), so it takes its last
+reports.
 
 SHUTDOWN (owner, 2026-11-15, OD-62; `ctxloom-wiring`'s `daemon/shutdown.rs`).
 `ctxloom shutdown [<duration> | now]` stops every running ctxloom of this
@@ -1927,7 +1943,8 @@ is refused before anything is asked, `ctxloom-wiring-shutdown-bad-time`
 for the daemon to exit AND the live frontends to end (a TUI is left to its
 human for the whole time), and for the daemon a grace longer
 (`DRAIN_GRACE`, 30 s: its period's end stops its one-shots and cuts its
-busy children). Then, `now` at once: each live interactive frontend is
+busy children) when no frontend is live (one that is keeps the daemon, so
+the frontends are asked to stop at once). Then, `now` at once: each live interactive frontend is
 asked to stop and waited for (`FRONTENDS_WAIT`, 20 s), then the daemon
 serving then (a frontend's report may have started one) the plain stop
 (`--even-if-live`) and waited for (`STOP_WAIT`, 30 s). Each step is said
@@ -1969,8 +1986,8 @@ its terminal's stderr as `ctxloom: <text>` once per notice (`Watch::look`).
 itself at the span's end); a SIGTERM's drain tells it with `stop_at` its
 start plus the timeout, told again when the timeout changes while the
 daemon lives, and the frontend stops itself then (said `the drain ctxloom
-was told of ended: ...`), since a daemon hosting nothing has exited by
-then. The notice text (`shutdown::notice_text`, "ctxloom is shutting down:
+was told of ended: ...`), and reports its end to the daemon, which
+stayed for it. The notice text (`shutdown::notice_text`, "ctxloom is shutting down:
 this session will be stopped in <span>; finish and exit") and both stop
 sentences are DRAFTS (OD-63). Under `test-support`, the daemon directory's
 `test-deaf-to-stop` makes a daemon take a stop and a drain and ignore them,
@@ -3539,7 +3556,8 @@ ruling 144; required: a missing nextest fails the gate),
 `just lint` (clippy, warnings denied), `just lint-deps` (cargo-deny) and
 `just lint-os`; `just test-pkg <crate>...` is the quick loop, `just fmt` and
 `just fmt-check` cover this workspace's crates only, `just run` runs the
-binary, `just clean-target` is the only way to drop `target/`, and `just
+binary, `just clean-target` is the only way to drop this checkout's
+`target/` (and `just trim-targets`, below, other worktrees'), and `just
 selftest` checks the scripts. Raw `cargo build|test|clippy|fmt|deny|clean|
 run|mutants`, `nextest`, `rustc`, `lefthook run`, `gitleaks`, and any
 `--no-verify` or `LEFTHOOK=`/`SKIP=` skip of the hooks are blocked by ltk
@@ -3551,6 +3569,35 @@ target/logs/<gate>.log)` and at most 40 lines of extract (only failing tests,
 the first 20 diagnostics, survivors capped, each with a `+K more` tail).
 `scripts/output-budget.selftest.sh` holds that budget. Read the log for the
 rest; `VERBOSE=1 just <gate>` shows the full output.
+
+Every `just` build shares compiler output through sccache (owner ruling of
+2026-11-16: each worktree's `target/` had grown to 120-180G). The gates
+(`gates/gates.just`) export `CARGO_INCREMENTAL=0` (sccache cannot cache an
+incremental compile; no `target/*/incremental`) and `RUSTC_WRAPPER`, the
+pinned sccache (the justfile's `sccache_version`, 0.19.0: `cargo install
+--locked sccache@0.19.0` into `~/.cargo/bin`; `SCCACHE_BASEDIRS` needs
+0.14.0 or newer), with `SCCACHE_DIR` `~/.cache/ctxloom-sccache` of the user's own home
+from the password database, not `$HOME`, which a ctxloom session moves
+(`CTXLOOM_SCCACHE_DIR` replaces it), an LRU capped at `SCCACHE_CACHE_SIZE=40G`, its
+own server on the unix socket `SCCACHE_SERVER_UDS` there, and
+`SCCACHE_BASEDIRS` the parent of each of the repository's worktrees
+(`CTXLOOM_SCCACHE_BASEDIRS` replaces it), to every recipe, script, mutation
+run and throwaway worktree. `gates/sccache.sh` checks the version and starts
+the server as the justfile is evaluated (so no test gate's memory-cap scope
+starts it): a missing or other sccache fails EVERY recipe, its fix the
+install line. The opt-out is `CTXLOOM_SCCACHE=off`, stated (an empty
+`RUSTC_WRAPPER`); on a GitHub Actions runner (`GITHUB_ACTIONS=true`) off is
+the default. Each worktree keeps its own `target/`. Measured limit: sccache
+hashes a Rust compile's working directory and `CARGO_MANIFEST_DIR` verbatim
+(basedirs rewrite only C/C++ compiles), so a dependency's compile is shared
+between worktrees and a workspace crate's is not; bin, build-script and
+proc-macro crates (the linker's) are never cached. `just trim-targets
+[base] [--dry-run]` (`scripts/trim-targets.sh`) clears the `target/` of
+every worktree whose HEAD is in `base` (default `origin/daemon/integration`)
+that no running process uses (cwd, executable or open file, from `/proc`)
+and that has no tracked change, untracked file or git lock, one line each
+saying what it removed or kept and why. Both are self-tested in `just
+selftest` (`scripts/sccache.selftest.sh`, `scripts/trim-targets.selftest.sh`).
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each
 test in a process of its own; SLOW at 30 s and killed at 120 s
@@ -3631,7 +3678,11 @@ ctxloom's go-final, go-installed on a cache miss only, for
 `ltk-rules-check.sh`), `gate-logs` (the logs dumped and uploaded on a
 failure) and `package-binary`, and its reusable workflows `binaries.yml` and
 `release.yml`, all pinned at ONE commit of its main (bump them together).
-Every action is pinned to a commit, every tool to a version. Linux
+Every action is pinned to a commit, every tool to a version. Every
+workflow sets `CTXLOOM_SCCACHE=off` and each job that builds says so (a
+hosted runner's cache starts empty; rust-cache keeps `target/`); ctxloom/ci's
+reusable binaries workflow, which takes no env, is off by the justfile's
+`GITHUB_ACTIONS` default. Linux
 (`ubuntu-24.04`; it moves into the dev container once that image is
 published, a commented `container:` line marks the place) runs every gate
 but mutation: `just build`, `fmt-check`, `lint`, `lint-os`, `lint-deps`,
@@ -3683,6 +3734,17 @@ scope can be made, that shard runs deliberately UNCAPPED
 the job's alone, so a runaway mutant fails that shard and nothing else.
 `mutants-shard <k/n> [out] [package]` with a package narrows the run to that
 one crate (`0/1` for all of it), how one crate's mutants are run whole.
+A shard holding mutants of the binary runs its feature runner, so on a tree
+that carries red spec on purpose (an integration branch, ruling 165) its
+unmutated baseline was red (cargo-mutants' exit 4, the score judging
+nothing: run 43870047304 on daemon/integration). Such a shard first makes
+the tree's own list (`just ratchet-base HEAD`, below), and when it has red
+runs cargo-mutants with `GHERKIN_RATCHET_BASE` naming it: every run of the
+runner, the baseline's and each mutant's, is judged against that list in
+the test, so the tree's red passes, a new red fails (the baseline, or kills
+the mutant). A list with no red (main) sets nothing: the plain gate. A
+shard with no mutant of the binary (`cargo mutants --list`) makes no list.
+The suites job still runs the runner straight, so its red is judged there.
 
 The release profile (owner ruling 2026-11-12, Cargo.toml's
 `[profile.release]`) is fat LTO, one codegen unit, opt-level 3,
@@ -3759,6 +3821,38 @@ daemon) holds the next run's lock. The staged tree's recipe inherited it
 until 2026-11-15 (U8r: two leaked test daemons held a commit's
 `test-staged` for half an hour); `scripts/scratch-tree-lock.selftest.sh`
 (`just selftest`) holds `_scratch-tree` to it through procfs (Linux).
+
+Whole-workspace test runs are serialized MACHINE-WIDE (2026-11-16: up to
+three agents share one machine, and two memory-capped runs at once can
+still take all its RAM; two global OOMs did). `gates/tests-lock.sh
+<label> <command>...` runs the command under a `flock` on one file per
+user, `${XDG_CACHE_HOME:-$HOME/.cache}/ctxloom/gates/workspace-tests.lock`
+(`TESTS_LOCK_FILE` overrides it, the self-tests' seam), never under
+`$XDG_RUNTIME_DIR`, which an agent's shell often lacks or sets itself and
+which goes when the last session ends; the path names no repository, so
+the gates' copies in taskloom and annals would share it. Its takers:
+`_test-workspace` (so `just test`, `test-staged`'s workspace leg, and
+`push-check`'s and `merge-check`'s), outside `_run` so a wait is said on
+the terminal and the gate's time is the run's; `_tests --workspace` itself
+(so `closeout`'s, `closeout-ratchet`'s and `land-ratchet`'s test legs,
+through `just test`); and `scripts/ratchet-base.sh`, which runs itself again
+under it once its cached list is not there, before its `.ratchet-base.lock`.
+A run of named packages (`test-pkg`, `test-staged`'s changed crates) and the
+mutation run take none. A waiter says once on stderr `wait <label>: ...`,
+naming the lock and the holder's pid, label and directory (which the
+holder writes into the file), and waits with no timeout: the kernel lets a
+flock go when its holder dies, so a wait is only ever on a live run. A
+holder exports `GATES_TESTS_LOCK_HELD=<the file>`, and a taker inside its
+run takes nothing (nesting never deadlocks); its descriptor (8) is closed
+for the command (`8>&-`), so a test's daemon never holds it. With no
+`flock` (macOS, Windows' Git Bash on CI, where each job has its own VM) the
+lock is skipped and said once, `note <label>: flock is not on PATH ...`.
+`scripts/tests-lock.selftest.sh` (`just selftest`) runs two concurrent
+`just test`s on a fixture with a fake cargo (serialized, one wait line
+naming the holder), a run nested in a holder, the descriptor through
+procfs, `_tests <package>` while the lock is held, and no `flock`.
+`gates/` is a copy of the shared gates repository: the change is to be
+ported there (`gates/MIGRATING.md`).
 
 lefthook runs the gates one at a time, stopping at the first failure, and
 shows each gate's pass line and any failure's extract. Gates 1 to 5 run in
@@ -3896,7 +3990,8 @@ Each branch landing on the integration branch runs it; the full `just
 closeout-ratchet <base>` runs once per batch and before main. `just
 closeout-ratchet <base>` (owner ruling 165; `scripts/closeout-ratchet.sh`) is
 closeout's six gates as usual, mutation included (over merge-base(<base>,
-HEAD)..HEAD), except that the feature runner may fail where the base's does
+HEAD)..HEAD, given `GHERKIN_RATCHET_BASE` naming the base's list when it
+has red, as `mutants-shard` is), except that the feature runner may fail where the base's does
 and nowhere else: the slice's red scenarios must be a SUBSET of the base
 tip's. It may turn red green, never add a red scenario or break a green one
 (`FAIL ratchet: N new red scenarios: B broke green, A added red`, each named,
@@ -3916,6 +4011,11 @@ and its failures file, between them: each, holding `<list>.lock`, replaces
 the lines and records of the features it ran and keeps the rest, sorted as
 one; `<list>.run` names the run that wrote it (`NEXTEST_RUN_ID`), so what
 an earlier run left is dropped and the file is exactly the run's scenarios.
+`GHERKIN_RATCHET_BASE=<absolute file>`, a base's list, judges each cluster
+against it in the test itself: it fails naming each of its scenarios red
+here and not red there (`broke green`, `added red`, the judge's rule) and
+passes the base's red, so a mutation run of a tree with red spec still has
+the runner judging (`mutants-shard`, `closeout-ratchet`'s mutants-batch).
 `GHERKIN_SCENARIO=<id>` runs that one scenario alone, `GHERKIN_ONLY=<text>`
 the features whose path holds it; a cluster holding none passes having run
 nothing, and when no feature matches at all every cluster fails. A

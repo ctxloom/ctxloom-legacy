@@ -19,6 +19,11 @@ mkdir -p "$fx/gates" "$fx/crates/a/src"
 cp "$gates" "$fx/gates/gates.just"
 cp "$(dirname "$gates")/drop-worktree.sh" "$fx/gates/drop-worktree.sh"
 cp "$(dirname "$gates")/memory-cap.sh" "$fx/gates/memory-cap.sh"
+cp "$(dirname "$gates")/tests-lock.sh" "$fx/gates/tests-lock.sh"
+# The fixture's workspace runs take a test lock of their own, never the
+# machine's (gates/tests-lock.sh), and are inside no other run's.
+export TESTS_LOCK_FILE=$tmp/workspace-tests.lock
+unset GATES_TESTS_LOCK_HELD
 cat > "$fx/Cargo.toml" <<'T'
 [workspace]
 members = ["crates/a"]
@@ -42,6 +47,13 @@ mutants_memory_max := "16G"
 mutants_swap_max := "2G"
 tests_memory_max := "none"
 tests_swap_max := "0"
+sccache_mode := "off"
+sccache_opt_out := ""
+sccache_version := ""
+sccache_dir := ""
+sccache_cache_size := ""
+sccache_socket := ""
+sccache_basedirs := ""
 workspace_wide := "Cargo.toml"
 build:
     @just --justfile {{TOP}}/justfile _run build workspace cargo cargo build -q --message-format=short --manifest-path {{TOP}}/Cargo.toml --workspace

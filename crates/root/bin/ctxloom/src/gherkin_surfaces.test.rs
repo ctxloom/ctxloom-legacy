@@ -590,12 +590,6 @@ fn file_matches(w: &mut World, rel: String, pattern: String) {
     assert!(matches(&pattern, &held), "{rel}: {held:?}");
 }
 
-#[then(expr = "the file {string} is valid YAML")]
-fn valid_yaml(w: &mut World, rel: String) {
-    let held = w.common.project.read(&rel).expect("a file");
-    angzarr_yaml::parse(&held).unwrap_or_else(|e| panic!("{rel}: {e}"));
-}
-
 #[then(expr = "the file {string} registers a SessionStart hook whose command contains {string}")]
 fn registers_hook(w: &mut World, rel: String, text: String) {
     assert!(

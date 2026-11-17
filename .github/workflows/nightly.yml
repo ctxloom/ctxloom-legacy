@@ -20,6 +20,12 @@
 # is read run by run. A tier below its threshold fails `score` (the verdict's
 # own exit), after the scores are kept.
 #
+# On a branch that carries red spec on purpose (an integration branch, owner
+# ruling 165), the shard holding the binary's mutants judges its feature
+# runner against the tree's own scenario list (`mutants-shard`'s ratchet,
+# GHERKIN_RATCHET_BASE), so its baseline is not red for the carried red and
+# a new red still fails; the suites job runs the runner straight.
+#
 # A dispatch may choose: `suites` (run the test suites too), `shards` (n),
 # and `only-shard` (run that one shard k of n alone, to measure a shard's
 # time; the score is then of that shard only).
@@ -56,6 +62,15 @@ env:
   # (whether the Linux one can make a user scope is not relied on). Each
   # test step says so in its output.
   TESTS_MEMORY_MAX: none
+  # The compiler cache (sccache, owner ruling of 2026-11-16; the justfile's
+  # sccache_mode) is opted out of, deliberately: it shares builds between
+  # one machine's worktrees, and a hosted runner's cache would start empty
+  # in every job, while rust-cache already keeps target/ between runs. The
+  # justfile defaults to off on GitHub Actions too (for ctxloom/ci's
+  # reusable binaries workflow, which takes no env from this one); this says
+  # it. CARGO_INCREMENTAL=0, which the gates export, is rust-cache's own
+  # setting. Each job that builds says so in its output.
+  CTXLOOM_SCCACHE: "off"
 
 jobs:
   plan:
@@ -121,7 +136,9 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - run: just build
+      - run: |
+          echo "compiler cache: sccache off (CTXLOOM_SCCACHE=off): a hosted runner starts each job with an empty cache; rust-cache keeps target/"
+          just build
       - name: just test (uncapped, TESTS_MEMORY_MAX=none)
         run: |
           echo "test gates: memory cap: none (TESTS_MEMORY_MAX=none): this runner's VM is the job's alone"
@@ -170,6 +187,7 @@ jobs:
               export MUTANTS_MEMORY_MAX=none
               echo "shard $SHARD: no systemd user scope on this runner: mutation run UNCAPPED (MUTANTS_MEMORY_MAX=none)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
+          echo "compiler cache: sccache off (CTXLOOM_SCCACHE=off): a hosted runner starts each job with an empty cache; rust-cache keeps target/"
           start=$(date +%s)
           rc=0
           just mutants-shard "$SHARD" target/logs/mutants-shard || rc=$?

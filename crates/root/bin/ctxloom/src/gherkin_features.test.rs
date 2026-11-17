@@ -41,6 +41,19 @@
 //! run's scenarios, as when one test wrote it. `just closeout-ratchet`
 //! (scripts/closeout-ratchet.sh) judges that list against its base branch's;
 //! nothing else sets it.
+//!
+//! `GHERKIN_RATCHET_BASE=<absolute file>`, a base's scenario list (`just
+//! ratchet-base`'s), judges each cluster against it, in the test itself: it
+//! fails naming each of its scenarios red here and not red in the base
+//! (scripts/ratchet-judge.sh's rule: one the base lists green `broke green`,
+//! one it does not list `added red`), and passes a scenario the base lists
+//! red, red or green. So a tree that carries red spec on purpose (an
+//! integration branch, owner ruling 165) can be mutation-tested with the
+//! runner still judging: its unmutated baseline passes with the base's red,
+//! and a mutant that turns a scenario red is killed. `just mutants-shard`
+//! and `closeout-ratchet`'s `mutants-batch` set it when the base has red
+//! scenarios. Beside `GHERKIN_RATCHET` the list is written first, then
+//! judged.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -420,6 +433,7 @@ fn run_cluster(name: &str) {
         .map(|v| v.to_string_lossy().into_owned())
         .unwrap_or_default();
     let ratchet = host_var("GHERKIN_RATCHET").map(std::path::PathBuf::from);
+    let base = host_var("GHERKIN_RATCHET_BASE").map(std::path::PathBuf::from);
     let scenario = host_var("GHERKIN_SCENARIO").map(|v| v.to_string_lossy().into_owned());
     let chosen: Vec<String> = feature_files()
         .into_iter()
@@ -438,6 +452,19 @@ fn run_cluster(name: &str) {
             "GHERKIN_RATCHET must be absolute: {file:?}"
         );
     }
+    let base = base.map(|file| {
+        assert!(
+            file.is_absolute(),
+            "GHERKIN_RATCHET_BASE must be absolute: {file:?}"
+        );
+        let text = files::read(&file)
+            .unwrap_or_else(|e| panic!("GHERKIN_RATCHET_BASE {file:?} does not read: {e}"));
+        assert!(
+            text.lines().any(|l| l.contains('\t')),
+            "GHERKIN_RATCHET_BASE {file:?} lists no scenario (a runner that listed nothing has shown nothing)"
+        );
+        (file, text)
+    });
     if features.is_empty() {
         return;
     }
@@ -450,9 +477,53 @@ fn run_cluster(name: &str) {
             &scenario_list(&ran.outcomes),
             &failures_file(&ran.steps_failed),
         );
+        if base.is_none() {
+            return;
+        }
+    }
+    if let Some((file, text)) = base {
+        let new = new_red(&text, &ran.outcomes);
+        assert!(
+            new.is_empty(),
+            "{} new red scenarios against the base list {file:?} (GHERKIN_RATCHET_BASE):\n{}\n{}",
+            new.len(),
+            new.join("\n"),
+            failures_file(
+                &ran.steps_failed
+                    .iter()
+                    .filter(|f| new
+                        .iter()
+                        .any(|said| said.ends_with(&format!("  {}", f.scenario))))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            )
+        );
         return;
     }
     assert!(ran.failures.is_empty(), "{}", ran.failures.join("\n"));
+}
+
+/// Each scenario of `outcomes` red here and not red in `base` (a scenario
+/// list, `GHERKIN_RATCHET`'s form), sorted, said as scripts/ratchet-judge.sh
+/// says it: `broke green  <id>` when the base lists it green, `added red
+/// <id>` when it does not list it. A scenario the base lists red passes,
+/// whatever its colour here.
+fn new_red(base: &str, outcomes: &[(String, bool)]) -> Vec<String> {
+    let colour = |id: &str| {
+        base.lines()
+            .filter_map(|line| line.split_once('\t'))
+            .find(|(_, listed)| *listed == id)
+            .map(|(word, _)| word.to_string())
+    };
+    scenario_list(outcomes)
+        .lines()
+        .filter_map(|line| line.strip_prefix("red\t"))
+        .filter_map(|id| match colour(id).as_deref() {
+            Some("red") => None,
+            Some(_) => Some(format!("  broke green  {id}")),
+            None => Some(format!("  added red    {id}")),
+        })
+        .collect()
 }
 
 /// One test per cluster, named by it: `clusters::<name>`, which
@@ -1006,4 +1077,31 @@ fn the_scenario_list_is_sorted_and_says_red_or_green() {
         ("c".to_string(), false),
     ];
     assert_eq!(scenario_list(&outcomes), "red\ta\ngreen\tb\nred\tc\n");
+}
+
+/// Against a base's list a cluster passes the scenarios the base lists red,
+/// whichever colour they are here, and fails each other red one: broke
+/// green where the base lists it green, added red where it lists none.
+#[test]
+fn against_a_base_list_its_red_passes_and_a_new_red_fails() {
+    let base = "red\tf.feature :: carried\ngreen\tf.feature :: kept\nred\tf.feature :: fixed\n";
+    let tolerated = [
+        ("f.feature :: carried".to_string(), false),
+        ("f.feature :: kept".to_string(), true),
+        ("f.feature :: fixed".to_string(), true),
+    ];
+    assert!(new_red(base, &tolerated).is_empty());
+    let broken = [
+        ("f.feature :: carried".to_string(), false),
+        ("f.feature :: kept".to_string(), false),
+        ("f.feature :: new".to_string(), false),
+        ("f.feature :: fixed".to_string(), true),
+    ];
+    assert_eq!(
+        new_red(base, &broken),
+        [
+            "  broke green  f.feature :: kept",
+            "  added red    f.feature :: new"
+        ]
+    );
 }

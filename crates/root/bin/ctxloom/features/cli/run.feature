@@ -1338,3 +1338,22 @@ Feature: run — assembling a project's context and handing it to an engine
         """
       Then the command succeeds, saying her session's start was held
       And the next daemon recorded her session's start, then its exit, in that order
+
+    Scenario: A TUI's exit held while no daemon serves ends its run with its exit code
+      # new: owner ruling OD-59 (2) (2026-11-16): the start-up sweep delivers a judged run's session's hold first.
+      Given an initialized ctxloom project
+      And an interactive session "tui" whose engine has started
+      And the daemon is killed and no daemon can start
+      When the session's engine exits with code 3
+      Then the session's exit report is held
+      When a ctxloom command starts a new daemon
+      Then the session's run ends "runner-exit" with exit code 3
+      And the session's incarnation ends "runner-exit"
+      And the run was never ended "runner-lost"
+
+    Scenario: A held exit report the new daemon cannot take leaves the run lost, and says why
+      # new: owner ruling OD-59 (2) (2026-11-16): what the start-up flush cannot deliver leaves the run to the sweep, said.
+      Given an interactive session "tui" whose exit report was held by a newer ctxloom
+      When an older daemon starts
+      Then the session's run ends "runner-lost"
+      And the daemon's log says the run ended runner-lost without what its hold held

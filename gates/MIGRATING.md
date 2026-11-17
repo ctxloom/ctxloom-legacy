@@ -28,6 +28,43 @@ once:
 lefthook install          # or: just hooks-install
 ```
 
+## The machine-wide test lock (2026-11-16)
+
+Every whole-workspace test run takes one flock per user,
+`${XDG_CACHE_HOME:-$HOME/.cache}/ctxloom/gates/workspace-tests.lock`
+(`gates/tests-lock.sh`), so two agents' runs on one machine never overlap.
+A repository copying it takes `gates/tests-lock.sh`, the `_tests` and
+`_test-workspace` changes in `gates/gates.just` (`test` and
+`test-staged`'s workspace leg now go through `_test-workspace`), its
+`scripts/ratchet-base.sh` re-run under the lock if it has that script,
+the copy of `tests-lock.sh` into each fixture self-test that copies
+`memory-cap.sh` (with `TESTS_LOCK_FILE` set to a file of the fixture's), and
+`scripts/tests-lock.selftest.sh` into its `just selftest`. Keep the lock's
+path as it is: the memory the lock guards is the machine's, so taskloom's
+and annals' runs must take the same file as ctxloom's.
+
+## Every build through sccache (2026-11-16)
+
+`gates/gates.just` exports `CARGO_INCREMENTAL=0` and `RUSTC_WRAPPER` (the
+pinned sccache's path, which `gates/sccache.sh resolve` checks and whose
+server it starts as the file is evaluated) and the cache's `SCCACHE_DIR`,
+`SCCACHE_CACHE_SIZE`, `SCCACHE_SERVER_UDS` and `SCCACHE_BASEDIRS`, to every
+recipe and what it runs. A missing or other sccache fails EVERY recipe, its
+fix the install line and the opt-out. A repository copying it takes
+`gates/sccache.sh`, the export block and the new parameters (the header's
+list: `sccache_mode`, `sccache_opt_out`, `sccache_version`, `sccache_dir`,
+`sccache_cache_size`, `sccache_socket`, `sccache_basedirs`) in its
+justfile, `scripts/sccache.selftest.sh` into its `just selftest` (it runs
+the justfile's opt-out variable: change `CTXLOOM_SCCACHE` there), and its
+CI opting out (or installing sccache at the pin). Each machine installs
+it: `cargo install --locked sccache@<version>`. Give each repository its
+own `sccache_dir` and socket (a unix socket's path is under 108 bytes, so
+not under a deep `$HOME`): sccache hashes a Rust compile's working
+directory, so only dependencies are shared across checkouts, and one
+repository's server keeps its own settings. ctxloom's `just trim-targets`
+(`scripts/trim-targets.sh`, not a gate) clears the target/ of landed, idle,
+clean worktrees.
+
 ## The commit-msg hook (owner ruling 170)
 
 `gates/lefthook.yml` names a `commit-msg` hook: `just commit-msg-check

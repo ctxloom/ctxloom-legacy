@@ -20,8 +20,12 @@
 #      (`ratchet-base.sh <base> --reconfirm`): a difference the base does not
 #      reproduce is FLAKY and fails the ratchet (scripts/ratchet-judge.sh).
 #      `mutants-batch` mutation-tests
-#      merge-base(<base>, HEAD)..HEAD with GHERKIN_RATCHET set too, so the
-#      base's red scenarios do not make its baseline red.
+#      merge-base(<base>, HEAD)..HEAD with GHERKIN_RATCHET_BASE naming the
+#      base's list when it has red: the feature runner judges every run
+#      against it in the test, so the base's red scenarios do not make the
+#      baseline red, a new red still does, and a mutant of the binary that
+#      turns a scenario red is killed (as `just mutants-shard` runs it). A
+#      base with no red sets nothing: the plain gate.
 #   3. A summary line: `ok   closeout-ratchet (6 gates; base 1a2b3c4: 136 red,
 #      4 turned green) 812s`, or `FAIL closeout-ratchet: ...`.
 #
@@ -77,7 +81,7 @@ fi
 dir=$top/target/logs/ratchet
 mkdir -p "$dir"
 slice_list=$dir/slice.list
-rm -f "$slice_list" "$dir/mutants.list"
+rm -f "$slice_list"
 
 # The ratchet's verdict, each difference from the base's list re-confirmed
 # on the base first (owner, 2026-11-14): `ratchet-base.sh --reconfirm`, or
@@ -125,7 +129,9 @@ for gate in "${gates[@]}"; do
             fi
             ;;
         mutants-batch)
-            GHERKIN_RATCHET=$dir/mutants.list just --justfile "$top/justfile" mutants-batch "$fork" 2>&1 \
+            judged=()
+            ! grep -q '^red' "$base_list" || judged=("GHERKIN_RATCHET_BASE=$base_list")
+            env "${judged[@]}" just --justfile "$top/justfile" mutants-batch "$fork" 2>&1 \
                 || failed+=(mutants-batch)
             ;;
         *)

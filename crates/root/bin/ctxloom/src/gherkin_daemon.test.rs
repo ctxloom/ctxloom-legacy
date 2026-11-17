@@ -106,6 +106,13 @@ pub(super) struct State {
     discovered: Option<Value>,
     /// The arguments a step scripted the stub claude's ask with (step 8 U6).
     scripted: Option<Value>,
+    /// How many daemons the log said served when a step said none did.
+    logged_before: Option<usize>,
+    /// What holds the daemon's single-instance lock, so no daemon can start,
+    /// and the file that lets it go.
+    blocker: Option<(Child, PathBuf)>,
+    /// The harp of the interactive session a run.feature step started.
+    tui: Option<String>,
 }
 
 /// An ask the scripted claude made: its server, the call's id, and the
@@ -134,6 +141,11 @@ impl Drop for State {
     fn drop(&mut self) {
         if let Some(release) = &self.release {
             files::put(release, "go");
+        }
+        if let Some((mut blocker, unblock)) = self.blocker.take() {
+            files::put(&unblock, "go");
+            let _ = blocker.kill();
+            let _ = blocker.wait();
         }
         if let Some(mut run) = self.run.take() {
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -910,7 +922,8 @@ fn hosted_working_one_shot(w: &mut World) {
 
 /// The interactive session's stub assistant: it records itself (its
 /// arguments, its whole environment, its directory, whether its session's
-/// lock was held), says it started, and runs until released; a SIGTERM is
+/// lock was held), says it started, and runs until released, then exits
+/// with the code `tui-exit` beside it says (none: 0); a SIGTERM is
 /// said, never obeyed (the scenario that asks for a stop wants the kill).
 /// Its records are named by its project's directory, so two projects'
 /// sessions keep their own.
@@ -926,6 +939,7 @@ trap 'echo asked > "$p/asked"' TERM
 : > "$p/tui-started"
 i=0
 while [ ! -e "$here/release" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+exit "$(cat "$here/tui-exit" 2>/dev/null || echo 0)"
 "#
     )
 }
@@ -1287,9 +1301,13 @@ fn alices_daemon_idle(w: &mut World) {
 
 #[given("no ctxloom daemon is serving for this home")]
 fn none_serving(w: &mut World) {
-    // A fresh home: no daemon has advertised itself there, and one a
-    // command starts idles out at once.
-    assert!(!files::exists(discovery_path(w)), "a fresh home");
+    // A fresh home: no daemon has advertised itself there; or one an
+    // earlier step started is gone (its discovery file left, stale). One a
+    // command starts idles out soon.
+    if files::exists(discovery_path(w)) {
+        assert!(!serving_now(w), "no daemon serves: {}", daemon_log_text(w));
+    }
+    w.daemon_spec.logged_before = Some(daemons_logged(w));
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
 }
@@ -1373,7 +1391,8 @@ fn serving_newer(w: &mut World) {
 
 #[given("a ctxloom daemon of this version is serving for this home")]
 fn serving_this(w: &mut World) {
-    start_daemon(w);
+    // It outlives the scenario's steps: a shutdown must find it serving.
+    start_daemon_idling(w, SPAWNED_IDLE_SECONDS);
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
 }
@@ -5997,4 +6016,294 @@ fn initialized_after_discover(w: &mut World) {
         Some(9),
         "{listed}"
     );
+}
+
+// ------------------------- a shutdown is done once the holds are empty
+
+#[given(expr = "a session {string} whose prompt its hook held while an older daemon served")]
+fn session_prompt_held_older(w: &mut World, harp: String) {
+    w.plant(&harp, "running");
+    holds_a_prompt(w);
+}
+
+#[given(expr = "a session {string} whose prompt is held")]
+fn session_prompt_held(w: &mut World, harp: String) {
+    // Held as a hook holds it: fired while only an older daemon served.
+    session_prompt_held_older(w, harp);
+}
+
+#[given("a session's hold has only a set-aside part")]
+fn hold_set_aside_only(w: &mut World) {
+    // The set-aside part of a session's hold (never delivered again), and
+    // no live part beside it.
+    files::mkdirs(held_dir(w));
+    files::put(
+        held_dir(w).join("5f0c7a52-1111-5111-8111-000000000001.held.corrupt-1"),
+        "not a record",
+    );
+    assert!(holds(w).is_empty(), "no live part: {:?}", holds(w));
+}
+
+#[then(expr = "the output says {string}")]
+fn output_says(w: &mut World, text: String) {
+    let ran = w.common.ran();
+    assert!(ran.stdout.contains(&text), "{text}: {}", ran.said());
+}
+
+#[then("no daemon was started")]
+fn no_daemon_started(w: &mut World) {
+    assert!(!serving_now(w), "{}", daemon_log_text(w));
+    let before = w
+        .daemon_spec
+        .logged_before
+        .expect("no daemon was said to serve");
+    assert_eq!(daemons_logged(w), before, "{}", daemon_log_text(w));
+}
+
+// --------------------- a TUI's exit held while no daemon serves (OD-59 (2))
+
+/// The interactive session's command (`ctxloom run` on a stood-in
+/// terminal, the TUI stub, of `stamp` when one is named), started, its
+/// TUI's start recorded by its daemon: its harp.
+fn tui_started(w: &mut World, stamp: Option<&str>) -> String {
+    let dir = stub_claude(w, &tui_stub());
+    w.daemon_spec.tui_dir = Some(dir.clone());
+    w.daemon_spec.release = Some(dir.join("release"));
+    let mut env = tui_env(w);
+    if let Some(stamp) = stamp {
+        env.push((STAMP_VARIABLE.to_string(), stamp.to_string()));
+    }
+    let mut child = w.common.project.start_with(&env_pairs(&env), &["run"]);
+    let project = w.common.project.dir().to_path_buf();
+    let started = dir.join(project.file_name().unwrap()).join("tui-started");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !files::exists(&started) {
+        if let Ok(Some(_)) = child.try_wait() {
+            let ran = crate::tests::Ran::of(child.wait_with_output().expect("it ran"));
+            panic!("the session ended before its TUI started: {}", ran.said());
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the TUI's start never came; the daemon's log:\n{}",
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    w.daemon_spec.run = Some(child);
+    let harp = tui_record(w, &project, "tui-harp").trim().to_string();
+    wait_for(w, "the daemon's record of the TUI's start", || {
+        run_events(w, &harp).contains(&"RunnerStartedRecorded".to_string())
+    });
+    w.daemon_spec.tui = Some(harp.clone());
+    harp
+}
+
+/// The harp of the session a step started.
+fn tui_harp(w: &World) -> String {
+    w.daemon_spec.tui.clone().expect("an interactive session")
+}
+
+#[given(expr = "an interactive session {string} whose engine has started")]
+fn tui_engine_started(w: &mut World, _session: String) {
+    // `run` mints the session's harp; the step's name is the scenario's
+    // handle for that session.
+    tui_started(w, None);
+}
+
+/// Kill the daemon serving outright, a blocker taking its single-instance
+/// lock as the kill lets it go (waiting on it BEFORE the kill, so it is
+/// ahead of the daemon the frontend's watch starts at once): no daemon can
+/// start until the blocker is let go.
+fn kill_and_block(w: &mut World) {
+    let dir = w.daemon_spec.tui_dir.clone().expect("the TUI stub's");
+    let lock = daemon_dir(w).join("daemon.lock");
+    let unblock = dir.join("unblock");
+    let holder = dir.join("blocks-daemons");
+    files::put_program(&holder, WAITS_FOR_LOCK);
+    let blocker = std::process::Command::new(&holder)
+        .args([lock.as_os_str(), unblock.as_os_str()])
+        .spawn()
+        .expect("the blocker starts");
+    w.daemon_spec.blocker = Some((blocker, unblock));
+    let pid = discovery_now(w).pid;
+    let killed = std::process::Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(killed.success(), "the daemon was killed");
+    wait_for(w, "the killed daemon's end", || !alive(pid));
+    w.daemon_spec.killed_pid = Some(pid);
+    wait_for(w, "the daemon's lock held", || lock_held(&lock));
+}
+
+/// Let the blocker go: a daemon can start again.
+fn unblock(w: &mut World) {
+    let (mut blocker, unblock) = w.daemon_spec.blocker.take().expect("a blocker");
+    files::put(&unblock, "go");
+    let _ = blocker.wait();
+}
+
+#[given("the daemon is killed and no daemon can start")]
+fn killed_and_unstartable(w: &mut World) {
+    kill_and_block(w);
+}
+
+/// The TUI exits `code`; the session's command is waited for.
+fn tui_exits(w: &mut World, code: i32) -> crate::tests::Ran {
+    let dir = w.daemon_spec.tui_dir.clone().expect("the TUI stub's");
+    files::put(dir.join("tui-exit"), code.to_string());
+    files::put(dir.join("release"), "go");
+    session_ran(w)
+}
+
+#[when(expr = "the session's engine exits with code {int}")]
+fn engine_exits(w: &mut World, code: i32) {
+    tui_exits(w, code);
+}
+
+/// The session's hold (its `.held` file), once it holds the exit report,
+/// with nothing yet ending the run.
+fn exit_held(w: &mut World) {
+    let ran = session_ran(w);
+    assert!(
+        ran.stderr
+            .contains("held the session's exit for the next daemon"),
+        "{}",
+        ran.said()
+    );
+    assert_eq!(holds(w).len(), 1, "the session's hold: {:?}", holds(w));
+    let harp = tui_harp(w);
+    assert!(
+        !run_events(w, &harp).contains(&"RunEnded".to_string()),
+        "nothing ended the run yet: {:?}",
+        run_events(w, &harp)
+    );
+}
+
+#[then("the session's exit report is held")]
+fn exit_report_held(w: &mut World) {
+    exit_held(w);
+}
+
+#[when("a ctxloom command starts a new daemon")]
+fn command_starts_a_daemon(w: &mut World) {
+    unblock(w);
+    let listed = run_now(w, &["session", "list"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    let killed = w.daemon_spec.killed_pid.expect("a daemon was killed");
+    assert_ne!(discovery_now(w).pid, killed, "another daemon");
+}
+
+/// The cause a run's end is recorded with, as the spec says it.
+fn end_cause(said: &str) -> &'static str {
+    match said {
+        "runner-exit" => "RunnerExit",
+        "runner-lost" => "RunnerLoss",
+        other => panic!("a run's end the spec says: {other:?}"),
+    }
+}
+
+/// The events of the session's run, as `test session-events` prints them.
+fn run_rows(w: &World) -> Vec<Value> {
+    let ran = run_now(w, &["test", "session-events", &tui_harp(w), "--run", "1"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    ran.json().as_array().cloned().unwrap_or_default()
+}
+
+/// The run's one end, once it is recorded.
+fn run_end(w: &World) -> Value {
+    wait_for(w, "the run's end", || {
+        run_rows(w).iter().any(|e| e["type"] == "RunEnded")
+    });
+    let ends: Vec<Value> = run_rows(w)
+        .into_iter()
+        .filter(|e| e["type"] == "RunEnded")
+        .collect();
+    assert_eq!(ends.len(), 1, "one end: {ends:?}");
+    ends[0].clone()
+}
+
+#[then(expr = "the session's run ends {string} with exit code {int}")]
+fn run_ends_with_code(w: &mut World, cause: String, code: i64) {
+    let end = run_end(w);
+    assert_eq!(
+        end["cause"],
+        end_cause(&cause),
+        "{end}\n{}",
+        daemon_log_text(w)
+    );
+    assert_eq!(end["exit_code"], code, "the TUI's own exit code: {end}");
+}
+
+#[then(expr = "the session's run ends {string}")]
+fn run_ends(w: &mut World, cause: String) {
+    let end = run_end(w);
+    assert_eq!(
+        end["cause"],
+        end_cause(&cause),
+        "{end}\n{}",
+        daemon_log_text(w)
+    );
+}
+
+#[then(expr = "the session's incarnation ends {string}")]
+fn incarnation_ends(w: &mut World, cause: String) {
+    let harp = tui_harp(w);
+    let ended = || -> Vec<String> {
+        caused_events(w, &harp, false)
+            .into_iter()
+            .filter(|(t, _)| t == "IncarnationEnded")
+            .map(|(_, cause)| cause)
+            .collect()
+    };
+    wait_for(w, "the incarnation's end", || !ended().is_empty());
+    assert_eq!(ended(), [cause], "{}", daemon_log_text(w));
+}
+
+#[then(expr = "the run was never ended {string}")]
+fn never_ended(w: &mut World, cause: String) {
+    assert_eq!(cause, "runner-lost", "the end the spec rules out");
+    let rows = run_rows(w);
+    assert!(
+        !rows.iter().any(|e| e["type"] == "RunnerLostRecorded"
+            || (e["type"] == "RunEnded" && e["cause"] == end_cause(&cause))),
+        "{rows:?}"
+    );
+}
+
+#[given(expr = "an interactive session {string} whose exit report was held by a newer ctxloom")]
+fn exit_held_by_newer(w: &mut World, _session: String) {
+    w.common.project = crate::tests::library::Project::initialized();
+    // The session's frontend and its daemon are of a newer ctxloom; the
+    // daemon is killed and none can start, so its TUI's exit report is
+    // held, in the newer one's records. Its engine is the TUI stub before
+    // its daemon starts.
+    stub_claude(w, &tui_stub());
+    start_daemon_stamped(w, NEWER_STAMP);
+    tui_started(w, Some(NEWER_STAMP));
+    kill_and_block(w);
+    if let Some(mut gone) = w.daemon_spec.daemon.take() {
+        let _ = gone.wait();
+    }
+    tui_exits(w, 0);
+    exit_held(w);
+}
+
+#[when("an older daemon starts")]
+fn older_daemon_starts(w: &mut World) {
+    // This version, older than the hold's: it starts as no command of the
+    // newer one would start it.
+    unblock(w);
+    start_daemon_idling(w, SPAWNED_IDLE_SECONDS);
+}
+
+#[then("the daemon's log says the run ended runner-lost without what its hold held")]
+fn log_says_lost_without_hold(w: &mut World) {
+    let log = daemon_log_text(w);
+    assert!(
+        log.contains("ended runner-lost without what its hold held")
+            && log.contains("records held by a newer ctxloom"),
+        "{log}"
+    );
+    assert_eq!(holds(w).len(), 1, "the hold is left: {:?}", holds(w));
 }

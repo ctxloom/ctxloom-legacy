@@ -46,6 +46,15 @@ env:
   # (whether the Linux one can make a user scope is not relied on). Each
   # test step says so in its output.
   TESTS_MEMORY_MAX: none
+  # The compiler cache (sccache, owner ruling of 2026-11-16; the justfile's
+  # sccache_mode) is opted out of, deliberately: it shares builds between
+  # one machine's worktrees, and a hosted runner's cache would start empty
+  # in every job, while rust-cache already keeps target/ between runs. The
+  # justfile defaults to off on GitHub Actions too (for ctxloom/ci's
+  # reusable binaries workflow, which takes no env from this one); this says
+  # it. CARGO_INCREMENTAL=0, which the gates export, is rust-cache's own
+  # setting. Each job that builds says so in its output.
+  CTXLOOM_SCCACHE: "off"
 
 jobs:
   linux:
@@ -77,6 +86,7 @@ jobs:
           node-version: "22"
       - name: Tool versions
         run: |
+          echo "compiler cache: sccache off (CTXLOOM_SCCACHE=off): a hosted runner starts each job with an empty cache; rust-cache keeps target/"
           just --version; cargo nextest --version; cargo deny --version
           protoc --version; node --version; jq --version; ltk --version
           command -v versionator
@@ -126,7 +136,9 @@ jobs:
         with:
           node-version: "22"
       - name: Tool versions
-        run: just --version; cargo nextest --version; protoc --version; node --version; jq --version; command -v versionator; echo "nextest profile $NEXTEST_PROFILE"
+        run: |
+          echo "compiler cache: sccache off (CTXLOOM_SCCACHE=off): a hosted runner starts each job with an empty cache; rust-cache keeps target/"
+          just --version; cargo nextest --version; protoc --version; node --version; jq --version; command -v versionator; echo "nextest profile $NEXTEST_PROFILE"
       - run: just build
       - name: just test (uncapped, TESTS_MEMORY_MAX=none)
         run: |
@@ -160,7 +172,9 @@ jobs:
       # jq: the build's plain-binary checks and nextest's setup script read
       # cargo's JSON with it (the runner image has it).
       - name: Tool versions
-        run: just --version; cargo nextest --version; protoc --version; jq --version; sh --version | head -n 1; command -v versionator; echo "nextest profile $NEXTEST_PROFILE"
+        run: |
+          echo "compiler cache: sccache off (CTXLOOM_SCCACHE=off): a hosted runner starts each job with an empty cache; rust-cache keeps target/"
+          just --version; cargo nextest --version; protoc --version; jq --version; sh --version | head -n 1; command -v versionator; echo "nextest profile $NEXTEST_PROFILE"
       - run: just build
       - name: just test (uncapped, TESTS_MEMORY_MAX=none)
         run: |

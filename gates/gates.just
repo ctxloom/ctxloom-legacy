@@ -46,17 +46,53 @@
 #                        `test-staged`, and every caller of `_tests`), or
 #                        `none` to run them uncapped, said in their log.
 #   tests_swap_max       its swap cap.
+#   sccache_mode         `on` (every build through sccache, below) or `off`
+#                        (no wrapper; the justfile says which variable opts
+#                        out, and when).
+#   sccache_opt_out      how a person opts out, for the failure's fix
+#                        (ctxloom's `CTXLOOM_SCCACHE=off`).
+#   sccache_version      the sccache pinned: any other version fails.
+#   sccache_dir          SCCACHE_DIR, the cache, outside every worktree.
+#   sccache_cache_size   SCCACHE_CACHE_SIZE, its LRU cap (`40G`).
+#   sccache_socket       SCCACHE_SERVER_UDS, the cache's own server's socket.
+#   sccache_basedirs     SCCACHE_BASEDIRS, absolute, `:`-joined.
 #
 # and this recipe, which the hooks call: `lint` (clippy, through `_run`).
 #
-# Needs bash, git, jq, flock, setsid, ps and pkill (util-linux, procps),
+# Needs bash, git, jq, flock, setsid, ps and pkill (util-linux, procps; with
+# no flock the whole-workspace test lock alone is skipped, and said, so that
+# `test` runs on macOS and Windows),
 # systemd-run and journalctl with a reachable systemd user manager (the
 # mutation run's and the test gates' memory caps), cargo-nextest, cargo-deny, cargo-mutants, gitleaks and lefthook. A missing
-# tool fails its gate; nothing skips.
+# tool fails its gate; nothing skips. And sccache at `sccache_version`
+# (unless `sccache_mode` is off), checked as this file is evaluated.
 
 # With forward slashes: on Windows just gives `D:\a\...`, whose backslashes
 # a bash recipe would read as escapes (the logs then landed nowhere findable).
 gates_root := replace(justfile_directory(), '\', '/')
+
+# Every build shares compiler output through sccache (owner ruling of
+# 2026-11-16), exported to every recipe and everything it runs: the gates,
+# the scripts, cargo-mutants' builds and the throwaway worktrees (the staged
+# tree, the ratchet base, the mutants batch), whose own justfile, even an
+# older one, inherits them. gates/sccache.sh checks the pinned version and
+# starts the cache's server, while this file is evaluated: a missing or
+# wrong sccache fails every recipe, saying the fix; `sccache_mode` off
+# exports an empty RUSTC_WRAPPER (no wrapper, whatever the caller's
+# environment held). CARGO_INCREMENTAL=0 always: sccache cannot cache an
+# incremental compile, and it keeps target/*/incremental from growing.
+# Each worktree keeps its own target/ (no shared CARGO_TARGET_DIR, so no
+# wait on another's cargo lock). sccache hashes a Rust compile's working
+# directory and CARGO_MANIFEST_DIR verbatim (SCCACHE_BASEDIRS rewrites only
+# C and C++ compiles, cc-rs's through RUSTC_WRAPPER): a dependency's compile
+# (crates.io, git) is shared between worktrees; a workspace crate's is
+# shared only by builds of the same checkout path.
+export CARGO_INCREMENTAL := "0"
+export RUSTC_WRAPPER := if sccache_mode == "off" { "" } else if sccache_mode == "on" { shell('SCCACHE_OPT_OUT="$7" "$1" resolve "$2" "$3" "$4" "$5" "$6"', gates_root / "gates/sccache.sh", sccache_version, sccache_dir, sccache_cache_size, sccache_socket, sccache_basedirs, sccache_opt_out) } else { error("sccache_mode is on or off, not '" + sccache_mode + "' (" + sccache_opt_out + " opts out)") }
+export SCCACHE_DIR := sccache_dir
+export SCCACHE_CACHE_SIZE := sccache_cache_size
+export SCCACHE_SERVER_UDS := sccache_socket
+export SCCACHE_BASEDIRS := sccache_basedirs
 
 # Gate output is terse, because it lands in agents' context windows. Every
 # gate runs through `_run`: a pass prints one line,
@@ -252,12 +288,12 @@ _extract-trailers log rc:
     cat "$1"
 
 # Every test in the workspace, by cargo-nextest (`_tests`), every feature of
-# `feature_rules` on.
+# `feature_rules` on, under the machine-wide test lock (`_test-workspace`).
 [no-exit-message]
 [group('check')]
 [doc("Every test in the workspace (nextest)")]
 test: (_require-nextest "test")
-    @just --justfile '{{gates_root}}/justfile' _run test workspace tests just --justfile '{{gates_root}}/justfile' _tests --workspace
+    @just --justfile '{{gates_root}}/justfile' _test-workspace test workspace
 
 # Test what the commit changes: lefthook's pre-commit step. Runs the OWN
 # tests of every crate with a staged change, and no dependent's (owner ruling
@@ -373,8 +409,7 @@ _test-affected scope:
         fi
     done < <(git diff --cached --name-only --no-renames -z HEAD)
     if [ -n "$whole" ]; then
-        exec just --justfile "$root/justfile" _run test-staged "workspace: $whole is staged" tests \
-            just --justfile "$root/justfile" _tests --workspace
+        exec just --justfile "$root/justfile" _test-workspace test-staged "workspace: $whole is staged"
     fi
     if [ "${#selected[@]}" -eq 0 ]; then
         echo "ok   test-staged (nothing to test: the staged change is in no crate's sources or manifest)"
@@ -438,6 +473,13 @@ _test-affected scope:
 # built (121, the cap's FAIL line and its fix said); `tests_memory_max`
 # `none` (TESTS_MEMORY_MAX=none) opts out, said in the log. Any exit of the
 # capped run outside the codes above (the cap not taking) is 121 too.
+#
+# A whole-workspace run (`--workspace`) runs under the machine-wide test lock
+# (gates/tests-lock.sh: one flock per user, so two agents' workspace runs on
+# one machine never overlap; a waiter says so once), taken after the cap is
+# had and around the capped run. Its callers through `_test-workspace`
+# already hold it, and inside their run it is not taken again. A run of
+# named packages takes no lock.
 [positional-arguments]
 [no-exit-message]
 _tests +packages:
@@ -446,8 +488,10 @@ _tests +packages:
     root='{{gates_root}}'
     cap=(env MEMORY_CAP_OPT_OUT=TESTS_MEMORY_MAX "$root/gates/memory-cap.sh" tests '{{tests_memory_max}}' '{{tests_swap_max}}')
     "${cap[@]}" --check || exit 121
+    lock=()
+    [ "$1" != --workspace ] || lock=("$root/gates/tests-lock.sh" tests)
     rc=0
-    "${cap[@]}" just --justfile "$root/justfile" _tests-capped "$@" || rc=$?
+    ${lock[@]+"${lock[@]}"} "${cap[@]}" just --justfile "$root/justfile" _tests-capped "$@" || rc=$?
     case "$rc" in
         0|100|101|120|121) exit "$rc" ;;
         *) echo "the capped test run exited $rc: not a test failure"; exit 121 ;;
@@ -894,12 +938,16 @@ push-check remote *lefthook:
     done
     [ "$tested" = 1 ] || echo "ok   push-check (no push to $remote/${default:-?}: nothing to test)"
 
-# Inside a commit's tree (`_commit-tree`): every test of the workspace, as
-# the gate named.
+# Every test of the workspace, as the gate named: `test`, `test-staged`'s
+# workspace leg, and inside a commit's tree (`_commit-tree`) `push-check`'s
+# and `merge-check`'s. Under the machine-wide test lock
+# (gates/tests-lock.sh), taken outside `_run` so that a run waiting on it
+# says so on the terminal, not in the gate's log, and so that the gate's
+# duration is the run's, not the wait's.
 [positional-arguments]
 [no-exit-message]
 _test-workspace gate scope:
-    @just --justfile '{{gates_root}}/justfile' _run "$1" "$2" tests just --justfile '{{gates_root}}/justfile' _tests --workspace
+    @'{{gates_root}}/gates/tests-lock.sh' "$1" just --justfile '{{gates_root}}/justfile' _run "$1" "$2" tests just --justfile '{{gates_root}}/justfile' _tests --workspace
 
 # lefthook's post-merge step. A fast-forward runs no hook git has, so no
 # hook can refuse one; this checks the default branch just after one. When a

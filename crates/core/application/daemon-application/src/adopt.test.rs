@@ -55,9 +55,10 @@ impl RunLocks for Frontend {
     }
 }
 
-/// The project's workspaces: what each was asked to remove.
+/// The project's workspaces: what each was asked to remove, and why it
+/// leaves one (work in it), when it does.
 #[derive(Default)]
-struct Checkouts(Mutex<Vec<String>>);
+struct Checkouts(Mutex<Vec<String>>, Option<String>);
 
 impl isolation_ports::Workspaces for Checkouts {
     fn prepare(
@@ -94,7 +95,10 @@ impl isolation_ports::Workspaces for Checkouts {
 
     fn remove(&self, repo_dir: &str, path: &str) -> isolation_ports::Removal {
         self.0.lock().unwrap().push(format!("{repo_dir} {path}"));
-        isolation_ports::Removal::Removed
+        match &self.1 {
+            Some(why) => isolation_ports::Removal::Left(why.clone()),
+            None => isolation_ports::Removal::Removed,
+        }
     }
 }
 
@@ -442,6 +446,8 @@ async fn a_start_tried_again_adopts_a_run_once() {
 struct Hold {
     edge: Arc<TestEdge>,
     who: runs_application::Identity,
+    /// The start report it holds, delivered first when flushed.
+    start: Option<runs::RecordRunnerStarted>,
     /// The exit report it holds, delivered when flushed; none, it delivers
     /// nothing.
     exit: Option<runs::RecordRunExited>,
@@ -456,6 +462,15 @@ impl crate::StartHolds for Hold {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::HoldFlushed> + Send + 'a>> {
         Box::pin(async move {
             self.asked.lock().unwrap().push(session.to_string());
+            if let (TUI, Some(start)) = (session, &self.start) {
+                runs_application::Facts::new(Arc::clone(&self.edge))
+                    .record(
+                        &self.who,
+                        runs_application::RunnerFact::RunnerStarted(start.clone()),
+                    )
+                    .await
+                    .unwrap();
+            }
             if let (TUI, Some(exit)) = (session, &self.exit) {
                 runs_application::Facts::new(Arc::clone(&self.edge))
                     .record(
@@ -475,6 +490,7 @@ impl Rig {
         Arc::new(Hold {
             edge: Arc::clone(&self.edge),
             who: self.who(),
+            start: None,
             exit,
             answer,
             asked: Mutex::new(Vec::new()),
@@ -615,4 +631,90 @@ async fn the_start_asks_only_the_judged_runs_holds_and_an_empty_one_says_nothing
     assert_eq!(*hold.asked.lock().unwrap(), [TUI.to_string()]);
     let said = rig.said.lock().unwrap().join("\n");
     assert!(!said.contains("its hold"), "{said}");
+}
+
+/// A rig whose checkouts are left (work in them) when `left` says why.
+fn rig_leaving(run: LockProbe, session: LockProbe, left: Option<&str>) -> Rig {
+    let mut rig = Rig::new(run, session);
+    rig.checkouts = Arc::new(Checkouts(Mutex::default(), left.map(str::to_string)));
+    rig
+}
+
+/// The run owed a runner whose frontend's start report AND exit report were
+/// both held while no daemon served (found by OD-59 (2)): its locks free,
+/// the next daemon's start flushes both, so the run is started and ended
+/// before its sweep judges it, and it is adopted from the list of runs OWED
+/// a runner. Its end path ends its incarnation and lets its checkout go,
+/// in the session's own project directory (its mint's).
+async fn both_reports_held(left: Option<&str>) -> (Rig, Daemon<TestEdge>) {
+    let rig = rig_leaving(LockProbe::Free, LockProbe::Free, left);
+    rig.prepared(false).await;
+    let hold = Arc::new(Hold {
+        edge: Arc::clone(&rig.edge),
+        who: rig.who(),
+        start: Some(runs::RecordRunnerStarted {
+            runtime: "claude-code".to_string(),
+            workspace: CHECKOUT.to_string(),
+            pid: 4242,
+        }),
+        exit: exited_with(0),
+        answer: crate::HoldFlushed {
+            delivered: 2,
+            ..crate::HoldFlushed::default()
+        },
+        asked: Mutex::new(Vec::new()),
+    });
+    let mut daemon = rig
+        .daemon()
+        .flushing_at_start(Arc::clone(&hold) as Arc<dyn crate::StartHolds>);
+    let swept = daemon
+        .start_up(&rig.edge.store, rig.edge.catalog())
+        .await
+        .unwrap();
+    assert!(
+        swept.is_empty(),
+        "its reports were held, not lost: {swept:?}"
+    );
+    assert_eq!(daemon.adopted_runs().len(), 1, "adopted");
+    assert!(
+        daemon
+            .end_the_adopted(&rig.edge.store, rig.edge.catalog())
+            .await
+    );
+    assert_eq!(causes(&rig.run_ends().await), [runs::EndCause::RunnerExit]);
+    assert_eq!(
+        rig.incarnations_ended().await,
+        [(1, "runner-exit".to_string())]
+    );
+    (rig, daemon)
+}
+
+#[tokio::test]
+async fn an_adopted_owed_run_whose_reports_were_both_held_releases_its_checkout_in_its_project() {
+    let (rig, daemon) = both_reports_held(None).await;
+    assert_eq!(rig.removed(), [format!("/work {CHECKOUT}")]);
+    assert!(daemon.adopted_runs().is_empty(), "its end path is done");
+    let said = rig.said.lock().unwrap().join("\n");
+    assert!(
+        said.contains(&format!("{TUI}: its checkout {CHECKOUT} removed")),
+        "{said}"
+    );
+}
+
+#[tokio::test]
+async fn an_adopted_owed_run_whose_reports_were_both_held_leaves_a_checkout_holding_work_and_says_so(
+) {
+    let (rig, _) = both_reports_held(Some("1 uncommitted change")).await;
+    assert_eq!(
+        rig.removed(),
+        [format!("/work {CHECKOUT}")],
+        "asked, never forced"
+    );
+    let said = rig.said.lock().unwrap().join("\n");
+    assert!(
+        said.contains(&format!(
+            "{TUI}: its checkout {CHECKOUT} left: 1 uncommitted change"
+        )),
+        "{said}"
+    );
 }
