@@ -306,23 +306,35 @@ impl library_cli::Served for DaemonServed {
             .is_ok_and(|wiring| wiring.ctxloom_project().is_some())
     }
 
-    fn list_bundles(
-        &self,
-        globals: &daemon_proto::v1::Globals,
-    ) -> Result<
-        (
-            daemon_proto::v1::ListBundlesResponse,
-            Vec<daemon_proto::v1::Notice>,
-        ),
-        Failure,
-    > {
-        use daemon_api::LibraryReads;
-        let wiring = self.wiring()?;
-        let client = crate::daemon::library_client(&wiring, &self.version)?;
-        let read = crate::daemon::answered(client.list_bundles(globals))?;
-        Ok((read.answer, read.notices))
-    }
+    library_cli::served_reads!(served_read);
 }
+
+/// [`DaemonServed`]'s reads, from `library_cli::served_reads!`: each the
+/// daemon's (reached, or started) of this binary's stamp.
+macro_rules! served_read {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                under: &str,
+                request: daemon_proto::v1::$request,
+            ) -> Result<
+                (
+                    daemon_proto::v1::$response,
+                    Vec<daemon_proto::v1::Notice>,
+                ),
+                Failure,
+            > {
+                use daemon_api::LibraryReads;
+                let wiring = self.wiring()?;
+                let client = crate::daemon::library_client(&wiring, &self.version)?;
+                let read = crate::daemon::answered(client.$method(under, request))?;
+                Ok((read.answer, read.notices))
+            }
+        )*
+    };
+}
+use served_read;
 
 /// Whether `noun`'s verb in `call` is a read the daemon answers (step 10a
 /// U2), whose home step is the daemon's own; every other verb still runs

@@ -437,56 +437,33 @@ impl<E: Edge + 'static> Calls for Api<E> {
         Box::pin(Api::wait_approval(self, request))
     }
 
-    // The library's reads served (step 10a U2; O3's, the hooks'): each
-    // observed first, then answered by library-api's use case.
-    fn list_bundles(
-        &self,
-        request: v1::ListBundlesRequest,
-    ) -> Answer<'_, daemon_ports::Read<v1::ListBundlesResponse>> {
-        Box::pin(async move {
-            self.open()?;
-            self.library_read(&request, library_api::reads::list_bundles)
-                .await
-        })
-    }
-
-    fn list_agents(
-        &self,
-        request: v1::ListAgentsRequest,
-    ) -> Answer<'_, daemon_ports::Read<v1::ListAgentsResponse>> {
-        Box::pin(async move {
-            self.open()?;
-            self.library_read(&request, library_api::reads::list_agents)
-                .await
-        })
-    }
-
-    fn list_profiles(
-        &self,
-        request: v1::ListProfilesRequest,
-    ) -> Answer<'_, daemon_ports::Read<v1::ListProfilesResponse>> {
-        Box::pin(async move {
-            self.open()?;
-            self.library_read(&request, library_api::reads::list_profiles)
-                .await
-        })
-    }
-
-    fn list_skills(
-        &self,
-        request: v1::ListSkillsRequest,
-    ) -> Answer<'_, daemon_ports::Read<v1::ListSkillsResponse>> {
-        Box::pin(async move {
-            self.open()?;
-            // A bundle's own skills, when the parent names a bundle.
-            let bundle = crate::library_reads::bundle_of(&request.parent);
-            self.library_read(&request, |library, flags, parent| {
-                library_api::reads::list_skills(library, flags, parent, &bundle)
-            })
-            .await
-        })
-    }
+    // The library's reads served (step 10a U2, D12), from library-api's
+    // table: each observed first, then answered by its use case.
+    library_api::served!(served_library_reads);
 }
+
+/// [`Api`]'s served library reads, from `library_api::served!`: each taken
+/// only while the daemon is open, observed first, then answered by
+/// `library_api::reads::$method`.
+macro_rules! served_library_reads {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> Answer<'_, daemon_ports::Read<v1::$response>> {
+                Box::pin(async move {
+                    self.open()?;
+                    self.library_read(&request, |library, flags, parent| {
+                        library_api::reads::$method(library, flags, parent, &request)
+                    })
+                    .await
+                })
+            }
+        )*
+    };
+}
+use served_library_reads;
 
 /// The use cases of the daemon's API.
 pub struct Api<E> {

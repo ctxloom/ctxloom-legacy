@@ -38,8 +38,8 @@ mod prelude {
         finish_text, given, given_list, given_map, given_pairs, nothing, text_only,
     };
     pub(crate) use crate::{
-        api, failed, output_failure, resource, text, text_arg, verb, Context, Failure, IntoFailure,
-        PROG,
+        api, failed, output_failure, resource, served, text, text_arg, verb, Context, Failure,
+        IntoFailure, PROG,
     };
     pub(crate) use daemon_proto::v1;
 }
@@ -101,19 +101,46 @@ pub trait Names {
 }
 
 /// The library reads the daemon answers (step 10a U2; D10: the CLI is the
-/// request and the render): each read's message, and the notices it said
-/// (the daemon's `NOTICE_METADATA`), or why it was not answered.
+/// request and the render): one method per read this CLI asks (the rows of
+/// `daemon_proto::library_reads!` it serves, D12), each answering the read's message
+/// and the notices it said (the daemon's `NOTICE_METADATA`), or why it was
+/// not answered. A read's target is the parent the daemon names this
+/// command's project by (`users/me` outside one) followed by `under`
+/// (`library_api::names`' targets).
 pub trait Served {
     /// Whether this command is in a project (else its reads are the
     /// home's, `users/me`).
     fn in_project(&self) -> bool;
 
-    /// `bundle list`: `ListBundles`.
-    fn list_bundles(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<(v1::ListBundlesResponse, Vec<v1::Notice>), Failure>;
+    served_reads!(served_read);
 }
+
+/// The reads this CLI asks the daemon, in the shape of
+/// `daemon_proto::library_reads!`'s rows, handed to `$each` (the trait's,
+/// the wiring's and the tests' implementations of [`Served`]).
+#[macro_export]
+macro_rules! served_reads {
+    ($each:ident) => {
+        $each! {
+            list_bundles (ListBundles) ListBundlesRequest.parent => ListBundlesResponse,
+        }
+    };
+}
+
+/// [`Served`]'s methods, from [`served_reads!`].
+macro_rules! served_read {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "`.")]
+            fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<(v1::$response, Vec<v1::Notice>), Failure>;
+        )*
+    };
+}
+use served_read;
 
 /// Everything a command needs to answer.
 pub(crate) struct Context<'a> {
@@ -124,6 +151,42 @@ pub(crate) struct Context<'a> {
     format: Format,
     explicit: bool,
     catalog: &'a Catalog,
+}
+
+impl Context<'_> {
+    /// This command's global flags as a read's request carries them (E1).
+    pub(crate) fn globals(&self) -> Option<v1::Globals> {
+        Some(library_api::reads::globals_of(&self.flags))
+    }
+}
+
+/// A served read's answer (step 10a U2, D10: the CLI is the request and
+/// the render): the notices the read said, said; then why it was not
+/// answered, or its message as json (`explicit_json`: only when json is
+/// asked for by name, a verb that answers in text otherwise), or its text,
+/// rendered from the message alone, with the notes the text adds said
+/// after it.
+pub(crate) fn served<M: Serialize>(
+    cx: &Context<'_>,
+    read: Result<(M, Vec<v1::Notice>), Failure>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    explicit_json: bool,
+    text: impl FnOnce(&M, &mut dyn Write, &mut Vec<String>) -> io::Result<()>,
+) -> Result<Exit, Failure> {
+    let (message, notices) = read?;
+    let said: Vec<Notice> = notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    let json = cx.format == Format::Json && (cx.explicit || !explicit_json);
+    let mut notes = Vec::new();
+    if json {
+        api::print(out, &message).map_err(output_failure)?;
+    } else {
+        text(&message, out, &mut notes).map_err(output_failure)?;
+    }
+    let said: Vec<Notice> = notes.into_iter().map(Notice::text).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    Ok(Exit::OK)
 }
 
 /// Run `noun` (given the matches of the whole line).

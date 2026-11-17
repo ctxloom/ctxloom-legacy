@@ -64,30 +64,48 @@ impl Served for ServedBy<'_> {
         self.names.parent().is_ok_and(|parent| parent != "users/me")
     }
 
-    fn list_bundles(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<(v1::ListBundlesResponse, Vec<v1::Notice>), Failure> {
-        let parent = self.names.parent()?;
-        let flags = library_application::Flags {
-            degraded: globals.degraded,
-            no_companions: globals.no_companions,
-            config_set: globals.config_set.clone(),
-            trusted: false,
-        };
-        let outcome = library_api::reads::list_bundles(self.library, &flags, &parent);
-        let notices = outcome
-            .notices
-            .iter()
-            .map(|notice| v1::Notice {
-                code: notice.code().to_string(),
-                args: Vec::new(),
-                text: notice.to_string(),
-            })
-            .collect();
-        Ok((outcome.result.map_err(failed)?, notices))
-    }
+    crate::served_reads!(served_by_library_api);
 }
+
+/// [`ServedBy`]'s reads: each library-api's, over the test's library, its
+/// target the parent `names` gives followed by `under`, its notices said
+/// by code and text.
+macro_rules! served_by_library_api {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<(v1::$response, Vec<v1::Notice>), Failure> {
+                let parent = self.names.parent()?;
+                let request = v1::$request {
+                    $target: format!("{parent}{under}"),
+                    ..request
+                };
+                let globals = request.globals.clone().unwrap_or_default();
+                let flags = library_application::Flags {
+                    degraded: globals.degraded,
+                    no_companions: globals.no_companions,
+                    config_set: globals.config_set.clone(),
+                    trusted: false,
+                };
+                let outcome = library_api::reads::$method(self.library, &flags, &parent, &request);
+                let notices = outcome
+                    .notices
+                    .iter()
+                    .map(|notice| v1::Notice {
+                        code: notice.code().to_string(),
+                        args: Vec::new(),
+                        text: notice.to_string(),
+                    })
+                    .collect();
+                Ok((outcome.result.map_err(failed)?, notices))
+            }
+        )*
+    };
+}
+use served_by_library_api;
 
 /// What one invocation left behind.
 pub(crate) struct Ran {

@@ -61,26 +61,26 @@ pub(crate) fn read(
     }
 }
 
-/// `bundle list`, the daemon's `ListBundles` (step 10a U2): its notices
-/// said, then its message as json, or as text (D10, rendered from the
-/// message alone).
+/// `bundle list`, the daemon's `ListBundles` (step 10a U2), its text
+/// rendered from the message alone (D10).
 fn listed_by_the_daemon(
     cx: &Context<'_>,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let (listed, notices) = cx
-        .served
-        .list_bundles(&library_api::reads::globals_of(&cx.flags))?;
-    let said: Vec<library_application::Notice> =
-        notices.iter().map(library_api::reads::said).collect();
-    say_notices(&said, PROG, cx.format, cx.catalog, err);
-    if cx.format == Format::Json {
-        api::print(out, &listed).map_err(output_failure)?;
-    } else {
-        text::bundles(out, &listed, cx.served.in_project()).map_err(output_failure)?;
-    }
-    Ok(Exit::OK)
+    let request = v1::ListBundlesRequest {
+        globals: cx.globals(),
+        ..v1::ListBundlesRequest::default()
+    };
+    let in_project = cx.served.in_project();
+    served(
+        cx,
+        cx.served.list_bundles("", request),
+        out,
+        err,
+        false,
+        |listed, out, _| text::bundles(out, listed, in_project),
+    )
 }
 
 /// `bundle show`: the `Bundle` (FULL), each child summarised by its name

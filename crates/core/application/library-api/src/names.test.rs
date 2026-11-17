@@ -126,3 +126,68 @@ fn a_bundle_s_name_reads_back_as_its_catalog_name() {
         "projects/p/odd/x"
     );
 }
+
+// Step 10a U2: a command names what it reads by its text as typed, and the
+// daemon reads that text back exactly, so its refusals say what was typed.
+#[test]
+fn every_bundle_text_a_command_takes_reads_back_as_typed() {
+    let parent = "projects/calm-otter";
+    for (text, target) in [
+        ("demo", "/bundles/demo"),
+        ("vendor/kit", "/remotes/vendor/bundles/kit"),
+        ("ctxloom+companion:acme", "/companions/acme/bundles/loadout"),
+        ("ctxloom+local:demo", "/bundles/ctxloom+local:demo"),
+        (
+            "demo#fragments/testing",
+            "/bundles/demo#fragments%2Ftesting",
+        ),
+        (
+            "github.com/o/r.git/kit",
+            "/bundles/github.com%2Fo%2Fr.git%2Fkit",
+        ),
+        ("50%/x", "/bundles/50%25%2Fx"),
+    ] {
+        assert_eq!(super::bundle_target(text), target, "{text}");
+        let name = format!("{parent}{target}");
+        assert_eq!(
+            super::bundle_under(parent, &name).as_deref(),
+            Some(text),
+            "{name}"
+        );
+    }
+    assert_eq!(super::bundle_under(parent, "users/me/bundles/demo"), None);
+    assert_eq!(super::bundle_under(parent, parent), None);
+}
+
+#[test]
+fn every_item_reference_a_command_takes_reads_back_as_typed() {
+    let parent = "users/me";
+    for (reference, target) in [
+        ("demo#fragments/testing", "/bundles/demo/fragments/testing"),
+        (
+            "ctxloom#prompts/distill",
+            "/bundles/ctxloom/prompts/distill",
+        ),
+        (
+            "vendor/kit#profiles/reach",
+            "/remotes/vendor/bundles/kit/profiles/reach",
+        ),
+        ("not-a-real-reference", "/bundles/not-a-real-reference"),
+        ("demo#fragments", "/bundles/demo/-/fragments"),
+        ("demo#a/b/c", "/bundles/demo/-/a%2Fb%2Fc"),
+        ("demo#-/x", "/bundles/demo/-/-%2Fx"),
+        ("demo#", "/bundles/demo/-/"),
+        (
+            "ctxloom+companion:acme#fragments/rules",
+            "/companions/acme/bundles/loadout/fragments/rules",
+        ),
+    ] {
+        assert_eq!(super::reference_target(reference), target, "{reference}");
+        let name = format!("{parent}{target}");
+        assert_eq!(
+            super::reference_under(parent, &name).as_deref(),
+            Some(reference),
+            "{name}"
+        );
+    }
+}

@@ -323,19 +323,22 @@ fn degraded() -> library_application::Flags {
 
 impl crate::HookLibrary for DaemonReads {
     fn agents_and_profiles(&self) -> Option<(bool, bool)> {
-        let agents = library_api::reads::list_agents(&self.0, &degraded(), PARENT)
-            .result
-            .ok()?;
-        let profiles = library_api::reads::list_profiles(&self.0, &degraded(), PARENT)
-            .result
-            .ok()?;
+        let agents =
+            library_api::reads::list_agents(&self.0, &degraded(), PARENT, &Default::default())
+                .result
+                .ok()?;
+        let profiles =
+            library_api::reads::list_profiles(&self.0, &degraded(), PARENT, &Default::default())
+                .result
+                .ok()?;
         Some((!agents.agents.is_empty(), !profiles.profiles.is_empty()))
     }
 
     fn skills(&self) -> Option<Vec<crate::HookSkill>> {
-        let listed = library_api::reads::list_skills(&self.0, &degraded(), PARENT, "")
-            .result
-            .ok()?;
+        let listed =
+            library_api::reads::list_skills(&self.0, &degraded(), PARENT, &Default::default())
+                .result
+                .ok()?;
         Some(crate::hook_skills(&listed))
     }
 }

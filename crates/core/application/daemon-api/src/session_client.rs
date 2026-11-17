@@ -431,35 +431,32 @@ impl<D: Daemons> SessionRemovals for Client<D> {
 }
 
 /// The library reads a command (or a hook, O3) asks of its daemon (step
-/// 10a U2), each under this client's project (`users/me` outside one), at
-/// its working directory, with its environment and `globals` (E1); each
-/// answered with the notices the read said.
+/// 10a U2, D12: one method per row of `daemon_proto::library_reads!`),
+/// each under this client's project (`users/me` outside one), at its
+/// working directory, with its environment (E1); each answered with the
+/// notices the read said. A read's `request` says the rest (its `globals`
+/// among it); its target (a Get's `name`, a List's `parent`) is the
+/// parent followed by `under` (`library_api::names`' targets: empty for
+/// the parent itself, else `/bundles/...`).
 #[allow(async_fn_in_trait)]
 pub trait LibraryReads {
-    /// `bundle list`'s read.
-    async fn list_bundles(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListBundlesResponse>, CallError>;
-
-    /// `agent list`'s read.
-    async fn list_agents(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListAgentsResponse>, CallError>;
-
-    /// `profile list`'s read.
-    async fn list_profiles(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListProfilesResponse>, CallError>;
-
-    /// `skill list`'s read, of every bundle.
-    async fn list_skills(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListSkillsResponse>, CallError>;
+    daemon_proto::library_reads!(library_read_declarations);
 }
+
+/// [`LibraryReads`]' methods, from `daemon_proto::library_reads!`.
+macro_rules! library_read_declarations {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "`, under this client's parent.")]
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<crate::Read<v1::$response>, CallError>;
+        )*
+    };
+}
+use library_read_declarations;
 
 impl<D: Daemons> Client<D> {
     /// The parent a library read is under: this client's project, as the
@@ -473,74 +470,36 @@ impl<D: Daemons> Client<D> {
 }
 
 impl<D: Daemons> LibraryReads for Client<D> {
-    async fn list_bundles(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListBundlesResponse>, CallError> {
-        self.on_daemon(async |api: &D::Api| {
-            let request = v1::ListBundlesRequest {
-                parent: self.library_parent_on(api).await?,
-                cwd: self.cwd.clone(),
-                env: Some(self.env.clone()),
-                globals: Some(globals.clone()),
-                ..v1::ListBundlesRequest::default()
-            };
-            api.list_bundles(request).await
-        })
-        .await
-    }
-
-    async fn list_agents(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListAgentsResponse>, CallError> {
-        self.on_daemon(async |api: &D::Api| {
-            let request = v1::ListAgentsRequest {
-                parent: self.library_parent_on(api).await?,
-                cwd: self.cwd.clone(),
-                env: Some(self.env.clone()),
-                globals: Some(globals.clone()),
-                ..v1::ListAgentsRequest::default()
-            };
-            api.list_agents(request).await
-        })
-        .await
-    }
-
-    async fn list_profiles(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListProfilesResponse>, CallError> {
-        self.on_daemon(async |api: &D::Api| {
-            let request = v1::ListProfilesRequest {
-                parent: self.library_parent_on(api).await?,
-                cwd: self.cwd.clone(),
-                env: Some(self.env.clone()),
-                globals: Some(globals.clone()),
-                ..v1::ListProfilesRequest::default()
-            };
-            api.list_profiles(request).await
-        })
-        .await
-    }
-
-    async fn list_skills(
-        &self,
-        globals: &v1::Globals,
-    ) -> Result<crate::Read<v1::ListSkillsResponse>, CallError> {
-        self.on_daemon(async |api: &D::Api| {
-            let request = v1::ListSkillsRequest {
-                parent: self.library_parent_on(api).await?,
-                cwd: self.cwd.clone(),
-                env: Some(self.env.clone()),
-                globals: Some(globals.clone()),
-                ..v1::ListSkillsRequest::default()
-            };
-            api.list_skills(request).await
-        })
-        .await
-    }
+    daemon_proto::library_reads!(library_read_requests);
 }
+
+/// [`Client`]'s [`LibraryReads`], from `daemon_proto::library_reads!`:
+/// each request's target, directory and environment this client's (asked
+/// again on a retry, the daemon reached again).
+macro_rules! library_read_requests {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<crate::Read<v1::$response>, CallError> {
+                self.on_daemon(async |api: &D::Api| {
+                    let parent = self.library_parent_on(api).await?;
+                    let request = v1::$request {
+                        $target: format!("{parent}{under}"),
+                        cwd: self.cwd.clone(),
+                        env: Some(self.env.clone()),
+                        ..request.clone()
+                    };
+                    api.$method(request).await
+                })
+                .await
+            }
+        )*
+    };
+}
+use library_read_requests;
 
 #[cfg(test)]
 #[path = "session_client.test.rs"]

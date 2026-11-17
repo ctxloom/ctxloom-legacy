@@ -133,8 +133,26 @@ fn degraded() -> v1::Globals {
 impl HookLibrary for DaemonHookLibrary {
     fn agents_and_profiles(&self) -> Option<(bool, bool)> {
         self.ask(async |client| {
-            let agents = client.list_agents(&degraded()).await.ok()?;
-            let profiles = client.list_profiles(&degraded()).await.ok()?;
+            let agents = client
+                .list_agents(
+                    "",
+                    v1::ListAgentsRequest {
+                        globals: Some(degraded()),
+                        ..v1::ListAgentsRequest::default()
+                    },
+                )
+                .await
+                .ok()?;
+            let profiles = client
+                .list_profiles(
+                    "",
+                    v1::ListProfilesRequest {
+                        globals: Some(degraded()),
+                        ..v1::ListProfilesRequest::default()
+                    },
+                )
+                .await
+                .ok()?;
             Some((
                 !agents.answer.agents.is_empty(),
                 !profiles.answer.profiles.is_empty(),
@@ -144,7 +162,16 @@ impl HookLibrary for DaemonHookLibrary {
 
     fn skills(&self) -> Option<Vec<HookSkill>> {
         self.ask(async |client| {
-            let listed = client.list_skills(&degraded()).await.ok()?;
+            let listed = client
+                .list_skills(
+                    "",
+                    v1::ListSkillsRequest {
+                        globals: Some(degraded()),
+                        ..v1::ListSkillsRequest::default()
+                    },
+                )
+                .await
+                .ok()?;
             Some(hook_skills(&listed.answer))
         })
     }

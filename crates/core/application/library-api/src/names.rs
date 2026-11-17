@@ -130,6 +130,96 @@ pub fn bundle_ref(parent: &str, text: &str) -> String {
     bundle_name(parent, text)
 }
 
+/// What a read's target says after its parent (step 10a U2): the bundle a
+/// command names, by its text as typed, so the daemon reads it back
+/// exactly ([`bundle_under`]): `/bundles/<b>`, `/remotes/<r>/bundles/<b>`
+/// for a remote's, `/companions/<c>/bundles/loadout` for a companion's
+/// loadout, as [`bundle_name`] names them; any other text (a canonical
+/// reference, one with more than one `/`) is `/bundles/<text>` with its `%`
+/// and `/` escaped, so no text a command takes is lost on the way.
+pub fn bundle_target(text: &str) -> String {
+    let plain = |part: &str| !part.is_empty() && !part.contains(['/', '%']);
+    if let Some(companion) = text.strip_prefix(COMPANION) {
+        if plain(companion) {
+            return format!("/companions/{companion}/bundles/loadout");
+        }
+    }
+    if !text.contains('#') && !text.starts_with(COMPANION) {
+        if let Some((remote, bundle)) = text.split_once('/') {
+            if plain(remote) && plain(bundle) {
+                return format!("/remotes/{remote}/bundles/{bundle}");
+            }
+        }
+    }
+    if plain(text) {
+        return format!("/bundles/{text}");
+    }
+    format!("/bundles/{}", escaped(text))
+}
+
+/// What a read's target says after its parent for an item a command names
+/// by its reference (`<bundle>#<kind>/<name>`), as typed: its bundle's
+/// [`bundle_target`], then `/<kind>/<name>`; a path of any other shape
+/// (none, one segment, more) is `/-/<path>` escaped, and a reference with
+/// no `#` is its bundle's target alone. [`reference_under`] reads it back.
+pub fn reference_target(reference: &str) -> String {
+    let Some((bundle, path)) = reference.split_once('#') else {
+        return bundle_target(reference);
+    };
+    let plain = |part: &str| !part.is_empty() && !part.contains(['/', '%']);
+    let item = match path.split_once('/') {
+        Some((kind, id)) if plain(kind) && plain(id) && kind != "-" => format!("/{kind}/{id}"),
+        _ => format!("/-/{}", escaped(path)),
+    };
+    format!("{}{item}", bundle_target(bundle))
+}
+
+/// The bundle text a target under `parent` names ([`bundle_target`] read
+/// back), or none when it names no bundle.
+pub fn bundle_under(parent: &str, name: &str) -> Option<String> {
+    let (bundle, rest) = split_bundle(parent, name)?;
+    rest.is_empty().then_some(bundle)
+}
+
+/// The item reference a target under `parent` names ([`reference_target`]
+/// read back), or none when it names no bundle.
+pub fn reference_under(parent: &str, name: &str) -> Option<String> {
+    let (bundle, rest) = split_bundle(parent, name)?;
+    match rest.as_slice() {
+        [] => Some(bundle),
+        ["-", path] => Some(format!("{bundle}#{}", unescaped(path))),
+        [kind, id] => Some(format!("{bundle}#{kind}/{id}")),
+        _ => None,
+    }
+}
+
+/// A target's bundle text and the segments after its bundle.
+fn split_bundle<'a>(parent: &str, name: &'a str) -> Option<(String, Vec<&'a str>)> {
+    let rest = name.strip_prefix(parent)?.strip_prefix('/')?;
+    let segments: Vec<&str> = rest.split('/').collect();
+    match segments.as_slice() {
+        ["companions", companion, "bundles", "loadout", rest @ ..] => {
+            Some((format!("{COMPANION}{companion}"), rest.to_vec()))
+        }
+        ["remotes", remote, "bundles", bundle, rest @ ..] => Some((
+            format!("{}/{}", unescaped(remote), unescaped(bundle)),
+            rest.to_vec(),
+        )),
+        ["bundles", bundle, rest @ ..] => Some((unescaped(bundle), rest.to_vec())),
+        _ => None,
+    }
+}
+
+/// `text` with its `%` and `/` escaped, as one segment of a name.
+fn escaped(text: &str) -> String {
+    text.replace('%', "%25").replace('/', "%2F")
+}
+
+/// [`escaped`] read back.
+fn unescaped(text: &str) -> String {
+    text.replace("%2F", "/").replace("%25", "%")
+}
+
 #[cfg(test)]
 #[path = "names.test.rs"]
 mod tests;

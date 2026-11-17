@@ -83,18 +83,6 @@ pub(crate) fn parent_of(target: &str) -> Option<(String, Option<ProjectName>)> {
     Some((parent, Some(name)))
 }
 
-/// The bundle a listing's parent names (`.../bundles/{b}`,
-/// `.../remotes/{r}/bundles/{b}`), by its catalog name; empty for a
-/// project's or the home's whole catalog.
-pub(crate) fn bundle_of(parent: &str) -> String {
-    let rest = parent.splitn(3, '/').nth(2).unwrap_or_default();
-    match rest.split('/').collect::<Vec<_>>().as_slice() {
-        ["bundles", bundle] => (*bundle).to_string(),
-        ["remotes", remote, "bundles", bundle] => format!("{remote}/{bundle}"),
-        _ => String::new(),
-    }
-}
-
 /// The global flags of a read, as the library's use cases take them.
 pub(crate) fn flags_of(globals: Option<&v1::Globals>) -> Flags {
     let globals = globals.cloned().unwrap_or_default();

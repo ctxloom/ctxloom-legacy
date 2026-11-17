@@ -4,7 +4,7 @@ use daemon_proto::v1;
 use library_application::fakes::{Setup, ENVELOPE};
 use library_application::Library;
 
-use super::{bundle_of, flags_of, parent_of, Libraries};
+use super::{flags_of, parent_of, Libraries};
 use crate::server::tests::{fixture, observing, resolve, Gits, COMMIT, ROOT};
 use crate::{ApiError, Calls};
 
@@ -18,17 +18,6 @@ fn a_read_s_parent_is_its_project_or_the_home() {
     assert!(project.is_none());
     assert!(parent_of("bundles/demo").is_none());
     assert!(parent_of("projects/").is_none());
-}
-
-#[test]
-fn a_listing_s_bundle_is_the_one_its_parent_names() {
-    assert_eq!(bundle_of("projects/p/bundles/demo"), "demo");
-    assert_eq!(
-        bundle_of("projects/p/remotes/acme/bundles/rules"),
-        "acme/rules"
-    );
-    assert_eq!(bundle_of("projects/p"), "");
-    assert_eq!(bundle_of("users/me"), "");
 }
 
 #[test]

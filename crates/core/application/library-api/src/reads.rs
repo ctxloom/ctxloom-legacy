@@ -5,14 +5,15 @@
 //! is the use case's own error, which the daemon answers as its typed
 //! refusal (E5).
 //!
-//! Served so far: `ListBundles` (`bundle list`), and `ListAgents`,
-//! `ListProfiles` and `ListSkills`, the reads of the engines' hooks (O3:
-//! the session-start nudge and the skill mates).
+//! Each read is `fn(library, flags, parent, request)`, the parent the
+//! target is under (`projects/{harp}` or `users/me`), so one table,
+//! [`served!`](crate::served), lists what the daemon serves, and each layer
+//! generates its part from it (D12).
 
 use daemon_proto::v1;
 use library_application::{DefaultAgent, Flags, Library, Outcome};
 
-use crate::resources;
+use crate::{names, resources};
 
 /// A notice a read said, as the command says it: its code and args,
 /// rendered by the command's own catalog.
@@ -37,11 +38,27 @@ fn mapped<T, U>(outcome: Outcome<T>, f: impl FnOnce(T) -> U) -> Outcome<U> {
     }
 }
 
+/// The library reads the daemon serves (step 10a U2, D12), in the shape
+/// of `daemon_proto::library_reads!`'s rows, handed to `$each`: each row's
+/// `reads::$method` answers it.
+#[macro_export]
+macro_rules! served {
+    ($each:ident) => {
+        $each! {
+            list_bundles (ListBundles) ListBundlesRequest.parent => ListBundlesResponse,
+            list_agents (ListAgents) ListAgentsRequest.parent => ListAgentsResponse,
+            list_profiles (ListProfiles) ListProfilesRequest.parent => ListProfilesResponse,
+            list_skills (ListSkills) ListSkillsRequest.parent => ListSkillsResponse,
+        }
+    };
+}
+
 /// `ListBundles`: the whole catalog, every origin.
 pub fn list_bundles(
     library: &Library,
     flags: &Flags,
     parent: &str,
+    _: &v1::ListBundlesRequest,
 ) -> Outcome<v1::ListBundlesResponse> {
     mapped(library.bundle_list(flags), |list| {
         resources::bundles(parent, &list)
@@ -54,6 +71,7 @@ pub fn list_agents(
     library: &Library,
     flags: &Flags,
     parent: &str,
+    _: &v1::ListAgentsRequest,
 ) -> Outcome<v1::ListAgentsResponse> {
     let read = library.agent_list(flags);
     // Asked only once the listing was had, so its notices are the
@@ -70,20 +88,22 @@ pub fn list_profiles(
     library: &Library,
     flags: &Flags,
     parent: &str,
+    _: &v1::ListProfilesRequest,
 ) -> Outcome<v1::ListProfilesResponse> {
     let read = library.profile_list(flags);
     mapped(read, |list| resources::profiles(parent, &list))
 }
 
-/// `ListSkills`: every skill of the catalog (`bundle`: of that bundle
-/// alone, by its catalog name; empty, every one).
+/// `ListSkills`: every skill of the catalog, or of the one bundle the
+/// request's parent names (`.../bundles/{b}`).
 pub fn list_skills(
     library: &Library,
     flags: &Flags,
     parent: &str,
-    bundle: &str,
+    request: &v1::ListSkillsRequest,
 ) -> Outcome<v1::ListSkillsResponse> {
-    let read = library.skill_list(flags, bundle);
+    let bundle = names::bundle_under(parent, &request.parent).unwrap_or_default();
+    let read = library.skill_list(flags, &bundle);
     mapped(read, |list| resources::skills(parent, &list))
 }
 
