@@ -278,14 +278,17 @@ fn shared_over(
     (fs, home): (&Arc<dyn Fs>, &Path),
     pace: Pace,
 ) -> Arc<Shared> {
-    Arc::new(Shared::new(
-        kept.index.clone().unwrap_or_default(),
-        Arc::clone(one_shots),
-        Period {
-            default: pace.hand_over,
-            configured: configured_drain_timeout(fs, home),
-        },
-    ))
+    Arc::new(
+        Shared::new(
+            kept.index.clone().unwrap_or_default(),
+            Arc::clone(one_shots),
+            Period {
+                default: pace.hand_over,
+                configured: configured_drain_timeout(fs, home),
+            },
+        )
+        .watching(DaemonFiles::new(Arc::clone(fs), home)),
+    )
 }
 
 /// The daemon's monotonic clock (OD-54): the time since its process made it.
@@ -1156,7 +1159,13 @@ struct Shared {
     start_up: Mutex<Option<String>>,
     /// Where a drain's period comes from.
     period: Period,
+    /// The daemon's home's ctxloom directory, once it is gone (OD-60, owner
+    /// 2026-11-17), looked at each time it is asked.
+    home_gone: HomeGone,
 }
+
+/// Where [`Shared`] looks for its home: none while it is there.
+type HomeGone = Box<dyn Fn() -> Option<String> + Send + Sync>;
 
 #[derive(Default)]
 struct Round {
@@ -1201,6 +1210,15 @@ impl Shared {
             done: tokio::sync::watch::Sender::new(0),
             wake: tokio::sync::Notify::new(),
             start_up: Mutex::new(None),
+            home_gone: Box::new(|| None),
+        }
+    }
+
+    /// The same, looking at `files`' home for whether it is gone.
+    fn watching(self, files: DaemonFiles) -> Shared {
+        Shared {
+            home_gone: Box::new(move || files.gone_home()),
+            ..self
         }
     }
 
@@ -1325,6 +1343,10 @@ impl daemon_api::Hosting for Shared {
 
     fn draining(&self) -> bool {
         self.round().drain
+    }
+
+    fn home_gone(&self) -> Option<String> {
+        (self.home_gone)()
     }
 
     /// The next round to START after this call (so its catch-up reads what

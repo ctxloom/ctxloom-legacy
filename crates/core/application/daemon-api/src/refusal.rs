@@ -141,6 +141,11 @@ pub enum ApiRejection {
         daemon: String,
         harps: Vec<String>,
     },
+    /// A call that would create files under the daemon's home once that
+    /// home's ctxloom directory is gone (owner, 2026-11-17): `home`.
+    HomeGone {
+        home: String,
+    },
     /// A configured age (`session_purge_age`) that is neither an age nor a
     /// date.
     AgeInvalid {
@@ -192,6 +197,7 @@ impl Diagnostic for ApiRejection {
             ApiRejection::ProjectUnknown { .. } => code!("project-unknown"),
             ApiRejection::DaemonHosting { .. } => code!("daemon-hosting"),
             ApiRejection::Draining { .. } => code!("draining"),
+            ApiRejection::HomeGone { .. } => code!("home-gone"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
             ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
@@ -241,6 +247,7 @@ impl Diagnostic for ApiRejection {
                 ("daemon", daemon.as_str().into()),
                 ("harps", harps.join(", ").into()),
             ],
+            ApiRejection::HomeGone { home } => vec![("home", home.as_str().into())],
             ApiRejection::AgeInvalid { key, value } => {
                 vec![
                     ("key", key.as_str().into()),
@@ -429,6 +436,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 harps: r.harps,
             })
         }),
+        "ctxloom.v1.DaemonHomeGone" => decode::<v1::DaemonHomeGone>(refusal)
+            .and_then(|r| api(ApiRejection::HomeGone { home: r.home })),
         "ctxloom.v1.AgeInvalid" => decode::<v1::AgeInvalid>(refusal).and_then(|r| {
             api(ApiRejection::AgeInvalid {
                 key: r.key,
@@ -591,6 +600,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ApiRejection::Draining {
             daemon: "v0.1.0-abc".to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
+        }),
+        Box::new(ApiRejection::HomeGone {
+            home: "/home/u/.ctxloom".to_string(),
         }),
         Box::new(ApiRejection::AgeInvalid {
             key: "session_purge_age".to_string(),

@@ -172,8 +172,19 @@ impl DaemonFiles {
     /// as it may be elsewhere (the account's, while `CTXLOOM_HOME` names
     /// another home; a test's own place). What cannot be told is there.
     pub(crate) fn home_gone(&self) -> bool {
-        let ctxloom = self.dir.parent().unwrap_or(&self.dir);
-        matches!(self.fs.exists(ctxloom), Ok(false))
+        matches!(self.fs.exists(self.ctxloom_dir()), Ok(false))
+    }
+
+    /// The daemon's ctxloom directory as a person reads it, once it is gone
+    /// ([`home_gone`](Self::home_gone)); none while it is there.
+    pub(crate) fn gone_home(&self) -> Option<String> {
+        self.home_gone()
+            .then(|| self.ctxloom_dir().display().to_string())
+    }
+
+    /// The daemon's ctxloom directory, `<home>/.ctxloom` (its store's).
+    fn ctxloom_dir(&self) -> &Path {
+        self.dir.parent().unwrap_or(&self.dir)
     }
 
     /// The daemon's directory, made if missing and held to 0700 whoever made

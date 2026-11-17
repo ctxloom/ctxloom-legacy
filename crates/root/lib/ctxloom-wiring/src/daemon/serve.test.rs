@@ -439,6 +439,34 @@ fn unsaid() -> super::Period {
     }
 }
 
+// The owner's ruling of 2026-11-17: what the loop shares with the API says
+// the daemon's home is gone once its ctxloom directory is removed, naming
+// it, so a call that would create files there is refused; and says nothing
+// while it is there.
+#[test]
+fn the_shared_round_says_the_daemons_home_is_gone_once_it_is_removed() {
+    use daemon_api::Hosting;
+    let root = fixtures::root();
+    let home = root.root().join("home");
+    let files = DaemonFiles::new(fixtures::fs(), &home);
+    let _held = files.hold_instance(Duration::ZERO).expect("the lock");
+    let one_shots = Arc::new(daemon_application::OneShots::new(Box::new(Kept(
+        Arc::default(),
+    ))));
+    let shared = super::Shared::new(
+        session_index::SessionIndexes::default(),
+        one_shots,
+        unsaid(),
+    )
+    .watching(DaemonFiles::new(fixtures::fs(), &home));
+    assert_eq!(shared.home_gone(), None, "its home is there");
+    fixtures::remove_dir(home.join(".ctxloom"));
+    assert_eq!(
+        shared.home_gone(),
+        Some(home.join(".ctxloom").display().to_string())
+    );
+}
+
 // Owner, 2026-11-15: a drain's period is the one its request asked
 // (`ctxloom shutdown <duration>`), else the home config's (read again each
 // time, so a change while it drains is the drain's), else the default; the

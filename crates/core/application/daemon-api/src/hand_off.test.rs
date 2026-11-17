@@ -311,6 +311,26 @@ async fn a_draining_daemon_withdraws_a_hand_off_made_before_the_drain() {
     assert!(draining.harps.is_empty(), "{draining:?}");
 }
 
+// The owner's ruling of 2026-11-17: a hand-off asked for once the daemon's
+// home is gone is refused `DaemonHomeGone`, before anything is planned or
+// written: nothing is created there.
+#[tokio::test]
+async fn a_hand_off_asked_for_once_the_home_is_gone_is_refused_and_writes_nothing() {
+    use crate::Calls;
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        ..Kept::default()
+    });
+    let (f, api) = with_owner(&kept).await;
+    *f.hosting.home_gone.lock().unwrap() = Some("/home/u/.ctxloom".to_string());
+    let calls: &dyn Calls = &api;
+    let (_, gone): (_, v1::DaemonHomeGone) =
+        refused(calls.create_hand_off(create("amber-quiet-heron")).await);
+    assert_eq!(gone.home, "/home/u/.ctxloom");
+    assert!(kept.planned.lock().unwrap().is_empty(), "planned");
+    assert!(kept.written.lock().unwrap().is_empty(), "written");
+}
+
 // ---------------------------------------- step 8 U2: trust and the target
 
 /// The second project, `api`, as `ResolveProject` registers it.
