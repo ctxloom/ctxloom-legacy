@@ -620,21 +620,16 @@ fn delete_ctxloom(w: &mut World) {
     }
 }
 
-/// Whether process `pid` is gone, waited for at most `within`: `kill -0`
-/// answers whether it is there (unix). Windows has no `kill`: it is taken as
-/// gone, and the home is read at once, as before.
+/// Whether process `pid` is gone, waited for at most `within`: `ps` answers
+/// whether it is there, a zombie gone (unix). Windows has no `ps`: it is
+/// taken as gone, and the home is read at once, as before.
 fn exited_within(pid: u32, within: std::time::Duration) -> bool {
     if os::host().flavor() == os::Flavor::Windows {
         return true;
     }
     let deadline = std::time::Instant::now() + within;
     loop {
-        let there = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if !there {
+        if !crate::tests::procs::alive(u64::from(pid)) {
             return true;
         }
         if std::time::Instant::now() > deadline {

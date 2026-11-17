@@ -33,7 +33,8 @@ use crate::Opencode;
 const SPIKE: &str = include_str!("fixtures/acp_spike.jsonl");
 
 /// The fake `opencode acp`. It writes every line it is given to
-/// `input.log` beside it, its pid to `pid`.
+/// `input.log` beside it, its pid to `pid`. Its seds are POSIX (`-E` for an
+/// alternation): macOS's sed has no GNU `\|`, and read no id there.
 const STUB: &str = r#"#!/bin/sh
 here=$(dirname "$0")
 printf '%s' "$$" > "$here/pid"
@@ -45,7 +46,7 @@ reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$1" "$2"; }
 chunk() { printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"%s","update":{"sessionUpdate":"agent_message_chunk","messageId":"%s","content":{"type":"text","text":"%s"}}}}\n' "$sid" "$1" "$2"; }
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$here/input.log"
-  id=$(printf '%s' "$line" | sed -n 's/^.*"id":\("[^"]*"\|[0-9][0-9]*\).*$/\1/p')
+  id=$(printf '%s' "$line" | sed -E -n 's/^.*"id":("[^"]*"|[0-9]+).*$/\1/p')
   case "$(field method "$line")" in
     initialize) reply "$id" '{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}' ;;
     session/new) n=$((n+1)); sid="S$n"; reply "$id" "{\"sessionId\":\"$sid\"}" ;;
@@ -79,7 +80,7 @@ done
 const DEAF: &str = r#"#!/bin/sh
 while :; do
   if IFS= read -r line; then
-    id=$(printf '%s' "$line" | sed -n 's/^.*"id":\("[^"]*"\|[0-9][0-9]*\).*$/\1/p')
+    id=$(printf '%s' "$line" | sed -E -n 's/^.*"id":("[^"]*"|[0-9]+).*$/\1/p')
     case "$line" in
       *'"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1}}\n' "$id" ;;
       *'"session/new"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"D"}}\n' "$id" ;;
