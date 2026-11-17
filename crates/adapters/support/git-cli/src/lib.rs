@@ -41,12 +41,18 @@ pub fn local_variables() -> &'static Option<Vec<String>> {
             .args(["rev-parse", "--local-env-vars"])
             .current_dir(top);
         let output = run_within(&spec, &Within::new(ASK_TIMEOUT).drain_grace(DRAIN_GRACE)).ok()?;
-        let names: Vec<String> = String::from_utf8_lossy(&output.stdout)
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
-        (output.status.is_some_and(|s| s.success()) && !names.is_empty()).then_some(names)
+        listed(output.status.is_some_and(|s| s.success()), &output.stdout)
     })
+}
+
+/// git's answer to `rev-parse --local-env-vars`, `stdout` once it exited
+/// (`succeeded`): its names, or none when it failed or named none.
+fn listed(succeeded: bool, stdout: &[u8]) -> Option<Vec<String>> {
+    let names: Vec<String> = String::from_utf8_lossy(stdout)
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    (succeeded && !names.is_empty()).then_some(names)
 }
 
 /// Whether `key` changes which repository git operates on, or how it reads

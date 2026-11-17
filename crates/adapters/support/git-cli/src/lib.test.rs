@@ -269,3 +269,15 @@ fn a_helper_that_outlives_a_finished_git_does_not_hold_the_caller() {
     drop(release);
     assert!(gone_soon(pid.trim()), "the helper {pid} outlived the test");
 }
+
+// git's list is taken only from a git that succeeded and named something;
+// otherwise there is none, and every `GIT_` variable counts.
+#[test]
+fn gits_list_is_taken_only_when_it_succeeded_and_named_some() {
+    assert_eq!(
+        super::listed(true, b"GIT_DIR\nGIT_WORK_TREE\n"),
+        Some(vec!["GIT_DIR".to_string(), "GIT_WORK_TREE".to_string()])
+    );
+    assert_eq!(super::listed(false, b"GIT_DIR\n"), None);
+    assert_eq!(super::listed(true, b"  \n"), None);
+}
