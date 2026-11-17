@@ -27,6 +27,7 @@ use crate::child::{
     child_command, detail_of, permission_answer, said_of, stop_of, PASSWORD_VARIABLE,
 };
 use crate::conversation::{Heard, Stop};
+use crate::home::tests::runs_scripts;
 use crate::Opencode;
 
 /// The spike's own lines (opencode 1.18.4 over ACP, the paths made up).
@@ -382,6 +383,9 @@ fn a_permission_is_answered_once_by_the_posture_else_cancelled() {
 
 #[test]
 fn a_child_carries_many_turns_in_one_process() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run_with(STUB, |spec| spec.model = "opencode/big-pickle".to_string());
     assert_eq!(running.next(), opened("S1"));
     assert_eq!(running.send("m-1", "first", Urgency::Wake), Queued::Written);
@@ -435,6 +439,9 @@ fn a_child_carries_many_turns_in_one_process() {
 
 #[test]
 fn a_steer_mid_turn_joins_it_and_a_held_wake_follows() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running.send("m-1", "LONG count", Urgency::Wake);
@@ -464,6 +471,9 @@ fn a_steer_mid_turn_joins_it_and_a_held_wake_follows() {
 
 #[test]
 fn an_interrupt_cancels_the_turn_and_a_steer_after_it_is_the_next_turn() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     assert!(!running.child.control.interrupt().unwrap());
@@ -505,6 +515,9 @@ fn an_interrupt_cancels_the_turn_and_a_steer_after_it_is_the_next_turn() {
 
 #[test]
 fn a_clear_makes_a_new_session_on_the_same_process() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running.send("m-1", "remember", Urgency::Wake);
@@ -529,6 +542,9 @@ fn a_clear_makes_a_new_session_on_the_same_process() {
 
 #[test]
 fn a_resumed_child_loads_its_session() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run_with(STUB, |spec| spec.resume = Some("OLD".to_string()));
     assert_eq!(running.next(), opened("OLD"));
     running.send("m-1", "again", Urgency::Wake);
@@ -545,6 +561,9 @@ fn a_resumed_child_loads_its_session() {
 
 #[test]
 fn a_permission_request_is_answered_from_the_posture() {
+    if !runs_scripts() {
+        return;
+    }
     for (posture, chosen) in [
         (ChildPermissions::Refuse, "chose no"),
         (ChildPermissions::Allow, "chose once"),
@@ -568,6 +587,9 @@ fn a_permission_request_is_answered_from_the_posture() {
 
 #[test]
 fn an_end_mid_turn_cancels_it_and_answers_what_was_held() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running.send("m-1", "LONG work", Urgency::Wake);
@@ -607,6 +629,9 @@ fn an_end_mid_turn_cancels_it_and_answers_what_was_held() {
 
 #[test]
 fn an_engine_that_exits_mid_turn_fails_the_turn_with_what_it_said() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     running.send("m-1", "EXIT now", Urgency::Wake);
@@ -643,6 +668,9 @@ fn an_engine_that_exits_mid_turn_fails_the_turn_with_what_it_said() {
 
 #[test]
 fn an_engine_deaf_to_its_input_end_is_stopped_after_the_grace() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(DEAF);
     assert_eq!(running.next(), opened("D"));
     let ended = running
@@ -656,6 +684,9 @@ fn an_engine_deaf_to_its_input_end_is_stopped_after_the_grace() {
 
 #[test]
 fn a_missing_program_starts_nothing() {
+    if !runs_scripts() {
+        return;
+    }
     let dir = Rooted::temp().unwrap();
     let missing = fixture_program::install_program(&dir, &os::fixture("/opencode"), "")
         .unwrap()
@@ -670,6 +701,9 @@ fn a_missing_program_starts_nothing() {
 
 #[test]
 fn a_dropped_control_closes_the_engines_input_and_it_exits() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     running.next();
     let StartedChild {
@@ -702,6 +736,9 @@ fn the_exit_detail_is_a_failed_wait_else_stderr() {
 
 #[test]
 fn the_pid_is_the_engines_own() {
+    if !runs_scripts() {
+        return;
+    }
     let mut running = run(STUB);
     // The session is made after the pid file is written.
     assert!(matches!(running.next(), ChildObservation::Started { .. }));
