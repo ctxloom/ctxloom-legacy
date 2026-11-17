@@ -458,7 +458,7 @@ mod mapping {
                 reason: "none native".to_string(),
             }],
         };
-        let shown = json_of(&agent_show(PARENT, &show, ""));
+        let shown = json_of(&library_api::resources::agent_shown(PARENT, &show, ""));
         assert_eq!(shown["resolution_error"], "no such profile", "{shown}");
         assert_eq!(
             shown["requirements"],

@@ -12,8 +12,14 @@ use std::collections::BTreeMap;
 use daemon_proto::google::protobuf::{value::Kind, ListValue, Struct, Value};
 use daemon_proto::v1;
 use library_application::{
-    AgentRow, Assembled, BundleList, BundleRow, CompanionRow, CompanionState, DistilledState,
-    ItemList, ItemShow, Located, Premises, ProfileList, ProfileRow, SkillList, SkillShow,
+    AgentRow, Assembled, BundleList, BundleRow, BundleShow, BundleView, CompanionRow,
+    CompanionState, DistilledState, ItemList, ItemShow, Located, McpList, McpRow, McpShow,
+    Premises, ProfileList, ProfileRow, ProfileShow, RemoteFound, SearchHit, SearchResults,
+    SkillList, SkillShow,
+};
+use library_application::{
+    AgentSettings, AgentShow, AuthSetting, EngineAgent, EngineRow, NotCarried, Requirement,
+    ResolvedAgent,
 };
 
 use crate::names::{bundle_name, bundle_ref, item_name, origin, profile_ref, reference_name};
@@ -146,6 +152,500 @@ fn blocks(engines: &serde_json::Value) -> BTreeMap<String, v1::AgentEngine> {
         .collect()
 }
 
+/// A value and the layer that said it.
+pub fn text(value: &str, source: &str) -> Option<v1::SourcedText> {
+    Some(v1::SourcedText {
+        value: value.to_string(),
+        source: source.to_string(),
+    })
+}
+
+/// What an agent resolves to on an engine. A model or effort nobody set is
+/// no value (the engine's own default), its source still said.
+pub fn settings(settings: &AgentSettings) -> v1::AgentSettings {
+    let optional =
+        |value: &Option<String>, source: &str| text(value.as_deref().unwrap_or_default(), source);
+    let runtime = &settings.runtime;
+    v1::AgentSettings {
+        model: optional(&settings.model.value, settings.model.source),
+        effort: optional(&settings.effort.value, settings.effort.source),
+        permissions: Some(v1::SourcedDocument {
+            value: settings.permissions.value.as_ref().map(document),
+            source: settings.permissions.source.to_string(),
+        }),
+        runtime: Some(v1::RuntimeSetting {
+            value: runtime.value.clone(),
+            source: runtime.source.to_string(),
+            overrides: runtime.overrides.clone().unwrap_or_default(),
+            overrides_source: runtime.overrides_source.unwrap_or_default().to_string(),
+            change: runtime.change.unwrap_or_default().to_string(),
+        }),
+        env: Some(v1::EnvSetting {
+            value: settings.env.value.clone(),
+            source: settings.env.source.to_string(),
+            keys: settings
+                .env
+                .keys
+                .iter()
+                .map(|key| v1::EnvKey {
+                    variable: key.name.clone(),
+                    source: key.source.to_string(),
+                })
+                .collect(),
+        }),
+        session_home: text(&settings.session_home.value, settings.session_home.source),
+        approval_timeout: text(
+            &settings.approval_timeout.value,
+            settings.approval_timeout.source,
+        ),
+    }
+}
+
+/// What an engine cannot carry of what an agent's profiles configure.
+pub fn not_carried(lost: &NotCarried) -> v1::NotCarried {
+    v1::NotCarried {
+        engine: lost.engine.clone(),
+        surface: lost.surface.clone(),
+        event: lost.event.clone(),
+        reason: lost.reason.clone(),
+    }
+}
+
+/// `agent show <agent>`: the `Agent` resource (the FULL view), its
+/// definition the resource and what it resolves to beside it.
+pub fn agent_shown(parent: &str, show: &AgentShow, default: &str) -> v1::Agent {
+    v1::Agent {
+        resolved: show.resolved.as_ref().map(|r| resolved(parent, r)),
+        resolution_error: show.resolution_error.clone(),
+        requirements: show.requirements.iter().map(requirement).collect(),
+        requirements_error: show.requirements_error.clone(),
+        not_carried: show.not_carried.iter().map(not_carried).collect(),
+        ..agent(parent, &show.definition, default)
+    }
+}
+
+/// What an agent resolves to, its settings flat (as today), its engine by
+/// its resource name.
+fn resolved(parent: &str, agent: &ResolvedAgent) -> v1::ResolvedAgent {
+    let settings = settings(&agent.settings);
+    v1::ResolvedAgent {
+        profiles: agent.profiles.clone(),
+        engine: engine_ref(parent, &agent.engine),
+        model: settings.model,
+        effort: settings.effort,
+        permissions: settings.permissions,
+        runtime: settings.runtime,
+        env: settings.env,
+        context: agent.context.clone(),
+        fragments: agent.fragments.clone(),
+        driving: agent.driving.clone(),
+        session_home: settings.session_home,
+        command: agent.command.clone(),
+    }
+}
+
+fn requirement(needed: &Requirement) -> v1::Requirement {
+    v1::Requirement {
+        command: needed.command.clone(),
+        sources: needed
+            .sources
+            .iter()
+            .map(|source| v1::RequirementSource {
+                kind: source.kind.clone(),
+                reference: source.reference.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// `engine list`: `ListEnginesResponse`, every engine under `parent`.
+pub fn engines(parent: &str, rows: &[EngineRow]) -> v1::ListEnginesResponse {
+    v1::ListEnginesResponse {
+        engines: rows.iter().map(|row| engine(parent, row)).collect(),
+        next_page_token: String::new(),
+    }
+}
+
+/// `engine show <engine>`: the `Engine` resource.
+pub fn engine(parent: &str, row: &EngineRow) -> v1::Engine {
+    v1::Engine {
+        name: engine_name(parent, &row.name),
+        command: text(&row.command.value, row.command.source),
+        session_home: text(&row.session_home.value, row.session_home.source),
+        runtime: text(&row.runtime.value, row.runtime.source),
+        env: Some(v1::SourcedList {
+            value: row.env.value.clone(),
+            source: row.env.source.to_string(),
+        }),
+        auth: Some(engine_auth(&row.auth)),
+        agents: row.agents.iter().map(engine_agent).collect(),
+        approval_timeout: text(&row.approval_timeout.value, row.approval_timeout.source),
+    }
+}
+
+/// The auth source: its word, or its variables and file; its state the
+/// enum's value.
+pub fn engine_auth(setting: &AuthSetting) -> v1::EngineAuth {
+    let value = match &setting.value {
+        serde_json::Value::String(word) => v1::AuthValue {
+            word: word.clone(),
+            ..v1::AuthValue::default()
+        },
+        serde_json::Value::Object(source) => v1::AuthValue {
+            word: String::new(),
+            env: source
+                .get("env")
+                .and_then(serde_json::Value::as_array)
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(|n| n.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            file: source
+                .get("file")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        },
+        _ => v1::AuthValue::default(),
+    };
+    let state = match setting.state {
+        "present" => v1::engine_auth::State::Present,
+        "missing" => v1::engine_auth::State::Missing,
+        "not-needed" => v1::engine_auth::State::NotNeeded,
+        _ => v1::engine_auth::State::Unspecified,
+    };
+    v1::EngineAuth {
+        value: Some(value),
+        source: setting.source.to_string(),
+        state: state as i32,
+        via: setting.via.clone().unwrap_or_default(),
+    }
+}
+
+/// One agent of an engine, its settings flat (design §3.8).
+fn engine_agent(agent: &EngineAgent) -> v1::EngineAgent {
+    let settings = settings(&agent.settings);
+    v1::EngineAgent {
+        agent: agent.name.clone(),
+        model: settings.model,
+        effort: settings.effort,
+        permissions: settings.permissions,
+        runtime: settings.runtime,
+        env: settings.env,
+        session_home: settings.session_home,
+    }
+}
+
+/// A server's resource name below the bundle that serves it (`source`, its
+/// canonical reference).
+pub fn server_name(parent: &str, source: &str, id: &str) -> String {
+    item_name(parent, source, "mcp", id)
+}
+
+/// A server as its `McpServer`, named `name`.
+pub fn server(name: &str, row: &McpRow) -> v1::McpServer {
+    v1::McpServer {
+        name: name.to_string(),
+        command: row.command.clone(),
+        args: row.args.clone(),
+        env: row.env.clone(),
+        url: row.url.clone(),
+        served_by: row.served_by.clone(),
+        notes: row.notes.clone(),
+        installation: row.installation.clone(),
+        ..v1::McpServer::default()
+    }
+}
+
+/// `mcp server list`: `ListMcpServersResponse`, each server below its
+/// bundle (no environment, notes or installation, as listed).
+pub fn servers_listed(parent: &str, list: &McpList) -> v1::ListMcpServersResponse {
+    v1::ListMcpServersResponse {
+        mcp_servers: list
+            .servers
+            .iter()
+            .map(|row| v1::McpServer {
+                name: server_name(parent, &row.source, &row.name),
+                command: row.command.clone(),
+                args: row.args.clone(),
+                url: row.url.clone(),
+                served_by: row.served_by.clone(),
+                ..v1::McpServer::default()
+            })
+            .collect(),
+        next_page_token: String::new(),
+    }
+}
+
+/// `mcp server show <name>`: `ListMcpServersResponse` filtered by the ID
+/// (design §3.5), every bundle's server of that ID.
+pub fn servers_shown(parent: &str, show: &McpShow) -> v1::ListMcpServersResponse {
+    v1::ListMcpServersResponse {
+        mcp_servers: show
+            .entries
+            .iter()
+            .map(|row| server(&server_name(parent, &row.source, &row.name), row))
+            .collect(),
+        next_page_token: String::new(),
+    }
+}
+
+/// `search`: `SearchLibraryResponse`, each local hit named under `parent`.
+pub fn searched(parent: &str, results: &SearchResults) -> v1::SearchLibraryResponse {
+    v1::SearchLibraryResponse {
+        query: results.query.clone(),
+        local: results
+            .local
+            .iter()
+            .map(|hit| local_hit(parent, hit))
+            .collect(),
+        remote: results.remote.iter().map(remote_found).collect(),
+        count: count(results.count),
+        hidden_local: count(results.hidden_local),
+        next_page_token: String::new(),
+    }
+}
+
+/// A local hit, named by its resource; one whose bundle the catalog does
+/// not hold keeps the name it was found by (OQ-16).
+fn local_hit(parent: &str, hit: &SearchHit) -> v1::SearchHit {
+    let (kind, collection) = item_kind(&hit.kind);
+    v1::SearchHit {
+        resource: hit.located.as_ref().map_or_else(
+            || hit.name.clone(),
+            |at| item_name(parent, &at.bundle, collection, &at.item),
+        ),
+        kind: kind as i32,
+        tags: hit.tags.clone(),
+        source: hit.source.clone(),
+        r#match: hit.r#match.clone(),
+    }
+}
+
+/// A remote's bundle, not installed: no resource name, its `item` the name
+/// it has in the remote.
+fn remote_found(found: &RemoteFound) -> v1::RemoteFound {
+    v1::RemoteFound {
+        remote: found.remote.clone(),
+        item: found.name.clone(),
+        kind: item_kind(&found.kind).0 as i32,
+        tags: found.tags.clone(),
+        description: found.description.clone(),
+        author: found.author.clone(),
+        pull_reference: found.pull_ref.clone(),
+    }
+}
+
+/// A search's kind word as its `ItemKind`, and the collection its items are
+/// named in.
+pub fn item_kind(word: &str) -> (v1::ItemKind, &'static str) {
+    match word {
+        "fragment" => (v1::ItemKind::Fragment, "fragments"),
+        "command" => (v1::ItemKind::Command, "commands"),
+        "skill" => (v1::ItemKind::Skill, "skills"),
+        "profile" => (v1::ItemKind::Profile, "profiles"),
+        "mcp_server" => (v1::ItemKind::McpServer, "mcpServers"),
+        "bundle" => (v1::ItemKind::Bundle, "bundles"),
+        _ => (v1::ItemKind::Unspecified, ""),
+    }
+}
+
+/// An `ItemKind` as a search's kind word; unspecified is none.
+pub fn kind_word(kind: i32) -> &'static str {
+    match v1::ItemKind::try_from(kind) {
+        Ok(v1::ItemKind::Fragment) => "fragment",
+        Ok(v1::ItemKind::Command) => "command",
+        Ok(v1::ItemKind::Skill) => "skill",
+        Ok(v1::ItemKind::Profile) => "profile",
+        Ok(v1::ItemKind::McpServer) => "mcp_server",
+        Ok(v1::ItemKind::Bundle) => "bundle",
+        _ => "",
+    }
+}
+
+/// `config show [section] [--raw]`: the `Config` singleton under `parent`,
+/// its document what the layers give (one section of it, or only what they
+/// set).
+pub fn config(parent: &str, shown: &library_application::ConfigShown) -> v1::Config {
+    v1::Config {
+        name: format!("{parent}/config"),
+        document: Some(document(&shown.json)),
+        etag: String::new(),
+    }
+}
+
+/// A distilled form there or not.
+fn distilled_there(there: bool) -> i32 {
+    if there {
+        v1::DistilledState::Fresh as i32
+    } else {
+        v1::DistilledState::None as i32
+    }
+}
+
+/// A `bundle show` entry's distilled form: stale where it no longer matches
+/// its source, else there or not.
+pub fn shown_distilled(there: bool, stale: bool) -> i32 {
+    if stale {
+        v1::DistilledState::Stale as i32
+    } else {
+        distilled_there(there)
+    }
+}
+
+/// `bundle show`: the `Bundle` (FULL), each child summarised by its name
+/// (OQ-14).
+pub fn bundle_shown(parent: &str, show: &BundleShow) -> v1::Bundle {
+    let item = |dir: &str, id: &str| item_name(parent, &show.name, dir, id);
+    v1::Bundle {
+        author: show.author.clone(),
+        notes: show.notes.clone(),
+        installation: show.installation.clone(),
+        description: show.description.clone(),
+        version: show.version.clone(),
+        tags: show.tags.clone(),
+        path: show.path.clone(),
+        skill_count: count(show.skills.len() as u64),
+        fragments: show
+            .fragments
+            .iter()
+            .map(|(id, f)| v1::BundleItem {
+                item: item("fragments", id),
+                tags: f.tags.clone(),
+                preview: f.preview.clone(),
+                distilled: shown_distilled(f.distilled, f.stale),
+                no_distill: Some(f.no_distill),
+                premise: f.premise.clone(),
+                ..v1::BundleItem::default()
+            })
+            .collect(),
+        commands: show
+            .commands
+            .iter()
+            .map(|(id, c)| v1::BundleItem {
+                item: item("commands", id),
+                tags: c.tags.clone(),
+                description: c.description.clone(),
+                preview: c.preview.clone(),
+                distilled: shown_distilled(c.distilled, c.stale),
+                no_distill: Some(c.no_distill),
+                ..v1::BundleItem::default()
+            })
+            .collect(),
+        skills: show
+            .skills
+            .iter()
+            .map(|(id, s)| v1::BundleItem {
+                item: item("skills", id),
+                tags: s.tags.clone(),
+                notes: s.notes.clone(),
+                path: s.path.clone(),
+                ..v1::BundleItem::default()
+            })
+            .collect(),
+        mcp_servers: show
+            .mcp
+            .iter()
+            .map(|(id, m)| v1::BundleItem {
+                item: item("mcp", id),
+                command: m.command.clone(),
+                args: m.args.clone(),
+                env: m.env.clone(),
+                notes: m.notes.clone(),
+                installation: m.installation.clone(),
+                ..v1::BundleItem::default()
+            })
+            .collect(),
+        profiles: show
+            .profiles
+            .iter()
+            .map(|id| item("profiles", id))
+            .collect(),
+        hooks: show.hooks.clone(),
+        ..bundle(
+            parent,
+            &BundleRow {
+                name: show.name.clone(),
+                ..show.listing.clone()
+            },
+        )
+    }
+}
+
+/// `bundle view <bundle>`: the `Bundle` (CONTENT), its files in the order
+/// they are viewed (its manifest first, then the rest by path).
+pub fn bundle_viewed(parent: &str, view: &BundleView) -> v1::Bundle {
+    let files = match &view.viewed {
+        library_application::Viewed::Files(files) => files
+            .iter()
+            .map(|(path, content)| v1::BundleFile {
+                path: path.clone(),
+                content: content.clone(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    v1::Bundle {
+        name: bundle_name(parent, &view.bundle),
+        files,
+        distilled: Some(view.distilled),
+        ..v1::Bundle::default()
+    }
+}
+
+/// The `Run` a dry run would create (design §5.9, `CreateRun` with
+/// `validate_only`), under `parent` (none: the project is not named, owner
+/// ruling 2026-11-14): the plan's agent, engine, profiles, fragments,
+/// context and its token estimate, the prompt, the findings, the agent's
+/// settings on the engine and the agent they are of, and the workspace axis
+/// and runtime the launch settles on (step 10a U2, owner ruling
+/// 2026-11-17). Its name is `<parent>/runs/-`, as nothing is created; its
+/// agent, engine and profiles are resource names (design §2), their
+/// configured text where the project has no name.
+pub fn planned(parent: Option<&str>, plan: &library_application::DryRun) -> v1::Run {
+    let named = |name: &dyn Fn(&str, &str) -> String, text: &str| match parent {
+        Some(parent) if !text.is_empty() => name(parent, text),
+        _ => text.to_string(),
+    };
+    let (workspace, runtime) = &plan.axes;
+    v1::Run {
+        name: parent.map_or_else(String::new, |parent| format!("{parent}/runs/-")),
+        agent: named(&agent_name, &plan.agent),
+        engine: named(&engine_name, &plan.engine),
+        profiles: plan
+            .profiles
+            .iter()
+            .map(|profile| named(&profile_ref, profile))
+            .collect(),
+        context: plan.context.clone(),
+        // A count (OQ-12); no context holds 2^32 tokens.
+        tokens: u32::try_from(plan.tokens).unwrap_or(u32::MAX),
+        findings: plan.findings.iter().map(finding).collect(),
+        settings: plan.settings.as_ref().map(settings),
+        settings_agent: plan.settings_agent.clone(),
+        workspace: plan.workspace.clone(),
+        runtime: plan.runtime.clone(),
+        settled_workspace: workspace.clone(),
+        settled_runtime: runtime.clone(),
+        prompt: plan.prompt.clone(),
+        fragments: plan.fragments.clone(),
+        ..v1::Run::default()
+    }
+}
+
+/// A plan's finding.
+pub fn finding(found: &library_application::FindingRow) -> v1::Finding {
+    v1::Finding {
+        kind: found.kind.clone(),
+        text: found.text.clone(),
+        remedy: found.remedy.clone(),
+        fatal: found.fatal,
+    }
+}
+
 /// The profile's own name within its key (`<bundle>#profiles/<name>`).
 pub fn profile_id(name: &str) -> &str {
     name.split_once("#profiles/").map_or(name, |(_, id)| id)
@@ -183,6 +683,34 @@ fn profile_row(parent: &str, row: &ProfileRow) -> v1::Profile {
         bundles: profile_bundles(parent, &row.bundles),
         default: Some(row.default),
         path: row.path.clone(),
+        ..<v1::Profile as Default>::default()
+    }
+}
+
+/// `profile show`: the `Profile` (FULL).
+pub fn profile_shown(parent: &str, show: &ProfileShow) -> v1::Profile {
+    v1::Profile {
+        default: Some(show.default),
+        ..profile_of(
+            parent,
+            &profile_name(parent, &show.entry, profile_id(&show.name)),
+            show,
+        )
+    }
+}
+
+/// A profile as its `Profile`, named `name`.
+pub fn profile_of(parent: &str, name: &str, show: &ProfileShow) -> v1::Profile {
+    v1::Profile {
+        name: name.to_string(),
+        description: show.description.clone(),
+        parents: profile_parents(parent, &show.parents),
+        tags: show.tags.clone(),
+        bundles: profile_bundles(parent, &show.bundles),
+        variables: show.variables.clone(),
+        exclude_fragments: show.exclude_fragments.clone(),
+        exclude_mcp_servers: show.exclude_mcp.clone(),
+        path: show.path.clone(),
         ..<v1::Profile as Default>::default()
     }
 }

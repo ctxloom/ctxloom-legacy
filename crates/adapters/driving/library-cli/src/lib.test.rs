@@ -66,6 +66,41 @@ impl Served for ServedBy<'_> {
 
     crate::served_reads!(served_by_library_api);
 
+    /// The daemon's dry run, as it plans one: under the parent the names
+    /// give, unnamed where they name none.
+    fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure> {
+        let parent = self.names.named_parent()?;
+        let globals = request.globals.clone().unwrap_or_default();
+        let flags = library_application::Flags {
+            degraded: globals.degraded,
+            no_companions: globals.no_companions,
+            config_set: globals.config_set.clone(),
+            trusted: false,
+        };
+        let asked = library_application::RunRequest {
+            agent: request.agent.clone(),
+            profile: request.profiles.first().cloned().unwrap_or_default(),
+            fragments: request.fragments.clone(),
+            tags: request.tags.clone(),
+            engine: request.engine.clone(),
+            prompt: request.prompt.clone(),
+            saved_command: request.command.clone(),
+            workspace: request.workspace.clone(),
+            no_context: request.no_context,
+        };
+        let outcome = self.library.dry_run(&flags, &asked);
+        let notices = outcome
+            .notices
+            .iter()
+            .map(library_api::reads::notice_of)
+            .collect();
+        let previewed = outcome.result.map_err(failed)?;
+        Ok(v1::Run {
+            notices,
+            ..library_api::resources::planned(parent.as_deref(), &previewed.plan)
+        })
+    }
+
     fn assemble_context(
         &self,
         request: v1::AssembleContextRequest,
@@ -120,11 +155,7 @@ macro_rules! served_by_library_api {
                 let notices = outcome
                     .notices
                     .iter()
-                    .map(|notice| v1::Notice {
-                        code: notice.code().to_string(),
-                        args: Vec::new(),
-                        text: notice.to_string(),
-                    })
+                    .map(library_api::reads::notice_of)
                     .collect();
                 Ok((outcome.result.map_err(failed)?, notices))
             }

@@ -156,6 +156,124 @@ fn as_ruled(id: &str, golden: String) -> String {
     }
 }
 
+/// The rows whose text prints canonical forms (owner ruling 2026-11-17):
+/// a profile's bundle and parents, its bundles, an MCP server's bundle and
+/// a dry run's profiles are their resource names (`projects/{HARP}/...`), never the text written.
+/// profile.tsv and mcp.tsv mark them.
+const CANONICAL_ROWS: [&str; 9] = [
+    "run-dry-dev-text",
+    "gold-run-dry-auto-text",
+    "mcp-server-list-text",
+    "mcp-server-show-text",
+    "profile-list-text",
+    "profile-show-dev-text",
+    "profile-show-base-text",
+    "gold-profile-list-text",
+    "gold-profile-show-curated-text",
+];
+
+/// The parent every resource name of a row is printed under, the
+/// project's harp unsaid.
+const HARPLESS: &str = "projects/{HARP}";
+
+/// A bundle's resource name, as Go's text names it (`ctxloom+local:<b>`
+/// or bare).
+fn bundle_resource(text: &str) -> String {
+    let bundle = text.strip_prefix("ctxloom+local:").unwrap_or(text);
+    format!("{HARPLESS}/bundles/{bundle}")
+}
+
+/// A profile's resource name, as Go's text names a parent (a project
+/// profile's bare name).
+fn profile_resource(text: &str) -> String {
+    format!("{HARPLESS}/bundles/project/profiles/{text}")
+}
+
+/// Go's golden for a [`CANONICAL_ROWS`] row, its references as their
+/// resource names: `Bundle:` and `from bundle:` the bundle's, `parents:`
+/// and a `Parents:` item a profile's, a `Bundles:` item a bundle's.
+fn as_canonical(id: &str, golden: String) -> String {
+    if !CANONICAL_ROWS.contains(&id) {
+        return golden;
+    }
+    let mut section = "";
+    let lines: Vec<String> = golden
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let indent = &line[..line.len() - trimmed.len()];
+            if let Some(bundle) = trimmed.strip_prefix("Bundle: ") {
+                return format!("{indent}Bundle: {}", bundle_resource(bundle));
+            }
+            if trimmed.starts_with("from bundle: ") {
+                let parts: Vec<String> = trimmed
+                    .split(", ")
+                    .map(|part| {
+                        if let Some(b) = part.strip_prefix("from bundle: ") {
+                            format!("from bundle: {}", bundle_resource(b))
+                        } else if let Some(p) = part.strip_prefix("parents: ") {
+                            format!("parents: {}", profile_resource(p))
+                        } else {
+                            part.to_string()
+                        }
+                    })
+                    .collect();
+                return format!("{indent}{}", parts.join(", "));
+            }
+            if line.starts_with("=== ") {
+                section = if line == "=== Profiles ===" {
+                    "profiles"
+                } else {
+                    ""
+                };
+                return line.to_string();
+            }
+            if section == "profiles" {
+                if let Some(p) = line.strip_prefix("  ") {
+                    return format!("  {}", profile_resource(p));
+                }
+                return line.to_string();
+            }
+            if line.ends_with(':') && !line.starts_with(' ') {
+                section = match line {
+                    "Parents:" => "parents",
+                    "Bundles:" => "bundles",
+                    _ => "",
+                };
+                return line.to_string();
+            }
+            match (section, line.strip_prefix("  - ")) {
+                ("parents", Some(p)) => format!("  - {}", profile_resource(p)),
+                ("bundles", Some(b)) => format!("  - {}", bundle_resource(b)),
+                _ => line.to_string(),
+            }
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// `text` with every `projects/<harp>` its resource names begin with as
+/// [`HARPLESS`].
+fn unharped(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("projects/") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + "projects/".len()..];
+        let harp = after
+            .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
+            .unwrap_or(after.len());
+        if harp > 0 && after[harp..].starts_with('/') {
+            out.push_str(HARPLESS);
+        } else {
+            out.push_str(&rest[at..at + "projects/".len() + harp]);
+        }
+        rest = &after[harp..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Go's golden as this build words it where the owner changed it: the schema
 /// stamp (Go writes 8, this build 9; Go's bare-name companions list is read
 /// as generation 9's names, OD-10); and Go's boolean
@@ -416,14 +534,22 @@ fn mismatch(row: &Row, project: &Project) -> Option<String> {
     if !agreed {
         return Some(format!("exit {} (Go {go_exit}): {}", ran.code, ran.said()));
     }
-    let want = as_ruled(
+    let want = as_canonical(
         &row.id,
-        as_declared(&row.id, as_changed(&golden(&row.id, "stdout"))),
+        as_ruled(
+            &row.id,
+            as_declared(&row.id, as_changed(&golden(&row.id, "stdout"))),
+        ),
     );
     if !is_dry_run(&row.id) && carries_retired_llm(&want) {
         return None;
     }
     let got = project.normalized(&ran.stdout);
+    let got = if CANONICAL_ROWS.contains(&row.id.as_str()) {
+        unharped(&got)
+    } else {
+        got
+    };
     if want.trim().is_empty() {
         return (!got.trim().is_empty()).then(|| format!("stdout should be empty: {got:?}"));
     }

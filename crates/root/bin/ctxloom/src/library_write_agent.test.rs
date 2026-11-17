@@ -74,7 +74,8 @@ fn test_creating_a_binding_records_every_axis_and_the_listing_reads_each_one_bac
         if is_text(flags) {
             listed
                 .contains("engine: claude-code")
-                .contains("profiles: dev")
+                .contains("profiles: projects/")
+                .contains("/bundles/project/profiles/dev")
                 .contains("runtime: container-rootless");
         } else {
             let doc = listed.json();
@@ -714,7 +715,9 @@ fn test_the_listing_and_the_write_summary_show_the_engine_blocks_in_the_config_s
     project
         .run(&["agent", "list", "--format", "text"])
         .succeeds()
-        .contains("  reviewer (engine: claude-code)\n    profiles: dev\n    engines.claude-code: {model: haiku, permissions: {defaultMode: plan}}\n      permissions passed to claude-code verbatim; ctxloom does not check it\n")
+        // The profile is its resource name (owner ruling 2026-11-17).
+        .contains("  reviewer (engine: claude-code)\n    profiles: projects/")
+        .contains("/bundles/project/profiles/dev\n    engines.claude-code: {model: haiku, permissions: {defaultMode: plan}}\n      permissions passed to claude-code verbatim; ctxloom does not check it\n")
         .lacks("claude-code={mode=plan}");
     let listed = project.run(&["agent", "list", "--format", "json"]).json();
     let reviewer = &listed["agents"][0];

@@ -11,7 +11,9 @@
 //! generates its part from it (D12).
 
 use daemon_proto::v1;
-use library_application::{AssembleRequest, DefaultAgent, Flags, ItemKind, Library, Outcome};
+use library_application::{
+    AssembleRequest, DefaultAgent, Flags, ItemKind, Library, Outcome, SearchRequest,
+};
 
 use crate::{names, resources};
 
@@ -19,6 +21,12 @@ use crate::{names, resources};
 /// rendered by the command's own catalog.
 pub fn said(notice: &v1::Notice) -> library_application::Notice {
     run_application::client::noticed(notice)
+}
+
+/// A notice a read said, as the daemon answers it: its code, flattened
+/// args and text.
+pub fn notice_of(notice: &library_application::Notice) -> v1::Notice {
+    run_application::client::notice_of(notice)
 }
 
 /// A command's global flags as a read's request carries them (E1).
@@ -56,6 +64,14 @@ macro_rules! served {
             get_premise_index (GetPremiseIndex) GetPremiseIndexRequest.name => PremiseIndex,
             get_skill (GetSkill) GetSkillRequest.name => Skill,
             list_companions (ListCompanions) ListCompanionsRequest.parent => ListCompanionsResponse,
+            get_profile (GetProfile) GetProfileRequest.name => Profile,
+            get_agent (GetAgent) GetAgentRequest.name => Agent,
+            list_engines (ListEngines) ListEnginesRequest.parent => ListEnginesResponse,
+            get_engine (GetEngine) GetEngineRequest.name => Engine,
+            list_mcp_servers (ListMcpServers) ListMcpServersRequest.parent => ListMcpServersResponse,
+            search_library (SearchLibrary) SearchLibraryRequest.parent => SearchLibraryResponse,
+            get_config (GetConfig) GetConfigRequest.name => Config,
+            get_bundle (GetBundle) GetBundleRequest.name => Bundle,
         }
     };
 }
@@ -83,10 +99,7 @@ pub fn list_agents(
     let read = library.agent_list(flags);
     // Asked only once the listing was had, so its notices are the
     // listing's alone.
-    let default = match library.agent_default(flags, None).result {
-        Ok(DefaultAgent::Current(name)) => name,
-        _ => String::new(),
-    };
+    let default = default_agent(library, flags);
     mapped(read, |rows| resources::agents(parent, &rows, &default))
 }
 
@@ -218,6 +231,145 @@ pub fn list_companions(
 ) -> Outcome<v1::ListCompanionsResponse> {
     mapped(library.companion_list(flags), |rows| {
         resources::companions(parent, &rows)
+    })
+}
+
+/// `GetProfile`: the profile its name references (a project profile's
+/// bare name, or `<bundle>#profiles/<name>`), read back as typed.
+pub fn get_profile(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::GetProfileRequest,
+) -> Outcome<v1::Profile> {
+    let ask = names::profile_under(parent, &request.name).unwrap_or_else(|| request.name.clone());
+    mapped(library.profile_show(flags, &ask), |show| {
+        resources::profile_shown(parent, &show)
+    })
+}
+
+/// The agent a bare run binds, empty when none.
+fn default_agent(library: &Library, flags: &Flags) -> String {
+    match library.agent_default(flags, None).result {
+        Ok(DefaultAgent::Current(name)) => name,
+        _ => String::new(),
+    }
+}
+
+/// `GetAgent`: the agent its name names, by the text typed, what it
+/// resolves to beside its binding (a resolution error in the library's
+/// words).
+pub fn get_agent(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::GetAgentRequest,
+) -> Outcome<v1::Agent> {
+    let name =
+        names::named_under(parent, "agents", &request.name).unwrap_or_else(|| request.name.clone());
+    let say = |d: &dyn angzarr_diagnostic::Diagnostic| library.say(d);
+    let read = library.agent_show(flags, &name, &say);
+    let default = default_agent(library, flags);
+    mapped(read, |show| resources::agent_shown(parent, &show, &default))
+}
+
+/// `ListEngines`: every engine, with its agents.
+pub fn list_engines(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    _: &v1::ListEnginesRequest,
+) -> Outcome<v1::ListEnginesResponse> {
+    mapped(library.engine_list(flags), |rows| {
+        resources::engines(parent, &rows)
+    })
+}
+
+/// `GetEngine`: the engine its name names, by the text typed.
+pub fn get_engine(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::GetEngineRequest,
+) -> Outcome<v1::Engine> {
+    let name = names::named_under(parent, "engines", &request.name)
+        .unwrap_or_else(|| request.name.clone());
+    mapped(library.engine_show(flags, &name), |row| {
+        resources::engine(parent, &row)
+    })
+}
+
+/// `ListMcpServers`: every server the catalog's bundles ship, or (an
+/// `mcp_server_id` asked, `mcp server show`) every bundle's server of that
+/// ID, whole.
+pub fn list_mcp_servers(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::ListMcpServersRequest,
+) -> Outcome<v1::ListMcpServersResponse> {
+    if request.mcp_server_id.is_empty() {
+        return mapped(library.mcp_list(flags), |list| {
+            resources::servers_listed(parent, &list)
+        });
+    }
+    mapped(library.mcp_show(flags, &request.mcp_server_id), |show| {
+        resources::servers_shown(parent, &show)
+    })
+}
+
+/// `SearchLibrary`: the catalog's items (and the remotes' bundles) that
+/// match the query or the tags, of the kind asked (none: every kind).
+pub fn search_library(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::SearchLibraryRequest,
+) -> Outcome<v1::SearchLibraryResponse> {
+    let asked = SearchRequest {
+        query: request.query.clone(),
+        tags: request.tags.clone(),
+        kind: resources::kind_word(request.kind).to_string(),
+        local: request.local,
+        remote: request.remote,
+    };
+    mapped(library.search(flags, &asked), |results| {
+        resources::searched(parent, &results)
+    })
+}
+
+/// `GetConfig`: the configuration the layers give (`EFFECTIVE`, the
+/// default) or only what they set (`SET`, `--raw`), whole or one section.
+pub fn get_config(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::GetConfigRequest,
+) -> Outcome<v1::Config> {
+    let raw = request.view == v1::config::View::Set as i32;
+    let section = (!request.section.is_empty()).then_some(request.section.as_str());
+    mapped(library.config_show(flags, section, raw), |shown| {
+        resources::config(parent, &shown)
+    })
+}
+
+/// `GetBundle`: the bundle its name names, by the text typed: what it
+/// holds (FULL, `bundle show`), or its files (CONTENT, `bundle view`).
+pub fn get_bundle(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::GetBundleRequest,
+) -> Outcome<v1::Bundle> {
+    let ask = names::bundle_under(parent, &request.name).unwrap_or_else(|| request.name.clone());
+    if request.view == v1::bundle::View::Content as i32 {
+        return mapped(
+            library.bundle_view(flags, &ask, request.prefer_distilled),
+            |view| resources::bundle_viewed(parent, &view),
+        );
+    }
+    mapped(library.bundle_show(flags, &ask), |show| {
+        resources::bundle_shown(parent, &show)
     })
 }
 

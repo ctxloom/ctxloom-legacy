@@ -191,3 +191,53 @@ fn every_item_reference_a_command_takes_reads_back_as_typed() {
         );
     }
 }
+
+#[test]
+fn every_profile_text_a_command_takes_reads_back_as_typed() {
+    let parent = "projects/calm-otter";
+    for (text, target) in [
+        ("dev", "/profiles/dev"),
+        ("a/b", "/profiles/a%2Fb"),
+        ("50%", "/profiles/50%25"),
+        ("", "/profiles/"),
+        ("demo#profiles/x", "/bundles/demo/profiles/x"),
+        (
+            "ctxloom+local:project#profiles/dev",
+            "/bundles/ctxloom+local:project/profiles/dev",
+        ),
+        (
+            "vendor/kit#profiles/reach",
+            "/remotes/vendor/bundles/kit/profiles/reach",
+        ),
+    ] {
+        assert_eq!(super::profile_target(text), target, "{text}");
+        let name = format!("{parent}{target}");
+        assert_eq!(
+            super::profile_under(parent, &name).as_deref(),
+            Some(text),
+            "{name}"
+        );
+    }
+    assert_eq!(super::profile_under(parent, "users/me/profiles/x"), None);
+}
+
+#[test]
+fn a_named_resource_text_reads_back_as_typed() {
+    let parent = "users/me";
+    for (text, target) in [
+        ("dev", "/agents/dev"),
+        ("a/b", "/agents/a%2Fb"),
+        ("", "/agents/"),
+    ] {
+        assert_eq!(super::named_target("agents", text), target, "{text}");
+        let name = format!("{parent}{target}");
+        assert_eq!(
+            super::named_under(parent, "agents", &name).as_deref(),
+            Some(text)
+        );
+    }
+    assert_eq!(
+        super::named_under(parent, "agents", "users/me/engines/x"),
+        None
+    );
+}

@@ -331,3 +331,122 @@ async fn assemble_context_outside_git_is_refused_before_it_assembles() {
     );
     assert!(opened.0.lock().unwrap().is_empty());
 }
+
+/// The library a dry run plans over: one agent, the default, on claude.
+#[derive(Default)]
+struct WithAgent(Mutex<Vec<String>>);
+
+impl Libraries for WithAgent {
+    fn root(&self, dir: &str, _: &[(String, String)]) -> Option<String> {
+        Some(dir.to_string())
+    }
+
+    fn read(
+        &self,
+        dir: &str,
+        _: &[(String, String)],
+        read: &mut dyn FnMut(&Library),
+    ) -> Result<(), ApiError> {
+        self.0.lock().unwrap().push(dir.to_string());
+        let library = Setup {
+            bundles: &[("demo", SKILLS)],
+            layers: &[
+                "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\ndefault_agent: dev\n",
+            ],
+            ..Setup::default()
+        }
+        .library();
+        read(&library);
+        Ok(())
+    }
+}
+
+// Step 10a U2: `run --dry-run` is `CreateRun` with `validate_only`, planned
+// as a library read at the caller's directory and named under its project:
+// the run's agent, engine and profiles resource names, its workspace axis
+// and runtime those it settles on.
+#[tokio::test]
+async fn a_preview_is_the_plan_named_under_its_project() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits {
+        work_tree: Some(ROOT.to_string()),
+        ..Gits::default()
+    });
+    let opened = Arc::new(WithAgent::default());
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
+        .observing(observing(&f.world, &gits));
+    let run = api
+        .create_run(v1::CreateRunRequest {
+            parent: "projects/calm-quiet-heron".to_string(),
+            mode: v1::run::Mode::Terminal as i32,
+            prompt: "hello".to_string(),
+            cwd: "/work/calm-wt".to_string(),
+            validate_only: true,
+            ..v1::CreateRunRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(run.name, "projects/calm-quiet-heron/runs/-");
+    assert_eq!(run.engine, "projects/calm-quiet-heron/engines/claude-code");
+    assert_eq!(run.prompt, "hello");
+    assert_eq!(run.settled_workspace, "none");
+    assert_eq!(run.settled_runtime, "host");
+    assert_eq!(run.settings_agent, "dev");
+    assert_eq!(opened.0.lock().unwrap()[0], "/work/calm-wt");
+}
+
+// A project nothing has named is asked under `users/me` from inside it: its
+// run keeps its names unresolved (owner ruling 2026-11-14).
+#[tokio::test]
+async fn an_unnamed_projects_preview_names_nothing() {
+    let f = fixture(vec![]);
+    let api = f.api.reading(Arc::new(WithAgent::default()));
+    let run = api
+        .create_run(v1::CreateRunRequest {
+            parent: "users/me".to_string(),
+            mode: v1::run::Mode::Terminal as i32,
+            cwd: "/work/unnamed".to_string(),
+            validate_only: true,
+            ..v1::CreateRunRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(run.name, "");
+    assert_eq!(run.engine, "claude-code");
+}
+
+// G1: a preview outside git is refused by the library domain before it is
+// planned.
+#[tokio::test]
+async fn a_preview_outside_git_is_refused_before_it_is_planned() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let opened = Arc::new(Opened::default());
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
+        .observing(observing(&f.world, &Arc::new(Gits::default())));
+    let refused = api
+        .create_run(v1::CreateRunRequest {
+            parent: "projects/calm-quiet-heron".to_string(),
+            mode: v1::run::Mode::Terminal as i32,
+            validate_only: true,
+            ..v1::CreateRunRequest::default()
+        })
+        .await;
+    let Err(ApiError::Refused(refusal)) = refused else {
+        panic!("not refused: {refused:?}");
+    };
+    assert!(
+        refusal.refusal.type_url.ends_with("NotInGit"),
+        "{refusal:?}"
+    );
+    assert!(opened.0.lock().unwrap().is_empty());
+}

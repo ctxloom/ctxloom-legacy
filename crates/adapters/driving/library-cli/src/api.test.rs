@@ -2,7 +2,9 @@
 
 use serde_json::json;
 
-use super::*;
+use library_api::resources::document;
+use library_api::resources::settings;
+use library_application::AgentSettings;
 
 pub(crate) fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
     serde_json::to_value(message).expect("serializes")

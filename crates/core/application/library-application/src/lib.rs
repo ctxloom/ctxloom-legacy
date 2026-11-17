@@ -43,7 +43,7 @@ pub use companions::CompanionInit;
 pub use config::{
     load as load_config, Flags, LegacyGo, OnRun, RegisteredCompanion, OUTPUT_DIR_DEFAULT,
 };
-pub use config_show::ConfigShown;
+pub use config_show::{config_yaml, ConfigShown};
 pub use distill::{BundleDistilled, Distilled, Distiller, ItemDistilled};
 pub use engine_noun::{
     AgentSettings, AuthSetting, EngineAgent, EngineRow, EnvKey, EnvSetting, PermissionsSetting,
@@ -74,7 +74,8 @@ pub use package::{
     PackagedSkill,
 };
 pub use project::{
-    Library, Outcome, RepositoryStep, RunSettings, TrustAsk, LISTING_HINT, NO_PROJECT_HINT,
+    Library, Outcome, RepositoryStep, RunSettings, TrustAsk, Words, LISTING_HINT, NO_PROJECT_HINT,
+    PROFILE_HINT,
 };
 pub use run::{AssembleRequest, Previewed, RunRequest};
 pub use search::SearchRequest;

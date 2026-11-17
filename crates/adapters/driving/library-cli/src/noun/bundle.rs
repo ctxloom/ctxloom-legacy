@@ -2,11 +2,11 @@
 //! AIP resource or method response (OD-40, design §5.1).
 
 use library_application::{
-    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleRow,
-    BundleShow, BundleView, Removal, Viewed,
+    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleView,
+    Removal, Viewed,
 };
 
-use library_api::resources::{bundle, count};
+use library_api::resources::count;
 
 use crate::catalog::{self, bundle_name, ok};
 use crate::prelude::*;
@@ -19,22 +19,41 @@ pub(crate) fn read(
 ) -> Result<Exit, Failure> {
     match verb {
         "show" => {
-            let outcome = cx.library.bundle_show(&cx.flags, &text_arg(sub, "name"));
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                shown,
-                |show, out, notes| {
-                    let mut said = text::Notes(Vec::new());
-                    let written = text::bundle_show(out, &mut said, show);
-                    notes.extend(said.0);
-                    written
-                },
-                ok,
-            )
+            // The daemon's read (step 10a U2), its text from the message (D10).
+            let request = v1::GetBundleRequest {
+                view: v1::bundle::View::Full as i32,
+                globals: cx.globals(),
+                ..v1::GetBundleRequest::default()
+            };
+            let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+            let read = cx.served.get_bundle(&under, request);
+            served(cx, read, out, err, false, |bundle, out, notes| {
+                let mut said = text::Notes(Vec::new());
+                let written =
+                    text::bundle_show(out, &mut said, &crate::read_back::bundle_show(bundle));
+                notes.extend(said.0);
+                written
+            })
+        }
+        "view" if !text_arg(sub, "name").contains('#') => {
+            // A whole bundle's files are the daemon's read (step 10a U2).
+            let ask = text_arg(sub, "name");
+            let request = v1::GetBundleRequest {
+                view: v1::bundle::View::Content as i32,
+                prefer_distilled: flag(sub, "distilled"),
+                globals: cx.globals(),
+                ..v1::GetBundleRequest::default()
+            };
+            let read = cx
+                .served
+                .get_bundle(&library_api::names::bundle_target(&ask), request);
+            served(cx, read, out, err, false, |bundle, out, notes| {
+                let mut said = text::Notes(Vec::new());
+                let view = crate::read_back::bundle_view(bundle);
+                let written = text::bundle_view(out, &mut said, &view, &ask);
+                notes.extend(said.0);
+                written
+            })
         }
         "view" => {
             let ask = text_arg(sub, "name");
@@ -81,88 +100,6 @@ fn listed_by_the_daemon(
         false,
         |listed, out, _| text::bundles(out, listed, in_project),
     )
-}
-
-/// `bundle show`: the `Bundle` (FULL), each child summarised by its name
-/// (OQ-14).
-pub(crate) fn shown(parent: &str, show: &BundleShow) -> v1::Bundle {
-    let item = |dir: &str, id: &str| catalog::item_name(parent, &show.name, dir, id);
-    v1::Bundle {
-        author: show.author.clone(),
-        notes: show.notes.clone(),
-        installation: show.installation.clone(),
-        description: show.description.clone(),
-        version: show.version.clone(),
-        tags: show.tags.clone(),
-        path: show.path.clone(),
-        skill_count: count(show.skills.len() as u64),
-        fragments: show
-            .fragments
-            .iter()
-            .map(|(id, f)| v1::BundleItem {
-                item: item("fragments", id),
-                tags: f.tags.clone(),
-                preview: f.preview.clone(),
-                distilled: catalog::shown_distilled(f.distilled, f.stale),
-                no_distill: Some(f.no_distill),
-                premise: f.premise.clone(),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        commands: show
-            .commands
-            .iter()
-            .map(|(id, c)| v1::BundleItem {
-                item: item("commands", id),
-                tags: c.tags.clone(),
-                description: c.description.clone(),
-                preview: c.preview.clone(),
-                distilled: catalog::shown_distilled(c.distilled, c.stale),
-                no_distill: Some(c.no_distill),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        skills: show
-            .skills
-            .iter()
-            .map(|(id, s)| v1::BundleItem {
-                item: item("skills", id),
-                tags: s.tags.clone(),
-                notes: s.notes.clone(),
-                path: s.path.clone(),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        mcp_servers: show
-            .mcp
-            .iter()
-            .map(|(id, m)| v1::BundleItem {
-                item: item("mcp", id),
-                command: m.command.clone(),
-                args: m.args.clone(),
-                env: m.env.clone(),
-                notes: m.notes.clone(),
-                installation: m.installation.clone(),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        profiles: show
-            .profiles
-            .iter()
-            .map(|id| item("profiles", id))
-            .collect(),
-        hooks: show.hooks.clone(),
-        ..bundle(parent, &named(show))
-    }
-}
-
-/// The show's listing, under the show's name (a listing the view did not
-/// fill is the name alone).
-fn named(show: &BundleShow) -> BundleRow {
-    BundleRow {
-        name: show.name.clone(),
-        ..show.listing.clone()
-    }
 }
 
 /// What `bundle view` answers: the bundle, or the item the path selects.
@@ -213,9 +150,9 @@ pub(crate) fn viewed(parent: &str, view: &BundleView) -> ViewedMessage {
             ..v1::Skill::default()
         }),
         Viewed::Mcp(row) => {
-            ViewedMessage::McpServer(crate::noun::mcp::server(&item("mcp", &row.name), row))
+            ViewedMessage::McpServer(library_api::resources::server(&item("mcp", &row.name), row))
         }
-        Viewed::Profile(profile) => ViewedMessage::Profile(crate::noun::profile::profile_of(
+        Viewed::Profile(profile) => ViewedMessage::Profile(library_api::resources::profile_of(
             parent,
             &item("profiles", &profile.name),
             profile,

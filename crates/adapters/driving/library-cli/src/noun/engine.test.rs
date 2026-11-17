@@ -96,14 +96,14 @@ mod read {
         );
     }
 
-    // Outside a project the names are rooted at the home (OQ-3); a text answer
-    // asks for no name at all, so it reaches no daemon (OQ-2).
+    // Outside a project the names are rooted at the home (OQ-3); the read is
+    // the daemon's (step 10a U2), so with none, text fails as json does.
     #[test]
-    fn test_engine_names_are_rooted_where_the_names_say_and_text_asks_for_none() {
+    fn test_engine_names_are_rooted_where_the_names_say_and_no_daemon_answers_none() {
         let home = go_named(&["engine", "show", "opencode"], JSON, &Home);
         assert_eq!(home.json()["name"], "users/me/engines/opencode");
         let text = go_named(&["engine", "list"], TEXT, &Unreachable);
-        assert_eq!(text.exit, Ok(0), "{}", text.err);
+        assert_eq!(text.exit, Err("daemon-api-unreached:10".to_string()));
         let json = go_named(&["engine", "list"], JSON, &Unreachable);
         assert_eq!(json.exit, Err("daemon-api-unreached:10".to_string()));
     }
@@ -130,8 +130,8 @@ mod read {
 }
 
 mod api {
-    use super::super::*;
     use crate::api::tests::json_of;
+    use library_application::AuthSetting;
     use serde_json::json;
 
     fn setting(value: serde_json::Value, state: &'static str) -> AuthSetting {
@@ -148,21 +148,30 @@ mod api {
     #[test]
     fn test_an_auth_source_is_its_value_and_its_state_the_enum() {
         assert_eq!(
-            json_of(&auth(&setting(json!("login"), "present"))),
+            json_of(&library_api::resources::engine_auth(&setting(
+                json!("login"),
+                "present"
+            ))),
             json!({"value": {"word": "login"}, "source": "engine", "state": "PRESENT"})
         );
         let mut source = setting(json!({"env": ["A", "B"], "file": "~/k"}), "missing");
         source.via = Some("A".to_string());
         assert_eq!(
-            json_of(&auth(&source)),
+            json_of(&library_api::resources::engine_auth(&source)),
             json!({"value": {"env": ["A", "B"], "file": "~/k"}, "source": "engine", "state": "MISSING", "via": "A"})
         );
         assert_eq!(
-            json_of(&auth(&setting(json!({"env": ["A"]}), "not-needed"))),
+            json_of(&library_api::resources::engine_auth(&setting(
+                json!({"env": ["A"]}),
+                "not-needed"
+            ))),
             json!({"value": {"env": ["A"]}, "source": "engine", "state": "NOT_NEEDED"})
         );
         assert_eq!(
-            json_of(&auth(&setting(json!(7), "unheard-of"))),
+            json_of(&library_api::resources::engine_auth(&setting(
+                json!(7),
+                "unheard-of"
+            ))),
             json!({"value": {}, "source": "engine"})
         );
     }

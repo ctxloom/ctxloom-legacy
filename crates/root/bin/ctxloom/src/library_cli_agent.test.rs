@@ -41,8 +41,11 @@ fn test_the_listing_reads_each_axis_of_a_binding_back() {
         let ran = run_with_flags(&project, &["agent", "list"], flags);
         ran.succeeds();
         if is_text(flags) {
+            // Text prints canonical forms (owner ruling 2026-11-17): a
+            // profile the agent names is its resource name.
             ran.contains("engine: claude-code")
-                .contains("profiles: dev")
+                .contains("profiles: projects/")
+                .contains("/bundles/project/profiles/dev")
                 .contains("runtime: container-rootless");
         } else {
             let doc = ran.json();

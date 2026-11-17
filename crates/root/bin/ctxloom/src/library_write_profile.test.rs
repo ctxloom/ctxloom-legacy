@@ -322,7 +322,8 @@ fn test_a_parent_profiles_content_is_inherited_and_detaching_the_parent_takes_it
         let shown = with_flags(&project, &["profile", "show", "dev"], flags);
         shown.succeeds();
         if is_text(flags) {
-            shown.contains("- base");
+            // A reference is its resource name (owner ruling 2026-11-17).
+            shown.contains("/bundles/project/profiles/base\n");
         } else {
             assert!(
                 reports_as(&shown.json(), "parents.0").ends_with("/bundles/project/profiles/base")
@@ -534,10 +535,13 @@ fn test_a_profile_has_no_preferred_engine_any_more() {
         .contains("--llm");
     assert_eq!(project.tree(PROFILES), before);
     project.write(DEV_YAML, "bundles:\n  - demo\nllm: big\n");
+    // The daemon's read refuses it as no profile it can read (a refused
+    // read carries no notices, step 10a U2); the listing says why.
     project
         .run(&["profile", "show", "dev"])
         .fails()
-        .contains("llm");
+        .contains("profile not found: dev");
+    project.run(&["profile", "list"]).contains("llm");
 }
 
 // cli/profile.go modify (documented condition): every change it makes is
@@ -644,7 +648,8 @@ fn test_export_remove_and_re_import_a_profile() {
         let shown = with_flags(&project, &["profile", "show", "dev"], flags);
         if is_text(flags) {
             listed.contains("dev");
-            shown.contains("- demo");
+            // A reference is its resource name (owner ruling 2026-11-17).
+            shown.contains("/bundles/demo\n");
         } else {
             assert!(reports_as(&listed.json(), "profiles.0.name")
                 .ends_with("/bundles/project/profiles/dev"));

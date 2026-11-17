@@ -149,3 +149,48 @@ fn a_companion_listing_reads_back_each_by_its_name_program_and_state() {
     assert!(!rows[1].exists);
     assert_eq!(rows[1].state, library_application::CompanionState::Enabled);
 }
+
+#[test]
+fn a_profile_reads_back_by_the_name_typed_and_its_references_canonical() {
+    assert_eq!(
+        profile_ask("projects/p/bundles/project/profiles/dev"),
+        "dev"
+    );
+    assert_eq!(
+        profile_ask("projects/p/bundles/demo/profiles/x"),
+        "ctxloom+local:demo#profiles/x"
+    );
+    assert_eq!(
+        profile_ask("projects/p/remotes/acme/bundles/kit/profiles/x"),
+        "projects/p/remotes/acme/bundles/kit/profiles/x"
+    );
+    let profile = v1::Profile {
+        name: "projects/p/bundles/project/profiles/dev".to_string(),
+        description: "dev profile".to_string(),
+        parents: vec!["projects/p/bundles/project/profiles/base".to_string()],
+        bundles: vec!["projects/p/bundles/demo".to_string()],
+        exclude_mcp_servers: vec!["tree-sitter".to_string()],
+        default: Some(true),
+        ..<v1::Profile as Default>::default()
+    };
+    let show = profile_show(&profile);
+    assert_eq!(show.name, "dev");
+    assert_eq!(show.bundle, "projects/p/bundles/project");
+    assert_eq!(show.parents, profile.parents);
+    assert_eq!(show.bundles, profile.bundles);
+    assert_eq!(show.exclude_mcp, profile.exclude_mcp_servers);
+    assert!(show.default);
+    let listed = v1::ListProfilesResponse {
+        profiles: vec![profile],
+        next_page_token: String::new(),
+    };
+    let list = profile_list(&listed, true);
+    assert_eq!(list.rows[0].name, "dev");
+    assert_eq!(list.rows[0].bundle, "projects/p/bundles/project");
+    assert!(list.rows[0].default);
+    assert_eq!(list.hint, library_application::PROFILE_HINT);
+    assert_eq!(
+        profile_list(&listed, false).hint,
+        library_application::NO_PROJECT_HINT
+    );
+}

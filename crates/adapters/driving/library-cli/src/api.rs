@@ -17,8 +17,7 @@ use std::io::{self, Write};
 
 use angzarr_presentation::Format;
 use cli_support::{say_notices, Exit};
-use daemon_proto::v1;
-use library_application::{AgentSettings, Notice, Outcome};
+use library_application::{Notice, Outcome};
 use serde::Serialize;
 
 use crate::{failed, output_failure, Context, Failure, PROG};
@@ -28,53 +27,7 @@ pub(crate) fn print<M: serde::Serialize>(out: &mut dyn Write, message: &M) -> io
     angzarr_presentation::write_json(out, message)
 }
 
-pub(crate) fn text(value: &str, source: &str) -> Option<v1::SourcedText> {
-    Some(v1::SourcedText {
-        value: value.to_string(),
-        source: source.to_string(),
-    })
-}
-
-/// What an agent resolves to on an engine. A model or effort nobody set is
-/// no value (the engine's own default), its source still said.
-pub(crate) fn settings(settings: &AgentSettings) -> v1::AgentSettings {
-    let optional =
-        |value: &Option<String>, source: &str| text(value.as_deref().unwrap_or_default(), source);
-    let runtime = &settings.runtime;
-    v1::AgentSettings {
-        model: optional(&settings.model.value, settings.model.source),
-        effort: optional(&settings.effort.value, settings.effort.source),
-        permissions: Some(v1::SourcedDocument {
-            value: settings.permissions.value.as_ref().map(document),
-            source: settings.permissions.source.to_string(),
-        }),
-        runtime: Some(v1::RuntimeSetting {
-            value: runtime.value.clone(),
-            source: runtime.source.to_string(),
-            overrides: runtime.overrides.clone().unwrap_or_default(),
-            overrides_source: runtime.overrides_source.unwrap_or_default().to_string(),
-            change: runtime.change.unwrap_or_default().to_string(),
-        }),
-        env: Some(v1::EnvSetting {
-            value: settings.env.value.clone(),
-            source: settings.env.source.to_string(),
-            keys: settings
-                .env
-                .keys
-                .iter()
-                .map(|key| v1::EnvKey {
-                    variable: key.name.clone(),
-                    source: key.source.to_string(),
-                })
-                .collect(),
-        }),
-        session_home: text(&settings.session_home.value, settings.session_home.source),
-        approval_timeout: text(
-            &settings.approval_timeout.value,
-            settings.approval_timeout.source,
-        ),
-    }
-}
+pub(crate) use library_api::resources::not_carried;
 
 /// A converted write's answer (OD-40; OQ-8, OQ-9): the notices, said; then
 /// its error, or its json, the method's response named under the parent the
@@ -103,20 +56,6 @@ pub(crate) fn written<T, M: Serialize>(
     say_notices(&said, PROG, cx.format, cx.catalog, err);
     Ok(exit(&value))
 }
-
-/// What an engine cannot carry of what an agent's profiles configure.
-pub(crate) fn not_carried(lost: &library_application::NotCarried) -> v1::NotCarried {
-    v1::NotCarried {
-        engine: lost.engine.clone(),
-        surface: lost.surface.clone(),
-        event: lost.event.clone(),
-        reason: lost.reason.clone(),
-    }
-}
-
-/// A free-form document as a `google.protobuf.Value` (OQ-11): the one
-/// mapping, library-api's.
-pub(crate) use library_api::resources::document;
 
 #[cfg(test)]
 #[path = "api.test.rs"]

@@ -69,6 +69,40 @@ impl Project {
     }
 }
 
+/// A configuration document (or a section of it) as `config show` prints
+/// it from its JSON: YAML, every mapping's keys sorted (step 10a U2: the
+/// text is drawn from the read's message, which holds no written order;
+/// owner ruling 2026-11-17, text prints canonical forms).
+pub fn config_yaml(json: &serde_json::Value) -> String {
+    to_yaml(&typed_of(json))
+}
+
+/// A JSON value as the typed value it prints as, keys sorted.
+fn typed_of(json: &serde_json::Value) -> Typed {
+    match json {
+        serde_json::Value::Null => Typed::Null,
+        serde_json::Value::Bool(b) => Typed::Bool(*b),
+        serde_json::Value::Number(n) => match n.as_i64() {
+            Some(whole) => Typed::Int(whole),
+            None => match n.as_f64() {
+                Some(x) if x.fract() == 0.0 && x.abs() < 9.0e15 => Typed::Int(x as i64),
+                Some(x) => Typed::Float(x),
+                None => Typed::Str(n.to_string()),
+            },
+        },
+        serde_json::Value::String(text) => Typed::Str(text.clone()),
+        serde_json::Value::Array(items) => Typed::Seq(items.iter().map(typed_of).collect()),
+        serde_json::Value::Object(fields) => {
+            let mut entries: Vec<(String, Typed)> = fields
+                .iter()
+                .map(|(key, field)| (key.clone(), typed_of(field)))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Typed::Map(entries)
+        }
+    }
+}
+
 /// What a section that is not set shows: its record's zero.
 fn empty_section(section: &str) -> Typed {
     match section {

@@ -2623,23 +2623,67 @@ built:
   sweep's settings, a child's plan (`child_library`) and a hosted run
   (`oneshot::hosted_wiring`) are all made over it; `per_call_env` (which
   set ctxloom's home as the caller's HOME) is gone.
-- Served: `ListBundles` (`bundle list`), `ListFragments`, `ListCommands`,
-  `GetFragment`, `GetCommand` (`fragment|command list|show`),
-  `GetPremiseIndex` (`fragment premises`), `ListSkills`, `GetSkill`
-  (`skill list|show`), `ListCompanions` (`companion list`, the programs
-  looked for on the caller's `PATH`), `AssembleContext` (`context assemble`), and
-  `ListAgents`, `ListProfiles` (the hooks' alone, O3). The CLI is the
-  request and the render (D10): `library_cli::served` says the read's
-  notices, then prints the message as json or its text, drawn from the
-  message alone (library-cli's `read_back`: the message read back as the
-  view the text renderer prints, line for line); a one-bundle listing that
-  holds none asks the whole catalog too, for its "exist in other bundles"
-  line. The view-to-message mappings are `library_api::resources`, the
-  one mapping. With no daemon, a served read fails (`daemon-api-unreached`,
-  exit 10), text or json alike: a text answer no longer reaches no daemon. The home step (G2)
-  is the daemon's, at a read (`observe_read`), said as
-  `library-api-notice-home-repository-made`; a verb still in process still
-  takes it in process first.
+- Served: `ListBundles` (`bundle list`), `GetBundle` (`bundle show`, FULL;
+  `bundle view <bundle>`, CONTENT: its files), `ListFragments`,
+  `ListCommands`, `GetFragment`, `GetCommand` (`fragment|command
+  list|show`), `GetPremiseIndex` (`fragment premises`), `ListSkills`,
+  `GetSkill` (`skill list|show`), `ListCompanions` (`companion list`, the
+  programs looked for on the caller's `PATH`), `ListProfiles`, `GetProfile`
+  (`profile list|show`; a bare name's target `/profiles/<name>`,
+  `names::profile_target`), `ListAgents`, `GetAgent` (`agent list|show`;
+  `names::named_target`; an agent's resolution error said in the program's
+  words, `Library::with_words`, the wiring's catalog), `ListEngines`,
+  `GetEngine` (`engine list|show`), `ListMcpServers` (`mcp server list`,
+  and `mcp server show <id>` as its `mcp_server_id` filter), `SearchLibrary`
+  (`search`; a `--type` word the API's `ItemKind` has no value for is
+  refused by the CLI, `library-application-search-type`, as the request
+  cannot carry it), `GetConfig` (`config show [section] [--raw]`: `SET`
+  is `--raw`; served while the daemon drains, so a drain's own timeout is
+  changed and read back while it runs), and `AssembleContext` (`context
+  assemble`). The CLI is the request and the render (D10):
+  `library_cli::served` says the read's notices, then prints the message
+  as json or its text, drawn from the message alone (library-cli's
+  `read_back`: the message read back as the view the text renderer
+  prints); a one-bundle listing that holds none asks the whole catalog
+  too, for its "exist in other bundles" line. The view-to-message mappings
+  are `library_api::resources`, the one mapping. With no daemon, a served
+  read fails (`daemon-api-unreached`, exit 10), text or json alike: a text
+  answer no longer reaches no daemon (so `scripts/plain-engines-check.sh`
+  proves the plain engine list by an agent written on a mock, refused in
+  process naming the list). The home step (G2) is the daemon's, at a read
+  (`observe_read`), said as `library-api-notice-home-repository-made`; a
+  verb still in process still takes it in process first.
+- Text prints CANONICAL forms (owner ruling 2026-11-17), as the message
+  holds them, never the spelling written (no as-written field crosses the
+  wire): a reference is its resource name (a profile's bundle, parents and
+  bundles, an agent's profiles, an MCP server's bundle, a dry run's
+  profiles: `projects/<harp>/bundles/project/profiles/base`; one OQ-16
+  cannot place keeps its text), a resource's own name the one a person
+  types (a project profile's bare name, `ctxloom+local:<b>#profiles/<p>`,
+  else its resource name), a free-form document (permissions, `config
+  show`) with its keys sorted. The Go-parity rows that printed the
+  written spelling carry `# changed:` (profile.tsv, mcp.tsv;
+  library_parity's `as_canonical`, its harp unsaid as `projects/{HARP}`).
+- `run --dry-run` is `CreateRun` with `validate_only` (`Api::preview_run`,
+  `LibraryReads::preview_run`, library-cli's `Served::preview_run`): planned
+  as a library read (its trees observed first, so a library outside git is
+  refused `library-tree-not-in-git`) at the caller's directory, in its
+  environment, under the project's trust as the daemon reads it, then
+  judged on the untrusted project settings it reads as the runs aggregate
+  judges an enqueue (`runs::pre_launch_refusal`, owner answer H:
+  `runs-untrusted-project-settings`, exit 20, with the plan's fatal findings
+  beside it one `runs-launch-refused`, exit 21); nothing is enqueued,
+  minted or started. Its `Run` (`library_api::resources::planned`) carries
+  the workspace axis and runtime the launch SETTLES on
+  (`Run.settled_workspace`, `Run.settled_runtime`, fields 19 and 20: the
+  asked or configured, else `none` and `host`; `workspace` and `runtime`
+  stay what was asked and what the agent declares, Go's top-level keys) and
+  `Run.settings_agent` (field 18, the agent the settings are of), its
+  notices in `Run.notices`, so its text (agent, axes, Settings section) is
+  drawn from the message; a plan with fatal findings prints and exits 21.
+  A dry run never mints: a project nothing has named is asked under
+  `users/me` from inside it (`daemon::preview_client`), and the daemon
+  leaves its names unresolved.
 - O3: the session-start nudge asks the daemon's `ListAgents` and
   `ListProfiles`, the skill mates its `ListSkills` (the bundle from the
   skill's resource name, the name its `Skill.display_name`, the SKILL.md
@@ -2650,12 +2694,9 @@ built:
   a daemon already serving); with no daemon in time a hook says nothing of
   the library and reads nothing in process.
 
-Still in process (U2's remainder): `bundle show|view`, `profile|agent|mcp|
-engine list|show`, `search`, `config show`, the deps reads, and
-`run --dry-run` (not yet `CreateRun{validate_only}`, which still answers
-UNIMPLEMENTED: its text needs the plan's settled workspace and runtime and
-the agent its settings are of, which `Run` does not carry; escalated), so
-library_changes.feature's `run --dry-run` row stays red.
+Still in process (U2's remainder): `bundle view <bundle>#<kind>/<item>`
+(an item's view, whose text is the item's own rendering), and the deps
+reads (`deps list` and the remote reads, deps-cli's).
 
 ## Storage is angzarr-store-sqlite
 
@@ -3728,7 +3769,10 @@ config's shape (ruling 67): `engines` (JSON) / `engines.<e>: {...}` lines
 (text, YAML flow form, keys sorted as written), each block that holds
 `permissions` followed by "passed to <engine> verbatim; ctxloom does not
 check it" (ruling 139; `agent show`, `engine show` and the dry run's Settings
-say it under the document too, and their JSON carries it as written); no
+say it under the document too). Text and JSON print the document with its
+keys sorted (E3, owner ruling 2026-11-17: they are drawn from the daemon's
+message, a `google.protobuf.Value`, which keeps no written order); what
+reaches the engine is still the document verbatim, in its written order; no
 flat model/effort, no `approver`, no "Headless posture".
 `engines.<e>.command`, `auth.file` and `session_home: host` (an engine
 block's or an agent's, `agents.<a>.session_home`) in a project layer are

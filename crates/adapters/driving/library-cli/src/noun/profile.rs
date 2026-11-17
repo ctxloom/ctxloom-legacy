@@ -4,14 +4,11 @@
 //! json is asked for by name.
 
 use library_application::{
-    ProfileCreated, ProfileExported, ProfileImported, ProfileModified, ProfileRemoved, ProfileShow,
-    Removal,
+    ProfileCreated, ProfileExported, ProfileImported, ProfileModified, ProfileRemoved, Removal,
 };
 
 use crate::catalog::{self, ok};
-use library_api::resources::{
-    profile_bundles, profile_id, profile_name, profile_parents, profiles,
-};
+use library_api::resources::{profile_bundles, profile_name, profile_parents};
 
 use crate::prelude::*;
 
@@ -21,58 +18,27 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
+    // The daemon's reads (step 10a U2), their text from the message (D10).
     if verb == "show" {
-        let outcome = cx.library.profile_show(&cx.flags, &text_arg(sub, "name"));
-        return catalog::answer(
-            cx,
-            outcome,
-            out,
-            err,
-            false,
-            shown,
-            |show, out, _| text::profile_show(out, show),
-            ok,
-        );
+        let request = v1::GetProfileRequest {
+            globals: cx.globals(),
+            ..v1::GetProfileRequest::default()
+        };
+        let under = library_api::names::profile_target(&text_arg(sub, "name"));
+        let read = cx.served.get_profile(&under, request);
+        return served(cx, read, out, err, false, |profile, out, _| {
+            text::profile_show(out, &crate::read_back::profile_show(profile))
+        });
     }
-    let outcome = cx.library.profile_list(&cx.flags);
-    catalog::answer(
-        cx,
-        outcome,
-        out,
-        err,
-        false,
-        profiles,
-        |list, out, _| text::profile_list(out, list),
-        ok,
-    )
-}
-
-/// `profile show`: the `Profile` (FULL).
-pub(crate) fn shown(parent: &str, show: &ProfileShow) -> v1::Profile {
-    v1::Profile {
-        default: Some(show.default),
-        ..profile_of(
-            parent,
-            &profile_name(parent, &show.entry, profile_id(&show.name)),
-            show,
-        )
-    }
-}
-
-/// A profile as its `Profile`, named `name`.
-pub(crate) fn profile_of(parent: &str, name: &str, show: &ProfileShow) -> v1::Profile {
-    v1::Profile {
-        name: name.to_string(),
-        description: show.description.clone(),
-        parents: profile_parents(parent, &show.parents),
-        tags: show.tags.clone(),
-        bundles: profile_bundles(parent, &show.bundles),
-        variables: show.variables.clone(),
-        exclude_fragments: show.exclude_fragments.clone(),
-        exclude_mcp_servers: show.exclude_mcp.clone(),
-        path: show.path.clone(),
-        ..<v1::Profile as Default>::default()
-    }
+    let request = v1::ListProfilesRequest {
+        globals: cx.globals(),
+        ..v1::ListProfilesRequest::default()
+    };
+    let in_project = cx.served.in_project();
+    let read = cx.served.list_profiles("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        text::profile_list(out, &crate::read_back::profile_list(listed, in_project))
+    })
 }
 
 pub(crate) fn write(

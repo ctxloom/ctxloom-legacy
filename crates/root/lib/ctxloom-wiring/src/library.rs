@@ -153,6 +153,31 @@ pub(crate) fn home_repository(wiring: &Wiring) -> Result<(), Failure> {
         .map_err(|e| Failure::boxed(e.into_failure(), Exit::FAILED))
 }
 
+/// The program's words for a library read's diagnostics: the wiring's
+/// catalogs and the library's own, read once, at the first diagnostic said;
+/// a catalog that does not read says each by its code and args.
+fn words() -> library_application::Words {
+    static CATALOG: std::sync::OnceLock<Option<angzarr_presentation::Catalog>> =
+        std::sync::OnceLock::new();
+    Arc::new(|d: &dyn angzarr_diagnostic::Diagnostic| {
+        let catalog = CATALOG.get_or_init(|| {
+            let mut sources = crate::catalog_sources();
+            sources.extend([
+                angzarr_yaml::EN_US,
+                library::EN_US,
+                library_application::EN_US,
+                deps::EN_US,
+                deps_application::EN_US,
+            ]);
+            angzarr_presentation::Catalog::en_us(&sources).ok()
+        });
+        match catalog {
+            Some(catalog) => catalog.message(d),
+            None => d.to_string(),
+        }
+    })
+}
+
 pub(crate) fn build(
     wiring: &Wiring,
     remotes: Option<Rc<dyn RemoteLibrary>>,
@@ -185,7 +210,10 @@ pub(crate) fn build(
         .with_engines(advising_engines())
         // What each engine cannot carry, in its own word (its surface half): the
         // capability-loss report and the swap preview read it.
-        .with_hook_losses(hook_losses());
+        .with_hook_losses(hook_losses())
+        // A read the daemon answers says a diagnostic (an agent's resolution
+        // error) in the program's words (step 10a U2).
+        .with_words(words());
     // ctxloom's default content, built in (owner rulings 110, 111).
     let library = if builtins_withheld(wiring.env()) {
         library
@@ -316,6 +344,16 @@ impl library_cli::Served for DaemonServed {
         let wiring = self.wiring()?;
         let client = crate::daemon::library_client(&wiring, &self.version)?;
         crate::daemon::answered(client.assemble_context(request))
+    }
+
+    fn preview_run(
+        &self,
+        request: daemon_proto::v1::CreateRunRequest,
+    ) -> Result<daemon_proto::v1::Run, Failure> {
+        use daemon_api::LibraryReads;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::preview_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.preview_run(request))
     }
 }
 

@@ -69,7 +69,10 @@ macro_rules! library_requests {
     };
 }
 daemon_proto::library_reads!(library_requests);
-library_requests!(assemble_context (AssembleContext) AssembleContextRequest.name => AssembledContext);
+library_requests!(
+    assemble_context (AssembleContext) AssembleContextRequest.name => AssembledContext,
+    create_run (CreateRun) CreateRunRequest.parent => Run,
+);
 
 /// The parent a read's target is under: `projects/{harp}` (its project) or
 /// `users/me` (none), the first two segments of its name.
@@ -162,6 +165,69 @@ impl<E: Edge> Api<E> {
         Ok(daemon_ports::Read {
             answer,
             notices: said,
+        })
+    }
+}
+
+impl<E: Edge> Api<E> {
+    /// `CreateRun` with `validate_only`, `run --dry-run` (step 10a U2):
+    /// the run planned as a library read is answered (its trees observed
+    /// first, so a library outside git is refused), at the caller's
+    /// directory, in its environment, under the project's trust as the
+    /// daemon reads it (never the client's to say, step 8 U2), and judged
+    /// as the runs aggregate judges an enqueue on the untrusted project
+    /// settings it reads (owner answer H: `runs-untrusted-project-settings`,
+    /// beside the plan's fatal findings). Nothing is enqueued, minted or
+    /// started. A project nothing has named (asked under `users/me` from
+    /// inside it) keeps its names unresolved (owner ruling 2026-11-14).
+    pub async fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
+        let project = self.host_project(&request.parent).await?;
+        let trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
+        let unnamed = project.is_none()
+            && !request.cwd.is_empty()
+            && self
+                .libraries
+                .as_ref()
+                .and_then(|libraries| libraries.root(&request.cwd, &pairs(request.env.as_ref())))
+                .is_some();
+        let (asked, _) = run_application::client::asked_of(&request);
+        let read = self
+            .library_read(&request, |library, flags, _| {
+                let flags = Flags {
+                    trusted,
+                    ..flags.clone()
+                };
+                library.dry_run(&flags, &asked.run)
+            })
+            .await?;
+        let previewed = read.answer;
+        let plan = &previewed.plan;
+        if !plan.untrusted.is_empty() {
+            let checks = runs::EnqueueRun {
+                session: String::new(),
+                incarnation: 1,
+                mode: runs::RunMode::Interactive,
+                prompt_given: true,
+                engine: plan.engine.clone(),
+                drivable_engines: vec![plan.engine.clone()],
+                credential: runs::CredentialEvidence {
+                    file_only: false,
+                    builtin_variables: Vec::new(),
+                    accepted_variables: Vec::new(),
+                    accepted_set: false,
+                },
+                fatal_findings: u32::try_from(previewed.fatal.len()).unwrap_or(u32::MAX),
+                launcher_lock: String::new(),
+                untrusted_settings: plan.untrusted.clone(),
+            };
+            if let Some((refusal, status)) = runs::pre_launch_refusal(&checks) {
+                return Err(ApiRefusal::typed(&refusal, status).into());
+            }
+        }
+        let parent = (!unnamed).then_some(request.parent.as_str());
+        Ok(v1::Run {
+            notices: read.notices,
+            ..library_api::resources::planned(parent, plan)
         })
     }
 }

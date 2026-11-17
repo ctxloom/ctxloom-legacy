@@ -172,26 +172,40 @@ async fn a_one_shot_in_a_project_nobody_named_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_run_of_no_mode_and_a_preview_are_not_served_yet() {
+async fn a_run_of_no_mode_is_not_served_yet() {
     let f = fixture(vec![]);
     let (hosted, asked) = one_shots(false);
     let api = f.restarted().await.hosting_one_shots(hosted);
-    for request in [
-        v1::CreateRunRequest {
+    let answered = api
+        .create_run(v1::CreateRunRequest {
             mode: v1::run::Mode::Unspecified as i32,
             ..one_shot("users/me")
-        },
-        v1::CreateRunRequest {
+        })
+        .await;
+    assert!(
+        matches!(answered, Err(ApiError::Unimplemented { .. })),
+        "{answered:?}"
+    );
+    assert!(asked.lock().unwrap().is_empty());
+}
+
+// Step 10a U2: a preview is the dry run's, planned as a library read, never
+// hosted: with no library to read it fails, and nothing is hosted.
+#[tokio::test]
+async fn a_preview_is_planned_as_a_library_read_and_never_hosted() {
+    let f = fixture(vec![]);
+    let (hosted, asked) = one_shots(false);
+    let api = f.restarted().await.hosting_one_shots(hosted);
+    let answered = api
+        .create_run(v1::CreateRunRequest {
             validate_only: true,
             ..one_shot("users/me")
-        },
-    ] {
-        let answered = api.create_run(request).await;
-        assert!(
-            matches!(answered, Err(ApiError::Unimplemented { .. })),
-            "{answered:?}"
-        );
-    }
+        })
+        .await;
+    assert!(
+        matches!(&answered, Err(ApiError::Failed { detail }) if detail.contains("reads no library")),
+        "{answered:?}"
+    );
     assert!(asked.lock().unwrap().is_empty());
 }
 

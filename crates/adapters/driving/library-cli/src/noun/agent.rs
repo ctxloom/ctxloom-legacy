@@ -2,9 +2,9 @@
 //! its method's response (OD-40, design §3.7, §5.6). `agent default` still
 //! answers in text only.
 
-use library_application::{AgentShow, Removal, Requirement, ResolvedAgent};
+use library_application::Removal;
 
-use library_api::resources::{agent, agent_name, agents, engine_ref};
+use library_api::resources::{agent, agent_name};
 
 use crate::prelude::*;
 
@@ -14,30 +14,26 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
+    // The daemon's reads (step 10a U2), their text from the message (D10).
     if verb == "show" {
-        let catalog = cx.catalog;
-        let say = |d: &dyn Diagnostic| catalog.message(d);
-        let outcome = cx
-            .library
-            .agent_show(&cx.flags, &text_arg(sub, "name"), &say);
-        return resource(
-            cx,
-            outcome,
-            out,
-            err,
-            |parent, show| agent_show(parent, show, &default_agent(cx)),
-            text::agent_show,
-        );
+        let request = v1::GetAgentRequest {
+            globals: cx.globals(),
+            ..v1::GetAgentRequest::default()
+        };
+        let under = library_api::names::named_target("agents", &text_arg(sub, "name"));
+        let read = cx.served.get_agent(&under, request);
+        return served(cx, read, out, err, false, |agent, out, _| {
+            text::agent_show(out, &crate::read_back::agent_show(agent))
+        });
     }
-    let outcome = cx.library.agent_list(&cx.flags);
-    resource(
-        cx,
-        outcome,
-        out,
-        err,
-        |parent, rows: &Vec<AgentRow>| agents(parent, rows, &default_agent(cx)),
-        |out, rows| text::agent_list(out, rows),
-    )
+    let request = v1::ListAgentsRequest {
+        globals: cx.globals(),
+        ..v1::ListAgentsRequest::default()
+    };
+    let read = cx.served.list_agents("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        text::agent_list(out, &crate::read_back::agent_rows(listed))
+    })
 }
 
 pub(crate) fn write(
@@ -141,53 +137,6 @@ fn named(parent: &str, agent: &str) -> v1::Agent {
     v1::Agent {
         name: agent_name(parent, agent),
         ..Default::default()
-    }
-}
-
-/// `agent show <agent>`: the `Agent` resource (the FULL view), its
-/// definition the resource and what it resolves to beside it.
-pub(crate) fn agent_show(parent: &str, show: &AgentShow, default: &str) -> v1::Agent {
-    v1::Agent {
-        resolved: show.resolved.as_ref().map(|r| resolved(parent, r)),
-        resolution_error: show.resolution_error.clone(),
-        requirements: show.requirements.iter().map(requirement).collect(),
-        requirements_error: show.requirements_error.clone(),
-        not_carried: show.not_carried.iter().map(api::not_carried).collect(),
-        ..agent(parent, &show.definition, default)
-    }
-}
-
-/// What an agent resolves to, its settings flat (as today), its engine by
-/// its resource name.
-fn resolved(parent: &str, agent: &ResolvedAgent) -> v1::ResolvedAgent {
-    let settings = api::settings(&agent.settings);
-    v1::ResolvedAgent {
-        profiles: agent.profiles.clone(),
-        engine: engine_ref(parent, &agent.engine),
-        model: settings.model,
-        effort: settings.effort,
-        permissions: settings.permissions,
-        runtime: settings.runtime,
-        env: settings.env,
-        context: agent.context.clone(),
-        fragments: agent.fragments.clone(),
-        driving: agent.driving.clone(),
-        session_home: settings.session_home,
-        command: agent.command.clone(),
-    }
-}
-
-fn requirement(needed: &Requirement) -> v1::Requirement {
-    v1::Requirement {
-        command: needed.command.clone(),
-        sources: needed
-            .sources
-            .iter()
-            .map(|source| v1::RequirementSource {
-                kind: source.kind.clone(),
-                reference: source.reference.clone(),
-            })
-            .collect(),
     }
 }
 

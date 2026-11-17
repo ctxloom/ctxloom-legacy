@@ -102,6 +102,7 @@ Feature: profile — the composition that decides what an agent actually receive
       And the file ".ctxloom/content/bundles/v2/project/profiles/hollow.yaml" does not exist
 
     Scenario Outline: Showing a profile reads its composition back
+      # changed: step 10a U2, owner ruling 2026-11-17: text prints canonical forms, a reference its resource name
       Given an initialized ctxloom project
       And a bundle "demo" exists
       And a profile "dev" with bundle "demo"
@@ -118,7 +119,7 @@ Feature: profile — the composition that decides what an agent actually receive
         | flags         | names the profile | the composed bundle |
         |               | projects/{project}/bundles/project/profiles/dev | projects/{project}/bundles/demo |
         | --format json | projects/{project}/bundles/project/profiles/dev | projects/{project}/bundles/demo |
-        | --format text | Profile: dev       | - demo               |
+        | --format text | Profile: dev       | - projects/{project}/bundles/demo |
 
     # The bare noun answers rather than teaches, through the same seam
     # `ctxloom remote` and `ctxloom deps` use. The `ls` alias is driven in the
@@ -186,6 +187,7 @@ Feature: profile — the composition that decides what an agent actually receive
     # stopped resolving at all" — which is what a broken detach looks like
     # from the outside.
     Scenario Outline: A parent profile's content is inherited, and detaching the parent takes it away
+      # changed: step 10a U2, owner ruling 2026-11-17: text prints canonical forms, a reference its resource name
       Given an initialized ctxloom project
       And a bundle "house-style" exists
       And a fragment "house-rules" in bundle "house-style" exists
@@ -219,7 +221,7 @@ Feature: profile — the composition that decides what an agent actually receive
         | flags         | inherits the parent |
         |               | projects/{project}/bundles/project/profiles/base |
         | --format json | projects/{project}/bundles/project/profiles/base |
-        | --format text | - base               |
+        | --format text | - projects/{project}/bundles/project/profiles/base |
 
     # A parent that does not exist is a composition that can never assemble.
     # Refusing at creation is friction up front; accepting it would defer the
@@ -407,6 +409,7 @@ Feature: profile — the composition that decides what an agent actually receive
     # destroyed nothing, since the re-import would recreate the file either
     # way.
     Scenario Outline: Export, remove, and re-import a profile
+      # changed: step 10a U2, owner ruling 2026-11-17: text prints canonical forms, a reference its resource name
       Given an initialized ctxloom project
       And a bundle "demo" exists
       And a profile "dev" with bundle "demo"
@@ -435,7 +438,7 @@ Feature: profile — the composition that decides what an agent actually receive
         | flags         | the reimported profile | the composed bundle |
         |               | projects/{project}/bundles/project/profiles/dev | projects/{project}/bundles/demo |
         | --format json | projects/{project}/bundles/project/profiles/dev | projects/{project}/bundles/demo |
-        | --format text | dev                     | - demo               |
+        | --format text | dev                     | - projects/{project}/bundles/demo |
 
     # The clobber guard, proven by what SURVIVES the refusal rather than by the
     # error text: a guard that printed the message and overwrote anyway would

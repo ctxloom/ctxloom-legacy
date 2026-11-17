@@ -95,8 +95,11 @@ mod read {
             home.json()["local"][0]["resource"],
             "users/me/bundles/demo/fragments/golang"
         );
-        let text = go_in(&["search", "golang"], TEXT, BARE, &Unreachable);
-        assert_eq!(text.code(), 0);
+        // The daemon's read (step 10a U2): with none, text fails as json does.
+        assert_eq!(
+            go_in(&["search", "golang"], TEXT, BARE, &Unreachable).refused(),
+            "daemon-api-unreached:10"
+        );
         assert_eq!(
             go_in(&["search", "golang"], JSON, BARE, &Unreachable).refused(),
             "daemon-api-unreached:10"
@@ -107,7 +110,6 @@ mod read {
 // OD-40 (design §1.2, OQ-4): a bundle's origin is part of its name; its
 // items are named below it, each in its collection.
 mod names {
-    use super::super::count;
     use crate::catalog::item_name;
 
     // A hit's bundle is named by catalog's names (B1's, which search
@@ -127,6 +129,7 @@ mod names {
     // OQ-12: a count is a uint32, saturating.
     #[test]
     fn test_a_count_is_a_uint32_saturating() {
+        use library_api::resources::count;
         assert_eq!(count(7), 7);
         assert_eq!(count(u64::from(u32::MAX)), u32::MAX);
         assert_eq!(count(u64::from(u32::MAX) + 1), u32::MAX);
@@ -141,7 +144,7 @@ mod mapping {
 
     #[test]
     fn test_a_remote_bundle_found_is_its_whole_message() {
-        let found = RemoteFound {
+        let found = library_application::RemoteFound {
             remote: "acme".to_string(),
             name: "rules".to_string(),
             kind: "bundle".to_string(),
@@ -151,7 +154,15 @@ mod mapping {
             pull_ref: "acme/rules".to_string(),
         };
         let mut out = Vec::new();
-        crate::api::print(&mut out, &remote(&found)).unwrap();
+        let results = library_application::SearchResults {
+            query: "rules".to_string(),
+            local: Vec::new(),
+            remote: vec![found],
+            count: 1,
+            hidden_local: 0,
+        };
+        let searched = library_api::resources::searched("projects/p", &results);
+        crate::api::print(&mut out, &searched.remote[0]).unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&out).unwrap(),
             json!({
@@ -168,6 +179,19 @@ mod mapping {
 
     #[test]
     fn test_a_bundle_is_its_kind_in_its_collection() {
-        assert_eq!(kind("bundle"), (v1::ItemKind::Bundle, "bundles"));
+        use library_api::resources::{item_kind, kind_word};
+        assert_eq!(item_kind("bundle"), (v1::ItemKind::Bundle, "bundles"));
+        for word in [
+            "fragment",
+            "command",
+            "skill",
+            "profile",
+            "mcp_server",
+            "bundle",
+        ] {
+            assert_eq!(kind_word(item_kind(word).0 as i32), word);
+        }
+        assert_eq!(item_kind("widget").0, v1::ItemKind::Unspecified);
+        assert_eq!(kind_word(0), "");
     }
 }

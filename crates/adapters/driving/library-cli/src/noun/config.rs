@@ -9,26 +9,23 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let section = text_arg(sub, "section");
-    let outcome = cx.library.config_show(
-        &cx.flags,
-        (!section.is_empty()).then_some(section.as_str()),
-        flag(sub, "raw"),
-    );
-    resource(cx, outcome, out, err, config, |out, shown: &ConfigShown| {
-        write!(out, "{}", shown.text)
+    // The daemon's read (step 10a U2), its text the message's document as
+    // YAML, keys sorted (D10; owner ruling 2026-11-17).
+    let view = if flag(sub, "raw") {
+        v1::config::View::Set
+    } else {
+        v1::config::View::Effective
+    };
+    let request = v1::GetConfigRequest {
+        view: view as i32,
+        section: text_arg(sub, "section"),
+        globals: cx.globals(),
+        ..v1::GetConfigRequest::default()
+    };
+    let read = cx.served.get_config("/config", request);
+    served(cx, read, out, err, false, |config, out, _| {
+        write!(out, "{}", crate::read_back::config_text(config))
     })
-}
-
-/// `config show [section] [--raw]`: the `Config` singleton under `parent`,
-/// its document what the layers give (one section of it, or only what they
-/// set), as written.
-pub(crate) fn config(parent: &str, shown: &ConfigShown) -> v1::Config {
-    v1::Config {
-        name: format!("{parent}/config"),
-        document: Some(api::document(&shown.json)),
-        etag: String::new(),
-    }
 }
 
 pub(crate) fn write(

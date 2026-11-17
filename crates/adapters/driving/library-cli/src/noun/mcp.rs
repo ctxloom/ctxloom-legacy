@@ -1,7 +1,9 @@
 //! `mcp server`: list and show, and its writes (B1), each json answer its
 //! AIP resource or method response (OD-40, design §5.4).
 
-use library_application::{McpList, McpRow, McpSet, McpShow};
+use library_application::McpSet;
+
+use library_api::resources::server_name;
 
 use crate::catalog::{self, ok};
 use crate::prelude::*;
@@ -19,84 +21,25 @@ pub(crate) fn read(
     if let Some(code) = write(cx, (name, args), out, err)? {
         return Ok(code);
     }
-    if name == "show" {
-        let outcome = cx.library.mcp_show(&cx.flags, &text_arg(args, "name"));
-        return catalog::answer(
-            cx,
-            outcome,
-            out,
-            err,
-            false,
-            shown,
-            |show, out, _| text::mcp_show(out, show),
-            ok,
-        );
-    }
-    let outcome = cx.library.mcp_list(&cx.flags);
-    catalog::answer(
-        cx,
-        outcome,
-        out,
-        err,
-        false,
-        listed,
-        |list, out, _| text::mcp_list(out, list),
-        ok,
-    )
-}
-
-/// A server's resource name below the bundle that serves it (`source`, its
-/// canonical reference).
-fn server_name(parent: &str, source: &str, id: &str) -> String {
-    catalog::item_name(parent, source, "mcp", id)
-}
-
-/// A server as its `McpServer`, named `name`.
-pub(crate) fn server(name: &str, row: &McpRow) -> v1::McpServer {
-    v1::McpServer {
-        name: name.to_string(),
-        command: row.command.clone(),
-        args: row.args.clone(),
-        env: row.env.clone(),
-        url: row.url.clone(),
-        served_by: row.served_by.clone(),
-        notes: row.notes.clone(),
-        installation: row.installation.clone(),
-        ..v1::McpServer::default()
-    }
-}
-
-/// `mcp server list`: `ListMcpServersResponse`, each server below its
-/// bundle (no environment, notes or installation, as listed).
-pub(crate) fn listed(parent: &str, list: &McpList) -> v1::ListMcpServersResponse {
-    v1::ListMcpServersResponse {
-        mcp_servers: list
-            .servers
-            .iter()
-            .map(|row| v1::McpServer {
-                name: server_name(parent, &row.source, &row.name),
-                command: row.command.clone(),
-                args: row.args.clone(),
-                url: row.url.clone(),
-                served_by: row.served_by.clone(),
-                ..v1::McpServer::default()
-            })
-            .collect(),
-        next_page_token: String::new(),
-    }
-}
-
-/// `mcp server show <name>`: `ListMcpServersResponse` filtered by the ID
-/// (design §3.5), every bundle's server of that ID.
-pub(crate) fn shown(parent: &str, show: &McpShow) -> v1::ListMcpServersResponse {
-    v1::ListMcpServersResponse {
-        mcp_servers: show
-            .entries
-            .iter()
-            .map(|row| server(&server_name(parent, &row.source, &row.name), row))
-            .collect(),
-        next_page_token: String::new(),
-    }
+    // The daemon's read (step 10a U2), `show` its listing of one ID (design
+    // §3.5), the text from the message (D10).
+    let request = v1::ListMcpServersRequest {
+        mcp_server_id: if name == "show" {
+            text_arg(args, "name")
+        } else {
+            String::new()
+        },
+        globals: cx.globals(),
+        ..v1::ListMcpServersRequest::default()
+    };
+    let read = cx.served.list_mcp_servers("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        if name == "show" {
+            text::mcp_show(out, &crate::read_back::mcp_show(listed))
+        } else {
+            text::mcp_list(out, &crate::read_back::mcp_list(listed))
+        }
+    })
 }
 
 pub(crate) fn write(

@@ -7,17 +7,22 @@
 #
 # cli/profile.feature
 profile-list-json	lib	profile list --format json
+# changed: owner 2026-11-17: text prints canonical forms, a reference its resource name (library_parity's as_canonical)
 profile-list-text	lib	profile list --format text
 profile-bare-json	lib	profile --format json
 profile-ls-json	lib	profile ls --format json
 profile-show-dev-json	lib	profile show dev --format json
+# changed: owner 2026-11-17: text prints canonical forms, a reference its resource name (library_parity's as_canonical)
 profile-show-dev-text	lib	profile show dev --format text
+# changed: owner 2026-11-17: text prints canonical forms, a reference its resource name (library_parity's as_canonical)
 profile-show-base-text	lib	profile show base --format text
 profile-show-unknown	lib	profile show nope
 # ctxloom-project bundle, adapters/content's tree fixtures, a premised bundle
 gold-profile-list-json	gold	profile list --format json
+# changed: owner 2026-11-17: text prints canonical forms, a reference its resource name (library_parity's as_canonical)
 gold-profile-list-text	gold	profile list --format text
 gold-profile-show-curated-json	gold	profile show golden-curated --format json
+# changed: owner 2026-11-17: text prints canonical forms, a reference its resource name (library_parity's as_canonical)
 gold-profile-show-curated-text	gold	profile show golden-curated --format text
 # Envelope generations 0 to 4 (bundles/upgrade.go envelopeSteps): one model whatever the stamp
 gens-profile-legacy-json	gens	profile show legacy --format json

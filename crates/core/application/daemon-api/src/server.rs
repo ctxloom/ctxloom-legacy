@@ -265,7 +265,7 @@ fn not_served(method: &str) -> ApiError {
     }
 }
 
-/// Every call but `GetDaemon`, `StopDaemon`, the project's names
+/// Every call but `GetDaemon`, `StopDaemon`, `GetConfig`, the project's names
 /// (`ResolveProject`, `GetProject`) and the calls on work a client already
 /// started (`WatchRun`, `DeleteHandOff`) is taken only while the daemon is
 /// open ([`Api::open`]): a draining one refuses it. The names are served
@@ -431,7 +431,8 @@ impl<E: Edge + 'static> Calls for Api<E> {
 }
 
 /// [`Api`]'s served library reads, from `library_api::served!`: each taken
-/// only while the daemon is open, observed first, then answered by
+/// only while the daemon is open (`GetConfig` while it drains too),
+/// observed first, then answered by
 /// `library_api::reads::$method`.
 macro_rules! served_library_reads {
     ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
@@ -441,7 +442,13 @@ macro_rules! served_library_reads {
                 request: v1::$request,
             ) -> Answer<'_, daemon_ports::Read<v1::$response>> {
                 Box::pin(async move {
-                    self.open()?;
+                    // `GetConfig` is served while the daemon drains (step
+                    // 10a U2): a drain's own timeout is changed and read
+                    // back while it runs (shutdown.feature), and the read
+                    // starts no work.
+                    if stringify!($rpc) != "GetConfig" {
+                        self.open()?;
+                    }
                     self.library_read(&request, |library, flags, parent| {
                         library_api::reads::$method(library, flags, parent, &request)
                     })

@@ -174,6 +174,40 @@ pub fn reference_target(reference: &str) -> String {
     format!("{}{item}", bundle_target(bundle))
 }
 
+/// What a read's target says after its parent for a profile a command
+/// names, as typed: a reference (`<bundle>#profiles/<name>`) is its
+/// [`reference_target`]; any other text (a project profile's bare name, or
+/// text of no shape) is `/profiles/<text>` escaped, so [`profile_under`]
+/// reads it back exactly and the use case refuses it in its own words.
+pub fn profile_target(text: &str) -> String {
+    if text.contains('#') {
+        return reference_target(text);
+    }
+    named_target("profiles", text)
+}
+
+/// The profile text a target under `parent` names ([`profile_target`] read
+/// back), or none when it names none.
+pub fn profile_under(parent: &str, name: &str) -> Option<String> {
+    named_under(parent, "profiles", name).or_else(|| reference_under(parent, name))
+}
+
+/// What a read's target says after its parent for a resource of
+/// `collection` directly under the parent (an agent, an engine), named by
+/// its text as typed: `/<collection>/<text>`, the text escaped as one
+/// segment. [`named_under`] reads it back.
+pub fn named_target(collection: &str, text: &str) -> String {
+    format!("/{collection}/{}", escaped(text))
+}
+
+/// The text a target under `parent` names in `collection`
+/// ([`named_target`] read back), or none when it names none there.
+pub fn named_under(parent: &str, collection: &str, name: &str) -> Option<String> {
+    let rest = name.strip_prefix(parent)?.strip_prefix('/')?;
+    let id = rest.strip_prefix(collection)?.strip_prefix('/')?;
+    (!id.contains('/')).then(|| unescaped(id))
+}
+
 /// The bundle text a target under `parent` names ([`bundle_target`] read
 /// back), or none when it names no bundle.
 pub fn bundle_under(parent: &str, name: &str) -> Option<String> {

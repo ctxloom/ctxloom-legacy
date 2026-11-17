@@ -58,10 +58,10 @@ fn not_found(name: &str) -> ApiError {
 impl<E: Edge> Api<E> {
     /// `CreateRun`, by its mode: a ONE_SHOT hosted; a TERMINAL run is U5's
     /// (its arm below is where it is built); a preview (`validate_only`) is
-    /// the dry run's, which the command plans itself.
+    /// the dry run's, planned here as a library read (step 10a U2).
     pub async fn create_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
         if request.validate_only {
-            return Err(unimplemented("CreateRun(validate_only)"));
+            return self.preview_run(request).await;
         }
         match v1::run::Mode::try_from(request.mode).unwrap_or(v1::run::Mode::Unspecified) {
             v1::run::Mode::OneShot => self.create_one_shot(request).await,

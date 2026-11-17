@@ -191,7 +191,9 @@ impl Common {
     pub(crate) fn output_reports_containing(&self, path: &str, value: &str) {
         let ran = self.ran();
         let Ok(doc) = serde_json::from_str::<Value>(&ran.stdout) else {
-            ran.contains(value);
+            // A text row names a resource as the json does (owner ruling
+            // 2026-11-17: text prints canonical forms).
+            ran.contains(&self.named(value));
             return;
         };
         let (path, value) = (&self.named(path), &self.named(value));
@@ -243,7 +245,7 @@ impl Common {
                 }
             }
             Err(_) => {
-                ran.contains(value);
+                ran.contains(&self.named(value));
             }
         }
     }

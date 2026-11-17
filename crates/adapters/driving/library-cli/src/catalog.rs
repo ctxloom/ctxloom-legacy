@@ -39,15 +39,8 @@ pub(crate) fn distilled_state(state: library_application::DistilledState) -> i32
     api as i32
 }
 
-/// A `bundle show` entry's distilled form: stale where it no longer matches
-/// its source, else there or not.
-pub(crate) fn shown_distilled(there: bool, stale: bool) -> i32 {
-    if stale {
-        v1::DistilledState::Stale as i32
-    } else {
-        distilled(there)
-    }
-}
+#[cfg(test)]
+pub(crate) use library_api::resources::shown_distilled;
 
 /// A catalog answer: the notices, said; then its error, or its json (the
 /// view as its API message, named under the parent the names give, asked

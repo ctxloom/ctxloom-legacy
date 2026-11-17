@@ -57,6 +57,9 @@ pub struct Library {
     /// The step `config create` takes first ([`Library::with_repository_step`]);
     /// none, no git step.
     pub(crate) repository: Option<RepositoryStep>,
+    /// How a diagnostic is said in a read's answer (an agent's resolution
+    /// error): the composition root's catalog; none, its code and args.
+    pub(crate) words: Option<Words>,
 }
 
 /// Make the project's directory a git repository when it is in none (step
@@ -106,6 +109,9 @@ pub struct Project {
     pub(crate) trust: Option<TrustAsk>,
 }
 
+/// How a diagnostic is said, in the catalog's words.
+pub type Words = Arc<dyn Fn(&dyn angzarr_diagnostic::Diagnostic) -> String + Send + Sync>;
+
 impl Library {
     /// The library over `content` and `files`; `environ` is the process's
     /// environment.
@@ -128,6 +134,23 @@ impl Library {
             distiller: None,
             trust: None,
             repository: None,
+            words: None,
+        }
+    }
+
+    /// The library whose reads say a diagnostic in `words` (step 10a U2: a
+    /// read the daemon answers has no command's catalog to say it in).
+    pub fn with_words(mut self, words: Words) -> Library {
+        self.words = Some(words);
+        self
+    }
+
+    /// `diagnostic` in the library's words: [`Library::with_words`]'s, else
+    /// its code and args.
+    pub fn say(&self, diagnostic: &dyn angzarr_diagnostic::Diagnostic) -> String {
+        match &self.words {
+            Some(words) => words(diagnostic),
+            None => diagnostic.to_string(),
         }
     }
 
@@ -400,6 +423,10 @@ pub const NO_PROJECT_HINT: &str =
 /// What an empty listing says in a project.
 pub const LISTING_HINT: &str =
     "Add remote bundles to a profile (ctxloom profile create/modify), then ctxloom deps pull";
+
+/// What an empty profile listing says in a project.
+pub const PROFILE_HINT: &str =
+    "Use 'ctxloom profile create <name> --include <bundle>...' to create one.";
 
 impl Project {
     /// A reference with a registered remote's name spelled out

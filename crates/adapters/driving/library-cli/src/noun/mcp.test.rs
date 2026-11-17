@@ -192,10 +192,10 @@ mod mapping {
 
     #[test]
     fn test_a_shown_server_is_its_whole_resource() {
-        let show = McpShow {
+        let show = library_application::McpShow {
             name: "tree".to_string(),
             found: true,
-            entries: vec![McpRow {
+            entries: vec![library_application::McpRow {
                 name: "tree".to_string(),
                 command: "tree-sitter".to_string(),
                 args: vec!["--stdio".to_string()],
@@ -208,7 +208,7 @@ mod mapping {
             }],
         };
         assert_eq!(
-            json_of(&shown(PARENT, &show)),
+            json_of(&library_api::resources::servers_shown(PARENT, &show)),
             json!({"mcp_servers": [{
                 "name": "projects/p/bundles/demo/mcpServers/tree",
                 "command": "tree-sitter",
@@ -224,7 +224,7 @@ mod mapping {
 
     #[test]
     fn test_a_listed_server_is_its_row() {
-        let list = McpList {
+        let list = library_application::McpList {
             servers: vec![McpListRow {
                 name: "tree".to_string(),
                 command: "tree-sitter".to_string(),
@@ -235,7 +235,7 @@ mod mapping {
             }],
         };
         assert_eq!(
-            json_of(&listed(PARENT, &list)),
+            json_of(&library_api::resources::servers_listed(PARENT, &list)),
             json!({"mcp_servers": [{
                 "name": "projects/p/bundles/demo/mcpServers/tree",
                 "command": "tree-sitter",

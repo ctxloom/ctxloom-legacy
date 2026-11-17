@@ -246,7 +246,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{Preview, ProfileEdited};
+    use library_application::{Preview, ProfileEdited, ProfileShow};
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -280,7 +280,7 @@ mod mapping {
             hint: String::new(),
         };
         assert_eq!(
-            json_of(&profiles(PARENT, &list)),
+            json_of(&library_api::resources::profiles(PARENT, &list)),
             json!({"profiles": [{
                 "name": "projects/p/bundles/project/profiles/dev",
                 "description": "the dev one",
@@ -315,7 +315,7 @@ mod mapping {
     #[test]
     fn test_a_shown_profile_is_its_whole_resource() {
         assert_eq!(
-            json_of(&shown(PARENT, &show())),
+            json_of(&library_api::resources::profile_shown(PARENT, &show())),
             json!({
                 "name": "projects/p/bundles/project/profiles/dev",
                 "description": "the dev one",

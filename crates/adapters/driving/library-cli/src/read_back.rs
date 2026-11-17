@@ -4,10 +4,20 @@
 //! renderer in [`text`](crate::text) prints, line for line as it printed
 //! the view the use case answered in process.
 
+use daemon_proto::google::protobuf::{value::Kind, Value};
 use daemon_proto::v1;
 use library_application::{
+    AgentRow, AgentSettings, AgentShow, AuthSetting, EngineAgent, EngineLine, EngineRow, EnvKey,
+    EnvSetting, NotCarried, PermissionsSetting, RequirementSource, ResolvedAgent, RuntimeSetting,
+    SourcedValue,
+};
+use library_application::{
+    BundleRow, BundleShow, BundleView, McpList, McpListRow, McpRow, McpShow, RemoteFound,
+    SearchHit, SearchResults, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
+};
+use library_application::{
     CompanionRow, CompanionState, DistilledState, ItemList, ItemRow, ItemShow, PremiseRow,
-    Premises, SkillFileRow, SkillList, SkillRow, SkillShow,
+    Premises, ProfileList, ProfileRow, ProfileShow, SkillFileRow, SkillList, SkillRow, SkillShow,
 };
 
 /// The parent a resource name is under: its first two segments,
@@ -193,6 +203,676 @@ pub(crate) fn companions(listed: &v1::ListCompanionsResponse) -> Vec<CompanionRo
             },
         })
         .collect()
+}
+
+/// A profile's bundle's resource name and its own id, as its resource name
+/// (`<bundle>/profiles/<id>`) says them.
+fn profile_parts(name: &str) -> (&str, &str) {
+    name.rsplit_once("/profiles/").unwrap_or(("", name))
+}
+
+/// The name a person types to reach a profile, read back from its resource
+/// name: a project profile's bare id, a project bundle's
+/// `ctxloom+local:<bundle>#profiles/<id>`, else (a remote's, a companion's)
+/// the resource name itself, its canonical form (owner ruling 2026-11-17).
+pub(crate) fn profile_ask(name: &str) -> String {
+    let parent = parent_of(name);
+    let (bundle, id) = profile_parts(name);
+    let catalog = library_api::names::catalog_name(parent, bundle);
+    if catalog == library_api::resources::PROJECT_BUNDLE {
+        return id.to_string();
+    }
+    if !catalog.contains(['/', ':']) && catalog != bundle {
+        return format!("ctxloom+local:{catalog}#profiles/{id}");
+    }
+    name.to_string()
+}
+
+/// A `profile list` as its view: each profile by the name a person types,
+/// its bundle, parents and bundles by their resource names (text prints
+/// canonical forms, owner ruling 2026-11-17).
+pub(crate) fn profile_list(listed: &v1::ListProfilesResponse, in_project: bool) -> ProfileList {
+    let rows = listed
+        .profiles
+        .iter()
+        .map(|profile| {
+            let (bundle, id) = profile_parts(&profile.name);
+            ProfileRow {
+                name: profile_ask(&profile.name),
+                display_name: id.to_string(),
+                description: profile.description.clone(),
+                parents: profile.parents.clone(),
+                tags: profile.tags.clone(),
+                bundles: profile.bundles.clone(),
+                default: profile.default == Some(true),
+                path: profile.path.clone(),
+                is_remote: false,
+                bundle: bundle.to_string(),
+                entry: String::new(),
+            }
+        })
+        .collect();
+    let hint = if in_project {
+        library_application::PROFILE_HINT
+    } else {
+        library_application::NO_PROJECT_HINT
+    };
+    ProfileList {
+        rows,
+        hint: hint.to_string(),
+    }
+}
+
+/// A `profile show` as its view, as [`profile_list`] reads each profile.
+pub(crate) fn profile_show(profile: &v1::Profile) -> ProfileShow {
+    let (bundle, _) = profile_parts(&profile.name);
+    ProfileShow {
+        name: profile_ask(&profile.name),
+        description: profile.description.clone(),
+        parents: profile.parents.clone(),
+        tags: profile.tags.clone(),
+        bundles: profile.bundles.clone(),
+        variables: profile.variables.clone(),
+        exclude_fragments: profile.exclude_fragments.clone(),
+        exclude_mcp: profile.exclude_mcp_servers.clone(),
+        path: profile.path.clone(),
+        bundle: bundle.to_string(),
+        default: profile.default == Some(true),
+        entry: String::new(),
+    }
+}
+
+/// A layer's word as the message says it (`agent`, `engine`, `project`,
+/// `default`); any other reads as `default`.
+fn layer(word: &str) -> &'static str {
+    match word {
+        "agent" => "agent",
+        "engine" => "engine",
+        "project" => "project",
+        _ => "default",
+    }
+}
+
+/// How a runtime differs from the one it replaced, as the message says it;
+/// none where nothing was replaced.
+fn change(word: &str) -> Option<&'static str> {
+    match word {
+        "weakens" => Some("weakens"),
+        "strengthens" => Some("strengthens"),
+        "ownership-swap" => Some("ownership-swap"),
+        _ => None,
+    }
+}
+
+/// A free-form document on one line in YAML's flow form, every map's keys
+/// sorted (text prints canonical forms, owner ruling 2026-11-17, E3): a
+/// word bare, a whole number without a fraction.
+pub(crate) fn flow(value: &Value) -> String {
+    match &value.kind {
+        None | Some(Kind::NullValue(_)) => "null".to_string(),
+        Some(Kind::BoolValue(b)) => b.to_string(),
+        Some(Kind::NumberValue(n)) if n.fract() == 0.0 && n.abs() < 1e15 => {
+            format!("{}", *n as i64)
+        }
+        Some(Kind::NumberValue(n)) => n.to_string(),
+        Some(Kind::StringValue(text)) => text.clone(),
+        Some(Kind::ListValue(list)) => format!(
+            "[{}]",
+            list.values.iter().map(flow).collect::<Vec<_>>().join(", ")
+        ),
+        Some(Kind::StructValue(fields)) => {
+            let inner: Vec<String> = fields
+                .fields
+                .iter()
+                .map(|(key, field)| format!("{key}: {}", flow(field)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+    }
+}
+
+/// A free-form document as JSON.
+fn json_of(value: &Value) -> serde_json::Value {
+    match &value.kind {
+        None | Some(Kind::NullValue(_)) => serde_json::Value::Null,
+        Some(Kind::BoolValue(b)) => serde_json::Value::Bool(*b),
+        Some(Kind::NumberValue(n)) => serde_json::Number::from_f64(*n)
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        Some(Kind::StringValue(text)) => serde_json::Value::String(text.clone()),
+        Some(Kind::ListValue(list)) => {
+            serde_json::Value::Array(list.values.iter().map(json_of).collect())
+        }
+        Some(Kind::StructValue(fields)) => serde_json::Value::Object(
+            fields
+                .fields
+                .iter()
+                .map(|(key, field)| (key.clone(), json_of(field)))
+                .collect(),
+        ),
+    }
+}
+
+/// The last segment of a resource name after `/<collection>/`, or the name.
+fn id_in<'a>(name: &'a str, collection: &str) -> &'a str {
+    name.rsplit_once(&format!("/{collection}/"))
+        .map_or(name, |(_, id)| id)
+}
+
+/// An agent's binding as its row: its engine by its id, its profiles by
+/// their resource names (canonical forms, owner ruling 2026-11-17), each
+/// engine block on one line in YAML's flow form, keys sorted.
+pub(crate) fn agent_row(agent: &v1::Agent) -> AgentRow {
+    let engine_lines = agent
+        .engines
+        .iter()
+        .map(|(engine, block)| {
+            let mut fields = Vec::new();
+            if !block.effort.is_empty() {
+                fields.push(format!("effort: {}", block.effort));
+            }
+            if !block.model.is_empty() {
+                fields.push(format!("model: {}", block.model));
+            }
+            if let Some(permissions) = &block.permissions {
+                fields.push(format!("permissions: {}", flow(permissions)));
+            }
+            EngineLine {
+                engine: engine.clone(),
+                line: format!("engines.{engine}: {{{}}}", fields.join(", ")),
+                permissions: block.permissions.is_some(),
+            }
+        })
+        .collect();
+    AgentRow {
+        name: id_in(&agent.name, "agents").to_string(),
+        engine: id_in(&agent.engine, "engines").to_string(),
+        profiles: agent.profiles.clone(),
+        runtime: agent.runtime.clone(),
+        driving: agent.driving.clone(),
+        env: agent.env.clone(),
+        session_home: agent.session_home.clone(),
+        engines: serde_json::Value::Object(serde_json::Map::new()),
+        engine_lines,
+    }
+}
+
+/// An `agent list` as its rows.
+pub(crate) fn agent_rows(listed: &v1::ListAgentsResponse) -> Vec<AgentRow> {
+    listed.agents.iter().map(agent_row).collect()
+}
+
+fn sourced_text(text: Option<&v1::SourcedText>) -> SourcedValue<String> {
+    SourcedValue {
+        value: text.map(|t| t.value.clone()).unwrap_or_default(),
+        source: layer(text.map_or("", |t| t.source.as_str())),
+    }
+}
+
+fn sourced_optional(text: Option<&v1::SourcedText>) -> SourcedValue<Option<String>> {
+    let read = sourced_text(text);
+    SourcedValue {
+        value: (!read.value.is_empty()).then_some(read.value),
+        source: read.source,
+    }
+}
+
+/// An agent's settings as the message says them (the parts `settings`,
+/// `ResolvedAgent` and `EngineAgent` each carry).
+#[allow(clippy::too_many_arguments)]
+fn settings_of(
+    model: Option<&v1::SourcedText>,
+    effort: Option<&v1::SourcedText>,
+    permissions: Option<&v1::SourcedDocument>,
+    runtime: Option<&v1::RuntimeSetting>,
+    env: Option<&v1::EnvSetting>,
+    session_home: Option<&v1::SourcedText>,
+    approval_timeout: Option<&v1::SourcedText>,
+) -> AgentSettings {
+    let document = permissions.and_then(|p| p.value.as_ref());
+    let runtime = runtime.cloned().unwrap_or_default();
+    let env = env.cloned().unwrap_or_default();
+    AgentSettings {
+        model: sourced_optional(model),
+        effort: sourced_optional(effort),
+        permissions: PermissionsSetting {
+            value: document.map(json_of),
+            source: layer(permissions.map_or("", |p| p.source.as_str())),
+            line: document.map(flow).unwrap_or_default(),
+        },
+        runtime: RuntimeSetting {
+            value: runtime.value.clone(),
+            source: layer(&runtime.source),
+            overrides: (!runtime.overrides.is_empty()).then(|| runtime.overrides.clone()),
+            overrides_source: (!runtime.overrides_source.is_empty())
+                .then(|| layer(&runtime.overrides_source)),
+            change: change(&runtime.change),
+        },
+        env: EnvSetting {
+            value: env.value.clone(),
+            source: layer(&env.source),
+            keys: env
+                .keys
+                .iter()
+                .map(|key| EnvKey {
+                    name: key.variable.clone(),
+                    source: layer(&key.source),
+                })
+                .collect(),
+        },
+        session_home: sourced_text(session_home),
+        approval_timeout: sourced_text(approval_timeout),
+    }
+}
+
+/// An agent's settings on an engine as the message says them.
+pub(crate) fn agent_settings(settings: &v1::AgentSettings) -> AgentSettings {
+    settings_of(
+        settings.model.as_ref(),
+        settings.effort.as_ref(),
+        settings.permissions.as_ref(),
+        settings.runtime.as_ref(),
+        settings.env.as_ref(),
+        settings.session_home.as_ref(),
+        settings.approval_timeout.as_ref(),
+    )
+}
+
+/// What an engine cannot carry, as the message says it.
+pub(crate) fn not_carried(lost: &v1::NotCarried) -> NotCarried {
+    NotCarried {
+        engine: lost.engine.clone(),
+        surface: lost.surface.clone(),
+        event: lost.event.clone(),
+        reason: lost.reason.clone(),
+    }
+}
+
+/// An `agent show` as its view.
+pub(crate) fn agent_show(agent: &v1::Agent) -> AgentShow {
+    let definition = agent_row(agent);
+    AgentShow {
+        resolved: agent.resolved.as_ref().map(|resolved| ResolvedAgent {
+            name: definition.name.clone(),
+            profiles: resolved.profiles.clone(),
+            engine: id_in(&resolved.engine, "engines").to_string(),
+            settings: settings_of(
+                resolved.model.as_ref(),
+                resolved.effort.as_ref(),
+                resolved.permissions.as_ref(),
+                resolved.runtime.as_ref(),
+                resolved.env.as_ref(),
+                resolved.session_home.as_ref(),
+                None,
+            ),
+            context: resolved.context.clone(),
+            fragments: resolved.fragments.clone(),
+            driving: resolved.driving.clone(),
+            command: resolved.command.clone(),
+        }),
+        definition,
+        resolution_error: agent.resolution_error.clone(),
+        requirements: agent
+            .requirements
+            .iter()
+            .map(|needed| library_application::Requirement {
+                command: needed.command.clone(),
+                sources: needed
+                    .sources
+                    .iter()
+                    .map(|source| RequirementSource {
+                        kind: source.kind.clone(),
+                        reference: source.reference.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        requirements_error: agent.requirements_error.clone(),
+        not_carried: agent.not_carried.iter().map(not_carried).collect(),
+    }
+}
+
+/// An engine's auth, as the message says it.
+fn auth_of(auth: Option<&v1::EngineAuth>) -> AuthSetting {
+    let auth = auth.cloned().unwrap_or_default();
+    let value = auth.value.unwrap_or_default();
+    let value = if value.word.is_empty() {
+        let mut source = serde_json::Map::new();
+        if !value.env.is_empty() {
+            source.insert("env".to_string(), serde_json::json!(value.env));
+        }
+        if !value.file.is_empty() {
+            source.insert("file".to_string(), serde_json::json!(value.file));
+        }
+        serde_json::Value::Object(source)
+    } else {
+        serde_json::Value::String(value.word)
+    };
+    let state = match v1::engine_auth::State::try_from(auth.state) {
+        Ok(v1::engine_auth::State::Present) => "present",
+        Ok(v1::engine_auth::State::Missing) => "missing",
+        Ok(v1::engine_auth::State::NotNeeded) => "not-needed",
+        _ => "",
+    };
+    AuthSetting {
+        value,
+        source: layer(&auth.source),
+        state,
+        via: (!auth.via.is_empty()).then_some(auth.via),
+    }
+}
+
+/// An `engine show` as its row.
+pub(crate) fn engine_row(engine: &v1::Engine) -> EngineRow {
+    let env = engine.env.clone().unwrap_or_default();
+    EngineRow {
+        name: id_in(&engine.name, "engines").to_string(),
+        command: sourced_text(engine.command.as_ref()),
+        session_home: sourced_text(engine.session_home.as_ref()),
+        runtime: sourced_text(engine.runtime.as_ref()),
+        env: SourcedValue {
+            value: env.value,
+            source: layer(&env.source),
+        },
+        auth: auth_of(engine.auth.as_ref()),
+        approval_timeout: sourced_text(engine.approval_timeout.as_ref()),
+        agents: engine
+            .agents
+            .iter()
+            .map(|agent| EngineAgent {
+                name: agent.agent.clone(),
+                settings: settings_of(
+                    agent.model.as_ref(),
+                    agent.effort.as_ref(),
+                    agent.permissions.as_ref(),
+                    agent.runtime.as_ref(),
+                    agent.env.as_ref(),
+                    agent.session_home.as_ref(),
+                    None,
+                ),
+            })
+            .collect(),
+    }
+}
+
+/// An `engine list` as its rows.
+pub(crate) fn engine_rows(listed: &v1::ListEnginesResponse) -> Vec<EngineRow> {
+    listed.engines.iter().map(engine_row).collect()
+}
+
+/// A server's own ID and its bundle's resource name, as its resource name
+/// (`<bundle>/mcpServers/<id>`) says them: the bundle printed so, its
+/// canonical form (owner ruling 2026-11-17).
+fn server_parts(name: &str) -> (String, String) {
+    let (bundle, id) = name.rsplit_once("/mcpServers/").unwrap_or(("", name));
+    (id.to_string(), bundle.to_string())
+}
+
+/// An `mcp server list` as its view.
+pub(crate) fn mcp_list(listed: &v1::ListMcpServersResponse) -> McpList {
+    McpList {
+        servers: listed
+            .mcp_servers
+            .iter()
+            .map(|server| {
+                let (name, source) = server_parts(&server.name);
+                McpListRow {
+                    name,
+                    command: server.command.clone(),
+                    args: server.args.clone(),
+                    url: server.url.clone(),
+                    served_by: server.served_by.clone(),
+                    source,
+                }
+            })
+            .collect(),
+    }
+}
+
+/// An `mcp server show` (the listing of one ID) as its view.
+pub(crate) fn mcp_show(listed: &v1::ListMcpServersResponse) -> McpShow {
+    let entries: Vec<McpRow> = listed
+        .mcp_servers
+        .iter()
+        .map(|server| {
+            let (name, source) = server_parts(&server.name);
+            McpRow {
+                name,
+                command: server.command.clone(),
+                args: server.args.clone(),
+                env: server.env.clone(),
+                url: server.url.clone(),
+                served_by: server.served_by.clone(),
+                source,
+                notes: server.notes.clone(),
+                installation: server.installation.clone(),
+            }
+        })
+        .collect();
+    McpShow {
+        name: entries.first().map(|e| e.name.clone()).unwrap_or_default(),
+        found: !entries.is_empty(),
+        entries,
+    }
+}
+
+/// A `search` as its view: each local hit by its own name (its resource
+/// name's last segment) and its bundle as found.
+pub(crate) fn search(found: &v1::SearchLibraryResponse) -> SearchResults {
+    use library_api::resources::kind_word;
+    SearchResults {
+        query: found.query.clone(),
+        local: found
+            .local
+            .iter()
+            .map(|hit| SearchHit {
+                kind: kind_word(hit.kind).to_string(),
+                name: hit
+                    .resource
+                    .rsplit_once('/')
+                    .map_or(hit.resource.as_str(), |(_, id)| id)
+                    .to_string(),
+                tags: hit.tags.clone(),
+                source: hit.source.clone(),
+                r#match: hit.r#match.clone(),
+                located: None,
+            })
+            .collect(),
+        remote: found
+            .remote
+            .iter()
+            .map(|hit| RemoteFound {
+                remote: hit.remote.clone(),
+                name: hit.item.clone(),
+                kind: kind_word(hit.kind).to_string(),
+                tags: hit.tags.clone(),
+                description: hit.description.clone(),
+                author: hit.author.clone(),
+                pull_ref: hit.pull_reference.clone(),
+            })
+            .collect(),
+        count: u64::from(found.count),
+        hidden_local: u64::from(found.hidden_local),
+    }
+}
+
+/// A `config show` as its text: the document as YAML, keys sorted.
+pub(crate) fn config_text(config: &v1::Config) -> String {
+    let document = config
+        .document
+        .as_ref()
+        .map_or(serde_json::Value::Null, json_of);
+    library_application::config_yaml(&document)
+}
+
+/// An item's own ID, its resource name's last segment.
+fn item_id(name: &str) -> String {
+    name.rsplit_once('/').map_or(name, |(_, id)| id).to_string()
+}
+
+/// A `bundle show` as its view: the bundle by its catalog name, each item
+/// by its ID.
+pub(crate) fn bundle_show(bundle: &v1::Bundle) -> BundleShow {
+    let parent = parent_of(&bundle.name);
+    let state = |item: &v1::BundleItem| state_of(item.distilled);
+    BundleShow {
+        name: library_api::names::catalog_name(parent, &bundle.name),
+        path: bundle.path.clone(),
+        version: bundle.version.clone(),
+        author: bundle.author.clone(),
+        description: bundle.description.clone(),
+        tags: bundle.tags.clone(),
+        notes: bundle.notes.clone(),
+        installation: bundle.installation.clone(),
+        fragments: bundle
+            .fragments
+            .iter()
+            .map(|f| {
+                (
+                    item_id(&f.item),
+                    ShownFragment {
+                        tags: f.tags.clone(),
+                        preview: f.preview.clone(),
+                        distilled: state(f) != DistilledState::None,
+                        no_distill: f.no_distill == Some(true),
+                        premise: f.premise.clone(),
+                        stale: state(f) == DistilledState::Stale,
+                    },
+                )
+            })
+            .collect(),
+        commands: bundle
+            .commands
+            .iter()
+            .map(|c| {
+                (
+                    item_id(&c.item),
+                    ShownCommand {
+                        tags: c.tags.clone(),
+                        description: c.description.clone(),
+                        preview: c.preview.clone(),
+                        distilled: state(c) != DistilledState::None,
+                        no_distill: c.no_distill == Some(true),
+                        stale: state(c) == DistilledState::Stale,
+                    },
+                )
+            })
+            .collect(),
+        mcp: bundle
+            .mcp_servers
+            .iter()
+            .map(|m| {
+                (
+                    item_id(&m.item),
+                    ShownMcp {
+                        command: m.command.clone(),
+                        args: m.args.clone(),
+                        env: m.env.clone(),
+                        notes: m.notes.clone(),
+                        installation: m.installation.clone(),
+                    },
+                )
+            })
+            .collect(),
+        skills: bundle
+            .skills
+            .iter()
+            .map(|s| {
+                (
+                    item_id(&s.item),
+                    ShownSkill {
+                        path: s.path.clone(),
+                        tags: s.tags.clone(),
+                        notes: s.notes.clone(),
+                    },
+                )
+            })
+            .collect(),
+        profiles: bundle.profiles.iter().map(|p| item_id(p)).collect(),
+        hooks: bundle.hooks.clone(),
+        listing: BundleRow {
+            name: library_api::names::catalog_name(parent, &bundle.name),
+            reference: bundle.reference.clone(),
+            path: bundle.path.clone(),
+            origin: String::new(),
+            version: bundle.version.clone(),
+            description: bundle.description.clone(),
+            tags: bundle.tags.clone(),
+            fragment_count: u64::from(bundle.fragment_count),
+            command_count: u64::from(bundle.command_count),
+            mcp_count: u64::from(bundle.mcp_server_count),
+            profile_count: u64::from(bundle.profile_count),
+            held: bundle.held == Some(true),
+            commit: bundle.commit.clone(),
+        },
+    }
+}
+
+/// A `bundle view <bundle>` as its view: its files as one text, each under
+/// its `==> path <==` line, its manifest first, as they were answered.
+pub(crate) fn bundle_view(bundle: &v1::Bundle) -> BundleView {
+    let parent = parent_of(&bundle.name);
+    let blocks: Vec<String> = bundle
+        .files
+        .iter()
+        .map(|file| {
+            let tail = if file.content.ends_with('\n') {
+                ""
+            } else {
+                "\n"
+            };
+            format!("==> {} <==\n{}{tail}", file.path, file.content)
+        })
+        .collect();
+    BundleView {
+        bundle: library_api::names::catalog_name(parent, &bundle.name),
+        path: String::new(),
+        distilled: bundle.distilled == Some(true),
+        content: blocks.join("\n"),
+        item: false,
+        viewed: library_application::Viewed::Nothing,
+    }
+}
+
+/// A plan's findings as the message says them.
+pub(crate) fn findings(run: &v1::Run) -> Vec<library_application::FindingRow> {
+    run.findings
+        .iter()
+        .map(|found| library_application::FindingRow {
+            kind: found.kind.clone(),
+            text: found.text.clone(),
+            remedy: found.remedy.clone(),
+            fatal: found.fatal,
+        })
+        .collect()
+}
+
+/// A `run --dry-run`'s `Run` as the plan its text is drawn from: its agent
+/// and engine by their IDs, its profiles as the message names them (their
+/// resource names, a canonical form, owner ruling 2026-11-17; configured
+/// text in a project nothing has named), the workspace axis and runtime it
+/// settles on, and the agent's settings with the agent they are of.
+pub(crate) fn dry_run(run: &v1::Run) -> library_application::DryRun {
+    library_application::DryRun {
+        agent: id_in(&run.agent, "agents").to_string(),
+        workspace: run.workspace.clone(),
+        runtime: run.runtime.clone(),
+        engine: id_in(&run.engine, "engines").to_string(),
+        profiles: run.profiles.clone(),
+        fragments: run.fragments.clone(),
+        context: run.context.clone(),
+        tokens: u64::from(run.tokens),
+        prompt: run.prompt.clone(),
+        findings: findings(run),
+        axes: (run.settled_workspace.clone(), run.settled_runtime.clone()),
+        model: String::new(),
+        effort: String::new(),
+        permissions: None,
+        drive: Default::default(),
+        settings: run.settings.as_ref().map(agent_settings),
+        settings_agent: run.settings_agent.clone(),
+        surfaces: Default::default(),
+        untrusted: Vec::new(),
+    }
 }
 
 #[cfg(test)]

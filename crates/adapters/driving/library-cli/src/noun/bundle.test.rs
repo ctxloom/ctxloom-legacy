@@ -328,7 +328,8 @@ mod messages {
     };
     use serde_json::{json, Value};
 
-    use super::super::{bundle, created, edited, exported, imported, removed, shown, viewed};
+    use super::super::{created, edited, exported, imported, removed, viewed};
+    use library_api::resources::bundle;
     use library_api::resources::bundles as listed;
 
     const P: &str = "projects/calm-otter";
@@ -456,7 +457,7 @@ mod messages {
     fn test_a_shown_bundle_carries_its_fields_its_children_and_its_listing() {
         let b = "projects/calm-otter/bundles/demo";
         assert_eq!(
-            as_json(shown(P, &show())),
+            as_json(library_api::resources::bundle_shown(P, &show())),
             json!({
                 "name": b,
                 "origin": "PROJECT",

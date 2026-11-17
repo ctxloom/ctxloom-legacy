@@ -837,6 +837,27 @@ pub(crate) fn library_parent_if_named(
     block_on(client.named_parent())?.map_err(called)
 }
 
+/// A dry run's client of the daemon (step 10a U2): its project registered,
+/// never minted (owner ruling 2026-11-14: "dry run should *not* mint"); a
+/// ctxloom project nothing has named is asked unnamed, under `users/me`,
+/// and the daemon leaves its names unresolved.
+pub(crate) fn preview_client<'a>(
+    wiring: &'a Wiring,
+    stamp: &str,
+) -> Result<daemon_api::Client<Reach<'a>>, Failure> {
+    Ok(match wiring.library_registration(crate::Minting::Never) {
+        Err(LibError::ProjectUnnamed { .. }) => client_for(wiring, stamp, None).unnamed(),
+        registration => client_for(
+            wiring,
+            stamp,
+            registration.map_err(|e| {
+                let exit = e.exit();
+                Failure::new(e, exit)
+            })?,
+        ),
+    })
+}
+
 /// This command's client of the daemon for a library read (step 10a U2):
 /// its project registered at its root (its id minted there if it has none
 /// yet), else outside a project.

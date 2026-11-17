@@ -449,6 +449,12 @@ pub trait LibraryReads {
         &self,
         request: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, CallError>;
+
+    /// `run --dry-run`'s `CreateRun` with `validate_only` (step 10a U2),
+    /// under this client's parent (`users/me` in a project nothing has
+    /// named, which the daemon then leaves unnamed): the plan, its notices
+    /// in the run's own.
+    async fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, CallError>;
 }
 
 /// [`LibraryReads`]' methods, from `daemon_proto::library_reads!`.
@@ -492,6 +498,20 @@ impl<D: Daemons> LibraryReads for Client<D> {
                 ..request.clone()
             };
             api.assemble_context(request).await
+        })
+        .await
+    }
+
+    async fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::CreateRunRequest {
+                parent: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                validate_only: true,
+                ..request.clone()
+            };
+            api.create_run(request).await
         })
         .await
     }

@@ -177,11 +177,9 @@ impl Project {
         ProfileList {
             rows,
             hint: if self.no_project() {
-                "No project here: run 'ctxloom init' to set one up with its default content."
-                    .to_string()
+                crate::NO_PROJECT_HINT.to_string()
             } else {
-                "Use 'ctxloom profile create <name> --include <bundle>...' to create one."
-                    .to_string()
+                crate::PROFILE_HINT.to_string()
             },
         }
     }

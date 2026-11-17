@@ -24,14 +24,12 @@ mod write;
 mod prelude {
     pub(crate) use std::io::{self, Write};
 
-    pub(crate) use angzarr_diagnostic::Diagnostic;
     pub(crate) use angzarr_presentation::Format;
     pub(crate) use clap::ArgMatches;
     pub(crate) use cli_support::{flag, many, say_notices, Exit};
     pub(crate) use library_application::{
-        AgentRequest, AgentRow, AgentWritten, AppError, AuthSetting, BundleEditRequest,
-        ConfigShown, DefaultAgent, EngineAgent, EngineRow, ItemKind, McpEdited, McpPatch,
-        ProfileCreateRequest, ProfileEdit, ProfileEdited, RunRequest, SearchRequest, SwapPreview,
+        AgentRequest, AgentRow, AgentWritten, AppError, BundleEditRequest, DefaultAgent, ItemKind,
+        McpEdited, McpPatch, ProfileCreateRequest, ProfileEdit, ProfileEdited, SwapPreview,
         WriteError, LOADOUT,
     };
 
@@ -39,8 +37,7 @@ mod prelude {
         finish_text, given, given_list, given_map, given_pairs, nothing, text_only,
     };
     pub(crate) use crate::{
-        api, failed, output_failure, resource, served, text, text_arg, verb, Context, Failure,
-        IntoFailure, PROG,
+        api, output_failure, served, text, text_arg, verb, Context, Failure, IntoFailure, PROG,
     };
     pub(crate) use daemon_proto::v1;
 }
@@ -121,6 +118,11 @@ pub trait Served {
         &self,
         request: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, Failure>;
+
+    /// `run --dry-run`: `CreateRun` with `validate_only`, its notices among
+    /// the run's own; a project nothing has named is asked unnamed (a dry
+    /// run never mints, owner ruling 2026-11-14).
+    fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure>;
 }
 
 /// The reads this CLI asks the daemon, in the shape of
@@ -139,6 +141,16 @@ macro_rules! served_reads {
             list_skills (ListSkills) ListSkillsRequest.parent => ListSkillsResponse,
             get_skill (GetSkill) GetSkillRequest.name => Skill,
             list_companions (ListCompanions) ListCompanionsRequest.parent => ListCompanionsResponse,
+            list_profiles (ListProfiles) ListProfilesRequest.parent => ListProfilesResponse,
+            get_profile (GetProfile) GetProfileRequest.name => Profile,
+            list_agents (ListAgents) ListAgentsRequest.parent => ListAgentsResponse,
+            get_agent (GetAgent) GetAgentRequest.name => Agent,
+            list_engines (ListEngines) ListEnginesRequest.parent => ListEnginesResponse,
+            get_engine (GetEngine) GetEngineRequest.name => Engine,
+            list_mcp_servers (ListMcpServers) ListMcpServersRequest.parent => ListMcpServersResponse,
+            search_library (SearchLibrary) SearchLibraryRequest.parent => SearchLibraryResponse,
+            get_config (GetConfig) GetConfigRequest.name => Config,
+            get_bundle (GetBundle) GetBundleRequest.name => Bundle,
         }
     };
 }
@@ -355,28 +367,6 @@ impl Diagnostic for OutputFailure {
 
 pub(crate) fn text_arg(matches: &ArgMatches, name: &str) -> String {
     one(matches, name).unwrap_or_default()
-}
-
-/// A converted noun's answer (OD-40): the notices, said; then its error,
-/// or its json, the view as its API message named under the parent the
-/// names give (asked only here), or its text.
-pub(crate) fn resource<T, M: Serialize>(
-    cx: &Context<'_>,
-    outcome: library_application::Outcome<T>,
-    out: &mut dyn Write,
-    err: &mut dyn Write,
-    message: impl FnOnce(&str, &T) -> M,
-    text: impl FnOnce(&mut dyn Write, &T) -> io::Result<()>,
-) -> Result<Exit, Failure> {
-    say_notices(&outcome.notices, PROG, cx.format, cx.catalog, err);
-    let value = outcome.result.map_err(failed)?;
-    if cx.format == Format::Json {
-        let parent = cx.names.parent()?;
-        api::print(out, &message(&parent, &value)).map_err(output_failure)?;
-    } else {
-        text(out, &value).map_err(output_failure)?;
-    }
-    Ok(Exit::OK)
 }
 
 #[cfg(test)]

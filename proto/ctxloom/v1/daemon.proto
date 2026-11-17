@@ -1400,9 +1400,12 @@ message Run {
   // The runner bearer (deleted, slice 2: one principal, the user).
   reserved 12;
   reserved "runner_bearer";
-  // The workspace axis and the runtime the launch settles on (design §5.9).
+  // The workspace axis the run asks for (`--workspace`); empty, none asked
+  // (Go's dry run's top-level `workspace`). What it settles on is
+  // `settled_workspace`.
   string workspace = 13;
-  // The runtime the launch settles on.
+  // The runtime the run's agent declares; empty, none (Go's dry run's
+  // top-level `runtime`). What it settles on is `settled_runtime`.
   string runtime = 14;
   // The opening prompt, as the plan resolved it.
   string prompt = 15;
@@ -1413,6 +1416,18 @@ message Run {
   // as `WatchRun` would have said it. Its `name` is `<parent>/runs/-`, as
   // nothing is left to watch.
   RunEnd end = 17;
+  // The agent `settings` are of (step 10a U2, owner ruling 2026-11-17): the
+  // one asked, or the default agent a run with no `--agent` takes; empty
+  // with no settings. The dry run's Settings section names its places by
+  // it (`agents.<agent>.engines.<engine>`).
+  string settings_agent = 18 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The workspace axis the launch settles on (step 10a U2, owner ruling
+  // 2026-11-17: the dry run prints it beside the agent): the one asked, else
+  // the config's `workspace`, else `none`.
+  string settled_workspace = 19 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The runtime the launch settles on: the agent's, else the config's
+  // `runtime`, else `host`.
+  string settled_runtime = 20 [(google.api.field_behavior) = OUTPUT_ONLY];
   // On a preview, the needs a person must answer before the apply.
   repeated Need needs = 90;
   // On a preview, the etag of what it was planned against, for the apply to
