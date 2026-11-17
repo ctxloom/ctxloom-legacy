@@ -8,7 +8,9 @@ use std::time::Duration;
 use daemon_application::{ChildHomes, Ears, HandOffs};
 use run_ports::{ChildObservation, Exit};
 
-use super::{advertised, said, stays_for, step_of, Advertised, HandOffFiles, Homes, Pumps, Say};
+use super::{
+    advertised, said, stays_for, step_of, why_it_exits, Advertised, HandOffFiles, Homes, Pumps, Say,
+};
 use crate::daemon::files::DaemonFiles;
 use crate::fixtures;
 
@@ -111,10 +113,10 @@ fn a_line_said_reaches_the_log() {
 }
 
 // M11: the lock is the single-instance lock alone; the discovery file is how a daemon
-// is found. Its own is left be, one gone is published again (it still holds
-// the single-instance lock), and another daemon's means this one lost it.
+// is found. Its own is left be, one gone is gone (the daemon exits, owner
+// 2026-11-17), and another daemon's means this one lost it.
 #[test]
-fn a_daemon_keeps_its_advertisement_republishes_a_gone_one_and_yields_to_anothers() {
+fn a_daemon_keeps_its_advertisement_and_tells_a_gone_one_from_anothers() {
     let own = run_ports::Discovery {
         stamp: "v0.1.0-abc1234".to_string(),
         pid: 7,
@@ -135,6 +137,40 @@ fn a_daemon_keeps_its_advertisement_republishes_a_gone_one_and_yields_to_another
         ..own.clone()
     };
     assert_eq!(advertised(&own, Some(&moved)), Advertised::Replaced);
+}
+
+// OD-60, the owner's ruling of 2026-11-17: a daemon never makes a file in
+// its home again once it has started. Its discovery file removed (its home
+// still there: the first of a `rm -rf`'s depth-first removals), the tick
+// says it exits, and nothing is advertised again.
+#[test]
+fn a_daemon_whose_discovery_file_is_gone_exits_and_makes_it_nothing_again() {
+    let root = fixtures::root();
+    let home = root.root().join("home");
+    let files = DaemonFiles::new(fixtures::fs(), &home);
+    let held = files.hold_instance(Duration::ZERO).expect("the lock");
+    let own = run_ports::Discovery {
+        stamp: "v0.1.0-abc1234".to_string(),
+        pid: 7,
+        endpoint: "https://127.0.0.1:4242".to_string(),
+        cert: run_ports::PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
+        bearer: run_ports::Token::from_bytes([7; 32]),
+        home: "/home/u".to_string(),
+    };
+    files.publish(&own).unwrap();
+    assert_eq!(
+        why_it_exits(&files, &own, &held),
+        None,
+        "its own: it serves on"
+    );
+    let discovery = home.join(".ctxloom/daemon/daemon.discovery");
+    fixtures::fs().remove_file(&discovery).unwrap();
+    assert!(fixtures::exists(home.join(".ctxloom")), "its home is there");
+    assert_eq!(
+        why_it_exits(&files, &own, &held),
+        Some("the discovery file was removed: exiting")
+    );
+    assert!(!fixtures::exists(&discovery), "advertised again");
 }
 
 // U6: a hosted child's session lock is the platform's file lock at
