@@ -176,10 +176,8 @@ fn baseline_changes(status: &[StatusEntry], ids: &BTreeMap<String, String>) -> V
             path: entry.path.clone(),
             status: status_of(entry.status),
             from_oid: String::new(),
-            to_oid: match entry.status {
-                PathStatus::Deleted => String::new(),
-                _ => ids.get(&entry.path).cloned().unwrap_or_default(),
-            },
+            // A deleted path's id is never asked in a baseline: none.
+            to_oid: ids.get(&entry.path).cloned().unwrap_or_default(),
             from_path: entry.from_path.clone().unwrap_or_default(),
         })
         .collect()

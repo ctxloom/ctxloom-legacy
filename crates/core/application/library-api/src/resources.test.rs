@@ -797,7 +797,7 @@ fn a_shown_distilled_form_is_stale_fresh_or_none() {
 fn shown_bundle() -> BundleShow {
     BundleShow {
         name: "demo".into(),
-        path: "/b/demo".into(),
+        path: "/shown/demo".into(),
         version: "2.0".into(),
         author: "someone".into(),
         description: "shown".into(),
@@ -866,7 +866,10 @@ fn a_shown_bundle_carries_its_listing_and_its_own_fields() {
         ("shown", "2.0")
     );
     assert_eq!(b.tags, ["x"]);
-    assert_eq!(b.path, "/b/demo");
+    assert_eq!(
+        b.path, "/shown/demo",
+        "the show's own path, not its listing's"
+    );
     assert_eq!(b.skill_count, 1);
     assert_eq!(b.profiles, ["projects/p/bundles/demo/profiles/dev"]);
     assert_eq!(b.hooks, ["pre_tool"]);

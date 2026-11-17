@@ -385,7 +385,7 @@ fn the_status_is_asked_over_the_library_alone() {
 }
 
 // A path git says is deleted has no id, whatever is still on disk (a
-// `git rm --cached` keeps the file): in the dirty set and a baseline alike.
+// `git rm --cached` keeps the file): in a baseline its id is never asked.
 #[test]
 fn a_path_git_says_deleted_has_no_id_whatever_is_on_disk() {
     let git = Git::at("c1", "t1")
@@ -438,4 +438,17 @@ fn a_committed_type_change_is_said_as_one() {
 fn a_deletion_seen_before_and_still_there_records_nothing() {
     let git = Git::at("c1", "t1").says(FRAGMENT, PathStatus::Deleted);
     assert_eq!(fact(&git, &held("c1", "t1", &[(FRAGMENT, "")])), None);
+}
+
+// Past a baseline a path the record held dirty is asked its id: one git now
+// says is deleted (staged, the file left on disk) is dirty with none.
+#[test]
+fn a_path_seen_dirty_then_deleted_is_dirty_with_no_id_whatever_is_on_disk() {
+    let git = Git::at("c1", "t1")
+        .file(FRAGMENT, "f1")
+        .says(FRAGMENT, PathStatus::Deleted);
+    let fact = fact(&git, &held("c1", "t1", &[(FRAGMENT, "f2")])).expect("a change");
+    assert_eq!(changes(&fact), one(FRAGMENT, ChangeStatus::Deleted));
+    assert_eq!(fact.dirty_after.len(), 1);
+    assert_eq!(fact.dirty_after[0].oid, "");
 }
