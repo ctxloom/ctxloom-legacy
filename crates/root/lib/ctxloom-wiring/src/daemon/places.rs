@@ -148,20 +148,14 @@ impl daemon_api::Assemblies for ProjectAssemblies {
         root: &str,
         request: &daemon_proto::v1::AssembleContextRequest,
     ) -> Result<daemon_proto::v1::AssembledContext, ApiError> {
-        let mut vars: Vec<(OsString, OsString)> = request
-            .env
-            .iter()
-            .flat_map(|env| env.vars.iter())
-            .filter(|var| !matches!(var.name.as_str(), "CTXLOOM_ROOT" | "HOME"))
-            .map(|var| (var.name.clone().into(), var.value.clone().into()))
-            .collect();
-        vars.push(("CTXLOOM_ROOT".into(), root.into()));
-        vars.push(("HOME".into(), self.home.as_os_str().to_os_string()));
-        let snapshot = EnvSnapshot::from_parts(
+        let snapshot = super::per_call_env(
             os::host().flavor(),
-            Ok(PathBuf::from(root)),
-            self.temp.clone(),
-            vars,
+            (root, &self.temp, &self.home),
+            request
+                .env
+                .iter()
+                .flat_map(|env| env.vars.iter())
+                .map(|var| (var.name.as_str(), var.value.as_str())),
         );
         let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
             detail: e.code().to_string(),
@@ -202,15 +196,12 @@ pub(crate) struct ProjectTrusts {
 
 impl daemon_api::Trusts for ProjectTrusts {
     fn settings(&self, root: &str) -> Result<Vec<daemon_proto::v1::TrustSetting>, ApiError> {
-        let vars: Vec<(OsString, OsString)> = vec![
-            ("CTXLOOM_ROOT".into(), root.into()),
-            ("HOME".into(), self.home.as_os_str().to_os_string()),
-        ];
-        let snapshot = EnvSnapshot::from_parts(
+        // Read as a process there would, with ctxloom's home as the
+        // platform's home variable (`per_call_env`) and nothing else.
+        let snapshot = super::per_call_env(
             os::host().flavor(),
-            Ok(PathBuf::from(root)),
-            self.temp.clone(),
-            vars,
+            (root, &self.temp, &self.home),
+            std::iter::empty(),
         );
         let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
             detail: e.code().to_string(),

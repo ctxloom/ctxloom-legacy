@@ -546,7 +546,7 @@ fn a_command_in_a_project_with_a_store_of_its_own_is_refused() {
 // added here is granted there too.
 #[test]
 fn the_daemon_hosts_children_on_claude_and_opencode() {
-    let env = EnvSnapshot::of([("HOME", "/nowhere")]);
+    let env = EnvSnapshot::of([(crate::fixtures::home_var(), "/nowhere")]);
     let wiring = Wiring::new(std::sync::Arc::new(env)).unwrap();
     let names: Vec<String> = super::hosted_engines(&wiring, "ctxloom")
         .iter()

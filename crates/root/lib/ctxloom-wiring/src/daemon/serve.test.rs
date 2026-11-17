@@ -51,7 +51,16 @@ fn a_childs_home_and_its_files_are_in_its_projects_session_directory() {
     let homes = Homes(fixtures::fs());
     let dir = project.display().to_string();
     let mut records = homes.records(&dir);
-    assert_eq!(records.dir("kid"), format!("{dir}/.ctxloom/sessions/kid"));
+    // Joined as the platform joins (`\` on Windows), as the records join it.
+    assert_eq!(
+        records.dir("kid"),
+        project
+            .join(".ctxloom")
+            .join("sessions")
+            .join("kid")
+            .display()
+            .to_string()
+    );
     records.write("kid", "home/settings.json", b"{}").unwrap();
     assert!(fixtures::exists(
         project.join(".ctxloom/sessions/kid/home/settings.json")
@@ -142,7 +151,9 @@ fn a_childs_session_lock_is_held_once_and_let_go_when_dropped() {
     assert_eq!(
         held.path(),
         project
-            .join(".ctxloom/sessions/kid.lock")
+            .join(".ctxloom")
+            .join("sessions")
+            .join("kid.lock")
             .display()
             .to_string()
     );

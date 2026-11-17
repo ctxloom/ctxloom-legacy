@@ -608,6 +608,25 @@ impl Ran {
         self
     }
 
+    /// The feature step `the output contains "<text>"`: [`contains`](Self::contains),
+    /// a path in `text` found however the platform separates it. On Windows
+    /// `/` and `\` are both the separator, so a spec's `~/.ctxloom/daemon/daemon.log`
+    /// is the same path as `~/.ctxloom/daemon\daemon.log` and either is found;
+    /// elsewhere `\` is a file name's character and `text` is found exactly
+    /// as written.
+    pub(crate) fn contains_as_platform(&self, text: &str) -> &Ran {
+        let output = self.output();
+        let found = output.contains(text)
+            || (os::host().flavor() == os::Flavor::Windows
+                && output.replace('\\', "/").contains(&text.replace('\\', "/")));
+        assert!(
+            found,
+            "expected the output to contain {text:?}: {}",
+            self.said()
+        );
+        self
+    }
+
     /// Go's `the output does not contain "<text>"`.
     pub(crate) fn lacks(&self, text: &str) -> &Ran {
         assert!(

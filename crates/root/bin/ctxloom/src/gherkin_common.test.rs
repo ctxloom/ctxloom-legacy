@@ -457,7 +457,7 @@ macro_rules! common_steps {
             #[then(expr = "the output contains {string}")]
             fn output_contains(w: &mut World, text: String) {
                 let text = w.common().expanded(&text);
-                w.ran().contains(&Common::clap_wording(&text));
+                w.ran().contains_as_platform(&Common::clap_wording(&text));
             }
 
             #[then(expr = "the output does not contain {string}")]
