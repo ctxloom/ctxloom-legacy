@@ -1266,6 +1266,32 @@ angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
 angzarr core's, all `Apache-2.0 OR BSD-3-Clause`; this workspace is
 `AGPL-3.0-only`.
 
+The API protos' annotations and their linter are pinned too (owner rulings
+S36, S37, S57, D6; step 10 U1). googleapis' `google/api/{resource,
+field_behavior,client,launch_stage}.proto`, `google/longrunning/
+operations.proto` and `google/rpc/status.proto`, with googleapis' LICENSE
+(Apache-2.0), are vendored under `proto/third_party/google/` at ONE commit,
+`ff8fd20f` (2026-10-30), each file's SHA-256 in its manifest
+`proto/third_party/google/SHA256SUMS`, the one place the commit and the
+digests are spelled: `just vendor-googleapis`
+(`scripts/vendor-googleapis.sh fetch`) fetches them and refuses one whose
+digest is not the manifest's, and `check` holds the tree to it offline.
+angzarr's `google/api/annotations.proto` and `http.proto` are not vendored,
+and operations.proto, which imports them, is imported by nothing yet.
+daemon-proto's build adds `proto/third_party` to its include path; the
+annotations are options, so nothing of googleapis is a field. api-linter
+is release v2.4.1 (linux-amd64 archive SHA-256 `adf6b94b...`, the digest
+GitHub publishes for it), fetched once into
+`~/.cache/ctxloom-api-linter/2.4.1/` and checked before it is unpacked
+(`scripts/lint-api.sh`); `just lint-api` runs it over `proto/ctxloom/v1`
+with `proto/api-linter.yaml` (no rule disabled there; each departure is a
+commented exception at its site, S38's `answers`, S44's folded streams),
+angzarr's own protos found at the locked commit by `cargo metadata`. It
+runs on Linux x86_64 only and is NOT yet part of `just lint` or CI: the
+drafts' findings it still reports (about 2.8k: missing comments and field
+behaviours, and findings that would change the wire, awaiting the owner)
+fail it.
+
 The callback's TLS stack is one crypto provider, ring (owner, ruling 35):
 tonic's `tls-ring` (never `tls-aws-lc`; `hook-listener` and `hook-sink-grpc`
 enable it, and `hook-listener` turns on `angzarr-coordinator-grpc`'s `tls`
@@ -3572,7 +3598,8 @@ Windows. The checks are `just build`,
 `just test` (cargo-nextest, the one test runner, mutation included, owner
 ruling 144; required: a missing nextest fails the gate),
 `just lint` (clippy, warnings denied), `just lint-deps` (cargo-deny) and
-`just lint-os`; `just test-pkg <crate>...` is the quick loop, `just fmt` and
+`just lint-os` (`just lint-api`, api-linter over the API protos, is not
+yet a gate: see "The pins"); `just test-pkg <crate>...` is the quick loop, `just fmt` and
 `just fmt-check` cover this workspace's crates only, `just run` runs the
 binary, `just clean-target` is the only way to drop this checkout's
 `target/` (`just trim-targets`, below, sweeps the pool's by age), and `just

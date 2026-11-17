@@ -100,18 +100,18 @@ syntax = "proto3";
 // JSON (ruling 146): `--format json` prints the response message's proto3
 // JSON, snake_case field names (`preserving_proto_field_names`).
 //
-// LINT (ruling 147; S36, S37 owner): googleapis' annotation and
-// longrunning protos are vendored into `proto/third_party/google/...`
-// (pinned, Apache-2.0) and api-linter gates these drafts, both at
-// implementation.
-// TODO(S36): until the vendored protos land, resource patterns are COMMENTS
-// (`// <pattern>` beside each resource), not `google.api.resource`
-// annotations, and fields carry no `google.api.field_behavior`; the only
-// local copies are tool caches with no pinned upstream commit.
-// Departures, each a commented exception at its site once the linter
-// gates: write responses carry `needs` (AIP-163 returns the would-be
-// response alone; needs are ctxloom's, API Q2, S38); `WatchTranscript` and
-// `WatchRun` are daemon-folded streams (S44).
+// LINT (ruling 147; S36, S37, S57 owner; D6): googleapis' annotation,
+// client and longrunning protos are vendored into
+// `proto/third_party/google/` at one pinned commit, each checked against
+// its SHA-256 (`SHA256SUMS`, `scripts/vendor-googleapis.sh`, Apache-2.0),
+// and api-linter, a pinned release checked by SHA-256, lints these drafts
+// (`just lint-api`, `proto/api-linter.yaml`). Each resource carries its
+// `google.api.resource`, and its fields their `google.api.field_behavior`
+// where the drafts settle it (step 10 U1). Departures are commented
+// exceptions at their site: a write request's `answers` (needs are
+// ctxloom's, API Q2, S38); `WatchTranscript` and `WatchRun` are
+// daemon-folded streams (S44). Write responses carry `needs` (AIP-163
+// returns the would-be response alone), S38 too.
 //
 // NAMES (S42, owner): user-addressable things are HARPS, minted once and
 // never changed. A project is `projects/{project}` by ITS harp; a session
@@ -128,6 +128,9 @@ syntax = "proto3";
 // `google.rpc.Status.details`.
 package ctxloom.v1;
 
+import "google/api/client.proto";
+import "google/api/field_behavior.proto";
+import "google/api/resource.proto";
 import "google/protobuf/field_mask.proto";
 import "google/protobuf/timestamp.proto";
 import "io/angzarr/v1/options.proto";
@@ -138,7 +141,9 @@ import "ctxloom/v1/needs.proto";
 service Ctxloom {
   // region daemon: `daemon` (a singleton, AIP-156). With none serving, the
   // client answers `daemon status|stop` itself (S14).
-  rpc GetDaemon(GetDaemonRequest) returns (Daemon);
+  rpc GetDaemon(GetDaemonRequest) returns (Daemon) {
+    option (google.api.method_signature) = "name";
+  }
   // `daemon stop`: refused `DaemonHosting` while it hosts live runs, unless
   // `even_if_live`, which ends the hosted engines cleanly first (S12), or
   // `drain` (`daemon stop --drain`, `ctxloom shutdown`, OD-54): it hands
@@ -159,7 +164,9 @@ service Ctxloom {
   // region projects: `projects/{project}` (the project's harp)
   // The project of a directory (S6): names only, never routing (T14).
   rpc ResolveProject(ResolveProjectRequest) returns (Project);
-  rpc GetProject(GetProjectRequest) returns (Project);
+  rpc GetProject(GetProjectRequest) returns (Project) {
+    option (google.api.method_signature) = "name";
+  }
   // `init` (API Q7): the preview's need asks `output.dir`; the apply returns
   // a continuation (the setup session's launch, then the restart offer's
   // request to preview when it ends).
@@ -171,38 +178,60 @@ service Ctxloom {
 
   // region sessions: `projects/{project}/sessions/{session}` (both harps);
   // `projects/-/sessions` lists every project's (`--all`, AIP-159)
-  rpc GetSession(GetSessionRequest) returns (Session);
-  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc GetSession(GetSessionRequest) returns (Session) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc SearchSessions(SearchSessionsRequest) returns (ListSessionsResponse);
   // `session remove`: its worktrees classified, the whole refused (with its
   // plan) if one is unsafe, else the worktrees removed, then the destroy.
   // Served only in a `session-destroy` build (M5).
-  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   // `session sweep`: each session by the fixed table, its purges through
   // the same removal as `DeleteSession`. A `session-destroy` build's (M5).
   rpc SweepSessions(SweepSessionsRequest) returns (SweepSessionsResponse);
   // `session transcript show`; `transcript list` is `ListSessions` with
   // `has_transcript`.
-  rpc GetTranscript(GetTranscriptRequest) returns (Transcript);
+  rpc GetTranscript(GetTranscriptRequest) returns (Transcript) {
+    option (google.api.method_signature) = "name";
+  }
   // `session transcript watch`: its lines as they are delivered.
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: a daemon-folded stream of the resource's lines or events (S44). --)
   rpc WatchTranscript(WatchTranscriptRequest) returns (stream TranscriptLine);
-  rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse);
+  rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   // A child's hand-off (T6, S10): `projects/{project}/handOffs/{child}`,
   // created before `LaunchChild`: the daemon checks the owner, plans the
   // child and judges its credential BEFORE it writes anything, so a refused
   // launch leaves nothing.
-  rpc CreateHandOff(CreateHandOffRequest) returns (HandOff);
+  rpc CreateHandOff(CreateHandOffRequest) returns (HandOff) {
+    option (google.api.method_signature) = "parent,hand_off_id";
+  }
   // A hand-off withdrawn: the `LaunchChild` it was created for was refused.
-  rpc DeleteHandOff(DeleteHandOffRequest) returns (HandOff);
+  rpc DeleteHandOff(DeleteHandOffRequest) returns (HandOff) {
+    option (google.api.method_signature) = "name";
+  }
   // endregion
 
   // region runs: `projects/{project}/runs/{run}`
   // `run --dry-run` is `validate_only`; `run --one-shot` creates a hosted
   // run (then `WatchRun`); `run` creates a TERMINAL run, whose `Run` holds
   // the `Launch` the frontend starts.
-  rpc CreateRun(CreateRunRequest) returns (Run);
-  rpc GetRun(GetRunRequest) returns (Run);
+  rpc CreateRun(CreateRunRequest) returns (Run) {
+    option (google.api.method_signature) = "parent";
+  }
+  rpc GetRun(GetRunRequest) returns (Run) {
+    option (google.api.method_signature) = "name";
+  }
   // A one-shot's notices, reply and end.
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: a daemon-folded stream of the resource's lines or events (S44). --)
   rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
   // endregion
 
@@ -212,9 +241,15 @@ service Ctxloom {
   // request, and the daemon fills root, run, engine, timeout, the harp and
   // the options, then records `approvals.RecordApprovalAsked`. Idempotent on
   // (session, engine_request_id): a retry answers the same approval.
-  rpc CreateApproval(CreateApprovalRequest) returns (Approval);
-  rpc GetApproval(GetApprovalRequest) returns (Approval);
-  rpc ListApprovals(ListApprovalsRequest) returns (ListApprovalsResponse);
+  rpc CreateApproval(CreateApprovalRequest) returns (Approval) {
+    option (google.api.method_signature) = "parent";
+  }
+  rpc GetApproval(GetApprovalRequest) returns (Approval) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListApprovals(ListApprovalsRequest) returns (ListApprovalsResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   // ctxloom's MCP approval tool waits here (S27): answered once the approval
   // is settled (answered, expired or withdrawn). The caller's deadline is
   // the approval's `expire_time` plus a margin, never `within`'s read
@@ -225,7 +260,9 @@ service Ctxloom {
   // region trusts: `projects/{project}/trust` (a singleton sub-resource,
   // AIP-156; D2, S58)
   // The preview of `trust`: what it allows, and the etag `GrantTrust` names.
-  rpc GetTrust(GetTrustRequest) returns (Trust);
+  rpc GetTrust(GetTrustRequest) returns (Trust) {
+    option (google.api.method_signature) = "name";
+  }
   // The projects the user trusts now (no parent): a revoked trust is not
   // listed.
   rpc ListTrusts(ListTrustsRequest) returns (ListTrustsResponse);
@@ -237,12 +274,20 @@ service Ctxloom {
 
   // region bundles: `projects/{project}/bundles/{bundle}` and the other
   // Bundle patterns (origin is in the name, OQ-4)
-  rpc GetBundle(GetBundleRequest) returns (Bundle);
-  rpc ListBundles(ListBundlesRequest) returns (ListBundlesResponse);
+  rpc GetBundle(GetBundleRequest) returns (Bundle) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListBundles(ListBundlesRequest) returns (ListBundlesResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateBundle(CreateBundleRequest) returns (CreateBundleResponse);
   // `bundle edit`: ONE change per call (T29): `update_mask` names one path.
-  rpc UpdateBundle(UpdateBundleRequest) returns (UpdateBundleResponse);
-  rpc DeleteBundle(DeleteBundleRequest) returns (DeleteBundleResponse);
+  rpc UpdateBundle(UpdateBundleRequest) returns (UpdateBundleResponse) {
+    option (google.api.method_signature) = "bundle,update_mask";
+  }
+  rpc DeleteBundle(DeleteBundleRequest) returns (DeleteBundleResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   rpc ExportBundle(ExportBundleRequest) returns (ExportBundleResponse);
   rpc ImportBundle(ImportBundleRequest) returns (ImportBundleResponse);
   rpc MoveBundle(MoveBundleRequest) returns (MoveBundleResponse);
@@ -250,96 +295,164 @@ service Ctxloom {
 
   // region fragments and commands: a Bundle + `/fragments/{fragment}`,
   // `/commands/{command}`
-  rpc GetFragment(GetFragmentRequest) returns (Fragment);
-  rpc ListFragments(ListFragmentsRequest) returns (ListFragmentsResponse);
+  rpc GetFragment(GetFragmentRequest) returns (Fragment) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListFragments(ListFragmentsRequest) returns (ListFragmentsResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateFragment(CreateFragmentRequest) returns (CreateFragmentResponse);
   // `fragment edit`: writes the `.md` alone (T30); with no fields, the
   // preview's need is an `Edit` of the document.
-  rpc UpdateFragment(UpdateFragmentRequest) returns (UpdateFragmentResponse);
-  rpc DeleteFragment(DeleteFragmentRequest) returns (DeleteFragmentResponse);
+  rpc UpdateFragment(UpdateFragmentRequest) returns (UpdateFragmentResponse) {
+    option (google.api.method_signature) = "fragment,update_mask";
+  }
+  rpc DeleteFragment(DeleteFragmentRequest) returns (DeleteFragmentResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   // `fragment distill`: the `.distilled.md` alone, recording the source's
   // digest (T30); `clear` removes it.
   rpc DistillFragment(DistillFragmentRequest) returns (DistillFragmentResponse);
   rpc DraftFragmentPremise(DraftFragmentPremiseRequest) returns (DraftFragmentPremiseResponse);
   // `fragment premises`: `projects/{project}/premiseIndex` (a singleton).
-  rpc GetPremiseIndex(GetPremiseIndexRequest) returns (PremiseIndex);
-  rpc GetCommand(GetCommandRequest) returns (Command);
-  rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
+  rpc GetPremiseIndex(GetPremiseIndexRequest) returns (PremiseIndex) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc GetCommand(GetCommandRequest) returns (Command) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateCommand(CreateCommandRequest) returns (CreateCommandResponse);
-  rpc UpdateCommand(UpdateCommandRequest) returns (UpdateCommandResponse);
-  rpc DeleteCommand(DeleteCommandRequest) returns (DeleteCommandResponse);
+  rpc UpdateCommand(UpdateCommandRequest) returns (UpdateCommandResponse) {
+    option (google.api.method_signature) = "command,update_mask";
+  }
+  rpc DeleteCommand(DeleteCommandRequest) returns (DeleteCommandResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   rpc DistillCommand(DistillCommandRequest) returns (DistillCommandResponse);
   // endregion
 
   // region skills: a Bundle + `/skills/{skill}`
-  rpc GetSkill(GetSkillRequest) returns (Skill);
-  rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
+  rpc GetSkill(GetSkillRequest) returns (Skill) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateSkill(CreateSkillRequest) returns (CreateSkillResponse);
-  rpc DeleteSkill(DeleteSkillRequest) returns (DeleteSkillResponse);
+  rpc DeleteSkill(DeleteSkillRequest) returns (DeleteSkillResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   rpc ExportSkill(ExportSkillRequest) returns (ExportSkillResponse);
   rpc ImportSkill(ImportSkillRequest) returns (ImportSkillResponse);
   // endregion
 
   // region MCP servers: a Bundle + `/mcpServers/{mcp_server}`
-  rpc GetMcpServer(GetMcpServerRequest) returns (McpServer);
-  rpc ListMcpServers(ListMcpServersRequest) returns (ListMcpServersResponse);
+  rpc GetMcpServer(GetMcpServerRequest) returns (McpServer) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListMcpServers(ListMcpServersRequest) returns (ListMcpServersResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   // `mcp server set|edit` (`allow_missing`: create-on-update, AIP-134).
-  rpc UpdateMcpServer(UpdateMcpServerRequest) returns (UpdateMcpServerResponse);
+  rpc UpdateMcpServer(UpdateMcpServerRequest) returns (UpdateMcpServerResponse) {
+    option (google.api.method_signature) = "mcp_server,update_mask";
+  }
   // endregion
 
   // region profiles: a Bundle + `/profiles/{profile}`
-  rpc GetProfile(GetProfileRequest) returns (Profile);
-  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+  rpc GetProfile(GetProfileRequest) returns (Profile) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateProfile(CreateProfileRequest) returns (CreateProfileResponse);
-  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
-  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileResponse);
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse) {
+    option (google.api.method_signature) = "profile,update_mask";
+  }
+  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   rpc ExportProfile(ExportProfileRequest) returns (ExportProfileResponse);
   rpc ImportProfile(ImportProfileRequest) returns (ImportProfileResponse);
   // endregion
 
   // region agents: `projects/{project}/agents/{agent}`, `users/me/agents/{agent}`
-  rpc GetAgent(GetAgentRequest) returns (Agent);
-  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc GetAgent(GetAgentRequest) returns (Agent) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
-  rpc UpdateAgent(UpdateAgentRequest) returns (UpdateAgentResponse);
-  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+  rpc UpdateAgent(UpdateAgentRequest) returns (UpdateAgentResponse) {
+    option (google.api.method_signature) = "agent,update_mask";
+  }
+  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   rpc SetDefaultAgent(SetDefaultAgentRequest) returns (SetDefaultAgentResponse);
   // endregion
 
   // region engines: `projects/{project}/engines/{engine}` (read-only)
-  rpc GetEngine(GetEngineRequest) returns (Engine);
-  rpc ListEngines(ListEnginesRequest) returns (ListEnginesResponse);
+  rpc GetEngine(GetEngineRequest) returns (Engine) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListEngines(ListEnginesRequest) returns (ListEnginesResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   // endregion
 
   // region companions: `projects/{project}/companions/{companion}`
-  rpc ListCompanions(ListCompanionsRequest) returns (ListCompanionsResponse);
+  rpc ListCompanions(ListCompanionsRequest) returns (ListCompanionsResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateCompanion(CreateCompanionRequest) returns (CreateCompanionResponse);
-  rpc DeleteCompanion(DeleteCompanionRequest) returns (DeleteCompanionResponse);
+  rpc DeleteCompanion(DeleteCompanionRequest) returns (DeleteCompanionResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   // AIP-136: a resource-based custom method answers the resource (OD-9).
   rpc EnableCompanion(EnableCompanionRequest) returns (Companion);
   rpc DisableCompanion(DisableCompanionRequest) returns (Companion);
   // endregion
 
   // region remotes: `projects/{project}/remotes/{remote}`
-  rpc GetRemote(GetRemoteRequest) returns (Remote);
-  rpc ListRemotes(ListRemotesRequest) returns (ListRemotesResponse);
+  rpc GetRemote(GetRemoteRequest) returns (Remote) {
+    option (google.api.method_signature) = "name";
+  }
+  rpc ListRemotes(ListRemotesRequest) returns (ListRemotesResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   rpc CreateRemote(CreateRemoteRequest) returns (CreateRemoteResponse);
-  rpc UpdateRemote(UpdateRemoteRequest) returns (UpdateRemoteResponse);
-  rpc DeleteRemote(DeleteRemoteRequest) returns (DeleteRemoteResponse);
+  rpc UpdateRemote(UpdateRemoteRequest) returns (UpdateRemoteResponse) {
+    option (google.api.method_signature) = "remote,update_mask";
+  }
+  rpc DeleteRemote(DeleteRemoteRequest) returns (DeleteRemoteResponse) {
+    option (google.api.method_signature) = "name,etag";
+  }
   rpc SetDefaultRemote(SetDefaultRemoteRequest) returns (SetDefaultRemoteResponse);
   // endregion
 
   // region dependencies: `projects/{project}/dependencies/{dependency}`
-  rpc ListDependencies(ListDependenciesRequest) returns (ListDependenciesResponse);
+  rpc ListDependencies(ListDependenciesRequest) returns (ListDependenciesResponse) {
+    option (google.api.method_signature) = "parent";
+  }
   // AIP-136: a resource-based custom method answers the resource.
   rpc HoldDependency(HoldDependencyRequest) returns (Dependency);
   rpc ReleaseDependency(ReleaseDependencyRequest) returns (Dependency);
   // endregion
 
   // region config: `projects/{project}/config`, `users/me/config` (singletons)
-  rpc GetConfig(GetConfigRequest) returns (Config);
+  rpc GetConfig(GetConfigRequest) returns (Config) {
+    option (google.api.method_signature) = "name";
+  }
   // `config set`: one key per call (T29).
-  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse) {
+    option (google.api.method_signature) = "config,update_mask";
+  }
   // `config create` (AIP-156 forbids Create on a singleton).
   rpc ScaffoldConfig(ScaffoldConfigRequest) returns (ScaffoldConfigResponse);
   // endregion
@@ -370,7 +483,7 @@ service Ctxloom {
 
 message GetDaemonRequest {
   // `daemon`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Daemon"];
   EnvVars env = 94;
 }
 
@@ -392,7 +505,14 @@ message HostedRun {
 
 // The daemon (a singleton). Never its bearer.
 message Daemon {
-  string name = 1;
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Daemon"
+    pattern: "daemon"
+    singular: "daemon"
+    plural: "daemons"
+  };
+
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   uint32 pid = 2;
   string endpoint = 3;
   google.protobuf.Timestamp start_time = 4;
@@ -464,19 +584,26 @@ message ResolveProjectRequest {
 }
 
 message Project {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Project"
+    pattern: "projects/{project}"
+    singular: "project"
+    plural: "projects"
+  };
+
   // `projects/{project}`, the project's permanent harp (S42).
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // The root it was first registered from.
   string root = 2;
   // The project id (the store's, and a session's claim namespace).
-  string uid = 3;
+  string uid = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // Its registered VCS identity (empty outside git).
   string git_common_dir = 4;
   string root_commit = 5;
 }
 
 message GetProjectRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Project"];
 }
 
 message InitProjectRequest {
@@ -569,6 +696,13 @@ message PendingMessage {
 
 // A session (the session index's record).
 message Session {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Session"
+    pattern: "projects/{project}/sessions/{session}"
+    singular: "session"
+    plural: "sessions"
+  };
+
   enum State {
     STATE_UNSPECIFIED = 0;
     LIVE = 1;
@@ -577,10 +711,10 @@ message Session {
   }
 
   // `projects/{project}/sessions/{session}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // The stream root (UUID text), what a command's cover names.
-  string uid = 2;
-  State state = 3;
+  string uid = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  State state = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   string engine = 4;
   string summary = 5;
   google.protobuf.Timestamp start_time = 6;
@@ -592,7 +726,7 @@ message Session {
   repeated string children = 11;
   repeated PendingMessage pending = 12;
   uint32 incarnation = 13;
-  string etag = 14;
+  string etag = 14 [(google.api.field_behavior) = OUTPUT_ONLY];
   // The free-text title `session rename` sets (S42); the harp never changes.
   string title = 15;
   // The engine's own session id, once bound.
@@ -613,13 +747,13 @@ message SessionRotation {
 }
 
 message GetSessionRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Session"];
   EnvVars env = 94;
 }
 
 message ListSessionsRequest {
   // `projects/{project}`, or `projects/-` for every project.
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Session"];
   Session.State state = 2;
   bool has_transcript = 3;
   int32 page_size = 80;
@@ -633,7 +767,7 @@ message ListSessionsResponse {
 }
 
 message SearchSessionsRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
   repeated string words = 2;
   Session.State state = 3;
   int32 page_size = 80;
@@ -643,7 +777,7 @@ message SearchSessionsRequest {
 
 message DeleteSessionRequest {
   // One session (`session remove <harp>`); the age form is `SweepSessions`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Session"];
   // Destroy a session whose lock does not prove it ended (`--even-if-live`):
   // the daemon judges by the session's lock. It reaches no worktree.
   bool even_if_live = 2;
@@ -652,6 +786,8 @@ message DeleteSessionRequest {
   // The preview (`session remove` without `--yes`): the plan, applied
   // nowhere.
   bool validate_only = 92;
+  // (-- api-linter: core::0135::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   // The caller's environment (S7): git runs in it for the worktrees.
   EnvVars env = 94;
@@ -779,7 +915,7 @@ message SweepSessionsResponse {
 
 message GetTranscriptRequest {
   // `projects/{project}/sessions/{session}/transcript`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Transcript"];
 }
 
 // One D27 line, as its JSON envelope.
@@ -788,24 +924,38 @@ message TranscriptLine {
 }
 
 message Transcript {
-  string name = 1;
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Transcript"
+    pattern: "projects/{project}/sessions/{session}/transcript"
+    singular: "transcript"
+    plural: "transcripts"
+  };
+
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   repeated TranscriptLine lines = 2;
 }
 
 message WatchTranscriptRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 message Worktree {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Worktree"
+    pattern: "projects/{project}/sessions/{session}/worktrees/{worktree}"
+    singular: "worktree"
+    plural: "worktrees"
+  };
+
   // `projects/{project}/sessions/{session}/worktrees/{worktree}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   string path = 2;
   string branch = 3;
   bool dirty = 4;
 }
 
 message ListWorktreesRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Worktree"];
   int32 page_size = 80;
   string page_token = 81;
 }
@@ -817,7 +967,7 @@ message ListWorktreesResponse {
 
 message CreateHandOffRequest {
   // `projects/{project}`.
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/HandOff"];
   // The child's stable id, minted by the client; `LaunchChild` names it.
   string hand_off_id = 2;
   // The owner session's harp in `parent`: a session nobody recorded is
@@ -846,13 +996,20 @@ message CreateHandOffRequest {
 
 message DeleteHandOffRequest {
   // `projects/{project}/handOffs/{child}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/HandOff"];
   string request_id = 90;
 }
 
 // The hand-off, by name only: its content never leaves the daemon.
 message HandOff {
-  string name = 1;
+  option (google.api.resource) = {
+    type: "ctxloom.dev/HandOff"
+    pattern: "projects/{project}/handOffs/{hand_off}"
+    singular: "handOff"
+    plural: "handOffs"
+  };
+
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // The engine the child is planned on: the one asked, else its agent's
   // configured engine (an agent naming none, the config's default engine).
   // What its `LaunchChild` names.
@@ -874,6 +1031,13 @@ message Finding {
 
 // A run: its plan, and once created its session and (TERMINAL) its launch.
 message Run {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Run"
+    pattern: "projects/{project}/runs/{run}"
+    singular: "run"
+    plural: "runs"
+  };
+
   enum Mode {
     MODE_UNSPECIFIED = 0;
     ONE_SHOT = 1;
@@ -881,7 +1045,7 @@ message Run {
   }
 
   // `projects/{project}/runs/{run}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   Mode mode = 2;
   // `projects/{project}/sessions/{session}`.
   string session = 3;
@@ -915,12 +1079,12 @@ message Run {
   // nothing is left to watch.
   RunEnd end = 17;
   repeated Need needs = 90;
-  string etag = 91;
+  string etag = 91 [(google.api.field_behavior) = OUTPUT_ONLY];
   repeated Notice notices = 92;
 }
 
 message CreateRunRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Run"];
   Run.Mode mode = 2;
   string prompt = 3;
   string agent = 4;
@@ -950,6 +1114,8 @@ message CreateRunRequest {
   string launcher_lock = 14;
   string request_id = 90;
   bool validate_only = 92;
+  // (-- api-linter: core::0133::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -957,11 +1123,11 @@ message CreateRunRequest {
 }
 
 message GetRunRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Run"];
 }
 
 message WatchRunRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 // A one-shot's end. Stopped by `RequestStop`: exit 128 plus the signal's
@@ -1019,9 +1185,16 @@ message ApprovalOption {
 
 // A permission ask (approvals/v1/approvals.proto's state).
 message Approval {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Approval"
+    pattern: "projects/{project}/approvals/{approval}"
+    singular: "approval"
+    plural: "approvals"
+  };
+
   // `projects/{project}/approvals/{approval}`, `{approval}` the ask's name,
   // `ask-<adjective>-<noun>`, under its ROOT's project (Q-A).
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // The asking session's and its root's session resource names.
   string child = 2;
   string root = 3;
@@ -1037,12 +1210,12 @@ message Approval {
   string message = 10;
   repeated ApprovalOption options = 11;
   // `waiting`, `answered`, `expired` or `withdrawn`.
-  string state = 12;
+  string state = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
   // When answered: the option's id.
   string option = 13;
   // Its stream's root (a UUID), as a session's `uid`: what an answer is
   // sent to.
-  string uid = 14;
+  string uid = 14 [(google.api.field_behavior) = OUTPUT_ONLY];
   // When answered: its option's kind (`allow_once`, ...).
   string option_kind = 15;
   // How long it waits, in seconds (its engine's `approval_timeout`; 0 is
@@ -1055,7 +1228,7 @@ message Approval {
 
 message CreateApprovalRequest {
   // `projects/{project}`.
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Approval"];
   // The asking session's stable id (the engine's `CTXLOOM_SESSION`); the
   // daemon finds its run, engine, root and approval_timeout from it.
   string session = 2;
@@ -1068,11 +1241,11 @@ message CreateApprovalRequest {
 }
 
 message GetApprovalRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Approval"];
 }
 
 message ListApprovalsRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Approval"];
   // Only those under this root session's tree.
   string root = 2;
   bool waiting = 3;
@@ -1086,7 +1259,7 @@ message ListApprovalsResponse {
 }
 
 message WaitApprovalRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 // endregion
@@ -1100,8 +1273,15 @@ message TrustSetting {
 
 // A project's trust, until revoked (S23).
 message Trust {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Trust"
+    pattern: "projects/{project}/trust"
+    singular: "trust"
+    plural: "trusts"
+  };
+
   // `projects/{project}/trust`, `{project}` the project's harp.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   bool trusted = 2;
   // What it allows: the project-only settings, and a project `ctxloom`
   // bundle (path `bundles/ctxloom`).
@@ -1109,12 +1289,12 @@ message Trust {
   string actor = 4;
   google.protobuf.Timestamp grant_time = 5;
   // What `GrantTrust` names (API Q5).
-  string etag = 6;
+  string etag = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetTrustRequest {
   // `projects/{project}/trust`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Trust"];
 }
 
 message ListTrustsRequest {

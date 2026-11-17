@@ -46,7 +46,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "ctxloom/v1/launch.proto",
             "ctxloom/v1/needs.proto",
         ],
-        &["../../../../proto"],
+        // The vendored googleapis protos (step 10 U1): the resource,
+        // field-behaviour and client annotations the drafts carry, options
+        // alone, so nothing of theirs is a field of a message.
+        &["../../../../proto", "../../../../proto/third_party"],
     )?;
     // The files the five import are compiled too, but only the five are
     // watched by `wire`: a change to library.proto (imported by
@@ -68,7 +71,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// The package's files the compiled ones import, which `wire` does not
 /// watch.
-const IMPORTED: &[&str] = &["ctxloom/v1/library.proto"];
+const IMPORTED: &[&str] = &[
+    "ctxloom/v1/library.proto",
+    "third_party/google/api/client.proto",
+    "third_party/google/api/field_behavior.proto",
+    "third_party/google/api/resource.proto",
+];
 
 /// The well-known types the package's messages use, compiled into this
 /// crate (`google::protobuf`) so that they can carry proto3 JSON.

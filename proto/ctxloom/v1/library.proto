@@ -72,9 +72,10 @@ syntax = "proto3";
 //   - Field numbers: 1 `name` (or `parent`); 2..69 the resource's own; 70
 //     `etag` on a resource; 80, 81 paging; 90+ the request and the response
 //     fields (90 `needs`, 91 `etag`, 92 `notices`).
-//   - Field behaviours (AIP-203) are COMMENTS until the vendored annotations
-//     land (daemon.proto's TODO(S36)): IDENTIFIER on `name`; OUTPUT_ONLY on
-//     everything derived.
+//   - Field behaviours (AIP-203) are `google.api.field_behavior`
+//     annotations (daemon.proto's LINT): IDENTIFIER on `name`; OUTPUT_ONLY
+//     on everything derived; REQUIRED on a request's `name`, `parent` and
+//     resource; OPTIONAL on `update_mask`.
 //   - `name` is reserved for the resource's name (AIP-122): a sub-row that
 //     said `name` says what it is (`agent`, `variable`, `resource`).
 //   - A reference is a resource name; one that resolves to nothing keeps its
@@ -117,6 +118,8 @@ syntax = "proto3";
 //     bundle) is `view`; UNSPECIFIED is BASIC for a List and FULL for a Get.
 package ctxloom.v1;
 
+import "google/api/field_behavior.proto";
+import "google/api/resource.proto";
 import "google/protobuf/field_mask.proto";
 import "google/protobuf/struct.proto";
 import "ctxloom/v1/needs.proto";
@@ -207,6 +210,16 @@ message NotCarried {
 // region bundles: ctxloom.dev/Bundle
 
 message Bundle {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Bundle"
+    pattern: "projects/{project}/bundles/{bundle}"
+    pattern: "projects/{project}/remotes/{remote}/bundles/{bundle}"
+    pattern: "projects/{project}/companions/{companion}/bundles/{bundle}"
+    pattern: "users/me/bundles/{bundle}"
+    singular: "bundle"
+    plural: "bundles"
+  };
+
   enum View {
     VIEW_UNSPECIFIED = 0;
     // `bundle list`.
@@ -233,15 +246,15 @@ message Bundle {
   }
 
   // IDENTIFIER: one of the four Bundle patterns.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // OUTPUT_ONLY. was: origin.
-  Origin origin = 2;
+  Origin origin = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY. was: ref (`ctxloom+local:demo`, `<url>@bundles/x`).
-  string reference = 3;
+  string reference = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, a remote bundle's commit. was: RemoteOrigin.sha.
-  string commit = 4;
+  string commit = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY: its bundle.yaml.
-  string path = 5;
+  string path = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
   string version = 6;
   // FULL.
   string author = 7;
@@ -252,28 +265,28 @@ message Bundle {
   // FULL.
   string installation = 11;
   // OUTPUT_ONLY counts.
-  uint32 fragment_count = 12;
+  uint32 fragment_count = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
   uint32 command_count = 13;
   // was: mcp_count.
   uint32 mcp_server_count = 14;
   uint32 profile_count = 15;
   uint32 skill_count = 16;
   // OUTPUT_ONLY, a remote bundle's: always printed when known.
-  optional bool held = 17;
+  optional bool held = 17 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, FULL: each child summarised by its name (OQ-14).
-  repeated BundleItem fragments = 20;
+  repeated BundleItem fragments = 20 [(google.api.field_behavior) = OUTPUT_ONLY];
   repeated BundleItem commands = 21;
   repeated BundleItem skills = 22;
   repeated BundleItem mcp_servers = 23;
   // OUTPUT_ONLY, FULL: Profile names.
-  repeated string profiles = 24;
+  repeated string profiles = 24 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, FULL: hook labels.
-  repeated string hooks = 25;
+  repeated string hooks = 25 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, CONTENT: each file of `bundle view`.
-  repeated BundleFile files = 26;
+  repeated BundleFile files = 26 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, CONTENT: the distilled forms were asked.
-  optional bool distilled = 27;
-  string etag = 70;
+  optional bool distilled = 27 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // One child as `bundle show` summarises it (AIP-122: the referenced
@@ -310,7 +323,7 @@ message BundleFile {
 }
 
 message GetBundleRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Bundle"];
   Bundle.View view = 2;
   // `--distilled`: a distilled form where one is fresh.
   bool prefer_distilled = 3;
@@ -320,7 +333,7 @@ message ListBundlesRequest {
   // `projects/{project}` answers the whole catalog, every origin (a lint
   // exception to AIP-132's "parent identifies the type", design §1.2);
   // `projects/{project}/remotes/-` every remote bundle alone (AIP-159).
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Bundle"];
   Bundle.View view = 2;
   int32 page_size = 80;
   string page_token = 81;
@@ -332,11 +345,13 @@ message ListBundlesResponse {
 }
 
 message CreateBundleRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Bundle"];
   string bundle_id = 2;
-  Bundle bundle = 3;
+  Bundle bundle = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
+  // (-- api-linter: core::0133::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -355,12 +370,14 @@ message CreateBundleResponse {
 }
 
 message UpdateBundleRequest {
-  Bundle bundle = 1;
+  Bundle bundle = 1 [(google.api.field_behavior) = REQUIRED];
   // Exactly ONE path (T29); more is refused `OneChangePerCall`.
-  google.protobuf.FieldMask update_mask = 2;
+  google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   Presentable presentable = 95;
   Globals globals = 96;
@@ -379,11 +396,13 @@ message UpdateBundleResponse {
 }
 
 message DeleteBundleRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Bundle"];
   string request_id = 90;
   string etag = 91;
   // Without `--yes`: the preview.
   bool validate_only = 92;
+  // (-- api-linter: core::0135::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   Presentable presentable = 95;
   Globals globals = 96;
@@ -549,30 +568,50 @@ enum ItemView {
 }
 
 message Fragment {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Fragment"
+    pattern: "projects/{project}/bundles/{bundle}/fragments/{fragment}"
+    pattern: "projects/{project}/remotes/{remote}/bundles/{bundle}/fragments/{fragment}"
+    pattern: "projects/{project}/companions/{companion}/bundles/{bundle}/fragments/{fragment}"
+    pattern: "users/me/bundles/{bundle}/fragments/{fragment}"
+    singular: "fragment"
+    plural: "fragments"
+  };
+
   // IDENTIFIER: a Bundle pattern + `/fragments/{fragment}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // OUTPUT_ONLY. was: ref (`demo#fragments/x`).
-  string reference = 2;
+  string reference = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY: the bundle's tags, then its own.
-  repeated string tags = 3;
+  repeated string tags = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // FULL. was: ItemShow.content.
   string body = 4;
   // OUTPUT_ONLY.
-  DistilledState distilled = 5;
+  DistilledState distilled = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
   optional bool no_distill = 6;
   string premise = 7;
   // OUTPUT_ONLY: the first line.
-  string preview = 8;
+  string preview = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY, FULL: the body served is the distilled form.
-  bool body_is_distilled = 9;
+  bool body_is_distilled = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
-  string path = 10;
-  string etag = 70;
+  string path = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message Command {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Command"
+    pattern: "projects/{project}/bundles/{bundle}/commands/{command}"
+    pattern: "projects/{project}/remotes/{remote}/bundles/{bundle}/commands/{command}"
+    pattern: "projects/{project}/companions/{companion}/bundles/{bundle}/commands/{command}"
+    pattern: "users/me/bundles/{bundle}/commands/{command}"
+    singular: "command"
+    plural: "commands"
+  };
+
   // IDENTIFIER: a Bundle pattern + `/commands/{command}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   string reference = 2;
   repeated string tags = 3;
   string body = 4;
@@ -582,18 +621,18 @@ message Command {
   string preview = 8;
   bool body_is_distilled = 9;
   string path = 10;
-  string etag = 70;
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetFragmentRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Fragment"];
   ItemView view = 2;
   bool prefer_distilled = 3;
 }
 
 message ListFragmentsRequest {
   // A bundle, or `projects/{project}/bundles/-` (AIP-159).
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Fragment"];
   repeated string tags = 2;
   ItemView view = 3;
   int32 page_size = 80;
@@ -606,11 +645,13 @@ message ListFragmentsResponse {
 }
 
 message CreateFragmentRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Fragment"];
   string fragment_id = 2;
-  Fragment fragment = 3;
+  Fragment fragment = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
+  // (-- api-linter: core::0133::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -631,11 +672,13 @@ message CreateFragmentResponse {
 }
 
 message UpdateFragmentRequest {
-  Fragment fragment = 1;
-  google.protobuf.FieldMask update_mask = 2;
+  Fragment fragment = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -655,10 +698,12 @@ message UpdateFragmentResponse {
 }
 
 message DeleteFragmentRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Fragment"];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0135::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   Presentable presentable = 95;
   Globals globals = 96;
@@ -718,13 +763,13 @@ message DraftFragmentPremiseResponse {
 }
 
 message GetCommandRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Command"];
   ItemView view = 2;
   bool prefer_distilled = 3;
 }
 
 message ListCommandsRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Command"];
   repeated string tags = 2;
   ItemView view = 3;
   int32 page_size = 80;
@@ -737,11 +782,13 @@ message ListCommandsResponse {
 }
 
 message CreateCommandRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Command"];
   string command_id = 2;
-  Command command = 3;
+  Command command = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
+  // (-- api-linter: core::0133::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -761,11 +808,13 @@ message CreateCommandResponse {
 }
 
 message UpdateCommandRequest {
-  Command command = 1;
-  google.protobuf.FieldMask update_mask = 2;
+  Command command = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -785,10 +834,12 @@ message UpdateCommandResponse {
 }
 
 message DeleteCommandRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Command"];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0135::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   Presentable presentable = 95;
   Globals globals = 96;
@@ -833,14 +884,21 @@ message PremiseEntry {
 }
 
 message PremiseIndex {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/PremiseIndex"
+    pattern: "projects/{project}/premiseIndex"
+    singular: "premiseIndex"
+    plural: "premiseIndexes"
+  };
+
   // `projects/{project}/premiseIndex`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   string instruction = 2;
   repeated PremiseEntry fragments = 3;
 }
 
 message GetPremiseIndexRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/PremiseIndex"];
 }
 
 // endregion
@@ -855,8 +913,18 @@ message SkillFile {
 }
 
 message Skill {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Skill"
+    pattern: "projects/{project}/bundles/{bundle}/skills/{skill}"
+    pattern: "projects/{project}/remotes/{remote}/bundles/{bundle}/skills/{skill}"
+    pattern: "projects/{project}/companions/{companion}/bundles/{bundle}/skills/{skill}"
+    pattern: "users/me/bundles/{bundle}/skills/{skill}"
+    singular: "skill"
+    plural: "skills"
+  };
+
   // IDENTIFIER: a Bundle pattern + `/skills/{skill}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   string description = 2;
   repeated string tags = 3;
   // FULL.
@@ -865,22 +933,22 @@ message Skill {
   repeated string allowed_tools = 6;
   string body = 7;
   // OUTPUT_ONLY, FULL.
-  repeated SkillFile files = 8;
+  repeated SkillFile files = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
-  uint32 file_count = 9;
+  uint32 file_count = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
   string notes = 10;
   // OUTPUT_ONLY: the directory.
-  string path = 11;
-  string etag = 70;
+  string path = 11 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetSkillRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Skill"];
   ItemView view = 2;
 }
 
 message ListSkillsRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Skill"];
   ItemView view = 2;
   int32 page_size = 80;
   string page_token = 81;
@@ -892,11 +960,13 @@ message ListSkillsResponse {
 }
 
 message CreateSkillRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Skill"];
   string skill_id = 2;
-  Skill skill = 3;
+  Skill skill = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
+  // (-- api-linter: core::0133::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -915,10 +985,12 @@ message CreateSkillResponse {
 }
 
 message DeleteSkillRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Skill"];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0135::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   Presentable presentable = 95;
   Globals globals = 96;
@@ -983,27 +1055,37 @@ message ImportSkillResponse {
 // region MCP servers: ctxloom.dev/McpServer
 
 message McpServer {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/McpServer"
+    pattern: "projects/{project}/bundles/{bundle}/mcpServers/{mcp_server}"
+    pattern: "projects/{project}/remotes/{remote}/bundles/{bundle}/mcpServers/{mcp_server}"
+    pattern: "projects/{project}/companions/{companion}/bundles/{bundle}/mcpServers/{mcp_server}"
+    pattern: "users/me/bundles/{bundle}/mcpServers/{mcp_server}"
+    singular: "mcpServer"
+    plural: "mcpServers"
+  };
+
   // IDENTIFIER: a Bundle pattern + `/mcpServers/{mcp_server}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   string command = 2;
   repeated string args = 3;
   // Values included, as `mcp server show` prints them today (OQ-17: kept).
   map<string, string> env = 4;
   string url = 5;
   // OUTPUT_ONLY: the Companion that serves it.
-  string served_by = 6;
+  string served_by = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
   string notes = 7;
   string installation = 8;
-  string etag = 70;
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetMcpServerRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/McpServer"];
 }
 
 message ListMcpServersRequest {
   // A bundle, or `projects/{project}/bundles/-`.
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/McpServer"];
   // `mcp server show <short name>`: the servers of every bundle with this
   // ID (a typed filter, API Q8); none matching is an empty list and the
   // existing notice.
@@ -1020,12 +1102,14 @@ message ListMcpServersResponse {
 // `mcp server set|edit`: create-on-update for a client-named resource
 // (AIP-134 `allow_missing`).
 message UpdateMcpServerRequest {
-  McpServer mcp_server = 1;
-  google.protobuf.FieldMask update_mask = 2;
+  McpServer mcp_server = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   bool allow_missing = 3;
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -1051,9 +1135,19 @@ message UpdateMcpServerResponse {
 // region profiles: ctxloom.dev/Profile
 
 message Profile {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Profile"
+    pattern: "projects/{project}/bundles/{bundle}/profiles/{profile}"
+    pattern: "projects/{project}/remotes/{remote}/bundles/{bundle}/profiles/{profile}"
+    pattern: "projects/{project}/companions/{companion}/bundles/{bundle}/profiles/{profile}"
+    pattern: "users/me/bundles/{bundle}/profiles/{profile}"
+    singular: "profile"
+    plural: "profiles"
+  };
+
   // IDENTIFIER: a Bundle pattern + `/profiles/{profile}`; a project's own
   // are in its bundle `project`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   string description = 2;
   // Profile names. was: the asks.
   repeated string parents = 3;
@@ -1066,19 +1160,19 @@ message Profile {
   // was: exclude_mcp.
   repeated string exclude_mcp_servers = 8;
   // OUTPUT_ONLY: a default profile, printed true or false (OQ-7).
-  optional bool default = 9;
+  optional bool default = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
-  string path = 10;
-  string etag = 70;
+  string path = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetProfileRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Profile"];
   ItemView view = 2;
 }
 
 message ListProfilesRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Profile"];
   ItemView view = 2;
   int32 page_size = 80;
   string page_token = 81;
@@ -1090,11 +1184,13 @@ message ListProfilesResponse {
 }
 
 message CreateProfileRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Profile"];
   string profile_id = 2;
-  Profile profile = 3;
+  Profile profile = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
+  // (-- api-linter: core::0133::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -1113,11 +1209,13 @@ message CreateProfileResponse {
 }
 
 message UpdateProfileRequest {
-  Profile profile = 1;
-  google.protobuf.FieldMask update_mask = 2;
+  Profile profile = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -1137,10 +1235,12 @@ message UpdateProfileResponse {
 }
 
 message DeleteProfileRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Profile"];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0135::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   Presentable presentable = 95;
   Globals globals = 96;
@@ -1243,6 +1343,14 @@ message ResolvedAgent {
 }
 
 message Agent {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Agent"
+    pattern: "projects/{project}/agents/{agent}"
+    pattern: "users/me/agents/{agent}"
+    singular: "agent"
+    plural: "agents"
+  };
+
   enum View {
     VIEW_UNSPECIFIED = 0;
     BASIC = 1;
@@ -1250,7 +1358,7 @@ message Agent {
   }
 
   // IDENTIFIER: `projects/{project}/agents/{agent}`, `users/me/agents/{agent}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // The Engine's name.
   string engine = 2;
   // Profile names.
@@ -1261,26 +1369,26 @@ message Agent {
   // Keyed by engine ID, so `engines.<e>.model` keeps its path.
   map<string, AgentEngine> engines = 7;
   // OUTPUT_ONLY: the default agent, printed true or false (OQ-7).
-  optional bool default = 8;
+  optional bool default = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
   // `session` | `host`, as the agent's binding says it; unset, its engine
   // block's (owner ruling of 2026-11-13).
   string session_home = 9;
   // OUTPUT_ONLY, FULL.
-  ResolvedAgent resolved = 20;
+  ResolvedAgent resolved = 20 [(google.api.field_behavior) = OUTPUT_ONLY];
   string resolution_error = 21;
   repeated Requirement requirements = 22;
   string requirements_error = 23;
   repeated NotCarried not_carried = 24;
-  string etag = 70;
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetAgentRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Agent"];
   Agent.View view = 2;
 }
 
 message ListAgentsRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Agent"];
   Agent.View view = 2;
   int32 page_size = 80;
   string page_token = 81;
@@ -1292,11 +1400,13 @@ message ListAgentsResponse {
 }
 
 message CreateAgentRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Agent"];
   string agent_id = 2;
-  Agent agent = 3;
+  Agent agent = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
+  // (-- api-linter: core::0133::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -1315,11 +1425,13 @@ message CreateAgentResponse {
 }
 
 message UpdateAgentRequest {
-  Agent agent = 1;
-  google.protobuf.FieldMask update_mask = 2;
+  Agent agent = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -1345,10 +1457,12 @@ message UpdateAgentResponse {
 }
 
 message DeleteAgentRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Agent"];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0135::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   Presentable presentable = 95;
   Globals globals = 96;
@@ -1433,10 +1547,18 @@ message EngineAgent {
 }
 
 message Engine {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Engine"
+    pattern: "projects/{project}/engines/{engine}"
+    pattern: "users/me/engines/{engine}"
+    singular: "engine"
+    plural: "engines"
+  };
+
   // IDENTIFIER: `projects/{project}/engines/{engine}`,
   // `users/me/engines/{engine}`. Everything else is OUTPUT_ONLY: derived
   // from the layered config.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   SourcedText command = 2;
   SourcedText session_home = 3;
   SourcedText runtime = 4;
@@ -1448,11 +1570,11 @@ message Engine {
 }
 
 message GetEngineRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Engine"];
 }
 
 message ListEnginesRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Engine"];
   int32 page_size = 80;
   string page_token = 81;
 }
@@ -1469,6 +1591,14 @@ message ListEnginesResponse {
 // A companion is registered by NAME alone (OD-10, owner 2026-11-13): its
 // program is found where the agent runs, so no path or command is held.
 message Companion {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Companion"
+    pattern: "projects/{project}/companions/{companion}"
+    pattern: "users/me/companions/{companion}"
+    singular: "companion"
+    plural: "companions"
+  };
+
   // Whether a registered companion contributes (OD-9:
   // `companions.<n>.state`, a word in the config).
   enum State {
@@ -1480,22 +1610,22 @@ message Companion {
   }
 
   // IDENTIFIER.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // OUTPUT_ONLY: the program its name stands for: a shipped companion's own
   // name (ltk, taskloom, reprise), any other `ctxloom-companion-<name>`.
-  string bin = 2;
+  string bin = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // The command a registration held (schema 9 before OD-10): gone with it,
   // a hard migrate.
   reserved 3;
   reserved "command";
   // OUTPUT_ONLY: its program resolves on the PATH where it is asked,
   // printed true or false. was: exists.
-  optional bool resolves = 4;
-  State state = 5;
+  optional bool resolves = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  State state = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message ListCompanionsRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Companion"];
   int32 page_size = 80;
   string page_token = 81;
 }
@@ -1506,9 +1636,9 @@ message ListCompanionsResponse {
 }
 
 message CreateCompanionRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Companion"];
   string companion_id = 2;
-  Companion companion = 3;
+  Companion companion = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
   Globals globals = 96;
@@ -1527,7 +1657,7 @@ message CreateCompanionResponse {
 }
 
 message DeleteCompanionRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Companion"];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
@@ -1566,22 +1696,29 @@ message DisableCompanionRequest {
 // region remotes: ctxloom.dev/Remote
 
 message Remote {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Remote"
+    pattern: "projects/{project}/remotes/{remote}"
+    singular: "remote"
+    plural: "remotes"
+  };
+
   // IDENTIFIER: `projects/{project}/remotes/{remote}`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   string url = 2;
   string forge = 3;
   // OUTPUT_ONLY: the default remote, printed true or false (OQ-7). was:
   // RemoteListing.default (one name).
-  optional bool default = 4;
-  string etag = 70;
+  optional bool default = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetRemoteRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Remote"];
 }
 
 message ListRemotesRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Remote"];
   int32 page_size = 80;
   string page_token = 81;
 }
@@ -1592,9 +1729,9 @@ message ListRemotesResponse {
 }
 
 message CreateRemoteRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Remote"];
   string remote_id = 2;
-  Remote remote = 3;
+  Remote remote = 3 [(google.api.field_behavior) = REQUIRED];
   string request_id = 90;
   bool validate_only = 92;
   Globals globals = 96;
@@ -1613,8 +1750,8 @@ message CreateRemoteResponse {
 }
 
 message UpdateRemoteRequest {
-  Remote remote = 1;
-  google.protobuf.FieldMask update_mask = 2;
+  Remote remote = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
@@ -1635,7 +1772,7 @@ message UpdateRemoteResponse {
 }
 
 message DeleteRemoteRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Remote"];
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
@@ -1748,26 +1885,33 @@ message DiscoverRemotesResponse {
 // region dependencies: ctxloom.dev/Dependency
 
 message Dependency {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Dependency"
+    pattern: "projects/{project}/dependencies/{dependency}"
+    singular: "dependency"
+    plural: "dependencies"
+  };
+
   // IDENTIFIER: `projects/{project}/dependencies/{dependency}`, the ID the
   // 16 hex digits of the SHA-256 of its lock identity (OQ-15).
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // OUTPUT_ONLY: the lock identity.
-  string reference = 2;
+  string reference = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY: the Bundle (or Profile) it installs. was: name.
-  string bundle = 3;
+  string bundle = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY. was: sha.
-  string commit = 4;
+  string commit = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
   string constraint = 5;
   // Printed true or false (OQ-7).
   optional bool held = 6;
   // OUTPUT_ONLY: the Remote's name, empty when none matches. was: origin.
-  string remote = 7;
+  string remote = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
   // OUTPUT_ONLY.
-  string url = 8;
+  string url = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message ListDependenciesRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).child_type = "ctxloom.dev/Dependency"];
   int32 page_size = 80;
   string page_token = 81;
 }
@@ -2133,6 +2277,14 @@ message UpgradeDependenciesResponse {
 // region config: ctxloom.dev/Config
 
 message Config {
+  option (google.api.resource) = {
+    type: "ctxloom.dev/Config"
+    pattern: "projects/{project}/config"
+    pattern: "users/me/config"
+    singular: "config"
+    plural: "configs"
+  };
+
   enum View {
     VIEW_UNSPECIFIED = 0;
     // `config show`: the layered config in effect.
@@ -2142,14 +2294,14 @@ message Config {
   }
 
   // IDENTIFIER: `projects/{project}/config`, `users/me/config`.
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // What `config show [section]` printed: `document.agents.default.engine`.
   google.protobuf.Value document = 2;
-  string etag = 70;
+  string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GetConfigRequest {
-  string name = 1;
+  string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Config"];
   Config.View view = 2;
   // One top-level section (AIP-157 deprecates a read mask, AIP-161).
   string section = 3;
@@ -2165,6 +2317,8 @@ message UpdateConfigRequest {
   string request_id = 90;
   string etag = 91;
   bool validate_only = 92;
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93;
   EnvVars env = 94;
   Presentable presentable = 95;
@@ -2241,7 +2395,7 @@ message RemoteFound {
 }
 
 message SearchLibraryRequest {
-  string parent = 1;
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
   string query = 2;
   repeated string tags = 3;
   ItemKind kind = 4;

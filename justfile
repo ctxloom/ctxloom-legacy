@@ -373,6 +373,37 @@ lint: lint-arch lint-path-deps
 lint-path-deps:
     @just --justfile {{TOP}}/justfile _run path-deps staged path-deps {{TOP}}/scripts/path-deps-check.sh {{TOP}}
 
+# api-linter over the daemon's API protos, proto/ctxloom/v1 (owner rulings
+# S36/S37/S57, D6; step 10 U1): the pinned release (scripts/lint-api.sh: its
+# version and its archive's SHA-256), after the vendored googleapis protos
+# are checked against their manifest. Linux x86_64 only; Linux CI runs it.
+# Its config, with each departure commented, is proto/api-linter.yaml.
+[group('check')]
+[doc("api-linter over the API protos (pinned, checked by SHA-256; Linux x86_64)")]
+[no-exit-message]
+lint-api:
+    @just --justfile {{TOP}}/justfile _run lint-api proto/ctxloom/v1 api {{TOP}}/scripts/lint-api.sh
+
+# The vendored googleapis protos (proto/third_party/google): fetched at the
+# commit their manifest (SHA256SUMS) pins, each refused unless its SHA-256 is
+# the manifest's (scripts/vendor-googleapis.sh fetch). `lint-api` checks them
+# without the network.
+[group('setup')]
+[doc("Fetch the vendored googleapis protos at their pinned commit, checked by SHA-256")]
+[no-exit-message]
+vendor-googleapis:
+    @{{TOP}}/scripts/vendor-googleapis.sh fetch
+
+# lint-api's failure: the linter's findings count (its yaml), then the log.
+[private]
+[positional-arguments]
+_extract-api log rc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    n=$(grep -c '^ *rule_id:' "$1" || true)
+    if [ "$n" -gt 0 ]; then echo "$n api-linter findings, by rule:"; else echo "failed (exit $2)"; fi
+    grep -E '^ *rule_id:' "$1" | sed 's/^ *rule_id: *//' | sort | uniq -c | sort -rn || cat "$1"
+
 # Wire lefthook's git hooks into the repository's .git/hooks. Worktrees share
 # .git/hooks, so this is once per clone, and again whenever lefthook.yml or
 # gates/lefthook.yml names a hook not installed yet. Needs lefthook (1.13.6)
@@ -579,7 +610,7 @@ trim-targets *args:
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown, slot pool, trim-targets")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, vendored googleapis, mcp-env probe, install shutdown, slot pool, trim-targets")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -598,6 +629,7 @@ selftest:
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
     @{{TOP}}/scripts/dev-local.selftest.sh
     @{{TOP}}/scripts/path-deps-check.selftest.sh
+    @{{TOP}}/scripts/vendor-googleapis.selftest.sh
     @{{TOP}}/scripts/commit-msg.selftest.sh
     @{{TOP}}/scripts/release-package.selftest.sh
     @{{TOP}}/scripts/mcp-env-probe.selftest.sh
