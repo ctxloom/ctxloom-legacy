@@ -24,6 +24,8 @@ impl Diagnostic for GitInitialized {
         code!("notice-git-initialized")
     }
 
+    // Equivalent: its only mutant (`vec![]`) is the same empty list.
+    #[cfg_attr(test, mutants::skip)]
     fn args(&self) -> Vec<(&str, Arg)> {
         Vec::new()
     }
