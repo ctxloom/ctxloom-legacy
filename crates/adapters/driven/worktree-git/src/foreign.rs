@@ -93,7 +93,7 @@ impl ForeignWorktrees for GitForeignWorktrees {
             .map(|w| {
                 let branch = w.branch.clone().unwrap_or_default();
                 ForeignWorktree {
-                    path: w.path.display().to_string(),
+                    path: spelled(os::host().flavor(), &w.path),
                     merged: (!branch.is_empty())
                         .then(|| merged.as_ref().map(|set| set.contains(&branch)))
                         .flatten(),
@@ -104,6 +104,18 @@ impl ForeignWorktrees for GitForeignWorktrees {
             .collect();
         foreign.sort_by(|a, b| a.path.cmp(&b.path));
         ForeignListing::Listed(foreign)
+    }
+}
+
+/// `path`, as git listed it, spelled as the platform spells a path to a
+/// person: on Windows git lists `C:/a/b`, and each `/` is the platform's
+/// `\` (a separator there either way), so a row never mixes the two beside
+/// the project's own `C:\a\b`; on unix git's spelling as it is.
+fn spelled(flavor: os::Flavor, path: &Path) -> String {
+    let shown = path.display().to_string();
+    match flavor {
+        os::Flavor::Unix => shown,
+        os::Flavor::Windows => shown.replace('/', "\\"),
     }
 }
 

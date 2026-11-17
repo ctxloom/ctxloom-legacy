@@ -572,7 +572,10 @@ fn long_lived(w: &mut World, branch: String) {
         .common
         .project
         .home()
-        .join("workspace/worktrees")
+        // Joined a component at a time: the path doctor shows is the
+        // platform's spelling (`\` on Windows), and so is this one.
+        .join("workspace")
+        .join("worktrees")
         .join(format!("proj--{branch}"));
     w.foreign.push((branch, dir));
 }
@@ -1015,7 +1018,8 @@ fn doctor_names_foreign(w: &mut World) {
         "no foreign worktree was seeded"
     );
     for dir in &w.planted_foreign {
-        // As git lists it: the path it was added at.
+        // The path it was added at, in the platform's spelling, as doctor
+        // shows it (git lists `C:/...` on Windows; doctor says `C:\...`).
         let shown = dir.display().to_string();
         assert!(
             detail.contains(&format!("{shown} (branch stale-feature, unmerged, dirty)")),
