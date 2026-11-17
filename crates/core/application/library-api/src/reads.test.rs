@@ -197,3 +197,66 @@ fn outside_a_project_the_loadout_is_the_home_s() {
     .unwrap();
     assert_eq!(loadout.name, "users/me/loadout");
 }
+
+fn keys(document: &Option<daemon_proto::google::protobuf::Value>) -> Vec<String> {
+    use daemon_proto::google::protobuf::value::Kind;
+    match document.as_ref().and_then(|d| d.kind.as_ref()) {
+        Some(Kind::StructValue(fields)) => fields.fields.keys().cloned().collect(),
+        other => panic!("an object, not {other:?}"),
+    }
+}
+
+#[test]
+fn the_config_is_answered_whole_or_one_section_under_the_parent() {
+    use daemon_proto::v1::{config::View, GetConfigRequest};
+    let lib = library(&["schema_version: 9\neditor:\n  command: vim\n"]);
+    let ask = |section: &str| {
+        let request = GetConfigRequest {
+            view: View::Effective as i32,
+            section: section.to_string(),
+            ..Default::default()
+        };
+        super::get_config(&lib, &Flags::default(), PARENT, &request)
+            .result
+            .unwrap()
+    };
+    let editor = ask("editor");
+    assert_eq!(editor.name, "projects/calm-otter/config");
+    assert_eq!(keys(&editor.document), ["command"]);
+    let whole = keys(&ask("").document);
+    assert!(whole.contains(&"schema_version".to_string()), "{whole:?}");
+}
+
+#[test]
+fn only_the_set_view_asks_for_what_the_layers_set() {
+    use daemon_proto::v1::{config::View, GetConfigRequest};
+    let asked = |view: View| {
+        super::only_set(&GetConfigRequest {
+            view: view as i32,
+            ..Default::default()
+        })
+    };
+    assert!(asked(View::Set));
+    assert!(!asked(View::Effective));
+    assert!(!asked(View::Unspecified));
+}
+
+#[test]
+fn a_read_s_flags_and_notices_are_carried_as_the_request_and_answer_say_them() {
+    let flags = Flags {
+        degraded: true,
+        no_companions: true,
+        config_set: vec!["a=b".to_string()],
+        ..Flags::default()
+    };
+    let globals = super::globals_of(&flags);
+    assert!(globals.degraded);
+    assert!(globals.no_companions);
+    assert_eq!(globals.config_set, ["a=b"]);
+    let notice = super::notice_of(&library_application::Notice::Finding {
+        text: "TEXT".to_string(),
+        remedy: "REMEDY".to_string(),
+    });
+    assert!(!notice.code.is_empty());
+    assert!(notice.text.contains("TEXT"), "{notice:?}");
+}

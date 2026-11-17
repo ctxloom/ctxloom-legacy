@@ -383,3 +383,59 @@ fn the_status_is_asked_over_the_library_alone() {
         .calls()
         .contains(&"status content/bundles/v2 config.yaml remotes.yaml lock.yaml".to_string()));
 }
+
+// A path git says is deleted has no id, whatever is still on disk (a
+// `git rm --cached` keeps the file): in the dirty set and a baseline alike.
+#[test]
+fn a_path_git_says_deleted_has_no_id_whatever_is_on_disk() {
+    let git = Git::at("c1", "t1")
+        .file(FRAGMENT, "f1")
+        .says(FRAGMENT, PathStatus::Deleted);
+    let fact = fact(&git, &Library::default()).expect("a baseline");
+    assert_eq!(changes(&fact), one(FRAGMENT, ChangeStatus::Deleted));
+    assert_eq!(fact.changes[0].to_oid, "");
+    assert_eq!(fact.dirty_after.len(), 1);
+    assert_eq!(fact.dirty_after[0].oid, "");
+}
+
+// A rename's source the record held dirty is said by its target's change
+// alone, never as a deletion of its own.
+#[test]
+fn a_staged_rename_of_a_path_seen_dirty_is_one_change_from_its_source() {
+    let git = Git::at("c1", "t1")
+        .file(RENAMED, "f2")
+        .renamed(RENAMED, FRAGMENT);
+    let fact = fact(&git, &held("c1", "t1", &[(FRAGMENT, "f2")])).expect("a change");
+    assert_eq!(
+        changes(&fact),
+        vec![(
+            RENAMED.to_string(),
+            ChangeStatus::Renamed,
+            FRAGMENT.to_string()
+        )]
+    );
+}
+
+#[test]
+fn a_committed_type_change_is_said_as_one() {
+    let mut git = Git::at("c2", "t2").file(FRAGMENT, "l2");
+    git.trees.insert("c1".to_string(), "t1".to_string());
+    git.diffs.insert(
+        ("c1".to_string(), "c2".to_string()),
+        vec![changed(
+            FRAGMENT,
+            PathStatus::TypeChanged,
+            None,
+            (Some("f1"), Some("l2")),
+        )],
+    );
+    let fact = fact(&git, &held("c1", "t1", &[])).expect("a change");
+    assert_eq!(changes(&fact), one(FRAGMENT, ChangeStatus::TypeChanged));
+}
+
+// A deletion already seen, still deleted, is nothing new.
+#[test]
+fn a_deletion_seen_before_and_still_there_records_nothing() {
+    let git = Git::at("c1", "t1").says(FRAGMENT, PathStatus::Deleted);
+    assert_eq!(fact(&git, &held("c1", "t1", &[(FRAGMENT, "")])), None);
+}

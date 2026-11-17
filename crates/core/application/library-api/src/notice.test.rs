@@ -70,3 +70,14 @@ fn the_home_notice_names_the_path() {
     assert_eq!(args.len(), 1);
     assert!(args[0].starts_with("path=") && args[0].contains("/h/.ctxloom"));
 }
+
+#[test]
+fn a_notice_displays_as_its_code_and_args() {
+    let notice = LibraryApiNotice::HomeRepositoryMade {
+        path: "/home/alice/.ctxloom".to_string(),
+    };
+    assert_eq!(
+        notice.to_string(),
+        "library-api-notice-home-repository-made path=/home/alice/.ctxloom"
+    );
+}

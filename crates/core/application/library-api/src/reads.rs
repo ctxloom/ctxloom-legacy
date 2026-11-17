@@ -396,11 +396,16 @@ pub fn get_config(
     parent: &str,
     request: &v1::GetConfigRequest,
 ) -> Outcome<v1::Config> {
-    let raw = request.view == v1::config::View::Set as i32;
+    let raw = only_set(request);
     let section = (!request.section.is_empty()).then_some(request.section.as_str());
     mapped(library.config_show(flags, section, raw), |shown| {
         resources::config(parent, &shown)
     })
+}
+
+/// Whether `GetConfig` asks only for what the layers set (`SET`, `--raw`).
+fn only_set(request: &v1::GetConfigRequest) -> bool {
+    request.view == v1::config::View::Set as i32
 }
 
 /// `GetBundle`: the bundle its name names, by the text typed: what it

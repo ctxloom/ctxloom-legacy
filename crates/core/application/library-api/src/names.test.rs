@@ -289,3 +289,11 @@ fn test_a_resource_name_reads_as_its_short_reference() {
         assert_eq!(super::short_reference(name), short, "{name}");
     }
 }
+
+#[test]
+fn a_skill_reference_names_its_skill() {
+    assert_eq!(
+        super::reference_name("projects/p", "demo#skills/reviewer").as_deref(),
+        Some("projects/p/bundles/demo/skills/reviewer")
+    );
+}

@@ -522,3 +522,28 @@ fn a_checkouts_library_is_its_ctxloom() {
         }
     );
 }
+
+// A home git does not hold (no work tree, after the home step) is not
+// observed: nothing is recorded for it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_home_git_does_not_hold_is_not_observed() {
+    let under = under();
+    let callers = callers(
+        || Git {
+            work_tree: None,
+            ..Git::at("c1", "t1")
+        },
+        Some("/h/.ctxloom"),
+    );
+    under
+        .observations
+        .observe_read(&callers, &[], None)
+        .await
+        .unwrap();
+    let home = Cover {
+        domain: LIBRARY_DOMAIN.to_string(),
+        root: Some(home_events_root()),
+        edition: None,
+    };
+    assert!(under.world.events(&home, 0).await.unwrap().is_empty());
+}
