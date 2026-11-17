@@ -339,3 +339,67 @@ fn test_a_listed_skill_s_bundle_is_its_name_before_skills() {
         }]
     );
 }
+
+// Owner ruling 2026-11-17 (U2 part 2's escalations): a skill's mates are
+// matched on its SKILL.md frontmatter `name:` (the `Skill`'s
+// `display_name`), as before the hooks read through the daemon, so a skill
+// whose directory and frontmatter name differ is still matched by the name
+// the engine reports.
+#[test]
+fn test_mates_are_matched_by_the_frontmatter_name_not_the_directory() {
+    let mut owned = crate::fakes::bundles();
+    owned[0].1.extend([
+        (
+            "skills/admit-dir/SKILL.md",
+            "---\nname: admit-renamed\ndescription: Admit.\n---\nA\n",
+        ),
+        (
+            "skills/.admit-dir.meta.yaml",
+            "tags: [ctxloom:link_id=pair]\n",
+        ),
+        (
+            "skills/mate-dir/SKILL.md",
+            "---\nname: mate-renamed\ndescription: Mate.\n---\nM\n",
+        ),
+        (
+            "skills/.mate-dir.meta.yaml",
+            "tags: [ctxloom:link_id=pair]\n",
+        ),
+    ]);
+    let w = crate::fakes::world_of(
+        CONFIG,
+        owned,
+        vec![Box::new(crate::fakes::Engine::all("claude-code"))],
+    );
+    let out = w
+        .setup
+        .skill_mates("claude-code", r#"{"skill":"admit-renamed"}"#)
+        .unwrap();
+    assert_eq!(
+        out,
+        "context=Skill admit-renamed completed; linked skills not yet invoked this session: mate-renamed;notice=\n"
+    );
+}
+
+#[test]
+fn test_a_listed_skill_is_judged_by_its_display_name_else_its_id() {
+    let listed = daemon_proto::v1::ListSkillsResponse {
+        skills: vec![
+            daemon_proto::v1::Skill {
+                name: "projects/p/bundles/demo/skills/admit-dir".to_string(),
+                display_name: "admit".to_string(),
+                ..daemon_proto::v1::Skill::default()
+            },
+            daemon_proto::v1::Skill {
+                name: "projects/p/bundles/demo/skills/plain".to_string(),
+                ..daemon_proto::v1::Skill::default()
+            },
+        ],
+        next_page_token: String::new(),
+    };
+    let names: Vec<String> = crate::hook_skills(&listed)
+        .into_iter()
+        .map(|skill| skill.name)
+        .collect();
+    assert_eq!(names, ["admit", "plain"]);
+}

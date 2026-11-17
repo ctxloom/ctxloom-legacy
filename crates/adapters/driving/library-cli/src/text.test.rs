@@ -131,6 +131,7 @@ fn test_a_skill_listing_shows_description_files_and_tags() {
     let list = SkillList {
         rows: vec![SkillRow {
             name: "demo/reviewer".to_string(),
+            display_name: String::new(),
             description: "SKILL-MARKER".to_string(),
             tags: vec!["sample".to_string(), "quality".to_string()],
             source: "demo".to_string(),
@@ -694,6 +695,7 @@ fn test_a_skill_row_without_a_description_or_tags_is_just_its_name_and_files() {
     let list = SkillList {
         rows: vec![SkillRow {
             name: st("demo/a"),
+            display_name: String::new(),
             description: String::new(),
             tags: Vec::new(),
             source: st("demo"),

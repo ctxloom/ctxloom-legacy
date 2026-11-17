@@ -40,8 +40,10 @@ pub trait HookLibrary {
     fn skills(&self) -> Option<Vec<HookSkill>>;
 }
 
-/// The skills a `ListSkills` answer lists, as a hook judges them: each
-/// by its resource name's last segment, its bundle the name before
+/// The skills a `ListSkills` answer lists, as a hook judges them: each by
+/// its `display_name` (its SKILL.md frontmatter name, which the engine
+/// reports it by; owner ruling 2026-11-17), else its resource name's last
+/// segment, its bundle the name before
 /// `/skills/` (`projects/{p}/bundles/{b}`, a remote's or a companion's
 /// alike), its tags as listed.
 pub fn hook_skills(listed: &daemon_proto::v1::ListSkillsResponse) -> Vec<HookSkill> {
@@ -49,7 +51,11 @@ pub fn hook_skills(listed: &daemon_proto::v1::ListSkillsResponse) -> Vec<HookSki
         .skills
         .iter()
         .filter_map(|skill| {
-            let (bundle, name) = skill.name.rsplit_once("/skills/")?;
+            let (bundle, id) = skill.name.rsplit_once("/skills/")?;
+            let name = match skill.display_name.as_str() {
+                "" => id,
+                display => display,
+            };
             Some(HookSkill {
                 name: name.to_string(),
                 bundle: bundle.to_string(),

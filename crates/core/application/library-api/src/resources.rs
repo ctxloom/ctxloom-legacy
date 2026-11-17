@@ -222,6 +222,7 @@ pub fn skills(parent: &str, list: &SkillList) -> v1::ListSkillsResponse {
                     .unwrap_or(&row.name);
                 v1::Skill {
                     name: skill_name(parent, &row.source, id),
+                    display_name: row.display_name.clone(),
                     description: row.description.clone(),
                     tags: row.tags.clone(),
                     file_count: count(row.file_count),

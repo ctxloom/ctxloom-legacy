@@ -253,6 +253,10 @@ pub struct Premises {
 #[derive(Clone, Debug, Serialize)]
 pub struct SkillRow {
     pub name: String,
+    /// The name its SKILL.md frontmatter says, which an engine reports the
+    /// skill by (it may differ from its directory, the id in `name`).
+    #[serde(skip)]
+    pub display_name: String,
     #[serde(skip_serializing_if = "no_text")]
     pub description: String,
     #[serde(skip_serializing_if = "no_items")]

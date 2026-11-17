@@ -2576,7 +2576,9 @@ built:
   takes it in process first.
 - O3: the session-start nudge asks the daemon's `ListAgents` and
   `ListProfiles`, the skill mates its `ListSkills` (the bundle from the
-  skill's resource name, the name its id), within the hook's bound,
+  skill's resource name, the name its `Skill.display_name`, the SKILL.md
+  frontmatter `name:` as the package names it, else its id: owner ruling
+  2026-11-17), within the hook's bound,
   degraded (setup-application's `HookLibrary`, the root's
   `DaemonHookLibrary`; a hook whose environment names an endpoint asks only
   a daemon already serving); with no daemon in time a hook says nothing of

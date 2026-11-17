@@ -356,6 +356,7 @@ impl Project {
             .into_iter()
             .map(|s| SkillRow {
                 name: format!("{}/{}", s.bundle, s.item),
+                display_name: s.display_name,
                 description: s.description,
                 tags: s.tags,
                 source: s.bundle,
@@ -423,6 +424,9 @@ struct LoadedSkill {
     bundle: String,
     item: String,
     name: String,
+    /// Its SKILL.md frontmatter's `name`, else its directory's (as the
+    /// package names it, which an engine reports it by).
+    display_name: String,
     description: String,
     license: String,
     compatibility: String,
@@ -473,6 +477,10 @@ fn load_skill(
         bundle: bundle.to_string(),
         item: name.to_string(),
         name: name.to_string(),
+        display_name: match field("name") {
+            declared if declared.is_empty() => name.to_string(),
+            declared => declared,
+        },
         description: field("description"),
         license: field("license"),
         compatibility: field("compatibility"),

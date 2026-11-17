@@ -1573,6 +1573,10 @@ message Skill {
   string notes = 10 [(google.api.field_behavior) = OPTIONAL];
   // OUTPUT_ONLY: the directory.
   string path = 11 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // OUTPUT_ONLY: the name its SKILL.md frontmatter says (`name:`), which an
+  // engine reports the skill by; it may differ from the directory, the id
+  // in `name` (owner ruling 2026-11-17).
+  string display_name = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
   // The resource's etag (AIP-154), what a confirmed write of it names: a
   // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];

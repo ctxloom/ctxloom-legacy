@@ -12,6 +12,10 @@ const DEMO: &[(&str, &str)] = &[
         "---\nname: reviewer\ndescription: Reviews code\n---\nSKILL-BODY\n",
     ),
     (
+        "skills/zz-dir/SKILL.md",
+        "---\nname: renamed\ndescription: Renamed\n---\nBODY\n",
+    ),
+    (
         "skills/.reviewer.meta.yaml",
         "tags: [\"ctxloom:link_id=pair\"]\n",
     ),
@@ -90,8 +94,15 @@ fn the_skills_are_answered_with_their_tags_below_their_bundle() {
     )
     .result
     .unwrap();
-    assert_eq!(listed.skills.len(), 1, "{listed:?}");
+    assert_eq!(listed.skills.len(), 2, "{listed:?}");
     let reviewer = &listed.skills[0];
+    // Owner ruling 2026-11-17: its frontmatter name beside its id.
+    assert_eq!(reviewer.display_name, "reviewer");
+    assert_eq!(
+        listed.skills[1].name,
+        "projects/calm-otter/bundles/demo/skills/zz-dir"
+    );
+    assert_eq!(listed.skills[1].display_name, "renamed");
     assert_eq!(
         reviewer.name,
         "projects/calm-otter/bundles/demo/skills/reviewer"

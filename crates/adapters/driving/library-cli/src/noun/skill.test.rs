@@ -157,6 +157,7 @@ mod mapping {
         let list = library_application::SkillList {
             rows: vec![SkillRow {
                 name: "demo/reviewer".to_string(),
+                display_name: String::new(),
                 description: "Reviews".to_string(),
                 tags: vec!["review".to_string()],
                 source: "demo".to_string(),
