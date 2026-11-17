@@ -441,6 +441,14 @@ impl<D: Daemons> SessionRemovals for Client<D> {
 #[allow(async_fn_in_trait)]
 pub trait LibraryReads {
     daemon_proto::library_reads!(library_read_declarations);
+
+    /// `context assemble`'s `AssembleContext`, named this client's parent:
+    /// the context, what a premise held back as data, and the read's
+    /// notices among its own.
+    async fn assemble_context(
+        &self,
+        request: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, CallError>;
 }
 
 /// [`LibraryReads`]' methods, from `daemon_proto::library_reads!`.
@@ -471,6 +479,22 @@ impl<D: Daemons> Client<D> {
 
 impl<D: Daemons> LibraryReads for Client<D> {
     daemon_proto::library_reads!(library_read_requests);
+
+    async fn assemble_context(
+        &self,
+        request: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::AssembleContextRequest {
+                name: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                ..request.clone()
+            };
+            api.assemble_context(request).await
+        })
+        .await
+    }
 }
 
 /// [`Client`]'s [`LibraryReads`], from `daemon_proto::library_reads!`:

@@ -134,10 +134,12 @@ fn a_sessions_checkout_under_the_account_home_is_found_and_spared() {
 
 // E2 (owner 2026-11-17): the daemon's assembly holds a premised fragment
 // back and answers the index as data; the MCP tool (a launch's edge) and
-// the CLI word it at their presentation (daemon_api::render_premise_index).
+// the CLI word it at their presentation (library_api::premise). Step 10a
+// U2: the assembly is a library read, over the library a process at the
+// project opens.
 #[test]
 fn an_assembly_answers_what_its_premises_held_back_as_data() {
-    use daemon_api::Assemblies;
+    use daemon_api::Libraries;
     let root = fixtures::root();
     let project = root.root().join("work/calm");
     let bundle = project.join(".ctxloom/content/bundles/v2/demo");
@@ -168,19 +170,23 @@ fn an_assembly_answers_what_its_premises_held_back_as_data() {
     );
     fixtures::mkdirs(root.root().join("home"));
     fixtures::mkdirs(root.root().join("tmp"));
-    let assemblies = super::ProjectAssemblies {
+    let libraries = super::ProjectLibraries {
         home: root.root().join("home"),
         temp: root.root().join("tmp"),
     };
-    let assembled = assemblies
-        .assemble(
-            &project.display().to_string(),
-            &daemon_proto::v1::AssembleContextRequest {
-                profiles: vec!["dev".to_string()],
-                ..daemon_proto::v1::AssembleContextRequest::default()
-            },
-        )
-        .expect("assembled");
+    let request = daemon_proto::v1::AssembleContextRequest {
+        profiles: vec!["dev".to_string()],
+        ..daemon_proto::v1::AssembleContextRequest::default()
+    };
+    let mut answered = None;
+    libraries
+        .read(&project.display().to_string(), &[], &mut |library| {
+            let flags = library_application::Flags::default();
+            let read = library_api::reads::assemble_context(library, &flags, "users/me", &request);
+            answered = Some(read.result.expect("assembled"));
+        })
+        .expect("read");
+    let assembled = answered.expect("read");
     // E2 (owner 2026-11-17): the index is answered as data, never
     // rendered here; the edge that shows the context renders it.
     let premised = assembled.premised.clone();

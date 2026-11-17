@@ -62,7 +62,6 @@ mod hand_over;
 pub mod launch;
 mod library_reads;
 mod library_refusals;
-mod premise;
 mod refusal;
 mod runs;
 mod server;
@@ -85,8 +84,8 @@ pub use client::{
 pub use destroy::{Places, Purges};
 pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
 pub use hand_over::HandingOver;
+pub use library_api::premise::{render_premise_index, Shown};
 pub use library_reads::{Libraries, LibraryRequest};
-pub use premise::{render_premise_index, Shown};
 pub use refusal::{
     library_refusal, rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection,
 };
@@ -94,9 +93,7 @@ pub use refusal::{
 /// service, which answers an error that is no refusal through it.
 pub use run_ports::{Infrastructure, DIAGNOSED};
 pub use runs::RunStream;
-pub use server::{
-    About, Answer, Api, Assemblies, Calls, Harps, Hosting, Observing, Parts, SessionStates,
-};
+pub use server::{About, Answer, Api, Calls, Harps, Hosting, Observing, Parts, SessionStates};
 pub use session_client::{
     Client, LibraryReads, Removed, RequestIds, SessionReads, SessionRemovals,
 };

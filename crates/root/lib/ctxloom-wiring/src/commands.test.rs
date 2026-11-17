@@ -224,10 +224,15 @@ fn test_every_engine_the_build_names_is_registered() {
 #[test]
 fn test_a_library_command_is_run_over_the_home() {
     let world = World::new("library");
-    // A read still in process (`bundle list` is the daemon's since step 10a
-    // U2, and a unit test starts no daemon).
-    let (code, out, err) = run_line(&mut world.commands(), &["fragment", "list"]);
-    assert_eq!((code, out.as_str(), err.as_str()), (0, "{}\n", ""));
+    // A verb still in process (the library's reads are the daemon's since
+    // step 10a U2, and a unit test starts no daemon; `agent default` is a
+    // write's verb, its bare form the default it would change).
+    let (code, out, err) =
+        try_line(&mut world.commands(), Format::Text, &["agent", "default"]).unwrap();
+    assert_eq!(
+        (code, out.as_str(), err.as_str()),
+        (0, "No default agent set.\n", "")
+    );
 }
 
 #[test]

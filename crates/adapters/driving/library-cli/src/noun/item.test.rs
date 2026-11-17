@@ -273,7 +273,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{DistilledState, ItemRow, Preview};
+    use library_application::Preview;
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -330,64 +330,6 @@ mod mapping {
         assert_eq!(
             String::from_utf8(out).unwrap(),
             "command \"review\" in bundle \"demo\" is marked as no_distill: nothing distilled\n"
-        );
-    }
-
-    fn list(kind: &str) -> ItemList {
-        ItemList {
-            rows: vec![ItemRow {
-                name: "one".to_string(),
-                tags: vec!["go".to_string()],
-                bundle: "demo".to_string(),
-                reference: "demo#x/one".to_string(),
-                remote: String::new(),
-                bundle_label: String::new(),
-            }],
-            kind: kind.to_string(),
-            bundle_filter: String::new(),
-            total: 1,
-            hint: String::new(),
-        }
-    }
-
-    #[test]
-    fn test_a_listed_item_keeps_its_tags() {
-        assert_eq!(
-            json_of(&listed(PARENT, &list("command")))["commands"][0]["tags"],
-            json!(["go"])
-        );
-        assert_eq!(
-            json_of(&listed(PARENT, &list("fragment")))["fragments"][0]["tags"],
-            json!(["go"])
-        );
-    }
-
-    fn show() -> ItemShow {
-        ItemShow {
-            name: "one".to_string(),
-            bundle: "demo".to_string(),
-            reference: "demo#x/one".to_string(),
-            content: "BODY".to_string(),
-            distilled: true,
-            state: DistilledState::Stale,
-        }
-    }
-
-    #[test]
-    fn test_a_shown_item_is_its_whole_resource() {
-        assert_eq!(
-            json_of(&shown(PARENT, ItemKind::Command, &show())),
-            json!({
-                "name": "projects/p/bundles/demo/commands/one",
-                "reference": "demo#x/one",
-                "body": "BODY",
-                "body_is_distilled": true,
-                "distilled": "STALE",
-            })
-        );
-        assert_eq!(
-            json_of(&shown(PARENT, ItemKind::Fragment, &show()))["reference"],
-            "demo#x/one"
         );
     }
 

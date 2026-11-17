@@ -107,12 +107,14 @@ mod read {
             home.json()["profiles"],
             serde_json::json!(["users/me/bundles/project/profiles/dev"])
         );
+        // Step 10a U2: the assembly is the daemon's, text or json, so with
+        // no daemon there is none.
         let text = go_in(
             &["context", "assemble", "-p", "dev"],
             TEXT,
             BARE,
             &Unreachable,
         );
-        assert_eq!(text.code(), 0);
+        assert_eq!(text.refused(), "daemon-api-unreached:10");
     }
 }

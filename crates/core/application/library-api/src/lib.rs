@@ -12,12 +12,14 @@
 //!   gives;
 //! - [`resources`]: a library view as its API message, the one mapping;
 //! - [`reads`]: the reads the daemon serves, each over the library opened
-//!   for it.
+//!   for it;
+//! - [`premise`]: the premise index an edge renders after an assembly.
 
 mod locate;
 pub mod names;
 mod notice;
 mod observe;
+pub mod premise;
 pub mod reads;
 pub mod reconcile;
 pub mod resources;

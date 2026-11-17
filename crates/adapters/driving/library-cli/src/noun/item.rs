@@ -2,12 +2,11 @@
 //! writes (B1), each json answer its AIP resource or method response
 //! (OD-40, design §5.2).
 
-use library_application::{
-    ItemCreated, ItemDistilled, ItemEdited, ItemList, ItemRemoved, ItemShow, Premises, Removal,
-};
+use library_application::{ItemCreated, ItemDistilled, ItemEdited, ItemRemoved, ItemShow, Removal};
 
 use crate::catalog::{self, ok};
 use crate::prelude::*;
+use crate::read_back;
 
 pub(crate) fn read(
     cx: &Context<'_>,
@@ -16,66 +15,135 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let kind_of = if kind == "fragment" {
-        ItemKind::Fragment
-    } else {
-        ItemKind::Command
-    };
+    let command = kind == "command";
     match verb {
         // Text unless json is asked for by name (an agent's shell runs it
-        // off a terminal for the body); json is the item's resource.
+        // off a terminal for the body); json is the item's resource. Each
+        // the daemon's read (step 10a U2), its text from the message (D10).
         "show" => {
-            let outcome = cx.library.item_show(
-                &cx.flags,
-                kind_of,
-                &text_arg(sub, "ref"),
-                flag(sub, "distilled"),
-            );
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                true,
-                |parent, show| shown(parent, kind_of, show),
-                |show, out, notes| {
-                    let mut said = text::Notes(Vec::new());
-                    let written = text::item_show(out, &mut said, show);
-                    notes.extend(said.0);
-                    written
-                },
-                ok,
-            )
+            let under = library_api::names::reference_target(&text_arg(sub, "ref"));
+            let prefer_distilled = flag(sub, "distilled");
+            let show = |reference: &str, body: &str, distilled: bool, state: i32| {
+                read_back::item_show(reference, body, distilled, state)
+            };
+            let text = |show: ItemShow, out: &mut dyn Write, notes: &mut Vec<String>| {
+                let mut said = text::Notes(Vec::new());
+                let written = text::item_show(out, &mut said, &show);
+                notes.extend(said.0);
+                written
+            };
+            if command {
+                let request = v1::GetCommandRequest {
+                    prefer_distilled,
+                    globals: cx.globals(),
+                    ..v1::GetCommandRequest::default()
+                };
+                let read = cx.served.get_command(&under, request);
+                return served(cx, read, out, err, true, |c, out, notes| {
+                    text(
+                        show(&c.reference, &c.body, c.body_is_distilled, c.distilled),
+                        out,
+                        notes,
+                    )
+                });
+            }
+            let request = v1::GetFragmentRequest {
+                prefer_distilled,
+                globals: cx.globals(),
+                ..v1::GetFragmentRequest::default()
+            };
+            let read = cx.served.get_fragment(&under, request);
+            served(cx, read, out, err, true, |f, out, notes| {
+                text(
+                    show(&f.reference, &f.body, f.body_is_distilled, f.distilled),
+                    out,
+                    notes,
+                )
+            })
         }
         "premises" => {
-            let outcome = cx.library.premises(&cx.flags);
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                premise_index,
-                |premises, out, _| text::premises(out, premises),
-                ok,
-            )
+            let request = v1::GetPremiseIndexRequest {
+                globals: cx.globals(),
+                ..v1::GetPremiseIndexRequest::default()
+            };
+            let read = cx.served.get_premise_index("/premiseIndex", request);
+            served(cx, read, out, err, false, |index, out, _| {
+                text::premises(out, &read_back::premises(index))
+            })
         }
-        _ => {
-            let outcome = cx
-                .library
-                .item_list(&cx.flags, kind_of, &text_arg(sub, "bundle"));
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                listed,
-                |list, out, _| text::item_list(out, list),
-                ok,
-            )
-        }
+        _ => listed_by_the_daemon(cx, kind, &text_arg(sub, "bundle"), out, err),
     }
+}
+
+/// `fragment|command list`, the daemon's `ListFragments` or `ListCommands`
+/// (step 10a U2), its text from the message (D10). A listing of one bundle
+/// that holds none asks the whole catalog's too, to say how many the other
+/// bundles hold.
+fn listed_by_the_daemon(
+    cx: &Context<'_>,
+    kind: &str,
+    bundle: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let under = |bundle: &str| match bundle {
+        "" => String::new(),
+        bundle => library_api::names::bundle_target(bundle),
+    };
+    let in_project = cx.served.in_project();
+    let total = |filtered: usize, count: &dyn Fn() -> usize| match (bundle, filtered) {
+        ("", n) => n,
+        (_, 0) => count(),
+        (_, n) => n,
+    };
+    let text = |items: Vec<(&str, &[String])>, total: usize, out: &mut dyn Write| {
+        let listed = read_back::Listed {
+            kind,
+            items,
+            bundle_filter: bundle,
+            total,
+            in_project,
+        };
+        text::item_list(out, &read_back::item_list(&listed))
+    };
+    if kind == "command" {
+        let request = || v1::ListCommandsRequest {
+            globals: cx.globals(),
+            ..v1::ListCommandsRequest::default()
+        };
+        let every = || {
+            cx.served
+                .list_commands("", request())
+                .map_or(0, |(listed, _)| listed.commands.len())
+        };
+        let read = cx.served.list_commands(&under(bundle), request());
+        return served(cx, read, out, err, false, |listed, out, _| {
+            let items = listed
+                .commands
+                .iter()
+                .map(|c| (c.reference.as_str(), c.tags.as_slice()))
+                .collect();
+            text(items, total(listed.commands.len(), &every), out)
+        });
+    }
+    let request = || v1::ListFragmentsRequest {
+        globals: cx.globals(),
+        ..v1::ListFragmentsRequest::default()
+    };
+    let every = || {
+        cx.served
+            .list_fragments("", request())
+            .map_or(0, |(listed, _)| listed.fragments.len())
+    };
+    let read = cx.served.list_fragments(&under(bundle), request());
+    served(cx, read, out, err, false, |listed, out, _| {
+        let items = listed
+            .fragments
+            .iter()
+            .map(|f| (f.reference.as_str(), f.tags.as_slice()))
+            .collect();
+        text(items, total(listed.fragments.len(), &every), out)
+    })
 }
 
 pub(crate) fn write(
@@ -287,90 +355,6 @@ pub(crate) enum Either<F, C> {
 /// Whether `kind` (the use case's word or its directory) is a command's.
 fn is_command(kind: &str) -> bool {
     matches!(kind, "command" | "commands" | "prompt" | "prompts")
-}
-
-/// `fragment|command list`: `ListFragmentsResponse` or `ListCommandsResponse`.
-pub(crate) fn listed(
-    parent: &str,
-    list: &ItemList,
-) -> Either<v1::ListFragmentsResponse, v1::ListCommandsResponse> {
-    let name = |bundle: &str, dir: &str, id: &str| catalog::item_name(parent, bundle, dir, id);
-    if is_command(&list.kind) {
-        return Either::Command(v1::ListCommandsResponse {
-            commands: list
-                .rows
-                .iter()
-                .map(|row| v1::Command {
-                    name: name(&row.bundle, "commands", &row.name),
-                    reference: row.reference.clone(),
-                    tags: row.tags.clone(),
-                    ..v1::Command::default()
-                })
-                .collect(),
-            next_page_token: String::new(),
-        });
-    }
-    Either::Fragment(v1::ListFragmentsResponse {
-        fragments: list
-            .rows
-            .iter()
-            .map(|row| v1::Fragment {
-                name: name(&row.bundle, "fragments", &row.name),
-                reference: row.reference.clone(),
-                tags: row.tags.clone(),
-                ..v1::Fragment::default()
-            })
-            .collect(),
-        next_page_token: String::new(),
-    })
-}
-
-/// `fragment|command show --format json`: the `Fragment` or `Command`
-/// (FULL), its body the one served.
-pub(crate) fn shown(
-    parent: &str,
-    kind: ItemKind,
-    show: &ItemShow,
-) -> Either<v1::Fragment, v1::Command> {
-    let command = kind == ItemKind::Command;
-    let dir = if command { "commands" } else { "fragments" };
-    let name = catalog::item_name(parent, &show.bundle, dir, &show.name);
-    if command {
-        return Either::Command(v1::Command {
-            name,
-            reference: show.reference.clone(),
-            body: show.content.clone(),
-            body_is_distilled: show.distilled,
-            distilled: catalog::distilled_state(show.state),
-            ..v1::Command::default()
-        });
-    }
-    Either::Fragment(v1::Fragment {
-        name,
-        reference: show.reference.clone(),
-        body: show.content.clone(),
-        body_is_distilled: show.distilled,
-        distilled: catalog::distilled_state(show.state),
-        ..v1::Fragment::default()
-    })
-}
-
-/// `fragment premises`: the `PremiseIndex` singleton, each entry naming
-/// its fragment.
-pub(crate) fn premise_index(parent: &str, premises: &Premises) -> v1::PremiseIndex {
-    v1::PremiseIndex {
-        name: format!("{parent}/premiseIndex"),
-        instruction: premises.instruction.clone(),
-        fragments: premises
-            .fragments
-            .iter()
-            .map(|row| v1::PremiseEntry {
-                fragment: catalog::reference_name(parent, &row.name)
-                    .unwrap_or_else(|| row.name.clone()),
-                premise: row.premise.clone(),
-            })
-            .collect(),
-    }
 }
 
 /// `fragment|command create`: `CreateFragmentResponse` or

@@ -5,11 +5,11 @@
 //! context renders the index after it, in the words of where it is shown:
 //! the CLI's `context assemble` at rest, the MCP server's
 //! `context_assemble` tool on a launch. The words are the library's own
-//! (`library::premise`), unchanged.
+//! (`library::premise`), unchanged. One renderer, library-api's (step 10a
+//! U2): the CLI's and the MCP server's alike.
 
 use daemon_proto::v1;
-use library::compose::SECTION_SEPARATOR;
-use library::premise::{render_on, Entry, Surface};
+use library_application::premise::{render_on, Entry, Surface, SECTION_SEPARATOR};
 
 /// Where an assembled context is shown, which words its index's last
 /// clause (s3-Q5).

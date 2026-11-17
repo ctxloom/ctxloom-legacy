@@ -713,10 +713,6 @@ fn served(
     Arc::new(
         // The sessions it prepares (U5).
         api.preparing_terminals(Arc::clone(terminals))
-            .assembling(Arc::new(super::places::ProjectAssemblies {
-                home: home.to_path_buf(),
-                temp: temp.to_path_buf(),
-            }))
             // The library's reads (step 10a U2): each at the caller's
             // directory, in its environment.
             .reading(Arc::new(super::places::ProjectLibraries {

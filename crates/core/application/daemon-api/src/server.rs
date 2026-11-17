@@ -74,18 +74,6 @@ pub trait Hosting: Send + Sync {
     }
 }
 
-/// A project's context, assembled as a process in it would (slice 3 step
-/// 6, the smallest piece of T13): the root composes the library over the
-/// project's registered root, in the caller's environment (S7).
-pub trait Assemblies: Send + Sync {
-    /// The context of the project at `root`, as `request` asks it.
-    fn assemble(
-        &self,
-        root: &str,
-        request: &v1::AssembleContextRequest,
-    ) -> Result<v1::AssembledContext, ApiError>;
-}
-
 /// What a library read observes first (step 10a U2): the trees as last
 /// observed (the kernel's `library-checkout`), each checkout's harp, and
 /// git as the read's caller runs it.
@@ -470,8 +458,6 @@ pub struct Api<E> {
     pub(crate) parts: Parts<E>,
     /// The destroys applied, by request id, for the daemon's life (S8).
     pub(crate) applied: crate::destroy::Applied,
-    /// Where an assembly is made; none, `AssembleContext` fails.
-    assemblies: Option<Arc<dyn Assemblies>>,
     /// The one-shots the daemon hosts (U4); none, `CreateRun` fails.
     pub(crate) one_shots: Option<Arc<daemon_application::OneShots>>,
     /// Where a child's hand-off is planned and kept; none, `CreateHandOff`
@@ -502,7 +488,6 @@ impl<E: Edge> Api<E> {
         Api {
             parts,
             applied: crate::destroy::Applied::default(),
-            assemblies: None,
             one_shots: None,
             hand_offs: None,
             terminals: None,
@@ -622,15 +607,6 @@ impl<E: Edge> Api<E> {
         }
     }
 
-    /// The API, its assemblies made by `assemblies`.
-    #[must_use]
-    pub fn assembling(self, assemblies: Arc<dyn Assemblies>) -> Api<E> {
-        Api {
-            assemblies: Some(assemblies),
-            ..self
-        }
-    }
-
     /// `GetTranscript` (slice 3 step 5): a session's D27 lines, from the
     /// warm index, as its hooks have delivered them so far; one with none
     /// is refused `TranscriptEmpty`.
@@ -675,18 +651,16 @@ impl<E: Edge> Api<E> {
         &self,
         request: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, ApiError> {
-        let name = ProjectName::parse(&request.name)
-            .map_err(|rejection| invalid(&request.name, &rejection))?;
-        let root = self.registered_root(&name).await?;
-        let assemblies = self.assemblies.as_ref().ok_or_else(|| ApiError::Failed {
-            detail: "this daemon makes no assembly".to_string(),
-        })?;
-        // The read observes its trees first (step 10a U2).
-        let said = self
-            .observed(Some((name.clone(), &root)), request.env.as_ref())
+        // A library read (step 10a U2, E1): at the caller's directory, in
+        // its environment, observed first; what it said rides in the
+        // message (the MCP tool's answer is the message alone).
+        let read = self
+            .library_read(&request, |library, flags, parent| {
+                library_api::reads::assemble_context(library, flags, parent, &request)
+            })
             .await?;
-        let mut assembled = assemblies.assemble(&root, &request)?;
-        assembled.notices.extend(said);
+        let mut assembled = read.answer;
+        assembled.notices.extend(read.notices);
         Ok(assembled)
     }
 

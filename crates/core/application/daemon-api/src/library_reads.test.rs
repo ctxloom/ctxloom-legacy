@@ -7,6 +7,7 @@ use library_application::Library;
 use super::{flags_of, parent_of, Libraries};
 use crate::server::tests::{fixture, observing, resolve, Gits, COMMIT, ROOT};
 use crate::{ApiError, Calls};
+use run_ports::Edge as _;
 
 #[test]
 fn a_read_s_parent_is_its_project_or_the_home() {
@@ -38,6 +39,7 @@ const SKILLS: &[(&str, &str)] = &[
         "skills/reviewer/SKILL.md",
         "---\nname: reviewer\ndescription: Reviews\n---\nBODY\n",
     ),
+    ("fragments/go.md", "GO-BODY\n"),
 ];
 
 /// The library a test reads, and where each read was asked to open it.
@@ -194,4 +196,138 @@ async fn a_read_a_name_does_not_shape_is_refused_name_invalid() {
         panic!("{refused:?}");
     };
     assert!(refusal.refusal.type_url.ends_with("NameInvalid"));
+}
+
+// Slice 3 step 6, step 10a U2: AssembleContext is a library read: made at
+// the project's REGISTERED root when the caller gives no directory; a
+// project nothing registered is not found; a name of no shape is invalid.
+#[tokio::test]
+async fn assemble_context_is_made_at_the_projects_registered_root() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    let opened = Arc::new(Opened::default());
+    let none = f
+        .restarted()
+        .await
+        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    assert!(
+        matches!(&none, Err(ApiError::Refused(r)) if r.refusal.type_url.ends_with("ProjectNotFound")),
+        "{none:?}"
+    );
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::clone(&opened) as Arc<dyn Libraries>);
+    let made = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            fragments: vec!["demo#fragments/go".to_string()],
+            ..v1::AssembleContextRequest::default()
+        })
+        .await
+        .unwrap();
+    assert!(made.context.contains("GO-BODY"), "{made:?}");
+    assert_eq!(
+        made.fragments[0].fragment,
+        "projects/calm-quiet-heron/bundles/demo/fragments/go"
+    );
+    assert_eq!(opened.0.lock().unwrap()[0].0, ROOT);
+    let invalid = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "calm".to_string(),
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    assert!(
+        matches!(&invalid, Err(ApiError::Refused(r)) if r.refusal.type_url.ends_with("NameInvalid")),
+        "{invalid:?}"
+    );
+}
+
+// Step 10a U2: AssembleContext observes the project's tree first, in the
+// caller's environment, and records its baseline once; a git operation in
+// progress is said in its answer's notices (the MCP tool's message).
+#[tokio::test]
+async fn assemble_context_observes_the_projects_library_first() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(Gits {
+        work_tree: Some(ROOT.to_string()),
+        motion: Some(ctxloom_ports::Motion::Merging),
+        ..Gits::default()
+    });
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::new(Opened::default()))
+        .observing(observing(&f.world, &gits));
+    let request = v1::AssembleContextRequest {
+        name: "projects/calm-quiet-heron".to_string(),
+        env: path("/usr/bin"),
+        ..v1::AssembleContextRequest::default()
+    };
+    let made = api.assemble_context(request.clone()).await.unwrap();
+    assert_eq!(made.notices.len(), 1, "{:?}", made.notices);
+    assert_eq!(made.notices[0].code, "library-api-notice-tree-in-motion");
+    assert!(
+        made.notices[0].text.contains("merging"),
+        "{:?}",
+        made.notices
+    );
+    api.assemble_context(request).await.unwrap();
+    assert_eq!(
+        *gits.envs.lock().unwrap(),
+        vec![vec![("PATH".to_string(), "/usr/bin".to_string())]; 2]
+    );
+    let tree = library_tree::TreeName::checkout(
+        sessions::ProjectName::new("calm-quiet-heron").unwrap(),
+        "brisk-copper-moth",
+    )
+    .unwrap();
+    let cover = angzarr_embedded::v1::Cover {
+        domain: library_tree::LIBRARY_DOMAIN.to_string(),
+        root: Some(tree.root()),
+        edition: None,
+    };
+    assert_eq!(f.world.events(&cover, 0).await.unwrap().len(), 1);
+}
+
+// Step 10a U2 (G1): an assembly outside git is refused with the library
+// domain's own refusal, before anything is opened.
+#[tokio::test]
+async fn assemble_context_outside_git_is_refused_before_it_assembles() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let opened = Arc::new(Opened::default());
+    let api = f
+        .restarted()
+        .await
+        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
+        .observing(observing(&f.world, &Arc::new(Gits::default())));
+    let refused = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    let Err(ApiError::Refused(refusal)) = refused else {
+        panic!("not refused: {refused:?}");
+    };
+    assert_eq!(
+        crate::rejection_of(&refusal.refusal),
+        Some(crate::Rejection::Library(
+            library_tree::LibraryTreeRejection::NotInGit {
+                root: ROOT.to_string()
+            }
+        ))
+    );
+    assert!(opened.0.lock().unwrap().is_empty());
 }

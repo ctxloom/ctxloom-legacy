@@ -335,7 +335,9 @@ impl<D: Daemons> Caller<D> {
 
     /// `context_assemble`: the fragments `fragments` (and those of `tags`)
     /// of this caller's project, assembled in the daemon from its
-    /// registered root, in the caller's environment.
+    /// registered root, in the caller's environment; what it asked for and
+    /// the catalog does not hold said among its notices (the tool's answer
+    /// is the message alone, so a name nobody has is said, never refused).
     pub async fn assemble(
         &self,
         fragments: Vec<String>,
@@ -348,7 +350,11 @@ impl<D: Daemons> Caller<D> {
             env: Some(self.env.clone()),
             ..v1::AssembleContextRequest::default()
         };
-        on_daemon!(self, |api| api.assemble_context(request.clone()).await)
+        let mut assembled: v1::AssembledContext =
+            on_daemon!(self, |api| api.assemble_context(request.clone()).await)?;
+        let missing = missing_notices(&assembled);
+        assembled.notices.extend(missing);
+        Ok(assembled)
     }
 
     /// The caller, as the `requester` of its commands: its project's id
@@ -778,6 +784,35 @@ impl<D: Daemons> ChildWrites for Caller<D> {
     async fn close(&self, target: &str) -> Result<Written, CallError> {
         Caller::close(self, target).await
     }
+}
+
+/// What an assembly was asked for and the catalog does not hold, as the
+/// notices the MCP tool says (`daemon-api-assembly-missing-fragment` and
+/// `-tag`, en-US beside the code).
+pub fn missing_notices(assembled: &v1::AssembledContext) -> Vec<v1::Notice> {
+    let missing = |code: &str, name: &str, what: String| v1::Notice {
+        code: code.to_string(),
+        args: vec![v1::NeedArg {
+            name: "name".to_string(),
+            value: name.to_string(),
+        }],
+        text: what,
+    };
+    let fragments = assembled.missing_fragments.iter().map(|name| {
+        missing(
+            "daemon-api-assembly-missing-fragment",
+            name,
+            format!("no fragment is named {name}"),
+        )
+    });
+    let tags = assembled.missing_tags.iter().map(|name| {
+        missing(
+            "daemon-api-assembly-missing-tag",
+            name,
+            format!("no fragment is tagged {name}"),
+        )
+    });
+    fragments.chain(tags).collect()
 }
 
 #[cfg(test)]

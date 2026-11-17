@@ -61,6 +61,13 @@ pub use library::distill::DistilledState;
 pub use library::write::loadout::DOCUMENT as LOADOUT;
 pub use library::write::mcp::McpPatch;
 pub use library::write::profile::ProfileEdit;
+
+/// The premise index's words and how an assembly is sectioned, for the
+/// edge that renders the index after a context it was held back from (E2).
+pub mod premise {
+    pub use library::compose::SECTION_SEPARATOR;
+    pub use library::premise::{render_on, Entry, Surface};
+}
 pub use losses::{AgentLosses, HookLosses, NotCarried};
 pub use package::{
     EnginePackage, PackageRequest, PackagedCommand, PackagedFile, PackagedHook, PackagedMcp,

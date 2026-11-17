@@ -185,59 +185,6 @@ impl daemon_api::Purges for StorePurges {
 #[path = "places.test.rs"]
 mod tests;
 
-/// A project's context, assembled in the daemon (slice 3 step 6, the
-/// smallest piece of T13): the library composed as a process at the
-/// project's REGISTERED root would compose it, in the caller's environment
-/// (S7) with ctxloom's `home`; a fragment named that the project lacks is
-/// said as a notice, never a refusal.
-pub(crate) struct ProjectAssemblies {
-    pub(crate) home: PathBuf,
-    pub(crate) temp: PathBuf,
-}
-
-impl daemon_api::Assemblies for ProjectAssemblies {
-    fn assemble(
-        &self,
-        root: &str,
-        request: &daemon_proto::v1::AssembleContextRequest,
-    ) -> Result<daemon_proto::v1::AssembledContext, ApiError> {
-        let snapshot = super::per_call_env(
-            os::host().flavor(),
-            (root, &self.temp, &self.home),
-            request
-                .env
-                .iter()
-                .flat_map(|env| env.vars.iter())
-                .map(|var| (var.name.as_str(), var.value.as_str())),
-        );
-        let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
-            detail: e.code().to_string(),
-        };
-        let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| failed(&e))?;
-        let library = crate::library::build(&wiring, None).map_err(|e| failed(&e))?;
-        let globals = request.globals.clone().unwrap_or_default();
-        let flags = library_application::Flags {
-            degraded: globals.degraded,
-            config_set: globals.config_set,
-            no_companions: globals.no_companions,
-            trusted: false,
-        };
-        let asked = library_application::AssembleRequest {
-            profiles: request.profiles.clone(),
-            fragments: request.fragments.clone(),
-            tags: request.tags.clone(),
-            // The index is the caller's to render, at its presentation (E2,
-            // owner 2026-11-17): answered as data.
-            surface: None,
-        };
-        let assembled = library
-            .assemble(&flags, &asked)
-            .result
-            .map_err(|e| failed(&e))?;
-        Ok(assembled_context(assembled))
-    }
-}
-
 /// The library a read is answered from (step 10a U2, E1): opened as a
 /// process at the caller's directory, in the caller's environment with
 /// ctxloom's `home` as the platform's home variable, would open it, the
@@ -334,69 +281,6 @@ impl daemon_api::Trusts for ProjectTrusts {
                 value: held.value,
             })
             .collect())
-    }
-}
-
-/// An assembly as the API's message: its context, the fragments it used,
-/// and a notice for each fragment or tag named that nothing holds.
-fn assembled_context(
-    assembled: library_application::Assembled,
-) -> daemon_proto::v1::AssembledContext {
-    use daemon_proto::v1;
-    let missing = |code: &str, name: &str, what: String| v1::Notice {
-        code: code.to_string(),
-        args: vec![v1::NeedArg {
-            name: "name".to_string(),
-            value: name.to_string(),
-        }],
-        text: what,
-    };
-    let mut notices: Vec<v1::Notice> = assembled
-        .missing_fragments
-        .iter()
-        .map(|name| {
-            missing(
-                "daemon-api-assembly-missing-fragment",
-                name,
-                format!("no fragment is named {name}"),
-            )
-        })
-        .collect();
-    notices.extend(assembled.missing_tags.iter().map(|name| {
-        missing(
-            "daemon-api-assembly-missing-tag",
-            name,
-            format!("no fragment is tagged {name}"),
-        )
-    }));
-    v1::AssembledContext {
-        tokens: 0,
-        fragments: assembled
-            .fragments_loaded
-            .iter()
-            .enumerate()
-            .map(|(at, fragment)| v1::AssembledFragment {
-                fragment: fragment.clone(),
-                form: if assembled.used.get(at).is_some_and(|u| u.distilled) {
-                    v1::assembled_fragment::Form::Distilled
-                } else {
-                    v1::assembled_fragment::Form::Original
-                } as i32,
-            })
-            .collect(),
-        profiles: assembled.profiles.clone(),
-        missing_fragments: assembled.missing_fragments.clone(),
-        missing_tags: assembled.missing_tags.clone(),
-        premised: assembled
-            .premised
-            .iter()
-            .map(|entry| v1::PremiseEntry {
-                fragment: entry.name.clone(),
-                premise: entry.premise.clone(),
-            })
-            .collect(),
-        context: assembled.context,
-        notices,
     }
 }
 

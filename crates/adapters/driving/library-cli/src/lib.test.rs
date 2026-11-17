@@ -65,6 +65,32 @@ impl Served for ServedBy<'_> {
     }
 
     crate::served_reads!(served_by_library_api);
+
+    fn assemble_context(
+        &self,
+        request: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, Failure> {
+        let parent = self.names.parent()?;
+        let globals = request.globals.clone().unwrap_or_default();
+        let flags = library_application::Flags {
+            degraded: globals.degraded,
+            no_companions: globals.no_companions,
+            config_set: globals.config_set.clone(),
+            trusted: false,
+        };
+        let outcome = library_api::reads::assemble_context(self.library, &flags, &parent, &request);
+        let mut assembled = outcome.result.map_err(failed)?;
+        assembled.notices = outcome
+            .notices
+            .iter()
+            .map(|notice| v1::Notice {
+                code: notice.code().to_string(),
+                args: Vec::new(),
+                text: notice.to_string(),
+            })
+            .collect();
+        Ok(assembled)
+    }
 }
 
 /// [`ServedBy`]'s reads: each library-api's, over the test's library, its

@@ -307,6 +307,16 @@ impl library_cli::Served for DaemonServed {
     }
 
     library_cli::served_reads!(served_read);
+
+    fn assemble_context(
+        &self,
+        request: daemon_proto::v1::AssembleContextRequest,
+    ) -> Result<daemon_proto::v1::AssembledContext, Failure> {
+        use daemon_api::LibraryReads;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.assemble_context(request))
+    }
 }
 
 /// [`DaemonServed`]'s reads, from `library_cli::served_reads!`: each the

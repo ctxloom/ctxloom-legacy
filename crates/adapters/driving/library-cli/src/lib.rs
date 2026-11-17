@@ -15,6 +15,7 @@ mod catalog;
 mod commands;
 pub mod inert;
 mod noun;
+mod read_back;
 mod text;
 mod write;
 
@@ -28,10 +29,10 @@ mod prelude {
     pub(crate) use clap::ArgMatches;
     pub(crate) use cli_support::{flag, many, say_notices, Exit};
     pub(crate) use library_application::{
-        AgentRequest, AgentRow, AgentWritten, AppError, AssembleRequest, AuthSetting,
-        BundleEditRequest, ConfigShown, DefaultAgent, EngineAgent, EngineRow, ItemKind, McpEdited,
-        McpPatch, ProfileCreateRequest, ProfileEdit, ProfileEdited, RunRequest, SearchRequest,
-        SwapPreview, WriteError, LOADOUT,
+        AgentRequest, AgentRow, AgentWritten, AppError, AuthSetting, BundleEditRequest,
+        ConfigShown, DefaultAgent, EngineAgent, EngineRow, ItemKind, McpEdited, McpPatch,
+        ProfileCreateRequest, ProfileEdit, ProfileEdited, RunRequest, SearchRequest, SwapPreview,
+        WriteError, LOADOUT,
     };
 
     pub(crate) use crate::write::{
@@ -113,6 +114,13 @@ pub trait Served {
     fn in_project(&self) -> bool;
 
     served_reads!(served_read);
+
+    /// `context assemble`: `AssembleContext`, its notices among the
+    /// message's own.
+    fn assemble_context(
+        &self,
+        request: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, Failure>;
 }
 
 /// The reads this CLI asks the daemon, in the shape of
@@ -123,6 +131,11 @@ macro_rules! served_reads {
     ($each:ident) => {
         $each! {
             list_bundles (ListBundles) ListBundlesRequest.parent => ListBundlesResponse,
+            list_fragments (ListFragments) ListFragmentsRequest.parent => ListFragmentsResponse,
+            list_commands (ListCommands) ListCommandsRequest.parent => ListCommandsResponse,
+            get_fragment (GetFragment) GetFragmentRequest.name => Fragment,
+            get_command (GetCommand) GetCommandRequest.name => Command,
+            get_premise_index (GetPremiseIndex) GetPremiseIndexRequest.name => PremiseIndex,
         }
     };
 }

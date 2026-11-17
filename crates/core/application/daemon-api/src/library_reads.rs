@@ -69,6 +69,7 @@ macro_rules! library_requests {
     };
 }
 daemon_proto::library_reads!(library_requests);
+library_requests!(assemble_context (AssembleContext) AssembleContextRequest.name => AssembledContext);
 
 /// The parent a read's target is under: `projects/{harp}` (its project) or
 /// `users/me` (none), the first two segments of its name.

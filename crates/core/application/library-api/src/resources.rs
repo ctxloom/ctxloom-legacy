@@ -11,9 +11,12 @@ use std::collections::BTreeMap;
 
 use daemon_proto::google::protobuf::{value::Kind, ListValue, Struct, Value};
 use daemon_proto::v1;
-use library_application::{AgentRow, BundleList, BundleRow, ProfileList, ProfileRow, SkillList};
+use library_application::{
+    AgentRow, Assembled, BundleList, BundleRow, DistilledState, ItemList, ItemShow, Located,
+    Premises, ProfileList, ProfileRow, SkillList,
+};
 
-use crate::names::{bundle_name, bundle_ref, item_name, origin, profile_ref};
+use crate::names::{bundle_name, bundle_ref, item_name, origin, profile_ref, reference_name};
 
 /// The bundle a project's own profiles are named under.
 pub const PROJECT_BUNDLE: &str = "project";
@@ -227,6 +230,142 @@ pub fn skills(parent: &str, list: &SkillList) -> v1::ListSkillsResponse {
             })
             .collect(),
         next_page_token: String::new(),
+    }
+}
+
+/// A distilled form as judged against its source now (T30, S51).
+pub fn distilled_state(state: DistilledState) -> i32 {
+    let api = match state {
+        DistilledState::None => v1::DistilledState::None,
+        DistilledState::Fresh => v1::DistilledState::Fresh,
+        DistilledState::Stale => v1::DistilledState::Stale,
+    };
+    api as i32
+}
+
+/// `fragment list`: `ListFragmentsResponse`, each fragment below its
+/// bundle.
+pub fn fragments(parent: &str, list: &ItemList) -> v1::ListFragmentsResponse {
+    v1::ListFragmentsResponse {
+        fragments: list
+            .rows
+            .iter()
+            .map(|row| v1::Fragment {
+                name: item_name(parent, &row.bundle, "fragments", &row.name),
+                reference: row.reference.clone(),
+                tags: row.tags.clone(),
+                ..v1::Fragment::default()
+            })
+            .collect(),
+        next_page_token: String::new(),
+    }
+}
+
+/// `command list`: `ListCommandsResponse`, each command below its bundle.
+pub fn commands(parent: &str, list: &ItemList) -> v1::ListCommandsResponse {
+    v1::ListCommandsResponse {
+        commands: list
+            .rows
+            .iter()
+            .map(|row| v1::Command {
+                name: item_name(parent, &row.bundle, "commands", &row.name),
+                reference: row.reference.clone(),
+                tags: row.tags.clone(),
+                ..v1::Command::default()
+            })
+            .collect(),
+        next_page_token: String::new(),
+    }
+}
+
+/// `fragment show`: the `Fragment` (FULL), its body the form served.
+pub fn fragment(parent: &str, show: &ItemShow) -> v1::Fragment {
+    v1::Fragment {
+        name: item_name(parent, &show.bundle, "fragments", &show.name),
+        reference: show.reference.clone(),
+        body: show.content.clone(),
+        body_is_distilled: show.distilled,
+        distilled: distilled_state(show.state),
+        ..v1::Fragment::default()
+    }
+}
+
+/// `command show`: the `Command` (FULL), its body the form served.
+pub fn command(parent: &str, show: &ItemShow) -> v1::Command {
+    v1::Command {
+        name: item_name(parent, &show.bundle, "commands", &show.name),
+        reference: show.reference.clone(),
+        body: show.content.clone(),
+        body_is_distilled: show.distilled,
+        distilled: distilled_state(show.state),
+        ..v1::Command::default()
+    }
+}
+
+/// `fragment premises`: the `PremiseIndex`, each fragment by its name.
+pub fn premise_index(parent: &str, premises: &Premises) -> v1::PremiseIndex {
+    v1::PremiseIndex {
+        name: format!("{parent}/premiseIndex"),
+        instruction: premises.instruction.clone(),
+        fragments: premises
+            .fragments
+            .iter()
+            .map(|row| v1::PremiseEntry {
+                fragment: reference_name(parent, &row.name).unwrap_or_else(|| row.name.clone()),
+                premise: row.premise.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// `context assemble` (and the MCP server's `context_assemble`):
+/// `AssembledContext`, its profiles and fragments named under `parent`; one
+/// the catalog does not hold keeps the text it was asked by, as a fragment
+/// asked for and not found does (OQ-16). What a premise held back is
+/// answered as data, by its reference, for the edge to render (E2).
+pub fn assembled(parent: &str, assembled: &Assembled) -> v1::AssembledContext {
+    let named = |text: &String, located: Option<&Option<Located>>, collection: &str| {
+        located.and_then(Option::as_ref).map_or_else(
+            || text.clone(),
+            |at| item_name(parent, &at.bundle, collection, &at.item),
+        )
+    };
+    v1::AssembledContext {
+        context: assembled.context.clone(),
+        tokens: count(assembled.tokens),
+        fragments: assembled
+            .fragments_loaded
+            .iter()
+            .enumerate()
+            .map(|(at, reference)| {
+                let used = assembled.used.get(at);
+                v1::AssembledFragment {
+                    fragment: named(reference, used.map(|u| &u.located), "fragments"),
+                    form: if used.is_some_and(|u| u.distilled) {
+                        v1::assembled_fragment::Form::Distilled
+                    } else {
+                        v1::assembled_fragment::Form::Original
+                    } as i32,
+                }
+            })
+            .collect(),
+        profiles: assembled
+            .profiles
+            .iter()
+            .enumerate()
+            .map(|(at, ask)| named(ask, assembled.profiles_located.get(at), "profiles"))
+            .collect(),
+        missing_fragments: assembled.missing_fragments.clone(),
+        missing_tags: assembled.missing_tags.clone(),
+        premised: assembled
+            .premised
+            .iter()
+            .map(|entry| v1::PremiseEntry {
+                fragment: entry.name.clone(),
+                premise: entry.premise.clone(),
+            })
+            .collect(),
+        notices: Vec::new(),
     }
 }
 
