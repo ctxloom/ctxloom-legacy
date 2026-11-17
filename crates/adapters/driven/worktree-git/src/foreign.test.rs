@@ -6,7 +6,7 @@ use std::process::Command;
 
 use ctxloom_ports::{ForeignListing, ForeignWorktree, ForeignWorktrees};
 
-use super::GitForeignWorktrees;
+use super::{spelled, GitForeignWorktrees};
 use crate::fixtures::{canonical, fs, link, mkdirs, put, root, runs_scripts};
 
 /// git with a clean identity and none of the caller's environment.
@@ -222,4 +222,21 @@ fn a_scratch_checkout_under_a_symlinked_home_is_not_listed() {
         ForeignListing::Listed(listed) => assert!(listed.is_empty(), "{listed:?}"),
         other => panic!("not listed: {other:?}"),
     }
+}
+
+// A worktree's path is shown as the platform spells a path: git lists one
+// on Windows as `C:/a/b`, and the doctor row beside the project's `C:\a\b`
+// would mix the two. Unix keeps git's spelling.
+#[test]
+fn a_listed_path_is_shown_with_the_platforms_separator() {
+    let listed = Path::new("C:/Users/her/workspace/proj--stale-feature");
+    assert_eq!(
+        spelled(os::Flavor::Windows, listed),
+        r"C:\Users\her\workspace\proj--stale-feature"
+    );
+    let unix = Path::new("/home/her/workspace/proj--stale-feature");
+    assert_eq!(
+        spelled(os::Flavor::Unix, unix),
+        "/home/her/workspace/proj--stale-feature"
+    );
 }

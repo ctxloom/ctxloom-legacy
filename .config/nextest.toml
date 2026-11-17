@@ -145,8 +145,67 @@ test-group = 'ports'
 # 114.9 s and `journeys` 47.5 s, and the others passed within their limits
 # (a pass's time is not shown). Measured with 3 features of a cluster at
 # once (the 20 cores shared among the 7 clusters); a host of fewer cores
-# runs 2 at once and was not measured. A cluster past its limit is hung, as
-# any test past 120 s is.
+# runs 2 at once. A cluster past its limit is hung, as any test past 120 s
+# is.
+#
+# Windows (owner ruling of 2026-11-17: measure, the same rule) has limits of
+# its own, the overrides with `platform = 'cfg(windows)'` just below, ahead
+# of the ones above them in effect (nextest takes the first override that
+# matches). Measured on 2026-11-17 on GitHub's `windows-latest` (4 cores,
+# MSVC, Git Bash), the whole `ci-platform` run of the branch push and two
+# dispatches of one commit (CI runs 44109460343, 44109525569,
+# 44109533175), every cluster limited to 600 s for the measurement alone;
+# each limit about 2.4 times the longest of the three, rounded up to whole
+# slow periods (the Linux period of the cluster), at least 60 s:
+#
+#   cluster    run 1   run 2   run 3   longest   x Linux   limit
+#   daemon     188.5   197.1   194.8   197.1     1.6       480 (60 s x 8)
+#   journeys    89.6    83.7    92.8    92.8     1.8       240 (30 s x 8)
+#   library    161.2   174.9   175.4   175.4     5.7       450 (30 s x 15)
+#   remotes    138.0   145.5   138.7   145.5     7.3       360 (30 s x 12)
+#   setup       52.9    65.2    57.5    65.2     4.0       180 (30 s x 6)
+#   sessions    62.3    86.7    67.6    86.7     5.9       210 (30 s x 7)
+#   other        5.1     4.4     5.1     5.1     1.0        60 (the above)
+#
+# (`daemon` and `journeys` failed in those runs, `daemon` red by ruling 132
+# and `journeys` at j001300's doctor scenario, a step that fails quickly:
+# both ran every scenario.) Windows is slow, not hung: each scenario spawns
+# ctxloom and git many times, and Windows spawns are slow; `remotes`, the
+# git-heaviest (clones and fetches), is over 6 times its Linux time and was
+# reported to the owner as such. macOS (`macos-15`, the same three runs)
+# is within the limits above and keeps them: daemon 207.7 216.6 224.2,
+# journeys 96.1 104.4 108.3, library 52.2 55.4 67.5, remotes 22.5 26.5
+# 27.1, setup 12.0 12.7 13.1, sessions 16.0 13.7 11.7, other 3.4 5.6 3.7.
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::daemon)'
+slow-timeout = { period = "60s", terminate-after = 8, grace-period = "10s" }
+
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::journeys)'
+slow-timeout = { period = "30s", terminate-after = 8, grace-period = "10s" }
+
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::library)'
+slow-timeout = { period = "30s", terminate-after = 15, grace-period = "10s" }
+
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::remotes)'
+slow-timeout = { period = "30s", terminate-after = 12, grace-period = "10s" }
+
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::setup)'
+slow-timeout = { period = "30s", terminate-after = 6, grace-period = "10s" }
+
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::sessions)'
+slow-timeout = { period = "30s", terminate-after = 7, grace-period = "10s" }
+
 [[profile.default.overrides]]
 filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::daemon)'
 slow-timeout = { period = "60s", terminate-after = 5, grace-period = "10s" }
