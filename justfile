@@ -69,35 +69,6 @@ mutants_swap_max := env("MUTANTS_SWAP_MAX", "2G")
 tests_memory_max := env("TESTS_MEMORY_MAX", "16G")
 tests_swap_max := env("TESTS_SWAP_MAX", "2G")
 
-# The compiler cache (owner ruling of 2026-11-16; gates/gates.just exports
-# it, gates/sccache.sh checks it): every `just` build, test, lint, mutation
-# and ratchet base runs rustc through sccache, pinned at sccache_version
-# (SCCACHE_BASEDIRS needs 0.14.0 or newer; 0.19.0 is the newest release,
-# and the first whose basedirs also rewrite a compile's arguments, 0.18.0,
-# and Windows drive-letter values, 0.19.0), installed by
-# `cargo install --locked sccache@0.19.0` into ~/.cargo/bin. One cache for
-# every worktree, outside them all: ~/.cache/ctxloom-sccache of the user's
-# own home (CTXLOOM_SCCACHE_DIR replaces it), an LRU capped at 40G, served
-# by its own server on a unix socket there. SCCACHE_BASEDIRS is the parent directory of each
-# worktree of this repository (the worktrees root and the primary
-# checkout's parent), as when the server started; CTXLOOM_SCCACHE_BASEDIRS
-# replaces it. A missing or other sccache fails every recipe, with the fix.
-# The opt-out is CTXLOOM_SCCACHE=off, stated; on a GitHub Actions runner
-# (GITHUB_ACTIONS=true) it is the default, because a hosted runner's cache
-# would start empty every job and rust-cache already keeps target/ (ci.yml
-# and nightly.yml also set it and say so; ctxloom/ci's reusable binaries
-# workflow, which takes no env from its caller, gets it from this default).
-sccache_version := "0.19.0"
-sccache_opt_out := "CTXLOOM_SCCACHE=off"
-sccache_mode := env("CTXLOOM_SCCACHE", if env("GITHUB_ACTIONS", "") == "true" { "off" } else { "on" })
-# The user's own home, from the password database, not $HOME: an agent in a
-# ctxloom session runs with HOME its session home (ruling 112), and its
-# builds are to share the one cache all the same.
-sccache_dir := env("CTXLOOM_SCCACHE_DIR", if sccache_mode == "on" { shell('eval "echo ~$(id -un)"') / ".cache/ctxloom-sccache" } else { "" })
-sccache_socket := sccache_dir / "server.sock"
-sccache_cache_size := "40G"
-sccache_basedirs := env("CTXLOOM_SCCACHE_BASEDIRS", if sccache_mode == "on" { shell('"$1" basedirs "$2"', justfile_directory() / "gates/sccache.sh", justfile_directory()) } else { "" })
-
 mutation_thresholds := "crates/core/domain=90 crates/core/read-model=90 crates/core/ports=90 crates/core/application=90 crates/adapters=90 crates/root/lib=0 crates/root/bin=0"
 
 # Staged paths outside any crate that can change what every crate builds or
@@ -580,7 +551,7 @@ trim-targets base="origin/daemon/integration" dry="":
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown, sccache, trim-targets")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown, trim-targets")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -603,7 +574,6 @@ selftest:
     @{{TOP}}/scripts/release-package.selftest.sh
     @{{TOP}}/scripts/mcp-env-probe.selftest.sh
     @{{TOP}}/scripts/install-shutdown.selftest.sh
-    @{{TOP}}/scripts/sccache.selftest.sh
     @{{TOP}}/scripts/trim-targets.selftest.sh
 
 # Run the ctxloom binary (cargo run, quiet) with the given arguments.
