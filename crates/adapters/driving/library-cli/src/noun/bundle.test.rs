@@ -89,6 +89,31 @@ mod read {
             skill["name"],
             "projects/calm-otter/bundles/demo/skills/reviewer"
         );
+        // Text, drawn from the item's message (owner ruling 2026-11-17): a
+        // body as served, else its fields as YAML, keys sorted, references
+        // short.
+        assert_eq!(
+            text_of(&["bundle", "view", "demo#fragments/dist"]),
+            "long form\n"
+        );
+        assert_eq!(
+            text_of(&["bundle", "view", "demo#fragments/dist", "-d"]),
+            "# (distilled version)\nshort form\n"
+        );
+        assert!(text_of(&["bundle", "view", "demo#mcp/tree-sitter"])
+            .starts_with("# MCP Server: tree-sitter\nargs:\n  - --stdio\ncommand: tree-sitter\n"));
+        assert_eq!(
+            text_of(&["bundle", "view", "project#profiles/dev"]),
+            "# Profile: dev\nbundles:\n  - demo\ndescription: dev profile\ntags:\n  - team\n"
+        );
+        assert!(
+            text_of(&["bundle", "view", "demo#skills/reviewer"]).starts_with("# Skill: reviewer\n")
+        );
+        // A path no item kind serves is the view's own refusal.
+        assert_eq!(
+            go(&["bundle", "view", "demo#widgets/x"], JSON, BARE).refused(),
+            "library-application-view-path:20"
+        );
         assert_eq!(
             go(&["bundle", "show", "nosuch"], JSON, BARE).refused(),
             "library-catalog-bundle-not-found:20"
@@ -323,12 +348,11 @@ mod messages {
 
     use library_application::{
         BundleCreated, BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved,
-        BundleRow, BundleShow, BundleView, McpRow, Preview, Removal, ShownCommand, ShownFragment,
-        ShownMcp, ShownSkill, Viewed,
+        BundleRow, BundleShow, Preview, Removal, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
     };
     use serde_json::{json, Value};
 
-    use super::super::{created, edited, exported, imported, removed, viewed};
+    use super::super::{created, edited, exported, imported, removed};
     use library_api::resources::bundle;
     use library_api::resources::bundles as listed;
 
@@ -508,85 +532,6 @@ mod messages {
                 "profiles": [format!("{b}/profiles/dev")],
                 "hooks": ["pre_tool"],
             })
-        );
-    }
-
-    fn view(viewed: Viewed, distilled: bool) -> BundleView {
-        BundleView {
-            bundle: "demo".to_string(),
-            path: String::new(),
-            distilled,
-            content: String::new(),
-            item: false,
-            viewed,
-        }
-    }
-
-    // `bundle view`: a command's body and whether it is the distilled form;
-    // a skill's tags, notes and path; the files, and whether the distilled
-    // forms were asked; and the bundle by its name when nothing was read.
-    #[test]
-    fn test_a_viewed_item_carries_what_was_read() {
-        let b = "projects/calm-otter/bundles/demo";
-        let command = Viewed::Body {
-            kind: "commands".to_string(),
-            name: "review".to_string(),
-            body: "short\n".to_string(),
-            distilled: true,
-        };
-        assert_eq!(
-            as_json(viewed(P, &view(command, true))),
-            json!({
-                "name": format!("{b}/commands/review"),
-                "body": "short\n",
-                "body_is_distilled": true,
-            })
-        );
-        let skill = Viewed::Skill {
-            name: "reviewer".to_string(),
-            skill: ShownSkill {
-                path: "skills/reviewer".to_string(),
-                tags: vec!["review".to_string()],
-                notes: "skill notes".to_string(),
-            },
-        };
-        assert_eq!(
-            as_json(viewed(P, &view(skill, false))),
-            json!({
-                "name": format!("{b}/skills/reviewer"),
-                "tags": ["review"],
-                "notes": "skill notes",
-                "path": "skills/reviewer",
-            })
-        );
-        let files = Viewed::Files(vec![("bundle.yaml".to_string(), "x\n".to_string())]);
-        assert_eq!(
-            as_json(viewed(P, &view(files, true))),
-            json!({
-                "name": b,
-                "files": [{"path": "bundle.yaml", "content": "x\n"}],
-                "distilled": true,
-            })
-        );
-        assert_eq!(
-            as_json(viewed(P, &view(Viewed::Nothing, false))),
-            json!({ "name": b })
-        );
-        // An MCP server is the server's own resource.
-        let mcp = Viewed::Mcp(McpRow {
-            name: "tree-sitter".to_string(),
-            command: "tree-sitter".to_string(),
-            args: Vec::new(),
-            env: BTreeMap::new(),
-            url: String::new(),
-            served_by: String::new(),
-            source: String::new(),
-            notes: String::new(),
-            installation: String::new(),
-        });
-        assert_eq!(
-            as_json(viewed(P, &view(mcp, false)))["name"],
-            format!("{b}/mcpServers/tree-sitter")
         );
     }
 

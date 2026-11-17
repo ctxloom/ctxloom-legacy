@@ -2,8 +2,7 @@
 //! AIP resource or method response (OD-40, design §5.1).
 
 use library_application::{
-    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleView,
-    Removal, Viewed,
+    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleView, Removal,
 };
 
 use library_api::resources::count;
@@ -55,27 +54,7 @@ pub(crate) fn read(
                 written
             })
         }
-        "view" => {
-            let ask = text_arg(sub, "name");
-            let outcome = cx
-                .library
-                .bundle_view(&cx.flags, &ask, flag(sub, "distilled"));
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                viewed,
-                |view, out, notes| {
-                    let mut said = text::Notes(Vec::new());
-                    let written = text::bundle_view(out, &mut said, view, &ask);
-                    notes.extend(said.0);
-                    written
-                },
-                ok,
-            )
-        }
+        "view" => viewed_by_the_daemon(cx, sub, out, err),
         _ => listed_by_the_daemon(cx, out, err),
     }
 }
@@ -102,77 +81,106 @@ fn listed_by_the_daemon(
     )
 }
 
-/// What `bundle view` answers: the bundle, or the item the path selects.
-#[derive(serde::Serialize)]
-#[serde(untagged)]
-pub(crate) enum ViewedMessage {
-    Bundle(v1::Bundle),
-    Fragment(v1::Fragment),
-    Command(v1::Command),
-    Skill(v1::Skill),
-    McpServer(v1::McpServer),
-    Profile(v1::Profile),
-}
-
-/// `bundle view`: the whole bundle as a `Bundle` (CONTENT), or the one item
-/// the path selects as its own resource (design §5.1).
-pub(crate) fn viewed(parent: &str, view: &BundleView) -> ViewedMessage {
-    let bundle = bundle_name(parent, &view.bundle);
-    let item = |dir: &str, id: &str| catalog::item_name(parent, &view.bundle, dir, id);
-    match &view.viewed {
-        Viewed::Body {
-            kind,
-            name,
-            body,
-            distilled,
-        } if kind == "commands" => ViewedMessage::Command(v1::Command {
-            name: item("commands", name),
-            body: body.clone(),
-            body_is_distilled: *distilled,
-            ..v1::Command::default()
-        }),
-        Viewed::Body {
-            name,
-            body,
-            distilled,
-            ..
-        } => ViewedMessage::Fragment(v1::Fragment {
-            name: item("fragments", name),
-            body: body.clone(),
-            body_is_distilled: *distilled,
-            ..v1::Fragment::default()
-        }),
-        Viewed::Skill { name, skill } => ViewedMessage::Skill(v1::Skill {
-            name: item("skills", name),
-            tags: skill.tags.clone(),
-            notes: skill.notes.clone(),
-            path: skill.path.clone(),
-            ..v1::Skill::default()
-        }),
-        Viewed::Mcp(row) => {
-            ViewedMessage::McpServer(library_api::resources::server(&item("mcp", &row.name), row))
+/// `bundle view <bundle>#<path>`, one item, the daemon's read of its kind
+/// (step 10a U2, owner ruling 2026-11-17): a fragment's or a command's
+/// body, or a skill's, an MCP server's or a profile's fields as YAML, keys
+/// sorted and references short, each rendered from the item's message
+/// alone. A path no item kind serves is the bundle's CONTENT read of it,
+/// which the daemon refuses as the view refuses it.
+fn viewed_by_the_daemon(
+    cx: &Context<'_>,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let ask = text_arg(sub, "name");
+    let prefer_distilled = flag(sub, "distilled");
+    let under = library_api::names::reference_target(&ask);
+    let kind = ask
+        .split_once('#')
+        .and_then(|(_, path)| path.split_once('/'))
+        .map_or("", |(kind, _)| kind);
+    let render = |view: BundleView, out: &mut dyn Write, notes: &mut Vec<String>| {
+        let mut said = text::Notes(Vec::new());
+        let written = text::bundle_view(out, &mut said, &view, &ask);
+        notes.extend(said.0);
+        written
+    };
+    match kind {
+        "fragments" => {
+            let request = v1::GetFragmentRequest {
+                prefer_distilled,
+                globals: cx.globals(),
+                ..v1::GetFragmentRequest::default()
+            };
+            let read = cx.served.get_fragment(&under, request);
+            served(cx, read, out, err, false, |f, out, notes| {
+                render(
+                    crate::read_back::body_view(&ask, &f.body, f.body_is_distilled),
+                    out,
+                    notes,
+                )
+            })
         }
-        Viewed::Profile(profile) => ViewedMessage::Profile(library_api::resources::profile_of(
-            parent,
-            &item("profiles", &profile.name),
-            profile,
-        )),
-        Viewed::Files(files) => ViewedMessage::Bundle(v1::Bundle {
-            name: bundle,
-            files: files
-                .iter()
-                .map(|(path, content)| v1::BundleFile {
-                    path: path.clone(),
-                    content: content.clone(),
-                })
-                .collect(),
-            distilled: Some(view.distilled),
-            ..v1::Bundle::default()
-        }),
-        Viewed::Nothing => ViewedMessage::Bundle(v1::Bundle {
-            name: bundle,
-            ..v1::Bundle::default()
-        }),
+        "commands" | "prompts" => {
+            let request = v1::GetCommandRequest {
+                prefer_distilled,
+                globals: cx.globals(),
+                ..v1::GetCommandRequest::default()
+            };
+            let read = cx.served.get_command(&under, request);
+            served(cx, read, out, err, false, |c, out, notes| {
+                render(
+                    crate::read_back::body_view(&ask, &c.body, c.body_is_distilled),
+                    out,
+                    notes,
+                )
+            })
+        }
+        "skills" => {
+            let request = v1::GetSkillRequest {
+                globals: cx.globals(),
+                ..v1::GetSkillRequest::default()
+            };
+            let read = cx.served.get_skill(&under, request);
+            served(cx, read, out, err, false, |skill, out, notes| {
+                render(crate::read_back::skill_view(&ask, skill), out, notes)
+            })
+        }
+        "mcp" => {
+            let request = v1::GetMcpServerRequest {
+                globals: cx.globals(),
+                ..v1::GetMcpServerRequest::default()
+            };
+            let read = cx.served.get_mcp_server(&under, request);
+            served(cx, read, out, err, false, |server, out, notes| {
+                render(crate::read_back::mcp_view(&ask, server), out, notes)
+            })
+        }
+        "profiles" => {
+            let request = v1::GetProfileRequest {
+                globals: cx.globals(),
+                ..v1::GetProfileRequest::default()
+            };
+            let read = cx
+                .served
+                .get_profile(&library_api::names::profile_target(&ask), request);
+            served(cx, read, out, err, false, |profile, out, notes| {
+                render(crate::read_back::profile_view(&ask, profile), out, notes)
+            })
+        }
+        _ => {
+            let request = v1::GetBundleRequest {
+                view: v1::bundle::View::Content as i32,
+                prefer_distilled,
+                globals: cx.globals(),
+                ..v1::GetBundleRequest::default()
+            };
+            let read = cx.served.get_bundle(&under, request);
+            served(cx, read, out, err, false, |bundle, out, notes| {
+                render(crate::read_back::bundle_view(bundle), out, notes)
+            })
+        }
     }
 }
 

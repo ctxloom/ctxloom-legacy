@@ -841,6 +841,109 @@ pub(crate) fn bundle_view(bundle: &v1::Bundle) -> BundleView {
     }
 }
 
+/// One item's `bundle view` (`<bundle>#<path>`, as asked), its content
+/// as text prints it (step 10a U2, owner ruling 2026-11-17).
+fn item_view(ask: &str, distilled: bool, content: String) -> BundleView {
+    let (bundle, path) = ask.split_once('#').unwrap_or((ask, ""));
+    BundleView {
+        bundle: bundle.to_string(),
+        path: path.to_string(),
+        distilled,
+        content,
+        item: true,
+        viewed: library_application::Viewed::Nothing,
+    }
+}
+
+/// A fragment's or a command's `bundle view`: its body from the message,
+/// headed `# (distilled version)` where the body is the distilled form.
+pub(crate) fn body_view(ask: &str, body: &str, distilled: bool) -> BundleView {
+    let header = if distilled {
+        "# (distilled version)\n"
+    } else {
+        ""
+    };
+    let tail = if body.ends_with('\n') { "" } else { "\n" };
+    item_view(ask, distilled, format!("{header}{body}{tail}"))
+}
+
+/// An item's fields as YAML under its `# <kind>: <id>` heading, every
+/// key sorted and an empty field left out (owner ruling 2026-11-17: the
+/// view is drawn from the item's message, not its file byte for byte).
+fn fields_view(ask: &str, heading: &str, fields: Vec<(&str, serde_json::Value)>) -> BundleView {
+    let set: serde_json::Map<String, serde_json::Value> = fields
+        .into_iter()
+        .filter(|(_, value)| match value {
+            serde_json::Value::String(text) => !text.is_empty(),
+            serde_json::Value::Array(items) => !items.is_empty(),
+            serde_json::Value::Object(entries) => !entries.is_empty(),
+            _ => true,
+        })
+        .map(|(key, value)| (key.to_string(), value))
+        .collect();
+    let yaml = if set.is_empty() {
+        String::new()
+    } else {
+        library_application::config_yaml(&serde_json::Value::Object(set))
+    };
+    item_view(ask, false, format!("# {heading}\n{yaml}"))
+}
+
+/// A skill's `bundle view`: its bundle's entry for it (path, tags, notes).
+pub(crate) fn skill_view(ask: &str, skill: &v1::Skill) -> BundleView {
+    let (_, id) = skill_parts(&skill.name);
+    fields_view(
+        ask,
+        &format!("Skill: {id}"),
+        vec![
+            ("notes", serde_json::json!(skill.notes)),
+            ("path", serde_json::json!(skill.path)),
+            ("tags", serde_json::json!(skill.tags)),
+        ],
+    )
+}
+
+/// An MCP server's `bundle view`: its configuration as the message says it.
+pub(crate) fn mcp_view(ask: &str, server: &v1::McpServer) -> BundleView {
+    fields_view(
+        ask,
+        &format!("MCP Server: {}", id_in(&server.name, "mcpServers")),
+        vec![
+            ("args", serde_json::json!(server.args)),
+            ("command", serde_json::json!(server.command)),
+            ("env", serde_json::json!(server.env)),
+            ("installation", serde_json::json!(server.installation)),
+            ("notes", serde_json::json!(server.notes)),
+            ("served_by", serde_json::json!(server.served_by)),
+            ("url", serde_json::json!(server.url)),
+        ],
+    )
+}
+
+/// A profile's `bundle view`: its composition, its parents and bundles by
+/// their short references.
+pub(crate) fn profile_view(ask: &str, profile: &v1::Profile) -> BundleView {
+    fields_view(
+        ask,
+        &format!("Profile: {}", id_in(&profile.name, "profiles")),
+        vec![
+            ("bundles", serde_json::json!(shorts(&profile.bundles))),
+            ("description", serde_json::json!(profile.description)),
+            (
+                "exclude_fragments",
+                serde_json::json!(profile.exclude_fragments),
+            ),
+            (
+                "exclude_mcp",
+                serde_json::json!(profile.exclude_mcp_servers),
+            ),
+            ("parents", serde_json::json!(shorts(&profile.parents))),
+            ("tags", serde_json::json!(profile.tags)),
+            ("variables", serde_json::json!(profile.variables)),
+        ],
+    )
+}
+
 /// A plan's findings as the message says them.
 pub(crate) fn findings(run: &v1::Run) -> Vec<library_application::FindingRow> {
     run.findings

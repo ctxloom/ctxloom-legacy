@@ -69,6 +69,7 @@ macro_rules! served {
             list_engines (ListEngines) ListEnginesRequest.parent => ListEnginesResponse,
             get_engine (GetEngine) GetEngineRequest.name => Engine,
             list_mcp_servers (ListMcpServers) ListMcpServersRequest.parent => ListMcpServersResponse,
+            get_mcp_server (GetMcpServer) GetMcpServerRequest.name => McpServer,
             search_library (SearchLibrary) SearchLibraryRequest.parent => SearchLibraryResponse,
             get_config (GetConfig) GetConfigRequest.name => Config,
             get_bundle (GetBundle) GetBundleRequest.name => Bundle,
@@ -318,6 +319,36 @@ pub fn list_mcp_servers(
     })
 }
 
+/// `GetMcpServer`: one bundle's server, as `bundle view
+/// <bundle>#mcp/<id>` reads it (a bundle of one server answers it
+/// whatever the ID, as Go's view did), named by the server it found. A
+/// name of no bundle is refused as the view refuses it.
+pub fn get_mcp_server(
+    library: &Library,
+    flags: &Flags,
+    parent: &str,
+    request: &v1::GetMcpServerRequest,
+) -> Outcome<v1::McpServer> {
+    let reference = reference_of(parent, &request.name);
+    let (bundle, path) = reference.split_once('#').unwrap_or((&reference, ""));
+    let id = path.rsplit_once('/').map_or(path, |(_, id)| id);
+    let read = library.bundle_view(flags, &format!("{bundle}#mcp/{id}"), false);
+    let bundle = bundle.to_string();
+    Outcome {
+        result: read.result.and_then(|view| match view.viewed {
+            library_application::Viewed::Mcp(row) => Ok(resources::server(
+                &resources::server_name(parent, &bundle, &row.name),
+                &row,
+            )),
+            _ => Err(library_application::AppError::ViewMissing {
+                kind: "mcp server".to_string(),
+                name: id.to_string(),
+            }),
+        }),
+        notices: read.notices,
+    }
+}
+
 /// `SearchLibrary`: the catalog's items (and the remotes' bundles) that
 /// match the query or the tags, of the kind asked (none: every kind).
 pub fn search_library(
@@ -361,13 +392,16 @@ pub fn get_bundle(
     parent: &str,
     request: &v1::GetBundleRequest,
 ) -> Outcome<v1::Bundle> {
-    let ask = names::bundle_under(parent, &request.name).unwrap_or_else(|| request.name.clone());
     if request.view == v1::bundle::View::Content as i32 {
+        // An item's path read back with it (`<bundle>#<path>`), so a
+        // path no item kind serves is refused as the view refuses it.
+        let ask = reference_of(parent, &request.name);
         return mapped(
             library.bundle_view(flags, &ask, request.prefer_distilled),
             |view| resources::bundle_viewed(parent, &view),
         );
     }
+    let ask = names::bundle_under(parent, &request.name).unwrap_or_else(|| request.name.clone());
     mapped(library.bundle_show(flags, &ask), |show| {
         resources::bundle_shown(parent, &show)
     })

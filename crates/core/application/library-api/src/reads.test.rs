@@ -1,7 +1,7 @@
 use library_application::fakes::{Setup, ENVELOPE};
 use library_application::Flags;
 
-use super::{list_agents, list_profiles, list_skills};
+use super::{get_bundle, get_mcp_server, list_agents, list_profiles, list_skills};
 
 const PARENT: &str = "projects/calm-otter";
 
@@ -26,11 +26,16 @@ const PROJECT: &[(&str, &str)] = &[
     ("profiles/dev.yaml", "description: dev\nbundles: [demo]\n"),
 ];
 
+const SERVED: &[(&str, &str)] = &[
+    ENVELOPE,
+    ("mcp/tree-sitter.yaml", "command: ts\nargs: [--stdio]\n"),
+];
+
 const AGENTS: &str = "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n    profiles: [dev]\ndefault_agent: dev\n";
 
 fn library(layers: &[&str]) -> library_application::Library {
     Setup {
-        bundles: &[("demo", DEMO), ("project", PROJECT)],
+        bundles: &[("demo", DEMO), ("project", PROJECT), ("served", SERVED)],
         layers,
         ..Setup::default()
     }
@@ -110,5 +115,48 @@ fn the_skills_are_answered_with_their_tags_below_their_bundle() {
     assert!(
         reviewer.tags.iter().any(|t| t == "ctxloom:link_id=pair"),
         "{reviewer:?}"
+    );
+}
+
+#[test]
+fn a_bundles_server_is_answered_by_its_own_name() {
+    let lib = library(&["schema_version: 9\n"]);
+    let ask = |name: &str| {
+        let request = daemon_proto::v1::GetMcpServerRequest {
+            name: format!("{PARENT}{}", crate::names::reference_target(name)),
+            ..Default::default()
+        };
+        get_mcp_server(&lib, &Flags::default(), PARENT, &request).result
+    };
+    let server = ask("served#mcp/tree-sitter").unwrap();
+    assert_eq!(
+        server.name,
+        "projects/calm-otter/bundles/served/mcpServers/tree-sitter"
+    );
+    assert_eq!(server.command, "ts");
+    assert_eq!(server.args, ["--stdio"]);
+    // A bundle of one server answers it whatever the ID (Go's view).
+    assert_eq!(ask("served#mcp/other").unwrap().command, "ts");
+    assert!(matches!(
+        ask("demo#mcp/none"),
+        Err(library_application::AppError::ViewMissing { .. })
+    ));
+}
+
+#[test]
+fn a_bundle_views_item_path_is_refused_as_the_view_refuses_it() {
+    let lib = library(&["schema_version: 9\n"]);
+    let request = daemon_proto::v1::GetBundleRequest {
+        name: format!(
+            "{PARENT}{}",
+            crate::names::reference_target("demo#fragments")
+        ),
+        view: daemon_proto::v1::bundle::View::Content as i32,
+        ..Default::default()
+    };
+    let read = get_bundle(&lib, &Flags::default(), PARENT, &request).result;
+    assert!(
+        matches!(read, Err(library_application::AppError::ViewPath { .. })),
+        "{read:?}"
     );
 }

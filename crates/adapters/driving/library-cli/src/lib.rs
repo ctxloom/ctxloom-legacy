@@ -148,6 +148,7 @@ macro_rules! served_reads {
             list_engines (ListEngines) ListEnginesRequest.parent => ListEnginesResponse,
             get_engine (GetEngine) GetEngineRequest.name => Engine,
             list_mcp_servers (ListMcpServers) ListMcpServersRequest.parent => ListMcpServersResponse,
+            get_mcp_server (GetMcpServer) GetMcpServerRequest.name => McpServer,
             search_library (SearchLibrary) SearchLibraryRequest.parent => SearchLibraryResponse,
             get_config (GetConfig) GetConfigRequest.name => Config,
             get_bundle (GetBundle) GetBundleRequest.name => Bundle,
