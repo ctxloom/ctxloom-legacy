@@ -250,10 +250,13 @@ fn delivery_of_code(code: Code, message: &str, reason: &str) -> Delivery {
             | Infrastructure::Failed
             | Infrastructure::DataLoss,
         ) => Delivery::Unavailable { detail },
+        // A host precondition unmet (the daemon's diagnosed failure) does
+        // not heal on a resend: refused, as a request that cannot be read.
         Some(
             Infrastructure::Malformed
             | Infrastructure::Unimplemented
-            | Infrastructure::Unauthenticated,
+            | Infrastructure::Unauthenticated
+            | Infrastructure::Unmet,
         )
         | None => Delivery::Refused { detail },
     }

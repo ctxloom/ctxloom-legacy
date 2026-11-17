@@ -34,6 +34,11 @@ use crate::NO_SUCH_SESSION;
 /// under INTERNAL: final, a resend would be parked again.
 pub const DEAD_LETTERED: &str = "ANGZARR_REASON_FACT_DEAD_LETTERED";
 
+/// The `google.rpc.ErrorInfo` domain of a failure the daemon says in a
+/// diagnostic of its own (its reason the diagnostic's code): the key of
+/// [`Infrastructure::Unmet`] under FAILED_PRECONDITION.
+pub const DIAGNOSED: &str = "ctxloom.dev/diagnostic";
+
 /// Each infrastructure error, with its status ([`Infrastructure::code`]) and,
 /// where one status carries more than one, the reason key that tells them
 /// apart ([`Infrastructure::key`]).
@@ -68,11 +73,16 @@ pub enum Infrastructure {
     Unknown,
     /// Data was lost or damaged: DATA_LOSS.
     DataLoss,
+    /// A precondition of the host unmet, said in a diagnostic of its own
+    /// (git missing or too old, step 10a U2, owner ruling 2026-11-17):
+    /// FAILED_PRECONDITION, keyed [`DIAGNOSED`] (not UNAVAILABLE, which a
+    /// client reads as an unreachable daemon; not INTERNAL).
+    Unmet,
 }
 
 impl Infrastructure {
     /// Every infrastructure error, in the order the enum lists them.
-    pub const ALL: [Infrastructure; 12] = [
+    pub const ALL: [Infrastructure; 13] = [
         Infrastructure::SessionUnknown,
         Infrastructure::Parked,
         Infrastructure::Conflict,
@@ -85,6 +95,7 @@ impl Infrastructure {
         Infrastructure::Exhausted,
         Infrastructure::Unknown,
         Infrastructure::DataLoss,
+        Infrastructure::Unmet,
     ];
 
     /// The status this error travels with: the one place it is named.
@@ -102,6 +113,7 @@ impl Infrastructure {
             Infrastructure::Exhausted => Code::ResourceExhausted,
             Infrastructure::Unknown => Code::Unknown,
             Infrastructure::DataLoss => Code::DataLoss,
+            Infrastructure::Unmet => Code::FailedPrecondition,
         }
     }
 
@@ -117,6 +129,7 @@ impl Infrastructure {
         match self {
             Infrastructure::SessionUnknown => Some(NO_SUCH_SESSION),
             Infrastructure::Parked => Some(DEAD_LETTERED),
+            Infrastructure::Unmet => Some(DIAGNOSED),
             _ => None,
         }
     }
@@ -136,6 +149,9 @@ impl Infrastructure {
         }
         if code == Infrastructure::Parked.code() && keyed(DEAD_LETTERED) {
             return Some(Infrastructure::Parked);
+        }
+        if code == Infrastructure::Unmet.code() && keyed(DIAGNOSED) {
+            return Some(Infrastructure::Unmet);
         }
         if keyed(NO_SUCH_SESSION) {
             return Some(Infrastructure::SessionUnknown);

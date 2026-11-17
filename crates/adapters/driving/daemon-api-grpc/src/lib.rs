@@ -248,7 +248,7 @@ struct ErrorInfo {
 
 /// The `ErrorInfo` domain of a failure the daemon says in a diagnostic of
 /// its own: its reason is the diagnostic's code.
-pub const DIAGNOSED_DOMAIN: &str = "ctxloom.dev/diagnostic";
+pub const DIAGNOSED_DOMAIN: &str = daemon_api::DIAGNOSED;
 
 /// `error` as the status the caller is answered.
 fn status_of_error(error: ApiError) -> Status {
@@ -278,7 +278,7 @@ fn status_of_error(error: ApiError) -> Status {
                 domain: DIAGNOSED_DOMAIN.to_string(),
                 metadata: args.into_iter().map(|arg| (arg.name, arg.value)).collect(),
             };
-            let status = Code::from_i32(Infrastructure::Failed.status());
+            let status = Code::from_i32(Infrastructure::Unmet.status());
             let details = RpcStatus {
                 code: status as i32,
                 message: code.clone(),

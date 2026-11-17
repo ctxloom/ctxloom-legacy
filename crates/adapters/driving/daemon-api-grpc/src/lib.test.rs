@@ -1074,7 +1074,11 @@ fn a_diagnosed_failure_carries_its_code_and_args() {
             value: "2.20.0".to_string(),
         }],
     });
-    assert_eq!(status.code() as i32, Infrastructure::Failed.status());
+    // Owner ruling 2026-11-17: a missing or too-old git is a precondition
+    // of the host unmet, FAILED_PRECONDITION; not INTERNAL, and not
+    // UNAVAILABLE, which the client reads as an unreachable daemon.
+    assert_eq!(status.code() as i32, Infrastructure::Unmet.status());
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
     let details = super::RpcStatus::decode(status.details()).unwrap().details;
     assert_eq!(details.len(), 1);
     assert!(details[0].type_url.ends_with("/google.rpc.ErrorInfo"));

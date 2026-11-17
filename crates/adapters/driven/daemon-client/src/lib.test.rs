@@ -902,7 +902,9 @@ fn each_infrastructure_error_the_daemon_answers_is_read_back() {
 
 // Step 10a U2: a failure the daemon said in a diagnostic of its own (its
 // ErrorInfo's reason the code, its metadata the args) is that diagnostic,
-// so a command says `library-git-git-missing` and exits 10.
+// so a command says `library-git-git-missing` and exits 10. It travels
+// FAILED_PRECONDITION (owner ruling 2026-11-17), and is never read as a
+// typed refusal of that status.
 #[test]
 fn a_diagnosed_failure_is_its_diagnostic() {
     let info = super::ErrorInfo {
@@ -913,7 +915,7 @@ fn a_diagnosed_failure_is_its_diagnostic() {
             .collect(),
     };
     let rpc = RpcStatus {
-        code: Code::Internal as i32,
+        code: Code::FailedPrecondition as i32,
         message: "library-git-git-too-old".to_string(),
         details: vec![prost_types::Any {
             type_url: "type.googleapis.com/google.rpc.ErrorInfo".to_string(),
@@ -921,7 +923,7 @@ fn a_diagnosed_failure_is_its_diagnostic() {
         }],
     };
     let status = Status::with_details(
-        Code::Internal,
+        Code::FailedPrecondition,
         "library-git-git-too-old",
         Bytes::from(rpc.encode_to_vec()),
     );

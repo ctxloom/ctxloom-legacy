@@ -92,7 +92,7 @@ pub use refusal::{
 };
 /// The infrastructure tree's one root (owner, 2026-11-14), for the daemon's
 /// service, which answers an error that is no refusal through it.
-pub use run_ports::Infrastructure;
+pub use run_ports::{Infrastructure, DIAGNOSED};
 pub use runs::RunStream;
 pub use server::{
     About, Answer, Api, Assemblies, Calls, Harps, Hosting, Observing, Parts, SessionStates,

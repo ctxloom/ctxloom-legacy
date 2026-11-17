@@ -188,7 +188,7 @@ struct ErrorInfo {
 
 /// The `ErrorInfo` domain of a failure the daemon says in a diagnostic of
 /// its own (daemon-api-grpc's): its reason is the diagnostic's code.
-const DIAGNOSED_DOMAIN: &str = "ctxloom.dev/diagnostic";
+const DIAGNOSED_DOMAIN: &str = run_ports::DIAGNOSED;
 
 /// The diagnostic a failure's details say it in, if they do.
 fn diagnosed(details: &[prost_types::Any]) -> Option<Called> {

@@ -1192,12 +1192,16 @@ with its root:
   infrastructure.rs`), an enum naming each error with its status once
   (`code()`, angzarr's transport-free `Code`; `status()`, its number) and,
   where one status carries two, its reason key (`key()`: `SessionUnknown`
-  NO_SUCH_SESSION, `Parked` angzarr's `DEAD_LETTERED`). Both listeners
+  NO_SUCH_SESSION, `Parked` angzarr's `DEAD_LETTERED`, `Unmet`
+  `run_ports::DIAGNOSED`, a host precondition unmet said in a diagnostic of
+  its own: git missing or too old, FAILED_PRECONDITION, owner ruling
+  2026-11-17, never UNAVAILABLE, which a client reads as an unreachable
+  daemon). Both listeners
   answer through it: the hook listener's command half
   (`runs_application::hook_commands`: a kernel failure's `Malformed` or
   `Failed`, an unknown session's `SessionUnknown`) and the daemon's service
   (`daemon_api_grpc`'s `status_of_error`: `ApiError::Failed`,
-  `Unimplemented`; through `daemon_api`'s re-export, as a driving adapter
+  `Unimplemented`, `Diagnosed` as `Unmet`; through `daemon_api`'s re-export, as a driving adapter
   reaches no port). Both clients read an answer back through
   `Infrastructure::read(status, keys)` (`hook_sink_grpc`'s
   `delivery_of_code`, `daemon_client::called`), each mapping the error to
