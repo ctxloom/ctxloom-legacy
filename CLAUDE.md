@@ -2603,7 +2603,14 @@ built:
   which `Api`'s `Calls` methods are generated; what the CLI asks is
   library-cli's `served_reads!`, from which its `Served` trait, the
   wiring's `DaemonServed` and the tests' `ServedBy` are generated. A read
-  is served by a row in each. `AssembleContext` is a library read too
+  is served by a row in each. The deps reads are the same, over their own
+  tables: `library_api::deps_served!` (`library_api::deps::$method(deps,
+  parent, request)`, `Api::deps_read`, over the `Libraries` port's
+  `read_deps`, the wiring's `ProjectLibraries` opening the project's
+  `Deps`) and deps-cli's `served_reads!` (its `Served`, which the wiring's
+  `DaemonServed` implements too); `Api::library_read` and `deps_read`
+  share one `read_site` (parent, directory, environment, flags,
+  observation). `AssembleContext` is a library read too
   (`Api::assemble_context` through `library_read`; `LibraryReads::
   assemble_context`, `Served::assemble_context`); the daemon's
   `Assemblies` port and the wiring's `ProjectAssemblies` are gone.
@@ -2624,7 +2631,20 @@ built:
   (`oneshot::hosted_wiring`) are all made over it; `per_call_env` (which
   set ctxloom's home as the caller's HOME) is gone.
 - Served: `ListBundles` (`bundle list`), `GetBundle` (`bundle show`, FULL;
-  `bundle view <bundle>`, CONTENT: its files), `ListFragments`,
+  `bundle view <bundle>`, CONTENT: its files; a path no item kind serves,
+  `<bundle>#<path>` read back whole, refused as the view refuses it),
+  `bundle view <bundle>#<kind>/<item>` as the item's own read (owner
+  ruling 2026-11-17: rendered from the item's message, no source-bytes
+  field, not the file byte for byte): `GetFragment`/`GetCommand` its body
+  (`# (distilled version)` over a distilled one), `GetSkill`,
+  `GetMcpServer` (one bundle's server, a bundle of one answering whatever
+  the ID, as Go's view did) and `GetProfile` their fields as YAML under
+  `# <Kind>: <id>`, keys sorted, empty ones left out, references short
+  (library-cli's `viewed_by_the_daemon`, `read_back::{body,skill,mcp,
+  profile}_view`), `ListRemotes` (`remote list`), `ListDependencies`
+  (`deps list`; a read model's decline, a lock or registry that does not
+  read, rides as `LibraryDeclined`, its cause the decline's code and args,
+  daemon-api's `refusal::deps_error`), `ListFragments`,
   `ListCommands`, `GetFragment`, `GetCommand` (`fragment|command
   list|show`), `GetPremiseIndex` (`fragment premises`), `ListSkills`,
   `GetSkill` (`skill list|show`), `ListCompanions` (`companion list`, the
@@ -2651,19 +2671,25 @@ built:
   answer no longer reaches no daemon (so `scripts/plain-engines-check.sh`
   proves the plain engine list by an agent written on a mock, refused in
   process naming the list). The home step (G2) is the daemon's, at a read
-  (`observe_read`), said as `library-api-notice-home-repository-made`; a
-  verb still in process still takes it in process first.
-- Text prints CANONICAL forms (owner ruling 2026-11-17), as the message
+  (`observe_read`), said as `library-api-notice-home-repository-made`; the
+  caller takes none before a served read (`library_cli::is_served_read`,
+  its `SERVED_VERBS` table, `mcp server list|show`, `search` and `run
+  --dry-run`; one path), and a verb still in process takes it in process
+  first.
+- Text prints CANONICAL forms (owner rulings 2026-11-17), as the message
   holds them, never the spelling written (no as-written field crosses the
-  wire): a reference is its resource name (a profile's bundle, parents and
+  wire): a reference is its SHORT library reference, harp-free, as a
+  person types it (`library_api::names::short_reference`, the names table
+  read back: a bundle by its catalog name, `demo`, `<r>/<b>`; an item
+  `<bundle>#<kind>/<id>`, `project#profiles/base`, `demo#mcp/x`; one
+  OQ-16 cannot place keeps its text): a profile's bundle, parents and
   bundles, an agent's profiles, an MCP server's bundle, a dry run's
-  profiles: `projects/<harp>/bundles/project/profiles/base`; one OQ-16
-  cannot place keeps its text), a resource's own name the one a person
-  types (a project profile's bare name, `ctxloom+local:<b>#profiles/<p>`,
-  else its resource name), a free-form document (permissions, `config
-  show`) with its keys sorted. The Go-parity rows that printed the
-  written spelling carry `# changed:` (profile.tsv, mcp.tsv;
-  library_parity's `as_canonical`, its harp unsaid as `projects/{HARP}`).
+  profiles, `fragment premises`; json keeps the resource name. A
+  resource's own name is the one a person types (a project profile's bare
+  name, `ctxloom+local:<b>#profiles/<p>`, else its short reference); a
+  free-form document (permissions, `config show`) has its keys sorted. The
+  Go-parity rows that printed the written spelling carry `# changed:`
+  (profile.tsv, mcp.tsv, run.tsv; library_parity's `as_canonical`).
 - `run --dry-run` is `CreateRun` with `validate_only` (`Api::preview_run`,
   `LibraryReads::preview_run`, library-cli's `Served::preview_run`): planned
   as a library read (its trees observed first, so a library outside git is
@@ -2694,9 +2720,9 @@ built:
   a daemon already serving); with no daemon in time a hook says nothing of
   the library and reads nothing in process.
 
-Still in process (U2's remainder): `bundle view <bundle>#<kind>/<item>`
-(an item's view, whose text is the item's own rendering), and the deps
-reads (`deps list` and the remote reads, deps-cli's).
+Still in process: `remote show`, which is `BrowseRemote` (what a remote
+publishes), not in the service (`GetRemote` is the registration alone;
+escalated, a wire change), and `loadout`.
 
 ## Storage is angzarr-store-sqlite
 
@@ -2974,7 +3000,7 @@ reference among them, OQ-16, no notice yet; an ID on disk that breaks the
 grammar is named as it is). `bundle show` lists each child as a
 `BundleItem` naming it (`fragments[item$=/fragments/x]`, OQ-14), `bundle
 view <b>` is the `Bundle` with its `files`, `bundle view <b>#<kind>/<i>` the
-item's own resource (its `body` the bytes served); `mcp server show <n>` is
+item's own resource as its Get answers it (its `body` the bytes served); `mcp server show <n>` is
 `ListMcpServersResponse` filtered by the ID; `fragment premises` the
 `PremiseIndex` singleton (`<parent>/premiseIndex`, each entry's `fragment`
 a name). A removal's preview is its `Delete<Noun>Response` with `applied:
