@@ -1103,20 +1103,27 @@ pub(crate) fn child_git_user(
 
 /// The environment a call the daemon serves for the project at `root` is
 /// read in (S7), as a process in that project would read it: the caller's
-/// `env`, with the project as `CTXLOOM_ROOT` and ctxloom's `home` as
-/// `HOME`, each over the caller's own of that name.
+/// `env`, with the project as `CTXLOOM_ROOT` and ctxloom's `home` as the
+/// platform's home variable (`HOME`, `USERPROFILE` on Windows:
+/// `os::Flavor::home_var`, which [`Wiring::new`] reads), each over the
+/// caller's own of that name as the platform compares names.
 pub(crate) fn per_call_env<'a>(
     flavor: os::Flavor,
     (root, temp, home): (&str, &Path, &Path),
     env: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> EnvSnapshot {
+    let home_var = flavor.home_var();
+    let owned = [
+        flavor.env_key(run_ports::ROOT_VARIABLE),
+        flavor.env_key(home_var),
+    ];
     let mut vars: Vec<(OsString, OsString)> = env
         .into_iter()
-        .filter(|(name, _)| !matches!(*name, "CTXLOOM_ROOT" | "HOME"))
+        .filter(|(name, _)| !owned.contains(&flavor.env_key(name)))
         .map(|(name, value)| (name.into(), value.into()))
         .collect();
-    vars.push(("CTXLOOM_ROOT".into(), root.into()));
-    vars.push(("HOME".into(), home.as_os_str().to_os_string()));
+    vars.push((run_ports::ROOT_VARIABLE.into(), root.into()));
+    vars.push((home_var.into(), home.as_os_str().to_os_string()));
     EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(root)), temp.to_path_buf(), vars)
 }
 
