@@ -2250,7 +2250,12 @@ this session will be stopped in <span>; finish and exit") and both stop
 sentences are DRAFTS (OD-63). Under `test-support`, the daemon directory's
 `test-deaf-to-stop` makes a daemon take a stop and a drain and ignore them,
 and `test-shutdown-stop-wait` (seconds) shortens `STOP_WAIT`, so a test
-sees the exit 10. A dead
+sees the exit 10. Its `test-hold-alarms` (one line, seconds since the
+epoch) holds the scheduler's clock at that instant while it is there
+(`DaemonFiles::alarms_held_at`, serve's `HeldAlarms`), so no alarm armed
+since comes due until the test removes it: session_approvals.feature's
+asks with `approval_timeout: 2s` are held from before the ask until "the
+ask's time runs out", never ended early by a slow machine (the race rule). A dead
 frontend's lock reads free and its files are taken away by the next look;
 no process id is trusted and no signal is sent to one (Windows alike). The
 shutdown reaches the daemon without the version check (`Reach::observing`),

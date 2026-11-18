@@ -195,7 +195,7 @@ pub(crate) fn serve(
         };
         let endpoint = own.endpoint.clone();
         said(&say, &format!("serving at {endpoint}"));
-        let scheduler = scheduler_over(&core, &kept, pace, &say);
+        let scheduler = scheduler_over(&core, &kept, (pace, &files), &say);
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
         let terminated = hear_terminate((&fs, home), &shared, &say);
@@ -267,17 +267,49 @@ const SCHEDULER_END: Duration = Duration::from_secs(5);
 fn scheduler_over(
     core: &InProcessCore<SqliteStore>,
     kept: &Projectors,
-    pace: Pace,
+    (pace, files): (Pace, &DaemonFiles),
     say: &Say,
 ) -> crate::scheduling::Scheduler {
     let say = Arc::clone(say);
     crate::scheduling::start(
         core.share(),
         kept.due.clone().unwrap_or_default(),
-        Arc::new(crate::SystemClock),
+        scheduler_clock(files),
         pace.poll,
         Arc::new(move |line: &str| said(&say, line)),
     )
+}
+
+/// The scheduler's clock: the system's; under test-support, held while
+/// the daemon's `test-hold-alarms` is there ([`DaemonFiles::alarms_held`]).
+#[cfg(feature = "test-support")]
+fn scheduler_clock(files: &DaemonFiles) -> Arc<dyn scheduler_ports::Clock> {
+    Arc::new(HeldAlarms {
+        files: files.clone(),
+    })
+}
+
+/// The shipped scheduler's clock is the system's.
+#[cfg(not(feature = "test-support"))]
+fn scheduler_clock(_: &DaemonFiles) -> Arc<dyn scheduler_ports::Clock> {
+    Arc::new(crate::SystemClock)
+}
+
+/// The system's clock, standing at the instant a hold of the alarms names
+/// while it lasts (test-support).
+#[cfg(feature = "test-support")]
+struct HeldAlarms {
+    files: DaemonFiles,
+}
+
+#[cfg(feature = "test-support")]
+impl scheduler_ports::Clock for HeldAlarms {
+    fn now(&self) -> angzarr_embedded::Timestamp {
+        match self.files.alarms_held_at() {
+            Some(seconds) => angzarr_embedded::Timestamp { seconds, nanos: 0 },
+            None => scheduler_ports::Clock::now(&crate::SystemClock),
+        }
+    }
 }
 
 /// What runs for the daemon's life, ended once its loop returns and before
