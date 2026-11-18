@@ -132,6 +132,34 @@ fn test_an_installed_remote_bundle_is_reachable_by_its_canonical_reference() {
     assert!(by_name.content.contains("KIT-RULES"));
 }
 
+// owner T27 (QUESTIONS 2(a)): an installed bundle in the old layout is
+// refused like a project's, its fix naming the remote to migrate it in.
+#[test]
+fn test_an_installed_bundle_in_the_old_layout_is_refused_naming_its_remote() {
+    let mut old = kit();
+    old.files
+        .insert("mcp/.tools.meta.yaml".to_string(), b"notes: n\n".to_vec());
+    let lib = library(Remotes {
+        installed: vec![old],
+        search: Ok(RemoteSearch::default()),
+    });
+    let list = lib.bundle_list(&plain());
+    assert!(
+        matches!(
+            &list.notices[..],
+            [Notice::BundleSkipped { cause: library::BundleError::OldLayout { remote, old, .. }, .. }]
+                if remote == URL && old == ".ctxloom/cache/bundles/kit/mcp/.tools.meta.yaml"
+        ),
+        "{:?}",
+        list.notices
+    );
+    let refused = lib.bundle_show(&plain(), "origin/kit").result.unwrap_err();
+    assert_eq!(
+        angzarr_diagnostic::Diagnostic::code(&refused),
+        "library-sidecar-old-layout"
+    );
+}
+
 #[test]
 fn test_a_library_without_remotes_lists_no_remote_bundle() {
     let lib = Setup {

@@ -233,9 +233,9 @@ fn changed(
                 .iter()
                 .all(|change| !matches!(change, Change::Write(_))) =>
         {
-            // Several paths taken away (an item with its distilled form, a
-            // skill with its old-layout sidecar): the sequence of their
-            // trashes (T28), each kept as a removal's is.
+            // Several paths taken away (an item with its distilled form):
+            // the sequence of their trashes (T28), each kept as a removal's
+            // is.
             Ok(Some(Shape::Sequence(
                 several
                     .iter()

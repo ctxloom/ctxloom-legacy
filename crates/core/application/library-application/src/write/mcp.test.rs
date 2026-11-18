@@ -17,9 +17,8 @@ fn world() -> (Library, Arc<Mem>) {
                 ENVELOPE,
                 (
                     "mcp/tools.yaml",
-                    "command: echo\nargs:\n  - KEEP-THIS-ARGUMENT\n",
+                    "command: echo\nargs:\n  - KEEP-THIS-ARGUMENT\nnotes: KEEP-THESE-NOTES\n",
                 ),
-                ("mcp/.tools.meta.yaml", "notes: KEEP-THESE-NOTES\n"),
             ],
         )],
         layers: &[CONFIG],
@@ -40,7 +39,7 @@ fn patch() -> McpPatch {
 
 // mcp.feature: A name the bundle lacks is created as a remote server
 #[test]
-fn test_set_creates_a_server_the_bundle_lacks_with_its_sidecar() {
+fn test_set_creates_a_server_the_bundle_lacks_as_its_one_file() {
     let (library, mem) = world();
     let done = library
         .mcp_set(
@@ -71,17 +70,15 @@ fn test_set_creates_a_server_the_bundle_lacks_with_its_sidecar() {
             "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml"
         )
     );
+    // owner T27: what is said about it is in its one file, no sidecar.
     assert_eq!(
         mem.text("demo", "mcp/search.yaml").unwrap(),
-        "url: https://mcp.example.com/v1\nheaders:\n  X-Team: core\n"
+        "url: https://mcp.example.com/v1\nheaders:\n  X-Team: core\ntags:\n  - search-index\nnotes: Team search index\ninstallation: Ask core for a seat\n"
     );
-    assert_eq!(
-        mem.text("demo", "mcp/.search.meta.yaml").unwrap(),
-        "tags:\n  - search-index\nnotes: Team search index\ninstallation: Ask core for a seat\n"
-    );
+    assert_eq!(mem.text("demo", "mcp/.search.meta.yaml"), None);
     assert_eq!(
         mem.text("demo", "mcp/tools.yaml").unwrap(),
-        "command: echo\nargs:\n  - KEEP-THIS-ARGUMENT\n"
+        "command: echo\nargs:\n  - KEEP-THIS-ARGUMENT\nnotes: KEEP-THESE-NOTES\n"
     );
 }
 
@@ -108,11 +105,7 @@ fn test_set_updates_what_it_names_and_keeps_the_rest() {
     assert_eq!(done.status, "updated");
     assert_eq!(
         mem.text("demo", "mcp/tools.yaml").unwrap(),
-        "command: search-mcp\nargs:\n  - --stdio\nenv:\n  LOG_LEVEL: debug\n"
-    );
-    assert_eq!(
-        mem.text("demo", "mcp/.tools.meta.yaml").unwrap(),
-        "notes: KEEP-THESE-NOTES\n"
+        "command: search-mcp\nargs:\n  - --stdio\nenv:\n  LOG_LEVEL: debug\nnotes: KEEP-THESE-NOTES\n"
     );
 }
 
@@ -135,7 +128,7 @@ fn test_set_can_clear_the_old_target_and_name_the_new_one_together() {
         .unwrap();
     assert_eq!(
         mem.text("demo", "mcp/tools.yaml").unwrap(),
-        "served_by: session-endpoint\n"
+        "served_by: session-endpoint\nnotes: KEEP-THESE-NOTES\n"
     );
 }
 
@@ -224,11 +217,7 @@ fn test_edit_writes_the_editors_result_back_and_keeps_the_rest() {
     );
     assert_eq!(
         mem.text("demo", "mcp/tools.yaml").unwrap(),
-        "command: EDITED-BY-TEST\nargs:\n  - KEEP-THIS-ARGUMENT\n"
-    );
-    assert_eq!(
-        mem.text("demo", "mcp/.tools.meta.yaml").unwrap(),
-        "notes: KEEP-THESE-NOTES\n"
+        "command: EDITED-BY-TEST\nargs:\n  - KEEP-THIS-ARGUMENT\nnotes: KEEP-THESE-NOTES\n"
     );
     assert_eq!(
         mem.edits(),

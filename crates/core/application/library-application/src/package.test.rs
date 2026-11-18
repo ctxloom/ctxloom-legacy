@@ -22,7 +22,7 @@ const DEMO: &[(&str, &str)] = &[
     ),
     ("skills/reviewer/scripts/run.sh", "echo"),
     (
-        "skills/.reviewer.meta.yaml",
+        "skills/reviewer/.meta.yaml",
         "tags: [ctxloom:link_id=pair]\nexecutable: [scripts/run.sh]\n",
     ),
     (
@@ -86,7 +86,9 @@ fn test_a_bundles_commands_are_named_for_their_bundle() {
 }
 
 // j000600_agent_skill.feature: a skill arrives whole, under its frontmatter
-// name, its exec bit from the sidecar's `executable:`.
+// name, its exec bit from its metadata's `executable:`; the metadata is
+// delivered with the directory (owner T27), so an engine's skills directory
+// holds it too.
 #[test]
 fn test_a_skill_arrives_whole_under_its_frontmatter_name() {
     let p = package();
@@ -95,6 +97,8 @@ fn test_a_skill_arrives_whole_under_its_frontmatter_name() {
     assert_eq!(skill.name, "code-reviewer");
     assert_eq!(skill.description, "SKILL-MARKER");
     assert_eq!(skill.tags, vec!["ctxloom:link_id=pair".to_string()]);
+    let paths: Vec<&str> = skill.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, [".meta.yaml", "SKILL.md", "scripts/run.sh"]);
     let run = skill
         .files
         .iter()

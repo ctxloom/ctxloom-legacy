@@ -27,7 +27,7 @@ fn vault_with_reviewer() -> Project {
     project.write(&script, "#!/bin/sh\n# SCRIPT-MARKER-reviewer-2b7e40\n");
     files::set_mode(project.dir().join(&script), 0o755);
     project.write(
-        &format!("{SKILL_ROOT}/skills/.reviewer.meta.yaml"),
+        &format!("{SKILL_ROOT}/skills/reviewer/.meta.yaml"),
         "executable:\n  - scripts/run.sh\n",
     );
     project

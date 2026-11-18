@@ -759,7 +759,7 @@ fn j000600_front_matter(w: &mut World, step: &Step) {
     w.engines.skill = Some((written, String::new()));
 }
 
-/// The script, and the skill's sidecar declaring it executable (the ONLY
+/// The script, and the skill's metadata declaring it executable (the ONLY
 /// word on a file's executability).
 #[when(
     regex = r#"^Alice adds an executable precheck script, scripts/run.sh, to the skill "([^"]*)"$"#
@@ -770,12 +770,18 @@ fn j000600_script(w: &mut World, reference: String) {
     w.common
         .project
         .write(&format!("{dir}/scripts/run.sh"), &script);
-    let sidecar = dir.replace("/skills/", "/skills/.") + ".meta.yaml";
-    let held = w.common.project.read(&sidecar).unwrap_or_default();
-    w.common.project.write(
-        &sidecar,
-        &format!("{held}executable:\n  - scripts/run.sh\n"),
-    );
+    // The skill's metadata, inside its directory (owner T27); a new
+    // skill's is the empty mapping, which a key replaces.
+    let meta = format!("{dir}/.meta.yaml");
+    let held = w.common.project.read(&meta).unwrap_or_default();
+    let held = if held.trim() == "{}" {
+        String::new()
+    } else {
+        held
+    };
+    w.common
+        .project
+        .write(&meta, &format!("{held}executable:\n  - scripts/run.sh\n"));
     let skill = w.engines.skill.as_mut().expect("the skill was created");
     skill.1 = script;
 }

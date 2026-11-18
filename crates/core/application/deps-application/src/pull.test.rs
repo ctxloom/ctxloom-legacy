@@ -778,7 +778,7 @@ fn test_the_disclosure_takes_executability_from_the_sidecar_alone() {
         ("bundle.yaml", ENVELOPE.1),
         ("skills/s/SKILL.md", "---\nname: s\n---\n"),
         ("skills/s/go", "#!/bin/sh\n"),
-        ("skills/.s.meta.yaml", "executable:\n  - go\n"),
+        ("skills/s/.meta.yaml", "executable:\n  - go\n"),
     ]
     .into_iter()
     .map(|(path, text)| (path.to_string(), text.as_bytes().to_vec()))

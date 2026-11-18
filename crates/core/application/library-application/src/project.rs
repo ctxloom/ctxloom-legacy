@@ -305,8 +305,12 @@ impl Library {
                     bundle,
                 }),
                 Err(cause) => {
+                    let dir = crate::shown::parent(&manifest).to_string();
+                    // An old layout's paths are named from the project's
+                    // root, as the `git mv` that migrates them is typed.
+                    let cause = cause.located(&self.below_root(&dir), "");
                     notices.push(Notice::BundleSkipped {
-                        dir: crate::shown::parent(&manifest).to_string(),
+                        dir,
                         manifest,
                         cause: cause.clone(),
                     });
@@ -314,7 +318,7 @@ impl Library {
                 }
             }
         }
-        let origins = self.installed(&mut entries, notices);
+        let origins = self.installed(&mut entries, &mut unreadable, notices);
         let mut catalog = Catalog::new(entries).with_origins(origins);
         // ctxloom's built-in bundles are a project's (rulings 110, 111),
         // except where it has its own of the name, readable or not.
@@ -349,6 +353,21 @@ impl Library {
 }
 
 impl Library {
+    /// The shown directory `dir` as it is reached from the project's root
+    /// (the parent of its `.ctxloom`); `dir` itself when it is not below it.
+    fn below_root(&self, dir: &str) -> String {
+        let app = self.files.app_dir();
+        let Some(root) = app
+            .strip_suffix(".ctxloom")
+            .filter(|root| root.ends_with(['/', '\\']))
+        else {
+            return dir.to_string();
+        };
+        dir.strip_prefix(root)
+            .filter(|rest| !rest.is_empty())
+            .map_or_else(|| dir.to_string(), ToString::to_string)
+    }
+
     /// Where a companion runs: the project's root (the parent of its
     /// `.ctxloom`) in a project, else the caller's directory (D1, and the
     /// verified gap: a probe that names none inherits its process's).
@@ -372,6 +391,7 @@ impl Library {
     fn installed(
         &self,
         entries: &mut Vec<Entry>,
+        unreadable: &mut BTreeMap<String, BundleError>,
         notices: &mut Vec<Notice>,
     ) -> BTreeMap<String, RemoteOrigin> {
         let mut origins = BTreeMap::new();
@@ -406,11 +426,20 @@ impl Library {
                         bundle: read,
                     });
                 }
-                Err(cause) => notices.push(Notice::BundleSkipped {
-                    dir: bundle.path,
-                    manifest,
-                    cause,
-                }),
+                Err(cause) => {
+                    // An installed copy is migrated in its remote, never
+                    // here: the refusal names it, and a read of the bundle
+                    // is refused with it (owner T27).
+                    let cause = cause.located(&bundle.path, &bundle.url);
+                    if matches!(cause, BundleError::OldLayout { .. }) {
+                        unreadable.insert(bundle.name.clone(), cause.clone());
+                    }
+                    notices.push(Notice::BundleSkipped {
+                        cause,
+                        dir: bundle.path,
+                        manifest,
+                    });
+                }
             }
         }
         origins

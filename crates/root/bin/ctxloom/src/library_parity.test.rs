@@ -117,8 +117,8 @@ const OWNER_REFUSALS: [&str; 9] = [
 const REFUSED_FIXTURES: [&str; 1] = ["cfg/v8"];
 
 /// Rows where the owner overrides Go (2026-11-12): a skill file's mode is its
-/// sidecar's `executable:` declaration, on every OS, never the mode on disk
-/// Go read. The `lib` fixture's sidecar declares `scripts/run.sh`, which git
+/// metadata's `executable:` declaration, on every OS, never the mode on disk
+/// Go read. The `lib` fixture's metadata declares `scripts/run.sh`, which git
 /// checks out 0644, so Go said 0644 and this build says 0755.
 const SIDECAR_MODE_ROWS: [&str; 2] = ["skill-show-json", "skill-show-text"];
 
@@ -135,6 +135,48 @@ fn as_declared(id: &str, golden: String) -> String {
             &format!("\"sha256\": \"{SCRIPT}\",\n      \"mode\": \"0755\""),
         )
         .replace(&format!("0644  {SCRIPT}"), &format!("0755  {SCRIPT}"))
+}
+
+/// The rows whose text lists a skill's files where the owner moved its
+/// metadata into its directory (T27, 2026-11-18, evening): a file of the
+/// package, so listed first and counted (Go kept it beside the package).
+/// Each with the digest of its fixture's `.meta.yaml`.
+const SKILL_META_ROWS: [(&str, &str); 3] = [
+    (
+        "skill-show-text",
+        "96a796879d68dc7d7ad2812cddc5946e7fe0192045e2cf94228532acbd3882de",
+    ),
+    ("skill-list-text", ""),
+    (
+        "gold-skill-show-text",
+        "c2f5c3dac38dbf5631daebaf7987ee71675ba32b820bca08415de518cca9c458",
+    ),
+];
+
+/// Go's golden for a [`SKILL_META_ROWS`] row, the skill's metadata among
+/// its files: a listing's count one more, a show's `Files` led by it.
+fn as_delivered(id: &str, golden: String) -> String {
+    let Some((_, digest)) = SKILL_META_ROWS.iter().find(|(row, _)| *row == id) else {
+        return golden;
+    };
+    if digest.is_empty() {
+        return golden.replace("[2 file(s)]", "[3 file(s)]");
+    }
+    let mut out = String::new();
+    for line in golden.split_inclusive('\n') {
+        match line
+            .strip_prefix("Files (")
+            .and_then(|rest| rest.strip_suffix("):\n"))
+            .and_then(|n| n.parse::<u32>().ok())
+        {
+            Some(n) => {
+                out.push_str(&format!("Files ({}):\n", n + 1));
+                out.push_str(&format!("  0644  sha256:{digest}  .meta.yaml\n"));
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
 }
 
 /// The rows whose answer the owner changed from Go's: `bundle list` of a
@@ -523,7 +565,10 @@ fn mismatch(row: &Row, project: &Project) -> Option<String> {
         &row.id,
         as_ruled(
             &row.id,
-            as_declared(&row.id, as_changed(&golden(&row.id, "stdout"))),
+            as_delivered(
+                &row.id,
+                as_declared(&row.id, as_changed(&golden(&row.id, "stdout"))),
+            ),
         ),
     );
     if !is_dry_run(&row.id) && carries_retired_llm(&want) {

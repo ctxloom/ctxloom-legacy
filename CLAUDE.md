@@ -122,19 +122,40 @@ nothing stores the template; an empty buffer is
 bundle nobody had (`ItemCreated::bundle_created`); the two-word Go form
 (`<bundle> <name>`) keeps Go's placeholder, no editor, and its refusal of a
 missing bundle. `skill create <bundle>#skills/<name>` (or the two words)
-scaffolds its `SKILL.md` and opens none. `fragment|command edit` writes the
+scaffolds its `SKILL.md` and an EMPTY `.meta.yaml` (`{}`, the empty
+mapping, `library::write::skill::EMPTY_META`) beside it, one new directory,
+and opens none. `fragment|command edit` writes the
 `.md` ALONE (owner T29, T30): it distills nothing and never touches the
 `.distilled.md` beside it, which then reads stale by its digest (below,
 "Distill"); `--no-distill` is accepted and only says so.
 Skill zips are written and read by `library::write::archive` over the `zip`
 crate (deflate only, default features off) and crc32fast.
-A file's executability is ONLY its skill sidecar's `executable:` list
-(`skills/.<n>.meta.yaml`), on every OS (owner ruling 2026-11-12; Windows
+A skill is ONE directory, its metadata inside it, `skills/<n>/.meta.yaml`
+(owner T27, 2026-11-18, evening), a file of the package (`Skill::files`)
+and so DELIVERED with it everywhere the directory is copied whole: a
+materialize into an engine's skills directory (claude's
+`.claude/skills/<n>/`, the session home's `skills/`), an export zip, an
+install and a push; `skill show` lists it. An MCP server is ONE file,
+`mcp/<n>.yaml`, its `tags`, `notes` and `installation` in it after its
+runtime fields (`library::write::mcp::content_file`), so `mcp server set
+--url X --notes Y` on a new server is one file. A bundle still in the old
+layout (`skills/.<n>.meta.yaml` or `mcp/.<n>.meta.yaml` beside the item)
+is refused per bundle (owner, QUESTIONS 2(a); D15): the tree reader's
+`BundleError::OldLayout`, `library-sidecar-old-layout`, exit 20, which
+`bundle show` (and every read through `Project::bundle`) answers with, and
+a listing names with the skipped-bundle notice while listing the rest; its
+paths are named from the project's root (`BundleError::located`), its fix
+the `git mv` that migrates it (for a server: copy the fields into its file,
+then `git rm`); an INSTALLED bundle's fix names its remote's URL to migrate
+in instead. Nothing reads or moves an old sidecar; a hook's
+`hooks/<event>/.<n>.meta.yaml` sidecar is unchanged.
+A file's executability is ONLY its skill's metadata's `executable:` list
+(`skills/<n>/.meta.yaml`), on every OS (owner ruling 2026-11-12; Windows
 reports every file executable): `library::write::skill::declared_executables`
 answers it for a bundle's tree, and nothing reads a mode from disk or git
 (`ContentRepo` has no `executable_files`, `UserFiles::read_tree` and
 `deps_ports::RepoTree` are bytes alone). `skill show`'s mode column, an
-export, an import (the sidecar it brings), an installed bundle and a pin's
+export, an import (the metadata it brings), an installed bundle and a pin's
 disclosure take it from there; an install writes the declared files 0755 as
 a convenience for running them, never read back, and a launch, which
 carries a skill whole, writes them executable where it puts them (the
@@ -145,7 +166,9 @@ and every other file 100644 (`Remotes::publish`'s `executable`, `git add
 --chmod`; a pull request's `PullRequest::executable`). Visible change on
 unix: a file chmod'ed executable but not listed shows 0644 and is pushed
 100644. Not changed: a skill zip's entry modes, which its export writes
-from the sidecar and its import turns into the sidecar's list.
+from the metadata and its import turns into the metadata's list (an
+import always writes the metadata: the archive's, else the empty mapping;
+a forced import replaces it with the directory).
 
 Step 10b U3 (writes as library-domain commands; `t13-step10.plan.md` §2
 U3, protos.md §1.1) serves `bundle create`, `fragment|command create
@@ -154,8 +177,8 @@ server set|edit` (`UpdateMcpServer`: a mask names a set's fields, a field
 named and given empty cleared; no mask is the whole server through the
 editor, the preview's Edit need; `--header`, `--tag` and `--served-by` are
 gone, owner ruling, hard migrate; a server's notes and installation are
-its `mcp/.<n>.meta.yaml` sidecar until T27, so a set of them beside a
-runtime field is two files, refused `OneChangePerCall`) and the
+in its one file, owner T27, so a set of them beside a runtime field is
+one file, one call) and the
 removals `bundle|profile|agent|companion remove` in the daemon,
 `agent create|edit` (`CreateAgent`, `UpdateAgent`: the agent's fields,
 an edit's named by its mask, a field given empty cleared; `model`,
@@ -177,9 +200,9 @@ refused `OneChangePerCall`, so bundle.feature's listing outline edits the
 version and the fragment in two calls, coordinator 2026-11-18, for owner
 review)
 and `fragment|command|skill remove` (`DeleteFragment`, `DeleteCommand`,
-`DeleteSkill`: an item with its distilled form, or a skill with its
-old-layout sidecar, is several paths taken away, the T28 sequence of
-their trashes, each kept; step 10b U9), from one table (`daemon_proto::library_writes!`, every layer;
+`DeleteSkill`: an item with its distilled form is several paths taken
+away, the T28 sequence of their trashes, each kept, step 10b U9; a skill
+is its one directory, one trash, owner T27), from one table (`daemon_proto::library_writes!`, every layer;
 `library_api::served_writes!`, each verb's use case and response; the
 CLI's `SERVED_WRITES`). Every write request carries the caller's `cwd`
 (97) and `env` (94), as the reads do (E1, extended to the writes on

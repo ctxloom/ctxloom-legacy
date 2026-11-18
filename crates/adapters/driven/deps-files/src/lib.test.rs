@@ -314,7 +314,7 @@ fn test_an_authored_bundle_is_found_read_and_removed_whole() {
     put(&fs, &format!("{root}/fragments/example.md"), "# Example\n");
     put(
         &fs,
-        &format!("{root}/skills/.s.meta.yaml"),
+        &format!("{root}/skills/s/.meta.yaml"),
         "executable: []\n",
     );
     assert_eq!(
@@ -325,7 +325,7 @@ fn test_an_authored_bundle_is_found_read_and_removed_whole() {
     let paths: Vec<&str> = read.keys().map(String::as_str).collect();
     assert_eq!(
         paths,
-        vec!["bundle.yaml", "fragments/example.md", "skills/.s.meta.yaml"]
+        vec!["bundle.yaml", "fragments/example.md", "skills/s/.meta.yaml"]
     );
     assert_eq!(read["fragments/example.md"], b"# Example\n");
     files.remove_local_bundle("demo").expect("removes");
