@@ -151,6 +151,9 @@ removal_responses!(
     DeleteCompanionResponse,
 );
 
+/// The refusal of a write planned against what has changed since.
+const STALE: &str = "library-tree-plan-stale";
+
 /// A removal preview's Confirm need, if it asks one.
 fn confirm_need(needs: &[v1::Need]) -> Option<(&str, &v1::Confirm)> {
     needs.iter().find_map(|need| match &need.kind {
@@ -182,6 +185,22 @@ pub(crate) fn removal_served<M: RemovalResponse>(
                         answer: Some(v1::answer::Answer::Confirmed(true)),
                     }];
                     answered = ask(false, answers, preview.etag().to_string());
+                }
+            }
+        }
+    }
+    // What she was shown has changed since: the apply is refused stale,
+    // and she is shown the removal as it is now, to look again.
+    if let Err(stale) = &answered {
+        if stale.cause.code() == STALE {
+            let again = ask(true, Vec::new(), String::new());
+            if let Ok(mut again) = again {
+                let notices = again.notices();
+                let said: Vec<library_application::Notice> =
+                    notices.iter().map(library_api::reads::said).collect();
+                cli_support::say_notices(&said, crate::PROG, cx.format, cx.catalog, err);
+                if let Some((_, confirm)) = confirm_need(again.needs()) {
+                    removal_preview_text(&again, confirm, out).map_err(crate::output_failure)?;
                 }
             }
         }

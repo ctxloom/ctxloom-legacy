@@ -42,6 +42,8 @@ const SPAWNED_IDLE_SECONDS: u64 = 15;
 /// is kill-tolerant) and reaped.
 #[derive(Default)]
 pub(super) struct State {
+    /// The bundle changed between a preview and Alice's answer, if any.
+    changes_before_answer: Option<String>,
     /// The stores' evidence as it was before the scenario's command ran.
     store_before: Option<StoreEvidence>,
     pub(super) daemon: Option<Child>,
@@ -713,11 +715,84 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         w.common.ran = Some(w.common.project.run_input(&args, "yes\n", &env_pairs(&env)));
         return true;
     }
-    let stubbed = text.contains("at her terminal, and answers yes when asked");
-    if stubbed {
-        red(text);
+    if text.contains("at her terminal, and answers yes when asked") {
+        removes_at_terminal(w, step);
+        return true;
     }
     false
+}
+
+/// Her terminal, stood in for (`CTXLOOM_TEST_TERMINAL`): the step's
+/// command run, and once it asks its `[y/N]` question (read off its
+/// standard error) whatever the scenario has to happen between the
+/// preview and her answer (`changes_before_answer`), then her yes. The
+/// change waits for the question, so it falls between the two, always.
+fn removes_at_terminal(w: &mut World, step: &cucumber::gherkin::Step) {
+    use std::io::{Read as _, Write as _};
+    use std::process::{Command, Stdio};
+    w.before_run();
+    let words = line_words(step);
+    let project = &w.common.project;
+    let mut command = Command::new(crate::tests::binary());
+    command
+        .args(&words)
+        .env_clear()
+        .env("HOME", project.home())
+        .env("USERPROFILE", project.home())
+        .env("TMPDIR", crate::tests::temp_root())
+        .env("CTXLOOM_ROOT", project.dir())
+        .env("CTXLOOM_TEST_TERMINAL", "1")
+        .current_dir(project.dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for name in ["PATH", "SystemRoot"] {
+        if let Some(value) = crate::tests::host_var(name) {
+            command.env(name, value);
+        }
+    }
+    for (name, value) in env_of(w) {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().expect("ctxloom runs");
+    let mut stdout = child.stdout.take().expect("stdout");
+    let mut stderr = child.stderr.take().expect("stderr");
+    let (asked, asking) = std::sync::mpsc::channel();
+    let errors = std::thread::spawn(move || {
+        let (mut said, mut byte, mut told) = (Vec::new(), [0_u8], false);
+        while stderr.read(&mut byte).is_ok_and(|n| n == 1) {
+            said.push(byte[0]);
+            if !told && said.ends_with(b"[y/N] ") {
+                told = true;
+                let _ = asked.send(());
+            }
+        }
+        said
+    });
+    let outputs = std::thread::spawn(move || {
+        let mut said = Vec::new();
+        let _ = stdout.read_to_end(&mut said);
+        said
+    });
+    let mut stdin = child.stdin.take().expect("stdin");
+    if asking.recv_timeout(Duration::from_secs(60)).is_ok() {
+        if let Some(bundle) = w.daemon_spec.changes_before_answer.clone() {
+            files::put(
+                w.common.project.dir().join(format!(
+                    ".ctxloom/content/bundles/v2/{bundle}/fragments/meanwhile.md"
+                )),
+                "written while Alice read the preview\n",
+            );
+        }
+        let _ = stdin.write_all(b"yes\n");
+    }
+    drop(stdin);
+    let status = child.wait().expect("ctxloom finishes");
+    w.common.ran = Some(crate::tests::Ran {
+        code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&outputs.join().expect("stdout read")).into_owned(),
+        stderr: String::from_utf8_lossy(&errors.join().expect("stderr read")).into_owned(),
+    });
 }
 
 /// The signal a `... ctxloom is sent a <SIG> while the assistant works:`
@@ -4480,13 +4555,33 @@ fn previewed_then_applied(_: &mut World) {
 #[given(
     expr = "the bundle {string} changes after its removal is previewed and before Alice answers"
 )]
-fn bundle_changes_mid(_: &mut World, _b: String) {
-    red("the bundle changes between preview and answer")
+fn bundle_changes_mid(w: &mut World, bundle: String) {
+    w.daemon_spec.changes_before_answer = Some(bundle);
 }
 
 #[then("the apply was refused as stale, and the CLI previewed the removal again")]
-fn refused_stale(_: &mut World) {
-    red("the apply was refused as stale")
+fn refused_stale(w: &mut World) {
+    let ran = w.common.ran();
+    assert_eq!(ran.code, 20, "{}", ran.said());
+    assert!(
+        ran.stderr.contains("library-tree-plan-stale") || ran.stderr.contains("look again"),
+        "refused as stale: {}",
+        ran.said()
+    );
+    assert!(
+        ran.stdout.contains("Would remove bundle \"notes\""),
+        "the removal previewed again: {}",
+        ran.said()
+    );
+    assert!(
+        files::exists(
+            w.common
+                .project
+                .dir()
+                .join(".ctxloom/content/bundles/v2/notes/bundle.yaml")
+        ),
+        "nothing was removed"
+    );
 }
 
 #[given(expr = "an initialized ctxloom project with a recorded session {string}")]

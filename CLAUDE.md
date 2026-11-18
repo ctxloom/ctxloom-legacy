@@ -185,7 +185,9 @@ review, and the preview's target as its arg `target`, from which the CLI
 prints the preview in its existing words); the CLI asks it at the terminal
 (`Served::confirm`, `[y/N]`; none off a terminal) and on a yes sends the
 apply with the answer and the preview's etag, else prints the preview and
-applies nothing (`library_cli::write::removal_served`); `--yes` is one
+applies nothing (`library_cli::write::removal_served`); an apply refused
+`library-tree-plan-stale` (the bundle changed before her answer) previews
+the removal again, prints it, and ends in the refusal; `--yes` is one
 call. `DeleteCompanion` has no `answers` field, so its apply sends none.
 A preview's etag is the path's last sequence; the apply sends it back
 (`etag`) and the daemon puts it in the step's command as `seen_sequence`

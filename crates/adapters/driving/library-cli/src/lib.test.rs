@@ -361,6 +361,26 @@ impl Names for Unnamed {
 /// No daemon to name the project: the call fails, as one unreached does.
 pub(crate) struct Unreachable;
 
+/// A write's refusal as stale, as the daemon answers one (its code alone).
+#[derive(Debug)]
+pub(crate) struct Stale;
+
+impl std::fmt::Display for Stale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the library changed since you looked; look again")
+    }
+}
+
+impl Diagnostic for Stale {
+    fn code(&self) -> &str {
+        "library-tree-plan-stale"
+    }
+
+    fn args(&self) -> Vec<(&str, angzarr_diagnostic::Arg)> {
+        Vec::new()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct NoDaemon;
 
@@ -427,6 +447,10 @@ impl Asks {
             .borrow_mut()
             .push((under.to_string(), Box::new(request)));
         let mut answers = self.answers.borrow_mut();
+        if answers.front().is_some_and(|answer| answer.is::<Stale>()) {
+            answers.pop_front();
+            return Err(Failure::new(Stale, Exit::REFUSED));
+        }
         if answers.front().is_some_and(|answer| answer.is::<M>()) {
             if let Some(answer) = answers.pop_front() {
                 if let Ok(answer) = answer.downcast::<M>() {
@@ -992,4 +1016,41 @@ pub(crate) fn confirm_need(target: &str) -> serde_json::Value {
         "text": format!("Remove {target}?"),
         "args": [{"name": "target", "value": target}],
     }})
+}
+
+// Step 10b U3: what she confirmed changed before her answer reached the
+// daemon, so its apply is refused stale; she is shown the removal again,
+// as it is now, and nothing is applied.
+#[test]
+fn test_a_confirmed_removal_refused_stale_is_previewed_again() {
+    let asks = Asks::answering(
+        vec![
+            Box::new(previewed_removal()),
+            Box::new(Stale),
+            Box::new(previewed_removal()),
+        ],
+        Some(true),
+    );
+    let ran = go_served(
+        &["bundle", "remove", "notes"],
+        TEXT,
+        BARE,
+        &Project,
+        Some(&asks),
+    );
+    assert!(
+        matches!(&ran.exit, Err(why) if why.starts_with("library-tree-plan-stale:20")),
+        "{:?}",
+        ran.exit
+    );
+    assert!(
+        ran.out.starts_with("Would remove bundle \"notes\":"),
+        "{}",
+        ran.out
+    );
+    let sent = asks.requests::<v1::DeleteBundleRequest>();
+    assert_eq!(
+        sent.iter().map(|r| r.validate_only).collect::<Vec<_>>(),
+        [true, false, true]
+    );
 }
