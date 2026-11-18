@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use cucumber::{given, then, when};
 use serde_json::{json, Value};
 
-use super::World;
+use super::{writes, World};
 use crate::tests::gherkin_common::CommonWorld;
 use crate::tests::{files, procs};
 
@@ -1558,6 +1558,18 @@ fn die_at(when: &str) -> Option<&'static str> {
         "while a turn is in flight" => "turn",
         "after a hook's fact is recorded, before it is answered" => "hook",
         "while the discovery file is written" => "discovery",
+        // A library write's points (step 10b U3): after its intent is
+        // recorded, after it is staged, after the rename, after its done
+        // fact. "In the middle" of one is between its staging and its rename.
+        "after the write's intent is recorded, before it is staged" => "intended",
+        "after the write is staged, before it is renamed in" | "in the middle of the write" => {
+            "staged"
+        }
+        "after the write is renamed in, before it is recorded done" => "renamed",
+        "after the write is recorded done, before it is answered" => "done",
+        // A sequence's (T28): after its first step, the trash, is applied.
+        "after the session's directory moved to trash, before the purge"
+        | "after the old bundle moved to trash, before the new one moved in" => "trashed",
         _ => return None,
     })
 }
@@ -1587,9 +1599,7 @@ fn killed_at(w: &mut World, when: String) {
         if w.daemon_spec.killed {
             return;
         }
-        if w.daemon_spec.daemon.is_some() {
-            w.daemon_spec.before_kill = Some(discovery_now(w));
-        }
+        w.daemon_spec.before_kill = discovery_if_serving(w);
         files::put(daemon_dir(w).join(DIE_AT), step);
         // A daemon serving with the step already reached (a child's turn in
         // flight) takes the switch on its next round.
@@ -1605,8 +1615,14 @@ fn killed_at(w: &mut World, when: String) {
     // takes it, applies the next write it is sent through its coordinator,
     // and is killed before it answers; the daemon started after it finds
     // none.
-    w.daemon_spec.before_kill = Some(discovery_now(w));
+    w.daemon_spec.before_kill = discovery_if_serving(w);
     files::put(daemon_dir(w).join(DIE_AFTER_APPLY), "once");
+}
+
+/// The discovery file of the daemon serving now, when one has written one
+/// (a daemon a command started, or the scenario's own).
+fn discovery_if_serving(w: &World) -> Option<run_ports::Discovery> {
+    files::exists(discovery_path(w)).then(|| discovery_now(w))
 }
 
 /// The daemon directory's switch that kills a test-support daemon once a
@@ -3151,38 +3167,94 @@ fn next_incarnation(w: &mut World, child: String) {
     });
 }
 
-/// The session write the last command was (the daemon spec's retry rows),
-/// as its event's type; a library write is not built yet (T13).
-fn session_write(w: &World) -> &'static str {
+/// The write the last command was (the daemon spec's retry rows): a
+/// session's, as its event's type, a session's removal, or a library write
+/// (step 10b U3), by its verb.
+enum Written {
+    Session(&'static str),
+    Removal(String),
+    Library(String),
+}
+
+fn session_write(w: &World) -> Written {
     let line = w.common.line.clone();
     if line.contains("session send") {
-        "MessageSent"
+        Written::Session("MessageSent")
     } else if line.contains("session close") {
-        "SessionClosed"
+        Written::Session("SessionClosed")
+    } else if let Some(rest) = line.split("session remove ").nth(1) {
+        Written::Removal(
+            rest.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+        )
+    } else if writes::is_library_write(&line) {
+        Written::Library(writes::verb_of(&line))
     } else {
-        red("a library write retried on a new daemon (T13)")
+        panic!("no write the harness knows was run: {line}")
     }
 }
 
 #[then("the command started a new daemon and sent the write once more, under the same id")]
 fn retried_once(w: &mut World) {
-    let _ = session_write(w);
-    let old = w
-        .daemon_spec
-        .before_kill
-        .clone()
-        .expect("a daemon was killed");
+    let written = session_write(w);
+    for switch in [DIE_AFTER_APPLY, DIE_AT] {
+        assert!(
+            !files::exists(daemon_dir(w).join(switch)),
+            "the daemon was never killed under the write (its switch {switch} is still there): {}",
+            w.common.ran().said()
+        );
+    }
     let now = discovery_now(w);
-    assert_ne!(now.pid, old.pid, "the retry was answered by a new daemon");
-    assert!(
-        !files::exists(daemon_dir(w).join(DIE_AFTER_APPLY)),
-        "the switch was taken"
-    );
+    match (&written, w.daemon_spec.before_kill.clone()) {
+        (_, Some(old)) => assert_ne!(now.pid, old.pid, "the retry was answered by a new daemon"),
+        (Written::Session(_), None) => panic!("a daemon was killed"),
+        // The command started the daemon that was killed: the switch was
+        // taken, and the command succeeded, so another one answered it.
+        _ => {}
+    }
+    if let Written::Library(verb) = written {
+        let events = writes::library_events(w, false);
+        let intents = writes::intents(&events, &verb);
+        assert_eq!(intents.len(), 1, "one intent of {verb}: {events:?}");
+        let request = &intents[0]["request_id"];
+        assert!(
+            events
+                .iter()
+                .any(|e| e["type"] == "StepApplied" && &e["request_id"] == request),
+            "the retry under {request} finished the write: {events:?}"
+        );
+    }
 }
 
 #[then("the write was applied once, and its second delivery was a duplicate")]
 fn applied_once(w: &mut World) {
-    let kind = session_write(w);
+    let kind = match session_write(w) {
+        Written::Session(kind) => kind,
+        Written::Removal(harp) => {
+            let record = record(w);
+            let intended = record
+                .iter()
+                .flat_map(|s| s["events"].as_array().cloned().unwrap_or_default())
+                .filter(|e| e["type"] == "SessionRemovalIntended" && e["harp"] == harp.as_str())
+                .count();
+            assert_eq!(
+                intended, 1,
+                "one removal of {harp} was intended: {record:?}"
+            );
+            return;
+        }
+        Written::Library(verb) => {
+            let events = writes::library_events(w, false);
+            assert_eq!(
+                writes::intents(&events, &verb).len(),
+                1,
+                "one intent of {verb}: {events:?}"
+            );
+            return;
+        }
+    };
     let events = session_events(w, "brisk-copper-moth");
     // The write the command sent: a send's by its text (the launch's own
     // first message is another).
@@ -4868,32 +4940,32 @@ fn container_path(_: &mut World) {
 }
 
 #[then("the change is in the tree whole, once, and every bundle still reads")]
-fn change_whole(_: &mut World) {
-    red("the change is in the tree whole, once")
+fn change_whole(w: &mut World) {
+    writes::change_whole(w);
 }
 
 #[given(expr = "another process creates the bundle {string} while its creation is staged")]
-fn concurrent_create(_: &mut World, _b: String) {
-    red("another process creates the bundle meanwhile")
+fn concurrent_create(w: &mut World, bundle: String) {
+    writes::other_creates(w, bundle);
 }
 
 #[then(
     regex = r#"^the other process's "([^"]+)" is untouched, and nothing staged is left behind$"#
 )]
-fn other_untouched(_: &mut World, _b: String) {
-    red("the other process's bundle is untouched")
+fn other_untouched(w: &mut World, bundle: String) {
+    writes::other_untouched(w, bundle);
 }
 
 #[then(
     regex = r#"^the skill "([^"]+)" is the one directory "([^"]+)" of the bundle "([^"]+)", holding its "\.meta\.yaml"$"#
 )]
-fn skill_one_dir(_: &mut World, _s: String, _d: String, _b: String) {
-    red("the skill is one directory with its metadata inside")
+fn skill_one_dir(w: &mut World, skill: String, dir: String, bundle: String) {
+    writes::skill_one_dir(w, skill, dir, bundle);
 }
 
 #[then(regex = r#"^only "([^"]+)" of the bundle "([^"]+)" changed$"#)]
-fn only_changed(_: &mut World, _p: String, _b: String) {
-    red("only the source file changed")
+fn only_changed(w: &mut World, path: String, bundle: String) {
+    writes::only_changed(w, path, bundle);
 }
 
 #[then(
@@ -4911,8 +4983,23 @@ fn rename_converged(_: &mut World, _h: String) {
 }
 
 #[then(regex = r#"^nothing lists "([^"]+)", its streams are purged and no trash is left$"#)]
-fn remove_converged(_: &mut World, _h: String) {
-    red("the remove converged")
+fn remove_converged(w: &mut World, harp: String) {
+    writes::kill_taken(w);
+    let listed = run_now(w, &["session", "list", "--all", "--format", "json"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    assert!(
+        !listed.stdout.contains(&harp),
+        "{harp} is listed: {}",
+        listed.said()
+    );
+    let record = record(w);
+    assert_eq!(
+        session_root(&record, &harp),
+        None,
+        "{harp}'s stream is still in the store"
+    );
+    let trash = writes::in_project(w, ".ctxloom/state/trash");
+    assert!(writes::empty(&trash), "the trash holds {}", trash.display());
 }
 
 #[then("the files it writes are as one uninterrupted run would leave them")]
@@ -4937,11 +5024,10 @@ fn not_moved(w: &mut World) {
     let project = w.common.project.dir().to_path_buf();
     for harp in &harps {
         assert!(
-            crate::tests::files::exists(
-                project
-                    .join(".ctxloom/sessions")
-                    .join(format!("{harp}.lock"))
-            ),
+            crate::tests::files::exists(super::session_lock(
+                &project.join(".ctxloom/sessions"),
+                harp
+            )),
             "{harp}'s lock is where it was"
         );
     }
@@ -4982,14 +5068,38 @@ fn six_word_name(w: &mut World, path: String, shape: String) {
     );
 }
 
+/// The running session's lock is the file `path` (under `.ctxloom`),
+/// inside its directory and held; nothing is beside the directory.
 #[then(regex = r#"^its lock is "([^"]+)", inside its directory$"#)]
-fn lock_inside(_: &mut World, _path: String) {
-    red("the session's lock is inside its directory")
+fn lock_inside(w: &mut World, path: String) {
+    // The fixture's session is seeded by the first command.
+    w.before_run();
+    let (dir, file) = path.rsplit_once('/').expect("a path in a directory");
+    assert_eq!(file, "session.lock", "the lock's name");
+    let lock = writes::in_project(w, &format!(".ctxloom/{path}"));
+    assert!(
+        files::exists(&lock),
+        "no lock at {}: {:?}",
+        lock.display(),
+        files::children(writes::in_project(w, ".ctxloom/sessions"))
+    );
+    let beside = writes::in_project(w, &format!(".ctxloom/{dir}.lock"));
+    assert!(
+        !files::exists(&beside),
+        "a lock is beside the directory: {}",
+        beside.display()
+    );
+    let probe = files::open_read(&lock).expect("the lock opens");
+    assert!(
+        probe.try_lock().is_err(),
+        "{} is not held by the running session",
+        lock.display()
+    );
 }
 
 #[then(regex = r#"^the bundle "([^"]+)" is the imported one, whole, and no trash is left$"#)]
-fn import_converged(_: &mut World, _bundle: String) {
-    red("bundle import --force converged")
+fn import_converged(w: &mut World, bundle: String) {
+    writes::import_converged(w, bundle);
 }
 
 // ------------------------------------------------------------ the drain (U8b)
