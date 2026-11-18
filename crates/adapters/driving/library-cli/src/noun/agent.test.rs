@@ -246,14 +246,13 @@ mod write {
             text(&library, &["agent", "remove", "dev"]),
             "Would remove agent \"dev\".\n\nNothing was removed. Re-run with --yes to apply:\n  ctxloom agent remove dev --yes\n"
         );
-        // OD-40: a removal's preview and its outcome are `DeleteAgentResponse`,
-        // `applied` false and the command that applies, then true.
+        // OD-40: its preview, then its outcome, are `DeleteAgentResponse`s.
         assert_eq!(
             json(&library, &["agent", "remove", "dev"]),
             serde_json::json!({
-                "agent": {"name": "projects/calm-otter/agents/dev"},
-                "applied": false,
+                "agent": {"name": "projects/calm-otter/agents/dev"}, "applied": false,
                 "apply_command": "ctxloom agent remove dev --yes",
+                "needs": [crate::tests::confirm_need("agent \"dev\"")],
             })
         );
         assert_eq!(
@@ -397,9 +396,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{
-        AgentRow, AgentShow, NotCarried, Preview, Removal, Requirement, RequirementSource,
-    };
+    use library_application::{AgentRow, AgentShow, NotCarried, Requirement, RequirementSource};
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -476,24 +473,6 @@ mod mapping {
                 "event": "session_end",
                 "reason": "none native",
             }])
-        );
-    }
-
-    #[test]
-    fn test_a_removed_agent_s_preview_says_what_would_go() {
-        let preview: Removal<()> = Removal::Preview(Preview::of(
-            "dev".to_string(),
-            vec!["agents.dev".to_string()],
-            "ctxloom agent remove dev --yes".to_string(),
-        ));
-        assert_eq!(
-            json_of(&removed(PARENT, "dev", &preview)),
-            json!({
-                "agent": {"name": "projects/p/agents/dev"},
-                "applied": false,
-                "detail": ["agents.dev"],
-                "apply_command": "ctxloom agent remove dev --yes",
-            })
         );
     }
 }

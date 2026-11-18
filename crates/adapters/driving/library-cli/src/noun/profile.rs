@@ -3,9 +3,7 @@
 //! in text only (create, edit, modify, export, import) still does, unless
 //! json is asked for by name.
 
-use library_application::{
-    ProfileCreated, ProfileExported, ProfileImported, ProfileModified, ProfileRemoved, Removal,
-};
+use library_application::{ProfileCreated, ProfileExported, ProfileImported, ProfileModified};
 
 use crate::catalog::{self, ok};
 use library_api::resources::{profile_bundles, profile_name, profile_parents};
@@ -212,6 +210,8 @@ fn import(
     )
 }
 
+/// `profile remove <name> [--yes]`: the daemon's `DeleteProfile` (step
+/// 10b U3), previewed and confirmed at a terminal.
 fn remove(
     cx: &Context<'_>,
     sub: &ArgMatches,
@@ -219,22 +219,23 @@ fn remove(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let name = text_arg(sub, "name");
-    let outcome = cx
-        .library
-        .profile_remove(&cx.flags, &name, flag(sub, "yes"));
-    catalog::answer(
+    let under = library_api::names::profile_target(&name);
+    crate::write::removal_served(
         cx,
-        outcome,
+        flag(sub, "yes"),
+        |validate_only, answers, etag| {
+            let request = v1::DeleteProfileRequest {
+                validate_only,
+                answers,
+                etag,
+                globals: cx.globals(),
+                ..v1::DeleteProfileRequest::default()
+            };
+            cx.served.delete_profile(&under, request)
+        },
         out,
         err,
-        false,
-        |parent, gone| removed(parent, &name, gone),
-        |gone, out, _| {
-            catalog::removal_text(gone, out, |gone, out| {
-                writeln!(out, "Removed profile \"{}\"", gone.profile)
-            })
-        },
-        crate::write::removal_exit,
+        |_, out| writeln!(out, "Removed profile \"{name}\""),
     )
 }
 
@@ -328,31 +329,6 @@ pub(crate) fn imported(
         applied: Some(true),
         ..v1::ImportProfileResponse::default()
     }
-}
-
-/// `profile remove`: `DeleteProfileResponse`, the preview's or the
-/// removal's, named by the profile asked.
-pub(crate) fn removed(
-    parent: &str,
-    asked: &str,
-    gone: &Removal<ProfileRemoved>,
-) -> v1::DeleteProfileResponse {
-    let name = catalog::profile_ref(parent, asked);
-    catalog::removal(
-        gone,
-        |preview| v1::DeleteProfileResponse {
-            profile: just_named(name.clone()),
-            applied: Some(false),
-            detail: preview.detail,
-            apply_command: preview.apply_command,
-            ..v1::DeleteProfileResponse::default()
-        },
-        |_| v1::DeleteProfileResponse {
-            profile: just_named(name.clone()),
-            applied: Some(true),
-            ..v1::DeleteProfileResponse::default()
-        },
-    )
 }
 
 /// Whether `profile edit` was given a flag to patch with (else it opens the

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use ctxloom_ports::{Editor, EditorCommand, Failure};
 use daemon_proto::v1;
 use library_application::{
-    BundleCreated, Flags, ItemCreated, ItemEdited, ItemKind, Library, Outcome,
+    BundleCreated, Flags, ItemCreated, ItemEdited, ItemKind, ItemRemoved, Library, Outcome, Removal,
 };
 
 use crate::names;
@@ -55,6 +55,13 @@ macro_rules! served_writes {
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse, "command edit";
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse, "config set";
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse, "skill create";
+            delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse, "bundle remove";
+            delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse, "fragment remove";
+            delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse, "command remove";
+            delete_skill (DeleteSkill) DeleteSkillRequest => DeleteSkillResponse, "skill remove";
+            delete_profile (DeleteProfile) DeleteProfileRequest => DeleteProfileResponse, "profile remove";
+            delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse, "agent remove";
+            delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse, "companion remove";
         }
     };
 }
@@ -595,6 +602,383 @@ pub mod create_skill {
             etag: wrote.etag,
             notices: wrote.notices,
             ..v1::CreateSkillResponse::default()
+        }
+    }
+}
+
+/// The id of a removal preview's Confirm need (step 10b U3).
+pub const CONFIRM_NEED: &str = "confirm";
+
+/// The parent a resource name is under: its first two segments
+/// (`projects/{harp}`, `users/me`).
+fn parent_of(name: &str) -> &str {
+    match name.match_indices('/').nth(1) {
+        Some((offset, _)) => &name[..offset],
+        None => name,
+    }
+}
+
+/// A removal as its response says it (step 10b U3): whether it applied,
+/// the preview's detail and the command that applies it, and its Confirm
+/// need (the preview's own target, `Would remove <target>`, as its arg
+/// `target`, so a client renders the preview's words and asks before it
+/// applies). A retry of a removal already applied (no answer) is applied.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Removed {
+    pub applied: bool,
+    pub detail: Vec<String>,
+    pub apply_command: String,
+    pub needs: Vec<v1::Need>,
+}
+
+/// [`Removed`] of a use case's removal.
+pub fn removed_of<T>(answer: Option<&Removal<T>>, applied: bool) -> Removed {
+    match answer {
+        Some(Removal::Preview(preview)) => Removed {
+            applied: false,
+            detail: preview.detail.clone(),
+            apply_command: preview.apply.clone(),
+            needs: vec![v1::Need {
+                id: CONFIRM_NEED.to_string(),
+                kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+                    text: format!("Remove {}?", preview.target),
+                    code: String::new(),
+                    args: vec![v1::NeedArg {
+                        name: "target".to_string(),
+                        value: preview.target.clone(),
+                    }],
+                })),
+            }],
+        },
+        Some(Removal::Done(_)) => Removed {
+            applied: true,
+            ..Removed::default()
+        },
+        None => Removed {
+            applied,
+            ..Removed::default()
+        },
+    }
+}
+
+/// `bundle remove <name> [--yes]`: `DeleteBundle`, the bundle's directory
+/// taken whole (one trash).
+pub mod delete_bundle {
+    use super::*;
+    use library_application::BundleRemoved;
+
+    fn asked(request: &v1::DeleteBundleRequest) -> String {
+        names::bundle_under(parent_of(&request.name), &request.name)
+            .unwrap_or_else(|| request.name.clone())
+    }
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::DeleteBundleRequest,
+        apply: bool,
+    ) -> Outcome<Removal<BundleRemoved>> {
+        library.bundle_remove(flags, &asked(request), apply)
+    }
+
+    pub fn respond(
+        request: &v1::DeleteBundleRequest,
+        wrote: Wrote<Removal<BundleRemoved>>,
+    ) -> v1::DeleteBundleResponse {
+        let removed = removed_of(wrote.answer.as_ref(), wrote.applied);
+        let path = match &wrote.answer {
+            Some(Removal::Done(done)) => done.path.clone(),
+            _ if removed.applied => wrote.at.clone(),
+            _ => String::new(),
+        };
+        v1::DeleteBundleResponse {
+            bundle: just_named(&wrote.parent, &asked(request)),
+            path,
+            applied: Some(removed.applied),
+            detail: removed.detail,
+            apply_command: removed.apply_command,
+            needs: removed.needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+        }
+    }
+}
+
+/// An item removal's use case and its answer (`fragment|command remove`).
+fn item_removal(
+    library: &Library,
+    flags: &Flags,
+    kind: ItemKind,
+    name: &str,
+    apply: bool,
+) -> Outcome<Removal<ItemRemoved>> {
+    let reference =
+        names::reference_under(parent_of(name), name).unwrap_or_else(|| name.to_string());
+    library.item_remove(flags, kind, &reference, apply)
+}
+
+/// The resource name and the path an item removal answers.
+fn item_removed(name: &str, wrote: &Wrote<Removal<ItemRemoved>>, dir: &str) -> (String, String) {
+    match &wrote.answer {
+        Some(Removal::Done(done)) => (
+            names::item_name(&wrote.parent, &done.bundle, dir, &done.name),
+            done.path.clone(),
+        ),
+        _ if wrote.applied => (name.to_string(), wrote.at.clone()),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+/// `fragment remove <ref> [--yes]`: `DeleteFragment`.
+pub mod delete_fragment {
+    use super::*;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::DeleteFragmentRequest,
+        apply: bool,
+    ) -> Outcome<Removal<ItemRemoved>> {
+        item_removal(library, flags, ItemKind::Fragment, &request.name, apply)
+    }
+
+    pub fn respond(
+        request: &v1::DeleteFragmentRequest,
+        wrote: Wrote<Removal<ItemRemoved>>,
+    ) -> v1::DeleteFragmentResponse {
+        let (name, path) = item_removed(&request.name, &wrote, "fragments");
+        let removed = removed_of(wrote.answer.as_ref(), wrote.applied);
+        v1::DeleteFragmentResponse {
+            fragment: Some(v1::Fragment {
+                name,
+                ..v1::Fragment::default()
+            }),
+            path,
+            applied: Some(removed.applied),
+            detail: removed.detail,
+            apply_command: removed.apply_command,
+            needs: removed.needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+        }
+    }
+}
+
+/// `command remove <ref> [--yes]`: `DeleteCommand`.
+pub mod delete_command {
+    use super::*;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::DeleteCommandRequest,
+        apply: bool,
+    ) -> Outcome<Removal<ItemRemoved>> {
+        item_removal(library, flags, ItemKind::Command, &request.name, apply)
+    }
+
+    pub fn respond(
+        request: &v1::DeleteCommandRequest,
+        wrote: Wrote<Removal<ItemRemoved>>,
+    ) -> v1::DeleteCommandResponse {
+        let (name, path) = item_removed(&request.name, &wrote, "commands");
+        let removed = removed_of(wrote.answer.as_ref(), wrote.applied);
+        v1::DeleteCommandResponse {
+            command: Some(v1::Command {
+                name,
+                ..v1::Command::default()
+            }),
+            path,
+            applied: Some(removed.applied),
+            detail: removed.detail,
+            apply_command: removed.apply_command,
+            needs: removed.needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+        }
+    }
+}
+
+/// `skill remove <ref> [--yes]`: `DeleteSkill`, the skill's one directory.
+pub mod delete_skill {
+    use super::*;
+    use library_application::SkillRemoved;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::DeleteSkillRequest,
+        apply: bool,
+    ) -> Outcome<Removal<SkillRemoved>> {
+        let reference = names::reference_under(parent_of(&request.name), &request.name)
+            .unwrap_or_else(|| request.name.clone());
+        library.skill_remove(flags, &reference, apply)
+    }
+
+    pub fn respond(
+        request: &v1::DeleteSkillRequest,
+        wrote: Wrote<Removal<SkillRemoved>>,
+    ) -> v1::DeleteSkillResponse {
+        let removed = removed_of(wrote.answer.as_ref(), wrote.applied);
+        let (name, dir) = match &wrote.answer {
+            Some(Removal::Done(done)) => (
+                format!(
+                    "{}/skills/{}",
+                    names::bundle_name(&wrote.parent, &done.bundle),
+                    done.name
+                ),
+                done.dir.clone(),
+            ),
+            _ if removed.applied => (request.name.clone(), wrote.at.clone()),
+            _ => (request.name.clone(), String::new()),
+        };
+        v1::DeleteSkillResponse {
+            skill: Some(v1::Skill {
+                name,
+                path: dir.clone(),
+                ..v1::Skill::default()
+            }),
+            path: dir,
+            applied: Some(removed.applied),
+            detail: removed.detail,
+            apply_command: removed.apply_command,
+            needs: removed.needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+        }
+    }
+}
+
+/// `profile remove <name> [--yes]`: `DeleteProfile`.
+pub mod delete_profile {
+    use super::*;
+    use library_application::ProfileRemoved;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::DeleteProfileRequest,
+        apply: bool,
+    ) -> Outcome<Removal<ProfileRemoved>> {
+        let asked = names::profile_under(parent_of(&request.name), &request.name)
+            .unwrap_or_else(|| request.name.clone());
+        library.profile_remove(flags, &asked, apply)
+    }
+
+    pub fn respond(
+        request: &v1::DeleteProfileRequest,
+        wrote: Wrote<Removal<ProfileRemoved>>,
+    ) -> v1::DeleteProfileResponse {
+        let removed = removed_of(wrote.answer.as_ref(), wrote.applied);
+        let path = if removed.applied {
+            wrote.at.clone()
+        } else {
+            String::new()
+        };
+        let asked = names::profile_under(parent_of(&request.name), &request.name)
+            .unwrap_or_else(|| request.name.clone());
+        v1::DeleteProfileResponse {
+            profile: Some(v1::Profile {
+                name: names::profile_ref(&wrote.parent, &asked),
+                ..<v1::Profile as Default>::default()
+            }),
+            path,
+            applied: Some(removed.applied),
+            detail: removed.detail,
+            apply_command: removed.apply_command,
+            needs: removed.needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+        }
+    }
+}
+
+/// `agent remove <name> [--yes]`: `DeleteAgent`, its config layer
+/// written.
+pub mod delete_agent {
+    use super::*;
+    use library_application::AgentRemoved;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::DeleteAgentRequest,
+        apply: bool,
+    ) -> Outcome<Removal<AgentRemoved>> {
+        let asked = names::named_under(parent_of(&request.name), "agents", &request.name)
+            .unwrap_or_else(|| request.name.clone());
+        library.agent_remove(flags, &asked, apply)
+    }
+
+    pub fn respond(
+        request: &v1::DeleteAgentRequest,
+        wrote: Wrote<Removal<AgentRemoved>>,
+    ) -> v1::DeleteAgentResponse {
+        let removed = removed_of(wrote.answer.as_ref(), wrote.applied);
+        let path = if removed.applied {
+            wrote.at.clone()
+        } else {
+            String::new()
+        };
+        v1::DeleteAgentResponse {
+            agent: Some(v1::Agent {
+                name: request.name.clone(),
+                ..<v1::Agent as Default>::default()
+            }),
+            path,
+            applied: Some(removed.applied),
+            detail: removed.detail,
+            apply_command: removed.apply_command,
+            needs: removed.needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+        }
+    }
+}
+
+/// `companion remove <name> [--yes]`: `DeleteCompanion`, its config layer
+/// written. A companion nobody registered is removed as nothing (applied
+/// false).
+pub mod delete_companion {
+    use super::*;
+    use library_application::CompanionRemoved;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::DeleteCompanionRequest,
+        apply: bool,
+    ) -> Outcome<Removal<CompanionRemoved>> {
+        let asked = names::named_under(parent_of(&request.name), "companions", &request.name)
+            .unwrap_or_else(|| request.name.clone());
+        library.companion_remove(flags, &asked, apply)
+    }
+
+    pub fn respond(
+        request: &v1::DeleteCompanionRequest,
+        wrote: Wrote<Removal<CompanionRemoved>>,
+    ) -> v1::DeleteCompanionResponse {
+        let mut removed = removed_of(wrote.answer.as_ref(), wrote.applied);
+        if let Some(Removal::Done(done)) = &wrote.answer {
+            removed.applied = done.removed;
+        }
+        let path = if removed.applied {
+            wrote.at.clone()
+        } else {
+            String::new()
+        };
+        v1::DeleteCompanionResponse {
+            companion: Some(v1::Companion {
+                name: request.name.clone(),
+                ..v1::Companion::default()
+            }),
+            path,
+            applied: Some(removed.applied),
+            detail: removed.detail,
+            apply_command: removed.apply_command,
+            needs: removed.needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
         }
     }
 }

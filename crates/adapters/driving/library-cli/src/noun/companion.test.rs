@@ -57,6 +57,7 @@ mod write {
                 "companion": {"name": "projects/calm-otter/companions/acme"},
                 "applied": false,
                 "apply_command": "ctxloom companion remove acme --yes",
+                "needs": [crate::tests::confirm_need("companion \"acme\"")],
             })
         );
         // OD-9: disable and enable answer the companion as it is now (AIP-136).
@@ -150,38 +151,6 @@ mod write {
         );
         assert!(ran.refused().contains("loadout-format"));
         assert_eq!(ran.out, "");
-    }
-}
-
-// The removal's mapping to its message, field by field (OD-40): what the
-// binary's tests alone reached.
-mod mapping {
-    use super::super::*;
-    use library_application::Preview;
-    use serde_json::json;
-
-    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
-        let mut out = Vec::new();
-        crate::api::print(&mut out, message).unwrap();
-        serde_json::from_slice(&out).unwrap()
-    }
-
-    #[test]
-    fn test_a_removed_companion_s_preview_says_what_would_go() {
-        let preview: Removal<CompanionRemoved> = Removal::Preview(Preview::of(
-            "acme".to_string(),
-            vec!["companions.acme".to_string()],
-            "ctxloom companion remove acme --yes".to_string(),
-        ));
-        assert_eq!(
-            json_of(&removed("projects/p", "acme", &preview)),
-            json!({
-                "companion": {"name": "projects/p/companions/acme"},
-                "applied": false,
-                "detail": ["companions.acme"],
-                "apply_command": "ctxloom companion remove acme --yes",
-            })
-        );
     }
 }
 

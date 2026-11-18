@@ -341,6 +341,17 @@ impl library_cli::Served for DaemonServed {
     /// The Edit need's EDITOR launch, run here on the user's terminal
     /// (step 10b U3): the program and arguments the daemon resolved, on a
     /// file of the document's text, what it left read back.
+    /// A write's Confirm need asked of the person at this terminal
+    /// (step 10b U3), as a trust is (`[y/N]`; a terminal stood in under
+    /// test-support); none off a terminal.
+    fn confirm(&self, question: &str) -> Option<bool> {
+        use session_cli::Asking as _;
+        let terminal = crate::sessions::TrustTerminal {
+            stood_in: crate::interview::stood_in(&self.env),
+        };
+        terminal.is_terminal().then(|| terminal.confirm(question))
+    }
+
     fn edit_document(&self, edit: &daemon_proto::v1::Edit) -> Result<String, Failure> {
         use ctxloom_ports::Editor as _;
         let launch = edit.launch.as_ref().ok_or_else(|| {

@@ -135,7 +135,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{Preview, SkillFileRow, SkillRow, SkillShow};
+    use library_application::{SkillFileRow, SkillRow, SkillShow};
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -208,41 +208,6 @@ mod mapping {
                     {"path": "SKILL.md", "sha256": "ab"},
                     {"path": "run.sh", "sha256": "ab", "executable": true},
                 ],
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_removed_skill_answers_its_removal_or_its_preview() {
-        let preview = Removal::Preview(Preview::of(
-            "reviewer".to_string(),
-            vec!["skills/reviewer".to_string()],
-            "ctxloom skill remove demo#skills/reviewer --yes".to_string(),
-        ));
-        assert_eq!(
-            json_of(&removed(PARENT, "demo#skills/reviewer", &preview)),
-            json!({
-                "skill": {"name": "projects/p/bundles/demo/skills/reviewer"},
-                "applied": false,
-                "detail": ["skills/reviewer"],
-                "apply_command": "ctxloom skill remove demo#skills/reviewer --yes",
-            })
-        );
-        let done = Removal::Done(SkillRemoved {
-            status: "removed".to_string(),
-            bundle: "demo".to_string(),
-            name: "reviewer".to_string(),
-            dir: "skills/reviewer".to_string(),
-        });
-        assert_eq!(
-            json_of(&removed(PARENT, "demo#skills/reviewer", &done)),
-            json!({
-                "skill": {
-                    "name": "projects/p/bundles/demo/skills/reviewer",
-                    "path": "skills/reviewer",
-                },
-                "path": "skills/reviewer",
-                "applied": true,
             })
         );
     }

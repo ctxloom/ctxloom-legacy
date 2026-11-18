@@ -149,8 +149,9 @@ from the sidecar and its import turns into the sidecar's list.
 
 Step 10b U3 (writes as library-domain commands; `t13-step10.plan.md` §2
 U3, protos.md §1.1) serves `bundle create`, `fragment|command create
-<bundle>#<kind>s/<id>` and `edit`, `skill create` and `config set` in the
-daemon, from one table (`daemon_proto::library_writes!`, every layer;
+<bundle>#<kind>s/<id>` and `edit`, `skill create`, `config set` and the
+removals (`bundle|fragment|command|skill|profile|agent|companion remove`)
+in the daemon, from one table (`daemon_proto::library_writes!`, every layer;
 `library_api::served_writes!`, each verb's use case and response; the
 CLI's `SERVED_WRITES`). Every write request carries the caller's `cwd`
 (97) and `env` (94), as the reads do (E1, extended to the writes on
@@ -174,6 +175,14 @@ once, as ctxloom's; a step done lays its paths over the record's dirty
 set. The editor round trip is the preview's Edit need: the daemon's
 `AnsweredEditor` answers `--body` or the need's answer, else keeps the
 ask; the CLI launches the need's EDITOR itself (`Served::edit_document`).
+A removal's preview carries a Confirm need (`library_api::served_writes::
+removed_of`: its text `Remove <target>?`, a wording the owner has yet to
+review, and the preview's target as its arg `target`, from which the CLI
+prints the preview in its existing words); the CLI asks it at the terminal
+(`Served::confirm`, `[y/N]`; none off a terminal) and on a yes sends the
+apply with the answer and the preview's etag, else prints the preview and
+applies nothing (`library_cli::write::removal_served`); `--yes` is one
+call. `DeleteCompanion` has no `answers` field, so its apply sends none.
 `--body` (fragment|command create and edit) and `config set <key> <value>
 [--home]` (one key, coerced as an override and judged by the schema at
 its path) are the spec's new surfaces. Test-support's `test-die-at`

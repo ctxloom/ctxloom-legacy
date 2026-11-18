@@ -2,8 +2,6 @@
 //! its method's response (OD-40, design §3.7, §5.6). `agent default` still
 //! answers in text only.
 
-use library_application::Removal;
-
 use library_api::resources::{agent, agent_name};
 
 use crate::prelude::*;
@@ -103,18 +101,23 @@ pub(crate) fn write(
             })?
         }
         "remove" => {
-            let outcome = cx.library.agent_remove(&cx.flags, &name, flag(sub, "yes"));
-            api::written(
+            let under = library_api::names::named_target("agents", &name);
+            crate::write::removal_served(
                 cx,
-                outcome,
+                flag(sub, "yes"),
+                |validate_only, answers, etag| {
+                    let request = v1::DeleteAgentRequest {
+                        validate_only,
+                        answers,
+                        etag,
+                        globals: cx.globals(),
+                        ..v1::DeleteAgentRequest::default()
+                    };
+                    cx.served.delete_agent(&under, request)
+                },
                 out,
                 err,
-                |parent, removal| removed(parent, &name, removal),
-                |removal, out, _| match removal {
-                    Removal::Preview(preview) => crate::write::preview_text(out, preview),
-                    Removal::Done(gone) => writeln!(out, "Removed agent \"{}\"", gone.name),
-                },
-                crate::write::removal_exit,
+                |_, out| writeln!(out, "Removed agent \"{name}\""),
             )?
         }
         _ => return Ok(None),
@@ -158,22 +161,6 @@ fn edited(parent: &str, value: &AgentWritten, default: &str) -> v1::UpdateAgentR
             applied: Some(true),
             ..v1::UpdateAgentResponse::default()
         },
-    }
-}
-
-/// `agent remove`: the preview (what would go and the command that applies
-/// it), or the removal done.
-fn removed<T>(parent: &str, name: &str, removal: &Removal<T>) -> v1::DeleteAgentResponse {
-    let (applied, detail, apply_command) = match removal {
-        Removal::Preview(preview) => (false, preview.detail.clone(), preview.apply.clone()),
-        Removal::Done(_) => (true, Vec::new(), String::new()),
-    };
-    v1::DeleteAgentResponse {
-        agent: Some(named(parent, name)),
-        applied: Some(applied),
-        detail,
-        apply_command,
-        ..v1::DeleteAgentResponse::default()
     }
 }
 

@@ -131,6 +131,15 @@ pub trait Served {
     /// it left. A need with no launch cannot be presented here.
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure>;
 
+    /// A write's Confirm need presented (step 10b U3): `question` asked of
+    /// the person at this command's terminal, `[y/N]`; none when there is
+    /// no terminal to ask at (the preview is then printed and nothing is
+    /// applied).
+    fn confirm(&self, question: &str) -> Option<bool> {
+        let _ = question;
+        None
+    }
+
     /// `loadout`: `GetLoadout`, always asked as `users/me/loadout`, its
     /// notices beside it: ctxloom's own loadout is the same in every
     /// project, and a companion probe asks it where there may be no
@@ -187,6 +196,13 @@ macro_rules! served_writes {
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
+            delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
+            delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,
+            delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse,
+            delete_skill (DeleteSkill) DeleteSkillRequest => DeleteSkillResponse,
+            delete_profile (DeleteProfile) DeleteProfileRequest => DeleteProfileResponse,
+            delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse,
+            delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse,
         }
     };
 }
@@ -390,11 +406,14 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
 /// home step and observes the trees before it plans, so the caller takes
 /// none of its own.
 pub const SERVED_WRITES: &[(&str, &[&str])] = &[
-    ("bundle", &["create"]),
-    ("fragment", &["create", "edit"]),
-    ("command", &["create", "edit"]),
+    ("bundle", &["create", "remove"]),
+    ("fragment", &["create", "edit", "remove"]),
+    ("command", &["create", "edit", "remove"]),
     ("config", &["set"]),
-    ("skill", &["create"]),
+    ("skill", &["create", "remove"]),
+    ("profile", &["remove"]),
+    ("agent", &["remove"]),
+    ("companion", &["remove"]),
 ];
 
 /// Whether `noun`, given its matches `sub`, is a write the daemon serves

@@ -218,3 +218,91 @@ fn test_a_created_skill_answers_its_directory_done_or_retried() {
     );
     assert_eq!(retried.path, "/work/demo/.ctxloom/content/bundles/v2/notes");
 }
+
+// Step 10b U3: a removal's preview asks its Confirm need, the target in
+// the use case's own words; a removal done, or retried once done, is
+// applied and asks nothing.
+#[test]
+fn test_a_removals_preview_asks_its_confirm_need_and_a_removal_done_asks_none() {
+    use library_application::{Preview, Removal};
+    let preview: Removal<()> = Removal::Preview(Preview::of(
+        "bundle \"notes\"".to_string(),
+        vec!["1 fragment(s)".to_string()],
+        "ctxloom bundle remove notes --yes".to_string(),
+    ));
+    let removed = super::removed_of(Some(&preview), false);
+    assert!(!removed.applied);
+    assert_eq!(removed.detail, ["1 fragment(s)"]);
+    assert_eq!(removed.apply_command, "ctxloom bundle remove notes --yes");
+    let [need] = removed.needs.as_slice() else {
+        panic!("{:?}", removed.needs)
+    };
+    assert_eq!(need.id, super::CONFIRM_NEED);
+    let Some(v1::need::Kind::Confirm(confirm)) = &need.kind else {
+        panic!("{need:?}")
+    };
+    assert_eq!(confirm.text, "Remove bundle \"notes\"?");
+    assert_eq!(confirm.args[0].name, "target");
+    assert_eq!(confirm.args[0].value, "bundle \"notes\"");
+    let done = super::removed_of(Some(&Removal::Done(())), false);
+    assert!(done.applied && done.needs.is_empty());
+    assert!(super::removed_of::<()>(None, true).applied);
+    assert!(!super::removed_of::<()>(None, false).applied);
+}
+
+// A bundle removal plans its bundle's whole tree gone, the bundle named by
+// its resource name, and previews it without planning anything gone.
+#[test]
+fn test_a_bundle_removal_plans_its_bundle_gone_and_its_preview_nothing() {
+    use super::delete_bundle;
+    use library_application::write::recording::Planned;
+    let request = v1::DeleteBundleRequest {
+        name: "projects/amber-quiet-heron/bundles/demo".to_string(),
+        ..v1::DeleteBundleRequest::default()
+    };
+    let (recording, recorder) = demo().recording();
+    let previewed = delete_bundle::plan(&recording, &plain(), &request, false)
+        .result
+        .unwrap();
+    assert!(matches!(
+        previewed,
+        library_application::Removal::Preview(_)
+    ));
+    assert!(recorder.take().is_empty());
+    let (recording, recorder) = demo().recording();
+    delete_bundle::plan(&recording, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert_eq!(
+        recorder.take(),
+        [Planned::BundleGone {
+            bundle: "demo".to_string()
+        }]
+    );
+    let answered = delete_bundle::respond(&request, wrote(None));
+    assert_eq!(answered.applied, Some(true));
+    assert_eq!(
+        answered.path,
+        "/work/demo/.ctxloom/content/bundles/v2/notes"
+    );
+    assert_eq!(
+        answered.bundle.unwrap().name,
+        "projects/amber-quiet-heron/bundles/demo"
+    );
+}
+
+// A profile removal answers the profile's canonical name, the project
+// bundle's, whatever form it was asked by.
+#[test]
+fn test_a_profile_removal_answers_the_profiles_canonical_name() {
+    let request = v1::DeleteProfileRequest {
+        name: "projects/amber-quiet-heron/profiles/dev".to_string(),
+        ..v1::DeleteProfileRequest::default()
+    };
+    let answered = super::delete_profile::respond(&request, wrote(None));
+    assert_eq!(
+        answered.profile.unwrap().name,
+        "projects/amber-quiet-heron/bundles/project/profiles/dev"
+    );
+    assert_eq!(answered.applied, Some(true));
+}

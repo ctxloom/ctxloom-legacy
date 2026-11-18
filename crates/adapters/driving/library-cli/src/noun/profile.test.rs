@@ -246,7 +246,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{Preview, ProfileEdited, ProfileShow};
+    use library_application::{ProfileEdited, ProfileShow};
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -415,24 +415,6 @@ mod mapping {
                 "profile": {"name": "projects/p/bundles/project/profiles/dev"},
                 "path": "profiles/dev.yaml",
                 "applied": true,
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_removed_profile_s_preview_says_what_would_go() {
-        let preview = Removal::Preview(Preview::of(
-            "dev".to_string(),
-            strings(&["profiles/dev.yaml"]),
-            "ctxloom profile remove dev --yes".to_string(),
-        ));
-        assert_eq!(
-            json_of(&removed(PARENT, "dev", &preview)),
-            json!({
-                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
-                "applied": false,
-                "detail": ["profiles/dev.yaml"],
-                "apply_command": "ctxloom profile remove dev --yes",
             })
         );
     }

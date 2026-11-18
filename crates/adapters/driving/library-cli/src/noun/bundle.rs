@@ -1,9 +1,7 @@
 //! `bundle`: list, show and view, and its writes (B1), each json answer its
 //! AIP resource or method response (OD-40, design §5.1).
 
-use library_application::{
-    BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleView, Removal,
-};
+use library_application::{BundleEdited, BundleExported, BundleImported, BundleView};
 
 use library_api::resources::count;
 
@@ -310,27 +308,31 @@ fn edit(
     )
 }
 
+/// `bundle remove <name> [--yes]`: the daemon's `DeleteBundle` (step 10b
+/// U3), previewed and confirmed at a terminal, its text from the response.
 fn remove(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let outcome = cx.library.bundle_remove(&cx.flags, &name, flag(sub, "yes"));
-    catalog::answer(
+    let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+    crate::write::removal_served(
         cx,
-        outcome,
+        flag(sub, "yes"),
+        |validate_only, answers, etag| {
+            let request = v1::DeleteBundleRequest {
+                validate_only,
+                answers,
+                etag,
+                globals: cx.globals(),
+                ..v1::DeleteBundleRequest::default()
+            };
+            cx.served.delete_bundle(&under, request)
+        },
         out,
         err,
-        false,
-        |parent, gone| removed(parent, &name, gone),
-        |gone, out, _| {
-            catalog::removal_text(gone, out, |gone, out| {
-                writeln!(out, "Removed bundle: {}", gone.path)
-            })
-        },
-        crate::write::removal_exit,
+        |gone, out| writeln!(out, "Removed bundle: {}", gone.path),
     )
 }
 
@@ -406,30 +408,6 @@ pub(crate) fn edited(parent: &str, edited: &BundleEdited) -> v1::UpdateBundleRes
         changes: edited.changes.clone(),
         ..v1::UpdateBundleResponse::default()
     }
-}
-
-/// `bundle remove`: `DeleteBundleResponse`, the preview's or the removal's.
-pub(crate) fn removed(
-    parent: &str,
-    asked: &str,
-    gone: &Removal<BundleRemoved>,
-) -> v1::DeleteBundleResponse {
-    catalog::removal(
-        gone,
-        |preview| v1::DeleteBundleResponse {
-            bundle: just_named(parent, asked),
-            applied: Some(false),
-            detail: preview.detail,
-            apply_command: preview.apply_command,
-            ..v1::DeleteBundleResponse::default()
-        },
-        |done| v1::DeleteBundleResponse {
-            bundle: just_named(parent, &done.name),
-            path: done.path.clone(),
-            applied: Some(true),
-            ..v1::DeleteBundleResponse::default()
-        },
-    )
 }
 
 /// `bundle export`: `ExportBundleResponse`.

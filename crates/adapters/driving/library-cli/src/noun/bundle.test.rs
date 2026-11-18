@@ -347,12 +347,12 @@ mod messages {
     use std::collections::BTreeMap;
 
     use library_application::{
-        BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved, BundleRow,
-        BundleShow, Preview, Removal, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
+        BundleEdited, BundleExported, BundleImported, BundleList, BundleRow, BundleShow,
+        ShownCommand, ShownFragment, ShownMcp, ShownSkill,
     };
     use serde_json::{json, Value};
 
-    use super::super::{edited, exported, imported, removed};
+    use super::super::{edited, exported, imported};
     use library_api::resources::bundle;
     use library_api::resources::bundles as listed;
 
@@ -553,29 +553,6 @@ mod messages {
                 "path": "bundles/demo/bundle.yaml",
                 "applied": true,
                 "changes": ["updated version"],
-            })
-        );
-        let gone = Removal::Done(BundleRemoved {
-            status: "removed".to_string(),
-            name: "demo".to_string(),
-            path: "bundles/demo".to_string(),
-        });
-        assert_eq!(
-            as_json(removed(P, "asked", &gone)),
-            json!({"bundle": {"name": b}, "path": "bundles/demo", "applied": true})
-        );
-        let preview = Removal::Preview(Preview::of(
-            "demo".to_string(),
-            vec!["fragments/x.md".to_string()],
-            "ctxloom bundle remove demo --yes".to_string(),
-        ));
-        assert_eq!(
-            as_json(removed(P, "demo", &preview)),
-            json!({
-                "bundle": {"name": b},
-                "applied": false,
-                "detail": ["fragments/x.md"],
-                "apply_command": "ctxloom bundle remove demo --yes",
             })
         );
         let out = BundleExported {

@@ -269,6 +269,13 @@ targeted! {
     UpdateFragmentRequest => |r, t| r.fragment.get_or_insert_with(Default::default).name = t;
     UpdateCommandRequest => |r, t| r.command.get_or_insert_with(Default::default).name = t;
     UpdateConfigRequest => |r, t| r.name = t;
+    DeleteBundleRequest => |r, t| r.name = t;
+    DeleteFragmentRequest => |r, t| r.name = t;
+    DeleteCommandRequest => |r, t| r.name = t;
+    DeleteSkillRequest => |r, t| r.name = t;
+    DeleteProfileRequest => |r, t| r.name = t;
+    DeleteAgentRequest => |r, t| r.name = t;
+    DeleteCompanionRequest => |r, t| r.name = t;
     CreateSkillRequest => |r, t| r.parent = t;
 }
 
@@ -396,14 +403,47 @@ pub(crate) fn go_in(line: &[&str], how: How, layers: &[&str], names: &dyn Names)
 #[derive(Default)]
 pub(crate) struct Asks {
     asked: std::cell::RefCell<Vec<(String, Box<dyn std::any::Any>)>>,
+    /// Answers given in turn, each to the first ask of its type; an ask
+    /// with none queued is answered unreached.
+    answers: std::cell::RefCell<std::collections::VecDeque<Box<dyn std::any::Any>>>,
+    /// What the person at the terminal answers a Confirm need; none: no
+    /// terminal.
+    confirms: Option<bool>,
 }
 
 impl Asks {
-    fn ask<R: 'static, M>(&self, under: &str, request: R) -> Result<M, Failure> {
+    /// The fake that answers `answers` in turn, and `confirms` at its
+    /// terminal.
+    pub(crate) fn answering(answers: Vec<Box<dyn std::any::Any>>, confirms: Option<bool>) -> Asks {
+        Asks {
+            answers: std::cell::RefCell::new(answers.into()),
+            confirms,
+            ..Asks::default()
+        }
+    }
+
+    fn ask<R: 'static, M: 'static>(&self, under: &str, request: R) -> Result<M, Failure> {
         self.asked
             .borrow_mut()
             .push((under.to_string(), Box::new(request)));
+        let mut answers = self.answers.borrow_mut();
+        if answers.front().is_some_and(|answer| answer.is::<M>()) {
+            if let Some(answer) = answers.pop_front() {
+                if let Ok(answer) = answer.downcast::<M>() {
+                    return Ok(*answer);
+                }
+            }
+        }
         Err(Failure::new(NoDaemon, Exit::FAILED))
+    }
+
+    /// The requests of type `R` it was asked, in order.
+    pub(crate) fn requests<R: Clone + 'static>(&self) -> Vec<R> {
+        self.asked
+            .borrow()
+            .iter()
+            .filter_map(|(_, request)| request.downcast_ref::<R>().cloned())
+            .collect()
     }
 }
 
@@ -448,6 +488,10 @@ impl Served for Asks {
 
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure> {
         self.ask("", edit.clone())
+    }
+
+    fn confirm(&self, _: &str) -> Option<bool> {
+        self.confirms
     }
 
     fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure> {
@@ -772,6 +816,113 @@ fn test_an_answer_that_cannot_be_written_fails_with_its_cause() {
 #[path = "write.test.rs"]
 pub(crate) mod write_verbs;
 
+/// A removal's preview, its Confirm need and its etag, as the daemon
+/// answers one (step 10b U3).
+fn previewed_removal() -> v1::DeleteBundleResponse {
+    v1::DeleteBundleResponse {
+        applied: Some(false),
+        detail: vec!["1 fragment(s)".to_string()],
+        apply_command: "ctxloom bundle remove notes --yes".to_string(),
+        needs: vec![v1::Need {
+            id: "confirm".to_string(),
+            kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+                text: "Remove bundle \"notes\"?".to_string(),
+                code: String::new(),
+                args: vec![v1::NeedArg {
+                    name: "target".to_string(),
+                    value: "bundle \"notes\"".to_string(),
+                }],
+            })),
+        }],
+        etag: "7".to_string(),
+        ..v1::DeleteBundleResponse::default()
+    }
+}
+
+fn removed_bundle() -> v1::DeleteBundleResponse {
+    v1::DeleteBundleResponse {
+        applied: Some(true),
+        path: "/work/bundles/notes".to_string(),
+        ..v1::DeleteBundleResponse::default()
+    }
+}
+
+// Step 10b U3: at her terminal, a removal is previewed, its Confirm need
+// asked there, and her yes applied with the answer and the preview's etag.
+#[test]
+fn test_a_removal_confirmed_at_the_terminal_is_applied_with_the_answer_and_the_etag() {
+    let asks = Asks::answering(
+        vec![Box::new(previewed_removal()), Box::new(removed_bundle())],
+        Some(true),
+    );
+    let ran = go_served(
+        &["bundle", "remove", "notes"],
+        TEXT,
+        BARE,
+        &Project,
+        Some(&asks),
+    );
+    assert_eq!(ran.out, "Removed bundle: /work/bundles/notes\n");
+    assert_eq!(ran.code(), 0);
+    let sent = asks.requests::<v1::DeleteBundleRequest>();
+    assert_eq!(sent.len(), 2);
+    assert!(sent[0].validate_only);
+    assert_eq!(sent[0].etag, "");
+    assert!(!sent[1].validate_only);
+    assert_eq!(sent[1].etag, "7");
+    assert_eq!(
+        sent[1].answers,
+        [v1::Answer {
+            need_id: "confirm".to_string(),
+            answer: Some(v1::answer::Answer::Confirmed(true)),
+        }]
+    );
+}
+
+// A no at the terminal, or no terminal at all, prints the preview in its
+// own words and applies nothing.
+#[test]
+fn test_a_removal_declined_or_off_a_terminal_is_its_preview_alone() {
+    for confirms in [Some(false), None] {
+        let asks = Asks::answering(
+            vec![Box::new(previewed_removal()), Box::new(removed_bundle())],
+            confirms,
+        );
+        let ran = go_served(
+            &["bundle", "remove", "notes"],
+            TEXT,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(
+            ran.out,
+            "Would remove bundle \"notes\":\n  1 fragment(s)\n\nNothing was removed. Re-run with --yes to apply:\n  ctxloom bundle remove notes --yes\n",
+            "{confirms:?}"
+        );
+        assert_eq!(ran.exit, Ok(1), "{confirms:?}");
+        assert_eq!(asks.requests::<v1::DeleteBundleRequest>().len(), 1);
+    }
+}
+
+// `--yes` is one call that plans and applies: nothing is previewed or
+// asked.
+#[test]
+fn test_a_removal_with_yes_is_one_call_that_applies() {
+    let asks = Asks::answering(vec![Box::new(removed_bundle())], Some(false));
+    let ran = go_served(
+        &["bundle", "remove", "notes", "--yes"],
+        TEXT,
+        BARE,
+        &Project,
+        Some(&asks),
+    );
+    assert_eq!(ran.out, "Removed bundle: /work/bundles/notes\n");
+    let sent = asks.requests::<v1::DeleteBundleRequest>();
+    assert_eq!(sent.len(), 1);
+    assert!(!sent[0].validate_only);
+}
+
 /// `line`'s noun and whether its verb is the daemon's read.
 fn is_served(line: &[&str]) -> bool {
     let program = clap::Command::new("ctxloom").subcommands(crate::nouns());
@@ -833,4 +984,12 @@ fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
             assert!(command.find_subcommand(verb).is_some(), "{noun} {verb}");
         }
     }
+}
+
+/// A removal preview's Confirm need of `target`, as its json says it.
+pub(crate) fn confirm_need(target: &str) -> serde_json::Value {
+    serde_json::json!({"id": "confirm", "confirm": {
+        "text": format!("Remove {target}?"),
+        "args": [{"name": "target", "value": target}],
+    }})
 }

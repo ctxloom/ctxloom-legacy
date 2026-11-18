@@ -136,6 +136,13 @@ macro_rules! library_writes {
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
+            delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
+            delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,
+            delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse,
+            delete_skill (DeleteSkill) DeleteSkillRequest => DeleteSkillResponse,
+            delete_profile (DeleteProfile) DeleteProfileRequest => DeleteProfileResponse,
+            delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse,
+            delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse,
         }
     };
 }

@@ -544,6 +544,13 @@ write_requests! {
     UpdateCommandRequest.command.name;
     UpdateConfigRequest.name;
     CreateSkillRequest.parent;
+    DeleteBundleRequest.name;
+    DeleteFragmentRequest.name;
+    DeleteCommandRequest.name;
+    DeleteSkillRequest.name;
+    DeleteProfileRequest.name;
+    DeleteAgentRequest.name;
+    DeleteCompanionRequest.name;
 }
 
 #[cfg(test)]

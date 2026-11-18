@@ -2,9 +2,7 @@
 //! method's response (OD-40, design §3.9, §5.7); `loadout` (B2), the one
 //! YAML document, written from the daemon's `Loadout` (step 10a U2).
 
-use library_application::{
-    CompanionAdded, CompanionRemoved, CompanionState, CompanionStateSet, Removal,
-};
+use library_application::{CompanionAdded, CompanionState, CompanionStateSet};
 
 use library_api::resources::{companion_name, companion_state};
 
@@ -85,20 +83,25 @@ pub(crate) fn write(
             )?
         }
         "remove" => {
-            let outcome = cx
-                .library
-                .companion_remove(&cx.flags, &name, flag(sub, "yes"));
-            api::written(
+            let under = library_api::names::named_target("companions", &name);
+            crate::write::removal_served(
                 cx,
-                outcome,
+                flag(sub, "yes"),
+                |validate_only, answers, etag| {
+                    // DeleteCompanion carries no answers: its Confirm is
+                    // answered by the apply itself.
+                    let _ = answers;
+                    let request = v1::DeleteCompanionRequest {
+                        validate_only,
+                        etag,
+                        globals: cx.globals(),
+                        ..v1::DeleteCompanionRequest::default()
+                    };
+                    cx.served.delete_companion(&under, request)
+                },
                 out,
                 err,
-                |parent, removal| removed(parent, &name, removal),
-                |removal, out, _| match removal {
-                    Removal::Preview(preview) => crate::write::preview_text(out, preview),
-                    Removal::Done(gone) => writeln!(out, "Removed companion '{}'", gone.name),
-                },
-                crate::write::removal_exit,
+                |_, out| writeln!(out, "Removed companion '{name}'"),
             )?
         }
         _ => return Ok(None),
@@ -129,29 +132,6 @@ fn set(parent: &str, done: &CompanionStateSet) -> v1::Companion {
         bin: done.program.clone(),
         resolves: None,
         state: companion_state(done.state).into(),
-    }
-}
-
-/// `companion remove`: the preview (the command that applies it), or the
-/// removal done.
-fn removed(
-    parent: &str,
-    name: &str,
-    removal: &Removal<CompanionRemoved>,
-) -> v1::DeleteCompanionResponse {
-    let (applied, detail, apply_command) = match removal {
-        Removal::Preview(preview) => (false, preview.detail.clone(), preview.apply.clone()),
-        Removal::Done(gone) => (gone.removed, Vec::new(), String::new()),
-    };
-    v1::DeleteCompanionResponse {
-        companion: Some(v1::Companion {
-            name: companion_name(parent, name),
-            ..v1::Companion::default()
-        }),
-        applied: Some(applied),
-        detail,
-        apply_command,
-        ..v1::DeleteCompanionResponse::default()
     }
 }
 

@@ -2,7 +2,7 @@
 //! writes (B1), each json answer its AIP resource or method response
 //! (OD-40, design §5.2).
 
-use library_application::{ItemCreated, ItemDistilled, ItemRemoved, ItemShow, Removal};
+use library_application::{ItemCreated, ItemDistilled, ItemShow};
 
 use crate::catalog::{self, ok};
 use crate::prelude::*;
@@ -188,29 +188,7 @@ pub(crate) fn write(
                 err,
             )?,
         },
-        "remove" => {
-            let outcome = cx
-                .library
-                .item_remove(&cx.flags, kind, &reference, flag(sub, "yes"));
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                |parent, gone| removed(parent, kind, &reference, gone),
-                |gone, out, _| {
-                    catalog::removal_text(gone, out, |gone, out| {
-                        writeln!(
-                            out,
-                            "Removed {} \"{}\" from bundle \"{}\"",
-                            gone.kind, gone.name, gone.bundle
-                        )
-                    })
-                },
-                crate::write::removal_exit,
-            )?
-        }
+        "remove" => remove_served(cx, kind, &reference, flag(sub, "yes"), out, err)?,
         "edit" => edit_served(
             cx,
             kind,
@@ -482,6 +460,65 @@ fn edit_served(
     Ok(code)
 }
 
+/// `fragment|command remove <ref> [--yes]`: the daemon's `DeleteFragment`
+/// or `DeleteCommand` (step 10b U3), previewed and confirmed at a terminal.
+fn remove_served(
+    cx: &Context<'_>,
+    kind: ItemKind,
+    reference: &str,
+    yes: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let under = library_api::names::reference_target(reference);
+    let done = |name: &str, word: &str, out: &mut dyn Write| {
+        let (bundle, item) = bundle_and_item(name);
+        writeln!(out, "Removed {word} \"{item}\" from bundle \"{bundle}\"")
+    };
+    if kind == ItemKind::Command {
+        return crate::write::removal_served(
+            cx,
+            yes,
+            |validate_only, answers, etag| {
+                let request = v1::DeleteCommandRequest {
+                    validate_only,
+                    answers,
+                    etag,
+                    globals: cx.globals(),
+                    ..v1::DeleteCommandRequest::default()
+                };
+                cx.served.delete_command(&under, request)
+            },
+            out,
+            err,
+            |gone, out| {
+                let name = gone.command.as_ref().map_or("", |c| c.name.as_str());
+                done(name, "command", out)
+            },
+        );
+    }
+    crate::write::removal_served(
+        cx,
+        yes,
+        |validate_only, answers, etag| {
+            let request = v1::DeleteFragmentRequest {
+                validate_only,
+                answers,
+                etag,
+                globals: cx.globals(),
+                ..v1::DeleteFragmentRequest::default()
+            };
+            cx.served.delete_fragment(&under, request)
+        },
+        out,
+        err,
+        |gone, out| {
+            let name = gone.fragment.as_ref().map_or("", |f| f.name.as_str());
+            done(name, "fragment", out)
+        },
+    )
+}
+
 /// `fragment|command distill <ref> [-f]` (plan step 5).
 fn distill(
     cx: &Context<'_>,
@@ -614,54 +651,6 @@ pub(crate) fn created(
         applied: Some(true),
         bundle_created: made.bundle_created,
         ..v1::CreateFragmentResponse::default()
-    })
-}
-
-/// `fragment|command remove`: `DeleteFragmentResponse` or
-/// `DeleteCommandResponse`, the preview's (named by the reference asked) or
-/// the removal's.
-pub(crate) fn removed(
-    parent: &str,
-    kind: ItemKind,
-    asked: &str,
-    gone: &Removal<ItemRemoved>,
-) -> Either<v1::DeleteFragmentResponse, v1::DeleteCommandResponse> {
-    let command = kind == ItemKind::Command;
-    let dir = if command { "commands" } else { "fragments" };
-    let name = match gone {
-        Removal::Done(done) => catalog::item_name(parent, &done.bundle, dir, &done.name),
-        Removal::Preview(_) => {
-            catalog::reference_name(parent, asked).unwrap_or_else(|| asked.to_string())
-        }
-    };
-    let (path, applied, detail, apply_command) = catalog::removal(
-        gone,
-        |preview| (String::new(), false, preview.detail, preview.apply_command),
-        |done| (done.path.clone(), true, Vec::new(), String::new()),
-    );
-    if command {
-        return Either::Command(v1::DeleteCommandResponse {
-            command: Some(v1::Command {
-                name,
-                ..v1::Command::default()
-            }),
-            path,
-            applied: Some(applied),
-            detail,
-            apply_command,
-            ..v1::DeleteCommandResponse::default()
-        });
-    }
-    Either::Fragment(v1::DeleteFragmentResponse {
-        fragment: Some(v1::Fragment {
-            name,
-            ..v1::Fragment::default()
-        }),
-        path,
-        applied: Some(applied),
-        detail,
-        apply_command,
-        ..v1::DeleteFragmentResponse::default()
     })
 }
 
