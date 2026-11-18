@@ -10,6 +10,7 @@
 //! - Nothing is created: reading is a read.
 
 mod error;
+mod operations;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -23,6 +24,7 @@ use os::Mode;
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{ContentError, EN_US};
+pub use operations::TreeOperations;
 
 /// Where bundles are below the app dir.
 pub const BUNDLES_BELOW_APP_DIR: &str = "content/bundles/v2";

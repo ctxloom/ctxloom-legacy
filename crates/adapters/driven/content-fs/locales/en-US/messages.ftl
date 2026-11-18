@@ -9,3 +9,5 @@ content-fs-bad-path = "{ $path }" is not a path inside a bundle: it is absolute,
 content-fs-write-file = cannot write { $path }: { $ext_err_txt }
 content-fs-remove-path = cannot remove { $path }: { $ext_err_txt }
 content-fs-make-dir = cannot make the directory { $path }: { $ext_err_txt }
+content-fs-rename = cannot rename { $from } to { $to }: { $ext_err_txt }
+content-fs-bad-request = "{ $request_id }" is not a write's request id: its staging and its trash are named by it, so it is one plain name

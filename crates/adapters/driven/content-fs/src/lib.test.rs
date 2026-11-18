@@ -319,7 +319,9 @@ fn test_the_errors_carry_their_args_and_their_samples_are_all_of_them() {
             "content-fs-bad-path",
             "content-fs-write-file",
             "content-fs-remove-path",
-            "content-fs-make-dir"
+            "content-fs-make-dir",
+            "content-fs-rename",
+            "content-fs-bad-request"
         ]
     );
 }

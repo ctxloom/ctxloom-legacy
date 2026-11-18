@@ -10,12 +10,14 @@
 //! git holds the library, and ctxloom asks it what is checked out and what
 //! differs, never keeping a copy of its own.
 
+mod operation;
 mod tree;
 
 use std::collections::BTreeMap;
 
 use angzarr_diagnostic::Diagnostic;
 
+pub use operation::{Operated, Operation, Operations, Point, STAGING_DIR, STATE_DIR, TRASH_DIR};
 pub use tree::{IgnoreRule, Motion, PathStatus, StatusEntry, TreeChange, TreeError, TreeObserver};
 
 /// Why an adapter could not do what it was asked: its own diagnostic.

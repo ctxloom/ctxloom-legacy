@@ -30,6 +30,33 @@ pub enum ContentError {
     RemovePath { path: String, detail: String },
     /// A directory could not be made.
     MakeDir { path: String, detail: String },
+    /// A path could not be renamed (an atomic operation's one step).
+    Rename {
+        from: String,
+        to: String,
+        detail: String,
+    },
+    /// A request id that is not one plain name (its staging and its trash
+    /// slot are named by it).
+    BadRequest { request_id: String },
+}
+
+impl ContentError {
+    pub(crate) fn list_dir(path: String, detail: String) -> ContentError {
+        ContentError::ListDir { path, detail }
+    }
+
+    pub(crate) fn make_dir(path: String, detail: String) -> ContentError {
+        ContentError::MakeDir { path, detail }
+    }
+
+    pub(crate) fn remove_path(path: String, detail: String) -> ContentError {
+        ContentError::RemovePath { path, detail }
+    }
+
+    pub(crate) fn write_file(path: String, detail: String) -> ContentError {
+        ContentError::WriteFile { path, detail }
+    }
 }
 
 impl fmt::Display for ContentError {
@@ -51,6 +78,8 @@ impl Diagnostic for ContentError {
             ContentError::WriteFile { .. } => code!("write-file"),
             ContentError::RemovePath { .. } => code!("remove-path"),
             ContentError::MakeDir { .. } => code!("make-dir"),
+            ContentError::Rename { .. } => code!("rename"),
+            ContentError::BadRequest { .. } => code!("bad-request"),
         }
     }
 
@@ -67,6 +96,14 @@ impl Diagnostic for ContentError {
             ],
             ContentError::BadName { name } => vec![("name", name.as_str().into())],
             ContentError::BadPath { path } => vec![("path", path.as_str().into())],
+            ContentError::Rename { from, to, detail } => vec![
+                ("from", from.as_str().into()),
+                ("to", to.as_str().into()),
+                ("ext_err_txt", detail.as_str().into()),
+            ],
+            ContentError::BadRequest { request_id } => {
+                vec![("request_id", request_id.as_str().into())]
+            }
         }
     }
 }
@@ -105,6 +142,17 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
             path: path.clone(),
             detail: detail.clone(),
         }),
-        Box::new(ContentError::MakeDir { path, detail }),
+        Box::new(ContentError::MakeDir {
+            path: path.clone(),
+            detail: detail.clone(),
+        }),
+        Box::new(ContentError::Rename {
+            from: format!("{path}/.ctxloom/state/staging/r/notes"),
+            to: path,
+            detail,
+        }),
+        Box::new(ContentError::BadRequest {
+            request_id: "../x".to_string(),
+        }),
     ]
 }
