@@ -497,3 +497,19 @@ mod mapping {
         );
     }
 }
+
+// Step 10a U2: each read's request carries the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_agent_reads_carry_the_globals() {
+        let (under, show) = asked_once::<v1::GetAgentRequest>(&["agent", "show", "dev"]);
+        assert_eq!(under, "/agents/dev");
+        assert_eq!(show.globals, degraded());
+        let (under, list) = asked_once::<v1::ListAgentsRequest>(&["agent", "list"]);
+        assert_eq!(under, "");
+        assert_eq!(list.globals, degraded());
+    }
+}

@@ -446,3 +446,39 @@ mod mapping {
         );
     }
 }
+
+// Step 10a U2: each read's request carries `--distilled` and the
+// command's global flags.
+mod asks {
+    use crate::tests::{asked, asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_item_reads_carry_distilled_and_the_globals() {
+        let (_, command) = asked_once::<v1::GetCommandRequest>(&[
+            "command",
+            "show",
+            "--distilled",
+            "demo#commands/review",
+        ]);
+        assert!(command.prefer_distilled);
+        assert_eq!(command.globals, degraded());
+        let (_, fragment) = asked_once::<v1::GetFragmentRequest>(&[
+            "fragment",
+            "show",
+            "--distilled",
+            "demo#fragments/golang",
+        ]);
+        assert!(fragment.prefer_distilled);
+        assert_eq!(fragment.globals, degraded());
+        let (under, index) = asked_once::<v1::GetPremiseIndexRequest>(&["fragment", "premises"]);
+        assert_eq!(under, "/premiseIndex");
+        assert_eq!(index.globals, degraded());
+        let commands = asked::<v1::ListCommandsRequest>(&["command", "list"]);
+        assert!(!commands.is_empty());
+        assert!(commands.iter().all(|(_, r)| r.globals == degraded()));
+        let fragments = asked::<v1::ListFragmentsRequest>(&["fragment", "list"]);
+        assert!(!fragments.is_empty());
+        assert!(fragments.iter().all(|(_, r)| r.globals == degraded()));
+    }
+}

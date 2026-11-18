@@ -258,3 +258,160 @@ fn a_profile_s_fragments_hooks_and_denied_tools_read_back_and_view() {
         "# Profile: full\ndeny_tools:\n  - Bash\nfragments:\n  - plain\n  - name: demo#fragments/pri\n    priority: 3\nhooks:\n  unified:\n    pre_tool:\n      - args:\n          - --fix\n        command: lint\n        type: command\nselect_tags:\n  - go\n"
     );
 }
+
+fn number(n: f64) -> Value {
+    Value {
+        kind: Some(Kind::NumberValue(n)),
+    }
+}
+
+#[test]
+fn a_number_flows_as_written_whole_without_a_fraction_and_zero_unsigned() {
+    assert_eq!(flow(&number(3.0)), "3");
+    assert_eq!(flow(&number(2.5)), "2.5");
+    assert_eq!(flow(&number(-0.0)), "0");
+    assert_eq!(flow(&number(-7.0)), "-7");
+    assert_eq!(flow(&number(1e15)), "1000000000000000");
+}
+
+#[test]
+fn an_agents_engine_block_reads_back_as_one_flow_line_of_what_it_says() {
+    let block = |model: &str, effort: &str| v1::AgentEngine {
+        model: model.to_string(),
+        effort: effort.to_string(),
+        ..v1::AgentEngine::default()
+    };
+    let agent = v1::Agent {
+        name: "projects/calm-otter/agents/dev".to_string(),
+        engines: [
+            ("claude-code".to_string(), block("haiku", "high")),
+            ("opencode".to_string(), block("", "")),
+        ]
+        .into_iter()
+        .collect(),
+        ..<v1::Agent as Default>::default()
+    };
+    let row = agent_row(&agent);
+    let lines: Vec<&str> = row.engine_lines.iter().map(|l| l.line.as_str()).collect();
+    assert_eq!(
+        lines,
+        [
+            "engines.claude-code: {effort: high, model: haiku}",
+            "engines.opencode: {}"
+        ]
+    );
+}
+
+#[test]
+fn an_engines_auth_reads_back_its_source_and_its_state() {
+    let auth = |value: v1::AuthValue, state: v1::engine_auth::State| v1::EngineAuth {
+        value: Some(value),
+        state: state as i32,
+        ..v1::EngineAuth::default()
+    };
+    let source = auth_of(Some(&auth(
+        v1::AuthValue {
+            env: vec!["TOKEN".to_string()],
+            file: "/k".to_string(),
+            ..v1::AuthValue::default()
+        },
+        v1::engine_auth::State::Present,
+    )));
+    assert_eq!(
+        source.value,
+        serde_json::json!({"env": ["TOKEN"], "file": "/k"})
+    );
+    assert_eq!(source.state, "present");
+    let bare = auth_of(Some(&auth(
+        v1::AuthValue::default(),
+        v1::engine_auth::State::Missing,
+    )));
+    assert_eq!(bare.value, serde_json::json!({}));
+    assert_eq!(bare.state, "missing");
+    let word = auth_of(Some(&auth(
+        v1::AuthValue {
+            word: "none".to_string(),
+            ..v1::AuthValue::default()
+        },
+        v1::engine_auth::State::NotNeeded,
+    )));
+    assert_eq!(word.value, serde_json::json!("none"));
+    assert_eq!(word.state, "not-needed");
+    assert_eq!(auth_of(None).state, "");
+}
+
+#[test]
+fn an_mcp_show_is_found_only_when_the_listing_holds_it() {
+    let found = mcp_show(&v1::ListMcpServersResponse {
+        mcp_servers: vec![v1::McpServer {
+            name: "projects/calm-otter/bundles/demo/mcpServers/tree-sitter".to_string(),
+            ..v1::McpServer::default()
+        }],
+        ..v1::ListMcpServersResponse::default()
+    });
+    assert!(found.found);
+    assert_eq!(found.name, "tree-sitter");
+    let none = mcp_show(&v1::ListMcpServersResponse::default());
+    assert!(!none.found);
+    assert_eq!(none.name, "");
+}
+
+#[test]
+fn a_shown_bundle_reads_back_each_item_by_its_id_and_its_distilled_state() {
+    let item = |id: &str, state: v1::DistilledState, no_distill: Option<bool>| v1::BundleItem {
+        item: format!("projects/calm-otter/bundles/demo/{id}"),
+        distilled: state as i32,
+        no_distill,
+        ..v1::BundleItem::default()
+    };
+    let bundle = v1::Bundle {
+        name: "projects/calm-otter/bundles/demo".to_string(),
+        held: Some(true),
+        fragments: vec![
+            item("fragments/fresh", v1::DistilledState::Fresh, Some(true)),
+            item("fragments/stale", v1::DistilledState::Stale, Some(false)),
+            item("fragments/plain", v1::DistilledState::Unspecified, None),
+        ],
+        commands: vec![
+            item("commands/fresh", v1::DistilledState::Fresh, Some(true)),
+            item("commands/stale", v1::DistilledState::Stale, Some(false)),
+            item("commands/plain", v1::DistilledState::Unspecified, None),
+        ],
+        ..v1::Bundle::default()
+    };
+    let show = bundle_show(&bundle);
+    let fragments: Vec<(&str, bool, bool, bool)> = show
+        .fragments
+        .iter()
+        .map(|(id, f)| (id.as_str(), f.distilled, f.no_distill, f.stale))
+        .collect();
+    let expected = [
+        ("fresh", true, true, false),
+        ("plain", false, false, false),
+        ("stale", true, false, true),
+    ];
+    assert_eq!(fragments, expected);
+    let commands: Vec<(&str, bool, bool, bool)> = show
+        .commands
+        .iter()
+        .map(|(id, c)| (id.as_str(), c.distilled, c.no_distill, c.stale))
+        .collect();
+    assert_eq!(commands, expected);
+    assert!(show.listing.held);
+    assert!(!bundle_show(&v1::Bundle::default()).listing.held);
+}
+
+#[test]
+fn a_viewed_bundle_is_distilled_only_when_the_message_says_so() {
+    let view = |distilled| {
+        bundle_view(&v1::Bundle {
+            name: "projects/calm-otter/bundles/demo".to_string(),
+            distilled,
+            ..v1::Bundle::default()
+        })
+        .distilled
+    };
+    assert!(view(Some(true)));
+    assert!(!view(Some(false)));
+    assert!(!view(None));
+}

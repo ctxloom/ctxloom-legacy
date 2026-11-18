@@ -176,3 +176,18 @@ mod api {
         );
     }
 }
+
+// Step 10a U2: each read's request carries the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_engine_reads_carry_the_globals() {
+        let (under, show) = asked_once::<v1::GetEngineRequest>(&["engine", "show", "claude-code"]);
+        assert_eq!(under, "/engines/claude-code");
+        assert_eq!(show.globals, degraded());
+        let (_, list) = asked_once::<v1::ListEnginesRequest>(&["engine", "list"]);
+        assert_eq!(list.globals, degraded());
+    }
+}
