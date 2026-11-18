@@ -1366,3 +1366,39 @@ fn test_a_bundle_export_plans_its_tree_below_the_callers_directory_and_answers_i
     };
     assert_eq!(dir, "/work/handoff");
 }
+
+// Step 10b U9 (QUESTIONS 1(a)): a local move plans the bundle's one move
+// into the project at her directory, below her working directory, and
+// answers where it was and where it landed, as she typed it; a retry
+// (no answer) says where it landed by the layout.
+#[test]
+fn test_a_bundle_move_plans_its_one_move_and_answers_where_it_landed_as_typed() {
+    let (library, recorder) = demo().recording();
+    let request = v1::MoveBundleRequest {
+        name: "projects/amber-quiet-heron/bundles/demo".to_string(),
+        destination: "other".to_string(),
+        cwd: "/work".to_string(),
+        ..v1::MoveBundleRequest::default()
+    };
+    let done = super::move_bundle::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert_eq!(
+        recorder.take(),
+        [library_application::write::recording::Planned::MovedInto {
+            bundle: "demo".to_string(),
+            app_dir: "/work/other/.ctxloom".to_string(),
+        }]
+    );
+    let answered = super::move_bundle::respond(&request, wrote(Some(done)));
+    assert_eq!(answered.path, "other/.ctxloom/content/bundles/v2/demo");
+    assert!(
+        answered.source.ends_with("demo/bundle.yaml"),
+        "{}",
+        answered.source
+    );
+    assert_eq!(answered.applied, Some(true));
+    assert!(answered.bundle.is_none());
+    let retried = super::move_bundle::respond(&request, wrote(None));
+    assert_eq!(retried.path, "other/.ctxloom/content/bundles/v2/demo");
+}

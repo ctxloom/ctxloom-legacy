@@ -27,6 +27,15 @@ pub struct PushRequest {
     pub pr: bool,
 }
 
+/// What `bundle move --to` names ([`Deps::move_target`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveTarget {
+    /// A configured remote: the bundle is published there.
+    Remote,
+    /// An existing directory: another project the bundle moves into.
+    Directory,
+}
+
 /// What `bundle move` is asked.
 #[derive(Clone, Debug, Default)]
 pub struct MoveRequest {
@@ -163,6 +172,20 @@ impl Deps {
             })?;
         let files = self.files.read_local_bundle(name).map_err(file)?;
         Ok((path, files))
+    }
+
+    /// Where `bundle move --to <to>` goes: a configured remote (published
+    /// here), an existing directory (another project: the daemon's local
+    /// move, step 10b U9), else refused, naming the remotes there are.
+    pub fn move_target(&self, to: &str) -> Result<MoveTarget, AppError> {
+        let registry = self.registry()?;
+        if registry.get(to).is_some() {
+            return Ok(MoveTarget::Remote);
+        }
+        if self.files.is_directory(to) {
+            return Ok(MoveTarget::Directory);
+        }
+        Err(self.bad_destination(to, &registry))
     }
 
     /// `bundle move`.

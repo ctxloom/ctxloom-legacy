@@ -39,8 +39,13 @@ pub enum Operation {
     CreateDir { path: String, files: Vec<Put> },
     /// The path taken into the trash slot of the request.
     Trash { path: String },
-    /// `from` renamed to `to`.
-    Move { from: String, to: String },
+    /// `from` renamed to `to`: below this tree, or (`into`, step 10b
+    /// QUESTIONS 1(a)) below ANOTHER tree, named by its directory.
+    Move {
+        from: String,
+        to: String,
+        into: Option<String>,
+    },
     /// The trash slot of the request removed whole; none there is done.
     Purge,
 }

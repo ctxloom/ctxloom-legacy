@@ -214,6 +214,29 @@ impl ContentRepo for ContentFs {
     fn bundle_dir(&self, name: &str) -> String {
         join_rel(&self.root, name).display().to_string()
     }
+
+    fn bundle_dir_in(&self, app_dir: &str, name: &str) -> String {
+        join_rel(&join_rel(Path::new(app_dir), BUNDLES_BELOW_APP_DIR), name)
+            .display()
+            .to_string()
+    }
+
+    fn move_into(&self, name: &str, app_dir: &str) -> Result<bool, Failure> {
+        let source = self.bundle_path(name)?;
+        let target = PathBuf::from(self.bundle_dir_in(app_dir, name));
+        if let Some(parent) = target.parent() {
+            make_dirs(&*self.fs, parent)?;
+        }
+        match self.fs.rename_noreplace(&source, &target) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(Box::new(ContentError::Rename {
+                from: source.display().to_string(),
+                to: target.display().to_string(),
+                detail: e.to_string(),
+            })),
+        }
+    }
 }
 
 /// `rel` (slash separated) below `top`.

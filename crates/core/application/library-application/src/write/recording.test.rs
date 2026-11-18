@@ -168,3 +168,58 @@ fn test_an_export_onto_a_path_that_is_there_is_refused_and_plans_nothing() {
     );
     assert!(recorder.take().is_empty());
 }
+
+// Step 10b U9 (QUESTIONS 1(a)): a local `bundle move` into another project
+// is planned as ONE move of the bundle into that project's tree, and moves
+// nothing; it answers where the bundle was and where it lands.
+#[test]
+fn test_a_bundle_move_into_another_project_is_planned_as_one_move() {
+    let (library, mem) = world();
+    mem.put_user("/work/other/.ctxloom/.keep", b"", false);
+    let (recording, recorder) = library.recording();
+    let moved = recording
+        .bundle_move_into(&plain(), "demo", "/work/other")
+        .result
+        .unwrap();
+    assert!(mem.has_bundle("demo"), "nothing moved");
+    assert_eq!(moved.name, "demo");
+    assert_eq!(
+        moved.source,
+        "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml"
+    );
+    assert_eq!(moved.dest, "/work/other/.ctxloom/content/bundles/v2/demo");
+    let planned = recorder.take();
+    assert_eq!(
+        planned,
+        [Planned::MovedInto {
+            bundle: "demo".to_string(),
+            app_dir: "/work/other/.ctxloom".to_string(),
+        }]
+    );
+}
+
+// The bundle is there already at its new place: refused, a decline, and
+// nothing planned (a move never replaces, `--force` or not); its own
+// place is no destination either.
+#[test]
+fn test_a_bundle_move_onto_a_bundle_there_or_onto_itself_is_refused() {
+    let (library, mem) = world();
+    mem.put_user(
+        "/work/other/.ctxloom/content/bundles/v2/demo/bundle.yaml",
+        b"theirs",
+        false,
+    );
+    let (recording, recorder) = library.recording();
+    let code = |outcome: crate::Outcome<crate::BundleMoved>| {
+        angzarr_diagnostic::Diagnostic::code(&outcome.result.expect_err("refused")).to_string()
+    };
+    assert_eq!(
+        code(recording.bundle_move_into(&plain(), "demo", "/work/other")),
+        "library-application-write-move-destination-exists"
+    );
+    assert_eq!(
+        code(recording.bundle_move_into(&plain(), "demo", "/p")),
+        "library-application-write-move-destination-itself"
+    );
+    assert!(recorder.take().is_empty());
+}

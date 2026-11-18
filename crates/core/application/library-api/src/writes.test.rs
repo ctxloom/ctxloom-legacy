@@ -832,3 +832,72 @@ fn test_a_sequences_other_paths_are_judged_on_their_own_tokens() {
         .collect();
     assert_eq!(seen, [3, 5]);
 }
+
+// Step 10b U9 (QUESTIONS 1(a)): a bundle moved into another project is one
+// Move out of this tree, naming the other tree; its intent's `to_tree` says
+// so, it expects only its own files gone (the arrival is the other tree's
+// to record), and its operation renames into that tree.
+#[test]
+fn test_a_bundle_moved_into_another_tree_is_one_move_out_of_this_one() {
+    let planned = Planned::MovedInto {
+        bundle: "demo".to_string(),
+        app_dir: "/other/.ctxloom".to_string(),
+    };
+    let files = |bundle: &str, dir: &str| {
+        assert_eq!((bundle, dir), ("demo", ""));
+        vec!["bundle.yaml".to_string(), "fragments/a.md".to_string()]
+    };
+    let shaped = shape(vec![planned], files).unwrap().unwrap();
+    assert_eq!(shaped.lands, Lands::Content);
+    let Shape::Move { from, to, into, .. } = &shaped.shape else {
+        panic!("{shaped:?}")
+    };
+    assert_eq!(from, "content/bundles/v2/demo");
+    assert_eq!(to, "content/bundles/v2/demo");
+    assert_eq!(into.as_deref(), Some("/other/.ctxloom"));
+    assert_eq!(
+        operation(&shaped.shape),
+        Some(ctxloom_ports::Operation::Move {
+            from: from.clone(),
+            to: to.clone(),
+            into: into.clone(),
+        })
+    );
+    let git = Git::at("h-0", "t-0");
+    let intended = intent_of(
+        &git,
+        "/d",
+        "t",
+        "bundle move",
+        &shaped.shape,
+        (3, &|_| 9),
+        evidence(),
+        "r",
+    )
+    .unwrap();
+    let Intended::Move(command) = &intended else {
+        panic!("{intended:?}")
+    };
+    assert_eq!(command.to_tree, "/other/.ctxloom");
+    assert_eq!(command.seen_sequence, 3);
+    let paths: Vec<String> = expected(&intended, &shaped.shape)
+        .into_iter()
+        .map(|p| p.path)
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "content/bundles/v2/demo/bundle.yaml",
+            "content/bundles/v2/demo/fragments/a.md"
+        ]
+    );
+    let step = intended.step("");
+    assert_eq!(
+        operation_of(&step, None),
+        Some(ctxloom_ports::Operation::Move {
+            from: from.clone(),
+            to: to.clone(),
+            into: into.clone(),
+        })
+    );
+}

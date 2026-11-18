@@ -768,6 +768,10 @@ message MoveBundleRequest {
   string name = 1 [(google.api.field_behavior) = REQUIRED];
   // The new parent (a project or a remote).
   string destination = 2 [(google.api.field_behavior) = REQUIRED];
+  // `--force`: a move never replaces what is there (one NOREPLACE rename,
+  // QUESTIONS 1(a)), so a served local move with it is still refused over a
+  // bundle there. Additive proto extension, owner ruling 2026-11-18.
+  bool force = 3 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
@@ -793,6 +797,9 @@ message MoveBundleResponse {
   Bundle bundle = 1;
   // The file or directory the write's one atomic operation targets (T25).
   string path = 2;
+  // The bundle's manifest where it was, as shown (`Moved <source> -> ...`).
+  // Additive proto extension, owner ruling 2026-11-18.
+  string source = 6;
   // Whether the write was applied: false on a preview, and printed either way
   // (OQ-7).
   optional bool applied = 3;

@@ -63,6 +63,7 @@ macro_rules! served_writes {
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse, "agent edit";
             export_bundle (ExportBundle) ExportBundleRequest => ExportBundleResponse, "bundle export";
+            move_bundle (MoveBundle) MoveBundleRequest => MoveBundleResponse, "bundle move";
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse, "bundle import";
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse, "bundle remove";
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse, "fragment remove";
@@ -1354,6 +1355,79 @@ pub fn removed_of<T>(answer: Option<&Removal<T>>, applied: bool) -> Removed {
 /// (T28, step 10b U9): the old tree into the trash, the new one renamed in,
 /// then the trash removed. Its source is the caller's path, read from her
 /// working directory when it is relative (never the daemon's).
+/// `path` as the caller means it: below her working directory `cwd` when
+/// relative.
+fn below_cwd(cwd: &str, path: &str) -> String {
+    let given = std::path::Path::new(path);
+    if path.is_empty() || given.is_absolute() || cwd.is_empty() {
+        return path.to_string();
+    }
+    std::path::Path::new(cwd).join(given).display().to_string()
+}
+
+/// `path` as she typed it: her working directory `cwd` taken off again.
+fn as_typed(cwd: &str, path: &str) -> String {
+    if cwd.is_empty() {
+        return path.to_string();
+    }
+    let cwd = cwd.trim_end_matches(['/', '\\']);
+    path.strip_prefix(cwd)
+        .and_then(|rest| rest.strip_prefix(['/', '\\']))
+        .map_or_else(|| path.to_string(), str::to_string)
+}
+
+/// A local `bundle move <bundle> --to <dir>` (step 10b U9, QUESTIONS
+/// 1(a)): `MoveBundle`, the project's own bundle moved whole into the
+/// project at her `dir` (below her working directory when relative) as ONE
+/// Move out of this tree, its stream naming the other; that tree's next
+/// read records the arrival. Never over a bundle there (`--force` too). A
+/// move to a remote is not served here (the CLI publishes it, U4).
+pub mod move_bundle {
+    use super::*;
+    use library_application::BundleMoved;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::MoveBundleRequest,
+        _apply: bool,
+    ) -> Outcome<BundleMoved> {
+        let bundle = names::bundle_under(parent_of(&request.name), &request.name)
+            .unwrap_or_else(|| request.name.clone());
+        library.bundle_move_into(
+            flags,
+            &bundle,
+            &below_cwd(&request.cwd, &request.destination),
+        )
+    }
+
+    pub fn respond(
+        request: &v1::MoveBundleRequest,
+        wrote: Wrote<BundleMoved>,
+    ) -> v1::MoveBundleResponse {
+        let (source, dest) = match &wrote.answer {
+            Some(done) => (done.source.clone(), done.dest.clone()),
+            // A retry of a move done: where it landed, by the layout.
+            None => {
+                let bundle = names::bundle_under(parent_of(&request.name), &request.name)
+                    .unwrap_or_else(|| request.name.clone());
+                let dir = below_cwd(&request.cwd, &request.destination);
+                let dir = dir.trim_end_matches(['/', '\\']);
+                let at = format!("{dir}/.ctxloom/{}/{bundle}", crate::writes::BUNDLES);
+                (String::new(), at)
+            }
+        };
+        v1::MoveBundleResponse {
+            path: as_typed(&request.cwd, &dest),
+            source,
+            applied: Some(wrote.applied),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::MoveBundleResponse::default()
+        }
+    }
+}
+
 /// `bundle export <bundle> <dest-dir>` (or `-o <path>`): `ExportBundle`,
 /// the bundle's tree put in outside ctxloom's trees, whole or not at all,
 /// never over what is there (D2's EXCEPTION: no step, no intent; the
@@ -1362,29 +1436,6 @@ pub fn removed_of<T>(answer: Option<&Removal<T>>, applied: bool) -> Removed {
 pub mod export_bundle {
     use super::*;
     use library_application::BundleExported;
-
-    /// `path` as the caller means it: below her `cwd` when relative.
-    fn below_cwd(request: &v1::ExportBundleRequest, path: &str) -> String {
-        let given = std::path::Path::new(path);
-        if path.is_empty() || given.is_absolute() || request.cwd.is_empty() {
-            return path.to_string();
-        }
-        std::path::Path::new(&request.cwd)
-            .join(given)
-            .display()
-            .to_string()
-    }
-
-    /// `path` as she typed it: her `cwd` taken off again.
-    fn as_typed(request: &v1::ExportBundleRequest, path: &str) -> String {
-        if request.cwd.is_empty() {
-            return path.to_string();
-        }
-        let cwd = request.cwd.trim_end_matches(['/', '\\']);
-        path.strip_prefix(cwd)
-            .and_then(|rest| rest.strip_prefix(['/', '\\']))
-            .map_or_else(|| path.to_string(), str::to_string)
-    }
 
     pub fn plan(
         library: &Library,
@@ -1397,8 +1448,8 @@ pub mod export_bundle {
         library.bundle_export(
             flags,
             &bundle,
-            &below_cwd(request, &request.destination),
-            &below_cwd(request, &request.output),
+            &below_cwd(&request.cwd, &request.destination),
+            &below_cwd(&request.cwd, &request.output),
         )
     }
 
@@ -1407,8 +1458,8 @@ pub mod export_bundle {
         wrote: Wrote<BundleExported>,
     ) -> v1::ExportBundleResponse {
         let (source, destination) = match &wrote.answer {
-            Some(done) => (done.source.clone(), as_typed(request, &done.dest)),
-            None => (String::new(), as_typed(request, &wrote.at)),
+            Some(done) => (done.source.clone(), as_typed(&request.cwd, &done.dest)),
+            None => (String::new(), as_typed(&request.cwd, &wrote.at)),
         };
         v1::ExportBundleResponse {
             bundle: request.name.clone(),

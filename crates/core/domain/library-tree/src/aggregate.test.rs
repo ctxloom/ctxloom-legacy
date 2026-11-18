@@ -222,6 +222,7 @@ fn moved(from: &str, to: &str, seen: u64) -> MovePath {
         to: to.to_string(),
         seen_sequence: seen,
         evidence: evidence(),
+        to_tree: String::new(),
     }
 }
 
@@ -1268,3 +1269,27 @@ fn a_failed_trash_leaves_no_slot() {
 }
 
 // endregion
+
+// 10b (QUESTIONS 1(a)): a move into ANOTHER tree is judged here on where
+// it comes from and the token it saw; where it goes is the other tree's,
+// never this record's (its NOREPLACE rename judges it).
+#[test]
+fn a_move_into_another_tree_does_not_judge_its_target_on_this_record() {
+    let mut tree = Tree::baselined();
+    tree.observe(edit(YAML, "y1"));
+    let mut out = moved(BUNDLE, BUNDLE, 1);
+    out.to_tree = "/work/other/.ctxloom".to_string();
+    let events = tree.command(out).unwrap();
+    let [LibraryEvent::ChangeIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    let step = intended.intent.steps[0].r#move.as_ref().unwrap();
+    assert_eq!(step.to_tree, "/work/other/.ctxloom");
+    // Within this tree the same target is there, and refused.
+    assert_eq!(
+        tree.command(moved(BUNDLE, BUNDLE, 1)),
+        Err(LibraryTreeRejection::ResourceExists {
+            path: BUNDLE.to_string()
+        })
+    );
+}

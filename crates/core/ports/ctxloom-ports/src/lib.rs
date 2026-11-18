@@ -93,6 +93,16 @@ pub trait ContentRepo {
 
     /// Where the bundle's directory is, as the user is shown it.
     fn bundle_dir(&self, name: &str) -> String;
+
+    /// Where the bundle `name` is in ANOTHER tree, the one whose `.ctxloom`
+    /// is `app_dir` (the same place below it), as the user is shown it.
+    fn bundle_dir_in(&self, app_dir: &str, name: &str) -> String;
+
+    /// The bundle `name` renamed whole into ANOTHER tree (`app_dir`, its
+    /// `.ctxloom`), at the same place below it, in one rename and never
+    /// over what is there (step 10b, QUESTIONS 1(a)): false when something
+    /// is there, and nothing was moved.
+    fn move_into(&self, name: &str, app_dir: &str) -> Result<bool, Failure>;
 }
 
 /// The user's own files, outside the project's content: where a bundle is

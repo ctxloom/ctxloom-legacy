@@ -28,6 +28,9 @@ pub enum Planned {
     BundleGone { bundle: String },
     /// A config layer written whole.
     Layer { scope: Scope, text: String },
+    /// A bundle moved whole into ANOTHER tree (a local `bundle move`; step
+    /// 10b QUESTIONS 1(a)), whose `.ctxloom` is `app_dir`.
+    MovedInto { bundle: String, app_dir: String },
     /// A tree written OUTSIDE ctxloom's trees (`bundle export`; D2's
     /// EXCEPTION: staged beside it and renamed in NOREPLACE, no intent on
     /// any stream), its directory as the use case named it.
@@ -192,6 +195,19 @@ impl ContentRepo for RecordingContent {
 
     fn bundle_dir(&self, name: &str) -> String {
         self.inner.bundle_dir(name)
+    }
+
+    fn bundle_dir_in(&self, app_dir: &str, name: &str) -> String {
+        self.inner.bundle_dir_in(app_dir, name)
+    }
+
+    /// Answered moved: the operation's NOREPLACE rename judges a race.
+    fn move_into(&self, name: &str, app_dir: &str) -> Result<bool, Failure> {
+        self.recorder.lock().push(Planned::MovedInto {
+            bundle: name.to_string(),
+            app_dir: app_dir.to_string(),
+        });
+        Ok(true)
     }
 }
 

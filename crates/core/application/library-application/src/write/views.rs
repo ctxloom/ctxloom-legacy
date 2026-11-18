@@ -131,6 +131,15 @@ pub struct BundleExported {
     pub dest: String,
 }
 
+/// A local `bundle move` into another project (step 10b U9): where the
+/// bundle's manifest was, as shown, and the directory it lands at.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct BundleMoved {
+    pub name: String,
+    pub source: String,
+    pub dest: String,
+}
+
 /// `bundle import`.
 #[derive(Clone, Debug, Serialize)]
 pub struct BundleImported {

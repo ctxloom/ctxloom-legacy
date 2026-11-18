@@ -364,6 +364,13 @@ message MovePath {
   // `from`'s token as the caller read it.
   uint64 seen_sequence = 5;
   Evidence evidence = 6;
+  // 10b (QUESTIONS 1(a), owner-approved): the tree the move lands in when
+  // it is not this one, by its directory (another project's `.ctxloom`);
+  // `to` is then below it. This stream records the move out; the other
+  // tree's next read records the arrival as a change of its own. Its
+  // record is not this tree's, so `to` is judged by the operation's
+  // NOREPLACE alone. Empty: a move within this tree. Additive.
+  string to_tree = 7;
 }
 
 // A retryable atomic sequence (T28): its steps are in the intent, so a

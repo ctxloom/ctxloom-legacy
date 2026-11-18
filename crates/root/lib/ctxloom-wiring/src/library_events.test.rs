@@ -124,6 +124,7 @@ fn an_intent_and_its_steps_print_their_request() {
                     verb: String::new(),
                     from: "content/bundles/v2/a".to_string(),
                     to: "content/bundles/v2/b".to_string(),
+                    to_tree: String::new(),
                     seen_sequence: 0,
                     evidence: library_tree::Evidence {
                         tree_reads: true,

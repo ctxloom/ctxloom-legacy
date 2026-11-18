@@ -12,7 +12,8 @@ use crate::project::{Library, Outcome, Project};
 use crate::write::plan::Plan;
 use crate::write::requests::BundleEditRequest;
 use crate::write::views::{
-    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, Preview, Removal,
+    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleMoved, BundleRemoved,
+    Preview, Removal,
 };
 use crate::write::WriteError;
 use crate::Flags;
@@ -57,12 +58,30 @@ impl Library {
         self.run(flags, |p| p.bundle_export(name, dest_dir, output))
     }
 
+    /// A local `bundle move <name> --to <dir>` (step 10b U9, QUESTIONS
+    /// 1(a)): the project's own bundle moved whole into the project at
+    /// `dir`, the same place below its `.ctxloom`, as ONE rename. A move
+    /// never replaces what is there, so a bundle there is refused (a
+    /// `--force` too); its own place is no destination.
+    pub fn bundle_move_into(&self, flags: &Flags, name: &str, dir: &str) -> Outcome<BundleMoved> {
+        self.run(flags, |p| p.bundle_move_into(name, dir))
+    }
+
     /// `bundle import <path> [--force]`: a tree named by its directory or its
     /// `bundle.yaml`, copied whole under its own name; over a bundle that is
     /// there it refuses unless forced.
     pub fn bundle_import(&self, flags: &Flags, path: &str, force: bool) -> Outcome<BundleImported> {
         self.run(flags, |p| p.bundle_import(path, force))
     }
+}
+
+/// A path as its steps say it, `.` steps and separators' spelling taken
+/// out (no filesystem asked): two names of one place compare equal.
+fn lexical(path: &str) -> Vec<String> {
+    path.split(['/', '\\'])
+        .filter(|step| !step.is_empty() && *step != ".")
+        .map(str::to_string)
+        .collect()
 }
 
 /// Whether `name` can be a bundle's: a path of plain segments, nested names
@@ -294,6 +313,37 @@ impl Project {
         Ok(BundleExported {
             status: "exported".to_string(),
             name: name.to_string(),
+            source: entry.manifest_path.clone(),
+            dest,
+        })
+    }
+
+    fn bundle_move_into(&self, name: &str, dir: &str) -> Result<BundleMoved, AppError> {
+        self.require_project()?;
+        let ports = self.write_ports()?;
+        let entry = self.bundle(name)?;
+        self.writable(&entry.name)?;
+        let own = self.content.bundle_names().map_err(AppError::Cause)?;
+        if !own.contains(&entry.name) {
+            return Err(AppError::cause(library::CatalogError::BundleNotFound {
+                ask: name.to_string(),
+            }));
+        }
+        let app_dir = format!("{}/.ctxloom", dir.trim_end_matches(['/', '\\']));
+        let dest = self.content.bundle_dir_in(&app_dir, &entry.name);
+        if lexical(&dest) == lexical(&self.content.bundle_dir(&entry.name)) {
+            return Err(WriteError::MoveDestinationItself { dest }.into());
+        }
+        if ports.user.exists(&dest).map_err(AppError::Cause)?
+            || !self
+                .content
+                .move_into(&entry.name, &app_dir)
+                .map_err(AppError::Cause)?
+        {
+            return Err(WriteError::MoveDestinationExists { dest }.into());
+        }
+        Ok(BundleMoved {
+            name: entry.name.clone(),
             source: entry.manifest_path.clone(),
             dest,
         })

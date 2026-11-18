@@ -47,7 +47,7 @@ pub use discover::DiscoverRequest;
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{AppError, Notice, EN_US};
-pub use publish::{MoveRequest, PushRequest};
+pub use publish::{MoveRequest, MoveTarget, PushRequest};
 pub use refresh::{ProjectRefresh, Pulled, Refresh, RefreshEngine, RefusedKind};
 pub use registry::CreateRequest;
 pub use views::*;

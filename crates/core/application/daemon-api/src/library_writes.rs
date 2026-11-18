@@ -764,6 +764,7 @@ macro_rules! write_requests {
 write_requests! {
     CreateBundleRequest.parent;
     ExportBundleRequest.name;
+    MoveBundleRequest.name;
     UpdateBundleRequest.bundle.name, etag;
     CreateFragmentRequest.parent;
     UpdateFragmentRequest.fragment.name, etag;

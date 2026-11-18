@@ -29,7 +29,7 @@ use angzarr_presentation::{Catalog, Format};
 use clap::ArgMatches;
 use cli_support::{flag, one, say_notices};
 use deps_application::{
-    AppError, CreateRequest, Deps, DiscoverRequest, Edit, MoveRequest, Notice, Outcome,
+    AppError, CreateRequest, Deps, DiscoverRequest, Edit, MoveRequest, MoveTarget, Notice, Outcome,
     ProjectRefresh, PushRequest,
 };
 use serde::Serialize;
@@ -58,6 +58,15 @@ pub trait Names {
 /// (`users/me` outside one) followed by `under`.
 pub trait Served {
     served_reads!(served_read);
+
+    /// `MoveBundle`: a local `bundle move` into another project, the
+    /// daemon's one Move (step 10b U9), its answer with the notices inside
+    /// it.
+    fn move_bundle(
+        &self,
+        under: &str,
+        request: v1::MoveBundleRequest,
+    ) -> Result<v1::MoveBundleResponse, Failure>;
 }
 
 /// The reads this CLI asks the daemon, in the shape of
@@ -551,16 +560,26 @@ fn bundle(
             |out| text::pushed(out, &pushed),
         )?;
     } else {
-        let moved = answer(
-            cx,
-            cx.deps.move_bundle(&MoveRequest {
-                name: text_arg(args, "name"),
-                to: text_arg(args, "to"),
-                force: flag(args, "force"),
-                message: text_arg(args, "message"),
-            }),
-            err,
-        )?;
+        let name = text_arg(args, "name");
+        let to = text_arg(args, "to");
+        let target = cx
+            .deps
+            .move_target(&to)
+            .map_err(IntoFailure::into_failure)?;
+        let moved = if target == MoveTarget::Remote {
+            answer(
+                cx,
+                cx.deps.move_bundle(&MoveRequest {
+                    name,
+                    to,
+                    force: flag(args, "force"),
+                    message: text_arg(args, "message"),
+                }),
+                err,
+            )?
+        } else {
+            moved_locally(cx, &name, &to, flag(args, "force"), err)?
+        };
         // Into another project's directory the bundle's name is that
         // project's, which this one cannot give: null (owner 2026-11-14).
         respond_naming(
@@ -572,6 +591,41 @@ fn bundle(
         )?;
     }
     Ok(Exit::OK)
+}
+
+/// A local `bundle move <name> --to <dir>`: the daemon's `MoveBundle`
+/// (step 10b U9, QUESTIONS 1(a): one Move out of this project's tree, the
+/// other's next read recording the arrival), its notices said, its answer
+/// as the move it reports (the same text and json as ever).
+fn moved_locally(
+    cx: &Context<'_>,
+    name: &str,
+    to: &str,
+    force: bool,
+    err: &mut dyn Write,
+) -> Result<deps_application::Moved, Failure> {
+    let request = v1::MoveBundleRequest {
+        destination: to.to_string(),
+        force,
+        ..v1::MoveBundleRequest::default()
+    };
+    let under = library_api::names::bundle_target(name);
+    let answered = cx.served.move_bundle(&under, request)?;
+    let said: Vec<_> = answered
+        .notices
+        .iter()
+        .map(library_api::reads::said)
+        .collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    Ok(deps_application::Moved {
+        status: "moved",
+        name: name.to_string(),
+        source: answered.source,
+        dest_kind: "path",
+        dest: answered.path,
+        remote: String::new(),
+        commit_sha: String::new(),
+    })
 }
 
 #[cfg(test)]

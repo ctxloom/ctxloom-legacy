@@ -55,6 +55,9 @@ pub enum Shape {
         from: String,
         to: String,
         files: Vec<String>,
+        /// The other tree it lands in, by its directory (a local `bundle
+        /// move` into another project, QUESTIONS 1(a)); none, this one.
+        into: Option<String>,
     },
     /// The trash slot of the write's own request removed whole: a
     /// sequence's last step, so it leaves no trash (G12(a)).
@@ -114,9 +117,10 @@ pub fn operation(shape: &Shape) -> Option<Operation> {
             files: files.clone(),
         },
         Shape::Trash { path, .. } => Operation::Trash { path: path.clone() },
-        Shape::Move { from, to, .. } => Operation::Move {
+        Shape::Move { from, to, into, .. } => Operation::Move {
             from: from.clone(),
             to: to.clone(),
+            into: into.clone(),
         },
         Shape::Purge => Operation::Purge,
         Shape::Sequence(_) => return None,
@@ -201,6 +205,17 @@ pub fn shape(
                 None => Ok(None),
             }
         }
+        // A bundle moved into another tree is one move out of this one
+        // (QUESTIONS 1(a)): its every file goes.
+        Planned::MovedInto { bundle, app_dir } => shaped(
+            Lands::Content,
+            Shape::Move {
+                from: bundle_path(bundle),
+                to: bundle_path(bundle),
+                files: files_under(bundle, ""),
+                into: Some(app_dir.clone()),
+            },
+        ),
         // A tree outside ctxloom's trees is no tree's step (D2's
         // EXCEPTION): the daemon takes it aside before it shapes.
         Planned::Outside { .. } => Ok(None),
@@ -308,6 +323,7 @@ fn paths_of(planned: &Planned) -> Vec<String> {
         Planned::BundleGone { bundle } => vec![bundle.clone()],
         Planned::Changed { changes, .. } => changes.iter().map(change_path).collect(),
         Planned::Outside { dir, .. } => vec![dir.clone()],
+        Planned::MovedInto { bundle, .. } => vec![bundle.clone()],
     }
 }
 
@@ -406,13 +422,14 @@ fn one_intent(
             // sequence's own (U9) is removed by its last step.
             keep: true,
         }),
-        Shape::Move { from, to, .. } => Intended::Move(MovePath {
+        Shape::Move { from, to, into, .. } => Intended::Move(MovePath {
             name: tree.to_string(),
             verb: verb.to_string(),
             from: from.clone(),
             to: to.clone(),
             seen_sequence: seen,
             evidence,
+            to_tree: into.clone().unwrap_or_default(),
         }),
         // A purge, or a sequence, is only ever a step of one ([`intent_of`]
         // makes those): alone, it is a sequence of nothing.
@@ -558,9 +575,16 @@ fn expected_in_tree(step: &Step, shape: Option<&Shape>) -> Vec<DirtyPath> {
             Some(Shape::Move { files, .. }) => files,
             _ => &[],
         };
+        // Into another tree, only where it came from is this tree's.
+        let here = moved.to_tree.is_empty();
+        let to = if here {
+            under(&moved.to, files)
+        } else {
+            Vec::new()
+        };
         return under(&moved.from, files)
             .into_iter()
-            .chain(under(&moved.to, files))
+            .chain(to)
             .map(gone)
             .collect();
     }
@@ -594,6 +618,7 @@ pub fn operation_of(step: &Step, shape: Option<&Shape>) -> Option<Operation> {
         return Some(Operation::Move {
             from: moved.from.clone(),
             to: moved.to.clone(),
+            into: (!moved.to_tree.is_empty()).then(|| moved.to_tree.clone()),
         });
     }
     if step.purge.is_some() {

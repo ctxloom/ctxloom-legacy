@@ -470,6 +470,19 @@ impl setup_cli::Cleaning for DaemonServed {
 
 impl deps_cli::Served for DaemonServed {
     deps_cli::served_reads!(served_read);
+
+    /// A local `bundle move` through the daemon (step 10b U9), as a library
+    /// write is sent.
+    fn move_bundle(
+        &self,
+        under: &str,
+        request: daemon_proto::v1::MoveBundleRequest,
+    ) -> Result<daemon_proto::v1::MoveBundleResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.move_bundle(under, request))
+    }
 }
 
 /// Whether `noun`'s verb in `call` is a read the daemon answers (step 10a

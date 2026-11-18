@@ -7,7 +7,8 @@
 //! - A new directory is built whole there, then renamed in with NOREPLACE:
 //!   one that appeared meanwhile is left as it was (`Exists`).
 //! - A removal is one rename into `state/trash/<request id>/<path>`.
-//! - A move is one NOREPLACE rename.
+//! - A move is one NOREPLACE rename, within the tree or into another
+//!   (its target below that tree's directory; QUESTIONS 1(a)).
 //!
 //! A path that is not plain (absolute, climbing, empty) or that goes
 //! through a link inside the tree is refused before anything is touched.
@@ -221,9 +222,14 @@ impl TreeOperations {
         Ok(Operated::Done)
     }
 
-    fn move_path(&self, tree: &Path, from: &str, to: &str) -> Result<Operated, Failure> {
+    fn move_path(
+        &self,
+        tree: &Path,
+        (from, to): (&str, &str),
+        into: Option<&Path>,
+    ) -> Result<Operated, Failure> {
         let source = self.inside(tree, from)?;
-        let target = self.inside(tree, to)?;
+        let target = self.inside(into.unwrap_or(tree), to)?;
         if !self.exists(&source)? {
             // Retried after its rename: it is at its target.
             return Ok(if self.exists(&target)? {
@@ -268,9 +274,9 @@ impl Operations for TreeOperations {
                 self.create_dir(tree, request_id, (path, files), at)
             }
             Operation::Trash { path } => self.trash(tree, request_id, path, at),
-            Operation::Move { from, to } => {
+            Operation::Move { from, to, into } => {
                 Self::of_request(tree, TRASH_DIR, request_id)?;
-                self.move_path(tree, from, to)
+                self.move_path(tree, (from, to), into.as_deref().map(Path::new))
             }
             Operation::Purge => {
                 self.remove_all(&Self::of_request(tree, TRASH_DIR, request_id)?)?;

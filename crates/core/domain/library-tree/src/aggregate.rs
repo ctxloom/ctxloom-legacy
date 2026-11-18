@@ -502,9 +502,12 @@ impl LibraryAggregate {
         cmd: MovePath,
         ctx: &Context,
     ) -> Result<Option<ChangeIntended>, Failed<Refuses<Self, MovePath>>> {
+        // Into another tree (QUESTIONS 1(a)), where it goes is that tree's
+        // record, never this one's: its NOREPLACE rename judges it.
+        let here = cmd.to_tree.is_empty();
         judge(&cmd.evidence, &cmd.from, Checks::default())
             .and_then(|()| self.present(&cmd.from))
-            .and_then(|()| self.absent(&cmd.to))
+            .and_then(|()| if here { self.absent(&cmd.to) } else { Ok(()) })
             .and_then(|()| self.fresh(&cmd.from, cmd.seen_sequence))
             .map_err(|rejection| {
                 refuse!(

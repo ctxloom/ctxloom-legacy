@@ -385,6 +385,26 @@ impl ContentRepo for Mem {
         Ok(())
     }
 
+    fn bundle_dir_in(&self, app_dir: &str, name: &str) -> String {
+        format!("{app_dir}/content/bundles/v2/{name}")
+    }
+
+    /// The bundle's files become the user's at its new place.
+    fn move_into(&self, name: &str, app_dir: &str) -> Result<bool, Failure> {
+        let at = self.bundle_dir_in(app_dir, name);
+        let mut state = self.lock();
+        let below = format!("{at}/");
+        if state.user.keys().any(|p| p.starts_with(&below)) {
+            return Ok(false);
+        }
+        state.log.push(format!("move_into {name} {app_dir}"));
+        let tree = state.trees.remove(name).unwrap_or_default();
+        for (path, file) in tree {
+            state.user.insert(format!("{at}/{path}"), file);
+        }
+        Ok(true)
+    }
+
     fn claim(&self, name: &str) -> Result<bool, Failure> {
         let mut state = self.lock();
         if state.trees.contains_key(name) || state.claimed.contains(name) {

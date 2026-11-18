@@ -202,6 +202,7 @@ macro_rules! served_writes {
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
             export_bundle (ExportBundle) ExportBundleRequest => ExportBundleResponse,
+            move_bundle (MoveBundle) MoveBundleRequest => MoveBundleResponse,
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse,
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,

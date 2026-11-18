@@ -4,7 +4,7 @@ use deps_ports::Endpoint;
 use exit_code::{Exit, ExitClass};
 
 use crate::fakes::Fixture;
-use crate::{AppError, MoveRequest, Outcome, PushRequest};
+use crate::{AppError, MoveRequest, MoveTarget, Outcome, PushRequest};
 
 const URL: &str = "file:///srv/team.git";
 
@@ -519,4 +519,23 @@ fn test_a_push_and_a_pull_request_commit_executable_what_the_sidecars_declare() 
     fx.files.author("scripted", tree);
     ok(fx.deps.push(&pr("scripted", "hub")));
     assert_eq!(fx.forge.opened()[0].1.executable, want);
+}
+
+// Step 10b U9: `--to` is told apart before anything moves: a configured
+// remote is published here, a directory is the daemon's local move, and
+// anything else is refused naming the remotes there are.
+#[test]
+fn test_a_move_target_is_a_remote_a_directory_or_refused() {
+    let fx = Fixture::new();
+    fx.origin("team", URL);
+    fx.files.directory("elsewhere");
+    assert_eq!(fx.deps.move_target("team").unwrap(), MoveTarget::Remote);
+    assert_eq!(
+        fx.deps.move_target("elsewhere").unwrap(),
+        MoveTarget::Directory
+    );
+    assert!(matches!(
+        fx.deps.move_target("nowhere"),
+        Err(AppError::BadDestination { .. })
+    ));
 }

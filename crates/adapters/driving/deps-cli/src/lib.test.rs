@@ -114,6 +114,32 @@ macro_rules! served_by_library_api {
 
 impl Served for ServedBy<'_> {
     crate::served_reads!(served_by_library_api);
+
+    /// The daemon's local move, as the fixture's dependencies make it
+    /// (its project tree is theirs here): the move it did, answered.
+    fn move_bundle(
+        &self,
+        under: &str,
+        request: daemon_proto::v1::MoveBundleRequest,
+    ) -> Result<daemon_proto::v1::MoveBundleResponse, Failure> {
+        let name = under.rsplit('/').next().unwrap_or(under).to_string();
+        let moved = self
+            .0
+            .move_bundle(&deps_application::MoveRequest {
+                name,
+                to: request.destination,
+                force: request.force,
+                message: String::new(),
+            })
+            .result
+            .map_err(IntoFailure::into_failure)?;
+        Ok(daemon_proto::v1::MoveBundleResponse {
+            path: moved.dest,
+            source: moved.source,
+            applied: Some(true),
+            ..daemon_proto::v1::MoveBundleResponse::default()
+        })
+    }
 }
 
 /// A resource name under [`PARENT`].

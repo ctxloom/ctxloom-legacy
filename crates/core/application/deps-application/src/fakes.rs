@@ -632,6 +632,19 @@ impl ContentRepo for FakeContent {
         format!("/p/.ctxloom/content/bundles/v2/{name}/bundle.yaml")
     }
 
+    fn bundle_dir_in(&self, app_dir: &str, name: &str) -> String {
+        format!("{app_dir}/content/bundles/v2/{name}")
+    }
+
+    fn move_into(&self, name: &str, _app_dir: &str) -> Result<bool, Failure> {
+        Ok(self
+            .bundles
+            .lock()
+            .expect("the bundles")
+            .remove(name)
+            .is_some())
+    }
+
     fn apply(&self, name: &str, changes: &[Change]) -> Result<(), Failure> {
         let mut bundles = self.bundles.lock().expect("the bundles");
         let tree = bundles.entry(name.to_string()).or_default();

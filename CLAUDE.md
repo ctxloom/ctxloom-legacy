@@ -187,7 +187,22 @@ staging directory beside it, `.<leaf>.ctxloom-staging-<pid>-<n>`, renamed
 in with NOREPLACE, the staging removed either way; its paths are the
 caller's, below her `cwd`, `-o` the additive `ExportBundleRequest.output`;
 a path that is there is refused first,
-`library-application-write-export-destination-exists`, a draft), and
+`library-application-write-export-destination-exists`, a draft), a
+local `bundle move <b> --to <dir>` (`MoveBundle`, step 10b U9,
+QUESTIONS 1(a) owner-approved: deps-cli tells `--to` apart in process,
+`Deps::move_target`, a remote still published there, U4, anything that is
+no directory refused as before; a directory is the daemon's ONE Move of
+the bundle out of this tree into the project at `dir`,
+`Library::bundle_move_into`, `ContentRepo::move_into` recorded as
+`Planned::MovedInto`, shaped `writes::Shape::Move { into }`, its intent's
+additive `MovePath.to_tree` naming the other tree's `.ctxloom`, which
+`decide` never judges `to` on, its operation `Operation::Move { into }`,
+content-fs's one `rename_noreplace` below that tree; only its `from`
+files are expected gone, and the other tree's next read records the
+arrival; a bundle there is refused, `--force` too, as is its own place,
+`library-application-write-move-destination-exists|-itself`, drafts; the
+CLI's text and json are the move's as before, from the response's
+additive `source`), and
 `bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
 `bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
 by the request's lists; an item beside anything else is two files,

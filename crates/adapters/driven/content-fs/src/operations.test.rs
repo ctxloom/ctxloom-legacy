@@ -268,6 +268,7 @@ fn test_a_move_is_one_rename_never_over_its_target() {
     let over = Operation::Move {
         from: "content/bundles/v2/a".to_string(),
         to: "content/bundles/v2/b".to_string(),
+        into: None,
     };
     assert_eq!(
         operate(&fs, &ops, &over).0,
@@ -282,6 +283,7 @@ fn test_a_move_is_one_rename_never_over_its_target() {
     let moved = Operation::Move {
         from: "content/bundles/v2/a".to_string(),
         to: "content/bundles/v2/team/c".to_string(),
+        into: None,
     };
     assert_eq!(operate(&fs, &ops, &moved).0, Operated::Done);
     assert_eq!(
@@ -431,4 +433,35 @@ fn test_a_path_through_a_link_is_refused() {
             os::host().flavor().from_top("/elsewhere/x.md")
         ))
         .is_err());
+}
+
+// Step 10b (QUESTIONS 1(a)): a move into ANOTHER tree is one rename, its
+// target below that tree, never over what is there; a retry after it is
+// done.
+#[test]
+fn test_a_move_into_another_tree_is_one_rename_below_it_never_over_its_target() {
+    let (fs, ops) = setup();
+    let other = os::host().flavor().from_top("/other/.ctxloom");
+    fs.create_dir_all(Path::new(&other), Mode::from_bits(0o755))
+        .unwrap();
+    put(&fs, "content/bundles/v2/demo/bundle.yaml", b"d\n");
+    let moved = Operation::Move {
+        from: "content/bundles/v2/demo".to_string(),
+        to: "content/bundles/v2/demo".to_string(),
+        into: Some(other.clone()),
+    };
+    assert_eq!(operate(&fs, &ops, &moved).0, Operated::Done);
+    let landed = Path::new(&other).join("content/bundles/v2/demo/bundle.yaml");
+    assert_eq!(fs.read(&landed).unwrap(), b"d\n");
+    assert!(files(&fs, "content/bundles/v2/demo").is_empty());
+    // Retried after its rename: done, the bundle where it went.
+    assert_eq!(operate(&fs, &ops, &moved).0, Operated::Done);
+    put(&fs, "content/bundles/v2/demo/bundle.yaml", b"again\n");
+    assert_eq!(
+        operate(&fs, &ops, &moved).0,
+        Operated::Exists {
+            path: "content/bundles/v2/demo".to_string()
+        }
+    );
+    assert_eq!(fs.read(&landed).unwrap(), b"d\n");
 }
