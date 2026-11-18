@@ -17,7 +17,8 @@ pub use ctxloom_ports::Scope;
 use ctxloom_ports::{Change, Operation, Put, TreeError, TreeObserver};
 use library_application::write::recording::Planned;
 use library_tree::{
-    CreateDirectory, DirtyPath, Evidence, LibraryTreeRejection, ReplaceFile, TrashPath,
+    CreateDirectory, DirtyPath, Evidence, LibraryTreeRejection, MovePath, PurgeSlot, ReplaceFile,
+    RunSequence, Step, TrashPath,
 };
 
 /// Where a bundle's directory is in its tree.
@@ -48,15 +49,41 @@ pub enum Shape {
     /// One path taken away (into the trash, U8), with every file under it
     /// (below it; none for a file).
     Trash { path: String, files: Vec<String> },
+    /// One path renamed to another (ctxloom's own move, L7), with every
+    /// file under it (below it; none for a file).
+    Move {
+        from: String,
+        to: String,
+        files: Vec<String>,
+    },
+    /// The trash slot of the write's own request removed whole: a
+    /// sequence's last step, so it leaves no trash (G12(a)).
+    Purge,
+    /// A retryable atomic sequence (T28): its steps in order, each one
+    /// atomic operation, listed in its intent and resumed on a retry at the
+    /// first not done.
+    Sequence(Vec<Shape>),
 }
 
 impl Shape {
-    /// The path the step changes: what its etag is of.
+    /// The path the step changes: what its etag is of (a sequence's, its
+    /// first step's; a purge's, none).
     pub fn path(&self) -> &str {
         match self {
             Shape::Replace { path, .. }
             | Shape::Create { path, .. }
             | Shape::Trash { path, .. } => path,
+            Shape::Move { from, .. } => from,
+            Shape::Purge => "",
+            Shape::Sequence(steps) => steps.first().map_or("", Shape::path),
+        }
+    }
+
+    /// Its steps in order: a sequence's, else itself alone.
+    pub fn steps(&self) -> Vec<&Shape> {
+        match self {
+            Shape::Sequence(steps) => steps.iter().collect(),
+            one => vec![one],
         }
     }
 }
@@ -68,10 +95,11 @@ pub struct Shaped {
     pub shape: Shape,
 }
 
-/// The atomic operation that makes `shape` (step 10b U8), its paths
-/// relative to its tree.
-pub fn operation(shape: &Shape) -> Operation {
-    match shape {
+/// The atomic operation that makes the step `shape` (step 10b U8), its
+/// paths relative to its tree; none for a sequence, whose steps each are
+/// one.
+pub fn operation(shape: &Shape) -> Option<Operation> {
+    Some(match shape {
         Shape::Replace {
             path,
             bytes,
@@ -86,7 +114,13 @@ pub fn operation(shape: &Shape) -> Operation {
             files: files.clone(),
         },
         Shape::Trash { path, .. } => Operation::Trash { path: path.clone() },
-    }
+        Shape::Move { from, to, .. } => Operation::Move {
+            from: from.clone(),
+            to: to.clone(),
+        },
+        Shape::Purge => Operation::Purge,
+        Shape::Sequence(_) => return None,
+    })
 }
 
 /// A bundle's directory in its tree.
@@ -95,8 +129,9 @@ pub fn bundle_path(bundle: &str) -> String {
 }
 
 /// What `planned` (a use case's recorded writes, in order) is: none when it
-/// writes nothing; refused `OneChangePerCall` when it changes more than one
-/// file, each named below its bundle. `files_under` answers the files
+/// writes nothing; a bundle taken away and made anew (a forced import) the
+/// sequence trash, create, purge (T28); refused `OneChangePerCall` when it
+/// changes more than one file otherwise, each named below its bundle. `files_under` answers the files
 /// below a directory of a bundle now (`""`: the bundle's own), each below
 /// it: several files written into a directory with none are one new
 /// directory (a skill).
@@ -105,6 +140,27 @@ pub fn shape(
     files_under: impl Fn(&str, &str) -> Vec<String>,
 ) -> Result<Option<Shaped>, LibraryTreeRejection> {
     let mut planned = planned;
+    if let [Planned::BundleGone { bundle: gone }, Planned::NewBundle { bundle, files }] =
+        &planned[..]
+    {
+        if gone == bundle {
+            let path = bundle_path(bundle);
+            return Ok(Some(Shaped {
+                lands: Lands::Content,
+                shape: Shape::Sequence(vec![
+                    Shape::Trash {
+                        path: path.clone(),
+                        files: files_under(bundle, ""),
+                    },
+                    Shape::Create {
+                        path,
+                        files: files.clone(),
+                    },
+                    Shape::Purge,
+                ]),
+            }));
+        }
+    }
     let one = match planned.len() {
         0 => return Ok(None),
         1 => planned.remove(0),
@@ -227,8 +283,48 @@ fn paths_of(planned: &Planned) -> Vec<String> {
 
 /// A write's command: the step its shape is, against the token `seen` of
 /// its path, the ids git would give what it writes asked of `observer` in
-/// the tree `dir`, under `verb` and the evidence `evidence`.
+/// the tree `dir`, under `verb` and the evidence `evidence`; a sequence's
+/// is a `RunSequence` of its steps (T28), its trash not kept (its last
+/// step, the purge of `request_id`'s own slot, removes it), each step on
+/// its first path judged on `seen`.
+#[allow(clippy::too_many_arguments)]
 pub fn intent_of(
+    observer: &dyn TreeObserver,
+    dir: &str,
+    tree: &str,
+    verb: &str,
+    shape: &Shape,
+    seen: u64,
+    evidence: Evidence,
+    request_id: &str,
+) -> Result<Intended, TreeError> {
+    if let Shape::Sequence(shapes) = shape {
+        let mut steps = Vec::new();
+        for one in shapes {
+            if *one == Shape::Purge {
+                steps.push(purge_step(request_id.to_string()));
+                continue;
+            }
+            let seen = if one.path() == shape.path() { seen } else { 0 };
+            let intended = one_intent(observer, dir, tree, verb, one, seen, evidence.clone())?;
+            let mut step = intended.step(request_id);
+            if let Some(trash) = step.trash.as_mut() {
+                trash.keep = false;
+            }
+            steps.push(step);
+        }
+        return Ok(Intended::Sequence(RunSequence {
+            name: tree.to_string(),
+            verb: verb.to_string(),
+            steps,
+            evidence,
+        }));
+    }
+    one_intent(observer, dir, tree, verb, shape, seen, evidence)
+}
+
+/// The command of one step: its shape's kind, its ids asked of `observer`.
+fn one_intent(
     observer: &dyn TreeObserver,
     dir: &str,
     tree: &str,
@@ -272,7 +368,42 @@ pub fn intent_of(
             // sequence's own (U9) is removed by its last step.
             keep: true,
         }),
+        Shape::Move { from, to, .. } => Intended::Move(MovePath {
+            name: tree.to_string(),
+            verb: verb.to_string(),
+            from: from.clone(),
+            to: to.clone(),
+            seen_sequence: seen,
+            evidence,
+        }),
+        // A purge, or a sequence, is only ever a step of one ([`intent_of`]
+        // makes those): alone, it is a sequence of nothing.
+        Shape::Purge | Shape::Sequence(_) => Intended::Sequence(RunSequence {
+            name: tree.to_string(),
+            verb: verb.to_string(),
+            steps: Vec::new(),
+            evidence,
+        }),
     })
+}
+
+/// A step with none of its arms set, for one arm to be laid over.
+fn no_step() -> Step {
+    Step {
+        replace: None,
+        create: None,
+        trash: None,
+        r#move: None,
+        purge: None,
+    }
+}
+
+/// The step that removes the trash slot of `request_id` whole.
+fn purge_step(request_id: String) -> Step {
+    Step {
+        purge: Some(PurgeSlot { request_id }),
+        ..no_step()
+    }
 }
 
 /// A write's command, as its step's kind.
@@ -281,42 +412,140 @@ pub enum Intended {
     Replace(ReplaceFile),
     Create(CreateDirectory),
     Trash(TrashPath),
+    Move(MovePath),
+    Sequence(RunSequence),
+}
+
+impl Intended {
+    /// Its steps as its intent lists them: a sequence's, else its one.
+    pub fn steps(&self, request_id: &str) -> Vec<Step> {
+        match self {
+            Intended::Sequence(sequence) => sequence.steps.clone(),
+            one => vec![one.step(request_id)],
+        }
+    }
+
+    /// The one step a lone command is (a sequence's first).
+    fn step(&self, request_id: &str) -> Step {
+        match self {
+            Intended::Replace(command) => Step {
+                replace: Some(command.clone()),
+                ..no_step()
+            },
+            Intended::Create(command) => Step {
+                create: Some(command.clone()),
+                ..no_step()
+            },
+            Intended::Trash(command) => Step {
+                trash: Some(command.clone()),
+                ..no_step()
+            },
+            Intended::Move(command) => Step {
+                r#move: Some(command.clone()),
+                ..no_step()
+            },
+            Intended::Sequence(sequence) => sequence
+                .steps
+                .first()
+                .cloned()
+                .unwrap_or_else(|| purge_step(request_id.to_string())),
+        }
+    }
 }
 
 /// The paths a step changes, each with the id it leaves (empty: taken
 /// away): what the re-observe looks at. A trash leaves gone each file of
 /// its shape (the path itself, for a file).
 pub fn expected(intended: &Intended, shape: &Shape) -> Vec<DirtyPath> {
-    match intended {
-        Intended::Replace(replace) => vec![DirtyPath {
+    expected_step(&intended.step(""), Some(shape))
+}
+
+/// What the step `step` leaves, as [`expected`] says it, its files below
+/// its path those of `shape` (the plan's step for it; none for a step
+/// resumed from its intent alone, whose trash or move then names its
+/// path); a purge leaves nothing in the library.
+pub fn expected_step(step: &Step, shape: Option<&Shape>) -> Vec<DirtyPath> {
+    let gone = |path: String| DirtyPath {
+        path,
+        oid: String::new(),
+    };
+    let under = |dir: &str, files: &[String]| -> Vec<String> {
+        if files.is_empty() {
+            vec![dir.to_string()]
+        } else {
+            files.iter().map(|file| format!("{dir}/{file}")).collect()
+        }
+    };
+    if let Some(replace) = &step.replace {
+        return vec![DirtyPath {
             path: replace.path.clone(),
             oid: replace.new_oid.clone(),
-        }],
-        Intended::Create(create) => create
+        }];
+    }
+    if let Some(create) = &step.create {
+        return create
             .entries
             .iter()
             .map(|entry| DirtyPath {
                 path: format!("{}/{}", create.path, entry.path),
                 oid: entry.oid.clone(),
             })
-            .collect(),
-        Intended::Trash(trash) => {
-            let files = match shape {
-                Shape::Trash { files, .. } if !files.is_empty() => files
-                    .iter()
-                    .map(|file| format!("{}/{file}", trash.path))
-                    .collect(),
-                _ => vec![trash.path.clone()],
-            };
-            files
-                .into_iter()
-                .map(|path| DirtyPath {
-                    path,
-                    oid: String::new(),
-                })
-                .collect()
-        }
+            .collect();
     }
+    if let Some(trash) = &step.trash {
+        let files = match shape {
+            Some(Shape::Trash { files, .. }) => under(&trash.path, files),
+            _ => vec![trash.path.clone()],
+        };
+        return files.into_iter().map(gone).collect();
+    }
+    if let Some(moved) = &step.r#move {
+        let files: &[String] = match shape {
+            Some(Shape::Move { files, .. }) => files,
+            _ => &[],
+        };
+        return under(&moved.from, files)
+            .into_iter()
+            .chain(under(&moved.to, files))
+            .map(gone)
+            .collect();
+    }
+    Vec::new()
+}
+
+/// The step of the plan `replanned` a recorded step `step` (T28: a
+/// sequence resumed from its intent) takes what it writes and the files it
+/// expects from: the one of its kind at its path. None for a purge, or a
+/// step the plan no longer has.
+pub fn content_for<'a>(step: &Step, replanned: &'a Shape) -> Option<&'a Shape> {
+    replanned.steps().into_iter().find(|shape| match shape {
+        Shape::Replace { path, .. } => step.replace.as_ref().is_some_and(|r| &r.path == path),
+        Shape::Create { path, .. } => step.create.as_ref().is_some_and(|c| &c.path == path),
+        Shape::Trash { path, .. } => step.trash.as_ref().is_some_and(|t| &t.path == path),
+        Shape::Move { from, .. } => step.r#move.as_ref().is_some_and(|m| &m.from == from),
+        Shape::Purge | Shape::Sequence(_) => false,
+    })
+}
+
+/// The atomic operation that makes the recorded step `step`, its content
+/// (a file's bytes, a new directory's files) the plan's step for it,
+/// `shape`: none when the step writes content and no plan has it.
+pub fn operation_of(step: &Step, shape: Option<&Shape>) -> Option<Operation> {
+    if let Some(trash) = &step.trash {
+        return Some(Operation::Trash {
+            path: trash.path.clone(),
+        });
+    }
+    if let Some(moved) = &step.r#move {
+        return Some(Operation::Move {
+            from: moved.from.clone(),
+            to: moved.to.clone(),
+        });
+    }
+    if step.purge.is_some() {
+        return Some(Operation::Purge);
+    }
+    operation(shape?)
 }
 
 /// What a step left, as git sees it now: each path it changed with its id
@@ -359,6 +588,8 @@ pub fn command_book(
         Intended::Replace(command) => command.clone().to_wire_any(),
         Intended::Create(command) => command.clone().to_wire_any(),
         Intended::Trash(command) => command.clone().to_wire_any(),
+        Intended::Move(command) => command.clone().to_wire_any(),
+        Intended::Sequence(command) => command.clone().to_wire_any(),
     };
     angzarr_embedded::v1::CommandBook {
         cover: Some(cover_of(tree)),

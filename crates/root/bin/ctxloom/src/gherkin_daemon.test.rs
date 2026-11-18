@@ -1672,12 +1672,36 @@ fn daemon_gone(w: &mut World) {
     w.daemon_spec.killed = true;
 }
 
+/// What the import's kill point presupposes ("the OLD bundle moved to
+/// trash, before the NEW one moved in"): a bundle `notes`, and its export
+/// at `exported/notes` holding a file the bundle does not, the new copy a
+/// forced import replaces it with.
+fn old_and_new_notes(w: &mut World) {
+    for args in [
+        &["bundle", "create", "notes", "--description", "my notes"][..],
+        &["bundle", "export", "notes", "exported"][..],
+    ] {
+        let ran = run_now(w, args);
+        assert_eq!(ran.code, 0, "{args:?}: {}", ran.said());
+    }
+    files::put(
+        w.common
+            .project
+            .dir()
+            .join("exported/notes/fragments/shared.md"),
+        "only the new copy holds this\n",
+    );
+}
+
 #[given(regex = r"^the daemon will be killed outright (.+)$")]
 fn killed_at(w: &mut World, when: String) {
     if let Some(step) = die_at(&when) {
         // Killed already (a scenario that planted what its daemon left).
         if w.daemon_spec.killed {
             return;
+        }
+        if when == "after the old bundle moved to trash, before the new one moved in" {
+            old_and_new_notes(w);
         }
         w.daemon_spec.before_kill = discovery_if_serving(w);
         files::put(daemon_dir(w).join(DIE_AT), step);

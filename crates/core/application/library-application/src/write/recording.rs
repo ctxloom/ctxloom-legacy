@@ -108,6 +108,13 @@ impl Recorder {
         }
     }
 
+    /// Whether the plan takes the bundle `bundle` away.
+    fn gone(&self, bundle: &str) -> bool {
+        self.lock()
+            .iter()
+            .any(|p| matches!(p, Planned::BundleGone { bundle: b } if b == bundle))
+    }
+
     fn layer(&self, scope: Scope, text: &str) {
         let mut planned = self.lock();
         planned.retain(|p| !matches!(p, Planned::Layer { scope: s, .. } if *s == scope));
@@ -157,7 +164,10 @@ impl ContentRepo for RecordingContent {
     /// Answered as the claim would be now: made, unless a bundle is there
     /// (the domain's `ResourceExists` and the operation judge a race).
     fn claim(&self, name: &str) -> Result<bool, Failure> {
-        let there = self.inner.bundle_names()?.iter().any(|b| b == name);
+        // A bundle this plan already took away is free to claim again (a
+        // forced import: the old one gone, then the new one made).
+        let there =
+            self.inner.bundle_names()?.iter().any(|b| b == name) && !self.recorder.gone(name);
         if !there {
             self.recorder.claim(name);
         }

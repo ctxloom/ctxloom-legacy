@@ -219,7 +219,14 @@ fn bundle() -> Command {
                     "path",
                     "A bundle tree: its directory, or its bundle.yaml",
                 ))
-                .arg(force("Overwrite existing bundle")),
+                .arg(force("Overwrite existing bundle"))
+                .arg(
+                    Arg::new("yes")
+                        .short('y')
+                        .long("yes")
+                        .action(ArgAction::SetTrue)
+                        .help("Apply at once (an import asks nothing; accepted for scripts)"),
+                ),
         )
         .subcommand(
             Command::new("distill")

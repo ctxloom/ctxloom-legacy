@@ -205,14 +205,32 @@ in with NOREPLACE (one that appeared meanwhile is
 rename into `state/trash/<request id>/<path>` (nothing there to take is
 `library-tree-no-such-resource`); nothing is staged beside its target.
 It is then read back and recorded `RecordStepDone`, and answered with
-the path's new etag. A tree's staging is swept the first time a daemon
+the path's new etag. Where one operation cannot do it, a write is a T28
+SEQUENCE (step 10b U9): `writes::Shape::Sequence`, its steps listed in its
+intent (`RunSequence`), carried out one at a time, each one atomic
+operation recorded done (`done:{request id}:{step}`), and RESUMED on a
+retry at the first step not done (`End::Pending{done}`, the recorded
+steps; a step's content, a file's bytes or a new directory's files, is
+the retry's re-plan's step of its kind at its path,
+`writes::content_for`/`operation_of`; a step that writes content the
+re-plan no longer holds fails the write). A sequence's trash is not kept:
+its last step, `Operation::Purge` (`PurgeSlot`), removes the request's own
+slot (G12(a)). `bundle import` is served (`ImportBundle`; its source the
+caller's path, read from her `cwd` when relative): a new bundle is one
+new directory, and a forced one over a bundle there is the sequence
+trash, create, purge (the use case plans the old bundle gone and a new
+one of EVERY file imported, `Planned::BundleGone` then `NewBundle`, so
+`shape` makes it the sequence; `--yes` is accepted and changes nothing,
+an import asks nothing). A library use case's failure is said in its own
+words, its code and args (`daemon_api::refusal::app_error`, as a deps
+failure is). A tree's staging is swept the first time a daemon
 observes the tree (`Observations::sweeping`, a read's or a write's; S50);
 the trash is never swept at start. An apply that trashed says where,
 the notice `library-api-notice-trashed` (its path and slot as the tree
 shows them, `.ctxloom/state/trash/<request id>/`, kept 7 days; texts.md
 §3, `daemon_api::library_writes::trashed_notice`). A removal's slot is in the tree's
 state (`library_tree::Slot`: its paths, the time its intent was recorded,
-`kept`; every lone removal is kept, a sequence's own will not be, U9), and
+`kept`; every lone removal is kept, a sequence's own is not, U9), and
 a kept slot `KEEP_DAYS` (7, G12) old or more by the daemon's clock is
 purged when the daemon next observes its tree (`Observations::purging`;
 QUESTIONS 4 says each round and at start, and the observation is where a

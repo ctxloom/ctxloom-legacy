@@ -8,7 +8,9 @@
 //!   staging, then renamed in WITHOUT replacing anything there (NOREPLACE);
 //! - [`Operation::Trash`]: one path renamed into the trash slot of its
 //!   request, `state/trash/<request id>/<path>`;
-//! - [`Operation::Move`]: one path renamed to another, never over one.
+//! - [`Operation::Move`]: one path renamed to another, never over one;
+//! - [`Operation::Purge`]: the request's own trash slot removed whole (a
+//!   sequence's last step, T28, so it leaves no trash; G12(a)).
 //!
 //! Nothing is ever staged beside its target: staging and trash are below
 //! the tree's `state/` (gitignored, outside the library's pathspec). Every
@@ -39,6 +41,8 @@ pub enum Operation {
     Trash { path: String },
     /// `from` renamed to `to`.
     Move { from: String, to: String },
+    /// The trash slot of the request removed whole; none there is done.
+    Purge,
 }
 
 /// A point an operation reaches, where a test-support switch may stop the

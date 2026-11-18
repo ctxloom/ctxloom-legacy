@@ -5,7 +5,10 @@ use ctxloom_ports::{Change, Put, Scope};
 use library_application::write::recording::Planned;
 use library_tree::{DirtyPath, Evidence, LibraryTreeRejection};
 
-use super::{expected, intent_of, left_by, operation, shape, Intended, Lands, Shape};
+use super::{
+    content_for, expected, expected_step, intent_of, left_by, operation, operation_of, shape,
+    Intended, Lands, Shape,
+};
 use crate::fakes::Git;
 
 fn put(path: &str, text: &str) -> Put {
@@ -182,7 +185,17 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
         path: "content/bundles/v2/notes".to_string(),
         files: vec![put("bundle.yaml", "v")],
     };
-    let intended = intent_of(&git, "/d", "t", "bundle create", &create, 0, evidence()).unwrap();
+    let intended = intent_of(
+        &git,
+        "/d",
+        "t",
+        "bundle create",
+        &create,
+        0,
+        evidence(),
+        "r",
+    )
+    .unwrap();
     let Intended::Create(command) = &intended else {
         panic!("{intended:?}")
     };
@@ -207,7 +220,7 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
         executable: false,
     };
     let Intended::Replace(command) =
-        intent_of(&git, "/d", "t", "config set", &replace, 4, evidence()).unwrap()
+        intent_of(&git, "/d", "t", "config set", &replace, 4, evidence(), "r").unwrap()
     else {
         panic!()
     };
@@ -222,7 +235,7 @@ fn test_a_trash_expects_each_of_its_files_gone_and_what_is_left_is_read_back() {
         path: "content/bundles/v2/demo".to_string(),
         files: vec!["bundle.yaml".to_string(), "kept.md".to_string()],
     };
-    let intended = intent_of(&git, "/d", "t", "bundle remove", &trash, 2, evidence()).unwrap();
+    let intended = intent_of(&git, "/d", "t", "bundle remove", &trash, 2, evidence(), "r").unwrap();
     let paths = expected(&intended, &trash);
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().all(|p| p.oid.is_empty()));
@@ -241,7 +254,7 @@ fn test_a_writes_book_carries_its_request_id_as_the_command_id() {
         executable: false,
     };
     let git = Git::at("h-0", "t-0");
-    let intended = intent_of(&git, "/d", "t", "config set", &replace, 0, evidence()).unwrap();
+    let intended = intent_of(&git, "/d", "t", "config set", &replace, 0, evidence(), "r").unwrap();
     let id = [7u8; 16];
     let book = super::command_book(&tree, &intended, id);
     let page = book.page.unwrap();
@@ -279,7 +292,7 @@ fn test_each_step_is_made_by_the_atomic_operation_of_its_kind() {
     };
     assert_eq!(
         operation(&replace),
-        Operation::Replace(put("config.yaml", "a: 1\n"))
+        Some(Operation::Replace(put("config.yaml", "a: 1\n")))
     );
     let create = Shape::Create {
         path: "content/bundles/v2/notes".to_string(),
@@ -287,10 +300,10 @@ fn test_each_step_is_made_by_the_atomic_operation_of_its_kind() {
     };
     assert_eq!(
         operation(&create),
-        Operation::CreateDir {
+        Some(Operation::CreateDir {
             path: "content/bundles/v2/notes".to_string(),
             files: vec![put("bundle.yaml", "v")],
-        }
+        })
     );
     let trash = Shape::Trash {
         path: "content/bundles/v2/demo".to_string(),
@@ -298,10 +311,12 @@ fn test_each_step_is_made_by_the_atomic_operation_of_its_kind() {
     };
     assert_eq!(
         operation(&trash),
-        Operation::Trash {
+        Some(Operation::Trash {
             path: "content/bundles/v2/demo".to_string()
-        }
+        })
     );
+    assert_eq!(operation(&Shape::Purge), Some(Operation::Purge));
+    assert_eq!(operation(&Shape::Sequence(vec![Shape::Purge])), None);
 }
 
 // A file the use case wrote executable stays so, written whole or in a
@@ -318,7 +333,7 @@ fn test_an_executable_file_stays_executable_in_its_operation() {
         changes: vec![Change::Write(run.clone())],
     };
     let shaped = shape(vec![write], none).unwrap().unwrap();
-    let Operation::Replace(made) = operation(&shaped.shape) else {
+    let Some(Operation::Replace(made)) = operation(&shaped.shape) else {
         panic!("{shaped:?}")
     };
     assert!(made.executable);
@@ -330,7 +345,7 @@ fn test_an_executable_file_stays_executable_in_its_operation() {
         ],
     };
     let shaped = shape(vec![new], none).unwrap().unwrap();
-    let Operation::CreateDir { files, .. } = operation(&shaped.shape) else {
+    let Some(Operation::CreateDir { files, .. }) = operation(&shaped.shape) else {
         panic!("{shaped:?}")
     };
     assert_eq!(
@@ -352,10 +367,241 @@ fn test_a_lone_removal_is_kept_in_the_trash() {
         files: vec!["bundle.yaml".to_string()],
     };
     let Intended::Trash(command) =
-        intent_of(&git, "/d", "t", "bundle remove", &trash, 3, evidence()).unwrap()
+        intent_of(&git, "/d", "t", "bundle remove", &trash, 3, evidence(), "r").unwrap()
     else {
         panic!("not a trash")
     };
     assert!(command.keep);
     assert_eq!(command.seen_sequence, 3);
+}
+
+/// The files of the bundle `demo` now, below it.
+fn demo_files(bundle: &str, dir: &str) -> Vec<String> {
+    match (bundle, dir) {
+        ("demo", "") => vec!["bundle.yaml".to_string(), "fragments/old.md".to_string()],
+        _ => Vec::new(),
+    }
+}
+
+/// A forced import's plan: the old bundle gone, a new one of every file.
+fn forced_import() -> Vec<Planned> {
+    vec![
+        Planned::BundleGone {
+            bundle: "demo".to_string(),
+        },
+        Planned::NewBundle {
+            bundle: "demo".to_string(),
+            files: vec![put("bundle.yaml", "v: 2\n")],
+        },
+    ]
+}
+
+// Step 10b U9 (T28): a bundle taken away and made anew in one plan (a
+// forced import) is the sequence: the old tree into the trash, the new
+// one renamed in, then the trash slot removed.
+#[test]
+fn test_a_bundle_replaced_whole_is_the_sequence_trash_create_purge() {
+    let shaped = shape(forced_import(), demo_files).unwrap().unwrap();
+    assert_eq!(shaped.lands, Lands::Content);
+    assert_eq!(
+        shaped.shape,
+        Shape::Sequence(vec![
+            Shape::Trash {
+                path: "content/bundles/v2/demo".to_string(),
+                files: vec!["bundle.yaml".to_string(), "fragments/old.md".to_string()],
+            },
+            Shape::Create {
+                path: "content/bundles/v2/demo".to_string(),
+                files: vec![put("bundle.yaml", "v: 2\n")],
+            },
+            Shape::Purge,
+        ])
+    );
+    assert_eq!(shaped.shape.path(), "content/bundles/v2/demo");
+    // A bundle gone and ANOTHER made is two changes, refused as ever.
+    let two = vec![
+        Planned::BundleGone {
+            bundle: "demo".to_string(),
+        },
+        Planned::NewBundle {
+            bundle: "notes".to_string(),
+            files: vec![put("bundle.yaml", "v")],
+        },
+    ];
+    assert!(matches!(
+        shape(two, demo_files),
+        Err(LibraryTreeRejection::OneChangePerCall { .. })
+    ));
+}
+
+// A sequence's intent lists its steps in order: its trash NOT kept (its
+// last step removes it, G12(a)), its last the purge of the request's own
+// slot, its first path judged on the token the caller saw.
+#[test]
+fn test_a_sequences_intent_lists_its_steps_its_trash_its_own() {
+    let git = Git::at("h-0", "t-0");
+    let shaped = shape(forced_import(), demo_files).unwrap().unwrap();
+    let intended = intent_of(
+        &git,
+        "/d",
+        "t",
+        "bundle import",
+        &shaped.shape,
+        5,
+        evidence(),
+        "r-1",
+    )
+    .unwrap();
+    let Intended::Sequence(command) = &intended else {
+        panic!("{intended:?}")
+    };
+    assert_eq!(command.verb, "bundle import");
+    let [trash, create, purge] = &command.steps[..] else {
+        panic!("{:?}", command.steps)
+    };
+    let trash = trash.trash.as_ref().expect("a trash first");
+    assert_eq!(
+        (trash.path.as_str(), trash.keep, trash.seen_sequence),
+        ("content/bundles/v2/demo", false, 5)
+    );
+    let create = create.create.as_ref().expect("a create second");
+    assert_eq!(
+        create.entries,
+        vec![DirtyPath {
+            path: "bundle.yaml".to_string(),
+            oid: "id-of:content/bundles/v2/demo/bundle.yaml:v: 2\n".to_string(),
+        }]
+    );
+    assert_eq!(
+        purge.purge.as_ref().map(|p| p.request_id.as_str()),
+        Some("r-1")
+    );
+    // What each step leaves: the old files gone, the new one's id, nothing.
+    let Shape::Sequence(shapes) = &shaped.shape else {
+        panic!()
+    };
+    let left: Vec<Vec<DirtyPath>> = command
+        .steps
+        .iter()
+        .zip(shapes)
+        .map(|(step, shape)| expected_step(step, Some(shape)))
+        .collect();
+    assert_eq!(
+        left[0],
+        vec![
+            DirtyPath {
+                path: "content/bundles/v2/demo/bundle.yaml".to_string(),
+                oid: String::new(),
+            },
+            DirtyPath {
+                path: "content/bundles/v2/demo/fragments/old.md".to_string(),
+                oid: String::new(),
+            },
+        ]
+    );
+    assert_eq!(left[1][0].path, "content/bundles/v2/demo/bundle.yaml");
+    assert!(left[2].is_empty(), "a purge leaves nothing in the library");
+    // A trash step resumed with no shape expects its path alone gone.
+    assert_eq!(
+        expected_step(&command.steps[0], None),
+        vec![DirtyPath {
+            path: "content/bundles/v2/demo".to_string(),
+            oid: String::new(),
+        }]
+    );
+    let book = super::command_book(
+        &library_tree::TreeName::home("brisk-copper-moth").unwrap(),
+        &intended,
+        [1; 16],
+    );
+    let Some(angzarr_embedded::v1::command_page::Body::Command(sent)) = book.page.unwrap().body
+    else {
+        panic!()
+    };
+    assert!(sent.payload.unwrap().type_url.ends_with("RunSequence"));
+}
+
+// A resumed sequence (T28) makes its steps from the intent it recorded;
+// the content a step writes is the re-plan's step of the same kind at the
+// same path, none when the re-plan has none there.
+#[test]
+fn test_a_resumed_step_takes_its_content_from_the_replans_step_at_its_path() {
+    let git = Git::at("h-0", "t-0");
+    let shaped = shape(forced_import(), demo_files).unwrap().unwrap();
+    let Intended::Sequence(command) = intent_of(
+        &git,
+        "/d",
+        "t",
+        "bundle import",
+        &shaped.shape,
+        5,
+        evidence(),
+        "r-1",
+    )
+    .unwrap() else {
+        panic!()
+    };
+    // Re-planned after the trash: the bundle is gone, so the plan is a new
+    // directory alone.
+    let replanned = Shape::Create {
+        path: "content/bundles/v2/demo".to_string(),
+        files: vec![put("bundle.yaml", "v: 2\n")],
+    };
+    assert_eq!(content_for(&command.steps[1], &replanned), Some(&replanned));
+    assert_eq!(content_for(&command.steps[0], &replanned), None);
+    // Re-planned before the trash, each step finds its own, a trash's with
+    // its files.
+    let [trash, create, _] = &shaped.shape.steps()[..] else {
+        panic!()
+    };
+    assert_eq!(content_for(&command.steps[0], &shaped.shape), Some(*trash));
+    assert_eq!(content_for(&command.steps[1], &shaped.shape), Some(*create));
+    assert_eq!(content_for(&command.steps[2], &replanned), None);
+    let elsewhere = Shape::Create {
+        path: "content/bundles/v2/other".to_string(),
+        files: Vec::new(),
+    };
+    assert_eq!(content_for(&command.steps[1], &elsewhere), None);
+}
+
+// A recorded step's operation: its own path for a trash, a move or a
+// purge, which need no content; the plan's step's content for a file or a
+// new directory, none (it cannot be made) without one.
+#[test]
+fn test_a_recorded_step_is_made_with_the_plans_content() {
+    use ctxloom_ports::Operation;
+    let git = Git::at("h-0", "t-0");
+    let shaped = shape(forced_import(), demo_files).unwrap().unwrap();
+    let Intended::Sequence(command) = intent_of(
+        &git,
+        "/d",
+        "t",
+        "bundle import",
+        &shaped.shape,
+        5,
+        evidence(),
+        "r-1",
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        operation_of(&command.steps[0], None),
+        Some(Operation::Trash {
+            path: "content/bundles/v2/demo".to_string()
+        })
+    );
+    assert_eq!(
+        operation_of(&command.steps[2], None),
+        Some(Operation::Purge)
+    );
+    assert_eq!(operation_of(&command.steps[1], None), None);
+    let create = content_for(&command.steps[1], &shaped.shape);
+    assert_eq!(
+        operation_of(&command.steps[1], create),
+        Some(Operation::CreateDir {
+            path: "content/bundles/v2/demo".to_string(),
+            files: vec![put("bundle.yaml", "v: 2\n")],
+        })
+    );
 }

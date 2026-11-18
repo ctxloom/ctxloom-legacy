@@ -200,6 +200,7 @@ macro_rules! served_writes {
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse,
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
+            import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse,
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,
             delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse,

@@ -351,6 +351,18 @@ fn test_a_purge_drops_its_slot_alone() {
         .expect("a purge of nothing is done");
 }
 
+// Step 10b U9 (T28): a sequence's last step purges its OWN slot, whole,
+// and a retry of it, the slot gone, is done.
+#[test]
+fn test_a_purge_operation_drops_its_requests_own_slot() {
+    let (fs, ops) = setup();
+    put(&fs, &format!("state/trash/{REQUEST}/content/x.md"), b"x\n");
+    put(&fs, "state/trash/other/content/y.md", b"y\n");
+    assert_eq!(operate(&fs, &ops, &Operation::Purge).0, Operated::Done);
+    assert_eq!(files(&fs, "state/trash"), vec!["other/content/y.md"]);
+    assert_eq!(operate(&fs, &ops, &Operation::Purge).0, Operated::Done);
+}
+
 // A path that climbs out of the tree, or a request id that is no plain
 // name, is refused before anything is touched.
 #[test]

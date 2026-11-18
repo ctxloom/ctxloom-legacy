@@ -345,27 +345,34 @@ impl Project {
             }
             .into());
         }
-        let mut plan = if there {
-            self.plan_of(&name)?
-        } else {
-            Plan::of(Files::new(), Default::default())
-        };
+        if there {
+            // The bundle's tree as it is (a built-in's never: it is not
+            // there), read first: one the import may not replace is said
+            // before anything is planned.
+            self.plan_of(&name)?;
+        }
+        // The new tree whole, every file imported, from nothing: a forced
+        // import REPLACES the bundle (step 10b U9, T28: the old one gone,
+        // then the new one made, which the daemon carries out as the
+        // sequence trash, create, purge), never merges into it.
+        let mut plan = Plan::of(Files::new(), Default::default());
         // The sidecar the import brings says what is executable, never the
         // modes of the files imported (owner ruling 2026-11-12).
         let exec = library::write::skill::declared_executables(&files);
         for (path, bytes) in &files {
             plan.put(path, bytes.clone(), exec.contains(path));
         }
-        let stale: Vec<String> = plan
-            .files()
-            .keys()
-            .filter(|k| !files.contains_key(*k))
-            .cloned()
-            .collect();
-        for path in stale {
-            plan.remove(&path);
+        // The new tree reads before the old one is touched.
+        library::tree::read_tree(&name, plan.files()).map_err(|cause| {
+            AppError::BundleUnreadable {
+                ask: name.clone(),
+                cause: Box::new(cause),
+            }
+        })?;
+        if there {
+            self.content.remove_bundle(&name).map_err(AppError::Cause)?;
         }
-        if !there && !self.content.claim(&name).map_err(AppError::Cause)? {
+        if !self.content.claim(&name).map_err(AppError::Cause)? {
             return Err(WriteError::ImportExists {
                 what: "bundle".to_string(),
                 path: dest,
@@ -373,9 +380,7 @@ impl Project {
             .into());
         }
         if let Err(error) = self.commit(&name, plan) {
-            if !there {
-                let _ = self.content.remove_bundle(&name);
-            }
+            let _ = self.content.remove_bundle(&name);
             return Err(error);
         }
         Ok(BundleImported {

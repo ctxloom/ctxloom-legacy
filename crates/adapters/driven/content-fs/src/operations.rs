@@ -272,6 +272,10 @@ impl Operations for TreeOperations {
                 Self::of_request(tree, TRASH_DIR, request_id)?;
                 self.move_path(tree, from, to)
             }
+            Operation::Purge => {
+                self.remove_all(&Self::of_request(tree, TRASH_DIR, request_id)?)?;
+                Ok(Operated::Done)
+            }
         }
     }
 

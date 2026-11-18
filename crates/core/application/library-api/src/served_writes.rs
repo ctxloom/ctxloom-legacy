@@ -60,6 +60,7 @@ macro_rules! served_writes {
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse, "mcp server set";
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse, "agent edit";
+            import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse, "bundle import";
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse, "bundle remove";
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse, "fragment remove";
             delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse, "command remove";
@@ -1133,6 +1134,75 @@ pub fn removed_of<T>(answer: Option<&Removal<T>>, applied: bool) -> Removed {
             applied,
             ..Removed::default()
         },
+    }
+}
+
+/// `bundle import <path> [--force] [--yes]`: `ImportBundle`. A new bundle
+/// is one new directory; a forced one over a bundle there is the sequence
+/// (T28, step 10b U9): the old tree into the trash, the new one renamed in,
+/// then the trash removed. Its source is the caller's path, read from her
+/// working directory when it is relative (never the daemon's).
+pub mod import_bundle {
+    use super::*;
+    use library_application::BundleImported;
+
+    /// The source as the caller means it: below her working directory
+    /// when relative.
+    fn source(request: &v1::ImportBundleRequest) -> String {
+        let given = std::path::Path::new(&request.source);
+        if given.is_absolute() || request.cwd.is_empty() {
+            return request.source.clone();
+        }
+        std::path::Path::new(&request.cwd)
+            .join(given)
+            .display()
+            .to_string()
+    }
+
+    /// The last segment of a path, either separator.
+    fn last(path: &str) -> &str {
+        path.trim_end_matches(['/', '\\'])
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or_default()
+    }
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::ImportBundleRequest,
+        _apply: bool,
+    ) -> Outcome<BundleImported> {
+        library.bundle_import(flags, &source(request), request.force)
+    }
+
+    pub fn respond(
+        _request: &v1::ImportBundleRequest,
+        wrote: Wrote<BundleImported>,
+    ) -> v1::ImportBundleResponse {
+        let count = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
+        let (bundle, path) = match &wrote.answer {
+            Some(done) => (
+                Some(v1::Bundle {
+                    name: names::bundle_name(&wrote.parent, last(&done.dest)),
+                    version: done.version.clone(),
+                    fragment_count: count(done.fragments),
+                    command_count: count(done.commands),
+                    mcp_server_count: count(done.mcp),
+                    ..v1::Bundle::default()
+                }),
+                done.dest.clone(),
+            ),
+            None => (just_named(&wrote.parent, last(&wrote.at)), wrote.at.clone()),
+        };
+        v1::ImportBundleResponse {
+            bundle,
+            path,
+            applied: Some(wrote.applied),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::ImportBundleResponse::default()
+        }
     }
 }
 

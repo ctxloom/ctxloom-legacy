@@ -329,8 +329,21 @@ pub(crate) fn not_in_git_status() -> i32 {
     ) as i32
 }
 
+/// The code of the cause [`a_library_decline_is_refused_and_a_failure_failed`]
+/// wraps.
+fn cause_code() -> String {
+    library_application::AppError::NotViewable {
+        dir: String::new(),
+        path: String::new(),
+    }
+    .code()
+    .to_string()
+}
+
 // Step 10a U2 (E5): a library read's decline is its typed refusal; an
-// adapter's failure is a failure.
+// adapter's failure is a failure, said in its own words (step 10b U9: its
+// code AND args, so a served import of a source that is not there names
+// it, as in process).
 #[test]
 fn a_library_decline_is_refused_and_a_failure_failed() {
     let declined = super::app_error(&library_application::AppError::NoBundlesDir);
@@ -342,10 +355,16 @@ fn a_library_decline_is_refused_and_a_failure_failed() {
         "{}",
         refused.refusal.type_url
     );
-    let failed = super::app_error(&library_application::AppError::Cause(Box::new(
-        library_application::AppError::NoBundlesDir,
-    )));
-    assert!(matches!(failed, ApiError::Failed { .. }), "{failed:?}");
+    let cause = library_application::AppError::NotViewable {
+        dir: "nowhere".to_string(),
+        path: "x".to_string(),
+    };
+    let failed = super::app_error(&library_application::AppError::Cause(Box::new(cause)));
+    let ApiError::Diagnosed { code, args } = &failed else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(code, &cause_code());
+    assert!(args.iter().any(|arg| arg.value == "nowhere"), "{args:?}");
 }
 
 // A deps error that is no read model's decline, but declines, rides as

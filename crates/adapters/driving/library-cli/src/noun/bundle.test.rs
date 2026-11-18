@@ -347,12 +347,12 @@ mod messages {
     use std::collections::BTreeMap;
 
     use library_application::{
-        BundleExported, BundleImported, BundleList, BundleRow, BundleShow, ShownCommand,
-        ShownFragment, ShownMcp, ShownSkill,
+        BundleExported, BundleList, BundleRow, BundleShow, ShownCommand, ShownFragment, ShownMcp,
+        ShownSkill,
     };
     use serde_json::{json, Value};
 
-    use super::super::{exported, imported};
+    use super::super::exported;
     use library_api::resources::bundle;
     use library_api::resources::bundles as listed;
 
@@ -552,29 +552,6 @@ mod messages {
                 "bundle": b,
                 "source": "bundles/demo",
                 "destination": "out/demo",
-                "applied": true,
-            })
-        );
-        let came = BundleImported {
-            status: "imported".to_string(),
-            source: "out/demo".to_string(),
-            dest: "bundles/demo/".to_string(),
-            version: "1.0.0".to_string(),
-            fragments: 2,
-            commands: 3,
-            mcp: 4,
-        };
-        assert_eq!(
-            as_json(imported(P, &came)),
-            json!({
-                "bundle": {
-                    "name": b,
-                    "version": "1.0.0",
-                    "fragment_count": 2,
-                    "command_count": 3,
-                    "mcp_server_count": 4,
-                },
-                "path": "bundles/demo/",
                 "applied": true,
             })
         );

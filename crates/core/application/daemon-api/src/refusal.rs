@@ -748,9 +748,10 @@ pub(crate) mod tests;
 pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
     match crate::library_refusals::typed(error) {
         Some(refused) => ApiError::Refused(refused),
-        None => ApiError::Failed {
-            detail: angzarr_diagnostic::Diagnostic::code(error).to_string(),
-        },
+        // A failure said in its own words, its code and args (step 10b
+        // U9), as a deps failure is: a served import whose source is not
+        // there names it, as in process.
+        None => ApiError::diagnosed(error),
     }
 }
 

@@ -957,3 +957,108 @@ fn test_a_config_edit_asks_its_text_and_writes_the_answer_whole() {
         "projects/amber-quiet-heron/config"
     );
 }
+
+fn import_request(source: &str, force: bool) -> v1::ImportBundleRequest {
+    v1::ImportBundleRequest {
+        parent: "projects/amber-quiet-heron".to_string(),
+        source: source.to_string(),
+        force,
+        cwd: "/work/demo".to_string(),
+        ..v1::ImportBundleRequest::default()
+    }
+}
+
+// Step 10b U9: an import's source is the caller's path, so one given
+// relative is read from her working directory, never the daemon's; a
+// forced one over a bundle is planned as it gone, then the new one (T28).
+#[test]
+fn test_a_bundle_import_reads_its_source_from_the_callers_directory() {
+    use super::import_bundle;
+    use library_application::write::recording::Planned;
+    let (library, mem) = Setup {
+        bundles: &[("notes", &[ENVELOPE])],
+        layers: &[CONFIG],
+        ..Setup::default()
+    }
+    .fixture();
+    mem.put_user(
+        "/work/demo/exported/notes/bundle.yaml",
+        ENVELOPE.1.as_bytes(),
+        false,
+    );
+    let (recording, recorder) = library.clone().recording();
+    let imported = import_bundle::plan(
+        &recording,
+        &plain(),
+        &import_request("exported/notes", true),
+        true,
+    )
+    .result
+    .unwrap();
+    assert_eq!(imported.source, "/work/demo/exported/notes");
+    let planned = recorder.take();
+    assert!(
+        matches!(
+            &planned[..],
+            [Planned::BundleGone { .. }, Planned::NewBundle { .. }]
+        ),
+        "{planned:?}"
+    );
+    // Absolute, it is read where it says.
+    mem.put_user("/elsewhere/notes/bundle.yaml", ENVELOPE.1.as_bytes(), false);
+    let (recording, _) = library.clone().recording();
+    let imported = import_bundle::plan(
+        &recording,
+        &plain(),
+        &import_request("/elsewhere/notes", true),
+        true,
+    )
+    .result
+    .unwrap();
+    assert_eq!(imported.source, "/elsewhere/notes");
+    // Not forced, a bundle there refuses it.
+    let (recording, _) = library.clone().recording();
+    assert!(import_bundle::plan(
+        &recording,
+        &plain(),
+        &import_request("exported/notes", false),
+        true
+    )
+    .result
+    .is_err());
+}
+
+#[test]
+fn test_a_bundle_import_answers_its_bundle_counts_and_path_done_or_retried() {
+    use super::import_bundle;
+    let done = library_application::BundleImported {
+        status: "imported".to_string(),
+        source: "/work/demo/exported/notes".to_string(),
+        dest: "/work/demo/.ctxloom/content/bundles/v2/notes".to_string(),
+        version: "1.2.0".to_string(),
+        fragments: 2,
+        commands: 1,
+        mcp: 0,
+    };
+    let answered =
+        import_bundle::respond(&import_request("exported/notes", true), wrote(Some(done)));
+    let bundle = answered.bundle.unwrap();
+    assert_eq!(bundle.name, "projects/amber-quiet-heron/bundles/notes");
+    assert_eq!(bundle.version, "1.2.0");
+    assert_eq!((bundle.fragment_count, bundle.command_count), (2, 1));
+    assert_eq!(
+        answered.path,
+        "/work/demo/.ctxloom/content/bundles/v2/notes"
+    );
+    assert_eq!(
+        (answered.applied, answered.etag.as_str()),
+        (Some(true), "4")
+    );
+    // A retry of one applied answers its place and its bundle's name.
+    let retried = import_bundle::respond(&import_request("exported/notes", true), wrote(None));
+    assert_eq!(retried.path, "/work/demo/.ctxloom/content/bundles/v2/notes");
+    assert_eq!(
+        retried.bundle.unwrap().name,
+        "projects/amber-quiet-heron/bundles/notes"
+    );
+}

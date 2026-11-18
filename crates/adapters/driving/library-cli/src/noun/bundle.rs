@@ -1,9 +1,7 @@
 //! `bundle`: list, show and view, and its writes (B1), each json answer its
 //! AIP resource or method response (OD-40, design §5.1).
 
-use library_application::{BundleExported, BundleImported, BundleView};
-
-use library_api::resources::count;
+use library_application::{BundleExported, BundleView};
 
 use crate::catalog::{self, bundle_name, ok};
 use crate::prelude::*;
@@ -376,32 +374,41 @@ fn export(
     )
 }
 
+/// `bundle import <path> [--force] [--yes]`: the daemon's `ImportBundle`
+/// (step 10b U9), its source read from this command's working directory
+/// (the request's `cwd`); a forced import over a bundle is its T28
+/// sequence. An import asks nothing, so `--yes` changes nothing (scripts
+/// may say it).
 fn import(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx
-        .library
-        .bundle_import(&cx.flags, &text_arg(sub, "path"), flag(sub, "force"));
-    catalog::answer(
+    let source = text_arg(sub, "path");
+    let request = v1::ImportBundleRequest {
+        source: source.clone(),
+        force: flag(sub, "force"),
+        globals: cx.globals(),
+        ..v1::ImportBundleRequest::default()
+    };
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.import_bundle("", request),
+        |made| std::mem::take(&mut made.notices),
         out,
         err,
-        false,
-        imported,
-        |done, out, _| {
-            writeln!(out, "Imported: {} -> {}", done.source, done.dest)?;
-            writeln!(out, "  Version: {}", done.version)?;
+        |made, out| {
+            let bundle = made.bundle.clone().unwrap_or_default();
+            writeln!(out, "Imported: {source} -> {}", made.path)?;
+            writeln!(out, "  Version: {}", bundle.version)?;
             writeln!(
                 out,
                 "  Fragments: {}, Commands: {}, MCP: {}",
-                done.fragments, done.commands, done.mcp
+                bundle.fragment_count, bundle.command_count, bundle.mcp_server_count
             )
         },
-        catalog::ok,
+        |_| Exit::OK,
     )
 }
 
@@ -413,30 +420,6 @@ pub(crate) fn exported(parent: &str, done: &BundleExported) -> v1::ExportBundleR
         destination: done.dest.clone(),
         applied: Some(true),
         ..v1::ExportBundleResponse::default()
-    }
-}
-
-/// `bundle import`: `ImportBundleResponse`, the bundle with its version and
-/// counts, named by the directory it landed in.
-pub(crate) fn imported(parent: &str, done: &BundleImported) -> v1::ImportBundleResponse {
-    let name = done
-        .dest
-        .trim_end_matches(['/', '\\'])
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default();
-    v1::ImportBundleResponse {
-        bundle: Some(v1::Bundle {
-            name: bundle_name(parent, name),
-            version: done.version.clone(),
-            fragment_count: count(done.fragments),
-            command_count: count(done.commands),
-            mcp_server_count: count(done.mcp),
-            ..v1::Bundle::default()
-        }),
-        path: done.dest.clone(),
-        applied: Some(true),
-        ..v1::ImportBundleResponse::default()
     }
 }
 

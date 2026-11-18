@@ -140,6 +140,13 @@ fn refused(rejection: &library_tree::LibraryTreeRejection) -> ApiError {
     ApiError::Refused(crate::library_refusal(rejection))
 }
 
+/// The write a step is of: its tree's stream, its directory, its request.
+struct Made<'a> {
+    tree: &'a TreeName,
+    dir: &'a str,
+    request_id: &'a str,
+}
+
 /// What a use case planned: its outcome, and its recorded writes shaped.
 struct Planned<T> {
     outcome: Outcome<T>,
@@ -232,7 +239,7 @@ impl<E: Edge> Api<E> {
             });
         }
         let pending = known.as_ref().and_then(|known| match known.end {
-            End::Pending { done } => Some(done),
+            End::Pending { done } => Some((done, known.intent.steps.clone())),
             _ => None,
         });
         let (etag, trashed) = self
@@ -290,16 +297,18 @@ impl<E: Edge> Api<E> {
     }
 
     /// The write `shaped` intended under `request_id` (unless its intent
-    /// is recorded already: `pending`, the step it got to), made, and its
-    /// step recorded done: the path's new token, and, for a step that took
-    /// a path into the trash, the notice of where it is kept.
+    /// is recorded already: `pending`, the step it got to and its recorded
+    /// steps), made one step at a time from the first not done, each step
+    /// one atomic operation recorded done (T28: a sequence resumed on a
+    /// retry where it stopped): the path's new token, and, for a lone step
+    /// that took a path into the trash, the notice of where it is kept.
     async fn carry_out(
         &self,
         site: &crate::library_reads::ReadSite<'_>,
         landing: &Landing<'_>,
         (verb, etag): (&str, &str),
         shaped: &writes::Shaped,
-        (request_id, pending): (&str, Option<u32>),
+        (request_id, pending): (&str, Option<(u32, Vec<library_tree::Step>)>),
     ) -> Result<(String, Option<v1::Notice>), ApiError> {
         let (observations, observers) =
             self.observing.as_ref().ok_or_else(|| ApiError::Failed {
@@ -320,6 +329,8 @@ impl<E: Edge> Api<E> {
             ignored: None,
             root: landing.root(),
         };
+        let id = request_bytes(request_id);
+        let request_id = uuid::Uuid::from_bytes(id).to_string();
         let intended = writes::intent_of(
             observer.as_ref(),
             landing.site.tree(),
@@ -328,12 +339,11 @@ impl<E: Edge> Api<E> {
             &shaped.shape,
             seen_sequence(etag, held.token(&path))?,
             evidence,
+            &request_id,
         )
         .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
-        let id = request_bytes(request_id);
-        let request_id = uuid::Uuid::from_bytes(id).to_string();
-        let step = match pending {
-            Some(done) => done,
+        let (start, steps) = match pending {
+            Some((done, steps)) => (done, steps),
             None => {
                 let book = writes::command_book(&landing.observed.tree, &intended, id);
                 observations
@@ -345,13 +355,14 @@ impl<E: Edge> Api<E> {
                         }
                         other => ApiError::failed(other),
                     })?;
-                observations
+                let done = observations
                     .known(&request_id)
                     .and_then(|known| match known.end {
                         End::Pending { done } => Some(done),
                         _ => None,
                     })
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                (done, intended.steps(&request_id))
             }
         };
         self.dies_at("intended");
@@ -359,44 +370,84 @@ impl<E: Edge> Api<E> {
         let operations = observations.operations().ok_or_else(|| ApiError::Failed {
             detail: "this daemon makes no library write".to_string(),
         })?;
-        let operated = operations
-            .operate(
-                landing.site.tree(),
-                &request_id,
-                &writes::operation(&shaped.shape),
-                &|point| self.dies_at(point.word()),
+        for (at, step) in steps.iter().enumerate().skip(start as usize) {
+            let at = u32::try_from(at).unwrap_or(u32::MAX);
+            let step_of = Made {
+                tree,
+                dir: landing.site.tree(),
+                request_id: &request_id,
+            };
+            self.make_step(
+                &step_of,
+                observer.as_ref(),
+                operations.as_ref(),
+                (at, step),
+                &shaped.shape,
             )
+            .await?;
+        }
+        self.dies_at("done");
+        Ok((
+            observations.held(tree).token(&path).to_string(),
+            trashed_notice(landing.site.tree(), &shaped.shape, &request_id),
+        ))
+    }
+
+    /// The step `step` (number `at`) of the write `made` makes: its one
+    /// atomic operation, its content the plan `planned`'s step for it,
+    /// then what it left read back and recorded done. A step that cannot
+    /// be made, or made nothing, is recorded failed (final).
+    async fn make_step(
+        &self,
+        made: &Made<'_>,
+        observer: &dyn ctxloom_ports::TreeObserver,
+        operations: &dyn ctxloom_ports::Operations,
+        (at, step): (u32, &library_tree::Step),
+        planned: &writes::Shape,
+    ) -> Result<(), ApiError> {
+        let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
+            detail: "this daemon observes no library".to_string(),
+        })?;
+        let request_id = made.request_id;
+        // The plan's step for it (this call's plan: a fresh write's, or
+        // the retry's re-plan of the tree as the earlier try left it).
+        let shape = writes::content_for(step, planned);
+        let Some(operation) = writes::operation_of(step, shape) else {
+            let why = ApiError::Failed {
+                detail: format!(
+                    "the write {request_id} cannot be resumed: its step {at} writes what the plan no longer holds"
+                ),
+            };
+            self.step_failed(made.tree, request_id, at, &why).await?;
+            return Err(why);
+        };
+        let operated = operations
+            .operate(made.dir, request_id, &operation, &|point| {
+                self.dies_at(point.word())
+            })
             .map_err(|failure| ApiError::diagnosed(failure.as_ref()));
         let refused = match operated {
             Ok(operated) => not_made(operated),
             Err(failure) => Some(failure),
         };
         if let Some(why) = refused {
-            self.step_failed(tree, &request_id, step, &why).await?;
+            self.step_failed(made.tree, request_id, at, &why).await?;
             return Err(why);
         }
         self.dies_at("renamed");
-        let observed = writes::left_by(
-            observer.as_ref(),
-            landing.site.tree(),
-            &writes::expected(&intended, &shaped.shape),
-        )
-        .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
+        let observed = writes::left_by(observer, made.dir, &writes::expected_step(step, shape))
+            .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
         let fact = RecordStepDone {
-            request_id: request_id.clone(),
-            step,
+            request_id: request_id.to_string(),
+            step: at,
             observed,
         };
-        let key = format!("done:{request_id}:{step}");
+        let key = format!("done:{request_id}:{at}");
         observations
-            .send(writes::step_book(tree, &fact, &key))
+            .send(writes::step_book(made.tree, &fact, &key))
             .await
             .map_err(ApiError::failed)?;
-        self.dies_at("done");
-        Ok((
-            observations.held(tree).token(&path).to_string(),
-            trashed_notice(landing.site.tree(), &shaped.shape, &request_id),
-        ))
+        Ok(())
     }
 
     /// The use case planned over the recording library at `site`: its
@@ -607,6 +658,7 @@ write_requests! {
     UpdateMcpServerRequest.mcp_server.name, etag;
     CreateAgentRequest.parent;
     UpdateAgentRequest.agent.name, etag;
+    ImportBundleRequest.parent, etag;
     DeleteBundleRequest.name, etag;
     DeleteFragmentRequest.name, etag;
     DeleteCommandRequest.name, etag;
