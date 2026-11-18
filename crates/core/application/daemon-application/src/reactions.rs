@@ -46,20 +46,9 @@ fn once(names: impl IntoIterator<Item = String>) -> Vec<String> {
     kept
 }
 
-/// The loadout of a plan of `agent` over `profiles` whose fragments are
-/// `fragments` (references, `<bundle>#fragments/<name>`).
-pub fn loadout_of_plan(agent: &str, profiles: &[String], fragments: &[String]) -> SessionLoadout {
-    let bundles = fragments.iter().filter_map(|reference| {
-        reference
-            .split_once('#')
-            .map(|(bundle, _)| bundle.to_string())
-    });
-    SessionLoadout {
-        agent: agent.to_string(),
-        profiles: profiles.to_vec(),
-        bundles: once(bundles),
-    }
-}
+/// The loadout of a plan (moved to run-application, where a run records
+/// it too).
+pub use run_application::loadout_of_plan;
 
 /// The bundle a fragment's resource name (`.../bundles/<b>/fragments/<f>`)
 /// is in.

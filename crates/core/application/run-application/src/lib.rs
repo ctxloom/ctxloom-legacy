@@ -20,6 +20,7 @@ mod credential;
 mod error;
 pub mod frontend;
 mod hosted;
+mod loadout;
 mod one_shot;
 
 pub use credential::{credential_evidence, links_on, share_login};
@@ -27,6 +28,7 @@ pub use credential::{credential_evidence, links_on, share_login};
 pub use error::diagnostic_samples;
 pub use error::{HostedEnd, RunError, EN_US};
 pub use hosted::{hosted_child, HostedChild};
+pub use loadout::loadout_of_plan;
 pub use one_shot::{
     Answer, Core, Done, Ended, OneShot, Parts, Place, Placement, Planner, RunService, Runs, Telling,
 };

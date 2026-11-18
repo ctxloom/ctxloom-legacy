@@ -2,7 +2,7 @@
 
 use daemon_proto::v1;
 
-use super::{loadout_of_assembled, loadout_of_plan, owed, touched};
+use super::{loadout_of_assembled, owed, touched};
 
 fn loadout(bundles: &[&str]) -> sessions::SessionLoadout {
     sessions::SessionLoadout {
@@ -14,21 +14,6 @@ fn loadout(bundles: &[&str]) -> sessions::SessionLoadout {
 
 fn paths(paths: &[&str]) -> Vec<String> {
     paths.iter().map(|p| p.to_string()).collect()
-}
-
-// A plan's loadout is its agent, its profiles and the bundles its
-// fragments came from, each once in the order first drawn on.
-#[test]
-fn a_plans_loadout_names_the_bundles_its_fragments_came_from() {
-    let fragments = paths(&[
-        "demo#fragments/example",
-        "other#fragments/rules",
-        "demo#fragments/more",
-    ]);
-    let got = loadout_of_plan("dev", &paths(&["dev"]), &fragments);
-    assert_eq!(got.agent, "dev");
-    assert_eq!(got.profiles, ["dev"]);
-    assert_eq!(got.bundles, ["demo", "other"]);
 }
 
 // An assembly's loadout is the same, its fragments named as resources
