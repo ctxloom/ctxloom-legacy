@@ -131,9 +131,14 @@ pub(crate) const CLUSTERS: &[Cluster] = &[
             "cli/context_status.feature",
             "cli/content_distill.feature",
             "cli/companion.feature",
-            "cli/agent.feature",
-            "cli/library_changes.feature",
         ],
+    },
+    // Split from `library` (2026-11-18): the library cluster ran 88.9 s
+    // against its 90 s limit under load; these two are its slowest, and
+    // share its limit (.config/nextest.toml).
+    Cluster {
+        name: "library_agent_changes",
+        files: &["cli/agent.feature", "cli/library_changes.feature"],
     },
     Cluster {
         name: "remotes",
@@ -550,7 +555,16 @@ mod clusters {
         };
     }
 
-    clusters!(journeys, daemon, sessions, library, remotes, setup, other);
+    clusters!(
+        journeys,
+        daemon,
+        sessions,
+        library,
+        library_agent_changes,
+        remotes,
+        setup,
+        other
+    );
 }
 
 /// Every feature file is in exactly one cluster; every cluster has a test of

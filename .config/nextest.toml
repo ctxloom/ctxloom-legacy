@@ -127,8 +127,10 @@ test-group = 'ports'
 # shared with other agents' builds and tests, load average 20 to 41),
 # rounded up to whole slow periods, and at least 60 s. A cluster's features
 # run at once, so it takes at least as long as its slowest feature, whose
-# scenarios take turns: `daemon` is cli/daemon.feature's 100 s or so, its
-# daemons' idle times waited out in turn. Seconds, as measured: alone (the
+# scenarios take turns: `daemon` is cli/daemon.feature's, about 88 s alone
+# since 6c6141047 and 4d596ae13 (a client no longer waits out a daemon that
+# could not start, and no step waits for an idle exit; it was 300 s or so
+# before them). Seconds, as measured on 2026-11-14: alone (the
 # clusters only, `just ratchet-base`), beside the binary's other 500 tests
 # (`just test-pkg ctxloom`, twice), and beside 2,500 tests of 12 crates:
 #
@@ -146,7 +148,10 @@ test-group = 'ports'
 # (a pass's time is not shown). Measured with 3 features of a cluster at
 # once (the 20 cores shared among the 7 clusters); a host of fewer cores
 # runs 2 at once. A cluster past its limit is hung, as any test past 120 s
-# is.
+# is. `library_agent_changes` (cli/agent.feature and
+# cli/library_changes.feature) was split from `library` on 2026-11-18,
+# after `library` ran 88.9 s against its 90 s under load; it shares
+# `library`'s limits, Linux's and Windows', through the same overrides.
 #
 # Windows (owner ruling of 2026-11-17: measure, the same rule) has limits of
 # its own, the overrides with `platform = 'cfg(windows)'` just below, ahead
@@ -188,7 +193,12 @@ slow-timeout = { period = "30s", terminate-after = 8, grace-period = "10s" }
 
 [[profile.default.overrides]]
 platform = 'cfg(windows)'
-filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::library)'
+filter = '''
+    package(ctxloom) & (
+        test(=tests::gherkin_features::clusters::library)
+        | test(=tests::gherkin_features::clusters::library_agent_changes)
+    )
+'''
 slow-timeout = { period = "30s", terminate-after = 15, grace-period = "10s" }
 
 [[profile.default.overrides]]
@@ -215,7 +225,12 @@ filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::journeys)'
 slow-timeout = { period = "30s", terminate-after = 5, grace-period = "10s" }
 
 [[profile.default.overrides]]
-filter = 'package(ctxloom) & test(=tests::gherkin_features::clusters::library)'
+filter = '''
+    package(ctxloom) & (
+        test(=tests::gherkin_features::clusters::library)
+        | test(=tests::gherkin_features::clusters::library_agent_changes)
+    )
+'''
 slow-timeout = { period = "30s", terminate-after = 3, grace-period = "10s" }
 
 [[profile.default.overrides]]

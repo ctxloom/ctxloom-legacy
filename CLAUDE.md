@@ -4252,7 +4252,9 @@ of it is apart), `sessions` (session, session_hooks, session_remove,
 session_worktrees, post_tool_hooks), `library` (bundle, fragment,
 fragment_draft_premise, command, profile, skill, mcp, mcp_resources,
 mcp_tools, search, materialize, read_extras, context_status,
-content_distill, companion, agent), `remotes` (remote, deps), `setup`
+content_distill, companion), `library_agent_changes` (agent,
+library_changes: split from `library` on 2026-11-18, which ran 88.9 s
+against its 90 s under load), `remotes` (remote, deps), `setup`
 (init, doctor, manage, auth, config, engine, clean, version, completion)
 and `other` (fault_tolerance, probes/, container, coordination_contract,
 startup_boundaries, editing, util). Every feature file is in exactly one
@@ -4262,11 +4264,12 @@ once; each runs its features `cluster_threads()` at a time (the cores
 shared among the clusters, at least 2), and a feature's scenarios take
 turns (their steps block cucumber's one executor thread), so a cluster
 lasts at least its slowest feature (`daemon`: cli/daemon.feature, about
-100 s). Each cluster's `terminate-after` is an override naming it in
+88 s alone since 6c6141047 and 4d596ae13). Each cluster's `terminate-after` is an override naming it in
 `.config/nextest.toml`, about 2.4 times its longest measured run
 (2026-11-14, 20 cores, alone, beside the binary's tests, beside 12
 crates' and in the whole workspace; the table is there), whole slow periods, at least 60 s: `daemon`
-300 s, `journeys` 150 s, `library` 90 s, `remotes`, `setup`, `sessions`
+300 s, `journeys` 150 s, `library` and `library_agent_changes` 90 s
+(one override), `remotes`, `setup`, `sessions`
 and `other` 60 s; every other test keeps 120 s. A host of fewer cores was
 not measured. Separation: each scenario has a temporary root of its own,
 so its own ctxloom home, daemon, single-instance lock, store, holds and
