@@ -184,6 +184,7 @@ fn evidence() -> Evidence {
 
 fn replace(path: &str, seen: u64) -> ReplaceFile {
     ReplaceFile {
+        foreign: false,
         name: TREE.to_string(),
         verb: "fragment edit".to_string(),
         path: path.to_string(),
@@ -242,6 +243,7 @@ fn step_of(
 
 fn sequence(steps: Vec<Step>) -> RunSequence {
     RunSequence {
+        foreign: Vec::new(),
         name: TREE.to_string(),
         verb: "deps pull".to_string(),
         steps,

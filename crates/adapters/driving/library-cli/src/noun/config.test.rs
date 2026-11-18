@@ -110,6 +110,7 @@ mod writes_asked {
             applied: Some(false),
             etag: "7".to_string(),
             needs: vec![v1::Need {
+                optional: false,
                 id: "edit".to_string(),
                 kind: Some(v1::need::Kind::Edit(v1::Edit {
                     file_name: "config.yaml".to_string(),

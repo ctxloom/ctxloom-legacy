@@ -113,6 +113,7 @@ fn an_observation_of_no_motion_and_no_outside_cause_prints_empty_commits() {
 fn an_intent_and_its_steps_print_their_request() {
     let intended = LibraryEvent::ChangeIntended(ChangeIntended {
         intent: Intent {
+            foreign: Vec::new(),
             request_id: "r-1".to_string(),
             verb: "fragment edit".to_string(),
             steps: vec![library_tree::Step {
@@ -223,5 +224,48 @@ fn a_purge_s_step_prints_the_slot_it_removes() {
     assert_eq!(
         super::step_row(&step),
         json!({"kind": "purge", "path": "state/trash/r-0"})
+    );
+}
+
+// Step 10c U10 and U4: a foreign writer's intent lists the other tools'
+// files it writes, by path (an intent naming none prints no list), and an
+// installed tree prints its request, step, identity, commit and tree.
+#[test]
+fn a_foreign_writers_files_and_an_installed_tree_print_what_they_name() {
+    let intended = LibraryEvent::ChangeIntended(ChangeIntended {
+        intent: Intent {
+            request_id: "r-1".to_string(),
+            verb: "materialize".to_string(),
+            steps: Vec::new(),
+            base_cause: String::new(),
+            done: 0,
+            foreign: vec![
+                library_tree::ForeignFile {
+                    path: "CLAUDE.md".to_string(),
+                    new_oid: "c1".to_string(),
+                },
+                library_tree::ForeignFile {
+                    path: ".mcp.json".to_string(),
+                    new_oid: String::new(),
+                },
+            ],
+        },
+    });
+    let installed = LibraryEvent::TreeInstalled(library_tree::TreeInstalled {
+        request_id: "r-2".to_string(),
+        step: 1,
+        identity: "ctxloom+git://h/r//bundles/demo".to_string(),
+        sha: "0123".to_string(),
+        tree: "t1".to_string(),
+    });
+    let doc = document(None, &[page(1, intended), page(2, installed)]);
+    assert_eq!(
+        doc["events"],
+        json!([
+            {"type": "ChangeIntended", "sequence": 1, "request_id": "r-1", "verb": "materialize",
+             "steps": [], "foreign": [{"path": "CLAUDE.md"}, {"path": ".mcp.json"}]},
+            {"type": "TreeInstalled", "sequence": 2, "request_id": "r-2", "step": 1,
+             "identity": "ctxloom+git://h/r//bundles/demo", "sha": "0123", "tree": "t1"},
+        ])
     );
 }

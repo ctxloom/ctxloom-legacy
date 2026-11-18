@@ -368,6 +368,7 @@ pub fn intent_of(
             steps.push(step);
         }
         return Ok(Intended::Sequence(RunSequence {
+            foreign: Vec::new(),
             name: tree.to_string(),
             verb: verb.to_string(),
             steps,
@@ -389,6 +390,7 @@ fn one_intent(
 ) -> Result<Intended, TreeError> {
     Ok(match shape {
         Shape::Replace { path, bytes, .. } => Intended::Replace(ReplaceFile {
+            foreign: false,
             name: tree.to_string(),
             verb: verb.to_string(),
             path: path.clone(),
@@ -434,6 +436,7 @@ fn one_intent(
         // A purge, or a sequence, is only ever a step of one ([`intent_of`]
         // makes those): alone, it is a sequence of nothing.
         Shape::Purge | Shape::Sequence(_) => Intended::Sequence(RunSequence {
+            foreign: Vec::new(),
             name: tree.to_string(),
             verb: verb.to_string(),
             steps: Vec::new(),

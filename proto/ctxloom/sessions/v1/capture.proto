@@ -228,6 +228,38 @@ message RecordConversationCleared {
   string trigger = 2;
 }
 
+// 10c (U13, G6/G7): the re-assembled context a live session's engine was
+// handed, at the hook that carried it. Size and SHA-256 only (ruling B),
+// never the text. external_id `reinject:<session>:<H(the observation's
+// cause)>`, so a second hook of the same change records nothing, and the
+// delivery is once. Like every fact it carries no sequence (G4
+// superseded). Additive.
+message RecordContextRedelivered {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.ContextRedelivered"]
+  };
+
+  // The bundles (and `config`) whose change caused it, sorted.
+  repeated string bundles = 1;
+  // The tree observation's cause it answers.
+  string cause = 2;
+  uint64 size = 3;
+  string sha256 = 4;
+  // The engine's hook it rode (`UserPromptSubmit`, `PostToolUse`).
+  string carried_by = 5;
+}
+
+message ContextRedelivered {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  repeated string bundles = 1;
+  string cause = 2;
+  uint64 size = 3;
+  string sha256 = 4;
+  string carried_by = 5;
+}
+
 message ConversationCleared {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
 

@@ -1004,6 +1004,7 @@ fn test_an_agent_write_answers_the_agent_or_the_swaps_preview() {
     assert_eq!(
         swap.needs,
         [v1::Need {
+            optional: false,
             id: super::CONFIRM_NEED.to_string(),
             kind: Some(v1::need::Kind::Confirm(v1::Confirm {
                 text: "Apply the move of agent \"dev\" from claude-code to opencode, \

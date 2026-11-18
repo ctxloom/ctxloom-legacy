@@ -202,6 +202,17 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("WatchRun")) }
     }
 
+    /// `WatchLibrary` (step 10c G7): each recorded change of the named
+    /// library trees, as a thin notice, from the call on; unbounded in time.
+    /// The default is a daemon that does not serve it.
+    fn watch_library(
+        &self,
+        request: v1::WatchLibraryRequest,
+    ) -> impl Future<Output = Result<Box<dyn LibraryChanges>, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("WatchLibrary")) }
+    }
+
     /// The coordinator's `Handle` (T16, API Q11): `book`, a domain command
     /// under the id its page names, applied (or found applied: a
     /// DUPLICATE); whether this delivery applied it. Nothing waits for a
@@ -336,6 +347,16 @@ pub trait RunEvents: Send {
 /// A hosted run's next event, as [`RunEvents::next`] answers it.
 pub type NextEvent<'a> =
     std::pin::Pin<Box<dyn Future<Output = Option<Result<v1::RunEvent, Called>>> + Send + 'a>>;
+
+/// A library's recorded changes, as `WatchLibrary` streams them (step 10c
+/// G7): each in order, waited for, until the stream ends (`None`) or breaks.
+pub trait LibraryChanges: Send {
+    fn next(&mut self) -> NextChange<'_>;
+}
+
+/// A library's next change, as [`LibraryChanges::next`] answers it.
+pub type NextChange<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Option<Result<v1::LibraryChange, Called>>> + Send + 'a>>;
 
 /// The coordinator's `Handle`, as a status names it.
 pub const HANDLE: &str =

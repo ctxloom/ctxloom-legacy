@@ -203,6 +203,7 @@ fn a_stream_it_holds_nothing_of_has_no_view() {
 fn intended(request: &str, steps: usize) -> LibraryEvent {
     let step = library_tree::Step {
         replace: Some(library_tree::ReplaceFile {
+            foreign: false,
             name: TREE.to_string(),
             verb: "fragment edit".to_string(),
             path: FILE.to_string(),
@@ -225,6 +226,7 @@ fn intended(request: &str, steps: usize) -> LibraryEvent {
     };
     LibraryEvent::ChangeIntended(library_tree::ChangeIntended {
         intent: library_tree::Intent {
+            foreign: Vec::new(),
             request_id: request.to_string(),
             verb: "fragment edit".to_string(),
             steps: vec![step; steps],

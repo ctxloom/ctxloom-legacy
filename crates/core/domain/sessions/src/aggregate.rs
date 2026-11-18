@@ -33,10 +33,10 @@ use crate::{
     SessionClosed, SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
 };
 use crate::{
-    AssistantTextShown, CaptureGapped, Compacted, ConversationCleared, PromptSubmitted,
-    RecordAssistantText, RecordCaptureGap, RecordCompaction, RecordConversationCleared,
-    RecordPromptSubmitted, RecordToolCall, RecordTurnEnded, SessionEnded, SessionReopened,
-    ToolCalled, TurnEnded,
+    AssistantTextShown, CaptureGapped, Compacted, ContextRedelivered, ConversationCleared,
+    PromptSubmitted, RecordAssistantText, RecordCaptureGap, RecordCompaction,
+    RecordConversationCleared, RecordPromptSubmitted, RecordToolCall, RecordTurnEnded,
+    SessionEnded, SessionReopened, ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -513,6 +513,14 @@ impl SessionAggregate {
     #[cfg_attr(test, mutants::skip)]
     #[applies(CaptureGapped)]
     fn applied_capturegapped(&mut self, event: CaptureGapped, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    // Equivalent: a re-assembly's record carries no aggregate state (step
+    // 10c U13; its fact is recorded by the unit that builds the delivery).
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(ContextRedelivered)]
+    fn applied_contextredelivered(&mut self, event: ContextRedelivered, page: &PageContext) {
         fold(&mut self.session, event.into(), page);
     }
 

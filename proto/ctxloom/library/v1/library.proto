@@ -143,6 +143,12 @@ message LibraryState {
   // repository of its own (`HomeRepositoryMade`), so each write to it is
   // committed there. Only the home's is ever set. Additive.
   bool home_repository_made = 11;
+  // 10c (U10, L15; G4 superseded): each foreign file a foreign writer's
+  // `StepApplied` left, project-relative, at that event's sequence. A
+  // record only: never observed, so no client is given its sequence as an
+  // etag. Additive (protos.md §1.1 drafted it as 11, which 10b's
+  // `home_repository_made` took first).
+  map<string, Resource> foreign = 12;
 }
 
 // A resource's place in the record (G4 superseded): the sequence of the
@@ -251,6 +257,27 @@ message RecordStepFailed {
   string ext_err_txt = 3;
 }
 
+// 10c (U4, L9): a pinned commit's tree, installed whole into the cache
+// (`cache/bundles/<segments>/<bundle>/<sha>/`, gitignored, outside the
+// pathspec), completing a `deps pull`'s or `deps upgrade`'s `CreateDirectory`
+// step in place of `RecordStepDone`. Its presence and its `.identity` marker
+// are all a read checks. Like every fact it carries ids and no sequence (G4
+// superseded). Additive.
+message RecordTreeInstalled {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.TreeInstalled"]
+  };
+
+  string request_id = 1;
+  uint32 step = 2;
+  // `<remote canonical>//bundles/<bundle>`.
+  string identity = 3;
+  string sha = 4;
+  // git's tree id of the installed tree.
+  string tree = 5;
+}
+
 // endregion
 
 // region commands (U0; first sent in 10b, U3)
@@ -318,6 +345,11 @@ message ReplaceFile {
   uint64 seen_sequence = 4;
   string new_oid = 5;
   Evidence evidence = 6;
+  // 10c (U10, L15): another tool's file. `path` is then project-relative
+  // and outside the tree, and `seen_sequence` is unset and not judged;
+  // `decide` refuses one that is not a step of a foreign writer's
+  // `RunSequence` (`PlanRejected`, a bug). Additive.
+  bool foreign = 7;
 }
 
 // A new directory, staged under `state/` then renamed in, never over
@@ -430,6 +462,8 @@ message RunSequence {
   string verb = 2;
   repeated Step steps = 3;
   Evidence evidence = 4;
+  // 10c (U10, L15): the other tools' files its steps write. Additive.
+  repeated ForeignFile foreign = 5;
 }
 
 // endregion
@@ -474,6 +508,21 @@ message Intent {
   string base_cause = 4;
   // The steps done so far.
   uint32 done = 5;
+  // 10c (U10, L15): what else the command writes, in its own steps
+  // (materialize, doctor --fix, manage install|uninstall, bundle move --to
+  // <remote>). Additive.
+  repeated ForeignFile foreign = 6;
+}
+
+// 10c (U10, L15, T26): a file of another tool's that a command writes (an
+// engine's own config, context file or hooks, at rest), relative to the
+// PROJECT's root, with git's id for what it will write (`hash-object
+// --path`, not written to the object store). Never reconciled: the tree's
+// pathspec excludes it.
+message ForeignFile {
+  string path = 1;
+  // Absent for a file the command removes.
+  string new_oid = 2;
 }
 
 // 10b (U8): what a trash slot holds.
@@ -533,6 +582,19 @@ message IntentSuperseded {
   option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
   string request_id = 1;
   string by_cause = 2;
+}
+
+// 10c (U4, L9): `RecordTreeInstalled`, recorded at a sequence: `apply` sets
+// `resources["cache/bundles/<segments>/<bundle>/<sha>"]` to `{that sequence,
+// tree}`. The cache is immutable by sha, so no client compares a token
+// against it. Additive.
+message TreeInstalled {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  string request_id = 1;
+  uint32 step = 2;
+  string identity = 3;
+  string sha = 4;
+  string tree = 5;
 }
 
 // endregion

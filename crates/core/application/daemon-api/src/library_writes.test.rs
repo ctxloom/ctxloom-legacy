@@ -324,6 +324,7 @@ fn bare() -> library_tree::Step {
 fn replaced(path: &str) -> library_tree::Step {
     library_tree::Step {
         replace: Some(library_tree::ReplaceFile {
+            foreign: false,
             name: String::new(),
             verb: String::new(),
             path: path.to_string(),

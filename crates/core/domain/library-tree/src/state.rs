@@ -153,6 +153,9 @@ impl Library {
             LibraryEvent::HomeRepositoryMade(_) => self.home_repository_made = true,
             // The read model keeps it; the tree is as it was.
             LibraryEvent::BundleExported(_) => {}
+            // Step 10c U4 folds an installed tree into `resources` under its
+            // cache path (protos.md §1.2); nothing records one yet.
+            LibraryEvent::TreeInstalled(_) => {}
         }
         self.last_cause = cause;
     }
@@ -327,6 +330,9 @@ impl Library {
                 .collect(),
             baseline_sequence: self.baseline_sequence,
             home_repository_made: self.home_repository_made,
+            // Step 10c U10 folds a foreign writer's steps here (protos.md
+            // §1.1); none is recorded yet.
+            foreign: Default::default(),
         }
     }
 }

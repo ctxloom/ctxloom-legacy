@@ -563,6 +563,15 @@ service Ctxloom {
 
   // `search`: `projects/{project}:searchLibrary` (AIP-136, stateless).
   rpc SearchLibrary(SearchLibraryRequest) returns (SearchLibraryResponse);
+  // `projects/{project}:watchLibrary` and `users/me:watchLibrary` (AIP-136,
+  // a server stream; step 10 G7, owner: the RPC now, the CLI verb later):
+  // each `TreeObserved` and `StepApplied` of the named trees (every checkout
+  // of the project, or the home), from the moment of the call, as a thin
+  // notice. Never content. The test build's `ctxloom test watch-library` is
+  // its one client. Additive (10c).
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: a daemon-folded stream of the trees' changes, as WatchTranscript's. --)
+  rpc WatchLibrary(WatchLibraryRequest) returns (stream LibraryChange);
 
   // The rest of the CLI, drafted with the milestone that ports each, by
   // these rules (S33): hooks; remotes' DiscoverRemotes;
@@ -1230,6 +1239,55 @@ message SweepSessionsResponse {
 message GetTranscriptRequest {
   // `projects/{project}/sessions/{session}/transcript`.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Transcript"];
+}
+
+// `ctxloom test watch-library`: watch a project's library trees, or the
+// home's (10c, G7).
+message WatchLibraryRequest {
+  // `projects/{project}` or `users/me`.
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One recorded change of a library tree, as a thin notice: the paths and
+// how, never their content (10c, G7; G4 superseded).
+message LibraryChange {
+  // What made the change.
+  enum Cause {
+    // Not set.
+    CAUSE_UNSPECIFIED = 0;
+    // Made outside ctxloom (an editor, a commit, a checkout, a pull).
+    EXTERNAL = 1;
+    // A write of ctxloom's own (an applied step).
+    INTENDED = 2;
+  }
+  // `projects/{p}/checkouts/{c}/library` or `users/me/library`.
+  string tree = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // What made it.
+  Cause cause = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The write's id; INTENDED only.
+  string request_id = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The CLI's verb of the write; INTENDED only.
+  string verb = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Each path changed, and how.
+  repeated ChangeSummary changes = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // When the change was recorded.
+  google.protobuf.Timestamp observed_at = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The event's sequence in the tree's stream: every path in `changes` now
+  // has it as its etag (G4 superseded), so a watcher knows its preview is
+  // stale without a read.
+  uint64 sequence = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// One path a `LibraryChange` names.
+message ChangeSummary {
+  // Relative to the library root.
+  string path = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // `added`, `modified`, `deleted`, `renamed`, `type_changed`.
+  string status = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // A rename's old path; empty otherwise.
+  string from_path = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // One D27 line, as its JSON envelope.

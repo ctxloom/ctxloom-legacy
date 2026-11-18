@@ -103,6 +103,10 @@ message Need {
     // Edit a document.
     Edit edit = 5;
   }
+  // 10c (U6): an optional need may go unanswered; the apply then takes its
+  // suggestion, or writes nothing it alone would write. A required need
+  // unanswered is `NeedsUnanswered` (as ever). Additive.
+  bool optional = 6;
 }
 
 // A person's answer to one need of a preview, sent with the apply.

@@ -217,6 +217,25 @@ impl Ctxloom for Fake {
         Ok(Response::new(Box::pin(tokio_stream::iter(events))))
     }
 
+    /// One change, then (for the parent `users/me`) the daemon's status
+    /// ending the stream early, else its end (step 10c G7).
+    async fn watch_library(
+        &self,
+        request: Request<v1::WatchLibraryRequest>,
+    ) -> Result<Response<tonic::codegen::BoxStream<v1::LibraryChange>>, Status> {
+        self.admit(&request)?;
+        let parent = request.into_inner().parent;
+        let mut changes = vec![Ok(v1::LibraryChange {
+            tree: format!("{parent}/library"),
+            sequence: 7,
+            ..v1::LibraryChange::default()
+        })];
+        if parent == "users/me" {
+            changes.push(Err(Status::internal("the watch broke")));
+        }
+        Ok(Response::new(Box::pin(tokio_stream::iter(changes))))
+    }
+
     async fn sweep_sessions(
         &self,
         request: Request<v1::SweepSessionsRequest>,
@@ -939,4 +958,35 @@ fn a_diagnosed_failure_is_its_diagnostic() {
         panic!("{called:?}");
     };
     assert_eq!(code, "library-git-git-too-old");
+}
+
+// Step 10c G7: a library's changes are streamed as the daemon sends them,
+// until its end; a stream the daemon breaks ends in what it came to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_librarys_changes_are_watched_until_the_stream_ends() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let client = DaemonClient::new(&found, WITHIN);
+    let mut changes = client
+        .watch_library(v1::WatchLibraryRequest {
+            parent: "projects/calm-otter".to_string(),
+            ..v1::WatchLibraryRequest::default()
+        })
+        .await
+        .unwrap();
+    let first = changes.next().await.unwrap().unwrap();
+    assert_eq!(first.tree, "projects/calm-otter/library");
+    assert_eq!(first.sequence, 7);
+    assert!(changes.next().await.is_none(), "nothing after the end");
+    let mut broken = client
+        .watch_library(v1::WatchLibraryRequest {
+            parent: "users/me".to_string(),
+            ..v1::WatchLibraryRequest::default()
+        })
+        .await
+        .unwrap();
+    assert!(broken.next().await.unwrap().is_ok());
+    assert!(matches!(
+        broken.next().await.unwrap(),
+        Err(Called::Failed { code, .. }) if code == Code::Internal as i32
+    ));
 }

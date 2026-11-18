@@ -26,7 +26,7 @@ use crate::{
     Evidence, External, HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand,
     LibraryEvent, LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordBundleExported,
     RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile,
-    RunSequence, Step, StepApplied, TrashPath, TreeObserved, KEEP_DAYS,
+    RunSequence, Step, StepApplied, TrashPath, TreeInstalled, TreeObserved, KEEP_DAYS,
 };
 
 /// The code a plan's rejection takes when the tree no longer reads and the
@@ -190,6 +190,8 @@ impl LibraryAggregate {
                 steps,
                 base_cause: self.library.last_cause.clone(),
                 done: 0,
+                // Step 10c U10 lists a foreign writer's files here.
+                foreign: Vec::new(),
             },
         }
     }
@@ -767,6 +769,18 @@ impl LibraryAggregate {
     fn change_failed(&mut self, event: ChangeFailed, page: &PageContext) {
         self.library
             .apply_page(&LibraryEvent::ChangeFailed(event), page.sequence, page.meta);
+    }
+
+    // Equivalent until step 10c U4 folds it (protos.md §1.2): nothing
+    // records a `TreeInstalled` yet, and the fold changes nothing for it.
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(TreeInstalled)]
+    fn tree_installed(&mut self, event: TreeInstalled, page: &PageContext) {
+        self.library.apply_page(
+            &LibraryEvent::TreeInstalled(event),
+            page.sequence,
+            page.meta,
+        );
     }
 
     #[applies(IntentSuperseded)]

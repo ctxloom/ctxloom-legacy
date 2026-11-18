@@ -131,6 +131,9 @@ impl LibraryCheckout {
             }
             // The tree's, naming no intent (G3).
             LibraryEvent::HomeRepositoryMade(_) => return,
+            // Step 10c U4 makes it complete its pull's step, as a
+            // `StepApplied` does; nothing records one yet.
+            LibraryEvent::TreeInstalled(_) => return,
             LibraryEvent::BundleExported(exported) => {
                 self.exports.insert(
                     exported.request_id.clone(),

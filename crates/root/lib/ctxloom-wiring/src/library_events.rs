@@ -103,6 +103,14 @@ pub(crate) fn event_row(page: &EventPage) -> Option<Value> {
             row["request_id"] = intended.intent.request_id.into();
             row["verb"] = intended.intent.verb.into();
             row["steps"] = intended.intent.steps.iter().map(step_row).collect();
+            if !intended.intent.foreign.is_empty() {
+                row["foreign"] = intended
+                    .intent
+                    .foreign
+                    .iter()
+                    .map(|file| json!({"path": file.path}))
+                    .collect();
+            }
         }
         Ok(LibraryEvent::StepApplied(applied)) => {
             row["request_id"] = applied.request_id.into();
@@ -121,6 +129,13 @@ pub(crate) fn event_row(page: &EventPage) -> Option<Value> {
             row["request_id"] = superseded.request_id.into();
         }
         Ok(LibraryEvent::HomeRepositoryMade(_)) => {}
+        Ok(LibraryEvent::TreeInstalled(installed)) => {
+            row["request_id"] = installed.request_id.into();
+            row["step"] = installed.step.into();
+            row["identity"] = installed.identity.into();
+            row["sha"] = installed.sha.into();
+            row["tree"] = installed.tree.into();
+        }
         Ok(LibraryEvent::BundleExported(exported)) => {
             row["request_id"] = exported.request_id.into();
         }

@@ -46,6 +46,7 @@ fn observed(baseline: bool, changes: Vec<Change>, dirty: &[(&str, &str)]) -> Lib
 fn intent(request: &str, steps: usize) -> LibraryEvent {
     let step = Step {
         replace: Some(ReplaceFile {
+            foreign: false,
             name: TREE.to_string(),
             verb: "fragment edit".to_string(),
             path: FILE.to_string(),
@@ -68,6 +69,7 @@ fn intent(request: &str, steps: usize) -> LibraryEvent {
     };
     LibraryEvent::ChangeIntended(ChangeIntended {
         intent: crate::Intent {
+            foreign: Vec::new(),
             request_id: request.to_string(),
             verb: "fragment edit".to_string(),
             steps: vec![step; steps],
