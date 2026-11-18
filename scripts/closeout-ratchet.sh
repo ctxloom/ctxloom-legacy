@@ -3,7 +3,7 @@
 # spec on purpose (owner ruling 165): `just closeout-ratchet <base>`. The
 # gates of `just closeout` (build, lint, lint-deps, test, lint-os,
 # mutants-batch), each as usual, but for one thing: the feature runner (its
-# cluster tests, `tests::gherkin_features::clusters::*`) may fail, so long
+# tests of one feature file each, `tests::gherkin_features::features::*`) may fail, so long
 # as the scenarios red on the slice are a SUBSET of those red on the base.
 # A slice may turn red green; it may never add a red scenario or break a
 # green one (scripts/ratchet-judge.sh).
