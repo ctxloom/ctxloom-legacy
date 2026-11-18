@@ -1507,6 +1507,74 @@ fn test_a_companion_add_registers_it_in_the_home_layer_and_answers_it() {
     );
 }
 
+// Step 10b (owner 2026-11-18, night): `companion disable|enable` are
+// served writes of the HOME config, one layer; each answers the companion
+// as the write leaves it, applied only when its state changed.
+#[test]
+fn test_a_companion_disable_and_enable_write_the_home_layer_and_answer_it() {
+    let (library, _) = companioned();
+    library
+        .companion_add(&plain(), "acme")
+        .result
+        .expect("acme registers");
+    let name = "projects/amber-quiet-heron/companions/acme".to_string();
+    let (recording, recorder) = library.recording();
+    let disable = v1::DisableCompanionRequest {
+        name: name.clone(),
+        ..v1::DisableCompanionRequest::default()
+    };
+    let done = super::disable_companion::plan(&recording, &plain(), &disable, true)
+        .result
+        .unwrap();
+    let (scope, text) = one_layer(&recorder.take());
+    assert_eq!(scope, ctxloom_ports::Scope::Home);
+    assert!(text.contains("disabled"), "{text}");
+    let answered = super::disable_companion::respond(&disable, wrote(Some(done.clone())));
+    let companion = answered.companion.unwrap();
+    assert_eq!(companion.name, name);
+    assert_eq!(companion.bin, "ctxloom-companion-acme");
+    assert_eq!(companion.state, v1::companion::State::Disabled as i32);
+    assert_eq!(answered.applied, Some(true));
+    assert_eq!(answered.etag, "4");
+    // Already in that state: nothing applied.
+    let same = library_application::CompanionStateSet {
+        changed: false,
+        ..done
+    };
+    assert_eq!(
+        super::disable_companion::respond(&disable, wrote(Some(same))).applied,
+        Some(false)
+    );
+    let enable = v1::EnableCompanionRequest {
+        name: name.clone(),
+        ..v1::EnableCompanionRequest::default()
+    };
+    let (library, _) = companioned();
+    library.companion_add(&plain(), "acme").result.unwrap();
+    library
+        .companion_set_state(
+            &plain(),
+            "acme",
+            library_application::CompanionState::Disabled,
+        )
+        .result
+        .unwrap();
+    let (recording, recorder) = library.recording();
+    let done = super::enable_companion::plan(&recording, &plain(), &enable, true)
+        .result
+        .unwrap();
+    assert_eq!(one_layer(&recorder.take()).0, ctxloom_ports::Scope::Home);
+    let answered = super::enable_companion::respond(&enable, wrote(Some(done)));
+    assert_eq!(
+        answered.companion.unwrap().state,
+        v1::companion::State::Enabled as i32
+    );
+    // A retry of a write already applied: applied, its companion named.
+    let retried = super::enable_companion::respond(&enable, wrote(None));
+    assert_eq!(retried.applied, Some(true));
+    assert_eq!(retried.companion.unwrap().name, name);
+}
+
 // Step 10b U3: `agent default <name>` is served: the default written to
 // the project's config, one layer; its answer names the agent and whether
 // it is defined yet.

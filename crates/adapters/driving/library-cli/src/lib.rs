@@ -214,6 +214,8 @@ macro_rules! served_writes {
             create_profile (CreateProfile) CreateProfileRequest => CreateProfileResponse,
             update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse,
             create_companion (CreateCompanion) CreateCompanionRequest => CreateCompanionResponse,
+            enable_companion (EnableCompanion) EnableCompanionRequest => EnableCompanionResponse,
+            disable_companion (DisableCompanion) DisableCompanionRequest => DisableCompanionResponse,
             set_default_agent (SetDefaultAgent) SetDefaultAgentRequest => SetDefaultAgentResponse,
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
@@ -456,7 +458,7 @@ pub const SERVED_WRITES: &[(&str, &[&str])] = &[
     ("skill", &["create", "remove"]),
     ("profile", &["create", "edit", "modify", "remove"]),
     ("agent", &["create", "edit", "remove"]),
-    ("companion", &["add", "remove"]),
+    ("companion", &["add", "enable", "disable", "remove"]),
     ("mcp server", &["set", "edit"]),
 ];
 

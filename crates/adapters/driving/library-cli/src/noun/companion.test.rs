@@ -60,7 +60,9 @@ mod write {
                 "needs": [crate::tests::confirm_need("companion \"acme\"")],
             })
         );
-        // OD-9: disable and enable answer the companion as it is now (AIP-136).
+        // Disable and enable answer a write's response (owner 2026-11-18,
+        // night): the companion as the write leaves it, applied when its
+        // state changed.
         assert_eq!(
             text(&library, &["companion", "disable", "acme"]),
             "Companion 'acme' is disabled\n"
@@ -72,9 +74,12 @@ mod write {
         assert_eq!(
             json(&library, &["companion", "enable", "acme"]),
             serde_json::json!({
-                "name": "projects/calm-otter/companions/acme",
-                "bin": "ctxloom-companion-acme",
-                "state": "ENABLED",
+                "companion": {
+                    "name": "projects/calm-otter/companions/acme",
+                    "bin": "ctxloom-companion-acme",
+                    "state": "ENABLED",
+                },
+                "applied": true,
             })
         );
         assert_eq!(
@@ -180,6 +185,23 @@ mod add_asked {
             asked_once::<v1::CreateCompanionRequest>(&["companion", "add", "acme"]);
         assert_eq!(under, "");
         assert_eq!(asked.companion_id, "acme");
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
+    }
+
+    // Step 10b (owner 2026-11-18, night): `companion enable|disable` ask
+    // the daemon's `EnableCompanion`/`DisableCompanion`, the companion by
+    // its name, once, applied (not a preview).
+    #[test]
+    fn test_companion_enable_and_disable_ask_the_daemon_by_name() {
+        let (under, asked) =
+            asked_once::<v1::EnableCompanionRequest>(&["companion", "enable", "acme"]);
+        assert_eq!(under, "/companions/acme");
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
+        let (under, asked) =
+            asked_once::<v1::DisableCompanionRequest>(&["companion", "disable", "acme"]);
+        assert_eq!(under, "/companions/acme");
         assert!(!asked.validate_only);
         assert_eq!(asked.globals, degraded());
     }

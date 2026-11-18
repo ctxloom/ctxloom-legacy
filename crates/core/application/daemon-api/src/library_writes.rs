@@ -854,6 +854,8 @@ write_requests! {
     CreateProfileRequest.parent;
     UpdateProfileRequest.profile.name, etag;
     CreateCompanionRequest.parent;
+    EnableCompanionRequest.name;
+    DisableCompanionRequest.name;
     SetDefaultAgentRequest.parent;
     CreateAgentRequest.parent;
     UpdateAgentRequest.agent.name, etag;

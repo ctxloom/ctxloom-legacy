@@ -484,10 +484,14 @@ service Ctxloom {
   rpc DeleteCompanion(DeleteCompanionRequest) returns (DeleteCompanionResponse) {
     option (google.api.method_signature) = "name,etag";
   }
-  // AIP-136: a resource-based custom method answers the resource (OD-9).
-  rpc EnableCompanion(EnableCompanionRequest) returns (Companion);
-  // `companion disable`: it stays registered and contributes nothing.
-  rpc DisableCompanion(DisableCompanionRequest) returns (Companion);
+  // `companion enable`, a served write (step 10b). NON-ADDITIVE (owner
+  // 2026-11-18, night, for these two RPCs alone): it answered the bare
+  // `Companion` (AIP-136); it answers a write's response now, in the house
+  // shape (companion, applied, notices, etag).
+  rpc EnableCompanion(EnableCompanionRequest) returns (EnableCompanionResponse);
+  // `companion disable`: it stays registered and contributes nothing. The
+  // same change as `EnableCompanion`'s.
+  rpc DisableCompanion(DisableCompanionRequest) returns (DisableCompanionResponse);
   // `loadout`: ctxloom's own loadout, what it contributes to a session as
   // its own companion (owner ruling 2026-11-17, step 10a U2).
   rpc GetLoadout(GetLoadoutRequest) returns (Loadout) {

@@ -2,10 +2,6 @@
 //! method's response (OD-40, design §3.9, §5.7); `loadout` (B2), the one
 //! YAML document, written from the daemon's `Loadout` (step 10a U2).
 
-use library_application::{CompanionState, CompanionStateSet};
-
-use library_api::resources::{companion_name, companion_state};
-
 use crate::prelude::*;
 
 pub(crate) fn read(
@@ -61,29 +57,52 @@ pub(crate) fn write(
                 |_| Exit::OK,
             )?
         }
+        // The daemon's `EnableCompanion`/`DisableCompanion` (step 10b, owner
+        // 2026-11-18, night): the state written to the home config; its
+        // text from the response (D10).
         "enable" | "disable" => {
-            let state = if verb == "enable" {
-                CompanionState::Enabled
+            let under = library_api::names::named_target("companions", &name);
+            let word = if verb == "enable" {
+                "enabled"
             } else {
-                CompanionState::Disabled
+                "disabled"
             };
-            let outcome = cx.library.companion_set_state(&cx.flags, &name, state);
-            api::written(
-                cx,
-                outcome,
-                out,
-                err,
-                set,
-                |done, out, _| {
-                    let word = done.state.word();
-                    if done.changed {
-                        writeln!(out, "Companion '{}' is {word}", done.name)
-                    } else {
-                        writeln!(out, "Companion '{}' is already {word}", done.name)
-                    }
-                },
-                |_| Exit::OK,
-            )?
+            let said = |applied: Option<bool>, out: &mut dyn Write| {
+                if applied.unwrap_or(false) {
+                    writeln!(out, "Companion '{name}' is {word}")
+                } else {
+                    writeln!(out, "Companion '{name}' is already {word}")
+                }
+            };
+            if verb == "enable" {
+                let request = v1::EnableCompanionRequest {
+                    globals: cx.globals(),
+                    ..v1::EnableCompanionRequest::default()
+                };
+                crate::answer_written(
+                    cx,
+                    cx.served.enable_companion(&under, request),
+                    |m| std::mem::take(&mut m.notices),
+                    out,
+                    err,
+                    |m, out| said(m.applied, out),
+                    |_| Exit::OK,
+                )?
+            } else {
+                let request = v1::DisableCompanionRequest {
+                    globals: cx.globals(),
+                    ..v1::DisableCompanionRequest::default()
+                };
+                crate::answer_written(
+                    cx,
+                    cx.served.disable_companion(&under, request),
+                    |m| std::mem::take(&mut m.notices),
+                    out,
+                    err,
+                    |m, out| said(m.applied, out),
+                    |_| Exit::OK,
+                )?
+            }
         }
         "remove" => {
             let under = library_api::names::named_target("companions", &name);
@@ -110,16 +129,6 @@ pub(crate) fn write(
         _ => return Ok(None),
     };
     Ok(Some(code))
-}
-
-/// `companion enable|disable`: the companion, as it is now (AIP-136).
-fn set(parent: &str, done: &CompanionStateSet) -> v1::Companion {
-    v1::Companion {
-        name: companion_name(parent, &done.name),
-        bin: done.program.clone(),
-        resolves: None,
-        state: companion_state(done.state).into(),
-    }
 }
 
 /// `loadout`: the daemon's `GetLoadout` (step 10a U2), written as the one

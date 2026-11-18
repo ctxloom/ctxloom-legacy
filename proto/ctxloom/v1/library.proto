@@ -3422,6 +3422,9 @@ message EnableCompanionRequest {
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do, applying nothing (owner
+  // 2026-11-18, night, with the response below).
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
@@ -3435,6 +3438,24 @@ message EnableCompanionRequest {
   string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `companion enable <name>`'s answer (owner 2026-11-18, night: the one
+// non-additive change, for this RPC and its twin alone; it answered the bare
+// `Companion`).
+message EnableCompanionResponse {
+  // The Companion, as the write leaves it (on a preview, as it would).
+  Companion companion = 1;
+  // The file the write's one atomic operation targets (T25): the home config.
+  string path = 2;
+  // Whether the write was applied: false on a preview, and when the
+  // companion was already enabled (nothing to change).
+  optional bool applied = 3;
+  // The etag of the config the write was planned against, or leaves
+  // (AIP-154).
+  string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
+  repeated Notice notices = 92;
+}
+
 // `companion disable <name>` (OD-9).
 message DisableCompanionRequest {
   // The Companion to disable, by its resource name.
@@ -3442,6 +3463,9 @@ message DisableCompanionRequest {
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do, applying nothing (owner
+  // 2026-11-18, night, with the response below).
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
@@ -3453,6 +3477,24 @@ message DisableCompanionRequest {
   // checkout from it (a git worktree is a checkout of its own, L2); empty,
   // the project's registered root.
   string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// `companion disable <name>`'s answer (owner 2026-11-18, night: the one
+// non-additive change, for this RPC and its twin alone; it answered the bare
+// `Companion`).
+message DisableCompanionResponse {
+  // The Companion, as the write leaves it (on a preview, as it would).
+  Companion companion = 1;
+  // The file the write's one atomic operation targets (T25): the home config.
+  string path = 2;
+  // Whether the write was applied: false on a preview, and when the
+  // companion was already disabled (nothing to change).
+  optional bool applied = 3;
+  // The etag of the config the write was planned against, or leaves
+  // (AIP-154).
+  string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
+  repeated Notice notices = 92;
 }
 
 // ctxloom's OWN loadout (Go's `cmd/ctxloom/loadout.yaml`): what ctxloom, as

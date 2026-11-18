@@ -61,6 +61,8 @@ macro_rules! served_writes {
             create_profile (CreateProfile) CreateProfileRequest => CreateProfileResponse, "profile create";
             update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse, "profile edit";
             create_companion (CreateCompanion) CreateCompanionRequest => CreateCompanionResponse, "companion add";
+            enable_companion (EnableCompanion) EnableCompanionRequest => EnableCompanionResponse, "companion enable";
+            disable_companion (DisableCompanion) DisableCompanionRequest => DisableCompanionResponse, "companion disable";
             set_default_agent (SetDefaultAgent) SetDefaultAgentRequest => SetDefaultAgentResponse, "agent default";
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse, "agent edit";
@@ -608,6 +610,73 @@ pub mod create_companion {
         }
     }
 }
+
+/// `companion enable|disable <name>` (step 10b, owner 2026-11-18, night):
+/// the companion's state written to the HOME config, one layer, answered
+/// as the write leaves it; applied only when the state changed.
+macro_rules! companion_state_write {
+    ($module:ident, $request:ident, $response:ident, $state:ident) => {
+        pub mod $module {
+            use super::*;
+            use library_application::CompanionStateSet;
+
+            pub fn plan(
+                library: &Library,
+                flags: &Flags,
+                request: &v1::$request,
+                _apply: bool,
+            ) -> Outcome<CompanionStateSet> {
+                let asked =
+                    names::named_under(parent_of(&request.name), "companions", &request.name)
+                        .unwrap_or_else(|| request.name.clone());
+                library.companion_set_state(
+                    flags,
+                    &asked,
+                    library_application::CompanionState::$state,
+                )
+            }
+
+            pub fn respond(
+                request: &v1::$request,
+                wrote: Wrote<CompanionStateSet>,
+            ) -> v1::$response {
+                let companion = match &wrote.answer {
+                    Some(done) => v1::Companion {
+                        name: request.name.clone(),
+                        bin: done.program.clone(),
+                        resolves: None,
+                        state: crate::resources::companion_state(done.state).into(),
+                    },
+                    None => v1::Companion {
+                        name: request.name.clone(),
+                        ..v1::Companion::default()
+                    },
+                };
+                let changed = wrote.answer.as_ref().is_none_or(|done| done.changed);
+                v1::$response {
+                    companion: Some(companion),
+                    path: wrote.at.clone(),
+                    applied: Some(wrote.applied && changed),
+                    etag: wrote.etag,
+                    notices: wrote.notices,
+                }
+            }
+        }
+    };
+}
+
+companion_state_write!(
+    enable_companion,
+    EnableCompanionRequest,
+    EnableCompanionResponse,
+    Enabled
+);
+companion_state_write!(
+    disable_companion,
+    DisableCompanionRequest,
+    DisableCompanionResponse,
+    Disabled
+);
 
 /// `agent default <name>`: `SetDefaultAgent`, the agent a bare run binds
 /// written to the config, one layer; an agent not defined yet is set all

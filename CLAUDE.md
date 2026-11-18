@@ -3413,8 +3413,12 @@ only. `companion list` is `ListCompanionsResponse`, each companion named
 `exists`) and its `state` (`ENABLED`/`DISABLED`); `companion add` answers
 `CreateCompanionResponse` (`applied` when the registration is new,
 `resolves` true: its program answered the probe), `remove`
-`DeleteCompanionResponse`, and `enable`/`disable` the `Companion` itself
-(AIP-136, `EnableCompanion`/`DisableCompanion`). `loadout` is unchanged.
+`DeleteCompanionResponse`, and `enable`/`disable` (served writes of the
+home config, step 10b) `EnableCompanionResponse`/`DisableCompanionResponse`
+(`companion`, `path`, `applied` when the state changed, `etag`, `notices`;
+their requests take `validate_only`): owner 2026-11-18, night, the one
+non-additive change, for these two RPCs alone (they answered the bare
+`Companion`, AIP-136). `loadout` is unchanged.
 
 Companions (M4; owner rulings OD-8 to OD-10, OD-22, 2026-11-13): a companion
 is registered by NAME alone (`companions.<n>: {state: enabled|disabled}`,
