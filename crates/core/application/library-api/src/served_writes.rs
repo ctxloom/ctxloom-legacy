@@ -962,7 +962,9 @@ pub enum McpWritten {
 /// `UpdateMcpServer`. A mask names the fields a set writes (`command`,
 /// `args`, `env`, `url`, `notes`, `installation`; a field named and given
 /// empty is cleared); no mask is the whole server through the editor, the
-/// preview's Edit need. A set creates a server its bundle lacks.
+/// preview's Edit need. A set creates a server its bundle lacks only when
+/// `allow_missing` (AIP-134; the CLI sends true), else it is refused
+/// `LibraryMcpNotFound`.
 pub mod update_mcp_server {
     use super::*;
     use library_application::{McpEdited, McpPatch};
@@ -1010,7 +1012,7 @@ pub mod update_mcp_server {
     ) -> Outcome<McpWritten> {
         let reference = reference(request);
         if !mask(request).is_empty() {
-            let set = library.mcp_set(flags, &reference, &patch(request));
+            let set = library.mcp_update(flags, &reference, &patch(request), request.allow_missing);
             return Outcome {
                 result: set.result.map(McpWritten::Set),
                 notices: set.notices,

@@ -152,7 +152,9 @@ U3, protos.md §1.1) serves `bundle create`, `fragment|command create
 <bundle>#<kind>s/<id>` and `edit`, `skill create`, `config set`, `mcp
 server set|edit` (`UpdateMcpServer`: a mask names a set's fields, a field
 named and given empty cleared; no mask is the whole server through the
-editor, the preview's Edit need; `--header`, `--tag` and `--served-by` are
+editor, the preview's Edit need; a missing server is created only when
+`allow_missing`, which the CLI always sends, else refused
+`LibraryMcpNotFound`, AIP-134; `--header`, `--tag` and `--served-by` are
 gone, owner ruling, hard migrate; a server's notes and installation are
 its `mcp/.<n>.meta.yaml` sidecar until T27, so a set of them beside a
 runtime field is two files, refused `OneChangePerCall`) and the

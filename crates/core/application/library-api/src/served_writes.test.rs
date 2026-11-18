@@ -572,6 +572,32 @@ fn one_write(planned: &[library_application::write::recording::Planned]) -> (Str
     writes[0].clone()
 }
 
+// An update that may not create (`allow_missing` false) of a server its
+// bundle lacks is refused McpNotFound (at the API its proto refusal, as
+// `LibraryMcpNotFound`) and plans no write; the CLI's set sends true.
+#[test]
+fn test_an_mcp_server_update_not_allowed_to_create_refuses_a_missing_one() {
+    let (library, recorder) = tools().recording();
+    let mut request = mcp_set(&["command"], |s| s.command = "echo".to_string());
+    request.allow_missing = false;
+    request.mcp_server.as_mut().unwrap().name =
+        "projects/amber-quiet-heron/bundles/demo/mcpServers/fresh".to_string();
+    let refused = super::update_mcp_server::plan(&library, &plain(), &request, true)
+        .result
+        .expect_err("a missing server is not created");
+    assert_eq!(
+        angzarr_diagnostic::Diagnostic::code(&refused),
+        "library-application-mcp-not-found"
+    );
+    assert!(planned_writes(&recorder.take()).is_empty());
+    let mut held = mcp_set(&["command"], |s| s.command = "echo".to_string());
+    held.allow_missing = false;
+    let written = super::update_mcp_server::plan(&library, &plain(), &held, true)
+        .result
+        .unwrap();
+    assert!(matches!(written, super::McpWritten::Set(_)), "{written:?}");
+}
+
 // `mcp server set`: the fields its mask names change, its env among them,
 // and the rest keep their value.
 #[test]
