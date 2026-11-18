@@ -225,7 +225,7 @@ impl Releases for LostCheckouts {
             .and_then(|rel| rel.components().next())
             .map(|first| first.as_os_str().to_string_lossy().into_owned())
             .unwrap_or_default();
-        let workspaces = self.workspaces.of(&project_id, &swept.project_dir);
+        let workspaces = self.workspaces.of(&project_id, &swept.project_dir, None);
         match workspaces.remove(&swept.project_dir, &swept.workspace) {
             isolation_ports::Removal::Removed => Released::Removed(swept.workspace.clone()),
             isolation_ports::Removal::Left(why) => Released::Left {
@@ -1273,7 +1273,7 @@ impl<E: Edge> Daemon<E> {
         let workspaces = self
             .workspaces
             .as_ref()
-            .map(|of| of.of(project_id, project_dir));
+            .map(|of| of.of(project_id, project_dir, Some(&handed.env)));
         let workspace = self.workspace_of(project_id, &at, harp, &planned, &handed);
         let started = self.spawn_child(
             &hosted_engine,

@@ -1709,12 +1709,26 @@ impl daemon_application::ChildWorkspaces for Workspaces {
         &self,
         project_id: &str,
         project_dir: &str,
+        env: Option<&BTreeMap<String, String>>,
     ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+        // Its git in the launcher's environment (her `GIT_*`, her ssh
+        // agent), as her git identity is asked; a sweep's in the daemon's.
+        let env = match env {
+            Some(env) => Arc::new(process_env::EnvSnapshot::from_parts(
+                self.env.flavor(),
+                Ok(PathBuf::from(project_dir)),
+                self.env.temp_dir().to_path_buf(),
+                env.iter()
+                    .map(|(name, value)| (name.into(), value.into()))
+                    .collect::<Vec<(std::ffi::OsString, std::ffi::OsString)>>(),
+            )),
+            None => Arc::clone(&self.env),
+        };
         Arc::new(worktree_git::GitWorkspaces::new(
             Arc::clone(&self.fs),
             PathBuf::from(project_dir),
             Some(isolation_ports::worktrees_root(&self.home, project_id)),
-            Arc::clone(&self.env),
+            env,
         ))
     }
 }

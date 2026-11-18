@@ -1672,6 +1672,8 @@ const CHECKOUT: &str = "/home/u/.ctxloom/worktrees/calm-otter/kid/dev";
 struct Checkouts {
     asked: Mutex<Vec<String>>,
     removal: isolation_ports::Removal,
+    /// The environment each workspace was asked in (none: the daemon's).
+    envs: Mutex<Vec<Option<BTreeMap<String, String>>>>,
 }
 
 impl isolation_ports::Workspaces for Checkouts {
@@ -1736,7 +1738,13 @@ impl isolation_ports::Workspaces for Checkouts {
 struct AllCheckouts(Arc<Checkouts>);
 
 impl crate::ChildWorkspaces for AllCheckouts {
-    fn of(&self, _: &str, _: &str) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+    fn of(
+        &self,
+        _: &str,
+        _: &str,
+        env: Option<&BTreeMap<String, String>>,
+    ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+        self.0.envs.lock().unwrap().push(env.cloned());
         Arc::clone(&self.0) as Arc<dyn isolation_ports::Workspaces + Send + Sync>
     }
 }
@@ -1851,6 +1859,7 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
     let checkouts = Arc::new(Checkouts {
         asked: Mutex::default(),
         removal,
+        envs: Mutex::default(),
     });
     let mut world = World::new(Box::new(WorktreePlans));
     let said: Log = Arc::default();
@@ -1864,7 +1873,11 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
             for_launch: None,
         }],
         plans: Box::new(WorktreePlans),
-        hand_offs: Box::new(Handed::of(BTreeMap::new())),
+        // Her launcher's environment holds her ssh agent.
+        hand_offs: Box::new(Handed::of(BTreeMap::from([(
+            "SSH_AUTH_SOCK".to_string(),
+            "/run/her-agent".to_string(),
+        )]))),
         homes: Box::new(world.homes.clone()),
         ears: Box::new(Listening::default()),
         run_locks: Arc::new(Locks(LockProbe::Unproven)),
@@ -1913,6 +1926,23 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
 
 /// What the daemon logged.
 type Log = Arc<Mutex<Vec<String>>>;
+
+// The defect of 2026-11-18: a hosted child's checkout is asked of its
+// project's workspaces in the environment its LAUNCHER sent, so its git sees
+// her `GIT_*` and `SSH_AUTH_SOCK`, never the daemon's own alone.
+#[tokio::test]
+async fn a_childs_checkout_is_asked_in_its_launchers_environment() {
+    let (_world, checkouts, _) = in_a_worktree(isolation_ports::Removal::Removed).await;
+    let envs = checkouts.envs.lock().unwrap().clone();
+    assert!(!envs.is_empty(), "its workspaces were asked");
+    assert!(
+        envs.iter().all(|env| env
+            .as_ref()
+            .and_then(|env| env.get("SSH_AUTH_SOCK"))
+            .is_some_and(|sock| sock == "/run/her-agent")),
+        "{envs:?}"
+    );
+}
 
 // s4-Q11: a hosted child follows its agent's `workspace`: its axis is
 // recorded at its mint, it is placed in a checkout of its session's own
