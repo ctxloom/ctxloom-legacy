@@ -23,10 +23,10 @@ runs.workspace = true
 runs-application.workspace = true
 session-ports.workspace = true
 sessions.workspace = true
+surface-ports.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-surface-ports.workspace = true
 angzarr-embedded = { workspace = true, features = ["test-support"] }
 run-launcher = { workspace = true, features = ["test-support"] }
 mutants.workspace = true

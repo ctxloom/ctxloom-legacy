@@ -933,6 +933,90 @@ async fn get_session_answers_the_session_by_its_name() {
     assert_eq!(invalid.reason, "shape");
 }
 
+/// Append `events` to the run of `session` (its id text) for `incarnation`,
+/// from its stream's start.
+async fn a_run(f: &Fixture, session: &str, incarnation: u32, events: Vec<runs::RunEvent>) {
+    use angzarr_embedded::{Payload, Write};
+    let root = runs::run_root(session, incarnation);
+    let pages: Vec<EventPage> = (0..)
+        .zip(events)
+        .map(|(sequence, event)| EventPage {
+            sequence,
+            body: Some(angzarr_embedded::v1::event_page::Body::Event(
+                event.to_any(),
+            )),
+            meta: None,
+        })
+        .collect();
+    let stream = angzarr_embedded::StreamRef::main(
+        runs::RUN_DOMAIN,
+        uuid::Uuid::from_slice(&root.value).unwrap(),
+    );
+    angzarr_embedded::EventStore::write(&f.world.store, Write::append(stream, 0, &pages))
+        .await
+        .unwrap();
+}
+
+// Step 9 (owner ruling 2026-11-17): GetSession says what the session's
+// latest run was launched with, as its enqueue journaled it, and how its
+// last turn failed.
+#[tokio::test]
+async fn get_session_says_what_its_latest_run_was_given_and_how_its_last_turn_failed() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.mint("amber-swift-owl").await;
+    f.catch_up().await;
+    let name = "projects/calm-quiet-heron/sessions/amber-swift-owl";
+    let get = || {
+        f.api.get_session(v1::GetSessionRequest {
+            name: name.to_string(),
+            ..v1::GetSessionRequest::default()
+        })
+    };
+    let before = get().await.unwrap();
+    assert_eq!(before.grant, None, "no run yet");
+    assert_eq!(before.last_failure, None);
+    a_run(
+        &f,
+        &before.uid,
+        1,
+        vec![
+            runs::RunEvent::RunEnqueued(runs::RunEnqueued {
+                session: before.uid.clone(),
+                incarnation: 1,
+                mode: runs::RunMode::Structured,
+                launcher_lock: String::new(),
+                grant: Some(runs::Grant {
+                    mcp_servers: vec!["ctxloom".to_string(), "review-tools".to_string()],
+                    permissions: r#"{"defaultMode":"plan"}"#.to_string(),
+                }),
+            }),
+            runs::RunEvent::TurnQueued(runs::TurnQueued {
+                prompt_ref: String::new(),
+                resume: true,
+                message_ids: vec!["m1".to_string()],
+                urgency: runs::TurnUrgency::Wake,
+            }),
+            runs::RunEvent::TurnFailedRecorded(runs::TurnFailedRecorded {
+                turn: 1,
+                class: runs::TurnFailureClass::RateLimited,
+                detail: "429".to_string(),
+                message_ids: vec!["m1".to_string()],
+            }),
+        ],
+    )
+    .await;
+    f.catch_up().await;
+    let shown = get().await.unwrap();
+    assert_eq!(
+        shown.grant.map(|g| g.mcp_servers),
+        Some(vec!["ctxloom".to_string(), "review-tools".to_string()])
+    );
+    let failure = shown.last_failure.expect("its last turn failed");
+    assert_eq!(failure.kind, "rate-limited");
+    assert_eq!(failure.detail, "429");
+}
+
 // ListSessions: a project's sessions (or every project's), by state.
 #[tokio::test]
 async fn list_sessions_lists_a_projects_sessions_by_state() {

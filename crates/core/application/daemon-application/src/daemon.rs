@@ -1214,6 +1214,8 @@ impl<E: Edge> Daemon<E> {
                 mode: RunMode::Structured,
                 evidence: child.evidence.clone(),
                 launcher_lock: lock.path().to_string(),
+                // What it is given, journaled (step 9).
+                grant: Some(child.grant()),
             })
             .await;
         match enqueued {

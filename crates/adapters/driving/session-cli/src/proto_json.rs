@@ -129,6 +129,30 @@ pub fn session(session: &v1::Session) -> Value {
             "rotations",
             session.rotations.iter().map(rotation).collect(),
         )
+        .message("grant", session.grant.as_ref().map(grant))
+        .message("last_failure", session.last_failure.as_ref().map(failure))
+        .done()
+}
+
+fn grant(grant: &v1::SessionGrant) -> Value {
+    Fields::default()
+        .list(
+            "mcp_servers",
+            grant
+                .mcp_servers
+                .iter()
+                .map(|name| Value::from(name.as_str()))
+                .collect(),
+        )
+        .text("permissions", &grant.permissions)
+        .done()
+}
+
+fn failure(failure: &v1::SessionFailure) -> Value {
+    Fields::default()
+        .text("kind", &failure.kind)
+        .text("detail", &failure.detail)
+        .message("notice", failure.notice.as_ref().map(notice))
         .done()
 }
 

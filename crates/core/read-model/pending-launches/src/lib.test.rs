@@ -55,6 +55,7 @@ fn enqueued(n: u8, incarnation: u32, mode: RunMode) -> EventBook {
         incarnation,
         mode,
         launcher_lock: lock_of(n),
+        grant: None,
     });
     book(RUN_DOMAIN, root, vec![page(0, event.to_any())])
 }

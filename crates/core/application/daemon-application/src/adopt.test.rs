@@ -177,6 +177,7 @@ impl Rig {
                 mode: runs::RunMode::Interactive,
                 evidence: runs_application::Evidence::passing("claude-code"),
                 launcher_lock: FRONTEND_LOCK.to_string(),
+                grant: None,
             })
             .await
             .unwrap();

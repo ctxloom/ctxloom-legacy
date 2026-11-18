@@ -618,6 +618,48 @@ fn show_in_text_names_the_owner_the_close_the_children_and_the_pending() {
     assert!(!ran.out.contains("more"), "{}", ran.out);
 }
 
+// Step 9 (owner ruling 2026-11-17): show says what the session's latest run
+// was launched with, its servers by name and its permissions document, and
+// how its last turn failed, in the notice's words.
+#[test]
+fn show_in_text_names_what_its_run_was_given_and_how_its_last_turn_failed() {
+    let mut s = session("brisk-copper-moth", v1::session::State::Live);
+    s.grant = Some(v1::SessionGrant {
+        mcp_servers: vec!["ctxloom".to_string(), "review-tools".to_string()],
+        permissions: r#"{"defaultMode":"plan"}"#.to_string(),
+    });
+    s.last_failure = Some(v1::SessionFailure {
+        kind: "rate-limited".to_string(),
+        detail: "429".to_string(),
+        notice: Some(v1::Notice {
+            code: "daemon-api-turn-rate-limited".to_string(),
+            args: Vec::new(),
+            text: "its last turn ran into its rate limit".to_string(),
+        }),
+    });
+    let reads = Reads {
+        sessions: vec![s],
+        ..Reads::default()
+    };
+    let ran = read_go(&reads, Format::Text, &["show", "brisk-copper-moth"]);
+    for line in [
+        "granted:  MCP servers ctxloom, review-tools",
+        r#"          permissions {"defaultMode":"plan"}"#,
+        "failed:   rate-limited: its last turn ran into its rate limit",
+        "          429",
+    ] {
+        assert!(ran.out.contains(line), "{line:?} in {}", ran.out);
+    }
+    // A session whose run journaled no grant, and no failure, says neither.
+    let plain = Reads {
+        sessions: vec![session("calm-dusty-wren", v1::session::State::Live)],
+        ..Reads::default()
+    };
+    let ran = read_go(&plain, Format::Text, &["show", "calm-dusty-wren"]);
+    assert!(!ran.out.contains("granted:"), "{}", ran.out);
+    assert!(!ran.out.contains("failed:"), "{}", ran.out);
+}
+
 // A call that came to nothing is the command's failure, with its exit.
 #[test]
 fn a_failed_call_is_the_commands_failure_with_its_exit_code() {

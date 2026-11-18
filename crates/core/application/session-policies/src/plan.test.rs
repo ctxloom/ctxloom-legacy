@@ -119,6 +119,7 @@ fn enqueued() -> RunEvent {
         incarnation: 1,
         mode: RunMode::Structured,
         launcher_lock: String::new(),
+        grant: None,
     })
 }
 

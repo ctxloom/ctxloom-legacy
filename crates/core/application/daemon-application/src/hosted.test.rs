@@ -928,6 +928,33 @@ async fn a_hosted_childs_home_is_prepared_with_its_agents_permissions() {
     );
 }
 
+// Step 9 (owner ruling 2026-11-17): a hosted child's run journals what it
+// was given, its servers by name (ctxloom's own) and its agent's document,
+// in its RunEnqueued.
+#[tokio::test]
+async fn a_hosted_childs_run_journals_what_it_was_given() {
+    let mut world = World::new(Box::new(Permitted));
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    let grant = world
+        .run_events()
+        .await
+        .into_iter()
+        .find_map(|event| match event {
+            RunEvent::RunEnqueued(enqueued) => Some(enqueued.grant),
+            _ => None,
+        })
+        .expect("the child's run is enqueued");
+    assert_eq!(
+        grant,
+        Some(runs::Grant {
+            mcp_servers: vec!["ctxloom".to_string()],
+            permissions: DOCUMENT.to_string(),
+        })
+    );
+}
+
 /// A plan of the child whose run agent denies a tool.
 struct Surfaced;
 

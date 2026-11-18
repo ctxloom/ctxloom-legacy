@@ -274,6 +274,7 @@ async fn the_start_sweeps_a_killed_daemons_child_and_ends_it_once() {
             mode: runs::RunMode::Structured,
             evidence: runs_application::Evidence::passing("claude-code"),
             launcher_lock: RUN_LOCK.to_string(),
+            grant: None,
         })
         .await
         .unwrap();
@@ -351,6 +352,7 @@ async fn a_run(edge: &Arc<TestEdge>, started: bool) {
             mode: runs::RunMode::Interactive,
             evidence: runs_application::Evidence::passing("claude-code"),
             launcher_lock: RUN_LOCK.to_string(),
+            grant: None,
         })
         .await
         .unwrap();
@@ -439,6 +441,7 @@ async fn the_start_leaves_a_child_whose_host_holds_its_lock() {
             mode: runs::RunMode::Structured,
             evidence: runs_application::Evidence::passing("claude-code"),
             launcher_lock: RUN_LOCK.to_string(),
+            grant: None,
         })
         .await
         .unwrap();

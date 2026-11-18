@@ -27,7 +27,7 @@ use angzarr_embedded::{
     Any, CatchUp, Domain, PageContext, Payload, PayloadError, ProjectorHandler,
 };
 use held_projection::{Fill, Held, Lock, Model};
-use runs::{RunEvent, RunState, RUN_DOMAIN};
+use runs::{RunEvent, RunState, TurnFailureClass, RUN_DOMAIN};
 use sessions::{
     ChildLaunched, SessionAggregate, SessionEvent, SessionState, Urgency, SESSION_DOMAIN,
 };
@@ -41,11 +41,24 @@ pub struct EndedTurn {
     pub failed: bool,
 }
 
+/// How a turn failed: its class and the engine's own words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnFailure {
+    pub class: TurnFailureClass,
+    pub detail: String,
+}
+
 /// One run stream: its folded state and the turns it ended, oldest first.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RunFold {
     pub state: RunState,
     pub ended_turns: Vec<EndedTurn>,
+    /// How its last turn failed, until a later turn of it completed (step
+    /// 9: `session show` says it).
+    pub last_failure: Option<TurnFailure>,
+    /// The words its end was recorded with (a launch that failed); empty
+    /// before it ended.
+    pub end_detail: String,
 }
 
 impl RunFold {
@@ -168,16 +181,26 @@ impl Board {
                 for (page, event) in events(book) {
                     let event = RunEvent::from_any(event)?;
                     match &event {
-                        RunEvent::TurnCompletedRecorded(done) => run.ended_turns.push(EndedTurn {
-                            turn: done.turn,
-                            message_ids: done.message_ids.clone(),
-                            failed: false,
-                        }),
-                        RunEvent::TurnFailedRecorded(failed) => run.ended_turns.push(EndedTurn {
-                            turn: failed.turn,
-                            message_ids: failed.message_ids.clone(),
-                            failed: true,
-                        }),
+                        RunEvent::TurnCompletedRecorded(done) => {
+                            run.last_failure = None;
+                            run.ended_turns.push(EndedTurn {
+                                turn: done.turn,
+                                message_ids: done.message_ids.clone(),
+                                failed: false,
+                            });
+                        }
+                        RunEvent::TurnFailedRecorded(failed) => {
+                            run.last_failure = Some(TurnFailure {
+                                class: failed.class,
+                                detail: failed.detail.clone(),
+                            });
+                            run.ended_turns.push(EndedTurn {
+                                turn: failed.turn,
+                                message_ids: failed.message_ids.clone(),
+                                failed: true,
+                            });
+                        }
+                        RunEvent::RunEnded(ended) => run.end_detail = ended.detail.clone(),
                         _ => {}
                     }
                     runs::apply(&mut run.state, &event, page.sequence);
