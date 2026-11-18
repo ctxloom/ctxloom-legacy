@@ -892,7 +892,7 @@ the URL's host. The private key lives in memory in
 `run_ports::HookCertificate` (whose `Debug` withholds it) and goes to
 `hook-listener`'s `TlsIdentity` and nowhere else: never journaled, logged, in
 an environment or in an error. The listener's limits are angzarr's generic
-`Listener` defaults (core `f6fed5e5`; `hook-listener` sets none): a TLS
+`Listener` defaults (core `b1445adf`; `hook-listener` sets none): a TLS
 handshake within 10 s, an HTTP/2 keepalive ping every 60 s answered within
 20 s, a connection closed after 1 h plus a 30 s grace (never zero: a zero
 grace is `ListenError::ZeroConnectionAgeGrace` at bind, which
@@ -1308,15 +1308,15 @@ The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
 a full commit. The angzarr pins are one line, one per family member:
 
-- angzarr core `f6fed5e5` (`angzarr-diagnostic`, `angzarr-yaml`,
+- angzarr core `b1445adf` (`angzarr-diagnostic`, `angzarr-yaml`,
   `angzarr-presentation`; `angzarr-coordinator-grpc`'s `tls` feature, which
   `hook-listener` enables, is `Listener::tls`);
-- angzarr-embedded `5cee822b` on angzarr-router `bec0c2bf`;
-- angzarr-build `bd02654f` (the markup generator, `angzarr-build` and
+- angzarr-embedded `5cdb1906` on angzarr-router `b332189a`;
+- angzarr-build `d0b63bcb` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `8e4aa9a1`;
-- taskloom's crates `2b1e6032` and ctxloom-lib's `30e916fa` (on its main), built
-  on the same line,
+- angzarr-platform `efbc2f6e`;
+- taskloom's crates `9ffcf92c` and ctxloom-lib's `ae7380e2` (each on its
+  main), built on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
