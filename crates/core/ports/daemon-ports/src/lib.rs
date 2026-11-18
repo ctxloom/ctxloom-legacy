@@ -202,6 +202,17 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("WatchRun")) }
     }
 
+    /// `RedeliverContext` (step 10c U13): what a live session's hook is to
+    /// carry to its engine, a re-assembled context or none. The default is
+    /// a daemon that does not serve it.
+    fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> impl Future<Output = Result<v1::RedeliveredContext, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("RedeliverContext")) }
+    }
+
     /// `WatchLibrary` (step 10c G7): each recorded change of the named
     /// library trees, as a thin notice, from the call on; unbounded in time.
     /// The default is a daemon that does not serve it.

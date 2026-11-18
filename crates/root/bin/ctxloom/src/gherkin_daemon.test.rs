@@ -1128,7 +1128,7 @@ fn run_events(w: &World, harp: &str) -> Vec<String> {
     if ran.code != 0 {
         return Vec::new();
     }
-    ran.json()
+    ran.json()["events"]
         .as_array()
         .map(|events| {
             events
@@ -5223,7 +5223,7 @@ fn neither_closed(w: &mut World) {
 fn session_events(w: &World, harp: &str) -> Vec<Value> {
     let ran = run_now(w, &["test", "session-events", harp]);
     assert_eq!(ran.code, 0, "{}", ran.said());
-    ran.json().as_array().cloned().unwrap_or_default()
+    ran.json()["events"].as_array().cloned().unwrap_or_default()
 }
 
 /// How many of `events` are of the type `name` (its message's name).
@@ -5929,7 +5929,7 @@ fn engine_stopped_and_recorded(w: &mut World) {
     until(w, "the session's end recorded", DAEMON_WAIT, |w| {
         let ran = run_now(w, &["test", "session-events", &harp]);
         let types: Vec<String> = if ran.code == 0 {
-            ran.json()
+            ran.json()["events"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default()
@@ -6048,7 +6048,7 @@ fn caused_events(w: &World, harp: &str, run: bool) -> Vec<(String, String)> {
     if ran.code != 0 {
         return Vec::new();
     }
-    ran.json()
+    ran.json()["events"]
         .as_array()
         .cloned()
         .unwrap_or_default()
@@ -6840,7 +6840,7 @@ fn end_cause(said: &str) -> &'static str {
 fn run_rows(w: &World) -> Vec<Value> {
     let ran = run_now(w, &["test", "session-events", &tui_harp(w), "--run", "1"]);
     assert_eq!(ran.code, 0, "{}", ran.said());
-    ran.json().as_array().cloned().unwrap_or_default()
+    ran.json()["events"].as_array().cloned().unwrap_or_default()
 }
 
 /// The run's one end, once it is recorded.

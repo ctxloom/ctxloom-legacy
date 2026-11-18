@@ -65,6 +65,9 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(LaunchError::BadSession {
             session: "x".to_string(),
         }),
+        Box::new(crate::ContextRedelivered {
+            changed: vec!["demo".to_string()],
+        }),
     ]
 }
 

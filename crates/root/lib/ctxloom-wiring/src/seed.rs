@@ -52,14 +52,28 @@ pub struct Seed {
     /// Its first incarnation ended, as a run's end tells it, so the session
     /// can be resumed (`run --session`).
     pub resumable: bool,
-    /// The profile its run was planned on (step 10c U13's harness).
-    pub profile: Option<String>,
+    /// What its run was planned to draw on (step 10c U13's harness: a
+    /// session on a profile), recorded as its loadout once it is minted.
+    pub loadout: Option<sessions::SessionLoadout>,
 }
 
 fn seed_error(detail: impl ToString) -> TestError {
     TestError::Seed {
         detail: detail.to_string(),
     }
+}
+
+/// The book that records `loadout` as the first incarnation's of the
+/// session `id` (its stream `cover`), keyed as a run's would be: recorded
+/// at the seed's now (step 10c U13), so a change recorded since is one its
+/// context has not been given.
+fn loadout_book(cover: &Cover, id: [u8; 16], loadout: &sessions::SessionLoadout) -> CommandBook {
+    let session = uuid::Uuid::from_bytes(id).to_string();
+    let fact = sessions::RecordLoadout {
+        loadout: loadout.clone(),
+        incarnation: 1,
+    };
+    sessions::fact_book(cover.clone(), &fact, &sessions::loadout_key(&session, 1))
 }
 
 impl Wiring {
@@ -132,6 +146,22 @@ impl Wiring {
                     row["message_id"] = sent.message_id.into();
                     row["text"] = sent.text.into();
                 }
+                // What a re-assembly handed the engine, by size and digest
+                // (step 10c U13), and what a loadout names.
+                match <sessions::SessionEvent as Payload>::from_any(&event) {
+                    Ok(sessions::SessionEvent::ContextRedelivered(handed)) => {
+                        row["bundles"] = handed.bundles.into();
+                        row["cause"] = handed.cause.into();
+                        row["size"] = handed.size.into();
+                        row["sha256"] = handed.sha256.into();
+                        row["carried_by"] = handed.carried_by.into();
+                    }
+                    Ok(sessions::SessionEvent::LoadoutRecorded(recorded)) => {
+                        row["profiles"] = recorded.loadout.profiles.into();
+                        row["bundles"] = recorded.loadout.bundles.into();
+                    }
+                    _ => {}
+                }
                 // Why an incarnation or a run ended (a daemon dying under a
                 // live TUI: the adoption's end path, as recorded).
                 if let Ok(sessions::SessionEvent::IncarnationEnded(ended)) =
@@ -186,15 +216,6 @@ impl Wiring {
 
     /// Plant `seed`; its stable id.
     pub fn seed_session(&self, seed: &Seed) -> Result<String, TestError> {
-        if let Some(profile) = &seed.profile {
-            // The run a seeded session's loadout is read from is recorded by
-            // the unit that reacts to a change (step 10c U13); until then a
-            // seed on a profile plants nothing.
-            return Err(seed_error(format!(
-                "a session seeded on the profile {profile} (its run planned on it, \
-                 so its loadout names its bundles) is step 10c U13's, not built yet"
-            )));
-        }
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -252,8 +273,7 @@ impl Wiring {
         };
         // Its stable id is the UUIDv5 of its name (slice 2 B3).
         let id = *name.id().as_bytes();
-        let registry = sessions_application::registry();
-        let registry = &registry;
+        let registry = &sessions_application::registry();
         let session_cover = Cover {
             domain: SESSION_DOMAIN.to_string(),
             root: Some(Uuid::from_bytes(id)),
@@ -336,6 +356,9 @@ impl Wiring {
         }
         if seed.resumable {
             run_book(now, incarnation_ended(&session_cover)).await?;
+        }
+        if let Some(loadout) = &seed.loadout {
+            run_book(now, loadout_book(&session_cover, id, loadout)).await?;
         }
         self.plant_files(seed)?;
         Ok(uuid::Uuid::from_bytes(id).to_string())

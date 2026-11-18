@@ -35,10 +35,15 @@ prost.workspace = true
 # `session remove`'s one safe order, and the sweep's table, run here.
 reclaim-application.workspace = true
 run-application.workspace = true
+# The framing of a live session's re-assembled context (step 10c U13).
+run-launcher.workspace = true
 run-ports.workspace = true
 # A destroy's run streams, UUIDv5(session, n).
 runs.workspace = true
 session-index.workspace = true
+# A re-assembled context's digest, recorded in place of its text (U13).
+sha2.workspace = true
+hex.workspace = true
 # The destroy's commands to the children and the owner (M3).
 session-policies.workspace = true
 session-ports.workspace = true

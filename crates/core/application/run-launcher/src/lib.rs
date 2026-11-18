@@ -19,6 +19,7 @@ mod home;
 mod launch;
 mod launcher;
 mod orders;
+mod redelivered;
 mod workspace;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -30,6 +31,7 @@ pub use launch::{
 };
 pub use launcher::{Launched, Launcher, Outcome, Released, Releases, Sweeper, Swept};
 pub use orders::{Order, Orders};
+pub use redelivered::{redelivered_context, ContextRedelivered};
 pub use workspace::{place_workspace, Axis, Placement, Workspace};
 
 /// In-memory ports and a world of the real aggregates, for this crate's tests

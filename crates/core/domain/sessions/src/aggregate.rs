@@ -34,9 +34,9 @@ use crate::{
 };
 use crate::{
     AssistantTextShown, CaptureGapped, Compacted, ContextRedelivered, ConversationCleared,
-    PromptSubmitted, RecordAssistantText, RecordCaptureGap, RecordCompaction,
-    RecordConversationCleared, RecordPromptSubmitted, RecordToolCall, RecordTurnEnded,
-    SessionEnded, SessionReopened, ToolCalled, TurnEnded,
+    LoadoutRecorded, PromptSubmitted, RecordAssistantText, RecordCaptureGap, RecordCompaction,
+    RecordContextRedelivered, RecordConversationCleared, RecordLoadout, RecordPromptSubmitted,
+    RecordToolCall, RecordTurnEnded, SessionEnded, SessionReopened, ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -482,6 +482,36 @@ impl SessionAggregate {
     /// RecordConversationCleared: a FACT (the engine started a new
     /// conversation), so never refused; recorded as its event on a live
     /// session, nothing on a stream with none.
+    /// RecordContextRedelivered (step 10c U13): the re-assembled context a
+    /// live session's engine was handed, by size and digest; nothing on a
+    /// stream with no session.
+    #[handles_fact(RecordContextRedelivered)]
+    fn context_redelivered(
+        &self,
+        fact: RecordContextRedelivered,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        record(live(&self.session).ok().map(|_| ContextRedelivered {
+            bundles: fact.bundles,
+            cause: fact.cause,
+            size: fact.size,
+            sha256: fact.sha256,
+            carried_by: fact.carried_by,
+        }))
+    }
+
+    /// RecordLoadout (step 10c U13): what a live session's run was planned
+    /// to draw on; nothing on a stream with no session.
+    #[handles_fact(RecordLoadout)]
+    fn loadout(&self, fact: RecordLoadout, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        record(live(&self.session).ok().map(|_| LoadoutRecorded {
+            loadout: fact.loadout,
+            incarnation: fact.incarnation,
+        }))
+    }
+
     #[handles_fact(RecordConversationCleared)]
     fn hook_conversation_cleared(
         &self,
@@ -517,10 +547,18 @@ impl SessionAggregate {
     }
 
     // Equivalent: a re-assembly's record carries no aggregate state (step
-    // 10c U13; its fact is recorded by the unit that builds the delivery).
+    // 10c U13; the session's record keeps it for its readers).
     #[cfg_attr(test, mutants::skip)]
     #[applies(ContextRedelivered)]
     fn applied_contextredelivered(&mut self, event: ContextRedelivered, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    // Equivalent: a loadout carries no aggregate state (step 10c U13; the
+    // session index folds it).
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(LoadoutRecorded)]
+    fn applied_loadoutrecorded(&mut self, event: LoadoutRecorded, page: &PageContext) {
         fold(&mut self.session, event.into(), page);
     }
 

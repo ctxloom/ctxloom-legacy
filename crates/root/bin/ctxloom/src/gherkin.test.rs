@@ -552,8 +552,12 @@ fn still_running(w: &mut World, harp: String) {
 fn still_running_on(w: &mut World, harp: String, profile: String) {
     w.plant(&harp, "running").profile = Some(profile);
     // Planted after the Background's reads, which seeded what was planted
-    // then (nothing): the next command seeds this one.
+    // then (nothing), and seeded NOW (step 10c U13): its run is planned on
+    // the profile as the Given says, before the scenario changes anything.
+    // Seeded at the next command, its plan's assembly (a read) would see
+    // the change first, and its context would hold it already.
     w.seeded = false;
+    w.seed();
 }
 
 #[given(expr = "a session {string} nothing can prove the liveness of")]

@@ -965,6 +965,28 @@ pub(crate) fn preview_client<'a>(
 /// This command's client of the daemon for a library read (step 10a U2):
 /// its project registered at its root (its id minted there if it has none
 /// yet), else outside a project.
+/// The loadout of a run planned on `profile` (step 10c U13's seed): the
+/// profile as the daemon assembles it, its fragments' bundles.
+#[cfg(feature = "test-support")]
+pub(crate) fn profile_loadout(
+    wiring: &Wiring,
+    stamp: &str,
+    profile: &str,
+) -> Result<sessions::SessionLoadout, Failure> {
+    use daemon_api::LibraryReads;
+    let client = library_client(wiring, stamp)?;
+    let profiles = vec![profile.to_string()];
+    let assembled = answered(
+        client.assemble_context(daemon_proto::v1::AssembleContextRequest {
+            profiles: profiles.clone(),
+            ..daemon_proto::v1::AssembleContextRequest::default()
+        }),
+    )?;
+    Ok(daemon_application::reactions::loadout_of_assembled(
+        "", &profiles, &assembled,
+    ))
+}
+
 pub(crate) fn library_client<'a>(
     wiring: &'a Wiring,
     stamp: &str,

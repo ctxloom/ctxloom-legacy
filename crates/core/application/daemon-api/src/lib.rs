@@ -91,6 +91,7 @@ pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
 pub use hand_over::HandingOver;
 pub use library_api::premise::{render_premise_index, Shown};
 pub use library_reads::{Libraries, LibraryRequest};
+pub use reactions::{Deliveries, LibraryPoll};
 pub use refusal::{
     library_refusal, rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection,
 };

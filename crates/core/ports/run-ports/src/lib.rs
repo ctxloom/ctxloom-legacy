@@ -46,9 +46,9 @@ pub use discovery::{
 };
 pub use edge::{Arrival, Edge, SyncAnswered, Unserved};
 pub use engine::{
-    copy_in, Advice, Credentials, Engine, EngineError, FailureClass, HomeFile, LaunchSurfaces,
-    LeftOut, Planned, PrepareRequest, Prepared, TurnOutcome, TurnRequest, UserSettings,
-    HOME_VARIABLE, ROOT_VARIABLE,
+    copy_in, Advice, ContextDelivery, Credentials, Engine, EngineError, FailureClass, HomeFile,
+    LaunchSurfaces, LeftOut, Planned, PrepareRequest, Prepared, TurnOutcome, TurnRequest,
+    UserSettings, HOME_VARIABLE, ROOT_VARIABLE,
 };
 pub use future::BoxFuture;
 pub use git::{git_config, GitUser, GIT_CONFIG_FILE};

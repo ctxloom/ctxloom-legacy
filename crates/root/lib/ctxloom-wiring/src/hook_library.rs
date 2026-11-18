@@ -160,6 +160,19 @@ impl HookLibrary for DaemonHookLibrary {
         })
     }
 
+    /// The context the live session `harp` is owed at `hook`, as the
+    /// daemon re-assembled and its engine's delivery put it (step 10c U13);
+    /// none owed, or no daemon in time, none.
+    fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
+        if harp.is_empty() {
+            return None;
+        }
+        self.ask(async |client| {
+            let answered = client.redeliver_context(harp, hook).await.ok()?;
+            Some(answered.context).filter(|context| !context.is_empty())
+        })
+    }
+
     fn skills(&self) -> Option<Vec<HookSkill>> {
         self.ask(async |client| {
             let listed = client

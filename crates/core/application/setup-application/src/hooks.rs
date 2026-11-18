@@ -38,6 +38,17 @@ pub trait HookLibrary {
 
     /// The project's skills (`ListSkills`).
     fn skills(&self) -> Option<Vec<HookSkill>>;
+
+    /// What the live session `harp` is owed at its engine's hook `hook`
+    /// (step 10c U13, G6/G7, `RedeliverContext`): its re-assembled context,
+    /// as its engine's delivery put it. None when it is owed nothing, or
+    /// no daemon answered in time (it stays owed).
+    // Equivalent: its one mutant (`None`) is this default body.
+    #[cfg_attr(test, mutants::skip)]
+    fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
+        let _ = (harp, hook);
+        None
+    }
 }
 
 /// The skills a `ListSkills` answer lists, as a hook judges them: each by
@@ -128,11 +139,27 @@ impl Setup {
                     event: Some(event),
                 })
             }
-            "post_tool" => Ok(HookAnswer {
-                stdout: encode(&self.mates_response(codec, &event))?,
-                event: Some(event),
-                ..HookAnswer::default()
-            }),
+            "turn_start" | "post_tool" => {
+                let mut response = match unified.as_str() {
+                    "post_tool" => self.mates_response(codec, &event),
+                    _ => HookResponse::default(),
+                };
+                // A change its loadout names, re-assembled (step 10c U13).
+                if let Some(owed) = self
+                    .hook_library()
+                    .and_then(|library| library.redelivered(harp, native))
+                {
+                    response.context = match response.context.is_empty() {
+                        true => owed,
+                        false => format!("{}\n\n{owed}", response.context),
+                    };
+                }
+                Ok(HookAnswer {
+                    stdout: encode(&response)?,
+                    event: Some(event),
+                    ..HookAnswer::default()
+                })
+            }
             _ => Ok(HookAnswer {
                 stdout: encode(&HookResponse::default())?,
                 event: Some(event),

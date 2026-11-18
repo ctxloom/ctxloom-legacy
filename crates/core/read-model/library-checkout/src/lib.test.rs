@@ -316,3 +316,72 @@ fn an_export_is_known_by_its_request_id_with_what_it_answered() {
         .unwrap();
     assert!(model.export("r-9").is_none());
 }
+
+// Step 10c U13 (G7, protos.md §4.1): every recorded change is logged once,
+// in order, as a thin notice: its tree, its sequence, its cause, its paths
+// and how each changed, and for ctxloom's own step its request and verb (a
+// path it wrote over one there was modified, a new one added). A book that
+// folds the stream afresh logs nothing it logged before; other events are
+// no change.
+#[test]
+fn each_recorded_change_is_logged_once_in_order() {
+    let mut model = LibraryCheckout::new();
+    model
+        .project(&on(
+            LIBRARY_DOMAIN,
+            0,
+            vec![observed(true, &[(FILE, "a")]), intended("r-1", 1)],
+        ))
+        .unwrap();
+    let applied = LibraryEvent::StepApplied(StepApplied {
+        request_id: "r-1".to_string(),
+        step: 0,
+        observed: vec![
+            DirtyPath {
+                path: FILE.to_string(),
+                oid: "b".to_string(),
+            },
+            DirtyPath {
+                path: "content/bundles/v2/demo/fragments/new.md".to_string(),
+                oid: "c".to_string(),
+            },
+        ],
+    });
+    model
+        .project(&on(LIBRARY_DOMAIN, 2, vec![applied]))
+        .unwrap();
+    let log = model.recorded_since(0);
+    assert_eq!(log.len(), 2, "the intent is no change: {log:?}");
+    let (first, second) = (&log[0], &log[1]);
+    assert_eq!(first.tree, TREE);
+    assert_eq!((first.at, first.sequence), (1, 0));
+    assert_eq!(first.cause, "obs:0");
+    assert_eq!(first.intended, None);
+    assert_eq!(first.changes[0].path, FILE);
+    assert_eq!(first.changes[0].status, "modified");
+    assert_eq!((second.at, second.sequence), (2, 2));
+    assert_eq!(
+        second.intended,
+        Some(("r-1".to_string(), "fragment edit".to_string()))
+    );
+    let statuses: Vec<(&str, &str)> = second
+        .changes
+        .iter()
+        .map(|c| (c.path.as_str(), c.status.as_str()))
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            (FILE, "modified"),
+            ("content/bundles/v2/demo/fragments/new.md", "added")
+        ]
+    );
+    assert_eq!(model.recorded_since(1), std::slice::from_ref(second));
+    assert!(model.recorded_since(2).is_empty());
+    assert_eq!(model.last_recorded(), 2);
+    // Folded afresh from sequence 0 (a catch-up): nothing is logged again.
+    model
+        .project(&on(LIBRARY_DOMAIN, 0, vec![observed(true, &[(FILE, "a")])]))
+        .unwrap();
+    assert_eq!(model.last_recorded(), 2);
+}

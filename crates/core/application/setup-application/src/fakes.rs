@@ -166,6 +166,7 @@ impl HookCodec for Wire {
     fn unified_event(&self, native: &str) -> String {
         match native {
             "SessionStart" => "session_start",
+            "UserPromptSubmit" => "turn_start",
             "PostToolUse" => "post_tool",
             "Stop" => "turn_end",
             other => other,

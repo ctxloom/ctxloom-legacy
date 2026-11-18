@@ -1067,3 +1067,85 @@ fn the_resource_carries_the_binding_places_and_rotations() {
         }]
     );
 }
+
+// Step 10c U13: a session's record carries the loadout its stream last
+// recorded (a later incarnation's replaces an earlier one's), none before
+// one is, and none of another session's.
+#[test]
+fn a_record_carries_the_loadout_its_session_last_recorded() {
+    let loadout = |profile: &str| sessions::SessionLoadout {
+        agent: String::new(),
+        profiles: vec![profile.to_string()],
+        bundles: vec![format!("{profile}-bundle")],
+    };
+    let recorded = |id: u8, n: u32, profile: &str| {
+        let payload = wire(&sessions::RecordLoadout {
+            loadout: loadout(profile),
+            incarnation: n,
+        });
+        fact(id, payload, &format!("loadout:{id}:{n}"))
+    };
+    let mut project = Project::new();
+    let mut index = SessionIndex::catch_up();
+    project.run(&mut index, FIRST, mint("amber-swift-owl"));
+    project.run(&mut index, SECOND, mint("brisk-copper-moth"));
+    let of = |index: &Index, harp: &str| {
+        index
+            .projector()
+            .index()
+            .find(harp)
+            .and_then(|record| record.loadout)
+    };
+    assert_eq!(of(&index, "amber-swift-owl"), None);
+    project.run_book(&mut index, recorded(FIRST, 1, "dev"));
+    assert_eq!(of(&index, "amber-swift-owl"), Some(loadout("dev")));
+    project.run_book(&mut index, recorded(FIRST, 2, "review"));
+    assert_eq!(of(&index, "amber-swift-owl"), Some(loadout("review")));
+    assert_eq!(of(&index, "brisk-copper-moth"), None);
+    assert_eq!(
+        of(&project.rebuilt(), "amber-swift-owl"),
+        Some(loadout("review")),
+        "caught up afresh, as another process's index"
+    );
+    // When its context was last handed to it: its last loadout's instant,
+    // then a re-assembly's, whichever is later (the Project's clock: the
+    // second loadout was recorded at 104).
+    let since = |index: &Index| {
+        index
+            .projector()
+            .index()
+            .find("amber-swift-owl")
+            .and_then(|record| record.context_since)
+            .map(|at| at.seconds)
+    };
+    assert_eq!(since(&index), Some(104));
+    let redelivered = wire(&sessions::RecordContextRedelivered {
+        bundles: vec!["demo".to_string()],
+        cause: "c1".to_string(),
+        size: 1,
+        sha256: String::new(),
+        carried_by: "UserPromptSubmit".to_string(),
+    });
+    project.run_book(&mut index, fact(FIRST, redelivered, "reinject:1:c1"));
+    assert_eq!(since(&index), Some(105));
+    assert_eq!(
+        index
+            .projector()
+            .index()
+            .find("brisk-copper-moth")
+            .and_then(|record| record.context_since),
+        None
+    );
+    // Purged and minted again: nothing of the old stream's loadout is left.
+    project.purge(FIRST);
+    project.run(&mut index, FIRST, mint("bright-keen-hawk"));
+    assert_eq!(of(&index, "bright-keen-hawk"), None);
+    assert_eq!(
+        index
+            .projector()
+            .index()
+            .find("bright-keen-hawk")
+            .and_then(|record| record.context_since),
+        None
+    );
+}

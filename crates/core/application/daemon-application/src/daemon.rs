@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use angzarr_embedded::v1::Uuid;
+use angzarr_embedded::v1::{Cover, Uuid};
 use angzarr_embedded::{Catalog, CatchUp, Failure, Processed, ReadStore, Store, Watch};
 use daemon_board::Boards;
 use pending_launches::{PendingLaunch, PendingModel, StartedRun};
@@ -175,6 +175,9 @@ struct Planned {
     hosted: run_application::HostedChild,
     axis: String,
     agent: String,
+    /// What its plan draws on (step 10c U13): recorded on its session once
+    /// its run is enqueued.
+    loadout: sessions::SessionLoadout,
 }
 
 impl std::ops::Deref for Planned {
@@ -1217,7 +1220,7 @@ impl<E: Edge> Daemon<E> {
             })
             .await;
         match enqueued {
-            Ok(_) => {}
+            Ok(_) => self.record_loadout(&at, &child.loadout).await,
             // Judged as any child is (rulings 53, 73e): refused for good.
             Err(EnqueueError::Refused(rejection)) => {
                 let code = angzarr_diagnostic::Diagnostic::code(&rejection).to_string();
@@ -1454,6 +1457,33 @@ impl<E: Edge> Daemon<E> {
         );
     }
 
+    /// The loadout of the incarnation `at` planned on, recorded on its
+    /// session (step 10c U13; keyed by the session and the incarnation, so
+    /// a retried start records it once). One not recorded is said: the
+    /// child runs, and a change is told it at no hook.
+    async fn record_loadout(&mut self, at: &RunAt, loadout: &sessions::SessionLoadout) {
+        let Ok(root) = uuid::Uuid::parse_str(&at.session) else {
+            return;
+        };
+        let cover = Cover {
+            domain: sessions::SESSION_DOMAIN.to_string(),
+            root: Some(Uuid::from_bytes(*root.as_bytes())),
+            edition: None,
+        };
+        let fact = sessions::RecordLoadout {
+            loadout: loadout.clone(),
+            incarnation: at.incarnation,
+        };
+        let key = sessions::loadout_key(&at.session, at.incarnation);
+        if let Err(failure) = self
+            .edge
+            .handle(sessions::fact_book(cover, &fact, &key))
+            .await
+        {
+            (self.say)(&format!("its loadout was not recorded: {failure:?}"));
+        }
+    }
+
     /// The hosted child of `project_dir` on `engine`, planned by its
     /// project's dry run and judged on `env` (D-N46, D-N47); the plan's
     /// error code where it cannot be planned.
@@ -1474,6 +1504,7 @@ impl<E: Edge> Daemon<E> {
             .find(|agent| !agent.is_empty())
             .cloned()
             .unwrap_or_default();
+        let loadout = crate::reactions::loadout_of_plan(&agent, &plan.profiles, &plan.fragments);
         Ok(Planned {
             hosted: run_application::hosted_child(
                 &previewed,
@@ -1484,6 +1515,7 @@ impl<E: Edge> Daemon<E> {
             ),
             axis: plan.axes.0.clone(),
             agent,
+            loadout,
         })
     }
 

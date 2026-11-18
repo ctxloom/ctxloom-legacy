@@ -14,7 +14,7 @@
 //! from the store by the daemon's loop ([`caught_up`]), so a tree a daemon
 //! before this one recorded is held too.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use angzarr_embedded::angzarr_router::error::CodedError;
@@ -35,6 +35,60 @@ pub struct LibraryCheckout {
     /// Every export recorded, by its request id (AIP-155), with its tree's
     /// root: what an export's retry is answered with.
     exports: BTreeMap<String, (Vec<u8>, library_tree::BundleExported)>,
+    /// The changes recorded, the latest [`LOG_KEPT`] (step 10c U13, G7):
+    /// what a watcher is streamed and the reaction policy reads.
+    log: VecDeque<Recorded>,
+    /// Each tree's last sequence logged, by its root, so a stream folded
+    /// afresh (a catch-up) logs nothing twice.
+    logged: BTreeMap<Vec<u8>, u64>,
+    /// The place of the last change logged.
+    last: u64,
+}
+
+/// How many recorded changes the log keeps: a watcher further behind
+/// misses the oldest (a thin notice, never the record).
+pub const LOG_KEPT: usize = 1024;
+
+/// One recorded change of a tree (step 10c U13, G7; protos.md §4.1): a
+/// `TreeObserved` or a `StepApplied`, as a thin notice. Never content.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recorded {
+    /// Its place in the log, from 1.
+    pub at: u64,
+    /// `projects/{p}/checkouts/{c}/library` or `users/me/library`.
+    pub tree: String,
+    /// The event's sequence in its tree's stream: each path's new token.
+    pub sequence: u64,
+    /// The cause the event records (an observation's external id, a
+    /// step's fact's).
+    pub cause: String,
+    /// ctxloom's own write: its request id and verb; none for an outside
+    /// change.
+    pub intended: Option<(String, String)>,
+    pub changes: Vec<Changed>,
+    /// When it was recorded, seconds and nanos since the epoch.
+    pub recorded_at: (i64, i32),
+}
+
+/// One path of a [`Recorded`] change.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Changed {
+    pub path: String,
+    /// `added`, `modified`, `deleted`, `renamed`, `type_changed`.
+    pub status: String,
+    /// A rename's old path.
+    pub from_path: String,
+}
+
+/// A change's status as a notice says it.
+fn status_text(status: library_tree::ChangeStatus) -> &'static str {
+    match status {
+        library_tree::ChangeStatus::Added => "added",
+        library_tree::ChangeStatus::Modified => "modified",
+        library_tree::ChangeStatus::Deleted => "deleted",
+        library_tree::ChangeStatus::Renamed => "renamed",
+        library_tree::ChangeStatus::TypeChanged => "type_changed",
+    }
 }
 
 /// An intent as the record holds it, by its request id: its tree's root,
@@ -57,6 +111,50 @@ pub enum End {
     Failed,
     /// Superseded before it was done.
     Superseded,
+}
+
+/// The paths `event` changes, as a notice says them, judged against `row`
+/// as it was before it: an observation's changes as git saw them, a step's
+/// paths each added, modified or deleted by what the record held there.
+/// None for an event that changes no path.
+fn changes_of(row: &Library, event: &LibraryEvent) -> Option<Vec<Changed>> {
+    match event {
+        LibraryEvent::TreeObserved(observed) => Some(
+            observed
+                .changes
+                .iter()
+                .map(|change| Changed {
+                    path: change.path.clone(),
+                    status: status_text(change.status).to_string(),
+                    from_path: change.from_path.clone(),
+                })
+                .collect(),
+        ),
+        LibraryEvent::StepApplied(applied) => Some(
+            applied
+                .observed
+                .iter()
+                .map(|path| {
+                    let was = row
+                        .resources
+                        .get(&path.path)
+                        .is_some_and(|resource| !resource.oid.is_empty())
+                        || row.dirty.get(&path.path).is_some_and(|oid| !oid.is_empty());
+                    let status = match (path.oid.is_empty(), was) {
+                        (true, _) => "deleted",
+                        (false, true) => "modified",
+                        (false, false) => "added",
+                    };
+                    Changed {
+                        path: path.path.clone(),
+                        status: status.to_string(),
+                        from_path: String::new(),
+                    }
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 fn root_of(cover: Option<&Cover>) -> Vec<u8> {
@@ -92,7 +190,19 @@ impl LibraryCheckout {
             };
             let event = LibraryEvent::from_any(event)?;
             let row = self.rows.entry(root.clone()).or_default();
+            let changes = changes_of(row, &event);
             row.apply_page(&event, page.sequence, page.meta.as_ref());
+            let tree = row.name.clone();
+            if let Some(changes) = changes {
+                self.log_change(
+                    &root,
+                    &event,
+                    (page.sequence, page.meta.as_ref()),
+                    tree,
+                    changes,
+                );
+            }
+            let row = self.rows.entry(root.clone()).or_default();
             let pending = row.pending.clone();
             self.track(&root, &event, &pending);
         }
@@ -149,6 +259,66 @@ impl LibraryCheckout {
             Some(intent) => End::Pending { done: intent.done },
             None => End::Done,
         });
+    }
+
+    /// `event`, recorded at `sequence` with `meta` on the stream rooted at
+    /// `root` (the tree `tree`), logged as the change `changes`, unless the
+    /// stream logged it before.
+    fn log_change(
+        &mut self,
+        root: &[u8],
+        event: &LibraryEvent,
+        (sequence, meta): (u64, Option<&angzarr_embedded::v1::EventMeta>),
+        tree: String,
+        changes: Vec<Changed>,
+    ) {
+        if self.logged.get(root).is_some_and(|last| *last >= sequence) {
+            return;
+        }
+        self.logged.insert(root.to_vec(), sequence);
+        let request = match event {
+            LibraryEvent::StepApplied(applied) => Some(applied.request_id.clone()),
+            LibraryEvent::TreeObserved(observed) => observed.intended.clone(),
+            _ => None,
+        };
+        let intended = request.map(|request| {
+            let verb = self
+                .intents
+                .get(&request)
+                .map(|known| known.intent.verb.clone())
+                .unwrap_or_default();
+            (request, verb)
+        });
+        let recorded_at = meta
+            .and_then(|meta| meta.recorded_at.as_ref())
+            .map_or((0, 0), |at| (at.seconds, at.nanos));
+        self.last += 1;
+        self.log.push_back(Recorded {
+            at: self.last,
+            tree,
+            sequence,
+            cause: library_tree::cause_of(meta),
+            intended,
+            changes,
+            recorded_at,
+        });
+        while self.log.len() > LOG_KEPT {
+            self.log.pop_front();
+        }
+    }
+
+    /// The changes logged after the place `after`, oldest first.
+    pub fn recorded_since(&self, after: u64) -> Vec<Recorded> {
+        self.log
+            .iter()
+            .filter(|recorded| recorded.at > after)
+            .cloned()
+            .collect()
+    }
+
+    /// The place of the last change logged (0: none yet).
+    pub fn last_recorded(&self) -> u64 {
+        self.last
     }
 
     /// The export recorded under `request_id`, in any tree (AIP-155).

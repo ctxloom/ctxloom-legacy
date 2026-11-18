@@ -389,6 +389,24 @@ impl<E: Edge> Observations<E> {
         self.checkouts.checkouts().export(request_id).cloned()
     }
 
+    /// The changes recorded after the place `after` in the checkouts' log,
+    /// oldest first (step 10c U13, G7): what a reaction judges and a
+    /// watcher is streamed.
+    pub fn recorded_since(&self, after: u64) -> Vec<library_checkout::Recorded> {
+        self.checkouts.checkouts().recorded_since(after)
+    }
+
+    /// The checkouts these observations reconcile against, shared: what a
+    /// watcher polls for as long as it watches (step 10c G7).
+    pub fn checkouts(&self) -> LibraryCheckouts {
+        self.checkouts.clone()
+    }
+
+    /// The place of the last change the checkouts' log holds.
+    pub fn last_recorded(&self) -> u64 {
+        self.checkouts.checkouts().last_recorded()
+    }
+
     /// The intent recorded under `request_id`, in any tree (step 10b U3).
     pub fn known(&self, request_id: &str) -> Option<library_checkout::Known> {
         self.checkouts.checkouts().intent(request_id).cloned()

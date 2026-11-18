@@ -202,6 +202,23 @@ pub trait Calls: Send + Sync {
         let _ = env;
         Box::pin(async { Ok(0) })
     }
+    /// `WatchLibrary` (step 10c G7): the named trees' changes from now on,
+    /// as a poll; as `GetTranscript`.
+    fn watch_library(
+        &self,
+        request: v1::WatchLibraryRequest,
+    ) -> Answer<'_, crate::reactions::LibraryPoll> {
+        let _ = request;
+        Box::pin(async { Err(not_served("WatchLibrary")) })
+    }
+    /// `RedeliverContext` (step 10c U13); as `GetTranscript`.
+    fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> Answer<'_, v1::RedeliveredContext> {
+        let _ = request;
+        Box::pin(async { Err(not_served("RedeliverContext")) })
+    }
     /// `AssembleContext` (slice 3 step 6); as `GetTranscript`.
     fn assemble_context(
         &self,
@@ -416,6 +433,23 @@ impl<E: Edge + 'static> Calls for Api<E> {
         })
     }
 
+    fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> Answer<'_, v1::RedeliveredContext> {
+        Box::pin(async move { Api::redeliver_context(self, request).await })
+    }
+
+    fn watch_library(
+        &self,
+        request: v1::WatchLibraryRequest,
+    ) -> Answer<'_, crate::reactions::LibraryPoll> {
+        Box::pin(async move {
+            self.open()?;
+            Api::watch_library(self, &request)
+        })
+    }
+
     fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
         Box::pin(async move {
             self.creating()?;
@@ -623,6 +657,9 @@ pub struct Api<E> {
     /// The platform's name (`std::env::consts::OS`'s), which a removal's
     /// evidence is judged by (D18); empty is a unix.
     pub(crate) os: String,
+    /// The engines a live session's re-assembled context is handed through
+    /// (step 10c U13); none, `RedeliverContext` answers nothing.
+    pub(crate) deliveries: Option<Arc<dyn crate::reactions::Deliveries>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -640,6 +677,7 @@ impl<E: Edge> Api<E> {
             caches: None,
             me: std::sync::OnceLock::new(),
             os: String::new(),
+            deliveries: None,
         }
     }
 
@@ -650,6 +688,16 @@ impl<E: Edge> Api<E> {
     pub fn on_os(self, os: &str) -> Api<E> {
         Api {
             os: os.to_string(),
+            ..self
+        }
+    }
+
+    /// The API, a live session's re-assembled context handed through
+    /// `deliveries`' engines (step 10c U13).
+    #[must_use]
+    pub fn delivering(self, deliveries: Arc<dyn crate::reactions::Deliveries>) -> Api<E> {
+        Api {
+            deliveries: Some(deliveries),
             ..self
         }
     }

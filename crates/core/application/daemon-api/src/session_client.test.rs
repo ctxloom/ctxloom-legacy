@@ -83,6 +83,21 @@ impl DaemonApi for Fake {
         })
     }
 
+    async fn redeliver_context(
+        &self,
+        r: v1::RedeliverContextRequest,
+    ) -> Result<v1::RedeliveredContext, Called> {
+        self.ask("redeliver", r.env)?;
+        self.names
+            .lock()
+            .unwrap()
+            .push(format!("{} cwd {}", r.name, r.cwd));
+        Ok(v1::RedeliveredContext {
+            context: format!("owed:{}", r.carried_by),
+            changed: Vec::new(),
+        })
+    }
+
     async fn get_transcript(&self, r: v1::GetTranscriptRequest) -> Result<v1::Transcript, Called> {
         self.ask("get-transcript", None)?;
         self.names.lock().unwrap().push(r.name.clone());
@@ -832,4 +847,27 @@ async fn what_runs_before_a_retry_runs_once_between_the_two_daemons() {
         .await
         .unwrap();
     assert_eq!(*none.lock().unwrap(), 0, "no retry, nothing run");
+}
+
+// Step 10c U13: a hook asks the daemon for what its session is owed, named
+// under its project as resolved, at its engine's hook, with the client's
+// directory and environment.
+#[tokio::test]
+async fn a_hook_asks_for_its_sessions_owed_context_by_name() {
+    let daemons = Fakes::new();
+    let answered = in_project(&daemons)
+        .redeliver_context("brisk-copper-moth", "PostToolUse")
+        .await
+        .unwrap();
+    assert_eq!(answered.context, "owed:PostToolUse");
+    assert_eq!(daemons.asked(), ["1:resolve", "1:redeliver"]);
+    assert_eq!(
+        daemons.names(),
+        [
+            "p-1",
+            "projects/calm-otter/sessions/brisk-copper-moth cwd /work"
+        ]
+    );
+    let envs = daemons.template.envs.lock().unwrap().clone();
+    assert_eq!(envs[1], Some(env()));
 }

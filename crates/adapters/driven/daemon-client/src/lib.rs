@@ -463,6 +463,13 @@ impl DaemonApi for DaemonClient {
         Ok(Box::new(Watching(streaming)))
     }
 
+    async fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> Result<v1::RedeliveredContext, Called> {
+        call!(self, redeliver_context, "RedeliverContext", request)
+    }
+
     async fn watch_library(
         &self,
         request: v1::WatchLibraryRequest,

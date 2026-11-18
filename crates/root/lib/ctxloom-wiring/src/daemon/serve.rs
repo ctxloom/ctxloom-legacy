@@ -603,6 +603,14 @@ async fn start(
         })
         // The one-shots it hosts (U4).
         .hosting_one_shots(Arc::clone(one_shots))
+        // A live session's re-assembled context is handed through its
+        // engine (step 10c U13).
+        .delivering(Arc::new(EngineDeliveries(
+            engines
+                .iter()
+                .map(|hosted| Arc::clone(&hosted.engine))
+                .collect(),
+        )))
         .on_os(&os),
         (fs, files, trash_clock(env)),
         (home, temp),
@@ -669,6 +677,16 @@ async fn start(
             let _ = listener.stop().await;
             Err(detail)
         }
+    }
+}
+
+/// The daemon's engines, as a live session's re-assembled context is
+/// handed through them (step 10c U13), by name.
+struct EngineDeliveries(Vec<Arc<dyn run_ports::Engine>>);
+
+impl daemon_api::Deliveries for EngineDeliveries {
+    fn engine(&self, name: &str) -> Option<Arc<dyn run_ports::Engine>> {
+        self.0.iter().find(|engine| engine.name() == name).cloned()
     }
 }
 

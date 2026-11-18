@@ -1079,3 +1079,60 @@ fn an_observation_changes_nothing_the_session_holds() {
     session.fact(tool_fact(), "hook:tool:s:toolu_1");
     assert_eq!(session.state(), before, "the transcript is the read side's");
 }
+
+// Step 10c U13 (protos.md §2): the re-assembled context a live session's
+// engine was handed is recorded in the session's own record, by size and
+// SHA-256 alone, once per change (its key names the change's cause), and
+// nothing on a stream with no session.
+#[test]
+fn a_redelivered_context_is_recorded_on_a_live_session_once() {
+    let fact = crate::RecordContextRedelivered {
+        bundles: vec!["config".to_string(), "demo".to_string()],
+        cause: "obs:tree:abc".to_string(),
+        size: 120,
+        sha256: "ab".repeat(32),
+        carried_by: "UserPromptSubmit".to_string(),
+    };
+    let mut session = Session::minted();
+    assert_eq!(
+        session.fact(fact.clone(), "reinject:s:h1"),
+        [SessionEvent::ContextRedelivered(
+            crate::ContextRedelivered {
+                bundles: fact.bundles.clone(),
+                cause: fact.cause.clone(),
+                size: 120,
+                sha256: fact.sha256.clone(),
+                carried_by: fact.carried_by.clone(),
+            }
+        )]
+    );
+    assert!(session.fact(fact.clone(), "reinject:s:h1").is_empty());
+    let mut none = Session::new();
+    assert!(none.fact(fact, "reinject:x:h1").is_empty());
+}
+
+// Step 10c U13: a session's loadout, as its run was planned, is recorded on
+// it; a repeat is a DUPLICATE, and a stream with no session records none.
+#[test]
+fn a_loadout_is_recorded_on_a_live_session_once() {
+    let loadout = crate::SessionLoadout {
+        agent: "dev".to_string(),
+        profiles: vec!["dev".to_string()],
+        bundles: vec!["demo".to_string()],
+    };
+    let fact = crate::RecordLoadout {
+        loadout: loadout.clone(),
+        incarnation: 1,
+    };
+    let mut session = Session::minted();
+    assert_eq!(
+        session.fact(fact.clone(), "loadout:s:1"),
+        [SessionEvent::LoadoutRecorded(crate::LoadoutRecorded {
+            loadout,
+            incarnation: 1,
+        })]
+    );
+    assert!(session.fact(fact.clone(), "loadout:s:1").is_empty());
+    let mut none = Session::new();
+    assert!(none.fact(fact, "loadout:x:1").is_empty());
+}

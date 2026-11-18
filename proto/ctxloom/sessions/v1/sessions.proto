@@ -491,3 +491,35 @@ message RehostBudgetSpent {
 }
 
 // endregion refusals
+
+// 10c (U13, G6/G7): what a session's run was planned to draw on, so a
+// change to it can be told the session. Names only: the agent (empty, the
+// default agent), the profiles it composed and the bundles they name
+// whole, as its plan resolved them. Never content. Additive.
+message SessionLoadout {
+  string agent = 1;
+  repeated string profiles = 2;
+  repeated string bundles = 3;
+}
+
+// 10c (U13): the loadout of the session's incarnation `incarnation`,
+// recorded once its run is planned (a hosted child's, a seeded one's).
+// external_id `loadout:<session>:<incarnation>`, so a repeat is a
+// DUPLICATE; a later incarnation's replaces it. Never refused: on a stream
+// with no session it records nothing. Additive.
+message RecordLoadout {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.LoadoutRecorded"]
+  };
+
+  SessionLoadout loadout = 1;
+  uint32 incarnation = 2;
+}
+
+message LoadoutRecorded {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  SessionLoadout loadout = 1;
+  uint32 incarnation = 2;
+}

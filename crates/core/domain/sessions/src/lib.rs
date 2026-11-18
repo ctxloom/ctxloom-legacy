@@ -137,7 +137,8 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         | SessionEvent::Compacted(_)
         | SessionEvent::ConversationCleared(_)
         | SessionEvent::CaptureGapped(_)
-        | SessionEvent::ContextRedelivered(_) => {}
+        | SessionEvent::ContextRedelivered(_)
+        | SessionEvent::LoadoutRecorded(_) => {}
         // A run's end is when the session's last run ended (the proto's
         // RecordEnd: IncarnationEnded supersedes it), at its page's instant.
         SessionEvent::IncarnationEnded(_) => {
@@ -317,6 +318,46 @@ pub(crate) fn live(state: &SessionState) -> Result<&SessionState, SessionRejecti
         return Err(SessionRejection::NoSession);
     }
     Ok(state)
+}
+
+/// The external id of a session's loadout for its incarnation
+/// `incarnation` (step 10c U13): `loadout:<session>:<incarnation>`.
+pub fn loadout_key(session: &str, incarnation: u32) -> String {
+    format!("loadout:{session}:{incarnation}")
+}
+
+/// The external id of a context redelivered to `session` for the change
+/// whose cause is `cause` (step 10c U13, protos.md §2):
+/// `reinject:<session>:<H(cause)>`, H the UUIDv5 of the cause, so the same
+/// change is delivered once.
+pub fn redelivery_key(session: &str, cause: &str) -> String {
+    let hashed = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, cause.as_bytes());
+    format!("reinject:{session}:{hashed}")
+}
+
+/// The book that records `fact` on the session stream `cover` names, keyed
+/// by `external_id`, so a repeat is answered DUPLICATE.
+pub fn fact_book(
+    cover: angzarr_embedded::v1::Cover,
+    fact: &impl angzarr_embedded::markup::DomainMessage,
+    external_id: &str,
+) -> angzarr_embedded::v1::CommandBook {
+    use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Fact, FactOrigin};
+    CommandBook {
+        cover: Some(cover),
+        page: Some(CommandPage {
+            body: Some(command_page::Body::Fact(Fact {
+                payload: Some(
+                    angzarr_embedded::Any::from_msg(&fact.to_wire()).expect("a fact encodes"),
+                ),
+                origin: Some(FactOrigin {
+                    external_id: external_id.to_string(),
+                    description: String::new(),
+                }),
+            })),
+            ..CommandPage::default()
+        }),
+    }
 }
 
 /// The book that records `bind` on the session stream `cover` names: a Fact

@@ -63,6 +63,8 @@ fn view(harp: &str, state: State, ended_days_ago: i64, kept: bool) -> View {
             children: Vec::new(),
             title: String::new(),
             name: String::new(),
+            loadout: None,
+            context_since: None,
         },
         state,
         title: None,

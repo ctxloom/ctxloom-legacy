@@ -403,3 +403,102 @@ fn test_a_listed_skill_is_judged_by_its_display_name_else_its_id() {
         .collect();
     assert_eq!(names, ["admit", "plain"]);
 }
+
+/// The daemon owing a re-assembly (step 10c U13): what each hook asked it,
+/// `<harp> <hook>`, and the context it answers.
+#[derive(Default)]
+struct Owes(std::sync::Mutex<Vec<String>>);
+
+impl crate::HookLibrary for Owes {
+    fn agents_and_profiles(&self) -> Option<(bool, bool)> {
+        None
+    }
+    fn skills(&self) -> Option<Vec<crate::HookSkill>> {
+        None
+    }
+    fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
+        self.0.lock().unwrap().push(format!("{harp} {hook}"));
+        Some("re-assembled".to_string())
+    }
+}
+
+// Step 10c U13 (G6/G7): at a prompt submitted or a tool's result, the hook
+// asks the daemon what its session is owed, by its harp and its engine's
+// own hook name, and carries it as its context; no other hook asks.
+#[test]
+fn test_a_prompt_or_a_tool_result_carries_the_context_its_session_is_owed() {
+    let owes = std::sync::Arc::new(Owes::default());
+    struct Shared(std::sync::Arc<Owes>);
+    impl crate::HookLibrary for Shared {
+        fn agents_and_profiles(&self) -> Option<(bool, bool)> {
+            self.0.agents_and_profiles()
+        }
+        fn skills(&self) -> Option<Vec<crate::HookSkill>> {
+            self.0.skills()
+        }
+        fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
+            self.0.redelivered(harp, hook)
+        }
+    }
+    let w = crate::fakes::world(CONFIG);
+    let setup = w
+        .setup
+        .with_hook_library(Box::new(Shared(std::sync::Arc::clone(&owes))));
+    for native in ["UserPromptSubmit", "PostToolUse"] {
+        let answer = setup
+            .execute_hook("claude-code", native, "{}", "brisk-copper-moth")
+            .unwrap();
+        assert_eq!(answer.stdout, "context=re-assembled;notice=\n", "{native}");
+    }
+    for native in ["SessionStart", "Stop"] {
+        setup
+            .execute_hook("claude-code", native, "{}", "brisk-copper-moth")
+            .unwrap();
+    }
+    assert_eq!(
+        *owes.0.lock().unwrap(),
+        [
+            "brisk-copper-moth UserPromptSubmit",
+            "brisk-copper-moth PostToolUse"
+        ]
+    );
+}
+
+// A tool's result that completed a skill carries its mates' line and the
+// owed context both, the line first.
+#[test]
+fn test_a_skills_mates_and_an_owed_context_are_carried_together() {
+    struct Both;
+    impl crate::HookLibrary for Both {
+        fn agents_and_profiles(&self) -> Option<(bool, bool)> {
+            None
+        }
+        fn skills(&self) -> Option<Vec<crate::HookSkill>> {
+            let skill = |name: &str| crate::HookSkill {
+                name: name.to_string(),
+                bundle: "rules".to_string(),
+                tags: vec!["ctxloom:link_id=x".to_string()],
+            };
+            Some(vec![skill("admit"), skill("unattended")])
+        }
+        fn redelivered(&self, _: &str, _: &str) -> Option<String> {
+            Some("re-assembled".to_string())
+        }
+    }
+    let w = crate::fakes::world(CONFIG);
+    let setup = w.setup.with_hook_library(Box::new(Both));
+    let answer = setup
+        .execute_hook(
+            "claude-code",
+            "PostToolUse",
+            r#"{"skill":"admit"}"#,
+            "brisk-copper-moth",
+        )
+        .unwrap();
+    assert!(
+        answer.stdout.starts_with("context=Skill admit completed;")
+            && answer.stdout.contains("\n\nre-assembled;notice="),
+        "{}",
+        answer.stdout
+    );
+}

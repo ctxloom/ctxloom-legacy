@@ -184,6 +184,26 @@ impl<D: Daemons> Client<D> {
         Client { ids, ..self }
     }
 
+    /// `RedeliverContext` (step 10c U13): what the live session `harp` of
+    /// this client's project, at its engine's hook `carried_by`, is to
+    /// carry: a re-assembled context, or none.
+    pub async fn redeliver_context(
+        &self,
+        harp: &str,
+        carried_by: &str,
+    ) -> Result<v1::RedeliveredContext, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::RedeliverContextRequest {
+                name: format!("{}/sessions/{harp}", self.project(api).await?),
+                carried_by: carried_by.to_string(),
+                env: Some(self.env.clone()),
+                cwd: self.cwd.clone(),
+            };
+            api.redeliver_context(request).await
+        })
+        .await
+    }
+
     /// `daemon status`: the serving daemon, or none (S14: none is started).
     pub async fn status(&self) -> Result<Option<v1::Daemon>, CallError> {
         let Some(api) = self.daemons.serving().await.map_err(CallError::Unreached)? else {

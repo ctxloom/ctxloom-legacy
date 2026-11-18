@@ -275,7 +275,9 @@ fn every_seed_flag_lands_in_the_seed() {
                 native: Some(("n1".to_string(), "/t/n1.jsonl".to_string())),
                 other_files: vec!["a.md".to_string(), "b.md".to_string()],
                 resumable: true,
-                profile: Some("dev".to_string()),
+                // A profile's loadout is the daemon's assembly of it, which
+                // the command asks for (step 10c U13), not the arguments'.
+                loadout: None,
             }
         )
     );

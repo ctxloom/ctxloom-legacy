@@ -8,13 +8,38 @@
 //! reads (no watcher). A session is live by its lock's verdict; one with
 //! an end stamp is never probed, so a round over a home of ended sessions
 //! reads no lock.
+//!
+//! A live session whose loadout a change touched is handed its context
+//! re-assembled at its next event (G6/G7, owner): its hook asks
+//! ([`Api::redeliver_context`], `RedeliverContext`), the daemon judges
+//! what it is owed (`daemon_application::reactions::owed`, pure, on the
+//! record alone), re-assembles it as `context assemble` would for its
+//! loadout, frames it (`run_launcher::redelivered_context`), hands it to
+//! the session's engine (`run_ports::Engine::deliver_context`, the one
+//! polymorphic interface), and records it in the session's record by size
+//! and SHA-256 (`RecordContextRedelivered`, keyed by the change's cause,
+//! so a second hook of one change is handed nothing). An engine that
+//! cannot carry it at this hook records nothing: the session stays owed.
 
+use std::sync::Arc;
+
+use angzarr_embedded::v1::{Cover, DeliveryOutcome, Uuid};
+use daemon_application::reactions::owed;
 use daemon_proto::v1;
-use run_ports::Edge;
+use run_ports::{ContextDelivery, Edge};
 use session_index::{SessionRecord, State};
+use sessions::{ProjectName, SessionName};
+use sha2::{Digest, Sha256};
 
 use crate::library_reads::pairs;
 use crate::server::Api;
+use crate::{ApiError, ApiRefusal};
+
+/// The engines a re-assembled context is handed through, by name (step
+/// 10c U13): the daemon's own.
+pub trait Deliveries: Send + Sync {
+    fn engine(&self, name: &str) -> Option<Arc<dyn run_ports::Engine>>;
+}
 
 /// The directories the live sessions of `records` run in, each once with
 /// its project's id, in their first session's order: `state` is a
@@ -42,41 +67,291 @@ impl<E: Edge> Api<E> {
     /// daemon cannot name, or a tree that does not observe, is passed
     /// over: the round goes on.
     pub async fn observe_live(&self, env: &v1::EnvVars) -> u32 {
-        let Some((observations, observers)) = self.observing.as_ref() else {
+        let (Some((observations, observers)), Some(libraries)) =
+            (self.observing.as_ref(), self.libraries.as_deref())
+        else {
             return 0;
         };
+        // Inside the loop's round, after its catch-up: the index as it is,
+        // never a wait for a fresher one (the loop would be waiting on
+        // itself).
         let live = {
             let index = self.parts.index.index();
             let records = index.records();
             live_dirs(&records, |dir, harp| self.parts.states.state(dir, harp))
                 .into_iter()
                 .filter_map(|(project, dir)| {
-                    index
-                        .project_harp(&project)
-                        .map(|harp| (format!("projects/{harp}"), dir))
+                    let name =
+                        ProjectName::parse(&format!("projects/{}", index.project_harp(&project)?))
+                            .ok()?;
+                    Some((name, dir))
                 })
                 .collect::<Vec<_>>()
         };
+        let env = pairs(Some(env));
         let mut observed = 0;
-        for (parent, dir) in live {
-            let Ok((site, project)) = self.resolve(&parent, &dir, Some(env), None).await else {
+        for (name, dir) in live {
+            let Some(root) = libraries.root(&dir, &env) else {
                 continue;
             };
             let trees = observations
-                .observe_trees(
-                    observers.as_ref(),
-                    &pairs(Some(env)),
-                    project
-                        .as_ref()
-                        .map(|(name, root)| (name.clone(), root.as_str())),
-                )
+                .observe_trees(observers.as_ref(), &env, Some((name, root.as_str())))
                 .await;
             if let Ok(trees) = trees {
                 observed += u32::try_from(trees.seen.len()).unwrap_or(u32::MAX);
             }
-            drop(site);
         }
         observed
+    }
+}
+
+/// A library's changes as a watcher polls them (step 10c G7): each call
+/// answers those recorded since the last, oldest first, none when none
+/// was.
+pub type LibraryPoll = Box<dyn FnMut() -> Vec<v1::LibraryChange> + Send>;
+
+/// Whether a watcher of `parent` (`projects/{p}`, or `users/me`) is told
+/// of the tree `tree`'s changes: every checkout of the project, or the
+/// home's library.
+pub(crate) fn watches(parent: &str, tree: &str) -> bool {
+    match parent {
+        "users/me" => tree == "users/me/library",
+        project => tree
+            .strip_prefix(project)
+            .is_some_and(|rest| rest.starts_with("/checkouts/")),
+    }
+}
+
+/// `recorded` as the thin notice a watcher is told (protos.md §4.1).
+pub(crate) fn notice_of(recorded: &library_checkout::Recorded) -> v1::LibraryChange {
+    use v1::library_change::Cause;
+    let (cause, request_id, verb) = match &recorded.intended {
+        Some((request, verb)) => (Cause::Intended, request.clone(), verb.clone()),
+        None => (Cause::External, String::new(), String::new()),
+    };
+    v1::LibraryChange {
+        tree: recorded.tree.clone(),
+        cause: cause as i32,
+        request_id,
+        verb,
+        changes: recorded
+            .changes
+            .iter()
+            .map(|changed| v1::ChangeSummary {
+                path: changed.path.clone(),
+                status: changed.status.clone(),
+                from_path: changed.from_path.clone(),
+            })
+            .collect(),
+        observed_at: Some(daemon_proto::google::protobuf::Timestamp {
+            seconds: recorded.recorded_at.0,
+            nanos: recorded.recorded_at.1,
+        }),
+        sequence: recorded.sequence,
+    }
+}
+
+impl<E: Edge> Api<E> {
+    /// `WatchLibrary` (G7): the changes of the trees `request.parent` names
+    /// recorded from now on, as a poll; a daemon that observes no library
+    /// fails it. Never content.
+    pub fn watch_library(
+        &self,
+        request: &v1::WatchLibraryRequest,
+    ) -> Result<LibraryPoll, ApiError> {
+        let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
+            detail: "this daemon observes no library".to_string(),
+        })?;
+        let parent = request.parent.clone();
+        if parent != "users/me" && sessions::ProjectName::parse(&parent).is_err() {
+            return Err(ApiError::from(ApiRefusal::of(&v1::NameInvalid {
+                name: parent,
+                reason: "shape".to_string(),
+            })));
+        }
+        let checkouts = observations.checkouts();
+        let mut after = checkouts.checkouts().last_recorded();
+        Ok(Box::new(move || {
+            let recorded = checkouts.checkouts().recorded_since(after);
+            if let Some(last) = recorded.last() {
+                after = last.at;
+            }
+            recorded
+                .iter()
+                .filter(|recorded| watches(&parent, &recorded.tree))
+                .map(notice_of)
+                .collect()
+        }))
+    }
+
+    /// `RedeliverContext`: what the live session `request.name` names is
+    /// owed at its engine's hook `request.carried_by`, handed and recorded;
+    /// nothing when it is owed nothing, has no loadout recorded, or its
+    /// engine cannot carry it at this hook (it stays owed). A session the
+    /// daemon does not know is refused `SessionNotFound`.
+    pub async fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> Result<v1::RedeliveredContext, ApiError> {
+        let none = v1::RedeliveredContext::default();
+        let (Some(deliveries), Some((observations, _))) =
+            (self.deliveries.as_ref(), self.observing.as_ref())
+        else {
+            return Ok(none);
+        };
+        let name = SessionName::parse(&request.name).map_err(|_| {
+            ApiError::from(ApiRefusal::of(&v1::NameInvalid {
+                name: request.name.clone(),
+                reason: "shape".to_string(),
+            }))
+        })?;
+        self.parts.hosting.fresh().await;
+        let record = self
+            .parts
+            .index
+            .index()
+            .find_by_id(&name.uid())
+            .ok_or_else(|| {
+                ApiError::from(ApiRefusal::of(&v1::SessionNotFound {
+                    name: request.name.clone(),
+                }))
+            })?;
+        let (Some(loadout), Some(since)) = (record.loadout.clone(), record.context_since) else {
+            return Ok(none);
+        };
+        // A read (G5(a)): the session's trees observed first, so a change
+        // no read has seen is seen now.
+        let parent = name.project().to_string();
+        let cwd = match request.cwd.as_str() {
+            "" => record.project_dir.clone(),
+            cwd => cwd.to_string(),
+        };
+        let names = self
+            .session_trees(&parent, &cwd, request.env.as_ref())
+            .await?;
+        let log = observations.recorded_since(0);
+        let Some(owing) = owed(&loadout, (since.seconds, since.nanos), &names, &log) else {
+            return Ok(none);
+        };
+        let Some(engine) = deliveries.engine(&record.engine) else {
+            return Ok(none);
+        };
+        let context = self
+            .reassembled(&loadout, (parent, cwd), request.env.clone())
+            .await?;
+        let framed = run_launcher::redelivered_context(&owing.changed, &context);
+        let ContextDelivery::HookContext(text) =
+            engine.deliver_context(&request.carried_by, &framed)
+        else {
+            return Ok(none);
+        };
+        let fact = sessions::RecordContextRedelivered {
+            bundles: owing.changed.clone(),
+            cause: owing.cause.clone(),
+            size: u64::try_from(text.len()).unwrap_or(u64::MAX),
+            sha256: hex::encode(Sha256::digest(text.as_bytes())),
+            carried_by: request.carried_by.clone(),
+        };
+        if !self.redelivered(&record, &fact).await? {
+            // Another hook of the same change was handed it first.
+            return Ok(none);
+        }
+        Ok(v1::RedeliveredContext {
+            context: text,
+            changed: owing.changed,
+        })
+    }
+
+    /// The trees a session at `cwd` of the project `parent` draws on (its
+    /// checkout's and the home's), observed as a read observes them: their
+    /// names.
+    async fn session_trees(
+        &self,
+        parent: &str,
+        cwd: &str,
+        env: Option<&v1::EnvVars>,
+    ) -> Result<Vec<String>, ApiError> {
+        let (observations, observers) =
+            self.observing.as_ref().ok_or_else(|| ApiError::Failed {
+                detail: "this daemon observes no library".to_string(),
+            })?;
+        let (site, project) = self.resolve(parent, cwd, env, None).await?;
+        let trees = observations
+            .observe_trees(
+                observers.as_ref(),
+                &site.env,
+                project
+                    .as_ref()
+                    .map(|(name, root)| (name.clone(), root.as_str())),
+            )
+            .await
+            .map_err(|error| match error {
+                library_api::ReadError::Refused(rejection) => {
+                    ApiError::Refused(crate::library_refusal(&rejection))
+                }
+                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            })?;
+        Ok(trees
+            .seen
+            .iter()
+            .map(|(_, observed)| observed.tree.to_string())
+            .collect())
+    }
+
+    /// `loadout`'s context, assembled at `cwd` of the project `parent` as
+    /// `context assemble` would assemble it (degraded: a config a strict
+    /// load refuses must not silence a hook), its premise index rendered
+    /// for a launch.
+    async fn reassembled(
+        &self,
+        loadout: &sessions::SessionLoadout,
+        (parent, cwd): (String, String),
+        env: Option<v1::EnvVars>,
+    ) -> Result<String, ApiError> {
+        let mut assembled = self
+            .assemble_context(v1::AssembleContextRequest {
+                name: parent,
+                agent: match loadout.profiles.is_empty() {
+                    true => loadout.agent.clone(),
+                    false => String::new(),
+                },
+                profiles: loadout.profiles.clone(),
+                env,
+                globals: Some(v1::Globals {
+                    degraded: true,
+                    ..v1::Globals::default()
+                }),
+                cwd,
+                ..v1::AssembleContextRequest::default()
+            })
+            .await?;
+        crate::render_premise_index(&mut assembled, crate::Shown::Launch);
+        Ok(assembled.context)
+    }
+
+    /// `fact` recorded on `record`'s session, keyed by its change's cause:
+    /// whether this was its first delivery (a repeat is a DUPLICATE).
+    async fn redelivered(
+        &self,
+        record: &SessionRecord,
+        fact: &sessions::RecordContextRedelivered,
+    ) -> Result<bool, ApiError> {
+        let root = uuid::Uuid::parse_str(&record.id).map_err(|_| ApiError::Failed {
+            detail: format!("the session id {} is not a UUID", record.id),
+        })?;
+        let cover = Cover {
+            domain: sessions::SESSION_DOMAIN.to_string(),
+            root: Some(Uuid::from_bytes(*root.as_bytes())),
+            edition: None,
+        };
+        let key = sessions::redelivery_key(&record.id, &fact.cause);
+        let answered = self
+            .parts
+            .edge
+            .handle(sessions::fact_book(cover, fact, &key))
+            .await
+            .map_err(ApiError::failed)?;
+        Ok(answered.delivery != DeliveryOutcome::Duplicate)
     }
 }
 

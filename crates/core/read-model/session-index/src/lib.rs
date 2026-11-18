@@ -93,6 +93,13 @@ pub struct SessionRecord {
     /// Its resource name, `projects/{project}/sessions/{session}` (slice 2
     /// B3); empty while its project has no harp.
     pub name: String,
+    /// What its run was last planned to draw on (step 10c U13): none until
+    /// one is recorded.
+    pub loadout: Option<sessions::SessionLoadout>,
+    /// When its context was last handed to it (step 10c U13): its last
+    /// loadout's instant, or its last re-assembly's, whichever is later; a
+    /// change recorded since is one it has not been given.
+    pub context_since: Option<Timestamp>,
 }
 
 /// A project as its stream says it (S54, and its registration, owner
@@ -119,6 +126,9 @@ pub struct SessionIndex {
     /// Each project's harp (S54), by its project stream's root: its id and
     /// the harp it was named with.
     projects: BTreeMap<Vec<u8>, ProjectRow>,
+    /// Each session's last recorded loadout (step 10c U13), by root, and
+    /// when its context was last handed to it.
+    loadouts: BTreeMap<Vec<u8>, (sessions::SessionLoadout, Timestamp)>,
 }
 
 /// A session's transcript as folded so far.
@@ -209,12 +219,14 @@ impl SessionIndex {
             if book.next_sequence == 0 {
                 self.streams.remove(&root);
                 self.transcripts.remove(&root);
+                self.loadouts.remove(&root);
             }
             return Ok(());
         };
         let mut session = match first.sequence {
             0 => {
                 self.transcripts.remove(&root);
+                self.loadouts.remove(&root);
                 SessionAggregate::default()
             }
             _ => self.streams.remove(&root).unwrap_or_default(),
@@ -237,10 +249,29 @@ impl SessionIndex {
                 .as_ref()
                 .and_then(|meta| meta.recorded_at)
                 .unwrap_or_default();
+            self.handed(&root, &event, recorded);
             self.transcribe(&root, &session, page.sequence, recorded, &event);
         }
         self.streams.insert(root, session);
         Ok(())
+    }
+
+    /// What `event`, recorded at `recorded` on the stream rooted at `root`,
+    /// says of the context the session was handed (step 10c U13): a loadout
+    /// is its plan's, a re-assembly is handed since.
+    fn handed(&mut self, root: &[u8], event: &SessionEvent, recorded: Timestamp) {
+        match event {
+            SessionEvent::LoadoutRecorded(loadout) => {
+                self.loadouts
+                    .insert(root.to_vec(), (loadout.loadout.clone(), recorded));
+            }
+            SessionEvent::ContextRedelivered(_) => {
+                if let Some((_, since)) = self.loadouts.get_mut(root) {
+                    *since = recorded;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Fold `event`, page `sequence` of the stream rooted at `root` recorded
@@ -275,6 +306,8 @@ impl SessionIndex {
         SessionRecord {
             last_captured: self.transcripts.get(root).and_then(|t| t.last),
             name: self.name_of(&record),
+            loadout: self.loadouts.get(root).map(|(loadout, _)| loadout.clone()),
+            context_since: self.loadouts.get(root).map(|(_, since)| *since),
             ..record
         }
     }
@@ -477,6 +510,8 @@ fn record_of(root: &[u8], session: &SessionAggregate) -> SessionRecord {
         children: state.children.clone(),
         title: state.title.clone(),
         name: String::new(),
+        loadout: None,
+        context_since: None,
     }
 }
 
