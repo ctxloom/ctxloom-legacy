@@ -10,7 +10,7 @@
 //! project's agent on the mock engine, which runs nothing; the step that
 //! writes the content to distill puts it back on Claude Code, the stub.
 
-use cucumber::{given, then};
+use cucumber::{given, then, when};
 use serde_json::Value;
 
 use super::World;
@@ -152,6 +152,77 @@ fn still_contains(w: &mut World, name: String, bundle: String, text: String) {
 #[then(regex = r#"^the fragment "([^"]+)" in bundle "([^"]+)" has no distilled rendering$"#)]
 fn no_rendering(w: &mut World, name: String, bundle: String) {
     assert_eq!(w.distilled_body("fragments", &bundle, &name), None);
+}
+
+/// The stub model that works until it is asked to stop: it says it works
+/// (its pid, written whole: the hold point a signal waits for), and on a
+/// SIGTERM writes down that it was asked (`asked`) and exits.
+const WORKING_MODEL: &str = r#"here="$(dirname "$0")"
+trap 'echo asked > "$here/asked"; kill "$!" 2>/dev/null; exit 0' TERM
+echo "$$" > "$here/pid.tmp" && mv "$here/pid.tmp" "$here/pid"
+sleep 30 &
+wait
+"#;
+
+#[given("the distiller works until it is asked to stop")]
+fn distiller_works(w: &mut World) {
+    let bin = w.adopt_scratch().join("bin");
+    files::put_program(bin.join("claude"), WORKING_MODEL);
+}
+
+/// The command started, and once the distiller says it works (its pid
+/// written: never a sleep), sent the signal; then waited for to its end.
+#[when(
+    regex = r#"^I run "([^"]+)", and ctxloom is sent a SIG(HUP|INT|TERM) while the distiller works$"#
+)]
+fn distill_signalled(w: &mut World, line: String, signal: String) {
+    let bin = w.adopt_scratch().join("bin");
+    w.before_line(&line);
+    w.before_run();
+    let words =
+        crate::tests::gherkin_common::split(line.strip_prefix("ctxloom ").expect("a ctxloom line"));
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    let env: Vec<(&str, &str)> = w
+        .common
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let child = w.common.project.start_with(&env, &args);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !files::exists(bin.join("pid")) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the distiller never said it works"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let sent = std::process::Command::new("kill")
+        .args([&format!("-{signal}"), &child.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success(), "the SIG{signal} was sent");
+    w.common.ran = Some(crate::tests::Ran::of(
+        child.wait_with_output().expect("ctxloom finishes"),
+    ));
+}
+
+#[then("the distiller was asked to stop, and it was gone before the command exited")]
+fn distiller_stopped(w: &mut World) {
+    let bin = w.adopt_scratch().join("bin");
+    let asked = files::read(bin.join("asked")).unwrap_or_default();
+    assert_eq!(
+        asked.trim(),
+        "asked",
+        "the distiller was not asked to stop: {}",
+        w.common.ran().said()
+    );
+    let pid = files::read(bin.join("pid")).expect("its pid");
+    assert!(
+        !crate::tests::procs::alive(pid.trim().parse().expect("a pid")),
+        "the distiller ({}) outlived the command",
+        pid.trim()
+    );
 }
 
 // ------------------------------------------------------- editing.feature
