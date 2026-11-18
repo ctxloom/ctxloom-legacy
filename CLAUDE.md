@@ -226,10 +226,13 @@ additive `MovePath.to_tree` naming the other tree's `.ctxloom`, which
 `decide` never judges `to` on, its operation `Operation::Move { into }`,
 content-fs's one `rename_noreplace` below that tree; only its `from`
 files are expected gone, and the other tree's next read records the
-arrival; a bundle there is refused, `--force` too, as is its own place,
-`library-application-write-move-destination-exists|-itself`, drafts; the
-CLI's text and json are the move's as before, from the response's
-additive `source`), `companion add` (`CreateCompanion`: the daemon
+arrival; a bundle there is refused, `--force` too (owner 2026-11-18,
+night), as is its own place,
+`library-application-write-move-destination-exists|-itself`, drafts, the
+first's fix naming `ctxloom bundle remove <bundle>` in that project then
+the move again; the CLI's text and json are the move's as before, from the
+response's additive `source`; deps-application's `move_bundle` is a
+remote's move alone, `DepsFiles::copy_bundle` and its local copy gone), `companion add` (`CreateCompanion`: the daemon
 probes the program in the caller's environment and registers the name in
 the HOME config, one layer; one registered already applies nothing),
 `agent default <name>` (`SetDefaultAgent`, one layer, `defined` saying

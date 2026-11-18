@@ -127,32 +127,6 @@ fn test_a_push_that_cannot_go_is_refused_naming_why() {
     }
 }
 
-// bundle.feature: Moving a bundle into another project lands it in that
-// project's content tree
-#[test]
-fn test_a_move_to_a_directory_lands_the_bundle_there_and_removes_the_source() {
-    let fx = authored();
-    fx.files.directory("other-project");
-    let moved = ok(fx.deps.move_bundle(&MoveRequest {
-        name: "authored".to_string(),
-        to: "other-project".to_string(),
-        ..MoveRequest::default()
-    }));
-    assert_eq!((moved.status, moved.dest_kind), ("moved", "path"));
-    assert_eq!(
-        moved.dest,
-        "other-project/.ctxloom/content/bundles/v2/authored"
-    );
-    assert_eq!(
-        moved.source,
-        "/p/.ctxloom/content/bundles/v2/authored/bundle.yaml"
-    );
-    assert_eq!((moved.remote.as_str(), moved.commit_sha.as_str()), ("", ""));
-    let placed = fx.files.placed(&moved.dest).expect("placed");
-    assert_eq!(placed["fragments/example.md"], b"# Example Fragment\n");
-    assert!(!fx.files.has_authored("authored"));
-}
-
 #[test]
 fn test_a_move_to_a_remote_publishes_first_then_removes_the_source() {
     let fx = authored();
@@ -203,29 +177,11 @@ fn test_a_move_that_cannot_land_leaves_the_source_alone() {
         }
         other => panic!("{other:?}"),
     }
+    // A directory is no destination here: the daemon moves into one.
     fx.files.directory("elsewhere");
-    ok(fx.deps.move_bundle(&MoveRequest {
-        name: "authored".to_string(),
-        to: "elsewhere".to_string(),
-        ..MoveRequest::default()
-    }));
-    // The bundle is gone from here; a second one of the same name is not.
-    fx.files.author("authored", &[("bundle.yaml", "v: 2\n")]);
     assert!(matches!(
         moves("elsewhere", false),
-        AppError::DestinationExists { .. }
-    ));
-    ok(fx.deps.move_bundle(&MoveRequest {
-        name: "authored".to_string(),
-        to: "elsewhere".to_string(),
-        force: true,
-        ..MoveRequest::default()
-    }));
-    fx.files.author("authored", &[("bundle.yaml", "v: 3\n")]);
-    fx.files.directory(".");
-    assert!(matches!(
-        moves(".", false),
-        AppError::DestinationItself { .. }
+        AppError::BadDestination { .. }
     ));
     assert!(fx.files.has_authored("authored"));
     assert!(matches!(

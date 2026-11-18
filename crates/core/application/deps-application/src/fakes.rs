@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use ctxloom_ports::{Change, ContentRepo, Failure, TreeFiles};
 use deps_ports::{
-    BundleSlot, CopyOutcome, DepsFiles, Endpoint, Forge, ForgeRepo, Opened, PullRequest, Remotes,
-    RepoTree, Repository, Why,
+    BundleSlot, DepsFiles, Endpoint, Forge, ForgeRepo, Opened, PullRequest, Remotes, RepoTree,
+    Repository, Why,
 };
 
 use crate::Deps;
@@ -562,25 +562,6 @@ impl DepsFiles for FakeFiles {
     fn exists(&self, path: &str) -> bool {
         let state = self.state();
         state.directories.contains(path) || state.placed.contains_key(path)
-    }
-
-    fn copy_bundle(
-        &self,
-        dir: &str,
-        name: &str,
-        files: &BTreeMap<String, Vec<u8>>,
-        force: bool,
-    ) -> Result<CopyOutcome, Why> {
-        let dest = format!("{dir}/.ctxloom/content/bundles/v2/{name}");
-        let mut state = self.state();
-        if dir == "." {
-            return Ok(CopyOutcome::Itself(dest));
-        }
-        if state.placed.contains_key(&dest) && !force {
-            return Ok(CopyOutcome::Exists(dest));
-        }
-        state.placed.insert(dest.clone(), files.clone());
-        Ok(CopyOutcome::Copied(dest))
     }
 }
 

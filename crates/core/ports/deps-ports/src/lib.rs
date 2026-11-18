@@ -231,28 +231,6 @@ pub trait DepsFiles {
 
     /// Whether `path` exists.
     fn exists(&self, path: &str) -> bool;
-
-    /// Put `files` into the bundles directory of the project (or `.ctxloom`)
-    /// at `dir` — or `dir` itself where it is neither — as the bundle `name`;
-    /// where they landed, as shown (the directory as given, joined).
-    fn copy_bundle(
-        &self,
-        dir: &str,
-        name: &str,
-        files: &BTreeMap<String, Vec<u8>>,
-        force: bool,
-    ) -> Result<CopyOutcome, Why>;
-}
-
-/// What copying a bundle into another place did.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum CopyOutcome {
-    /// It landed here.
-    Copied(String),
-    /// A bundle of that name is there already (and `force` was not given).
-    Exists(String),
-    /// The destination is the bundle's own directory.
-    Itself(String),
 }
 
 /// A bundle installed from a remote, at its pin.
