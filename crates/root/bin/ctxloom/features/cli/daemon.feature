@@ -202,7 +202,7 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom mcp server set demo#mcp/tools --command echo           |
         | ctxloom profile create dev --include demo                      |
         | ctxloom agent create reviewer --profiles dev                   |
-        | ctxloom config set engines.claude-code.model opus              |
+        | ctxloom config set engines.claude-code.command claude-beta     |
         | ctxloom bundle export demo exported                            |
         | ctxloom clean --yes                                            |
         | ctxloom session remove amber-swift-owl --yes                   |
@@ -558,7 +558,7 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom session send brisk-copper-moth wake "check the tests" |
         | ctxloom session close brisk-copper-moth                     |
         | ctxloom bundle create notes --description "my notes"        |
-        | ctxloom config set engines.claude-code.model opus           |
+        | ctxloom config set engines.claude-code.command claude-beta  |
 
   Rule: The preview carries the questions, and the apply answers them
 

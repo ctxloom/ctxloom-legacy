@@ -91,7 +91,7 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
         | ctxloom bundle create notes --description "my notes"          |
         | ctxloom fragment create demo#fragments/rules --body "be kind" |
         | ctxloom skill create demo#skills/review                       |
-        | ctxloom config set engines.claude-code.model opus             |
+        | ctxloom config set engines.claude-code.command claude-beta    |
 
     Scenario Outline: A write killed at any point of it converges on its one retry, and is recorded once, as ctxloom's
       # new: step 10 U3, the four kill points; L3, intent then operation then fact.
