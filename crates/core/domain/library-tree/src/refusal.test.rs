@@ -100,3 +100,21 @@ fn a_message_that_is_no_refusal_of_ours_is_none_of_ours() {
     });
     assert_eq!(LibraryTreeRejection::try_from(&other), Err(NotOurs));
 }
+
+// OQ-10 (owner, 2026-11-13): a stale plan is ABORTED (AIP-154), now that
+// angzarr core declares it (b1445adf); every other state refusal of the
+// tree stays a failed precondition. Compared, never spelled.
+#[test]
+fn test_a_stale_plan_is_refused_under_a_status_of_its_own() {
+    let precondition = <TreeInMotion as crate::Refusal>::REFUSAL_STATUS;
+    assert_eq!(<NotInGit as crate::Refusal>::REFUSAL_STATUS, precondition);
+    assert_ne!(<PlanStale as crate::Refusal>::REFUSAL_STATUS, precondition);
+    assert_ne!(
+        <PlanStale as crate::Refusal>::REFUSAL_STATUS,
+        <ResourceExists as crate::Refusal>::REFUSAL_STATUS
+    );
+    assert_ne!(
+        <PlanStale as crate::Refusal>::REFUSAL_STATUS,
+        <OneChangePerCall as crate::Refusal>::REFUSAL_STATUS
+    );
+}

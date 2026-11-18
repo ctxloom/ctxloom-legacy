@@ -1761,12 +1761,12 @@ message ListTrustsResponse {
 // (-- region refusals --)
 
 // The etag no longer matches what the preview was planned against (API Q5).
-// OQ-10 (owner, 2026-11-13) rules it ABORTED (AIP-154, 134, 135). angzarr
+// OQ-10 (owner, 2026-11-13) rules it ABORTED (AIP-154, 134, 135): angzarr
 // core's `RefusalStatus` holds REFUSAL_STATUS_ABORTED since b1445adf
-// (angzarr decision 14.111); this declaration moves to it with 10b's
-// stale-etag refusal (U3), and stays FAILED_PRECONDITION until then.
+// (angzarr decision 14.111), and 10b's stale-etag refusal (U3) declares it,
+// as library-tree's own `PlanStale` does.
 message PlanStale {
-  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_ABORTED;
 
   // The etag the apply named.
   string seen = 1;

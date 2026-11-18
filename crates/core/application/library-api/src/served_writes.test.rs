@@ -306,3 +306,34 @@ fn test_a_profile_removal_answers_the_profiles_canonical_name() {
     );
     assert_eq!(answered.applied, Some(true));
 }
+
+// Step 10b U3 (G4 superseded): an edit's preview with no text to give
+// still plans the one file its apply writes, so the daemon answers that
+// path's etag for the apply to send back (stale once the file moved);
+// it asks its Edit need all the same, and a preview performs nothing.
+#[test]
+fn test_an_edits_preview_plans_its_file_for_its_etag_and_still_asks_the_edit_need() {
+    let preview = v1::UpdateFragmentRequest {
+        fragment: Some(v1::Fragment {
+            name: "projects/amber-quiet-heron/bundles/demo/fragments/example".to_string(),
+            ..v1::Fragment::default()
+        }),
+        presentable: launching(),
+        validate_only: true,
+        ..v1::UpdateFragmentRequest::default()
+    };
+    let (library, recorder) = demo().recording();
+    let asked = super::update_fragment::plan(&library, &plain(), &preview, true)
+        .result
+        .unwrap();
+    assert_eq!(asked.needs.len(), 1, "{:?}", asked.needs);
+    let planned = recorder.take();
+    let [library_application::write::recording::Planned::Changed { changes, .. }] = &planned[..]
+    else {
+        panic!("{planned:?}")
+    };
+    let [ctxloom_ports::Change::Write(put)] = &changes[..] else {
+        panic!("{changes:?}")
+    };
+    assert_eq!(put.path, "fragments/example.md");
+}

@@ -105,3 +105,34 @@ fn test_a_writes_directory_is_its_requests_own() {
     assert_eq!(request.cwd(), "/work/demo");
     assert_eq!(request.cwd, "/work/demo");
 }
+
+// Step 10b U3 (G4 superseded): a write is planned against the etag its
+// caller's preview answered, the path's sequence then, so `decide` judges
+// it stale when the path has moved since; one call that plans and applies
+// (`--yes`) is planned against the path as it is now.
+#[test]
+fn test_a_writes_seen_sequence_is_its_callers_etag_else_the_paths_now() {
+    use super::seen_sequence;
+    assert_eq!(seen_sequence("", 9).unwrap(), 9);
+    assert_eq!(seen_sequence("4", 9).unwrap(), 4);
+    assert_eq!(seen_sequence("0", 9).unwrap(), 0);
+    assert!(seen_sequence("abc", 9).is_err());
+}
+
+// Every write that names an existing resource carries the etag its
+// caller sends back; a create carries none.
+#[test]
+fn test_an_update_or_a_removal_carries_its_etag_and_a_create_none() {
+    use super::LibraryWriteRequest;
+    let update = daemon_proto::v1::UpdateFragmentRequest {
+        etag: "7".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(update.etag(), "7");
+    let removal = daemon_proto::v1::DeleteBundleRequest {
+        etag: "3".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(removal.etag(), "3");
+    assert_eq!(daemon_proto::v1::CreateBundleRequest::default().etag(), "");
+}

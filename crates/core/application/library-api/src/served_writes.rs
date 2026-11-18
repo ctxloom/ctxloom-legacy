@@ -78,6 +78,11 @@ pub const EDIT_NEED: &str = "edit";
 #[derive(Default)]
 pub struct AnsweredEditor {
     given: Option<String>,
+    /// A preview's editor with no text to answer: it answers the document
+    /// changed, so the preview plans the write its apply would make and
+    /// answers that path's etag (never performed: a preview writes
+    /// nothing), and still keeps the ask as the Edit need.
+    probing: bool,
     asked: Mutex<Option<(EditorCommand, String, String)>>,
 }
 
@@ -86,6 +91,17 @@ impl AnsweredEditor {
     pub fn answering(given: Option<String>) -> Arc<AnsweredEditor> {
         Arc::new(AnsweredEditor {
             given,
+            probing: false,
+            asked: Mutex::new(None),
+        })
+    }
+
+    /// The editor of a preview that is given no text: it probes (see
+    /// [`AnsweredEditor::probing`]).
+    pub fn probing() -> Arc<AnsweredEditor> {
+        Arc::new(AnsweredEditor {
+            given: None,
+            probing: true,
             asked: Mutex::new(None),
         })
     }
@@ -129,6 +145,9 @@ impl Editor for AnsweredEditor {
         if let Ok(mut asked) = self.asked.lock() {
             *asked = Some((command.clone(), file_name.to_string(), content.to_string()));
         }
+        if self.probing {
+            return Ok(format!("{content}\n"));
+        }
         Ok(content.to_string())
     }
 
@@ -163,11 +182,14 @@ fn edited(answers: &[v1::Answer]) -> Option<String> {
 /// answer with the Edit need it could not answer.
 fn editing<T>(
     library: &Library,
-    given: Option<String>,
+    (given, preview): (Option<String>, bool),
     can_launch: bool,
     use_case: impl FnOnce(&Library) -> Outcome<T>,
 ) -> Outcome<Asked<T>> {
-    let editor = AnsweredEditor::answering(given);
+    let editor = match given {
+        None if preview => AnsweredEditor::probing(),
+        given => AnsweredEditor::answering(given),
+    };
     let editing = library
         .clone()
         .editing_with(Arc::clone(&editor) as Arc<dyn Editor>);
@@ -279,7 +301,7 @@ pub mod create_fragment {
         );
         editing(
             library,
-            given(body, &request.answers),
+            (given(body, &request.answers), false),
             can_launch(request.presentable.as_ref()),
             |library| library.item_create_at(flags, ItemKind::Fragment, &reference),
         )
@@ -341,7 +363,7 @@ pub mod create_command {
         );
         editing(
             library,
-            given(body, &request.answers),
+            (given(body, &request.answers), false),
             can_launch(request.presentable.as_ref()),
             |library| library.item_create_at(flags, ItemKind::Command, &reference),
         )
@@ -410,7 +432,10 @@ pub mod update_fragment {
         let fragment = request.fragment.clone().unwrap_or_default();
         editing(
             library,
-            given(&fragment.body, &request.answers),
+            (
+                given(&fragment.body, &request.answers),
+                request.validate_only,
+            ),
             can_launch(request.presentable.as_ref()),
             |library| {
                 library.item_edit(
@@ -470,7 +495,10 @@ pub mod update_command {
         let command = request.command.clone().unwrap_or_default();
         editing(
             library,
-            given(&command.body, &request.answers),
+            (
+                given(&command.body, &request.answers),
+                request.validate_only,
+            ),
             can_launch(request.presentable.as_ref()),
             |library| {
                 library.item_edit(

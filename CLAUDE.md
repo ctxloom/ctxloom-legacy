@@ -187,6 +187,16 @@ prints the preview in its existing words); the CLI asks it at the terminal
 apply with the answer and the preview's etag, else prints the preview and
 applies nothing (`library_cli::write::removal_served`); `--yes` is one
 call. `DeleteCompanion` has no `answers` field, so its apply sends none.
+A preview's etag is the path's last sequence; the apply sends it back
+(`etag`) and the daemon puts it in the step's command as `seen_sequence`
+(`daemon_api::library_writes::seen_sequence`; empty, a `--yes`, is the
+path's token now), so `decide` refuses a path moved since the preview
+`library-tree-plan-stale`, whose status is ABORTED (OQ-10; angzarr core
+b1445adf). An edit's preview with no text given probes (the daemon's
+`AnsweredEditor::probing`): it plans the file its apply would write, for
+that file's etag, and still asks the Edit need; the CLI's `fragment|command
+edit` sends that etag with its apply. An etag that is not a number fails
+the call (no typed refusal is drafted for it).
 `--body` (fragment|command create and edit) and `config set <key> <value>
 [--home]` (one key, coerced as an override and judged by the schema at
 its path) are the spec's new surfaces. Test-support's `test-die-at`

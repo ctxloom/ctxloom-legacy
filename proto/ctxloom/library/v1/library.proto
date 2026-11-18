@@ -440,8 +440,10 @@ message IntentSuperseded {
 
 // What the caller read has changed: the path's sequence moved since the
 // token it sent (G4 superseded); preview again. `library-tree-plan-stale`.
+// ABORTED (OQ-10, owner 2026-11-13; AIP-154), angzarr core's since
+// b1445adf.
 message PlanStale {
-  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_ABORTED;
   string path = 1;
   // Were git ids (G4); now the token sent and the path's token now.
   uint64 seen = 2;

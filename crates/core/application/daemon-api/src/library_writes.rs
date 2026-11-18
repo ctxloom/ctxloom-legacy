@@ -57,6 +57,23 @@ pub trait LibraryWriteRequest {
     /// The client's id for the write (AIP-155): the command's id.
     fn request_id(&self) -> &str;
     fn validate_only(&self) -> bool;
+    /// The etag the caller's preview answered (AIP-154: the path's last
+    /// sequence, as a decimal), sent back with the apply; empty with
+    /// `--yes` or for a write that takes none (a create).
+    fn etag(&self) -> &str;
+}
+
+/// The sequence a write was planned against: the caller's etag (its
+/// preview's), else the path's token now (a `--yes`, one call that plans
+/// and applies). `decide` refuses the write `PlanStale` when it is not the
+/// path's last sequence. An etag that is not a number fails the call.
+pub(crate) fn seen_sequence(etag: &str, now: u64) -> Result<u64, ApiError> {
+    if etag.is_empty() {
+        return Ok(now);
+    }
+    etag.parse::<u64>().map_err(|_| ApiError::Failed {
+        detail: format!("the etag {etag:?} is not one a preview answered"),
+    })
 }
 
 /// A test-support point of a write the daemon may be killed at (the
@@ -195,7 +212,13 @@ impl<E: Edge> Api<E> {
             _ => None,
         });
         let etag = self
-            .carry_out(&site, &landing, verb, &shaped, (request_id, pending))
+            .carry_out(
+                &site,
+                &landing,
+                (verb, request.etag()),
+                &shaped,
+                (request_id, pending),
+            )
             .await?;
         Ok(Wrote {
             answer: Some(answer),
@@ -248,7 +271,7 @@ impl<E: Edge> Api<E> {
         &self,
         site: &crate::library_reads::ReadSite<'_>,
         landing: &Landing<'_>,
-        verb: &str,
+        (verb, etag): (&str, &str),
         shaped: &writes::Shaped,
         (request_id, pending): (&str, Option<u32>),
     ) -> Result<String, ApiError> {
@@ -277,7 +300,7 @@ impl<E: Edge> Api<E> {
             &landing.observed.tree.to_string(),
             verb,
             &shaped.shape,
-            held.token(&path),
+            seen_sequence(etag, held.token(&path))?,
             evidence,
         )
         .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
@@ -490,7 +513,7 @@ fn landing_of(seen: &[(Site, Observed)], lands: Lands) -> Option<Landing<'_>> {
 
 /// Each write request's target, as its message names it.
 macro_rules! write_requests {
-    ($($request:ident . $($field:ident).+ ;)*) => {
+    ($($request:ident . $($field:ident).+ $(, $etag:ident)? ;)*) => {
         $(
             impl LibraryWriteRequest for v1::$request {
                 fn target(&self) -> &str {
@@ -523,9 +546,14 @@ macro_rules! write_requests {
                 fn validate_only(&self) -> bool {
                     self.validate_only
                 }
+                fn etag(&self) -> &str {
+                    write_requests!(@etag self $($etag)?)
+                }
             }
         )*
     };
+    (@etag $self:ident etag) => { &$self.etag };
+    (@etag $self:ident) => { "" };
     (@get $self:ident $field:ident) => { &$self.$field };
     (@get $self:ident $outer:ident . $inner:ident) => {
         $self.$outer.as_ref().map_or("", |outer| outer.$inner.as_str())
@@ -539,18 +567,18 @@ macro_rules! write_requests {
 write_requests! {
     CreateBundleRequest.parent;
     CreateFragmentRequest.parent;
-    UpdateFragmentRequest.fragment.name;
+    UpdateFragmentRequest.fragment.name, etag;
     CreateCommandRequest.parent;
-    UpdateCommandRequest.command.name;
-    UpdateConfigRequest.name;
+    UpdateCommandRequest.command.name, etag;
+    UpdateConfigRequest.name, etag;
     CreateSkillRequest.parent;
-    DeleteBundleRequest.name;
-    DeleteFragmentRequest.name;
-    DeleteCommandRequest.name;
-    DeleteSkillRequest.name;
-    DeleteProfileRequest.name;
-    DeleteAgentRequest.name;
-    DeleteCompanionRequest.name;
+    DeleteBundleRequest.name, etag;
+    DeleteFragmentRequest.name, etag;
+    DeleteCommandRequest.name, etag;
+    DeleteSkillRequest.name, etag;
+    DeleteProfileRequest.name, etag;
+    DeleteAgentRequest.name, etag;
+    DeleteCompanionRequest.name, etag;
 }
 
 #[cfg(test)]

@@ -414,24 +414,32 @@ fn edit_served(
     };
     let mut said = Vec::new();
     let code = if kind == ItemKind::Command {
-        let ask = |validate_only: bool, answers: Vec<v1::Answer>| v1::UpdateCommandRequest {
-            command: Some(v1::Command {
-                body: body.clone().unwrap_or_default(),
-                no_distill: no_distill.then_some(true),
-                ..v1::Command::default()
-            }),
-            validate_only,
-            answers,
-            presentable: presentable(),
-            globals: cx.globals(),
-            ..v1::UpdateCommandRequest::default()
+        let ask = |validate_only: bool, answers: Vec<v1::Answer>, etag: String| {
+            v1::UpdateCommandRequest {
+                command: Some(v1::Command {
+                    body: body.clone().unwrap_or_default(),
+                    no_distill: no_distill.then_some(true),
+                    ..v1::Command::default()
+                }),
+                validate_only,
+                answers,
+                etag,
+                presentable: presentable(),
+                globals: cx.globals(),
+                ..v1::UpdateCommandRequest::default()
+            }
         };
-        let mut answers = Vec::new();
+        // The preview's etag goes back with the apply, so a file changed
+        // while the editor was open refuses it stale (step 10b U3).
+        let (mut answers, mut etag) = (Vec::new(), String::new());
         if previewed {
-            let preview = cx.served.update_command(&under, ask(true, Vec::new()))?;
+            let preview = cx
+                .served
+                .update_command(&under, ask(true, Vec::new(), String::new()))?;
             answers = edit_answers(cx, &preview.needs)?;
+            etag = preview.etag;
         }
-        let edited = cx.served.update_command(&under, ask(false, answers));
+        let edited = cx.served.update_command(&under, ask(false, answers, etag));
         crate::answer_written(
             cx,
             edited,
@@ -446,24 +454,32 @@ fn edit_served(
             |_| Exit::OK,
         )?
     } else {
-        let ask = |validate_only: bool, answers: Vec<v1::Answer>| v1::UpdateFragmentRequest {
-            fragment: Some(v1::Fragment {
-                body: body.clone().unwrap_or_default(),
-                no_distill: no_distill.then_some(true),
-                ..v1::Fragment::default()
-            }),
-            validate_only,
-            answers,
-            presentable: presentable(),
-            globals: cx.globals(),
-            ..v1::UpdateFragmentRequest::default()
+        let ask = |validate_only: bool, answers: Vec<v1::Answer>, etag: String| {
+            v1::UpdateFragmentRequest {
+                fragment: Some(v1::Fragment {
+                    body: body.clone().unwrap_or_default(),
+                    no_distill: no_distill.then_some(true),
+                    ..v1::Fragment::default()
+                }),
+                validate_only,
+                answers,
+                etag,
+                presentable: presentable(),
+                globals: cx.globals(),
+                ..v1::UpdateFragmentRequest::default()
+            }
         };
-        let mut answers = Vec::new();
+        // The preview's etag goes back with the apply, so a file changed
+        // while the editor was open refuses it stale (step 10b U3).
+        let (mut answers, mut etag) = (Vec::new(), String::new());
         if previewed {
-            let preview = cx.served.update_fragment(&under, ask(true, Vec::new()))?;
+            let preview = cx
+                .served
+                .update_fragment(&under, ask(true, Vec::new(), String::new()))?;
             answers = edit_answers(cx, &preview.needs)?;
+            etag = preview.etag;
         }
-        let edited = cx.served.update_fragment(&under, ask(false, answers));
+        let edited = cx.served.update_fragment(&under, ask(false, answers, etag));
         crate::answer_written(
             cx,
             edited,
