@@ -921,6 +921,22 @@ fn each_split_scenario_is_its_own_runs_and_one_that_ran_nothing_is_red() {
     assert!(green.passed);
 }
 
+/// `GHERKIN_SCENARIOS_AT_ONCE` sets how many of a feature's scenarios run
+/// at once: unset is the default, a count is that count, and anything else
+/// (0, not a number) is refused, never measured as the default.
+#[test]
+fn the_scenarios_at_once_are_the_variables_count_else_the_default() {
+    use super::gherkin_common::{scenarios_at_once_from, SCENARIOS_AT_ONCE};
+    use std::ffi::OsStr;
+    assert_eq!(scenarios_at_once_from(None), SCENARIOS_AT_ONCE);
+    assert_eq!(scenarios_at_once_from(Some(OsStr::new("2"))), 2);
+    assert_eq!(scenarios_at_once_from(Some(OsStr::new("7"))), 7);
+    for bad in ["0", "two", "", "-1"] {
+        let refused = std::panic::catch_unwind(|| scenarios_at_once_from(Some(OsStr::new(bad))));
+        assert!(refused.is_err(), "{bad:?} was taken");
+    }
+}
+
 /// A feature whose other scenarios run: its `@pending` scenarios, and a
 /// `@pending` Rule's, are left out, though no World has their steps.
 #[test]
