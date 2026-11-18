@@ -1069,16 +1069,67 @@ fn an_observation_of_a_steps_ids_and_more_is_recorded_as_the_intents() {
     );
 }
 
+// Changed by step 10c U13 (protos.md §1.3): an outside change at a pending
+// intent's path, whose ids are not the intent's, supersedes the intent.
 #[test]
-fn an_observation_of_other_ids_at_a_pending_path_is_an_outside_change() {
+fn an_observation_of_other_ids_at_a_pending_path_supersedes_the_intent() {
     let mut tree = Tree::baselined();
     let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    let last = tree.library().last_cause;
+    let key = observation_key(TREE, &last, "h-0", &dirty(&[(FILE, "by-hand")]));
     let events = tree.observe(edit(FILE, "by-hand"));
-    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
+    let [LibraryEvent::TreeObserved(observed), LibraryEvent::IntentSuperseded(superseded)] =
+        &events[..]
+    else {
         panic!("{events:?}")
     };
     assert_eq!(observed.intended, None);
+    assert_eq!(superseded.request_id, request);
+    assert_eq!(superseded.by_cause, key);
+    assert!(tree.library().pending.is_empty(), "no longer pending");
+}
+
+#[test]
+fn an_outside_change_of_another_path_leaves_a_pending_intent_pending() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    let events = tree.observe(edit(YAML, "by-hand"));
+    let [LibraryEvent::TreeObserved(_)] = &events[..] else {
+        panic!("{events:?}")
+    };
     assert!(tree.library().pending.contains_key(&request));
+}
+
+#[test]
+fn an_outside_edit_under_a_path_a_pending_trash_takes_supersedes_it() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(None, Some(trash(BUNDLE, 0)), None));
+    let events = tree.observe(edit(FILE, "by-hand"));
+    let [LibraryEvent::TreeObserved(_), LibraryEvent::IntentSuperseded(superseded)] = &events[..]
+    else {
+        panic!("{events:?}")
+    };
+    assert_eq!(superseded.request_id, request);
+}
+
+#[test]
+fn a_file_made_by_hand_where_a_pending_creation_creates_supersedes_it() {
+    let mut tree = Tree::baselined();
+    let made = "content/bundles/v2/notes";
+    let other = "content/bundles/v2/notes/fragments/x.md";
+    let request = intending(&mut tree, creating(made, &[("bundle.yaml", "y1")]));
+    let events = tree.observe(observation(
+        "h-0",
+        "h-0",
+        vec![change(other, ChangeStatus::Added, "", "x1")],
+        &[(other, "x1")],
+        false,
+    ));
+    let [LibraryEvent::TreeObserved(_), LibraryEvent::IntentSuperseded(superseded)] = &events[..]
+    else {
+        panic!("{events:?}")
+    };
+    assert_eq!(superseded.request_id, request);
 }
 
 #[test]

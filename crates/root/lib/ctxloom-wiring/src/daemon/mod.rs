@@ -849,14 +849,39 @@ fn client_through<'a>(
 /// not be reached (S8); under test-support, not when the command's
 /// environment sets `CTXLOOM_TEST_NO_RETRY` (step 10b's harness: what a
 /// killed daemon left is left).
+/// And, under test-support, the program `CTXLOOM_TEST_BEFORE_RETRY` names
+/// run (and waited for) before that one retry (step 10c U13's harness: a
+/// person's hand edit between the daemon's loss and the write sent again).
 #[cfg(feature = "test-support")]
 fn retrying<'a>(
     wiring: &Wiring,
     client: daemon_api::Client<Reach<'a>>,
 ) -> daemon_api::Client<Reach<'a>> {
-    match wiring.env().non_empty("CTXLOOM_TEST_NO_RETRY") {
+    let client = match wiring.env().non_empty("CTXLOOM_TEST_NO_RETRY") {
         Some(_) => client.without_retry(),
         None => client,
+    };
+    match wiring.env().non_empty(BEFORE_RETRY) {
+        Some(program) => {
+            let program = program.to_owned();
+            client.before_retry(Box::new(move || run_before_retry(&program)))
+        }
+        None => client,
+    }
+}
+
+/// The test-support variable naming what a client runs before its retry.
+#[cfg(feature = "test-support")]
+const BEFORE_RETRY: &str = "CTXLOOM_TEST_BEFORE_RETRY";
+
+/// `program` run to its end; one that cannot be run is said on stderr
+/// and the retry goes on (a test's harness, never a shipped path).
+#[cfg(feature = "test-support")]
+fn run_before_retry(program: &std::ffi::OsStr) {
+    let ran = os::process::spawn_tree(std::process::Command::new(program))
+        .and_then(|mut tree| tree.wait());
+    if let Err(error) = ran {
+        eprintln!("ctxloom: {BEFORE_RETRY} {program:?} did not run: {error}");
     }
 }
 

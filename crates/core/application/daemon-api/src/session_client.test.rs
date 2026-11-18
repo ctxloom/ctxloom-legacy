@@ -802,3 +802,34 @@ async fn a_client_that_does_not_retry_reaches_one_daemon_only() {
         ["1:req-1"]
     );
 }
+
+// Step 10c U13's harness (`CTXLOOM_TEST_BEFORE_RETRY`): what a client is
+// told to do before its one retry runs once, after the first daemon was
+// lost and before a second is reached (the race forced, never waited
+// for); a call that needs no retry never runs it.
+#[tokio::test]
+async fn what_runs_before_a_retry_runs_once_between_the_two_daemons() {
+    let daemons = Fakes::new();
+    daemons.template.dying.lock().unwrap().push(1);
+    let reached = Arc::clone(&daemons.reached);
+    let ran: Arc<Mutex<Vec<usize>>> = Arc::default();
+    let seen = Arc::clone(&ran);
+    let client = in_project(&daemons).before_retry(Box::new(move || {
+        seen.lock().unwrap().push(*reached.lock().unwrap());
+    }));
+    client
+        .list_sessions(false, v1::session::State::Unspecified)
+        .await
+        .unwrap();
+    assert_eq!(*ran.lock().unwrap(), [1], "once, after the first reach");
+    assert_eq!(daemons.reaches(), 2);
+    let fine = Fakes::new();
+    let none: Arc<Mutex<usize>> = Arc::default();
+    let counted = Arc::clone(&none);
+    in_project(&fine)
+        .before_retry(Box::new(move || *counted.lock().unwrap() += 1))
+        .list_sessions(false, v1::session::State::Unspecified)
+        .await
+        .unwrap();
+    assert_eq!(*none.lock().unwrap(), 0, "no retry, nothing run");
+}

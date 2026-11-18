@@ -764,7 +764,12 @@ fn answered_before<T>(
                 let (etag, at) = done_before(&trees.seen, known, observations);
                 return Some(Ok(done(etag, at, String::new(), std::mem::take(notices))));
             }
-            End::Failed | End::Superseded => {
+            End::Superseded => {
+                // An outside change overtook it (step 10c U13): its retry
+                // is refused stale, and performs nothing.
+                return Some(Err(superseded(&trees.seen, known, observations)));
+            }
+            End::Failed => {
                 return Some(Err(ApiError::Failed {
                     detail: format!("the write {request_id} was tried before and did not complete"),
                 }));
@@ -781,6 +786,41 @@ fn answered_before<T>(
         exported.source,
         std::mem::take(notices),
     )))
+}
+
+/// The refusal of a retry whose intent was superseded (step 10c U13,
+/// protos.md §1.3): `PlanStale` of its first step's path, `seen` the token
+/// the intent was decided on and `now` the path's token in its tree now.
+fn superseded(
+    seen: &[(Site, Observed)],
+    known: &library_checkout::Known,
+    observations: &library_api::Observations<impl Edge>,
+) -> ApiError {
+    let step = known.intent.steps.first();
+    let path = step.map(step_path).unwrap_or_default();
+    let decided = step.map_or(0, seen_on);
+    let now = seen
+        .iter()
+        .find(|(_, observed)| observed.tree.root().value.to_vec() == known.root)
+        .map_or(0, |(_, observed)| {
+            observations.held(&observed.tree).token(&path)
+        });
+    refused(&library_tree::LibraryTreeRejection::PlanStale {
+        path,
+        seen: decided,
+        now,
+    })
+}
+
+/// The token a recorded step was decided on.
+fn seen_on(step: &library_tree::Step) -> u64 {
+    if let Some(replace) = &step.replace {
+        return replace.seen_sequence;
+    }
+    if let Some(trash) = &step.trash {
+        return trash.seen_sequence;
+    }
+    step.r#move.as_ref().map_or(0, |moved| moved.seen_sequence)
 }
 
 /// The token and the place of the path a write already done changed (its

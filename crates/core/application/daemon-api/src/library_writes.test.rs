@@ -453,3 +453,112 @@ async fn test_an_export_made_before_is_answered_from_its_record() {
     )
     .is_none());
 }
+
+// Step 10c U13 (protos.md §1.3): a retry of a write whose intent an outside
+// change superseded is refused stale (`PlanStale`, ABORTED, exit 20),
+// naming its first step's path, the token the intent was decided on and
+// the path's token now; a write still pending is planned again.
+#[tokio::test]
+async fn test_a_retry_of_a_superseded_write_is_refused_stale() {
+    use std::sync::Arc;
+    let f = crate::server::tests::fixture(vec![]);
+    let gits = Arc::new(crate::server::tests::Gits::default());
+    let api = f
+        .api
+        .observing(crate::server::tests::observing(&f.world, &gits));
+    let (observations, _) = api.observing.as_ref().expect("observing");
+    let seen = seen(true);
+    let root = seen[0].1.tree.root().value.to_vec();
+    let trees = library_api::Trees {
+        seen,
+        notices: Vec::new(),
+    };
+    let path = "content/bundles/v2/demo/fragments/example.md";
+    let mut step = replaced(path);
+    if let Some(replace) = step.replace.as_mut() {
+        replace.seen_sequence = 3;
+    }
+    let known = |end| library_checkout::Known {
+        root: root.clone(),
+        intent: library_tree::Intent {
+            foreign: Vec::new(),
+            request_id: "r-1".to_string(),
+            verb: "fragment edit".to_string(),
+            steps: vec![step.clone()],
+            base_cause: String::new(),
+            done: 0,
+        },
+        end,
+    };
+    // The path's token now is the edit's sequence, 1 (the baseline's 0).
+    let tree = trees.seen[0].1.tree.clone();
+    let sight = |baseline: bool, base_cause: &str, changes: Vec<library_tree::Change>| {
+        library_tree::RecordTreeObserved {
+            name: tree.to_string(),
+            kind: library_tree::TreeKind::Checkout,
+            base_cause: base_cause.to_string(),
+            head_before: "h-0".to_string(),
+            head_after: "h-0".to_string(),
+            tree_after: "t-0".to_string(),
+            dirty_after: changes
+                .iter()
+                .map(|change| library_tree::DirtyPath {
+                    path: change.path.clone(),
+                    oid: change.to_oid.clone(),
+                })
+                .collect(),
+            changes,
+            baseline,
+            in_motion: None,
+        }
+    };
+    observations
+        .send(library_api::writes::step_book(
+            &tree,
+            &sight(true, "", vec![]),
+            "obs-0",
+        ))
+        .await
+        .expect("baselined");
+    let edit = library_tree::Change {
+        path: path.to_string(),
+        status: library_tree::ChangeStatus::Modified,
+        from_oid: "a".to_string(),
+        to_oid: "by-hand".to_string(),
+        from_path: String::new(),
+    };
+    observations
+        .send(library_api::writes::step_book(
+            &tree,
+            &sight(false, "obs-0", vec![edit]),
+            "obs-1",
+        ))
+        .await
+        .expect("edited");
+    let mut said = Vec::new();
+    let superseded = known(library_checkout::End::Superseded);
+    let refused = answered_before::<()>(
+        (&trees, observations),
+        ("r-1", Some(&superseded)),
+        "projects/p",
+        &mut said,
+    )
+    .expect("answered");
+    let expected = crate::library_refusal(&library_tree::LibraryTreeRejection::PlanStale {
+        path: path.to_string(),
+        seen: 3,
+        now: 1,
+    });
+    match refused {
+        Err(crate::ApiError::Refused(refusal)) => assert_eq!(refusal, expected),
+        other => panic!("not refused stale: {:?}", other.map(|_| ())),
+    }
+    let pending = known(library_checkout::End::Pending { done: 0 });
+    assert!(answered_before::<()>(
+        (&trees, observations),
+        ("r-1", Some(&pending)),
+        "projects/p",
+        &mut said
+    )
+    .is_none());
+}

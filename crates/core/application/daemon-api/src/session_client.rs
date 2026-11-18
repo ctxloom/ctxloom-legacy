@@ -39,7 +39,13 @@ pub struct Client<D> {
     /// Whether a call whose daemon could not be reached is made once more
     /// on a new one (S8); only test-support turns it off.
     retries: bool,
+    /// What runs before that one retry (test-support's
+    /// `CTXLOOM_TEST_BEFORE_RETRY`, step 10c U13's harness); none, nothing.
+    before_retry: Option<BeforeRetry>,
 }
+
+/// What a client runs before its one retry.
+pub type BeforeRetry = Box<dyn Fn() + Send + Sync>;
 
 /// What mints a write's request id (S8): unique per call.
 pub type RequestIds = Box<dyn Fn() -> String + Send + Sync>;
@@ -126,6 +132,7 @@ impl<D: Daemons> Client<D> {
             ids: Box::new(String::new),
             unnamed: false,
             retries: true,
+            before_retry: None,
         }
     }
 
@@ -155,6 +162,18 @@ impl<D: Daemons> Client<D> {
     pub fn without_retry(self) -> Client<D> {
         Client {
             retries: false,
+            ..self
+        }
+    }
+
+    /// This client, `then` run once before a call whose daemon could not
+    /// be reached is made again (test-support's
+    /// `CTXLOOM_TEST_BEFORE_RETRY`: a person's edit between the loss and
+    /// the retry, forced rather than waited for).
+    #[must_use]
+    pub fn before_retry(self, then: BeforeRetry) -> Client<D> {
+        Client {
+            before_retry: Some(then),
             ..self
         }
     }
@@ -269,6 +288,9 @@ impl<D: Daemons> Client<D> {
         let api = self.daemons.reach().await.map_err(CallError::Unreached)?;
         match call(&api).await {
             Err(Called::Unreachable { .. }) if self.retries => {
+                if let Some(then) = &self.before_retry {
+                    then();
+                }
                 let again = self.daemons.reach().await.map_err(CallError::Unreached)?;
                 Ok(call(&again).await?)
             }

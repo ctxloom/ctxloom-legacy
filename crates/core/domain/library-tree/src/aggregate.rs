@@ -284,7 +284,72 @@ fn leaves(step: &Step) -> Leaves {
     Leaves::Unknown
 }
 
+/// Whether `changes` (an outside observation's) touch a path the step
+/// `step` is still to write, with ids that are not what it writes there
+/// (step 10c U13, protos.md §1.3): the base it was decided on has moved.
+fn overtakes(step: &Step, changes: &[crate::Change]) -> bool {
+    let at_or_under = |path: &str, change: &crate::Change| {
+        let under = format!("{}/", path.trim_end_matches('/'));
+        change.path == path || change.path.starts_with(&under)
+    };
+    if let Some(replace) = &step.replace {
+        return changes
+            .iter()
+            .any(|c| c.path == replace.path && c.to_oid != replace.new_oid);
+    }
+    if let Some(create) = &step.create {
+        let dir = create.path.trim_end_matches('/');
+        return changes.iter().filter(|c| at_or_under(dir, c)).any(|c| {
+            !create
+                .entries
+                .iter()
+                .any(|entry| format!("{dir}/{}", entry.path) == c.path && entry.oid == c.to_oid)
+        });
+    }
+    if let Some(trash) = &step.trash {
+        return changes
+            .iter()
+            .any(|c| at_or_under(&trash.path, c) && !c.to_oid.is_empty());
+    }
+    if let Some(moved) = &step.r#move {
+        return changes.iter().any(|c| {
+            (at_or_under(&moved.from, c) && !c.to_oid.is_empty())
+                || (moved.to_tree.is_empty() && at_or_under(&moved.to, c))
+        });
+    }
+    false
+}
+
+/// The cause a fact's context names: its external id.
+fn fact_cause(ctx: &Context) -> String {
+    match &ctx.command.arm {
+        angzarr_embedded::markup::InputArm::Fact {
+            origin: Some(origin),
+        } => origin.external_id.clone(),
+        _ => String::new(),
+    }
+}
+
 impl LibraryAggregate {
+    /// The pending intents (but `except`) whose steps not yet done an
+    /// outside observation's `changes` overtake, by request id: each is
+    /// superseded (step 10c U13), its retry refused stale.
+    fn superseded(&self, changes: &[crate::Change], except: Option<&str>) -> Vec<String> {
+        self.library
+            .pending
+            .values()
+            .filter(|intent| Some(intent.request_id.as_str()) != except)
+            .filter(|intent| {
+                intent
+                    .steps
+                    .iter()
+                    .skip(intent.done as usize)
+                    .any(|step| overtakes(step, changes))
+            })
+            .map(|intent| intent.request_id.clone())
+            .collect()
+    }
+
     /// The pending intent whose next step's new ids `changes` show (the
     /// first by request id), that step, and what the changes say of its
     /// paths.
@@ -324,6 +389,28 @@ impl LibraryAggregate {
             };
             Some((intent.request_id.clone(), intent.done, seen))
         })
+    }
+}
+
+impl LibraryAggregate {
+    /// `observed` recorded, then every pending intent but `except` it
+    /// overtakes superseded, by this observation's cause (step 10c U13).
+    fn outside(
+        &self,
+        observed: TreeObserved,
+        except: Option<&str>,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let superseded = self.superseded(&observed.changes, except);
+        let by_cause = fact_cause(ctx);
+        let mut events = vec![pack_message(&observed)];
+        events.extend(superseded.into_iter().map(|request_id| {
+            pack_message(&IntentSuperseded {
+                request_id,
+                by_cause: by_cause.clone(),
+            })
+        }));
+        Ok(FactEmit::of(events))
     }
 }
 
@@ -631,7 +718,6 @@ impl LibraryAggregate {
     /// else a `TreeObserved` caused by the intent.
     #[handles_fact(RecordTreeObserved)]
     fn observed(&self, fact: RecordTreeObserved, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
-        let _ = ctx;
         let Some(mut observed) = self.observation(fact) else {
             return recorded(None::<TreeObserved>);
         };
@@ -642,10 +728,10 @@ impl LibraryAggregate {
             .as_ref()
             .is_some_and(|external| external.head_after != self.library.head);
         if observed.baseline || moved {
-            return recorded(Some(observed));
+            return self.outside(observed, None, ctx);
         }
         let Some((request_id, step, seen)) = self.attributed(&observed.changes) else {
-            return recorded(Some(observed));
+            return self.outside(observed, None, ctx);
         };
         let whole = seen.len() == observed.changes.len()
             && observed.tree_after == self.library.tree
@@ -663,8 +749,8 @@ impl LibraryAggregate {
             }));
         }
         observed.external = None;
-        observed.intended = Some(request_id);
-        recorded(Some(observed))
+        observed.intended = Some(request_id.clone());
+        self.outside(observed, Some(&request_id), ctx)
     }
 
     /// A pending intent's next step done: what it left becomes its paths'
