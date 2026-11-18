@@ -5,7 +5,7 @@ use library_api::{Observed, Site};
 use library_tree::TreeName;
 use sessions::ProjectName;
 
-use super::{landing_of, request_bytes, step_path};
+use super::{commit_message, commit_paths, landing_of, request_bytes, step_path};
 
 fn observed(tree: TreeName) -> Observed {
     Observed {
@@ -297,4 +297,98 @@ fn test_a_tree_outside_is_taken_aside_alone_and_refused_beside_a_change() {
         taken,
         Err(library_tree::LibraryTreeRejection::OneChangePerCall { .. })
     ));
+}
+
+fn evidence() -> library_tree::Evidence {
+    library_tree::Evidence {
+        tree_reads: true,
+        plan_rejection: None,
+        builtin: false,
+        in_motion: None,
+        in_git: true,
+        ignored: None,
+        root: String::new(),
+    }
+}
+
+fn bare() -> library_tree::Step {
+    library_tree::Step {
+        replace: None,
+        create: None,
+        trash: None,
+        r#move: None,
+        purge: None,
+    }
+}
+
+fn replaced(path: &str) -> library_tree::Step {
+    library_tree::Step {
+        replace: Some(library_tree::ReplaceFile {
+            name: String::new(),
+            verb: String::new(),
+            path: path.to_string(),
+            seen_sequence: 0,
+            new_oid: String::new(),
+            evidence: evidence(),
+        }),
+        ..bare()
+    }
+}
+
+fn moved(from: &str, to: &str, to_tree: &str) -> library_tree::Step {
+    library_tree::Step {
+        r#move: Some(library_tree::MovePath {
+            name: String::new(),
+            verb: String::new(),
+            from: from.to_string(),
+            to: to.to_string(),
+            seen_sequence: 0,
+            evidence: evidence(),
+            to_tree: to_tree.to_string(),
+        }),
+        ..bare()
+    }
+}
+
+// G3: a home write's commit names what its steps changed in the library,
+// each once: a move both its ends (but only the end in this tree), never
+// a purge's slot or anything outside the library's pathspec.
+#[test]
+fn test_a_home_commit_names_each_library_path_its_steps_changed_once() {
+    let purge = library_tree::Step {
+        purge: Some(library_tree::PurgeSlot {
+            request_id: "r-0".to_string(),
+        }),
+        ..bare()
+    };
+    let steps = [
+        replaced("config.yaml"),
+        moved("content/bundles/v2/a", "content/bundles/v2/b", ""),
+        moved(
+            "content/bundles/v2/c",
+            "content/bundles/v2/c",
+            "/work/other/.ctxloom",
+        ),
+        purge,
+        replaced("config.yaml"),
+        replaced("state/checkout"),
+    ];
+    assert_eq!(
+        commit_paths(&steps),
+        [
+            "config.yaml",
+            "content/bundles/v2/a",
+            "content/bundles/v2/b",
+            "content/bundles/v2/c"
+        ]
+    );
+}
+
+// texts.md 6 (QUESTIONS 6): the subject alone, no body.
+#[test]
+fn test_a_home_commit_s_message_names_its_verb_and_request_id() {
+    assert_eq!(
+        commit_message("companion add", "0195f1e2-0000-7000-8000-000000000000"),
+        "ctxloom: companion add (0195f1e2-0000-7000-8000-000000000000)"
+    );
 }

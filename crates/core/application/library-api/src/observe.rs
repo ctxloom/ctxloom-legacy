@@ -245,6 +245,37 @@ impl<E: Edge> Observations<E> {
         Ok(())
     }
 
+    /// The stream `site`'s tree is recorded on, by its harp.
+    fn tree_name(&self, site: &Site) -> Result<TreeName, ReadError> {
+        let harp = self.harps.harp(site.tree()).map_err(ReadError::Failed)?;
+        match site {
+            Site::Checkout { project, .. } => TreeName::checkout(project.clone(), &harp),
+            Site::Home { .. } => TreeName::home(&harp),
+        }
+        .map_err(|rejection| ReadError::Failed(Box::new(rejection)))
+    }
+
+    /// The home step's `git init` recorded on the home tree's stream (G3,
+    /// owner 2026-11-18, night): only a home with it is committed in. Keyed
+    /// by the tree, so a second is a DUPLICATE.
+    async fn record_home_made(&self, home: &str) -> Result<(), ReadError> {
+        let tree = self.tree_name(&Site::Home {
+            tree: home.to_string(),
+        })?;
+        let fact = library_tree::RecordHomeRepositoryMade {
+            name: tree.to_string(),
+        };
+        self.edge
+            .handle(crate::writes::step_book(
+                &tree,
+                &fact,
+                &format!("home-repository-made:{tree}"),
+            ))
+            .await
+            .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
+        Ok(())
+    }
+
     /// Observe `site` through `observer` (git in the caller's environment),
     /// recording what changed since the record's state of it.
     pub async fn observe(
@@ -258,12 +289,7 @@ impl<E: Edge> Observations<E> {
             }
         }
         self.sweep_once(site.tree())?;
-        let harp = self.harps.harp(site.tree()).map_err(ReadError::Failed)?;
-        let tree = match site {
-            Site::Checkout { project, .. } => TreeName::checkout(project.clone(), &harp),
-            Site::Home { .. } => TreeName::home(&harp),
-        }
-        .map_err(|rejection| ReadError::Failed(Box::new(rejection)))?;
+        let tree = self.tree_name(site)?;
         let held = {
             let checkouts = self.checkouts.checkouts();
             checkouts.tree(&tree.root()).cloned().unwrap_or_default()
@@ -337,6 +363,11 @@ impl<E: Edge> Observations<E> {
             let held = observer.work_tree(&home)?.is_some()
                 && observer.check_ignore(&home, "config.yaml")?.is_none();
             if held {
+                if made == library_application::HomeRepository::Made {
+                    // G3: a home git holds, made by ctxloom: its writes are
+                    // committed there from now on.
+                    self.record_home_made(&home).await?;
+                }
                 let site = Site::Home { tree: home };
                 let observed = self.observe(observer.as_ref(), &site).await?;
                 notices.extend(observed.notices.iter().cloned());

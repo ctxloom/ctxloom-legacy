@@ -351,6 +351,10 @@ async fn git_failing_fails_the_read() {
                 },
             )))
         }
+
+        fn commit(&self, _: &str, _: &str, _: &[&str]) -> Result<(), ctxloom_ports::TreeError> {
+            unreachable!("not asked")
+        }
     }
     let under = under();
     let failed = under
@@ -457,6 +461,34 @@ async fn a_home_in_no_work_tree_or_one_git_ignores_is_made_a_repository_and_said
     }
 }
 
+// G3 (owner 2026-11-18, night): the home step's init, once git holds the
+// home, is recorded on the home's stream, so its writes are committed
+// there; a second read records it no more.
+#[tokio::test(flavor = "current_thread")]
+async fn a_home_ctxloom_made_a_repository_is_recorded_made_once() {
+    let under = under();
+    let callers = callers(
+        || Git {
+            work_tree: None,
+            inits_to: Some("/h/.ctxloom".to_string()),
+            ..Git::at("c1", "t1")
+        },
+        Some("/h/.ctxloom"),
+    );
+    let read = || under.observations.observe_read(&callers, &[], None);
+    read().await.unwrap();
+    let home = TreeName::home(HARP).unwrap();
+    assert!(under.observations.held(&home).home_repository_made);
+    let cover = Cover {
+        domain: LIBRARY_DOMAIN.to_string(),
+        root: Some(home_events_root()),
+        edition: None,
+    };
+    let first = under.world.events(&cover, 0).await.unwrap().len();
+    read().await.unwrap();
+    assert_eq!(under.world.events(&cover, 0).await.unwrap().len(), first);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_home_that_is_a_repository_already_is_used_as_it_is_and_nothing_said() {
     let under = under();
@@ -473,6 +505,9 @@ async fn a_home_that_is_a_repository_already_is_used_as_it_is_and_nothing_said()
         .await
         .unwrap();
     assert!(said.is_empty(), "{said:?}");
+    // G3: a repository ctxloom did not make is never committed in.
+    let home = TreeName::home(HARP).unwrap();
+    assert!(!under.observations.held(&home).home_repository_made);
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -458,11 +458,45 @@ impl<E: Edge> Api<E> {
             )
             .await?;
         }
+        let mut notices = trashed_notice(landing.site.tree(), &shaped.shape, &request_id);
+        notices.extend(self.home_commit(landing, observer.as_ref(), (verb, &request_id), &steps));
         self.dies_at("done");
-        Ok((
-            observations.held(tree).token(&path).to_string(),
-            trashed_notice(landing.site.tree(), &shaped.shape, &request_id),
-        ))
+        Ok((observations.held(tree).token(&path).to_string(), notices))
+    }
+
+    /// A write to the home recorded done, committed there when ctxloom
+    /// made the home's repository (G3, owner 2026-11-18, night): one
+    /// commit of its own, of the paths its steps changed, never in a
+    /// project's tree, nor a home made before the fact was recorded. A
+    /// failed commit is said, and the write stands.
+    fn home_commit(
+        &self,
+        landing: &Landing<'_>,
+        observer: &dyn ctxloom_ports::TreeObserver,
+        (verb, request_id): (&str, &str),
+        steps: &[library_tree::Step],
+    ) -> Option<v1::Notice> {
+        let (observations, _) = self.observing.as_ref()?;
+        let home = matches!(landing.site, Site::Home { .. });
+        if !home
+            || !observations
+                .held(&landing.observed.tree)
+                .home_repository_made
+        {
+            return None;
+        }
+        let paths = commit_paths(steps);
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let dir = landing.site.tree();
+        observer
+            .commit(dir, &commit_message(verb, request_id), &paths)
+            .err()
+            .map(|error| {
+                notice_of(&library_api::LibraryApiNotice::HomeNotCommitted {
+                    path: dir.to_string(),
+                    ext_err_txt: error.diagnostic().to_string(),
+                })
+            })
     }
 
     /// The step `step` (number `at`) of the write `made` makes: its one
@@ -700,6 +734,36 @@ fn step_path(step: &library_tree::Step) -> String {
         .as_ref()
         .map(|moved| moved.from.clone())
         .unwrap_or_default()
+}
+
+/// What the commit of a home write names (G3): each library path its
+/// `steps` changed, once, sorted.
+pub(crate) fn commit_paths(steps: &[library_tree::Step]) -> Vec<String> {
+    let mut paths = std::collections::BTreeSet::new();
+    for step in steps {
+        let named = [
+            step.replace.as_ref().map(|replace| replace.path.clone()),
+            step.create.as_ref().map(|create| create.path.clone()),
+            step.trash.as_ref().map(|trash| trash.path.clone()),
+            step.r#move.as_ref().map(|moved| moved.from.clone()),
+            step.r#move
+                .as_ref()
+                .filter(|moved| moved.to_tree.is_empty())
+                .map(|moved| moved.to.clone()),
+        ];
+        paths.extend(
+            named
+                .into_iter()
+                .flatten()
+                .filter(|path| writes::in_library(path)),
+        );
+    }
+    paths.into_iter().collect()
+}
+
+/// The message of a home write's commit (step 10b texts.md 6).
+pub(crate) fn commit_message(verb: &str, request_id: &str) -> String {
+    format!("ctxloom: {verb} ({request_id})")
 }
 
 /// The observed tree a write landing `lands` changes: the content's is the

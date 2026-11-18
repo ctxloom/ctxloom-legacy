@@ -8,7 +8,7 @@ fn every_notice_has_a_message_using_exactly_its_args_and_its_code_is_prefixed() 
     let (name, catalog) = EN_US;
     assert_eq!(name, "library-api");
     let samples = diagnostic_samples();
-    assert_eq!(samples.len(), 3);
+    assert_eq!(samples.len(), 4);
     for sample in samples {
         let code = sample.code();
         assert!(code.starts_with("library-api-notice-"), "{code}");

@@ -16,3 +16,7 @@ library-api-notice-home-repository-made = ctxloom made { $path } a git repositor
 # into the trash (bundle remove, skill remove, clean); reviewed before
 # release with the rest, `connected-boil`.
 library-api-notice-trashed = { $path } is kept in { $slot } for 7 days, in case you want it back; after that ctxloom removes it
+
+# Step 10b (G3, owner 2026-11-18, night): DRAFT, for the owner's review. Said
+# when a write to a home repository ctxloom made stands but its commit failed.
+library-api-notice-home-not-committed = the change was written to { $path }, but ctxloom could not commit it there ({ $ext_err_txt }); it stays uncommitted until you commit it

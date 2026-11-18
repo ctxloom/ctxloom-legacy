@@ -139,6 +139,10 @@ message LibraryState {
   // The sequence of the tree's last baseline: the token of every path no
   // event has named since.
   uint64 baseline_sequence = 10;
+  // 10b (G3, owner 2026-11-18, night): ctxloom made this tree a git
+  // repository of its own (`HomeRepositoryMade`), so each write to it is
+  // committed there. Only the home's is ever set. Additive.
+  bool home_repository_made = 11;
 }
 
 // A resource's place in the record (G4 superseded): the sequence of the
@@ -183,6 +187,21 @@ message RecordTreeObserved {
   bool baseline = 9;
   // None when no git operation was in progress.
   optional Motion in_motion = 10;
+}
+
+// 10b (G3, owner 2026-11-18, night): ctxloom made the home's library a
+// git repository of its own (`git init`, the home step, G2), so its writes
+// are committed there, one commit per write. Recorded where the home step
+// ran the init; a home made before this fact existed, or one already in a
+// repository, has none, and is never committed. Keyed
+// `home-repository-made:{tree}`, so a second is a DUPLICATE. Additive.
+message RecordHomeRepositoryMade {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.HomeRepositoryMade"]
+  };
+
+  string name = 1;
 }
 
 // 10b (U3): a step of an intent was carried out, and what it left. No
@@ -468,6 +487,13 @@ message ChangeFailed {
   string request_id = 1;
   uint32 step = 2;
   string ext_err_txt = 3;
+}
+
+// 10b (G3): the home's library is a repository ctxloom made; `apply` sets
+// `home_repository_made`. Additive.
+message HomeRepositoryMade {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  string name = 1;
 }
 
 // A pending intent whose base an observation changed (Q6, U13).

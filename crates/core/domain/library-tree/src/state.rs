@@ -68,6 +68,9 @@ pub struct Library {
     pub baseline_sequence: u64,
     /// Whether a baseline was ever recorded.
     pub baselined: bool,
+    /// Whether ctxloom made this tree a repository of its own (G3): only
+    /// then are its writes committed.
+    pub home_repository_made: bool,
 }
 
 /// The cause an event's page names: a fact's external id, else the
@@ -147,6 +150,7 @@ impl Library {
             LibraryEvent::StepApplied(applied) => self.applied(applied, sequence),
             LibraryEvent::ChangeFailed(failed) => self.failed(failed),
             LibraryEvent::IntentSuperseded(superseded) => self.superseded(superseded),
+            LibraryEvent::HomeRepositoryMade(_) => self.home_repository_made = true,
         }
         self.last_cause = cause;
     }
@@ -320,6 +324,7 @@ impl Library {
                 })
                 .collect(),
             baseline_sequence: self.baseline_sequence,
+            home_repository_made: self.home_repository_made,
         }
     }
 }

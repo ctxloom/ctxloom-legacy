@@ -2768,8 +2768,24 @@ not judged.
   keeping it) is used as it is.
 - NOT built here (10a's other units): the reads moving into the daemon,
   which then takes the home step per home and says the home's notice
-  `library-api-notice-home-repository-made` (U2, blocked: below). ctxloom
-  commits nowhere yet (G3, the home's commits, are 10b's).
+  `library-api-notice-home-repository-made` (U2, blocked: below).
+- The HOME COMMIT (G3, owner 2026-11-18, night; step 10b): when the
+  daemon's home step (`Observations::observe_trees`) `git init`s the home
+  and git then holds it, it records `RecordHomeRepositoryMade` on the home
+  tree's stream (keyed `home-repository-made:{tree}`; `HomeRepositoryMade`,
+  `LibraryState.home_repository_made`, all additive). After a write to the
+  home is recorded done, and only on a stream holding it, the daemon
+  commits that write (`carry_out`'s `home_commit`, through
+  `TreeObserver::commit`, library-git over git-cli): `git -c
+  user.name=ctxloom -c user.email=ctxloom@localhost -c commit.gpgsign=false
+  commit -q -m "ctxloom: <verb> (<request id>)" -- <paths>` (the library
+  paths its steps changed, staged first with `add -A`; `GIT_AUTHOR_*` and
+  `GIT_COMMITTER_*` are set to ctxloom too, as they outrank `-c`), one commit
+  per write; nothing changed, nothing committed. Never in a project tree,
+  nor in a home made before the fact existed, nor in a repository ctxloom
+  did not make; a home first made by an in-process verb (not a served one)
+  gets no fact either. A failed commit is the notice
+  `library-api-notice-home-not-committed` (a draft), and the write stands.
 - `TreeObserver::blob_ids` leaves out a path with no file (absent): the
   reconcile asks the ids of paths it last saw dirty, some since taken away.
 

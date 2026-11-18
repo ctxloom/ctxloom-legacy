@@ -717,7 +717,8 @@ impl<M: angzarr_embedded::markup::DomainMessage> WireAny for M {
 }
 
 /// The book that records a step's end on `tree`'s stream: `fact` keyed
-/// `{kind}:{request_id}:{step}`, so its redelivery is a DUPLICATE.
+/// `{kind}:{request_id}:{step}`, so its redelivery is a DUPLICATE. (The
+/// home step's `RecordHomeRepositoryMade` rides it too, keyed by its tree.)
 pub fn step_book<M: angzarr_embedded::markup::DomainMessage>(
     tree: &library_tree::TreeName,
     fact: &M,

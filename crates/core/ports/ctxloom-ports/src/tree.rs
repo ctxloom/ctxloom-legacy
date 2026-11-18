@@ -176,6 +176,16 @@ pub trait TreeObserver: Send + Sync {
 
     /// The git operation in progress in `dir`'s repository, if any.
     fn in_motion(&self, dir: &str) -> Result<Option<Motion>, TreeError>;
+
+    /// Commit `paths` (relative to `dir`) as they are now, a gone one as
+    /// its removal, and nothing else, as ctxloom (step 10b G3, owner
+    /// 2026-11-18, night: `git -c user.name=ctxloom -c
+    /// user.email=ctxloom@localhost -c commit.gpgsign=false commit -m
+    /// <message> -- <paths>`, author and committer ctxloom whatever the
+    /// environment says). A path neither there nor tracked is left out;
+    /// when nothing of them changed, nothing is committed. Only ever asked
+    /// of a home repository ctxloom made.
+    fn commit(&self, dir: &str, message: &str, paths: &[&str]) -> Result<(), TreeError>;
 }
 
 #[cfg(test)]

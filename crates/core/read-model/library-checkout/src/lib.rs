@@ -125,6 +125,8 @@ impl LibraryCheckout {
             LibraryEvent::IntentSuperseded(superseded) => {
                 (&superseded.request_id, Some(End::Superseded))
             }
+            // The tree's, naming no intent (G3).
+            LibraryEvent::HomeRepositoryMade(_) => return,
         };
         let Some(known) = self.intents.get_mut(request) else {
             return;

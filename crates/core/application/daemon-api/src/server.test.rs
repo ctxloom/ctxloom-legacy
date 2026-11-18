@@ -1254,6 +1254,9 @@ impl ctxloom_ports::TreeObserver for TableGit {
     ) -> Result<Option<ctxloom_ports::Motion>, ctxloom_ports::TreeError> {
         Ok(self.motion)
     }
+    fn commit(&self, _: &str, _: &str, _: &[&str]) -> Result<(), ctxloom_ports::TreeError> {
+        Ok(())
+    }
 }
 
 impl library_api::Observers for Gits {

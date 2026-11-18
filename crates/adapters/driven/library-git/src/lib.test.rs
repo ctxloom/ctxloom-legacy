@@ -573,3 +573,127 @@ fn a_query_that_fails_aloud_is_a_failure_not_an_answer() {
         "library-git-failed"
     );
 }
+
+// ------------------------------------------------------------- the home commit
+
+/// A home repository ctxloom made, its allowlist `.gitignore`, `HOME` a
+/// gitconfig of hers that signs every commit as her, and her identity in
+/// the environment too (all of which ctxloom's commit must outrank).
+fn her_home() -> (file_system::Rooted, std::path::PathBuf, GitTrees) {
+    let (root, top) = Repo::none();
+    put(
+        top.join(".gitconfig"),
+        "[user]\n\tname = Her\n\temail = her@example.com\n\tsigningkey = NOSUCHKEY\n[commit]\n\tgpgsign = true\n",
+    );
+    let home = top.join(".ctxloom");
+    mkdirs(&home);
+    let base = process_env::EnvSnapshot::from_process();
+    let path = env().var("PATH").unwrap_or_default().to_os_string();
+    let env = std::sync::Arc::new(process_env::EnvSnapshot::from_parts(
+        base.flavor(),
+        base.cwd(),
+        base.temp_dir().to_path_buf(),
+        [
+            ("PATH".into(), path),
+            ("HOME".into(), top.as_os_str().to_os_string()),
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            ("GIT_AUTHOR_NAME".into(), "Her".into()),
+            ("GIT_AUTHOR_EMAIL".into(), "her@example.com".into()),
+            ("GIT_COMMITTER_NAME".into(), "Her".into()),
+            ("GIT_COMMITTER_EMAIL".into(), "her@example.com".into()),
+        ],
+    ));
+    let trees = GitTrees::new(fs(), env);
+    trees
+        .init_repository(
+            &home.display().to_string(),
+            Some("/*\n!/.gitignore\n!/config.yaml\n!/remotes.yaml\n"),
+        )
+        .unwrap();
+    (root, top, trees)
+}
+
+fn log_of(top: &std::path::Path, format: &str) -> String {
+    crate::fixtures::git_in(
+        &top.join(".ctxloom"),
+        top,
+        &["log", "-1", &format!("--format={format}")],
+    )
+    .trim_end()
+    .to_string()
+}
+
+// G3: one commit of ctxloom's own, unsigned, of the paths it names alone,
+// its message the subject given and no body.
+#[test]
+fn a_home_commit_is_ctxloom_s_own_of_its_paths_alone() {
+    let (_root, top, trees) = her_home();
+    let home = top.join(".ctxloom");
+    put(home.join("config.yaml"), "schema_version: 9\n");
+    put(home.join("remotes.yaml"), "schema_version: 1\n");
+    trees
+        .commit(
+            &home.display().to_string(),
+            "ctxloom: companion add (r-1)",
+            &["config.yaml"],
+        )
+        .unwrap();
+    assert_eq!(log_of(&top, "%an <%ae>"), "ctxloom <ctxloom@localhost>");
+    assert_eq!(log_of(&top, "%cn <%ce>"), "ctxloom <ctxloom@localhost>");
+    assert_eq!(log_of(&top, "%B"), "ctxloom: companion add (r-1)");
+    let changed =
+        crate::fixtures::git_in(&home, &top, &["show", "--name-only", "--format=", "HEAD"]);
+    assert_eq!(changed.trim(), "config.yaml");
+    let count = crate::fixtures::git_in(&home, &top, &["rev-list", "--count", "HEAD"]);
+    assert_eq!(count.trim(), "1");
+}
+
+// A path the write took away is committed as its removal; one neither there
+// nor tracked is left out; nothing changed commits nothing.
+#[test]
+fn a_gone_path_is_committed_as_its_removal_and_an_unknown_one_left_out() {
+    let (_root, top, trees) = her_home();
+    let home = top.join(".ctxloom");
+    let dir = home.display().to_string();
+    put(home.join("config.yaml"), "schema_version: 9\n");
+    trees
+        .commit(&dir, "ctxloom: one (r-1)", &["config.yaml", "remotes.yaml"])
+        .unwrap();
+    assert_eq!(log_of(&top, "%B"), "ctxloom: one (r-1)");
+    // Tracked and unchanged since: nothing to commit, and no failure.
+    trees
+        .commit(&dir, "ctxloom: again (r-0)", &["config.yaml"])
+        .unwrap();
+    assert_eq!(log_of(&top, "%B"), "ctxloom: one (r-1)");
+    fs().remove_file(&home.join("config.yaml")).unwrap();
+    trees
+        .commit(&dir, "ctxloom: two (r-2)", &["config.yaml"])
+        .unwrap();
+    let status =
+        crate::fixtures::git_in(&home, &top, &["show", "--name-status", "--format=", "HEAD"]);
+    assert_eq!(status.trim(), "D\tconfig.yaml");
+    // Nothing of them changed, or nothing of them known: no commit.
+    trees
+        .commit(&dir, "ctxloom: three (r-3)", &["config.yaml"])
+        .unwrap();
+    trees
+        .commit(&dir, "ctxloom: four (r-4)", &["remotes.yaml"])
+        .unwrap();
+    let count = crate::fixtures::git_in(&home, &top, &["rev-list", "--count", "HEAD"]);
+    assert_eq!(count.trim(), "2");
+}
+
+#[test]
+fn a_commit_outside_a_repository_fails() {
+    let (_root, top) = Repo::none();
+    put(top.join("config.yaml"), "x\n");
+    let trees = GitTrees::new(fs(), crate::fixtures::env_at(&top));
+    let error = trees
+        .commit(
+            &top.display().to_string(),
+            "ctxloom: x (r)",
+            &["config.yaml"],
+        )
+        .unwrap_err();
+    assert_eq!(code(&error), "library-git-failed");
+}

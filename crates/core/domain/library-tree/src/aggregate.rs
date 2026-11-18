@@ -23,9 +23,10 @@ use crate::{
 };
 use crate::{
     ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath, Evidence, External,
-    Intent, IntentSuperseded, Library, LibraryCommand, LibraryEvent, LibraryTreeRejection,
-    MovePath, PurgeSlot, PurgeTrash, RecordStepDone, RecordStepFailed, RecordTreeObserved,
-    ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeObserved, KEEP_DAYS,
+    HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand, LibraryEvent,
+    LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordHomeRepositoryMade,
+    RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile, RunSequence, Step,
+    StepApplied, TrashPath, TreeObserved, KEEP_DAYS,
 };
 
 /// The code a plan's rejection takes when the tree no longer reads and the
@@ -691,6 +692,29 @@ impl LibraryAggregate {
             step: fact.step,
             ext_err_txt: fact.ext_err_txt,
         }))
+    }
+
+    /// The home step made this tree a repository of ctxloom's own (G3):
+    /// recorded once; said again, it adds nothing.
+    #[handles_fact(RecordHomeRepositoryMade)]
+    fn home_repository_made(
+        &self,
+        fact: RecordHomeRepositoryMade,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        recorded(
+            (!self.library.home_repository_made).then_some(HomeRepositoryMade { name: fact.name }),
+        )
+    }
+
+    #[applies(HomeRepositoryMade)]
+    fn home_repository_was_made(&mut self, event: HomeRepositoryMade, page: &PageContext) {
+        self.library.apply_page(
+            &LibraryEvent::HomeRepositoryMade(event),
+            page.sequence,
+            page.meta,
+        );
     }
 
     #[applies(TreeObserved)]

@@ -13,9 +13,9 @@ use angzarr_embedded::{Any, Failure, Handled, Registry};
 use crate::{
     observation_key, tree_root, Change, ChangeStatus, CreateDirectory, DirtyPath, Evidence,
     LibraryAggregate, LibraryCommand, LibraryEvent, LibraryIgnored, LibraryTreeRejection, Motion,
-    MovePath, PlanRejected, PurgeTrash, RecordStepDone, RecordStepFailed, RecordTreeObserved,
-    ReplaceFile, Resource, RunSequence, Step, TrashPath, TreeKind, KEEP_DAYS, LIBRARY_DOMAIN,
-    TREE_UNREADABLE,
+    MovePath, PlanRejected, PurgeTrash, RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed,
+    RecordTreeObserved, ReplaceFile, Resource, RunSequence, Step, TrashPath, TreeKind, KEEP_DAYS,
+    LIBRARY_DOMAIN, TREE_UNREADABLE,
 };
 
 const TREE: &str = "projects/amber-quiet-heron/checkouts/brisk-copper-moth/library";
@@ -1292,4 +1292,24 @@ fn a_move_into_another_tree_does_not_judge_its_target_on_this_record() {
             path: BUNDLE.to_string()
         })
     );
+}
+
+// G3 (owner 2026-11-18, night): the home step's `git init` is recorded once,
+// and the state holds it; a second record of it adds nothing.
+#[test]
+fn test_a_home_repository_made_is_recorded_once_and_held() {
+    let mut tree = Tree::new();
+    assert!(!tree.library().home_repository_made);
+    let made = RecordHomeRepositoryMade {
+        name: TREE.to_string(),
+    };
+    let events = tree.fact(made.clone(), "home-repository-made:one");
+    assert!(
+        matches!(events.as_slice(), [LibraryEvent::HomeRepositoryMade(_)]),
+        "{events:?}"
+    );
+    assert!(tree.library().home_repository_made);
+    assert!(tree.library().wire().home_repository_made);
+    assert!(tree.fact(made, "home-repository-made:two").is_empty());
+    assert!(tree.library().home_repository_made);
 }

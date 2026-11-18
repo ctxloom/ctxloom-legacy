@@ -92,6 +92,10 @@ impl TreeObserver for Fake {
     fn in_motion(&self, _: &str) -> Result<Option<Motion>, TreeError> {
         unreachable!("not asked")
     }
+
+    fn commit(&self, _: &str, _: &str, _: &[&str]) -> Result<(), TreeError> {
+        unreachable!("not asked")
+    }
 }
 
 #[test]

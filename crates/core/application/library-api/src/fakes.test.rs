@@ -20,6 +20,9 @@ pub(crate) struct Git {
     pub(crate) motion: Option<Motion>,
     pub(crate) work_tree: Option<String>,
     pub(crate) ignored: Option<IgnoreRule>,
+    /// The work tree an `init_repository` makes (none: the init changes
+    /// nothing the fake answers); once made, nothing is ignored.
+    pub(crate) inits_to: Option<String>,
     pub(crate) asked: Mutex<Vec<String>>,
 }
 
@@ -60,6 +63,17 @@ impl Git {
         self.asked.lock().unwrap().clone()
     }
 
+    /// Whether an init made the work tree [`Git::inits_to`] names.
+    fn made(&self) -> Option<String> {
+        let inited = self
+            .asked
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == "init_repository");
+        self.inits_to.clone().filter(|_| inited)
+    }
+
     fn ask(&self, call: &str) {
         self.asked.lock().unwrap().push(call.to_string());
     }
@@ -92,11 +106,14 @@ pub(crate) fn changed(
 impl TreeObserver for Git {
     fn work_tree(&self, _dir: &str) -> Result<Option<String>, TreeError> {
         self.ask("work_tree");
-        Ok(self.work_tree.clone())
+        Ok(self.made().or_else(|| self.work_tree.clone()))
     }
 
     fn check_ignore(&self, _dir: &str, path: &str) -> Result<Option<IgnoreRule>, TreeError> {
         self.ask(&format!("check_ignore {path}"));
+        if self.made().is_some() {
+            return Ok(None);
+        }
         Ok(self.ignored.clone())
     }
 
@@ -151,5 +168,10 @@ impl TreeObserver for Git {
     fn in_motion(&self, _dir: &str) -> Result<Option<Motion>, TreeError> {
         self.ask("in_motion");
         Ok(self.motion)
+    }
+
+    fn commit(&self, _dir: &str, message: &str, paths: &[&str]) -> Result<(), TreeError> {
+        self.ask(&format!("commit {message} -- {}", paths.join(" ")));
+        Ok(())
     }
 }

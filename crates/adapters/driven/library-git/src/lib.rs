@@ -47,6 +47,10 @@ pub const FLOOR: (u32, u32) = (2, 25);
 /// configuration changes).
 const GLOBAL: [&str; 3] = ["--no-optional-locks", "-c", "core.longpaths=true"];
 
+/// The name and address of every commit ctxloom makes in a home repository
+/// it made (step 10b G3; QUESTIONS 6(a)).
+const IDENTITY: (&str, &str) = ("ctxloom", "ctxloom@localhost");
+
 /// What the version check found, kept for the observer's life.
 #[derive(Clone, Debug)]
 enum Floor {
@@ -363,6 +367,74 @@ impl TreeObserver for GitTrees {
             }
         }
         Ok(None)
+    }
+
+    fn commit(&self, dir: &str, message: &str, paths: &[&str]) -> Result<(), TreeError> {
+        let dir = Path::new(dir);
+        // What of `paths` git can stage: each on disk, or tracked (a gone
+        // one is staged as its removal). `ls-files` names them as `dir` sees
+        // them, as `paths` are.
+        let mut args = vec!["ls-files", "-z", "--"];
+        args.extend_from_slice(paths);
+        let listed = self.git(dir, &args, None)?;
+        let tracked: Vec<String> = listed
+            .split(|b| *b == 0)
+            .filter(|name| !name.is_empty())
+            .map(|name| String::from_utf8_lossy(name).into_owned())
+            .collect();
+        let kept: Vec<&str> = paths
+            .iter()
+            .copied()
+            .filter(|path| {
+                let under = format!("{}/", path.trim_end_matches('/'));
+                self.fs.exists(&dir.join(path)).unwrap_or(false)
+                    || tracked.iter().any(|t| t == path || t.starts_with(&under))
+            })
+            .collect();
+        if kept.is_empty() {
+            return Ok(());
+        }
+        let mut add = vec!["add", "-A", "--"];
+        add.extend_from_slice(&kept);
+        self.git(dir, &add, None)?;
+        // Nothing of them staged (each as HEAD has it): nothing to commit.
+        let mut staged = vec!["diff", "--cached", "--quiet", "--"];
+        staged.extend_from_slice(&kept);
+        match self.invoke(dir, &staged, None, &[])? {
+            Ok(_) => return Ok(()),
+            Err(git_cli::Failure::Exited { .. }) => {}
+            Err(failure) => {
+                return Err(TreeError::Failed(Box::new(failed(&staged, dir, &failure))))
+            }
+        }
+        let mut commit = vec![
+            "-c",
+            "user.name=ctxloom",
+            "-c",
+            "user.email=ctxloom@localhost",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            message,
+            "--",
+        ];
+        commit.extend_from_slice(&kept);
+        // The identity the environment would give outranks `-c user.*`, so
+        // it is ctxloom's here too (author and committer alike, G3).
+        let identity: Vec<(OsString, OsString)> = [
+            ("GIT_AUTHOR_NAME", IDENTITY.0),
+            ("GIT_AUTHOR_EMAIL", IDENTITY.1),
+            ("GIT_COMMITTER_NAME", IDENTITY.0),
+            ("GIT_COMMITTER_EMAIL", IDENTITY.1),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.into(), value.into()))
+        .collect();
+        self.invoke(dir, &commit, None, &identity)?
+            .map(|_| ())
+            .map_err(|failure| TreeError::Failed(Box::new(failed(&commit, dir, &failure))))
     }
 }
 

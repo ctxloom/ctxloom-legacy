@@ -19,6 +19,10 @@ pub enum LibraryApiNotice {
     /// A removal took `path` into the trash `slot`, where it is kept 7 days
     /// (step 10b, G12; texts.md §3).
     Trashed { path: String, slot: String },
+    /// A write to the home repository ctxloom made at `path` stands, but
+    /// its commit (G3) failed, git saying `ext_err_txt` (step 10b, owner
+    /// 2026-11-18, night: a notice, never a refusal).
+    HomeNotCommitted { path: String, ext_err_txt: String },
 }
 
 impl fmt::Display for LibraryApiNotice {
@@ -33,6 +37,7 @@ impl Diagnostic for LibraryApiNotice {
             LibraryApiNotice::TreeInMotion { .. } => code!("notice-tree-in-motion"),
             LibraryApiNotice::HomeRepositoryMade { .. } => code!("notice-home-repository-made"),
             LibraryApiNotice::Trashed { .. } => code!("notice-trashed"),
+            LibraryApiNotice::HomeNotCommitted { .. } => code!("notice-home-not-committed"),
         }
     }
 
@@ -46,6 +51,10 @@ impl Diagnostic for LibraryApiNotice {
             LibraryApiNotice::Trashed { path, slot } => vec![
                 ("path", path.as_str().into()),
                 ("slot", slot.as_str().into()),
+            ],
+            LibraryApiNotice::HomeNotCommitted { path, ext_err_txt } => vec![
+                ("path", path.as_str().into()),
+                ("ext_err_txt", ext_err_txt.as_str().into()),
             ],
         }
     }
@@ -71,6 +80,10 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(LibraryApiNotice::Trashed {
             path: ".ctxloom/content/bundles/v2/demo".to_string(),
             slot: ".ctxloom/state/trash/0195f1e2-0000-7000-8000-000000000000/".to_string(),
+        }),
+        Box::new(LibraryApiNotice::HomeNotCommitted {
+            path: "/home/alice/.ctxloom".to_string(),
+            ext_err_txt: "fatal: Unable to create '.git/index.lock': File exists.".to_string(),
         }),
     ]
 }
