@@ -925,6 +925,30 @@ fn test_an_agent_write_answers_the_agent_or_the_swaps_preview() {
         swap.agent.unwrap().name,
         "projects/amber-quiet-heron/agents/dev"
     );
+    // Step 10b, owner ruling 2026-11-18 (evening): the swap's preview asks
+    // a Confirm need, as a removal's does; an applied edit asks none.
+    let arg = |name: &str, value: &str| v1::NeedArg {
+        name: name.to_string(),
+        value: value.to_string(),
+    };
+    assert_eq!(
+        swap.needs,
+        [v1::Need {
+            id: super::CONFIRM_NEED.to_string(),
+            kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+                text: "Apply the move of agent \"dev\" from claude-code to opencode, \
+                       giving up what opencode cannot carry?"
+                    .to_string(),
+                code: String::new(),
+                args: vec![
+                    arg("agent", "dev"),
+                    arg("from", "claude-code"),
+                    arg("to", "opencode"),
+                ],
+            })),
+        }]
+    );
+    assert!(done.needs.is_empty());
 }
 
 fn config_edit(answers: Vec<v1::Answer>, validate_only: bool) -> v1::EditConfigRequest {

@@ -3407,9 +3407,15 @@ of each agent that has one (`Doctor::reporting_losses`, the library's
 loses something the old did not is the SWAP PREVIEW without `--yes`
 (`Library::agent_edit`, `AgentWritten::Preview`, `SwapPreview`; its json
 `UpdateAgentResponse`: `applied: false`, `from`, `to`, `not_carried`,
-`apply_command`, OD-40; the edit
-judged as the write would judge it first; nothing written; exit 1 under
-`--detailed-exitcode`). An edit that changes no engine, or loses nothing,
+`apply_command`, OD-40, and a Confirm need, `needs`; the edit
+judged as the write would judge it first; nothing written). At a terminal
+the need is asked (owner ruling 2026-11-18, evening, as a removal's is;
+its question `library-api::served_writes::swap_confirm`, a draft in the
+10b spec's texts.md §3b) and a yes applies it with the answer and the
+preview's etag; off a terminal or on a no it is the preview, printed
+(exit 1 under `--detailed-exitcode`); an apply refused stale
+(`library-tree-plan-stale`) is previewed again and ends in the refusal.
+An edit that changes no engine, or loses nothing,
 writes as ever, and `agent create` never previews. Only hooks are judged:
 a kind an engine does not carry in a session at all is not reported yet.
 opencode's losses are the unified events its plugin has no trigger for

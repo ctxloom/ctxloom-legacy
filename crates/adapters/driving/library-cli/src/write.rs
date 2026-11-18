@@ -140,7 +140,7 @@ removal_responses!(
 );
 
 /// The refusal of a write planned against what has changed since.
-const STALE: &str = "library-tree-plan-stale";
+pub(crate) const STALE: &str = "library-tree-plan-stale";
 
 /// A removal preview's Confirm need, if it asks one.
 fn confirm_need(needs: &[v1::Need]) -> Option<(&str, &v1::Confirm)> {
