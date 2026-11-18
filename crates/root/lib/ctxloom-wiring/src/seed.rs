@@ -52,6 +52,8 @@ pub struct Seed {
     /// Its first incarnation ended, as a run's end tells it, so the session
     /// can be resumed (`run --session`).
     pub resumable: bool,
+    /// The profile its run was planned on (step 10c U13's harness).
+    pub profile: Option<String>,
 }
 
 fn seed_error(detail: impl ToString) -> TestError {
@@ -184,6 +186,15 @@ impl Wiring {
 
     /// Plant `seed`; its stable id.
     pub fn seed_session(&self, seed: &Seed) -> Result<String, TestError> {
+        if let Some(profile) = &seed.profile {
+            // The run a seeded session's loadout is read from is recorded by
+            // the unit that reacts to a change (step 10c U13); until then a
+            // seed on a profile plants nothing.
+            return Err(seed_error(format!(
+                "a session seeded on the profile {profile} (its run planned on it, \
+                 so its loadout names its bundles) is step 10c U13's, not built yet"
+            )));
+        }
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

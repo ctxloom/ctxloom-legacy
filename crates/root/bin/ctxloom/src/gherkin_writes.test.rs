@@ -61,6 +61,8 @@ pub(super) struct State {
     /// The other process that creates a bundle while a creation is staged:
     /// the bundle, and whether it found the staging and wrote its bundle.
     other: Option<(String, JoinHandle<bool>)>,
+    /// The git remotes the scenario seeds (a pull's, step 10c U4).
+    remotes: Option<crate::tests::deps::Remotes>,
 }
 
 /// The file at `rel` in the project, by its `/`-separated steps.
@@ -119,6 +121,19 @@ fn is_write(line: &str) -> bool {
             .any(|word| WRITE_VERBS.contains(&word.as_str()))
 }
 
+/// Whether `line` is one of the setup nouns' writes (step 10c U4-U6),
+/// which name no write verb: git's status is taken before it too.
+fn is_setup_write(line: &str) -> bool {
+    let words = words(line);
+    let first = |verb: &str| words.first().map(String::as_str) == Some(verb);
+    let second = |verb: &str| words.get(1).map(String::as_str) == Some(verb);
+    (first("deps") && (second("pull") || second("upgrade")))
+        || first("init") && words.len() == 1
+        || first("manage") && words.iter().any(|w| w == "install")
+        || first("materialize")
+        || first("doctor") && words.iter().any(|w| w == "--fix")
+}
+
 /// Whether `line` takes something out of, or changes a file in, the tree:
 /// what the trash and an edit's one file are checked against.
 fn takes_or_edits(line: &str) -> bool {
@@ -149,7 +164,8 @@ pub(super) fn verb_of(line: &str) -> String {
 
 /// Whether `line` writes the library (not a session's removal).
 pub(super) fn is_library_write(line: &str) -> bool {
-    is_write(line) && words(line).first().map(String::as_str) != Some("session")
+    (is_write(line) || is_setup_write(line))
+        && words(line).first().map(String::as_str) != Some("session")
 }
 
 /// Before a command: its line, kept for [`before_run`].
@@ -163,7 +179,7 @@ pub(super) fn before_run(w: &mut World) {
     let Some(line) = w.writes.line.take() else {
         return;
     };
-    if !is_write(&line) {
+    if !is_write(&line) && !is_setup_write(&line) {
         return;
     }
     w.writes.git_before = git_status(w);
@@ -795,4 +811,200 @@ fn changed_while_open(w: &mut World, step: &Step, rel: String, back: String) {
             editor.to_str().expect("utf-8")
         ),
     );
+}
+
+// ------------------------------------------------------------------ pulls (10c U4)
+
+/// A bare repository whose `main` publishes the bundle `demo`, registered
+/// in the project (deps.feature's step, for this World's pulls).
+#[given(expr = "a git remote {string} serving a ctxloom bundle")]
+fn git_remote(w: &mut World, name: String) {
+    let env: Vec<(&str, &str)> = w
+        .common
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    w.writes
+        .remotes
+        .get_or_insert_with(crate::tests::deps::Remotes::new)
+        .git_remote(&w.common.project, &env, &name);
+}
+
+/// The CLI's one retry is off for the next command alone.
+#[given("the command's retry is turned off")]
+fn retry_off(w: &mut World) {
+    w.common
+        .next_env
+        .push((NO_RETRY.to_string(), "1".to_string()));
+}
+
+/// Each entry `lock.yaml` names, `(identity, sha, url)`, in its order: the
+/// two-space key under `bundles:` and its four-space `sha:` and `url:`.
+fn lock_pins(lock: &str) -> Vec<(String, String, String)> {
+    let mut pins: Vec<(String, String, String)> = Vec::new();
+    let mut in_bundles = false;
+    for line in lock.lines() {
+        if !line.starts_with(' ') {
+            in_bundles = line.trim_end() == "bundles:";
+            continue;
+        }
+        if !in_bundles {
+            continue;
+        }
+        if let Some(key) = line
+            .strip_prefix("  ")
+            .filter(|rest| !rest.starts_with(' '))
+        {
+            let key = key.trim_end().trim_end_matches(':');
+            pins.push((key.to_string(), String::new(), String::new()));
+        } else if let Some(pin) = pins.last_mut() {
+            let field = line.trim();
+            if let Some(sha) = field.strip_prefix("sha: ") {
+                pin.1 = sha.to_string();
+            } else if let Some(url) = field.strip_prefix("url: ") {
+                pin.2 = url.to_string();
+            }
+        }
+    }
+    pins
+}
+
+/// Every directory below `dir` named `name`.
+fn dirs_named(dir: &Path, name: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in files::children(dir) {
+        if !files::is_dir(&entry) {
+            continue;
+        }
+        if entry.file_name().is_some_and(|n| n == name) {
+            found.push(entry.clone());
+        }
+        found.extend(dirs_named(&entry, name));
+    }
+    found
+}
+
+/// For each pin of the lock, the cache holds one directory of its sha
+/// whose `.identity` names it, and it holds the remote's bundle tree at
+/// that commit, file for file; its bundle has no other commit's directory
+/// beside it. A kill a Given planted was taken, so the pull was cut short
+/// where the scenario says.
+#[then("every tree the lock pins is installed whole, once")]
+fn installed_whole(w: &mut World) {
+    let switch = w.common.project.home().join(".ctxloom/daemon").join(DIE_AT);
+    assert!(
+        !files::exists(&switch),
+        "the pull was never killed where the scenario says (the daemon never took {:?})",
+        files::read(&switch).unwrap_or_default().trim()
+    );
+    let lock = files::read(in_project(w, ".ctxloom/lock.yaml")).expect("a lock");
+    let pins = lock_pins(&lock);
+    assert!(!pins.is_empty(), "the lock pins nothing:\n{lock}");
+    let cache = in_project(w, ".ctxloom/cache/bundles");
+    for (identity, sha, url) in pins {
+        let slots: Vec<PathBuf> = dirs_named(&cache, &sha)
+            .into_iter()
+            .filter(|dir| {
+                files::read(dir.join(".identity")).is_ok_and(|said| said.trim() == identity)
+            })
+            .collect();
+        assert_eq!(slots.len(), 1, "{identity} at {sha}: {slots:?}");
+        let slot = &slots[0];
+        let bundle = identity.rsplit('/').next().expect("a bundle");
+        let repo = PathBuf::from(url.strip_prefix("file://").unwrap_or(&url));
+        let listed = w.common.project.git_output(
+            &repo,
+            &[
+                "ls-tree",
+                "-r",
+                "--name-only",
+                &sha,
+                &format!("bundles/{bundle}/"),
+            ],
+        );
+        assert!(listed.status.success(), "{identity}: git ls-tree in {url}");
+        let mut want: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .map(|path| {
+                path.trim_start_matches(&format!("bundles/{bundle}/"))
+                    .to_string()
+            })
+            .collect();
+        want.sort();
+        let have: Vec<String> = tree_of(slot)
+            .into_iter()
+            .map(|(rel, _)| rel)
+            .filter(|rel| rel != ".identity")
+            .collect();
+        assert_eq!(have, want, "{identity} at {sha} is not the remote's tree");
+        let parent = slot.parent().expect("a bundle directory");
+        let others: Vec<PathBuf> = files::children(parent)
+            .into_iter()
+            .filter(|dir| files::is_dir(dir) && dir != slot)
+            .filter(|dir| {
+                !dir.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            })
+            .collect();
+        assert!(
+            others.is_empty(),
+            "{identity}: another commit's tree beside it: {others:?}"
+        );
+    }
+}
+
+/// The lock's pins, each its identity, commit and address; a line outside
+/// `bundles:` is none of them, and a pin's other fields are passed over.
+#[test]
+fn a_locks_pins_are_its_bundles_with_their_commit_and_address() {
+    let lock = "schema_version: 3\nbundles:\n  ctxloom+git://h/r//bundles/a:\n    sha: 01ab\n    url: file:///r\n    kind: branch\n  ctxloom+git://h/r//bundles/b:\n    held: true\n    sha: 02cd\n    url: file:///s\nother:\n  x:\n    sha: 99\n";
+    assert_eq!(
+        lock_pins(lock),
+        vec![
+            (
+                "ctxloom+git://h/r//bundles/a".to_string(),
+                "01ab".to_string(),
+                "file:///r".to_string()
+            ),
+            (
+                "ctxloom+git://h/r//bundles/b".to_string(),
+                "02cd".to_string(),
+                "file:///s".to_string()
+            ),
+        ]
+    );
+    assert!(lock_pins("schema_version: 3\n").is_empty());
+}
+
+/// The setup nouns' writes (step 10c U4-U6) are writes too, though they
+/// name no write verb; their reads, and the rest, are not.
+#[test]
+fn the_setup_nouns_writes_are_writes_and_their_reads_are_not() {
+    for line in [
+        "ctxloom deps pull",
+        "ctxloom deps upgrade --yes",
+        "ctxloom init",
+        "ctxloom manage install --engine claude-code --no-pull",
+        "ctxloom manage gitignore install",
+        "ctxloom materialize --to out --yes",
+        "ctxloom doctor --fix",
+    ] {
+        assert!(is_setup_write(line), "{line}");
+        assert!(is_library_write(line), "{line}");
+    }
+    for line in [
+        "ctxloom deps check",
+        "ctxloom deps list --format json",
+        "ctxloom init prompt",
+        "ctxloom manage check",
+        "ctxloom doctor",
+        "ctxloom bundle list",
+        "ctxloom session remove amber-swift-owl --yes",
+    ] {
+        assert!(!is_setup_write(line), "{line}");
+    }
+    assert!(!is_library_write(
+        "ctxloom session remove amber-swift-owl --yes"
+    ));
 }

@@ -321,3 +321,46 @@ fn not_offered(w: &mut World, name: String) {
         "{said}"
     );
 }
+
+#[then(expr = "init's terminal output says {string}")]
+fn init_says(w: &mut World, text: String) {
+    let said = w.said();
+    assert!(
+        said.contains(&text),
+        "{text:?} is not in what init said:\n{said}"
+    );
+}
+
+/// The lines of what init said at the terminal that ask something: those
+/// holding a question mark.
+fn questions(said: &str) -> Vec<&str> {
+    said.lines().filter(|line| line.contains('?')).collect()
+}
+
+/// No question init asked at the stood-in terminal names git (G1: `git
+/// init` is said, never asked); init asked something, so the check bites.
+#[then("init asked her nothing about git")]
+fn asked_nothing_of_git(w: &mut World) {
+    let said = w.said();
+    let asked = questions(&said);
+    assert!(!asked.is_empty(), "init asked nothing at all:\n{said}");
+    let of_git: Vec<&&str> = asked
+        .iter()
+        .filter(|line| line.to_lowercase().contains("git"))
+        .collect();
+    assert!(of_git.is_empty(), "init asked about git: {of_git:?}");
+}
+
+/// A question is a line with a question mark; a notice is not one.
+#[test]
+fn a_question_is_a_line_that_asks() {
+    let said = "ctxloom will make this directory a git repository (git init)\nWhere should outputs go? [ctxloom/]\nloads always? (on-demand|always)\n";
+    assert_eq!(
+        questions(said),
+        vec![
+            "Where should outputs go? [ctxloom/]",
+            "loads always? (on-demand|always)"
+        ]
+    );
+    assert!(questions("no question here\n").is_empty());
+}

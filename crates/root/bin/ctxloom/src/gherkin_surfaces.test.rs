@@ -65,6 +65,9 @@ struct World {
     onboarding: onboarding::State,
     /// The git remotes the scenario seeds (search, deps), made on first use.
     remotes: Option<super::deps::Remotes>,
+    /// The daemon a step started for the home (deps.feature's U4 rule),
+    /// kept serving to the scenario's end.
+    daemon: Option<std::process::Child>,
 }
 
 impl fmt::Debug for World {
@@ -102,6 +105,7 @@ impl World {
             command: String::new(),
             onboarding: onboarding::State::default(),
             remotes: None,
+            daemon: None,
         }
     }
 
@@ -135,6 +139,41 @@ fn git_remote(w: &mut World, name: String) {
     w.remotes
         .get_or_insert_with(super::deps::Remotes::new)
         .git_remote(&w.common.project, &env, &name);
+}
+
+/// A daemon serving for the scenario's home before the next command (step
+/// 10 U4): `ctxloom daemon serve`, started with the scenario's environment
+/// (so its `PATH` is never a later command's own), awaited until `daemon
+/// status` names it. The project ends it with the scenario.
+#[given("a ctxloom daemon is serving for this home")]
+fn daemon_serving(w: &mut World) {
+    let env: Vec<(&str, &str)> = w
+        .common
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    w.daemon = Some(
+        w.common
+            .project
+            .start_with(&env, &["daemon", "serve", "--idle-seconds", "300"]),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let status = w
+            .common
+            .project
+            .run_with(&env, &["daemon", "status", "--format", "json"]);
+        assert_eq!(status.code, 0, "{}", status.said());
+        if status.json().get("pid").is_some() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the daemon never served"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 /// Go's `the remote "<name>" advances its bundle`: version two, its fragment

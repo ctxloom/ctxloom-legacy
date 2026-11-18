@@ -16,6 +16,8 @@ pub(crate) mod heard;
 mod places;
 mod serve;
 pub(crate) mod shutdown;
+#[cfg(feature = "test-support")]
+pub(crate) mod watch;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};

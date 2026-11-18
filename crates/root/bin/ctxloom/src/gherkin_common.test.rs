@@ -37,6 +37,9 @@ pub(crate) struct Common {
     /// (`I note ... as "<label>"`): `{<label>}` in a later command line or
     /// in `the output contains` is the value (a minted name, never chosen).
     pub(crate) notes: Vec<(String, String)>,
+    /// What the next step's commands alone run with, over [`Common::env`]
+    /// (`... of the next command alone`): taken by [`Common::run_lines_at`].
+    pub(crate) next_env: Vec<(String, String)>,
 }
 
 impl Common {
@@ -48,6 +51,7 @@ impl Common {
             line: String::new(),
             aliases: Vec::new(),
             notes: Vec::new(),
+            next_env: Vec::new(),
         }
     }
 
@@ -84,6 +88,7 @@ impl Common {
         let dir = self.project.dir().display().to_string();
         let quoted = serde_json::to_string(&dir).expect("a string is JSON");
         let in_json = &quoted[1..quoted.len() - 1];
+        let next_env = std::mem::take(&mut self.next_env);
         for line in lines.lines().map(str::trim).filter(|l| !l.is_empty()) {
             let line = line.replace("$PROJECT_DIR", &dir);
             let words: Vec<String> = split(&line)
@@ -100,6 +105,8 @@ impl Common {
             let env: Vec<(&str, &str)> = self
                 .env
                 .iter()
+                .filter(|(k, _)| !next_env.iter().any(|(n, _)| n == k))
+                .chain(next_env.iter())
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();
             let ran = if let Some(cwd) = cwd {
@@ -125,6 +132,55 @@ impl Common {
 
     pub(crate) fn json(&self) -> Value {
         super::parse_one(&self.ran().stdout)
+    }
+
+    /// The directory of the recording git ([`Common::record_git_calls_next`]),
+    /// beside the scenario's home.
+    fn recording_git_dir(&self) -> PathBuf {
+        self.project.home().join("..").join("recording-git")
+    }
+
+    /// Put a `git` that logs each call, then execs the real one, first on
+    /// the `PATH` of the next step's commands alone (step 10 U4: the daemon
+    /// runs git in the asking command's environment). Its log is one line
+    /// per call, `<parent pid> <args>`: the parent is the process that ran
+    /// it (the shim execs `sh`, so `$PPID` is the caller).
+    pub(crate) fn record_git_calls_next(&mut self) {
+        let path = self
+            .env
+            .iter()
+            .find(|(name, _)| name == "PATH")
+            .map(|(_, value)| std::ffi::OsString::from(value))
+            .or_else(|| super::host_var("PATH"))
+            .unwrap_or_default();
+        let dirs = files::search_path(&path);
+        let real = dirs
+            .iter()
+            .map(|dir| dir.join("git"))
+            .find(|git| files::exists(git))
+            .expect("a git on the PATH");
+        let dir = self.recording_git_dir();
+        let log = dir.join("calls.log");
+        files::put_program(
+            dir.join("git"),
+            &format!(
+                "printf '%s %s\\n' \"$PPID\" \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+                log.display(),
+                real.display()
+            ),
+        );
+        let joined = std::env::join_paths(std::iter::once(dir).chain(dirs)).expect("a PATH");
+        self.next_env.retain(|(name, _)| name != "PATH");
+        self.next_env.push((
+            "PATH".to_string(),
+            joined.to_str().expect("utf-8").to_string(),
+        ));
+    }
+
+    /// The recording git's calls, each `(parent pid, args)`; none when it
+    /// was never run.
+    pub(crate) fn recorded_git_calls(&self) -> Vec<(u32, String)> {
+        git_calls(&files::read(self.recording_git_dir().join("calls.log")).unwrap_or_default())
     }
 
     pub(crate) fn set_env(&mut self, name: &str, value: String) {
@@ -351,6 +407,17 @@ pub(crate) fn doc(step: &Step) -> String {
         .to_string()
 }
 
+/// The recording git's log, `<parent pid> <args>` a line, as `(pid, args)`;
+/// a line whose first word is no pid is not a call.
+pub(crate) fn git_calls(log: &str) -> Vec<(u32, String)> {
+    log.lines()
+        .filter_map(|line| {
+            let (pid, args) = line.split_once(' ').unwrap_or((line, ""));
+            pid.parse().ok().map(|pid| (pid, args.to_string()))
+        })
+        .collect()
+}
+
 /// Define the steps every World has, in a module of its own, against the
 /// `World` in scope (which implements [`CommonWorld`]).
 macro_rules! common_steps {
@@ -530,6 +597,36 @@ macro_rules! common_steps {
             #[then(expr = "the file {string} contains {string}")]
             fn file_contains(w: &mut World, rel: String, text: String) {
                 w.common().project.file_contains(&rel, &text);
+            }
+
+            #[given("a git that records each call is first on the PATH of the next command alone")]
+            fn recording_git(w: &mut World) {
+                w.common_mut().record_git_calls_next();
+            }
+
+            /// The serving daemon ran the recording git: a call whose
+            /// parent is the daemon `daemon status` names, never the command
+            /// that asked (whose PATH alone held it).
+            #[then("the recording git was called for the pull")]
+            fn recorded_for_pull(w: &mut World) {
+                let common = w.common();
+                let calls = common.recorded_git_calls();
+                let env: Vec<(&str, &str)> = common
+                    .env
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                let status = common
+                    .project
+                    .run_with(&env, &["daemon", "status", "--format", "json"]);
+                assert_eq!(status.code, 0, "{}", status.said());
+                let pid = status.json()["pid"].as_u64();
+                assert!(
+                    calls
+                        .iter()
+                        .any(|(parent, _)| Some(u64::from(*parent)) == pid),
+                    "no git call of the serving daemon ({pid:?}): {calls:?}"
+                );
             }
 
             #[then(expr = "the file {string} contains {string} exactly {int} times")]
@@ -1061,4 +1158,19 @@ fn spaced_columns_are_joined_in_the_header_and_wherever_the_outline_names_them()
     use cucumber::feature::Ext as _;
     let expanded = feature.expand_examples().expect("it expands");
     assert_eq!(expanded.rules[0].scenarios[0].name, "o a b");
+}
+
+/// The recording git's log: each line its caller's pid, then the call's
+/// words; a call with no words is the pid alone, and a line that starts
+/// with no pid is not a call.
+#[test]
+fn the_recording_gits_log_reads_as_each_call_and_its_caller() {
+    assert_eq!(
+        git_calls("41 fetch --quiet origin\n42\nnot-a-pid clone\n\n7 ls-remote"),
+        vec![
+            (41, "fetch --quiet origin".to_string()),
+            (42, String::new()),
+            (7, "ls-remote".to_string()),
+        ]
+    );
 }

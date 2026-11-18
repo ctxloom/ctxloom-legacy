@@ -149,6 +149,38 @@ fn home_line_added(w: &mut World, rel: String, line: String) {
 
 // ------------------------------------------------------------------ the home's git
 
+/// A line added to a project file, by hand (step 10c U13: a config change
+/// reaches every live session).
+#[when(expr = "the file {string} has the line {string} added by hand")]
+fn line_added(w: &mut World, rel: String, line: String) {
+    let path = in_project(w, &rel);
+    let mut text = files::read(&path).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&line);
+    text.push('\n');
+    files::put(&path, &text);
+}
+
+/// The home's `.ctxloom` is in no git work tree (the harness's home is
+/// none's): asserted, so a host whose temporary directory is in one fails
+/// the step rather than the scenario's assertion.
+#[given(expr = "the home's {string} is in no git repository yet")]
+fn home_in_no_repository(w: &mut World, rel: String) {
+    let dir = in_home(w, &rel);
+    files::mkdirs(&dir);
+    let inside = w
+        .common
+        .project
+        .git_output(&dir, &["rev-parse", "--is-inside-work-tree"]);
+    assert!(
+        !inside.status.success(),
+        "{} is in a git work tree already",
+        dir.display()
+    );
+}
+
 #[given("the home directory is a git repository of its own")]
 fn home_is_a_repository(w: &mut World) {
     let home = w.common.project.home().to_path_buf();

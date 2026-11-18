@@ -225,3 +225,27 @@ fn a_seeded_sessions_output_dir_is_under_the_projects_output_directory() {
     let expected = wiring.project_dir().join("ctxloom").join(HARP);
     assert_eq!(views[0].record.output_dir, expected.display().to_string());
 }
+
+// Step 10c U13's harness: a session seeded on a profile is one whose run
+// was planned on it, so its loadout names that profile's bundles. Until the
+// unit that records a seeded run's loadout builds it, such a seed is
+// refused, naming it, and plants nothing.
+#[test]
+fn a_seed_on_a_profile_is_refused_until_its_loadout_is_recorded() {
+    let world = World::new("seed-profile");
+    let wiring = world.wiring();
+    let on_profile = Seed {
+        profile: Some("dev".to_string()),
+        ..seed()
+    };
+    match wiring.seed_session(&on_profile) {
+        Err(TestError::Seed { detail }) => {
+            assert!(detail.contains("dev") && detail.contains("U13"), "{detail}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut sessions = wiring.sessions();
+    assert!(block(sessions.list(ListQuery::default()))
+        .unwrap()
+        .is_empty());
+}

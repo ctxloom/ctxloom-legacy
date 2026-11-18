@@ -65,6 +65,10 @@ pub(super) struct State {
     registered: Option<(String, PathBuf)>,
     /// What an engine's call of a ctxloom tool was answered.
     tool: Option<Value>,
+    /// Each elicitation the server asked of the last tool call (step 10c
+    /// U11), and whether the engine accepts the next ones.
+    elicited: Vec<Value>,
+    declines: bool,
     /// The daemon a tool's call found before it was killed.
     before_kill: Option<run_ports::Discovery>,
     /// A second project's directory (U5: two sessions, two projects).
@@ -1650,6 +1654,10 @@ fn die_at(when: &str) -> Option<&'static str> {
         // A sequence's (T28): after its first step, the trash, is applied.
         "after the session's directory moved to trash, before the purge"
         | "after the old bundle moved to trash, before the new one moved in" => "trashed",
+        // A pull's (step 10c U4, O6.3): its sequence's trees, then its lock.
+        "after the first tree is installed, before the second" => "tree-installed",
+        "after every tree is installed, before the lock is written" => "trees-installed",
+        "after the lock is written, before the pull is answered" => "done",
         _ => return None,
     })
 }
@@ -1694,7 +1702,15 @@ fn old_and_new_notes(w: &mut World) {
 }
 
 #[given(regex = r"^the daemon will be killed outright (.+)$")]
-fn killed_at(w: &mut World, when: String) {
+fn killed_at(w: &mut World, step: &cucumber::gherkin::Step, when: String) {
+    if let Some(rel) = superseded_file(&when) {
+        // Killed once its intent is recorded, and the file changed by hand
+        // before the CLI's retry reaches a new daemon (step 10c U13).
+        w.daemon_spec.before_kill = discovery_if_serving(w);
+        files::put(daemon_dir(w).join(DIE_AT), "intended");
+        edit_before_retry(w, &rel, &crate::tests::gherkin_common::doc(step));
+        return;
+    }
     if let Some(step) = die_at(&when) {
         // Killed already (a scenario that planted what its daemon left).
         if w.daemon_spec.killed {
@@ -1721,6 +1737,40 @@ fn killed_at(w: &mut World, when: String) {
     // none.
     w.daemon_spec.before_kill = discovery_if_serving(w);
     files::put(daemon_dir(w).join(DIE_AFTER_APPLY), "once");
+}
+
+/// The file a kill's `when` says is changed by hand before the retry
+/// (`after the write's intent is recorded, and the file "<rel>" is changed
+/// by hand before the retry, to:`), project-relative; none for any other.
+fn superseded_file(when: &str) -> Option<String> {
+    let rest = when.strip_prefix("after the write's intent is recorded, and the file \"")?;
+    let (rel, tail) = rest.split_once('"')?;
+    (tail == " is changed by hand before the retry, to:").then(|| rel.to_string())
+}
+
+/// The test-support program the CLI runs before its one retry (step 10c
+/// U13's harness), so a test stands for a person between the daemon's loss
+/// and the write sent again: the race forced, never waited for.
+const BEFORE_RETRY: &str = "CTXLOOM_TEST_BEFORE_RETRY";
+
+/// The CLI's retry runs a program that writes `text` over `rel` first.
+fn edit_before_retry(w: &mut World, rel: &str, text: &str) {
+    let dir = w.common.project.home().join("..").join("before-retry");
+    let body = dir.join("hand-edit.txt");
+    files::put(&body, format!("{text}\n"));
+    let target = rel
+        .split('/')
+        .fold(w.common.project.dir().to_path_buf(), |path, part| {
+            path.join(part)
+        });
+    files::put_program(
+        dir.join("edit"),
+        &format!("cp '{}' '{}'\n", body.display(), target.display()),
+    );
+    w.common.set_env(
+        BEFORE_RETRY,
+        dir.join("edit").to_str().expect("utf-8").to_string(),
+    );
 }
 
 /// The discovery file of the daemon serving now, when one has written one
@@ -1763,12 +1813,61 @@ fn child_closed(w: &mut World, child: String) {
 
 #[given(expr = "a child {string} of {string} that is open and idle")]
 fn child_of_idle(w: &mut World, child: String, owner: String) {
+    if (child.as_str(), owner.as_str()) == ("olive-quiet-finch", "brisk-copper-moth") {
+        grandchild_idle(w);
+        return;
+    }
     assert_eq!(
         (child.as_str(), owner.as_str()),
         ("brisk-copper-moth", "amber-quiet-heron"),
         "the child and owner the harness hosts"
     );
     idle_child(w);
+}
+
+/// The hosted claude child, its agent planned on `profile` (step 10c U13:
+/// its loadout names that profile's bundles), open and idle; the session
+/// a later hook fires in.
+#[given(expr = "a claude child {string} of {string} that is open and idle on the profile {string}")]
+fn claude_child_on(w: &mut World, child: String, owner: String, profile: String) {
+    assert_eq!(
+        (child.as_str(), owner.as_str()),
+        ("brisk-copper-moth", "amber-quiet-heron"),
+        "the child and owner the harness hosts"
+    );
+    w.daemon_spec
+        .project_says
+        .push(format!("agents.default.profiles: [{profile}]"));
+    idle_child(w);
+    w.seeded_harps.push(child);
+}
+
+/// The hosted child's own child (step 10c D16): launched by the child,
+/// `olive-quiet-finch`, its first turn ended and told to it.
+fn grandchild_idle(w: &mut World) {
+    let mut env = env_of(w);
+    env.push(("ANTHROPIC_API_KEY".to_string(), "a-key".to_string())); // gitleaks:allow
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let launched = w.common.project.run_with(
+        &env,
+        &[
+            "session",
+            "launch",
+            "brisk-copper-moth",
+            "--name",
+            "olive-quiet-finch",
+            "a task",
+        ],
+    );
+    assert_eq!(launched.code, 0, "{}", launched.said());
+    // Its first turn's end is its run's record (its owner, itself a
+    // hosted child, is told it through its own conversation).
+    until(w, "the grandchild's first turn to end", DAEMON_WAIT, |w| {
+        run_events(w, "olive-quiet-finch")
+            .iter()
+            .any(|kind| kind == "TurnCompletedRecorded")
+            .then_some(())
+    });
 }
 
 /// A child no session holds open: one nothing launched.
@@ -1986,6 +2085,50 @@ fn library_hook_fires(w: &mut World, hook: String, skill: String) {
         "tool_response": "ok",
     });
     fire(w, "PostToolUse", &payload.to_string());
+}
+
+/// A hook after a plain tool's call (step 10c U13: a tool's result is an
+/// event a re-assembly may ride).
+#[when(regex = r#"^the session's assistant fires its PostToolUse, after the tool "([^"]+)" hook$"#)]
+fn tool_hook_fires(w: &mut World, tool: String) {
+    let payload = json!({
+        "session_id": "9d764b45-a56a-48d7-ac9d-c2a16c5669f1",
+        "hook_event_name": "PostToolUse",
+        "cwd": w.common.project.dir().to_str().expect("utf-8"),
+        "tool_name": tool,
+        "tool_input": {"file_path": "README.md"},
+        "tool_response": "ok",
+    });
+    fire(w, "PostToolUse", &payload.to_string());
+}
+
+/// The `additionalContext` of a hook's answer, as claude reads it
+/// (`hookSpecificOutput.additionalContext` of its stdout's JSON); none
+/// when the answer is no JSON, or has none.
+fn additional_context(stdout: &str) -> Option<String> {
+    let answer: Value = serde_json::from_str(stdout.trim()).ok()?;
+    answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .map(str::to_string)
+}
+
+#[then(expr = "the hook's answer to the engine carries additionalContext containing {string}")]
+fn context_carried(w: &mut World, text: String) {
+    let fired = fired(w);
+    let context = additional_context(&fired.ran.stdout)
+        .unwrap_or_else(|| panic!("no additionalContext: {}", fired.ran.said()));
+    assert!(context.contains(&text), "{text:?} is not in {context:?}");
+}
+
+#[then("the hook's answer to the engine carries no additionalContext")]
+fn no_context(w: &mut World) {
+    let fired = fired(w);
+    assert_eq!(
+        additional_context(&fired.ran.stdout),
+        None,
+        "{}",
+        fired.ran.said()
+    );
 }
 
 #[then("the hook exits 0, within its bound")]
@@ -5009,11 +5152,69 @@ fn engine_calls(w: &mut World, owner: &str, tool: &str, arguments: Value) {
     let me = session_name(w, owner);
     let env = env_of(w);
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let mut mcp = crate::tests::mcp_serve::Mcp::for_session(&w.common.project, &me, &env);
-    let answered = mcp.call(tool, arguments);
+    // A client that can elicit (step 10c U11), so a tool that asks first is
+    // seen asking, and one that does not is seen not to.
+    let mut mcp = crate::tests::mcp_serve::Mcp::for_session_eliciting(&w.common.project, &me, &env);
+    let (answered, elicited) = mcp.call_eliciting(tool, arguments, !w.daemon_spec.declines);
     let (code, err) = mcp.finish();
     assert_eq!(code, 0, "the server failed: {err}");
     w.daemon_spec.tool = Some(answered);
+    w.daemon_spec.elicited = elicited;
+}
+
+#[when(
+    regex = r#"^the engine of "([^"]+)" calls "child_close" for "([^"]+)", and answers its elicitation (yes|no)$"#
+)]
+fn close_answering(w: &mut World, owner: String, child: String, answer: String) {
+    w.daemon_spec.declines = answer == "no";
+    engine_calls(w, &owner, "child_close", json!({"child": child}));
+}
+
+#[then(regex = r#"^the elicitation asked to confirm closing "([^"]+)" and, with it, "([^"]+)"$"#)]
+fn asked_cascade(w: &mut World, child: String, grandchild: String) {
+    let asked = &w.daemon_spec.elicited;
+    assert_eq!(asked.len(), 1, "one question: {asked:?}");
+    let message = asked[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(&child) && message.contains(&grandchild),
+        "{message:?} names {child} and {grandchild}"
+    );
+}
+
+#[then("no elicitation was sent")]
+fn none_elicited(w: &mut World) {
+    let asked = &w.daemon_spec.elicited;
+    assert!(asked.is_empty(), "the server asked: {asked:?}");
+}
+
+/// Whether `harp` is closed, as `session show` says.
+fn is_closed(w: &World, harp: &str) -> bool {
+    shown(w, harp)["closed"] == Value::Bool(true)
+}
+
+#[then(regex = r#"^"([^"]+)" is closed, and the tool said so$"#)]
+fn closed_said(w: &mut World, harp: String) {
+    tool_session(w);
+    assert!(is_closed(w, &harp), "{harp} is closed");
+}
+
+#[then(regex = r#"^"([^"]+)" and "([^"]+)" are closed, and the tool said so$"#)]
+fn both_closed_said(w: &mut World, one: String, two: String) {
+    tool_session(w);
+    assert!(is_closed(w, &one), "{one} is closed");
+    assert!(is_closed(w, &two), "{two} is closed");
+}
+
+#[then("neither is closed, and the tool answered that the close was declined")]
+fn neither_closed(w: &mut World) {
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    assert!(
+        answered.to_string().contains("was not closed"),
+        "the tool said the close was declined: {answered}"
+    );
+    for harp in ["brisk-copper-moth", "olive-quiet-finch"] {
+        assert!(!is_closed(w, harp), "{harp} is not closed");
+    }
 }
 
 /// The events of the session `harp`'s stream, as `ctxloom test
@@ -6738,4 +6939,46 @@ fn log_says_lost_without_hold(w: &mut World) {
         "{log}"
     );
     assert_eq!(holds(w).len(), 1, "the hold is left: {:?}", holds(w));
+}
+
+/// A hook's answer carries additionalContext only as claude reads it: the
+/// string under `hookSpecificOutput`; text that is no JSON, or JSON without
+/// it, carries none.
+#[test]
+fn a_hooks_additional_context_is_read_as_claude_reads_it() {
+    let answer = r#"{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"ctxloom: your context changed"}}"#;
+    assert_eq!(
+        additional_context(&format!("{answer}\n")).as_deref(),
+        Some("ctxloom: your context changed")
+    );
+    assert_eq!(
+        additional_context(r#"{"additionalContext":"top level"}"#),
+        None
+    );
+    assert_eq!(additional_context(r#"{"hookSpecificOutput":{}}"#), None);
+    assert_eq!(additional_context("ctxloom: not json"), None);
+    assert_eq!(additional_context(""), None);
+}
+
+/// Only the superseded-write kill names a file: its path, from the step's
+/// own words; every other kill, or one worded otherwise, names none.
+#[test]
+fn a_kill_that_changes_a_file_before_the_retry_names_the_file() {
+    assert_eq!(
+        superseded_file(
+            "after the write's intent is recorded, and the file \".ctxloom/a.md\" is changed by hand before the retry, to:"
+        )
+        .as_deref(),
+        Some(".ctxloom/a.md")
+    );
+    assert_eq!(
+        superseded_file("after the write's intent is recorded, before it is staged"),
+        None
+    );
+    assert_eq!(
+        superseded_file(
+            "after the write's intent is recorded, and the file \".ctxloom/a.md\" is changed by hand, to:"
+        ),
+        None
+    );
 }
