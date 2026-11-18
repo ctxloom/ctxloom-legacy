@@ -386,7 +386,7 @@ impl<D: Daemons> Caller<D> {
     /// answered with the target as the index projected it (as `GetSession`
     /// reads it when no projection came back), and whether it was applied
     /// now.
-    async fn write<M: angzarr_embedded::markup::DomainMessage>(
+    pub(crate) async fn write<M: angzarr_embedded::markup::DomainMessage>(
         &self,
         api: &D::Api,
         target: &SessionName,

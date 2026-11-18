@@ -55,6 +55,7 @@
 
 mod approvals;
 mod caller;
+mod caller_wake;
 mod clean;
 mod client;
 mod destroy;
@@ -73,6 +74,7 @@ mod shown;
 mod start_up;
 mod terminal;
 mod trust;
+mod waker;
 mod watch;
 
 pub use approvals::{
@@ -95,6 +97,7 @@ pub use library_reads::{Libraries, LibraryRequest};
 pub use refusal::{
     library_refusal, rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection,
 };
+pub use run_ports::{wake_line, wake_nonce, WakePost};
 /// The infrastructure tree's one root (owner, 2026-11-14), for the daemon's
 /// service, which answers an error that is no refusal through it.
 pub use run_ports::{Infrastructure, DIAGNOSED};
@@ -105,11 +108,15 @@ pub use session_client::{
 };
 pub use start_up::StartUpIncomplete;
 pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
+pub use waker::{WakeAct, Waker, DISARM_AFTER};
 pub use watch::SessionStream;
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).
-pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Read, Synced, Unreached, Until};
+pub use daemon_ports::{
+    Called, CommandBook, DaemonApi, Daemons, NextSignal, Read, SessionSignals, Synced, Unreached,
+    Until,
+};
 
 /// This crate's en-US messages, its name first.
 pub const EN_US: (&str, &str) = (

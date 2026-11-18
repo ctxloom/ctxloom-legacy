@@ -3150,6 +3150,7 @@ dependencies = [
  "daemon-proto",
  "mutants",
  "prost",
+ "prost-types",
  "rmcp",
  "serde",
  "serde_json",

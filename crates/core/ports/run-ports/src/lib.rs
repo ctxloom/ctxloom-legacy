@@ -33,6 +33,7 @@ mod sink;
 mod tls;
 mod token;
 mod version;
+mod wake;
 
 pub use argv::{check_command_line, CommandTooLong, Measure, MAX_ARG_STRLEN, WINDOWS_COMMAND_LINE};
 pub use bind::{bind_for, BindPlan, BindRefusal, ContainerRuntime, PlatformFacts, Probe, Runtime};
@@ -84,6 +85,7 @@ pub use sink::{Delivery, FactSink, NO_SUCH_SESSION};
 pub use tls::{CertError, CertMint, CertNames, HookCertificate, PublicCert};
 pub use token::{Token, TokenError, TokenHash, TokenSource, EN_US};
 pub use version::newer;
+pub use wake::{wake_line, wake_nonce, WakePost, NONCE_DIGITS};
 
 /// One value of every error, for the catalog test.
 #[cfg(any(test, feature = "test-support"))]
