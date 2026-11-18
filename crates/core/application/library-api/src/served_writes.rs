@@ -57,6 +57,8 @@ macro_rules! served_writes {
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse, "config set";
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse, "skill create";
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse, "mcp server set";
+            create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
+            update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse, "agent edit";
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse, "bundle remove";
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse, "fragment remove";
             delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse, "command remove";
@@ -341,6 +343,200 @@ pub mod update_bundle {
             notices: wrote.notices,
             ..v1::UpdateBundleResponse::default()
         }
+    }
+}
+
+/// What an agent write came to (`agent create|edit`): the binding written,
+/// or an engine swap's preview, and the agent a bare run binds (OQ-7), so
+/// the answer says whether this one is it.
+#[derive(Clone, Debug)]
+pub struct AgentWrote {
+    pub written: library_application::AgentWritten,
+    pub default: String,
+}
+
+/// The agent a request's resource name names (its last segment).
+fn agent_in(name: &str) -> String {
+    names::named_under(parent_of(name), "agents", name).unwrap_or_else(|| name.to_string())
+}
+
+/// An engine as the binding says it: its id, when given as the resource
+/// name a read answers (`.../engines/{e}`).
+fn engine_word(engine: &str) -> String {
+    engine
+        .rsplit_once("/engines/")
+        .map_or(engine, |(_, id)| id)
+        .to_string()
+}
+
+/// The agent's fields as a write's request: each one `given` says is given
+/// (a create's are its non-empty fields, an edit's those its mask names).
+fn agent_request(
+    agent: &v1::Agent,
+    home: bool,
+    given: impl Fn(&str, bool) -> bool,
+) -> library_application::AgentRequest {
+    let text = |path: &str, value: &str| given(path, value.is_empty()).then(|| value.to_string());
+    let pairs = |map: &std::collections::BTreeMap<String, String>| {
+        map.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>()
+    };
+    library_application::AgentRequest {
+        engine: given("engine", agent.engine.is_empty()).then(|| engine_word(&agent.engine)),
+        model: text("model", &agent.model),
+        effort: text("effort", &agent.effort),
+        profiles: given("profiles", agent.profiles.is_empty()).then(|| agent.profiles.clone()),
+        runtime: text("runtime", &agent.runtime),
+        surfaces: given("surfaces", agent.surfaces.is_empty()).then(|| pairs(&agent.surfaces)),
+        roots: given("roots", agent.roots.is_empty()).then(|| pairs(&agent.roots)),
+        env: given("env", agent.env.is_empty()).then(|| agent.env.clone()),
+        session_home: text("session_home", &agent.session_home),
+        home,
+    }
+}
+
+/// The agent a bare run binds, empty when none (OQ-7).
+fn default_agent(library: &Library, flags: &Flags) -> String {
+    match library.agent_default(flags, None).result {
+        Ok(library_application::DefaultAgent::Current(name)) => name,
+        _ => String::new(),
+    }
+}
+
+/// An agent write's outcome, with the default agent beside it.
+fn agent_wrote(
+    library: &Library,
+    flags: &Flags,
+    outcome: Outcome<library_application::AgentWritten>,
+) -> Outcome<AgentWrote> {
+    Outcome {
+        result: outcome.result.map(|written| AgentWrote {
+            written,
+            default: default_agent(library, flags),
+        }),
+        notices: outcome.notices,
+    }
+}
+
+/// An agent written, as its response's `agent`: the binding as the config
+/// holds it now, or (a swap's preview, a retry) named alone.
+fn agent_answered(
+    asked: &str,
+    wrote: &Wrote<AgentWrote>,
+) -> (v1::Agent, Option<library_application::SwapPreview>) {
+    let named = v1::Agent {
+        name: asked.to_string(),
+        ..<v1::Agent as Default>::default()
+    };
+    match &wrote.answer {
+        Some(AgentWrote {
+            written: library_application::AgentWritten::Done(row),
+            default,
+        }) => (crate::resources::agent(&wrote.parent, row, default), None),
+        Some(AgentWrote {
+            written: library_application::AgentWritten::Preview(preview),
+            ..
+        }) => (named, Some(preview.clone())),
+        None => (named, None),
+    }
+}
+
+/// `agent create <name> [flags] [--home]`: `CreateAgent`, the binding its
+/// fields give (a field left empty is not given), one config layer
+/// written; a name taken is refused (never an upsert).
+pub mod create_agent {
+    use super::*;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::CreateAgentRequest,
+        _apply: bool,
+    ) -> Outcome<AgentWrote> {
+        let agent = request.agent.clone().unwrap_or_default();
+        let asked = agent_request(&agent, request.home, |_, empty| !empty);
+        let outcome = library.agent_write(flags, &request.agent_id, &asked, false);
+        let outcome = Outcome {
+            result: outcome.result.map(library_application::AgentWritten::Done),
+            notices: outcome.notices,
+        };
+        agent_wrote(library, flags, outcome)
+    }
+
+    pub fn respond(
+        request: &v1::CreateAgentRequest,
+        wrote: Wrote<AgentWrote>,
+    ) -> v1::CreateAgentResponse {
+        let asked = crate::resources::agent_name(&request.parent, &request.agent_id);
+        let (agent, _) = agent_answered(&asked, &wrote);
+        v1::CreateAgentResponse {
+            agent: Some(agent),
+            path: wrote.at.clone(),
+            applied: Some(wrote.applied),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::CreateAgentResponse::default()
+        }
+    }
+}
+
+/// `agent edit <name> [flags] [--home] [--yes]`: `UpdateAgent`, the fields
+/// its mask names (one given empty is cleared), one config layer written.
+/// An engine swap whose new engine cannot carry what the old one did is,
+/// on a preview, the swap's preview (from, to, what is given up and the
+/// command that applies it), planning nothing; an apply is the `--yes`.
+pub mod update_agent {
+    use super::*;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::UpdateAgentRequest,
+        apply: bool,
+    ) -> Outcome<AgentWrote> {
+        let agent = request.agent.clone().unwrap_or_default();
+        let mask = request
+            .update_mask
+            .as_ref()
+            .map_or(&[][..], |mask| mask.paths.as_slice());
+        let asked = agent_request(&agent, request.home, |path, _| {
+            mask.iter().any(|p| p == path)
+        });
+        let outcome = library.agent_edit(flags, &agent_in(&agent.name), &asked, apply);
+        agent_wrote(library, flags, outcome)
+    }
+
+    pub fn respond(
+        request: &v1::UpdateAgentRequest,
+        wrote: Wrote<AgentWrote>,
+    ) -> v1::UpdateAgentResponse {
+        let asked = request
+            .agent
+            .as_ref()
+            .map(|agent| agent.name.clone())
+            .unwrap_or_default();
+        let (agent, preview) = agent_answered(&asked, &wrote);
+        let mut answered = v1::UpdateAgentResponse {
+            agent: Some(agent),
+            path: wrote.at.clone(),
+            applied: Some(wrote.applied),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::UpdateAgentResponse::default()
+        };
+        if let Some(preview) = preview {
+            answered.applied = Some(false);
+            answered.apply_command = preview.apply;
+            answered.from = preview.from;
+            answered.to = preview.to;
+            answered.not_carried = preview
+                .not_carried
+                .iter()
+                .map(crate::resources::not_carried)
+                .collect();
+        }
+        answered
     }
 }
 

@@ -2,8 +2,6 @@
 //! its method's response (OD-40, design §3.7, §5.6). `agent default` still
 //! answers in text only.
 
-use library_api::resources::{agent, agent_name};
-
 use crate::prelude::*;
 
 pub(crate) fn read(
@@ -42,45 +40,8 @@ pub(crate) fn write(
 ) -> Result<Option<Exit>, Failure> {
     let name = text_arg(sub, "name");
     let code = match verb {
-        "create" | "edit" => {
-            let request = agent_request(sub)?;
-            if verb == "create" {
-                let outcome = cx.library.agent_write(&cx.flags, &name, &request, false);
-                api::written(
-                    cx,
-                    outcome,
-                    out,
-                    err,
-                    |parent, row| v1::CreateAgentResponse {
-                        agent: Some(agent(parent, row, &default_agent(cx))),
-                        applied: Some(true),
-                        ..v1::CreateAgentResponse::default()
-                    },
-                    |row, out, _| agent_written(row, "Created", out),
-                    |_| Exit::OK,
-                )?
-            } else {
-                let outcome = cx
-                    .library
-                    .agent_edit(&cx.flags, &name, &request, flag(sub, "yes"));
-                api::written(
-                    cx,
-                    outcome,
-                    out,
-                    err,
-                    |parent, value| edited(parent, value, &default_agent(cx)),
-                    |value, out, _| match value {
-                        AgentWritten::Preview(preview) => swap_preview_text(out, preview),
-                        AgentWritten::Done(row) => agent_written(row, "Updated", out),
-                    },
-                    // A preview would change the binding (ruling 153).
-                    |value| match value {
-                        AgentWritten::Preview(_) => Exit::WOULD_CHANGE,
-                        AgentWritten::Done(_) => Exit::OK,
-                    },
-                )?
-            }
-        }
+        "create" => created(cx, &name, sub, out, err)?,
+        "edit" => edited(cx, &name, sub, out, err)?,
         "default" => {
             text_only(cx, "agent default")?;
             let asked = given(sub, "name");
@@ -125,58 +86,158 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
-/// The agent a bare run binds, empty when none: what each agent's `default`
-/// says (OQ-7). Asked only for a json answer, after the answer itself was
-/// had, so its notices are the answer's own and are not said again.
-fn default_agent(cx: &Context<'_>) -> String {
-    match cx.library.agent_default(&cx.flags, None).result {
-        Ok(DefaultAgent::Current(name)) => name,
-        _ => String::new(),
+/// The fields `agent create|edit` was given, as an Agent, and the mask
+/// naming them (a field given empty is named, and cleared).
+pub(crate) fn agent_given(sub: &ArgMatches) -> Result<(v1::Agent, Vec<String>), Failure> {
+    let mut agent = <v1::Agent as Default>::default();
+    let mut mask = Vec::new();
+    let mut text = |path: &str, flag: &str, field: &mut String| {
+        if let Some(value) = given(sub, flag) {
+            *field = value;
+            mask.push(path.to_string());
+        }
+    };
+    text("engine", "engine", &mut agent.engine);
+    text("model", "model", &mut agent.model);
+    text("effort", "effort", &mut agent.effort);
+    if let Some(profiles) = given_list(sub, "profiles") {
+        agent.profiles = profiles;
+        mask.push("profiles".to_string());
     }
+    if let Some(runtime) = given(sub, "runtime") {
+        agent.runtime = runtime;
+        mask.push("runtime".to_string());
+    }
+    if let Some(surfaces) = given_pairs(sub, "surface")? {
+        agent.surfaces = surfaces.into_iter().collect();
+        mask.push("surfaces".to_string());
+    }
+    if let Some(roots) = given_pairs(sub, "root")? {
+        agent.roots = roots.into_iter().collect();
+        mask.push("roots".to_string());
+    }
+    if let Some(env) = given_list(sub, "env") {
+        agent.env = env;
+        mask.push("env".to_string());
+    }
+    if let Some(home) = given(sub, "session-home") {
+        agent.session_home = home;
+        mask.push("session_home".to_string());
+    }
+    Ok((agent, mask))
 }
 
-/// An agent known by its name alone (a preview's, a removal's).
-fn named(parent: &str, agent: &str) -> v1::Agent {
-    v1::Agent {
-        name: agent_name(parent, agent),
-        ..Default::default()
-    }
-}
-
-/// `agent edit`: the binding written, or the swap's preview (its engines and
-/// what the new one gives up; nothing written).
-fn edited(parent: &str, value: &AgentWritten, default: &str) -> v1::UpdateAgentResponse {
-    match value {
-        AgentWritten::Preview(preview) => v1::UpdateAgentResponse {
-            agent: Some(named(parent, &preview.agent)),
-            applied: Some(false),
-            apply_command: preview.apply.clone(),
-            from: preview.from.clone(),
-            to: preview.to.clone(),
-            not_carried: preview.not_carried.iter().map(api::not_carried).collect(),
-            ..v1::UpdateAgentResponse::default()
-        },
-        AgentWritten::Done(row) => v1::UpdateAgentResponse {
-            agent: Some(agent(parent, row, default)),
-            applied: Some(true),
-            ..v1::UpdateAgentResponse::default()
-        },
-    }
-}
-
-fn agent_request(sub: &ArgMatches) -> Result<AgentRequest, Failure> {
-    Ok(AgentRequest {
-        engine: given(sub, "engine"),
-        model: given(sub, "model"),
-        effort: given(sub, "effort"),
-        profiles: given_list(sub, "profiles"),
-        runtime: given(sub, "runtime"),
-        surfaces: given_pairs(sub, "surface")?,
-        roots: given_pairs(sub, "root")?,
-        env: given_list(sub, "env"),
-        session_home: given(sub, "session-home"),
+/// `agent create <name> [flags] [--home]`: the daemon's `CreateAgent` (step
+/// 10b U3), its text from the response (D10).
+fn created(
+    cx: &Context<'_>,
+    name: &str,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let (agent, _) = agent_given(sub)?;
+    let request = v1::CreateAgentRequest {
+        agent_id: name.to_string(),
+        agent: Some(agent),
         home: flag(sub, "home"),
-    })
+        globals: cx.globals(),
+        ..v1::CreateAgentRequest::default()
+    };
+    crate::answer_written(
+        cx,
+        cx.served.create_agent("", request),
+        |m| std::mem::take(&mut m.notices),
+        out,
+        err,
+        |m, out| {
+            let agent = m.agent.clone().unwrap_or_default();
+            agent_written(&crate::read_back::agent_row(&agent), "Created", out)
+        },
+        |_| Exit::OK,
+    )
+}
+
+/// `agent edit <name> [flags] [--home] [--yes]`: the daemon's `UpdateAgent`
+/// (step 10b U3), the fields given named by its mask. Without `--yes` it is
+/// previewed first: a swap whose new engine cannot carry what the old one
+/// did is that preview, printed, and nothing applied (exit 1 under
+/// `--detailed-exitcode`, ruling 153); any other edit is applied with the
+/// preview's etag. `--yes` is one call.
+fn edited(
+    cx: &Context<'_>,
+    name: &str,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let (agent, paths) = agent_given(sub)?;
+    let under = library_api::names::named_target("agents", name);
+    let ask = |validate_only: bool, etag: String| v1::UpdateAgentRequest {
+        agent: Some(agent.clone()),
+        update_mask: Some(daemon_proto::google::protobuf::FieldMask {
+            paths: paths.clone(),
+        }),
+        home: flag(sub, "home"),
+        validate_only,
+        etag,
+        globals: cx.globals(),
+        ..v1::UpdateAgentRequest::default()
+    };
+    let written = if flag(sub, "yes") {
+        cx.served.update_agent(&under, ask(false, String::new()))
+    } else {
+        let preview = cx.served.update_agent(&under, ask(true, String::new()))?;
+        if is_swap(&preview) {
+            Ok(preview)
+        } else {
+            cx.served.update_agent(&under, ask(false, preview.etag))
+        }
+    };
+    crate::answer_written(
+        cx,
+        written,
+        |m| std::mem::take(&mut m.notices),
+        out,
+        err,
+        |m, out| {
+            if is_swap(m) {
+                return swap_preview_text(out, &swap_of(name, m));
+            }
+            let agent = m.agent.clone().unwrap_or_default();
+            agent_written(&crate::read_back::agent_row(&agent), "Updated", out)
+        },
+        // A preview would change the binding (ruling 153).
+        |m| {
+            if is_swap(m) {
+                Exit::WOULD_CHANGE
+            } else {
+                Exit::OK
+            }
+        },
+    )
+}
+
+/// Whether an edit's answer is a swap's preview (nothing applied).
+fn is_swap(answer: &v1::UpdateAgentResponse) -> bool {
+    !answer.to.is_empty() && answer.applied != Some(true)
+}
+
+/// A swap's preview as its answer says it.
+fn swap_of(agent: &str, answer: &v1::UpdateAgentResponse) -> SwapPreview {
+    SwapPreview {
+        status: "preview".to_string(),
+        applied: false,
+        agent: agent.to_string(),
+        from: answer.from.clone(),
+        to: answer.to.clone(),
+        not_carried: answer
+            .not_carried
+            .iter()
+            .map(crate::read_back::not_carried)
+            .collect(),
+        apply: answer.apply_command.clone(),
+    }
 }
 
 /// The binding a create or an edit wrote, in the config's shape.

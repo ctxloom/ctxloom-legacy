@@ -156,7 +156,15 @@ editor, the preview's Edit need; `--header`, `--tag` and `--served-by` are
 gone, owner ruling, hard migrate; a server's notes and installation are
 its `mcp/.<n>.meta.yaml` sidecar until T27, so a set of them beside a
 runtime field is two files, refused `OneChangePerCall`) and the
-removals `bundle|profile|agent|companion remove` in the daemon, and
+removals `bundle|profile|agent|companion remove` in the daemon,
+`agent create|edit` (`CreateAgent`, `UpdateAgent`: the agent's fields,
+an edit's named by its mask, a field given empty cleared; `model`,
+`effort`, `surfaces` and `roots` are INPUT_ONLY Agent fields and `home`
+a field of each request, additive, owner ruling 2026-11-18; an edit
+without `--yes` is previewed first, a swap whose new engine cannot carry
+what the old one did printed as that preview and nothing applied, any
+other edit applied with the preview's etag; the summary is the answer's,
+a profile its short library reference), and
 `bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
 `bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
 by the request's lists; an item beside anything else is two files,

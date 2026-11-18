@@ -2712,6 +2712,23 @@ message Agent {
   // `session` | `host`, as the agent's binding says it; unset, its engine
   // block's (owner ruling of 2026-11-13).
   string session_home = 9 [(google.api.field_behavior) = OPTIONAL];
+  // A write's model (`--model`), written to the block of the engine the
+  // agent runs on: the write's `engine`, else the agent's, else the default
+  // engine's (ruling 68); read back in `engines`. Empty, under the mask, the
+  // engine's default again. Additive proto extension, owner ruling
+  // 2026-11-18.
+  string model = 10 [(google.api.field_behavior) = INPUT_ONLY];
+  // A write's effort level (`--effort`), written as `model` is. Additive
+  // proto extension, owner ruling 2026-11-18.
+  string effort = 11 [(google.api.field_behavior) = INPUT_ONLY];
+  // A write's surface delivery preferences (`--surface kind=approach`),
+  // replacing the binding's; empty, under the mask, cleared. Not yet
+  // answered by a read. Additive proto extension, owner ruling 2026-11-18.
+  map<string, string> surfaces = 12 [(google.api.field_behavior) = INPUT_ONLY];
+  // A write's roots per surface kind (`--root kind=root`), replacing the
+  // binding's; empty, under the mask, cleared. Not yet answered by a read.
+  // Additive proto extension, owner ruling 2026-11-18.
+  map<string, string> roots = 13 [(google.api.field_behavior) = INPUT_ONLY];
   // OUTPUT_ONLY, FULL.
   ResolvedAgent resolved = 20 [(google.api.field_behavior) = OUTPUT_ONLY];
   // FULL: why the agent did not resolve; empty when it did.
@@ -2789,6 +2806,9 @@ message CreateAgentRequest {
   string agent_id = 2 [(google.api.field_behavior) = REQUIRED];
   // The Agent to create, as its own fields say it.
   Agent agent = 3 [(google.api.field_behavior) = REQUIRED];
+  // Write the home config instead of the project's (`--home`). Additive
+  // proto extension, owner ruling 2026-11-18.
+  bool home = 4 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
@@ -2849,6 +2869,9 @@ message UpdateAgentRequest {
   // the owner's for `bundle edit`); paths that would change more than one
   // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Write the home config instead of the project's (`--home`). Additive
+  // proto extension, owner ruling 2026-11-18.
+  bool home = 3 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];

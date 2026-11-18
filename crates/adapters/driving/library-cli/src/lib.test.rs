@@ -286,6 +286,8 @@ targeted! {
     DeleteCompanionRequest => |r, t| r.name = t;
     CreateSkillRequest => |r, t| r.parent = t;
     UpdateMcpServerRequest => |r, t| r.mcp_server.get_or_insert_with(Default::default).name = t;
+    CreateAgentRequest => |r, t| r.parent = t;
+    UpdateAgentRequest => |r, t| r.agent.get_or_insert_with(Default::default).name = t;
 }
 
 /// What one invocation left behind.
@@ -588,7 +590,7 @@ pub(crate) fn degraded() -> Option<v1::Globals> {
     })
 }
 
-fn go_served(
+pub(crate) fn go_served(
     line: &[&str],
     how: How,
     layers: &[&str],

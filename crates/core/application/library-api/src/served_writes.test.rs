@@ -712,3 +712,191 @@ fn test_an_mcp_server_write_answers_its_server_whether_created_and_applied() {
         "projects/amber-quiet-heron/bundles/demo/mcp/tools"
     );
 }
+
+const AGENTS: &str = "schema_version: 9\ndefault_agent: dev\nagents:\n  dev:\n    engine: claude-code\n    profiles: [default]\n    runtime: host\n    engines:\n      claude-code:\n        model: haiku\n";
+
+fn agents() -> library_application::Library {
+    Setup {
+        bundles: &[("demo", &[ENVELOPE])],
+        layers: &[AGENTS],
+        ..Setup::default()
+    }
+    .fixture()
+    .0
+}
+
+/// The one config layer a write planned, and its scope.
+fn one_layer(
+    planned: &[library_application::write::recording::Planned],
+) -> (ctxloom_ports::Scope, String) {
+    use library_application::write::recording::Planned;
+    let layers: Vec<_> = planned
+        .iter()
+        .filter_map(|p| match p {
+            Planned::Layer { scope, text } => Some((*scope, text.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(layers.len(), 1, "{planned:?}");
+    layers[0].clone()
+}
+
+fn agent_update(mask: &[&str], agent: impl FnOnce(&mut v1::Agent)) -> v1::UpdateAgentRequest {
+    let mut named = v1::Agent {
+        name: "projects/amber-quiet-heron/agents/dev".to_string(),
+        ..<v1::Agent as Default>::default()
+    };
+    agent(&mut named);
+    v1::UpdateAgentRequest {
+        agent: Some(named),
+        update_mask: Some(daemon_proto::google::protobuf::FieldMask {
+            paths: mask.iter().map(|p| p.to_string()).collect(),
+        }),
+        ..v1::UpdateAgentRequest::default()
+    }
+}
+
+// `agent create`: the binding its fields give (model and effort into its
+// engine's block, its surfaces and roots, its env), into the home config
+// when the request says `home`; answered with the agent written.
+#[test]
+fn test_an_agent_create_writes_the_binding_its_fields_give_where_home_says() {
+    let (library, recorder) = agents().recording();
+    let request = v1::CreateAgentRequest {
+        parent: "projects/amber-quiet-heron".to_string(),
+        agent_id: "reviewer".to_string(),
+        agent: Some(v1::Agent {
+            engine: "claude-code".to_string(),
+            profiles: vec!["default".to_string()],
+            model: "sonnet".to_string(),
+            effort: "low".to_string(),
+            surfaces: [("context".to_string(), "system-prompt".to_string())].into(),
+            env: vec!["ALPHA_TOKEN".to_string()],
+            ..<v1::Agent as Default>::default()
+        }),
+        ..v1::CreateAgentRequest::default()
+    };
+    let made = super::create_agent::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    let library_application::AgentWritten::Done(row) = &made.written else {
+        panic!("{made:?}")
+    };
+    assert_eq!(row.name, "reviewer");
+    assert_eq!(made.default, "dev", "the agent a bare run binds");
+    let (scope, text) = one_layer(&recorder.take());
+    assert_eq!(scope, ctxloom_ports::Scope::Project);
+    assert!(text.contains("reviewer:"), "{text}");
+    assert!(
+        text.contains("model: sonnet") && text.contains("effort: low"),
+        "{text}"
+    );
+    assert!(text.contains("context: system-prompt"), "{text}");
+    assert!(text.contains("ALPHA_TOKEN"), "{text}");
+    let home = v1::CreateAgentRequest {
+        home: true,
+        ..request
+    };
+    super::create_agent::plan(&library, &plain(), &home, true)
+        .result
+        .unwrap();
+    assert_eq!(one_layer(&recorder.take()).0, ctxloom_ports::Scope::Home);
+}
+
+// `agent edit`: only what its mask names changes (a field named and given
+// empty is cleared); a model goes to the agent's engine's block.
+#[test]
+fn test_an_agent_edit_writes_the_fields_its_mask_names_alone() {
+    let (library, recorder) = agents().recording();
+    let request = agent_update(&["runtime", "effort"], |a| {
+        a.runtime = "container-rootless".to_string();
+        a.effort = "high".to_string();
+        a.engine = "opencode".to_string();
+        a.profiles = vec!["not-masked".to_string()];
+    });
+    let edited = super::update_agent::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert!(matches!(
+        edited.written,
+        library_application::AgentWritten::Done(_)
+    ));
+    let (_, text) = one_layer(&recorder.take());
+    assert!(text.contains("runtime: container-rootless"), "{text}");
+    assert!(
+        text.contains("effort: high") && text.contains("model: haiku"),
+        "{text}"
+    );
+    assert!(text.contains("engine: claude-code"), "{text}");
+    assert!(
+        !text.contains("not-masked") && !text.contains("opencode"),
+        "{text}"
+    );
+    let cleared = agent_update(&["model"], |_| {});
+    super::update_agent::plan(&library, &plain(), &cleared, true)
+        .result
+        .unwrap();
+    let (_, text) = one_layer(&recorder.take());
+    assert!(!text.contains("haiku"), "{text}");
+}
+
+// An edit answers the agent as written with whether it is the default; a
+// swap's preview answers its engines and what is given up, and the command
+// that applies it, applied false.
+#[test]
+fn test_an_agent_write_answers_the_agent_or_the_swaps_preview() {
+    use library_application::{AgentRow, AgentWritten, SwapPreview};
+    let request = agent_update(&["engine"], |a| a.engine = "opencode".to_string());
+    let row = AgentRow {
+        name: "dev".to_string(),
+        engine: "opencode".to_string(),
+        profiles: Vec::new(),
+        runtime: String::new(),
+        driving: String::new(),
+        env: Vec::new(),
+        session_home: String::new(),
+        engines: serde_json::Value::Null,
+        engine_lines: Vec::new(),
+    };
+    let done = super::update_agent::respond(
+        &request,
+        wrote(Some(super::AgentWrote {
+            written: AgentWritten::Done(row),
+            default: "dev".to_string(),
+        })),
+    );
+    let agent = done.agent.unwrap();
+    assert_eq!(agent.name, "projects/amber-quiet-heron/agents/dev");
+    assert_eq!(agent.engine, "projects/amber-quiet-heron/engines/opencode");
+    assert_eq!(agent.default, Some(true));
+    assert_eq!(done.applied, Some(true));
+    assert_eq!(done.etag, "4");
+    let preview = SwapPreview {
+        status: "preview".to_string(),
+        applied: false,
+        agent: "dev".to_string(),
+        from: "claude-code".to_string(),
+        to: "opencode".to_string(),
+        not_carried: Vec::new(),
+        apply: "ctxloom agent edit dev --engine opencode --yes".to_string(),
+    };
+    let mut previewed = wrote(Some(super::AgentWrote {
+        written: AgentWritten::Preview(preview),
+        default: String::new(),
+    }));
+    previewed.applied = false;
+    let swap = super::update_agent::respond(&request, previewed);
+    assert_eq!(swap.applied, Some(false));
+    assert_eq!(
+        (swap.from.as_str(), swap.to.as_str()),
+        ("claude-code", "opencode")
+    );
+    assert_eq!(
+        swap.apply_command,
+        "ctxloom agent edit dev --engine opencode --yes"
+    );
+    assert_eq!(
+        swap.agent.unwrap().name,
+        "projects/amber-quiet-heron/agents/dev"
+    );
+}

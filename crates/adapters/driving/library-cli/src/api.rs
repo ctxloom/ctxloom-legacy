@@ -27,8 +27,6 @@ pub(crate) fn print<M: serde::Serialize>(out: &mut dyn Write, message: &M) -> io
     angzarr_presentation::write_json(out, message)
 }
 
-pub(crate) use library_api::resources::not_carried;
-
 /// A converted write's answer (OD-40; OQ-8, OQ-9): the notices, said; then
 /// its error, or its json, the method's response named under the parent the
 /// names give (asked only here, after the write answered), or its text, with

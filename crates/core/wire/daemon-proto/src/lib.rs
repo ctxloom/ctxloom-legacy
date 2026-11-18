@@ -138,6 +138,8 @@ macro_rules! library_writes {
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse,
+            create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
+            update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,
             delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse,
