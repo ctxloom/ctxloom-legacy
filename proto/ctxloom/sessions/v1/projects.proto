@@ -195,21 +195,6 @@ message RemoveSession {
   RemovalEvidence evidence = 4;
 }
 
-// Several, as `session sweep --yes` applies them; one intent each, keyed
-// `{request_id}:{harp}`. Each session's evidence is judged as its own
-// `RemoveSession`'s; a refused one is passed over, never the sweep's
-// refusal.
-message SweepSessions {
-  option (io.angzarr.v1.command) = {
-    component: "ctxloom.sessions.v1.ProjectState"
-    emits: ["ctxloom.sessions.v1.SessionRemovalIntended"]
-  };
-
-  string project = 1;
-  repeated string harps = 2;
-  repeated RemovalEvidence evidence = 3;
-}
-
 message SessionRemovalIntended {
   option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.ProjectState"};
   string request_id = 1;

@@ -7,7 +7,7 @@
 //! the user because a stream is.
 
 use angzarr_embedded::markup::{
-    pack_message, Bug, Context, Emit, FactEmit, Failed, PageContext, Refuses, Unrefusable,
+    pack_message, Bug, Context, Emit, FactEmit, Failed, PageContext, Refuses,
 };
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
@@ -20,7 +20,7 @@ use crate::{
 };
 use crate::{
     KeepsSession, RecordRemovalStepDone, RemovalEvidence, RemovalStepDone, RemoveSession,
-    SessionKept, SessionLive, SessionRemovalIntended, SweepSessions, WithinRetention,
+    SessionKept, SessionLive, SessionRemovalIntended, WithinRetention,
 };
 
 /// A session removal's steps, in order (O2, step 10b U9): its worktrees
@@ -222,22 +222,6 @@ impl ProjectAggregate {
             ));
         }
         Ok(Some(intended(request_of(ctx), cmd.harp)))
-    }
-
-    /// Remove several sessions (`session sweep --yes`): one intent each,
-    /// keyed `{request_id}:{harp}`; one its evidence refuses is passed
-    /// over (a sweep's rows say why), never the sweep's refusal.
-    #[handles_cmd(SweepSessions)]
-    fn sweep(&self, cmd: SweepSessions, ctx: &Context) -> Result<Emit<Self>, Failed<Unrefusable>> {
-        let request = request_of(ctx);
-        let events: Vec<SessionRemovalIntended> = cmd
-            .harps
-            .iter()
-            .zip(&cmd.evidence)
-            .filter(|(_, evidence)| removal_refused(evidence, false).is_none())
-            .map(|(harp, _)| intended(format!("{request}:{harp}"), harp.clone()))
-            .collect();
-        Ok(Emit::of(events))
     }
 
     /// A removal's next step done: recorded for an open removal at that

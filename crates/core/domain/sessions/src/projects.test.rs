@@ -548,36 +548,6 @@ fn a_removal_is_refused_on_its_evidence() {
     assert_eq!(anyway.len(), 1, "--even-if-live removes it anyway");
 }
 
-// A sweep intends one removal per session it may remove, each keyed
-// `{request_id}:{harp}`; one its evidence refuses is passed over.
-#[test]
-fn a_sweep_intends_one_removal_per_removable_session() {
-    let mut project = project();
-    project.when(name(PROJECT)).result().unwrap();
-    let kept = crate::RemovalEvidence {
-        kept: true,
-        ..removable("brisk-copper-moth")
-    };
-    let events = project
-        .when(crate::SweepSessions {
-            project: PROJECT.to_string(),
-            harps: vec![HARP.to_string(), "brisk-copper-moth".to_string()],
-            evidence: vec![removable(HARP), kept],
-        })
-        .result()
-        .unwrap();
-    let [ProjectEvent::SessionRemovalIntended(intended)] = &events[..] else {
-        panic!("{events:?}")
-    };
-    assert_eq!(intended.harp, HARP);
-    assert!(
-        intended.request_id.ends_with(&format!(":{HARP}")),
-        "{}",
-        intended.request_id
-    );
-    assert_eq!(project.state().state().removals.len(), 1);
-}
-
 // The open removals round-trip through the state's wire message.
 #[test]
 fn the_open_removals_round_trip_through_the_wire() {
