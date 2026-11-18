@@ -264,12 +264,18 @@ impl<E: Edge> Removals for Removing<'_, E> {
             .states
             .state(&record.project_dir, &record.harp);
         let now = self.api.parts.places.now();
-        let evidence = evidence(
+        let mut evidence = evidence(
             &record,
             lock,
             last_active,
             (now, self.retention.get(&record.project_id).copied()),
         );
+        evidence.blocking_lock = blocking_lock(&self.api.os, lock, || {
+            self.api
+                .parts
+                .states
+                .lock(&record.project_dir, &record.harp)
+        });
         let removal = Removal {
             harp: record.harp.clone(),
             applied: false,
@@ -381,6 +387,18 @@ fn evidence(
         retained,
         spared: 0,
         skipped: 0,
+        blocking_lock: String::new(),
+    }
+}
+
+/// The lock that keeps a session's directory from being renamed into the
+/// trash on the platform `os` (`std::env::consts::OS`'s name): its lock,
+/// `path`, when it is held on Windows, where a directory holding an open
+/// file cannot be moved (D18); none anywhere else, nor for a lock not held.
+pub(crate) fn blocking_lock(os: &str, lock: State, path: impl FnOnce() -> String) -> String {
+    match os == run_ports::WINDOWS && lock == State::Live {
+        true => path(),
+        false => String::new(),
     }
 }
 
@@ -397,6 +415,7 @@ fn refusal_of(rejection: sessions::SessionRejection) -> Option<Refusal> {
         },
         R::SessionKept { harp } => Refusal::Kept { harp },
         R::WithinRetention { harp, detail } => Refusal::Retained { harp, detail },
+        R::SessionLockHeld { harp, lock } => Refusal::LockHeld { harp, lock },
         _ => return None,
     })
 }
@@ -668,6 +687,11 @@ impl<E: Edge> Api<E> {
             (Some(Refusal::Retained { detail, .. }), _) => Err(refused(
                 v1::removal_refusal::Reason::Retained,
                 detail.clone(),
+                (0, 0),
+            )),
+            (Some(Refusal::LockHeld { lock, .. }), _) => Err(refused(
+                v1::removal_refusal::Reason::LockHeld,
+                lock.clone(),
                 (0, 0),
             )),
             (

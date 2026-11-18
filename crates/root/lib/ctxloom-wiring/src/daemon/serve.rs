@@ -550,19 +550,7 @@ async fn start(
     // The user bearer (T12): minted at each start, advertised in the
     // discovery file alone.
     let bearer = OsTokenSource.mint();
-    let names = CertNames::new(
-        vec![
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-        ],
-        Vec::new(),
-    );
-    let certificate = hook_tls::Minter::lasting(
-        hook_tls::SystemClock,
-        run_ports::DAEMON_CERT_LIFETIME_SECONDS,
-    )
-    .mint(&names)
-    .map_err(|e| code(&e))?;
+    let certificate = daemon_certificate()?;
     let started_at = seconds_now();
     let calls = served(
         daemon_api::Api::new(daemon_api::Parts {
@@ -582,7 +570,8 @@ async fn start(
             about: about(&stamp, started_at, pace),
         })
         // The one-shots it hosts (U4).
-        .hosting_one_shots(Arc::clone(one_shots)),
+        .hosting_one_shots(Arc::clone(one_shots))
+        .on_os(&os),
         (fs, files, trash_clock(env)),
         (home, temp),
         (&engines, terminals, kept),
@@ -1467,10 +1456,35 @@ impl daemon_api::Hosting for Shared {
     }
 }
 
+/// The daemon's listener certificate, minted at each start for the
+/// loopback addresses its clients dial, lasting the daemon's lifetime cap.
+fn daemon_certificate() -> Result<run_ports::HookCertificate, String> {
+    let names = CertNames::new(
+        vec![
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ],
+        Vec::new(),
+    );
+    hook_tls::Minter::lasting(
+        hook_tls::SystemClock,
+        run_ports::DAEMON_CERT_LIFETIME_SECONDS,
+    )
+    .mint(&names)
+    .map_err(|e| angzarr_diagnostic::Diagnostic::code(&e).to_string())
+}
+
 /// A session's state, from its liveness lock in its project.
 struct Locks(Arc<dyn Fs>);
 
 impl daemon_api::SessionStates for Locks {
+    fn lock(&self, project_dir: &str, harp: &str) -> String {
+        liveness::LockFiles::new(Arc::clone(&self.0), project_dir)
+            .path(harp)
+            .display()
+            .to_string()
+    }
+
     fn state(&self, project_dir: &str, harp: &str) -> session_index::State {
         use session_ports::{Liveness, LockState};
         let mut locks = liveness::LockFiles::new(Arc::clone(&self.0), project_dir);

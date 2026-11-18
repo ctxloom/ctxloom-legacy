@@ -20,7 +20,7 @@ use crate::{
 };
 use crate::{
     KeepsSession, RecordRemovalStepDone, RemovalEvidence, RemovalStepDone, RemoveSession,
-    SessionKept, SessionLive, SessionRemovalIntended, WithinRetention,
+    SessionKept, SessionLive, SessionLockHeld, SessionRemovalIntended, WithinRetention,
 };
 
 /// A session removal's steps, in order (O2, step 10b U9): its worktrees
@@ -29,7 +29,9 @@ use crate::{
 pub const REMOVAL_STEPS: [&str; 4] = ["worktrees", "trash", "purge", "purge_trash"];
 
 /// Why a session's removal is refused on `evidence`, if it is: its lock
-/// does not prove its owner ended (unless `even_if_live`), it is kept, it
+/// does not prove its owner ended (unless `even_if_live`), its held lock
+/// keeps its directory from being moved (D18: the evidence names it only
+/// on Windows, so `even_if_live` cannot pass it), it is kept, it
 /// ended within the transcript retention, or a worktree keeps it. The one
 /// judgement `RemoveSession`'s decide and a removal's preview share.
 pub fn removal_refused(evidence: &RemovalEvidence, even_if_live: bool) -> Option<SessionRejection> {
@@ -38,6 +40,12 @@ pub fn removal_refused(evidence: &RemovalEvidence, even_if_live: bool) -> Option
         return Some(SessionRejection::SessionLive {
             harp,
             reason: evidence.not_ended.clone(),
+        });
+    }
+    if !evidence.blocking_lock.is_empty() {
+        return Some(SessionRejection::SessionLockHeld {
+            harp,
+            lock: evidence.blocking_lock.clone(),
         });
     }
     if evidence.kept {
@@ -200,7 +208,13 @@ impl ProjectAggregate {
     /// steps listed ([`REMOVAL_STEPS`]).
     #[handles_cmd(
         RemoveSession,
-        refuses(SessionLive, SessionKept, WithinRetention, KeepsSession)
+        refuses(
+            SessionLive,
+            SessionKept,
+            WithinRetention,
+            KeepsSession,
+            SessionLockHeld
+        )
     )]
     fn remove(
         &self,
@@ -218,6 +232,7 @@ impl ProjectAggregate {
                     SessionKept{harp} => SessionKept,
                     WithinRetention{harp, detail} => WithinRetention,
                     KeepsSession{harp, spared, skipped} => KeepsSession,
+                    SessionLockHeld{harp, lock} => SessionLockHeld,
                 ]
             ));
         }

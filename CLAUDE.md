@@ -483,7 +483,15 @@ ended). A hook fact
 redelivered after it finds no session and records nothing. It is refused, as
 before, for a session whose lock does not prove it ended (held, or none;
 the daemon reads the lock) unless `--even-if-live` (the one override), for
-a kept one, and within the transcript retention: its project's
+a held lock on Windows even with it (owner ruling 2026-11-18, D18: a
+directory holding an open file cannot be renamed into the trash there; the
+daemon, `Api::on_os` given the wiring's `os_name`, names the held lock in
+the evidence, `RemovalEvidence.blocking_lock`, by
+`daemon_api::destroy::blocking_lock`, and the domain refuses it up front,
+`sessions-session-lock-held`, said as `sessions-application-refused-lock-held`
+with its `-fix`, end the session first; the wire's
+`RemovalRefusal.Reason.LOCK_HELD`, its `detail` the lock's path; unix is
+unchanged), for a kept one, and within the transcript retention: its project's
 `session_transcript_retention`, read from its REGISTERED root (30 days
 unless configured; one that is no age is `AgeInvalid`, a configuration that
 does not read `ConfigUnreadable`, a sweep's too, the flag or not). A refused removal is the typed `RemovalRefusal`

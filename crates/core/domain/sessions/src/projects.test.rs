@@ -413,6 +413,7 @@ fn removable(harp: &str) -> crate::RemovalEvidence {
         retained: String::new(),
         spared: 0,
         skipped: 0,
+        blocking_lock: String::new(),
     }
 }
 
@@ -498,6 +499,45 @@ fn a_removal_is_intended_with_its_steps_and_open_until_each_is_done() {
         assert_eq!(step_done(&mut project, &id, step), 1, "step {step}");
     }
     assert_eq!(open(&project), None, "a removal done is dropped");
+}
+
+// D18: where a held lock keeps the directory from being moved (the
+// evidence names it, on Windows), `--even-if-live` is refused up front,
+// naming the lock, and nothing is intended; without the flag the lock's
+// own refusal comes first, as on unix.
+#[test]
+fn a_removal_whose_held_lock_blocks_the_move_is_refused_even_if_live() {
+    let mut project = project();
+    project.when(name(PROJECT)).result().unwrap();
+    let blocked = crate::RemovalEvidence {
+        ended: false,
+        not_ended: "its lock is held".to_string(),
+        blocking_lock: "C:/p/.ctxloom/sessions/h/session.lock".to_string(),
+        ..removable(HARP)
+    };
+    let Err(Failure::Rejected(rejected)) = project.when(remove(blocked.clone(), true)).result()
+    else {
+        panic!("not refused")
+    };
+    let typed = rejected
+        .rejection::<angzarr_embedded::markup::TypedRefusal>()
+        .expect("a typed refusal");
+    assert_eq!(
+        SessionRejection::try_from(typed),
+        Ok(SessionRejection::SessionLockHeld {
+            harp: HARP.to_string(),
+            lock: "C:/p/.ctxloom/sessions/h/session.lock".to_string(),
+        })
+    );
+    assert_eq!(
+        refused(project.when(remove(blocked.clone(), true)).result()),
+        "sessions-session-lock-held"
+    );
+    assert_eq!(
+        refused(project.when(remove(blocked, false)).result()),
+        "sessions-session-live"
+    );
+    assert!(project.state().state().removals.is_empty());
 }
 
 // The removal is judged on its evidence, in today's order: the lock (unless

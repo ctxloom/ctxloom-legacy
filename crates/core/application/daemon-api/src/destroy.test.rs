@@ -468,6 +468,73 @@ async fn even_if_live_destroys_a_session_its_lock_cannot_prove_ended() {
     assert_eq!(f.places.held().destroyed, [HARP]);
 }
 
+// D18: on Windows a held lock keeps the session's directory from being
+// renamed into the trash, so it blocks the removal there, and only a held
+// one; on every other platform nothing does.
+#[test]
+fn a_held_lock_blocks_a_removal_on_windows_alone() {
+    let lock = || "C:/p/.ctxloom/sessions/h/session.lock".to_string();
+    assert_eq!(super::blocking_lock("windows", State::Live, lock), lock());
+    for state in [State::Ended, State::Unknown] {
+        assert_eq!(
+            super::blocking_lock("windows", state, lock),
+            "",
+            "{state:?}"
+        );
+    }
+    for os in ["linux", "macos", "freebsd", ""] {
+        assert_eq!(super::blocking_lock(os, State::Live, lock), "", "{os}");
+    }
+}
+
+// D18: on Windows `--even-if-live` of a session whose lock is held is
+// refused up front, naming the lock, with its plan; nothing is destroyed.
+#[tokio::test]
+async fn even_if_live_of_a_held_lock_is_refused_on_windows_naming_the_lock() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    f.locks
+        .0
+        .lock()
+        .unwrap()
+        .insert(HARP.to_string(), State::Live);
+    let api = f.api.on_os("windows");
+    let refused = removal_refused(
+        api.delete_session(v1::DeleteSessionRequest {
+            even_if_live: true,
+            ..delete(NAME, true)
+        })
+        .await,
+    );
+    assert_eq!(refused.reason, v1::removal_refusal::Reason::LockHeld as i32);
+    assert_eq!(
+        refused.detail,
+        format!("{ROOT}/.ctxloom/sessions/{HARP}/session.lock")
+    );
+    assert_eq!(refused.plan.expect("the plan").applied, Some(false));
+    assert!(f.places.held().destroyed.is_empty());
+}
+
+// Unix is unchanged: `--even-if-live` removes a session whose lock is held.
+#[tokio::test]
+async fn even_if_live_of_a_held_lock_destroys_it_off_windows() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    f.locks
+        .0
+        .lock()
+        .unwrap()
+        .insert(HARP.to_string(), State::Live);
+    let api = f.api.on_os("linux");
+    let done = api
+        .delete_session(v1::DeleteSessionRequest {
+            even_if_live: true,
+            ..delete(NAME, true)
+        })
+        .await
+        .unwrap();
+    assert_eq!(done.applied, Some(true));
+    assert_eq!(f.places.held().destroyed, [HARP]);
+}
+
 // A kept session is refused at any age; one within its retention says when
 // it ended.
 #[tokio::test]

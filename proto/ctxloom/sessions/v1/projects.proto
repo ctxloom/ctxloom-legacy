@@ -171,6 +171,10 @@ message RemovalEvidence {
   // owner not proven ended).
   uint64 spared = 6;
   uint64 skipped = 7;
+  // A lock held open that keeps its directory from being renamed into the
+  // trash (D18: on Windows a directory holding an open file cannot be
+  // moved): its path, set only there; empty everywhere else.
+  string blocking_lock = 8;
 }
 
 // Remove one session (`session remove <harp> --yes`), a T28 sequence the
@@ -187,6 +191,7 @@ message RemoveSession {
     refuses: "ctxloom.sessions.v1.SessionKept"
     refuses: "ctxloom.sessions.v1.WithinRetention"
     refuses: "ctxloom.sessions.v1.KeepsSession"
+    refuses: "ctxloom.sessions.v1.SessionLockHeld"
   };
 
   string project = 1;
@@ -257,6 +262,18 @@ message KeepsSession {
   string harp = 1;
   uint64 spared = 2;
   uint64 skipped = 3;
+}
+
+// A removal, `--even-if-live` or not, of a session whose lock is held
+// where a held lock keeps its directory from being moved (D18, Windows):
+// refused before anything is touched, naming the lock; end the session
+// first (`sessions-session-lock-held`).
+message SessionLockHeld {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string harp = 1;
+  // The lock's path, as the daemon found it held.
+  string lock = 2;
 }
 
 // A claim on a project harp another project holds.

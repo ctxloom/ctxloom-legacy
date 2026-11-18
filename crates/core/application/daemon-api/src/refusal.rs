@@ -384,6 +384,12 @@ impl RemovalRejection {
                         detail: refused.detail.clone(),
                     })
                 }
+                v1::removal_refusal::Reason::LockHeld => {
+                    RemovalRejection::Session(Refusal::LockHeld {
+                        harp,
+                        lock: refused.detail.clone(),
+                    })
+                }
                 v1::removal_refusal::Reason::WorktreesKeep => RemovalRejection::KeepsSession {
                     harp,
                     spared: refused.spared,
