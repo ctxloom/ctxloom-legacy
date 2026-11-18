@@ -130,3 +130,26 @@ mod asks {
         assert_eq!(request.globals, degraded());
     }
 }
+
+// Owner ruling 2026-11-18 (night): the json of `context assemble` carries
+// the assembly's notices (a stale distilled form's among them), and they
+// are said as every read's are.
+mod notices {
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_an_assembly_keeps_its_notices_in_its_message_and_says_them() {
+        let stale = v1::Notice {
+            code: "library-application-stale-distilled".to_string(),
+            text: "stale".to_string(),
+            ..v1::Notice::default()
+        };
+        let (message, said) = super::super::at_rest(v1::AssembledContext {
+            context: "ctx".to_string(),
+            notices: vec![stale.clone()],
+            ..v1::AssembledContext::default()
+        });
+        assert_eq!(message.notices, std::slice::from_ref(&stale));
+        assert_eq!(said, [stale]);
+    }
+}

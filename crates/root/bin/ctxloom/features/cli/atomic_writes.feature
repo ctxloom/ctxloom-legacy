@@ -237,7 +237,8 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
       When the source of "rules" is edited by hand
       And I run "ctxloom context assemble --profile dev --format json"
       Then the assembled context holds the original text of "rules", not its distilled form
-      And the output reports "notices[0].code" as "library-application-stale-distilled"
+      # changed: owner ruling 2026-11-18, presence not position: the notices hold the code, wherever it is.
+      And the output reports "notices[code=library-application-stale-distilled].code" as "library-application-stale-distilled"
 
     Scenario: After its source is edited, assembly serves the original and says the distilled form is stale
       # new: the digest is checked at every use.
@@ -248,7 +249,8 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
       When I run "ctxloom context assemble --profile dev --format json"
       Then the command succeeds
       And the assembled context holds the original text of "rules", not its distilled form
-      And the output reports "notices[0].code" as "library-application-stale-distilled"
+      # changed: owner ruling 2026-11-18, presence not position: the notices hold the code, wherever it is.
+      And the output reports "notices[code=library-application-stale-distilled].code" as "library-application-stale-distilled"
 
     Scenario: A distilled form that records no digest is stale
       # new: an older distilled file.

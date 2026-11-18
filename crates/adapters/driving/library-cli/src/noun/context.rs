@@ -24,14 +24,15 @@ pub(crate) fn read(
 }
 
 /// An assembly as `context assemble` shows it: its premise index rendered
-/// after its context, at rest (`ctxloom fragment show`), and its notices
-/// apart from the message, said as every read's are.
+/// after its context, at rest (`ctxloom fragment show`); its notices said
+/// as every read's are, and kept in the message too, so its json carries
+/// them (owner ruling 2026-11-18, night: a stale distilled form's notice).
 pub(crate) fn at_rest(
     mut assembled: v1::AssembledContext,
 ) -> (v1::AssembledContext, Vec<v1::Notice>) {
     library_api::premise::render_premise_index(&mut assembled, library_api::premise::Shown::AtRest);
     assembled.premised.clear();
-    let notices = std::mem::take(&mut assembled.notices);
+    let notices = assembled.notices.clone();
     (assembled, notices)
 }
 
