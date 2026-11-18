@@ -861,7 +861,11 @@ fn dies_at_steps(edge: &Arc<CoreEdge>, files: &DaemonFiles) {
 fn write_kills(files: &DaemonFiles) -> daemon_api::library_writes::DiesAt {
     let files = files.clone();
     Arc::new(move |point: &str| {
-        if files.take_die_at(point) {
+        // A write recorded done and not yet answered is also where the
+        // client's write is "applied, before it is answered" (slice 3's
+        // `test-die-after-apply`, the retry's switch).
+        let applied = point == "done" && files.take_die_after_apply();
+        if applied || files.take_die_at(point) {
             std::process::abort();
         }
     })

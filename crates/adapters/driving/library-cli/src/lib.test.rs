@@ -68,6 +68,13 @@ impl Served for ServedBy<'_> {
 
     library_api::served_writes!(written_by_library_api);
 
+    /// The library's own editor, as the CLI would launch it.
+    fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure> {
+        self.library
+            .edit_document(&edit.file_name, &edit.text)
+            .map_err(failed)
+    }
+
     /// The daemon's dry run, as it plans one: under the parent the names
     /// give, unnamed where they name none.
     fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure> {
@@ -193,10 +200,12 @@ macro_rules! written_by_library_api {
         $(
             fn $method(
                 &self,
-                _under: &str,
+                under: &str,
                 request: v1::$request,
             ) -> Result<v1::$response, Failure> {
                 let parent = self.names.parent()?;
+                let mut request = request;
+                Targeted::target(&mut request, format!("{parent}{under}"));
                 let globals = request.globals.clone().unwrap_or_default();
                 let flags = library_application::Flags {
                     degraded: globals.degraded,
@@ -205,8 +214,12 @@ macro_rules! written_by_library_api {
                     trusted: false,
                 };
                 let apply = !request.validate_only;
+                // A preview writes nothing: its use case over the recording
+                // library, as the daemon plans it.
+                let previewing = self.library.clone().recording().0;
+                let library = if apply { self.library } else { &previewing };
                 let outcome =
-                    library_api::served_writes::$method::plan(self.library, &flags, &request, apply);
+                    library_api::served_writes::$method::plan(library, &flags, &request, apply);
                 let notices = outcome
                     .notices
                     .iter()
@@ -229,6 +242,34 @@ macro_rules! written_by_library_api {
     };
 }
 use written_by_library_api;
+
+/// A write request, writing what its target names (the daemon's client
+/// sets it so).
+trait Targeted {
+    fn target(&mut self, target: String);
+}
+
+macro_rules! targeted {
+    ($($request:ident => |$r:ident, $t:ident| $set:expr;)*) => {
+        $(
+            impl Targeted for v1::$request {
+                fn target(&mut self, $t: String) {
+                    let $r = self;
+                    $set;
+                }
+            }
+        )*
+    };
+}
+
+targeted! {
+    CreateBundleRequest => |r, t| r.parent = t;
+    CreateFragmentRequest => |r, t| r.parent = t;
+    CreateCommandRequest => |r, t| r.parent = t;
+    UpdateFragmentRequest => |r, t| r.fragment.get_or_insert_with(Default::default).name = t;
+    UpdateCommandRequest => |r, t| r.command.get_or_insert_with(Default::default).name = t;
+    UpdateConfigRequest => |r, t| r.name = t;
+}
 
 /// What one invocation left behind.
 pub(crate) struct Ran {

@@ -43,6 +43,28 @@ pub(crate) fn write(
             })
             .map(Some)
         }
+        "set" => {
+            // The daemon's `UpdateConfig` (step 10b U3), its text from the
+            // response (D10).
+            let request = v1::UpdateConfigRequest {
+                path: text_arg(sub, "key"),
+                value: text_arg(sub, "value"),
+                home: flag(sub, "home"),
+                globals: cx.globals(),
+                ..v1::UpdateConfigRequest::default()
+            };
+            let set = cx.served.update_config("/config", request);
+            crate::answer_written(
+                cx,
+                set,
+                |m| std::mem::take(&mut m.notices),
+                out,
+                err,
+                |m, out| writeln!(out, "Set {} in {}", m.changes.join(", "), m.path),
+                |_| Exit::OK,
+            )
+            .map(Some)
+        }
         "edit" => {
             text_only(cx, "config edit")?;
             let outcome = cx.library.config_edit();

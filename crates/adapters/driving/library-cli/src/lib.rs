@@ -126,6 +126,11 @@ pub trait Served {
 
     served_writes!(served_write);
 
+    /// A write's Edit need presented (step 10b U3): the editor its launch
+    /// names, on the user's terminal, opened on the document's text; what
+    /// it left. A need with no launch cannot be presented here.
+    fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure>;
+
     /// `loadout`: `GetLoadout`, always asked as `users/me/loadout`, its
     /// notices beside it: ctxloom's own loadout is the same in every
     /// project, and a companion probe asks it where there may be no
@@ -176,6 +181,11 @@ macro_rules! served_writes {
     ($each:ident) => {
         $each! {
             create_bundle (CreateBundle) CreateBundleRequest => CreateBundleResponse,
+            create_fragment (CreateFragment) CreateFragmentRequest => CreateFragmentResponse,
+            update_fragment (UpdateFragment) UpdateFragmentRequest => UpdateFragmentResponse,
+            create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse,
+            update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
+            update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
         }
     };
 }
@@ -378,7 +388,12 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
 /// The write verbs, by noun, the daemon serves (step 10b U3): it takes the
 /// home step and observes the trees before it plans, so the caller takes
 /// none of its own.
-pub const SERVED_WRITES: &[(&str, &[&str])] = &[("bundle", &["create"])];
+pub const SERVED_WRITES: &[(&str, &[&str])] = &[
+    ("bundle", &["create"]),
+    ("fragment", &["create", "edit"]),
+    ("command", &["create", "edit"]),
+    ("config", &["set"]),
+];
 
 /// Whether `noun`, given its matches `sub`, is a write the daemon serves
 /// (a verb of [`SERVED_WRITES`]).

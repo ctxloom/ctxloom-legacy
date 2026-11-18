@@ -338,6 +338,31 @@ impl library_cli::Served for DaemonServed {
 
     library_cli::served_writes!(served_write);
 
+    /// The Edit need's EDITOR launch, run here on the user's terminal
+    /// (step 10b U3): the program and arguments the daemon resolved, on a
+    /// file of the document's text, what it left read back.
+    fn edit_document(&self, edit: &daemon_proto::v1::Edit) -> Result<String, Failure> {
+        use ctxloom_ports::Editor as _;
+        let launch = edit.launch.as_ref().ok_or_else(|| {
+            Failure::new(
+                library_application::AppError::from(library_application::WriteError::NotWired {}),
+                Exit::FAILED,
+            )
+        })?;
+        let wiring = self.wiring()?;
+        let (around, _) = wiring.locate();
+        let editor = ProcessEditor::new(wiring.fs(), &around.temp_root);
+        let command = ctxloom_ports::EditorCommand {
+            program: launch.program.clone(),
+            args: launch.args.clone(),
+        };
+        editor
+            .edit(&command, &edit.file_name, &edit.text)
+            .map_err(|cause| {
+                Failure::new(library_application::AppError::Cause(cause), Exit::FAILED)
+            })
+    }
+
     fn assemble_context(
         &self,
         request: daemon_proto::v1::AssembleContextRequest,

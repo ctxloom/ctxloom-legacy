@@ -522,6 +522,11 @@ macro_rules! write_requests {
 
 write_requests! {
     CreateBundleRequest.parent;
+    CreateFragmentRequest.parent;
+    UpdateFragmentRequest.fragment.name;
+    CreateCommandRequest.parent;
+    UpdateCommandRequest.command.name;
+    UpdateConfigRequest.name;
 }
 
 #[cfg(test)]

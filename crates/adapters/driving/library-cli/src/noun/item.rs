@@ -2,7 +2,7 @@
 //! writes (B1), each json answer its AIP resource or method response
 //! (OD-40, design §5.2).
 
-use library_application::{ItemCreated, ItemDistilled, ItemEdited, ItemRemoved, ItemShow, Removal};
+use library_application::{ItemCreated, ItemDistilled, ItemRemoved, ItemShow, Removal};
 
 use crate::catalog::{self, ok};
 use crate::prelude::*;
@@ -155,44 +155,39 @@ pub(crate) fn write(
 ) -> Result<Option<Exit>, Failure> {
     let reference = text_arg(sub, "ref");
     let code = match verb {
-        "create" => {
-            let outcome = match given(sub, "name") {
-                Some(name) => {
+        "create" => match given(sub, "name") {
+            Some(name) => {
+                let outcome =
                     cx.library
-                        .item_create(&cx.flags, kind, &text_arg(sub, "bundle"), &name)
-                }
-                None => cx
-                    .library
-                    .item_create_at(&cx.flags, kind, &text_arg(sub, "bundle")),
-            };
-            catalog::answer(
+                        .item_create(&cx.flags, kind, &text_arg(sub, "bundle"), &name);
+                catalog::answer(
+                    cx,
+                    outcome,
+                    out,
+                    err,
+                    false,
+                    created,
+                    |made, out, _| {
+                        created_text(
+                            &made.kind,
+                            &made.bundle,
+                            &made.name,
+                            made.bundle_created,
+                            out,
+                        )
+                    },
+                    ok,
+                )?
+            }
+            None => create_served(
                 cx,
-                outcome,
+                kind,
+                &text_arg(sub, "bundle"),
+                given(sub, "body"),
                 out,
                 err,
-                false,
-                created,
-                |made, out, _| {
-                    if made.bundle_created {
-                        writeln!(out, "Created bundle \"{}\"", made.bundle)?;
-                    }
-                    writeln!(
-                        out,
-                        "Created {} \"{}\" in bundle \"{}\"",
-                        made.kind, made.name, made.bundle
-                    )?;
-                    writeln!(
-                        out,
-                        "Edit with: ctxloom {} edit {}#{}/{}",
-                        made.kind,
-                        made.bundle,
-                        dir_of(&made.kind),
-                        made.name
-                    )
-                },
-                ok,
-            )?
-        }
+            )?,
+        },
         "remove" => {
             let outcome = cx
                 .library
@@ -216,41 +211,275 @@ pub(crate) fn write(
                 crate::write::removal_exit,
             )?
         }
-        "edit" => {
-            let no_distill = flag(sub, "no-distill");
-            let outcome = cx
-                .library
-                .item_edit(&cx.flags, kind, &reference, no_distill);
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                edited,
-                |edited, out, notes| {
-                    if edited.status == "unchanged" {
-                        return nothing(out);
-                    }
-                    if edited.distill_skipped {
-                        notes.push("distilled form not refreshed (--no-distill)".to_string());
-                    }
-                    writeln!(
-                        out,
-                        "Updated {} \"{}\" in bundle \"{}\"",
-                        edited.kind, edited.name, edited.bundle
-                    )?;
-                    writeln!(out)?;
-                    writeln!(out, "Bundle modified. To publish changes:")?;
-                    writeln!(out, "  ctxloom bundle push {} [remote]", edited.bundle)
-                },
-                ok,
-            )?
-        }
+        "edit" => edit_served(
+            cx,
+            kind,
+            &reference,
+            (given(sub, "body"), flag(sub, "no-distill")),
+            out,
+            err,
+        )?,
         "distill" => distill(cx, kind, &reference, flag(sub, "force"), out, err)?,
         _ => return Ok(None),
     };
     Ok(Some(code))
+}
+
+/// What a create said, in text (Go's words).
+fn created_text(
+    kind: &str,
+    bundle: &str,
+    name: &str,
+    bundle_created: bool,
+    out: &mut dyn Write,
+) -> std::io::Result<()> {
+    if bundle_created {
+        writeln!(out, "Created bundle \"{bundle}\"")?;
+    }
+    writeln!(out, "Created {kind} \"{name}\" in bundle \"{bundle}\"")?;
+    writeln!(
+        out,
+        "Edit with: ctxloom {kind} edit {bundle}#{}/{name}",
+        dir_of(kind)
+    )
+}
+
+/// The bundle and the item a resource name names
+/// (`.../bundles/{b}/{dir}/{id}`).
+fn bundle_and_item(name: &str) -> (String, String) {
+    let rest = name.split_once("/bundles/").map_or(name, |(_, rest)| rest);
+    let mut parts = rest.splitn(3, '/');
+    let bundle = parts.next().unwrap_or_default().to_string();
+    let item = parts.nth(1).unwrap_or_default().to_string();
+    (bundle, item)
+}
+
+/// What the CLI can present of a need (step 10b U3): it launches the
+/// editor on the user's terminal, and asks nothing else here.
+fn presentable() -> Option<v1::Presentable> {
+    Some(v1::Presentable {
+        can_ask: false,
+        can_launch: true,
+    })
+}
+
+/// The answer to `needs`' Edit need, the editor launched on its document
+/// (step 10b U3: the preview's Edit need, presented by the CLI); none
+/// when it asks none.
+fn edit_answers(cx: &Context<'_>, needs: &[v1::Need]) -> Result<Vec<v1::Answer>, Failure> {
+    let mut answers = Vec::new();
+    for need in needs {
+        if let Some(v1::need::Kind::Edit(edit)) = &need.kind {
+            let edited = cx.served.edit_document(edit)?;
+            answers.push(v1::Answer {
+                need_id: need.id.clone(),
+                answer: Some(v1::answer::Answer::Edited(edited)),
+            });
+        }
+    }
+    Ok(answers)
+}
+
+/// `fragment|command create <bundle>#<dir>/<id> [--body]`: the daemon's
+/// `CreateFragment` or `CreateCommand` (step 10b U3). With no body, its
+/// preview's Edit need is presented (the editor launched here), and the
+/// apply sends what the editor left.
+fn create_served(
+    cx: &Context<'_>,
+    kind: ItemKind,
+    reference: &str,
+    body: Option<String>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let (bundle, path) = reference.split_once('#').unwrap_or((reference, ""));
+    let id = path.split_once('/').map_or(path, |(_, id)| id).to_string();
+    let under = library_api::names::bundle_target(bundle);
+    let previewed = body.is_none();
+    let word = if kind == ItemKind::Command {
+        "command"
+    } else {
+        "fragment"
+    };
+    let text = |name: &str, bundle_created: bool, out: &mut dyn Write| {
+        let (bundle, item) = bundle_and_item(name);
+        created_text(word, &bundle, &item, bundle_created, out)
+    };
+    if kind == ItemKind::Command {
+        let ask = |validate_only: bool, answers: Vec<v1::Answer>| v1::CreateCommandRequest {
+            command_id: id.clone(),
+            command: Some(v1::Command {
+                body: body.clone().unwrap_or_default(),
+                ..v1::Command::default()
+            }),
+            validate_only,
+            answers,
+            presentable: presentable(),
+            globals: cx.globals(),
+            ..v1::CreateCommandRequest::default()
+        };
+        let mut answers = Vec::new();
+        if previewed {
+            let preview = cx.served.create_command(&under, ask(true, Vec::new()))?;
+            answers = edit_answers(cx, &preview.needs)?;
+        }
+        let made = cx.served.create_command(&under, ask(false, answers));
+        return crate::answer_written(
+            cx,
+            made,
+            |m| std::mem::take(&mut m.notices),
+            out,
+            err,
+            |m, out| {
+                let name = m.command.as_ref().map_or("", |c| c.name.as_str());
+                text(name, m.bundle_created, out)
+            },
+            |_| Exit::OK,
+        );
+    }
+    let ask = |validate_only: bool, answers: Vec<v1::Answer>| v1::CreateFragmentRequest {
+        fragment_id: id.clone(),
+        fragment: Some(v1::Fragment {
+            body: body.clone().unwrap_or_default(),
+            ..v1::Fragment::default()
+        }),
+        validate_only,
+        answers,
+        presentable: presentable(),
+        globals: cx.globals(),
+        ..v1::CreateFragmentRequest::default()
+    };
+    let mut answers = Vec::new();
+    if previewed {
+        let preview = cx.served.create_fragment(&under, ask(true, Vec::new()))?;
+        answers = edit_answers(cx, &preview.needs)?;
+    }
+    let made = cx.served.create_fragment(&under, ask(false, answers));
+    crate::answer_written(
+        cx,
+        made,
+        |m| std::mem::take(&mut m.notices),
+        out,
+        err,
+        |m, out| {
+            let name = m.fragment.as_ref().map_or("", |f| f.name.as_str());
+            text(name, m.bundle_created, out)
+        },
+        |_| Exit::OK,
+    )
+}
+
+/// What an edit said, in text (Go's words): nothing changed, or the item
+/// updated and how to publish it.
+fn edited_text(
+    word: &str,
+    name: &str,
+    applied: bool,
+    no_distill: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> std::io::Result<()> {
+    if !applied {
+        return nothing(out);
+    }
+    let (bundle, item) = bundle_and_item(name);
+    writeln!(out, "Updated {word} \"{item}\" in bundle \"{bundle}\"")?;
+    writeln!(out)?;
+    writeln!(out, "Bundle modified. To publish changes:")?;
+    writeln!(out, "  ctxloom bundle push {bundle} [remote]")?;
+    if no_distill {
+        writeln!(err, "{PROG}: distilled form not refreshed (--no-distill)")?;
+    }
+    Ok(())
+}
+
+/// `fragment|command edit <ref> [--body] [--no-distill]`: the daemon's
+/// `UpdateFragment` or `UpdateCommand` (step 10b U3). With no body, its
+/// preview's Edit need is presented (the editor launched here, on the
+/// body as it is), and the apply sends what the editor left.
+fn edit_served(
+    cx: &Context<'_>,
+    kind: ItemKind,
+    reference: &str,
+    (body, no_distill): (Option<String>, bool),
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let under = library_api::names::reference_target(reference);
+    let previewed = body.is_none();
+    let word = if kind == ItemKind::Command {
+        "command"
+    } else {
+        "fragment"
+    };
+    let mut said = Vec::new();
+    let code = if kind == ItemKind::Command {
+        let ask = |validate_only: bool, answers: Vec<v1::Answer>| v1::UpdateCommandRequest {
+            command: Some(v1::Command {
+                body: body.clone().unwrap_or_default(),
+                no_distill: no_distill.then_some(true),
+                ..v1::Command::default()
+            }),
+            validate_only,
+            answers,
+            presentable: presentable(),
+            globals: cx.globals(),
+            ..v1::UpdateCommandRequest::default()
+        };
+        let mut answers = Vec::new();
+        if previewed {
+            let preview = cx.served.update_command(&under, ask(true, Vec::new()))?;
+            answers = edit_answers(cx, &preview.needs)?;
+        }
+        let edited = cx.served.update_command(&under, ask(false, answers));
+        crate::answer_written(
+            cx,
+            edited,
+            |m| std::mem::take(&mut m.notices),
+            out,
+            err,
+            |m, out| {
+                let name = m.command.as_ref().map_or("", |c| c.name.as_str());
+                let applied = m.applied.unwrap_or(false);
+                edited_text(word, name, applied, no_distill && applied, out, &mut said)
+            },
+            |_| Exit::OK,
+        )?
+    } else {
+        let ask = |validate_only: bool, answers: Vec<v1::Answer>| v1::UpdateFragmentRequest {
+            fragment: Some(v1::Fragment {
+                body: body.clone().unwrap_or_default(),
+                no_distill: no_distill.then_some(true),
+                ..v1::Fragment::default()
+            }),
+            validate_only,
+            answers,
+            presentable: presentable(),
+            globals: cx.globals(),
+            ..v1::UpdateFragmentRequest::default()
+        };
+        let mut answers = Vec::new();
+        if previewed {
+            let preview = cx.served.update_fragment(&under, ask(true, Vec::new()))?;
+            answers = edit_answers(cx, &preview.needs)?;
+        }
+        let edited = cx.served.update_fragment(&under, ask(false, answers));
+        crate::answer_written(
+            cx,
+            edited,
+            |m| std::mem::take(&mut m.notices),
+            out,
+            err,
+            |m, out| {
+                let name = m.fragment.as_ref().map_or("", |f| f.name.as_str());
+                let applied = m.applied.unwrap_or(false);
+                edited_text(word, name, applied, no_distill && applied, out, &mut said)
+            },
+            |_| Exit::OK,
+        )?
+    };
+    err.write_all(&said).map_err(crate::output_failure)?;
+    Ok(code)
 }
 
 /// `fragment|command distill <ref> [-f]` (plan step 5).
@@ -385,44 +614,6 @@ pub(crate) fn created(
         applied: Some(true),
         bundle_created: made.bundle_created,
         ..v1::CreateFragmentResponse::default()
-    })
-}
-
-/// `fragment|command edit`: `UpdateFragmentResponse` or
-/// `UpdateCommandResponse`; an edit that changed nothing applied nothing.
-/// Its distilled form refreshed is `FRESH`; one not refreshed is no claim.
-pub(crate) fn edited(
-    parent: &str,
-    edited: &ItemEdited,
-) -> Either<v1::UpdateFragmentResponse, v1::UpdateCommandResponse> {
-    let name = catalog::item_name(parent, &edited.bundle, dir_of(&edited.kind), &edited.name);
-    let applied = Some(edited.status != "unchanged");
-    let distilled = if edited.distilled {
-        v1::DistilledState::Fresh as i32
-    } else {
-        v1::DistilledState::Unspecified as i32
-    };
-    if is_command(&edited.kind) {
-        return Either::Command(v1::UpdateCommandResponse {
-            command: Some(v1::Command {
-                name,
-                distilled,
-                ..v1::Command::default()
-            }),
-            path: edited.path.clone(),
-            applied,
-            ..v1::UpdateCommandResponse::default()
-        });
-    }
-    Either::Fragment(v1::UpdateFragmentResponse {
-        fragment: Some(v1::Fragment {
-            name,
-            distilled,
-            ..v1::Fragment::default()
-        }),
-        path: edited.path.clone(),
-        applied,
-        ..v1::UpdateFragmentResponse::default()
     })
 }
 

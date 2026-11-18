@@ -366,45 +366,6 @@ mod mapping {
         );
     }
 
-    fn edit(kind: &str) -> ItemEdited {
-        ItemEdited {
-            status: "updated".to_string(),
-            bundle: "demo".to_string(),
-            name: "one".to_string(),
-            path: "x/one.md".to_string(),
-            distilled: true,
-            kind: kind.to_string(),
-            reference: String::new(),
-            distill_skipped: false,
-        }
-    }
-
-    #[test]
-    fn test_an_edited_item_answers_its_path_and_its_fresh_form() {
-        assert_eq!(
-            json_of(&edited(PARENT, &edit("command"))),
-            json!({
-                "command": {
-                    "name": "projects/p/bundles/demo/commands/one",
-                    "distilled": "FRESH",
-                },
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-        assert_eq!(
-            json_of(&edited(PARENT, &edit("fragment"))),
-            json!({
-                "fragment": {
-                    "name": "projects/p/bundles/demo/fragments/one",
-                    "distilled": "FRESH",
-                },
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-    }
-
     fn gone() -> Removal<ItemRemoved> {
         Removal::Done(ItemRemoved {
             status: "removed".to_string(),

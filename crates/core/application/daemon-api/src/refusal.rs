@@ -594,6 +594,13 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
             library_tree::NotInGit,
             library_tree::LibraryIgnored,
             library_tree::PlanRejected,
+            // A write's (step 10b U3).
+            library_tree::TreeInMotion,
+            library_tree::ResourceExists,
+            library_tree::NoSuchResource,
+            library_tree::BuiltinReadOnly,
+            library_tree::OneChangePerCall,
+            library_tree::PlanStale,
         ]
     );
     library

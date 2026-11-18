@@ -21,6 +21,7 @@ mod agents;
 mod always;
 mod bundles;
 pub(crate) mod companions;
+pub mod config_set;
 mod configfile;
 mod configs;
 mod editor;

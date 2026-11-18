@@ -130,6 +130,11 @@ macro_rules! library_writes {
     ($each:ident) => {
         $each! {
             create_bundle (CreateBundle) CreateBundleRequest => CreateBundleResponse,
+            create_fragment (CreateFragment) CreateFragmentRequest => CreateFragmentResponse,
+            update_fragment (UpdateFragment) UpdateFragmentRequest => UpdateFragmentResponse,
+            create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse,
+            update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
+            update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
         }
     };
 }

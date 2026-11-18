@@ -85,6 +85,7 @@ pub use run::{AssembleRequest, Previewed, RunRequest};
 pub use search::SearchRequest;
 pub use trust::{HeldBack, CTXLOOM_BUNDLE_PATH};
 pub use views::*;
+pub use write::config_set::ConfigSet;
 pub use write::requests::*;
 pub use write::views::*;
 pub use write::{WriteError, WritePorts};

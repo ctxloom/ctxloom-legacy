@@ -125,6 +125,18 @@ fn config() -> Command {
     noun("config", "Show ctxloom configuration")
         .subcommand(Command::new("edit").about("Open config.yaml in $EDITOR"))
         .subcommand(
+            Command::new("set")
+                .about("Set one key of the configuration (the project's; the home's with --home)")
+                .arg(one("key", "The key's dotted path (editor.command)"))
+                .arg(one("value", "Its value, as typed"))
+                .arg(
+                    Arg::new("home")
+                        .long("home")
+                        .action(ArgAction::SetTrue)
+                        .help("Set it in the home's config instead of the project's"),
+                ),
+        )
+        .subcommand(
             Command::new("create")
                 .about("Scaffold a default config.yaml (and remotes.yaml)")
                 .arg(
@@ -238,7 +250,8 @@ fn item_writes(noun: Command, word: &'static str, dir: &'static str) -> Command 
                 Arg::new("name")
                     .value_name("NAME")
                     .help("The new item's name, after a bundle (no editor is opened)"),
-            ),
+            )
+            .arg(body_arg("The item's text, stored as it is (no editor is opened)")),
     )
     .subcommand(
         remove(match word {
@@ -286,8 +299,15 @@ fn item_writes(noun: Command, word: &'static str, dir: &'static str) -> Command 
                     .long("no-distill")
                     .action(ArgAction::SetTrue)
                     .help("Skip re-distillation for this edit"),
-            ),
+            )
+            .arg(body_arg("The item's new body, its front matter kept (no editor is opened)")),
     )
+}
+
+/// `--body <text>` (step 10b's spec): the item's text given on the command
+/// line, so no editor is opened.
+fn body_arg(help: &'static str) -> Arg {
+    Arg::new("body").long("body").value_name("TEXT").help(help)
 }
 
 fn fragment() -> Command {

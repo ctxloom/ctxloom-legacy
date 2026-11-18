@@ -240,6 +240,31 @@ impl Library {
         (self, recorder)
     }
 
+    /// The library whose editor round trips are `editor`'s (step 10b U3:
+    /// the daemon's answers an Edit need; it launches nothing).
+    pub fn editing_with(mut self, editor: Arc<dyn ctxloom_ports::Editor>) -> Library {
+        if let Some(ports) = self.ports.as_mut() {
+            ports.editor = editor;
+        }
+        self
+    }
+
+    /// `text` through this library's own editor, as a file named
+    /// `file_name`: what a test's client does with a write's Edit need
+    /// (the shipped CLI launches the need's EDITOR itself).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn edit_document(&self, file_name: &str, text: &str) -> Result<String, crate::AppError> {
+        let ports = self
+            .ports
+            .as_ref()
+            .ok_or_else(|| crate::AppError::from(crate::WriteError::NotWired {}))?;
+        let command = crate::write::editor::editor_from_env(&self.environ);
+        ports
+            .editor
+            .edit(&command, file_name, text)
+            .map_err(crate::AppError::Cause)
+    }
+
     /// The files below `dir` of the bundle `bundle` (`""`: the bundle's
     /// whole tree), each below it, sorted; none where there are none.
     pub fn bundle_files(&self, bundle: &str, dir: &str) -> Vec<String> {
