@@ -3,9 +3,12 @@
 # the mock engine and the mock-* test engines are compiled and registered only
 # under the `test-support` feature the acceptance tests build with. This runs
 # the binary a plain `cargo build` made, in a temporary home, and refuses one
-# whose agent written on a mock (the library's list, which the refusal names)
+# whose config created on a mock (the library's list, which the refusal names)
 # or `manage install --engine mock` (the surface registry) is not the
-# unknown-engine refusal. It reaches no daemon.
+# unknown-engine refusal. It reaches no daemon: `config create --engine`
+# judges the list in process (`agent create`, which judges the same list,
+# `library_application::agents::ENGINES`, is the daemon's write since step
+# 10b U3).
 #
 # The unit tests cannot see this: a workspace test build unifies features, so
 # every crate there has `test-support` on. Only a build without the
@@ -37,20 +40,19 @@ jq() { command jq "$@" | tr -d '\r'; }
 ctxloom() { (cd "$home" && env -i PATH="$PATH" HOME="$home" TMPDIR="$home" ${windows[@]+"${windows[@]}"} "$bin" "$@"); }
 
 # The library's list (`engine list` and `show` are the daemon's reads since
-# step 10a U2, and this check reaches no daemon): an agent written on an
-# engine the list does not hold is refused, in process, naming the list.
+# step 10a U2, `agent create` its write since 10b U3, and this check reaches
+# no daemon): a config created on an engine the list does not hold is
+# refused, in process, naming the list.
 project="$home/project"
 mkdir -p "$project"
 inproject() { (cd "$project" && env -i PATH="$PATH" HOME="$home" TMPDIR="$home" ${windows[@]+"${windows[@]}"} "$bin" "$@"); }
-made=$(inproject config create 2>&1) || {
-    echo "plain build: config create failed"; echo "$made"; exit 1; }
 for engine in mock mock-launch mock-lossy mock-noskills; do
     rc=0
-    said=$(inproject agent create probe --engine "$engine" --format json 2>&1) || rc=$?
+    said=$(inproject config create --engine "$engine" 2>&1) || rc=$?
     code=$(jq -r '.code? // empty' <<< "$said" 2>/dev/null || true)
     valid=$(jq -r '.args.valid? // empty' <<< "$said" 2>/dev/null || true)
-    if [ "$rc" -eq 0 ] || [ "$code" != library-application-write-unknown-engine ]; then
-        echo "plain build: an agent on $engine is not refused as an unknown engine (exit $rc)"
+    if [ "$rc" -eq 0 ] || [ "$code" != library-application-write-config-engine ]; then
+        echo "plain build: a config on $engine is not refused as an unknown engine (exit $rc)"
         echo "$said"
         exit 1
     fi
