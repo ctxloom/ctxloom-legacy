@@ -4568,9 +4568,9 @@ procfs, `_tests <package>` while the lock is held, and no `flock`.
 ported there (`gates/MIGRATING.md`).
 
 lefthook runs the gates one at a time, stopping at the first failure, and
-shows each gate's pass line and any failure's extract. Gates 1 to 5 run in
+shows each gate's pass line and any failure's extract. Gates 1 to 6 run in
 pre-commit (the private recipes `fmt-staged`, `secrets-scan-staged`,
-`test-commit`, ...; `just --list` hides them, they run by name). Mutation (6)
+`plain-binary`, `test-commit`, ...; `just --list` hides them, they run by name). Mutation (7)
 runs in no git hook and is not run by hand: the `closeout` skill runs `just
 closeout`, whose `mutants-batch` mutation-tests the whole batch (base to HEAD,
 the base defaulting to the merge-base with `main`) in a throwaway worktree, in
@@ -4605,8 +4605,15 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    secret in a test ends its line with `gitleaks:allow`.
 3. **clippy**: `just lint`, including the core's purity rules
    (`crates/core/clippy.toml`).
-4. **deps**: `just lint-deps`, cargo-deny (`deny.toml`).
-5. **tests**: `just test-staged` runs the changed crates' OWN tests in the
+4. **plain binary**: `just plain-binary` (owner ruling 2026-11-18,
+   evening) builds the workspace without its dev-dependencies, as `just
+   build` does, and holds the binary it made to the two plain-build checks,
+   `scripts/plain-engines-check.sh` (the real engines alone, ruling 52) and
+   `scripts/plain-destroy-check.sh` (no destroy, ruling 94b); one `ok
+   plain-binary` line, its log `target/logs/plain-binary.log`. `just build`
+   ends with it.
+5. **deps**: `just lint-deps`, cargo-deny (`deny.toml`).
+6. **tests**: `just test-staged` runs the changed crates' OWN tests in the
    staged tree (HEAD plus the staged diff, a sibling worktree of the
    checkout), no dependent's (owner ruling of 2026-11-13, fast hooks,
    acceptance at landing): a library's change does not select the binary
@@ -4621,7 +4628,7 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    2026-11-13); a red scenario the branch added, or a green one it broke, is
    refused at landing by the ratchet of `land-ratchet` and
    `closeout-ratchet` (below).
-6. **mutants** (no hook; at close-out, `just mutants-batch`): `mutants-staged` mutation-tests the staged diff
+7. **mutants** (no hook; at close-out, `just mutants-batch`): `mutants-staged` mutation-tests the staged diff
    (`cargo mutants --in-diff`), holding new logic to its tier: every
    hand-written tier (domain, read models, ports, application and adapters)
    90% or more; the composition root is listed but not held (the justfile's
