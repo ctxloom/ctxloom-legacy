@@ -3512,6 +3512,40 @@ prints the `Names` parent, `projects/<harp>` or `users/me`); an absent field
 reads as its default (`as "false"`, `"0"` or `""` passes where proto3 JSON
 left it out, anything else does not), and an absent list has 0 entries.
 
+## The terminal wake (step 9, owner rulings 2026-11-18)
+
+A primary terminal session is woken through its engine's own messaging
+socket. claude exports `CLAUDE_CODE_MESSAGING_SOCKET` (and `_TOKEN`) to what
+it starts, so `ctxloom mcp serve` (the stdio server it starts from
+`ctxloom-mcp.json`) holds `WatchSession` open for its own session
+(`CTXLOOM_SESSION`; server-streaming, checked as `GetSession` is) and acts on
+`daemon_api::Waker`: a pending wake it never woke for, with none outstanding
+(one at a time), is issued (`sessions.IssueWake`, journaled), posted
+(engine-claude's `messaging_wake`: Go's NDJSON, an auth line then
+`{"type":"user",...,"content":"ctxloom: wake <16 hex> (messages delivered at
+turn start)"}`, `run_ports::wake_line`), and disarmed after 60 s
+(`DisarmWake`; a post that fails, at once). A wake is a nudge: the session's
+pending messages are the truth. Its prompt hook (`turn_start`) delivers its
+informs and wakes as `additionalContext`, and a tool call's (`post_tool`) its
+steers. They are recorded first (`DeliverMessages`, which redeems the wake its
+prompt was; pending-messages drops them) and are a primary's alone (a child's
+are fed as turns). A wake line that delivered nothing is blocked; a human's
+prompt never is. One hook answer has ONE 10,000-character context budget
+(claude's cap), shared in order by setup-application's `compose_context`:
+the skill mates line, the messages (given what is left; past it they wait
+behind a pointer to `session show`), then U13's re-delivered context. The
+daemon publishes each watched session's `SessionSignal` every round (its
+pending wakes, its outstanding wake) and repeats it every 5 s, so a gone
+watcher is noticed. A primary takes `Wake` (never `Steer`) only while
+watched (`session_policies::supported(session, wakeable)`, `GetSession`'s
+`wakeable`); a wake to one nobody watches (a `--no-context` session has no
+ctxloom server) is refused client-side, `daemon-api-wake-inform-only`.
+`session show` says `wake: sent, not answered`. The wire is undocumented:
+`just validate-wake-claude` (no gate) re-measures it on each claude bump;
+on 2.1.325 a non-descendant's post is NOT refused. The unix socket call is
+three lines of engine-claude's `messaging.rs` in `scripts/os-cfg-allow.txt`
+(the os crate has no local socket yet); no other OS is posted to.
+
 ## What an engine cannot carry (M6, j002000)
 
 An engine's word on what it cannot carry is its surface half's
