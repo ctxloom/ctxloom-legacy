@@ -1,7 +1,7 @@
 //! `skill`: list and show, and its writes (B1), each json answer its AIP
 //! resource or method response (OD-40, design §5.3).
 
-use library_application::{Removal, SkillCreated, SkillExported, SkillImported, SkillRemoved};
+use library_application::{Removal, SkillExported, SkillImported, SkillRemoved};
 
 use crate::catalog::{self, ok};
 use crate::read_back;
@@ -70,35 +70,48 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
+/// `skill create <bundle>#skills/<name>` (or the bundle and the name):
+/// the daemon's `CreateSkill` (step 10b U3), its text from the response.
 fn create(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx.library.skill_create(
-        &cx.flags,
-        &text_arg(sub, "bundle"),
-        &text_arg(sub, "name"),
-        &text_arg(sub, "description"),
-    );
-    catalog::answer(
+    let asked = text_arg(sub, "bundle");
+    let named = text_arg(sub, "name");
+    let (bundle, id) = match asked.split_once('#') {
+        Some((bundle, path)) if named.is_empty() => (
+            bundle.to_string(),
+            path.strip_prefix("skills/").unwrap_or(path).to_string(),
+        ),
+        _ => (asked.clone(), named),
+    };
+    let request = v1::CreateSkillRequest {
+        skill_id: id,
+        skill: Some(v1::Skill {
+            description: text_arg(sub, "description"),
+            ..v1::Skill::default()
+        }),
+        globals: cx.globals(),
+        ..v1::CreateSkillRequest::default()
+    };
+    let under = library_api::names::bundle_target(&bundle);
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.create_skill(&under, request),
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        false,
-        created,
-        |made, out, _| {
-            writeln!(
-                out,
-                "Created skill \"{}\" in bundle \"{}\"",
-                made.name, made.bundle
-            )?;
-            writeln!(out, "  {}", made.dir)?;
-            writeln!(out, "Edit {}/SKILL.md to describe the skill", made.dir)
+        |m, out| {
+            let name = m.skill.as_ref().map_or("", |s| s.name.as_str());
+            let rest = name.split_once("/bundles/").map_or(name, |(_, rest)| rest);
+            let (bundle, skill) = rest.split_once("/skills/").unwrap_or((rest, ""));
+            writeln!(out, "Created skill \"{skill}\" in bundle \"{bundle}\"")?;
+            writeln!(out, "  {}", m.path)?;
+            writeln!(out, "Edit {}/SKILL.md to describe the skill", m.path)
         },
-        ok,
+        |_| Exit::OK,
     )
 }
 
@@ -190,20 +203,6 @@ fn import(
         },
         ok,
     )
-}
-
-/// `skill create`: `CreateSkillResponse`.
-pub(crate) fn created(parent: &str, made: &SkillCreated) -> v1::CreateSkillResponse {
-    v1::CreateSkillResponse {
-        skill: Some(v1::Skill {
-            name: skill_name(parent, &made.bundle, &made.name),
-            path: made.dir.clone(),
-            ..v1::Skill::default()
-        }),
-        path: made.dir.clone(),
-        applied: Some(true),
-        ..v1::CreateSkillResponse::default()
-    }
 }
 
 /// `skill remove`: `DeleteSkillResponse`, the preview's (named by the

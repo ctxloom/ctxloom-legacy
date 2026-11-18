@@ -527,6 +527,7 @@ write_requests! {
     CreateCommandRequest.parent;
     UpdateCommandRequest.command.name;
     UpdateConfigRequest.name;
+    CreateSkillRequest.parent;
 }
 
 #[cfg(test)]

@@ -186,6 +186,7 @@ macro_rules! served_writes {
             create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse,
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
+            create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
         }
     };
 }
@@ -393,6 +394,7 @@ pub const SERVED_WRITES: &[(&str, &[&str])] = &[
     ("fragment", &["create", "edit"]),
     ("command", &["create", "edit"]),
     ("config", &["set"]),
+    ("skill", &["create"]),
 ];
 
 /// Whether `noun`, given its matches `sub`, is a write the daemon serves

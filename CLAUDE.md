@@ -147,6 +147,36 @@ unix: a file chmod'ed executable but not listed shows 0644 and is pushed
 100644. Not changed: a skill zip's entry modes, which its export writes
 from the sidecar and its import turns into the sidecar's list.
 
+Step 10b U3 (writes as library-domain commands; `t13-step10.plan.md` §2
+U3, protos.md §1.1) serves `bundle create`, `fragment|command create
+<bundle>#<kind>s/<id>` and `edit`, `skill create` and `config set` in the
+daemon, from one table (`daemon_proto::library_writes!`, every layer;
+`library_api::served_writes!`, each verb's use case and response; the
+CLI's `SERVED_WRITES`). A write is observed as a read is, then its request
+id looked up in `library-checkout` (which keeps every intent by request
+id: a retry of a write done is answered as applied, one owed is finished
+from its step), then PLANNED: the use case over `Library::recording`,
+whose content and config ports record what it writes and write nothing,
+shaped by `library_api::writes::shape` into ONE step (a file replaced, a
+new directory, a path trashed; more than one file is
+`library-tree-one-change-per-call`), then INTENDED (the step's command
+under the request id, git's ids for what it writes from
+`TreeObserver::blob_id_of`), made by `Library::perform` (the one
+operation, the seam U8's atomic operations replace), read back and
+recorded `RecordStepDone`, and answered with the path's new etag. An
+observation that sees exactly a pending intent's ids is that step done
+(`StepApplied`), so a daemon killed after the operation is recorded
+once, as ctxloom's; a step done lays its paths over the record's dirty
+set. The editor round trip is the preview's Edit need: the daemon's
+`AnsweredEditor` answers `--body` or the need's answer, else keeps the
+ask; the CLI launches the need's EDITOR itself (`Served::edit_document`).
+`--body` (fragment|command create and edit) and `config set <key> <value>
+[--home]` (one key, coerced as an override and judged by the schema at
+its path) are the spec's new surfaces. Test-support's `test-die-at`
+kills a write at `intended`, `renamed` and `done` (and
+`test-die-after-apply` at `done`). Every other write still runs in
+process until it is served.
+
 Slice S4 (sessions) built the following. The record is the user's durable
 store (owner rulings 87a, T14, which reverses 87's store per project): a
 session's state goes through angzarr-embedded over the ONE per-user

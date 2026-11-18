@@ -213,27 +213,6 @@ mod mapping {
     }
 
     #[test]
-    fn test_a_created_skill_answers_its_directory() {
-        let made = SkillCreated {
-            status: "created".to_string(),
-            bundle: "demo".to_string(),
-            name: "reviewer".to_string(),
-            dir: "skills/reviewer".to_string(),
-        };
-        assert_eq!(
-            json_of(&created(PARENT, &made)),
-            json!({
-                "skill": {
-                    "name": "projects/p/bundles/demo/skills/reviewer",
-                    "path": "skills/reviewer",
-                },
-                "path": "skills/reviewer",
-                "applied": true,
-            })
-        );
-    }
-
-    #[test]
     fn test_a_removed_skill_answers_its_removal_or_its_preview() {
         let preview = Removal::Preview(Preview::of(
             "reviewer".to_string(),

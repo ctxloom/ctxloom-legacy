@@ -135,6 +135,7 @@ macro_rules! library_writes {
             create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse,
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
+            create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
         }
     };
 }

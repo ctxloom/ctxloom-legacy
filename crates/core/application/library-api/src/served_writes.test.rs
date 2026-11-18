@@ -189,3 +189,32 @@ fn test_an_edit_refreshed_says_its_distilled_form_fresh_and_one_unchanged_applie
     assert_eq!(same.applied, Some(false));
     assert_eq!(same.command.unwrap().distilled, 0);
 }
+
+#[test]
+fn test_a_created_skill_answers_its_directory_done_or_retried() {
+    let made = library_application::SkillCreated {
+        status: "created".to_string(),
+        bundle: "demo".to_string(),
+        name: "reviewer".to_string(),
+        dir: "skills/reviewer".to_string(),
+    };
+    let request = v1::CreateSkillRequest {
+        parent: "projects/amber-quiet-heron/bundles/demo".to_string(),
+        skill_id: "reviewer".to_string(),
+        ..v1::CreateSkillRequest::default()
+    };
+    let answered = super::create_skill::respond(&request, wrote(Some(made)));
+    let skill = answered.skill.unwrap();
+    assert_eq!(
+        skill.name,
+        "projects/amber-quiet-heron/bundles/demo/skills/reviewer"
+    );
+    assert_eq!(skill.path, "skills/reviewer");
+    assert_eq!(answered.path, "skills/reviewer");
+    let retried = super::create_skill::respond(&request, wrote(None));
+    assert_eq!(
+        retried.skill.unwrap().name,
+        "projects/amber-quiet-heron/bundles/demo/skills/reviewer"
+    );
+    assert_eq!(retried.path, "/work/demo/.ctxloom/content/bundles/v2/notes");
+}

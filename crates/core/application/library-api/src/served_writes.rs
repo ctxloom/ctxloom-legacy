@@ -54,6 +54,7 @@ macro_rules! served_writes {
             create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse, "command create";
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse, "command edit";
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse, "config set";
+            create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse, "skill create";
         }
     };
 }
@@ -543,6 +544,57 @@ pub mod update_config {
             etag: wrote.etag,
             notices: wrote.notices,
             ..v1::UpdateConfigResponse::default()
+        }
+    }
+}
+
+/// `skill create <bundle>#skills/<name> [-d description]`: `CreateSkill`,
+/// the skill one new directory, its metadata inside it.
+pub mod create_skill {
+    use super::*;
+    use library_application::SkillCreated;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::CreateSkillRequest,
+        _apply: bool,
+    ) -> Outcome<SkillCreated> {
+        let description = request
+            .skill
+            .as_ref()
+            .map_or("", |s| s.description.as_str());
+        library.skill_create(
+            flags,
+            bundle_in(&request.parent),
+            &request.skill_id,
+            description,
+        )
+    }
+
+    pub fn respond(
+        request: &v1::CreateSkillRequest,
+        wrote: Wrote<SkillCreated>,
+    ) -> v1::CreateSkillResponse {
+        let (bundle, id, dir) = match &wrote.answer {
+            Some(made) => (made.bundle.clone(), made.name.clone(), made.dir.clone()),
+            None => (
+                bundle_in(&request.parent).to_string(),
+                request.skill_id.clone(),
+                wrote.at.clone(),
+            ),
+        };
+        v1::CreateSkillResponse {
+            skill: Some(v1::Skill {
+                name: format!("{}/skills/{id}", names::bundle_name(&wrote.parent, &bundle)),
+                path: dir.clone(),
+                ..v1::Skill::default()
+            }),
+            path: dir,
+            applied: Some(wrote.applied),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::CreateSkillResponse::default()
         }
     }
 }

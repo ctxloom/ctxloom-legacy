@@ -269,6 +269,7 @@ targeted! {
     UpdateFragmentRequest => |r, t| r.fragment.get_or_insert_with(Default::default).name = t;
     UpdateCommandRequest => |r, t| r.command.get_or_insert_with(Default::default).name = t;
     UpdateConfigRequest => |r, t| r.name = t;
+    CreateSkillRequest => |r, t| r.parent = t;
 }
 
 /// What one invocation left behind.
