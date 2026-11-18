@@ -24,8 +24,8 @@ use crate::{
     ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeObserved,
 };
 use crate::{
-    BuiltinReadOnly, LibraryIgnored, NoSuchResource, NotInGit, PlanRejected, PlanStale,
-    ResourceExists, TreeInMotion,
+    BuiltinReadOnly, LibraryIgnored, NoSuchResource, NotInGit, OneChangePerCall, PlanRejected,
+    PlanStale, ResourceExists, TreeInMotion,
 };
 
 /// The code a plan's rejection takes when the tree no longer reads and the
@@ -118,6 +118,23 @@ impl LibraryAggregate {
             seen,
             now,
         })
+    }
+
+    /// `path` as ONE file (T29): refused when the record knows several
+    /// files under it (a directory), each named below it.
+    fn one_file(&self, path: &str) -> Result<(), LibraryTreeRejection> {
+        let under = format!("{}/", path.trim_end_matches('/'));
+        let paths: Vec<String> = self
+            .library
+            .resources
+            .iter()
+            .filter(|(key, resource)| key.starts_with(&under) && !resource.oid.is_empty())
+            .map(|(key, _)| key[under.len()..].to_string())
+            .collect();
+        if paths.len() < 2 {
+            return Ok(());
+        }
+        Err(LibraryTreeRejection::OneChangePerCall { paths })
     }
 
     fn present(&self, path: &str) -> Result<(), LibraryTreeRejection> {
@@ -324,7 +341,8 @@ impl LibraryAggregate {
             PlanRejected,
             TreeInMotion,
             NotInGit,
-            LibraryIgnored
+            LibraryIgnored,
+            OneChangePerCall
         )
     )]
     fn replace(
@@ -337,6 +355,7 @@ impl LibraryAggregate {
             builtin: true,
         };
         judge(&cmd.evidence, &cmd.path, checks)
+            .and_then(|()| self.one_file(&cmd.path))
             .and_then(|()| self.fresh(&cmd.path, cmd.seen_sequence))
             .map_err(|rejection| {
                 refuse!(
@@ -344,6 +363,7 @@ impl LibraryAggregate {
                     rejection,
                     Refuses<Self, ReplaceFile>,
                     [
+                        OneChangePerCall { paths } => OneChangePerCall,
                         PlanStale { path, seen, now } => PlanStale,
                         BuiltinReadOnly { bundle } => BuiltinReadOnly,
                         PlanRejected { code, args } => PlanRejected,

@@ -14,9 +14,9 @@ syntax = "proto3";
 // `optional` enum (the domain layer maps a set enum alone; the wire is the
 // same). `Evidence` gains `root`, the tree's root as the application found
 // it, which `NotInGit` and `TreeInMotion` (10b's text names it) carry.
-// And `OneChangePerCall` (T29, D14) waits for 10b (U8), with the evidence
-// that raises it: the generator refuses a refusal no command refuses, and
-// no U0 command has a plan of several files to judge.
+// `OneChangePerCall` (T29, D14) came with 10b (U3): the application refuses
+// a plan of several files before any command, and `ReplaceFile` refuses a
+// path the record knows holds several (a directory, not one file).
 //
 // THE LIBRARY: what ctxloom observed of a library TREE in git, and (from
 // 10b) what it intended to change there. A tree is a project checkout's
@@ -258,6 +258,7 @@ message ReplaceFile {
     refuses: "ctxloom.library.v1.TreeInMotion"
     refuses: "ctxloom.library.v1.NotInGit"
     refuses: "ctxloom.library.v1.LibraryIgnored"
+    refuses: "ctxloom.library.v1.OneChangePerCall"
   };
 
   string name = 1;
@@ -463,6 +464,15 @@ message NoSuchResource {
 message BuiltinReadOnly {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
   string bundle = 1;
+}
+
+// `library-tree-one-change-per-call` (T29, D14): a change of more than one
+// file. Replaces daemon.proto's `OneChangePerCall` now 10b serves the
+// writes.
+message OneChangePerCall {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+  // Each file it would change, relative to its bundle (else to the tree).
+  repeated string paths = 1;
 }
 
 // A planning failure, as the diagnostic the plan raised (L14). The person

@@ -34,6 +34,9 @@ pub enum LibraryTreeRejection {
         line: u32,
         pattern: String,
     },
+    /// The change would change more than one file (T29, D14): each, below
+    /// its bundle.
+    OneChangePerCall { paths: Vec<String> },
 }
 
 /// A motion as the catalog's selector names it.
@@ -64,6 +67,7 @@ impl Diagnostic for LibraryTreeRejection {
             LibraryTreeRejection::TreeInMotion { .. } => code!("tree-in-motion"),
             LibraryTreeRejection::NotInGit { .. } => code!("not-in-git"),
             LibraryTreeRejection::LibraryIgnored { .. } => code!("library-ignored"),
+            LibraryTreeRejection::OneChangePerCall { .. } => code!("one-change-per-call"),
         }
     }
 
@@ -96,6 +100,10 @@ impl Diagnostic for LibraryTreeRejection {
                 ("source", source.as_str().into()),
                 ("line", (*line).into()),
                 ("pattern", pattern.as_str().into()),
+            ],
+            LibraryTreeRejection::OneChangePerCall { paths } => vec![
+                ("count", paths.len().into()),
+                ("paths", paths.join(", ").into()),
             ],
         }
     }
@@ -134,6 +142,9 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
             source: ".gitignore".to_string(),
             line: 1,
             pattern: ".ctxloom/".to_string(),
+        }),
+        Box::new(LibraryTreeRejection::OneChangePerCall {
+            paths: vec!["fragments/a.md".to_string(), "fragments/b.md".to_string()],
         }),
     ]
 }

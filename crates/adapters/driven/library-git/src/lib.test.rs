@@ -359,6 +359,20 @@ fn a_path_with_no_file_is_left_out_of_the_ids() {
         .is_empty());
 }
 
+#[test]
+fn the_id_of_bytes_not_written_is_the_id_they_would_have_there() {
+    let repo = library();
+    let trees = observer(&repo);
+    let dir = repo.dir(".ctxloom");
+    let id = trees
+        .blob_id_of(&dir, "content/new.md", b"to be written\n")
+        .unwrap();
+    assert_eq!(id, git_hash(&repo, "to be written\n"));
+    assert!(!crate::fixtures::exists(
+        repo.path(".ctxloom/content/new.md")
+    ));
+}
+
 fn git_hash(repo: &Repo, text: &str) -> String {
     put(repo.top.join("scratch"), text);
     crate::fixtures::git_in(

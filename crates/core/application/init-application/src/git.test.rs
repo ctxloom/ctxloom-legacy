@@ -85,6 +85,10 @@ impl TreeObserver for Fake {
         unreachable!("not asked")
     }
 
+    fn blob_id_of(&self, _: &str, _: &str, _: &[u8]) -> Result<String, TreeError> {
+        unreachable!("not asked")
+    }
+
     fn in_motion(&self, _: &str) -> Result<Option<Motion>, TreeError> {
         unreachable!("not asked")
     }

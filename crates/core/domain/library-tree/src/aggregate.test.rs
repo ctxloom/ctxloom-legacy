@@ -1112,3 +1112,28 @@ fn a_pending_steps_ids_seen_past_a_moved_head_are_the_outsides() {
     assert_eq!(observed.intended, None);
     assert!(tree.library().pending.contains_key(&request));
 }
+
+#[test]
+fn a_replace_of_a_path_holding_several_files_is_one_change_per_call() {
+    let mut tree = Tree::baselined();
+    tree.observe(observation(
+        "h-0",
+        "h-0",
+        vec![
+            change(FILE, ChangeStatus::Modified, "f0", "f1"),
+            change(YAML, ChangeStatus::Modified, "y0", "y1"),
+        ],
+        &[(FILE, "f1"), (YAML, "y1")],
+        false,
+    ));
+    assert_eq!(
+        tree.command(replace(BUNDLE, 1)),
+        Err(LibraryTreeRejection::OneChangePerCall {
+            paths: vec![
+                "bundle.yaml".to_string(),
+                "fragments/example.md".to_string()
+            ]
+        })
+    );
+    assert!(tree.command(replace(FILE, 1)).is_ok());
+}

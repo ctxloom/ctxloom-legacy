@@ -30,6 +30,7 @@ mod items;
 mod mcp;
 mod plan;
 mod profiles;
+pub mod recording;
 pub mod requests;
 mod skills;
 pub mod views;

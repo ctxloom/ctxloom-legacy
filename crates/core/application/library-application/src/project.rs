@@ -31,6 +31,7 @@ pub struct RunSettings {
 }
 
 /// The library, over its ports.
+#[derive(Clone)]
 pub struct Library {
     pub(crate) content: Arc<dyn ContentRepo>,
     pub(crate) files: Arc<dyn ConfigFiles>,

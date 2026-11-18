@@ -629,6 +629,7 @@ pub fn library_refusal(rejection: &library_tree::LibraryTreeRejection) -> ApiRef
         Why::ResourceExists { path } => typed(&library_tree::ResourceExists { path }),
         Why::NoSuchResource { path } => typed(&library_tree::NoSuchResource { path }),
         Why::BuiltinReadOnly { bundle } => typed(&library_tree::BuiltinReadOnly { bundle }),
+        Why::OneChangePerCall { paths } => typed(&library_tree::OneChangePerCall { paths }),
     }
 }
 

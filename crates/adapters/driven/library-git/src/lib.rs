@@ -329,6 +329,15 @@ impl TreeObserver for GitTrees {
         Ok(paths.iter().map(|p| p.to_string()).zip(ids).collect())
     }
 
+    fn blob_id_of(&self, dir: &str, path: &str, bytes: &[u8]) -> Result<String, TreeError> {
+        let dir_path = Path::new(dir);
+        // `--path` names the file git's filters are chosen by, from the
+        // repository's root whatever the directory it runs in: given whole.
+        let named = format!("--path={}", dir_path.join(path).display());
+        let out = self.git(dir_path, &["hash-object", "--stdin", &named], Some(bytes))?;
+        Ok(String::from_utf8_lossy(&out).trim().to_string())
+    }
+
     fn in_motion(&self, dir: &str) -> Result<Option<Motion>, TreeError> {
         let dir = Path::new(dir);
         // Most telling first: a stopped rebase or merge also leaves files a

@@ -27,3 +27,5 @@ library-tree-tree-in-motion = git is in the middle of { $motion ->
    *[reverting] a revert
   } in { $root }, so ctxloom changes nothing there until it ends
 library-tree-tree-in-motion-fix = finish or abort it (`git merge --continue`, `git rebase --abort` …), then run the command again
+library-tree-one-change-per-call = this would change { $count } files ({ $paths }); ctxloom makes one change per call
+library-tree-one-change-per-call-fix = run one command for each, one item at a time

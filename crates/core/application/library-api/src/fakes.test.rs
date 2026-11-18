@@ -143,6 +143,11 @@ impl TreeObserver for Git {
             .collect())
     }
 
+    fn blob_id_of(&self, _dir: &str, path: &str, bytes: &[u8]) -> Result<String, TreeError> {
+        self.ask("blob_id_of");
+        Ok(format!("id-of:{path}:{}", String::from_utf8_lossy(bytes)))
+    }
+
     fn in_motion(&self, _dir: &str) -> Result<Option<Motion>, TreeError> {
         self.ask("in_motion");
         Ok(self.motion)

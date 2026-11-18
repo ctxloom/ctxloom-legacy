@@ -169,6 +169,11 @@ pub trait TreeObserver: Send + Sync {
     /// left out: absent.
     fn blob_ids(&self, dir: &str, paths: &[&str]) -> Result<BTreeMap<String, String>, TreeError>;
 
+    /// The object id git would give `bytes` as the file `path` (relative to
+    /// `dir`, its filters applied, nothing stored), whether or not a file is
+    /// there: what a write's intent names before it writes (step 10b U3).
+    fn blob_id_of(&self, dir: &str, path: &str, bytes: &[u8]) -> Result<String, TreeError>;
+
     /// The git operation in progress in `dir`'s repository, if any.
     fn in_motion(&self, dir: &str) -> Result<Option<Motion>, TreeError>;
 }

@@ -24,7 +24,7 @@ fn every_diagnostic_has_a_message_and_its_code_is_prefixed() {
             assert!(catalog.contains(&format!("${arg}")), "{code} uses {arg}");
         }
     }
-    assert_eq!(diagnostic_samples().len(), 7);
+    assert_eq!(diagnostic_samples().len(), 8);
 }
 
 #[test]

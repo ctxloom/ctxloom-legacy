@@ -335,6 +335,15 @@ async fn git_failing_fails_the_read() {
         ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::TreeError> {
             Ok(Default::default())
         }
+        fn blob_id_of(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[u8],
+        ) -> Result<String, ctxloom_ports::TreeError> {
+            unreachable!("not asked")
+        }
+
         fn in_motion(&self, _: &str) -> Result<Option<Motion>, ctxloom_ports::TreeError> {
             Err(ctxloom_ports::TreeError::GitMissing(Box::new(
                 LibraryTreeRejection::NotInGit {
