@@ -1165,6 +1165,27 @@ more (the `session stop` verb, its scenarios `@pending`, is not built).
 Not built:
 the hidden runner subcommand.
 
+Delegation on the daemon (step 9, owner rulings 2026-11-17). A hosted
+child's run enqueue journals what the child was GIVEN (`RunEnqueued.grant`,
+`runs.v1.Grant`: its MCP servers by name, ctxloom's own unless the launch
+has no context, and its permissions document; never a server's command or
+environment), and `session show` (text and json, `Session.grant`) says its
+latest run's, so a later `agent edit` changes only the next child's record;
+a one-shot journals none yet. `session show` also says how the latest run
+failed (`Session.last_failure`: its last turn's class, `rate-limited`
+among them, or `launch-failed`, with a notice saying what to do); nothing
+retries a failed turn, `session send <harp> wake` resumes it. `session stop
+<harp>` asks the session's current run to stop (`runs.RequestStop`, keyed
+`stop:<session>:<n>`); the daemon's `Stop` step ends a hosted child's
+engine, its incarnation ends `stopped`, and the child stays open, its
+hand-off kept, for its next message. Each incarnation a child's run ended
+is told to its open owner (`child <harp> ended its run <n>: <cause>`), but
+an end a re-host continues (orphaned, drained) and an idle reap. A hosted
+child's checkout is made with git in its LAUNCHER's environment (the
+hand-off's: her `GIT_*`, her `SSH_AUTH_SOCK`), a sweep's in the daemon's
+(`ChildWorkspaces::of`'s `env`). Not built: waking a terminal orchestrator
+(its informs stay pending in `session show`).
+
 The locks a run is judged by (owner rulings 85, 86, 92, 93, defects 1 and 3;
 advisory file locks through the platform's `file-lock`, taken at once or not
 at all, never a pid). The run's OWN lock, `<home>/.ctxloom/runs/<run>.lock`

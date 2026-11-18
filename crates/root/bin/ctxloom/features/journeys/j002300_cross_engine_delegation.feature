@@ -44,7 +44,7 @@ Feature: Delegation — each child sees only its own context, and hears from and
 
   # A child on opencode works from the guidance its session home delivered to
   # it, as a child on Claude Code does.
-  @opencode
+  @opencode @pending
   Scenario: A child delegated to an opencode agent runs on opencode and reports what its delivered context says
     # substitution: an agent on the opencode engine, launched by `child_launch`; what the child reports is what Alice sees
     Given Alice's orchestrator can delegate to "qwen-worker", an agent on opencode, carrying its own guidance

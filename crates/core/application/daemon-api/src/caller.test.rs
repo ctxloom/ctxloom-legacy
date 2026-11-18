@@ -195,6 +195,13 @@ impl DaemonApi for Fake {
         })
     }
 
+    // A write no projection is awaited for (a run's RequestStop): applied.
+    async fn handle(&self, book: CommandBook) -> Result<bool, Called> {
+        self.ask("handle");
+        self.seen.lock().unwrap().books.push(book);
+        Ok(true)
+    }
+
     async fn handle_sync(
         &self,
         book: CommandBook,

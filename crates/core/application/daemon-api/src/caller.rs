@@ -532,10 +532,11 @@ impl<D: Daemons> Caller<D> {
         let command = runs::RequestStop {
             reason: STOP_REASON.to_string(),
         };
-        let synced = api
-            .handle_sync(sessions::keyed_book(cover, &command, &key), Vec::new())
+        // A run's command: no session projection to wait for.
+        let applied = api
+            .handle(sessions::keyed_book(cover, &command, &key))
             .await?;
-        Ok((self.read(api, target).await?, synced.applied))
+        Ok((self.read(api, target).await?, applied))
     }
 
     async fn cleared(
