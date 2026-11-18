@@ -118,6 +118,75 @@ fn test_a_fragment_create_with_a_body_stores_it_and_asks_nothing() {
     assert_eq!(put.bytes, b"be kind");
 }
 
+// Step 10b: Go's two-word form (`fragment|command create <bundle> <name>`,
+// the request's `placeholder`) is served: Go's placeholder written, no
+// editor asked; a bundle nobody has is refused, never made.
+#[test]
+fn test_a_two_word_create_writes_gos_placeholder_and_refuses_a_missing_bundle() {
+    // Go's directories: a command's is `prompts/` (command.feature).
+    for (kind, dir) in [("fragments", "fragments"), ("commands", "prompts")] {
+        let (library, recorder) = demo().recording();
+        let parent = "projects/amber-quiet-heron/bundles/demo".to_string();
+        let (needs, done) = if kind == "fragments" {
+            let request = v1::CreateFragmentRequest {
+                parent: parent.clone(),
+                fragment_id: "rules".to_string(),
+                placeholder: true,
+                presentable: launching(),
+                ..v1::CreateFragmentRequest::default()
+            };
+            let asked = super::create_fragment::plan(&library, &plain(), &request, true)
+                .result
+                .unwrap();
+            (asked.needs, asked.done)
+        } else {
+            let request = v1::CreateCommandRequest {
+                parent: parent.clone(),
+                command_id: "rules".to_string(),
+                placeholder: true,
+                presentable: launching(),
+                ..v1::CreateCommandRequest::default()
+            };
+            let asked = super::create_command::plan(&library, &plain(), &request, true)
+                .result
+                .unwrap();
+            (asked.needs, asked.done)
+        };
+        assert!(needs.is_empty(), "no editor: {needs:?}");
+        assert!(!done.bundle_created);
+        let planned = recorder.take();
+        let library_application::write::recording::Planned::Changed { changes, .. } = &planned[0]
+        else {
+            panic!("{planned:?}")
+        };
+        let ctxloom_ports::Change::Write(put) = &changes[0] else {
+            panic!()
+        };
+        assert_eq!(put.path, format!("{dir}/rules.md"));
+        assert!(
+            String::from_utf8_lossy(&put.bytes).contains("Add content here."),
+            "{:?}",
+            String::from_utf8_lossy(&put.bytes)
+        );
+    }
+    let (library, recorder) = demo().recording();
+    let missing = v1::CreateFragmentRequest {
+        parent: "projects/amber-quiet-heron/bundles/nobody".to_string(),
+        fragment_id: "rules".to_string(),
+        placeholder: true,
+        ..v1::CreateFragmentRequest::default()
+    };
+    let refused = super::create_fragment::plan(&library, &plain(), &missing, true)
+        .result
+        .expect_err("a bundle nobody has is refused");
+    assert!(
+        angzarr_diagnostic::Diagnostic::code(&refused).contains("bundle-not-found"),
+        "{}",
+        angzarr_diagnostic::Diagnostic::code(&refused)
+    );
+    assert!(recorder.take().is_empty());
+}
+
 #[test]
 fn test_a_fragment_edit_with_no_body_asks_its_edit_need_and_applies_the_answer() {
     let name = "projects/amber-quiet-heron/bundles/demo/fragments/example";

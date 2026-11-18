@@ -1072,6 +1072,11 @@ message CreateFragmentRequest {
   string fragment_id = 2 [(google.api.field_behavior) = REQUIRED];
   // The Fragment to create, as its own fields say it.
   Fragment fragment = 3 [(google.api.field_behavior) = REQUIRED];
+  // Go's two-word form (`fragment create <bundle> <name>`, step 10b,
+  // additive): the fragment gets Go's placeholder body, no editor is asked,
+  // and a bundle nobody has is refused (never made, as the reference form
+  // makes one).
+  bool placeholder = 4 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
@@ -1417,6 +1422,11 @@ message CreateCommandRequest {
   string command_id = 2 [(google.api.field_behavior) = REQUIRED];
   // The Command to create, as its own fields say it.
   Command command = 3 [(google.api.field_behavior) = REQUIRED];
+  // Go's two-word form (`command create <bundle> <name>`, step 10b,
+  // additive): the command gets Go's placeholder body, no editor is asked,
+  // and a bundle nobody has is refused (never made, as the reference form
+  // makes one).
+  bool placeholder = 4 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];

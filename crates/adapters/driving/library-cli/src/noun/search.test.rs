@@ -110,7 +110,7 @@ mod read {
 // OD-40 (design §1.2, OQ-4): a bundle's origin is part of its name; its
 // items are named below it, each in its collection.
 mod names {
-    use crate::catalog::item_name;
+    use library_api::names::item_name;
 
     // A hit's bundle is named by catalog's names (B1's, which search
     // shares): a remote's item below its remote's bundle.

@@ -405,15 +405,6 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use serde_json::json;
-
-    const PARENT: &str = "projects/p";
-
-    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
-        let mut out = Vec::new();
-        crate::api::print(&mut out, message).unwrap();
-        serde_json::from_slice(&out).unwrap()
-    }
 
     fn done(status: &str, kind: &str) -> ItemDistilled {
         ItemDistilled {
@@ -434,39 +425,6 @@ mod mapping {
             "command \"review\" in bundle \"demo\" is marked as no_distill: nothing distilled\n"
         );
     }
-
-    fn made(kind: &str) -> ItemCreated {
-        ItemCreated {
-            status: "created".to_string(),
-            bundle: "demo".to_string(),
-            name: "one".to_string(),
-            path: "x/one.md".to_string(),
-            kind: kind.to_string(),
-            bundle_created: true,
-        }
-    }
-
-    #[test]
-    fn test_a_created_item_answers_its_path_and_its_bundle_made() {
-        assert_eq!(
-            json_of(&created(PARENT, &made("command"))),
-            json!({
-                "command": {"name": "projects/p/bundles/demo/commands/one"},
-                "path": "x/one.md",
-                "applied": true,
-                "bundle_created": true,
-            })
-        );
-        assert_eq!(
-            json_of(&created(PARENT, &made("fragment"))),
-            json!({
-                "fragment": {"name": "projects/p/bundles/demo/fragments/one"},
-                "path": "x/one.md",
-                "applied": true,
-                "bundle_created": true,
-            })
-        );
-    }
 }
 
 // Step 10a U2: each read's request carries `--distilled` and the
@@ -474,6 +432,24 @@ mod mapping {
 mod asks {
     use crate::tests::{asked, asked_once, degraded};
     use daemon_proto::v1;
+
+    // Step 10b: Go's two-word create is the daemon's create, asked once
+    // (no preview, no editor), Go's placeholder asked for.
+    #[test]
+    fn test_a_two_word_create_asks_the_daemon_once_for_gos_placeholder() {
+        let (under, fragment) =
+            asked_once::<v1::CreateFragmentRequest>(&["fragment", "create", "demo", "testing"]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(fragment.fragment_id, "testing");
+        assert!(fragment.placeholder);
+        assert!(!fragment.validate_only);
+        assert_eq!(fragment.globals, degraded());
+        let (_, command) =
+            asked_once::<v1::CreateCommandRequest>(&["command", "create", "demo", "second"]);
+        assert_eq!(command.command_id, "second");
+        assert!(command.placeholder);
+        assert!(!command.validate_only);
+    }
 
     #[test]
     fn test_item_reads_carry_distilled_and_the_globals() {

@@ -216,6 +216,26 @@ fn editing<T>(
 }
 
 /// The bundle a parent or a resource name is under (`.../bundles/{b}`).
+/// Go's two-word create (`placeholder`, step 10b): the item written with
+/// Go's placeholder body under the bundle `parent` names, no editor asked; a
+/// bundle nobody has is refused (`item_create`).
+fn placeholder(
+    library: &Library,
+    flags: &Flags,
+    kind: ItemKind,
+    parent: &str,
+    id: &str,
+) -> Outcome<Asked<ItemCreated>> {
+    let made = library.item_create(flags, kind, bundle_in(parent), id);
+    Outcome {
+        result: made.result.map(|done| Asked {
+            done,
+            needs: Vec::new(),
+        }),
+        notices: made.notices,
+    }
+}
+
 fn bundle_in(name: &str) -> &str {
     name.split_once("/bundles/")
         .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""))
@@ -955,6 +975,15 @@ pub mod create_fragment {
         request: &v1::CreateFragmentRequest,
         _apply: bool,
     ) -> Outcome<Asked<ItemCreated>> {
+        if request.placeholder {
+            return placeholder(
+                library,
+                flags,
+                ItemKind::Fragment,
+                &request.parent,
+                &request.fragment_id,
+            );
+        }
         let body = request.fragment.as_ref().map_or("", |f| f.body.as_str());
         let reference = format!(
             "{}#fragments/{}",
@@ -1017,6 +1046,15 @@ pub mod create_command {
         request: &v1::CreateCommandRequest,
         _apply: bool,
     ) -> Outcome<Asked<ItemCreated>> {
+        if request.placeholder {
+            return placeholder(
+                library,
+                flags,
+                ItemKind::Command,
+                &request.parent,
+                &request.command_id,
+            );
+        }
         let body = request.command.as_ref().map_or("", |c| c.body.as_str());
         let reference = format!(
             "{}#commands/{}",

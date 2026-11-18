@@ -2,9 +2,8 @@
 //! writes (B1), each json answer its AIP resource or method response
 //! (OD-40, design §5.2).
 
-use library_application::{ItemCreated, ItemDistilled, ItemShow};
+use library_application::{ItemDistilled, ItemShow};
 
-use crate::catalog::{self, ok};
 use crate::prelude::*;
 use crate::read_back;
 
@@ -155,39 +154,33 @@ pub(crate) fn write(
 ) -> Result<Option<Exit>, Failure> {
     let reference = text_arg(sub, "ref");
     let code = match verb {
-        "create" => match given(sub, "name") {
-            Some(name) => {
-                let outcome =
-                    cx.library
-                        .item_create(&cx.flags, kind, &text_arg(sub, "bundle"), &name);
-                catalog::answer(
-                    cx,
-                    outcome,
-                    out,
-                    err,
-                    false,
-                    created,
-                    |made, out, _| {
-                        created_text(
-                            &made.kind,
-                            &made.bundle,
-                            &made.name,
-                            made.bundle_created,
-                            out,
-                        )
-                    },
-                    ok,
-                )?
-            }
-            None => create_served(
+        // Go's two-word form (`<bundle> <name>`) asks for Go's placeholder,
+        // no editor; the reference form opens the editor (step 10b U3).
+        "create" => {
+            let (reference, placeholder) = match given(sub, "name") {
+                Some(name) => (
+                    format!(
+                        "{}#{}/{name}",
+                        text_arg(sub, "bundle"),
+                        if kind == ItemKind::Command {
+                            "commands"
+                        } else {
+                            "fragments"
+                        }
+                    ),
+                    true,
+                ),
+                None => (text_arg(sub, "bundle"), false),
+            };
+            create_served(
                 cx,
                 kind,
-                &text_arg(sub, "bundle"),
-                given(sub, "body"),
+                &reference,
+                (given(sub, "body"), placeholder),
                 out,
                 err,
-            )?,
-        },
+            )?
+        }
         "remove" => remove_served(cx, kind, &reference, flag(sub, "yes"), out, err)?,
         "edit" => edit_served(
             cx,
@@ -269,14 +262,15 @@ fn create_served(
     cx: &Context<'_>,
     kind: ItemKind,
     reference: &str,
-    body: Option<String>,
+    (body, placeholder): (Option<String>, bool),
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let (bundle, path) = reference.split_once('#').unwrap_or((reference, ""));
     let id = path.split_once('/').map_or(path, |(_, id)| id).to_string();
     let under = library_api::names::bundle_target(bundle);
-    let previewed = body.is_none();
+    // Go's placeholder asks no editor, so nothing to preview for.
+    let previewed = body.is_none() && !placeholder;
     let word = if kind == ItemKind::Command {
         "command"
     } else {
@@ -293,6 +287,7 @@ fn create_served(
                 body: body.clone().unwrap_or_default(),
                 ..v1::Command::default()
             }),
+            placeholder,
             validate_only,
             answers,
             presentable: presentable(),
@@ -324,6 +319,7 @@ fn create_served(
             body: body.clone().unwrap_or_default(),
             ..v1::Fragment::default()
         }),
+        placeholder,
         validate_only,
         answers,
         presentable: presentable(),
@@ -713,37 +709,6 @@ pub(crate) enum Either<F, C> {
 /// Whether `kind` (the use case's word or its directory) is a command's.
 fn is_command(kind: &str) -> bool {
     matches!(kind, "command" | "commands" | "prompt" | "prompts")
-}
-
-/// `fragment|command create`: `CreateFragmentResponse` or
-/// `CreateCommandResponse`.
-pub(crate) fn created(
-    parent: &str,
-    made: &ItemCreated,
-) -> Either<v1::CreateFragmentResponse, v1::CreateCommandResponse> {
-    let name = catalog::item_name(parent, &made.bundle, dir_of(&made.kind), &made.name);
-    if is_command(&made.kind) {
-        return Either::Command(v1::CreateCommandResponse {
-            command: Some(v1::Command {
-                name,
-                ..v1::Command::default()
-            }),
-            path: made.path.clone(),
-            applied: Some(true),
-            bundle_created: made.bundle_created,
-            ..v1::CreateCommandResponse::default()
-        });
-    }
-    Either::Fragment(v1::CreateFragmentResponse {
-        fragment: Some(v1::Fragment {
-            name,
-            ..v1::Fragment::default()
-        }),
-        path: made.path.clone(),
-        applied: Some(true),
-        bundle_created: made.bundle_created,
-        ..v1::CreateFragmentResponse::default()
-    })
 }
 
 /// The directory a kind's items live under in a reference.

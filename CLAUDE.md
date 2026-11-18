@@ -121,7 +121,9 @@ nothing stores the template; an empty buffer is
 `library-application-write-empty-edit` and writes nothing), and makes a bare
 bundle nobody had (`ItemCreated::bundle_created`); the two-word Go form
 (`<bundle> <name>`) keeps Go's placeholder, no editor, and its refusal of a
-missing bundle. `skill create <bundle>#skills/<name>` (or the two words)
+missing bundle, and is a daemon write too (step 10b: the create requests'
+additive `placeholder`, served by library-api's `placeholder` over
+`Library::item_create`). `skill create <bundle>#skills/<name>` (or the two words)
 scaffolds its `SKILL.md` and an EMPTY `.meta.yaml` (`{}`, the empty
 mapping, `library::write::skill::EMPTY_META`) beside it, one new directory,
 and opens none. `fragment|command edit` writes the
