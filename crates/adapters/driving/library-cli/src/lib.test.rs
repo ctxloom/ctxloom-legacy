@@ -299,6 +299,115 @@ pub(crate) fn go_named(line: &[&str], how: How, names: &dyn Names) -> Ran {
 }
 
 pub(crate) fn go_in(line: &[&str], how: How, layers: &[&str], names: &dyn Names) -> Ran {
+    go_served(line, how, layers, names, None)
+}
+
+/// What a command asked the daemon: each read's target and its request,
+/// kept as it was built; every read is then answered unreached.
+#[derive(Default)]
+pub(crate) struct Asks {
+    asked: std::cell::RefCell<Vec<(String, Box<dyn std::any::Any>)>>,
+}
+
+impl Asks {
+    fn ask<R: 'static, M>(&self, under: &str, request: R) -> Result<M, Failure> {
+        self.asked
+            .borrow_mut()
+            .push((under.to_string(), Box::new(request)));
+        Err(Failure::new(NoDaemon, Exit::FAILED))
+    }
+}
+
+/// [`Asks`]'s reads, each kept.
+macro_rules! asked_of_the_daemon {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<(v1::$response, Vec<v1::Notice>), Failure> {
+                self.ask(under, request)
+            }
+        )*
+    };
+}
+
+impl Served for Asks {
+    fn in_project(&self) -> bool {
+        true
+    }
+
+    crate::served_reads!(asked_of_the_daemon);
+
+    fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure> {
+        self.ask("", request)
+    }
+
+    fn own_loadout(
+        &self,
+        request: v1::GetLoadoutRequest,
+    ) -> Result<(v1::Loadout, Vec<v1::Notice>), Failure> {
+        self.ask("", request)
+    }
+
+    fn assemble_context(
+        &self,
+        request: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, Failure> {
+        self.ask("", request)
+    }
+}
+
+/// The global flags a degraded command's reads carry.
+pub(crate) const DEGRADED: How = How {
+    degraded: true,
+    ..JSON
+};
+
+/// The requests of type `R` `line` asked the daemon (run degraded, so
+/// its globals are told from none), each with its target.
+pub(crate) fn asked<R: Clone + 'static>(line: &[&str]) -> Vec<(String, R)> {
+    let asks = Asks::default();
+    go_served(line, DEGRADED, BARE, &Project, Some(&asks));
+    let asked = asks.asked.into_inner();
+    asked
+        .iter()
+        .filter_map(|(under, request)| {
+            request
+                .downcast_ref::<R>()
+                .map(|request| (under.clone(), request.clone()))
+        })
+        .collect()
+}
+
+/// The one request of type `R` `line` asked the daemon, with its target.
+pub(crate) fn asked_once<R: Clone + 'static>(line: &[&str]) -> (String, R) {
+    let mut asked = asked::<R>(line);
+    assert_eq!(
+        asked.len(),
+        1,
+        "{line:?} asks one {}",
+        std::any::type_name::<R>()
+    );
+    asked.remove(0)
+}
+
+/// The globals a [`DEGRADED`] command's request carries.
+pub(crate) fn degraded() -> Option<v1::Globals> {
+    Some(v1::Globals {
+        degraded: true,
+        ..v1::Globals::default()
+    })
+}
+
+fn go_served(
+    line: &[&str],
+    how: How,
+    layers: &[&str],
+    names: &dyn Names,
+    served: Option<&dyn Served>,
+) -> Ran {
     let setup = Setup {
         bundles: &[("demo", DEMO), ("project", PROJECT)],
         layers,
@@ -328,13 +437,14 @@ pub(crate) fn go_in(line: &[&str], how: How, layers: &[&str], names: &dyn Names)
     let catalog = Catalog::en_us(&[library_application::EN_US]).unwrap();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let library = setup.library();
+    let by_library = ServedBy {
+        library: &library,
+        names,
+    };
     let exit = run(
         &library,
         names,
-        &ServedBy {
-            library: &library,
-            names,
-        },
+        served.unwrap_or(&by_library),
         &noun,
         &call,
         &catalog,
@@ -581,6 +691,7 @@ fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
         &["companion", "list"],
         &["config"],
         &["config", "show"],
+        &["context"],
         &["context", "assemble"],
         &["mcp", "server", "list"],
         &["mcp", "server", "show", "x"],

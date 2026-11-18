@@ -34,26 +34,6 @@ pub(crate) fn read(
                 written
             })
         }
-        "view" if !text_arg(sub, "name").contains('#') => {
-            // A whole bundle's files are the daemon's read (step 10a U2).
-            let ask = text_arg(sub, "name");
-            let request = v1::GetBundleRequest {
-                view: v1::bundle::View::Content as i32,
-                prefer_distilled: flag(sub, "distilled"),
-                globals: cx.globals(),
-                ..v1::GetBundleRequest::default()
-            };
-            let read = cx
-                .served
-                .get_bundle(&library_api::names::bundle_target(&ask), request);
-            served(cx, read, out, err, false, |bundle, out, notes| {
-                let mut said = text::Notes(Vec::new());
-                let view = crate::read_back::bundle_view(bundle);
-                let written = text::bundle_view(out, &mut said, &view, &ask);
-                notes.extend(said.0);
-                written
-            })
-        }
         "view" => viewed_by_the_daemon(cx, sub, out, err),
         _ => listed_by_the_daemon(cx, out, err),
     }
@@ -85,8 +65,9 @@ fn listed_by_the_daemon(
 /// (step 10a U2, owner ruling 2026-11-17): a fragment's or a command's
 /// body, or a skill's, an MCP server's or a profile's fields as YAML, keys
 /// sorted and references short, each rendered from the item's message
-/// alone. A path no item kind serves is the bundle's CONTENT read of it,
-/// which the daemon refuses as the view refuses it.
+/// alone. A whole bundle (no `#`), or a path no item kind serves, is the
+/// bundle's CONTENT read of it, which the daemon refuses as the view
+/// refuses a path it does not hold.
 fn viewed_by_the_daemon(
     cx: &Context<'_>,
     sub: &ArgMatches,

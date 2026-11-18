@@ -265,3 +265,21 @@ mod mapping {
         );
     }
 }
+
+// Step 10a U2: `show` is the listing of one ID, `list` of every one, each
+// with the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_mcp_server_reads_ask_their_id_with_the_globals() {
+        let (_, show) =
+            asked_once::<v1::ListMcpServersRequest>(&["mcp", "server", "show", "tree-sitter"]);
+        assert_eq!(show.mcp_server_id, "tree-sitter");
+        assert_eq!(show.globals, degraded());
+        let (_, list) = asked_once::<v1::ListMcpServersRequest>(&["mcp", "server", "list"]);
+        assert_eq!(list.mcp_server_id, "");
+        assert_eq!(list.globals, degraded());
+    }
+}

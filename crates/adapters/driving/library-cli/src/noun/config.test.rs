@@ -66,3 +66,20 @@ mod write {
         assert!(said.starts_with("Wrote "), "{said}");
     }
 }
+
+// Step 10a U2: the read asks the view the flag names, with the command's
+// global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_config_show_asks_its_view_with_the_globals() {
+        let (under, effective) = asked_once::<v1::GetConfigRequest>(&["config", "show"]);
+        assert_eq!(under, "/config");
+        assert_eq!(effective.view, v1::config::View::Effective as i32);
+        assert_eq!(effective.globals, degraded());
+        let (_, set) = asked_once::<v1::GetConfigRequest>(&["config", "show", "--raw"]);
+        assert_eq!(set.view, v1::config::View::Set as i32);
+    }
+}

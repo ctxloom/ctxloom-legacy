@@ -373,9 +373,9 @@ pub(crate) fn flow(value: &Value) -> String {
     match &value.kind {
         None | Some(Kind::NullValue(_)) => "null".to_string(),
         Some(Kind::BoolValue(b)) => b.to_string(),
-        Some(Kind::NumberValue(n)) if n.fract() == 0.0 && n.abs() < 1e15 => {
-            format!("{}", *n as i64)
-        }
+        // A float prints a whole number without its fraction (and never
+        // with an exponent) already: only a negative zero is written `0`.
+        Some(Kind::NumberValue(n)) if *n == 0.0 => "0".to_string(),
         Some(Kind::NumberValue(n)) => n.to_string(),
         Some(Kind::StringValue(text)) => text.clone(),
         Some(Kind::ListValue(list)) => format!(

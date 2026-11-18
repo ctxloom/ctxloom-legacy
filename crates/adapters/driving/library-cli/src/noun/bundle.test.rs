@@ -675,3 +675,65 @@ mod distill {
         );
     }
 }
+
+// Step 10a U2: each read asks its view, `--distilled` and the command's
+// global flags; a whole bundle's view is the bundle's target, an item's
+// its reference's.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_bundle_show_list_and_view_ask_their_view_with_the_globals() {
+        let (under, show) = asked_once::<v1::GetBundleRequest>(&["bundle", "show", "demo"]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(show.view, v1::bundle::View::Full as i32);
+        assert_eq!(show.globals, degraded());
+        let (_, list) = asked_once::<v1::ListBundlesRequest>(&["bundle", "list"]);
+        assert_eq!(list.globals, degraded());
+        let (under, whole) =
+            asked_once::<v1::GetBundleRequest>(&["bundle", "view", "--distilled", "demo"]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(whole.view, v1::bundle::View::Content as i32);
+        assert!(whole.prefer_distilled);
+        assert_eq!(whole.globals, degraded());
+    }
+
+    #[test]
+    fn test_bundle_view_of_an_item_asks_its_kinds_read_with_the_globals() {
+        let (under, fragment) = asked_once::<v1::GetFragmentRequest>(&[
+            "bundle",
+            "view",
+            "--distilled",
+            "demo#fragments/golang",
+        ]);
+        assert_eq!(
+            under,
+            library_api::names::reference_target("demo#fragments/golang")
+        );
+        assert!(fragment.prefer_distilled);
+        assert_eq!(fragment.globals, degraded());
+        let (_, command) = asked_once::<v1::GetCommandRequest>(&[
+            "bundle",
+            "view",
+            "--distilled",
+            "demo#commands/review",
+        ]);
+        assert!(command.prefer_distilled);
+        assert_eq!(command.globals, degraded());
+        let (_, skill) =
+            asked_once::<v1::GetSkillRequest>(&["bundle", "view", "demo#skills/reviewer"]);
+        assert_eq!(skill.globals, degraded());
+        let (_, mcp) =
+            asked_once::<v1::GetMcpServerRequest>(&["bundle", "view", "demo#mcp/tree-sitter"]);
+        assert_eq!(mcp.globals, degraded());
+        let (_, profile) =
+            asked_once::<v1::GetProfileRequest>(&["bundle", "view", "project#profiles/dev"]);
+        assert_eq!(profile.globals, degraded());
+        let (_, other) =
+            asked_once::<v1::GetBundleRequest>(&["bundle", "view", "--distilled", "demo#notes/x"]);
+        assert_eq!(other.view, v1::bundle::View::Content as i32);
+        assert!(other.prefer_distilled);
+        assert_eq!(other.globals, degraded());
+    }
+}
