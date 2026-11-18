@@ -384,6 +384,11 @@ impl<E: Edge> Observations<E> {
         checkouts.tree(&tree.root()).cloned().unwrap_or_default()
     }
 
+    /// The export recorded under `request_id`, in any tree (AIP-155).
+    pub fn exported(&self, request_id: &str) -> Option<library_tree::BundleExported> {
+        self.checkouts.checkouts().export(request_id).cloned()
+    }
+
     /// The intent recorded under `request_id`, in any tree (step 10b U3).
     pub fn known(&self, request_id: &str) -> Option<library_checkout::Known> {
         self.checkouts.checkouts().intent(request_id).cloned()

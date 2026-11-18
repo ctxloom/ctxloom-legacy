@@ -14,6 +14,7 @@ fn wrote<T>(answer: Option<T>) -> Wrote<T> {
         at: "/work/demo/.ctxloom/content/bundles/v2/notes".to_string(),
         parent: "projects/amber-quiet-heron".to_string(),
         notices: Vec::new(),
+        source: String::new(),
     }
 }
 
@@ -1470,6 +1471,22 @@ fn test_a_bundle_export_plans_its_tree_below_the_callers_directory_and_answers_i
     assert_eq!(answered.destination, "exported/demo");
     assert_eq!(answered.applied, Some(true));
     assert_eq!(answered.bundle, "projects/amber-quiet-heron/bundles/demo");
+    // AIP-155: the retry of an export made before is answered with what it
+    // answered then (its source and where it went), applied.
+    let retried = super::export_bundle::respond(
+        &request,
+        Wrote {
+            at: "/work/exported/demo".to_string(),
+            source: "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml".to_string(),
+            ..wrote(None)
+        },
+    );
+    assert_eq!(retried.applied, Some(true));
+    assert_eq!(retried.destination, "exported/demo");
+    assert_eq!(
+        retried.source,
+        "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml"
+    );
     let output = v1::ExportBundleRequest {
         destination: String::new(),
         output: "handoff".to_string(),

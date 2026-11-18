@@ -5,7 +5,7 @@ use library_api::{Observed, Site};
 use library_tree::TreeName;
 use sessions::ProjectName;
 
-use super::{commit_message, commit_paths, landing_of, request_bytes, step_path};
+use super::{answered_before, commit_message, commit_paths, landing_of, request_bytes, step_path};
 
 fn observed(tree: TreeName) -> Observed {
     Observed {
@@ -391,4 +391,64 @@ fn test_a_home_commit_s_message_names_its_verb_and_request_id() {
         commit_message("companion add", "0195f1e2-0000-7000-8000-000000000000"),
         "ctxloom: companion add (0195f1e2-0000-7000-8000-000000000000)"
     );
+}
+
+// AIP-155 (owner 2026-11-18, night): an export made before under a request
+// id is answered from its record, applied, with the source and the
+// destination it answered then; a request id nothing recorded is planned.
+#[tokio::test]
+async fn test_an_export_made_before_is_answered_from_its_record() {
+    use std::sync::Arc;
+    let f = crate::server::tests::fixture(vec![]);
+    let gits = Arc::new(crate::server::tests::Gits::default());
+    let api = f
+        .api
+        .observing(crate::server::tests::observing(&f.world, &gits));
+    let (observations, _) = api.observing.as_ref().expect("observing");
+    let trees = library_api::Trees {
+        seen: Vec::new(),
+        notices: Vec::new(),
+    };
+    let mut said = Vec::new();
+    let fresh = answered_before::<()>(
+        (&trees, observations),
+        ("r-1", None),
+        "projects/p",
+        &mut said,
+    );
+    assert!(fresh.is_none(), "nothing recorded: planned");
+    let fact = library_tree::RecordBundleExported {
+        request_id: "r-1".to_string(),
+        bundle: "demo".to_string(),
+        source: "/w/.ctxloom/content/bundles/v2/demo/bundle.yaml".to_string(),
+        destination: "/w/exported/demo".to_string(),
+    };
+    let tree = TreeName::home("brisk-copper-moth").unwrap();
+    observations
+        .send(library_api::writes::step_book(&tree, &fact, "export:r-1"))
+        .await
+        .expect("recorded");
+    let retried = answered_before::<()>(
+        (&trees, observations),
+        ("r-1", None),
+        "projects/p",
+        &mut said,
+    )
+    .expect("answered")
+    .expect("applied");
+    assert!(retried.applied);
+    assert!(retried.answer.is_none());
+    assert_eq!(retried.at, "/w/exported/demo");
+    assert_eq!(
+        retried.source,
+        "/w/.ctxloom/content/bundles/v2/demo/bundle.yaml"
+    );
+    assert_eq!(retried.parent, "projects/p");
+    assert!(answered_before::<()>(
+        (&trees, observations),
+        ("r-2", None),
+        "projects/p",
+        &mut said
+    )
+    .is_none());
 }

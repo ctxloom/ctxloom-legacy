@@ -22,11 +22,11 @@ use crate::{
     PlanRejected, PlanStale, ResourceExists, SlotNotDue, TreeInMotion,
 };
 use crate::{
-    ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath, Evidence, External,
-    HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand, LibraryEvent,
-    LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordHomeRepositoryMade,
-    RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile, RunSequence, Step,
-    StepApplied, TrashPath, TreeObserved, KEEP_DAYS,
+    BundleExported, ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath,
+    Evidence, External, HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand,
+    LibraryEvent, LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordBundleExported,
+    RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile,
+    RunSequence, Step, StepApplied, TrashPath, TreeObserved, KEEP_DAYS,
 };
 
 /// The code a plan's rejection takes when the tree no longer reads and the
@@ -706,6 +706,31 @@ impl LibraryAggregate {
         recorded(
             (!self.library.home_repository_made).then_some(HomeRepositoryMade { name: fact.name }),
         )
+    }
+
+    /// A bundle of this tree exported, as it was made (AIP-155).
+    #[handles_fact(RecordBundleExported)]
+    fn bundle_exported(
+        &self,
+        fact: RecordBundleExported,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        recorded(Some(BundleExported {
+            request_id: fact.request_id,
+            bundle: fact.bundle,
+            source: fact.source,
+            destination: fact.destination,
+        }))
+    }
+
+    #[applies(BundleExported)]
+    fn bundle_was_exported(&mut self, event: BundleExported, page: &PageContext) {
+        self.library.apply_page(
+            &LibraryEvent::BundleExported(event),
+            page.sequence,
+            page.meta,
+        );
     }
 
     #[applies(HomeRepositoryMade)]

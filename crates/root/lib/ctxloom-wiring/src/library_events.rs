@@ -121,6 +121,9 @@ pub(crate) fn event_row(page: &EventPage) -> Option<Value> {
             row["request_id"] = superseded.request_id.into();
         }
         Ok(LibraryEvent::HomeRepositoryMade(_)) => {}
+        Ok(LibraryEvent::BundleExported(exported)) => {
+            row["request_id"] = exported.request_id.into();
+        }
         Err(_) => {}
     }
     Some(row)

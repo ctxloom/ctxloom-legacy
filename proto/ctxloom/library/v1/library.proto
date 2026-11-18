@@ -204,6 +204,27 @@ message RecordHomeRepositoryMade {
   string name = 1;
 }
 
+// 10b (owner 2026-11-18, night; AIP-155): a bundle of this tree was
+// exported outside ctxloom's trees (`bundle export`, D2's exception: no
+// intent), under the client's request id, so the same request sent again
+// is answered with this result, applied, and never refused as a
+// destination that is there. Recorded on the SOURCE tree's stream, keyed
+// `export:{request_id}` (a second is a DUPLICATE). Additive.
+message RecordBundleExported {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.BundleExported"]
+  };
+
+  string request_id = 1;
+  // The bundle, by its name in the tree.
+  string bundle = 2;
+  // Its manifest, where it was exported from.
+  string source = 3;
+  // Where the exported tree is.
+  string destination = 4;
+}
+
 // 10b (U3): a step of an intent was carried out, and what it left. No
 // sequence: its `StepApplied` is given one when recorded.
 message RecordStepDone {
@@ -487,6 +508,17 @@ message ChangeFailed {
   string request_id = 1;
   uint32 step = 2;
   string ext_err_txt = 3;
+}
+
+// 10b: a bundle exported under `request_id` (`RecordBundleExported`).
+// `library-checkout` keeps it by its request id; the tree's state does not
+// change. Additive.
+message BundleExported {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  string request_id = 1;
+  string bundle = 2;
+  string source = 3;
+  string destination = 4;
 }
 
 // 10b (G3): the home's library is a repository ctxloom made; `apply` sets

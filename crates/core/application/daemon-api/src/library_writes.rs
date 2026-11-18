@@ -245,28 +245,13 @@ impl<E: Edge> Api<E> {
         let known = (!request_id.is_empty())
             .then(|| observations.known(request_id))
             .flatten();
-        if let Some(known) = &known {
-            match known.end {
-                End::Done => {
-                    let (etag, at) = done_before(&trees.seen, known, observations);
-                    return Ok(Wrote {
-                        answer: None,
-                        applied: true,
-                        etag,
-                        at,
-                        parent: site.parent.clone(),
-                        notices,
-                    });
-                }
-                End::Failed | End::Superseded => {
-                    return Err(ApiError::Failed {
-                        detail: format!(
-                            "the write {request_id} was tried before and did not complete"
-                        ),
-                    });
-                }
-                End::Pending { .. } => {}
-            }
+        if let Some(before) = answered_before(
+            (&trees, observations),
+            (request_id, known.as_ref()),
+            &site.parent,
+            &mut notices,
+        ) {
+            return before;
         }
         let apply = !request.validate_only();
         let (answer, shaped, outside) = {
@@ -279,7 +264,13 @@ impl<E: Edge> Api<E> {
         let answer = answer?;
         let shaped = shaped.map_err(|rejection| refused(&rejection))?;
         if let Some(outside) = outside {
-            return self.made_outside(&site, apply, outside, (answer, notices));
+            let destination = outside.0.clone();
+            let wrote = self.made_outside(&site, apply, outside, (answer, notices))?;
+            if apply && !request_id.is_empty() {
+                self.record_export(&site, (&trees, request), &destination)
+                    .await?;
+            }
+            return Ok(wrote);
         }
         let Some(shaped) = shaped else {
             // A preview, or a write that changes nothing: nothing to intend.
@@ -290,6 +281,7 @@ impl<E: Edge> Api<E> {
                 at: String::new(),
                 parent: site.parent.clone(),
                 notices,
+                source: String::new(),
             });
         };
         let landing = landing_of(&trees.seen, shaped.lands).ok_or_else(|| ApiError::Failed {
@@ -306,6 +298,7 @@ impl<E: Edge> Api<E> {
                 at,
                 parent: site.parent.clone(),
                 notices,
+                source: String::new(),
             });
         }
         let pending = known.as_ref().and_then(|known| match known.end {
@@ -329,6 +322,7 @@ impl<E: Edge> Api<E> {
             at,
             parent: site.parent.clone(),
             notices,
+            source: String::new(),
         })
     }
 
@@ -618,7 +612,52 @@ impl<E: Edge> Api<E> {
             at: dir,
             parent: site.parent.clone(),
             notices,
+            source: String::new(),
         })
+    }
+
+    /// The export `request` made into `destination` recorded on its SOURCE
+    /// tree's stream (AIP-155, owner 2026-11-18, night), keyed by its
+    /// request id: the observed tree whose library holds the bundle's
+    /// manifest (the checkout's first), as git sees it.
+    async fn record_export<Q: LibraryWriteRequest>(
+        &self,
+        site: &crate::library_reads::ReadSite<'_>,
+        (trees, request): (&library_api::Trees, &Q),
+        destination: &str,
+    ) -> Result<(), ApiError> {
+        let Some((observations, observers)) = self.observing.as_ref() else {
+            return Ok(());
+        };
+        let bundle = library_api::names::bundle_under(&site.parent, request.target())
+            .unwrap_or_else(|| request.target().to_string());
+        let manifest = format!("{}/{bundle}/bundle.yaml", writes::BUNDLES);
+        let observer = observers.observer(&site.env);
+        let holds = |dir: &str| {
+            observer
+                .blob_ids(dir, &[manifest.as_str()])
+                .is_ok_and(|ids| ids.contains_key(&manifest))
+        };
+        let Some((source, observed)) = trees.seen.iter().find(|(seen, _)| holds(seen.tree()))
+        else {
+            return Ok(());
+        };
+        let request_id = request.request_id();
+        let fact = library_tree::RecordBundleExported {
+            request_id: request_id.to_string(),
+            bundle,
+            source: format!("{}/{manifest}", source.tree()),
+            destination: destination.to_string(),
+        };
+        observations
+            .send(writes::step_book(
+                &observed.tree,
+                &fact,
+                &format!("export:{request_id}"),
+            ))
+            .await
+            .map(|_| ())
+            .map_err(ApiError::failed)
     }
 
     /// The tree `files` put in at `dir`, outside ctxloom's trees, through
@@ -692,6 +731,51 @@ pub(crate) fn not_made(operated: ctxloom_ports::Operated) -> Option<ApiError> {
         }
     };
     Some(ApiError::Refused(crate::library_refusal(&rejection)))
+}
+
+/// The answer of a write tried before under `request_id` (its intent
+/// `known`, if any): a write done, from its tree as observed now; an export
+/// made, from its record (AIP-155: its destination is there now, which a
+/// fresh plan would refuse); one that did not complete, failed. None: plan
+/// it (a fresh write, or one owed more steps).
+fn answered_before<T>(
+    (trees, observations): (&library_api::Trees, &library_api::Observations<impl Edge>),
+    (request_id, known): (&str, Option<&library_checkout::Known>),
+    parent: &str,
+    notices: &mut Vec<v1::Notice>,
+) -> Option<Result<Wrote<T>, ApiError>> {
+    let done = |etag: String, at: String, source: String, notices: Vec<v1::Notice>| Wrote {
+        answer: None,
+        applied: true,
+        etag,
+        at,
+        parent: parent.to_string(),
+        notices,
+        source,
+    };
+    if let Some(known) = known {
+        match known.end {
+            End::Done => {
+                let (etag, at) = done_before(&trees.seen, known, observations);
+                return Some(Ok(done(etag, at, String::new(), std::mem::take(notices))));
+            }
+            End::Failed | End::Superseded => {
+                return Some(Err(ApiError::Failed {
+                    detail: format!("the write {request_id} was tried before and did not complete"),
+                }));
+            }
+            End::Pending { .. } => return None,
+        }
+    }
+    let exported = (!request_id.is_empty())
+        .then(|| observations.exported(request_id))
+        .flatten()?;
+    Some(Ok(done(
+        String::new(),
+        exported.destination,
+        exported.source,
+        std::mem::take(notices),
+    )))
 }
 
 /// The token and the place of the path a write already done changed (its

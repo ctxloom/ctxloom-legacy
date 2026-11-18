@@ -286,3 +286,31 @@ fn an_intent_failed_is_known_failed_and_a_stream_started_afresh_forgets_it() {
         .unwrap();
     assert!(model.intent("r-1").is_none());
 }
+
+// AIP-155 (owner 2026-11-18, night): an export is known by its request id,
+// what it answered kept; a stream started afresh forgets it.
+#[test]
+fn an_export_is_known_by_its_request_id_with_what_it_answered() {
+    let mut model = LibraryCheckout::new();
+    let exported = LibraryEvent::BundleExported(library_tree::BundleExported {
+        request_id: "r-9".to_string(),
+        bundle: "demo".to_string(),
+        source: "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml".to_string(),
+        destination: "/out/demo".to_string(),
+    });
+    model
+        .project(&on(LIBRARY_DOMAIN, 0, vec![observed(true, &[]), exported]))
+        .unwrap();
+    let known = model.export("r-9").expect("known");
+    assert_eq!(known.destination, "/out/demo");
+    assert_eq!(
+        known.source,
+        "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml"
+    );
+    assert_eq!(known.bundle, "demo");
+    assert!(model.export("r-8").is_none());
+    model
+        .project(&on(LIBRARY_DOMAIN, 0, vec![observed(true, &[])]))
+        .unwrap();
+    assert!(model.export("r-9").is_none());
+}

@@ -39,6 +39,9 @@ pub struct Wrote<T> {
     pub parent: String,
     /// What the observation and the use case said, in order.
     pub notices: Vec<v1::Notice>,
+    /// Where a write done before read from, when it was an export (its
+    /// retry's answer, AIP-155: the record's); empty otherwise.
+    pub source: String,
 }
 
 /// The library writes the daemon serves (step 10b U3, D12), in the shape
@@ -1679,7 +1682,8 @@ pub mod export_bundle {
     ) -> v1::ExportBundleResponse {
         let (source, destination) = match &wrote.answer {
             Some(done) => (done.source.clone(), as_typed(&request.cwd, &done.dest)),
-            None => (String::new(), as_typed(&request.cwd, &wrote.at)),
+            // A retry of an export made before: what it answered then.
+            None => (wrote.source.clone(), as_typed(&request.cwd, &wrote.at)),
         };
         v1::ExportBundleResponse {
             bundle: request.name.clone(),

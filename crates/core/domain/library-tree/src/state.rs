@@ -151,6 +151,8 @@ impl Library {
             LibraryEvent::ChangeFailed(failed) => self.failed(failed),
             LibraryEvent::IntentSuperseded(superseded) => self.superseded(superseded),
             LibraryEvent::HomeRepositoryMade(_) => self.home_repository_made = true,
+            // The read model keeps it; the tree is as it was.
+            LibraryEvent::BundleExported(_) => {}
         }
         self.last_cause = cause;
     }

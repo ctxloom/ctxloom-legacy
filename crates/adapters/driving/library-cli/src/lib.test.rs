@@ -332,6 +332,7 @@ macro_rules! written_by_library_api {
                         at: String::new(),
                         parent,
                         notices,
+                        source: String::new(),
                     },
                 ))
             }

@@ -214,7 +214,14 @@ staging directory beside it, `.<leaf>.ctxloom-staging-<pid>-<n>`, renamed
 in with NOREPLACE, the staging removed either way; its paths are the
 caller's, below her `cwd`, `-o` the additive `ExportBundleRequest.output`;
 a path that is there is refused first,
-`library-application-write-export-destination-exists`, a draft), a
+`library-application-write-export-destination-exists`, a draft; once
+made it is recorded on its SOURCE tree's stream, the tree whose git sees
+the bundle's manifest, `RecordBundleExported` keyed `export:<request id>`
+(its event `BundleExported`, additive; `library-checkout` keeps it by
+request id), so the same request sent again is answered from the record,
+applied, its source and destination as then (AIP-155, owner 2026-11-18,
+night; `answered_before`), and a NEW request onto that destination is
+refused as before), a
 local `bundle move <b> --to <dir>` (`MoveBundle`, step 10b U9,
 QUESTIONS 1(a) owner-approved: deps-cli tells `--to` apart in process,
 `Deps::move_target`, a remote still published there, U4, anything that is

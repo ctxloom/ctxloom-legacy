@@ -32,6 +32,9 @@ pub struct LibraryCheckout {
     /// Every intent recorded, by its request id (step 10b U3): what a
     /// write's retry finds, whether it is done or not.
     intents: BTreeMap<String, Known>,
+    /// Every export recorded, by its request id (AIP-155), with its tree's
+    /// root: what an export's retry is answered with.
+    exports: BTreeMap<String, (Vec<u8>, library_tree::BundleExported)>,
 }
 
 /// An intent as the record holds it, by its request id: its tree's root,
@@ -81,6 +84,7 @@ impl LibraryCheckout {
         if book.pages.first().is_none_or(|page| page.sequence == 0) {
             self.rows.remove(&root);
             self.intents.retain(|_, known| known.root != root);
+            self.exports.retain(|_, (tree, _)| *tree != root);
         }
         for page in &book.pages {
             let Some(event_page::Body::Event(event)) = &page.body else {
@@ -127,6 +131,13 @@ impl LibraryCheckout {
             }
             // The tree's, naming no intent (G3).
             LibraryEvent::HomeRepositoryMade(_) => return,
+            LibraryEvent::BundleExported(exported) => {
+                self.exports.insert(
+                    exported.request_id.clone(),
+                    (root.to_vec(), exported.clone()),
+                );
+                return;
+            }
         };
         let Some(known) = self.intents.get_mut(request) else {
             return;
@@ -135,6 +146,11 @@ impl LibraryCheckout {
             Some(intent) => End::Pending { done: intent.done },
             None => End::Done,
         });
+    }
+
+    /// The export recorded under `request_id`, in any tree (AIP-155).
+    pub fn export(&self, request_id: &str) -> Option<&library_tree::BundleExported> {
+        self.exports.get(request_id).map(|(_, exported)| exported)
     }
 
     /// The intent recorded under `request_id`, in any tree.

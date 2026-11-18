@@ -13,9 +13,9 @@ use angzarr_embedded::{Any, Failure, Handled, Registry};
 use crate::{
     observation_key, tree_root, Change, ChangeStatus, CreateDirectory, DirtyPath, Evidence,
     LibraryAggregate, LibraryCommand, LibraryEvent, LibraryIgnored, LibraryTreeRejection, Motion,
-    MovePath, PlanRejected, PurgeTrash, RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed,
-    RecordTreeObserved, ReplaceFile, Resource, RunSequence, Step, TrashPath, TreeKind, KEEP_DAYS,
-    LIBRARY_DOMAIN, TREE_UNREADABLE,
+    MovePath, PlanRejected, PurgeTrash, RecordBundleExported, RecordHomeRepositoryMade,
+    RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile, Resource, RunSequence, Step,
+    TrashPath, TreeKind, KEEP_DAYS, LIBRARY_DOMAIN, TREE_UNREADABLE,
 };
 
 const TREE: &str = "projects/amber-quiet-heron/checkouts/brisk-copper-moth/library";
@@ -1312,4 +1312,30 @@ fn test_a_home_repository_made_is_recorded_once_and_held() {
     assert!(tree.library().wire().home_repository_made);
     assert!(tree.fact(made, "home-repository-made:two").is_empty());
     assert!(tree.library().home_repository_made);
+}
+
+// AIP-155 (owner 2026-11-18, night): an export is recorded on its source
+// tree as it was made, so its retry is answered with it; the tree's state
+// is otherwise unchanged.
+#[test]
+fn test_a_bundle_exported_is_recorded_as_made_and_changes_no_resource() {
+    let mut tree = Tree::baselined();
+    let before = tree.library().resources.clone();
+    let exported = RecordBundleExported {
+        request_id: "r-1".to_string(),
+        bundle: "demo".to_string(),
+        source: "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml".to_string(),
+        destination: "/out/demo".to_string(),
+    };
+    let events = tree.fact(exported, "export:r-1");
+    let [LibraryEvent::BundleExported(event)] = events.as_slice() else {
+        panic!("{events:?}")
+    };
+    assert_eq!(event.request_id, "r-1");
+    assert_eq!(event.destination, "/out/demo");
+    assert_eq!(
+        event.source,
+        "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml"
+    );
+    assert_eq!(tree.library().resources, before);
 }
