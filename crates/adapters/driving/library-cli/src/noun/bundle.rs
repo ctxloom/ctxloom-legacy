@@ -1,9 +1,9 @@
 //! `bundle`: list, show and view, and its writes (B1), each json answer its
 //! AIP resource or method response (OD-40, design §5.1).
 
-use library_application::{BundleExported, BundleView};
+use library_application::BundleView;
 
-use crate::catalog::{self, bundle_name, ok};
+use crate::catalog::{self, ok};
 use crate::prelude::*;
 
 pub(crate) fn read(
@@ -349,28 +349,32 @@ fn remove(
     )
 }
 
+/// `bundle export <name> <dest-dir>` (or `-o <path>`): the daemon's
+/// `ExportBundle` (step 10b, D2's EXCEPTION): the bundle's tree put in at
+/// her path, below this command's working directory (the request's `cwd`),
+/// whole or not at all and never over what is there. Its text from the
+/// response (D10).
 fn export(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let outcome = cx.library.bundle_export(
-        &cx.flags,
-        &name,
-        &text_arg(sub, "dest"),
-        &text_arg(sub, "output"),
-    );
-    catalog::answer(
+    let request = v1::ExportBundleRequest {
+        destination: text_arg(sub, "dest"),
+        output: text_arg(sub, "output"),
+        globals: cx.globals(),
+        ..v1::ExportBundleRequest::default()
+    };
+    let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.export_bundle(&under, request),
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        false,
-        exported,
-        |done, out, _| writeln!(out, "Exported: {} -> {}", done.source, done.dest),
-        catalog::ok,
+        |m, out| writeln!(out, "Exported: {} -> {}", m.source, m.destination),
+        |_| Exit::OK,
     )
 }
 
@@ -410,17 +414,6 @@ fn import(
         },
         |_| Exit::OK,
     )
-}
-
-/// `bundle export`: `ExportBundleResponse`.
-pub(crate) fn exported(parent: &str, done: &BundleExported) -> v1::ExportBundleResponse {
-    v1::ExportBundleResponse {
-        bundle: bundle_name(parent, &done.name),
-        source: done.source.clone(),
-        destination: done.dest.clone(),
-        applied: Some(true),
-        ..v1::ExportBundleResponse::default()
-    }
 }
 
 #[cfg(test)]

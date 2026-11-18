@@ -177,7 +177,17 @@ directory; `--add-skill` is the INPUT_ONLY `Profile.skills`, additive),
 its add/remove lists additive request fields and `description` by mask,
 a mask sent even naming none, so `profile modify <name>` alone changes
 nothing; no mask and no list, the editor's round trip, its preview's Edit
-need), and
+need), `bundle export` (`ExportBundle`, D2's EXCEPTION, the one write
+outside ctxloom's trees: the recording library's `UserFiles` records the
+tree, `Planned::Outside`, so planning, a preview's twice, writes nothing;
+the daemon takes it aside, `daemon_api::library_writes::outside_of`, and
+on an apply makes it with no step and no intent on any stream,
+`Library::write_outside`, content-fs's `UserFiles::write_tree`: built in a
+staging directory beside it, `.<leaf>.ctxloom-staging-<pid>-<n>`, renamed
+in with NOREPLACE, the staging removed either way; its paths are the
+caller's, below her `cwd`, `-o` the additive `ExportBundleRequest.output`;
+a path that is there is refused first,
+`library-application-write-export-destination-exists`, a draft), and
 `bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
 `bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
 by the request's lists; an item beside anything else is two files,

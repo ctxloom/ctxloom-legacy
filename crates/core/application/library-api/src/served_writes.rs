@@ -62,6 +62,7 @@ macro_rules! served_writes {
             update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse, "profile edit";
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse, "agent edit";
+            export_bundle (ExportBundle) ExportBundleRequest => ExportBundleResponse, "bundle export";
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse, "bundle import";
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse, "bundle remove";
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse, "fragment remove";
@@ -1353,6 +1354,73 @@ pub fn removed_of<T>(answer: Option<&Removal<T>>, applied: bool) -> Removed {
 /// (T28, step 10b U9): the old tree into the trash, the new one renamed in,
 /// then the trash removed. Its source is the caller's path, read from her
 /// working directory when it is relative (never the daemon's).
+/// `bundle export <bundle> <dest-dir>` (or `-o <path>`): `ExportBundle`,
+/// the bundle's tree put in outside ctxloom's trees, whole or not at all,
+/// never over what is there (D2's EXCEPTION: no step, no intent; the
+/// daemon makes the use case's recorded tree on an apply). Its paths are
+/// the caller's, below her working directory when relative.
+pub mod export_bundle {
+    use super::*;
+    use library_application::BundleExported;
+
+    /// `path` as the caller means it: below her `cwd` when relative.
+    fn below_cwd(request: &v1::ExportBundleRequest, path: &str) -> String {
+        let given = std::path::Path::new(path);
+        if path.is_empty() || given.is_absolute() || request.cwd.is_empty() {
+            return path.to_string();
+        }
+        std::path::Path::new(&request.cwd)
+            .join(given)
+            .display()
+            .to_string()
+    }
+
+    /// `path` as she typed it: her `cwd` taken off again.
+    fn as_typed(request: &v1::ExportBundleRequest, path: &str) -> String {
+        if request.cwd.is_empty() {
+            return path.to_string();
+        }
+        let cwd = request.cwd.trim_end_matches(['/', '\\']);
+        path.strip_prefix(cwd)
+            .and_then(|rest| rest.strip_prefix(['/', '\\']))
+            .map_or_else(|| path.to_string(), str::to_string)
+    }
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::ExportBundleRequest,
+        _apply: bool,
+    ) -> Outcome<BundleExported> {
+        let bundle = names::bundle_under(parent_of(&request.name), &request.name)
+            .unwrap_or_else(|| request.name.clone());
+        library.bundle_export(
+            flags,
+            &bundle,
+            &below_cwd(request, &request.destination),
+            &below_cwd(request, &request.output),
+        )
+    }
+
+    pub fn respond(
+        request: &v1::ExportBundleRequest,
+        wrote: Wrote<BundleExported>,
+    ) -> v1::ExportBundleResponse {
+        let (source, destination) = match &wrote.answer {
+            Some(done) => (done.source.clone(), as_typed(request, &done.dest)),
+            None => (String::new(), as_typed(request, &wrote.at)),
+        };
+        v1::ExportBundleResponse {
+            bundle: request.name.clone(),
+            source,
+            destination,
+            applied: Some(wrote.applied),
+            notices: wrote.notices,
+            ..v1::ExportBundleResponse::default()
+        }
+    }
+}
+
 pub mod import_bundle {
     use super::*;
     use library_application::BundleImported;

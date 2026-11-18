@@ -164,10 +164,53 @@ struct Made<'a> {
     request_id: &'a str,
 }
 
-/// What a use case planned: its outcome, and its recorded writes shaped.
+/// What a use case planned: its outcome, its recorded writes shaped, and
+/// a tree it writes outside ctxloom's trees, if any (D2's EXCEPTION:
+/// `bundle export`).
 struct Planned<T> {
     outcome: Outcome<T>,
     shaped: Result<Option<writes::Shaped>, library_tree::LibraryTreeRejection>,
+    outside: Option<Outside>,
+}
+
+/// A tree written outside ctxloom's trees: its directory and its files.
+type Outside = (String, Vec<ctxloom_ports::Put>);
+
+/// A use case's recorded writes.
+type Recorded = Vec<library_application::write::recording::Planned>;
+
+/// A use case's recorded writes, a tree it writes outside ctxloom's trees
+/// taken aside: one such tree alone is the write (no step, no intent);
+/// beside anything else it is more than one change, refused
+/// `OneChangePerCall`.
+fn outside_of(
+    written: Recorded,
+) -> (
+    Recorded,
+    Result<Option<Outside>, library_tree::LibraryTreeRejection>,
+) {
+    use library_application::write::recording::Planned as Wrote;
+    let (outside, inside): (Vec<_>, Vec<_>) = written
+        .into_iter()
+        .partition(|planned| matches!(planned, Wrote::Outside { .. }));
+    let mut trees: Vec<Outside> = outside
+        .into_iter()
+        .filter_map(|planned| match planned {
+            Wrote::Outside { dir, files } => Some((dir, files)),
+            _ => None,
+        })
+        .collect();
+    match (trees.len(), inside.is_empty()) {
+        (0, _) => (inside, Ok(None)),
+        (1, true) => (inside, Ok(trees.pop())),
+        _ => {
+            let paths = trees.into_iter().map(|(dir, _)| dir).collect();
+            (
+                Vec::new(),
+                Err(library_tree::LibraryTreeRejection::OneChangePerCall { paths }),
+            )
+        }
+    }
 }
 
 impl<E: Edge> Api<E> {
@@ -213,21 +256,18 @@ impl<E: Edge> Api<E> {
             }
         }
         let apply = !request.validate_only();
-        let (answer, shaped) = {
-            let Planned { outcome, shaped } = self.planned(&site, apply, &plan)?;
-            notices.extend(
-                outcome
-                    .notices
-                    .iter()
-                    .map(run_application::client::notice_of),
-            );
-            (outcome.result.map_err(|error| read_error(&error)), shaped)
+        let (answer, shaped, outside) = {
+            let planned = self.planned(&site, apply, &plan)?;
+            let said = planned.outcome.notices.iter();
+            notices.extend(said.map(run_application::client::notice_of));
+            let answer = planned.outcome.result.map_err(|error| read_error(&error));
+            (answer, planned.shaped, planned.outside)
         };
         let answer = answer?;
-        let shaped = match shaped {
-            Ok(shaped) => shaped,
-            Err(rejection) => return Err(refused(&rejection)),
-        };
+        let shaped = shaped.map_err(|rejection| refused(&rejection))?;
+        if let Some(outside) = outside {
+            return self.made_outside(&site, apply, outside, (answer, notices));
+        }
         let Some(shaped) = shaped else {
             // A preview, or a write that changes nothing: nothing to intend.
             return Ok(Wrote {
@@ -492,12 +532,69 @@ impl<E: Edge> Api<E> {
                 let _ = plan(&recording, &site.flags, true);
                 written = recorder.take();
             }
-            let shaped = writes::shape(written, |bundle, dir| library.bundle_files(bundle, dir));
-            planned = Some(Planned { outcome, shaped });
+            let (written, outside) = outside_of(written);
+            let (shaped, outside) = match outside {
+                Ok(outside) => (
+                    writes::shape(written, |bundle, dir| library.bundle_files(bundle, dir)),
+                    outside,
+                ),
+                Err(rejection) => (Err(rejection), None),
+            };
+            planned = Some(Planned {
+                outcome,
+                shaped,
+                outside,
+            });
         })?;
         planned.ok_or_else(|| ApiError::Failed {
             detail: "the library was not read".to_string(),
         })
+    }
+
+    /// A write that is a tree outside ctxloom's trees (D2's EXCEPTION): no
+    /// step of any tree's stream; made, on an apply, by the user files'
+    /// staged NOREPLACE put, whole or not at all.
+    fn made_outside<T>(
+        &self,
+        site: &crate::library_reads::ReadSite<'_>,
+        apply: bool,
+        (dir, files): Outside,
+        (answer, notices): (T, Vec<v1::Notice>),
+    ) -> Result<Wrote<T>, ApiError> {
+        if apply {
+            self.write_outside(site, &dir, &files)?;
+        }
+        Ok(Wrote {
+            answer: Some(answer),
+            applied: apply,
+            etag: String::new(),
+            at: dir,
+            parent: site.parent.clone(),
+            notices,
+        })
+    }
+
+    /// The tree `files` put in at `dir`, outside ctxloom's trees, through
+    /// the site's library (its user files).
+    fn write_outside(
+        &self,
+        site: &crate::library_reads::ReadSite<'_>,
+        dir: &str,
+        files: &[ctxloom_ports::Put],
+    ) -> Result<(), ApiError> {
+        let mut made = None;
+        site.libraries.read(&site.at, &site.env, &mut |library| {
+            if made.is_none() {
+                made = Some(library.write_outside(dir, files));
+            }
+        })?;
+        match made {
+            Some(Ok(())) => Ok(()),
+            Some(Err(error)) => Err(read_error(&error)),
+            None => Err(ApiError::Failed {
+                detail: "the library was not read".to_string(),
+            }),
+        }
     }
 
     /// The step `step` of the write `request_id` failed (final): recorded,
@@ -666,6 +763,7 @@ macro_rules! write_requests {
 
 write_requests! {
     CreateBundleRequest.parent;
+    ExportBundleRequest.name;
     UpdateBundleRequest.bundle.name, etag;
     CreateFragmentRequest.parent;
     UpdateFragmentRequest.fragment.name, etag;

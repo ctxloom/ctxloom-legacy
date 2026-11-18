@@ -201,6 +201,9 @@ pub fn shape(
                 None => Ok(None),
             }
         }
+        // A tree outside ctxloom's trees is no tree's step (D2's
+        // EXCEPTION): the daemon takes it aside before it shapes.
+        Planned::Outside { .. } => Ok(None),
     }
 }
 
@@ -304,6 +307,7 @@ fn paths_of(planned: &Planned) -> Vec<String> {
         Planned::NewBundle { files, .. } => files.iter().map(|put| put.path.clone()).collect(),
         Planned::BundleGone { bundle } => vec![bundle.clone()],
         Planned::Changed { changes, .. } => changes.iter().map(change_path).collect(),
+        Planned::Outside { dir, .. } => vec![dir.clone()],
     }
 }
 

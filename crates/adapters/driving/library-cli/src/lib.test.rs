@@ -288,6 +288,7 @@ targeted! {
     DeleteCompanionRequest => |r, t| r.name = t;
     CreateSkillRequest => |r, t| r.parent = t;
     UpdateMcpServerRequest => |r, t| r.mcp_server.get_or_insert_with(Default::default).name = t;
+    ExportBundleRequest => |r, t| r.name = t;
     CreateProfileRequest => |r, t| r.parent = t;
     UpdateProfileRequest => |r, t| r.profile.get_or_insert_with(Default::default).name = t;
     CreateAgentRequest => |r, t| r.parent = t;

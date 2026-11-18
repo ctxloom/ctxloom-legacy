@@ -269,3 +269,32 @@ fn test_a_sequence_says_where_each_kept_path_is_and_a_purging_one_nothing() {
     let import = Shape::Sequence(vec![trash("content/bundles/v2/demo"), Shape::Purge]);
     assert!(super::trashed_notice("/work/demo/.ctxloom", &import, "r-1").is_empty());
 }
+
+// Step 10b (D2's EXCEPTION): a tree written outside ctxloom's trees is
+// taken aside, the write itself, no step of any tree; beside a tree's
+// change it is more than one change, refused.
+#[test]
+fn test_a_tree_outside_is_taken_aside_alone_and_refused_beside_a_change() {
+    use library_application::write::recording::Planned;
+    let outside = Planned::Outside {
+        dir: "/work/exported/demo".to_string(),
+        files: vec![ctxloom_ports::Put::file("bundle.yaml", "x")],
+    };
+    let (rest, taken) = super::outside_of(vec![outside.clone()]);
+    assert!(rest.is_empty());
+    let (dir, files) = taken.unwrap().expect("taken aside");
+    assert_eq!(dir, "/work/exported/demo");
+    assert_eq!(files.len(), 1);
+    let layer = Planned::Layer {
+        scope: ctxloom_ports::Scope::Project,
+        text: "a: b\n".to_string(),
+    };
+    let (rest, taken) = super::outside_of(vec![layer.clone()]);
+    assert_eq!(rest, std::slice::from_ref(&layer));
+    assert_eq!(taken.unwrap(), None);
+    let (_, taken) = super::outside_of(vec![outside, layer]);
+    assert!(matches!(
+        taken,
+        Err(library_tree::LibraryTreeRejection::OneChangePerCall { .. })
+    ));
+}

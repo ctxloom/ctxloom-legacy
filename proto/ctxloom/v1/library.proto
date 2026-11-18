@@ -650,9 +650,14 @@ message DeleteBundleResponse {
 message ExportBundleRequest {
   // The Bundle to export, by its resource name.
   string name = 1 [(google.api.field_behavior) = REQUIRED];
-  // Where the bundle's tree lands (`DEST-DIR`, or `--output` for the tree's
-  // own path).
+  // The directory the bundle's tree lands in, as `<destination>/<bundle>`
+  // (`DEST-DIR`); relative, below the caller's `cwd`.
   string destination = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The tree's own path instead (`--output`), relative below the caller's
+  // `cwd`: additive proto extension, owner ruling 2026-11-18. Either way the
+  // tree is put in whole, never over what is there (D2's EXCEPTION: staged
+  // beside it, renamed in NOREPLACE; no intent on any stream).
+  string output = 3 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];

@@ -143,6 +143,7 @@ macro_rules! library_writes {
             update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse,
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
+            export_bundle (ExportBundle) ExportBundleRequest => ExportBundleResponse,
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse,
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,

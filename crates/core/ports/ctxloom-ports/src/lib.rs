@@ -118,7 +118,9 @@ pub trait UserFiles {
     /// a file is there.
     fn write_file(&self, path: &str, bytes: &[u8], overwrite: bool) -> Result<bool, Failure>;
 
-    /// The files written below `dir`, its directories made.
+    /// The files put in as the new directory `dir`, whole or not at all,
+    /// never over anything there (D2's EXCEPTION for a tree written outside
+    /// ctxloom's trees: staged beside it, renamed in NOREPLACE).
     fn write_tree(&self, dir: &str, files: &[Put]) -> Result<(), Failure>;
 }
 

@@ -201,6 +201,7 @@ macro_rules! served_writes {
             update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse,
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
+            export_bundle (ExportBundle) ExportBundleRequest => ExportBundleResponse,
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse,
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,
@@ -426,7 +427,7 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
 /// home step and observes the trees before it plans, so the caller takes
 /// none of its own.
 pub const SERVED_WRITES: &[(&str, &[&str])] = &[
-    ("bundle", &["create", "edit", "remove", "import"]),
+    ("bundle", &["create", "edit", "remove", "import", "export"]),
     ("fragment", &["create", "edit", "remove"]),
     ("command", &["create", "edit", "remove"]),
     ("config", &["set", "edit"]),

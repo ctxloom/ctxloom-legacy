@@ -274,6 +274,9 @@ impl Project {
         } else {
             output.to_string()
         };
+        if ports.user.exists(&dest).map_err(AppError::Cause)? {
+            return Err(WriteError::ExportDestinationExists { path: dest }.into());
+        }
         let plan = self.plan_to_read(&entry.name)?;
         let puts: Vec<Put> = plan
             .files()

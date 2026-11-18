@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use ctxloom_ports::{
-    Change, ConfigFiles, ContentRepo, Failure, LayerText, Put, Scope, Source, TreeFiles,
+    Change, ConfigFiles, ContentRepo, Failure, LayerText, Put, Scope, Source, TreeFiles, UserFiles,
 };
 
 use crate::project::Library;
@@ -28,6 +28,10 @@ pub enum Planned {
     BundleGone { bundle: String },
     /// A config layer written whole.
     Layer { scope: Scope, text: String },
+    /// A tree written OUTSIDE ctxloom's trees (`bundle export`; D2's
+    /// EXCEPTION: staged beside it and renamed in NOREPLACE, no intent on
+    /// any stream), its directory as the use case named it.
+    Outside { dir: String, files: Vec<Put> },
 }
 
 /// What a library opened by [`Library::recording`] was asked to write.
@@ -121,6 +125,13 @@ impl Recorder {
         planned.push(Planned::Layer {
             scope,
             text: text.to_string(),
+        });
+    }
+
+    fn outside(&self, dir: &str, files: &[Put]) {
+        self.lock().push(Planned::Outside {
+            dir: dir.to_string(),
+            files: files.to_vec(),
         });
     }
 
@@ -232,7 +243,56 @@ impl ConfigFiles for RecordingConfig {
     }
 }
 
+/// The user's files, a tree written outside the trees recorded; reads
+/// pass through. A single file (a profile's or a skill's export) is not
+/// served, and passes through.
+struct RecordingUser {
+    inner: Arc<dyn UserFiles>,
+    recorder: Recorder,
+}
+
+impl UserFiles for RecordingUser {
+    fn exists(&self, path: &str) -> Result<bool, Failure> {
+        self.inner.exists(path)
+    }
+
+    fn is_dir(&self, path: &str) -> Result<bool, Failure> {
+        self.inner.is_dir(path)
+    }
+
+    fn read_file(&self, path: &str) -> Result<Vec<u8>, Failure> {
+        self.inner.read_file(path)
+    }
+
+    fn read_tree(&self, dir: &str) -> Result<TreeFiles, Failure> {
+        self.inner.read_tree(dir)
+    }
+
+    fn write_file(&self, path: &str, bytes: &[u8], overwrite: bool) -> Result<bool, Failure> {
+        self.inner.write_file(path, bytes, overwrite)
+    }
+
+    fn write_tree(&self, dir: &str, files: &[Put]) -> Result<(), Failure> {
+        self.recorder.outside(dir, files);
+        Ok(())
+    }
+}
+
 impl Library {
+    /// The tree `files` written outside ctxloom's trees, at `dir` (the
+    /// daemon's make of a recorded [`Planned::Outside`]): whole or not at
+    /// all, never over what is there (the user files' NOREPLACE).
+    pub fn write_outside(&self, dir: &str, files: &[Put]) -> Result<(), crate::AppError> {
+        let ports = self
+            .ports
+            .as_ref()
+            .ok_or_else(|| crate::AppError::from(crate::WriteError::NotWired {}))?;
+        ports
+            .user
+            .write_tree(dir, files)
+            .map_err(crate::AppError::Cause)
+    }
+
     /// The library whose writes are recorded, not made, and what records
     /// them: a use case run over it plans its write (step 10b U3).
     // The library holds its ports as `Arc<dyn ..>` without `Send`, so a
@@ -248,6 +308,12 @@ impl Library {
             inner: Arc::clone(&self.files),
             recorder: recorder.clone(),
         });
+        if let Some(ports) = self.ports.as_mut() {
+            ports.user = Arc::new(RecordingUser {
+                inner: Arc::clone(&ports.user),
+                recorder: recorder.clone(),
+            });
+        }
         (self, recorder)
     }
 

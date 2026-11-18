@@ -68,6 +68,9 @@ write_errors! {
     ExportNeedsDest { } = "write-export-needs-dest";
     /// An export onto a file that is there.
     ExportExists { path } = "write-export-exists";
+    /// A bundle export onto a path that is there (D2: put in whole, never
+    /// over what is there).
+    ExportDestinationExists { path } = "write-export-destination-exists";
     /// An import that would replace what is there.
     ImportExists { what, path } = "write-import-exists";
     /// An import of what is no bundle.

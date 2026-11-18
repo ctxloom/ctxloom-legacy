@@ -346,6 +346,35 @@ impl UserFilesFs {
     }
 }
 
+/// A process's count of the trees it staged, so two exports at once never
+/// share a staging directory.
+static STAGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl UserFilesFs {
+    /// `files` written under `staging`, then `staging` renamed to `top`
+    /// with NOREPLACE (something there refuses it).
+    fn stage_and_rename(&self, staging: &Path, top: &Path, files: &[Put]) -> Result<(), Failure> {
+        make_dirs(&*self.fs, staging)?;
+        for put in files {
+            let target = join_rel(staging, &put.path);
+            if let Some(parent) = target.parent() {
+                make_dirs(&*self.fs, parent)?;
+            }
+            let mode = Mode::from_bits(if put.executable { 0o755 } else { 0o644 });
+            self.fs
+                .write_atomic(&target, &put.bytes, Perms::Exact(mode))
+                .map_err(|e| write_failure(&target, &e))?;
+        }
+        self.fs.rename_noreplace(staging, top).map_err(|e| {
+            Box::new(ContentError::Rename {
+                from: staging.display().to_string(),
+                to: top.display().to_string(),
+                detail: e.to_string(),
+            }) as Failure
+        })
+    }
+}
+
 /// `path` below `top`, slash separated.
 fn relative(top: &Path, path: &Path) -> String {
     let rel = path.strip_prefix(top).unwrap_or(path);
@@ -417,19 +446,31 @@ impl UserFiles for UserFilesFs {
         }
     }
 
+    /// D2's EXCEPTION for a tree written outside ctxloom's trees (`bundle
+    /// export`): built whole in a staging directory beside `dir`, then
+    /// renamed in with NOREPLACE, so it is there whole or not at all and
+    /// never over what is there; the staging is removed either way.
     fn write_tree(&self, dir: &str, files: &[Put]) -> Result<(), Failure> {
         let top = Path::new(dir);
-        for put in files {
-            let target = join_rel(top, &put.path);
-            if let Some(parent) = target.parent() {
-                make_dirs(&*self.fs, parent)?;
-            }
-            let mode = Mode::from_bits(if put.executable { 0o755 } else { 0o644 });
-            self.fs
-                .write_atomic(&target, &put.bytes, Perms::Exact(mode))
-                .map_err(|e| write_failure(&target, &e))?;
+        let parent = top
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let leaf = top
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        make_dirs(&*self.fs, parent)?;
+        let staging = parent.join(format!(
+            ".{leaf}.ctxloom-staging-{}-{}",
+            std::process::id(),
+            STAGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let made = self.stage_and_rename(&staging, top, files);
+        if made.is_err() {
+            let _ = self.fs.remove_dir_all(&staging);
         }
-        Ok(())
+        made
     }
 }
 

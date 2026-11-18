@@ -1324,3 +1324,45 @@ fn test_a_profile_patch_of_an_empty_mask_asks_no_editor_and_changes_nothing() {
         Some(false)
     );
 }
+
+// Step 10b (D2's EXCEPTION): an export plans the bundle's tree outside the
+// trees, at her path below her working directory, and writes nothing; its
+// answer says the destination as she typed it.
+#[test]
+fn test_a_bundle_export_plans_its_tree_below_the_callers_directory_and_answers_it_as_typed() {
+    let (library, recorder) = demo().recording();
+    let request = v1::ExportBundleRequest {
+        name: "projects/amber-quiet-heron/bundles/demo".to_string(),
+        destination: "exported".to_string(),
+        cwd: "/work".to_string(),
+        ..v1::ExportBundleRequest::default()
+    };
+    let done = super::export_bundle::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    let planned = recorder.take();
+    let [library_application::write::recording::Planned::Outside { dir, files }] = &planned[..]
+    else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(dir, "/work/exported/demo");
+    assert!(files.iter().any(|f| f.path == "fragments/example.md"));
+    let answered = super::export_bundle::respond(&request, wrote(Some(done)));
+    assert_eq!(answered.destination, "exported/demo");
+    assert_eq!(answered.applied, Some(true));
+    assert_eq!(answered.bundle, "projects/amber-quiet-heron/bundles/demo");
+    let output = v1::ExportBundleRequest {
+        destination: String::new(),
+        output: "handoff".to_string(),
+        ..request
+    };
+    let (library, recorder) = demo().recording();
+    super::export_bundle::plan(&library, &plain(), &output, true)
+        .result
+        .unwrap();
+    let planned = recorder.take();
+    let [library_application::write::recording::Planned::Outside { dir, .. }] = &planned[..] else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(dir, "/work/handoff");
+}

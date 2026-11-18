@@ -347,12 +347,10 @@ mod messages {
     use std::collections::BTreeMap;
 
     use library_application::{
-        BundleExported, BundleList, BundleRow, BundleShow, ShownCommand, ShownFragment, ShownMcp,
-        ShownSkill,
+        BundleList, BundleRow, BundleShow, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
     };
     use serde_json::{json, Value};
 
-    use super::super::exported;
     use library_api::resources::bundle;
     use library_api::resources::bundles as listed;
 
@@ -534,28 +532,6 @@ mod messages {
             })
         );
     }
-
-    // The writes' responses: each names the bundle and carries the path,
-    // source and counts the write reported.
-    #[test]
-    fn test_the_write_responses_carry_what_the_write_reported() {
-        let b = "projects/calm-otter/bundles/demo";
-        let out = BundleExported {
-            status: "exported".to_string(),
-            name: "demo".to_string(),
-            source: "bundles/demo".to_string(),
-            dest: "out/demo".to_string(),
-        };
-        assert_eq!(
-            as_json(exported(P, &out)),
-            json!({
-                "bundle": b,
-                "source": "bundles/demo",
-                "destination": "out/demo",
-                "applied": true,
-            })
-        );
-    }
 }
 
 // `bundle distill`: the bundle, its fragments and its commands each in its
@@ -721,5 +697,27 @@ mod writes_asked {
         let (_, bare) = asked_once::<v1::UpdateBundleRequest>(&["bundle", "edit", "demo"]);
         assert!(bare.update_mask.is_none_or(|m| m.paths.is_empty()));
         assert!(bare.add_tags.is_empty() && bare.add_fragments.is_empty());
+    }
+}
+
+// Step 10b (D2's EXCEPTION): `bundle export` asks the daemon's
+// `ExportBundle` with her paths as typed (the daemon reads them below her
+// working directory), once.
+mod export_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_bundle_export_asks_export_bundle_with_its_paths() {
+        let (under, asked) =
+            asked_once::<v1::ExportBundleRequest>(&["bundle", "export", "demo", "exported"]);
+        assert_eq!(under, "/bundles/demo");
+        assert_eq!(asked.destination, "exported");
+        assert!(asked.output.is_empty());
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
+        let (_, asked) =
+            asked_once::<v1::ExportBundleRequest>(&["bundle", "export", "demo", "-o", "handoff"]);
+        assert_eq!(asked.output, "handoff");
     }
 }

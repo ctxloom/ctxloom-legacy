@@ -131,3 +131,40 @@ fn test_an_import_of_a_new_bundle_is_planned_as_one_new_directory() {
     };
     assert_eq!(bundle, "notes");
 }
+
+// Step 10b U3 (D2: an export outside the trees is an EXCEPTION, staged and
+// NOREPLACE): over the recording library an export is planned as the tree
+// it would write, and writes nothing, so a preview, planned twice, never
+// exports.
+#[test]
+fn test_an_export_is_planned_as_a_tree_outside_and_writes_nothing() {
+    let (library, mem) = world();
+    let (recording, recorder) = library.recording();
+    let exported = recording.bundle_export(&plain(), "demo", "out", "");
+    assert!(exported.result.is_ok(), "{:?}", exported.result.err());
+    assert_eq!(mem.writes(), 0, "{:?}", mem.log());
+    assert!(mem.user_paths().is_empty(), "{:?}", mem.user_paths());
+    let planned = recorder.take();
+    let [Planned::Outside { dir, files }] = &planned[..] else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(dir, "out/demo");
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    assert!(paths.contains(&"fragments/example.md"), "{paths:?}");
+}
+
+// An export onto a path that is there is refused, a decline, before
+// anything is planned: the tree is put in whole or not at all.
+#[test]
+fn test_an_export_onto_a_path_that_is_there_is_refused_and_plans_nothing() {
+    let (library, mem) = world();
+    mem.put_user("out/demo/keep.md", b"hers", false);
+    let (recording, recorder) = library.recording();
+    let refused = recording.bundle_export(&plain(), "demo", "out", "");
+    let error = refused.result.expect_err("refused");
+    assert_eq!(
+        angzarr_diagnostic::Diagnostic::code(&error),
+        "library-application-write-export-destination-exists"
+    );
+    assert!(recorder.take().is_empty());
+}
