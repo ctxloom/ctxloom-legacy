@@ -136,14 +136,18 @@ impl World {
     /// The project's files outside the sessions' own directories, and
     /// outside the project's identity (`.ctxloom/project-id`, git-ignored,
     /// which the first command to open the project's store writes, whatever
-    /// the command).
+    /// the command) and its checkout's (`.ctxloom/state/checkout`, which the
+    /// daemon writes at the tree's first observation: a live session's tree
+    /// is observed each round, step 10c U13, G5(b)).
     fn outside_sessions(&self) -> BTreeMap<String, Vec<u8>> {
         self.common
             .project
             .tree("")
             .into_iter()
             .filter(|(path, _)| {
-                !path.starts_with(".ctxloom/sessions/") && path != ".ctxloom/project-id"
+                !path.starts_with(".ctxloom/sessions/")
+                    && path != ".ctxloom/project-id"
+                    && path != ".ctxloom/state/checkout"
             })
             .collect()
     }
