@@ -69,7 +69,7 @@ pub trait LibraryWriteRequest {
 /// preview's), else the path's token now (a `--yes`, one call that plans
 /// and applies). `decide` refuses the write `PlanStale` when it is not the
 /// path's last sequence. An etag that is not a number is refused, the
-/// request's own INVALID_ARGUMENT (`EtagInvalid`, protos.md §1.1).
+/// request's own bad argument (`EtagInvalid`, protos.md §1.1).
 pub(crate) fn seen_sequence(etag: &str, now: u64) -> Result<u64, ApiError> {
     if etag.is_empty() {
         return Ok(now);

@@ -169,7 +169,7 @@ fn test_an_operation_that_made_nothing_is_the_domain_s_refusal() {
 }
 
 // An etag that is not a number (none a preview answered) is the request's
-// own INVALID_ARGUMENT (protos.md §1.1): the typed `EtagInvalid`, naming the
+// own bad argument (protos.md §1.1): the typed `EtagInvalid`, naming the
 // etag as sent, never a failure (exit 10).
 #[test]
 fn test_an_etag_that_is_not_a_number_is_refused_as_an_invalid_argument() {
