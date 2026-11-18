@@ -256,7 +256,7 @@ fn bundle_and_item(name: &str) -> (String, String) {
 
 /// What the CLI can present of a need (step 10b U3): it launches the
 /// editor on the user's terminal, and asks nothing else here.
-fn presentable() -> Option<v1::Presentable> {
+pub(crate) fn presentable() -> Option<v1::Presentable> {
     Some(v1::Presentable {
         can_ask: false,
         can_launch: true,
@@ -266,7 +266,10 @@ fn presentable() -> Option<v1::Presentable> {
 /// The answer to `needs`' Edit need, the editor launched on its document
 /// (step 10b U3: the preview's Edit need, presented by the CLI); none
 /// when it asks none.
-fn edit_answers(cx: &Context<'_>, needs: &[v1::Need]) -> Result<Vec<v1::Answer>, Failure> {
+pub(crate) fn edit_answers(
+    cx: &Context<'_>,
+    needs: &[v1::Need],
+) -> Result<Vec<v1::Answer>, Failure> {
     let mut answers = Vec::new();
     for need in needs {
         if let Some(v1::need::Kind::Edit(edit)) = &need.kind {

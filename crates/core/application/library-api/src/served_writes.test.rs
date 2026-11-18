@@ -528,3 +528,187 @@ fn test_a_bundle_edit_of_the_manifest_alone_is_one_step_and_beside_an_item_is_re
         other => panic!("{other:?}"),
     }
 }
+
+fn tools() -> library_application::Library {
+    Setup {
+        bundles: &[(
+            "demo",
+            &[
+                ENVELOPE,
+                (
+                    "mcp/tools.yaml",
+                    "command: echo\nargs:\n  - KEEP-THIS-ARGUMENT\n",
+                ),
+            ],
+        )],
+        layers: &[CONFIG],
+        ..Setup::default()
+    }
+    .fixture()
+    .0
+}
+
+fn mcp_set(mask: &[&str], server: impl FnOnce(&mut v1::McpServer)) -> v1::UpdateMcpServerRequest {
+    let mut mcp_server = v1::McpServer {
+        name: "projects/amber-quiet-heron/bundles/demo/mcp/tools".to_string(),
+        ..v1::McpServer::default()
+    };
+    server(&mut mcp_server);
+    v1::UpdateMcpServerRequest {
+        mcp_server: Some(mcp_server),
+        update_mask: Some(daemon_proto::google::protobuf::FieldMask {
+            paths: mask.iter().map(|p| p.to_string()).collect(),
+        }),
+        allow_missing: true,
+        presentable: launching(),
+        ..v1::UpdateMcpServerRequest::default()
+    }
+}
+
+/// The text of the one file a write planned of the bundle.
+fn one_write(planned: &[library_application::write::recording::Planned]) -> (String, String) {
+    let writes = planned_writes(planned);
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    writes[0].clone()
+}
+
+// `mcp server set`: the fields its mask names change, its env among them,
+// and the rest keep their value.
+#[test]
+fn test_an_mcp_server_set_writes_the_fields_its_mask_names_env_included() {
+    let (library, recorder) = tools().recording();
+    let request = mcp_set(&["command", "env"], |s| {
+        s.command = "search-mcp".to_string();
+        s.env.insert("LOG_LEVEL".to_string(), "debug".to_string());
+        s.url = "https://not.masked".to_string();
+    });
+    let written = super::update_mcp_server::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    let super::McpWritten::Set(set) = written else {
+        panic!("{written:?}")
+    };
+    assert_eq!((set.bundle.as_str(), set.name.as_str()), ("demo", "tools"));
+    assert_eq!(set.status, "updated");
+    let (path, text) = one_write(&recorder.take());
+    assert_eq!(path, "mcp/tools.yaml");
+    assert!(text.contains("command: search-mcp"), "{text}");
+    assert!(text.contains("LOG_LEVEL: debug"), "{text}");
+    assert!(text.contains("KEEP-THIS-ARGUMENT"), "{text}");
+    assert!(!text.contains("not.masked"), "{text}");
+}
+
+// A masked list or map given empty clears it; a set of a name the bundle
+// lacks creates it.
+#[test]
+fn test_an_mcp_server_set_clears_a_masked_field_given_empty_and_creates_a_missing_one() {
+    let (library, recorder) = tools().recording();
+    let request = mcp_set(&["command", "args", "url"], |s| {
+        s.url = "https://mcp.example.com/v1".to_string();
+    });
+    let written = super::update_mcp_server::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert!(matches!(written, super::McpWritten::Set(_)), "{written:?}");
+    let (_, text) = one_write(&recorder.take());
+    assert_eq!(text, "url: https://mcp.example.com/v1\n");
+    let (library, recorder) = tools().recording();
+    let mut request = mcp_set(&["command"], |s| s.command = "echo".to_string());
+    request.mcp_server.as_mut().unwrap().name =
+        "projects/amber-quiet-heron/bundles/demo/mcpServers/fresh".to_string();
+    let super::McpWritten::Set(set) =
+        super::update_mcp_server::plan(&library, &plain(), &request, true)
+            .result
+            .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (set.name.as_str(), set.status.as_str()),
+        ("fresh", "created")
+    );
+    assert_eq!(one_write(&recorder.take()).0, "mcp/fresh.yaml");
+}
+
+// `mcp server edit` (no mask): the server through the editor, the
+// preview's Edit need its document, the apply its answer.
+#[test]
+fn test_an_mcp_server_edit_asks_its_document_and_writes_the_answer() {
+    let (library, recorder) = tools().recording();
+    let mut preview = mcp_set(&[], |_| {});
+    preview.validate_only = true;
+    let super::McpWritten::Edited(asked) =
+        super::update_mcp_server::plan(&library, &plain(), &preview, false)
+            .result
+            .unwrap()
+    else {
+        panic!()
+    };
+    let Some(v1::need::Kind::Edit(edit)) = &asked.needs[0].kind else {
+        panic!("{:?}", asked.needs)
+    };
+    assert!(edit.text.contains("KEEP-THIS-ARGUMENT"), "{}", edit.text);
+    assert_eq!(edit.file_name, "tools.yaml");
+    let _ = recorder.take();
+    let mut apply = mcp_set(&[], |_| {});
+    apply.answers = vec![v1::Answer {
+        need_id: super::EDIT_NEED.to_string(),
+        answer: Some(v1::answer::Answer::Edited(
+            "command: EDITED-BY-TEST\nargs:\n  - KEEP-THIS-ARGUMENT\n".to_string(),
+        )),
+    }];
+    let super::McpWritten::Edited(asked) =
+        super::update_mcp_server::plan(&library, &plain(), &apply, true)
+            .result
+            .unwrap()
+    else {
+        panic!()
+    };
+    assert!(asked.needs.is_empty());
+    assert_eq!(
+        asked.done,
+        library_application::McpEdited::Updated {
+            name: "tools".to_string(),
+            bundle: "demo".to_string()
+        }
+    );
+    let (path, text) = one_write(&recorder.take());
+    assert_eq!(path, "mcp/tools.yaml");
+    assert!(text.contains("EDITED-BY-TEST"), "{text}");
+}
+
+#[test]
+fn test_an_mcp_server_write_answers_its_server_whether_created_and_applied() {
+    let request = mcp_set(&["command"], |_| {});
+    let set = library_application::McpSet {
+        status: "created".to_string(),
+        bundle: "demo".to_string(),
+        name: "tools".to_string(),
+        path: "/work/demo/.ctxloom/content/bundles/v2/demo/bundle.yaml".to_string(),
+    };
+    let answered =
+        super::update_mcp_server::respond(&request, wrote(Some(super::McpWritten::Set(set))));
+    assert_eq!(
+        answered.mcp_server.unwrap().name,
+        "projects/amber-quiet-heron/bundles/demo/mcpServers/tools"
+    );
+    assert!(answered.created);
+    assert_eq!(answered.applied, Some(true));
+    assert_eq!(answered.etag, "4");
+    // Applied by the call, yet the editor changed nothing: nothing applied.
+    let unchanged = Wrote {
+        ..wrote(Some(super::McpWritten::Edited(super::Asked {
+            done: library_application::McpEdited::Unchanged,
+            needs: Vec::new(),
+        })))
+    };
+    let answered = super::update_mcp_server::respond(&request, unchanged);
+    assert_eq!(answered.applied, Some(false));
+    assert!(!answered.created);
+    let retried = super::update_mcp_server::respond(&request, wrote(None));
+    assert_eq!(retried.applied, Some(true));
+    assert_eq!(
+        retried.mcp_server.unwrap().name,
+        "projects/amber-quiet-heron/bundles/demo/mcp/tools"
+    );
+}

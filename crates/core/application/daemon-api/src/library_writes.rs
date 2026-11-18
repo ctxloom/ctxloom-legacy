@@ -579,6 +579,7 @@ write_requests! {
     UpdateCommandRequest.command.name, etag;
     UpdateConfigRequest.name, etag;
     CreateSkillRequest.parent;
+    UpdateMcpServerRequest.mcp_server.name, etag;
     DeleteBundleRequest.name, etag;
     DeleteFragmentRequest.name, etag;
     DeleteCommandRequest.name, etag;

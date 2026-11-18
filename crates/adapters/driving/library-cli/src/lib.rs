@@ -29,8 +29,7 @@ mod prelude {
     pub(crate) use cli_support::{flag, many, say_notices, Exit};
     pub(crate) use library_application::{
         AgentRequest, AgentRow, AgentWritten, AppError, BundleEditRequest, DefaultAgent, ItemKind,
-        McpEdited, McpPatch, ProfileCreateRequest, ProfileEdit, ProfileEdited, SwapPreview,
-        WriteError,
+        ProfileCreateRequest, ProfileEdit, ProfileEdited, SwapPreview, WriteError,
     };
 
     pub(crate) use crate::write::{
@@ -197,6 +196,7 @@ macro_rules! served_writes {
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
+            update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse,
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse,
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse,
             delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse,
@@ -254,6 +254,20 @@ impl Context<'_> {
     /// This command's global flags as a read's request carries them (E1).
     pub(crate) fn globals(&self) -> Option<v1::Globals> {
         Some(library_api::reads::globals_of(&self.flags))
+    }
+
+    /// This context answering in `format` (a verb that answers in text
+    /// unless json is asked for by name).
+    pub(crate) fn formatted(&self, format: Format) -> Context<'_> {
+        Context {
+            library: self.library,
+            names: self.names,
+            served: self.served,
+            flags: self.flags.clone(),
+            format,
+            explicit: self.explicit,
+            catalog: self.catalog,
+        }
     }
 }
 
@@ -415,13 +429,22 @@ pub const SERVED_WRITES: &[(&str, &[&str])] = &[
     ("profile", &["remove"]),
     ("agent", &["remove"]),
     ("companion", &["remove"]),
+    ("mcp server", &["set", "edit"]),
 ];
 
 /// Whether `noun`, given its matches `sub`, is a write the daemon serves
-/// (a verb of [`SERVED_WRITES`]).
+/// (a verb of [`SERVED_WRITES`]; `mcp`'s are its `server`'s, the table's
+/// `mcp server`).
 pub fn is_served_write(noun: &str, sub: &ArgMatches) -> bool {
-    let Some((asked, _)) = sub.subcommand() else {
+    let Some((asked, matches)) = sub.subcommand() else {
         return false;
+    };
+    let (noun, asked) = match (noun, asked) {
+        ("mcp", "server") => match matches.subcommand() {
+            Some((verb, _)) => ("mcp server", verb),
+            None => return false,
+        },
+        other => other,
     };
     SERVED_WRITES
         .iter()

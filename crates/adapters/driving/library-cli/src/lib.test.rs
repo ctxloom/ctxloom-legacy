@@ -278,6 +278,7 @@ targeted! {
     DeleteAgentRequest => |r, t| r.name = t;
     DeleteCompanionRequest => |r, t| r.name = t;
     CreateSkillRequest => |r, t| r.parent = t;
+    UpdateMcpServerRequest => |r, t| r.mcp_server.get_or_insert_with(Default::default).name = t;
 }
 
 /// What one invocation left behind.
@@ -994,7 +995,6 @@ fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
         &["agent", "default"],
         &["companion", "add", "acme"],
         &["config", "edit"],
-        &["mcp", "server", "edit", "demo#mcp/x"],
         &["run", "hello"],
     ] {
         assert!(!is_served(line), "{line:?} runs in process");
@@ -1008,6 +1008,37 @@ fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
         for verb in *verbs {
             assert!(command.find_subcommand(verb).is_some(), "{noun} {verb}");
         }
+    }
+}
+
+/// Whether `line`'s verb is a write the daemon serves.
+fn is_served_writing(line: &[&str]) -> bool {
+    let program = clap::Command::new("ctxloom").subcommands(crate::nouns());
+    let matches = program
+        .try_get_matches_from(std::iter::once("ctxloom").chain(line.iter().copied()))
+        .unwrap_or_else(|e| panic!("{line:?}: {e}"));
+    let (noun, sub) = matches.subcommand().expect("a noun");
+    crate::is_served_write(noun, sub)
+}
+
+// Step 10b U3: the writes the daemon serves take its home step; `mcp`'s
+// verbs are its `server`'s.
+#[test]
+fn test_the_daemons_writes_are_told_from_the_verbs_in_process() {
+    for line in [
+        &["bundle", "create", "demo"][..],
+        &["config", "set", "a.b", "c"],
+        &["mcp", "server", "set", "demo#mcp/x", "--command", "echo"],
+        &["mcp", "server", "edit", "demo#mcp/x"],
+    ] {
+        assert!(is_served_writing(line), "{line:?} is served");
+    }
+    for line in [
+        &["mcp", "server", "list"][..],
+        &["mcp", "server", "show", "x"],
+        &["profile", "create", "dev"],
+    ] {
+        assert!(!is_served_writing(line), "{line:?} is no served write");
     }
 }
 

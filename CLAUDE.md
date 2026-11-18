@@ -149,8 +149,19 @@ from the sidecar and its import turns into the sidecar's list.
 
 Step 10b U3 (writes as library-domain commands; `t13-step10.plan.md` §2
 U3, protos.md §1.1) serves `bundle create`, `fragment|command create
-<bundle>#<kind>s/<id>` and `edit`, `skill create`, `config set` and the
+<bundle>#<kind>s/<id>` and `edit`, `skill create`, `config set`, `mcp
+server set|edit` (`UpdateMcpServer`: a mask names a set's fields, a field
+named and given empty cleared; no mask is the whole server through the
+editor, the preview's Edit need; `--header`, `--tag` and `--served-by` are
+gone, owner ruling, hard migrate; a server's notes and installation are
+its `mcp/.<n>.meta.yaml` sidecar until T27, so a set of them beside a
+runtime field is two files, refused `OneChangePerCall`) and the
 removals `bundle|profile|agent|companion remove` in the daemon
+(`UpdateBundle`, `bundle edit`, is served too, its mask allowed several
+paths of the one `bundle.yaml` (owner ruling 2026-11-18) and its items
+added and removed by the request's lists, but the CLI's `bundle edit`
+stays in process until bundle.feature's listing outline, a two-file edit,
+is ruled on)
 (`DeleteFragment`, `DeleteCommand` and `DeleteSkill` are served too, but
 the CLI's `fragment|command|skill remove` stay in process: an item with its
 distilled form, or a skill with its old-layout sidecar, is two paths, which

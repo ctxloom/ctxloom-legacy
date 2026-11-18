@@ -123,14 +123,6 @@ fn test_a_name_the_bundle_lacks_is_created_as_a_remote_server() {
         "demo#mcp/search",
         "--url",
         "https://mcp.example.com/v1",
-        "--header",
-        "X-Team=core",
-        "--tag",
-        "search-index",
-        "--notes",
-        "Team search index",
-        "--installation",
-        "Ask core for a seat",
     ]);
     ran.succeeds();
     // OD-40: `UpdateMcpServerResponse`, made where the bundle lacked it.
@@ -142,14 +134,30 @@ fn test_a_name_the_bundle_lacks_is_created_as_a_remote_server() {
         "{doc}"
     );
     assert_eq!(reports_as(&doc, "path"), manifest);
-    // Go's bytes.
+    // Go's bytes. `--header` and `--tag` are dropped (owner ruling); the
+    // notes and installation are the server's sidecar until T27 moves them
+    // into its one file, so they are a second write (T29: one file a call).
     assert_eq!(
         project.read(&format!("{DEMO}/mcp/search.yaml")).as_deref(),
-        Some("url: https://mcp.example.com/v1\nheaders:\n  X-Team: core\n")
+        Some("url: https://mcp.example.com/v1\n")
     );
+    project
+        .run(&[
+            "mcp",
+            "server",
+            "set",
+            "demo#mcp/search",
+            "--notes",
+            "Team search index",
+            "--installation",
+            "Ask core for a seat",
+        ])
+        .succeeds();
     assert_eq!(
-        project.read(&format!("{DEMO}/mcp/.search.meta.yaml")).as_deref(),
-        Some("tags:\n  - search-index\nnotes: Team search index\ninstallation: Ask core for a seat\n")
+        project
+            .read(&format!("{DEMO}/mcp/.search.meta.yaml"))
+            .as_deref(),
+        Some("notes: Team search index\ninstallation: Ask core for a seat\n")
     );
     project.file_contains(&format!("{DEMO}/mcp/tools.yaml"), "KEEP-THIS-ARGUMENT");
 }
@@ -194,9 +202,9 @@ fn test_updating_an_existing_server_replaces_its_arguments_and_keeps_what_was_no
 }
 
 // mcp.feature: Scenario: Clearing the old target in the same call moves a
-// server to the session endpoint
+// server to a remote endpoint
 #[test]
-fn test_clearing_the_old_target_in_the_same_call_moves_a_server_to_the_session_endpoint() {
+fn test_clearing_the_old_target_in_the_same_call_moves_a_server_to_a_remote_endpoint() {
     let project = Project::initialized();
     demo_with_tools(&project, "mcp set fixture");
     project
@@ -207,13 +215,13 @@ fn test_clearing_the_old_target_in_the_same_call_moves_a_server_to_the_session_e
             "demo#mcp/tools",
             "--command=",
             "--arg=",
-            "--served-by",
-            "session-endpoint",
+            "--url",
+            "https://mcp.example.com/v1",
         ])
         .succeeds();
     assert_eq!(
         project.read(&format!("{DEMO}/mcp/tools.yaml")).as_deref(),
-        Some("served_by: session-endpoint\n")
+        Some("url: https://mcp.example.com/v1\n")
     );
 }
 

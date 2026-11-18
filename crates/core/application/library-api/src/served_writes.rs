@@ -56,6 +56,7 @@ macro_rules! served_writes {
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse, "command edit";
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse, "config set";
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse, "skill create";
+            update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse, "mcp server set";
             delete_bundle (DeleteBundle) DeleteBundleRequest => DeleteBundleResponse, "bundle remove";
             delete_fragment (DeleteFragment) DeleteFragmentRequest => DeleteFragmentResponse, "fragment remove";
             delete_command (DeleteCommand) DeleteCommandRequest => DeleteCommandResponse, "command remove";
@@ -700,6 +701,138 @@ pub mod create_skill {
             etag: wrote.etag,
             notices: wrote.notices,
             ..v1::CreateSkillResponse::default()
+        }
+    }
+}
+
+/// What an `UpdateMcpServer` came to: a `set`'s fields, or an `edit`'s
+/// round trip through the editor (the preview's Edit need).
+#[derive(Clone, Debug)]
+pub enum McpWritten {
+    Set(library_application::McpSet),
+    Edited(Asked<library_application::McpEdited>),
+}
+
+/// `mcp server set <ref> [flags]` and `mcp server edit <ref>`:
+/// `UpdateMcpServer`. A mask names the fields a set writes (`command`,
+/// `args`, `env`, `url`, `notes`, `installation`; a field named and given
+/// empty is cleared); no mask is the whole server through the editor, the
+/// preview's Edit need. A set creates a server its bundle lacks.
+pub mod update_mcp_server {
+    use super::*;
+    use library_application::{McpEdited, McpPatch};
+
+    /// The mask's paths, none when it names none (the editor's round trip).
+    fn mask(request: &v1::UpdateMcpServerRequest) -> &[String] {
+        request
+            .update_mask
+            .as_ref()
+            .map_or(&[], |mask| mask.paths.as_slice())
+    }
+
+    /// The `<bundle>#mcp/<id>` reference the request's server name names.
+    fn reference(request: &v1::UpdateMcpServerRequest) -> String {
+        let name = request
+            .mcp_server
+            .as_ref()
+            .map_or("", |server| server.name.as_str());
+        let reference =
+            names::reference_under(parent_of(name), name).unwrap_or_else(|| name.to_string());
+        reference.replacen("#mcpServers/", "#mcp/", 1)
+    }
+
+    /// The patch a set's mask names: each named field as given (empty, a
+    /// clear), the rest left as they are.
+    fn patch(request: &v1::UpdateMcpServerRequest) -> McpPatch {
+        let server = request.mcp_server.clone().unwrap_or_default();
+        let named = |path: &str| mask(request).iter().any(|p| p == path);
+        McpPatch {
+            command: named("command").then(|| server.command.clone()),
+            args: named("args").then(|| server.args.clone()),
+            env: named("env").then(|| server.env.clone().into_iter().collect()),
+            url: named("url").then(|| server.url.clone()),
+            notes: named("notes").then(|| server.notes.clone()),
+            installation: named("installation").then(|| server.installation.clone()),
+            ..McpPatch::default()
+        }
+    }
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::UpdateMcpServerRequest,
+        _apply: bool,
+    ) -> Outcome<McpWritten> {
+        let reference = reference(request);
+        if !mask(request).is_empty() {
+            let set = library.mcp_set(flags, &reference, &patch(request));
+            return Outcome {
+                result: set.result.map(McpWritten::Set),
+                notices: set.notices,
+            };
+        }
+        let edited = editing(
+            library,
+            (edited(&request.answers), request.validate_only),
+            can_launch(request.presentable.as_ref()),
+            |library| library.mcp_edit(flags, &reference),
+        );
+        Outcome {
+            result: edited.result.map(McpWritten::Edited),
+            notices: edited.notices,
+        }
+    }
+
+    pub fn respond(
+        request: &v1::UpdateMcpServerRequest,
+        wrote: Wrote<McpWritten>,
+    ) -> v1::UpdateMcpServerResponse {
+        let asked = request
+            .mcp_server
+            .as_ref()
+            .map(|server| server.name.clone())
+            .unwrap_or_default();
+        let (name, path, created, needs) = match &wrote.answer {
+            Some(McpWritten::Set(set)) => (
+                names::item_name(&wrote.parent, &set.bundle, "mcp", &set.name),
+                set.path.clone(),
+                set.status == "created",
+                Vec::new(),
+            ),
+            Some(McpWritten::Edited(asked_of)) => {
+                let name = match &asked_of.done {
+                    McpEdited::Updated { name, bundle } => {
+                        names::item_name(&wrote.parent, bundle, "mcp", name)
+                    }
+                    McpEdited::Unchanged => {
+                        names::reference_name(&wrote.parent, &reference(request))
+                            .unwrap_or_else(|| asked.clone())
+                    }
+                };
+                (name, String::new(), false, asked_of.needs.clone())
+            }
+            None => (asked, wrote.at.clone(), false, Vec::new()),
+        };
+        // An edit the editor left as it was applied nothing.
+        let unchanged = matches!(
+            &wrote.answer,
+            Some(McpWritten::Edited(Asked {
+                done: McpEdited::Unchanged,
+                ..
+            }))
+        );
+        v1::UpdateMcpServerResponse {
+            mcp_server: Some(v1::McpServer {
+                name,
+                ..v1::McpServer::default()
+            }),
+            path,
+            applied: Some(wrote.applied && !unchanged),
+            created,
+            needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::UpdateMcpServerResponse::default()
         }
     }
 }

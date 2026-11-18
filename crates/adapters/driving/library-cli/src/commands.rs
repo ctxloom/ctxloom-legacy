@@ -613,15 +613,6 @@ fn mcp() -> Command {
                     "url",
                     "Endpoint of a remote server, http or https (empty clears it)",
                 ))
-                .arg(each(
-                    "header",
-                    "HTTP header as Name=value (repeatable; replaces the map)",
-                ))
-                .arg(each("tag", "Tag (repeatable; replaces the list)"))
-                .arg(named(
-                    "served-by",
-                    "session-endpoint: the running session serves this entry (empty clears it)",
-                ))
                 .arg(named("notes", "Human-readable notes (empty clears them)"))
                 .arg(named(
                     "installation",
