@@ -636,3 +636,26 @@ mod writes_asked {
         assert_eq!(asks.requests::<v1::UpdateAgentRequest>().len(), 1);
     }
 }
+
+// Step 10b U3: `agent default <name>` asks the daemon's `SetDefaultAgent`
+// with the name, once; bare, it asks the daemon nothing (the current
+// default is still read in process).
+mod default_asked {
+    use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+    use daemon_proto::v1;
+
+    fn asked(line: &[&str]) -> Vec<v1::SetDefaultAgentRequest> {
+        let asks = Asks::default();
+        go_served(line, TEXT, BARE, &Project, Some(&asks));
+        asks.requests::<v1::SetDefaultAgentRequest>()
+    }
+
+    #[test]
+    fn test_agent_default_with_a_name_asks_set_default_agent() {
+        let sent = asked(&["agent", "default", "reviewer"]);
+        let [one] = &sent[..] else { panic!("{sent:?}") };
+        assert_eq!(one.agent, "reviewer");
+        assert!(!one.validate_only);
+        assert!(asked(&["agent", "default"]).is_empty());
+    }
+}

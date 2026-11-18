@@ -3,6 +3,7 @@
 //! answers in text only.
 
 use crate::prelude::*;
+use library_application::Notice;
 
 pub(crate) fn read(
     cx: &Context<'_>,
@@ -42,7 +43,35 @@ pub(crate) fn write(
     let code = match verb {
         "create" => created(cx, &name, sub, out, err)?,
         "edit" => edited(cx, &name, sub, out, err)?,
+        "default" if given(sub, "name").is_some() => {
+            // The daemon's `SetDefaultAgent` (step 10b U3), its text from
+            // the response (D10); it answers in text only, as before.
+            text_only(cx, "agent default")?;
+            let request = v1::SetDefaultAgentRequest {
+                agent: name.clone(),
+                globals: cx.globals(),
+                ..v1::SetDefaultAgentRequest::default()
+            };
+            let mut answered = cx.served.set_default_agent("", request)?;
+            let said: Vec<Notice> = std::mem::take(&mut answered.notices)
+                .iter()
+                .map(library_api::reads::said)
+                .collect();
+            say_notices(&said, crate::PROG, cx.format, cx.catalog, err);
+            writeln!(out, "Set default agent to \"{}\".", answered.agent)
+                .map_err(crate::output_failure)?;
+            if !answered.defined {
+                let note = Notice::text(format!(
+                    "agent \"{}\" is not defined yet; define it with `ctxloom agent create {}`",
+                    answered.agent, answered.agent
+                ));
+                say_notices(&[note], crate::PROG, cx.format, cx.catalog, err);
+            }
+            Exit::OK
+        }
         "default" => {
+            // The current default: still read in process (a default may name
+            // an agent no listing has yet).
             text_only(cx, "agent default")?;
             let asked = given(sub, "name");
             let outcome = cx.library.agent_default(&cx.flags, asked.as_deref());

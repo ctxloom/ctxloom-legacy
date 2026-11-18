@@ -1402,3 +1402,79 @@ fn test_a_bundle_move_plans_its_one_move_and_answers_where_it_landed_as_typed() 
     let retried = super::move_bundle::respond(&request, wrote(None));
     assert_eq!(retried.path, "other/.ctxloom/content/bundles/v2/demo");
 }
+
+/// A home layer (the fixture's first) beside the project's.
+const HOME_LAYER: &str = "schema_version: 9\neditor:\n  command: 'true'\n";
+
+fn companioned() -> (
+    library_application::Library,
+    std::sync::Arc<library_application::fakes::Mem>,
+) {
+    let (library, mem) = Setup {
+        layers: &[HOME_LAYER, CONFIG],
+        ..Setup::default()
+    }
+    .fixture();
+    mem.set_companion(
+        "acme",
+        ctxloom_ports::CompanionLoadout::Loaded("run:\n  version: 1.0.0\n".to_string()),
+    );
+    (library, mem)
+}
+
+// Step 10b U3: `companion add` is served; it probes the program the name
+// stands for and registers the name in the HOME config, one layer; its
+// answer is the companion, applied only when it was new.
+#[test]
+fn test_a_companion_add_registers_it_in_the_home_layer_and_answers_it() {
+    let (library, _) = companioned();
+    let (recording, recorder) = library.recording();
+    let request = v1::CreateCompanionRequest {
+        parent: "projects/amber-quiet-heron".to_string(),
+        companion_id: "acme".to_string(),
+        ..v1::CreateCompanionRequest::default()
+    };
+    let done = super::create_companion::plan(&recording, &plain(), &request, true)
+        .result
+        .unwrap();
+    let (scope, text) = one_layer(&recorder.take());
+    assert_eq!(scope, ctxloom_ports::Scope::Home);
+    assert!(text.contains("acme"), "{text}");
+    let answered = super::create_companion::respond(&request, wrote(Some(done.clone())));
+    let companion = answered.companion.unwrap();
+    assert_eq!(companion.name, "projects/amber-quiet-heron/companions/acme");
+    assert_eq!(companion.bin, "ctxloom-companion-acme");
+    assert_eq!(answered.applied, Some(true));
+    let already = library_application::CompanionAdded {
+        added: false,
+        ..done
+    };
+    let mut unchanged = wrote(Some(already));
+    unchanged.applied = false;
+    assert_eq!(
+        super::create_companion::respond(&request, unchanged).applied,
+        Some(false)
+    );
+}
+
+// Step 10b U3: `agent default <name>` is served: the default written to
+// the project's config, one layer; its answer names the agent and whether
+// it is defined yet.
+#[test]
+fn test_an_agent_default_set_writes_one_layer_and_says_whether_it_is_defined() {
+    let (library, recorder) = agents().recording();
+    let request = v1::SetDefaultAgentRequest {
+        parent: "projects/amber-quiet-heron".to_string(),
+        agent: "nobody-yet".to_string(),
+        ..v1::SetDefaultAgentRequest::default()
+    };
+    let done = super::set_default_agent::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    let (_, text) = one_layer(&recorder.take());
+    assert!(text.contains("nobody-yet"), "{text}");
+    let answered = super::set_default_agent::respond(&request, wrote(Some(done)));
+    assert_eq!(answered.agent, "nobody-yet");
+    assert!(!answered.defined);
+    assert_eq!(answered.applied, Some(true));
+}

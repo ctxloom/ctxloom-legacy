@@ -2,7 +2,7 @@
 //! method's response (OD-40, design §3.9, §5.7); `loadout` (B2), the one
 //! YAML document, written from the daemon's `Loadout` (step 10a U2).
 
-use library_application::{CompanionAdded, CompanionState, CompanionStateSet};
+use library_application::{CompanionState, CompanionStateSet};
 
 use library_api::resources::{companion_name, companion_state};
 
@@ -32,27 +32,30 @@ pub(crate) fn write(
 ) -> Result<Option<Exit>, Failure> {
     let name = text_arg(sub, "name");
     let code = match verb {
+        // The daemon's `CreateCompanion` (step 10b U3): it probes the
+        // program and registers the name in the home config; its text from
+        // the response (D10).
         "add" => {
-            let outcome = cx.library.companion_add(&cx.flags, &name);
-            api::written(
+            let request = v1::CreateCompanionRequest {
+                companion_id: name.clone(),
+                globals: cx.globals(),
+                ..v1::CreateCompanionRequest::default()
+            };
+            crate::answer_written(
                 cx,
-                outcome,
+                cx.served.create_companion("", request),
+                |m| std::mem::take(&mut m.notices),
                 out,
                 err,
-                added,
-                |done, out, _| {
-                    if done.added {
+                |m, out| {
+                    let bin = m.companion.as_ref().map_or("", |c| c.bin.as_str());
+                    if m.applied.unwrap_or(false) {
                         writeln!(
                             out,
-                            "Registered companion '{}' (its program {} answers)",
-                            done.name, done.program
+                            "Registered companion '{name}' (its program {bin} answers)"
                         )
                     } else {
-                        writeln!(
-                            out,
-                            "Companion '{}' is already registered ({})",
-                            done.name, done.program
-                        )
+                        writeln!(out, "Companion '{name}' is already registered ({bin})")
                     }
                 },
                 |_| Exit::OK,
@@ -107,22 +110,6 @@ pub(crate) fn write(
         _ => return Ok(None),
     };
     Ok(Some(code))
-}
-
-/// `companion add`: the companion as registered (its program answered the
-/// probe, so it resolves), applied when the registration is new or changed
-/// one; the same registration again changes nothing.
-fn added(parent: &str, done: &CompanionAdded) -> v1::CreateCompanionResponse {
-    v1::CreateCompanionResponse {
-        companion: Some(v1::Companion {
-            name: companion_name(parent, &done.name),
-            bin: done.program.clone(),
-            resolves: Some(true),
-            state: v1::companion::State::Enabled.into(),
-        }),
-        applied: Some(done.added),
-        ..v1::CreateCompanionResponse::default()
-    }
 }
 
 /// `companion enable|disable`: the companion, as it is now (AIP-136).

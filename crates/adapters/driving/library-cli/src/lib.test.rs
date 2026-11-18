@@ -292,6 +292,8 @@ targeted! {
     MoveBundleRequest => |r, t| r.name = t;
     CreateProfileRequest => |r, t| r.parent = t;
     UpdateProfileRequest => |r, t| r.profile.get_or_insert_with(Default::default).name = t;
+    CreateCompanionRequest => |r, t| r.parent = t;
+    SetDefaultAgentRequest => |r, t| r.parent = t;
     CreateAgentRequest => |r, t| r.parent = t;
     UpdateAgentRequest => |r, t| r.agent.get_or_insert_with(Default::default).name = t;
 }

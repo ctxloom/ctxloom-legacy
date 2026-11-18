@@ -167,3 +167,20 @@ mod asks {
         assert_eq!(loadout.globals, degraded());
     }
 }
+
+// Step 10b U3: `companion add` asks the daemon's `CreateCompanion` with the
+// name, once.
+mod add_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_companion_add_asks_create_companion_with_its_name() {
+        let (under, asked) =
+            asked_once::<v1::CreateCompanionRequest>(&["companion", "add", "acme"]);
+        assert_eq!(under, "");
+        assert_eq!(asked.companion_id, "acme");
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
+    }
+}

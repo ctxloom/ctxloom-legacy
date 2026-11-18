@@ -776,6 +776,8 @@ write_requests! {
     UpdateMcpServerRequest.mcp_server.name, etag;
     CreateProfileRequest.parent;
     UpdateProfileRequest.profile.name, etag;
+    CreateCompanionRequest.parent;
+    SetDefaultAgentRequest.parent;
     CreateAgentRequest.parent;
     UpdateAgentRequest.agent.name, etag;
     ImportBundleRequest.parent, etag;

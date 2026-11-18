@@ -60,6 +60,8 @@ macro_rules! served_writes {
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse, "mcp server set";
             create_profile (CreateProfile) CreateProfileRequest => CreateProfileResponse, "profile create";
             update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse, "profile edit";
+            create_companion (CreateCompanion) CreateCompanionRequest => CreateCompanionResponse, "companion add";
+            set_default_agent (SetDefaultAgent) SetDefaultAgentRequest => SetDefaultAgentResponse, "agent default";
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse, "agent edit";
             export_bundle (ExportBundle) ExportBundleRequest => ExportBundleResponse, "bundle export";
@@ -557,6 +559,88 @@ pub mod update_profile {
             etag: wrote.etag,
             notices: wrote.notices,
             ..v1::UpdateProfileResponse::default()
+        }
+    }
+}
+
+/// `companion add <name>`: `CreateCompanion`, the program the name stands
+/// for probed (in the caller's environment, at her project), then the name
+/// registered in the HOME config, one layer; one registered already is
+/// left as it was, and applies nothing.
+pub mod create_companion {
+    use super::*;
+    use library_application::CompanionAdded;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::CreateCompanionRequest,
+        _apply: bool,
+    ) -> Outcome<CompanionAdded> {
+        library.companion_add(flags, &request.companion_id)
+    }
+
+    pub fn respond(
+        request: &v1::CreateCompanionRequest,
+        wrote: Wrote<CompanionAdded>,
+    ) -> v1::CreateCompanionResponse {
+        let name = crate::resources::companion_name(&wrote.parent, &request.companion_id);
+        let companion = match &wrote.answer {
+            Some(done) => v1::Companion {
+                name,
+                bin: done.program.clone(),
+                resolves: Some(true),
+                state: v1::companion::State::Enabled.into(),
+            },
+            None => v1::Companion {
+                name,
+                ..v1::Companion::default()
+            },
+        };
+        let added = wrote.answer.as_ref().is_none_or(|done| done.added);
+        v1::CreateCompanionResponse {
+            companion: Some(companion),
+            path: wrote.at.clone(),
+            applied: Some(wrote.applied && added),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::CreateCompanionResponse::default()
+        }
+    }
+}
+
+/// `agent default <name>`: `SetDefaultAgent`, the agent a bare run binds
+/// written to the config, one layer; an agent not defined yet is set all
+/// the same, and said so (`defined`).
+pub mod set_default_agent {
+    use super::*;
+    use library_application::DefaultAgent;
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::SetDefaultAgentRequest,
+        _apply: bool,
+    ) -> Outcome<DefaultAgent> {
+        library.agent_default(flags, Some(&agent_in(&request.agent)))
+    }
+
+    pub fn respond(
+        request: &v1::SetDefaultAgentRequest,
+        wrote: Wrote<DefaultAgent>,
+    ) -> v1::SetDefaultAgentResponse {
+        let (agent, defined) = match &wrote.answer {
+            Some(DefaultAgent::Set { name, defined }) => (name.clone(), *defined),
+            Some(DefaultAgent::Current(name)) => (name.clone(), true),
+            None => (agent_in(&request.agent), true),
+        };
+        v1::SetDefaultAgentResponse {
+            agent,
+            defined,
+            applied: Some(wrote.applied),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::SetDefaultAgentResponse::default()
         }
     }
 }

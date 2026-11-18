@@ -202,7 +202,13 @@ files are expected gone, and the other tree's next read records the
 arrival; a bundle there is refused, `--force` too, as is its own place,
 `library-application-write-move-destination-exists|-itself`, drafts; the
 CLI's text and json are the move's as before, from the response's
-additive `source`), and
+additive `source`), `companion add` (`CreateCompanion`: the daemon
+probes the program in the caller's environment and registers the name in
+the HOME config, one layer; one registered already applies nothing),
+`agent default <name>` (`SetDefaultAgent`, one layer, `defined` saying
+whether the agent is defined yet; the bare `agent default`, the current
+default, is still read in process, as a default may name an agent no
+listing has), and
 `bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
 `bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
 by the request's lists; an item beside anything else is two files,
