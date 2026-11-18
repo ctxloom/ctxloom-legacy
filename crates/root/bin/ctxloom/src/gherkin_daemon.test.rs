@@ -2374,6 +2374,9 @@ fn her_daemon_exited(w: &mut World) {
 
 #[then("it proves itself with a new certificate, and knows her by a new credential")]
 fn new_credentials(w: &mut World) {
+    // The daemon that command started, as read while it served (the step
+    // before), never re-read here, where it may have idled out.
+    w.daemon_spec.new = w.daemon_spec.first.clone();
     rotated(w);
 }
 
