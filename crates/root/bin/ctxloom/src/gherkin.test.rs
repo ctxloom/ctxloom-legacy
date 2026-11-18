@@ -142,6 +142,7 @@ impl CommonWorld for World {
         self.seed();
         self.seed_scratch();
         self.before = self.session_bytes();
+        daemon_spec::before_run(self);
         writes::before_run(self);
     }
 }

@@ -42,6 +42,8 @@ const SPAWNED_IDLE_SECONDS: u64 = 15;
 /// is kill-tolerant) and reaped.
 #[derive(Default)]
 pub(super) struct State {
+    /// The stores' evidence as it was before the scenario's command ran.
+    store_before: Option<StoreEvidence>,
     pub(super) daemon: Option<Child>,
     run: Option<Child>,
     /// The file whose presence lets the stub engine end.
@@ -2328,17 +2330,76 @@ fn replaced(w: &mut World) {
     );
 }
 
+/// What a store's opening leaves behind, as the harness can see it: each
+/// store file's size and modification time, whether its `-wal` and `-shm`
+/// are there (an open makes them, a read's may stay), and the sessions'
+/// directories in the project (a session set up for an engine).
+/// One store file: its path, its size and modification time (none when it
+/// is not there), and whether its `-wal` and `-shm` are there.
+type StoreFile = (PathBuf, Option<(u64, std::time::SystemTime)>, bool, bool);
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct StoreEvidence {
+    stores: Vec<StoreFile>,
+    sessions: Vec<PathBuf>,
+}
+
+/// The stores' evidence now: the one store and every per-project one.
+fn store_evidence(w: &World) -> StoreEvidence {
+    let home = w.common.project.home();
+    let mut dbs = vec![home.join(".ctxloom/ctxloom.db")];
+    dbs.extend(
+        files::children(home.join(".ctxloom/projects"))
+            .into_iter()
+            .map(|dir| dir.join("ctxloom.db")),
+    );
+    let side = |db: &PathBuf, suffix: &str| {
+        let mut name = db.as_os_str().to_owned();
+        name.push(suffix);
+        files::exists(PathBuf::from(name))
+    };
+    let stores = dbs
+        .iter()
+        .map(|db| {
+            (
+                db.clone(),
+                files::size_and_modified(db),
+                side(db, "-wal"),
+                side(db, "-shm"),
+            )
+        })
+        .collect();
+    let mut sessions = files::children(w.common.project.dir().join(".ctxloom/sessions"));
+    sessions.sort();
+    StoreEvidence { stores, sessions }
+}
+
+/// Before the scenario's command: the stores' evidence, so a later step
+/// can tell what the command itself opened from what the Given made.
+pub(super) fn before_run(w: &mut World) {
+    w.daemon_spec.store_before = Some(store_evidence(w));
+}
+
+// The command opened no store and started no engine: what the Given left
+// (a seeded session's store, its directory) is as it was, and nothing new
+// is there (a store that was not there is still not).
 #[then("no project store was opened, and no engine was started")]
 fn nothing_opened(w: &mut World) {
-    let home = w.common.project.home();
-    assert!(
-        !files::exists(home.join(".ctxloom/ctxloom.db")),
-        "the one store was not opened"
+    let before = w
+        .daemon_spec
+        .store_before
+        .clone()
+        .expect("the stores were looked at before the command ran");
+    let now = store_evidence(w);
+    assert_eq!(
+        now.stores,
+        before.stores,
+        "the command opened a store: {}",
+        w.common.ran().said()
     );
-    assert_eq!(per_project_stores(home), Vec::<PathBuf>::new());
-    assert!(
-        !files::exists(w.common.project.dir().join(".ctxloom/sessions")),
-        "no session was set up, so no engine was started"
+    assert_eq!(
+        now.sessions, before.sessions,
+        "the command set a session up, so an engine may have started"
     );
 }
 
