@@ -28,8 +28,7 @@ mod prelude {
     pub(crate) use clap::ArgMatches;
     pub(crate) use cli_support::{flag, many, say_notices, Exit};
     pub(crate) use library_application::{
-        AgentRow, AppError, DefaultAgent, ItemKind, ProfileCreateRequest, ProfileEdit,
-        ProfileEdited, SwapPreview, WriteError,
+        AgentRow, AppError, DefaultAgent, ItemKind, SwapPreview, WriteError,
     };
 
     pub(crate) use crate::write::{
@@ -198,6 +197,8 @@ macro_rules! served_writes {
             edit_config (EditConfig) EditConfigRequest => EditConfigResponse,
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse,
+            create_profile (CreateProfile) CreateProfileRequest => CreateProfileResponse,
+            update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse,
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse,
@@ -430,7 +431,7 @@ pub const SERVED_WRITES: &[(&str, &[&str])] = &[
     ("command", &["create", "edit", "remove"]),
     ("config", &["set", "edit"]),
     ("skill", &["create", "remove"]),
-    ("profile", &["remove"]),
+    ("profile", &["create", "edit", "modify", "remove"]),
     ("agent", &["create", "edit", "remove"]),
     ("companion", &["remove"]),
     ("mcp server", &["set", "edit"]),

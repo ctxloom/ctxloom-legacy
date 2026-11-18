@@ -2197,6 +2197,10 @@ message Profile {
   ProfileHooks hooks = 13 [(google.api.field_behavior) = OPTIONAL];
   // The tools a session of it is denied (`deny_tools:`).
   repeated string deny_tools = 14 [(google.api.field_behavior) = OPTIONAL];
+  // The skills it curates (`skills:`, `--add-skill`), by reference as
+  // written (`<bundle>#skills/<name>`): additive proto extension, owner
+  // ruling 2026-11-18; a read does not answer it yet.
+  repeated string skills = 15 [(google.api.field_behavior) = INPUT_ONLY];
   // The resource's etag (AIP-154), what a confirmed write of it names: a
   // stale one is refused `PlanStale`.
   string etag = 70 [(google.api.field_behavior) = OUTPUT_ONLY];
@@ -2375,7 +2379,10 @@ message CreateProfileResponse {
   repeated Notice notices = 92;
 }
 
-// `profile edit <name>`: flags patch it, none opens it in the editor.
+// `profile edit <name>`: flags patch it, none opens it in the editor (no
+// `update_mask` at all and no list below: the preview's Edit need, its
+// apply that need's answer, the profile's file written whole; a mask sent,
+// even one naming no path, is a patch).
 message UpdateProfileRequest {
   // The Profile to change, named by its `name`: only the field `update_mask`
   // names is written.
@@ -2384,7 +2391,26 @@ message UpdateProfileRequest {
   // file allowed (T29 counts files; coordinator ruling R2, 2026-11-18, after
   // the owner's for `bundle edit`); paths that would change more than one
   // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
+  // `description` is set from `profile`; the lists below change the rest.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The parents added (`--add-parent`): additive proto extension, owner
+  // ruling 2026-11-18, as are the seven fields below. A profile is one file,
+  // so any of them together are one change.
+  repeated string add_parents = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The parents taken out (`--remove-parent`).
+  repeated string remove_parents = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The bundles added (`--add-bundle`).
+  repeated string add_bundles = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The bundles taken out (`--remove-bundle`).
+  repeated string remove_bundles = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The fragments it leaves out (`--exclude-fragment`).
+  repeated string exclude_fragments = 7 [(google.api.field_behavior) = OPTIONAL];
+  // The fragments no longer left out (`--include-fragment`).
+  repeated string include_fragments = 8 [(google.api.field_behavior) = OPTIONAL];
+  // The MCP servers it leaves out (`--exclude-mcp`).
+  repeated string exclude_mcp_servers = 9 [(google.api.field_behavior) = OPTIONAL];
+  // The MCP servers no longer left out (`--include-mcp`).
+  repeated string include_mcp_servers = 10 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];

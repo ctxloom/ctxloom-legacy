@@ -288,6 +288,8 @@ targeted! {
     DeleteCompanionRequest => |r, t| r.name = t;
     CreateSkillRequest => |r, t| r.parent = t;
     UpdateMcpServerRequest => |r, t| r.mcp_server.get_or_insert_with(Default::default).name = t;
+    CreateProfileRequest => |r, t| r.parent = t;
+    UpdateProfileRequest => |r, t| r.profile.get_or_insert_with(Default::default).name = t;
     CreateAgentRequest => |r, t| r.parent = t;
     UpdateAgentRequest => |r, t| r.agent.get_or_insert_with(Default::default).name = t;
 }
@@ -1042,13 +1044,16 @@ fn test_the_daemons_writes_are_told_from_the_verbs_in_process() {
         &["config", "set", "a.b", "c"],
         &["mcp", "server", "set", "demo#mcp/x", "--command", "echo"],
         &["mcp", "server", "edit", "demo#mcp/x"],
+        &["profile", "create", "dev", "--include", "demo"],
+        &["profile", "edit", "dev"],
+        &["profile", "modify", "dev", "--add-bundle", "demo"],
     ] {
         assert!(is_served_writing(line), "{line:?} is served");
     }
     for line in [
         &["mcp", "server", "list"][..],
         &["mcp", "server", "show", "x"],
-        &["profile", "create", "dev"],
+        &["profile", "export", "dev", "out"],
     ] {
         assert!(!is_served_writing(line), "{line:?} is no served write");
     }

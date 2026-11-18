@@ -58,6 +58,8 @@ macro_rules! served_writes {
             edit_config (EditConfig) EditConfigRequest => EditConfigResponse, "config edit";
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse, "skill create";
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse, "mcp server set";
+            create_profile (CreateProfile) CreateProfileRequest => CreateProfileResponse, "profile create";
+            update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse, "profile edit";
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse, "agent edit";
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse, "bundle import";
@@ -344,6 +346,215 @@ pub mod update_bundle {
             etag: wrote.etag,
             notices: wrote.notices,
             ..v1::UpdateBundleResponse::default()
+        }
+    }
+}
+
+/// `profile create <name> [--parent P]... [--include B]... [--add-skill
+/// S]... [-d D] [--bundle B]`: `CreateProfile`, the profile's one file in
+/// the bundle its parent names (the project's own, `project`, when it
+/// names none, made with it the first time: one new directory).
+pub mod create_profile {
+    use super::*;
+    use library_application::{ProfileCreateRequest, ProfileCreated};
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::CreateProfileRequest,
+        _apply: bool,
+    ) -> Outcome<ProfileCreated> {
+        let profile = request.profile.clone().unwrap_or_default();
+        let asked = ProfileCreateRequest {
+            name: request.profile_id.clone(),
+            description: profile.description,
+            parents: profile.parents,
+            bundles: profile.bundles,
+            skills: profile.skills,
+            target: bundle_in(&request.parent).to_string(),
+        };
+        library.profile_create(flags, &asked)
+    }
+
+    pub fn respond(
+        request: &v1::CreateProfileRequest,
+        wrote: Wrote<ProfileCreated>,
+    ) -> v1::CreateProfileResponse {
+        let name = crate::resources::profile_name(
+            &wrote.parent,
+            bundle_in(&request.parent),
+            &request.profile_id,
+        );
+        let profile = match &wrote.answer {
+            Some(made) => v1::Profile {
+                name,
+                description: request
+                    .profile
+                    .as_ref()
+                    .map(|p| p.description.clone())
+                    .unwrap_or_default(),
+                parents: crate::resources::profile_parents(&wrote.parent, &made.parents),
+                bundles: crate::resources::profile_bundles(&wrote.parent, &made.bundles),
+                path: made.path.clone(),
+                ..<v1::Profile as Default>::default()
+            },
+            None => v1::Profile {
+                name,
+                ..<v1::Profile as Default>::default()
+            },
+        };
+        v1::CreateProfileResponse {
+            path: wrote
+                .answer
+                .as_ref()
+                .map_or_else(|| wrote.at.clone(), |made| made.path.clone()),
+            profile: Some(profile),
+            applied: Some(wrote.applied),
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::CreateProfileResponse::default()
+        }
+    }
+}
+
+/// What a profile update came to: a patch's changes, or the editor's
+/// round trip.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProfileUpdated {
+    Patched(library_application::ProfileModified),
+    Edited(library_application::ProfileEdited),
+}
+
+/// `profile edit <name> [flags]` (and `modify`): `UpdateProfile`. Its lists
+/// and the fields its mask names (`description`) patch the profile's one
+/// file; with none of them it is the editor's round trip (the preview's
+/// Edit need, the apply its answer), the file written whole. Nothing to
+/// change is applied as nothing.
+pub mod update_profile {
+    use super::*;
+    use library_application::{ProfileEdit, ProfileEdited};
+
+    /// The profile its resource name names, as the library takes it.
+    fn asked(request: &v1::UpdateProfileRequest) -> String {
+        let name = request
+            .profile
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        names::profile_under(parent_of(&name), &name).unwrap_or(name)
+    }
+
+    /// The patch the request asks, none when it asks none (the editor's).
+    fn patch(request: &v1::UpdateProfileRequest) -> Option<ProfileEdit> {
+        let masked = |path: &str| {
+            request
+                .update_mask
+                .as_ref()
+                .is_some_and(|mask| mask.paths.iter().any(|p| p == path))
+        };
+        let lists = [
+            &request.add_parents,
+            &request.remove_parents,
+            &request.add_bundles,
+            &request.remove_bundles,
+            &request.exclude_fragments,
+            &request.include_fragments,
+            &request.exclude_mcp_servers,
+            &request.include_mcp_servers,
+        ];
+        // A mask sent, even one naming no path, asks a patch (`profile
+        // modify <name>` alone changes nothing); none and no list, the
+        // editor.
+        if request.update_mask.is_none() && lists.iter().all(|list| list.is_empty()) {
+            return None;
+        }
+        Some(ProfileEdit {
+            description: masked("description").then(|| {
+                request
+                    .profile
+                    .as_ref()
+                    .map(|p| p.description.clone())
+                    .unwrap_or_default()
+            }),
+            add_parents: request.add_parents.clone(),
+            remove_parents: request.remove_parents.clone(),
+            add_bundles: request.add_bundles.clone(),
+            remove_bundles: request.remove_bundles.clone(),
+            exclude_fragments: request.exclude_fragments.clone(),
+            include_fragments: request.include_fragments.clone(),
+            exclude_mcp: request.exclude_mcp_servers.clone(),
+            include_mcp: request.include_mcp_servers.clone(),
+        })
+    }
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::UpdateProfileRequest,
+        _apply: bool,
+    ) -> Outcome<Asked<ProfileUpdated>> {
+        let name = asked(request);
+        if let Some(edit) = patch(request) {
+            let outcome = library.profile_modify(flags, &name, &edit);
+            return Outcome {
+                result: outcome.result.map(|done| Asked {
+                    done: ProfileUpdated::Patched(done),
+                    needs: Vec::new(),
+                }),
+                notices: outcome.notices,
+            };
+        }
+        let outcome = editing(
+            library,
+            (edited(&request.answers), request.validate_only),
+            can_launch(request.presentable.as_ref()),
+            |library| library.profile_edit(flags, &name),
+        );
+        Outcome {
+            result: outcome.result.map(|asked| Asked {
+                done: ProfileUpdated::Edited(asked.done),
+                needs: asked.needs,
+            }),
+            notices: outcome.notices,
+        }
+    }
+
+    pub fn respond(
+        request: &v1::UpdateProfileRequest,
+        wrote: Wrote<Asked<ProfileUpdated>>,
+    ) -> v1::UpdateProfileResponse {
+        let (path, changes, changed, needs) = match &wrote.answer {
+            Some(Asked {
+                done: ProfileUpdated::Patched(done),
+                needs,
+            }) => (
+                wrote.at.clone(),
+                done.changes.clone(),
+                !done.changes.is_empty(),
+                needs.clone(),
+            ),
+            Some(Asked {
+                done: ProfileUpdated::Edited(ProfileEdited::Updated { path }),
+                needs,
+            }) => (path.clone(), Vec::new(), true, needs.clone()),
+            Some(Asked {
+                done: ProfileUpdated::Edited(ProfileEdited::Unchanged),
+                needs,
+            }) => (String::new(), Vec::new(), false, needs.clone()),
+            None => (wrote.at.clone(), Vec::new(), true, Vec::new()),
+        };
+        v1::UpdateProfileResponse {
+            profile: Some(v1::Profile {
+                name: names::profile_ref(&wrote.parent, &asked(request)),
+                ..<v1::Profile as Default>::default()
+            }),
+            path,
+            applied: Some(wrote.applied && changed),
+            changes,
+            needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::UpdateProfileResponse::default()
         }
     }
 }

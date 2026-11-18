@@ -139,6 +139,8 @@ macro_rules! library_writes {
             edit_config (EditConfig) EditConfigRequest => EditConfigResponse,
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse,
+            create_profile (CreateProfile) CreateProfileRequest => CreateProfileResponse,
+            update_profile (UpdateProfile) UpdateProfileRequest => UpdateProfileResponse,
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,
             update_agent (UpdateAgent) UpdateAgentRequest => UpdateAgentResponse,
             import_bundle (ImportBundle) ImportBundleRequest => ImportBundleResponse,

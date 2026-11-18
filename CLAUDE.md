@@ -169,7 +169,15 @@ an additive RPC, owner ruling 2026-11-18: the config of where it is run
 through the editor as a round trip, the preview's Edit need its text and
 the apply its answer written whole and unparsed, so a config that does not
 load can still be mended; left as it was, nothing applied; outside git it
-is refused `library-tree-not-in-git` first), and
+is refused `library-tree-not-in-git` first), `profile create`
+(`CreateProfile`, under the bundle its parent names, `--bundle`, else
+the project's own, `project`, made with it the first time as one new
+directory; `--add-skill` is the INPUT_ONLY `Profile.skills`, additive),
+`profile edit|modify` (`UpdateProfile`: given flags, a patch in one call,
+its add/remove lists additive request fields and `description` by mask,
+a mask sent even naming none, so `profile modify <name>` alone changes
+nothing; no mask and no list, the editor's round trip, its preview's Edit
+need), and
 `bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
 `bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
 by the request's lists; an item beside anything else is two files,

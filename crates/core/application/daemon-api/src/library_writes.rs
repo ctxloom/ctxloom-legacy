@@ -675,6 +675,8 @@ write_requests! {
     EditConfigRequest.name, etag;
     CreateSkillRequest.parent;
     UpdateMcpServerRequest.mcp_server.name, etag;
+    CreateProfileRequest.parent;
+    UpdateProfileRequest.profile.name, etag;
     CreateAgentRequest.parent;
     UpdateAgentRequest.agent.name, etag;
     ImportBundleRequest.parent, etag;

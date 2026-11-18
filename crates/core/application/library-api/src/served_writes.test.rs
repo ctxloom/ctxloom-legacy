@@ -1062,3 +1062,265 @@ fn test_a_bundle_import_answers_its_bundle_counts_and_path_done_or_retried() {
         "projects/amber-quiet-heron/bundles/notes"
     );
 }
+
+fn profiled() -> library_application::Library {
+    Setup {
+        bundles: &[
+            ("demo", &[ENVELOPE, ("fragments/example.md", "EXAMPLE\n")]),
+            ("ops", &[ENVELOPE]),
+            (
+                "project",
+                &[ENVELOPE, ("profiles/dev.yaml", "bundles:\n  - demo\n")],
+            ),
+        ],
+        layers: &[CONFIG],
+        ..Setup::default()
+    }
+    .fixture()
+    .0
+}
+
+fn profile_create(parent: &str, profile: v1::Profile) -> v1::CreateProfileRequest {
+    v1::CreateProfileRequest {
+        parent: parent.to_string(),
+        profile_id: "clinic".to_string(),
+        profile: Some(profile),
+        ..v1::CreateProfileRequest::default()
+    }
+}
+
+// Step 10b U3: `profile create` is served; a profile into the project's own
+// bundle, which no one made yet, is the bundle made with it (one new
+// directory, its manifest and the profile), its skills curated as given.
+#[test]
+fn test_a_profile_create_makes_the_project_bundle_with_it_its_skills_given() {
+    let (library, recorder) = demo().recording();
+    let request = profile_create(
+        "projects/amber-quiet-heron",
+        v1::Profile {
+            description: "day-to-day".to_string(),
+            bundles: vec!["demo".to_string()],
+            skills: vec!["demo#skills/doctor".to_string()],
+            ..<v1::Profile as Default>::default()
+        },
+    );
+    let made = super::create_profile::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert_eq!(made.name, "clinic");
+    let planned = recorder.take();
+    let [library_application::write::recording::Planned::NewBundle { bundle, files }] =
+        &planned[..]
+    else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(bundle, "project");
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["bundle.yaml", "profiles/clinic.yaml"]);
+    let text = String::from_utf8_lossy(&files[1].bytes);
+    assert!(text.contains("demo#skills/doctor"), "{text}");
+    assert!(text.contains("day-to-day"), "{text}");
+}
+
+// The bundle its parent names (`--bundle`) is the one written into.
+#[test]
+fn test_a_profile_create_under_a_bundle_writes_into_that_bundle() {
+    let (library, recorder) = profiled().recording();
+    let request = profile_create(
+        "projects/amber-quiet-heron/bundles/ops",
+        v1::Profile {
+            parents: vec!["dev".to_string()],
+            ..<v1::Profile as Default>::default()
+        },
+    );
+    super::create_profile::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    let planned = recorder.take();
+    let [library_application::write::recording::Planned::Changed { bundle, changes }] =
+        &planned[..]
+    else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(bundle, "ops");
+    let [ctxloom_ports::Change::Write(put)] = &changes[..] else {
+        panic!("{changes:?}")
+    };
+    assert_eq!(put.path, "profiles/clinic.yaml");
+}
+
+#[test]
+fn test_a_profile_create_answers_the_profile_named_in_its_bundle_done_or_retried() {
+    let request = profile_create(
+        "projects/amber-quiet-heron",
+        v1::Profile {
+            bundles: vec!["demo".to_string()],
+            ..<v1::Profile as Default>::default()
+        },
+    );
+    let made = library_application::ProfileCreated {
+        name: "clinic".to_string(),
+        parents: Vec::new(),
+        bundles: vec!["demo".to_string()],
+        path: ".ctxloom/content/bundles/v2/project/profiles/clinic.yaml".to_string(),
+    };
+    let answered = super::create_profile::respond(&request, wrote(Some(made)));
+    let profile = answered.profile.unwrap();
+    assert_eq!(
+        profile.name,
+        "projects/amber-quiet-heron/bundles/project/profiles/clinic"
+    );
+    assert_eq!(profile.bundles, ["projects/amber-quiet-heron/bundles/demo"]);
+    assert_eq!(
+        answered.path,
+        ".ctxloom/content/bundles/v2/project/profiles/clinic.yaml"
+    );
+    assert_eq!(answered.applied, Some(true));
+    assert_eq!(answered.etag, "4");
+    // A retry of a create already applied: named alone, still applied.
+    let retried = super::create_profile::respond(&request, wrote(None));
+    assert_eq!(
+        retried.profile.unwrap().name,
+        "projects/amber-quiet-heron/bundles/project/profiles/clinic"
+    );
+    assert_eq!(retried.applied, Some(true));
+}
+
+fn profile_update(
+    mask: &[&str],
+    edit: impl FnOnce(&mut v1::UpdateProfileRequest),
+) -> v1::UpdateProfileRequest {
+    let mut request = v1::UpdateProfileRequest {
+        profile: Some(v1::Profile {
+            name: "projects/amber-quiet-heron/profiles/dev".to_string(),
+            ..<v1::Profile as Default>::default()
+        }),
+        update_mask: (!mask.is_empty()).then(|| daemon_proto::google::protobuf::FieldMask {
+            paths: mask.iter().map(|p| p.to_string()).collect(),
+        }),
+        presentable: launching(),
+        ..v1::UpdateProfileRequest::default()
+    };
+    edit(&mut request);
+    request
+}
+
+// A patch (`profile edit --add-bundle ...`) is the profile's one file
+// changed by its lists and the fields its mask names; it asks nothing.
+#[test]
+fn test_a_profile_patch_writes_its_lists_and_masked_fields_into_its_one_file() {
+    let (library, recorder) = profiled().recording();
+    let request = profile_update(&["description"], |r| {
+        r.profile.as_mut().unwrap().description = "patched".to_string();
+        r.add_bundles = vec!["ops".to_string()];
+        r.exclude_fragments = vec!["example".to_string()];
+    });
+    let asked = super::update_profile::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert!(asked.needs.is_empty(), "{:?}", asked.needs);
+    let writes = planned_writes(&recorder.take());
+    let [(path, text)] = &writes[..] else {
+        panic!("{writes:?}")
+    };
+    assert_eq!(path, "profiles/dev.yaml");
+    assert!(text.contains("patched"), "{text}");
+    assert!(text.contains("ops"), "{text}");
+    assert!(text.contains("example"), "{text}");
+    let answered = super::update_profile::respond(&request, wrote(Some(asked)));
+    assert_eq!(answered.applied, Some(true));
+    assert!(!answered.changes.is_empty());
+    assert_eq!(
+        answered.profile.unwrap().name,
+        "projects/amber-quiet-heron/bundles/project/profiles/dev"
+    );
+}
+
+// A description given but not named by the mask is not written: nothing
+// to change, nothing applied.
+#[test]
+fn test_a_profile_patch_with_no_mask_path_for_its_field_changes_nothing() {
+    let (library, recorder) = profiled().recording();
+    let request = profile_update(&[], |r| {
+        r.profile.as_mut().unwrap().description = "patched".to_string();
+        r.add_parents = vec![];
+        r.remove_bundles = vec!["no-such".to_string()];
+    });
+    let asked = super::update_profile::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert!(asked.needs.is_empty());
+    assert!(recorder.take().is_empty());
+    let answered = super::update_profile::respond(&request, wrote(Some(asked)));
+    assert_eq!(answered.applied, Some(false));
+}
+
+// With no mask path and no list, `profile edit` is the editor's round
+// trip: the preview asks its Edit need (the profile's text), the apply
+// writes the answer.
+#[test]
+fn test_a_profile_edit_with_nothing_given_asks_its_document_and_writes_the_answer() {
+    let preview = profile_update(&[], |r| r.validate_only = true);
+    let (library, recorder) = profiled().recording();
+    let asked = super::update_profile::plan(&library, &plain(), &preview, false)
+        .result
+        .unwrap();
+    let [need] = &asked.needs[..] else {
+        panic!("{:?}", asked.needs)
+    };
+    let Some(v1::need::Kind::Edit(edit)) = &need.kind else {
+        panic!()
+    };
+    assert_eq!(edit.file_name, "dev.yaml");
+    assert_eq!(edit.text, "bundles:\n  - demo\n");
+    recorder.take();
+    let answered = v1::UpdateProfileRequest {
+        validate_only: false,
+        answers: vec![v1::Answer {
+            need_id: super::EDIT_NEED.to_string(),
+            answer: Some(v1::answer::Answer::Edited(
+                "bundles:\n  - ops\n".to_string(),
+            )),
+        }],
+        ..preview
+    };
+    let (library, recorder) = profiled().recording();
+    let asked = super::update_profile::plan(&library, &plain(), &answered, true)
+        .result
+        .unwrap();
+    assert!(asked.needs.is_empty());
+    let writes = planned_writes(&recorder.take());
+    assert_eq!(
+        writes,
+        [(
+            "profiles/dev.yaml".to_string(),
+            "bundles:\n  - ops\n".to_string()
+        )]
+    );
+    let response = super::update_profile::respond(&answered, wrote(Some(asked)));
+    assert_eq!(response.applied, Some(true));
+    assert!(
+        response.path.ends_with("profiles/dev.yaml"),
+        "{}",
+        response.path
+    );
+}
+
+// `profile modify <name>` alone sends a mask naming nothing: a patch that
+// changes nothing, never the editor.
+#[test]
+fn test_a_profile_patch_of_an_empty_mask_asks_no_editor_and_changes_nothing() {
+    let (library, recorder) = profiled().recording();
+    let request = profile_update(&[], |r| {
+        r.update_mask = Some(daemon_proto::google::protobuf::FieldMask::default());
+    });
+    let asked = super::update_profile::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert!(asked.needs.is_empty(), "{:?}", asked.needs);
+    assert!(recorder.take().is_empty());
+    assert_eq!(
+        super::update_profile::respond(&request, wrote(Some(asked))).applied,
+        Some(false)
+    );
+}
