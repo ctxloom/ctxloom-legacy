@@ -1270,6 +1270,32 @@ pub(crate) fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
         observers: Arc::clone(gits) as Arc<dyn library_api::Observers>,
         operations: Arc::new(NoOperations),
         clock: Arc::new(|| 0),
+        caches: Arc::new(NoCaches),
+    }
+}
+
+/// No cache anywhere: these tests' cleans find nothing to take.
+struct NoCaches;
+
+impl crate::Caches for NoCaches {
+    fn cache(&self, tree: &str) -> Arc<dyn ctxloom_ports::ProjectCache> {
+        Arc::new(NoCache(tree.to_string()))
+    }
+}
+
+struct NoCache(String);
+
+impl ctxloom_ports::ProjectCache for NoCache {
+    fn app_dir(&self) -> String {
+        self.0.clone()
+    }
+
+    fn measure(&self, _: &str) -> Result<Option<u64>, ctxloom_ports::Failure> {
+        Ok(None)
+    }
+
+    fn remove(&self, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
     }
 }
 

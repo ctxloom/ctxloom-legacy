@@ -112,6 +112,19 @@ impl daemon_api::Places for ProjectPlaces {
     }
 }
 
+/// A tree's regenerable cache (step 10b U9, `clean`): cache-files' over
+/// this process's filesystem, its `.ctxloom` the tree's directory.
+pub(crate) struct TreeCaches(pub(crate) Arc<dyn Fs>);
+
+impl daemon_api::Caches for TreeCaches {
+    fn cache(&self, tree: &str) -> Arc<dyn ctxloom_ports::ProjectCache> {
+        Arc::new(cache_files::CacheFiles::new(
+            Arc::clone(&self.0),
+            std::path::Path::new(tree),
+        ))
+    }
+}
+
 /// `env` as name and value pairs.
 fn pairs(env: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
     env.iter()

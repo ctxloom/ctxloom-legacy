@@ -176,11 +176,10 @@ by the request's lists; an item beside anything else is two files,
 refused `OneChangePerCall`, so bundle.feature's listing outline edits the
 version and the fragment in two calls, coordinator 2026-11-18, for owner
 review)
-(`DeleteFragment`, `DeleteCommand` and `DeleteSkill` are served too, but
-the CLI's `fragment|command|skill remove` stay in process: an item with its
-distilled form, or a skill with its old-layout sidecar, is two paths, which
-one step refuses `OneChangePerCall`; they are U9's sequence and U8's T27
-layout), from one table (`daemon_proto::library_writes!`, every layer;
+and `fragment|command|skill remove` (`DeleteFragment`, `DeleteCommand`,
+`DeleteSkill`: an item with its distilled form, or a skill with its
+old-layout sidecar, is several paths taken away, the T28 sequence of
+their trashes, each kept; step 10b U9), from one table (`daemon_proto::library_writes!`, every layer;
 `library_api::served_writes!`, each verb's use case and response; the
 CLI's `SERVED_WRITES`). Every write request carries the caller's `cwd`
 (97) and `env` (94), as the reads do (E1, extended to the writes on
@@ -221,9 +220,19 @@ new directory, and a forced one over a bundle there is the sequence
 trash, create, purge (the use case plans the old bundle gone and a new
 one of EVERY file imported, `Planned::BundleGone` then `NewBundle`, so
 `shape` makes it the sequence; `--yes` is accepted and changes nothing,
-an import asks nothing). A library use case's failure is said in its own
-words, its code and args (`daemon_api::refusal::app_error`, as a deps
-failure is). A tree's staging is swept the first time a daemon
+an import asks nothing). `clean` is served too (`Clean`, an additive RPC;
+setup-cli's `Cleaning`, the wiring's `DaemonServed`): the daemon measures
+the cache trees (`daemon_api::Caches`, cache-files') and takes each one
+present into the checkout's trash, one write, a sequence of kept trashes
+(a sequence that purges no slot of its own keeps its trash, G12), each
+said by `library-api-notice-trashed`; its text and json are the report
+they always were (`setup_cli::report_of`, from the response's additive
+`items`). A step on a path outside the library's pathspec (`cache/`,
+`sessions/`, `state/`) leaves nothing the record follows
+(`writes::in_library`). A sequence's first path is judged on the
+caller's etag, each other on its own token now. A library use case's
+failure is said in its own words, its code and args
+(`daemon_api::refusal::app_error`, as a deps failure is). A tree's staging is swept the first time a daemon
 observes the tree (`Observations::sweeping`, a read's or a write's; S50);
 the trash is never swept at start. An apply that trashed says where,
 the notice `library-api-notice-trashed` (its path and slot as the tree

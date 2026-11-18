@@ -797,6 +797,8 @@ fn served(
                 operations: Arc::new(content_fs::TreeOperations::new(Arc::clone(fs))),
                 // A kept trash slot's age is told by it (G12).
                 clock,
+                // `clean` measures a tree's cache (step 10b U9).
+                caches: Arc::new(super::places::TreeCaches(Arc::clone(fs))),
             }),
     )
 }

@@ -550,6 +550,11 @@ service Ctxloom {
   rpc EditConfig(EditConfigRequest) returns (EditConfigResponse);
   // `config create` (AIP-156 forbids Create on a singleton).
   rpc ScaffoldConfig(ScaffoldConfigRequest) returns (ScaffoldConfigResponse);
+  // `clean`: `projects/{project}:clean` (AIP-136; step 10b protos.md §3,
+  // U9). validate_only previews what it would take; the apply renames each
+  // cache tree there into the trash (each a TrashPath of one sequence,
+  // kept 7 days, G12). Additive proto extension, owner ruling 2026-11-18.
+  rpc Clean(CleanRequest) returns (CleanResponse);
   // (-- endregion --)
 
   // `search`: `projects/{project}:searchLibrary` (AIP-136, stateless).

@@ -425,11 +425,11 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
 /// home step and observes the trees before it plans, so the caller takes
 /// none of its own.
 pub const SERVED_WRITES: &[(&str, &[&str])] = &[
-    ("bundle", &["create", "edit", "remove"]),
-    ("fragment", &["create", "edit"]),
-    ("command", &["create", "edit"]),
+    ("bundle", &["create", "edit", "remove", "import"]),
+    ("fragment", &["create", "edit", "remove"]),
+    ("command", &["create", "edit", "remove"]),
     ("config", &["set", "edit"]),
-    ("skill", &["create"]),
+    ("skill", &["create", "remove"]),
     ("profile", &["remove"]),
     ("agent", &["create", "edit", "remove"]),
     ("companion", &["remove"]),

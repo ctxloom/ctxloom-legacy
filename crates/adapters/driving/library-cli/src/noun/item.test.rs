@@ -273,7 +273,6 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::Preview;
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -362,86 +361,6 @@ mod mapping {
                 "path": "x/one.md",
                 "applied": true,
                 "bundle_created": true,
-            })
-        );
-    }
-
-    fn gone() -> Removal<ItemRemoved> {
-        Removal::Done(ItemRemoved {
-            status: "removed".to_string(),
-            bundle: "demo".to_string(),
-            name: "one".to_string(),
-            path: "x/one.md".to_string(),
-            kind: String::new(),
-        })
-    }
-
-    fn preview() -> Removal<ItemRemoved> {
-        Removal::Preview(Preview::of(
-            "one".to_string(),
-            vec!["x/one.md".to_string()],
-            "ctxloom remove it --yes".to_string(),
-        ))
-    }
-
-    #[test]
-    fn test_a_removed_command_answers_its_removal_or_its_preview() {
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Command,
-                "demo#commands/one",
-                &gone()
-            )),
-            json!({
-                "command": {"name": "projects/p/bundles/demo/commands/one"},
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Command,
-                "demo#commands/one",
-                &preview()
-            )),
-            json!({
-                "command": {"name": "projects/p/bundles/demo/commands/one"},
-                "applied": false,
-                "detail": ["x/one.md"],
-                "apply_command": "ctxloom remove it --yes",
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_removed_fragment_answers_its_removal_or_its_preview() {
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Fragment,
-                "demo#fragments/one",
-                &gone()
-            )),
-            json!({
-                "fragment": {"name": "projects/p/bundles/demo/fragments/one"},
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Fragment,
-                "demo#fragments/one",
-                &preview()
-            )),
-            json!({
-                "fragment": {"name": "projects/p/bundles/demo/fragments/one"},
-                "applied": false,
-                "detail": ["x/one.md"],
-                "apply_command": "ctxloom remove it --yes",
             })
         );
     }

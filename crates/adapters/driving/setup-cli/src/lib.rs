@@ -28,10 +28,11 @@ use angzarr_presentation::{write_json, Catalog, Format};
 use auth_application::Auth;
 use clap::ArgMatches;
 use cli_support::{say_notices, say_warning};
+use daemon_proto::v1;
 use deps_application::Notice;
 use doctor_checks::Doctor;
 use init_application::{interview, Init, InitRequest, Outcome, Prompts, Sessions, Terminal};
-use reclaim_application::Cleaner;
+use reclaim_application::{CleanReport, CleanTarget};
 use sessions_application::RemovedNothing;
 
 pub use commands::nouns;
@@ -42,9 +43,36 @@ const PROG: &str = "ctxloom";
 pub use cli_support::{Call, Failure};
 
 /// The use cases the commands run on.
+/// `clean` as the daemon answers it (step 10b U9, `Clean`): its cache trees
+/// taken into the project's trash, or (`validate_only`) reported.
+pub trait Cleaning {
+    fn clean(&self, request: v1::CleanRequest) -> Result<v1::CleanResponse, Failure>;
+}
+
+/// The report `answered` says, as `clean` has always printed it.
+pub fn report_of(answered: &v1::CleanResponse) -> CleanReport {
+    CleanReport {
+        applied: answered.applied,
+        targets: answered
+            .items
+            .iter()
+            .map(|item| CleanTarget {
+                rel: item.rel.clone(),
+                path: item.path.clone(),
+                present: item.present,
+                bytes: item.bytes,
+                rebuild: item.rebuild.clone(),
+                removed: item.removed,
+            })
+            .collect(),
+        bytes: answered.bytes,
+    }
+}
+
 pub struct UseCases<'a> {
     pub auth: &'a Auth,
-    pub cleaner: &'a Cleaner,
+    /// `clean`, the daemon's (step 10b U9).
+    pub cleaning: &'a dyn Cleaning,
     pub doctor: &'a Doctor,
     pub init: &'a Init,
     /// Whether a person is there, and her answer.
@@ -122,10 +150,17 @@ fn clean(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let yes = sub.get_flag("yes");
-    let report = uses
-        .cleaner
-        .clean(yes)
-        .map_err(|e| failure(e, Exit::FAILED))?;
+    let answered = uses.cleaning.clean(v1::CleanRequest {
+        validate_only: !yes,
+        ..v1::CleanRequest::default()
+    })?;
+    let said: Vec<_> = answered
+        .notices
+        .iter()
+        .map(library_api::reads::said)
+        .collect();
+    say_notices(&said, PROG, format, catalog, err);
+    let report = report_of(&answered);
     match format {
         Format::Json => write_json(out, &report),
         Format::Text => text::clean(&report, out),

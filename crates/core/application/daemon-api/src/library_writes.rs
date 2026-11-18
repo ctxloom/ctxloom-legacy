@@ -86,9 +86,9 @@ pub(crate) fn seen_sequence(etag: &str, now: u64) -> Result<u64, ApiError> {
 pub type DiesAt = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// The tree a write lands in, as it was observed.
-struct Landing<'a> {
-    site: &'a Site,
-    observed: &'a Observed,
+pub(crate) struct Landing<'a> {
+    pub(crate) site: &'a Site,
+    pub(crate) observed: &'a Observed,
 }
 
 impl Landing<'_> {
@@ -109,26 +109,43 @@ fn request_bytes(request_id: &str) -> [u8; 16] {
         .into_bytes()
 }
 
-/// What a write that took a path into the trash says (step 10b texts.md
-/// §3, G12): the path and the slot it is kept in, as the tree shows them
-/// (the tree directory's own name first, `.ctxloom/...`); none for any
-/// other step.
-fn trashed_notice(tree: &str, shape: &writes::Shape, made_under: &str) -> Option<v1::Notice> {
-    let writes::Shape::Trash { path, .. } = shape else {
-        return None;
+/// What a write that took paths into the trash to keep says (step 10b
+/// texts.md §3, G12): each path and the slot it is kept in, as the tree
+/// shows them (the tree directory's own name first, `.ctxloom/...`): a lone
+/// trash's, and each of a sequence's that purges no slot of its own
+/// (`clean`'s); none for any other step.
+pub(crate) fn trashed_notice(
+    tree: &str,
+    shape: &writes::Shape,
+    made_under: &str,
+) -> Vec<v1::Notice> {
+    let kept: Vec<&str> = match shape {
+        writes::Shape::Trash { path, .. } => vec![path.as_str()],
+        writes::Shape::Sequence(steps) if !steps.contains(&writes::Shape::Purge) => steps
+            .iter()
+            .filter_map(|step| match step {
+                writes::Shape::Trash { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
     };
     let base = tree
         .trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
         .next()
         .unwrap_or_default();
-    Some(notice_of(&library_api::LibraryApiNotice::Trashed {
-        path: format!("{base}/{path}"),
-        slot: format!("{base}/state/trash/{made_under}/"),
-    }))
+    kept.into_iter()
+        .map(|path| {
+            notice_of(&library_api::LibraryApiNotice::Trashed {
+                path: format!("{base}/{path}"),
+                slot: format!("{base}/state/trash/{made_under}/"),
+            })
+        })
+        .collect()
 }
 
-fn notice_of(notice: &library_api::LibraryApiNotice) -> v1::Notice {
+pub(crate) fn notice_of(notice: &library_api::LibraryApiNotice) -> v1::Notice {
     v1::Notice {
         code: angzarr_diagnostic::Diagnostic::code(notice).to_string(),
         args: run_application::client::flat_args(notice),
@@ -264,7 +281,7 @@ impl<E: Edge> Api<E> {
 
     /// Where a write is made, and its trees observed (a tree outside git,
     /// or one git ignores, refuses it).
-    async fn write_site<Q: LibraryWriteRequest>(
+    pub(crate) async fn write_site<Q: LibraryWriteRequest>(
         &self,
         request: &Q,
     ) -> Result<(crate::library_reads::ReadSite<'_>, library_api::Trees), ApiError> {
@@ -302,14 +319,14 @@ impl<E: Edge> Api<E> {
     /// one atomic operation recorded done (T28: a sequence resumed on a
     /// retry where it stopped): the path's new token, and, for a lone step
     /// that took a path into the trash, the notice of where it is kept.
-    async fn carry_out(
+    pub(crate) async fn carry_out(
         &self,
         site: &crate::library_reads::ReadSite<'_>,
         landing: &Landing<'_>,
         (verb, etag): (&str, &str),
         shaped: &writes::Shaped,
         (request_id, pending): (&str, Option<(u32, Vec<library_tree::Step>)>),
-    ) -> Result<(String, Option<v1::Notice>), ApiError> {
+    ) -> Result<(String, Vec<v1::Notice>), ApiError> {
         let (observations, observers) =
             self.observing.as_ref().ok_or_else(|| ApiError::Failed {
                 detail: "this daemon observes no library".to_string(),
@@ -337,7 +354,9 @@ impl<E: Edge> Api<E> {
             &landing.observed.tree.to_string(),
             verb,
             &shaped.shape,
-            seen_sequence(etag, held.token(&path))?,
+            (seen_sequence(etag, held.token(&path))?, &|other: &str| {
+                held.token(other)
+            }),
             evidence,
             &request_id,
         )
@@ -575,7 +594,7 @@ fn step_path(step: &library_tree::Step) -> String {
 
 /// The observed tree a write landing `lands` changes: the content's is the
 /// project's checkout (else the home's), a layer's its scope's.
-fn landing_of(seen: &[(Site, Observed)], lands: Lands) -> Option<Landing<'_>> {
+pub(crate) fn landing_of(seen: &[(Site, Observed)], lands: Lands) -> Option<Landing<'_>> {
     let checkout = || {
         seen.iter()
             .find(|(site, _)| matches!(site, Site::Checkout { .. }))
@@ -666,6 +685,7 @@ write_requests! {
     DeleteProfileRequest.name, etag;
     DeleteAgentRequest.name, etag;
     DeleteCompanionRequest.name, etag;
+    CleanRequest.project, etag;
 }
 
 #[cfg(test)]

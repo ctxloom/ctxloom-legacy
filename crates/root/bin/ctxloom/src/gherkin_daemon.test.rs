@@ -822,7 +822,7 @@ fn records_itself() -> String {
         r#"here="$(dirname "$0")"
 echo "$PPID" > "$here/ppid"
 echo "${{CTXLOOM_SESSION##*/}}" > "$here/watched-harp"
-lock="${{CTXLOOM_ROOT}}/.ctxloom/sessions/${{CTXLOOM_SESSION##*/}}.lock"
+lock="${{CTXLOOM_ROOT}}/.ctxloom/sessions/${{CTXLOOM_SESSION##*/}}/session.lock"
 if {free}; then echo free > "$here/lock-probe"; else echo held > "$here/lock-probe"; fi
 "#
     )
@@ -3172,7 +3172,7 @@ fn frontend_lock(w: &mut World) {
     let launch = frontend_launch(w);
     let lock = launch["session_lock"].as_str().expect("its lock");
     assert!(
-        lock.ends_with(&format!("/{}.lock", w.harp())),
+        lock.ends_with(&format!("/{}/session.lock", w.harp())),
         "the launch names the session's lock: {lock}"
     );
     assert!(

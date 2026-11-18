@@ -222,7 +222,9 @@ fn test_a_trash_step_says_where_its_path_is_kept() {
         path: "content/bundles/v2/demo".to_string(),
         files: Vec::new(),
     };
-    let said = super::trashed_notice("/work/demo/.ctxloom", &trash, "r-1").expect("a notice");
+    let [said] = &super::trashed_notice("/work/demo/.ctxloom", &trash, "r-1")[..] else {
+        panic!("one notice")
+    };
     assert_eq!(said.code, "library-api-notice-trashed");
     assert!(
         said.text.contains(".ctxloom/content/bundles/v2/demo")
@@ -235,11 +237,35 @@ fn test_a_trash_step_says_where_its_path_is_kept() {
         bytes: Vec::new(),
         executable: false,
     };
-    assert!(super::trashed_notice("/work/demo/.ctxloom", &replace, "r-1").is_none());
-    let windows = super::trashed_notice(r"C:\work\.ctxloom", &trash, "r-2").unwrap();
+    assert!(super::trashed_notice("/work/demo/.ctxloom", &replace, "r-1").is_empty());
+    let windows = super::trashed_notice(r"C:\work\.ctxloom", &trash, "r-2")
+        .pop()
+        .unwrap();
     assert!(
         windows.text.contains(".ctxloom/state/trash/r-2/"),
         "{}",
         windows.text
     );
+}
+
+// Step 10b U9 (G12): a sequence that keeps its trash (`clean`'s) says where
+// each path is kept; one that purges its own slot (a forced import's) says
+// nothing, as it keeps none.
+#[test]
+fn test_a_sequence_says_where_each_kept_path_is_and_a_purging_one_nothing() {
+    use library_api::writes::Shape;
+    let trash = |path: &str| Shape::Trash {
+        path: path.to_string(),
+        files: Vec::new(),
+    };
+    let clean = Shape::Sequence(vec![trash("cache/repos"), trash("cache/context")]);
+    let said = super::trashed_notice("/work/demo/.ctxloom", &clean, "r-1");
+    assert_eq!(said.len(), 2);
+    assert!(
+        said[1].text.contains(".ctxloom/cache/context"),
+        "{}",
+        said[1].text
+    );
+    let import = Shape::Sequence(vec![trash("content/bundles/v2/demo"), Shape::Purge]);
+    assert!(super::trashed_notice("/work/demo/.ctxloom", &import, "r-1").is_empty());
 }

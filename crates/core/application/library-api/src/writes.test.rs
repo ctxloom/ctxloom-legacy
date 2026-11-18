@@ -191,7 +191,7 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
         "t",
         "bundle create",
         &create,
-        0,
+        (0, &|_| 9),
         evidence(),
         "r",
     )
@@ -219,9 +219,17 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
         bytes: b"a".to_vec(),
         executable: false,
     };
-    let Intended::Replace(command) =
-        intent_of(&git, "/d", "t", "config set", &replace, 4, evidence(), "r").unwrap()
-    else {
+    let Intended::Replace(command) = intent_of(
+        &git,
+        "/d",
+        "t",
+        "config set",
+        &replace,
+        (4, &|_| 9),
+        evidence(),
+        "r",
+    )
+    .unwrap() else {
         panic!()
     };
     assert_eq!(command.seen_sequence, 4);
@@ -235,7 +243,17 @@ fn test_a_trash_expects_each_of_its_files_gone_and_what_is_left_is_read_back() {
         path: "content/bundles/v2/demo".to_string(),
         files: vec!["bundle.yaml".to_string(), "kept.md".to_string()],
     };
-    let intended = intent_of(&git, "/d", "t", "bundle remove", &trash, 2, evidence(), "r").unwrap();
+    let intended = intent_of(
+        &git,
+        "/d",
+        "t",
+        "bundle remove",
+        &trash,
+        (2, &|_| 9),
+        evidence(),
+        "r",
+    )
+    .unwrap();
     let paths = expected(&intended, &trash);
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().all(|p| p.oid.is_empty()));
@@ -254,7 +272,17 @@ fn test_a_writes_book_carries_its_request_id_as_the_command_id() {
         executable: false,
     };
     let git = Git::at("h-0", "t-0");
-    let intended = intent_of(&git, "/d", "t", "config set", &replace, 0, evidence(), "r").unwrap();
+    let intended = intent_of(
+        &git,
+        "/d",
+        "t",
+        "config set",
+        &replace,
+        (0, &|_| 9),
+        evidence(),
+        "r",
+    )
+    .unwrap();
     let id = [7u8; 16];
     let book = super::command_book(&tree, &intended, id);
     let page = book.page.unwrap();
@@ -366,9 +394,17 @@ fn test_a_lone_removal_is_kept_in_the_trash() {
         path: "content/bundles/v2/demo".to_string(),
         files: vec!["bundle.yaml".to_string()],
     };
-    let Intended::Trash(command) =
-        intent_of(&git, "/d", "t", "bundle remove", &trash, 3, evidence(), "r").unwrap()
-    else {
+    let Intended::Trash(command) = intent_of(
+        &git,
+        "/d",
+        "t",
+        "bundle remove",
+        &trash,
+        (3, &|_| 9),
+        evidence(),
+        "r",
+    )
+    .unwrap() else {
         panic!("not a trash")
     };
     assert!(command.keep);
@@ -447,7 +483,7 @@ fn test_a_sequences_intent_lists_its_steps_its_trash_its_own() {
         "t",
         "bundle import",
         &shaped.shape,
-        5,
+        (5, &|_| 9),
         evidence(),
         "r-1",
     )
@@ -534,7 +570,7 @@ fn test_a_resumed_step_takes_its_content_from_the_replans_step_at_its_path() {
         "t",
         "bundle import",
         &shaped.shape,
-        5,
+        (5, &|_| 9),
         evidence(),
         "r-1",
     )
@@ -578,7 +614,7 @@ fn test_a_recorded_step_is_made_with_the_plans_content() {
         "t",
         "bundle import",
         &shaped.shape,
-        5,
+        (5, &|_| 9),
         evidence(),
         "r-1",
     )
@@ -604,4 +640,195 @@ fn test_a_recorded_step_is_made_with_the_plans_content() {
             files: vec![put("bundle.yaml", "v: 2\n")],
         })
     );
+}
+
+// Step 10b U9 (G12): `clean` is a sequence of trashes with no purge, so
+// each is KEPT 7 days; only a sequence that ends purging its own slot
+// keeps none.
+#[test]
+fn test_a_sequence_with_no_purge_keeps_its_trash() {
+    let git = Git::at("h-0", "t-0");
+    let clean = Shape::Sequence(vec![
+        Shape::Trash {
+            path: "cache/repos".to_string(),
+            files: Vec::new(),
+        },
+        Shape::Trash {
+            path: "cache/context".to_string(),
+            files: Vec::new(),
+        },
+    ]);
+    let Intended::Sequence(command) = intent_of(
+        &git,
+        "/d",
+        "t",
+        "clean",
+        &clean,
+        (0, &|_| 9),
+        evidence(),
+        "r",
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert!(command
+        .steps
+        .iter()
+        .all(|step| step.trash.as_ref().is_some_and(|t| t.keep)));
+}
+
+// A step on a path outside the library's pathspec (`cache/`, `sessions/`,
+// `state/`) leaves nothing the record follows: git never sees it.
+#[test]
+fn test_a_step_outside_the_library_expects_nothing() {
+    let git = Git::at("h-0", "t-0");
+    let cache = Shape::Trash {
+        path: "cache/context".to_string(),
+        files: Vec::new(),
+    };
+    let Intended::Trash(trash) = intent_of(
+        &git,
+        "/d",
+        "t",
+        "clean",
+        &cache,
+        (0, &|_| 9),
+        evidence(),
+        "r",
+    )
+    .unwrap() else {
+        panic!()
+    };
+    let step = library_tree::Step {
+        trash: Some(trash),
+        replace: None,
+        create: None,
+        r#move: None,
+        purge: None,
+    };
+    assert!(expected_step(&step, Some(&cache)).is_empty());
+    for inside in [
+        "content/bundles/v2/demo",
+        "config.yaml",
+        "remotes.yaml",
+        "lock.yaml",
+    ] {
+        assert!(super::in_library(inside), "{inside}");
+    }
+    for outside in [
+        "cache/context",
+        "sessions/x",
+        "state/trash/r",
+        "configs.yaml",
+    ] {
+        assert!(!super::in_library(outside), "{outside}");
+    }
+}
+
+// Step 10b U9 (T28): an item taken away with its distilled form, or a skill
+// with its old-layout sidecar, is several removals: the sequence of their
+// trashes (each kept, as a removal's is), never one change per call.
+#[test]
+fn test_several_removals_are_the_sequence_of_their_trashes() {
+    let files = |bundle: &str, dir: &str| match (bundle, dir) {
+        ("demo", "skills/review") => vec!["SKILL.md".to_string()],
+        _ => Vec::new(),
+    };
+    let item = Planned::Changed {
+        bundle: "demo".to_string(),
+        changes: vec![
+            Change::Remove {
+                path: "fragments/rules.md".to_string(),
+            },
+            Change::Remove {
+                path: "fragments/rules.distilled.md".to_string(),
+            },
+        ],
+    };
+    assert_eq!(
+        shape(vec![item], files).unwrap().unwrap().shape,
+        Shape::Sequence(vec![
+            Shape::Trash {
+                path: "content/bundles/v2/demo/fragments/rules.md".to_string(),
+                files: Vec::new(),
+            },
+            Shape::Trash {
+                path: "content/bundles/v2/demo/fragments/rules.distilled.md".to_string(),
+                files: Vec::new(),
+            },
+        ])
+    );
+    let skill = Planned::Changed {
+        bundle: "demo".to_string(),
+        changes: vec![
+            Change::RemoveDir {
+                path: "skills/review".to_string(),
+            },
+            Change::Remove {
+                path: "skills/.review.meta.yaml".to_string(),
+            },
+        ],
+    };
+    let Shape::Sequence(steps) = shape(vec![skill], files).unwrap().unwrap().shape else {
+        panic!()
+    };
+    assert_eq!(
+        steps[0],
+        Shape::Trash {
+            path: "content/bundles/v2/demo/skills/review".to_string(),
+            files: vec!["SKILL.md".to_string()],
+        }
+    );
+    // A removal beside a write is still two changes, refused.
+    let mixed = Planned::Changed {
+        bundle: "demo".to_string(),
+        changes: vec![
+            Change::Remove {
+                path: "fragments/rules.md".to_string(),
+            },
+            Change::Write(put("fragments/other.md", "x")),
+        ],
+    };
+    assert!(matches!(
+        shape(vec![mixed], files),
+        Err(LibraryTreeRejection::OneChangePerCall { .. })
+    ));
+}
+
+// A sequence's later paths are judged on their own tokens now, its first
+// on the caller's etag: a skill's old-layout sidecar removed beside its
+// directory is not refused stale for an etag that was never its own.
+#[test]
+fn test_a_sequences_other_paths_are_judged_on_their_own_tokens() {
+    let git = Git::at("h-0", "t-0");
+    let skill = Shape::Sequence(vec![
+        Shape::Trash {
+            path: "content/bundles/v2/demo/skills/review".to_string(),
+            files: Vec::new(),
+        },
+        Shape::Trash {
+            path: "content/bundles/v2/demo/skills/.review.meta.yaml".to_string(),
+            files: Vec::new(),
+        },
+    ]);
+    let token = |path: &str| if path.ends_with(".meta.yaml") { 5 } else { 1 };
+    let Intended::Sequence(command) = intent_of(
+        &git,
+        "/d",
+        "t",
+        "skill remove",
+        &skill,
+        (3, &token),
+        evidence(),
+        "r",
+    )
+    .unwrap() else {
+        panic!()
+    };
+    let seen: Vec<u64> = command
+        .steps
+        .iter()
+        .map(|step| step.trash.as_ref().unwrap().seen_sequence)
+        .collect();
+    assert_eq!(seen, [3, 5]);
 }

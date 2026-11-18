@@ -55,6 +55,7 @@
 
 mod approvals;
 mod caller;
+mod clean;
 mod client;
 mod destroy;
 mod hand_off;
@@ -79,6 +80,7 @@ pub use caller::{
     launch_lock_name, urgency_of, Caller, ChildWrites, Launch, ProjectResolver, Written,
     DELEGATION_LIMIT,
 };
+pub use clean::Caches;
 pub use client::{
     newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,
 };

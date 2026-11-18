@@ -117,7 +117,8 @@ fn test_bare_fragment_remove_reports_and_destroys_nothing() {
         project.fragment("demo", "testing");
         // A json answer names the project (OD-40, OQ-2): its id is written once.
         project.run(&["test", "project-name"]).succeeds();
-        let before = project.tree(".ctxloom");
+        let mut before = project.tree(".ctxloom");
+        before.remove("state/checkout");
         let ran = with_flags(
             &project,
             &["fragment", "remove", "demo#fragments/testing"],
@@ -146,7 +147,11 @@ fn test_bare_fragment_remove_reports_and_destroys_nothing() {
             &format!("{DEMO}/fragments/testing.md"),
             "FRAGMENT-BODY-testing",
         );
-        assert_eq!(project.tree(".ctxloom"), before);
+        // The daemon observes the checkout before it previews (step 10b
+        // U3, as a read does): its own state, never the library's.
+        let mut after = project.tree(".ctxloom");
+        after.remove("state/checkout");
+        assert_eq!(after, before);
     }
 }
 
@@ -251,7 +256,8 @@ fn test_bare_command_remove_reports_and_destroys_nothing() {
         project.command("demo", "review");
         // A json answer names the project (OD-40, OQ-2): its id is written once.
         project.run(&["test", "project-name"]).succeeds();
-        let before = project.tree(".ctxloom");
+        let mut before = project.tree(".ctxloom");
+        before.remove("state/checkout");
         let ran = with_flags(
             &project,
             &["command", "remove", "demo#commands/review"],
@@ -265,7 +271,11 @@ fn test_bare_command_remove_reports_and_destroys_nothing() {
         }
         ran.contains("ctxloom command remove demo#commands/review --yes");
         project.file_contains(&format!("{DEMO}/prompts/review.md"), "COMMAND-BODY-review");
-        assert_eq!(project.tree(".ctxloom"), before);
+        // The daemon observes the checkout before it previews (step 10b
+        // U3, as a read does): its own state, never the library's.
+        let mut after = project.tree(".ctxloom");
+        after.remove("state/checkout");
+        assert_eq!(after, before);
     }
 }
 

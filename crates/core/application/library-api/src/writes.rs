@@ -205,7 +205,8 @@ pub fn shape(
 }
 
 /// The step of changes to an existing bundle: one file written or taken
-/// away, or several written into one new directory.
+/// away, several written into one new directory, or several taken away (the
+/// sequence of their trashes).
 fn changed(
     bundle: &str,
     changes: &[Change],
@@ -227,6 +228,31 @@ fn changed(
             path: in_bundle(path),
             files: files_under(bundle, path),
         })),
+        several
+            if several
+                .iter()
+                .all(|change| !matches!(change, Change::Write(_))) =>
+        {
+            // Several paths taken away (an item with its distilled form, a
+            // skill with its old-layout sidecar): the sequence of their
+            // trashes (T28), each kept as a removal's is.
+            Ok(Some(Shape::Sequence(
+                several
+                    .iter()
+                    .map(|change| {
+                        let path = change_path(change);
+                        let files = match change {
+                            Change::RemoveDir { .. } => files_under(bundle, &path),
+                            _ => Vec::new(),
+                        };
+                        Shape::Trash {
+                            path: in_bundle(&path),
+                            files,
+                        }
+                    })
+                    .collect(),
+            )))
+        }
         several => {
             let writes: Option<Vec<_>> = several
                 .iter()
@@ -286,7 +312,8 @@ fn paths_of(planned: &Planned) -> Vec<String> {
 /// the tree `dir`, under `verb` and the evidence `evidence`; a sequence's
 /// is a `RunSequence` of its steps (T28), its trash not kept (its last
 /// step, the purge of `request_id`'s own slot, removes it), each step on
-/// its first path judged on `seen`.
+/// its first path judged on `seen` (the caller's etag), each other on its
+/// own path's token now (`token_now`).
 #[allow(clippy::too_many_arguments)]
 pub fn intent_of(
     observer: &dyn TreeObserver,
@@ -294,22 +321,29 @@ pub fn intent_of(
     tree: &str,
     verb: &str,
     shape: &Shape,
-    seen: u64,
+    (seen, token_now): (u64, &dyn Fn(&str) -> u64),
     evidence: Evidence,
     request_id: &str,
 ) -> Result<Intended, TreeError> {
     if let Shape::Sequence(shapes) = shape {
+        // A sequence that purges its own slot keeps no trash (G12(a));
+        // one that does not (`clean`) keeps each, as a lone removal does.
+        let keep = !shapes.contains(&Shape::Purge);
         let mut steps = Vec::new();
         for one in shapes {
             if *one == Shape::Purge {
                 steps.push(purge_step(request_id.to_string()));
                 continue;
             }
-            let seen = if one.path() == shape.path() { seen } else { 0 };
+            let seen = if one.path() == shape.path() {
+                seen
+            } else {
+                token_now(one.path())
+            };
             let intended = one_intent(observer, dir, tree, verb, one, seen, evidence.clone())?;
             let mut step = intended.step(request_id);
             if let Some(trash) = step.trash.as_mut() {
-                trash.keep = false;
+                trash.keep = keep;
             }
             steps.push(step);
         }
@@ -465,6 +499,22 @@ pub fn expected(intended: &Intended, shape: &Shape) -> Vec<DirtyPath> {
 /// resumed from its intent alone, whose trash or move then names its
 /// path); a purge leaves nothing in the library.
 pub fn expected_step(step: &Step, shape: Option<&Shape>) -> Vec<DirtyPath> {
+    let left = expected_in_tree(step, shape);
+    left.into_iter()
+        .filter(|path| in_library(&path.path))
+        .collect()
+}
+
+/// Whether `path` (below its tree's `.ctxloom`) is in the library's
+/// pathspec (L13): the bundles, `config.yaml`, `remotes.yaml`,
+/// `lock.yaml`. Never `cache/`, `sessions/` or `state/`, which git never
+/// sees and the record never follows.
+pub fn in_library(path: &str) -> bool {
+    path.starts_with("content/") || matches!(path, CONFIG | "remotes.yaml" | "lock.yaml")
+}
+
+/// What `step` leaves in its tree, inside the library or not.
+fn expected_in_tree(step: &Step, shape: Option<&Shape>) -> Vec<DirtyPath> {
     let gone = |path: String| DirtyPath {
         path,
         oid: String::new(),

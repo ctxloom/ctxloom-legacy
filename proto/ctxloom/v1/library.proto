@@ -4543,6 +4543,62 @@ message EditConfigRequest {
   string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
+// `clean` (step 10b protos.md §3, U9): the project's regenerable cache.
+// Additive proto extension, owner ruling 2026-11-18: `etag` (91), `globals`
+// (96) and `cwd` (97) beside the spec's fields, as every write carries them.
+message CleanRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // Unused: a clean's apply is planned against the cache as it is then.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what it would take, taking nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags the call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1): the daemon resolves the project
+  // from it.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One cache tree `clean` reports (additive: what `clean`'s report has always
+// said of each).
+message CleanTarget {
+  // As the project shows it: `.ctxloom/cache/context`.
+  string rel = 1;
+  // Where it resolves on this machine, the platform's separator throughout.
+  string path = 2;
+  bool present = 3;
+  // What removing it reclaims; zero when absent.
+  uint64 bytes = 4;
+  // The command that rebuilds it.
+  string rebuild = 5;
+  // Whether this call took it (into the trash).
+  bool removed = 6;
+}
+
+message CleanResponse {
+  // Each target present, relative to the project's root
+  // (`.ctxloom/cache/context`).
+  repeated string targets = 1;
+  bool applied = 2;
+  // `ctxloom clean --yes` on a preview.
+  string apply_command = 3;
+  // Additive: every target, present or not, as the report says it.
+  repeated CleanTarget items = 4;
+  // Additive: what the present targets hold, in bytes.
+  uint64 bytes = 5;
+  repeated Need needs = 90;
+  string etag = 91;
+  repeated Notice notices = 92;
+}
+
 // What `config edit` did. Additive proto extension, owner ruling 2026-11-18.
 message EditConfigResponse {
   // The Config edited.

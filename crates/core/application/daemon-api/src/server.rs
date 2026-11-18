@@ -92,6 +92,8 @@ pub struct Observing {
     /// The daemon's clock, by which a kept trash slot's age is told and
     /// purged at its tree's observation (G12).
     pub clock: library_api::Clock,
+    /// A tree's regenerable cache, which `clean` measures (step 10b U9).
+    pub caches: Arc<dyn crate::Caches>,
 }
 
 /// A session's state now, from its liveness lock in its project.
@@ -460,6 +462,11 @@ impl<E: Edge + 'static> Calls for Api<E> {
     // The library's writes served (step 10b U3, D12), from library-api's
     // table: each observed, planned, intended, made and recorded.
     library_api::served_writes!(served_library_writes);
+
+    /// `Clean` (step 10b U9): the cache's present trees into the trash.
+    fn clean(&self, request: v1::CleanRequest) -> Answer<'_, v1::CleanResponse> {
+        Box::pin(async move { self.serve_clean(request).await })
+    }
 }
 
 /// [`Api`]'s served library writes, from `library_api::served_writes!`:
@@ -565,6 +572,8 @@ pub struct Api<E> {
     /// The test-support kill points of a library write (step 10b U3);
     /// none, a write is never killed.
     pub(crate) write_dies_at: Option<crate::library_writes::DiesAt>,
+    /// A tree's regenerable cache (step 10b U9); none, `Clean` fails.
+    pub(crate) caches: Option<Arc<dyn crate::Caches>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -579,6 +588,7 @@ impl<E: Edge> Api<E> {
             libraries: None,
             observing: None,
             write_dies_at: None,
+            caches: None,
         }
     }
 
@@ -606,6 +616,7 @@ impl<E: Edge> Api<E> {
         .purging(observing.clock);
         Api {
             observing: Some((observations, observing.observers)),
+            caches: Some(observing.caches),
             ..self
         }
     }

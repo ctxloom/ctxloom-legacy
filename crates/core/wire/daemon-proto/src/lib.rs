@@ -149,6 +149,7 @@ macro_rules! library_writes {
             delete_profile (DeleteProfile) DeleteProfileRequest => DeleteProfileResponse,
             delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse,
             delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse,
+            clean (Clean) CleanRequest => CleanResponse,
         }
     };
 }

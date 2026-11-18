@@ -405,9 +405,13 @@ impl Commands {
             flags: &call.globals,
             stamp: &stamp,
         };
+        let cleaning = crate::library::DaemonServed {
+            env: Arc::clone(&env),
+            version: stamp.clone(),
+        };
         let uses = setup_cli::UseCases {
             auth: &wired.setup.auth,
-            cleaner: &wired.setup.cleaner,
+            cleaning: &cleaning,
             doctor: &wired.setup.doctor,
             init: &wired.setup.init,
             terminal: &terminal,

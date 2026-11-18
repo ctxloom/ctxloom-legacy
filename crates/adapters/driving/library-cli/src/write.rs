@@ -8,7 +8,7 @@ use std::io::{self, Write};
 
 use angzarr_presentation::Format;
 use clap::ArgMatches;
-use library_application::{AppError, Outcome, Preview, Removal, WriteError};
+use library_application::{AppError, Outcome, Preview, WriteError};
 
 use daemon_proto::v1;
 
@@ -79,18 +79,6 @@ pub(crate) fn finish_text<T>(
     crate::answer(cx, outcome, out, err, |value, out, notes| {
         text(&value, out, notes).map(|()| Exit::OK)
     })
-}
-
-/// A removal's exit (ruling 153): its preview would change something (the
-/// thing it names is there to remove), so it is the distinguishing success
-/// 1 under `--detailed-exitcode`; a removal done is ok. The in-process
-/// removals' (fragment, command and skill: their two-file forms are U9's
-/// sequences and U8's layout).
-pub(crate) fn removal_exit<T>(removal: &Removal<T>) -> Exit {
-    match removal {
-        Removal::Preview(_) => Exit::WOULD_CHANGE,
-        Removal::Done(_) => Exit::OK,
-    }
 }
 
 pub(crate) fn preview_text(out: &mut dyn Write, preview: &Preview) -> io::Result<()> {

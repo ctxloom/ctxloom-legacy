@@ -455,6 +455,19 @@ macro_rules! served_write {
 }
 use served_write;
 
+/// `clean` through the daemon (step 10b U9), as a library write is sent.
+impl setup_cli::Cleaning for DaemonServed {
+    fn clean(
+        &self,
+        request: daemon_proto::v1::CleanRequest,
+    ) -> Result<daemon_proto::v1::CleanResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.clean("", request))
+    }
+}
+
 impl deps_cli::Served for DaemonServed {
     deps_cli::served_reads!(served_read);
 }
