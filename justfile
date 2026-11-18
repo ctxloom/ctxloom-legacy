@@ -693,6 +693,15 @@ selftest:
     @{{TOP}}/scripts/slot.selftest.sh
     @TRIM_SWEEP_VERSION='{{cargo_sweep_version}}' {{TOP}}/scripts/trim-targets.selftest.sh
 
+# The terminal wake's live probe against the installed claude (owner ruling
+# 2026-11-18): re-run on each claude bump. Not a gate. One model call (haiku);
+# `--no-model` makes none. Credentials: CLAUDE_CODE_OAUTH_TOKEN, else a link to
+# your claude login, never copied or printed.
+[group('check')]
+[doc("Live-probe claude's messaging socket wake: validate-wake-claude [claude] [--no-model]")]
+validate-wake-claude *args:
+    @python3 -I {{TOP}}/scripts/validate-wake-claude.py {{args}}
+
 # Run the ctxloom binary (cargo run, quiet) with the given arguments.
 [group('dev')]
 [doc("Run the ctxloom binary: run [args...]")]
