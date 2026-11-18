@@ -136,3 +136,53 @@ fn test_an_update_or_a_removal_carries_its_etag_and_a_create_none() {
     assert_eq!(removal.etag(), "3");
     assert_eq!(daemon_proto::v1::CreateBundleRequest::default().etag(), "");
 }
+
+// An operation that made nothing is the domain's refusal: something at the
+// path it creates is `ResourceExists` (D4, NOREPLACE), nothing at the path
+// it takes `NoSuchResource`; one that made its change is no refusal.
+#[test]
+fn test_an_operation_that_made_nothing_is_the_domain_s_refusal() {
+    use ctxloom_ports::Operated;
+    assert!(super::not_made(Operated::Done).is_none());
+    let code = |operated| match super::not_made(operated) {
+        Some(crate::refusal::ApiError::Refused(refusal)) => refusal
+            .refusal
+            .type_url
+            .rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        code(Operated::Exists {
+            path: "content/bundles/v2/notes".to_string()
+        }),
+        "ResourceExists"
+    );
+    assert_eq!(
+        code(Operated::Missing {
+            path: "content/bundles/v2/demo".to_string()
+        }),
+        "NoSuchResource"
+    );
+}
+
+// An etag that is not a number (none a preview answered) is the request's
+// own INVALID_ARGUMENT (protos.md §1.1): the typed `EtagInvalid`, naming the
+// etag as sent, never a failure (exit 10).
+#[test]
+fn test_an_etag_that_is_not_a_number_is_refused_as_an_invalid_argument() {
+    use super::seen_sequence;
+    use daemon_proto::Refusal as _;
+    let Err(crate::refusal::ApiError::Refused(refusal)) = seen_sequence("abc", 9) else {
+        panic!("not refused")
+    };
+    assert_eq!(refusal.code, daemon_proto::v1::EtagInvalid::REFUSAL_STATUS);
+    let invalid: daemon_proto::v1::EtagInvalid = refusal.refusal.to_msg().unwrap();
+    assert_eq!(invalid.etag, "abc");
+    assert!(matches!(
+        seen_sequence("-1", 9),
+        Err(crate::refusal::ApiError::Refused(_))
+    ));
+}

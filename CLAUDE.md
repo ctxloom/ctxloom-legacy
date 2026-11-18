@@ -170,9 +170,21 @@ shaped by `library_api::writes::shape` into ONE step (a file replaced, a
 new directory, a path trashed; more than one file is
 `library-tree-one-change-per-call`), then INTENDED (the step's command
 under the request id, git's ids for what it writes from
-`TreeObserver::blob_id_of`), made by `Library::perform` (the one
-operation, the seam U8's atomic operations replace), read back and
-recorded `RecordStepDone`, and answered with the path's new etag. An
+`TreeObserver::blob_id_of`), made by ONE atomic operation (U8,
+`ctxloom_ports::Operations`, content-fs's `TreeOperations`, through the
+`Observing`'s `operations`; `library_api::writes::operation` maps the
+step): a file written under the tree's `state/staging/<request id>/` and
+renamed over its target, a new directory built whole there and renamed
+in with NOREPLACE (one that appeared meanwhile is
+`library-tree-resource-exists`, and is left as it was), a removal one
+rename into `state/trash/<request id>/<path>` (nothing there to take is
+`library-tree-no-such-resource`); nothing is staged beside its target.
+It is then read back and recorded `RecordStepDone`, and answered with
+the path's new etag. A tree's staging is swept the first time a daemon
+observes the tree (`Observations::sweeping`, a read's or a write's; S50);
+the trash is never swept at start. The rename's directory is not synced
+(the file-system seam gives no way to), so a power loss may undo it,
+leaving the intent owed. An
 observation that sees exactly a pending intent's ids is that step done
 (`StepApplied`), so a daemon killed after the operation is recorded
 once, as ctxloom's; a step done lays its paths over the record's dirty
@@ -180,8 +192,9 @@ set. The editor round trip is the preview's Edit need: the daemon's
 `AnsweredEditor` answers `--body` or the need's answer, else keeps the
 ask; the CLI launches the need's EDITOR itself (`Served::edit_document`).
 A removal's preview carries a Confirm need (`library_api::served_writes::
-removed_of`: its text `Remove <target>?`, a wording the owner has yet to
-review, and the preview's target as its arg `target`, from which the CLI
+removed_of`: its text `Remove <target>?`, drafted in the 10b spec's
+texts.md as `library-api-confirm-remove` (owner-delegated, not yet
+rendered from that id), and the preview's target as its arg `target`, from which the CLI
 prints the preview in its existing words); the CLI asks it at the terminal
 (`Served::confirm`, `[y/N]`; none off a terminal) and on a yes sends the
 apply with the answer and the preview's etag, else prints the preview and
@@ -197,14 +210,19 @@ path's token now), so `decide` refuses a path moved since the preview
 b1445adf). An edit's preview with no text given probes (the daemon's
 `AnsweredEditor::probing`): it plans the file its apply would write, for
 that file's etag, and still asks the Edit need; the CLI's `fragment|command
-edit` sends that etag with its apply. An etag that is not a number fails
-the call (no typed refusal is drafted for it).
+edit` sends that etag with its apply. An etag that is not a number is
+refused `daemon-api-etag-invalid` (`ctxloom.v1.EtagInvalid`,
+INVALID_ARGUMENT, exit 20; its text a draft the owner delegated).
 `--body` (fragment|command create and edit) and `config set <key> <value>
 [--home]` (one key, coerced as an override and judged by the schema at
 its path) are the spec's new surfaces. Test-support's `test-die-at`
-kills a write at `intended`, `renamed` and `done` (and
-`test-die-after-apply` at `done`). Every other write still runs in
-process until it is served.
+kills a write at `intended`, `staged`, `trashed`, `renamed` and `done`
+(and `test-die-after-apply` at `done`); `test-hold-at` (the same words)
+holds a write at its point while the file names it (at most 30 s), so a
+test standing for another process acts between two steps; and a
+command's `CTXLOOM_TEST_NO_RETRY` turns the client's one retry off
+(`Client::without_retry`), so what a killed daemon left is left. Every
+other write still runs in process until it is served.
 
 Slice S4 (sessions) built the following. The record is the user's durable
 store (owner rulings 87a, T14, which reverses 87's store per project): a

@@ -86,6 +86,9 @@ pub struct Observing {
     pub checkouts: library_checkout::LibraryCheckouts,
     pub harps: Arc<dyn library_api::CheckoutHarps>,
     pub observers: Arc<dyn library_api::Observers>,
+    /// The atomic operations a write makes its change through (step 10b
+    /// U8), whose staging of a tree is swept at its first observation.
+    pub operations: Arc<dyn ctxloom_ports::Operations>,
 }
 
 /// A session's state now, from its liveness lock in its project.
@@ -580,7 +583,8 @@ impl<E: Edge> Api<E> {
     }
 
     /// The API, each library write telling `dies_at` the points it reaches
-    /// (`intended`, `renamed`, `done`; test-support's kill switch).
+    /// (`intended`, `staged`, `trashed`, `renamed`, `done`; test-support's
+    /// kill switch).
     #[must_use]
     pub fn dying_at_writes(self, dies_at: crate::library_writes::DiesAt) -> Api<E> {
         Api {
@@ -597,7 +601,8 @@ impl<E: Edge> Api<E> {
             Arc::clone(&self.parts.edge),
             observing.checkouts,
             observing.harps,
-        );
+        )
+        .sweeping(observing.operations);
         Api {
             observing: Some((observations, observing.observers)),
             ..self

@@ -783,3 +783,22 @@ async fn a_write_is_asked_from_the_callers_directory_in_its_environment() {
     let envs = daemons.template.envs.lock().unwrap().clone();
     assert_eq!(envs[1], Some(env()));
 }
+
+// Test-support's `CTXLOOM_TEST_NO_RETRY` (step 10b's harness): a client
+// that does not retry answers the first daemon's loss as it is, and never
+// reaches a second daemon, so what the killed one left is left.
+#[tokio::test]
+async fn a_client_that_does_not_retry_reaches_one_daemon_only() {
+    let daemons = Fakes::new();
+    daemons.template.dying.lock().unwrap().push(1);
+    let client = numbering(&daemons).without_retry();
+    let lost = client
+        .delete_session("brisk-copper-moth", true, false)
+        .await;
+    assert!(lost.is_err(), "{lost:?}");
+    assert_eq!(daemons.reaches(), 1);
+    assert_eq!(
+        daemons.template.request_ids.lock().unwrap().clone(),
+        ["1:req-1"]
+    );
+}

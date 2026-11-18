@@ -1,5 +1,5 @@
 //! A use case over the recording library plans its write and writes
-//! nothing; the plan, performed, is the write the use case would have made.
+//! nothing; what it planned is the write the use case would have made.
 
 use ctxloom_ports::{Change, Scope};
 
@@ -30,27 +30,6 @@ fn test_a_bundle_create_is_planned_as_one_new_directory_and_writes_nothing() {
     assert_eq!(bundle, "notes");
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert!(paths.contains(&"bundle.yaml"), "{paths:?}");
-}
-
-#[test]
-fn test_a_planned_new_bundle_performed_is_the_bundle_made() {
-    let (library, mem) = world();
-    let (recording, recorder) = library.clone().recording();
-    recording
-        .bundle_create(&plain(), "notes", "my notes")
-        .result
-        .unwrap();
-    let planned = recorder.take();
-    assert!(library.perform(&planned[0]).unwrap());
-    assert!(mem.has_bundle("notes"));
-    assert!(mem
-        .text("notes", "bundle.yaml")
-        .unwrap()
-        .contains("my notes"));
-    assert!(
-        !library.perform(&planned[0]).unwrap(),
-        "a directory there by now is not made over"
-    );
 }
 
 #[test]

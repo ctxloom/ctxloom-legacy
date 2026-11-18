@@ -2,8 +2,9 @@
 //! ports that record what a use case asks them to write, so the daemon can
 //! intend the change (its paths and new ids) before it makes it. Reads pass
 //! through; a write is recorded and answered as the real port would answer
-//! it now. What was recorded is then made by [`Library::perform`], the one
-//! operation of the write: the narrow seam U8's atomic operations replace.
+//! it now. What was recorded is then shaped into the write's one step and
+//! made by an atomic operation (step 10b U8, `ctxloom_ports::Operations`),
+//! never through these ports.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -279,26 +280,6 @@ impl Library {
             .filter_map(|path| path.strip_prefix(under.as_str()))
             .map(str::to_string)
             .collect()
-    }
-
-    /// Make `planned` (a write [`Library::recording`] recorded) through the
-    /// real ports: the write's one operation (step 10b U3), and the seam
-    /// U8's atomic operations replace. A new bundle whose directory is
-    /// there by now is not made: false.
-    pub fn perform(&self, planned: &Planned) -> Result<bool, Failure> {
-        match planned {
-            Planned::NewBundle { bundle, files } => {
-                if !self.content.claim(bundle)? {
-                    return Ok(false);
-                }
-                let changes: Vec<Change> = files.iter().cloned().map(Change::Write).collect();
-                self.content.apply(bundle, &changes)?;
-            }
-            Planned::Changed { bundle, changes } => self.content.apply(bundle, changes)?,
-            Planned::BundleGone { bundle } => self.content.remove_bundle(bundle)?,
-            Planned::Layer { scope, text } => self.files.write_layer(*scope, text)?,
-        }
-        Ok(true)
     }
 }
 

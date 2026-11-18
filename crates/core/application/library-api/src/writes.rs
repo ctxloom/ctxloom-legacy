@@ -7,13 +7,14 @@
 //! in the domain's own words; a plan of nothing writes nothing.
 //!
 //! What the step's command is (its paths, the ids git would give what it
-//! writes) is [`intent_of`]; what the step left, as the re-observe sees
-//! it, is [`left_by`].
+//! writes) is [`intent_of`]; the atomic operation that makes it (U8) is
+//! [`operation`]; what the step left, as the re-observe sees it, is
+//! [`left_by`].
 
 use std::collections::BTreeMap;
 
 pub use ctxloom_ports::Scope;
-use ctxloom_ports::{Change, TreeError, TreeObserver};
+use ctxloom_ports::{Change, Operation, Put, TreeError, TreeObserver};
 use library_application::write::recording::Planned;
 use library_tree::{
     CreateDirectory, DirtyPath, Evidence, LibraryTreeRejection, ReplaceFile, TrashPath,
@@ -37,12 +38,13 @@ pub enum Lands {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shape {
     /// One file written whole.
-    Replace { path: String, bytes: Vec<u8> },
-    /// One new directory and the files in it, each below it.
-    Create {
+    Replace {
         path: String,
-        files: Vec<(String, Vec<u8>)>,
+        bytes: Vec<u8>,
+        executable: bool,
     },
+    /// One new directory and the files in it, each below it.
+    Create { path: String, files: Vec<Put> },
     /// One path taken away (into the trash, U8), with every file under it
     /// (below it; none for a file).
     Trash { path: String, files: Vec<String> },
@@ -59,13 +61,32 @@ impl Shape {
     }
 }
 
-/// A planned write, shaped: the tree it lands in, its step, and what to
-/// perform for it.
+/// A planned write, shaped: the tree it lands in, and its step.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shaped {
     pub lands: Lands,
     pub shape: Shape,
-    pub planned: Planned,
+}
+
+/// The atomic operation that makes `shape` (step 10b U8), its paths
+/// relative to its tree.
+pub fn operation(shape: &Shape) -> Operation {
+    match shape {
+        Shape::Replace {
+            path,
+            bytes,
+            executable,
+        } => Operation::Replace(Put {
+            path: path.clone(),
+            bytes: bytes.clone(),
+            executable: *executable,
+        }),
+        Shape::Create { path, files } => Operation::CreateDir {
+            path: path.clone(),
+            files: files.clone(),
+        },
+        Shape::Trash { path, .. } => Operation::Trash { path: path.clone() },
+    }
 }
 
 /// A bundle's directory in its tree.
@@ -93,29 +114,21 @@ pub fn shape(
             })
         }
     };
-    let shaped = |lands, shape| {
-        Ok(Some(Shaped {
-            lands,
-            shape,
-            planned: one.clone(),
-        }))
-    };
+    let shaped = |lands, shape| Ok(Some(Shaped { lands, shape }));
     match &one {
         Planned::Layer { scope, text } => shaped(
             Lands::Layer(*scope),
             Shape::Replace {
                 path: CONFIG.to_string(),
                 bytes: text.as_bytes().to_vec(),
+                executable: false,
             },
         ),
         Planned::NewBundle { bundle, files } => shaped(
             Lands::Content,
             Shape::Create {
                 path: bundle_path(bundle),
-                files: files
-                    .iter()
-                    .map(|put| (put.path.clone(), put.bytes.clone()))
-                    .collect(),
+                files: files.clone(),
             },
         ),
         Planned::BundleGone { bundle } => shaped(
@@ -148,6 +161,7 @@ fn changed(
         [Change::Write(put)] => Ok(Some(Shape::Replace {
             path: in_bundle(&put.path),
             bytes: put.bytes.clone(),
+            executable: put.executable,
         })),
         [Change::Remove { path }] => Ok(Some(Shape::Trash {
             path: in_bundle(path),
@@ -178,7 +192,10 @@ fn changed(
                         path: in_bundle(&dir),
                         files: puts
                             .iter()
-                            .map(|put| (put.path[dir.len() + 1..].to_string(), put.bytes.clone()))
+                            .map(|put| Put {
+                                path: put.path[dir.len() + 1..].to_string(),
+                                ..(*put).clone()
+                            })
                             .collect(),
                     }))
                 }
@@ -221,7 +238,7 @@ pub fn intent_of(
     evidence: Evidence,
 ) -> Result<Intended, TreeError> {
     Ok(match shape {
-        Shape::Replace { path, bytes } => Intended::Replace(ReplaceFile {
+        Shape::Replace { path, bytes, .. } => Intended::Replace(ReplaceFile {
             name: tree.to_string(),
             verb: verb.to_string(),
             path: path.clone(),
@@ -231,10 +248,10 @@ pub fn intent_of(
         }),
         Shape::Create { path, files } => {
             let mut entries = Vec::new();
-            for (rel, bytes) in files {
+            for put in files {
                 entries.push(DirtyPath {
-                    path: rel.clone(),
-                    oid: observer.blob_id_of(dir, &format!("{path}/{rel}"), bytes)?,
+                    path: put.path.clone(),
+                    oid: observer.blob_id_of(dir, &format!("{path}/{}", put.path), &put.bytes)?,
                 });
             }
             Intended::Create(CreateDirectory {

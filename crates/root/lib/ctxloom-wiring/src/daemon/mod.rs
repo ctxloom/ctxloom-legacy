@@ -804,8 +804,35 @@ fn client_through<'a>(
         .cwd()
         .map(|cwd| cwd.display().to_string())
         .unwrap_or_default();
-    daemon_api::Client::new(reach, registration, cwd, env_vars(wiring.env()))
-        .with_request_ids(Box::new(request_id))
+    retrying(
+        wiring,
+        daemon_api::Client::new(reach, registration, cwd, env_vars(wiring.env()))
+            .with_request_ids(Box::new(request_id)),
+    )
+}
+
+/// The client, its call made once more on a new daemon if this one could
+/// not be reached (S8); under test-support, not when the command's
+/// environment sets `CTXLOOM_TEST_NO_RETRY` (step 10b's harness: what a
+/// killed daemon left is left).
+#[cfg(feature = "test-support")]
+fn retrying<'a>(
+    wiring: &Wiring,
+    client: daemon_api::Client<Reach<'a>>,
+) -> daemon_api::Client<Reach<'a>> {
+    match wiring.env().non_empty("CTXLOOM_TEST_NO_RETRY") {
+        Some(_) => client.without_retry(),
+        None => client,
+    }
+}
+
+/// The shipped client always retries once (S8).
+#[cfg(not(feature = "test-support"))]
+fn retrying<'a>(
+    _: &Wiring,
+    client: daemon_api::Client<Reach<'a>>,
+) -> daemon_api::Client<Reach<'a>> {
+    client
 }
 
 /// Where this process's library resource names are rooted (OD-40, OQ-2,

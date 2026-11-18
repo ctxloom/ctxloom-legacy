@@ -36,6 +36,9 @@ pub struct Client<D> {
     /// project, so it mints none: owner ruling 2026-11-14), so nothing is
     /// recorded in it.
     unnamed: bool,
+    /// Whether a call whose daemon could not be reached is made once more
+    /// on a new one (S8); only test-support turns it off.
+    retries: bool,
 }
 
 /// What mints a write's request id (S8): unique per call.
@@ -122,6 +125,7 @@ impl<D: Daemons> Client<D> {
             env,
             ids: Box::new(String::new),
             unnamed: false,
+            retries: true,
         }
     }
 
@@ -142,6 +146,17 @@ impl<D: Daemons> Client<D> {
     /// unasked: its project has no identity, so nothing is recorded in it.
     fn nothing_recorded(&self, all: bool) -> bool {
         self.unnamed && !all && self.project.is_none()
+    }
+
+    /// This client, a call whose daemon could not be reached answered as
+    /// it is, never made on a new one: test-support's
+    /// `CTXLOOM_TEST_NO_RETRY`, which leaves what a killed daemon left.
+    #[must_use]
+    pub fn without_retry(self) -> Client<D> {
+        Client {
+            retries: false,
+            ..self
+        }
     }
 
     /// This client, each write's request id minted by `ids` (none, by
@@ -253,7 +268,7 @@ impl<D: Daemons> Client<D> {
     ) -> Result<T, CallError> {
         let api = self.daemons.reach().await.map_err(CallError::Unreached)?;
         match call(&api).await {
-            Err(Called::Unreachable { .. }) => {
+            Err(Called::Unreachable { .. }) if self.retries => {
                 let again = self.daemons.reach().await.map_err(CallError::Unreached)?;
                 Ok(call(&again).await?)
             }

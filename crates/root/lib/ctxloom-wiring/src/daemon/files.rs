@@ -384,6 +384,26 @@ impl DaemonFiles {
         named && self.fs.remove_file(&self.path(DIE_AT)).is_ok()
     }
 
+    /// The test-support switch that holds a library write at one point
+    /// (`test-hold-at`, its one line the point's word, as `test-die-at`'s):
+    /// while the file names `point`, the write waits there, so a test
+    /// standing for another process acts between two of its steps and then
+    /// removes the file (the race rule: the interleaving is forced, never
+    /// waited for). Bounded by `HOLD_MOST`, so a test that never lets go
+    /// cannot hang the daemon.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn hold_at(&self, point: &str) {
+        let named = || {
+            self.fs
+                .read(&self.path(HOLD_AT))
+                .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).trim() == point)
+        };
+        let deadline = std::time::Instant::now() + HOLD_MOST;
+        while named() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     /// The test-support switch that makes the daemon deaf to a stop and a
     /// drain (`test-deaf-to-stop`): while it is there, each is taken and
     /// ignored, so `ctxloom shutdown` finds a daemon that will not exit.
@@ -528,6 +548,14 @@ const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 /// The test-support switch that kills a daemon at a step (slice 4 U6).
 #[cfg(feature = "test-support")]
 const DIE_AT: &str = "test-die-at";
+
+/// The test-support switch that holds a write at a point (`test-hold-at`).
+#[cfg(feature = "test-support")]
+const HOLD_AT: &str = "test-hold-at";
+
+/// The longest a write is held at a point.
+#[cfg(feature = "test-support")]
+const HOLD_MOST: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The test-support switch that fails a daemon's start-up catch-up (OD-52).
 #[cfg(feature = "test-support")]

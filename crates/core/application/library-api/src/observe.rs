@@ -12,9 +12,10 @@
 //! checkouts inline, so a read after another's recording reconciles against
 //! it.
 
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 
-use ctxloom_ports::{Failure, TreeError, TreeObserver};
+use ctxloom_ports::{Failure, Operations, TreeError, TreeObserver};
 use library_checkout::LibraryCheckouts;
 use library_tree::{observation_book, LibraryTreeRejection, TreeName};
 use run_ports::Edge;
@@ -112,6 +113,11 @@ pub struct Observations<E> {
     edge: Arc<E>,
     checkouts: LibraryCheckouts,
     harps: Arc<dyn CheckoutHarps>,
+    /// The atomic operations, whose staging of a tree is swept at the
+    /// tree's first observation (S50); none, nothing is swept.
+    operations: Option<Arc<dyn Operations>>,
+    /// The trees whose staging this daemon has swept.
+    swept: Mutex<BTreeSet<String>>,
 }
 
 impl<E: Edge> Observations<E> {
@@ -126,7 +132,43 @@ impl<E: Edge> Observations<E> {
             edge,
             checkouts,
             harps,
+            operations: None,
+            swept: Mutex::new(BTreeSet::new()),
         }
+    }
+
+    /// These observations, each tree's staging swept through `operations`
+    /// the first time this daemon observes the tree (step 10b U8, S50).
+    #[must_use]
+    pub fn sweeping(self, operations: Arc<dyn Operations>) -> Observations<E> {
+        Observations {
+            operations: Some(operations),
+            ..self
+        }
+    }
+
+    /// The operations a write makes its change through, if any.
+    pub fn operations(&self) -> Option<&Arc<dyn Operations>> {
+        self.operations.as_ref()
+    }
+
+    /// `tree`'s staging swept, the first time this daemon observes it: what
+    /// a write killed before its rename left there (S50). The trash is
+    /// never swept.
+    fn sweep_once(&self, tree: &str) -> Result<(), ReadError> {
+        let Some(operations) = &self.operations else {
+            return Ok(());
+        };
+        let mut swept = self
+            .swept
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if swept.contains(tree) {
+            return Ok(());
+        }
+        operations.sweep_staging(tree).map_err(ReadError::Failed)?;
+        swept.insert(tree.to_string());
+        Ok(())
     }
 
     /// Observe `site` through `observer` (git in the caller's environment),
@@ -141,6 +183,7 @@ impl<E: Edge> Observations<E> {
                 return Err(ReadError::Refused(refused));
             }
         }
+        self.sweep_once(site.tree())?;
         let harp = self.harps.harp(site.tree()).map_err(ReadError::Failed)?;
         let tree = match site {
             Site::Checkout { project, .. } => TreeName::checkout(project.clone(), &harp),

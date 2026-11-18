@@ -12,8 +12,10 @@
 //! 4. INTENDED: the step's command (its path, git's ids for what it
 //!    writes, the path's token, the evidence) sent under the request id, so
 //!    the domain decides it and records `ChangeIntended`;
-//! 5. ONE OPERATION: the plan performed through the real ports
-//!    (`Library::perform`, the seam U8's atomic operations replace);
+//! 5. ONE OPERATION: the step made by its atomic operation (U8,
+//!    `ctxloom_ports::Operations`: staged under the tree's `state/`, then
+//!    renamed in; a removal renamed into its trash slot), each point it
+//!    reaches told to the test-support kill switch (`staged`, `trashed`);
 //! 6. RE-OBSERVED: what the step left read back and recorded
 //!    (`RecordStepDone`), its `StepApplied` the paths' new etag;
 //! 7. answered, with that etag.
@@ -66,13 +68,16 @@ pub trait LibraryWriteRequest {
 /// The sequence a write was planned against: the caller's etag (its
 /// preview's), else the path's token now (a `--yes`, one call that plans
 /// and applies). `decide` refuses the write `PlanStale` when it is not the
-/// path's last sequence. An etag that is not a number fails the call.
+/// path's last sequence. An etag that is not a number is refused, the
+/// request's own INVALID_ARGUMENT (`EtagInvalid`, protos.md §1.1).
 pub(crate) fn seen_sequence(etag: &str, now: u64) -> Result<u64, ApiError> {
     if etag.is_empty() {
         return Ok(now);
     }
-    etag.parse::<u64>().map_err(|_| ApiError::Failed {
-        detail: format!("the etag {etag:?} is not one a preview answered"),
+    etag.parse::<u64>().map_err(|_| {
+        ApiError::Refused(ApiRefusal::of(&v1::EtagInvalid {
+            etag: etag.to_string(),
+        }))
     })
 }
 
@@ -330,20 +335,24 @@ impl<E: Edge> Api<E> {
         };
         self.dies_at("intended");
         let tree = &landing.observed.tree;
-        let performed = self.perform(site, &shaped.planned);
-        let made = match performed {
-            Ok(made) => made,
-            Err(failure) => {
-                self.step_failed(tree, &request_id, step, &failure).await?;
-                return Err(failure);
-            }
+        let operations = observations.operations().ok_or_else(|| ApiError::Failed {
+            detail: "this daemon makes no library write".to_string(),
+        })?;
+        let operated = operations
+            .operate(
+                landing.site.tree(),
+                &request_id,
+                &writes::operation(&shaped.shape),
+                &|point| self.dies_at(point.word()),
+            )
+            .map_err(|failure| ApiError::diagnosed(failure.as_ref()));
+        let refused = match operated {
+            Ok(operated) => not_made(operated),
+            Err(failure) => Some(failure),
         };
-        if !made {
-            let exists = ApiError::Refused(crate::library_refusal(
-                &library_tree::LibraryTreeRejection::ResourceExists { path: path.clone() },
-            ));
-            self.step_failed(tree, &request_id, step, &exists).await?;
-            return Err(exists);
+        if let Some(why) = refused {
+            self.step_failed(tree, &request_id, step, &why).await?;
+            return Err(why);
         }
         self.dies_at("renamed");
         let observed = writes::left_by(
@@ -397,28 +406,6 @@ impl<E: Edge> Api<E> {
         })
     }
 
-    /// The write's one operation (step 10b U3; U8 makes it atomic): false
-    /// when the new directory it makes is there by now.
-    fn perform(
-        &self,
-        site: &crate::library_reads::ReadSite<'_>,
-        planned: &library_application::write::recording::Planned,
-    ) -> Result<bool, ApiError> {
-        let mut made = None;
-        site.libraries.read(&site.at, &site.env, &mut |library| {
-            if made.is_none() {
-                made = Some(library.perform(planned));
-            }
-        })?;
-        match made {
-            Some(Ok(made)) => Ok(made),
-            Some(Err(failure)) => Err(ApiError::diagnosed(failure.as_ref())),
-            None => Err(ApiError::Failed {
-                detail: "the library was not read".to_string(),
-            }),
-        }
-    }
-
     /// The step `step` of the write `request_id` failed (final): recorded,
     /// so no intent stays owed.
     async fn step_failed(
@@ -451,6 +438,22 @@ impl<E: Edge> Api<E> {
             dies(point);
         }
     }
+}
+
+/// Why an operation made no change, as the domain refuses it: something at
+/// the path it creates (`ResourceExists`, D4's NOREPLACE), or nothing at the
+/// path it takes (`NoSuchResource`). None when it is made.
+pub(crate) fn not_made(operated: ctxloom_ports::Operated) -> Option<ApiError> {
+    let rejection = match operated {
+        ctxloom_ports::Operated::Done => return None,
+        ctxloom_ports::Operated::Exists { path } => {
+            library_tree::LibraryTreeRejection::ResourceExists { path }
+        }
+        ctxloom_ports::Operated::Missing { path } => {
+            library_tree::LibraryTreeRejection::NoSuchResource { path }
+        }
+    };
+    Some(ApiError::Refused(crate::library_refusal(&rejection)))
 }
 
 /// The token and the place of the path a write already done changed (its

@@ -556,3 +556,73 @@ async fn a_home_git_does_not_hold_is_not_observed() {
     };
     assert!(under.world.events(&home, 0).await.unwrap().is_empty());
 }
+
+/// The operations port, counting the sweeps of each tree.
+#[derive(Default)]
+struct Sweeps(Mutex<Vec<String>>);
+
+impl ctxloom_ports::Operations for Sweeps {
+    fn operate(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ctxloom_ports::Operation,
+        _: &dyn Fn(ctxloom_ports::Point),
+    ) -> Result<ctxloom_ports::Operated, ctxloom_ports::Failure> {
+        unreachable!("an observation operates nothing")
+    }
+
+    fn sweep_staging(&self, tree: &str) -> Result<(), ctxloom_ports::Failure> {
+        self.0.lock().unwrap().push(tree.to_string());
+        Ok(())
+    }
+
+    fn purge_slot(&self, _: &str, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        unreachable!("an observation purges nothing")
+    }
+}
+
+// S50: what a killed write left staged is swept when a daemon starts, as
+// the daemon first observes the tree (a read or a write), and never again
+// in that daemon's life, so a write it stages later is never swept from
+// under it. The trash is not swept (the port's own test).
+#[tokio::test(flavor = "current_thread")]
+async fn a_tree_s_staging_is_swept_at_its_first_observation_alone() {
+    let checkouts = LibraryCheckouts::default();
+    let world = World::new(&checkouts);
+    let sweeps = Arc::new(Sweeps::default());
+    let observations = Observations::new(
+        Arc::clone(&world),
+        checkouts,
+        Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
+    )
+    .sweeping(Arc::clone(&sweeps) as Arc<dyn ctxloom_ports::Operations>);
+    let git = Git::at("c1", "t1");
+    observations.observe(&git, &site()).await.unwrap();
+    observations.observe(&git, &site()).await.unwrap();
+    let home = Site::Home {
+        tree: "/home/alice/.ctxloom".to_string(),
+    };
+    observations.observe(&git, &home).await.unwrap();
+    assert_eq!(
+        *sweeps.0.lock().unwrap(),
+        vec!["/work/demo/.ctxloom", "/home/alice/.ctxloom"]
+    );
+}
+
+// A tree a read is refused (outside git) is not touched.
+#[tokio::test(flavor = "current_thread")]
+async fn a_refused_tree_is_not_swept() {
+    let checkouts = LibraryCheckouts::default();
+    let world = World::new(&checkouts);
+    let sweeps = Arc::new(Sweeps::default());
+    let observations = Observations::new(
+        world,
+        checkouts,
+        Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
+    )
+    .sweeping(Arc::clone(&sweeps) as Arc<dyn ctxloom_ports::Operations>);
+    let refused = observations.observe(&Git::default(), &site()).await;
+    assert!(refused.is_err());
+    assert!(sweeps.0.lock().unwrap().is_empty());
+}

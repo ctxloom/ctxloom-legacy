@@ -54,12 +54,12 @@ sessions.workspace = true
 sessions-application.workspace = true
 sessions-proto.workspace = true
 uuid.workspace = true
+# A write's atomic operations (step 10b U8).
+ctxloom-ports.workspace = true
 
 [dev-dependencies]
 # A config that does not parse, as a refusal's cause (E5's tests).
 angzarr-yaml.workspace = true
-# A read's git, as a test stands it in (step 10a U2).
-ctxloom-ports.workspace = true
 library-application = { workspace = true, features = ["test-support"] }
 deps-application = { workspace = true, features = ["test-support"] }
 angzarr-embedded = { workspace = true, features = ["test-support"] }

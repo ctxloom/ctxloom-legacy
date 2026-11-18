@@ -5,7 +5,7 @@ use ctxloom_ports::{Change, Put, Scope};
 use library_application::write::recording::Planned;
 use library_tree::{DirtyPath, Evidence, LibraryTreeRejection};
 
-use super::{expected, intent_of, left_by, shape, Intended, Lands, Shape};
+use super::{expected, intent_of, left_by, operation, shape, Intended, Lands, Shape};
 use crate::fakes::Git;
 
 fn put(path: &str, text: &str) -> Put {
@@ -42,7 +42,7 @@ fn test_a_new_bundle_is_one_new_directory_of_its_files() {
         shaped.shape,
         Shape::Create {
             path: "content/bundles/v2/notes".to_string(),
-            files: vec![("bundle.yaml".to_string(), b"v: 1\n".to_vec())],
+            files: vec![put("bundle.yaml", "v: 1\n")],
         }
     );
 }
@@ -69,6 +69,7 @@ fn test_one_file_written_or_taken_away_is_that_one_step() {
         Shape::Replace {
             path: "content/bundles/v2/demo/fragments/rules.md".to_string(),
             bytes: b"be kind".to_vec(),
+            executable: false,
         }
     );
     let gone = Planned::Changed {
@@ -117,10 +118,7 @@ fn test_several_files_into_a_directory_nobody_has_are_one_new_directory() {
         shape(vec![skill.clone()], none).unwrap().unwrap().shape,
         Shape::Create {
             path: "content/bundles/v2/demo/skills/review".to_string(),
-            files: vec![
-                ("SKILL.md".to_string(), b"s".to_vec()),
-                (".meta.yaml".to_string(), b"m".to_vec()),
-            ],
+            files: vec![put("SKILL.md", "s"), put(".meta.yaml", "m"),],
         }
     );
     let there = |_: &str, _: &str| vec!["SKILL.md".to_string()];
@@ -182,7 +180,7 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
     let git = Git::at("h-0", "t-0");
     let create = Shape::Create {
         path: "content/bundles/v2/notes".to_string(),
-        files: vec![("bundle.yaml".to_string(), b"v".to_vec())],
+        files: vec![put("bundle.yaml", "v")],
     };
     let intended = intent_of(&git, "/d", "t", "bundle create", &create, 0, evidence()).unwrap();
     let Intended::Create(command) = &intended else {
@@ -206,6 +204,7 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
     let replace = Shape::Replace {
         path: "config.yaml".to_string(),
         bytes: b"a".to_vec(),
+        executable: false,
     };
     let Intended::Replace(command) =
         intent_of(&git, "/d", "t", "config set", &replace, 4, evidence()).unwrap()
@@ -239,6 +238,7 @@ fn test_a_writes_book_carries_its_request_id_as_the_command_id() {
     let replace = Shape::Replace {
         path: "config.yaml".to_string(),
         bytes: b"a".to_vec(),
+        executable: false,
     };
     let git = Git::at("h-0", "t-0");
     let intended = intent_of(&git, "/d", "t", "config set", &replace, 0, evidence()).unwrap();
@@ -264,4 +264,80 @@ fn test_a_writes_book_carries_its_request_id_as_the_command_id() {
         panic!()
     };
     assert_eq!(fact.origin.unwrap().external_id, "done:r:0");
+}
+
+// The step is made by the one atomic operation of its kind (step 10b U8):
+// a file replaced, a new directory created, a path trashed, each at the
+// step's path below its tree.
+#[test]
+fn test_each_step_is_made_by_the_atomic_operation_of_its_kind() {
+    use ctxloom_ports::Operation;
+    let replace = Shape::Replace {
+        path: "config.yaml".to_string(),
+        bytes: b"a: 1\n".to_vec(),
+        executable: false,
+    };
+    assert_eq!(
+        operation(&replace),
+        Operation::Replace(put("config.yaml", "a: 1\n"))
+    );
+    let create = Shape::Create {
+        path: "content/bundles/v2/notes".to_string(),
+        files: vec![put("bundle.yaml", "v")],
+    };
+    assert_eq!(
+        operation(&create),
+        Operation::CreateDir {
+            path: "content/bundles/v2/notes".to_string(),
+            files: vec![put("bundle.yaml", "v")],
+        }
+    );
+    let trash = Shape::Trash {
+        path: "content/bundles/v2/demo".to_string(),
+        files: vec!["bundle.yaml".to_string()],
+    };
+    assert_eq!(
+        operation(&trash),
+        Operation::Trash {
+            path: "content/bundles/v2/demo".to_string()
+        }
+    );
+}
+
+// A file the use case wrote executable stays so, written whole or in a
+// new directory.
+#[test]
+fn test_an_executable_file_stays_executable_in_its_operation() {
+    use ctxloom_ports::Operation;
+    let run = Put {
+        executable: true,
+        ..put("skills/review/scripts/run.sh", "#!/bin/sh\n")
+    };
+    let write = Planned::Changed {
+        bundle: "demo".to_string(),
+        changes: vec![Change::Write(run.clone())],
+    };
+    let shaped = shape(vec![write], none).unwrap().unwrap();
+    let Operation::Replace(made) = operation(&shaped.shape) else {
+        panic!("{shaped:?}")
+    };
+    assert!(made.executable);
+    let new = Planned::Changed {
+        bundle: "demo".to_string(),
+        changes: vec![
+            Change::Write(put("skills/review/SKILL.md", "s")),
+            Change::Write(run),
+        ],
+    };
+    let shaped = shape(vec![new], none).unwrap().unwrap();
+    let Operation::CreateDir { files, .. } = operation(&shaped.shape) else {
+        panic!("{shaped:?}")
+    };
+    assert_eq!(
+        files
+            .iter()
+            .map(|f| (f.path.as_str(), f.executable))
+            .collect::<Vec<_>>(),
+        vec![("SKILL.md", false), ("scripts/run.sh", true)]
+    );
 }

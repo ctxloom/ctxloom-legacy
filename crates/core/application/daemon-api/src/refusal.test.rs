@@ -368,3 +368,26 @@ fn a_deps_decline_rides_as_its_cause_and_a_failure_keeps_its_words() {
     let failed = super::deps_error(&deps_application::AppError::DiscoverFailed);
     assert!(matches!(failed, ApiError::Diagnosed { .. }), "{failed:?}");
 }
+
+// An etag that is not a number is told in the daemon's own words, exit 20
+// (a decline), never a failure.
+#[test]
+fn an_etag_that_is_not_a_number_is_the_daemons_refusal() {
+    let invalid = Any::from_msg(&v1::EtagInvalid {
+        etag: "abc".to_string(),
+    })
+    .unwrap();
+    let rejection = rejection_of(&invalid);
+    assert_eq!(
+        rejection,
+        Some(Rejection::Api(ApiRejection::EtagInvalid {
+            etag: "abc".to_string()
+        }))
+    );
+    assert_eq!(
+        exit_code::ExitClass::exit(&ApiRejection::EtagInvalid {
+            etag: "abc".to_string()
+        }),
+        exit_code::Exit::REFUSED
+    );
+}

@@ -1268,5 +1268,30 @@ pub(crate) fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
         checkouts: world.checkouts.clone(),
         harps: Arc::new(OneHarp),
         observers: Arc::clone(gits) as Arc<dyn library_api::Observers>,
+        operations: Arc::new(NoOperations),
+    }
+}
+
+/// Operations that make nothing and sweep nothing: these tests' writes
+/// are never carried out.
+struct NoOperations;
+
+impl ctxloom_ports::Operations for NoOperations {
+    fn operate(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ctxloom_ports::Operation,
+        _: &dyn Fn(ctxloom_ports::Point),
+    ) -> Result<ctxloom_ports::Operated, ctxloom_ports::Failure> {
+        Ok(ctxloom_ports::Operated::Done)
+    }
+
+    fn sweep_staging(&self, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
+    }
+
+    fn purge_slot(&self, _: &str, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
     }
 }

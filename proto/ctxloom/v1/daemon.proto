@@ -1774,6 +1774,16 @@ message PlanStale {
   string now = 2;
 }
 
+// An apply whose etag is not a number, so no preview answered it (step 10b
+// U3, protos.md §1.1: the etag is a resource's last sequence, a decimal).
+// `daemon-api-etag-invalid`.
+message EtagInvalid {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+
+  // The etag as the apply sent it.
+  string etag = 1;
+}
+
 // An apply that does not answer every need of its preview.
 message NeedsUnanswered {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;

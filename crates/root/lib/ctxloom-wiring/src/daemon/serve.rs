@@ -742,6 +742,8 @@ fn served(
                     home: home.to_path_buf(),
                     temp: temp.to_path_buf(),
                 }),
+                // A write's change is one atomic operation (step 10b U8).
+                operations: Arc::new(content_fs::TreeOperations::new(Arc::clone(fs))),
             }),
     )
 }
@@ -853,14 +855,16 @@ fn dies_at_steps(edge: &Arc<CoreEdge>, files: &DaemonFiles) {
     }));
 }
 
-/// A library write's kill points (step 10b U3; `test-die-at`'s
-/// `intended`, `renamed`, `done`): under test-support the daemon that
-/// finds the switch naming the point it reached takes it and is killed
-/// outright. Forced, never waited for (the race rule).
+/// A library write's kill points (step 10b U3, U8; `test-die-at`'s
+/// `intended`, `staged`, `trashed`, `renamed`, `done`): under test-support
+/// the daemon that finds the switch naming the point it reached takes it
+/// and is killed outright; one held there (`test-hold-at`) waits first.
+/// Forced, never waited for (the race rule).
 #[cfg(feature = "test-support")]
 fn write_kills(files: &DaemonFiles) -> daemon_api::library_writes::DiesAt {
     let files = files.clone();
     Arc::new(move |point: &str| {
+        files.hold_at(point);
         // A write recorded done and not yet answered is also where the
         // client's write is "applied, before it is answered" (slice 3's
         // `test-die-after-apply`, the retry's switch).

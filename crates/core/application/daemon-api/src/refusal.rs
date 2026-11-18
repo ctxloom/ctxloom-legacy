@@ -174,6 +174,11 @@ pub enum ApiRejection {
         key: String,
         value: String,
     },
+    /// An apply whose etag is not a number, so no preview answered it
+    /// (step 10b U3).
+    EtagInvalid {
+        etag: String,
+    },
     /// A project's configuration that does not read.
     ConfigUnreadable {
         root: String,
@@ -221,6 +226,7 @@ impl Diagnostic for ApiRejection {
             ApiRejection::Draining { .. } => code!("draining"),
             ApiRejection::HomeGone { .. } => code!("home-gone"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
+            ApiRejection::EtagInvalid { .. } => code!("etag-invalid"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
             ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
             ApiRejection::SessionNotHosted { .. } => code!("session-not-hosted"),
@@ -276,6 +282,7 @@ impl Diagnostic for ApiRejection {
                     ("value", value.as_str().into()),
                 ]
             }
+            ApiRejection::EtagInvalid { etag } => vec![("etag", etag.as_str().into())],
             ApiRejection::ConfigUnreadable { root, detail } => vec![
                 ("root", root.as_str().into()),
                 ("ext_err_txt", detail.as_str().into()),
@@ -474,6 +481,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 value: r.value,
             })
         }),
+        "ctxloom.v1.EtagInvalid" => decode::<v1::EtagInvalid>(refusal)
+            .and_then(|r| api(ApiRejection::EtagInvalid { etag: r.etag })),
         "ctxloom.v1.ConfigUnreadable" => decode::<v1::ConfigUnreadable>(refusal).and_then(|r| {
             api(ApiRejection::ConfigUnreadable {
                 root: r.root,
@@ -690,6 +699,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ApiRejection::AgeInvalid {
             key: "session_purge_age".to_string(),
             value: "soon".to_string(),
+        }),
+        Box::new(ApiRejection::EtagInvalid {
+            etag: "abc".to_string(),
         }),
         Box::new(ApiRejection::ConfigUnreadable {
             root: "/work/calm".to_string(),
