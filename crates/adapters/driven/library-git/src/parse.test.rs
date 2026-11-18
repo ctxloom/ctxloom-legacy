@@ -186,3 +186,24 @@ fn a_diff_cut_short_or_holding_no_record_reads_what_it_can() {
     let cut = format!(":100644 100644 {OID_A} {OID_B} M\0");
     assert!(diff_tree(cut.as_bytes()).is_empty());
 }
+
+#[test]
+fn a_renamed_path_that_was_named_like_a_record_is_not_read_as_one() {
+    // The path a rename was is its own field: one named `? old` is that
+    // path, never an untracked entry of its own.
+    let out = format!("2 R. N... 100644 100644 100644 {OID_A} {OID_A} R100 new.md\0? old\0");
+    let entries = status(out.as_bytes(), "");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path, "new.md");
+    assert_eq!(entries[0].from_path.as_deref(), Some("? old"));
+}
+
+#[test]
+fn a_changed_path_named_like_a_record_is_not_read_as_one() {
+    // A path is its own field: one spelled as a raw record is that path.
+    let named = format!(":100644 100644 {OID_A} {OID_B} M");
+    let out = format!(":100644 100644 {OID_A} {OID_B} M\0{named}\0z.md\0");
+    let changes = diff_tree(out.as_bytes());
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, named);
+}
