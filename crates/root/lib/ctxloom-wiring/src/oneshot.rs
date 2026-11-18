@@ -487,7 +487,12 @@ pub(crate) fn client_one_shot(
 /// the daemon owns the model call as a run), followed to its end through
 /// the daemon of the stamp `stamp`, as a one-shot is: a signal heard asks
 /// the daemon to stop it.
-pub(crate) fn client_follow(wiring: &Wiring, stamp: &str, run: &str) -> Done<Answer> {
+pub(crate) fn client_follow(
+    wiring: &Wiring,
+    stamp: &str,
+    run: &str,
+    stops: Option<&crate::signals::CommandStops>,
+) -> Done<Answer> {
     let refused = |error: RunError| Done {
         result: Err(error),
         notices: Vec::new(),
@@ -508,8 +513,26 @@ pub(crate) fn client_follow(wiring: &Wiring, stamp: &str, run: &str) -> Done<Ans
             name: run.to_string(),
             ..daemon_proto::v1::Run::default()
         };
-        let (heard, hearing, unheard) = heard_stops(wiring);
-        let mut done = run_application::client::followed(&api, &asked, heard, None).await;
+        // The command's own stops when it hears them already (ruling 114: a
+        // stop heard before the follow began asks the daemon to stop the
+        // run at once); else heard from here on.
+        let (heard, hearing, unheard, signal) = match stops {
+            Some(stops) => {
+                let signal = stops.signal().map(|signal| signal.name().to_string());
+                let heard: run_application::client::Heard<'static> = if signal.is_some() {
+                    Box::pin(std::future::pending())
+                } else {
+                    stops.heard()
+                };
+                let unheard = stops.unheard().map(unheard_notice).into_iter().collect();
+                (heard, None, unheard, signal)
+            }
+            None => {
+                let (heard, hearing, unheard) = heard_stops(wiring);
+                (heard, hearing, unheard, None)
+            }
+        };
+        let mut done = run_application::client::followed(&api, &asked, heard, signal).await;
         if let Some(hearing) = hearing {
             hearing.abort();
         }
@@ -532,6 +555,13 @@ pub(crate) fn failed(failure: cli_support::Failure) -> RunError {
     }))
 }
 
+/// What is said when no signal can be heard: `why`.
+fn unheard_notice(why: &str) -> library_application::Notice {
+    library_application::Notice::text(format!(
+        "cannot listen for signals ({why}): a signal ends ctxloom without asking the daemon to stop the engine"
+    ))
+}
+
 /// The first of the signals that stop a one-shot (all three), once heard,
 /// by its name; the task that hears them for the command's whole run (so
 /// none ends it by its default, and a second changes nothing); and the
@@ -549,9 +579,7 @@ fn heard_stops(
             return (
                 Box::pin(std::future::pending()),
                 None,
-                vec![library_application::Notice::text(format!(
-                    "cannot listen for signals ({e}): a signal ends ctxloom without asking the daemon to stop the engine"
-                ))],
+                vec![unheard_notice(&e.to_string())],
             )
         }
     };

@@ -172,6 +172,41 @@ mod distill {
         assert!(!asks.requests::<v1::DistillFragmentRequest>()[0].force);
     }
 
+    // Ruling 114: the command hears its stops BEFORE it asks the daemon to
+    // distill (whose answer is a run the daemon has started already), so a
+    // stop that arrives before the follow begins is heard, never taken by
+    // its default.
+    #[test]
+    fn test_a_distill_hears_its_stops_before_it_asks_the_daemon() {
+        let run = "projects/calm-otter/runs/r1";
+        let asks = Asks::answering(vec![Box::new(asking(run)), Box::new(())], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.code(), 0, "{}", ran.err);
+        let order: Vec<&str> = asks
+            .asked
+            .borrow()
+            .iter()
+            .map(|(_, asked)| {
+                if asked.is::<crate::tests::HearStops>() {
+                    "hear"
+                } else if asked.is::<v1::DistillFragmentRequest>() {
+                    "distill"
+                } else if asked.is::<v1::WatchRunRequest>() {
+                    "follow"
+                } else {
+                    "other"
+                }
+            })
+            .collect();
+        assert_eq!(order, ["hear", "distill", "follow"]);
+    }
+
     // A run that ends in a failure fails the command in its end's words,
     // what was said before it said first; nothing is applied.
     #[test]

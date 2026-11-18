@@ -315,9 +315,21 @@ impl deps_cli::Names for DaemonNames {
 pub(crate) struct DaemonServed {
     pub(crate) env: Arc<EnvSnapshot>,
     pub(crate) version: String,
+    /// The command's stops, heard once something asks
+    /// ([`library_cli::Served::hear_stops`]), for the rest of its life.
+    pub(crate) stops: std::sync::OnceLock<crate::signals::CommandStops>,
 }
 
 impl DaemonServed {
+    /// The daemon's calls for a command in `env`, of the binary `version`.
+    pub(crate) fn new(env: Arc<EnvSnapshot>, version: String) -> DaemonServed {
+        DaemonServed {
+            env,
+            version,
+            stops: std::sync::OnceLock::new(),
+        }
+    }
+
     fn wiring(&self) -> Result<Wiring, Failure> {
         Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))
     }
@@ -335,6 +347,16 @@ impl library_cli::Served for DaemonServed {
 
     /// A distill's run followed to its end as a one-shot is (step 10b): a
     /// signal heard here asks the daemon to stop it.
+    fn hear_stops(&self) {
+        let Ok(wiring) = self.wiring() else {
+            return;
+        };
+        let fs = wiring.fs();
+        self.stops.get_or_init(|| {
+            crate::signals::CommandStops::hearing(move || fs.os().signals(&crate::signals::HEARD))
+        });
+    }
+
     fn follow_run(&self, run: &str) -> library_cli::RunFollowed {
         let wiring = match self.wiring() {
             Ok(wiring) => wiring,
@@ -345,7 +367,9 @@ impl library_cli::Served for DaemonServed {
                 }
             }
         };
-        let done = crate::oneshot::client_follow(&wiring, &self.version, run);
+        self.hear_stops();
+        let stops = self.stops.get();
+        let done = crate::oneshot::client_follow(&wiring, &self.version, run, stops);
         library_cli::RunFollowed {
             notices: done
                 .notices
@@ -538,10 +562,7 @@ impl Extension for LibraryCommands {
                 &Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))?,
             )?;
         }
-        let served = DaemonServed {
-            env: Arc::clone(&self.env),
-            version: self.version.clone(),
-        };
+        let served = DaemonServed::new(Arc::clone(&self.env), self.version.clone());
         let library = self.wired().map_err(|e| Failure::new(e, Exit::FAILED))?;
         library_cli::run(library, &names, &served, noun, call, catalog, out, err)
     }

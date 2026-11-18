@@ -3657,7 +3657,12 @@ trust, ruling 128; the prompt's text is the owner's) with the body inside
 CONTEXT (as `CreateRun` hosts one, `OneShots::create_reacting`) and
 answers with the run's name (`run`, additive), which the CLI follows with
 `WatchRun` (`Served::follow_run`, run-application's `client::followed`; a
-signal heard asks the daemon to stop it). The run REACTS
+signal heard asks the daemon to stop it, and the command exits 128 plus its
+number, ruling 114). Its stops are heard from BEFORE the distill call
+(`Served::hear_stops`, the wiring's `signals::CommandStops`, on a thread
+and runtime of its own), so one that arrives while the daemon starts the
+run is not taken by its default and is told to the follow as heard
+already. The run REACTS
 (`daemon_application::Reaction`, awaited in `Told::done` on the daemon's
 runtime, before its watchers see its end; the core spawns nothing): no
 answer is `library-application-distill-failed` (its cause the run's end);

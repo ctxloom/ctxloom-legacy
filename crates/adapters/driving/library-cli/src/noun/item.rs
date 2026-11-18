@@ -638,6 +638,8 @@ pub(crate) fn distill_followed(
     under: &str,
     force: bool,
 ) -> Result<DistillAnswer, (Failure, Vec<v1::Notice>)> {
+    // Its stops heard from before the daemon starts the run (ruling 114).
+    cx.served.hear_stops();
     let asked = if kind == ItemKind::Command {
         let request = v1::DistillCommandRequest {
             force,

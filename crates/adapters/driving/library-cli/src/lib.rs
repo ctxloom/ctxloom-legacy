@@ -145,6 +145,13 @@ pub trait Served {
     /// said, and how it ended.
     fn follow_run(&self, run: &str) -> RunFollowed;
 
+    /// Hear the signals that stop a run from now on, for the rest of the
+    /// command (ruling 114): asked before a call whose answer is a run to
+    /// follow (a distill's), so a stop that arrives before the follow
+    /// begins is heard, not taken by its default, and the follow asks the
+    /// daemon to stop the run. Asking again changes nothing.
+    fn hear_stops(&self);
+
     /// `loadout`: `GetLoadout`, always asked as `users/me/loadout`, its
     /// notices beside it: ctxloom's own loadout is the same in every
     /// project, and a companion probe asks it where there may be no

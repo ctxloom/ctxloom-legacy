@@ -405,10 +405,7 @@ impl Commands {
             flags: &call.globals,
             stamp: &stamp,
         };
-        let cleaning = crate::library::DaemonServed {
-            env: Arc::clone(&env),
-            version: stamp.clone(),
-        };
+        let cleaning = crate::library::DaemonServed::new(Arc::clone(&env), stamp.clone());
         let uses = setup_cli::UseCases {
             auth: &wired.setup.auth,
             cleaning: &cleaning,
@@ -600,7 +597,7 @@ impl Commands {
             setup: &wired.surface,
             flags: call.globals.clone(),
         };
-        let served = crate::library::DaemonServed { env, version };
+        let served = crate::library::DaemonServed::new(env, version);
         deps_cli::run(
             &wired.deps,
             &refresh,

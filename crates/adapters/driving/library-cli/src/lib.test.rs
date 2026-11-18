@@ -155,6 +155,9 @@ impl Served for ServedBy<'_> {
         }
     }
 
+    /// Nothing to hear in process.
+    fn hear_stops(&self) {}
+
     /// The library's own editor, as the CLI would launch it.
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure> {
         self.library
@@ -530,7 +533,7 @@ pub(crate) fn go_in(line: &[&str], how: How, layers: &[&str], names: &dyn Names)
 /// kept as it was built; every read is then answered unreached.
 #[derive(Default)]
 pub(crate) struct Asks {
-    asked: std::cell::RefCell<Vec<(String, Box<dyn std::any::Any>)>>,
+    pub(crate) asked: std::cell::RefCell<Vec<(String, Box<dyn std::any::Any>)>>,
     /// Answers given in turn, each to the first ask of its type; an ask
     /// with none queued is answered unreached.
     answers: std::cell::RefCell<std::collections::VecDeque<Box<dyn std::any::Any>>>,
@@ -609,6 +612,10 @@ macro_rules! written_to_the_daemon {
     };
 }
 
+/// That the command asked to hear its stops ([`Served::hear_stops`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HearStops;
+
 impl Served for Asks {
     fn in_project(&self) -> bool {
         true
@@ -632,6 +639,13 @@ impl Served for Asks {
                 },
             ),
         }
+    }
+
+    /// Recorded among the requests, as [`HearStops`], so its order is seen.
+    fn hear_stops(&self) {
+        self.asked
+            .borrow_mut()
+            .push((String::new(), Box::new(HearStops)));
     }
 
     fn confirm(&self, _: &str) -> Option<bool> {
