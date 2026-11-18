@@ -2973,6 +2973,7 @@ dependencies = [
  "serde_json",
  "sessions",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

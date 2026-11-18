@@ -626,3 +626,127 @@ async fn a_refused_tree_is_not_swept() {
     assert!(refused.is_err());
     assert!(sweeps.0.lock().unwrap().is_empty());
 }
+
+/// The operations port, recording each slot purged.
+#[derive(Default)]
+struct Purges(Mutex<Vec<(String, String)>>);
+
+impl ctxloom_ports::Operations for Purges {
+    fn operate(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ctxloom_ports::Operation,
+        _: &dyn Fn(ctxloom_ports::Point),
+    ) -> Result<ctxloom_ports::Operated, ctxloom_ports::Failure> {
+        unreachable!("an observation operates nothing")
+    }
+
+    fn sweep_staging(&self, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
+    }
+
+    fn purge_slot(&self, tree: &str, request_id: &str) -> Result<(), ctxloom_ports::Failure> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((tree.to_string(), request_id.to_string()));
+        Ok(())
+    }
+}
+
+const REMOVAL: &str = "01a1ecdd-5f31-75fa-8782-789facb7078e";
+
+/// The observations of a tree baselined, then holding one kept trash slot
+/// of `REMOVAL` (its intent recorded and done), their clock `days` after
+/// the slot's time; and what they purged.
+async fn with_a_slot(
+    days: i64,
+) -> (
+    Observations<World>,
+    Arc<Purges>,
+    Arc<World>,
+    LibraryCheckouts,
+) {
+    let checkouts = LibraryCheckouts::default();
+    let world = World::new(&checkouts);
+    let plain = Observations::new(
+        Arc::clone(&world),
+        checkouts.clone(),
+        Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
+    );
+    let git = Git::at("c1", "t1");
+    plain.observe(&git, &site()).await.unwrap();
+    let trash = crate::writes::Intended::Trash(library_tree::TrashPath {
+        name: tree().to_string(),
+        verb: "bundle remove".to_string(),
+        path: "content/bundles/v2/demo".to_string(),
+        seen_sequence: 0,
+        evidence: library_tree::Evidence {
+            tree_reads: true,
+            plan_rejection: None,
+            builtin: false,
+            in_motion: None,
+            in_git: true,
+            ignored: None,
+            root: "/work/demo".to_string(),
+        },
+        keep: true,
+    });
+    let id = uuid::Uuid::parse_str(REMOVAL).unwrap().into_bytes();
+    world
+        .handle(crate::writes::command_book(&tree(), &trash, id))
+        .await
+        .unwrap();
+    let done = library_tree::RecordStepDone {
+        request_id: REMOVAL.to_string(),
+        step: 0,
+        observed: Vec::new(),
+    };
+    world
+        .handle(crate::writes::step_book(&tree(), &done, "done:r:0"))
+        .await
+        .unwrap();
+    let slot = plain.held(&tree()).trashed[REMOVAL].clone();
+    let purges = Arc::new(Purges::default());
+    let now = slot.trashed_at + days * 86_400;
+    let observations = Observations::new(
+        Arc::clone(&world),
+        checkouts.clone(),
+        Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
+    )
+    .sweeping(Arc::clone(&purges) as Arc<dyn ctxloom_ports::Operations>)
+    .purging(Arc::new(move || now));
+    (observations, purges, world, checkouts)
+}
+
+// G12, L12 (QUESTIONS 4): a kept slot 7 days old or more is purged when the
+// daemon next observes its tree (a read's, a write's, a start's): the
+// domain's PurgeTrash, the slot removed whole, its step recorded done, so
+// the slot leaves the state and a later observation purges nothing more.
+#[tokio::test(flavor = "current_thread")]
+async fn a_kept_slot_seven_days_old_is_purged_at_its_tree_s_next_observation_once() {
+    let (observations, purges, _world, _) = with_a_slot(8).await;
+    let git = Git::at("c1", "t1");
+    observations.observe(&git, &site()).await.unwrap();
+    assert_eq!(
+        *purges.0.lock().unwrap(),
+        vec![("/work/demo/.ctxloom".to_string(), REMOVAL.to_string())]
+    );
+    assert!(observations.held(&tree()).trashed.is_empty());
+    observations.observe(&git, &site()).await.unwrap();
+    assert_eq!(purges.0.lock().unwrap().len(), 1, "purged once");
+}
+
+// A slot younger than 7 days survives every observation (and a restart:
+// nothing but its age decides).
+#[tokio::test(flavor = "current_thread")]
+async fn a_slot_younger_than_seven_days_is_kept() {
+    let (observations, purges, _world, _) = with_a_slot(6).await;
+    observations
+        .observe(&Git::at("c1", "t1"), &site())
+        .await
+        .unwrap();
+    assert!(purges.0.lock().unwrap().is_empty());
+    assert!(observations.held(&tree()).trashed.contains_key(REMOVAL));
+}

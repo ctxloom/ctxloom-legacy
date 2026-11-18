@@ -13,8 +13,9 @@ use angzarr_embedded::{Any, Failure, Handled, Registry};
 use crate::{
     observation_key, tree_root, Change, ChangeStatus, CreateDirectory, DirtyPath, Evidence,
     LibraryAggregate, LibraryCommand, LibraryEvent, LibraryIgnored, LibraryTreeRejection, Motion,
-    MovePath, PlanRejected, RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile,
-    Resource, RunSequence, Step, TrashPath, TreeKind, LIBRARY_DOMAIN, TREE_UNREADABLE,
+    MovePath, PlanRejected, PurgeTrash, RecordStepDone, RecordStepFailed, RecordTreeObserved,
+    ReplaceFile, Resource, RunSequence, Step, TrashPath, TreeKind, KEEP_DAYS, LIBRARY_DOMAIN,
+    TREE_UNREADABLE,
 };
 
 const TREE: &str = "projects/amber-quiet-heron/checkouts/brisk-copper-moth/library";
@@ -209,6 +210,7 @@ fn trash(path: &str, seen: u64) -> TrashPath {
         path: path.to_string(),
         seen_sequence: seen,
         evidence: evidence(),
+        keep: true,
     }
 }
 
@@ -233,6 +235,7 @@ fn step_of(
         create: None,
         trash,
         r#move,
+        purge: None,
     }
 }
 
@@ -835,6 +838,7 @@ fn a_sequence_judges_each_step_as_its_own_command_and_keeps_them_all() {
             create: Some(create("cache/x")),
             trash: None,
             r#move: None,
+            purge: None,
         },
         step_of(None, Some(trash(YAML, 1)), None),
         step_of(None, None, Some(moved(BUNDLE, "content/bundles/v2/z", 1))),
@@ -871,6 +875,7 @@ fn a_sequences_steps_are_not_judged_on_existence_so_a_retry_can_resume() {
             create: Some(create(BUNDLE)),
             trash: None,
             r#move: None,
+            purge: None,
         },
     ];
     assert_eq!(tree.command(sequence(steps)).map(|e| e.len()), Ok(1));
@@ -997,6 +1002,7 @@ fn creating(path: &str, entries: &[(&str, &str)]) -> Step {
         }),
         trash: None,
         r#move: None,
+        purge: None,
     }
 }
 
@@ -1137,3 +1143,128 @@ fn a_replace_of_a_path_holding_several_files_is_one_change_per_call() {
     );
     assert!(tree.command(replace(FILE, 1)).is_ok());
 }
+
+// region the trash (step 10b U8, G12)
+
+/// The one trash of `path`, recorded and done: its request id and the
+/// seconds its intent was recorded at.
+fn trashed(tree: &mut Tree, path: &str, keep: bool) -> (String, i64) {
+    let events = tree
+        .command(TrashPath {
+            keep,
+            ..trash(path, 0)
+        })
+        .unwrap();
+    let [LibraryEvent::ChangeIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    let at = tree
+        .harness
+        .pages()
+        .last()
+        .and_then(|page| page.meta.clone())
+        .and_then(|meta| meta.recorded_at)
+        .map(|at| at.seconds)
+        .unwrap();
+    let request = intended.intent.request_id.clone();
+    tree.fact(
+        done(&request, 0, &[(path, "")]),
+        &format!("done:{request}:0"),
+    );
+    (request, at)
+}
+
+fn purge(request: &str, age_days: u32) -> PurgeTrash {
+    PurgeTrash {
+        name: TREE.to_string(),
+        request_id: request.to_string(),
+        age_days,
+    }
+}
+
+// L12, G12: a removal's slot is recorded with the time its intent was
+// recorded (decide reads no clock) and whether it is kept; it outlives its
+// intent's end, so the daemon can purge it once it is old enough.
+#[test]
+fn a_removal_s_slot_is_recorded_with_its_time_and_outlives_its_intent() {
+    let mut tree = Tree::baselined();
+    let (request, at) = trashed(&mut tree, BUNDLE, true);
+    let library = tree.library();
+    assert!(library.pending.is_empty());
+    let slot = library.trashed.get(&request).expect("the slot");
+    assert_eq!(slot.paths, vec![BUNDLE.to_string()]);
+    assert_eq!(slot.trashed_at, at);
+    assert!(slot.kept);
+    let wire = library.wire();
+    let slot = &wire.trashed[&request];
+    assert_eq!(slot.trashed_at.as_ref().map(|t| t.seconds), Some(at));
+    assert!(slot.kept);
+}
+
+// G12: a slot 7 days old or more is purged by one PurgeTrash, whose one
+// step removes the slot, dropped from the state once it is done.
+#[test]
+fn a_slot_seven_days_old_is_purged_by_its_one_step() {
+    let mut tree = Tree::baselined();
+    let (request, _) = trashed(&mut tree, BUNDLE, true);
+    let events = tree.command(purge(&request, KEEP_DAYS)).unwrap();
+    let [LibraryEvent::ChangeIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    let step = &intended.intent.steps[0];
+    assert_eq!(
+        step.purge.as_ref().map(|p| p.request_id.as_str()),
+        Some(request.as_str())
+    );
+    assert!(tree.library().trashed.contains_key(&request), "until done");
+    let purger = intended.intent.request_id.clone();
+    tree.fact(done(&purger, 0, &[]), &format!("done:{purger}:0"));
+    let library = tree.library();
+    assert!(library.trashed.is_empty(), "{:?}", library.trashed);
+    assert!(library.pending.is_empty());
+}
+
+// Nothing is purged early, and a slot not there (purged already) is not
+// purged again.
+#[test]
+fn a_slot_not_due_or_not_there_is_refused() {
+    let mut tree = Tree::baselined();
+    let (request, _) = trashed(&mut tree, BUNDLE, true);
+    assert_eq!(
+        tree.command(purge(&request, KEEP_DAYS - 1)),
+        Err(LibraryTreeRejection::SlotNotDue {
+            request_id: request.clone(),
+            age_days: KEEP_DAYS - 1,
+        })
+    );
+    assert_eq!(
+        tree.command(purge("0199aaaa-0000-7000-8000-000000000000", 30)),
+        Err(LibraryTreeRejection::NoSuchSlot {
+            request_id: "0199aaaa-0000-7000-8000-000000000000".to_string(),
+        })
+    );
+    assert!(tree.library().trashed.contains_key(&request));
+}
+
+// A trash step that failed moved nothing, so it leaves no slot.
+#[test]
+fn a_failed_trash_leaves_no_slot() {
+    let mut tree = Tree::baselined();
+    let events = tree.command(trash(BUNDLE, 0)).unwrap();
+    let [LibraryEvent::ChangeIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    let request = intended.intent.request_id.clone();
+    assert!(tree.library().trashed.contains_key(&request));
+    tree.fact(
+        RecordStepFailed {
+            request_id: request.clone(),
+            step: 0,
+            ext_err_txt: "busy".to_string(),
+        },
+        "failed:trash",
+    );
+    assert!(tree.library().trashed.is_empty());
+}
+
+// endregion

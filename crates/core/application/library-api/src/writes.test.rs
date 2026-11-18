@@ -341,3 +341,21 @@ fn test_an_executable_file_stays_executable_in_its_operation() {
         vec![("SKILL.md", false), ("scripts/run.sh", true)]
     );
 }
+
+// G12: a lone removal's trash is kept 7 days (then purged by the daemon);
+// only a sequence's own trash, which its last step removes, is not.
+#[test]
+fn test_a_lone_removal_is_kept_in_the_trash() {
+    let git = Git::at("h-0", "t-0");
+    let trash = Shape::Trash {
+        path: "content/bundles/v2/demo".to_string(),
+        files: vec!["bundle.yaml".to_string()],
+    };
+    let Intended::Trash(command) =
+        intent_of(&git, "/d", "t", "bundle remove", &trash, 3, evidence()).unwrap()
+    else {
+        panic!("not a trash")
+    };
+    assert!(command.keep);
+    assert_eq!(command.seen_sequence, 3);
+}

@@ -29,3 +29,8 @@ library-tree-tree-in-motion = git is in the middle of { $motion ->
 library-tree-tree-in-motion-fix = finish or abort it (`git merge --continue`, `git rebase --abort` …), then run the command again
 library-tree-one-change-per-call = this would change { $count } files ({ $paths }); ctxloom makes one change per call
 library-tree-one-change-per-call-fix = run one command for each, one item at a time
+# Step 10b (texts.md §1, the trash; G12): the daemon's own refusals, never a
+# person's command. Accepted verbatim (owner, 2026-11-16, night; reviewed
+# before release, `connected-boil`).
+library-tree-no-such-slot = nothing is in the trash under { $request_id }
+library-tree-slot-not-due = the trash under { $request_id } is { $age_days } days old, and is kept for 7

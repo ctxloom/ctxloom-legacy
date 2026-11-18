@@ -23,6 +23,8 @@ serde_json.workspace = true
 run-application.workspace = true
 # The library domain: its fact, its names, its fold and its refusals.
 library-tree.workspace = true
+# A trash slot's purge is one command, its id derived from the slot (G12).
+uuid.workspace = true
 # The trees as last observed, what a read reconciles against.
 library-checkout.workspace = true
 # The edge an observation is recorded through.

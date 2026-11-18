@@ -135,6 +135,7 @@ fn an_intent_and_its_steps_print_their_request() {
                         root: String::new(),
                     },
                 }),
+                purge: None,
             }],
             base_cause: String::new(),
             done: 0,
@@ -202,5 +203,24 @@ fn a_page_with_no_event_is_not_printed_and_another_domains_is_its_type_alone() {
     assert_eq!(
         event_row(&other),
         Some(json!({"type": "TrustGranted", "sequence": 5}))
+    );
+}
+
+// protos.md §1.4: a purge's step prints its kind and the slot it removes,
+// the trash path of its request (G12).
+#[test]
+fn a_purge_s_step_prints_the_slot_it_removes() {
+    let step = library_tree::Step {
+        replace: None,
+        create: None,
+        trash: None,
+        r#move: None,
+        purge: Some(library_tree::PurgeSlot {
+            request_id: "r-0".to_string(),
+        }),
+    };
+    assert_eq!(
+        super::step_row(&step),
+        json!({"kind": "purge", "path": "state/trash/r-0"})
     );
 }

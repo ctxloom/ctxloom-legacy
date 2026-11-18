@@ -268,6 +268,9 @@ pub fn intent_of(
             path: path.clone(),
             seen_sequence: seen,
             evidence,
+            // A lone removal's trash is kept 7 days (G12): only a
+            // sequence's own (U9) is removed by its last step.
+            keep: true,
         }),
     })
 }
@@ -365,6 +368,28 @@ pub fn command_book(
                 handling: None,
             })),
             command_id: Some(Uuid::from_bytes(request_id)),
+            ..CommandPage::default()
+        }),
+    }
+}
+
+/// The book that sends the purge `purge` of a kept trash slot to `tree`'s
+/// stream under the command id `id` (G12): one derived from the slot, so a
+/// second purge of it is a DUPLICATE.
+pub fn purge_book(
+    tree: &library_tree::TreeName,
+    purge: library_tree::PurgeTrash,
+    id: [u8; 16],
+) -> angzarr_embedded::v1::CommandBook {
+    use angzarr_embedded::v1::{command_page, Command, CommandPage, Uuid};
+    angzarr_embedded::v1::CommandBook {
+        cover: Some(cover_of(tree)),
+        page: Some(CommandPage {
+            body: Some(command_page::Body::Command(Command {
+                payload: Some(purge.to_wire_any()),
+                handling: None,
+            })),
+            command_id: Some(Uuid::from_bytes(id)),
             ..CommandPage::default()
         }),
     }

@@ -13,8 +13,8 @@
 use angzarr_embedded::markup::TypedRefusal;
 
 use crate::{
-    BuiltinReadOnly, LibraryIgnored, LibraryTreeRejection, NoSuchResource, NotInGit,
-    OneChangePerCall, PlanRejected, PlanStale, ResourceExists, TreeInMotion,
+    BuiltinReadOnly, LibraryIgnored, LibraryTreeRejection, NoSuchResource, NoSuchSlot, NotInGit,
+    OneChangePerCall, PlanRejected, PlanStale, ResourceExists, SlotNotDue, TreeInMotion,
 };
 
 /// What a command handler fails with for `rejection`: the typed refusal
@@ -83,6 +83,19 @@ impl TryFrom<&TypedRefusal> for LibraryTreeRejection {
         }
         if let Some(OneChangePerCall { paths }) = refusal.object() {
             return Ok(LibraryTreeRejection::OneChangePerCall { paths });
+        }
+        if let Some(NoSuchSlot { request_id }) = refusal.object() {
+            return Ok(LibraryTreeRejection::NoSuchSlot { request_id });
+        }
+        if let Some(SlotNotDue {
+            request_id,
+            age_days,
+        }) = refusal.object()
+        {
+            return Ok(LibraryTreeRejection::SlotNotDue {
+                request_id,
+                age_days,
+            });
         }
         Err(NotOurs)
     }

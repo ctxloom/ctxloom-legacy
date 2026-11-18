@@ -182,7 +182,19 @@ rename into `state/trash/<request id>/<path>` (nothing there to take is
 It is then read back and recorded `RecordStepDone`, and answered with
 the path's new etag. A tree's staging is swept the first time a daemon
 observes the tree (`Observations::sweeping`, a read's or a write's; S50);
-the trash is never swept at start. The rename's directory is not synced
+the trash is never swept at start. A removal's slot is in the tree's
+state (`library_tree::Slot`: its paths, the time its intent was recorded,
+`kept`; every lone removal is kept, a sequence's own will not be, U9), and
+a kept slot `KEEP_DAYS` (7, G12) old or more by the daemon's clock is
+purged when the daemon next observes its tree (`Observations::purging`;
+QUESTIONS 4 says each round and at start, and the observation is where a
+tree's directory is known): the domain's `PurgeTrash` (its age the
+evidence, refused `library-tree-slot-not-due` under 7 and
+`library-tree-no-such-slot` once purged; its command id UUIDv5 of
+`purge:{tree}:{request id}`), the slot removed whole, its `PurgeSlot` step
+recorded done, which drops it from the state. Under test-support the
+daemon's clock is moved on by `CTXLOOM_TEST_CLOCK_OFFSET` whole days,
+passed on to a daemon a command starts. The rename's directory is not synced
 (the file-system seam gives no way to), so a power loss may undo it,
 leaving the intent owed. An
 observation that sees exactly a pending intent's ids is that step done

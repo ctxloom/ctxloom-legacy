@@ -18,14 +18,14 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
 use crate::refusal::refuse;
 use crate::{
-    cause_of, ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath, Evidence,
-    External, Intent, IntentSuperseded, Library, LibraryCommand, LibraryEvent,
-    LibraryTreeRejection, MovePath, RecordStepDone, RecordStepFailed, RecordTreeObserved,
-    ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeObserved,
+    BuiltinReadOnly, LibraryIgnored, NoSuchResource, NoSuchSlot, NotInGit, OneChangePerCall,
+    PlanRejected, PlanStale, ResourceExists, SlotNotDue, TreeInMotion,
 };
 use crate::{
-    BuiltinReadOnly, LibraryIgnored, NoSuchResource, NotInGit, OneChangePerCall, PlanRejected,
-    PlanStale, ResourceExists, TreeInMotion,
+    ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath, Evidence, External,
+    Intent, IntentSuperseded, Library, LibraryCommand, LibraryEvent, LibraryTreeRejection,
+    MovePath, PurgeSlot, PurgeTrash, RecordStepDone, RecordStepFailed, RecordTreeObserved,
+    ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeObserved, KEEP_DAYS,
 };
 
 /// The code a plan's rejection takes when the tree no longer reads and the
@@ -379,6 +379,7 @@ impl LibraryAggregate {
             create: None,
             trash: None,
             r#move: None,
+            purge: None,
         };
         Ok(Some(self.intent(verb, vec![step], ctx)))
     }
@@ -427,6 +428,7 @@ impl LibraryAggregate {
             create: Some(cmd),
             trash: None,
             r#move: None,
+            purge: None,
         };
         Ok(Some(self.intent(verb, vec![step], ctx)))
     }
@@ -477,6 +479,7 @@ impl LibraryAggregate {
             create: None,
             trash: Some(cmd),
             r#move: None,
+            purge: None,
         };
         Ok(Some(self.intent(verb, vec![step], ctx)))
     }
@@ -524,6 +527,7 @@ impl LibraryAggregate {
             create: None,
             trash: None,
             r#move: Some(cmd),
+            purge: None,
         };
         Ok(Some(self.intent(verb, vec![step], ctx)))
     }
@@ -560,6 +564,55 @@ impl LibraryAggregate {
                 )
             })?;
         Ok(Some(self.intent(cmd.verb, cmd.steps, ctx)))
+    }
+
+    /// The purge of a kept trash slot (G12, L12): the slot must be in the
+    /// state and, by the daemon's clock (its age the EVIDENCE: decide reads
+    /// no clock), at least [`KEEP_DAYS`] old. Its one step removes the
+    /// slot; its `StepApplied` drops it from the state.
+    #[handles_cmd(PurgeTrash, refuses(NoSuchSlot, SlotNotDue))]
+    fn purge(
+        &self,
+        cmd: PurgeTrash,
+        ctx: &Context,
+    ) -> Result<Option<ChangeIntended>, Failed<Refuses<Self, PurgeTrash>>> {
+        let refused = if !self.library.trashed.contains_key(&cmd.request_id) {
+            Some(LibraryTreeRejection::NoSuchSlot {
+                request_id: cmd.request_id.clone(),
+            })
+        } else if cmd.age_days < KEEP_DAYS {
+            Some(LibraryTreeRejection::SlotNotDue {
+                request_id: cmd.request_id.clone(),
+                age_days: cmd.age_days,
+            })
+        } else {
+            None
+        };
+        if let Some(rejection) = refused {
+            return Err(refuse!(
+                LibraryTreeRejection,
+                rejection,
+                Refuses<Self, PurgeTrash>,
+                [
+                    NoSuchSlot { request_id } => NoSuchSlot,
+                    SlotNotDue { request_id, age_days } => SlotNotDue,
+                ]
+            ));
+        }
+        let step = Step {
+            replace: None,
+            create: None,
+            trash: None,
+            r#move: None,
+            purge: Some(PurgeSlot {
+                request_id: cmd.request_id,
+            }),
+        };
+        Ok(Some(self.intent(
+            "trash purge".to_string(),
+            vec![step],
+            ctx,
+        )))
     }
 
     /// An observation (L5): recorded when it adds anything to the state, a
@@ -639,46 +692,37 @@ impl LibraryAggregate {
 
     #[applies(TreeObserved)]
     fn tree_observed(&mut self, event: TreeObserved, page: &PageContext) {
-        self.library.apply(
-            &LibraryEvent::TreeObserved(event),
-            page.sequence,
-            cause_of(page.meta),
-        );
+        self.library
+            .apply_page(&LibraryEvent::TreeObserved(event), page.sequence, page.meta);
     }
 
     #[applies(ChangeIntended)]
     fn change_intended(&mut self, event: ChangeIntended, page: &PageContext) {
-        self.library.apply(
+        self.library.apply_page(
             &LibraryEvent::ChangeIntended(event),
             page.sequence,
-            cause_of(page.meta),
+            page.meta,
         );
     }
 
     #[applies(StepApplied)]
     fn step_applied(&mut self, event: StepApplied, page: &PageContext) {
-        self.library.apply(
-            &LibraryEvent::StepApplied(event),
-            page.sequence,
-            cause_of(page.meta),
-        );
+        self.library
+            .apply_page(&LibraryEvent::StepApplied(event), page.sequence, page.meta);
     }
 
     #[applies(ChangeFailed)]
     fn change_failed(&mut self, event: ChangeFailed, page: &PageContext) {
-        self.library.apply(
-            &LibraryEvent::ChangeFailed(event),
-            page.sequence,
-            cause_of(page.meta),
-        );
+        self.library
+            .apply_page(&LibraryEvent::ChangeFailed(event), page.sequence, page.meta);
     }
 
     #[applies(IntentSuperseded)]
     fn intent_superseded(&mut self, event: IntentSuperseded, page: &PageContext) {
-        self.library.apply(
+        self.library.apply_page(
             &LibraryEvent::IntentSuperseded(event),
             page.sequence,
-            cause_of(page.meta),
+            page.meta,
         );
     }
 }

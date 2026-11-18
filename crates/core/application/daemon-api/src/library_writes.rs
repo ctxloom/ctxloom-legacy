@@ -489,6 +489,9 @@ fn step_path(step: &library_tree::Step) -> String {
     if let Some(trash) = &step.trash {
         return trash.path.clone();
     }
+    if let Some(purged) = &step.purge {
+        return format!("{}/{}", ctxloom_ports::TRASH_DIR, purged.request_id);
+    }
     step.r#move
         .as_ref()
         .map(|moved| moved.from.clone())

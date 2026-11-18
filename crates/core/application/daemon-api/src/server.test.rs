@@ -1269,6 +1269,7 @@ pub(crate) fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
         harps: Arc::new(OneHarp),
         observers: Arc::clone(gits) as Arc<dyn library_api::Observers>,
         operations: Arc::new(NoOperations),
+        clock: Arc::new(|| 0),
     }
 }
 

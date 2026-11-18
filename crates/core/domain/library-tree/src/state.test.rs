@@ -64,6 +64,7 @@ fn intent(request: &str, steps: usize) -> LibraryEvent {
         create: None,
         trash: None,
         r#move: None,
+        purge: None,
     };
     LibraryEvent::ChangeIntended(ChangeIntended {
         intent: crate::Intent {
@@ -373,7 +374,11 @@ fn the_wire_state_carries_every_part_of_the_fold() {
     library.apply(&intent("r-1", 1), 5, "r-1".to_string());
     library.trashed.insert(
         "r-0".to_string(),
-        vec!["content/bundles/v2/old".to_string()],
+        crate::Slot {
+            paths: vec!["content/bundles/v2/old".to_string()],
+            trashed_at: 1_700_000_000,
+            kept: true,
+        },
     );
     let wire = library.wire();
     assert_eq!(wire.name, TREE);

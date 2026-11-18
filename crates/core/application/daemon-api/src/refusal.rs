@@ -646,6 +646,14 @@ pub fn library_refusal(rejection: &library_tree::LibraryTreeRejection) -> ApiRef
         Why::NoSuchResource { path } => typed(&library_tree::NoSuchResource { path }),
         Why::BuiltinReadOnly { bundle } => typed(&library_tree::BuiltinReadOnly { bundle }),
         Why::OneChangePerCall { paths } => typed(&library_tree::OneChangePerCall { paths }),
+        Why::NoSuchSlot { request_id } => typed(&library_tree::NoSuchSlot { request_id }),
+        Why::SlotNotDue {
+            request_id,
+            age_days,
+        } => typed(&library_tree::SlotNotDue {
+            request_id,
+            age_days,
+        }),
     }
 }
 

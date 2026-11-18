@@ -52,6 +52,7 @@ syntax = "proto3";
 // `TreeInMotion` (10b).
 package ctxloom.library.v1;
 
+import "google/protobuf/timestamp.proto";
 import "io/angzarr/v1/options.proto";
 
 // Which kind of tree.
@@ -241,6 +242,14 @@ message Step {
   optional CreateDirectory create = 2;
   optional TrashPath trash = 3;
   optional MovePath move = 4;
+  // 10b (U8, G12): a trash slot removed whole (`state/trash/<request_id>/`):
+  // the one step of a `PurgeTrash`, or a sequence's last step for its own.
+  optional PurgeSlot purge = 5;
+}
+
+// The trash slot of the request `request_id`, removed whole.
+message PurgeSlot {
+  string request_id = 1;
 }
 
 // Replace one file whole (or create it). `seen_sequence` is the etag the
@@ -311,6 +320,28 @@ message TrashPath {
   // The path's token as the caller read it (a bundle's, for a bundle).
   uint64 seen_sequence = 4;
   Evidence evidence = 5;
+  // 10b (G12): kept 7 days, then purged (`bundle remove`, `skill remove`,
+  // `clean`, every lone removal); false for a sequence's own trash, which
+  // its last step removes.
+  bool keep = 6;
+}
+
+// Purge one kept trash slot (G12, L12): sent by the daemon for each slot
+// whose `trashed_at` is 7 or more days before its clock; the age is
+// EVIDENCE (decide reads no clock). Its command id is derived from
+// `purge:{tree}:{request_id}`, so two purges of one slot are one.
+message PurgeTrash {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.ChangeIntended"]
+    refuses: "ctxloom.library.v1.NoSuchSlot"
+    refuses: "ctxloom.library.v1.SlotNotDue"
+  };
+
+  string name = 1;
+  string request_id = 2;
+  // Whole days since `trashed_at`, by the daemon's clock.
+  uint32 age_days = 3;
 }
 
 // ctxloom's own move: one rename, recorded as such (L7).
@@ -402,6 +433,11 @@ message Intent {
 message Trashed {
   string request_id = 1;
   repeated string paths = 2;
+  // G12: when it was trashed, set by `apply` from the ChangeIntended's
+  // recorded time, so the daemon can tell when it is 7 days old.
+  google.protobuf.Timestamp trashed_at = 3;
+  // False for a sequence's own slot, which its last step removes.
+  bool kept = 4;
 }
 
 message ChangeIntended {
@@ -460,6 +496,21 @@ message ResourceExists {
 message NoSuchResource {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
   string path = 1;
+}
+
+// `library-tree-no-such-slot`: the slot is not in the state (purged
+// already).
+message NoSuchSlot {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_NOT_FOUND;
+  string request_id = 1;
+}
+
+// `library-tree-slot-not-due`: fewer than 7 days (a bug in the caller;
+// nothing is purged early).
+message SlotNotDue {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  string request_id = 1;
+  uint32 age_days = 2;
 }
 
 // `library-tree-builtin-read-only` (ruling 127's text, moved).

@@ -37,6 +37,10 @@ pub enum LibraryTreeRejection {
     /// The change would change more than one file (T29, D14): each, below
     /// its bundle.
     OneChangePerCall { paths: Vec<String> },
+    /// No trash slot of the request is in the state (purged already).
+    NoSuchSlot { request_id: String },
+    /// The slot is younger than [`crate::KEEP_DAYS`] (G12).
+    SlotNotDue { request_id: String, age_days: u32 },
 }
 
 /// A motion as the catalog's selector names it.
@@ -68,6 +72,8 @@ impl Diagnostic for LibraryTreeRejection {
             LibraryTreeRejection::NotInGit { .. } => code!("not-in-git"),
             LibraryTreeRejection::LibraryIgnored { .. } => code!("library-ignored"),
             LibraryTreeRejection::OneChangePerCall { .. } => code!("one-change-per-call"),
+            LibraryTreeRejection::NoSuchSlot { .. } => code!("no-such-slot"),
+            LibraryTreeRejection::SlotNotDue { .. } => code!("slot-not-due"),
         }
     }
 
@@ -104,6 +110,16 @@ impl Diagnostic for LibraryTreeRejection {
             LibraryTreeRejection::OneChangePerCall { paths } => vec![
                 ("count", paths.len().into()),
                 ("paths", paths.join(", ").into()),
+            ],
+            LibraryTreeRejection::NoSuchSlot { request_id } => {
+                vec![("request_id", request_id.as_str().into())]
+            }
+            LibraryTreeRejection::SlotNotDue {
+                request_id,
+                age_days,
+            } => vec![
+                ("request_id", request_id.as_str().into()),
+                ("age_days", (*age_days).into()),
             ],
         }
     }
@@ -145,6 +161,13 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(LibraryTreeRejection::OneChangePerCall {
             paths: vec!["fragments/a.md".to_string(), "fragments/b.md".to_string()],
+        }),
+        Box::new(LibraryTreeRejection::NoSuchSlot {
+            request_id: "01a1ecdd-5f31-75fa-8782-789facb7078e".to_string(),
+        }),
+        Box::new(LibraryTreeRejection::SlotNotDue {
+            request_id: "01a1ecdd-5f31-75fa-8782-789facb7078e".to_string(),
+            age_days: 6,
         }),
     ]
 }

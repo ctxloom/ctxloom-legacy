@@ -66,6 +66,10 @@ fn step_row(step: &library_tree::Step) -> Value {
     if let Some(moved) = &step.r#move {
         return json!({"kind": "move", "path": moved.from, "from": moved.from, "to": moved.to});
     }
+    if let Some(purged) = &step.purge {
+        let slot = format!("{}/{}", ctxloom_ports::TRASH_DIR, purged.request_id);
+        return json!({"kind": "purge", "path": slot});
+    }
     json!({"kind": ""})
 }
 

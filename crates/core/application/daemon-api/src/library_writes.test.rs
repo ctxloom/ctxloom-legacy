@@ -88,10 +88,20 @@ fn test_a_steps_path_is_its_kinds_own() {
                 ignored: None,
                 root: String::new(),
             },
+            keep: true,
         }),
         r#move: None,
+        purge: None,
     };
     assert_eq!(step_path(&step), "content/bundles/v2/demo");
+    let purge = library_tree::Step {
+        trash: None,
+        purge: Some(library_tree::PurgeSlot {
+            request_id: "r-0".to_string(),
+        }),
+        ..step
+    };
+    assert_eq!(step_path(&purge), "state/trash/r-0");
 }
 
 // E1, extended to the writes: a write's directory is the one it carries,

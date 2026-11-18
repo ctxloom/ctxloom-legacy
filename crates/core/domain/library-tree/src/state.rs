@@ -26,6 +26,22 @@ pub struct Resource {
     pub oid: String,
 }
 
+/// How long a kept trash slot is kept before the daemon purges it (G12,
+/// N = 7 days).
+pub const KEEP_DAYS: u32 = 7;
+
+/// A trash slot (L12): the paths a removal took into
+/// `state/trash/<request id>/`, when its intent was recorded (seconds since
+/// the epoch, the page's own time; decide reads no clock), and whether it
+/// is kept ([`KEEP_DAYS`], then purged) or a sequence's own (its last step
+/// removes it).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Slot {
+    pub paths: Vec<String>,
+    pub trashed_at: i64,
+    pub kept: bool,
+}
+
 /// A library tree as its stream holds it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Library {
@@ -44,8 +60,8 @@ pub struct Library {
     pub last_cause: String,
     /// The intents not yet done, by request id (10b, U3).
     pub pending: BTreeMap<String, Intent>,
-    /// Trash slots, by request id (10b, U8): nothing folds one yet.
-    pub trashed: BTreeMap<String, Vec<String>>,
+    /// Trash slots, by request id (10b, U8, G12).
+    pub trashed: BTreeMap<String, Slot>,
     /// Per path, the last event that named it.
     pub resources: BTreeMap<String, Resource>,
     /// The sequence of the tree's last baseline.
@@ -108,11 +124,26 @@ impl Library {
         named.peek().is_some() && named.all(|(_, resource)| resource.oid.is_empty())
     }
 
-    /// Fold `event`, recorded at `sequence` and caused by `cause`.
-    pub fn apply(&mut self, event: &LibraryEvent, sequence: u64, cause: String) {
+    /// Fold `event`, recorded on a page at `sequence` with `meta`: its
+    /// cause ([`cause_of`]) and its time (a trash slot's).
+    pub fn apply_page(&mut self, event: &LibraryEvent, sequence: u64, meta: Option<&EventMeta>) {
+        let at = meta
+            .and_then(|meta| meta.recorded_at.as_ref())
+            .map_or(0, |at| at.seconds);
+        self.fold(event, sequence, cause_of(meta), at);
+    }
+
+    /// Fold `event`, recorded at `sequence` and caused by `cause`, at no
+    /// time: a test's.
+    #[cfg(test)]
+    pub(crate) fn apply(&mut self, event: &LibraryEvent, sequence: u64, cause: String) {
+        self.fold(event, sequence, cause, 0);
+    }
+
+    fn fold(&mut self, event: &LibraryEvent, sequence: u64, cause: String, at: i64) {
         match event {
             LibraryEvent::TreeObserved(observed) => self.observed(observed, sequence),
-            LibraryEvent::ChangeIntended(intended) => self.intended(intended),
+            LibraryEvent::ChangeIntended(intended) => self.intended(intended, at),
             LibraryEvent::StepApplied(applied) => self.applied(applied, sequence),
             LibraryEvent::ChangeFailed(failed) => self.failed(failed),
             LibraryEvent::IntentSuperseded(superseded) => self.superseded(superseded),
@@ -180,8 +211,19 @@ impl Library {
         }
     }
 
-    fn intended(&mut self, intended: &ChangeIntended) {
+    fn intended(&mut self, intended: &ChangeIntended, at: i64) {
         let intent = &intended.intent;
+        for trash in intent.steps.iter().filter_map(|step| step.trash.as_ref()) {
+            let slot = self
+                .trashed
+                .entry(intent.request_id.clone())
+                .or_insert_with(|| Slot {
+                    paths: Vec::new(),
+                    trashed_at: at,
+                    kept: trash.keep,
+                });
+            slot.paths.push(trash.path.clone());
+        }
         self.pending
             .insert(intent.request_id.clone(), intent.clone());
     }
@@ -200,6 +242,13 @@ impl Library {
         let Some(intent) = self.pending.get_mut(&applied.request_id) else {
             return;
         };
+        if let Some(purged) = intent
+            .steps
+            .get(applied.step as usize)
+            .and_then(|step| step.purge.as_ref())
+        {
+            self.trashed.remove(&purged.request_id);
+        }
         intent.done = intent.done.max(applied.step + 1);
         if intent.done as usize >= intent.steps.len() {
             self.pending.remove(&applied.request_id);
@@ -207,6 +256,16 @@ impl Library {
     }
 
     fn failed(&mut self, failed: &ChangeFailed) {
+        // A trash that failed moved nothing: its slot holds nothing.
+        let trashing = self.pending.get(&failed.request_id).is_some_and(|intent| {
+            intent
+                .steps
+                .get(failed.step as usize)
+                .is_some_and(|step| step.trash.is_some())
+        });
+        if trashing && failed.step == 0 {
+            self.trashed.remove(&failed.request_id);
+        }
         self.pending.remove(&failed.request_id);
     }
 
@@ -232,12 +291,17 @@ impl Library {
             trashed: self
                 .trashed
                 .iter()
-                .map(|(id, paths)| {
+                .map(|(id, slot)| {
                     (
                         id.clone(),
                         wire::Trashed {
                             request_id: id.clone(),
-                            paths: paths.clone(),
+                            paths: slot.paths.clone(),
+                            trashed_at: Some(angzarr_embedded::Timestamp {
+                                seconds: slot.trashed_at,
+                                nanos: 0,
+                            }),
+                            kept: slot.kept,
                         },
                     )
                 })

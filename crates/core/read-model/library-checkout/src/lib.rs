@@ -22,7 +22,7 @@ use angzarr_embedded::angzarr_router::hpb::{ProjectRequest, ProjectResponse};
 use angzarr_embedded::v1::{event_page, Cover, EventBook};
 use angzarr_embedded::{Any, CatchUp, Payload, PayloadError, ProjectorHandler};
 use held_projection::{Fill, Held, Lock, Model};
-use library_tree::{cause_of, Library, LibraryEvent, LIBRARY_DOMAIN};
+use library_tree::{Library, LibraryEvent, LIBRARY_DOMAIN};
 
 /// The checkouts.
 #[derive(Default)]
@@ -88,7 +88,7 @@ impl LibraryCheckout {
             };
             let event = LibraryEvent::from_any(event)?;
             let row = self.rows.entry(root.clone()).or_default();
-            row.apply(&event, page.sequence, cause_of(page.meta.as_ref()));
+            row.apply_page(&event, page.sequence, page.meta.as_ref());
             let pending = row.pending.clone();
             self.track(&root, &event, &pending);
         }

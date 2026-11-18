@@ -89,6 +89,9 @@ pub struct Observing {
     /// The atomic operations a write makes its change through (step 10b
     /// U8), whose staging of a tree is swept at its first observation.
     pub operations: Arc<dyn ctxloom_ports::Operations>,
+    /// The daemon's clock, by which a kept trash slot's age is told and
+    /// purged at its tree's observation (G12).
+    pub clock: library_api::Clock,
 }
 
 /// A session's state now, from its liveness lock in its project.
@@ -602,7 +605,8 @@ impl<E: Edge> Api<E> {
             observing.checkouts,
             observing.harps,
         )
-        .sweeping(observing.operations);
+        .sweeping(observing.operations)
+        .purging(observing.clock);
         Api {
             observing: Some((observations, observing.observers)),
             ..self

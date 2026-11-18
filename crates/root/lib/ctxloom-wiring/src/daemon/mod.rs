@@ -99,6 +99,12 @@ fn daemon_env<N: AsRef<OsStr>, V: AsRef<OsStr>>(
     env
 }
 
+/// The test-support variable moving the daemon's clock on by whole days
+/// (step 10b's harness, QUESTIONS 5): passed on to a daemon a command
+/// starts, read by its trash clock.
+#[cfg(feature = "test-support")]
+pub(crate) const CLOCK_OFFSET_VARIABLE: &str = "CTXLOOM_TEST_CLOCK_OFFSET";
+
 /// The test-support variable naming the OS account's home, so a test's
 /// temporary home is the account's for the daemon (and a test can tell the
 /// account's home from a moved HOME). Read only under `test-support`.
@@ -1181,6 +1187,12 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     #[cfg(feature = "test-support")]
     if let Some(account) = account_home(env) {
         kept.push((ACCOUNT_HOME_VARIABLE.into(), account.into_os_string()));
+    }
+    // A test's clock offset (step 10b, the trash's 7 days) is the daemon's
+    // clock's.
+    #[cfg(feature = "test-support")]
+    if let Some(days) = env.non_empty(CLOCK_OFFSET_VARIABLE) {
+        kept.push((CLOCK_OFFSET_VARIABLE.into(), days.to_os_string()));
     }
     command.env_clear().envs(kept).current_dir(wiring.home());
     // DETACHED (T3, M8): a session of its own on unix (setsid), no console

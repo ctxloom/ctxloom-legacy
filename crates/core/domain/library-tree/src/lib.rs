@@ -41,7 +41,7 @@ pub use refusal::NotOurs;
 #[cfg(any(test, feature = "test-support"))]
 pub use rejection::diagnostic_samples;
 pub use rejection::{motion_word, LibraryTreeRejection, EN_US};
-pub use state::{cause_of, Library, Resource, LIBRARY_DOMAIN};
+pub use state::{cause_of, Library, Resource, Slot, KEEP_DAYS, LIBRARY_DOMAIN};
 
 #[cfg(test)]
 #[path = "lib.test.rs"]

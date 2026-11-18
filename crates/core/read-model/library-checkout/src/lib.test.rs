@@ -221,6 +221,7 @@ fn intended(request: &str, steps: usize) -> LibraryEvent {
         create: None,
         trash: None,
         r#move: None,
+        purge: None,
     };
     LibraryEvent::ChangeIntended(library_tree::ChangeIntended {
         intent: library_tree::Intent {

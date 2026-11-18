@@ -118,7 +118,13 @@ pub struct Observations<E> {
     operations: Option<Arc<dyn Operations>>,
     /// The trees whose staging this daemon has swept.
     swept: Mutex<BTreeSet<String>>,
+    /// The daemon's clock, in seconds since the epoch, by which a kept
+    /// trash slot's age is told (G12); none, nothing is purged.
+    clock: Option<Clock>,
 }
+
+/// The daemon's clock: now, in seconds since the epoch.
+pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
 impl<E: Edge> Observations<E> {
     /// Recorded through `edge`, reconciled against `checkouts` (the
@@ -134,6 +140,7 @@ impl<E: Edge> Observations<E> {
             harps,
             operations: None,
             swept: Mutex::new(BTreeSet::new()),
+            clock: None,
         }
     }
 
@@ -143,6 +150,17 @@ impl<E: Edge> Observations<E> {
     pub fn sweeping(self, operations: Arc<dyn Operations>) -> Observations<E> {
         Observations {
             operations: Some(operations),
+            ..self
+        }
+    }
+
+    /// These observations, each tree's kept trash slots
+    /// [`library_tree::KEEP_DAYS`] old or more by `clock` purged when the
+    /// tree is observed (G12, L12).
+    #[must_use]
+    pub fn purging(self, clock: Clock) -> Observations<E> {
+        Observations {
+            clock: Some(clock),
             ..self
         }
     }
@@ -168,6 +186,62 @@ impl<E: Edge> Observations<E> {
         }
         operations.sweep_staging(tree).map_err(ReadError::Failed)?;
         swept.insert(tree.to_string());
+        Ok(())
+    }
+
+    /// The kept trash slots of `tree` (its directory `dir`) at least
+    /// [`library_tree::KEEP_DAYS`] old by the daemon's clock, purged (G12,
+    /// L12): for each, the domain's `PurgeTrash` (its command id derived
+    /// from the tree and the slot, so a second purge of one slot is a
+    /// DUPLICATE), the slot removed whole, and its one step recorded done,
+    /// which drops it from the state. A younger slot, or a sequence's own,
+    /// is left; nothing is purged without a clock.
+    async fn purge_due(&self, dir: &str, tree: &TreeName) -> Result<(), ReadError> {
+        let (Some(clock), Some(operations)) = (&self.clock, &self.operations) else {
+            return Ok(());
+        };
+        let now = clock();
+        let due: Vec<(String, u32)> = self
+            .held(tree)
+            .trashed
+            .iter()
+            .filter(|(_, slot)| slot.kept)
+            .map(|(request, slot)| {
+                let days = (now - slot.trashed_at).max(0) / 86_400;
+                (request.clone(), u32::try_from(days).unwrap_or(u32::MAX))
+            })
+            .filter(|(_, days)| *days >= library_tree::KEEP_DAYS)
+            .collect();
+        for (request, age_days) in due {
+            let key = format!("purge:{tree}:{request}");
+            let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes());
+            let purge = library_tree::PurgeTrash {
+                name: tree.to_string(),
+                request_id: request.clone(),
+                age_days,
+            };
+            self.edge
+                .handle(crate::writes::purge_book(tree, purge, id.into_bytes()))
+                .await
+                .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
+            operations
+                .purge_slot(dir, &request)
+                .map_err(ReadError::Failed)?;
+            let purger = id.to_string();
+            let done = library_tree::RecordStepDone {
+                request_id: purger.clone(),
+                step: 0,
+                observed: Vec::new(),
+            };
+            self.edge
+                .handle(crate::writes::step_book(
+                    tree,
+                    &done,
+                    &format!("done:{purger}:0"),
+                ))
+                .await
+                .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
+        }
         Ok(())
     }
 
@@ -201,6 +275,7 @@ impl<E: Edge> Observations<E> {
                 .await
                 .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
         }
+        self.purge_due(site.tree(), &tree).await?;
         let notices = sight
             .motion
             .map(|motion| LibraryApiNotice::TreeInMotion {
