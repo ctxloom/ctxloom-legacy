@@ -1508,19 +1508,20 @@ fn holds_at_bound(w: &mut World) {
     file.set_len(256 << 20).expect("a sparse hold");
 }
 
-/// The older daemon serving again for a second hook: the first hook that
-/// held for it asked it to drain (H-Q6 (b)), and, hosting nothing, it
-/// exited; a hook finding none would start one of its own version.
+/// The older daemon still serving for a second hook: a hook never touches
+/// a daemon's life (OD-61, OD-62: H-Q6's drain nudge is gone), so the one
+/// the first hook held for serves on. (This step used to wait for it to
+/// exit and start it again; it exited only at its idle time, 15 s a
+/// scenario, the daemon cluster's cap, owner ruling 2026-11-18.)
 fn older_still_serving(w: &mut World) {
-    if let Some(mut gone) = w.daemon_spec.daemon.take() {
-        let deadline = Instant::now() + DAEMON_WAIT;
-        while matches!(gone.try_wait(), Ok(None)) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let _ = gone.kill();
-        let _ = gone.wait();
-    }
-    start_daemon_stamped(w, OLDER_STAMP);
+    let alive = w
+        .daemon_spec
+        .daemon
+        .as_mut()
+        .is_some_and(|daemon| matches!(daemon.try_wait(), Ok(None)));
+    assert!(alive, "the older daemon exited: {}", daemon_log_text(w));
+    assert_eq!(discovery_now(w).stamp, OLDER_STAMP, "the older one serves");
+    assert!(serving_now(w), "the older daemon answers");
 }
 
 #[given("the session's hooks held its prompt and its turn's end while an older daemon served")]
