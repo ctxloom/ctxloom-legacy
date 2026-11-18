@@ -15,6 +15,7 @@ fn request() -> EnqueueRequest {
         mode: runs::RunMode::Interactive,
         evidence: Evidence::passing("claude-code"),
         launcher_lock: "/home/u/.ctxloom/runs/run-1.lock".to_string(),
+        grant: None,
     }
 }
 
@@ -184,4 +185,40 @@ async fn the_enqueue_journals_the_lock_its_launcher_holds() {
         launcher.as_deref(),
         Some("/home/u/.ctxloom/runs/run-1.lock")
     );
+}
+
+// Step 9 (owner ruling 2026-11-17): what a run is given is journaled in its
+// RunEnqueued, as the request says it.
+#[tokio::test]
+async fn the_enqueue_journals_what_the_run_was_given() {
+    let edge = Arc::new(KernelEdge::new());
+    minted(&edge).await;
+    let enqueuer = Enqueuer::new(Arc::clone(&edge));
+    let grant = runs::Grant {
+        mcp_servers: vec!["ctxloom".to_string(), "review-tools".to_string()],
+        permissions: r#"{"defaultMode":"plan"}"#.to_string(),
+    };
+    let enqueued = enqueuer
+        .enqueue(EnqueueRequest {
+            grant: Some(grant.clone()),
+            ..request()
+        })
+        .await
+        .unwrap();
+    let cover = angzarr_embedded::v1::Cover {
+        domain: runs::RUN_DOMAIN.to_string(),
+        root: Some(enqueued.run.clone()),
+        edition: None,
+    };
+    let pages = edge.events(&cover, 0).await.unwrap();
+    let journaled = pages.iter().find_map(|page| match &page.body {
+        Some(angzarr_embedded::v1::event_page::Body::Event(any)) => {
+            match runs::RunEvent::from_any(any) {
+                Ok(runs::RunEvent::RunEnqueued(enqueued)) => Some(enqueued.grant),
+                _ => None,
+            }
+        }
+        _ => None,
+    });
+    assert_eq!(journaled, Some(Some(grant)));
 }

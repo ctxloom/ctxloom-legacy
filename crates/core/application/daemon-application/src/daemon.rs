@@ -27,6 +27,10 @@ use run_launcher::{Released, Releases, Sweeper, Swept};
 /// How long an ended child has to exit before its tree is stopped.
 const END_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Why a hosted child's incarnation ends when its run was asked to stop
+/// (S19's `session stop`): told to its owner as the run's end.
+const STOPPED: &str = "stopped";
+
 /// How long a draining daemon waits for a busy child, steered to end its
 /// turn, before it hands the child over anyway, its turn in flight cut
 /// (owner ruling OD-54: five minutes).
@@ -225,7 +229,7 @@ impl Releases for LostCheckouts {
             .and_then(|rel| rel.components().next())
             .map(|first| first.as_os_str().to_string_lossy().into_owned())
             .unwrap_or_default();
-        let workspaces = self.workspaces.of(&project_id, &swept.project_dir);
+        let workspaces = self.workspaces.of(&project_id, &swept.project_dir, None);
         match workspaces.remove(&swept.project_dir, &swept.workspace) {
             isolation_ports::Removal::Removed => Released::Removed(swept.workspace.clone()),
             isolation_ports::Removal::Left(why) => Released::Left {
@@ -278,6 +282,9 @@ pub struct Daemon<E: Edge> {
     /// The runs of the children it ended to hand them over: each one's
     /// incarnation ends `drained` at its exit.
     drained: BTreeSet<String>,
+    /// The runs whose stop was asked (S19's `session stop`) and whose
+    /// engine this daemon ended for it: their exit ends them `stopped`.
+    stopping: BTreeSet<String>,
     /// Its clock (OD-54), which times a hand-over's period; none, a busy
     /// child is waited for until its turn ends.
     clock: Option<Arc<dyn Monotonic>>,
@@ -406,6 +413,7 @@ impl<E: Edge> Daemon<E> {
             workspaces: None,
             handing_over: false,
             drained: BTreeSet::new(),
+            stopping: BTreeSet::new(),
             clock: None,
             hand_over_period: HAND_OVER_PERIOD,
             hand_over_began: None,
@@ -1121,6 +1129,16 @@ impl<E: Edge> Daemon<E> {
                 },
                 None => Taken::Again,
             },
+            // Its run asked to stop (S19): its engine ended, the child left
+            // open, its hand-off kept for its next run.
+            Step::Stop { at, .. } => match self.hosted.get(&at.run()) {
+                Some(hosted) => {
+                    self.stopping.insert(at.run());
+                    let _ = hosted.control.end(END_GRACE);
+                    Taken::Done
+                }
+                None => Taken::Again,
+            },
             Step::End { at, .. } => {
                 // The child is closed for good (T6): what it was launched
                 // with is let go, at rest too.
@@ -1214,6 +1232,8 @@ impl<E: Edge> Daemon<E> {
                 mode: RunMode::Structured,
                 evidence: child.evidence.clone(),
                 launcher_lock: lock.path().to_string(),
+                // What it is given, journaled (step 9).
+                grant: Some(child.grant()),
             })
             .await;
         match enqueued {
@@ -1273,7 +1293,7 @@ impl<E: Edge> Daemon<E> {
         let workspaces = self
             .workspaces
             .as_ref()
-            .map(|of| of.of(project_id, project_dir));
+            .map(|of| of.of(project_id, project_dir, Some(&handed.env)));
         let workspace = self.workspace_of(project_id, &at, harp, &planned, &handed);
         let started = self.spawn_child(
             &hosted_engine,
@@ -1821,9 +1841,11 @@ impl<E: Edge> Daemon<E> {
                     )
                     .await;
                 // Ended to be handed over (s4-Q4): the next daemon re-hosts it.
-                let cause = match self.drained.remove(run) {
-                    true => session_policies::ENDED_DRAINED,
-                    false => "runner-exit",
+                let stopped = self.stopping.remove(run);
+                let cause = match (self.drained.remove(run), stopped) {
+                    (true, _) => session_policies::ENDED_DRAINED,
+                    (false, true) => STOPPED,
+                    (false, false) => "runner-exit",
                 };
                 let _ = facts
                     .incarnation_ended(&at.session, at.incarnation, cause)

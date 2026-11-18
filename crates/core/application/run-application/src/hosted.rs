@@ -75,6 +75,26 @@ pub fn hosted_child(
     }
 }
 
+impl HostedChild {
+    /// What the child is given, as its run's enqueue journals it (step 9,
+    /// owner ruling 2026-11-17): its servers' names and its permissions
+    /// document, never a server's command or environment.
+    pub fn grant(&self) -> runs::Grant {
+        let surfaces = &self.surfaces.0;
+        // As the engine carries them: none without context (OD-38), else
+        // ctxloom's own, which shadows one of its name (OD-6), and the rest.
+        let mut mcp_servers = std::collections::BTreeSet::new();
+        if !surfaces.no_context {
+            mcp_servers.insert(surface_ports::CTXLOOM_SERVER.to_string());
+            mcp_servers.extend(surfaces.mcp.iter().map(|server| server.name.clone()));
+        }
+        runs::Grant {
+            mcp_servers: mcp_servers.into_iter().collect(),
+            permissions: self.permissions.clone().unwrap_or_default(),
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "hosted.test.rs"]
 mod tests;

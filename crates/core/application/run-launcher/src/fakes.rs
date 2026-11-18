@@ -189,6 +189,7 @@ pub async fn enqueued_by(edge: &TestEdge, session: &str, harp: &str, launcher_lo
         },
         fatal_findings: 0,
         launcher_lock: launcher_lock.to_string(),
+        grant: None,
         untrusted_settings: Vec::new(),
     }
     .into();
