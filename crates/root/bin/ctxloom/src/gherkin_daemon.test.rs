@@ -54,6 +54,8 @@ pub(super) struct State {
     called: Option<Result<(), daemon_ports::Called>>,
     /// The discovery of a daemon since stopped.
     old: Option<run_ports::Discovery>,
+    /// The discovery of the daemon started after it, read while it served.
+    new: Option<run_ports::Discovery>,
     /// The daemon a command was seen to start.
     first: Option<run_ports::Discovery>,
     /// What two commands run at once came to.
@@ -1846,10 +1848,15 @@ fn restarted(w: &mut World) {
     if let Some(mut daemon) = w.daemon_spec.daemon.take() {
         let _ = daemon.wait();
     }
-    // The next command's daemon idles out at once.
-    w.common.set_env(IDLE_VARIABLE, IDLE_SECONDS.to_string());
+    // The next command's daemon idles as a spawned one does, so it outlives
+    // the steps that call it; its discovery is read here, while `daemon
+    // resolve` has just found it serving, never left to a later step's
+    // timing (under load a short idle time had it gone by then).
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
     let next = run_now(w, &["daemon", "resolve"]);
     assert_eq!(next.code, 0, "{}\n{}", next.said(), daemon_log_text(w));
+    w.daemon_spec.new = Some(discovery_now(w));
     w.daemon_spec.old = Some(old);
 }
 
@@ -2559,7 +2566,7 @@ fn unauthenticated(w: &mut World) {
 #[then("the new discovery file holds another certificate and another bearer")]
 fn rotated(w: &mut World) {
     let old = w.daemon_spec.old.as_ref().expect("a daemon was stopped");
-    let new = discovery_now(w);
+    let new = w.daemon_spec.new.as_ref().expect("another daemon started");
     assert_ne!(new.pid, old.pid, "another daemon");
     assert_ne!(new.cert, old.cert, "another certificate");
     assert_ne!(new.bearer, old.bearer, "another bearer");
@@ -2568,9 +2575,10 @@ fn rotated(w: &mut World) {
 #[then("a client still holding the old bearer is refused")]
 fn old_bearer_refused(w: &mut World) {
     let old = w.daemon_spec.old.clone().expect("a daemon was stopped");
+    let new = w.daemon_spec.new.clone().expect("another daemon started");
     let stale = run_ports::Discovery {
         bearer: old.bearer,
-        ..discovery_now(w)
+        ..new
     };
     assert_eq!(
         get_daemon(&stale),
