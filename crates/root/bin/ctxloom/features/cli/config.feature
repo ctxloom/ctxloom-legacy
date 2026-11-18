@@ -1,11 +1,11 @@
+# world: base
 # Ported from cli/config.feature (rev f36e8dfb2)
-# NOT ported: any of it yet (the Feature is @pending).
+# NOT ported: the Rules tagged @pending (every Rule but the last).
 # OD-40 (aip/configuration, 2026-11-13; OQ-19): the JSON steps read the AIP resource (library.proto's
 #   `Config` singleton, design §3.9, §5.8): `{name: projects/{project}/config, document: {...}}`, so
 #   a path into the configuration starts `document.`. Still pending.
 
 @doc
-@pending
 Feature: config — the project's one configuration document, read and scaffolded
 
   Covers: `ctxloom config show [section]`, `config create`, `config edit`,
@@ -33,6 +33,7 @@ Feature: config — the project's one configuration document, read and scaffolde
   engine-axis matrix lives; this file asserts what create writes and what it
   refuses.
 
+  @pending
   Rule: The bare noun renders the whole document
 
     Someone typing a noun on its own wants to know what they have. `ctxloom
@@ -128,6 +129,7 @@ Feature: config — the project's one configuration document, read and scaffolde
       And the output is valid JSON
       And the output contains "claude-code"
 
+  @pending
   Rule: A section view narrows, and narrowing is asserted by what is absent
 
     `config show <section>` claims to answer a smaller question than bare `show`.
@@ -242,6 +244,7 @@ Feature: config — the project's one configuration document, read and scaffolde
       And the output contains "unknown command"
       And the output contains "shwo"
 
+  @pending
   Rule: Create writes the scaffold, and never over an existing config
 
     `config create` materializes what a project needs to BE a ctxloom project
@@ -296,6 +299,7 @@ Feature: config — the project's one configuration document, read and scaffolde
       And the file ".ctxloom/config.yaml" contains "schema_version: 8"
       And the file ".ctxloom/config.yaml" does not contain "engine:"
 
+  @pending
   Rule: Edit refuses to open an editor on a config that is not there
 
     `config edit` hands the file to $EDITOR, which is why its success path has
@@ -319,3 +323,36 @@ Feature: config — the project's one configuration document, read and scaffolde
       And the output contains "no config at"
       And the output contains "ctxloom config create"
       And the file ".ctxloom/config.yaml" does not exist
+
+  Rule: --raw shows only what the configuration's layers set
+
+    `config show` gives the configuration in effect: the home's layer, the
+    project's laid over it, then the environment's and the flags' overrides.
+    `--raw` answers the other question, what the files themselves say: the
+    two layers merged, and nothing a run adds over them.
+
+    Scenario: --raw shows what the home and the project set, and no override
+      # new: owner ruling 2026-11-17: `--raw` (GetConfig's SET view) is the
+      # layers merged, home and project, nothing filled in; it was a copy of
+      # the effective configuration.
+      Given an initialized ctxloom project
+      And the home already has the file ".ctxloom/config.yaml":
+        """
+        schema_version: 9
+        editor:
+          command: vim
+        """
+      And the project already has the file ".ctxloom/config.yaml":
+        """
+        schema_version: 9
+        output:
+          dir: notes/
+        """
+      When Alice reads what her configuration files say:
+        """
+        ctxloom --config-set sync.on_run=none config show --raw
+        """
+      Then the command succeeds
+      And the output reports "document.editor.command" as "vim"
+      And the output reports "document.output.dir" as "notes/"
+      And the output does not contain "on_run"

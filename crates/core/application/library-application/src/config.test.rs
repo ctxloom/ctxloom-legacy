@@ -199,7 +199,7 @@ mod loading {
                 other => panic!("unexpected {other:?}"),
             })
             .collect();
-        (config.raw, said)
+        (config.value, said)
     }
 
     fn flags_with(sets: &[&str]) -> Flags {
@@ -207,6 +207,44 @@ mod loading {
             config_set: sets.iter().map(ToString::to_string).collect(),
             ..Flags::default()
         }
+    }
+
+    /// The configuration `layers` load to under `flags`, whatever was said.
+    fn config_of(layers: &[&str], flags: &Flags) -> super::super::Config {
+        let (_, mem) = Setup {
+            layers,
+            ..Setup::default()
+        }
+        .fixture();
+        let files: &dyn ConfigFiles = mem.as_ref();
+        load(files, &[], flags, &mut Vec::new()).expect("loaded")
+    }
+
+    // owner ruling 2026-11-17: `--raw` (GetConfig's SET) is what the layers
+    // set, home and project merged: no override, nothing filled in.
+    #[test]
+    fn test_raw_is_the_layers_merged_with_nothing_filled_in() {
+        let config = config_of(
+            &[
+                "schema_version: 9\neditor:\n  command: vim\n",
+                "schema_version: 9\noutput:\n  dir: notes/\n",
+            ],
+            &flags_with(&["sync.on_run=none"]),
+        );
+        let angzarr_yaml::Value::Map(set) = &config.raw else {
+            panic!("not a mapping: {:?}", config.raw);
+        };
+        let keys: Vec<&str> = set.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["schema_version", "editor", "output"]);
+        assert_eq!(
+            config
+                .raw
+                .get("output")
+                .and_then(|o| o.get("dir"))
+                .and_then(angzarr_yaml::Value::as_str),
+            Some("notes/")
+        );
+        assert!(config.value.get("sync").is_some());
     }
 
     #[test]

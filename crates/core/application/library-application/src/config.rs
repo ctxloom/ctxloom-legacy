@@ -66,7 +66,8 @@ pub enum LegacyGo {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub value: Value,
-    /// What the files and overrides set, without the shipped registry.
+    /// What the layers set, home and project merged (`config show --raw`):
+    /// no override of the environment's or the flags', nothing filled in.
     pub raw: Value,
     pub source: Source,
     /// The project-only settings the project layer said and an untrusted
@@ -132,10 +133,12 @@ pub fn load(
         return Err(refused(&violations));
     }
     let merged = layer::merge_layers(&values);
+    // `--raw` (GetConfig's SET): what the layers set, home and project
+    // merged, before any override or stamp (owner ruling 2026-11-17).
+    let raw = merged.clone();
     let merged = override_with(merged, environ, flags, notices)?;
     let mut merged = reduced_when_unreadable(merged, shape_failure);
     stamp(&mut merged);
-    let raw = merged.clone();
     Ok(Config {
         value: merged,
         raw,
