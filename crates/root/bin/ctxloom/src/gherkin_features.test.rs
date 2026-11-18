@@ -861,6 +861,32 @@ fn a_features_scenarios_run_at_once() {
     assert_eq!(got, [("one".to_string(), true), ("two".to_string(), true)]);
 }
 
+/// The forcing test of the lifeline (`tests::lifeline`, the wiring's
+/// `serve::Lifeline`): a daemon hosting a child, whose test (here a process
+/// of the scenario's own holding the lifeline) is killed outright, as
+/// nextest's timeout kills one, ends the child and exits within a bounded
+/// wait. Without the lifeline nothing stops it: the child keeps it busy,
+/// so it never idles out.
+#[test]
+fn a_daemon_whose_test_is_killed_ends_what_it_hosts_and_exits() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let project = super::library::Project::bare();
+    let path = project.dir().join("lifeline.feature");
+    files::put(
+        &path,
+        "# world: base\nFeature: lifeline\n\n  Scenario: its test is killed\n    Given an initialized ctxloom project\n    And the scenario's commands have a lifeline a process of their own holds\n    And a ctxloom daemon is serving for this home, with a child it hosts\n    When the lifeline's holder is killed outright\n    Then the daemon and the child it hosts are gone within 30 seconds\n",
+    );
+    let run = super::gherkin::run(&path);
+    quiet_hook_undone();
+    assert!(run.passed, "{:?}", run.failures);
+    assert_eq!(
+        outcomes(&path, run),
+        [("its test is killed".to_string(), true)]
+    );
+}
+
 /// The split's outcomes are each scenario's own, in the order of the ids,
 /// and an id whose own run ran nothing is red, never left out.
 #[test]

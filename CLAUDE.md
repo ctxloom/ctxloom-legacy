@@ -4462,7 +4462,22 @@ as one FILE, `target/test-guard/inherited-home`, so a test that keeps one
 from the process and writes under it fails (ENOTDIR) instead of writing
 into the caller's; the wiring's
 `test_the_run_inherits_no_home_a_test_could_write_into` holds the run to
-it. The wiring's tests read the process environment through
+it. A test process holds a LIFELINE for its life (2026-11-18, test-support
+only): `tests::lifeline()`, an advisory lock on
+`<temp>/ctxloom-test-lifelines/<pid>-<nanos>.lock` (one whose lock is free
+is removed when the next is made), named to every `ctxloom` it spawns as
+`CTXLOOM_TEST_LIFELINE` (`workspace.test.rs` holds every spawner with a
+cleared environment to it) and passed on by a client to a daemon it
+spawns. A test-support daemon tries the lock each round
+(`serve::Lifeline`); once it can take it, its test is gone (a test killed
+by nextest's timeout drops no TempDir, and its detached daemon, kept busy
+by a child mid-turn, never idled out: six were found hours old), so it
+says `its test is gone: ending what it hosts`, ends them as a stop even if
+live does, and exits. The kernel lets the lock go however the test ended,
+and a reused pid names no lock. A plain build reads no such variable. The
+forcing test is `a_daemon_whose_test_is_killed_ends_what_it_hosts_and_exits`
+(its lifeline held by a process of the scenario's own, killed outright).
+The wiring's tests read the process environment through
 `host_snapshot()` (which drops those names, as `Env` unsets them), under
 the `ENV_LOCK` its `Env` tests hold while they change it. `_tests`
 exits with codes of its own, never nextest's passed through (nextest's 102

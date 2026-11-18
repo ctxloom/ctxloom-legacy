@@ -15,7 +15,7 @@
 //! a real step with the milestone that builds what it asserts.
 
 use std::path::{Path, PathBuf};
-use std::process::Child;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
@@ -57,6 +57,9 @@ pub(super) struct State {
     /// The stores' evidence as it was before the scenario's command ran.
     store_before: Option<StoreEvidence>,
     pub(super) daemon: Option<Child>,
+    /// The process holding the scenario's own lifeline, when a step gave
+    /// its commands one (the lifeline's forcing test).
+    holder: Option<Child>,
     /// The idle time "the daemon's idle time passes" waits out, when not
     /// [`IDLE_SECONDS`]: a busy daemon's [`BUSY_IDLE_SECONDS`].
     idle_wait: Option<u64>,
@@ -163,6 +166,10 @@ pub(super) struct Fired {
 
 impl Drop for State {
     fn drop(&mut self) {
+        if let Some(mut holder) = self.holder.take() {
+            let _ = holder.kill();
+            let _ = holder.wait();
+        }
         if let Some(release) = &self.release {
             files::put(release, "go");
         }
@@ -744,7 +751,6 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
 /// change waits for the question, so it falls between the two, always.
 fn removes_at_terminal(w: &mut World, step: &cucumber::gherkin::Step) {
     use std::io::{Read as _, Write as _};
-    use std::process::{Command, Stdio};
     w.before_run();
     let words = line_words(step);
     let project = &w.common.project;
@@ -755,6 +761,7 @@ fn removes_at_terminal(w: &mut World, step: &cucumber::gherkin::Step) {
         .env("HOME", project.home())
         .env("USERPROFILE", project.home())
         .env("TMPDIR", crate::tests::temp_root())
+        .env(crate::tests::LIFELINE, crate::tests::lifeline())
         .env("CTXLOOM_ROOT", project.dir())
         .env("CTXLOOM_TEST_TERMINAL", "1")
         .current_dir(project.dir())
@@ -1840,6 +1847,87 @@ fn alices_daemon_killed(w: &mut World) {
     // She goes on: her next hook finds no daemon, starts one, and delivers.
     let (stop, _) = hook_run(w, "Stop", STOP, Some(&name));
     w.daemon_spec.hooks = vec![prompt, stop];
+}
+
+/// The lifeline's forcing test (gherkin_features.test.rs): the scenario's
+/// commands are given a lifeline (`CTXLOOM_TEST_LIFELINE`) that a process
+/// of its own holds, not the test process, so a step can kill its holder
+/// outright as nextest's timeout kills a test. The holder is one `sh` that
+/// locks the file on its descriptor 9 and becomes `sleep`, keeping it.
+#[given("the scenario's commands have a lifeline a process of their own holds")]
+fn own_lifeline(w: &mut World) {
+    let path = w.common.project.dir().join("lifeline.lock");
+    let holder = Command::new("sh")
+        .args(["-c", "exec 9>\"$1\"; flock -x 9; exec sleep 600", "sh"])
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the lifeline's holder starts");
+    w.daemon_spec.holder = Some(holder);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while file_lock::lock_within(&*files::fs(), &path, Duration::ZERO).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "the holder never took the lifeline"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    w.common
+        .set_env(crate::tests::LIFELINE, path.display().to_string());
+}
+
+#[when("the lifeline's holder is killed outright")]
+fn holder_killed(w: &mut World) {
+    let mut holder = w.daemon_spec.holder.take().expect("a lifeline's holder");
+    holder.kill().expect("the holder is killed");
+    holder.wait().expect("the holder is reaped");
+}
+
+/// Whether the process `pid` is still there (`kill -0`).
+fn process_is_there(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[then("the daemon and the child it hosts are gone within 30 seconds")]
+fn daemon_and_child_gone(w: &mut World) {
+    let log = daemon_log_text(w);
+    let child = log
+        .lines()
+        .find_map(|line| {
+            line.split_once("started, pid ")
+                .map(|(_, pid)| pid.trim().to_string())
+        })
+        .unwrap_or_else(|| panic!("no hosted child in the daemon's log:\n{log}"));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let daemon = w
+            .daemon_spec
+            .daemon
+            .as_mut()
+            .expect("a daemon the scenario started");
+        let exited = matches!(daemon.try_wait(), Ok(Some(_)));
+        if exited && !process_is_there(&child) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "after 30 s the daemon {} and its child {child} {}; its log:\n{}",
+            if exited { "has exited" } else { "still runs" },
+            if process_is_there(&child) {
+                "still runs"
+            } else {
+                "is gone"
+            },
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[when("her daemon's idle time passes")]

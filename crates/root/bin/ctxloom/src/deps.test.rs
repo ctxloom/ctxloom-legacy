@@ -47,6 +47,7 @@ pub(crate) fn git_in(dir: &Path, args: &[&str]) -> String {
         .env("PATH", crate::tests::host_var("PATH").unwrap_or_default())
         .env("HOME", dir)
         .env("TMPDIR", crate::tests::temp_root())
+        .env(crate::tests::LIFELINE, crate::tests::lifeline())
         .env("GIT_AUTHOR_NAME", "Fixture")
         .env("GIT_AUTHOR_EMAIL", "fixture@example.test")
         .env("GIT_COMMITTER_NAME", "Fixture")

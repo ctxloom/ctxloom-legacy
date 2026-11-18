@@ -482,6 +482,31 @@ fn test_every_spawn_in_a_directory_hands_the_child_its_temporary_root() {
     assert!(missing.is_empty(), "no TMPDIR handed on: {missing:#?}");
 }
 
+/// A test that spawns the binary with a cleared environment hands it this
+/// test process's lifeline (`tests::lifeline`, `CTXLOOM_TEST_LIFELINE`), so
+/// a daemon it starts, or its command starts, exits once the test is gone,
+/// killed or not, and ends what it hosts.
+#[test]
+fn test_every_spawn_with_a_cleared_environment_hands_the_child_its_lifeline() {
+    let src = super::repo_root().join("crates/root/bin/ctxloom/src");
+    let mut missing = Vec::new();
+    let mut spawners = 0;
+    for path in files::children(&src) {
+        if !path.to_string_lossy().ends_with(".test.rs") || path.ends_with("workspace.test.rs") {
+            continue;
+        }
+        let text = files::read(&path).expect("a test file");
+        if text.contains(".env_clear()") && text.contains(".current_dir(") {
+            spawners += 1;
+            if !text.contains("crate::tests::lifeline()") {
+                missing.push(path.display().to_string());
+            }
+        }
+    }
+    assert!(spawners >= 5, "found only {spawners} spawning test files");
+    assert!(missing.is_empty(), "no lifeline handed on: {missing:#?}");
+}
+
 #[test]
 fn test_annals_has_left_the_workspace() {
     let meta = super::cargo_metadata();
