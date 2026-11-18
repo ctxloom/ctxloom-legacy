@@ -4896,7 +4896,15 @@ in its feature file. A difference both re-runs give the base's listed colour
 is reproduced and judged as ever (a new red stays one, a turned green
 passes); one that is not, or was not re-run, is `FLAKY <id>`, named with its
 colours and its failures-file reason, and FAILS the ratchet whichever way it
-went: a flake is a finding, never a pass. The base's list is `just
+went: a flake is a finding, never a pass. What a re-confirmation found is
+cached by the base's sha, `target/ratchet/<sha>.reconfirm` (and
+`.reconfirm.failures`) beside its list (2026-11-18: a land spent 651 s
+re-confirming 14), so a later land on the same base re-runs only the ids
+not cached there (`note ratchet: K of the N ... re-confirmed ... before`);
+only an id both re-runs gave its listed colour is cached (a flaky one is
+re-run every time), and the cache is renamed into place once its
+re-confirmation succeeded, failures first, so an interrupted run's work
+does not count (`closeout-ratchet.selftest.sh` kills one mid-way). The base's list is `just
 ratchet-base <base>` (`scripts/ratchet-base.sh`): only the runner's tests
 (its feature tests, a base's clusters, or its `every_feature_runs` from
 before those), on the
