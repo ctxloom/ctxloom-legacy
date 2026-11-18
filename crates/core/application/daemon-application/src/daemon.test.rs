@@ -536,8 +536,10 @@ async fn a_refused_first_task(edge: &Arc<TestEdge>) -> (Daemon<TestEdge>, Arc<Mu
     assert!(!session_policies::CHILD_ENGINES.contains(&NO_CHILD_ADAPTER));
     mint(edge, OWNER, "boss", "claude-code", None).await;
     mint(edge, CHILD, "kid", NO_CHILD_ADAPTER, Some(OWNER)).await;
+    // Its first incarnation over, so none is started; an idle reap, which
+    // tells its owner nothing (step 9 tells an owner of every other end).
     runs_application::Facts::new(Arc::clone(edge))
-        .incarnation_ended(CHILD, 1, "runner-exit")
+        .incarnation_ended(CHILD, 1, "idle-reaped")
         .await
         .unwrap();
     command(

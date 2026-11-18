@@ -29,7 +29,8 @@ use angzarr_embedded::{
 use held_projection::{Fill, Held, Lock, Model};
 use runs::{RunEvent, RunState, TurnFailureClass, RUN_DOMAIN};
 use sessions::{
-    ChildLaunched, SessionAggregate, SessionEvent, SessionState, Urgency, SESSION_DOMAIN,
+    ChildLaunched, IncarnationEnded, SessionAggregate, SessionEvent, SessionState, Urgency,
+    SESSION_DOMAIN,
 };
 
 /// A turn a run ended: its number, the messages it carried, and whether it
@@ -86,6 +87,8 @@ struct SessionFold {
     clears: Vec<String>,
     /// Its last incarnation's end: the incarnation and its cause.
     last_end: Option<(u32, String)>,
+    /// Every incarnation's end, in the order ended.
+    ends: Vec<IncarnationEnded>,
 }
 
 impl SessionFold {
@@ -104,6 +107,7 @@ impl SessionFold {
             SessionEvent::ClearRequested(clear) => self.clears.push(clear.clear_id.clone()),
             SessionEvent::IncarnationEnded(ended) => {
                 self.last_end = Some((ended.incarnation, ended.cause.clone()));
+                self.ends.push(ended.clone());
             }
             _ => {}
         }
@@ -254,6 +258,13 @@ impl Board {
             .last_end
             .as_ref()
             .map(|(incarnation, cause)| (*incarnation, cause.as_str()))
+    }
+
+    /// Every incarnation of `session` that ended, in the order ended.
+    pub fn ends(&self, session: &str) -> &[IncarnationEnded] {
+        self.sessions
+            .get(session)
+            .map_or(&[], |session| session.ends.as_slice())
     }
 
     /// The session whose harp is `harp`.

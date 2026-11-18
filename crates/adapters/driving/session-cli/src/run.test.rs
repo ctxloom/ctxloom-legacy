@@ -2395,6 +2395,11 @@ impl daemon_api::ChildWrites for Writes {
         self.asked.lock().unwrap().push(format!("close {target}"));
         Ok(self.written(target, "uid"))
     }
+
+    async fn stop(&self, target: &str) -> Result<daemon_api::Written, daemon_api::CallError> {
+        self.asked.lock().unwrap().push(format!("stop {target}"));
+        Ok(self.written(target, "uid"))
+    }
 }
 
 fn child_go(writes: &Writes, format: Format, words: &[&str]) -> Ran {
@@ -2565,12 +2570,37 @@ fn a_refused_child_verb_fails_as_its_refusal_says() {
         async fn close(&self, _: &str) -> Result<daemon_api::Written, daemon_api::CallError> {
             unreachable!()
         }
+        async fn stop(&self, _: &str) -> Result<daemon_api::Written, daemon_api::CallError> {
+            unreachable!()
+        }
     }
     let command = parsed(&["send", "brisk-copper-moth", "wake", "one more thing"]);
     let mut out = Vec::new();
     let failed = crate::child(&command, &Refusing, Format::Text, &mut out).unwrap_err();
     assert_eq!(failed.failure.exit, Exit::REFUSED);
     assert_eq!(failed.failure.cause.code(), "daemon-api-session-not-found");
+}
+
+// S19's `session stop` (OD-57): the child's run is asked to stop, and the
+// child stays open; a stop of a run already stopped or ended says so.
+#[test]
+fn a_stop_stops_the_childs_run_and_says_so() {
+    let writes = Writes::default();
+    let ran = child_go(&writes, Format::Text, &["stop", "quiet-silver-fern"]);
+    assert_eq!(ran.out, "quiet-silver-fern: its run asked to stop\n");
+    assert_eq!(*writes.asked.lock().unwrap(), ["stop quiet-silver-fern"]);
+    let again = Writes {
+        duplicate: true,
+        ..Writes::default()
+    };
+    let ran = child_go(&again, Format::Text, &["stop", "quiet-silver-fern"]);
+    assert_eq!(ran.out, "quiet-silver-fern: no run of it to stop\n");
+    let ran = child_go(&writes, Format::Json, &["stop", "quiet-silver-fern"]);
+    assert!(
+        ran.out.contains("projects/"),
+        "the session as json: {}",
+        ran.out
+    );
 }
 
 #[test]

@@ -526,6 +526,35 @@ fn a_closed_hosted_child_is_ended() {
     assert!(!keys(&ended.plan()).iter().any(|k| k.starts_with("end:")));
 }
 
+// Step 9 (S19, OD-57): a hosted child whose run was asked to stop
+// (`session stop`, the run's RequestStop) has its run stopped, once; the child
+// stays open, so nothing else is done on it, and a run asked nothing is not.
+#[test]
+fn a_hosted_childs_run_asked_to_stop_is_stopped() {
+    let world = World::with_child().hosting(vec![
+        enqueued(),
+        RunEvent::StopRequested(runs::StopRequested {
+            reason: "stop".to_string(),
+        }),
+    ]);
+    let steps = world.plan();
+    let stop = format!("stop:{}", run_text(CHILD, 1));
+    assert!(
+        steps
+            .iter()
+            .any(|s| matches!(s, Step::Stop { key, at } if *key == stop && *at == child_run())),
+        "{steps:?}"
+    );
+    assert!(
+        !keys(&steps).iter().any(|k| k.starts_with("end:")),
+        "{steps:?}"
+    );
+    let asked_nothing = World::with_child().hosting(vec![enqueued()]);
+    assert!(!keys(&asked_nothing.plan())
+        .iter()
+        .any(|k| k.starts_with("stop:")));
+}
+
 // D29: a closed owner closes the child it holds; the closed child is ended on
 // its owner.
 #[test]
@@ -772,6 +801,43 @@ fn a_child_a_draining_daemon_handed_over_is_rehosted_for_the_cause_drain() {
 
 fn at_owner() -> SessionRef {
     at(OWNER)
+}
+
+// Step 9: each incarnation a child's run ended is told to its open owner
+// (`notice:<child>:<incarnation>`, the child's run ended and why: a start that
+// failed, a stop, an exit), once; one a re-host continues (its host lost, or
+// handed over by a draining daemon) is no end to tell, and a closed owner is
+// told nothing.
+#[test]
+fn each_incarnation_a_child_ended_is_told_to_its_owner() {
+    for cause in ["runner-exit", "launch-failed", "stopped"] {
+        let steps = ended_child(cause).plan();
+        let key = format!("notice:{CHILD}:1");
+        let Some(found) = steps.iter().find(|s| s.key() == key) else {
+            panic!("{cause}: no notice in {:?}", keys(&steps));
+        };
+        let notice: SendMessage = command(found);
+        assert_eq!(notice.text, format!("child kid ended its run 1: {cause}"));
+        assert_eq!(notice.urgency, Urgency::Inform, "a primary owner");
+        let Step::Send(sent) = found else {
+            unreachable!()
+        };
+        assert_eq!(sent.book.cover.as_ref().unwrap().root, Some(root(OWNER)));
+    }
+    for cause in ["orphaned", "drained"] {
+        let steps = ended_child(cause).plan();
+        assert!(
+            !keys(&steps).contains(&format!("notice:{CHILD}:1").as_str()),
+            "{cause}: {:?}",
+            keys(&steps)
+        );
+    }
+    let mut owner_closed = ended_child("runner-exit");
+    owner_closed.owner.push(closed());
+    assert!(
+        !keys(&owner_closed.plan()).contains(&format!("notice:{CHILD}:1").as_str()),
+        "a closed owner is told nothing"
+    );
 }
 
 // One that exited, closed, stopped, never bound a native session, or owes

@@ -51,6 +51,9 @@ const TOOL_CLOSE: &str = "closed by its owner";
 /// The cause a close from the user's own command is recorded with.
 const USER_CLOSE: &str = "closed by the user";
 
+/// Why a run is stopped by `session stop` (S19).
+const STOP_REASON: &str = "stopped by the user";
+
 /// How many open children an owner may hold when nothing says (the
 /// delegation limit's evidence, D-N14; no config key yet).
 pub const DELEGATION_LIMIT: u32 = 4;
@@ -500,6 +503,41 @@ impl<D: Daemons> Caller<D> {
         })
     }
 
+    /// `session stop` (S19, OD-57): the run `target` is on now asked to
+    /// stop, keyed by that run; the session stays open.
+    pub async fn stop(&self, target: &str) -> Result<Written, CallError> {
+        let name = self.target(target)?;
+        let (session, applied) = on_daemon!(self, |api| self.stopped(api, &name).await)?;
+        Ok(Written {
+            id: name.uid(),
+            session,
+            applied,
+        })
+    }
+
+    /// One stop of `target`'s current run on `api`: its run as that daemon
+    /// has it, keyed `stop:<session>:<incarnation>`.
+    async fn stopped(
+        &self,
+        api: &D::Api,
+        target: &SessionName,
+    ) -> Result<(v1::Session, bool), Called> {
+        let incarnation = self.read(api, target).await?.incarnation;
+        let cover = angzarr_embedded::v1::Cover {
+            domain: runs::RUN_DOMAIN.to_string(),
+            root: Some(runs::run_root(&target.uid(), incarnation)),
+            edition: None,
+        };
+        let key = format!("stop:{}:{incarnation}", target.uid());
+        let command = runs::RequestStop {
+            reason: STOP_REASON.to_string(),
+        };
+        let synced = api
+            .handle_sync(sessions::keyed_book(cover, &command, &key), Vec::new())
+            .await?;
+        Ok((self.read(api, target).await?, synced.applied))
+    }
+
     async fn cleared(
         &self,
         api: &D::Api,
@@ -760,6 +798,9 @@ pub trait ChildWrites {
 
     /// `session close`: `target` closed, with its children.
     async fn close(&self, target: &str) -> Result<Written, CallError>;
+
+    /// `session stop`: `target`'s current run stopped, `target` left open.
+    async fn stop(&self, target: &str) -> Result<Written, CallError>;
 }
 
 impl<D: Daemons> ChildWrites for Caller<D> {
@@ -783,6 +824,10 @@ impl<D: Daemons> ChildWrites for Caller<D> {
 
     async fn close(&self, target: &str) -> Result<Written, CallError> {
         Caller::close(self, target).await
+    }
+
+    async fn stop(&self, target: &str) -> Result<Written, CallError> {
+        Caller::stop(self, target).await
     }
 }
 

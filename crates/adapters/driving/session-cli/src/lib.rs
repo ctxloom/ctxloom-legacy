@@ -146,6 +146,9 @@ pub enum SessionVerb {
     /// Close a session for good: its engine ends, and so do the children it holds
     #[command(after_help = "Examples:\n  ctxloom session close brisk-copper-moth")]
     Close(HarpArgs),
+    /// Stop a child's run: its engine exits, and the child stays open for its next message
+    #[command(after_help = "Examples:\n  ctxloom session stop brisk-copper-moth")]
+    Stop(HarpArgs),
     /// The permission asks waiting for you, from the sessions your daemon runs: list them, answer one
     #[command(
         after_help = "Examples:\n  ctxloom session approvals\n  ctxloom session approvals amber-quiet-heron\n  ctxloom session approvals answer ask-tidy-wren allow-once\n  ctxloom session approvals answer brisk-copper-moth deny \"not yet\""
