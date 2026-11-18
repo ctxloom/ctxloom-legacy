@@ -509,9 +509,9 @@ message UpdateBundleRequest {
   // The paths the edit changes: `description` and `version` (set from
   // `bundle`), and `tags`, `fragments`, `commands` and `mcp_servers` (changed
   // by the add and remove lists below). SEVERAL paths may be named (owner
-  // ruling 2026-11-18: the spec wins over T29's one path for this request
-  // alone): what they change is applied as ONE step, so the edit must change
-  // one file. The bundle's own fields and tags are its `bundle.yaml`, one
+  // ruling 2026-11-18: the spec wins over T29's one path; the rule for every
+  // update is one FILE per call, coordinator ruling R2): what they change is
+  // applied as ONE step, so the edit must change one file. The bundle's own fields and tags are its `bundle.yaml`, one
   // file; an item is a file of its own, so an item beside anything else is
   // refused `ctxloom.library.v1.OneChangePerCall`, naming each file, before
   // anything is written.
@@ -1116,8 +1116,10 @@ message UpdateFragmentRequest {
   // The Fragment to change, named by its `name`: only the field `update_mask`
   // names is written.
   Fragment fragment = 1 [(google.api.field_behavior) = REQUIRED];
-  // The one field path to change (T29); a mask of more than one is refused
-  // `OneChangePerCall`.
+  // The field paths to change: ONE FILE per call, and several fields of that
+  // file allowed (T29 counts files; coordinator ruling R2, 2026-11-18, after
+  // the owner's for `bundle edit`); paths that would change more than one
+  // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
@@ -1449,8 +1451,10 @@ message UpdateCommandRequest {
   // The Command to change, named by its `name`: only the field `update_mask`
   // names is written.
   Command command = 1 [(google.api.field_behavior) = REQUIRED];
-  // The one field path to change (T29); a mask of more than one is refused
-  // `OneChangePerCall`.
+  // The field paths to change: ONE FILE per call, and several fields of that
+  // file allowed (T29 counts files; coordinator ruling R2, 2026-11-18, after
+  // the owner's for `bundle edit`); paths that would change more than one
+  // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
@@ -2081,8 +2085,10 @@ message UpdateMcpServerRequest {
   // The McpServer to change (or create), named by its `name`: only the field
   // `update_mask` names is written.
   McpServer mcp_server = 1 [(google.api.field_behavior) = REQUIRED];
-  // The one field path to change (T29); a mask of more than one is refused
-  // `OneChangePerCall`.
+  // The field paths to change: ONE FILE per call, and several fields of that
+  // file allowed (T29 counts files; coordinator ruling R2, 2026-11-18, after
+  // the owner's for `bundle edit`); paths that would change more than one
+  // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   // Create the server when its bundle has none of that name (AIP-134).
   bool allow_missing = 3 [(google.api.field_behavior) = OPTIONAL];
@@ -2374,8 +2380,10 @@ message UpdateProfileRequest {
   // The Profile to change, named by its `name`: only the field `update_mask`
   // names is written.
   Profile profile = 1 [(google.api.field_behavior) = REQUIRED];
-  // The one field path to change (T29); a mask of more than one is refused
-  // `OneChangePerCall`.
+  // The field paths to change: ONE FILE per call, and several fields of that
+  // file allowed (T29 counts files; coordinator ruling R2, 2026-11-18, after
+  // the owner's for `bundle edit`); paths that would change more than one
+  // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
@@ -2836,8 +2844,10 @@ message UpdateAgentRequest {
   // The Agent to change, named by its `name`: only the field `update_mask`
   // names is written.
   Agent agent = 1 [(google.api.field_behavior) = REQUIRED];
-  // The one field path to change (T29); a mask of more than one is refused
-  // `OneChangePerCall`.
+  // The field paths to change: ONE FILE per call, and several fields of that
+  // file allowed (T29 counts files; coordinator ruling R2, 2026-11-18, after
+  // the owner's for `bundle edit`); paths that would change more than one
+  // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
@@ -3553,13 +3563,16 @@ message CreateRemoteResponse {
   repeated Notice notices = 92;
 }
 
-// `remote edit <remote> [--name] [--url] [--forge]`: one change per call.
+// `remote edit <remote> [--name] [--url] [--forge]`: one file per call
+// (`remotes.yaml`), several of its fields allowed (T29; R2, 2026-11-18).
 message UpdateRemoteRequest {
   // The Remote to change, named by its `name`: only the field `update_mask`
   // names is written.
   Remote remote = 1 [(google.api.field_behavior) = REQUIRED];
-  // The one field path to change (T29); a mask of more than one is refused
-  // `OneChangePerCall`.
+  // The field paths to change: ONE FILE per call, and several fields of that
+  // file allowed (T29 counts files; coordinator ruling R2, 2026-11-18, after
+  // the owner's for `bundle edit`); paths that would change more than one
+  // file are refused `ctxloom.library.v1.OneChangePerCall`, naming each file.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).

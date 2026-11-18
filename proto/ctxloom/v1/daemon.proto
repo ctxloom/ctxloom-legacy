@@ -513,7 +513,7 @@ service Ctxloom {
   }
   // `remote create`.
   rpc CreateRemote(CreateRemoteRequest) returns (CreateRemoteResponse);
-  // `remote edit`: one change per call.
+  // `remote edit`: one file per call, several of its fields allowed (T29).
   rpc UpdateRemote(UpdateRemoteRequest) returns (UpdateRemoteResponse) {
     option (google.api.method_signature) = "remote,update_mask";
   }
@@ -1793,7 +1793,8 @@ message NeedsUnanswered {
   repeated string need_ids = 1;
 }
 
-// An edit that names more than one change (T29).
+// An edit that would change more than one file (T29: one file per call,
+// several fields of it allowed).
 message OneChangePerCall {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
 
