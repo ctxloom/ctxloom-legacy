@@ -39,7 +39,6 @@ fn bundle(name: &str, fragments: u64, commands: u64, mcp: u64) -> BundleRow {
 fn test_the_bundle_listing_pluralizes_what_a_bundle_contains() {
     let list = BundleList {
         rows: vec![bundle("demo", 4, 1, 2), bundle("style", 1, 0, 0)],
-        no_root: false,
         hint: String::new(),
     };
     let text = shown(|out| bundle_list(out, &list));
@@ -50,36 +49,30 @@ fn test_the_bundle_listing_pluralizes_what_a_bundle_contains() {
     assert!(text.contains("    Contains: 1 fragment\n"));
 }
 
-// bundle_list.go runBundleList: three empties, three words (goldens
-// empty-bundle-list-text, emptybundles-bundle-list-text, noproject-...).
+// bundle_list.go runBundleList had three empties, three words (goldens
+// empty-bundle-list-text, emptybundles-bundle-list-text, noproject-...);
+// owner ruling 2026-11-17: a project with no bundles directory is one with
+// no bundles, so every empty listing says so, then its hint.
 #[test]
-fn test_an_empty_bundle_listing_says_why() {
-    let say = |no_root: bool, hint: &str| {
+fn test_an_empty_bundle_listing_says_no_bundles_then_its_hint() {
+    let say = |hint: &str| {
         shown(|out| {
             bundle_list(
                 out,
                 &BundleList {
                     rows: Vec::new(),
-                    no_root,
                     hint: hint.to_string(),
                 },
             )
         })
     };
     assert_eq!(
-        say(true, "Add remote bundles"),
-        "No bundles directory found. Create one with: mkdir -p .ctxloom/content/bundles\n"
-    );
-    assert_eq!(
-        say(
-            true,
-            "No project here: run 'ctxloom init' to set one up with its default content."
-        ),
-        "No project here: run 'ctxloom init' to set one up with its default content.\n"
-    );
-    assert_eq!(
-        say(false, "Add remote bundles"),
+        say("Add remote bundles"),
         "No bundles installed.\nAdd remote bundles\n"
+    );
+    assert_eq!(
+        say("No project here: run 'ctxloom init' to set one up with its default content."),
+        "No bundles installed.\nNo project here: run 'ctxloom init' to set one up with its default content.\n"
     );
 }
 
@@ -138,6 +131,7 @@ fn test_a_skill_listing_shows_description_files_and_tags() {
     let list = SkillList {
         rows: vec![SkillRow {
             name: "demo/reviewer".to_string(),
+            display_name: String::new(),
             description: "SKILL-MARKER".to_string(),
             tags: vec!["sample".to_string(), "quality".to_string()],
             source: "demo".to_string(),
@@ -701,6 +695,7 @@ fn test_a_skill_row_without_a_description_or_tags_is_just_its_name_and_files() {
     let list = SkillList {
         rows: vec![SkillRow {
             name: st("demo/a"),
+            display_name: String::new(),
             description: String::new(),
             tags: Vec::new(),
             source: st("demo"),
@@ -729,7 +724,61 @@ fn profile_shown() -> ProfileShow {
         path: st("/p/dev.yaml"),
         bundle: st("proj"),
         default: true,
+        select_tags: Vec::new(),
+        fragments: Vec::new(),
+        hooks: Default::default(),
+        deny_tools: Vec::new(),
     }
+}
+
+// step 10a U2 (owner ruling 2026-11-17): a profile's fragments, selecting
+// tags, denied tools and hooks print too, each hook on one line in YAML's
+// flow form under its document path, keys sorted
+#[test]
+fn test_a_profile_show_prints_its_fragments_selecting_tags_denied_tools_and_hooks() {
+    use library_application::{FragmentRef, Hook};
+    let mut hooks = library_application::ProfileHooks::default();
+    hooks.unified.insert(
+        st("pre_tool"),
+        vec![Hook {
+            event: st("pre_tool"),
+            name: st("0"),
+            kind: st("command"),
+            command: st("lint"),
+            args: sv(&["--fix"]),
+            timeout: 5,
+            ..Hook::default()
+        }],
+    );
+    hooks.ext.entry(st("claude-code")).or_default().insert(
+        st("Notification"),
+        vec![Hook {
+            command: st("ping"),
+            is_async: true,
+            order: Some(1),
+            ..Hook::default()
+        }],
+    );
+    let full = ProfileShow {
+        select_tags: sv(&["go"]),
+        fragments: vec![
+            FragmentRef {
+                name: st("plain"),
+                priority: 0,
+            },
+            FragmentRef {
+                name: st("demo#fragments/pri"),
+                priority: 3,
+            },
+        ],
+        hooks,
+        deny_tools: sv(&["Bash"]),
+        ..profile_shown()
+    };
+    assert_eq!(
+        shown(|out| profile_show(out, &full)),
+        "Profile: dev\nPath: /p/dev.yaml\nBundle: proj\nDefault: yes\nDescription: Dev\nParents:\n  - base\nBundles:\n  - demo\nFragments:\n  - plain\n  - demo#fragments/pri (priority 3)\nTags:\n  - t\nSelect tags:\n  - go\nVariables:\n  k: v\nExcluded fragments:\n  - f\nExcluded MCP servers:\n  - m\nDenied tools:\n  - Bash\nHooks:\n  unified.pre_tool:\n    - {args: [--fix], command: lint, timeout: 5, type: command}\n  ext.claude-code.Notification:\n    - {async: true, command: ping, order: 1}\n"
+    );
 }
 
 // profile_show.go: every section when it has entries.
@@ -1347,7 +1396,6 @@ fn test_a_built_in_bundle_is_listed_under_its_origin() {
             origin: "ctxloom/builtin".to_string(),
             ..bundle("testing", 3, 0, 0)
         }],
-        no_root: false,
         hint: String::new(),
     };
     let mut out = Vec::new();
@@ -1380,4 +1428,49 @@ fn test_a_dry_runs_settings_name_the_engine_block_of_its_approval_timeout() {
         shown_plan.contains("\n  approval_timeout  now  (engines.claude-code)\n"),
         "{shown_plan}"
     );
+}
+
+// Step 10a U2 (D10): `bundle list` from the daemon's message alone reads as
+// the view's text did: each bundle by its catalog name, the built-in one
+// marked, and an empty listing's hint a project's or none's.
+#[test]
+fn test_bundle_list_from_the_daemon_s_message() {
+    use daemon_proto::v1;
+    let listed = v1::ListBundlesResponse {
+        bundles: vec![
+            v1::Bundle {
+                name: "projects/p/bundles/ctxloom".to_string(),
+                origin: v1::bundle::Origin::Builtin as i32,
+                version: "1.0.0".to_string(),
+                command_count: 2,
+                ..v1::Bundle::default()
+            },
+            v1::Bundle {
+                name: "projects/p/remotes/acme/bundles/rules".to_string(),
+                origin: v1::bundle::Origin::Remote as i32,
+                fragment_count: 1,
+                tags: vec!["team".to_string()],
+                ..v1::Bundle::default()
+            },
+        ],
+        next_page_token: String::new(),
+    };
+    let mut out = Vec::new();
+    super::bundles(&mut out, &listed, true).unwrap();
+    let text = String::from_utf8(out).unwrap();
+    assert_eq!(
+        text,
+        "Installed bundles (2):\n\n  ctxloom (v1.0.0) [built-in]\n    Contains: 2 commands\n\n  acme/rules\n    Contains: 1 fragment\n    Tags: team\n\n"
+    );
+    for (in_project, hint) in [
+        (true, library_application::LISTING_HINT),
+        (false, library_application::NO_PROJECT_HINT),
+    ] {
+        let mut out = Vec::new();
+        super::bundles(&mut out, &v1::ListBundlesResponse::default(), in_project).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!("No bundles installed.\n{hint}\n")
+        );
+    }
 }

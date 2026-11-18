@@ -28,6 +28,9 @@ setup-cli.workspace = true
 ctxloom-ports.workspace = true
 library.workspace = true
 library-application.workspace = true
+library-git.workspace = true
+# The library reads' observation (step 10a U2), served by the daemon.
+library-api.workspace = true
 deps.workspace = true
 deps-application.workspace = true
 deps-cli.workspace = true
@@ -85,6 +88,11 @@ trees.workspace = true
 # registers and keeps warm.
 trust.workspace = true
 trust-index.workspace = true
+# A library tree (step 10a U0): its aggregate, its wire types (the
+# checkout's view) and the model the daemon registers and keeps warm.
+library-tree.workspace = true
+library-domain-proto.workspace = true
+library-checkout.workspace = true
 # The permission asks (step 8 U4): registered in the kernel, read by the API.
 approvals.workspace = true
 pending-approvals.workspace = true

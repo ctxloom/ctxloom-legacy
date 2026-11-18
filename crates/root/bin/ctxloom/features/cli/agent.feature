@@ -247,6 +247,7 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
     # single membership check would pass against a merge that kept one profile
     # and dropped the other, which is exactly the loss under test.
     Scenario Outline: An edit naming only --runtime leaves every other axis intact
+      # changed: step 10a U2, owner ruling 2026-11-17: text prints a reference as its short library reference (project#profiles/dev, demo), json its resource name
       Given an initialized ctxloom project
       And a profile "dev" exists
       And a profile "ops" exists
@@ -270,7 +271,7 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
         | flags         | the binding written | the axis that changed       | the engine that survived | the first profile | the second profile | the model that survived |
         |               | developer           | container-rootless          | projects/{project}/engines/claude-code | projects/{project}/bundles/project/profiles/dev | projects/{project}/bundles/project/profiles/ops | haiku |
         | --format json | developer           | container-rootless          | projects/{project}/engines/claude-code | projects/{project}/bundles/project/profiles/dev | projects/{project}/bundles/project/profiles/ops | haiku |
-        | --format text | Updated agent       | runtime: container-rootless | engine: claude-code         | profiles: dev, ops | ops               | engines.claude-code: {model: haiku} |
+        | --format text | Updated agent       | runtime: container-rootless | engine: claude-code         | profiles: project#profiles/dev, project#profiles/ops | project#profiles/ops | engines.claude-code: {model: haiku} |
 
     # --surface is the delivery-preference axis (kind=approach, repeatable):
     # which mechanism a surface reaches the engine through, distinct from

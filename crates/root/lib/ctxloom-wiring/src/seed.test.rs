@@ -116,7 +116,7 @@ fn the_seed_plants_the_sessions_files_backdated_to_its_end() {
         fs().read_to_string(&dir.join("notes/plan.md")).unwrap(),
         "authored\n"
     );
-    let lock = sessions.join(format!("{HARP}.lock"));
+    let lock = dir.join("session.lock");
     for path in [dir.join("notes/plan.md"), lock] {
         near(fs().metadata(&path).unwrap().modified, ago(3600));
     }

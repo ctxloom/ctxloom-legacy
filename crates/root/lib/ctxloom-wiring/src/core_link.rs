@@ -25,6 +25,7 @@ use angzarr_embedded_host::config::Expose;
 use angzarr_embedded_host::stores::Stores;
 use angzarr_embedded_host::App;
 use embedded_edge::EmbeddedEdge;
+use library_tree::LibraryAggregate;
 use runs::RunAggregate;
 use scheduler::SchedulerAggregate;
 use sessions::{NameClaimAggregate, ProjectAggregate, ProjectNameAggregate, SessionAggregate};
@@ -151,6 +152,8 @@ pub struct Projectors {
     pub approvals: Option<pending_approvals::PendingApprovals>,
     /// The alarms armed, which the daemon's scheduler reads (step 8 U5a).
     pub due: Option<crate::scheduling::SchedulerDues>,
+    /// The library trees as last observed (step 10a U0).
+    pub checkouts: Option<library_checkout::LibraryCheckouts>,
 }
 
 impl Projectors {
@@ -168,6 +171,7 @@ impl Projectors {
             trusts: Some(trust_index::TrustIndexes::filled(fill())),
             approvals: Some(pending_approvals::PendingApprovals::filled(fill())),
             due: Some(crate::scheduling::SchedulerDues::filled(fill())),
+            checkouts: Some(library_checkout::LibraryCheckouts::filled(fill())),
         }
     }
 
@@ -204,6 +208,11 @@ impl Projectors {
             registry
                 .projector_handler(&[scheduler::SCHEDULER_DOMAIN], due)
                 .expect("the due alarms register");
+        }
+        if let Some(checkouts) = self.checkouts {
+            registry
+                .projector_handler(&library_checkout::SOURCES, checkouts)
+                .expect("the library checkouts register");
         }
     }
 }
@@ -296,9 +305,9 @@ where
     S: Store + Processed + ListStreams + Send + Sync + 'static,
 {
     /// A CLI command's core over `store`: the sessions, runs, trees, trust,
-    /// approvals and scheduler aggregates registered; sessions and runs
-    /// exposed to the network (the container bridge reaches them) and
-    /// trees, trust and approvals to loopback; the kernel's retries off, so
+    /// library, approvals and scheduler aggregates registered; sessions and
+    /// runs exposed to the network (the container bridge reaches them) and
+    /// trees, trust, library and approvals to loopback; the kernel's retries off, so
     /// a fact at the race cap is parked at once. No read model, no policy
     /// (no alarm consumer), and no resume at start (owner ruling
     /// 2026-11-16): the daemon's core alone pays for owed policy work.
@@ -361,6 +370,12 @@ where
         registry
             .aggregate::<TrustAggregate>(TrustAggregate::default)
             .expect("the trust aggregate registers");
+        // A library tree (step 10a U0): what the daemon observed of it, and
+        // what it intends to change there; the daemon's and the user's, on
+        // loopback alone.
+        registry
+            .aggregate::<LibraryAggregate>(LibraryAggregate::default)
+            .expect("the library aggregate registers");
         // The permission asks and their names (step 8 U4): an answer and a
         // withdrawal are the user's, on loopback; the ask and its name's
         // claim are the daemon's own.
@@ -386,6 +401,7 @@ where
             (trees::TREE_DOMAIN.to_string(), Expose::Loopback),
             (trust::TRUST_DOMAIN.to_string(), Expose::Loopback),
             (approvals::APPROVALS_DOMAIN.to_string(), Expose::Loopback),
+            (library_tree::LIBRARY_DOMAIN.to_string(), Expose::Loopback),
         ]);
         let retries = OnRetryable {
             max_retries: 0,

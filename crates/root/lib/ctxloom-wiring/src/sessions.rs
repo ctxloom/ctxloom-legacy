@@ -34,8 +34,8 @@ pub(crate) fn nouns() -> Vec<Command> {
 /// The person at this process's terminal, asked yes or no (`[y/N]`: only
 /// `y` or `yes` is a yes); a terminal stood in under test-support
 /// (`CTXLOOM_TEST_TERMINAL`), its answers on standard input.
-struct TrustTerminal {
-    stood_in: bool,
+pub(crate) struct TrustTerminal {
+    pub(crate) stood_in: bool,
 }
 
 impl session_cli::Asking for TrustTerminal {

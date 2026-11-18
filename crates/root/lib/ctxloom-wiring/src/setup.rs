@@ -5,14 +5,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use auth_application::Auth;
-use cache_files::CacheFiles;
 use config_files::{ConfigFilesFs, ScaffoldFs};
 use content_fs::UserFilesFs;
 use deps_application::Deps;
 use doctor_checks::{Doctor, GitIdentity};
 use init_application::{Create, Failure, Init};
 use library_application::Library;
-use reclaim_application::Cleaner;
 
 use crate::{LibError, ProcessEnv, Wiring};
 
@@ -80,7 +78,6 @@ impl GitIdentity for GitIdentityIn {
 /// The setup use cases, built together.
 pub(crate) struct SetupUseCases {
     pub(crate) auth: Auth,
-    pub(crate) cleaner: Cleaner,
     pub(crate) doctor: Doctor,
     pub(crate) init: Init,
 }
@@ -97,7 +94,6 @@ impl SetupUseCases {
         let (around, app) = wiring.locate();
         let user = Arc::new(UserFilesFs::new(Arc::clone(&fs)));
         let binaries = wiring.path_search();
-        let cleaner = Cleaner::new(Arc::new(CacheFiles::new(Arc::clone(&fs), &app.path)));
         let config = ConfigFilesFs::new(Arc::clone(&fs), app, &home);
         let doctor = Doctor::new(
             Arc::new(config),
@@ -165,10 +161,18 @@ impl SetupUseCases {
                 crate::library::build(wiring, None)?,
                 Arc::clone(wiring.env()),
             )),
+        )
+        // The directory init is run in made a git repository when it is in
+        // none (step 10, G1), by git on her PATH.
+        .with_repository(
+            Arc::new(library_git::GitTrees::new(
+                Arc::clone(&fs),
+                Arc::clone(wiring.env()),
+            )),
+            &around.cwd.display().to_string(),
         );
         Ok(SetupUseCases {
             auth: Auth::new(Arc::new(ProcessEnv::from_snapshot(wiring.env()))),
-            cleaner,
             doctor,
             init,
         })

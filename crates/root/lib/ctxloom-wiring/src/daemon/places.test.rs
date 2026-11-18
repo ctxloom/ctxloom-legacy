@@ -99,7 +99,7 @@ fn a_sessions_checkout_under_the_account_home_is_found_and_spared() {
     let project = root.root().join("work/calm");
     fixtures::mkdirs(project.join(".ctxloom/sessions/amber-swift-owl"));
     fixtures::put_mode(
-        project.join(".ctxloom/sessions/amber-swift-owl.lock"),
+        project.join(".ctxloom/sessions/amber-swift-owl/session.lock"),
         "",
         0o644,
     );
@@ -132,12 +132,14 @@ fn a_sessions_checkout_under_the_account_home_is_found_and_spared() {
     assert_eq!(report.spared, 1, "{report:?}");
 }
 
-// s3-Q5: the daemon assembles for a session's `context_assemble` tool, so
-// the context rides a launch where ctxloom's server is offered: a premise
-// index in it names the tool, never the CLI.
+// E2 (owner 2026-11-17): the daemon's assembly holds a premised fragment
+// back and answers the index as data; the MCP tool (a launch's edge) and
+// the CLI word it at their presentation (library_api::premise). Step 10a
+// U2: the assembly is a library read, over the library a process at the
+// project opens.
 #[test]
-fn an_assembly_for_a_session_words_its_index_for_the_launch() {
-    use daemon_api::Assemblies;
+fn an_assembly_answers_what_its_premises_held_back_as_data() {
+    use daemon_api::Libraries;
     let root = fixtures::root();
     let project = root.root().join("work/calm");
     let bundle = project.join(".ctxloom/content/bundles/v2/demo");
@@ -168,25 +170,129 @@ fn an_assembly_for_a_session_words_its_index_for_the_launch() {
     );
     fixtures::mkdirs(root.root().join("home"));
     fixtures::mkdirs(root.root().join("tmp"));
-    let assemblies = super::ProjectAssemblies {
+    let libraries = super::ProjectLibraries {
         home: root.root().join("home"),
         temp: root.root().join("tmp"),
     };
-    let assembled = assemblies
-        .assemble(
-            &project.display().to_string(),
-            &daemon_proto::v1::AssembleContextRequest {
-                profiles: vec!["dev".to_string()],
-                ..daemon_proto::v1::AssembleContextRequest::default()
-            },
-        )
-        .expect("assembled");
+    let request = daemon_proto::v1::AssembleContextRequest {
+        profiles: vec!["dev".to_string()],
+        ..daemon_proto::v1::AssembleContextRequest::default()
+    };
+    let mut answered = None;
+    libraries
+        .read(&project.display().to_string(), &[], &mut |library| {
+            let flags = library_application::Flags::default();
+            let read = library_api::reads::assemble_context(library, &flags, "users/me", &request);
+            answered = Some(read.result.expect("assembled"));
+        })
+        .expect("read");
+    let assembled = answered.expect("read");
+    // E2 (owner 2026-11-17): the index is answered as data, never
+    // rendered here; the edge that shows the context renders it.
+    let premised = assembled.premised.clone();
     let context = assembled.context;
     assert!(context.contains("RULES-BODY"), "{context}");
     assert!(!context.contains("LATER-BODY"), "held back: {context}");
-    assert!(
-        context.contains("the ctxloom `context_assemble` tool"),
-        "{context}"
+    assert!(!context.contains("Conditional guidance"), "{context}");
+    assert_eq!(premised.len(), 1, "{premised:?}");
+    assert!(premised[0].fragment.ends_with("later"), "{premised:?}");
+    assert_eq!(premised[0].premise, "about to do the later thing");
+}
+
+// Step 10a U2: a read's checkout is named once, in its tree's
+// `state/checkout`, and read back after.
+#[test]
+fn a_checkouts_harp_is_minted_once_into_its_tree() {
+    use library_api::CheckoutHarps;
+    let root = fixtures::root();
+    let tree = root.root().join("work/calm/.ctxloom");
+    fixtures::mkdirs(&tree);
+    let harps = super::TreeHarps(fixtures::fs());
+    let first = harps.harp(&tree.display().to_string()).unwrap();
+    let again = harps.harp(&tree.display().to_string()).unwrap();
+    assert_eq!(first, again);
+    let kept = fixtures::fs()
+        .read_to_string(&tree.join("state/checkout"))
+        .unwrap();
+    assert_eq!(kept.trim(), first);
+}
+
+// Step 10a U2: git as the read's caller runs it, on the caller's PATH (none
+// with git on it: git is missing, exit 10's failure); the home's library is
+// observed where the home has one.
+#[test]
+fn a_reads_git_is_the_callers_and_its_home_is_ctxloom_s_own() {
+    use library_api::Observers;
+    let root = fixtures::root();
+    let home = root.root().join("home");
+    fixtures::mkdirs(&home);
+    let gits = super::CallerGits {
+        fs: fixtures::fs(),
+        home: home.clone(),
+        temp: root.root().join("tmp"),
+    };
+    assert_eq!(gits.home_tree(), None);
+    fixtures::mkdirs(home.join(".ctxloom"));
+    assert_eq!(
+        gits.home_tree(),
+        Some(home.join(".ctxloom").display().to_string())
     );
-    assert!(!context.contains("ctxloom fragment show"), "{context}");
+    let empty = root.root().join("nowhere");
+    fixtures::mkdirs(&empty);
+    let observer = gits.observer(&[("PATH".to_string(), empty.display().to_string())]);
+    let missing = observer.work_tree(&home.display().to_string()).unwrap_err();
+    assert_eq!(missing.diagnostic().code(), "library-git-git-missing");
+}
+
+// Step 10a U2 (E1): a library read is opened where the caller is, as a
+// process there would open it: the nearest `.ctxloom` above its directory
+// (a worktree of the project is its own checkout), none outside a project.
+#[test]
+fn a_reads_library_is_the_one_its_callers_directory_finds() {
+    use daemon_api::Libraries;
+    let root = fixtures::root();
+    let project = root.root().join("work/calm");
+    fixtures::mkdirs(project.join(".ctxloom/content/bundles/v2/project/profiles"));
+    fixtures::mkdirs(project.join("src/deep"));
+    fixtures::put_mode(
+        project.join(".ctxloom/config.yaml"),
+        "schema_version: 9\n",
+        0o644,
+    );
+    fixtures::put_mode(
+        project.join(".ctxloom/content/bundles/v2/project/bundle.yaml"),
+        "schema_version: 4\nversion: 1.0.0\n",
+        0o644,
+    );
+    fixtures::put_mode(
+        project.join(".ctxloom/content/bundles/v2/project/profiles/dev.yaml"),
+        "description: the dev one\n",
+        0o644,
+    );
+    fixtures::mkdirs(root.root().join("home"));
+    fixtures::mkdirs(root.root().join("tmp"));
+    fixtures::mkdirs(root.root().join("elsewhere"));
+    let libraries = super::ProjectLibraries {
+        home: root.root().join("home"),
+        temp: root.root().join("tmp"),
+    };
+    let deep = project.join("src/deep").display().to_string();
+    assert_eq!(
+        libraries.root(&deep, &[]),
+        Some(project.display().to_string())
+    );
+    let elsewhere = root.root().join("elsewhere").display().to_string();
+    assert_eq!(libraries.root(&elsewhere, &[]), None);
+    assert_eq!(libraries.root("", &[]), None);
+    let mut profiles = Vec::new();
+    libraries
+        .read(&deep, &[], &mut |library| {
+            let listed = library
+                .profile_list(&library_application::Flags::default())
+                .result
+                .unwrap();
+            profiles = listed.rows.iter().map(|r| r.display_name.clone()).collect();
+        })
+        .unwrap();
+    assert_eq!(profiles, ["dev"]);
 }

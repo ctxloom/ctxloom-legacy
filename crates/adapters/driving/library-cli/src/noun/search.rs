@@ -1,9 +1,7 @@
-//! `search` (B3): its json the `SearchLibraryResponse` of
-//! `projects/{project}:searchLibrary` (OD-40, design §5.9).
+//! `search` (B3): the daemon's `SearchLibrary` of `projects/{project}`
+//! (OD-40, design §5.9; step 10a U2), its text drawn from the message (D10).
 
-use crate::catalog;
 use crate::prelude::*;
-use library_application::{RemoteFound, SearchHit, SearchResults};
 
 pub(crate) fn read(
     cx: &Context<'_>,
@@ -11,77 +9,26 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let request = SearchRequest {
+    // The kind is the API's enum: a word that names none is refused here,
+    // as the use case refuses it, since the request cannot carry it.
+    let word = text_arg(sub, "type");
+    let (kind, _) = library_api::resources::item_kind(&word);
+    if !word.is_empty() && kind == v1::ItemKind::Unspecified {
+        return Err(AppError::SearchType { value: word }.into_failure());
+    }
+    let request = v1::SearchLibraryRequest {
         query: text_arg(sub, "query"),
         tags: many(sub, "tag"),
-        kind: text_arg(sub, "type"),
+        kind: kind as i32,
         local: flag(sub, "local"),
         remote: flag(sub, "remote"),
+        globals: cx.globals(),
+        ..v1::SearchLibraryRequest::default()
     };
-    let outcome = cx.library.search(&cx.flags, &request);
-    resource(cx, outcome, out, err, response, text::search)
-}
-
-/// `search`: `SearchLibraryResponse`, each local hit named under `parent`.
-pub(crate) fn response(parent: &str, results: &SearchResults) -> v1::SearchLibraryResponse {
-    v1::SearchLibraryResponse {
-        query: results.query.clone(),
-        local: results.local.iter().map(|hit| local(parent, hit)).collect(),
-        remote: results.remote.iter().map(remote).collect(),
-        count: count(results.count),
-        hidden_local: count(results.hidden_local),
-        next_page_token: String::new(),
-    }
-}
-
-/// A local hit, named by its resource; one whose bundle the catalog does
-/// not hold keeps the name it was found by (OQ-16).
-fn local(parent: &str, hit: &SearchHit) -> v1::SearchHit {
-    let (kind, collection) = kind(&hit.kind);
-    v1::SearchHit {
-        resource: hit.located.as_ref().map_or_else(
-            || hit.name.clone(),
-            |at| catalog::item_name(parent, &at.bundle, collection, &at.item),
-        ),
-        kind: kind as i32,
-        tags: hit.tags.clone(),
-        source: hit.source.clone(),
-        r#match: hit.r#match.clone(),
-    }
-}
-
-/// A remote's bundle, not installed: no resource name, its `item` the name
-/// it has in the remote.
-fn remote(found: &RemoteFound) -> v1::RemoteFound {
-    v1::RemoteFound {
-        remote: found.remote.clone(),
-        item: found.name.clone(),
-        kind: kind(&found.kind).0 as i32,
-        tags: found.tags.clone(),
-        description: found.description.clone(),
-        author: found.author.clone(),
-        pull_reference: found.pull_ref.clone(),
-    }
-}
-
-/// A search's kind word as its `ItemKind`, and the collection its items are
-/// named in.
-fn kind(word: &str) -> (v1::ItemKind, &'static str) {
-    match word {
-        "fragment" => (v1::ItemKind::Fragment, "fragments"),
-        "command" => (v1::ItemKind::Command, "commands"),
-        "skill" => (v1::ItemKind::Skill, "skills"),
-        "profile" => (v1::ItemKind::Profile, "profiles"),
-        "mcp_server" => (v1::ItemKind::McpServer, "mcpServers"),
-        "bundle" => (v1::ItemKind::Bundle, "bundles"),
-        _ => (v1::ItemKind::Unspecified, ""),
-    }
-}
-
-/// A count or token estimate as the API's `uint32` (OQ-12), saturating: no
-/// list or context comes near it.
-pub(crate) fn count(n: u64) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
+    let read = cx.served.search_library("", request);
+    served(cx, read, out, err, false, |found, out, _| {
+        text::search(out, &crate::read_back::search(found))
+    })
 }
 
 #[cfg(test)]

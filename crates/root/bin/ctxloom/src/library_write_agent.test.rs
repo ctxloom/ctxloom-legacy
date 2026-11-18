@@ -61,9 +61,11 @@ fn test_creating_a_binding_records_every_axis_and_the_listing_reads_each_one_bac
         );
         ran.succeeds();
         if is_text(flags) {
+            // Step 10b U3: the summary is the served answer's, a profile its
+            // short library reference (owner ruling 2026-11-17, as listed).
             assert_eq!(
                 ran.stdout,
-                "Created agent \"developer\" (engine: claude-code, profiles: dev, runtime: container-rootless)\n"
+                "Created agent \"developer\" (engine: claude-code, profiles: project#profiles/dev, runtime: container-rootless)\n"
             );
         } else {
             assert!(reports_as(&ran.json(), "agent.name").ends_with("/agents/developer"));
@@ -74,7 +76,7 @@ fn test_creating_a_binding_records_every_axis_and_the_listing_reads_each_one_bac
         if is_text(flags) {
             listed
                 .contains("engine: claude-code")
-                .contains("profiles: dev")
+                .contains("profiles: project#profiles/dev")
                 .contains("runtime: container-rootless");
         } else {
             let doc = listed.json();
@@ -173,7 +175,7 @@ fn test_a_binding_is_written_with_sorted_keys_and_the_rest_of_the_file_is_kept()
     ]);
     assert_eq!(
         text.stdout,
-        "Updated agent \"dev2\" (engine: claude-code, profiles: dev, dev-base, runtime: host, engines.claude-code: {model: haiku}, env: A, B)\n"
+        "Updated agent \"dev2\" (engine: claude-code, profiles: project#profiles/dev, project#profiles/dev-base, runtime: host, engines.claude-code: {model: haiku}, env: A, B)\n"
     );
 }
 
@@ -279,7 +281,7 @@ fn test_an_edit_naming_only_runtime_leaves_every_other_axis_intact() {
             ran.contains("Updated agent")
                 .contains("runtime: container-rootless")
                 .contains("engine: claude-code")
-                .contains("profiles: dev, ops")
+                .contains("profiles: project#profiles/dev, project#profiles/ops")
                 .contains("engines.claude-code: {model: haiku}");
         } else {
             assert!(reports_as(&ran.json(), "agent.name").ends_with("/agents/developer"));
@@ -709,12 +711,13 @@ fn test_the_listing_and_the_write_summary_show_the_engine_blocks_in_the_config_s
     ran.succeeds();
     assert_eq!(
         ran.stdout,
-        "Updated agent \"reviewer\" (engine: claude-code, profiles: dev, engines.claude-code: {model: haiku, permissions: {defaultMode: plan}}, permissions passed to claude-code verbatim; ctxloom does not check it)\n"
+        "Updated agent \"reviewer\" (engine: claude-code, profiles: project#profiles/dev, engines.claude-code: {model: haiku, permissions: {defaultMode: plan}}, permissions passed to claude-code verbatim; ctxloom does not check it)\n"
     );
     project
         .run(&["agent", "list", "--format", "text"])
         .succeeds()
-        .contains("  reviewer (engine: claude-code)\n    profiles: dev\n    engines.claude-code: {model: haiku, permissions: {defaultMode: plan}}\n      permissions passed to claude-code verbatim; ctxloom does not check it\n")
+        // The profile is its short reference (owner ruling 2026-11-17).
+        .contains("  reviewer (engine: claude-code)\n    profiles: project#profiles/dev\n    engines.claude-code: {model: haiku, permissions: {defaultMode: plan}}\n      permissions passed to claude-code verbatim; ctxloom does not check it\n")
         .lacks("claude-code={mode=plan}");
     let listed = project.run(&["agent", "list", "--format", "json"]).json();
     let reviewer = &listed["agents"][0];
@@ -746,7 +749,7 @@ fn test_a_setting_written_for_an_agent_that_names_no_engine_names_the_block() {
     ran.succeeds();
     assert_eq!(
         ran.stdout,
-        "Created agent \"plain\" (profiles: dev, engines.claude-code: {model: haiku})\n"
+        "Created agent \"plain\" (profiles: project#profiles/dev, engines.claude-code: {model: haiku})\n"
     );
     assert!(
         ran.stderr.contains("agent plain names no engine: its settings were written to agents.plain.engines.claude-code, the default engine's block"),

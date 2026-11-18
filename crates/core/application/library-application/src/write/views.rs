@@ -131,6 +131,15 @@ pub struct BundleExported {
     pub dest: String,
 }
 
+/// A local `bundle move` into another project (step 10b U9): where the
+/// bundle's manifest was, as shown, and the directory it lands at.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct BundleMoved {
+    pub name: String,
+    pub source: String,
+    pub dest: String,
+}
+
 /// `bundle import`.
 #[derive(Clone, Debug, Serialize)]
 pub struct BundleImported {
@@ -335,4 +344,12 @@ pub struct CompanionRemoved {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigCreated {
     pub path: String,
+}
+
+/// `config edit`, served (step 10b U3): the layer edited, and whether the
+/// editor changed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigEdited {
+    pub path: String,
+    pub changed: bool,
 }

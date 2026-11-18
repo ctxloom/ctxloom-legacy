@@ -483,6 +483,64 @@ pub(crate) fn client_one_shot(
     })
 }
 
+/// The run `run` a call was answered with (a distill's model, step 10b:
+/// the daemon owns the model call as a run), followed to its end through
+/// the daemon of the stamp `stamp`, as a one-shot is: a signal heard asks
+/// the daemon to stop it.
+pub(crate) fn client_follow(
+    wiring: &Wiring,
+    stamp: &str,
+    run: &str,
+    stops: Option<&crate::signals::CommandStops>,
+) -> Done<Answer> {
+    let refused = |error: RunError| Done {
+        result: Err(error),
+        notices: Vec::new(),
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => return refused(unmade(&e)),
+    };
+    runtime.block_on(async {
+        let api = match crate::daemon::Reach::new(wiring, stamp).reach().await {
+            Ok(api) => api,
+            Err(unreached) => return refused(RunError::Unreached(unreached)),
+        };
+        let asked = daemon_proto::v1::Run {
+            name: run.to_string(),
+            ..daemon_proto::v1::Run::default()
+        };
+        // The command's own stops when it hears them already (ruling 114: a
+        // stop heard before the follow began asks the daemon to stop the
+        // run at once); else heard from here on.
+        let (heard, hearing, unheard, signal) = match stops {
+            Some(stops) => {
+                let signal = stops.signal().map(|signal| signal.name().to_string());
+                let heard: run_application::client::Heard<'static> = if signal.is_some() {
+                    Box::pin(std::future::pending())
+                } else {
+                    stops.heard()
+                };
+                let unheard = stops.unheard().map(unheard_notice).into_iter().collect();
+                (heard, None, unheard, signal)
+            }
+            None => {
+                let (heard, hearing, unheard) = heard_stops(wiring);
+                (heard, hearing, unheard, None)
+            }
+        };
+        let mut done = run_application::client::followed(&api, &asked, heard, signal).await;
+        if let Some(hearing) = hearing {
+            hearing.abort();
+        }
+        done.notices.splice(0..0, unheard);
+        done
+    })
+}
+
 /// A command's failure, as the run's error: its diagnostic, exit and
 /// refusals, said as they were.
 pub(crate) fn failed(failure: cli_support::Failure) -> RunError {
@@ -495,6 +553,13 @@ pub(crate) fn failed(failure: cli_support::Failure) -> RunError {
             .map(|refusal| Report::of(&**refusal))
             .collect(),
     }))
+}
+
+/// What is said when no signal can be heard: `why`.
+fn unheard_notice(why: &str) -> library_application::Notice {
+    library_application::Notice::text(format!(
+        "cannot listen for signals ({why}): a signal ends ctxloom without asking the daemon to stop the engine"
+    ))
 }
 
 /// The first of the signals that stop a one-shot (all three), once heard,
@@ -514,9 +579,7 @@ fn heard_stops(
             return (
                 Box::pin(std::future::pending()),
                 None,
-                vec![library_application::Notice::text(format!(
-                    "cannot listen for signals ({e}): a signal ends ctxloom without asking the daemon to stop the engine"
-                ))],
+                vec![unheard_notice(&e.to_string())],
             )
         }
     };
@@ -597,25 +660,47 @@ impl daemon_application::OneShotHost for HostedOneShots {
                             told.clone(),
                         ))
                     }));
-                    let done = hosted.unwrap_or_else(|_| Done {
+                    let panicked = || Done {
                         result: Err(RunError::NotStarted {
                             detail: "the daemon's one-shot panicked".to_string(),
                         }),
                         notices: Vec::new(),
-                    });
-                    told.done(done);
+                    };
+                    let done = hosted.unwrap_or_else(|_| panicked());
+                    // Its end awaited on the daemon's runtime: what follows
+                    // from it (a distill's write, step 10b) is made there. A
+                    // reaction that panics is taken already, so the second
+                    // end is said as it is, and the run never stays open.
+                    let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        runtime.block_on(told.done(done))
+                    }));
+                    if ended.is_err() {
+                        runtime.block_on(told.done(panicked()));
+                    }
                 }
             });
         if let Err(e) = spawned {
-            told.done(Done {
+            // On the caller's runtime, where nothing may block on it: a run
+            // that never started is answered at once, its reaction too
+            // (nothing follows from a failure but its end).
+            polled_once(told.done(Done {
                 result: Err(RunError::NotStarted {
                     detail: format!("no thread for the one-shot: {e}"),
                 }),
                 notices: Vec::new(),
-            });
+            }));
         }
         control
     }
+}
+
+/// Poll `future` once: what is answered at once is done; what would wait
+/// is dropped (the core's end of a run that never started waits on
+/// nothing).
+pub(crate) fn polled_once(future: impl std::future::Future<Output = ()>) {
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let _ = future.as_mut().poll(&mut cx);
 }
 
 /// The wiring a hosted one-shot is planned and driven in: its client's
@@ -625,18 +710,15 @@ pub(crate) fn hosted_wiring(
     temp: &Path,
     request: &daemon_application::HostRequest,
 ) -> Wiring {
-    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = request
-        .env
-        .iter()
-        .map(|(name, value)| (name.into(), value.into()))
-        .collect();
-    let snapshot = EnvSnapshot::from_parts(
-        os::host().flavor(),
-        Ok(std::path::PathBuf::from(&request.cwd)),
-        temp.to_path_buf(),
-        vars,
-    );
-    Wiring::at(Arc::new(snapshot), home.to_path_buf())
+    crate::daemon::caller_wiring(
+        home,
+        temp,
+        (&request.cwd, None),
+        request
+            .env
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    )
 }
 
 /// What a run the daemon hosts is planned and driven in (a hosted

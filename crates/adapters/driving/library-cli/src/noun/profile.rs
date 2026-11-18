@@ -3,16 +3,12 @@
 //! in text only (create, edit, modify, export, import) still does, unless
 //! json is asked for by name.
 
-use library_application::{
-    ProfileCreated, ProfileExported, ProfileImported, ProfileList, ProfileModified, ProfileRemoved,
-    ProfileRow, ProfileShow, Removal,
-};
+use library_application::{ProfileExported, ProfileImported};
 
 use crate::catalog::{self, ok};
-use crate::prelude::*;
+use library_api::resources::profile_name;
 
-/// The bundle a project's own profiles are items of.
-const PROJECT_BUNDLE: &str = "project";
+use crate::prelude::*;
 
 pub(crate) fn read(
     cx: &Context<'_>,
@@ -20,113 +16,27 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
+    // The daemon's reads (step 10a U2), their text from the message (D10).
     if verb == "show" {
-        let outcome = cx.library.profile_show(&cx.flags, &text_arg(sub, "name"));
-        return catalog::answer(
-            cx,
-            outcome,
-            out,
-            err,
-            false,
-            shown,
-            |show, out, _| text::profile_show(out, show),
-            ok,
-        );
+        let request = v1::GetProfileRequest {
+            globals: cx.globals(),
+            ..v1::GetProfileRequest::default()
+        };
+        let under = library_api::names::profile_target(&text_arg(sub, "name"));
+        let read = cx.served.get_profile(&under, request);
+        return served(cx, read, out, err, false, |profile, out, _| {
+            text::profile_show(out, &crate::read_back::profile_show(profile))
+        });
     }
-    let outcome = cx.library.profile_list(&cx.flags);
-    catalog::answer(
-        cx,
-        outcome,
-        out,
-        err,
-        false,
-        listed,
-        |list, out, _| text::profile_list(out, list),
-        ok,
-    )
-}
-
-/// The profile's own name within its key (`<bundle>#profiles/<name>`).
-fn id_of(name: &str) -> &str {
-    name.split_once("#profiles/").map_or(name, |(_, id)| id)
-}
-
-/// A profile's resource name, below the bundle that ships it.
-fn profile_name(parent: &str, entry: &str, id: &str) -> String {
-    let entry = if entry.is_empty() {
-        PROJECT_BUNDLE
-    } else {
-        entry
+    let request = v1::ListProfilesRequest {
+        globals: cx.globals(),
+        ..v1::ListProfilesRequest::default()
     };
-    catalog::item_name(parent, entry, "profiles", id)
-}
-
-/// `profile list`: `ListProfilesResponse`.
-pub(crate) fn listed(parent: &str, list: &ProfileList) -> v1::ListProfilesResponse {
-    v1::ListProfilesResponse {
-        profiles: list
-            .rows
-            .iter()
-            .map(|row| listed_row(parent, row))
-            .collect(),
-        next_page_token: String::new(),
-    }
-}
-
-fn listed_row(parent: &str, row: &ProfileRow) -> v1::Profile {
-    v1::Profile {
-        name: profile_name(parent, &row.entry, &row.display_name),
-        description: row.description.clone(),
-        parents: parents(parent, &row.parents),
-        tags: row.tags.clone(),
-        bundles: bundles(parent, &row.bundles),
-        default: Some(row.default),
-        path: row.path.clone(),
-        ..<v1::Profile as Default>::default()
-    }
-}
-
-/// A profile's parents as Profile names (OQ-16: one with no place keeps
-/// its text).
-fn parents(parent: &str, asks: &[String]) -> Vec<String> {
-    asks.iter()
-        .map(|ask| catalog::profile_ref(parent, ask))
-        .collect()
-}
-
-/// A profile's bundles as Bundle (or item) names.
-fn bundles(parent: &str, asks: &[String]) -> Vec<String> {
-    asks.iter()
-        .map(|ask| catalog::bundle_ref(parent, ask))
-        .collect()
-}
-
-/// `profile show`: the `Profile` (FULL).
-pub(crate) fn shown(parent: &str, show: &ProfileShow) -> v1::Profile {
-    v1::Profile {
-        default: Some(show.default),
-        ..profile_of(
-            parent,
-            &profile_name(parent, &show.entry, id_of(&show.name)),
-            show,
-        )
-    }
-}
-
-/// A profile as its `Profile`, named `name`.
-pub(crate) fn profile_of(parent: &str, name: &str, show: &ProfileShow) -> v1::Profile {
-    v1::Profile {
-        name: name.to_string(),
-        description: show.description.clone(),
-        parents: parents(parent, &show.parents),
-        tags: show.tags.clone(),
-        bundles: bundles(parent, &show.bundles),
-        variables: show.variables.clone(),
-        exclude_fragments: show.exclude_fragments.clone(),
-        exclude_mcp_servers: show.exclude_mcp.clone(),
-        path: show.path.clone(),
-        ..<v1::Profile as Default>::default()
-    }
+    let in_project = cx.served.in_project();
+    let read = cx.served.list_profiles("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        text::profile_list(out, &crate::read_back::profile_list(listed, in_project))
+    })
 }
 
 pub(crate) fn write(
@@ -147,50 +57,81 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
+/// `profile create <name> [flags] [--bundle B]`: the daemon's
+/// `CreateProfile` (step 10b U3), under the bundle `--bundle` names (none:
+/// the project's own, made with it the first time). Its text from the
+/// response (D10), and json only when asked for by name.
 fn create(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let request = ProfileCreateRequest {
-        name,
-        description: text_arg(sub, "description"),
-        parents: many(sub, "parent"),
-        // `--include`, and the vocabulary's `--add-bundle`, in that order.
-        bundles: [many(sub, "include"), many(sub, "add-bundle")].concat(),
-        skills: many(sub, "add-skill"),
-        target: text_arg(sub, "bundle"),
+    let target = text_arg(sub, "bundle");
+    let under = if target.is_empty() {
+        String::new()
+    } else {
+        library_api::names::bundle_target(&target)
     };
-    let outcome = cx.library.profile_create(&cx.flags, &request);
-    catalog::answer(
-        cx,
-        outcome,
+    let request = v1::CreateProfileRequest {
+        profile_id: text_arg(sub, "name"),
+        profile: Some(v1::Profile {
+            description: text_arg(sub, "description"),
+            parents: many(sub, "parent"),
+            // `--include`, and the vocabulary's `--add-bundle`, in that order.
+            bundles: [many(sub, "include"), many(sub, "add-bundle")].concat(),
+            skills: many(sub, "add-skill"),
+            ..<v1::Profile as Default>::default()
+        }),
+        globals: cx.globals(),
+        ..v1::CreateProfileRequest::default()
+    };
+    let asked = request.profile.clone().unwrap_or_default();
+    let cx = text_unless_asked(cx);
+    crate::answer_written(
+        &cx,
+        cx.served.create_profile(&under, request),
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        true,
-        |parent, made| created(parent, &request, made),
-        |made, out, _| {
+        |m, out| {
+            // Said as she wrote them (the response names them as resources).
             let mut parts = Vec::new();
-            if !made.parents.is_empty() {
-                parts.push(format!("parents: {}", made.parents.join(", ")));
+            if !asked.parents.is_empty() {
+                parts.push(format!("parents: {}", asked.parents.join(", ")));
             }
-            if !made.bundles.is_empty() {
-                parts.push(format!("bundles: {}", made.bundles.join(", ")));
+            if !asked.bundles.is_empty() {
+                parts.push(format!("bundles: {}", asked.bundles.join(", ")));
             }
             let with = if parts.is_empty() {
                 String::new()
             } else {
                 format!(" with {}", parts.join("; "))
             };
-            writeln!(out, "Created profile \"{}\"{with}", made.name)?;
-            writeln!(out, "Saved to: {}", made.path)
+            let name = m.profile.as_ref().map_or("", |p| p.name.as_str());
+            let id = name.rsplit('/').next().unwrap_or(name);
+            writeln!(out, "Created profile \"{id}\"{with}")?;
+            writeln!(out, "Saved to: {}", m.path)
         },
-        ok,
+        |_| Exit::OK,
     )
 }
 
+/// The context of a write that answers in text unless json is asked for
+/// by name (OD-40).
+fn text_unless_asked<'a>(cx: &'a Context<'a>) -> Context<'a> {
+    let json_by_name = cx.explicit && cx.format == angzarr_presentation::Format::Json;
+    cx.formatted(if json_by_name {
+        angzarr_presentation::Format::Json
+    } else {
+        angzarr_presentation::Format::Text
+    })
+}
+
+/// `profile modify|edit <name> <flags>`: the daemon's `UpdateProfile` as a
+/// patch (step 10b U3), one call: its lists as given, `description` named
+/// by its mask (a mask sent even when it names none, so nothing given is
+/// a patch of nothing, never the editor).
 fn modify(
     cx: &Context<'_>,
     sub: &ArgMatches,
@@ -198,58 +139,88 @@ fn modify(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let name = text_arg(sub, "name");
-    let edit = ProfileEdit {
-        description: given(sub, "description"),
+    let mut profile = <v1::Profile as Default>::default();
+    let mut paths = Vec::new();
+    if let Some(description) = given(sub, "description") {
+        profile.description = description;
+        paths.push("description".to_string());
+    }
+    let request = v1::UpdateProfileRequest {
+        profile: Some(profile),
+        update_mask: Some(daemon_proto::google::protobuf::FieldMask { paths }),
         add_parents: many(sub, "add-parent"),
         remove_parents: many(sub, "remove-parent"),
         add_bundles: many(sub, "add-bundle"),
         remove_bundles: many(sub, "remove-bundle"),
         exclude_fragments: many(sub, "exclude-fragment"),
         include_fragments: many(sub, "include-fragment"),
-        exclude_mcp: many(sub, "exclude-mcp"),
-        include_mcp: many(sub, "include-mcp"),
+        exclude_mcp_servers: many(sub, "exclude-mcp"),
+        include_mcp_servers: many(sub, "include-mcp"),
+        globals: cx.globals(),
+        ..v1::UpdateProfileRequest::default()
     };
-    let outcome = cx.library.profile_modify(&cx.flags, &name, &edit);
-    catalog::answer(
-        cx,
-        outcome,
+    let under = library_api::names::profile_target(&name);
+    let cx = text_unless_asked(cx);
+    crate::answer_written(
+        &cx,
+        cx.served.update_profile(&under, request),
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        true,
-        |parent, done| modified(parent, &name, done),
-        |done, out, _| {
-            if done.changes.is_empty() {
+        |m, out| {
+            if m.changes.is_empty() {
                 return nothing(out);
             }
-            for change in &done.changes {
+            for change in &m.changes {
                 writeln!(out, "{change}")?;
             }
-            writeln!(out, "Modified profile \"{}\"", done.name)
+            writeln!(out, "Modified profile \"{name}\"")
         },
-        ok,
+        |_| Exit::OK,
     )
 }
 
+/// `profile edit <name>` with no flag: the daemon's `UpdateProfile` as the
+/// editor's round trip (step 10b U3): its preview's Edit need presented
+/// here (the EDITOR launched on the profile's text), the apply sent with
+/// what it left and the preview's etag.
 fn edit_in_editor(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let outcome = cx.library.profile_edit(&cx.flags, &name);
-    catalog::answer(
-        cx,
-        outcome,
+    let under = library_api::names::profile_target(&text_arg(sub, "name"));
+    let ask =
+        |validate_only: bool, answers: Vec<v1::Answer>, etag: String| v1::UpdateProfileRequest {
+            validate_only,
+            answers,
+            etag,
+            presentable: crate::noun::item::presentable(),
+            globals: cx.globals(),
+            ..v1::UpdateProfileRequest::default()
+        };
+    let preview = cx
+        .served
+        .update_profile(&under, ask(true, Vec::new(), String::new()))?;
+    let answers = crate::noun::item::edit_answers(cx, &preview.needs)?;
+    let edited = cx
+        .served
+        .update_profile(&under, ask(false, answers, preview.etag));
+    let cx = text_unless_asked(cx);
+    crate::answer_written(
+        &cx,
+        edited,
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        true,
-        |parent, done| edited(parent, &name, done),
-        |done, out, _| match done {
-            ProfileEdited::Unchanged => nothing(out),
-            ProfileEdited::Updated { path } => writeln!(out, "Updated profile: {path}"),
+        |m, out| {
+            if !m.applied.unwrap_or(false) {
+                return nothing(out);
+            }
+            writeln!(out, "Updated profile: {}", m.path)
         },
-        ok,
+        |_| Exit::OK,
     )
 }
 
@@ -300,6 +271,8 @@ fn import(
     )
 }
 
+/// `profile remove <name> [--yes]`: the daemon's `DeleteProfile` (step
+/// 10b U3), previewed and confirmed at a terminal.
 fn remove(
     cx: &Context<'_>,
     sub: &ArgMatches,
@@ -307,22 +280,23 @@ fn remove(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let name = text_arg(sub, "name");
-    let outcome = cx
-        .library
-        .profile_remove(&cx.flags, &name, flag(sub, "yes"));
-    catalog::answer(
+    let under = library_api::names::profile_target(&name);
+    crate::write::removal_served(
         cx,
-        outcome,
+        flag(sub, "yes"),
+        |validate_only, answers, etag| {
+            let request = v1::DeleteProfileRequest {
+                validate_only,
+                answers,
+                etag,
+                globals: cx.globals(),
+                ..v1::DeleteProfileRequest::default()
+            };
+            cx.served.delete_profile(&under, request)
+        },
         out,
         err,
-        false,
-        |parent, gone| removed(parent, &name, gone),
-        |gone, out, _| {
-            catalog::removal_text(gone, out, |gone, out| {
-                writeln!(out, "Removed profile \"{}\"", gone.profile)
-            })
-        },
-        crate::write::removal_exit,
+        |_, out| writeln!(out, "Removed profile \"{name}\""),
     )
 }
 
@@ -332,58 +306,6 @@ fn just_named(name: String) -> Option<v1::Profile> {
         name,
         ..<v1::Profile as Default>::default()
     })
-}
-
-/// `profile create --format json`: `CreateProfileResponse`, the profile in
-/// the bundle it was written into.
-pub(crate) fn created(
-    parent: &str,
-    request: &ProfileCreateRequest,
-    made: &ProfileCreated,
-) -> v1::CreateProfileResponse {
-    v1::CreateProfileResponse {
-        profile: Some(v1::Profile {
-            name: profile_name(parent, &request.target, &made.name),
-            description: request.description.clone(),
-            parents: parents(parent, &made.parents),
-            bundles: bundles(parent, &made.bundles),
-            path: made.path.clone(),
-            ..<v1::Profile as Default>::default()
-        }),
-        path: made.path.clone(),
-        applied: Some(true),
-        ..v1::CreateProfileResponse::default()
-    }
-}
-
-/// `profile modify|edit <flags> --format json`: `UpdateProfileResponse`;
-/// a modification that changed nothing applied nothing.
-pub(crate) fn modified(
-    parent: &str,
-    asked: &str,
-    done: &ProfileModified,
-) -> v1::UpdateProfileResponse {
-    v1::UpdateProfileResponse {
-        profile: just_named(catalog::profile_ref(parent, asked)),
-        applied: Some(!done.changes.is_empty()),
-        changes: done.changes.clone(),
-        ..v1::UpdateProfileResponse::default()
-    }
-}
-
-/// `profile edit --format json` (the editor's round trip):
-/// `UpdateProfileResponse`.
-pub(crate) fn edited(parent: &str, asked: &str, done: &ProfileEdited) -> v1::UpdateProfileResponse {
-    let (path, applied) = match done {
-        ProfileEdited::Unchanged => (String::new(), false),
-        ProfileEdited::Updated { path } => (path.clone(), true),
-    };
-    v1::UpdateProfileResponse {
-        profile: just_named(catalog::profile_ref(parent, asked)),
-        path,
-        applied: Some(applied),
-        ..v1::UpdateProfileResponse::default()
-    }
 }
 
 /// `profile export --format json`: `ExportProfileResponse`.
@@ -416,31 +338,6 @@ pub(crate) fn imported(
         applied: Some(true),
         ..v1::ImportProfileResponse::default()
     }
-}
-
-/// `profile remove`: `DeleteProfileResponse`, the preview's or the
-/// removal's, named by the profile asked.
-pub(crate) fn removed(
-    parent: &str,
-    asked: &str,
-    gone: &Removal<ProfileRemoved>,
-) -> v1::DeleteProfileResponse {
-    let name = catalog::profile_ref(parent, asked);
-    catalog::removal(
-        gone,
-        |preview| v1::DeleteProfileResponse {
-            profile: just_named(name.clone()),
-            applied: Some(false),
-            detail: preview.detail,
-            apply_command: preview.apply_command,
-            ..v1::DeleteProfileResponse::default()
-        },
-        |_| v1::DeleteProfileResponse {
-            profile: just_named(name.clone()),
-            applied: Some(true),
-            ..v1::DeleteProfileResponse::default()
-        },
-    )
 }
 
 /// Whether `profile edit` was given a flag to patch with (else it opens the

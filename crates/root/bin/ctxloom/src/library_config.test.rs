@@ -554,6 +554,8 @@ fn test_a_first_json_read_from_a_subdirectory_names_the_roots_project() {
         after.remove(".ctxloom/project-id").is_some(),
         "minted at the root"
     );
+    // The read observes the checkout at the root first (step 10a U2, L2).
+    assert!(after.remove(".ctxloom/state/checkout").is_some());
     assert_eq!(after, before, "the read wrote more than the root's id");
     let from_root = project.run_in(project.dir(), &["config", "show", "--format", "json"]);
     assert_eq!(reports_as(&from_root.json(), "name"), name);

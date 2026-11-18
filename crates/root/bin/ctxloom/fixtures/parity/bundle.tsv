@@ -77,10 +77,12 @@ cfg-retired-turn-cap-bundle-list	cfg/retired-turn-cap	bundle list --format json
 cfg-layers-bundle-list	cfg/layers	bundle list --format json
 cfg-layers-empty-companions-bundle-list	cfg/layers-empty-companions	bundle list --format json
 # Nothing there: no content directory at all, and an empty one (empty_listing_hint, cli/agent.feature)
+# changed: owner 2026-11-17: no-directory reads as no bundles ("No bundles installed." and its hint, never Go's mkdir line; library_parity's as_ruled)
 empty-bundle-list-text	empty	bundle list --format text
 empty-bundle-list-json	empty	bundle list --format json
 emptybundles-bundle-list-text	emptybundles	bundle list --format text
 emptybundles-bundle-list-json	emptybundles	bundle list --format json
 # No project here (configload/appdir.go: no .ctxloom up the path, so the home's config alone)
+# changed: owner 2026-11-17: no-directory reads as no bundles ("No bundles installed." above the no-project hint; library_parity's as_ruled)
 noproject-bundle-list-text	noproject	CTXLOOM_ROOT= bundle list --format text
 noproject-bundle-list-json	noproject	CTXLOOM_ROOT= bundle list --format json

@@ -9,15 +9,18 @@
 //!   opened over them.
 
 mod capture;
+mod checkout;
 mod commands;
 mod core_link;
 mod daemon;
-mod distiller;
 mod error;
 mod frontend;
+mod hook_library;
 mod interview;
 mod isolation;
 mod library;
+#[cfg(feature = "test-support")]
+mod library_events;
 mod mcp;
 mod oneshot;
 mod process_env;
@@ -66,6 +69,7 @@ pub use capture::{
     daemon_sink, Deadline, EdgeSink, HoldingRecording, HookReach, HookRecording, HookSink, RunIds,
     SessionIds, Unreachable,
 };
+pub use checkout::{checkout_file, checkout_harp, checkout_tree, mint_checkout_harp};
 pub use commands::{engines, Commands, Hooks};
 pub use core_link::{
     AlarmConsumer, CoreStores, InProcessCore, Projectors, SharedCore, SystemClock, Unclosed,
@@ -245,6 +249,8 @@ pub fn catalog_sources() -> Vec<angzarr_presentation::Source> {
     sources.extend(sessions_application::CATALOGS);
     sources.extend(isolation_application::CATALOGS);
     sources.extend([worktree_git::EN_US, container_cli::EN_US]);
+    sources.extend([library_git::EN_US, init_application::EN_US]);
+    sources.extend([library_tree::EN_US, library_api::EN_US]);
     sources.push(tasks_ports::EN_US);
     sources.extend([scheduler::EN_US, scheduler_loop::EN_US]);
     sources.extend([

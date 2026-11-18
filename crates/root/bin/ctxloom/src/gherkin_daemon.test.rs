@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use cucumber::{given, then, when};
 use serde_json::{json, Value};
 
-use super::World;
+use super::{writes, World};
 use crate::tests::gherkin_common::CommonWorld;
 use crate::tests::{files, procs};
 
@@ -42,6 +42,10 @@ const SPAWNED_IDLE_SECONDS: u64 = 15;
 /// is kill-tolerant) and reaped.
 #[derive(Default)]
 pub(super) struct State {
+    /// The bundle changed between a preview and Alice's answer, if any.
+    changes_before_answer: Option<String>,
+    /// The stores' evidence as it was before the scenario's command ran.
+    store_before: Option<StoreEvidence>,
     pub(super) daemon: Option<Child>,
     run: Option<Child>,
     /// The file whose presence lets the stub engine end.
@@ -50,6 +54,8 @@ pub(super) struct State {
     called: Option<Result<(), daemon_ports::Called>>,
     /// The discovery of a daemon since stopped.
     old: Option<run_ports::Discovery>,
+    /// The discovery of the daemon started after it, read while it served.
+    new: Option<run_ports::Discovery>,
     /// The daemon a command was seen to start.
     first: Option<run_ports::Discovery>,
     /// What two commands run at once came to.
@@ -81,8 +87,13 @@ pub(super) struct State {
     /// The home config's `daemon.drain_timeout`, as a step said it
     /// (shutdown.feature): every home config the steps write carries it.
     drain_timeout: Option<String>,
-    /// The stub claude the home config names, once one is set.
+    /// The stub claude, once one is set: the one the home config names,
+    /// or, when [`State::stub_on_path`], the one the default `claude` is.
     stub: Option<PathBuf>,
+    /// The stub is reached on the scenario's PATH as the default command
+    /// `claude`, and no config names it ([`project_says`]: an untrusted
+    /// read reports claude-code's command as the default's, trust.feature).
+    stub_on_path: bool,
     /// What the interactive session's command came to, once it ended.
     session_ran: Option<crate::tests::Ran>,
     /// A command a step started and left running (`I start ...`), for a
@@ -275,6 +286,7 @@ fn stub_claude(w: &mut World, body: &str) -> PathBuf {
     };
     w.common.project.write(".ctxloom/config.yaml", &config);
     w.daemon_spec.stub = Some(dir.join("claude"));
+    w.daemon_spec.stub_on_path = false;
     write_home_config(w);
     dir
 }
@@ -291,7 +303,12 @@ fn write_home_config(w: &World) {
             .read_home(".ctxloom/config.yaml")
             .unwrap_or_default(),
     ));
-    if let Some(stub) = &w.daemon_spec.stub {
+    if let Some(stub) = w
+        .daemon_spec
+        .stub
+        .as_ref()
+        .filter(|_| !w.daemon_spec.stub_on_path)
+    {
         config.push_str(&format!(
             "engines:\n  claude-code:\n    command: {}\n",
             stub.display()
@@ -700,11 +717,84 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
         w.common.ran = Some(w.common.project.run_input(&args, "yes\n", &env_pairs(&env)));
         return true;
     }
-    let stubbed = text.contains("at her terminal, and answers yes when asked");
-    if stubbed {
-        red(text);
+    if text.contains("at her terminal, and answers yes when asked") {
+        removes_at_terminal(w, step);
+        return true;
     }
     false
+}
+
+/// Her terminal, stood in for (`CTXLOOM_TEST_TERMINAL`): the step's
+/// command run, and once it asks its `[y/N]` question (read off its
+/// standard error) whatever the scenario has to happen between the
+/// preview and her answer (`changes_before_answer`), then her yes. The
+/// change waits for the question, so it falls between the two, always.
+fn removes_at_terminal(w: &mut World, step: &cucumber::gherkin::Step) {
+    use std::io::{Read as _, Write as _};
+    use std::process::{Command, Stdio};
+    w.before_run();
+    let words = line_words(step);
+    let project = &w.common.project;
+    let mut command = Command::new(crate::tests::binary());
+    command
+        .args(&words)
+        .env_clear()
+        .env("HOME", project.home())
+        .env("USERPROFILE", project.home())
+        .env("TMPDIR", crate::tests::temp_root())
+        .env("CTXLOOM_ROOT", project.dir())
+        .env("CTXLOOM_TEST_TERMINAL", "1")
+        .current_dir(project.dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for name in ["PATH", "SystemRoot"] {
+        if let Some(value) = crate::tests::host_var(name) {
+            command.env(name, value);
+        }
+    }
+    for (name, value) in env_of(w) {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().expect("ctxloom runs");
+    let mut stdout = child.stdout.take().expect("stdout");
+    let mut stderr = child.stderr.take().expect("stderr");
+    let (asked, asking) = std::sync::mpsc::channel();
+    let errors = std::thread::spawn(move || {
+        let (mut said, mut byte, mut told) = (Vec::new(), [0_u8], false);
+        while stderr.read(&mut byte).is_ok_and(|n| n == 1) {
+            said.push(byte[0]);
+            if !told && said.ends_with(b"[y/N] ") {
+                told = true;
+                let _ = asked.send(());
+            }
+        }
+        said
+    });
+    let outputs = std::thread::spawn(move || {
+        let mut said = Vec::new();
+        let _ = stdout.read_to_end(&mut said);
+        said
+    });
+    let mut stdin = child.stdin.take().expect("stdin");
+    if asking.recv_timeout(Duration::from_secs(60)).is_ok() {
+        if let Some(bundle) = w.daemon_spec.changes_before_answer.clone() {
+            files::put(
+                w.common.project.dir().join(format!(
+                    ".ctxloom/content/bundles/v2/{bundle}/fragments/meanwhile.md"
+                )),
+                "written while Alice read the preview\n",
+            );
+        }
+        let _ = stdin.write_all(b"yes\n");
+    }
+    drop(stdin);
+    let status = child.wait().expect("ctxloom finishes");
+    w.common.ran = Some(crate::tests::Ran {
+        code: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&outputs.join().expect("stdout read")).into_owned(),
+        stderr: String::from_utf8_lossy(&errors.join().expect("stderr read")).into_owned(),
+    });
 }
 
 /// The signal a `... ctxloom is sent a <SIG> while the assistant works:`
@@ -732,7 +822,7 @@ fn records_itself() -> String {
         r#"here="$(dirname "$0")"
 echo "$PPID" > "$here/ppid"
 echo "${{CTXLOOM_SESSION##*/}}" > "$here/watched-harp"
-lock="${{CTXLOOM_ROOT}}/.ctxloom/sessions/${{CTXLOOM_SESSION##*/}}.lock"
+lock="${{CTXLOOM_ROOT}}/.ctxloom/sessions/${{CTXLOOM_SESSION##*/}}/session.lock"
 if {free}; then echo free > "$here/lock-probe"; else echo held > "$here/lock-probe"; fi
 "#
     )
@@ -1234,7 +1324,7 @@ fn alices_session_with_child(w: &mut World, owner: String, child: String) {
         .common
         .project
         .dir()
-        .join(format!(".ctxloom/sessions/{owner}.lock"));
+        .join(format!(".ctxloom/sessions/{owner}/session.lock"));
     let release = dir.join("release");
     let holder = dir.join("holds-lock");
     files::put_program(&holder, &holds_lock());
@@ -1420,19 +1510,20 @@ fn holds_at_bound(w: &mut World) {
     file.set_len(256 << 20).expect("a sparse hold");
 }
 
-/// The older daemon serving again for a second hook: the first hook that
-/// held for it asked it to drain (H-Q6 (b)), and, hosting nothing, it
-/// exited; a hook finding none would start one of its own version.
+/// The older daemon still serving for a second hook: a hook never touches
+/// a daemon's life (OD-61, OD-62: H-Q6's drain nudge is gone), so the one
+/// the first hook held for serves on. (This step used to wait for it to
+/// exit and start it again; it exited only at its idle time, 15 s a
+/// scenario, the daemon cluster's cap, owner ruling 2026-11-18.)
 fn older_still_serving(w: &mut World) {
-    if let Some(mut gone) = w.daemon_spec.daemon.take() {
-        let deadline = Instant::now() + DAEMON_WAIT;
-        while matches!(gone.try_wait(), Ok(None)) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let _ = gone.kill();
-        let _ = gone.wait();
-    }
-    start_daemon_stamped(w, OLDER_STAMP);
+    let alive = w
+        .daemon_spec
+        .daemon
+        .as_mut()
+        .is_some_and(|daemon| matches!(daemon.try_wait(), Ok(None)));
+    assert!(alive, "the older daemon exited: {}", daemon_log_text(w));
+    assert_eq!(discovery_now(w).stamp, OLDER_STAMP, "the older one serves");
+    assert!(serving_now(w), "the older daemon answers");
 }
 
 #[given("the session's hooks held its prompt and its turn's end while an older daemon served")]
@@ -1547,6 +1638,18 @@ fn die_at(when: &str) -> Option<&'static str> {
         "while a turn is in flight" => "turn",
         "after a hook's fact is recorded, before it is answered" => "hook",
         "while the discovery file is written" => "discovery",
+        // A library write's points (step 10b U3): after its intent is
+        // recorded, after it is staged, after the rename, after its done
+        // fact. "In the middle" of one is between its staging and its rename.
+        "after the write's intent is recorded, before it is staged" => "intended",
+        "after the write is staged, before it is renamed in" | "in the middle of the write" => {
+            "staged"
+        }
+        "after the write is renamed in, before it is recorded done" => "renamed",
+        "after the write is recorded done, before it is answered" => "done",
+        // A sequence's (T28): after its first step, the trash, is applied.
+        "after the session's directory moved to trash, before the purge"
+        | "after the old bundle moved to trash, before the new one moved in" => "trashed",
         _ => return None,
     })
 }
@@ -1569,6 +1672,27 @@ fn daemon_gone(w: &mut World) {
     w.daemon_spec.killed = true;
 }
 
+/// What the import's kill point presupposes ("the OLD bundle moved to
+/// trash, before the NEW one moved in"): a bundle `notes`, and its export
+/// at `exported/notes` holding a file the bundle does not, the new copy a
+/// forced import replaces it with.
+fn old_and_new_notes(w: &mut World) {
+    for args in [
+        &["bundle", "create", "notes", "--description", "my notes"][..],
+        &["bundle", "export", "notes", "exported"][..],
+    ] {
+        let ran = run_now(w, args);
+        assert_eq!(ran.code, 0, "{args:?}: {}", ran.said());
+    }
+    files::put(
+        w.common
+            .project
+            .dir()
+            .join("exported/notes/fragments/shared.md"),
+        "only the new copy holds this\n",
+    );
+}
+
 #[given(regex = r"^the daemon will be killed outright (.+)$")]
 fn killed_at(w: &mut World, when: String) {
     if let Some(step) = die_at(&when) {
@@ -1576,9 +1700,10 @@ fn killed_at(w: &mut World, when: String) {
         if w.daemon_spec.killed {
             return;
         }
-        if w.daemon_spec.daemon.is_some() {
-            w.daemon_spec.before_kill = Some(discovery_now(w));
+        if when == "after the old bundle moved to trash, before the new one moved in" {
+            old_and_new_notes(w);
         }
+        w.daemon_spec.before_kill = discovery_if_serving(w);
         files::put(daemon_dir(w).join(DIE_AT), step);
         // A daemon serving with the step already reached (a child's turn in
         // flight) takes the switch on its next round.
@@ -1594,8 +1719,14 @@ fn killed_at(w: &mut World, when: String) {
     // takes it, applies the next write it is sent through its coordinator,
     // and is killed before it answers; the daemon started after it finds
     // none.
-    w.daemon_spec.before_kill = Some(discovery_now(w));
+    w.daemon_spec.before_kill = discovery_if_serving(w);
     files::put(daemon_dir(w).join(DIE_AFTER_APPLY), "once");
+}
+
+/// The discovery file of the daemon serving now, when one has written one
+/// (a daemon a command started, or the scenario's own).
+fn discovery_if_serving(w: &World) -> Option<run_ports::Discovery> {
+    files::exists(discovery_path(w)).then(|| discovery_now(w))
 }
 
 /// The daemon directory's switch that kills a test-support daemon once a
@@ -1741,10 +1872,15 @@ fn restarted(w: &mut World) {
     if let Some(mut daemon) = w.daemon_spec.daemon.take() {
         let _ = daemon.wait();
     }
-    // The next command's daemon idles out at once.
-    w.common.set_env(IDLE_VARIABLE, IDLE_SECONDS.to_string());
+    // The next command's daemon idles as a spawned one does, so it outlives
+    // the steps that call it; its discovery is read here, while `daemon
+    // resolve` has just found it serving, never left to a later step's
+    // timing (under load a short idle time had it gone by then).
+    w.common
+        .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
     let next = run_now(w, &["daemon", "resolve"]);
     assert_eq!(next.code, 0, "{}\n{}", next.said(), daemon_log_text(w));
+    w.daemon_spec.new = Some(discovery_now(w));
     w.daemon_spec.old = Some(old);
 }
 
@@ -1825,6 +1961,70 @@ fn hook_fires(w: &mut World) {
 #[when("the session's assistant fires its Stop hook")]
 fn stop_hook_fires(w: &mut World) {
     fire(w, "Stop", STOP);
+}
+
+const SESSION_START: &str =
+    include_str!("../../../../adapters/driven/engine-claude/src/fixtures/session_start.json");
+
+/// A hook that reads the library (step 10 O3): SessionStart (the
+/// session-start notices), or PostToolUse after a Skill call (the skill's
+/// link-group mates).
+#[when(
+    regex = r#"^the session's assistant fires its (SessionStart|PostToolUse, after the skill "([^"]+)") hook$"#
+)]
+fn library_hook_fires(w: &mut World, hook: String, skill: String) {
+    if hook == "SessionStart" {
+        fire(w, "SessionStart", SESSION_START);
+        return;
+    }
+    let payload = json!({
+        "session_id": "9d764b45-a56a-48d7-ac9d-c2a16c5669f1",
+        "hook_event_name": "PostToolUse",
+        "cwd": w.common.project.dir().to_str().expect("utf-8"),
+        "tool_name": "Skill",
+        "tool_input": {"skill": skill, "args": ""},
+        "tool_response": "ok",
+    });
+    fire(w, "PostToolUse", &payload.to_string());
+}
+
+#[then("the hook exits 0, within its bound")]
+fn hook_exits_within_bound(w: &mut World) {
+    let fired = fired(w);
+    assert_eq!(fired.ran.code, 0, "{}", fired.ran.said());
+    assert!(
+        fired.took <= HOOK_BOUND + PROCESS_SLACK,
+        "took {:?}: {}",
+        fired.took,
+        fired.ran.said()
+    );
+}
+
+/// What each library part of a hook's answer says, to find it absent:
+/// the session-start notice of a project with profiles and no agent, and
+/// the mates line of a completed skill (setup-application's hooks).
+fn library_part_marker(part: &str) -> &'static str {
+    match part {
+        "session-start notice" => "has profiles but no agents configured",
+        "linked skills not yet invoked" => "linked skills not yet invoked",
+        other => panic!("no library part {other:?} of a hook's answer"),
+    }
+}
+
+/// The engine's stdout is empty or one JSON document, and holds nothing of
+/// the library part named.
+#[then(regex = r"^the hook's answer to the engine is well formed, and carries no (.+)$")]
+fn hook_answer_without(w: &mut World, part: String) {
+    let marker = library_part_marker(&part);
+    let answer = fired(w).ran.stdout.trim().to_string();
+    if !answer.is_empty() {
+        let _: Value = serde_json::from_str(&answer)
+            .unwrap_or_else(|e| panic!("the answer is not JSON ({e}): {answer}"));
+    }
+    assert!(
+        !answer.contains(marker),
+        "the answer carries the {part}: {answer}"
+    );
 }
 
 /// The fixture's MessageDisplay, as piece `index` of ten of one message.
@@ -2174,6 +2374,9 @@ fn her_daemon_exited(w: &mut World) {
 
 #[then("it proves itself with a new certificate, and knows her by a new credential")]
 fn new_credentials(w: &mut World) {
+    // The daemon that command started, as read while it served (the step
+    // before), never re-read here, where it may have idled out.
+    w.daemon_spec.new = w.daemon_spec.first.clone();
     rotated(w);
 }
 
@@ -2237,17 +2440,76 @@ fn replaced(w: &mut World) {
     );
 }
 
+/// What a store's opening leaves behind, as the harness can see it: each
+/// store file's size and modification time, whether its `-wal` and `-shm`
+/// are there (an open makes them, a read's may stay), and the sessions'
+/// directories in the project (a session set up for an engine).
+/// One store file: its path, its size and modification time (none when it
+/// is not there), and whether its `-wal` and `-shm` are there.
+type StoreFile = (PathBuf, Option<(u64, std::time::SystemTime)>, bool, bool);
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct StoreEvidence {
+    stores: Vec<StoreFile>,
+    sessions: Vec<PathBuf>,
+}
+
+/// The stores' evidence now: the one store and every per-project one.
+fn store_evidence(w: &World) -> StoreEvidence {
+    let home = w.common.project.home();
+    let mut dbs = vec![home.join(".ctxloom/ctxloom.db")];
+    dbs.extend(
+        files::children(home.join(".ctxloom/projects"))
+            .into_iter()
+            .map(|dir| dir.join("ctxloom.db")),
+    );
+    let side = |db: &PathBuf, suffix: &str| {
+        let mut name = db.as_os_str().to_owned();
+        name.push(suffix);
+        files::exists(PathBuf::from(name))
+    };
+    let stores = dbs
+        .iter()
+        .map(|db| {
+            (
+                db.clone(),
+                files::size_and_modified(db),
+                side(db, "-wal"),
+                side(db, "-shm"),
+            )
+        })
+        .collect();
+    let mut sessions = files::children(w.common.project.dir().join(".ctxloom/sessions"));
+    sessions.sort();
+    StoreEvidence { stores, sessions }
+}
+
+/// Before the scenario's command: the stores' evidence, so a later step
+/// can tell what the command itself opened from what the Given made.
+pub(super) fn before_run(w: &mut World) {
+    w.daemon_spec.store_before = Some(store_evidence(w));
+}
+
+// The command opened no store and started no engine: what the Given left
+// (a seeded session's store, its directory) is as it was, and nothing new
+// is there (a store that was not there is still not).
 #[then("no project store was opened, and no engine was started")]
 fn nothing_opened(w: &mut World) {
-    let home = w.common.project.home();
-    assert!(
-        !files::exists(home.join(".ctxloom/ctxloom.db")),
-        "the one store was not opened"
+    let before = w
+        .daemon_spec
+        .store_before
+        .clone()
+        .expect("the stores were looked at before the command ran");
+    let now = store_evidence(w);
+    assert_eq!(
+        now.stores,
+        before.stores,
+        "the command opened a store: {}",
+        w.common.ran().said()
     );
-    assert_eq!(per_project_stores(home), Vec::<PathBuf>::new());
-    assert!(
-        !files::exists(w.common.project.dir().join(".ctxloom/sessions")),
-        "no session was set up, so no engine was started"
+    assert_eq!(
+        now.sessions, before.sessions,
+        "the command set a session up, so an engine may have started"
     );
 }
 
@@ -2331,7 +2593,7 @@ fn unauthenticated(w: &mut World) {
 #[then("the new discovery file holds another certificate and another bearer")]
 fn rotated(w: &mut World) {
     let old = w.daemon_spec.old.as_ref().expect("a daemon was stopped");
-    let new = discovery_now(w);
+    let new = w.daemon_spec.new.as_ref().expect("another daemon started");
     assert_ne!(new.pid, old.pid, "another daemon");
     assert_ne!(new.cert, old.cert, "another certificate");
     assert_ne!(new.bearer, old.bearer, "another bearer");
@@ -2340,9 +2602,10 @@ fn rotated(w: &mut World) {
 #[then("a client still holding the old bearer is refused")]
 fn old_bearer_refused(w: &mut World) {
     let old = w.daemon_spec.old.clone().expect("a daemon was stopped");
+    let new = w.daemon_spec.new.clone().expect("another daemon started");
     let stale = run_ports::Discovery {
         bearer: old.bearer,
-        ..discovery_now(w)
+        ..new
     };
     assert_eq!(
         get_daemon(&stale),
@@ -2912,7 +3175,7 @@ fn frontend_lock(w: &mut World) {
     let launch = frontend_launch(w);
     let lock = launch["session_lock"].as_str().expect("its lock");
     assert!(
-        lock.ends_with(&format!("/{}.lock", w.harp())),
+        lock.ends_with(&format!("/{}/session.lock", w.harp())),
         "the launch names the session's lock: {lock}"
     );
     assert!(
@@ -3076,38 +3339,108 @@ fn next_incarnation(w: &mut World, child: String) {
     });
 }
 
-/// The session write the last command was (the daemon spec's retry rows),
-/// as its event's type; a library write is not built yet (T13).
-fn session_write(w: &World) -> &'static str {
+/// The write the last command was (the daemon spec's retry rows): a
+/// session's, as its event's type, a session's removal, or a library write
+/// (step 10b U3), by its verb.
+enum Written {
+    Session(&'static str),
+    Removal(String),
+    Library(String),
+}
+
+fn session_write(w: &World) -> Written {
     let line = w.common.line.clone();
     if line.contains("session send") {
-        "MessageSent"
+        Written::Session("MessageSent")
     } else if line.contains("session close") {
-        "SessionClosed"
+        Written::Session("SessionClosed")
+    } else if let Some(rest) = line.split("session remove ").nth(1) {
+        Written::Removal(
+            rest.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+        )
+    } else if writes::is_library_write(&line) {
+        Written::Library(writes::verb_of(&line))
     } else {
-        red("a library write retried on a new daemon (T13)")
+        panic!("no write the harness knows was run: {line}")
     }
 }
 
 #[then("the command started a new daemon and sent the write once more, under the same id")]
 fn retried_once(w: &mut World) {
-    let _ = session_write(w);
-    let old = w
-        .daemon_spec
-        .before_kill
-        .clone()
-        .expect("a daemon was killed");
+    let written = session_write(w);
+    for switch in [DIE_AFTER_APPLY, DIE_AT] {
+        assert!(
+            !files::exists(daemon_dir(w).join(switch)),
+            "the daemon was never killed under the write (its switch {switch} is still there): {}",
+            w.common.ran().said()
+        );
+    }
     let now = discovery_now(w);
-    assert_ne!(now.pid, old.pid, "the retry was answered by a new daemon");
-    assert!(
-        !files::exists(daemon_dir(w).join(DIE_AFTER_APPLY)),
-        "the switch was taken"
-    );
+    match (&written, w.daemon_spec.before_kill.clone()) {
+        (_, Some(old)) => assert_ne!(now.pid, old.pid, "the retry was answered by a new daemon"),
+        (Written::Session(_), None) => panic!("a daemon was killed"),
+        // The command started the daemon that was killed: the switch was
+        // taken, and the command succeeded, so another one answered it.
+        _ => {}
+    }
+    if let Written::Library(verb) = written {
+        let events = writes::library_events(w, false);
+        // An export is recorded as made, under its request id (AIP-155).
+        if verb == "bundle export" {
+            let made = writes::made(&events, &verb);
+            assert_eq!(made.len(), 1, "one export made: {events:?}");
+            return;
+        }
+        let intents = writes::intents(&events, &verb);
+        assert_eq!(intents.len(), 1, "one intent of {verb}: {events:?}");
+        let request = &intents[0]["request_id"];
+        assert!(
+            events
+                .iter()
+                .any(|e| e["type"] == "StepApplied" && &e["request_id"] == request),
+            "the retry under {request} finished the write: {events:?}"
+        );
+    }
 }
 
 #[then("the write was applied once, and its second delivery was a duplicate")]
 fn applied_once(w: &mut World) {
-    let kind = session_write(w);
+    let kind = match session_write(w) {
+        Written::Session(kind) => kind,
+        Written::Removal(harp) => {
+            let record = record(w);
+            let intended = record
+                .iter()
+                .flat_map(|s| s["events"].as_array().cloned().unwrap_or_default())
+                .filter(|e| e["type"] == "SessionRemovalIntended" && e["harp"] == harp.as_str())
+                .count();
+            assert_eq!(
+                intended, 1,
+                "one removal of {harp} was intended: {record:?}"
+            );
+            return;
+        }
+        Written::Library(verb) => {
+            let events = writes::library_events(w, false);
+            if verb == "bundle export" {
+                assert_eq!(
+                    writes::made(&events, &verb).len(),
+                    1,
+                    "one export made: {events:?}"
+                );
+                return;
+            }
+            assert_eq!(
+                writes::intents(&events, &verb).len(),
+                1,
+                "one intent of {verb}: {events:?}"
+            );
+            return;
+        }
+    };
     let events = session_events(w, "brisk-copper-moth");
     // The write the command sent: a send's by its text (the launch's own
     // first message is another).
@@ -3464,11 +3797,16 @@ fn project_says(w: &mut World, setting: String) {
             setting,
         ]),
     );
-    // A one-shot's assistant, should the launch run: the home config's
-    // stub, which answers (never an engine on the host's PATH).
-    let stub = assistant_dir(w).join("claude");
+    // A one-shot's assistant, should the launch run: the stub, which
+    // answers, first on the scenario's PATH as `claude`, so the default
+    // command runs it (never an engine on the host's PATH) and no config
+    // names it: an untrusted read reports the command as the default's.
+    let bin = assistant_dir(w);
+    let stub = bin.join("claude");
     files::put_program(&stub, &answering_stub());
+    w.common.project.put_on_path(&bin);
     w.daemon_spec.stub = Some(stub);
+    w.daemon_spec.stub_on_path = true;
     write_home_config(w);
     w.common
         .set_env(IDLE_VARIABLE, SPAWNED_IDLE_SECONDS.to_string());
@@ -3539,6 +3877,8 @@ fn listed_trusted(w: &mut World) {
 /// bounded, until none is waiting any more.
 #[when("the ask's time runs out")]
 fn ask_expires(w: &mut World) {
+    // The time passes now: the alarm held since the ask is let go.
+    files::remove(alarms_hold(w));
     until(w, "the ask's time to run out", DAEMON_WAIT, |w| {
         waiting_asks(w, None).is_empty().then_some(())
     });
@@ -4267,13 +4607,33 @@ fn previewed_then_applied(_: &mut World) {
 #[given(
     expr = "the bundle {string} changes after its removal is previewed and before Alice answers"
 )]
-fn bundle_changes_mid(_: &mut World, _b: String) {
-    red("the bundle changes between preview and answer")
+fn bundle_changes_mid(w: &mut World, bundle: String) {
+    w.daemon_spec.changes_before_answer = Some(bundle);
 }
 
 #[then("the apply was refused as stale, and the CLI previewed the removal again")]
-fn refused_stale(_: &mut World) {
-    red("the apply was refused as stale")
+fn refused_stale(w: &mut World) {
+    let ran = w.common.ran();
+    assert_eq!(ran.code, 20, "{}", ran.said());
+    assert!(
+        ran.stderr.contains("library-tree-plan-stale") || ran.stderr.contains("look again"),
+        "refused as stale: {}",
+        ran.said()
+    );
+    assert!(
+        ran.stdout.contains("Would remove bundle \"notes\""),
+        "the removal previewed again: {}",
+        ran.said()
+    );
+    assert!(
+        files::exists(
+            w.common
+                .project
+                .dir()
+                .join(".ctxloom/content/bundles/v2/notes/bundle.yaml")
+        ),
+        "nothing was removed"
+    );
 }
 
 #[given(expr = "an initialized ctxloom project with a recorded session {string}")]
@@ -4788,32 +5148,32 @@ fn container_path(_: &mut World) {
 }
 
 #[then("the change is in the tree whole, once, and every bundle still reads")]
-fn change_whole(_: &mut World) {
-    red("the change is in the tree whole, once")
+fn change_whole(w: &mut World) {
+    writes::change_whole(w);
 }
 
 #[given(expr = "another process creates the bundle {string} while its creation is staged")]
-fn concurrent_create(_: &mut World, _b: String) {
-    red("another process creates the bundle meanwhile")
+fn concurrent_create(w: &mut World, bundle: String) {
+    writes::other_creates(w, bundle);
 }
 
 #[then(
     regex = r#"^the other process's "([^"]+)" is untouched, and nothing staged is left behind$"#
 )]
-fn other_untouched(_: &mut World, _b: String) {
-    red("the other process's bundle is untouched")
+fn other_untouched(w: &mut World, bundle: String) {
+    writes::other_untouched(w, bundle);
 }
 
 #[then(
     regex = r#"^the skill "([^"]+)" is the one directory "([^"]+)" of the bundle "([^"]+)", holding its "\.meta\.yaml"$"#
 )]
-fn skill_one_dir(_: &mut World, _s: String, _d: String, _b: String) {
-    red("the skill is one directory with its metadata inside")
+fn skill_one_dir(w: &mut World, skill: String, dir: String, bundle: String) {
+    writes::skill_one_dir(w, skill, dir, bundle);
 }
 
 #[then(regex = r#"^only "([^"]+)" of the bundle "([^"]+)" changed$"#)]
-fn only_changed(_: &mut World, _p: String, _b: String) {
-    red("only the source file changed")
+fn only_changed(w: &mut World, path: String, bundle: String) {
+    writes::only_changed(w, path, bundle);
 }
 
 #[then(
@@ -4831,8 +5191,23 @@ fn rename_converged(_: &mut World, _h: String) {
 }
 
 #[then(regex = r#"^nothing lists "([^"]+)", its streams are purged and no trash is left$"#)]
-fn remove_converged(_: &mut World, _h: String) {
-    red("the remove converged")
+fn remove_converged(w: &mut World, harp: String) {
+    writes::kill_taken(w);
+    let listed = run_now(w, &["session", "list", "--all", "--format", "json"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    assert!(
+        !listed.stdout.contains(&harp),
+        "{harp} is listed: {}",
+        listed.said()
+    );
+    let record = record(w);
+    assert_eq!(
+        session_root(&record, &harp),
+        None,
+        "{harp}'s stream is still in the store"
+    );
+    let trash = writes::in_project(w, ".ctxloom/state/trash");
+    assert!(writes::empty(&trash), "the trash holds {}", trash.display());
 }
 
 #[then("the files it writes are as one uninterrupted run would leave them")]
@@ -4857,11 +5232,10 @@ fn not_moved(w: &mut World) {
     let project = w.common.project.dir().to_path_buf();
     for harp in &harps {
         assert!(
-            crate::tests::files::exists(
-                project
-                    .join(".ctxloom/sessions")
-                    .join(format!("{harp}.lock"))
-            ),
+            crate::tests::files::exists(super::session_lock(
+                &project.join(".ctxloom/sessions"),
+                harp
+            )),
             "{harp}'s lock is where it was"
         );
     }
@@ -4902,14 +5276,38 @@ fn six_word_name(w: &mut World, path: String, shape: String) {
     );
 }
 
+/// The running session's lock is the file `path` (under `.ctxloom`),
+/// inside its directory and held; nothing is beside the directory.
 #[then(regex = r#"^its lock is "([^"]+)", inside its directory$"#)]
-fn lock_inside(_: &mut World, _path: String) {
-    red("the session's lock is inside its directory")
+fn lock_inside(w: &mut World, path: String) {
+    // The fixture's session is seeded by the first command.
+    w.before_run();
+    let (dir, file) = path.rsplit_once('/').expect("a path in a directory");
+    assert_eq!(file, "session.lock", "the lock's name");
+    let lock = writes::in_project(w, &format!(".ctxloom/{path}"));
+    assert!(
+        files::exists(&lock),
+        "no lock at {}: {:?}",
+        lock.display(),
+        files::children(writes::in_project(w, ".ctxloom/sessions"))
+    );
+    let beside = writes::in_project(w, &format!(".ctxloom/{dir}.lock"));
+    assert!(
+        !files::exists(&beside),
+        "a lock is beside the directory: {}",
+        beside.display()
+    );
+    let probe = files::open_read(&lock).expect("the lock opens");
+    assert!(
+        probe.try_lock().is_err(),
+        "{} is not held by the running session",
+        lock.display()
+    );
 }
 
 #[then(regex = r#"^the bundle "([^"]+)" is the imported one, whole, and no trash is left$"#)]
-fn import_converged(_: &mut World, _bundle: String) {
-    red("bundle import --force converged")
+fn import_converged(w: &mut World, bundle: String) {
+    writes::import_converged(w, bundle);
 }
 
 // ------------------------------------------------------------ the drain (U8b)
@@ -5666,7 +6064,21 @@ fn child_asking(w: &mut World, child: &str, owner: &str, tool: &str, text: &str)
             (turns(w).len() > taken).then_some(())
         });
     }
+    // Its alarm held until the scenario says its time runs out (the race
+    // rule): an `approval_timeout` of 2s must not end the ask on the wall
+    // clock while the steps before that one run on a loaded machine.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    files::put(alarms_hold(w), now.to_string());
     ask(w, child, tool, text);
+}
+
+/// The daemon's test-support hold of its scheduler's alarms
+/// (`test-hold-alarms`, the instant it holds them at): while it is there
+/// no alarm armed since comes due.
+fn alarms_hold(w: &World) -> PathBuf {
+    daemon_dir(w).join("test-hold-alarms")
 }
 
 #[given("the project's config defines no agent of its own")]

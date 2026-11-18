@@ -127,6 +127,12 @@ pub(crate) fn mode_of(path: impl AsRef<Path>) -> Option<u32> {
     meta.mode.map(|m| m.bits())
 }
 
+/// A file's size and its modification time; none where it is not there.
+pub(crate) fn size_and_modified(path: impl AsRef<Path>) -> Option<(u64, std::time::SystemTime)> {
+    let meta = fs().metadata(path.as_ref()).ok()?;
+    Some((meta.len, meta.modified))
+}
+
 pub(crate) fn read(path: impl AsRef<Path>) -> std::io::Result<String> {
     fs().read_to_string(path.as_ref())
 }

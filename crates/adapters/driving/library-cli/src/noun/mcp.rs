@@ -1,9 +1,6 @@
 //! `mcp server`: list and show, and its writes (B1), each json answer its
 //! AIP resource or method response (OD-40, design §5.4).
 
-use library_application::{McpList, McpRow, McpSet, McpShow};
-
-use crate::catalog::{self, ok};
 use crate::prelude::*;
 
 pub(crate) fn read(
@@ -19,84 +16,25 @@ pub(crate) fn read(
     if let Some(code) = write(cx, (name, args), out, err)? {
         return Ok(code);
     }
-    if name == "show" {
-        let outcome = cx.library.mcp_show(&cx.flags, &text_arg(args, "name"));
-        return catalog::answer(
-            cx,
-            outcome,
-            out,
-            err,
-            false,
-            shown,
-            |show, out, _| text::mcp_show(out, show),
-            ok,
-        );
-    }
-    let outcome = cx.library.mcp_list(&cx.flags);
-    catalog::answer(
-        cx,
-        outcome,
-        out,
-        err,
-        false,
-        listed,
-        |list, out, _| text::mcp_list(out, list),
-        ok,
-    )
-}
-
-/// A server's resource name below the bundle that serves it (`source`, its
-/// canonical reference).
-fn server_name(parent: &str, source: &str, id: &str) -> String {
-    catalog::item_name(parent, source, "mcp", id)
-}
-
-/// A server as its `McpServer`, named `name`.
-pub(crate) fn server(name: &str, row: &McpRow) -> v1::McpServer {
-    v1::McpServer {
-        name: name.to_string(),
-        command: row.command.clone(),
-        args: row.args.clone(),
-        env: row.env.clone(),
-        url: row.url.clone(),
-        served_by: row.served_by.clone(),
-        notes: row.notes.clone(),
-        installation: row.installation.clone(),
-        ..v1::McpServer::default()
-    }
-}
-
-/// `mcp server list`: `ListMcpServersResponse`, each server below its
-/// bundle (no environment, notes or installation, as listed).
-pub(crate) fn listed(parent: &str, list: &McpList) -> v1::ListMcpServersResponse {
-    v1::ListMcpServersResponse {
-        mcp_servers: list
-            .servers
-            .iter()
-            .map(|row| v1::McpServer {
-                name: server_name(parent, &row.source, &row.name),
-                command: row.command.clone(),
-                args: row.args.clone(),
-                url: row.url.clone(),
-                served_by: row.served_by.clone(),
-                ..v1::McpServer::default()
-            })
-            .collect(),
-        next_page_token: String::new(),
-    }
-}
-
-/// `mcp server show <name>`: `ListMcpServersResponse` filtered by the ID
-/// (design §3.5), every bundle's server of that ID.
-pub(crate) fn shown(parent: &str, show: &McpShow) -> v1::ListMcpServersResponse {
-    v1::ListMcpServersResponse {
-        mcp_servers: show
-            .entries
-            .iter()
-            .map(|row| server(&server_name(parent, &row.source, &row.name), row))
-            .collect(),
-        next_page_token: String::new(),
-    }
+    // The daemon's read (step 10a U2), `show` its listing of one ID (design
+    // §3.5), the text from the message (D10).
+    let request = v1::ListMcpServersRequest {
+        mcp_server_id: if name == "show" {
+            text_arg(args, "name")
+        } else {
+            String::new()
+        },
+        globals: cx.globals(),
+        ..v1::ListMcpServersRequest::default()
+    };
+    let read = cx.served.list_mcp_servers("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        if name == "show" {
+            text::mcp_show(out, &crate::read_back::mcp_show(listed))
+        } else {
+            text::mcp_list(out, &crate::read_back::mcp_list(listed))
+        }
+    })
 }
 
 pub(crate) fn write(
@@ -107,97 +45,140 @@ pub(crate) fn write(
 ) -> Result<Option<Exit>, Failure> {
     let reference = text_arg(sub, "ref");
     match verb {
-        "edit" => {
-            let outcome = cx.library.mcp_edit(&cx.flags, &reference);
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                true,
-                |parent, edited| edited_of(parent, &reference, edited),
-                |edited, out, _| match edited {
-                    McpEdited::Unchanged => nothing(out),
-                    McpEdited::Updated { name, bundle } => {
-                        writeln!(out, "Updated MCP server \"{name}\" in bundle \"{bundle}\"")
-                    }
-                },
-                ok,
-            )
-            .map(Some)
-        }
-        "set" => {
-            let patch = McpPatch {
-                command: given(sub, "command"),
-                args: given_list(sub, "arg"),
-                env: given_map(sub, "env")?,
-                url: given(sub, "url"),
-                headers: given_map(sub, "header")?,
-                tags: given_list(sub, "tag"),
-                served_by: given(sub, "served-by"),
-                notes: given(sub, "notes"),
-                installation: given(sub, "installation"),
-            };
-            let outcome = cx.library.mcp_set(&cx.flags, &reference, &patch);
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                set_of,
-                |set, out, _| {
-                    writeln!(
-                        out,
-                        "Set MCP server \"{}\" in bundle \"{}\"",
-                        set.name, set.bundle
-                    )
-                },
-                ok,
-            )
-            .map(Some)
-        }
+        "edit" => edit_served(cx, &reference, out, err).map(Some),
+        "set" => set_served(cx, &reference, sub, out, err).map(Some),
         _ => Ok(None),
     }
 }
 
-/// `mcp server set`: `UpdateMcpServerResponse` (AIP-134 `allow_missing`):
-/// `created` when the bundle lacked it.
-pub(crate) fn set_of(parent: &str, set: &McpSet) -> v1::UpdateMcpServerResponse {
-    v1::UpdateMcpServerResponse {
-        mcp_server: Some(v1::McpServer {
-            name: server_name(parent, &set.bundle, &set.name),
-            ..v1::McpServer::default()
-        }),
-        path: set.path.clone(),
-        applied: Some(true),
-        created: set.status == "created",
-        ..v1::UpdateMcpServerResponse::default()
+/// The fields `mcp server set` was given, as a server and the mask naming
+/// them (a field given empty is named, and cleared).
+pub(crate) fn server_set(sub: &ArgMatches) -> Result<(v1::McpServer, Vec<String>), Failure> {
+    let mut server = v1::McpServer::default();
+    let mut mask = Vec::new();
+    if let Some(command) = given(sub, "command") {
+        server.command = command;
+        mask.push("command".to_string());
     }
+    if let Some(args) = given_list(sub, "arg") {
+        server.args = args;
+        mask.push("args".to_string());
+    }
+    if let Some(env) = given_map(sub, "env")? {
+        server.env = env.into_iter().collect();
+        mask.push("env".to_string());
+    }
+    if let Some(url) = given(sub, "url") {
+        server.url = url;
+        mask.push("url".to_string());
+    }
+    if let Some(notes) = given(sub, "notes") {
+        server.notes = notes;
+        mask.push("notes".to_string());
+    }
+    if let Some(installation) = given(sub, "installation") {
+        server.installation = installation;
+        mask.push("installation".to_string());
+    }
+    Ok((server, mask))
 }
 
-/// `mcp server edit --format json`: `UpdateMcpServerResponse`; an edit
-/// that changed nothing applied nothing (named by the reference asked).
-pub(crate) fn edited_of(
-    parent: &str,
-    asked: &str,
-    edited: &McpEdited,
-) -> v1::UpdateMcpServerResponse {
-    let (name, applied) = match edited {
-        McpEdited::Unchanged => (
-            catalog::reference_name(parent, asked).unwrap_or_else(|| asked.to_string()),
-            false,
-        ),
-        McpEdited::Updated { name, bundle } => (server_name(parent, bundle, name), true),
+/// The bundle and server a server's resource name names.
+fn bundle_and_server(name: &str) -> (String, String) {
+    let rest = name.split_once("/bundles/").map_or(name, |(_, rest)| rest);
+    let mut parts = rest.splitn(3, '/');
+    let bundle = parts.next().unwrap_or_default().to_string();
+    let server = parts.nth(1).unwrap_or_default().to_string();
+    (bundle, server)
+}
+
+/// `mcp server set <bundle>#mcp/<name> [flags]`: the daemon's
+/// `UpdateMcpServer` (step 10b U3), the fields given named by its mask; a
+/// name the bundle lacks is created (`allow_missing`).
+fn set_served(
+    cx: &Context<'_>,
+    reference: &str,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let (server, paths) = server_set(sub)?;
+    let request = v1::UpdateMcpServerRequest {
+        mcp_server: Some(server),
+        update_mask: Some(daemon_proto::google::protobuf::FieldMask { paths }),
+        allow_missing: true,
+        globals: cx.globals(),
+        ..v1::UpdateMcpServerRequest::default()
     };
-    v1::UpdateMcpServerResponse {
-        mcp_server: Some(v1::McpServer {
-            name,
-            ..v1::McpServer::default()
-        }),
-        applied: Some(applied),
-        ..v1::UpdateMcpServerResponse::default()
-    }
+    let under = library_api::names::reference_target(reference);
+    crate::answer_written(
+        cx,
+        cx.served.update_mcp_server(&under, request),
+        |m| std::mem::take(&mut m.notices),
+        out,
+        err,
+        |m, out| {
+            let name = m.mcp_server.as_ref().map_or("", |s| s.name.as_str());
+            let (bundle, server) = bundle_and_server(name);
+            writeln!(out, "Set MCP server \"{server}\" in bundle \"{bundle}\"")
+        },
+        |_| Exit::OK,
+    )
+}
+
+/// `mcp server edit <bundle>#mcp/<name>`: the daemon's `UpdateMcpServer`
+/// with no mask, the whole server through the editor (step 10b U3): its
+/// preview's Edit need presented (the editor launched here), the apply
+/// sent with what it left and the preview's etag. It answers in text unless
+/// json is asked for by name (Go's format debt).
+fn edit_served(
+    cx: &Context<'_>,
+    reference: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let under = library_api::names::reference_target(reference);
+    let ask =
+        |validate_only: bool, answers: Vec<v1::Answer>, etag: String| v1::UpdateMcpServerRequest {
+            validate_only,
+            answers,
+            etag,
+            presentable: crate::noun::item::presentable(),
+            globals: cx.globals(),
+            ..v1::UpdateMcpServerRequest::default()
+        };
+    let preview = cx
+        .served
+        .update_mcp_server(&under, ask(true, Vec::new(), String::new()))?;
+    let answers = crate::noun::item::edit_answers(cx, &preview.needs)?;
+    let edited = cx
+        .served
+        .update_mcp_server(&under, ask(false, answers, preview.etag));
+    let json_by_name = cx.explicit && cx.format == Format::Json;
+    let cx = cx.formatted(if json_by_name {
+        Format::Json
+    } else {
+        Format::Text
+    });
+    crate::answer_written(
+        &cx,
+        edited,
+        |m| std::mem::take(&mut m.notices),
+        out,
+        err,
+        |m, out| {
+            if !m.applied.unwrap_or(false) {
+                return nothing(out);
+            }
+            let name = m.mcp_server.as_ref().map_or("", |s| s.name.as_str());
+            let (bundle, server) = bundle_and_server(name);
+            writeln!(
+                out,
+                "Updated MCP server \"{server}\" in bundle \"{bundle}\""
+            )
+        },
+        |_| Exit::OK,
+    )
 }
 
 /// A bare `mcp`: no stdio server to point a client at.

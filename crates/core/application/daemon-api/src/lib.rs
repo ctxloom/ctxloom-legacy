@@ -55,11 +55,16 @@
 
 mod approvals;
 mod caller;
+mod clean;
 mod client;
 mod destroy;
+mod distill;
 mod hand_off;
 mod hand_over;
 pub mod launch;
+mod library_reads;
+mod library_refusals;
+pub mod library_writes;
 mod refusal;
 mod runs;
 mod server;
@@ -76,25 +81,32 @@ pub use caller::{
     launch_lock_name, urgency_of, Caller, ChildWrites, Launch, ProjectResolver, Written,
     DELEGATION_LIMIT,
 };
+pub use clean::Caches;
 pub use client::{
     newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,
 };
 pub use destroy::{Places, Purges};
 pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
 pub use hand_over::HandingOver;
-pub use refusal::{rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection};
+pub use library_api::premise::{render_premise_index, Shown};
+pub use library_reads::{Libraries, LibraryRequest};
+pub use refusal::{
+    library_refusal, rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection,
+};
 /// The infrastructure tree's one root (owner, 2026-11-14), for the daemon's
 /// service, which answers an error that is no refusal through it.
-pub use run_ports::Infrastructure;
+pub use run_ports::{Infrastructure, DIAGNOSED};
 pub use runs::RunStream;
-pub use server::{About, Answer, Api, Assemblies, Calls, Harps, Hosting, Parts, SessionStates};
-pub use session_client::{Client, Removed, RequestIds, SessionReads, SessionRemovals};
+pub use server::{About, Answer, Api, Calls, Harps, Hosting, Observing, Parts, SessionStates};
+pub use session_client::{
+    Client, LibraryReads, LibraryWrites, Removed, RequestIds, SessionReads, SessionRemovals,
+};
 pub use start_up::StartUpIncomplete;
 pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).
-pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Synced, Unreached, Until};
+pub use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Read, Synced, Unreached, Until};
 
 /// This crate's en-US messages, its name first.
 pub const EN_US: (&str, &str) = (

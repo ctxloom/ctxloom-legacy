@@ -31,6 +31,8 @@ pub(crate) struct World {
     pub(crate) registry: Registry,
     pub(crate) store: MemoryStore,
     samples: Mutex<Samples>,
+    /// The library trees as last observed, projected inline (step 10a U2).
+    pub(crate) checkouts: library_checkout::LibraryCheckouts,
 }
 
 impl World {
@@ -62,10 +64,18 @@ impl World {
                 approvals::ApprovalNameAggregate::default,
             )
             .unwrap();
+        registry
+            .aggregate::<library_tree::LibraryAggregate>(library_tree::LibraryAggregate::default)
+            .unwrap();
+        let checkouts = library_checkout::LibraryCheckouts::default();
+        registry
+            .projector_handler(&library_checkout::SOURCES, checkouts.clone())
+            .unwrap();
         Arc::new(World {
             registry,
             store: MemoryStore::default(),
             samples: Mutex::new(Samples::starting_at(1_000)),
+            checkouts,
         })
     }
 }
@@ -194,6 +204,10 @@ impl Hosting for Loop {
 pub(crate) struct Locks(pub(crate) Mutex<std::collections::BTreeMap<String, State>>);
 
 impl SessionStates for Locks {
+    fn lock(&self, project_dir: &str, harp: &str) -> String {
+        format!("{project_dir}/.ctxloom/sessions/{harp}/session.lock")
+    }
+
     fn state(&self, _project_dir: &str, harp: &str) -> State {
         if let Some(state) = self.0.lock().unwrap().get(harp) {
             return *state;
@@ -361,6 +375,17 @@ pub(crate) fn resolve(commit: &str, name: &str) -> v1::ResolveProjectRequest {
 /// At most this many of a watch's events are read: more is a watch that
 /// never ends.
 const WATCH_BOUND: usize = 16;
+
+/// `future`'s output, polled once: what a scripted host awaits (a
+/// one-shot's end) never waits on anything.
+pub(crate) fn now<F: std::future::Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    match future.as_mut().poll(&mut cx) {
+        std::task::Poll::Ready(output) => output,
+        std::task::Poll::Pending => panic!("waited on something"),
+    }
+}
 
 /// A watch's events, read to its end, which must come within
 /// [`WATCH_BOUND`] of them. Bounded, as daemon-application's tests read
@@ -1161,74 +1186,157 @@ async fn get_transcript_answers_each_captured_line() {
     assert!(lines[1].contains("second words"), "{lines:?}");
 }
 
-/// An assembly that records where it was made and answers its fragments.
+/// git as a read's caller would run it, from a table: the project's work
+/// tree (none: outside git), the operation in progress, and the
+/// environment each read was observed in.
 #[derive(Default)]
-struct Assembling(std::sync::Mutex<Vec<(String, Vec<String>)>>);
+pub(crate) struct Gits {
+    pub(crate) work_tree: Option<String>,
+    pub(crate) motion: Option<ctxloom_ports::Motion>,
+    pub(crate) envs: std::sync::Mutex<Vec<Vec<(String, String)>>>,
+}
 
-impl crate::Assemblies for Assembling {
-    fn assemble(
+struct TableGit {
+    work_tree: Option<String>,
+    motion: Option<ctxloom_ports::Motion>,
+}
+
+impl ctxloom_ports::TreeObserver for TableGit {
+    fn work_tree(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+        Ok(self.work_tree.clone())
+    }
+    fn check_ignore(
         &self,
-        root: &str,
-        request: &v1::AssembleContextRequest,
-    ) -> Result<v1::AssembledContext, ApiError> {
-        self.0
-            .lock()
-            .unwrap()
-            .push((root.to_string(), request.fragments.clone()));
-        Ok(v1::AssembledContext {
-            context: request.fragments.join(","),
-            ..v1::AssembledContext::default()
-        })
+        _: &str,
+        _: &str,
+    ) -> Result<Option<ctxloom_ports::IgnoreRule>, ctxloom_ports::TreeError> {
+        Ok(None)
+    }
+    fn init_repository(&self, _: &str, _: Option<&str>) -> Result<(), ctxloom_ports::TreeError> {
+        Ok(())
+    }
+    fn head(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+        Ok(Some("c1".to_string()))
+    }
+    fn library_tree(&self, _: &str, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
+        Ok(Some("t1".to_string()))
+    }
+    fn status(
+        &self,
+        _: &str,
+        _: &[&str],
+    ) -> Result<Vec<ctxloom_ports::StatusEntry>, ctxloom_ports::TreeError> {
+        Ok(Vec::new())
+    }
+    fn diff_tree(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[&str],
+    ) -> Result<Vec<ctxloom_ports::TreeChange>, ctxloom_ports::TreeError> {
+        Ok(Vec::new())
+    }
+    fn blob_ids(
+        &self,
+        _: &str,
+        _: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::TreeError> {
+        Ok(Default::default())
+    }
+    fn blob_id_of(&self, _: &str, _: &str, _: &[u8]) -> Result<String, ctxloom_ports::TreeError> {
+        unreachable!("not asked")
+    }
+
+    fn in_motion(
+        &self,
+        _: &str,
+    ) -> Result<Option<ctxloom_ports::Motion>, ctxloom_ports::TreeError> {
+        Ok(self.motion)
+    }
+    fn commit(&self, _: &str, _: &str, _: &[&str]) -> Result<(), ctxloom_ports::TreeError> {
+        Ok(())
     }
 }
 
-// Slice 3 step 6: AssembleContext is made at the project's REGISTERED root;
-// a project nothing registered is not found; a daemon that makes none fails.
-#[tokio::test]
-async fn assemble_context_is_made_at_the_projects_registered_root() {
-    let f = fixture(vec!["calm-quiet-heron"]);
-    let none = f
-        .api
-        .assemble_context(v1::AssembleContextRequest {
-            name: "projects/calm-quiet-heron".to_string(),
-            ..v1::AssembleContextRequest::default()
+impl library_api::Observers for Gits {
+    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
+        self.envs.lock().unwrap().push(env.to_vec());
+        Box::new(TableGit {
+            work_tree: self.work_tree.clone(),
+            motion: self.motion,
         })
-        .await;
-    let _: (_, v1::ProjectNotFound) = refused(none);
-    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
-    f.catch_up().await;
-    let unmade = f
-        .api
-        .assemble_context(v1::AssembleContextRequest {
-            name: "projects/calm-quiet-heron".to_string(),
-            ..v1::AssembleContextRequest::default()
-        })
-        .await;
-    assert!(matches!(unmade, Err(ApiError::Failed { .. })), "{unmade:?}");
-    let assemblies = Arc::new(Assembling::default());
-    let api = f
-        .restarted()
-        .await
-        .assembling(Arc::clone(&assemblies) as Arc<dyn crate::Assemblies>);
-    let made = api
-        .assemble_context(v1::AssembleContextRequest {
-            name: "projects/calm-quiet-heron".to_string(),
-            fragments: vec!["demo#fragments/go".to_string()],
-            ..v1::AssembleContextRequest::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(made.context, "demo#fragments/go");
-    assert_eq!(
-        *assemblies.0.lock().unwrap(),
-        [(ROOT.to_string(), vec!["demo#fragments/go".to_string()])]
-    );
-    let (_, invalid): (_, v1::NameInvalid) = refused(
-        api.assemble_context(v1::AssembleContextRequest {
-            name: "calm".to_string(),
-            ..v1::AssembleContextRequest::default()
-        })
-        .await,
-    );
-    assert_eq!(invalid.reason, "shape");
+    }
+
+    fn home_tree(&self) -> Option<String> {
+        None
+    }
+}
+
+struct OneHarp;
+
+impl library_api::CheckoutHarps for OneHarp {
+    fn harp(&self, _: &str) -> Result<String, ctxloom_ports::Failure> {
+        Ok("brisk-copper-moth".to_string())
+    }
+}
+
+pub(crate) fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
+    crate::Observing {
+        checkouts: world.checkouts.clone(),
+        harps: Arc::new(OneHarp),
+        observers: Arc::clone(gits) as Arc<dyn library_api::Observers>,
+        operations: Arc::new(NoOperations),
+        clock: Arc::new(|| 0),
+        caches: Arc::new(NoCaches),
+    }
+}
+
+/// No cache anywhere: these tests' cleans find nothing to take.
+struct NoCaches;
+
+impl crate::Caches for NoCaches {
+    fn cache(&self, tree: &str) -> Arc<dyn ctxloom_ports::ProjectCache> {
+        Arc::new(NoCache(tree.to_string()))
+    }
+}
+
+struct NoCache(String);
+
+impl ctxloom_ports::ProjectCache for NoCache {
+    fn app_dir(&self) -> String {
+        self.0.clone()
+    }
+
+    fn measure(&self, _: &str) -> Result<Option<u64>, ctxloom_ports::Failure> {
+        Ok(None)
+    }
+
+    fn remove(&self, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
+    }
+}
+
+/// Operations that make nothing and sweep nothing: these tests' writes
+/// are never carried out.
+struct NoOperations;
+
+impl ctxloom_ports::Operations for NoOperations {
+    fn operate(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ctxloom_ports::Operation,
+        _: &dyn Fn(ctxloom_ports::Point),
+    ) -> Result<ctxloom_ports::Operated, ctxloom_ports::Failure> {
+        Ok(ctxloom_ports::Operated::Done)
+    }
+
+    fn sweep_staging(&self, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
+    }
+
+    fn purge_slot(&self, _: &str, _: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
+    }
 }

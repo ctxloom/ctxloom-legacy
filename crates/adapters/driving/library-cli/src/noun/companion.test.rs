@@ -57,9 +57,12 @@ mod write {
                 "companion": {"name": "projects/calm-otter/companions/acme"},
                 "applied": false,
                 "apply_command": "ctxloom companion remove acme --yes",
+                "needs": [crate::tests::confirm_need("companion \"acme\"")],
             })
         );
-        // OD-9: disable and enable answer the companion as it is now (AIP-136).
+        // Disable and enable answer a write's response (owner 2026-11-18,
+        // night): the companion as the write leaves it, applied when its
+        // state changed.
         assert_eq!(
             text(&library, &["companion", "disable", "acme"]),
             "Companion 'acme' is disabled\n"
@@ -71,9 +74,12 @@ mod write {
         assert_eq!(
             json(&library, &["companion", "enable", "acme"]),
             serde_json::json!({
-                "name": "projects/calm-otter/companions/acme",
-                "bin": "ctxloom-companion-acme",
-                "state": "ENABLED",
+                "companion": {
+                    "name": "projects/calm-otter/companions/acme",
+                    "bin": "ctxloom-companion-acme",
+                    "state": "ENABLED",
+                },
+                "applied": true,
             })
         );
         assert_eq!(
@@ -110,12 +116,27 @@ mod write {
         );
     }
 
-    // loadout_cmd.go (documented condition)
+    /// ctxloom's own loadout document, its structure and none of the
+    /// owner's text (D24, D8).
+    const LOADOUT: &str = "run:\n  version: 1.0.0\n  tags:\n    - core\n    - mcp\n    - isolation\n  author: ctxloom\n  mcp:\n    ctxloom:\n      served_by: session-endpoint\n";
+
+    // loadout_cmd.go (documented condition): the daemon's `GetLoadout`
+    // (step 10a U2), written from its message as the one yaml document,
+    // whatever the output format, json off a terminal too.
     #[test]
     fn test_loadout_is_the_one_yaml_document() {
         let (library, _) = world();
         let said = text(&library, &["loadout"]);
-        assert_eq!(said, library_application::LOADOUT);
+        assert_eq!(said, LOADOUT);
+        let off_a_terminal = run_on(
+            &library,
+            &["loadout"],
+            How {
+                explicit: None,
+                ..TEXT
+            },
+        );
+        assert_eq!(off_a_terminal.out, LOADOUT);
         let ran = run_on(
             &library,
             &["loadout", "--format", "yaml"],
@@ -124,7 +145,7 @@ mod write {
                 ..TEXT
             },
         );
-        assert_eq!(ran.out, library_application::LOADOUT);
+        assert_eq!(ran.out, LOADOUT);
         let ran = run_on(
             &library,
             &["loadout", "--format", "toml"],
@@ -138,34 +159,50 @@ mod write {
     }
 }
 
-// The removal's mapping to its message, field by field (OD-40): what the
-// binary's tests alone reached.
-mod mapping {
-    use super::super::*;
-    use library_application::Preview;
-    use serde_json::json;
-
-    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
-        let mut out = Vec::new();
-        crate::api::print(&mut out, message).unwrap();
-        serde_json::from_slice(&out).unwrap()
-    }
+// Step 10a U2: each read's request carries the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
 
     #[test]
-    fn test_a_removed_companion_s_preview_says_what_would_go() {
-        let preview: Removal<CompanionRemoved> = Removal::Preview(Preview::of(
-            "acme".to_string(),
-            vec!["companions.acme".to_string()],
-            "ctxloom companion remove acme --yes".to_string(),
-        ));
-        assert_eq!(
-            json_of(&removed("projects/p", "acme", &preview)),
-            json!({
-                "companion": {"name": "projects/p/companions/acme"},
-                "applied": false,
-                "detail": ["companions.acme"],
-                "apply_command": "ctxloom companion remove acme --yes",
-            })
-        );
+    fn test_companion_reads_carry_the_globals() {
+        let (_, list) = asked_once::<v1::ListCompanionsRequest>(&["companion", "list"]);
+        assert_eq!(list.globals, degraded());
+        let (_, loadout) = asked_once::<v1::GetLoadoutRequest>(&["loadout"]);
+        assert_eq!(loadout.globals, degraded());
+    }
+}
+
+// Step 10b U3: `companion add` asks the daemon's `CreateCompanion` with the
+// name, once.
+mod add_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_companion_add_asks_create_companion_with_its_name() {
+        let (under, asked) =
+            asked_once::<v1::CreateCompanionRequest>(&["companion", "add", "acme"]);
+        assert_eq!(under, "");
+        assert_eq!(asked.companion_id, "acme");
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
+    }
+
+    // Step 10b (owner 2026-11-18, night): `companion enable|disable` ask
+    // the daemon's `EnableCompanion`/`DisableCompanion`, the companion by
+    // its name, once, applied (not a preview).
+    #[test]
+    fn test_companion_enable_and_disable_ask_the_daemon_by_name() {
+        let (under, asked) =
+            asked_once::<v1::EnableCompanionRequest>(&["companion", "enable", "acme"]);
+        assert_eq!(under, "/companions/acme");
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
+        let (under, asked) =
+            asked_once::<v1::DisableCompanionRequest>(&["companion", "disable", "acme"]);
+        assert_eq!(under, "/companions/acme");
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
     }
 }

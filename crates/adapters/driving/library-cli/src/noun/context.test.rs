@@ -107,12 +107,49 @@ mod read {
             home.json()["profiles"],
             serde_json::json!(["users/me/bundles/project/profiles/dev"])
         );
+        // Step 10a U2: the assembly is the daemon's, text or json, so with
+        // no daemon there is none.
         let text = go_in(
             &["context", "assemble", "-p", "dev"],
             TEXT,
             BARE,
             &Unreachable,
         );
-        assert_eq!(text.code(), 0);
+        assert_eq!(text.refused(), "daemon-api-unreached:10");
+    }
+}
+
+// Step 10a U2: the assembly's request carries the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_context_assemble_carries_the_globals() {
+        let (_, request) = asked_once::<v1::AssembleContextRequest>(&["context", "assemble"]);
+        assert_eq!(request.globals, degraded());
+    }
+}
+
+// Owner ruling 2026-11-18 (night): the json of `context assemble` carries
+// the assembly's notices (a stale distilled form's among them), and they
+// are said as every read's are.
+mod notices {
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_an_assembly_keeps_its_notices_in_its_message_and_says_them() {
+        let stale = v1::Notice {
+            code: "library-application-stale-distilled".to_string(),
+            text: "stale".to_string(),
+            ..v1::Notice::default()
+        };
+        let (message, said) = super::super::at_rest(v1::AssembledContext {
+            context: "ctx".to_string(),
+            notices: vec![stale.clone()],
+            ..v1::AssembledContext::default()
+        });
+        assert_eq!(message.notices, std::slice::from_ref(&stale));
+        assert_eq!(said, [stale]);
     }
 }

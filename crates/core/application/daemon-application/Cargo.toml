@@ -29,6 +29,9 @@ session-index.workspace = true
 trust-index.workspace = true
 # The permission asks the loop keeps caught up (step 8 U4).
 pending-approvals.workspace = true
+# The library trees as last observed, caught up at the start and each round
+# (step 10a U0): what a read reconciles against (U2).
+library-checkout.workspace = true
 session-policies.workspace = true
 sessions.workspace = true
 uuid.workspace = true
@@ -39,6 +42,7 @@ run-launcher = { workspace = true, features = ["test-support"] }
 run-ports = { workspace = true, features = ["test-support"] }
 mutants.workspace = true
 trust.workspace = true
+library-tree.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

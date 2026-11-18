@@ -194,7 +194,7 @@ mod write {
                     "container-rootless"
                 ]
             ),
-            "Created agent \"dev\" (engine: claude-code, profiles: dev, runtime: container-rootless)\n"
+            "Created agent \"dev\" (engine: claude-code, profiles: project#profiles/dev, runtime: container-rootless)\n"
         );
         assert_eq!(
             text(
@@ -205,7 +205,7 @@ mod write {
                     "--env", "A", "--env", "B", "--surface", "context=system-prompt", "--root", "mcp=project-root",
                 ]
             ),
-            "Updated agent \"dev\" (engine: claude-code, profiles: dev, dev, runtime: host, engines.claude-code: {model: haiku}, env: A, B)\n"
+            "Updated agent \"dev\" (engine: claude-code, profiles: project#profiles/dev, project#profiles/dev, runtime: host, engines.claude-code: {model: haiku}, env: A, B)\n"
         );
         // OD-40 (design §4): a write answers its method's response, the
         // resource after the write and `applied` printed.
@@ -246,14 +246,13 @@ mod write {
             text(&library, &["agent", "remove", "dev"]),
             "Would remove agent \"dev\".\n\nNothing was removed. Re-run with --yes to apply:\n  ctxloom agent remove dev --yes\n"
         );
-        // OD-40: a removal's preview and its outcome are `DeleteAgentResponse`,
-        // `applied` false and the command that applies, then true.
+        // OD-40: its preview, then its outcome, are `DeleteAgentResponse`s.
         assert_eq!(
             json(&library, &["agent", "remove", "dev"]),
             serde_json::json!({
-                "agent": {"name": "projects/calm-otter/agents/dev"},
-                "applied": false,
+                "agent": {"name": "projects/calm-otter/agents/dev"}, "applied": false,
                 "apply_command": "ctxloom agent remove dev --yes",
+                "needs": [crate::tests::confirm_need("agent \"dev\"")],
             })
         );
         assert_eq!(
@@ -387,6 +386,14 @@ mod write {
                     "event": "session_end",
                     "reason": "no session_end",
                 }],
+                "needs": [{"id": "confirm", "confirm": {
+                    "text": "Apply the move of agent \"dev\" from claude-code to opencode, giving up what opencode cannot carry?",
+                    "args": [
+                        {"name": "agent", "value": "dev"},
+                        {"name": "from", "value": "claude-code"},
+                        {"name": "to", "value": "opencode"},
+                    ],
+                }}],
             })
         );
         assert_eq!(mem.config(Scope::Project), before, "nothing is written");
@@ -396,10 +403,8 @@ mod write {
 // Each view's mapping to its message, field by field (OD-40): what the
 // binary's tests alone reached.
 mod mapping {
-    use super::super::*;
-    use library_application::{
-        AgentRow, AgentShow, NotCarried, Preview, Removal, Requirement, RequirementSource,
-    };
+    use library_api::resources::agent;
+    use library_application::{AgentRow, AgentShow, NotCarried, Requirement, RequirementSource};
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -458,7 +463,7 @@ mod mapping {
                 reason: "none native".to_string(),
             }],
         };
-        let shown = json_of(&agent_show(PARENT, &show, ""));
+        let shown = json_of(&library_api::resources::agent_shown(PARENT, &show, ""));
         assert_eq!(shown["resolution_error"], "no such profile", "{shown}");
         assert_eq!(
             shown["requirements"],
@@ -478,22 +483,305 @@ mod mapping {
             }])
         );
     }
+}
+
+// Step 10a U2: each read's request carries the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
 
     #[test]
-    fn test_a_removed_agent_s_preview_says_what_would_go() {
-        let preview: Removal<()> = Removal::Preview(Preview::of(
-            "dev".to_string(),
-            vec!["agents.dev".to_string()],
-            "ctxloom agent remove dev --yes".to_string(),
-        ));
+    fn test_agent_reads_carry_the_globals() {
+        let (under, show) = asked_once::<v1::GetAgentRequest>(&["agent", "show", "dev"]);
+        assert_eq!(under, "/agents/dev");
+        assert_eq!(show.globals, degraded());
+        let (under, list) = asked_once::<v1::ListAgentsRequest>(&["agent", "list"]);
+        assert_eq!(under, "");
+        assert_eq!(list.globals, degraded());
+    }
+}
+
+// Step 10b U3: `agent create` asks the daemon's `CreateAgent` with the
+// fields it was given; `agent edit` asks `UpdateAgent` with the fields it
+// was given named by its mask (one given empty, a clear), previewed first
+// and applied with the preview's etag, or in one call with `--yes`.
+mod writes_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_agent_create_asks_create_agent_with_its_fields() {
+        let (under, made) = asked_once::<v1::CreateAgentRequest>(&[
+            "agent",
+            "create",
+            "dev",
+            "--engine",
+            "claude-code",
+            "--model",
+            "haiku",
+            "--effort",
+            "low",
+            "--profiles",
+            "a,b",
+            "--runtime",
+            "host",
+            "--surface",
+            "context=system-prompt",
+            "--root",
+            "mcp=project-root",
+            "--env",
+            "A",
+            "--session-home",
+            "session",
+            "--home",
+        ]);
+        assert_eq!(under, "");
+        assert_eq!(made.agent_id, "dev");
+        assert!(made.home);
+        assert!(!made.validate_only);
+        assert_eq!(made.globals, degraded());
+        let agent = made.agent.unwrap();
+        assert_eq!(agent.engine, "claude-code");
         assert_eq!(
-            json_of(&removed(PARENT, "dev", &preview)),
-            json!({
-                "agent": {"name": "projects/p/agents/dev"},
-                "applied": false,
-                "detail": ["agents.dev"],
-                "apply_command": "ctxloom agent remove dev --yes",
-            })
+            (agent.model.as_str(), agent.effort.as_str()),
+            ("haiku", "low")
         );
+        assert_eq!(agent.profiles, ["a", "b"]);
+        assert_eq!(agent.runtime, "host");
+        assert_eq!(
+            agent.surfaces.get("context").map(String::as_str),
+            Some("system-prompt")
+        );
+        assert_eq!(
+            agent.roots.get("mcp").map(String::as_str),
+            Some("project-root")
+        );
+        assert_eq!(agent.env, ["A"]);
+        assert_eq!(agent.session_home, "session");
+    }
+
+    #[test]
+    fn test_agent_edit_asks_its_given_fields_by_mask_previewed_then_applied() {
+        use crate::tests::{go_served, Asks, Project, BARE, DEGRADED};
+        let previewed = v1::UpdateAgentResponse {
+            applied: Some(false),
+            etag: "7".to_string(),
+            ..v1::UpdateAgentResponse::default()
+        };
+        let asks = Asks::answering(vec![Box::new(previewed)], None);
+        go_served(
+            &[
+                "agent",
+                "edit",
+                "dev",
+                "--runtime",
+                "host",
+                "--model",
+                "",
+                "--env",
+                "",
+            ],
+            DEGRADED,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        let sent = asks.requests::<v1::UpdateAgentRequest>();
+        assert_eq!(sent.len(), 2, "a preview, then its apply");
+        let preview = &sent[0];
+        assert!(preview.validate_only);
+        assert_eq!(preview.etag, "");
+        assert_eq!(
+            preview.update_mask.clone().unwrap().paths,
+            ["model", "runtime", "env"]
+        );
+        let agent = preview.agent.clone().unwrap();
+        assert_eq!(agent.runtime, "host");
+        assert!(agent.model.is_empty() && agent.env.is_empty());
+        assert_eq!(preview.globals, degraded());
+        let apply = &sent[1];
+        assert!(!apply.validate_only);
+        assert_eq!(apply.etag, "7");
+        assert_eq!(apply.update_mask, preview.update_mask);
+        let (under, yes) = asked_once::<v1::UpdateAgentRequest>(&[
+            "agent", "edit", "dev", "--engine", "opencode", "--home", "--yes",
+        ]);
+        assert_eq!(under, library_api::names::named_target("agents", "dev"));
+        assert!(!yes.validate_only && yes.home);
+        assert_eq!(yes.update_mask.unwrap().paths, ["engine"]);
+    }
+
+    // A swap's preview is printed, and nothing applied.
+    #[test]
+    fn test_agent_edit_whose_preview_is_a_swap_applies_nothing() {
+        use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+        let swap = v1::UpdateAgentResponse {
+            agent: Some(v1::Agent {
+                name: "projects/p/agents/dev".to_string(),
+                ..<v1::Agent as Default>::default()
+            }),
+            applied: Some(false),
+            from: "claude-code".to_string(),
+            to: "opencode".to_string(),
+            apply_command: "ctxloom agent edit dev --engine opencode --yes".to_string(),
+            ..v1::UpdateAgentResponse::default()
+        };
+        let asks = Asks::answering(vec![Box::new(swap)], None);
+        let ran = go_served(
+            &["agent", "edit", "dev", "--engine", "opencode"],
+            TEXT,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.exit, Ok(1), "{}", ran.err);
+        assert!(
+            ran.out
+                .starts_with("Moving agent \"dev\" from claude-code to opencode"),
+            "{}",
+            ran.out
+        );
+        assert_eq!(asks.requests::<v1::UpdateAgentRequest>().len(), 1);
+    }
+
+    /// A swap's preview as the daemon answers it: its Confirm need asked.
+    fn swap_asking() -> v1::UpdateAgentResponse {
+        v1::UpdateAgentResponse {
+            agent: Some(v1::Agent {
+                name: "projects/p/agents/dev".to_string(),
+                ..<v1::Agent as Default>::default()
+            }),
+            applied: Some(false),
+            from: "claude-code".to_string(),
+            to: "opencode".to_string(),
+            apply_command: "ctxloom agent edit dev --engine opencode --yes".to_string(),
+            needs: vec![v1::Need {
+                id: "confirm".to_string(),
+                kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+                    text: "Apply the move of agent \"dev\"?".to_string(),
+                    code: String::new(),
+                    args: Vec::new(),
+                })),
+            }],
+            etag: "7".to_string(),
+            ..v1::UpdateAgentResponse::default()
+        }
+    }
+
+    fn applied() -> v1::UpdateAgentResponse {
+        v1::UpdateAgentResponse {
+            agent: Some(v1::Agent {
+                name: "projects/p/agents/dev".to_string(),
+                engine: "projects/p/engines/opencode".to_string(),
+                ..<v1::Agent as Default>::default()
+            }),
+            applied: Some(true),
+            ..v1::UpdateAgentResponse::default()
+        }
+    }
+
+    fn swap_at_terminal(
+        answers: Vec<Box<dyn std::any::Any>>,
+        yes: Option<bool>,
+    ) -> (crate::tests::Ran, Vec<v1::UpdateAgentRequest>) {
+        use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+        let asks = Asks::answering(answers, yes);
+        let ran = go_served(
+            &["agent", "edit", "dev", "--engine", "opencode"],
+            TEXT,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        (ran, asks.requests::<v1::UpdateAgentRequest>())
+    }
+
+    // Owner ruling 2026-11-18 (evening): at a terminal the swap's preview is
+    // its Confirm need; on a yes the apply is sent with the answer and the
+    // preview's etag.
+    #[test]
+    fn test_a_swap_confirmed_at_the_terminal_is_applied_with_the_previews_etag() {
+        let (ran, sent) = swap_at_terminal(
+            vec![Box::new(swap_asking()), Box::new(applied())],
+            Some(true),
+        );
+        assert_eq!(ran.exit, Ok(0), "{}", ran.err);
+        assert!(ran.out.contains("Updated agent \"dev\""), "{}", ran.out);
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].validate_only && !sent[1].validate_only);
+        assert_eq!(sent[1].etag, "7");
+        assert_eq!(
+            sent[1].answers,
+            [v1::Answer {
+                need_id: "confirm".to_string(),
+                answer: Some(v1::answer::Answer::Confirmed(true)),
+            }]
+        );
+    }
+
+    // A no at the terminal is the preview, printed, and nothing applied.
+    #[test]
+    fn test_a_swap_declined_at_the_terminal_is_its_preview_and_applies_nothing() {
+        let (ran, sent) = swap_at_terminal(vec![Box::new(swap_asking())], Some(false));
+        assert_eq!(ran.exit, Ok(1), "{}", ran.err);
+        assert!(
+            ran.out
+                .starts_with("Moving agent \"dev\" from claude-code to opencode"),
+            "{}",
+            ran.out
+        );
+        assert_eq!(sent.len(), 1);
+    }
+
+    // What she confirmed changed before her answer reached the daemon: the
+    // apply is refused stale, and she is shown the swap again, as it is now.
+    #[test]
+    fn test_a_confirmed_swap_refused_stale_is_previewed_again() {
+        let (ran, sent) = swap_at_terminal(
+            vec![
+                Box::new(swap_asking()),
+                Box::new(crate::tests::Stale),
+                Box::new(swap_asking()),
+            ],
+            Some(true),
+        );
+        assert!(
+            matches!(&ran.exit, Err(why) if why.starts_with("library-tree-plan-stale:20")),
+            "{:?}",
+            ran.exit
+        );
+        assert!(
+            ran.out
+                .starts_with("Moving agent \"dev\" from claude-code to opencode"),
+            "{}",
+            ran.out
+        );
+        assert_eq!(
+            sent.iter().map(|r| r.validate_only).collect::<Vec<_>>(),
+            [true, false, true]
+        );
+    }
+}
+
+// Step 10b U3: `agent default <name>` asks the daemon's `SetDefaultAgent`
+// with the name, once; bare, it asks the daemon nothing (the current
+// default is still read in process).
+mod default_asked {
+    use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+    use daemon_proto::v1;
+
+    fn asked(line: &[&str]) -> Vec<v1::SetDefaultAgentRequest> {
+        let asks = Asks::default();
+        go_served(line, TEXT, BARE, &Project, Some(&asks));
+        asks.requests::<v1::SetDefaultAgentRequest>()
+    }
+
+    #[test]
+    fn test_agent_default_with_a_name_asks_set_default_agent() {
+        let sent = asked(&["agent", "default", "reviewer"]);
+        let [one] = &sent[..] else { panic!("{sent:?}") };
+        assert_eq!(one.agent, "reviewer");
+        assert!(!one.validate_only);
+        assert!(asked(&["agent", "default"]).is_empty());
     }
 }

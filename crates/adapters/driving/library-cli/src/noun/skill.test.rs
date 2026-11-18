@@ -135,7 +135,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{Preview, SkillFileRow, SkillRow};
+    use library_application::{SkillFileRow, SkillRow, SkillShow};
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -154,9 +154,10 @@ mod mapping {
 
     #[test]
     fn test_a_listed_skill_keeps_its_tags_and_file_count() {
-        let list = SkillList {
+        let list = library_application::SkillList {
             rows: vec![SkillRow {
                 name: "demo/reviewer".to_string(),
+                display_name: String::new(),
                 description: "Reviews".to_string(),
                 tags: vec!["review".to_string()],
                 source: "demo".to_string(),
@@ -166,7 +167,7 @@ mod mapping {
             total: 1,
         };
         assert_eq!(
-            json_of(&listed(PARENT, &list)),
+            json_of(&library_api::resources::skills(PARENT, &list)),
             json!({"skills": [{
                 "name": "projects/p/bundles/demo/skills/reviewer",
                 "description": "Reviews",
@@ -194,7 +195,7 @@ mod mapping {
             files: vec![file("SKILL.md", "0644"), file("run.sh", "0755")],
         };
         assert_eq!(
-            json_of(&shown(PARENT, &show)),
+            json_of(&library_api::resources::skill(PARENT, &show)),
             json!({
                 "name": "projects/p/bundles/demo/skills/reviewer",
                 "description": "Reviews",
@@ -207,62 +208,6 @@ mod mapping {
                     {"path": "SKILL.md", "sha256": "ab"},
                     {"path": "run.sh", "sha256": "ab", "executable": true},
                 ],
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_created_skill_answers_its_directory() {
-        let made = SkillCreated {
-            status: "created".to_string(),
-            bundle: "demo".to_string(),
-            name: "reviewer".to_string(),
-            dir: "skills/reviewer".to_string(),
-        };
-        assert_eq!(
-            json_of(&created(PARENT, &made)),
-            json!({
-                "skill": {
-                    "name": "projects/p/bundles/demo/skills/reviewer",
-                    "path": "skills/reviewer",
-                },
-                "path": "skills/reviewer",
-                "applied": true,
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_removed_skill_answers_its_removal_or_its_preview() {
-        let preview = Removal::Preview(Preview::of(
-            "reviewer".to_string(),
-            vec!["skills/reviewer".to_string()],
-            "ctxloom skill remove demo#skills/reviewer --yes".to_string(),
-        ));
-        assert_eq!(
-            json_of(&removed(PARENT, "demo#skills/reviewer", &preview)),
-            json!({
-                "skill": {"name": "projects/p/bundles/demo/skills/reviewer"},
-                "applied": false,
-                "detail": ["skills/reviewer"],
-                "apply_command": "ctxloom skill remove demo#skills/reviewer --yes",
-            })
-        );
-        let done = Removal::Done(SkillRemoved {
-            status: "removed".to_string(),
-            bundle: "demo".to_string(),
-            name: "reviewer".to_string(),
-            dir: "skills/reviewer".to_string(),
-        });
-        assert_eq!(
-            json_of(&removed(PARENT, "demo#skills/reviewer", &done)),
-            json!({
-                "skill": {
-                    "name": "projects/p/bundles/demo/skills/reviewer",
-                    "path": "skills/reviewer",
-                },
-                "path": "skills/reviewer",
-                "applied": true,
             })
         );
     }
@@ -296,5 +241,20 @@ mod mapping {
                 "applied": true,
             })
         );
+    }
+}
+
+// Step 10a U2: each read's request carries the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_skill_reads_carry_the_globals() {
+        let (_, show) =
+            asked_once::<v1::GetSkillRequest>(&["skill", "show", "demo#skills/reviewer"]);
+        assert_eq!(show.globals, degraded());
+        let (_, list) = asked_once::<v1::ListSkillsRequest>(&["skill", "list"]);
+        assert_eq!(list.globals, degraded());
     }
 }

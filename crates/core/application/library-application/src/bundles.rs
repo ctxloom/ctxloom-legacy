@@ -7,7 +7,7 @@ use library::distill::DistilledState;
 use library::model::Bundle;
 use library::refs::{self, ItemKind};
 use library::tree;
-use library::CatalogError;
+use library::{BundleError, CatalogError};
 
 use crate::error::AppError;
 use crate::project::{Library, Outcome, Project};
@@ -75,9 +75,6 @@ impl Project {
                     )
                 })
                 .collect(),
-            // The built-in bundles are listed with or without the project's
-            // own bundles directory.
-            no_root: !self.has_root && self.catalog.entries().is_empty(),
             hint: self.listing_hint(),
         }
     }
@@ -91,6 +88,11 @@ impl Project {
             Ok(entry) => Ok(entry),
             Err(CatalogError::BundleNotFound { .. } | CatalogError::ItemNotBundle { .. }) => {
                 if let Some(cause) = self.unreadable.get(ask) {
+                    // Metadata in the old layout is its own refusal, its
+                    // fix the move that migrates it (owner T27, D15).
+                    if matches!(cause, BundleError::OldLayout { .. }) {
+                        return Err(AppError::cause(cause.clone()));
+                    }
                     return Err(AppError::BundleUnreadable {
                         ask: ask.to_string(),
                         cause: Box::new(cause.clone()),
@@ -146,12 +148,14 @@ impl Project {
                 viewed: Viewed::Files(files_in_order(&files)),
             });
         }
-        let (content, viewed) = view_item(&entry.bundle, item_path, distilled)?;
+        // An item's view is its data alone (step 10a U2): the CLI renders
+        // its text from the item's own message, so no content is drawn here.
+        let viewed = view_item(&entry.bundle, item_path, distilled)?;
         Ok(BundleView {
             bundle: name.to_string(),
             path: item_path.to_string(),
             distilled,
-            content,
+            content: String::new(),
             item: true,
             viewed,
         })
@@ -252,9 +256,9 @@ pub(crate) fn library_preview(content: &str) -> String {
     format!("{}\u{2026}", &first[..end])
 }
 
-/// One item of a bundle, as `bundle view` prints it.
-/// One item of a bundle, as `bundle view` renders it and as data.
-fn view_item(bundle: &Bundle, path: &str, distilled: bool) -> Result<(String, Viewed), AppError> {
+/// One item of a bundle, as data (`bundle view <bundle>#<path>`, and
+/// `GetMcpServer`'s server); a path no item kind serves is refused.
+fn view_item(bundle: &Bundle, path: &str, distilled: bool) -> Result<Viewed, AppError> {
     if let Some(name) = path.strip_prefix("profiles/") {
         let profile = bundle
             .profiles
@@ -274,10 +278,7 @@ fn view_item(bundle: &Bundle, path: &str, distilled: bool) -> Result<(String, Vi
             exclude_mcp: profile.exclude_mcp.clone(),
             ..ProfileShow::default()
         };
-        return Ok((
-            format!("# Profile: {name}\n{}", crate::yamlout::profile(profile)),
-            Viewed::Profile(shown),
-        ));
+        return Ok(Viewed::Profile(shown));
     }
     let (kind, name) = refs::parse_selector(path).map_err(|cause| AppError::ViewPath {
         cause: Box::new(cause),
@@ -300,19 +301,16 @@ fn view_item(bundle: &Bundle, path: &str, distilled: bool) -> Result<(String, Vi
             // A distilled form is served only while it matches its source
             // (T30).
             let served_distilled = distilled && body.distilled_state() == DistilledState::Fresh;
-            Ok((
-                view_content(&body.content, &body.distilled, served_distilled),
-                Viewed::Body {
-                    kind: dir.to_string(),
-                    name: name.clone(),
-                    body: if served_distilled {
-                        body.distilled.clone()
-                    } else {
-                        body.content.clone()
-                    },
-                    distilled: served_distilled,
+            Ok(Viewed::Body {
+                kind: dir.to_string(),
+                name: name.clone(),
+                body: if served_distilled {
+                    body.distilled.clone()
+                } else {
+                    body.content.clone()
                 },
-            ))
+                distilled: served_distilled,
+            })
         }
         ItemKind::Mcp => {
             let (shown, server) = match bundle.mcp.get(&name) {
@@ -327,27 +325,21 @@ fn view_item(bundle: &Bundle, path: &str, distilled: bool) -> Result<(String, Vi
                 }
                 None => return Err(missing("mcp server", &name)),
             };
-            Ok((
-                format!("# MCP Server: {shown}\n{}", crate::yamlout::mcp(server)),
-                Viewed::Mcp(crate::config::mcp_row(&shown, server, "")),
-            ))
+            Ok(Viewed::Mcp(crate::config::mcp_row(&shown, server, "")))
         }
         ItemKind::Skill => {
             let skill = bundle
                 .skills
                 .get(&name)
                 .ok_or_else(|| missing("skill", &name))?;
-            Ok((
-                format!("# Skill: {name}\n{}", crate::yamlout::skill(skill)),
-                Viewed::Skill {
-                    name: name.clone(),
-                    skill: ShownSkill {
-                        path: skill.path.clone(),
-                        tags: skill.tags.clone(),
-                        notes: skill.notes.clone(),
-                    },
+            Ok(Viewed::Skill {
+                name: name.clone(),
+                skill: ShownSkill {
+                    path: skill.path.clone(),
+                    tags: skill.tags.clone(),
+                    notes: skill.notes.clone(),
                 },
-            ))
+            })
         }
         ItemKind::Hook => Err(AppError::NotViewable {
             dir: kind.dir().to_string(),
@@ -379,14 +371,4 @@ fn missing(kind: &str, name: &str) -> AppError {
         kind: kind.to_string(),
         name: name.to_string(),
     }
-}
-
-fn view_content(raw: &str, distilled: &str, use_distilled: bool) -> String {
-    let (content, header) = if use_distilled && !distilled.is_empty() {
-        (distilled, "# (distilled version)\n")
-    } else {
-        (raw, "")
-    };
-    let tail = if content.ends_with('\n') { "" } else { "\n" };
-    format!("{header}{content}{tail}")
 }

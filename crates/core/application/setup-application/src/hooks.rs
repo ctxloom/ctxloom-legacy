@@ -5,7 +5,6 @@
 //! startup: what it can foresee going wrong is silence, and only a payload it
 //! cannot read, or an engine it does not know, is an error.
 
-use library_application::{Flags, PackageRequest};
 use surface_ports::{EngineSurfaces, HookCodec, HookEvent, HookResponse};
 
 use crate::{Setup, SetupError};
@@ -16,6 +15,55 @@ const AGENT_SETUP_NUDGE: &str = "ctxloom: this project has profiles but no agent
 
 /// The tag that links skills into a group: `ctxloom:link_id=<id>`.
 const LINK_TAG: &str = "ctxloom:link_id=";
+
+/// A skill as a hook judges its mates by (O3): its name, the bundle it is
+/// in (any spelling that is the same for two skills of one bundle), and its
+/// tags.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct HookSkill {
+    pub name: String,
+    pub bundle: String,
+    pub tags: Vec<String>,
+}
+
+/// The library as an engine's hooks read it (step 10a U2, O3, owner ruling
+/// 2026-11-17): THROUGH THE DAEMON, within the hook's bound, degraded (a
+/// config a strict load refuses must not silence a hook). None, when no
+/// daemon answered in time (or the read failed): the hook then says
+/// nothing of the library, and never reads it in process.
+pub trait HookLibrary {
+    /// Whether the project has agents, and whether it has profiles
+    /// (`ListAgents`, `ListProfiles`).
+    fn agents_and_profiles(&self) -> Option<(bool, bool)>;
+
+    /// The project's skills (`ListSkills`).
+    fn skills(&self) -> Option<Vec<HookSkill>>;
+}
+
+/// The skills a `ListSkills` answer lists, as a hook judges them: each by
+/// its `display_name` (its SKILL.md frontmatter name, which the engine
+/// reports it by; owner ruling 2026-11-17), else its resource name's last
+/// segment, its bundle the name before
+/// `/skills/` (`projects/{p}/bundles/{b}`, a remote's or a companion's
+/// alike), its tags as listed.
+pub fn hook_skills(listed: &daemon_proto::v1::ListSkillsResponse) -> Vec<HookSkill> {
+    listed
+        .skills
+        .iter()
+        .filter_map(|skill| {
+            let (bundle, id) = skill.name.rsplit_once("/skills/")?;
+            let name = match skill.display_name.as_str() {
+                "" => id,
+                display => display,
+            };
+            Some(HookSkill {
+                name: name.to_string(),
+                bundle: bundle.to_string(),
+                tags: skill.tags.clone(),
+            })
+        })
+        .collect()
+}
 
 /// What `hook <engine> execute <name>` answers: the engine's stdout, and what
 /// else the caller is to do with the event (the driving edge records what it
@@ -123,17 +171,20 @@ impl Setup {
     }
 
     /// The session-start notice: the nudge to set up agents when the project
-    /// has profiles and none; empty otherwise.
+    /// has profiles and none; empty otherwise, and when the daemon did not
+    /// answer (O3).
     fn agent_nudge(&self) -> String {
-        let flags = Flags {
-            degraded: true,
-            ..Flags::default()
-        };
-        let package = self.library.package(&flags, &PackageRequest::default());
-        match package.result {
-            Ok(p) if !p.has_agents && p.has_profiles => AGENT_SETUP_NUDGE.to_string(),
+        match self
+            .hook_library()
+            .and_then(|library| library.agents_and_profiles())
+        {
+            Some((false, true)) => AGENT_SETUP_NUDGE.to_string(),
             _ => String::new(),
         }
+    }
+
+    fn hook_library(&self) -> Option<&dyn HookLibrary> {
+        self.hook_library.as_deref()
     }
 
     /// The engine's answer to a PostToolUse: when the tool call completed a
@@ -173,15 +224,7 @@ impl Setup {
     /// The one line the hook injects: the completed skill and the mates it
     /// leaves uninvoked, names only. Empty when there are none.
     fn mates_line(&self, completed: &str, invoked: &[String]) -> String {
-        let flags = Flags {
-            degraded: true,
-            ..Flags::default()
-        };
-        let Ok(package) = self
-            .library
-            .package(&flags, &PackageRequest::default())
-            .result
-        else {
+        let Some(skills) = self.hook_library().and_then(|library| library.skills()) else {
             return String::new();
         };
         let links = |tags: &[String]| -> Vec<String> {
@@ -190,9 +233,9 @@ impl Setup {
                 .collect()
         };
         let mut mates: Vec<String> = Vec::new();
-        for skill in package.skills.iter().filter(|s| s.name == completed) {
+        for skill in skills.iter().filter(|s| s.name == completed) {
             let ids = links(&skill.tags);
-            for other in &package.skills {
+            for other in &skills {
                 let shares = links(&other.tags).iter().any(|id| ids.contains(id));
                 if other.bundle == skill.bundle
                     && other.name != completed

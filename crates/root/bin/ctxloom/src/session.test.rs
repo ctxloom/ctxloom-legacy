@@ -119,7 +119,8 @@ impl Home {
             .env
             .home()
             .join(".ctxloom/sessions")
-            .join(format!("{harp}.lock"));
+            .join(harp)
+            .join("session.lock");
         let file = files::open_read(path).expect("a lock file: seed with --lock free");
         file.lock().expect("the lock is free to take");
         file
@@ -517,7 +518,7 @@ fn test_remove_yes_destroys_the_whole_session_its_directory_lock_and_events() {
         !files::exists(
             home.env
                 .home()
-                .join(".ctxloom/sessions/amber-swift-owl.lock")
+                .join(".ctxloom/sessions/amber-swift-owl/session.lock")
         ),
         "its lock goes"
     );

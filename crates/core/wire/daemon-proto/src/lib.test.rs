@@ -17,7 +17,8 @@ fn test_each_refusal_declares_the_status_its_proto_says() {
     assert_eq!(<v1::SessionNotFound as Refusal>::REFUSAL_STATUS, 5);
     assert_eq!(<v1::ProjectNotFound as Refusal>::REFUSAL_STATUS, 5);
     assert_eq!(<v1::NameInvalid as Refusal>::REFUSAL_STATUS, 3);
-    assert_eq!(<v1::PlanStale as Refusal>::REFUSAL_STATUS, 9);
+    // OQ-10: stale is ABORTED (gRPC 10), declared since angzarr b1445adf.
+    assert_eq!(<v1::PlanStale as Refusal>::REFUSAL_STATUS, 10);
 }
 
 fn json<T: serde::Serialize>(value: &T) -> serde_json::Value {

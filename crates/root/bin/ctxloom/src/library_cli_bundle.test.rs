@@ -247,6 +247,9 @@ fn test_the_minimal_config_is_enough() {
     // json read in a project with none is refused).
     let project = Project::bare().on_gos_catalog().named();
     project.write(".ctxloom/config.yaml", MINIMAL_CONFIG);
+    // A library is read only in git (G1, step 10a): the project is a
+    // repository, its config committed, as an initialized one is.
+    project.git_init_committing(&[".ctxloom/config.yaml"]);
     project
         .run(&["bundle", "list", "--format", "json"])
         .succeeds();

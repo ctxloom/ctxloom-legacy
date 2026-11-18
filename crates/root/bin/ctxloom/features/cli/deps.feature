@@ -770,9 +770,10 @@ Feature: deps — the installed dependency closure, and everything that moves it
         | skills/reviewer/SKILL.md        |
         | profiles/studio.yaml            |
 
-    # Content kinds carry their metadata as front-matter inside the file;
-    # executable and structural kinds carry it in a separate sidecar file,
-    # which a pull that copied only content files would lose.
+    # Content kinds carry their metadata as front-matter inside the file; an
+    # MCP server carries it in its one file, and a skill in the sidecar inside
+    # its own directory (owner T27), which a pull that copied only content
+    # files would lose.
     Scenario Outline: Each kind's metadata survives publication in the place that kind stores it
       Given Trent publishes the "atelier" tree to his company repo
       When Alice references the company's "atelier" bundle and pulls it
@@ -782,8 +783,8 @@ Feature: deps — the installed dependency closure, and everything that moves it
         | kind     | probe                    | placement                                  |
         | fragment | ATELIER-FRAGMENT-DESC    | front-matter in "fragments/when-shipping.md" |
         | command  | ATELIER-COMMAND-DESC     | front-matter in "prompts/ship-it.md"       |
-        | mcp      | ATELIER-MCP-DESC         | the sidecar "mcp/.ledger.meta.yaml"        |
-        | skill    | ATELIER-SKILL-DESC       | the sidecar "skills/.reviewer.meta.yaml"   |
+        | mcp      | ATELIER-MCP-DESC         | a field of "mcp/ledger.yaml"               |
+        | skill    | ATELIER-SKILL-DESC       | the sidecar "skills/reviewer/.meta.yaml"   |
 
     # An MCP server is a structure: its command, args and env are compared
     # parsed, so a flattened or reordered round trip fails where a substring

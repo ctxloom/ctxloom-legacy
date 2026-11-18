@@ -22,6 +22,7 @@ fn the_samples_hold_every_diagnostic_of_the_crate() {
             "daemon-api-draining",
             "daemon-api-home-gone",
             "daemon-api-age-invalid",
+            "daemon-api-etag-invalid",
             "daemon-api-config-unreadable",
             "daemon-api-launch-in-progress",
             "daemon-api-session-not-hosted",

@@ -374,25 +374,47 @@ pub async fn one_shot<A: DaemonApi>(api: &A, asked: &Asked, heard: Heard<'_>) ->
             }
         }
     };
-    let mut followed = Followed::default();
-    let result = match &created {
-        Err(called) => Err(RunError::Called(Box::new(called.clone()))),
-        Ok(run) => {
-            followed.notices.extend(run.notices.iter().map(noticed));
-            match &run.end {
-                Some(end) => {
-                    followed.end = Some(end.clone());
-                    Ok(())
-                }
-                None => follow(api, run, &mut heard, &mut signal, &mut followed).await,
+    match created {
+        Err(called) => {
+            let mut result = Err(RunError::Called(Box::new(called)));
+            if let Some(signal) = &signal {
+                overrule(&mut result, signal);
+            }
+            Done {
+                result,
+                notices: Vec::new(),
             }
         }
+        Ok(run) => followed(api, &run, heard, signal).await,
+    }
+}
+
+/// The run `run` the daemon answered (a one-shot's `CreateRun`, or a
+/// distill's, step 10b) followed through `api` to its end, stopped when
+/// `heard` is (once); `signal` one heard already. Its answer, or the error
+/// it ended in; a signal heard makes it `Stopped`, whatever it ended in
+/// (ruling 114).
+pub async fn followed<A: DaemonApi>(
+    api: &A,
+    run: &v1::Run,
+    heard: Heard<'_>,
+    signal: Option<String>,
+) -> Done<Answer> {
+    let (mut heard, mut signal) = (heard, signal);
+    let mut followed = Followed::default();
+    followed.notices.extend(run.notices.iter().map(noticed));
+    let result = match &run.end {
+        Some(end) => {
+            followed.end = Some(end.clone());
+            Ok(())
+        }
+        None => follow(api, run, &mut heard, &mut signal, &mut followed).await,
     };
     let mut result = match result {
         Err(error) => Err(error),
         Ok(()) => match error_of(&followed.end.clone().unwrap_or_default()) {
             Some(error) => Err(error),
-            None => reply_of(created.as_ref().ok(), &followed).ok_or(RunError::EmptyAnswer),
+            None => reply_of(Some(run), &followed).ok_or(RunError::EmptyAnswer),
         },
     };
     if let Some(signal) = &signal {

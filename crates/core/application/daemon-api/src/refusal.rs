@@ -59,6 +59,13 @@ pub enum ApiError {
     Refused(ApiRefusal),
     /// Something broke (the store, the kernel): an internal failure.
     Failed { detail: String },
+    /// Failed, in a diagnostic of its own (step 10a U2: git missing or too
+    /// old, `library-git-*`): its code and its flattened args, which the
+    /// client is told so it says it in that diagnostic's words.
+    Diagnosed {
+        code: String,
+        args: Vec<v1::NeedArg>,
+    },
     /// Not served by this daemon (yet): `CreateRun` for a TERMINAL run until
     /// U5 builds it; answered UNIMPLEMENTED.
     Unimplemented { method: String },
@@ -69,6 +76,16 @@ impl ApiError {
     pub(crate) fn failed(cause: impl fmt::Debug) -> ApiError {
         ApiError::Failed {
             detail: format!("{cause:?}"),
+        }
+    }
+}
+
+impl ApiError {
+    /// A failure said in `cause`'s own code and args.
+    pub fn diagnosed(cause: &dyn Diagnostic) -> ApiError {
+        ApiError::Diagnosed {
+            code: cause.code().to_string(),
+            args: run_application::client::flat_args(cause),
         }
     }
 }
@@ -92,6 +109,7 @@ impl Diagnostic for ApiError {
         match self {
             ApiError::Refused(_) => code!("refused"),
             ApiError::Failed { .. } => code!("failed"),
+            ApiError::Diagnosed { code, .. } => code,
             ApiError::Unimplemented { .. } => code!("unimplemented"),
         }
     }
@@ -102,6 +120,10 @@ impl Diagnostic for ApiError {
                 vec![("ext_err_txt", refused.refusal.type_url.as_str().into())]
             }
             ApiError::Failed { detail } => vec![("ext_err_txt", detail.as_str().into())],
+            ApiError::Diagnosed { args, .. } => args
+                .iter()
+                .map(|arg| (arg.name.as_str(), arg.value.as_str().into()))
+                .collect(),
             ApiError::Unimplemented { method } => vec![("method", method.as_str().into())],
         }
     }
@@ -152,6 +174,11 @@ pub enum ApiRejection {
         key: String,
         value: String,
     },
+    /// An apply whose etag is not a number, so no preview answered it
+    /// (step 10b U3).
+    EtagInvalid {
+        etag: String,
+    },
     /// A project's configuration that does not read.
     ConfigUnreadable {
         root: String,
@@ -199,6 +226,7 @@ impl Diagnostic for ApiRejection {
             ApiRejection::Draining { .. } => code!("draining"),
             ApiRejection::HomeGone { .. } => code!("home-gone"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
+            ApiRejection::EtagInvalid { .. } => code!("etag-invalid"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
             ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
             ApiRejection::SessionNotHosted { .. } => code!("session-not-hosted"),
@@ -254,6 +282,7 @@ impl Diagnostic for ApiRejection {
                     ("value", value.as_str().into()),
                 ]
             }
+            ApiRejection::EtagInvalid { etag } => vec![("etag", etag.as_str().into())],
             ApiRejection::ConfigUnreadable { root, detail } => vec![
                 ("root", root.as_str().into()),
                 ("ext_err_txt", detail.as_str().into()),
@@ -294,6 +323,12 @@ pub enum Rejection {
     Trust(trust::TrustRejection),
     /// The approvals domain's (an answer refused, step 8 U4).
     Approvals(approvals::ApprovalsRejection),
+    /// The library domain's (a read of a tree outside git, or one git
+    /// ignores: step 10a U2).
+    Library(library_tree::LibraryTreeRejection),
+    /// A library read's use case's (E5): its own diagnostic, by the typed
+    /// refusal's type.
+    LibraryRead(Report),
 }
 
 impl Rejection {
@@ -306,6 +341,8 @@ impl Rejection {
             Rejection::Runs(runs) => Report::of(runs),
             Rejection::Trust(trust) => Report::of(trust),
             Rejection::Approvals(approvals) => Report::of(approvals),
+            Rejection::Library(library) => Report::of(library),
+            Rejection::LibraryRead(read) => read.clone(),
         }
     }
 }
@@ -345,6 +382,12 @@ impl RemovalRejection {
                     RemovalRejection::Session(Refusal::Retained {
                         harp,
                         detail: refused.detail.clone(),
+                    })
+                }
+                v1::removal_refusal::Reason::LockHeld => {
+                    RemovalRejection::Session(Refusal::LockHeld {
+                        harp,
+                        lock: refused.detail.clone(),
                     })
                 }
                 v1::removal_refusal::Reason::WorktreesKeep => RemovalRejection::KeepsSession {
@@ -444,6 +487,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 value: r.value,
             })
         }),
+        "ctxloom.v1.EtagInvalid" => decode::<v1::EtagInvalid>(refusal)
+            .and_then(|r| api(ApiRejection::EtagInvalid { etag: r.etag })),
         "ctxloom.v1.ConfigUnreadable" => decode::<v1::ConfigUnreadable>(refusal).and_then(|r| {
             api(ApiRejection::ConfigUnreadable {
                 root: r.root,
@@ -483,7 +528,8 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 })
             })
         }
-        _ => domain_rejection(refusal),
+        _ => domain_rejection(refusal)
+            .or_else(|| crate::library_refusals::rejection(refusal).map(Rejection::LibraryRead)),
     }
 }
 
@@ -552,9 +598,69 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
             approvals::MessageNotRelayed,
         ]
     );
-    answered
-        .and_then(|typed| approvals::ApprovalsRejection::try_from(&typed).ok())
-        .map(Rejection::Approvals)
+    if let Some(answered) =
+        answered.and_then(|typed| approvals::ApprovalsRejection::try_from(&typed).ok())
+    {
+        return Some(Rejection::Approvals(answered));
+    }
+    let library: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
+        refusal,
+        [
+            library_tree::NotInGit,
+            library_tree::LibraryIgnored,
+            library_tree::PlanRejected,
+            // A write's (step 10b U3).
+            library_tree::TreeInMotion,
+            library_tree::ResourceExists,
+            library_tree::NoSuchResource,
+            library_tree::BuiltinReadOnly,
+            library_tree::OneChangePerCall,
+            library_tree::PlanStale,
+        ]
+    );
+    library
+        .and_then(|typed| library_tree::LibraryTreeRejection::try_from(&typed).ok())
+        .map(Rejection::Library)
+}
+
+/// A library read's refusal (step 10a U2) as the daemon answers it: the
+/// library domain's own typed refusal, under the status its message
+/// declares, so one code reaches the person, read or write.
+pub fn library_refusal(rejection: &library_tree::LibraryTreeRejection) -> ApiRefusal {
+    use library_tree::{LibraryTreeRejection as Why, Refusal};
+    fn typed<M: angzarr_embedded::markup::DomainMessage + Refusal>(message: &M) -> ApiRefusal {
+        ApiRefusal::typed(
+            &angzarr_embedded::markup::TypedRefusal::of(message),
+            M::REFUSAL_STATUS,
+        )
+    }
+    match rejection.clone() {
+        Why::NotInGit { root } => typed(&library_tree::NotInGit { root }),
+        Why::LibraryIgnored {
+            source,
+            line,
+            pattern,
+        } => typed(&library_tree::LibraryIgnored {
+            source,
+            line,
+            pattern,
+        }),
+        Why::PlanRejected { code, args } => typed(&library_tree::PlanRejected { code, args }),
+        Why::TreeInMotion { motion, root } => typed(&library_tree::TreeInMotion { motion, root }),
+        Why::PlanStale { path, seen, now } => typed(&library_tree::PlanStale { path, seen, now }),
+        Why::ResourceExists { path } => typed(&library_tree::ResourceExists { path }),
+        Why::NoSuchResource { path } => typed(&library_tree::NoSuchResource { path }),
+        Why::BuiltinReadOnly { bundle } => typed(&library_tree::BuiltinReadOnly { bundle }),
+        Why::OneChangePerCall { paths } => typed(&library_tree::OneChangePerCall { paths }),
+        Why::NoSuchSlot { request_id } => typed(&library_tree::NoSuchSlot { request_id }),
+        Why::SlotNotDue {
+            request_id,
+            age_days,
+        } => typed(&library_tree::SlotNotDue {
+            request_id,
+            age_days,
+        }),
+    }
 }
 
 fn decode<T: Message + Default>(refusal: &Any) -> Option<T> {
@@ -608,6 +714,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
             key: "session_purge_age".to_string(),
             value: "soon".to_string(),
         }),
+        Box::new(ApiRejection::EtagInvalid {
+            etag: "abc".to_string(),
+        }),
         Box::new(ApiRejection::ConfigUnreadable {
             root: "/work/calm".to_string(),
             detail: "it does not parse".to_string(),
@@ -636,4 +745,48 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
 
 #[cfg(test)]
 #[path = "refusal.test.rs"]
-mod tests;
+pub(crate) mod tests;
+
+/// A library use case's error (step 10a U2) as a read answers it: an
+/// adapter's failure is a failure; a decline is its typed refusal (E5).
+/// Only a decline is typed (`library_refusals::typed`: every one it types
+/// exits refused, which its tests hold it to).
+pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
+    match crate::library_refusals::typed(error) {
+        Some(refused) => ApiError::Refused(refused),
+        // A failure said in its own words, its code and args (step 10b
+        // U9), as a deps failure is: a served import whose source is not
+        // there names it, as in process.
+        None => ApiError::diagnosed(error),
+    }
+}
+
+/// A deps use case's error (step 10a U2, `remote list|show`, `deps list`)
+/// as a read answers it: an adapter's or a file's failure is a failure in
+/// its own words ([`ApiError::diagnosed`]); a read model's decline (a
+/// lock or a registry that does not read) is its own typed refusal
+/// (`ctxloom.v1.Deps*`, E5, `library_refusals::read_decline`); any other
+/// decline (a write's, 10b) rides as `LibraryDeclined`, its cause the
+/// decline's own code and args.
+pub(crate) fn deps_error(error: &deps_application::AppError) -> ApiError {
+    use exit_code::ExitClass;
+    let declined = |d: &dyn angzarr_diagnostic::Diagnostic| {
+        ApiError::Refused(ApiRefusal::of(&daemon_proto::v1::LibraryDeclined {
+            cause: Some(daemon_proto::v1::Cause {
+                code: d.code().to_string(),
+                args: run_application::client::flat_args(d),
+            }),
+        }))
+    };
+    match error {
+        deps_application::AppError::Declined(cause) => {
+            crate::library_refusals::read_decline(cause.as_ref())
+                .map_or_else(|| declined(cause.as_ref()), ApiError::Refused)
+        }
+        _ if error.exit() == exit_code::Exit::REFUSED => declined(error),
+        // A failure (a clone that cannot be browsed, a file that does not
+        // read) said in its own words (step 10a U2: `remote show`'s
+        // `deps-application-browse`), exit 10 as in process.
+        _ => ApiError::diagnosed(error),
+    }
+}

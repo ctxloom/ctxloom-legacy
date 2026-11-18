@@ -10,7 +10,10 @@ Feature: trust — the user's verdict on a project's own settings
   (`engines.<e>.session_home: host`, `agents.<a>.session_home: host`), and
   a project `ctxloom` bundle that replaces the prompts ctxloom's own work
   runs on (its setup interview, its distill prompt). The daemon holds each
-  back until the user trusts the project: a launch that reads one is
+  back until the user trusts the project: a read (`engine show`, `config
+  show`, a dry run's plan, any of the library's) answers as if the setting
+  were not there and says which it held back, as the notice
+  `library-application-notice-untrusted-setting`; a launch that reads one is
   refused, `runs-untrusted-project-settings`, naming each and `ctxloom
   trust` as the fix (a setting the launch does not read, another engine's
   or another agent's, refuses nothing); a project `ctxloom` bundle is
@@ -81,7 +84,28 @@ Feature: trust — the user's verdict on a project's own settings
       Examples:
         | command                                                                               |
         | ctxloom run                                                                           |
+        | ctxloom run --dry-run                                                                 |
         | ctxloom session launch amber-quiet-heron --name brisk-copper-moth "review the change" |
+
+    Scenario: A read holds an untrusted project's own setting back and says so, and shows it once the project is trusted
+      # new: step 10 U7 (D7), trust gates every daemon read; ruling 46's strip-and-notice is gone.
+      Given an initialized ctxloom project whose project config says "engines.claude-code.command: /opt/their-claude"
+      When I run "ctxloom engine show claude-code --format json"
+      Then the command succeeds
+      And the output reports "command.value" as "claude"
+      And the output reports "command.source" as "default"
+      And the output contains "library-application-notice-untrusted-setting"
+      And the output contains "ctxloom trust"
+      When I run "ctxloom trust --yes"
+      And I run "ctxloom engine show claude-code --format json"
+      Then the command succeeds
+      And the output reports "command.value" as "/opt/their-claude"
+      And the output reports "command.source" as "engine"
+      And the output does not contain "library-application-notice-untrusted-setting"
+      When I run "ctxloom trust --undo --yes"
+      And I run "ctxloom engine show claude-code --format json"
+      Then the command succeeds
+      And the output reports "command.value" as "claude"
 
     Scenario: An untrusted setting the launch does not read refuses nothing
       # new: only the keys this launch reads are judged.

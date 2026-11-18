@@ -41,6 +41,39 @@ pub(crate) fn engine_name(parent: &str, engine: &str) -> String {
     }
 }
 
+/// The `Run` a ONE_SHOT `request` is answered with, as it was `created`:
+/// placed (to watch), or ended before it was, with its notices and end.
+pub(crate) fn run_created(request: &v1::CreateRunRequest, created: Created) -> v1::Run {
+    let run = v1::Run {
+        mode: v1::run::Mode::OneShot as i32,
+        agent: request.agent.clone(),
+        prompt: request.prompt.clone(),
+        ..v1::Run::default()
+    };
+    match created {
+        Created::Placed(placed) => v1::Run {
+            name: run_name(&placed.name, &placed.run),
+            engine: engine_name(&request.parent, &placed.engine),
+            session: placed.name,
+            ..run
+        },
+        Created::Ended(events) => {
+            let mut ended = v1::Run {
+                name: format!("{}/runs/-", request.parent),
+                ..run
+            };
+            for event in events {
+                match event.event {
+                    Some(v1::run_event::Event::Notice(notice)) => ended.notices.push(notice),
+                    Some(v1::run_event::Event::End(end)) => ended.end = Some(end),
+                    _ => {}
+                }
+            }
+            ended
+        }
+    }
+}
+
 /// A call this daemon does not serve yet.
 fn unimplemented(method: &str) -> ApiError {
     ApiError::Unimplemented {
@@ -58,10 +91,10 @@ fn not_found(name: &str) -> ApiError {
 impl<E: Edge> Api<E> {
     /// `CreateRun`, by its mode: a ONE_SHOT hosted; a TERMINAL run is U5's
     /// (its arm below is where it is built); a preview (`validate_only`) is
-    /// the dry run's, which the command plans itself.
+    /// the dry run's, planned here as a library read (step 10a U2).
     pub async fn create_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
         if request.validate_only {
-            return Err(unimplemented("CreateRun(validate_only)"));
+            return self.preview_run(request).await;
         }
         match v1::run::Mode::try_from(request.mode).unwrap_or(v1::run::Mode::Unspecified) {
             v1::run::Mode::OneShot => self.create_one_shot(request).await,
@@ -73,7 +106,7 @@ impl<E: Edge> Api<E> {
     }
 
     /// The daemon's one-shots, or the failure of a daemon that hosts none.
-    fn one_shots(&self) -> Result<&Arc<OneShots>, ApiError> {
+    pub(crate) fn one_shots(&self) -> Result<&Arc<OneShots>, ApiError> {
         self.one_shots.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon hosts no one-shot".to_string(),
         })
@@ -84,10 +117,20 @@ impl<E: Edge> Api<E> {
     /// environment. Answered once placed, or with its end.
     async fn create_one_shot(&self, request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
         let one_shots = Arc::clone(self.one_shots()?);
+        let host = self.one_shot_request(&request).await?;
+        Ok(run_created(&request, one_shots.create(host)))
+    }
+
+    /// What hosting the ONE_SHOT `request` asks of the daemon's one-shots:
+    /// its project (none under `users/me`), the client's working directory
+    /// and environment, and the project's trust, which is the daemon's to
+    /// read, never the client's to say (step 8 U2).
+    pub(crate) async fn one_shot_request(
+        &self,
+        request: &v1::CreateRunRequest,
+    ) -> Result<HostRequest, ApiError> {
         let project = self.host_project(&request.parent).await?;
-        let (one_shot, mut flags) = run_application::client::asked_of(&request);
-        // The project's trust is the daemon's to read, never the client's
-        // to say (step 8 U2).
+        let (one_shot, mut flags) = run_application::client::asked_of(request);
         flags.trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
         let env = request
             .env
@@ -97,41 +140,13 @@ impl<E: Edge> Api<E> {
             .into_iter()
             .map(|var| (var.name, var.value))
             .collect();
-        let created = one_shots.create(HostRequest {
+        Ok(HostRequest {
             project,
             cwd: request.cwd.clone(),
             env,
             flags,
             request: one_shot,
             launcher_lock: None,
-        });
-        let run = v1::Run {
-            mode: v1::run::Mode::OneShot as i32,
-            agent: request.agent.clone(),
-            prompt: request.prompt.clone(),
-            ..v1::Run::default()
-        };
-        Ok(match created {
-            Created::Placed(placed) => v1::Run {
-                name: run_name(&placed.name, &placed.run),
-                engine: engine_name(&request.parent, &placed.engine),
-                session: placed.name,
-                ..run
-            },
-            Created::Ended(events) => {
-                let mut ended = v1::Run {
-                    name: format!("{}/runs/-", request.parent),
-                    ..run
-                };
-                for event in events {
-                    match event.event {
-                        Some(v1::run_event::Event::Notice(notice)) => ended.notices.push(notice),
-                        Some(v1::run_event::Event::End(end)) => ended.end = Some(end),
-                        _ => {}
-                    }
-                }
-                ended
-            }
         })
     }
 

@@ -585,6 +585,98 @@ async fn a_trust_granted_through_the_edge_is_answered_by_the_trust_index() {
     assert!(matches!(hidden, Unserved::Hidden { .. }), "{hidden:?}");
 }
 
+// Step 10a U0: the daemon's core holds a library tree, on loopback: an
+// observation recorded through the edge is answered by `library-checkout`
+// as the tree's state, each path at its event's sequence; the same
+// observation again is a duplicate; the network never reaches a tree.
+#[tokio::test]
+async fn an_observation_through_the_edge_is_answered_by_the_library_checkout() {
+    use prost::Message as _;
+    let mut kept = Projectors::default();
+    let core = InProcessCore::start_with(MemoryStore::default(), |store| {
+        kept = Projectors::filled(store);
+        kept.clone()
+    })
+    .await;
+    let project = sessions::ProjectName::parse("projects/calm-quiet-heron").unwrap();
+    let tree = library_tree::TreeName::checkout(project, "brisk-copper-moth").unwrap();
+    let path = "content/bundles/v2/demo/bundle.yaml";
+    let fact = library_tree::RecordTreeObserved {
+        name: tree.to_string(),
+        kind: library_tree::TreeKind::Checkout,
+        base_cause: String::new(),
+        head_before: String::new(),
+        head_after: "h-0".to_string(),
+        tree_after: "t-0".to_string(),
+        changes: vec![library_tree::Change {
+            path: path.to_string(),
+            status: library_tree::ChangeStatus::Added,
+            from_oid: String::new(),
+            to_oid: "y1".to_string(),
+            from_path: String::new(),
+        }],
+        dirty_after: vec![library_tree::DirtyPath {
+            path: path.to_string(),
+            oid: "y1".to_string(),
+        }],
+        baseline: true,
+        in_motion: None,
+    };
+    let book = library_tree::observation_book(&tree, &fact);
+    let synced = core
+        .edge()
+        .serve_sync(
+            book.clone(),
+            vec!["library-checkout".to_string()],
+            Arrival::Loopback,
+        )
+        .await
+        .unwrap();
+    let state = library_domain_proto::v1::LibraryState::decode(
+        synced.projections[0]
+            .projection
+            .as_ref()
+            .expect("the checkout's view")
+            .value
+            .as_slice(),
+    )
+    .unwrap();
+    assert_eq!(state.name, tree.to_string());
+    assert_eq!(state.head, "h-0");
+    assert_eq!(
+        state
+            .resources
+            .get(path)
+            .map(|r| (r.sequence, r.oid.as_str())),
+        Some((0, "y1"))
+    );
+    assert_eq!(
+        kept.checkouts
+            .as_ref()
+            .unwrap()
+            .checkouts()
+            .token(&tree.root(), path),
+        Some(0)
+    );
+    let cover = book.cover.clone().unwrap();
+    let again = core
+        .edge()
+        .serve_sync(
+            book.clone(),
+            vec!["library-checkout".to_string()],
+            Arrival::Loopback,
+        )
+        .await;
+    assert!(again.is_ok(), "{again:?}");
+    assert_eq!(core.edge().events(&cover, 0).await.unwrap().len(), 1);
+    let hidden = core
+        .edge()
+        .serve_sync(book, vec!["library-checkout".to_string()], Arrival::Ip)
+        .await
+        .unwrap_err();
+    assert!(matches!(hidden, Unserved::Hidden { .. }), "{hidden:?}");
+}
+
 /// An ask of the session `c` under the root `o`.
 fn an_ask() -> approvals::RecordApprovalAsked {
     let reference = |session: &str| approvals::SessionRef {

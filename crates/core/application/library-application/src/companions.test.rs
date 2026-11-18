@@ -423,7 +423,7 @@ fn the_premise_index_is_worded_for_the_surface_its_context_rides() {
             &plain(),
             &AssembleRequest {
                 fragments: vec!["own".to_string()],
-                surface: Surface::Launch,
+                surface: Some(Surface::Launch),
                 ..AssembleRequest::default()
             },
         )

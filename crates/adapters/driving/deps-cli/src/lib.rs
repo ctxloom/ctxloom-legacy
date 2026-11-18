@@ -16,18 +16,20 @@ mod bundle;
 mod commands;
 mod dependency;
 mod pins;
+mod read_back;
 mod refresh;
 mod remote;
 mod text;
 
 use cli_support::{Exit, ExitClass};
+use daemon_proto::v1;
 use std::io::{self, Write};
 
 use angzarr_presentation::{Catalog, Format};
 use clap::ArgMatches;
 use cli_support::{flag, one, say_notices};
 use deps_application::{
-    AppError, CreateRequest, Deps, DiscoverRequest, Edit, MoveRequest, Notice, Outcome,
+    AppError, CreateRequest, Deps, DiscoverRequest, Edit, MoveRequest, MoveTarget, Notice, Outcome,
     ProjectRefresh, PushRequest,
 };
 use serde::Serialize;
@@ -48,6 +50,54 @@ pub trait Names {
     fn parent(&self) -> Result<String, Failure>;
 }
 
+/// The deps reads the daemon answers (step 10a U2; D10: the CLI is the
+/// request and the render): one method per read this CLI asks (the rows of
+/// `daemon_proto::library_reads!` it serves, D12), each answering the
+/// read's message and the notices it said, or why it was not answered. A
+/// read's target is the parent the daemon names this command's project by
+/// (`users/me` outside one) followed by `under`.
+pub trait Served {
+    served_reads!(served_read);
+
+    /// `MoveBundle`: a local `bundle move` into another project, the
+    /// daemon's one Move (step 10b U9), its answer with the notices inside
+    /// it.
+    fn move_bundle(
+        &self,
+        under: &str,
+        request: v1::MoveBundleRequest,
+    ) -> Result<v1::MoveBundleResponse, Failure>;
+}
+
+/// The reads this CLI asks the daemon, in the shape of
+/// `daemon_proto::library_reads!`'s rows, handed to `$each` (the trait's,
+/// the wiring's and the tests' implementations of [`Served`]).
+#[macro_export]
+macro_rules! served_reads {
+    ($each:ident) => {
+        $each! {
+            list_remotes (ListRemotes) ListRemotesRequest.parent => ListRemotesResponse,
+            browse_remote (BrowseRemote) BrowseRemoteRequest.name => BrowseRemoteResponse,
+            list_dependencies (ListDependencies) ListDependenciesRequest.parent => ListDependenciesResponse,
+        }
+    };
+}
+
+/// [`Served`]'s methods, from [`served_reads!`].
+macro_rules! served_read {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "`.")]
+            fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<(v1::$response, Vec<v1::Notice>), Failure>;
+        )*
+    };
+}
+use served_read;
+
 /// An application error as the failure it ends the command in.
 trait IntoFailure {
     fn into_failure(self) -> Failure;
@@ -64,17 +114,20 @@ struct Context<'a> {
     deps: &'a Deps,
     refresh: &'a dyn ProjectRefresh,
     names: &'a dyn Names,
+    served: &'a dyn Served,
     format: Format,
     catalog: &'a Catalog,
 }
 
 /// Run `noun` (given the matches of the whole line); `refresh` is the project
-/// refresh a pull ends with, `names` where its json answer's names are rooted.
+/// refresh a pull ends with, `names` where its json answer's names are
+/// rooted, `served` the daemon's reads.
 #[allow(clippy::too_many_arguments)]
 pub fn run<G>(
     deps: &Deps,
     refresh: &dyn ProjectRefresh,
     names: &dyn Names,
+    served: &dyn Served,
     noun: &str,
     call: &Call<'_, G>,
     catalog: &Catalog,
@@ -90,6 +143,7 @@ pub fn run<G>(
         deps,
         refresh,
         names,
+        served,
         format,
         catalog,
     };
@@ -113,6 +167,22 @@ pub fn run<G>(
 fn answer<T>(cx: &Context<'_>, outcome: Outcome<T>, err: &mut dyn Write) -> Result<T, Failure> {
     say_notices(&outcome.notices, PROG, cx.format, cx.catalog, err);
     outcome.result.map_err(IntoFailure::into_failure)
+}
+
+/// A served read's answer (step 10a U2, D10): the notices the read said,
+/// said; then why it was not answered, or its message as json, or its
+/// text, rendered from the message alone.
+fn served<M: Serialize>(
+    cx: &Context<'_>,
+    read: Result<(M, Vec<v1::Notice>), Failure>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    text: impl FnOnce(&M, &mut dyn Write) -> io::Result<()>,
+) -> Result<(), Failure> {
+    let (message, notices) = read?;
+    let said: Vec<_> = notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    emit(cx.format, out, &message, |out| text(&message, out))
 }
 
 /// Write `value` as json, or as `text` says; a write that fails is a failure.
@@ -186,22 +256,24 @@ fn remote(
     let deps = cx.deps;
     match verb {
         "" | "list" => {
-            let listing = answer(cx, deps.remote_list(), err)?;
-            respond(
-                cx,
-                out,
-                |parent| remote::listed(parent, &listing),
-                |out| text::remote_list(out, &listing),
-            )?;
+            // The daemon's read (step 10a U2), its text from the message.
+            let read = cx
+                .served
+                .list_remotes("", v1::ListRemotesRequest::default());
+            served(cx, read, out, err, |listed, out| {
+                text::remote_list(out, &read_back::remotes(listed))
+            })?;
         }
         "show" => {
-            let browsed = answer(cx, deps.remote_show(&text_arg(args, "remote")), err)?;
-            respond(
-                cx,
-                out,
-                |parent| remote::browsed(parent, &browsed),
-                |out| text::remote_show(out, &browsed),
-            )?;
+            // The daemon's BrowseRemote (step 10a U2, owner ruling
+            // 2026-11-17), its text from the message.
+            let under = library_api::names::named_target("remotes", &text_arg(args, "remote"));
+            let read = cx
+                .served
+                .browse_remote(&under, v1::BrowseRemoteRequest::default());
+            served(cx, read, out, err, |browsed, out| {
+                text::remote_show(out, &read_back::browsed(browsed))
+            })?;
         }
         "create" => {
             let forge = text_arg(args, "forge");
@@ -323,13 +395,13 @@ fn dependencies(
     let deps = cx.deps;
     match verb {
         "" | "list" => {
-            let listing = answer(cx, deps.list(), err)?;
-            respond(
-                cx,
-                out,
-                |parent| dependency::listed(parent, &listing),
-                |out| text::deps_list(out, &listing),
-            )?;
+            // The daemon's read (step 10a U2), its text from the message.
+            let read = cx
+                .served
+                .list_dependencies("", v1::ListDependenciesRequest::default());
+            served(cx, read, out, err, |listed, out| {
+                text::deps_list(out, &read_back::dependencies(listed))
+            })?;
         }
         "pull" => {
             let _ = writeln!(err, "Pulling dependencies...");
@@ -488,16 +560,26 @@ fn bundle(
             |out| text::pushed(out, &pushed),
         )?;
     } else {
-        let moved = answer(
-            cx,
-            cx.deps.move_bundle(&MoveRequest {
-                name: text_arg(args, "name"),
-                to: text_arg(args, "to"),
-                force: flag(args, "force"),
-                message: text_arg(args, "message"),
-            }),
-            err,
-        )?;
+        let name = text_arg(args, "name");
+        let to = text_arg(args, "to");
+        let target = cx
+            .deps
+            .move_target(&to)
+            .map_err(IntoFailure::into_failure)?;
+        let moved = if target == MoveTarget::Remote {
+            answer(
+                cx,
+                cx.deps.move_bundle(&MoveRequest {
+                    name,
+                    to,
+                    force: flag(args, "force"),
+                    message: text_arg(args, "message"),
+                }),
+                err,
+            )?
+        } else {
+            moved_locally(cx, &name, &to, flag(args, "force"), err)?
+        };
         // Into another project's directory the bundle's name is that
         // project's, which this one cannot give: null (owner 2026-11-14).
         respond_naming(
@@ -509,6 +591,41 @@ fn bundle(
         )?;
     }
     Ok(Exit::OK)
+}
+
+/// A local `bundle move <name> --to <dir>`: the daemon's `MoveBundle`
+/// (step 10b U9, QUESTIONS 1(a): one Move out of this project's tree, the
+/// other's next read recording the arrival), its notices said, its answer
+/// as the move it reports (the same text and json as ever).
+fn moved_locally(
+    cx: &Context<'_>,
+    name: &str,
+    to: &str,
+    force: bool,
+    err: &mut dyn Write,
+) -> Result<deps_application::Moved, Failure> {
+    let request = v1::MoveBundleRequest {
+        destination: to.to_string(),
+        force,
+        ..v1::MoveBundleRequest::default()
+    };
+    let under = library_api::names::bundle_target(name);
+    let answered = cx.served.move_bundle(&under, request)?;
+    let said: Vec<_> = answered
+        .notices
+        .iter()
+        .map(library_api::reads::said)
+        .collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    Ok(deps_application::Moved {
+        status: "moved",
+        name: name.to_string(),
+        source: answered.source,
+        dest_kind: "path",
+        dest: answered.path,
+        remote: String::new(),
+        commit_sha: String::new(),
+    })
 }
 
 #[cfg(test)]

@@ -22,6 +22,8 @@ sessions.workspace = true
 trust.workspace = true
 # The user may answer an ask and an engine withdraw one (step 8 U4).
 approvals.workspace = true
+# The user may send the library domain's operations and facts (step 10a U0).
+library-tree.workspace = true
 sha2.workspace = true
 surface-ports.workspace = true
 trees.workspace = true

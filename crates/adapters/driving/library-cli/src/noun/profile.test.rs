@@ -246,7 +246,7 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{Preview, ProfileEdited};
+    use library_application::ProfileShow;
     use serde_json::json;
 
     const PARENT: &str = "projects/p";
@@ -263,8 +263,8 @@ mod mapping {
 
     #[test]
     fn test_a_listed_profile_is_its_whole_row() {
-        let list = ProfileList {
-            rows: vec![ProfileRow {
+        let list = library_application::ProfileList {
+            rows: vec![library_application::ProfileRow {
                 name: "dev".to_string(),
                 display_name: "dev".to_string(),
                 description: "the dev one".to_string(),
@@ -280,7 +280,7 @@ mod mapping {
             hint: String::new(),
         };
         assert_eq!(
-            json_of(&listed(PARENT, &list)),
+            json_of(&library_api::resources::profiles(PARENT, &list)),
             json!({"profiles": [{
                 "name": "projects/p/bundles/project/profiles/dev",
                 "description": "the dev one",
@@ -315,7 +315,7 @@ mod mapping {
     #[test]
     fn test_a_shown_profile_is_its_whole_resource() {
         assert_eq!(
-            json_of(&shown(PARENT, &show())),
+            json_of(&library_api::resources::profile_shown(PARENT, &show())),
             json!({
                 "name": "projects/p/bundles/project/profiles/dev",
                 "description": "the dev one",
@@ -327,65 +327,6 @@ mod mapping {
                 "exclude_mcp_servers": ["tree-sitter"],
                 "path": "profiles/dev.yaml",
                 "default": false,
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_created_profile_answers_what_it_was_made_of() {
-        let request = ProfileCreateRequest {
-            name: "dev".to_string(),
-            description: "the dev one".to_string(),
-            parents: Vec::new(),
-            bundles: Vec::new(),
-            skills: Vec::new(),
-            target: String::new(),
-        };
-        let made = ProfileCreated {
-            name: "dev".to_string(),
-            parents: strings(&["base"]),
-            bundles: strings(&["demo"]),
-            path: "profiles/dev.yaml".to_string(),
-        };
-        assert_eq!(
-            json_of(&created(PARENT, &request, &made)),
-            json!({
-                "profile": {
-                    "name": "projects/p/bundles/project/profiles/dev",
-                    "description": "the dev one",
-                    "parents": ["projects/p/bundles/project/profiles/base"],
-                    "bundles": ["projects/p/bundles/demo"],
-                    "path": "profiles/dev.yaml",
-                },
-                "path": "profiles/dev.yaml",
-                "applied": true,
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_modified_or_edited_profile_names_it() {
-        let done = ProfileModified {
-            name: "dev".to_string(),
-            changes: strings(&["description"]),
-        };
-        assert_eq!(
-            json_of(&modified(PARENT, "dev", &done)),
-            json!({
-                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
-                "applied": true,
-                "changes": ["description"],
-            })
-        );
-        let updated = ProfileEdited::Updated {
-            path: "profiles/dev.yaml".to_string(),
-        };
-        assert_eq!(
-            json_of(&edited(PARENT, "dev", &updated)),
-            json!({
-                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
-                "path": "profiles/dev.yaml",
-                "applied": true,
             })
         );
     }
@@ -418,22 +359,155 @@ mod mapping {
             })
         );
     }
+}
+
+// Step 10b U3: `profile create` asks `CreateProfile` under the bundle its
+// `--bundle` names (none: the project), its fields as given; `profile
+// edit|modify` with flags asks `UpdateProfile` once, a patch (its lists,
+// `description` by mask); `profile edit` alone previews its Edit need and
+// applies the answer with the preview's etag.
+mod writes_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
 
     #[test]
-    fn test_a_removed_profile_s_preview_says_what_would_go() {
-        let preview = Removal::Preview(Preview::of(
-            "dev".to_string(),
-            strings(&["profiles/dev.yaml"]),
-            "ctxloom profile remove dev --yes".to_string(),
-        ));
+    fn test_profile_create_asks_create_profile_with_its_fields() {
+        let (under, made) = asked_once::<v1::CreateProfileRequest>(&[
+            "profile",
+            "create",
+            "clinic",
+            "--parent",
+            "base",
+            "--include",
+            "demo",
+            "--add-bundle",
+            "ops",
+            "--add-skill",
+            "ops#skills/doctor",
+            "-d",
+            "day-to-day",
+        ]);
+        assert_eq!(under, "");
+        assert_eq!(made.profile_id, "clinic");
+        assert!(!made.validate_only);
+        assert_eq!(made.globals, degraded());
+        let profile = made.profile.unwrap();
+        assert_eq!(profile.description, "day-to-day");
+        assert_eq!(profile.parents, ["base"]);
+        assert_eq!(profile.bundles, ["demo", "ops"]);
+        assert_eq!(profile.skills, ["ops#skills/doctor"]);
+        let (under, _) = asked_once::<v1::CreateProfileRequest>(&[
+            "profile", "create", "clinic", "-i", "demo", "--bundle", "ops",
+        ]);
+        assert_eq!(under, "/bundles/ops");
+    }
+
+    #[test]
+    fn test_profile_edit_given_flags_asks_one_patch_with_its_lists() {
+        let (under, patch) = asked_once::<v1::UpdateProfileRequest>(&[
+            "profile",
+            "edit",
+            "dev",
+            "-d",
+            "words",
+            "--add-parent",
+            "a",
+            "--remove-parent",
+            "b",
+            "--add-bundle",
+            "c",
+            "--remove-bundle",
+            "d",
+            "--exclude-fragment",
+            "e",
+            "--include-fragment",
+            "f",
+            "--exclude-mcp",
+            "g",
+            "--include-mcp",
+            "h",
+        ]);
+        assert_eq!(under, "/profiles/dev");
+        assert!(!patch.validate_only);
+        assert_eq!(patch.globals, degraded());
+        assert_eq!(patch.update_mask.unwrap().paths, ["description"]);
+        assert_eq!(patch.profile.unwrap().description, "words");
         assert_eq!(
-            json_of(&removed(PARENT, "dev", &preview)),
-            json!({
-                "profile": {"name": "projects/p/bundles/project/profiles/dev"},
-                "applied": false,
-                "detail": ["profiles/dev.yaml"],
-                "apply_command": "ctxloom profile remove dev --yes",
-            })
+            [
+                patch.add_parents,
+                patch.remove_parents,
+                patch.add_bundles,
+                patch.remove_bundles,
+                patch.exclude_fragments,
+                patch.include_fragments,
+                patch.exclude_mcp_servers,
+                patch.include_mcp_servers,
+            ],
+            [["a"], ["b"], ["c"], ["d"], ["e"], ["f"], ["g"], ["h"]]
         );
+        // `modify` alone is a patch of nothing: its mask sent, naming none.
+        let (_, bare) = asked_once::<v1::UpdateProfileRequest>(&["profile", "modify", "dev"]);
+        assert_eq!(bare.update_mask.map(|m| m.paths.len()), Some(0));
+    }
+
+    #[test]
+    fn test_profile_edit_alone_previews_its_edit_need_and_applies_with_its_etag() {
+        use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+        let previewed = v1::UpdateProfileResponse {
+            applied: Some(false),
+            etag: "7".to_string(),
+            needs: vec![v1::Need {
+                id: "edit".to_string(),
+                kind: Some(v1::need::Kind::Edit(v1::Edit {
+                    file_name: "dev.yaml".to_string(),
+                    text: "bundles:\n  - demo\n".to_string(),
+                    launch: None,
+                })),
+            }],
+            ..v1::UpdateProfileResponse::default()
+        };
+        let asks = Asks::answering(
+            vec![
+                Box::new(previewed),
+                Box::new("bundles:\n  - ops\n".to_string()),
+            ],
+            None,
+        );
+        let ran = go_served(
+            &["profile", "edit", "dev"],
+            TEXT,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        let sent = asks.requests::<v1::UpdateProfileRequest>();
+        assert_eq!(sent.len(), 2, "{}", ran.err);
+        assert!(sent[0].validate_only && sent[0].update_mask.is_none());
+        assert!(sent[0].presentable.as_ref().is_some_and(|p| p.can_launch));
+        assert!(!sent[1].validate_only && sent[1].update_mask.is_none());
+        assert_eq!(sent[1].etag, "7");
+        assert_eq!(
+            sent[1].answers,
+            [v1::Answer {
+                need_id: "edit".to_string(),
+                answer: Some(v1::answer::Answer::Edited(
+                    "bundles:\n  - ops\n".to_string()
+                )),
+            }]
+        );
+    }
+}
+
+// Step 10a U2: each read's request carries the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_profile_reads_carry_the_globals() {
+        let (_, show) = asked_once::<v1::GetProfileRequest>(&["profile", "show", "dev"]);
+        assert_eq!(show.globals, degraded());
+        let (_, list) = asked_once::<v1::ListProfilesRequest>(&["profile", "list"]);
+        assert_eq!(list.globals, degraded());
     }
 }

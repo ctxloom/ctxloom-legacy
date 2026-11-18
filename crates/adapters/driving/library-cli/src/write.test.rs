@@ -60,6 +60,10 @@ pub(crate) fn run_on(library: &Library, line: &[&str], how: How) -> Ran {
     let exit = run(
         library,
         &crate::tests::Project,
+        &crate::tests::ServedBy {
+            library,
+            names: &crate::tests::Project,
+        },
         &noun,
         &call,
         &catalog,

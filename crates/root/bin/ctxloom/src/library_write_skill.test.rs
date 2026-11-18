@@ -40,14 +40,14 @@ fn project_with_bundles() -> Project {
 
 /// Go's `Alice adds an executable scripts/run.sh carrying the marker "<m>" to
 /// the skill`: the script written executable on disk, and (the plan's rule)
-/// declared in the skill's sidecar when `declared`.
+/// declared in the skill's metadata (`skills/<n>/.meta.yaml`) when `declared`.
 fn add_script(project: &Project, marker: &str, declared: bool) {
     let script = format!("{VAULT}/skills/reviewer/scripts/run.sh");
     project.write(&script, &format!("#!/bin/sh\n# {marker}\necho {marker}\n"));
     project.make_executable(&script);
     if declared {
         project.write(
-            &format!("{VAULT}/skills/.reviewer.meta.yaml"),
+            &format!("{VAULT}/skills/reviewer/.meta.yaml"),
             "executable:\n  - scripts/run.sh\n",
         );
     }
@@ -123,7 +123,8 @@ fn test_alice_authors_a_skill_package_and_its_listing_and_show_reflect_the_real_
         .iter()
         .filter_map(|f| f["path"].as_str())
         .collect();
-    assert_eq!(paths, ["SKILL.md", "scripts/run.sh"]);
+    // Its metadata is a file of the directory (owner T27).
+    assert_eq!(paths, [".meta.yaml", "SKILL.md", "scripts/run.sh"]);
     project
         .run(&["skill", "list"])
         .succeeds()
@@ -217,8 +218,7 @@ fn test_removing_a_skill_drops_its_on_disk_directory() {
             "{doc}"
         );
         project.file_is_absent(&format!("{VAULT}/skills/reviewer"));
-        // Exactly the target: the package and its sidecar; the neighbour stays.
-        project.file_is_absent(&format!("{VAULT}/skills/.reviewer.meta.yaml"));
+        // Exactly the target, its metadata with it; the neighbour stays.
         project.file_contains(&format!("{VAULT}/skills/planner/SKILL.md"), "name: planner");
         project.run(&["skill", "list"]).succeeds().lacks("reviewer");
     }
@@ -284,7 +284,7 @@ fn test_a_skills_files_survive_export_and_import_byte_for_byte() {
             assert_eq!(
                 imported.stdout,
                 format!(
-                    "Imported skill \"reviewer\" into bundle \"landed\" (3 file(s))\n  {}\n",
+                    "Imported skill \"reviewer\" into bundle \"landed\" (4 file(s))\n  {}\n",
                     dir
                 )
             );
@@ -297,17 +297,18 @@ fn test_a_skills_files_survive_export_and_import_byte_for_byte() {
                 "{doc}"
             );
             assert_eq!(reports_as(&doc, "path"), dir);
-            assert_eq!(reports_as(&doc, "skill.file_count"), "3");
+            // SKILL.md, the script, an asset and the metadata (owner T27).
+            assert_eq!(reports_as(&doc, "skill.file_count"), "4");
         }
         assert_eq!(
             project.tree(&format!("{LANDED}/skills/reviewer")),
             project.tree(&format!("{VAULT}/skills/reviewer")),
             "the imported files differ from the authored ones"
         );
-        // The exec bit travels by the sidecar: declared on the landed copy,
+        // The exec bit travels by the metadata: declared on the landed copy,
         // and the script is the only file that has it.
         project.file_contains(
-            &format!("{LANDED}/skills/.reviewer.meta.yaml"),
+            &format!("{LANDED}/skills/reviewer/.meta.yaml"),
             "scripts/run.sh",
         );
         if files::keeps_exec_bits_for("the landed files' execute bits on disk") {
@@ -346,7 +347,11 @@ fn test_an_exec_bit_on_disk_but_not_in_the_sidecar_does_not_travel() {
         .run(&["skill", "import", "reviewer.zip", "--bundle", "landed"])
         .succeeds();
     assert!(!project.is_executable(&format!("{LANDED}/skills/reviewer/scripts/run.sh")));
-    project.file_is_absent(&format!("{LANDED}/skills/.reviewer.meta.yaml"));
+    // Its metadata declares nothing executable (owner T27: every skill has it).
+    project.file_lacks(
+        &format!("{LANDED}/skills/reviewer/.meta.yaml"),
+        "executable",
+    );
 }
 
 // plan over Go (§10 S2: an import over an existing item refuses, and the

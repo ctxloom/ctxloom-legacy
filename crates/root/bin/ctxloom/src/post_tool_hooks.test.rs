@@ -40,7 +40,7 @@ fn nightly_project() -> Project {
     );
     for skill in ["admit", "unattended"] {
         project.write(
-            &format!("{root}/skills/.{skill}.meta.yaml"),
+            &format!("{root}/skills/{skill}/.meta.yaml"),
             "tags:\n  - ctxloom:link_id=nightly\n",
         );
     }

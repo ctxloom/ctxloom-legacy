@@ -13,7 +13,7 @@ use doctor_checks::{
     UserFiles,
 };
 use init_application::{Ended, LaunchFailure, Scaffold};
-use reclaim_application::ProjectCache;
+use reclaim_application::{Cleaner, ProjectCache};
 
 use super::*;
 
@@ -318,6 +318,38 @@ fn go_with(
     )
 }
 
+/// `clean` as the daemon makes it, in process over the test's world.
+struct CleaningIn(Cleaner);
+
+impl super::Cleaning for CleaningIn {
+    fn clean(
+        &self,
+        request: daemon_proto::v1::CleanRequest,
+    ) -> Result<daemon_proto::v1::CleanResponse, Failure> {
+        let report = self
+            .0
+            .clean(!request.validate_only)
+            .map_err(|e| Failure::new(e, Exit::FAILED))?;
+        Ok(daemon_proto::v1::CleanResponse {
+            applied: report.applied,
+            items: report
+                .targets
+                .iter()
+                .map(|t| daemon_proto::v1::CleanTarget {
+                    rel: t.rel.clone(),
+                    path: t.path.clone(),
+                    present: t.present,
+                    bytes: t.bytes,
+                    rebuild: t.rebuild.clone(),
+                    removed: t.removed,
+                })
+                .collect(),
+            bytes: report.bytes,
+            ..daemon_proto::v1::CleanResponse::default()
+        })
+    }
+}
+
 fn go_with_companions(
     line: &[&str],
     format: Format,
@@ -350,7 +382,7 @@ fn go_with_companions(
     );
     let uses = UseCases {
         auth: &auth,
-        cleaner: &cleaner,
+        cleaning: &CleaningIn(cleaner),
         doctor: &doctor,
         init: &init,
         terminal: person,
@@ -975,7 +1007,7 @@ fn a_noun_the_line_does_not_carry_is_a_usage_failure() {
     );
     let uses = UseCases {
         auth: &auth,
-        cleaner: &cleaner,
+        cleaning: &CleaningIn(cleaner),
         doctor: &doctor,
         init: &init,
         terminal: &Person::default(),

@@ -271,7 +271,10 @@ pub(crate) async fn dispatch<D: Daemons>(
         "context_assemble" => {
             let fragments = texts(tool, args, "bundles", true).map_err(refused)?;
             let tags = texts(tool, args, "tags", false).map_err(refused)?;
-            let assembled = caller.assemble(fragments, tags).await.map_err(failed)?;
+            let mut assembled = caller.assemble(fragments, tags).await.map_err(failed)?;
+            // The index is this edge's to render (E2), on the launch whose
+            // session calls the tool (s3-Q5).
+            daemon_api::render_premise_index(&mut assembled, daemon_api::Shown::Launch);
             Ok(vec![json_text(&assembled)])
         }
         "child_launch" => {

@@ -46,6 +46,7 @@ fn the_noun_is_hidden_and_has_a_verb_for_each_test_command() {
             "project-name",
             "session-name",
             "session-events",
+            "library-events",
             "record",
             "seed-rehosts"
         ]

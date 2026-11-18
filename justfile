@@ -21,7 +21,7 @@ import 'gates/dev-local.just'
 # from the same ctxloom-lib commit the workspace pins (arch_lint_rev, kept
 # equal to Cargo.toml's by `_arch-lint-ready`'s check) and installed once per
 # commit into the user's cache, shared by every worktree.
-arch_lint_rev := "30e916fa38f13152c90bc5536d66e51b95c2f9f2"
+arch_lint_rev := "6a21bd0e09f7e61a8abe5640b74759e3a3fa0445"
 arch_lint_root := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") / ".cache") / "ctxloom-arch-lint" / arch_lint_rev
 arch_lint := arch_lint_root / "bin/arch-lint"
 
@@ -92,7 +92,7 @@ workspace_wide := "Cargo.toml Cargo.lock rust-toolchain.toml proto/* .cargo/conf
 # The cargo arguments `check-windows` (gates/os-gates.just) compiles for a
 # Windows target: driven adapters that use the platform seams, without C
 # dependencies (those need a mingw C compiler).
-windows_packages := "-p content-fs -p config-files -p cache-files -p surface-files -p remote-git -p liveness -p session-files -p deps-files -p editor-process"
+windows_packages := "-p content-fs -p config-files -p cache-files -p surface-files -p remote-git -p library-git -p liveness -p session-files -p deps-files -p editor-process"
 
 # Where this machine's checkout of ctxloom-lib's templates/clippy-disallowed.toml
 # is, the canonical OS and filesystem list `lint-clippy-sync` compares
@@ -101,6 +101,7 @@ windows_packages := "-p content-fs -p config-files -p cache-files -p surface-fil
 clippy_template := env("CTXLOOM_LIB_TEMPLATE", TOP + "/../ctxloom-lib/templates/clippy-disallowed.toml")
 
 # Build every crate. Needs protoc on PATH and access to github.com (angzarr-proto).
+# Then the plain binary it made is held to its checks (`plain-binary`).
 [group('check')]
 [doc("Build every crate (needs protoc and github.com)")]
 [no-exit-message]
@@ -109,15 +110,46 @@ build:
     set -euo pipefail
     terse=(-q --message-format=short)
     [ "${VERBOSE:-}" = 1 ] && terse=()
-    # Then the plain binary it made is held to knowing only the real engines
-    # (ruling 52: the mocks are test-support's; scripts/plain-engines-check.sh)
-    # and to having no destroy (ruling 94b: `session purge` is the
-    # session-destroy feature's; scripts/plain-destroy-check.sh).
+    just --justfile {{TOP}}/justfile _run build workspace cargo \
+        cargo build "${terse[@]}" --manifest-path {{TOP}}/Cargo.toml --workspace
+    exec just --justfile {{TOP}}/justfile plain-binary
+
+# The plain binary (a build of the workspace without its dev-dependencies,
+# as `build` makes it) is held to knowing only the real engines (ruling 52:
+# the mocks are test-support's; scripts/plain-engines-check.sh) and to
+# having no destroy (ruling 94b: scripts/plain-destroy-check.sh). No test
+# build can see either, since a test build unifies features. The
+# pre-commit gate after clippy (owner ruling 2026-11-18, evening), and the
+# end of `build`.
+[private]
+[group('hook')]
+[doc("pre-commit: the plain binary knows only the real engines and no destroy")]
+[no-exit-message]
+plain-binary:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    terse=(-q --message-format=short)
+    [ "${VERBOSE:-}" = 1 ] && terse=()
     target=${CARGO_TARGET_DIR:-{{TOP}}/target}
-    exec just --justfile {{TOP}}/justfile _run build workspace cargo \
+    exec just --justfile {{TOP}}/justfile _run plain-binary workspace plain-binary \
         bash -c 'cargo build "${@:3}" --manifest-path "$1/Cargo.toml" --workspace &&
             "$1/scripts/plain-engines-check.sh" "$2/debug/ctxloom" &&
-            "$1/scripts/plain-destroy-check.sh" "$2/debug/ctxloom"' build {{TOP}} "$target" "${terse[@]}"
+            "$1/scripts/plain-destroy-check.sh" "$2/debug/ctxloom"' plain-binary {{TOP}} "$target" "${terse[@]}"
+
+# `plain-binary`'s extract: a build's diagnostics as `cargo`'s are; else
+# the failing check's own words, its summary first (each check is silent
+# on a pass).
+[private]
+[positional-arguments]
+_extract-plain-binary log rc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if grep -qE '^[^ ]+:[0-9]+:[0-9]+: error|^error(\[[A-Z0-9]+\])?: ' "$1"; then
+        exec just --justfile '{{TOP}}/justfile' _extract-cargo "$1" "$2"
+    fi
+    # A build's warnings are not why it failed: the check's words are.
+    said=$(grep -vE '^[^ ]+:[0-9]+:[0-9]+: warning|^warning: ' "$1" || true)
+    if [ -n "$said" ]; then echo "$said"; else echo "failed (exit $2)"; fi
 
 # Install the Rust ctxloom beside the Go one (owner ruling 164): the PLAIN
 # binary (no test-support, no session-destroy; held to that by the same two
@@ -373,6 +405,37 @@ lint: lint-arch lint-path-deps
 lint-path-deps:
     @just --justfile {{TOP}}/justfile _run path-deps staged path-deps {{TOP}}/scripts/path-deps-check.sh {{TOP}}
 
+# api-linter over the daemon's API protos, proto/ctxloom/v1 (owner rulings
+# S36/S37/S57, D6; step 10 U1): the pinned release (scripts/lint-api.sh: its
+# version and its archive's SHA-256), after the vendored googleapis protos
+# are checked against their manifest. Linux x86_64 only; Linux CI runs it.
+# Its config, with each departure commented, is proto/api-linter.yaml.
+[group('check')]
+[doc("api-linter over the API protos (pinned, checked by SHA-256; Linux x86_64)")]
+[no-exit-message]
+lint-api:
+    @just --justfile {{TOP}}/justfile _run lint-api proto/ctxloom/v1 api {{TOP}}/scripts/lint-api.sh
+
+# The vendored googleapis protos (proto/third_party/google): fetched at the
+# commit their manifest (SHA256SUMS) pins, each refused unless its SHA-256 is
+# the manifest's (scripts/vendor-googleapis.sh fetch). `lint-api` checks them
+# without the network.
+[group('setup')]
+[doc("Fetch the vendored googleapis protos at their pinned commit, checked by SHA-256")]
+[no-exit-message]
+vendor-googleapis:
+    @{{TOP}}/scripts/vendor-googleapis.sh fetch
+
+# lint-api's failure: the linter's findings count (its yaml), then the log.
+[private]
+[positional-arguments]
+_extract-api log rc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    n=$(grep -c '^ *rule_id:' "$1" || true)
+    if [ "$n" -gt 0 ]; then echo "$n api-linter findings, by rule:"; else echo "failed (exit $2)"; fi
+    grep -E '^ *rule_id:' "$1" | sed 's/^ *rule_id: *//' | sort | uniq -c | sort -rn || cat "$1"
+
 # Wire lefthook's git hooks into the repository's .git/hooks. Worktrees share
 # .git/hooks, so this is once per clone, and again whenever lefthook.yml or
 # gates/lefthook.yml names a hook not installed yet. Needs lefthook (1.13.6)
@@ -391,6 +454,30 @@ hooks-install:
 [no-exit-message]
 test-pkg +packages: (_require-nextest "test-pkg")
     @just --justfile '{{TOP}}/justfile' _run test-pkg "{{packages}}" tests just --justfile '{{TOP}}/justfile' _tests {{packages}}
+
+# The reconcile's bench (step 10a U2, plan O7): a library read's observation
+# as the daemon makes it, on a repository of 100 000 files with 500 in
+# .ctxloom, its p95 held to 50 ms for a read that sees nothing new and one
+# that sees a hand edit. It builds its repository first (about half a
+# minute); each case's p50, p95 and max are printed, the full run in
+# target/logs/bench-reconcile.log.
+[group('check')]
+[doc("The reconcile's bench (O7): p95 under 50 ms on 100k files")]
+[no-exit-message]
+bench-reconcile: (_require-nextest "bench-reconcile")
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log='{{TOP}}/target/logs/bench-reconcile.log'
+    mkdir -p "$(dirname "$log")"
+    LIBRARY_BENCH=reconcile cargo nextest run --manifest-path '{{TOP}}/Cargo.toml' --package ctxloom-wiring \
+        --no-fail-fast --no-tests=fail --success-output immediate --failure-output immediate --hide-progress-bar \
+        --cargo-quiet -E 'test(a_reconcile_on_a_large_repository_is_within_its_budget)' > "$log" 2>&1
+    rc=$?
+    grep -E '^ *bench reconcile|over the budget' "$log" | sed 's/^ *//'
+    # A bench that skipped measured nothing.
+    [ "$rc" -ne 0 ] || grep -q 'bench reconcile' "$log" || rc=1
+    if [ "$rc" -eq 0 ]; then echo "ok   bench-reconcile (O7)"; else echo "FAIL bench-reconcile: exit $rc (full log: target/logs/bench-reconcile.log)"; fi
+    exit "$rc"
 
 # Mutation-test a batch (base..head; base defaults to the merge-base with main,
 # head to HEAD) in a throwaway worktree: scripts/mutants-batch.sh. Nothing else
@@ -579,7 +666,7 @@ trim-targets *args:
 
 # The self-tests of this repository's scripts against fixture trees.
 [group('check')]
-[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, mcp-env probe, install shutdown, slot pool, trim-targets")]
+[doc("Self-tests of the scripts: drop-worktree, mutants-batch, mutants-verdict, memory cap, closeout, closeout-ratchet, ratchet-base, ltk rules, output budget, tests exit, test-staged, scratch-tree lock, machine-wide test lock, exec-mode check, path deps, vendored googleapis, mcp-env probe, install shutdown, slot pool, trim-targets")]
 [no-exit-message]
 selftest:
     @{{TOP}}/scripts/drop-worktree.selftest.sh
@@ -598,6 +685,7 @@ selftest:
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
     @{{TOP}}/scripts/dev-local.selftest.sh
     @{{TOP}}/scripts/path-deps-check.selftest.sh
+    @{{TOP}}/scripts/vendor-googleapis.selftest.sh
     @{{TOP}}/scripts/commit-msg.selftest.sh
     @{{TOP}}/scripts/release-package.selftest.sh
     @{{TOP}}/scripts/mcp-env-probe.selftest.sh

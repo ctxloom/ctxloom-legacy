@@ -100,7 +100,12 @@ Feature: bundle — the container authored content lives in, and everything that
       And the output reports "bundles[name$=/bundles/demo].command_count" as "<the command count>"
       And the output reports "bundles[name$=/bundles/ctxloom].origin" as "<the built-in>"
       # Move the manifest and the summary has to move with it.
-      When I run "ctxloom bundle edit demo --version 2.0.0 --add-fragment testing"
+      # changed: one edit became two (the version, then the fragment), per
+      # the approved spec's OneChangePerCall, coordinator 2026-11-18, for
+      # owner review: the two flags change two files.
+      When I run "ctxloom bundle edit demo --version 2.0.0"
+      Then the command succeeds
+      When I run "ctxloom bundle edit demo --add-fragment testing"
       Then the command succeeds
       When I run "ctxloom bundle list <flags>"
       Then the output reports "bundles[name$=/bundles/demo].version" as "<the version after edit>"
@@ -345,22 +350,30 @@ Feature: bundle — the container authored content lives in, and everything that
     # reported success and removed nothing passes any exit-code check, and a
     # `--add-*` that wrote an empty entry passes any name check — the
     # placeholder body `edit` actually writes is what distinguishes both.
-    Scenario: Items are attached and detached by name, and the manifest follows
+    # ONE CHANGE PER CALL (owner T29, step 10 D14): each attachment and each
+    # detachment is its own file, so each is its own edit.
+    Scenario: Items are attached and detached by name, one per call, and the manifest follows
+      # substitution: T29, one file per edit; Go attached three items and a tag in one call.
       Given an initialized ctxloom project
       And a bundle "demo" exists
-      When Alice attaches a fragment, a command and a server:
+      When Alice attaches a fragment, a command and a server, one at a time:
         """
-        ctxloom bundle edit demo --add-fragment coding-standards --add-prompt review --add-mcp tree-sitter --add-tag golang
+        ctxloom bundle edit demo --add-fragment coding-standards
         """
+      And I run "ctxloom bundle edit demo --add-prompt review"
+      And I run "ctxloom bundle edit demo --add-mcp tree-sitter"
+      And I run "ctxloom bundle edit demo --add-tag golang"
       Then the command succeeds
       And the file ".ctxloom/content/bundles/v2/demo/fragments/coding-standards.md" exists
       And the file ".ctxloom/content/bundles/v2/demo/prompts/review.md" contains "Add prompt content here."
       And the file ".ctxloom/content/bundles/v2/demo/mcp/tree-sitter.yaml" exists
       And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" contains "golang"
-      When Alice detaches the two she did not want after all:
+      When Alice detaches the two she did not want after all, one at a time:
         """
-        ctxloom bundle edit demo --remove-fragment coding-standards --remove-mcp tree-sitter --remove-tag golang
+        ctxloom bundle edit demo --remove-fragment coding-standards
         """
+      And I run "ctxloom bundle edit demo --remove-mcp tree-sitter"
+      And I run "ctxloom bundle edit demo --remove-tag golang"
       Then the command succeeds
       And the file ".ctxloom/content/bundles/v2/demo/fragments/coding-standards.md" does not exist
       And the file ".ctxloom/content/bundles/v2/demo/mcp/tree-sitter.yaml" does not exist
@@ -368,6 +381,36 @@ Feature: bundle — the container authored content lives in, and everything that
       # The command that was NOT detached is still there, so the removals above
       # took exactly what they named rather than emptying the manifest.
       And the file ".ctxloom/content/bundles/v2/demo/prompts/review.md" contains "Add prompt content here."
+
+    # THE REFUSAL IS PROVEN BY WHAT DID NOT HAPPEN: an edit that wrote the
+    # first file and refused the second would pass an exit-code check.
+    Scenario Outline: An edit that would change more than one file is refused, and changes none
+      # new: T29, S52 (owner): OneChangePerCall, exit 20.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And the project's changes are committed
+      When I run "ctxloom bundle edit demo <flags>"
+      Then the command exits with code 20
+      And the refusal is "library-tree-one-change-per-call"
+      And the output contains "<first>"
+      And the output contains "<second>"
+      And git sees nothing changed in the project
+
+      Examples:
+        | flags                                             | first                  | second               |
+        | --add-fragment a --add-prompt b                   | fragments/a.md         | prompts/b.md         |
+        | --add-fragment a --add-tag golang                 | fragments/a.md         | bundle.yaml          |
+        | --remove-fragment example --remove-prompt example | fragments/example.md   | prompts/example.md   |
+
+    # Metadata and tags are both bundle.yaml's, so changing both is one file.
+    Scenario: A description and a tag changed together are one file, and one edit
+      # new: T29 counts files, not flags.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      When I run "ctxloom bundle edit demo -d updated-desc --add-tag golang"
+      Then the command succeeds
+      And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" contains "updated-desc"
+      And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" contains "golang"
 
     # An edit with no flags is a person who does not yet know what to type, and
     # the answer is help plus a plain statement that nothing happened — not a

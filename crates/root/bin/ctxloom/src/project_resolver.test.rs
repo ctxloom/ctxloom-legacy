@@ -229,7 +229,8 @@ fn test_a_fresh_projects_json_read_mints_at_the_root_and_names_it() {
     if !files::runs_scripts() {
         return;
     }
-    let project = Project::bare();
+    // In git: a library read outside it is refused (step 10a, G1).
+    let project = Project::bare_in_git();
     ctxloom_at(&project, "");
     let engine = Engine::on(&project);
     let env = engine.env(&[]);
@@ -258,6 +259,8 @@ fn test_a_fresh_projects_json_read_mints_at_the_root_and_names_it() {
         "minted at the root: {:?}",
         minted.keys()
     );
+    // The read observes the checkout at the root first (step 10a U2, L2).
+    assert!(minted.remove(".ctxloom/state/checkout").is_some());
     assert_eq!(minted, before, "the read wrote more than the root's id");
     assert!(
         !files::exists(sub.join(".ctxloom")),
@@ -307,7 +310,8 @@ fn test_a_dry_run_in_a_fresh_project_writes_nothing() {
 // names.
 #[test]
 fn test_a_json_dry_run_is_named_once_its_project_is_and_null_before() {
-    let project = Project::bare();
+    // In git: a library read outside it is refused (step 10a, G1).
+    let project = Project::bare_in_git();
     ctxloom_at(&project, "");
     project.write(
         ".ctxloom/config.yaml",
@@ -359,7 +363,8 @@ const IDLE_SOON: (&str, &str) = ("CTXLOOM_DAEMON_IDLE_SECONDS", "15");
 // needed, text or json alike. With none serving, a text dry run starts one.
 #[test]
 fn test_a_text_dry_run_with_no_daemon_starts_one() {
-    let project = Project::bare();
+    // In git: a dry run is a library read, refused outside it (step 10a, G1).
+    let project = Project::bare_in_git();
     ctxloom_at(&project, "");
     let project = project.named();
     assert!(!files::exists(daemon_discovery(&project)), "a fresh home");

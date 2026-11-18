@@ -125,6 +125,18 @@ fn config() -> Command {
     noun("config", "Show ctxloom configuration")
         .subcommand(Command::new("edit").about("Open config.yaml in $EDITOR"))
         .subcommand(
+            Command::new("set")
+                .about("Set one key of the configuration (the project's; the home's with --home)")
+                .arg(one("key", "The key's dotted path (editor.command)"))
+                .arg(one("value", "Its value, as typed"))
+                .arg(
+                    Arg::new("home")
+                        .long("home")
+                        .action(ArgAction::SetTrue)
+                        .help("Set it in the home's config instead of the project's"),
+                ),
+        )
+        .subcommand(
             Command::new("create")
                 .about("Scaffold a default config.yaml (and remotes.yaml)")
                 .arg(
@@ -207,7 +219,14 @@ fn bundle() -> Command {
                     "path",
                     "A bundle tree: its directory, or its bundle.yaml",
                 ))
-                .arg(force("Overwrite existing bundle")),
+                .arg(force("Overwrite existing bundle"))
+                .arg(
+                    Arg::new("yes")
+                        .short('y')
+                        .long("yes")
+                        .action(ArgAction::SetTrue)
+                        .help("Apply at once (an import asks nothing; accepted for scripts)"),
+                ),
         )
         .subcommand(
             Command::new("distill")
@@ -238,7 +257,8 @@ fn item_writes(noun: Command, word: &'static str, dir: &'static str) -> Command 
                 Arg::new("name")
                     .value_name("NAME")
                     .help("The new item's name, after a bundle (no editor is opened)"),
-            ),
+            )
+            .arg(body_arg("The item's text, stored as it is (no editor is opened)")),
     )
     .subcommand(
         remove(match word {
@@ -286,8 +306,15 @@ fn item_writes(noun: Command, word: &'static str, dir: &'static str) -> Command 
                     .long("no-distill")
                     .action(ArgAction::SetTrue)
                     .help("Skip re-distillation for this edit"),
-            ),
+            )
+            .arg(body_arg("The item's new body, its front matter kept (no editor is opened)")),
     )
+}
+
+/// `--body <text>` (step 10b's spec): the item's text given on the command
+/// line, so no editor is opened.
+fn body_arg(help: &'static str) -> Arg {
+    Arg::new("body").long("body").value_name("TEXT").help(help)
 }
 
 fn fragment() -> Command {
@@ -592,15 +619,6 @@ fn mcp() -> Command {
                 .arg(named(
                     "url",
                     "Endpoint of a remote server, http or https (empty clears it)",
-                ))
-                .arg(each(
-                    "header",
-                    "HTTP header as Name=value (repeatable; replaces the map)",
-                ))
-                .arg(each("tag", "Tag (repeatable; replaces the list)"))
-                .arg(named(
-                    "served-by",
-                    "session-endpoint: the running session serves this entry (empty clears it)",
                 ))
                 .arg(named("notes", "Human-readable notes (empty clears them)"))
                 .arg(named(

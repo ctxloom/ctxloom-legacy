@@ -135,6 +135,33 @@ impl Calls for Scripted {
         })
     }
 
+    fn list_agents(
+        &self,
+        request: v1::ListAgentsRequest,
+    ) -> Answer<'_, daemon_api::Read<v1::ListAgentsResponse>> {
+        Box::pin(async move {
+            Ok(daemon_api::Read {
+                answer: v1::ListAgentsResponse {
+                    agents: vec![v1::Agent {
+                        name: format!("{}/agents/dev", request.parent),
+                        ..<v1::Agent as Default>::default()
+                    }],
+                    next_page_token: String::new(),
+                },
+                notices: vec![
+                    v1::Notice {
+                        code: "library-api-notice-tree-in-motion".to_string(),
+                        ..v1::Notice::default()
+                    },
+                    v1::Notice {
+                        code: "second".to_string(),
+                        ..v1::Notice::default()
+                    },
+                ],
+            })
+        })
+    }
+
     fn create_hand_off(&self, request: v1::CreateHandOffRequest) -> Answer<'_, v1::HandOff> {
         Box::pin(async move {
             Ok(v1::HandOff {
@@ -469,6 +496,43 @@ async fn the_transcript_and_the_assembly_are_served() {
         .unwrap()
         .into_inner();
     assert_eq!(assembled.context, "a,b");
+}
+
+// Step 10a U2 (owner ruling 2026-11-17): a library read answers its
+// message, and the notices the read said ride its response metadata
+// (`NOTICE_METADATA`), in order, apart from the standing warnings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_library_read_s_notices_ride_its_metadata() {
+    let mut client = CtxloomClient::new(serve(Arc::default()).await);
+    let response = client
+        .list_agents(with_bearer(
+            v1::ListAgentsRequest {
+                parent: "projects/calm-otter".to_string(),
+                ..v1::ListAgentsRequest::default()
+            },
+            BEARER,
+        ))
+        .await
+        .unwrap();
+    let codes: Vec<String> = response
+        .metadata()
+        .get_all_bin(daemon_proto::NOTICE_METADATA)
+        .iter()
+        .map(|value| v1::Notice::decode(value.to_bytes().unwrap()).unwrap().code)
+        .collect();
+    assert_eq!(codes, ["library-api-notice-tree-in-motion", "second"]);
+    assert_eq!(
+        response
+            .metadata()
+            .get_all_bin(daemon_proto::WARNING_METADATA)
+            .iter()
+            .count(),
+        0
+    );
+    assert_eq!(
+        response.into_inner().agents[0].name,
+        "projects/calm-otter/agents/dev"
+    );
 }
 
 // Gate first, everything (owner, after step 5): a call without the user
@@ -996,4 +1060,30 @@ async fn the_trust_and_approvals_rpcs_are_served() {
         .unwrap()
         .into_inner();
     assert_eq!(waited.name, "waited/ask-tidy-wren");
+}
+
+// Step 10a U2: a failure the daemon says in a diagnostic of its own (git
+// missing) travels as its code and args in a `google.rpc.ErrorInfo`, so the
+// client says it in that diagnostic's words.
+#[test]
+fn a_diagnosed_failure_carries_its_code_and_args() {
+    let status = super::status_of_error(ApiError::Diagnosed {
+        code: "library-git-git-too-old".to_string(),
+        args: vec![v1::NeedArg {
+            name: "version".to_string(),
+            value: "2.20.0".to_string(),
+        }],
+    });
+    // Owner ruling 2026-11-17: a missing or too-old git is a precondition
+    // of the host unmet, failed-precondition; not INTERNAL, and not
+    // UNAVAILABLE, which the client reads as an unreachable daemon.
+    assert_eq!(status.code() as i32, Infrastructure::Unmet.status());
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    let details = super::RpcStatus::decode(status.details()).unwrap().details;
+    assert_eq!(details.len(), 1);
+    assert!(details[0].type_url.ends_with("/google.rpc.ErrorInfo"));
+    let info = super::ErrorInfo::decode(details[0].value.as_slice()).unwrap();
+    assert_eq!(info.reason, "library-git-git-too-old");
+    assert_eq!(info.domain, super::DIAGNOSED_DOMAIN);
+    assert_eq!(info.metadata["version"], "2.20.0");
 }

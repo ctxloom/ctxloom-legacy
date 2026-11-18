@@ -95,6 +95,22 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
   redelivery is a duplicate. A daemon killed outright (SIGKILL) at any step
   comes back on the next call, and that call finds the record whole.
 
+  THE LIBRARY IS READ HERE (step 10). Every read of the library (bundles,
+  items, profiles, agents, engines, companions, remotes, dependencies, the
+  config, search, context assemble, the premise index, the loadout, a dry
+  run, and a hook's read) is the daemon's. It first observes the tree
+  through git and records what changed (cli/library_changes.feature), then
+  answers from the files, holding back what an untrusted project may not
+  say (cli/trust.feature). No command reads a library tree itself.
+
+  AND WRITTEN HERE (step 10b). Every write of the library (a create, an
+  edit, a remove, an import, an export, a move, a distill, `config set`,
+  `clean`) is the daemon's too: a command of the library's own domain under
+  the request id the command chose, intended, applied as one atomic
+  operation and recorded (cli/atomic_writes.feature). No command writes a
+  library tree itself, and an editor round trip is the preview's Edit need,
+  opened by the CLI at her terminal.
+
   IDLE. The daemon exits by itself once it has had no live run, no hosted
   child and no open client stream for ten minutes.
 
@@ -140,6 +156,10 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom session list                |
         | ctxloom session show amber-swift-owl |
         | ctxloom bundle list                 |
+        | ctxloom fragment list               |
+        | ctxloom context assemble            |
+        | ctxloom deps list                   |
+        | ctxloom engine show claude-code     |
         | ctxloom run --one-shot "hi"         |
         | ctxloom run                         |
         | ctxloom run --dry-run               |
@@ -158,6 +178,34 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom session --frobnicate  | 20   |
         | ctxloom daemon status         | 0    |
         | ctxloom daemon stop           | 0    |
+
+    Scenario Outline: A write that cannot start a daemon fails, and changes no file
+      # new: step 10 D17, the cannot-start rows per noun: no write falls back to the files.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And a finished session "amber-swift-owl" whose transcript retention has passed
+      And the project's changes are committed
+      And no ctxloom daemon can be started for this home
+      When I run '<write>'
+      Then the command exits with code 10
+      And the output contains "no ctxloom daemon could be started"
+      And git sees nothing changed in the project
+      And no project store was opened, and no engine was started
+
+      Examples:
+        | write                                                          |
+        | ctxloom bundle create notes --description "my notes"           |
+        | ctxloom bundle remove demo --yes                               |
+        | ctxloom fragment create demo#fragments/rules --body "be kind"  |
+        | ctxloom command create demo#commands/review                    |
+        | ctxloom skill create demo#skills/review                        |
+        | ctxloom mcp server set demo#mcp/tools --command echo           |
+        | ctxloom profile create dev --include demo                      |
+        | ctxloom agent create reviewer --profiles dev                   |
+        | ctxloom config set engines.claude-code.command claude-beta     |
+        | ctxloom bundle export demo exported                            |
+        | ctxloom clean --yes                                            |
+        | ctxloom session remove amber-swift-owl --yes                   |
 
   Rule: Only the user can find the daemon, or speak to it as her
 
@@ -319,6 +367,32 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
       And the hook warns "hook-cli-held" for the prompt, within its bound
       And the prompt is held for "brisk-copper-moth", in a file only its owner can read
       And once a ctxloom daemon can be started and serves, the next command records the prompt in the session's transcript, once
+
+    Scenario: A hook's read of the library is the daemon's, and observes the tree as any read does
+      # new: step 10 O3, hooks read the library through the daemon.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And a session "brisk-copper-moth" that is still running
+      When the session's assistant fires its SessionStart hook
+      Then the hook exits 0, and says nothing was left unrecorded
+      When I run "ctxloom test library-events --format json"
+      Then the command succeeds
+      And the output reports "events" having "1" entries
+      And the output reports "events[0].baseline" as "true"
+
+    Scenario Outline: A hook whose library read no daemon answers within its bound answers the engine with nothing from the library
+      # new: step 10 O3, silence and the fact held, never an in-process read.
+      Given an initialized ctxloom project
+      And a session "brisk-copper-moth" that is still running
+      And no ctxloom daemon can be started for this home
+      When the session's assistant fires its <hook> hook
+      Then the hook exits 0, within its bound
+      And the hook's answer to the engine is well formed, and carries no <library part>
+
+      Examples:
+        | hook                                  | library part                   |
+        | SessionStart                          | session-start notice           |
+        | PostToolUse, after the skill "admit"  | linked skills not yet invoked  |
 
   Rule: A hook holds its facts until a daemon that is up to date serves, and its session's next hook delivers them first, in the order held
 
@@ -484,6 +558,18 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom session send brisk-copper-moth wake "check the tests" |
         | ctxloom session close brisk-copper-moth                     |
         | ctxloom bundle create notes --description "my notes"        |
+        | ctxloom config set engines.claude-code.command claude-beta  |
+
+    Scenario: A bundle export whose daemon is killed under it is answered on a new daemon with what it made, made once
+      # new: AIP-155 (owner ruling 2026-11-18, night: a retried export is answered with its original result). Draft spec text, for the owner's review before release.
+      Given an initialized ctxloom project
+      And a bundle "notes" exists
+      And the daemon will be killed outright after the write is applied, before it is answered
+      When I run 'ctxloom bundle export notes exported'
+      Then the command succeeds
+      And the command started a new daemon and sent the write once more, under the same id
+      And the write was applied once, and its second delivery was a duplicate
+      And the file "exported/notes/bundle.yaml" exists
 
   Rule: The preview carries the questions, and the apply answers them
 

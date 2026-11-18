@@ -688,8 +688,9 @@ Feature: run — assembling a project's context and handing it to an engine
 
   Rule: A run holds its session's lock for as long as it runs, so its session reads live
 
-    The lock is `.ctxloom/sessions/<harp>.lock`, beside the session's
-    directory: an exclusive file lock taken once its session is minted, by
+    The lock is `.ctxloom/sessions/<harp>/session.lock`, inside the
+    session's directory (step 10, T28: the directory and its lock move as
+    one rename): an exclusive file lock taken once its session is minted, by
     the process that starts its engine (the command on the user's terminal
     for an interactive session, the user's daemon for a one-shot or a
     child), and let go after its engine exits. So a session outlives its

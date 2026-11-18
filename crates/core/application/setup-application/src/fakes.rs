@@ -284,7 +284,7 @@ pub(crate) fn bundles() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)
                     "---\nname: admit\ndescription: Admit.\n---\nA\n",
                 ),
                 (
-                    "skills/.admit.meta.yaml",
+                    "skills/admit/.meta.yaml",
                     "tags: [ctxloom:link_id=nightly]\n",
                 ),
                 (
@@ -292,7 +292,7 @@ pub(crate) fn bundles() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)
                     "---\nname: unattended\ndescription: Work.\n---\nB\n",
                 ),
                 (
-                    "skills/.unattended.meta.yaml",
+                    "skills/unattended/.meta.yaml",
                     "tags: [ctxloom:link_id=nightly]\n",
                 ),
             ],
@@ -306,6 +306,41 @@ pub(crate) fn bundles() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)
             ],
         ),
     ]
+}
+
+/// The hooks' library reads as the daemon answers them (library-api's
+/// reads over the library, degraded, under a project's parent).
+pub(crate) struct DaemonReads(pub library_application::Library);
+
+const PARENT: &str = "projects/calm-otter";
+
+fn degraded() -> library_application::Flags {
+    library_application::Flags {
+        degraded: true,
+        ..library_application::Flags::default()
+    }
+}
+
+impl crate::HookLibrary for DaemonReads {
+    fn agents_and_profiles(&self) -> Option<(bool, bool)> {
+        let agents =
+            library_api::reads::list_agents(&self.0, &degraded(), PARENT, &Default::default())
+                .result
+                .ok()?;
+        let profiles =
+            library_api::reads::list_profiles(&self.0, &degraded(), PARENT, &Default::default())
+                .result
+                .ok()?;
+        Some((!agents.agents.is_empty(), !profiles.profiles.is_empty()))
+    }
+
+    fn skills(&self) -> Option<Vec<crate::HookSkill>> {
+        let listed =
+            library_api::reads::list_skills(&self.0, &degraded(), PARENT, &Default::default())
+                .result
+                .ok()?;
+        Some(crate::hook_skills(&listed))
+    }
 }
 
 pub(crate) struct World {
@@ -352,6 +387,15 @@ pub(crate) fn world_of(
     .fixture();
     let store = Arc::new(Store::default());
     let engines = Registry::new(engines);
-    let setup = Setup::new(library, engines, store.clone(), mem.clone(), "/p", "/p");
+    // The hooks' reads, answered as the daemon answers them (O3), over the
+    // same bundles and config.
+    let (read, _) = LibrarySetup {
+        bundles: &slices,
+        layers: &layers,
+        ..LibrarySetup::default()
+    }
+    .fixture();
+    let setup = Setup::new(library, engines, store.clone(), mem.clone(), "/p", "/p")
+        .with_hook_library(Box::new(DaemonReads(read)));
     World { setup, store, mem }
 }

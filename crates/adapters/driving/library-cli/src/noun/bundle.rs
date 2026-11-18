@@ -1,12 +1,9 @@
 //! `bundle`: list, show and view, and its writes (B1), each json answer its
 //! AIP resource or method response (OD-40, design §5.1).
 
-use library_application::{
-    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved,
-    BundleRow, BundleShow, BundleView, Removal, Viewed,
-};
+use library_application::BundleView;
 
-use crate::catalog::{self, bundle_name, ok};
+use crate::catalog;
 use crate::prelude::*;
 
 pub(crate) fn read(
@@ -17,245 +14,150 @@ pub(crate) fn read(
 ) -> Result<Exit, Failure> {
     match verb {
         "show" => {
-            let outcome = cx.library.bundle_show(&cx.flags, &text_arg(sub, "name"));
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                shown,
-                |show, out, notes| {
-                    let mut said = text::Notes(Vec::new());
-                    let written = text::bundle_show(out, &mut said, show);
-                    notes.extend(said.0);
-                    written
-                },
-                ok,
-            )
+            // The daemon's read (step 10a U2), its text from the message (D10).
+            let request = v1::GetBundleRequest {
+                view: v1::bundle::View::Full as i32,
+                globals: cx.globals(),
+                ..v1::GetBundleRequest::default()
+            };
+            let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+            let read = cx.served.get_bundle(&under, request);
+            served(cx, read, out, err, false, |bundle, out, notes| {
+                let mut said = text::Notes(Vec::new());
+                let written =
+                    text::bundle_show(out, &mut said, &crate::read_back::bundle_show(bundle));
+                notes.extend(said.0);
+                written
+            })
         }
-        "view" => {
-            let ask = text_arg(sub, "name");
-            let outcome = cx
-                .library
-                .bundle_view(&cx.flags, &ask, flag(sub, "distilled"));
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                viewed,
-                |view, out, notes| {
-                    let mut said = text::Notes(Vec::new());
-                    let written = text::bundle_view(out, &mut said, view, &ask);
-                    notes.extend(said.0);
-                    written
-                },
-                ok,
-            )
+        "view" => viewed_by_the_daemon(cx, sub, out, err),
+        _ => listed_by_the_daemon(cx, out, err),
+    }
+}
+
+/// `bundle list`, the daemon's `ListBundles` (step 10a U2), its text
+/// rendered from the message alone (D10).
+fn listed_by_the_daemon(
+    cx: &Context<'_>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let request = v1::ListBundlesRequest {
+        globals: cx.globals(),
+        ..v1::ListBundlesRequest::default()
+    };
+    let in_project = cx.served.in_project();
+    served(
+        cx,
+        cx.served.list_bundles("", request),
+        out,
+        err,
+        false,
+        |listed, out, _| text::bundles(out, listed, in_project),
+    )
+}
+
+/// `bundle view <bundle>#<path>`, one item, the daemon's read of its kind
+/// (step 10a U2, owner ruling 2026-11-17): a fragment's or a command's
+/// body, or a skill's, an MCP server's or a profile's fields as YAML, keys
+/// sorted and references short, each rendered from the item's message
+/// alone. A whole bundle (no `#`), or a path no item kind serves, is the
+/// bundle's CONTENT read of it, which the daemon refuses as the view
+/// refuses a path it does not hold.
+fn viewed_by_the_daemon(
+    cx: &Context<'_>,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let ask = text_arg(sub, "name");
+    let prefer_distilled = flag(sub, "distilled");
+    let under = library_api::names::reference_target(&ask);
+    let kind = ask
+        .split_once('#')
+        .and_then(|(_, path)| path.split_once('/'))
+        .map_or("", |(kind, _)| kind);
+    let render = |view: BundleView, out: &mut dyn Write, notes: &mut Vec<String>| {
+        let mut said = text::Notes(Vec::new());
+        let written = text::bundle_view(out, &mut said, &view, &ask);
+        notes.extend(said.0);
+        written
+    };
+    match kind {
+        "fragments" => {
+            let request = v1::GetFragmentRequest {
+                prefer_distilled,
+                globals: cx.globals(),
+                ..v1::GetFragmentRequest::default()
+            };
+            let read = cx.served.get_fragment(&under, request);
+            served(cx, read, out, err, false, |f, out, notes| {
+                render(
+                    crate::read_back::body_view(&ask, &f.body, f.body_is_distilled),
+                    out,
+                    notes,
+                )
+            })
+        }
+        "commands" | "prompts" => {
+            let request = v1::GetCommandRequest {
+                prefer_distilled,
+                globals: cx.globals(),
+                ..v1::GetCommandRequest::default()
+            };
+            let read = cx.served.get_command(&under, request);
+            served(cx, read, out, err, false, |c, out, notes| {
+                render(
+                    crate::read_back::body_view(&ask, &c.body, c.body_is_distilled),
+                    out,
+                    notes,
+                )
+            })
+        }
+        "skills" => {
+            let request = v1::GetSkillRequest {
+                globals: cx.globals(),
+                ..v1::GetSkillRequest::default()
+            };
+            let read = cx.served.get_skill(&under, request);
+            served(cx, read, out, err, false, |skill, out, notes| {
+                render(crate::read_back::skill_view(&ask, skill), out, notes)
+            })
+        }
+        "mcp" => {
+            let request = v1::GetMcpServerRequest {
+                globals: cx.globals(),
+                ..v1::GetMcpServerRequest::default()
+            };
+            let read = cx.served.get_mcp_server(&under, request);
+            served(cx, read, out, err, false, |server, out, notes| {
+                render(crate::read_back::mcp_view(&ask, server), out, notes)
+            })
+        }
+        "profiles" => {
+            let request = v1::GetProfileRequest {
+                globals: cx.globals(),
+                ..v1::GetProfileRequest::default()
+            };
+            let read = cx
+                .served
+                .get_profile(&library_api::names::profile_target(&ask), request);
+            served(cx, read, out, err, false, |profile, out, notes| {
+                render(crate::read_back::profile_view(&ask, profile), out, notes)
+            })
         }
         _ => {
-            let outcome = cx.library.bundle_list(&cx.flags);
-            catalog::answer(
-                cx,
-                outcome,
-                out,
-                err,
-                false,
-                listed,
-                |list, out, _| text::bundle_list(out, list),
-                ok,
-            )
+            let request = v1::GetBundleRequest {
+                view: v1::bundle::View::Content as i32,
+                prefer_distilled,
+                globals: cx.globals(),
+                ..v1::GetBundleRequest::default()
+            };
+            let read = cx.served.get_bundle(&under, request);
+            served(cx, read, out, err, false, |bundle, out, notes| {
+                render(crate::read_back::bundle_view(bundle), out, notes)
+            })
         }
-    }
-}
-
-/// `bundle list`: `ListBundlesResponse`, the whole catalog (design §1.2).
-pub(crate) fn listed(parent: &str, list: &BundleList) -> v1::ListBundlesResponse {
-    v1::ListBundlesResponse {
-        bundles: list.rows.iter().map(|row| bundle(parent, row)).collect(),
-        next_page_token: String::new(),
-    }
-}
-
-/// A `bundle list` row as its `Bundle` (BASIC).
-pub(crate) fn bundle(parent: &str, row: &BundleRow) -> v1::Bundle {
-    v1::Bundle {
-        name: bundle_name(parent, &row.name),
-        origin: catalog::origin(&row.name, row.origin == "ctxloom/builtin") as i32,
-        reference: row.reference.clone(),
-        commit: row.commit.clone(),
-        path: row.path.clone(),
-        version: row.version.clone(),
-        description: row.description.clone(),
-        tags: row.tags.clone(),
-        fragment_count: count(row.fragment_count),
-        command_count: count(row.command_count),
-        mcp_server_count: count(row.mcp_count),
-        profile_count: count(row.profile_count),
-        ..v1::Bundle::default()
-    }
-}
-
-/// A count as the API's uint32 (OQ-12), saturating.
-fn count(n: u64) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
-}
-
-/// `bundle show`: the `Bundle` (FULL), each child summarised by its name
-/// (OQ-14).
-pub(crate) fn shown(parent: &str, show: &BundleShow) -> v1::Bundle {
-    let item = |dir: &str, id: &str| catalog::item_name(parent, &show.name, dir, id);
-    v1::Bundle {
-        author: show.author.clone(),
-        notes: show.notes.clone(),
-        installation: show.installation.clone(),
-        description: show.description.clone(),
-        version: show.version.clone(),
-        tags: show.tags.clone(),
-        path: show.path.clone(),
-        skill_count: count(show.skills.len() as u64),
-        fragments: show
-            .fragments
-            .iter()
-            .map(|(id, f)| v1::BundleItem {
-                item: item("fragments", id),
-                tags: f.tags.clone(),
-                preview: f.preview.clone(),
-                distilled: catalog::shown_distilled(f.distilled, f.stale),
-                no_distill: Some(f.no_distill),
-                premise: f.premise.clone(),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        commands: show
-            .commands
-            .iter()
-            .map(|(id, c)| v1::BundleItem {
-                item: item("commands", id),
-                tags: c.tags.clone(),
-                description: c.description.clone(),
-                preview: c.preview.clone(),
-                distilled: catalog::shown_distilled(c.distilled, c.stale),
-                no_distill: Some(c.no_distill),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        skills: show
-            .skills
-            .iter()
-            .map(|(id, s)| v1::BundleItem {
-                item: item("skills", id),
-                tags: s.tags.clone(),
-                notes: s.notes.clone(),
-                path: s.path.clone(),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        mcp_servers: show
-            .mcp
-            .iter()
-            .map(|(id, m)| v1::BundleItem {
-                item: item("mcp", id),
-                command: m.command.clone(),
-                args: m.args.clone(),
-                env: m.env.clone(),
-                notes: m.notes.clone(),
-                installation: m.installation.clone(),
-                ..v1::BundleItem::default()
-            })
-            .collect(),
-        profiles: show
-            .profiles
-            .iter()
-            .map(|id| item("profiles", id))
-            .collect(),
-        hooks: show.hooks.clone(),
-        ..bundle(parent, &named(show))
-    }
-}
-
-/// The show's listing, under the show's name (a listing the view did not
-/// fill is the name alone).
-fn named(show: &BundleShow) -> BundleRow {
-    BundleRow {
-        name: show.name.clone(),
-        ..show.listing.clone()
-    }
-}
-
-/// What `bundle view` answers: the bundle, or the item the path selects.
-#[derive(serde::Serialize)]
-#[serde(untagged)]
-pub(crate) enum ViewedMessage {
-    Bundle(v1::Bundle),
-    Fragment(v1::Fragment),
-    Command(v1::Command),
-    Skill(v1::Skill),
-    McpServer(v1::McpServer),
-    Profile(v1::Profile),
-}
-
-/// `bundle view`: the whole bundle as a `Bundle` (CONTENT), or the one item
-/// the path selects as its own resource (design §5.1).
-pub(crate) fn viewed(parent: &str, view: &BundleView) -> ViewedMessage {
-    let bundle = bundle_name(parent, &view.bundle);
-    let item = |dir: &str, id: &str| catalog::item_name(parent, &view.bundle, dir, id);
-    match &view.viewed {
-        Viewed::Body {
-            kind,
-            name,
-            body,
-            distilled,
-        } if kind == "commands" => ViewedMessage::Command(v1::Command {
-            name: item("commands", name),
-            body: body.clone(),
-            body_is_distilled: *distilled,
-            ..v1::Command::default()
-        }),
-        Viewed::Body {
-            name,
-            body,
-            distilled,
-            ..
-        } => ViewedMessage::Fragment(v1::Fragment {
-            name: item("fragments", name),
-            body: body.clone(),
-            body_is_distilled: *distilled,
-            ..v1::Fragment::default()
-        }),
-        Viewed::Skill { name, skill } => ViewedMessage::Skill(v1::Skill {
-            name: item("skills", name),
-            tags: skill.tags.clone(),
-            notes: skill.notes.clone(),
-            path: skill.path.clone(),
-            ..v1::Skill::default()
-        }),
-        Viewed::Mcp(row) => {
-            ViewedMessage::McpServer(crate::noun::mcp::server(&item("mcp", &row.name), row))
-        }
-        Viewed::Profile(profile) => ViewedMessage::Profile(crate::noun::profile::profile_of(
-            parent,
-            &item("profiles", &profile.name),
-            profile,
-        )),
-        Viewed::Files(files) => ViewedMessage::Bundle(v1::Bundle {
-            name: bundle,
-            files: files
-                .iter()
-                .map(|(path, content)| v1::BundleFile {
-                    path: path.clone(),
-                    content: content.clone(),
-                })
-                .collect(),
-            distilled: Some(view.distilled),
-            ..v1::Bundle::default()
-        }),
-        Viewed::Nothing => ViewedMessage::Bundle(v1::Bundle {
-            name: bundle,
-            ..v1::Bundle::default()
-        }),
     }
 }
 
@@ -277,292 +179,276 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
-/// `bundle distill <bundle> [-f]` (OD-39: by name): each item's line in
-/// text; in json the `Bundle`, each of its items with the distilled state
-/// it was left in.
+/// `bundle distill <bundle> [-f]` (OD-39, by name; step 10b): each of the
+/// bundle's fragments, then each of its commands, as the daemon reads
+/// them, distilled as `fragment|command distill` distills one: one run per
+/// item, each its own write following from it (the plan's U13 notes do
+/// not decide the shape; this is the simpler one), each followed to its
+/// end before the next is asked. The first that fails fails the command,
+/// and what was distilled before it stays.
 fn distill(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx
-        .library
-        .bundle_distill(&cx.flags, &text_arg(sub, "name"), flag(sub, "force"));
-    catalog::answer(
-        cx,
-        outcome,
-        out,
-        err,
-        false,
-        |parent, done| {
-            let entry = |i: &library_application::ItemDistilled, dir: &str| v1::BundleItem {
-                item: catalog::item_name(parent, &done.bundle, dir, &i.name),
-                distilled: catalog::distilled(i.status != "no_distill"),
-                no_distill: Some(i.status == "no_distill"),
-                ..v1::BundleItem::default()
-            };
-            v1::Bundle {
-                name: catalog::bundle_name(parent, &done.bundle),
-                fragments: done
-                    .items
-                    .iter()
-                    .filter(|i| i.kind == "fragment")
-                    .map(|i| entry(i, "fragments"))
-                    .collect(),
-                commands: done
-                    .items
-                    .iter()
-                    .filter(|i| i.kind == "command")
-                    .map(|i| entry(i, "commands"))
-                    .collect(),
-                ..v1::Bundle::default()
+    let force = flag(sub, "force");
+    // Its items as `bundle show` reads them.
+    let request = v1::GetBundleRequest {
+        view: v1::bundle::View::Full as i32,
+        globals: cx.globals(),
+        ..v1::GetBundleRequest::default()
+    };
+    let target = library_api::names::bundle_target(&text_arg(sub, "name"));
+    let (bundle, mut notices) = cx.served.get_bundle(&target, request)?;
+    let items = bundle
+        .fragments
+        .iter()
+        .map(|item| (ItemKind::Fragment, item))
+        .chain(bundle.commands.iter().map(|item| (ItemKind::Command, item)));
+    let mut answers = Vec::new();
+    for (kind, item) in items {
+        let under = item
+            .item
+            .find("/bundles/")
+            .map_or(item.item.as_str(), |at| &item.item[at..]);
+        match super::item::distill_followed(cx, kind, under, force) {
+            Ok(mut answer) => {
+                notices.append(answer.notices_mut());
+                answers.push(answer);
             }
-        },
-        |done, out, _| {
-            for item in &done.items {
-                super::item::distilled_text(item, out)?;
+            Err((failure, said)) => {
+                notices.extend(said);
+                super::item::say(cx, &notices, err);
+                return Err(failure);
             }
-            Ok(())
-        },
-        ok,
-    )
+        }
+    }
+    super::item::say(cx, &notices, err);
+    let entry = |answer: &super::item::DistillAnswer| {
+        let (name, no_distill) = match answer {
+            super::item::Either::Fragment(f) => (
+                f.fragment.as_ref().map(|f| f.name.clone()),
+                answer.no_distill(),
+            ),
+            super::item::Either::Command(c) => (
+                c.command.as_ref().map(|c| c.name.clone()),
+                answer.no_distill(),
+            ),
+        };
+        v1::BundleItem {
+            item: name.unwrap_or_default(),
+            distilled: catalog::distilled(!no_distill),
+            no_distill: Some(no_distill),
+            ..v1::BundleItem::default()
+        }
+    };
+    if cx.format == Format::Json {
+        let is_command = |answer: &&super::item::DistillAnswer| {
+            matches!(answer, super::item::Either::Command(_))
+        };
+        let message = v1::Bundle {
+            name: bundle.name.clone(),
+            fragments: answers
+                .iter()
+                .filter(|a| !is_command(a))
+                .map(entry)
+                .collect(),
+            commands: answers.iter().filter(is_command).map(entry).collect(),
+            ..v1::Bundle::default()
+        };
+        api::print(out, &message).map_err(output_failure)?;
+    } else {
+        for answer in &answers {
+            super::item::distilled_text(&answer.item(), out).map_err(output_failure)?;
+        }
+    }
+    Ok(Exit::OK)
 }
 
+/// `bundle create <name> [-d description]`: the daemon's `CreateBundle`
+/// (step 10b U3), its text from the response (D10).
 fn create(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let outcome = cx
-        .library
-        .bundle_create(&cx.flags, &name, &text_arg(sub, "description"));
-    catalog::answer(
+    let request = v1::CreateBundleRequest {
+        bundle_id: text_arg(sub, "name"),
+        bundle: Some(v1::Bundle {
+            description: text_arg(sub, "description"),
+            ..v1::Bundle::default()
+        }),
+        globals: cx.globals(),
+        ..v1::CreateBundleRequest::default()
+    };
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.create_bundle("", request),
+        |made| std::mem::take(&mut made.notices),
         out,
         err,
-        false,
-        created,
-        |made, out, _| {
+        |made, out| {
             writeln!(out, "Created bundle: {}", made.path)?;
             writeln!(
                 out,
                 "Edit its item files to add your fragments and prompts."
             )
         },
-        catalog::ok,
+        |_| Exit::OK,
     )
 }
 
+/// `bundle edit <name> [flags]`: the daemon's `UpdateBundle` (step 10b
+/// U3), its mask naming the fields given (`description`, `version`) and
+/// its add and remove lists as given: several mask paths, one step to the
+/// bundle's one file (owner ruling 2026-11-18); a change to more than one
+/// file is refused `OneChangePerCall`. Its text from the response (D10).
 fn edit(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let request = BundleEditRequest {
-        name,
-        description: given(sub, "description"),
-        version: given(sub, "version"),
+    let mut bundle = v1::Bundle::default();
+    let mut paths = Vec::new();
+    if let Some(description) = given(sub, "description") {
+        bundle.description = description;
+        paths.push("description".to_string());
+    }
+    if let Some(version) = given(sub, "version") {
+        bundle.version = version;
+        paths.push("version".to_string());
+    }
+    let request = v1::UpdateBundleRequest {
+        bundle: Some(bundle),
+        update_mask: (!paths.is_empty())
+            .then_some(daemon_proto::google::protobuf::FieldMask { paths }),
         add_tags: many(sub, "add-tag"),
         remove_tags: many(sub, "remove-tag"),
         add_fragments: many(sub, "add-fragment"),
         remove_fragments: many(sub, "remove-fragment"),
-        add_prompts: many(sub, "add-prompt"),
-        remove_prompts: many(sub, "remove-prompt"),
-        add_mcp: many(sub, "add-mcp"),
-        remove_mcp: many(sub, "remove-mcp"),
+        add_commands: many(sub, "add-prompt"),
+        remove_commands: many(sub, "remove-prompt"),
+        add_mcp_servers: many(sub, "add-mcp"),
+        remove_mcp_servers: many(sub, "remove-mcp"),
+        globals: cx.globals(),
+        ..v1::UpdateBundleRequest::default()
     };
-    let outcome = cx.library.bundle_edit(&cx.flags, &request);
-    catalog::answer(
+    let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.update_bundle(&under, request),
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        false,
-        edited,
-        |edited, out, _| {
-            if edited.changes.is_empty() {
+        |m, out| {
+            if m.changes.is_empty() {
                 return nothing(out);
             }
-            for change in &edited.changes {
+            for change in &m.changes {
                 writeln!(out, "{change}")?;
             }
-            writeln!(out, "Updated bundle: {}", edited.path)
+            writeln!(out, "Updated bundle: {}", m.path)
         },
-        catalog::ok,
+        |_| Exit::OK,
     )
 }
 
+/// `bundle remove <name> [--yes]`: the daemon's `DeleteBundle` (step 10b
+/// U3), previewed and confirmed at a terminal, its text from the response.
 fn remove(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let outcome = cx.library.bundle_remove(&cx.flags, &name, flag(sub, "yes"));
-    catalog::answer(
+    let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+    crate::write::removal_served(
         cx,
-        outcome,
+        flag(sub, "yes"),
+        |validate_only, answers, etag| {
+            let request = v1::DeleteBundleRequest {
+                validate_only,
+                answers,
+                etag,
+                globals: cx.globals(),
+                ..v1::DeleteBundleRequest::default()
+            };
+            cx.served.delete_bundle(&under, request)
+        },
         out,
         err,
-        false,
-        |parent, gone| removed(parent, &name, gone),
-        |gone, out, _| {
-            catalog::removal_text(gone, out, |gone, out| {
-                writeln!(out, "Removed bundle: {}", gone.path)
-            })
-        },
-        crate::write::removal_exit,
+        |gone, out| writeln!(out, "Removed bundle: {}", gone.path),
     )
 }
 
+/// `bundle export <name> <dest-dir>` (or `-o <path>`): the daemon's
+/// `ExportBundle` (step 10b, D2's EXCEPTION): the bundle's tree put in at
+/// her path, below this command's working directory (the request's `cwd`),
+/// whole or not at all and never over what is there. Its text from the
+/// response (D10).
 fn export(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let outcome = cx.library.bundle_export(
-        &cx.flags,
-        &name,
-        &text_arg(sub, "dest"),
-        &text_arg(sub, "output"),
-    );
-    catalog::answer(
+    let request = v1::ExportBundleRequest {
+        destination: text_arg(sub, "dest"),
+        output: text_arg(sub, "output"),
+        globals: cx.globals(),
+        ..v1::ExportBundleRequest::default()
+    };
+    let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.export_bundle(&under, request),
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        false,
-        exported,
-        |done, out, _| writeln!(out, "Exported: {} -> {}", done.source, done.dest),
-        catalog::ok,
+        |m, out| writeln!(out, "Exported: {} -> {}", m.source, m.destination),
+        |_| Exit::OK,
     )
 }
 
+/// `bundle import <path> [--force] [--yes]`: the daemon's `ImportBundle`
+/// (step 10b U9), its source read from this command's working directory
+/// (the request's `cwd`); a forced import over a bundle is its T28
+/// sequence. An import asks nothing, so `--yes` changes nothing (scripts
+/// may say it).
 fn import(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx
-        .library
-        .bundle_import(&cx.flags, &text_arg(sub, "path"), flag(sub, "force"));
-    catalog::answer(
+    let source = text_arg(sub, "path");
+    let request = v1::ImportBundleRequest {
+        source: source.clone(),
+        force: flag(sub, "force"),
+        globals: cx.globals(),
+        ..v1::ImportBundleRequest::default()
+    };
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.import_bundle("", request),
+        |made| std::mem::take(&mut made.notices),
         out,
         err,
-        false,
-        imported,
-        |done, out, _| {
-            writeln!(out, "Imported: {} -> {}", done.source, done.dest)?;
-            writeln!(out, "  Version: {}", done.version)?;
+        |made, out| {
+            let bundle = made.bundle.clone().unwrap_or_default();
+            writeln!(out, "Imported: {source} -> {}", made.path)?;
+            writeln!(out, "  Version: {}", bundle.version)?;
             writeln!(
                 out,
                 "  Fragments: {}, Commands: {}, MCP: {}",
-                done.fragments, done.commands, done.mcp
+                bundle.fragment_count, bundle.command_count, bundle.mcp_server_count
             )
         },
-        catalog::ok,
+        |_| Exit::OK,
     )
-}
-
-/// A bundle named and nothing else, as a write answers it.
-fn just_named(parent: &str, catalog: &str) -> Option<v1::Bundle> {
-    Some(v1::Bundle {
-        name: bundle_name(parent, catalog),
-        ..v1::Bundle::default()
-    })
-}
-
-/// `bundle create`: `CreateBundleResponse`.
-pub(crate) fn created(parent: &str, made: &BundleCreated) -> v1::CreateBundleResponse {
-    v1::CreateBundleResponse {
-        bundle: just_named(parent, &made.name),
-        path: made.path.clone(),
-        applied: Some(true),
-        ..v1::CreateBundleResponse::default()
-    }
-}
-
-/// `bundle edit`: `UpdateBundleResponse`; an edit that changed nothing
-/// applied nothing and lists no change.
-pub(crate) fn edited(parent: &str, edited: &BundleEdited) -> v1::UpdateBundleResponse {
-    v1::UpdateBundleResponse {
-        bundle: just_named(parent, &edited.name),
-        path: edited.path.clone(),
-        applied: Some(!edited.changes.is_empty()),
-        changes: edited.changes.clone(),
-        ..v1::UpdateBundleResponse::default()
-    }
-}
-
-/// `bundle remove`: `DeleteBundleResponse`, the preview's or the removal's.
-pub(crate) fn removed(
-    parent: &str,
-    asked: &str,
-    gone: &Removal<BundleRemoved>,
-) -> v1::DeleteBundleResponse {
-    catalog::removal(
-        gone,
-        |preview| v1::DeleteBundleResponse {
-            bundle: just_named(parent, asked),
-            applied: Some(false),
-            detail: preview.detail,
-            apply_command: preview.apply_command,
-            ..v1::DeleteBundleResponse::default()
-        },
-        |done| v1::DeleteBundleResponse {
-            bundle: just_named(parent, &done.name),
-            path: done.path.clone(),
-            applied: Some(true),
-            ..v1::DeleteBundleResponse::default()
-        },
-    )
-}
-
-/// `bundle export`: `ExportBundleResponse`.
-pub(crate) fn exported(parent: &str, done: &BundleExported) -> v1::ExportBundleResponse {
-    v1::ExportBundleResponse {
-        bundle: bundle_name(parent, &done.name),
-        source: done.source.clone(),
-        destination: done.dest.clone(),
-        applied: Some(true),
-        ..v1::ExportBundleResponse::default()
-    }
-}
-
-/// `bundle import`: `ImportBundleResponse`, the bundle with its version and
-/// counts, named by the directory it landed in.
-pub(crate) fn imported(parent: &str, done: &BundleImported) -> v1::ImportBundleResponse {
-    let name = done
-        .dest
-        .trim_end_matches(['/', '\\'])
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default();
-    v1::ImportBundleResponse {
-        bundle: Some(v1::Bundle {
-            name: bundle_name(parent, name),
-            version: done.version.clone(),
-            fragment_count: count(done.fragments),
-            command_count: count(done.commands),
-            mcp_server_count: count(done.mcp),
-            ..v1::Bundle::default()
-        }),
-        path: done.dest.clone(),
-        applied: Some(true),
-        ..v1::ImportBundleResponse::default()
-    }
 }
 
 #[cfg(test)]

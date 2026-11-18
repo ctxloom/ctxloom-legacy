@@ -9,26 +9,23 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let section = text_arg(sub, "section");
-    let outcome = cx.library.config_show(
-        &cx.flags,
-        (!section.is_empty()).then_some(section.as_str()),
-        flag(sub, "raw"),
-    );
-    resource(cx, outcome, out, err, config, |out, shown: &ConfigShown| {
-        write!(out, "{}", shown.text)
+    // The daemon's read (step 10a U2), its text the message's document as
+    // YAML, keys sorted (D10; owner ruling 2026-11-17).
+    let view = if flag(sub, "raw") {
+        v1::config::View::Set
+    } else {
+        v1::config::View::Effective
+    };
+    let request = v1::GetConfigRequest {
+        view: view as i32,
+        section: text_arg(sub, "section"),
+        globals: cx.globals(),
+        ..v1::GetConfigRequest::default()
+    };
+    let read = cx.served.get_config("/config", request);
+    served(cx, read, out, err, false, |config, out, _| {
+        write!(out, "{}", crate::read_back::config_text(config))
     })
-}
-
-/// `config show [section] [--raw]`: the `Config` singleton under `parent`,
-/// its document what the layers give (one section of it, or only what they
-/// set), as written.
-pub(crate) fn config(parent: &str, shown: &ConfigShown) -> v1::Config {
-    v1::Config {
-        name: format!("{parent}/config"),
-        document: Some(api::document(&shown.json)),
-        etag: String::new(),
-    }
 }
 
 pub(crate) fn write(
@@ -46,10 +43,61 @@ pub(crate) fn write(
             })
             .map(Some)
         }
+        "set" => {
+            // The daemon's `UpdateConfig` (step 10b U3), its text from the
+            // response (D10).
+            let request = v1::UpdateConfigRequest {
+                path: text_arg(sub, "key"),
+                value: text_arg(sub, "value"),
+                home: flag(sub, "home"),
+                globals: cx.globals(),
+                ..v1::UpdateConfigRequest::default()
+            };
+            let set = cx.served.update_config("/config", request);
+            crate::answer_written(
+                cx,
+                set,
+                |m| std::mem::take(&mut m.notices),
+                out,
+                err,
+                |m, out| writeln!(out, "Set {} in {}", m.changes.join(", "), m.path),
+                |_| Exit::OK,
+            )
+            .map(Some)
+        }
         "edit" => {
+            // The daemon's `EditConfig` (step 10b U3): its preview's Edit
+            // need presented here (the editor launched on the config's
+            // text), the apply sent with what it left and the preview's
+            // etag. It says nothing on success, as before.
             text_only(cx, "config edit")?;
-            let outcome = cx.library.config_edit();
-            finish_text(cx, outcome, out, err, |(), _, _| Ok(())).map(Some)
+            let ask = |validate_only: bool, answers: Vec<v1::Answer>, etag: String| {
+                v1::EditConfigRequest {
+                    validate_only,
+                    answers,
+                    etag,
+                    presentable: crate::noun::item::presentable(),
+                    globals: cx.globals(),
+                    ..v1::EditConfigRequest::default()
+                }
+            };
+            let preview = cx
+                .served
+                .edit_config("/config", ask(true, Vec::new(), String::new()))?;
+            let answers = crate::noun::item::edit_answers(cx, &preview.needs)?;
+            let edited = cx
+                .served
+                .edit_config("/config", ask(false, answers, preview.etag));
+            crate::answer_written(
+                cx,
+                edited,
+                |m| std::mem::take(&mut m.notices),
+                out,
+                err,
+                |_, _| Ok(()),
+                |_| Exit::OK,
+            )
+            .map(Some)
         }
         _ => Ok(None),
     }

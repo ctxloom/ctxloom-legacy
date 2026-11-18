@@ -18,6 +18,8 @@ daemon-api-home-gone = the daemon's home { $home } is gone, so it creates nothin
 daemon-api-home-gone-fix = run the command again: it starts a fresh daemon
 daemon-api-age-invalid = { $key } { $value } is neither an age nor a date
 daemon-api-age-invalid-fix = give an age such as 90d, 1h30m or 1.5d, or a date such as 2026-01-01
+daemon-api-etag-invalid = the etag { $etag } is not one a preview answered: an etag is the number of the change the preview saw, so nothing was written
+daemon-api-etag-invalid-fix = preview the change again (the command without --yes), then apply what it shows
 daemon-api-config-unreadable = the configuration of the project at { $root } does not read: { $ext_err_txt }
 # OD-62 (2026-11-15): one ctxloom version runs at a time. DRAFT wording,
 # the owner's to approve.

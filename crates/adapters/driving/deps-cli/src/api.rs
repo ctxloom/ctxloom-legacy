@@ -8,22 +8,11 @@
 
 use daemon_proto::v1;
 
-/// A Remote's resource name: `<parent>/remotes/<remote>`.
-pub(crate) fn remote_name(parent: &str, remote: &str) -> String {
-    format!("{parent}/remotes/{remote}")
-}
+pub(crate) use library_api::deps::{dependency_name, remote_name};
 
 /// A local Bundle's resource name: `<parent>/bundles/<bundle>`.
 pub(crate) fn bundle_name(parent: &str, bundle: &str) -> String {
     format!("{parent}/bundles/{bundle}")
-}
-
-/// A Dependency's resource name, from its lock identity (OQ-15).
-pub(crate) fn dependency_name(parent: &str, identity: &str) -> String {
-    format!(
-        "{parent}/dependencies/{}",
-        deps_application::dependency_id(identity)
-    )
 }
 
 /// The kind a view's word names (`mcp` is an MCP server, OQ-B5); a word

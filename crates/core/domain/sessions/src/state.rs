@@ -223,6 +223,9 @@ pub struct ProjectState {
     pub root: String,
     pub git_common_dir: String,
     pub root_commit: String,
+    /// The session removals intended and not yet done, by request id (O2,
+    /// step 10b U9).
+    pub removals: std::collections::BTreeMap<String, OpenRemoval>,
 }
 
 impl From<ProjectState> for sessions_proto::v1::ProjectState {
@@ -233,6 +236,11 @@ impl From<ProjectState> for sessions_proto::v1::ProjectState {
             root: value.root,
             git_common_dir: value.git_common_dir,
             root_commit: value.root_commit,
+            removals: value
+                .removals
+                .into_iter()
+                .map(|(id, removal)| (id, removal.into()))
+                .collect(),
         }
     }
 }
@@ -247,6 +255,45 @@ impl TryFrom<sessions_proto::v1::ProjectState> for ProjectState {
             root: value.root,
             git_common_dir: value.git_common_dir,
             root_commit: value.root_commit,
+            removals: value
+                .removals
+                .into_iter()
+                .map(|(id, removal)| Ok((id, removal.try_into()?)))
+                .collect::<Result<_, WireError>>()?,
+        })
+    }
+}
+
+/// A session removal intended and not yet done (O2, step 10b U9): its
+/// steps in order, and how many are done.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpenRemoval {
+    pub request_id: String,
+    pub harp: String,
+    pub steps: Vec<String>,
+    pub done: u32,
+}
+
+impl From<OpenRemoval> for sessions_proto::v1::OpenRemoval {
+    fn from(value: OpenRemoval) -> Self {
+        sessions_proto::v1::OpenRemoval {
+            request_id: value.request_id,
+            harp: value.harp,
+            steps: value.steps,
+            done: value.done,
+        }
+    }
+}
+
+impl TryFrom<sessions_proto::v1::OpenRemoval> for OpenRemoval {
+    type Error = WireError;
+
+    fn try_from(value: sessions_proto::v1::OpenRemoval) -> Result<Self, WireError> {
+        Ok(OpenRemoval {
+            request_id: value.request_id,
+            harp: value.harp,
+            steps: value.steps,
+            done: value.done,
         })
     }
 }

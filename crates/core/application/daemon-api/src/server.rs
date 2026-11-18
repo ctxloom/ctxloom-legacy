@@ -78,21 +78,31 @@ pub trait Hosting: Send + Sync {
     }
 }
 
-/// A project's context, assembled as a process in it would (slice 3 step
-/// 6, the smallest piece of T13): the root composes the library over the
-/// project's registered root, in the caller's environment (S7).
-pub trait Assemblies: Send + Sync {
-    /// The context of the project at `root`, as `request` asks it.
-    fn assemble(
-        &self,
-        root: &str,
-        request: &v1::AssembleContextRequest,
-    ) -> Result<v1::AssembledContext, ApiError>;
+/// What a library read observes first (step 10a U2): the trees as last
+/// observed (the kernel's `library-checkout`), each checkout's harp, and
+/// git as the read's caller runs it.
+#[derive(Clone)]
+pub struct Observing {
+    pub checkouts: library_checkout::LibraryCheckouts,
+    pub harps: Arc<dyn library_api::CheckoutHarps>,
+    pub observers: Arc<dyn library_api::Observers>,
+    /// The atomic operations a write makes its change through (step 10b
+    /// U8), whose staging of a tree is swept at its first observation.
+    pub operations: Arc<dyn ctxloom_ports::Operations>,
+    /// The daemon's clock, by which a kept trash slot's age is told and
+    /// purged at its tree's observation (G12).
+    pub clock: library_api::Clock,
+    /// A tree's regenerable cache, which `clean` measures (step 10b U9).
+    pub caches: Arc<dyn crate::Caches>,
 }
 
 /// A session's state now, from its liveness lock in its project.
 pub trait SessionStates: Send + Sync {
     fn state(&self, project_dir: &str, harp: &str) -> State;
+
+    /// Where the session's lock is, as its adapter forms it
+    /// (`session_ports::lock_path`): what a refusal names.
+    fn lock(&self, project_dir: &str, harp: &str) -> String;
 }
 
 /// Fresh project harps to try, in order (minted outside the core).
@@ -240,7 +250,46 @@ pub trait Calls: Send + Sync {
     fn warnings(&self) -> Vec<v1::Notice> {
         Vec::new()
     }
+
+    // The library's reads (step 10a U2, D12), from the one table; each
+    // answers its message and the notices the read said. An edge that
+    // serves one fails it.
+    daemon_proto::library_reads!(library_read_calls);
+
+    // The library's writes (step 10b U3, D12), from their one table.
+    daemon_proto::library_writes!(library_write_calls);
 }
+
+/// [`Calls`]'s library writes, from `daemon_proto::library_writes!`.
+macro_rules! library_write_calls {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "` (step 10b U3).")]
+            fn $method(&self, request: v1::$request) -> Answer<'_, v1::$response> {
+                let _ = request;
+                Box::pin(async { Err(not_served(stringify!($rpc))) })
+            }
+        )*
+    };
+}
+use library_write_calls;
+
+/// [`Calls`]'s library reads, from `daemon_proto::library_reads!`.
+macro_rules! library_read_calls {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "` (step 10a U2); as `GetTranscript`.")]
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> Answer<'_, daemon_ports::Read<v1::$response>> {
+                let _ = request;
+                Box::pin(async { Err(not_served(stringify!($rpc))) })
+            }
+        )*
+    };
+}
+use library_read_calls;
 
 /// A call this edge does not serve, failed.
 fn not_served(method: &str) -> ApiError {
@@ -249,7 +298,7 @@ fn not_served(method: &str) -> ApiError {
     }
 }
 
-/// Every call but `GetDaemon`, `StopDaemon`, the project's names
+/// Every call but `GetDaemon`, `StopDaemon`, `GetConfig`, the project's names
 /// (`ResolveProject`, `GetProject`) and the calls on work a client already
 /// started (`WatchRun`, `DeleteHandOff`) is taken only while the daemon is
 /// open ([`Api::open`]): a draining one refuses it. The names are served
@@ -408,15 +457,116 @@ impl<E: Edge + 'static> Calls for Api<E> {
     fn wait_approval(&self, request: v1::WaitApprovalRequest) -> Answer<'_, v1::Approval> {
         Box::pin(Api::wait_approval(self, request))
     }
+
+    // The library's reads served (step 10a U2, D12), from library-api's
+    // table: each observed first, then answered by its use case.
+    library_api::served!(served_library_reads);
+    // The deps reads served (step 10a U2), as the library's.
+    library_api::deps_served!(served_deps_reads);
+    // The library's writes served (step 10b U3, D12), from library-api's
+    // table: each observed, planned, intended, made and recorded.
+    library_api::served_writes!(served_library_writes);
+
+    /// `Clean` (step 10b U9): the cache's present trees into the trash.
+    fn clean(&self, request: v1::CleanRequest) -> Answer<'_, v1::CleanResponse> {
+        Box::pin(async move { self.serve_clean(request).await })
+    }
+
+    /// `DistillFragment` (step 10b, owner 2026-11-18): the model asked as a
+    /// run the daemon hosts, its distilled form written once it ends.
+    fn distill_fragment(
+        &self,
+        request: v1::DistillFragmentRequest,
+    ) -> Answer<'_, v1::DistillFragmentResponse> {
+        Box::pin(async move { self.distill_fragment(request).await })
+    }
+
+    /// `DistillCommand`, as `DistillFragment`.
+    fn distill_command(
+        &self,
+        request: v1::DistillCommandRequest,
+    ) -> Answer<'_, v1::DistillCommandResponse> {
+        Box::pin(async move { self.distill_command(request).await })
+    }
 }
+
+/// [`Api`]'s served library writes, from `library_api::served_writes!`:
+/// each the daemon's `library_write` of its use case, answered by its
+/// response.
+macro_rules! served_library_writes {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident, $verb:literal;)*) => {
+        $(
+            fn $method(&self, request: v1::$request) -> Answer<'_, v1::$response> {
+                Box::pin(async move {
+                    let wrote = self
+                        .library_write(&request, $verb, |library, flags, apply| {
+                            library_api::served_writes::$method::plan(library, flags, &request, apply)
+                        })
+                        .await?;
+                    Ok(library_api::served_writes::$method::respond(&request, wrote))
+                })
+            }
+        )*
+    };
+}
+use served_library_writes;
+
+/// [`Api`]'s served deps reads, from `library_api::deps_served!`: each
+/// taken only while the daemon is open, observed first, then answered by
+/// `library_api::deps::$method`.
+macro_rules! served_deps_reads {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> Answer<'_, daemon_ports::Read<v1::$response>> {
+                Box::pin(async move {
+                    self.open()?;
+                    self.deps_read(&request, |deps, parent| {
+                        library_api::deps::$method(deps, parent, &request)
+                    })
+                    .await
+                })
+            }
+        )*
+    };
+}
+use served_deps_reads;
+
+/// [`Api`]'s served library reads, from `library_api::served!`: each taken
+/// only while the daemon is open (`GetConfig` while it drains too),
+/// observed first, then answered by
+/// `library_api::reads::$method`.
+macro_rules! served_library_reads {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> Answer<'_, daemon_ports::Read<v1::$response>> {
+                Box::pin(async move {
+                    // `GetConfig` is served while the daemon drains (step
+                    // 10a U2): a drain's own timeout is changed and read
+                    // back while it runs (shutdown.feature), and the read
+                    // starts no work.
+                    if stringify!($rpc) != "GetConfig" {
+                        self.open()?;
+                    }
+                    self.library_read(&request, |library, flags, parent| {
+                        library_api::reads::$method(library, flags, parent, &request)
+                    })
+                    .await
+                })
+            }
+        )*
+    };
+}
+use served_library_reads;
 
 /// The use cases of the daemon's API.
 pub struct Api<E> {
     pub(crate) parts: Parts<E>,
-    /// The destroys applied, by request id, for the daemon's life (S8).
-    pub(crate) applied: crate::destroy::Applied,
-    /// Where an assembly is made; none, `AssembleContext` fails.
-    assemblies: Option<Arc<dyn Assemblies>>,
     /// The one-shots the daemon hosts (U4); none, `CreateRun` fails.
     pub(crate) one_shots: Option<Arc<daemon_application::OneShots>>,
     /// Where a child's hand-off is planned and kept; none, `CreateHandOff`
@@ -431,20 +581,124 @@ pub struct Api<E> {
     /// Where an ask is recorded and read (step 8 U4); none, the approvals
     /// calls fail.
     pub(crate) approving: Option<crate::Approving>,
+    /// Where a library read is answered from (step 10a U2); none, every
+    /// library read fails.
+    pub(crate) libraries: Option<Arc<dyn crate::Libraries>>,
+    /// What a library read observes first (step 10a U2), and git as its
+    /// caller runs it; none, a read observes nothing.
+    pub(crate) observing: Option<(
+        library_api::Observations<E>,
+        Arc<dyn library_api::Observers>,
+    )>,
+    /// The test-support kill points of a library write (step 10b U3);
+    /// none, a write is never killed.
+    pub(crate) write_dies_at: Option<crate::library_writes::DiesAt>,
+    /// A tree's regenerable cache (step 10b U9); none, `Clean` fails.
+    pub(crate) caches: Option<Arc<dyn crate::Caches>>,
+    /// This API, once it is shared ([`Api::shared`]): what a reaction to a
+    /// run it hosts (a distill's write, step 10b) makes its write through,
+    /// after the call that started the run has answered. Unset, a distill
+    /// that asks a model fails.
+    pub(crate) me: std::sync::OnceLock<std::sync::Weak<Api<E>>>,
+    /// The platform's name (`std::env::consts::OS`'s), which a removal's
+    /// evidence is judged by (D18); empty is a unix.
+    pub(crate) os: String,
 }
 
 impl<E: Edge> Api<E> {
     pub fn new(parts: Parts<E>) -> Api<E> {
         Api {
             parts,
-            applied: crate::destroy::Applied::default(),
-            assemblies: None,
             one_shots: None,
             hand_offs: None,
             terminals: None,
             trusting: None,
             approving: None,
+            libraries: None,
+            observing: None,
+            write_dies_at: None,
+            caches: None,
+            me: std::sync::OnceLock::new(),
+            os: String::new(),
         }
+    }
+
+    /// The API on the platform `os` (`std::env::consts::OS`'s name; the
+    /// wiring's `os_name`): on `windows` a held session lock blocks its
+    /// removal (D18).
+    #[must_use]
+    pub fn on_os(self, os: &str) -> Api<E> {
+        Api {
+            os: os.to_string(),
+            ..self
+        }
+    }
+
+    /// The API, each library write telling `dies_at` the points it reaches
+    /// (`intended`, `staged`, `trashed`, `renamed`, `done`; test-support's
+    /// kill switch).
+    #[must_use]
+    pub fn dying_at_writes(self, dies_at: crate::library_writes::DiesAt) -> Api<E> {
+        Api {
+            write_dies_at: Some(dies_at),
+            ..self
+        }
+    }
+
+    /// The API, each library read observing its trees first through
+    /// `observing` (step 10a U2), recorded through its own edge.
+    #[must_use]
+    pub fn observing(self, observing: Observing) -> Api<E> {
+        let observations = library_api::Observations::new(
+            Arc::clone(&self.parts.edge),
+            observing.checkouts,
+            observing.harps,
+        )
+        .sweeping(observing.operations)
+        .purging(observing.clock);
+        Api {
+            observing: Some((observations, observing.observers)),
+            caches: Some(observing.caches),
+            ..self
+        }
+    }
+
+    /// A library read's observations (step 10a U2): the project's checkout
+    /// at `root` (none: a read outside a project), then the home's
+    /// library, through git in the caller's environment `env`, as the
+    /// notices they say. A tree outside git, or one git ignores, refuses
+    /// the read with the library domain's own refusal; git missing, too
+    /// old or failing fails it.
+    pub(crate) async fn observed(
+        &self,
+        project: Option<(ProjectName, &str)>,
+        env: Option<&v1::EnvVars>,
+    ) -> Result<Vec<v1::Notice>, ApiError> {
+        let Some((observations, observers)) = &self.observing else {
+            return Ok(Vec::new());
+        };
+        let env: Vec<(String, String)> = env
+            .iter()
+            .flat_map(|env| env.vars.iter())
+            .map(|var| (var.name.clone(), var.value.clone()))
+            .collect();
+        let said = observations
+            .observe_read(observers.as_ref(), &env, project)
+            .await
+            .map_err(|error| match error {
+                library_api::ReadError::Refused(rejection) => {
+                    ApiError::Refused(crate::library_refusal(&rejection))
+                }
+                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            })?;
+        Ok(said
+            .iter()
+            .map(|notice| v1::Notice {
+                code: angzarr_diagnostic::Diagnostic::code(notice).to_string(),
+                args: run_application::client::flat_args(notice),
+                text: notice.to_string(),
+            })
+            .collect())
     }
 
     /// The API, its asks recorded and read through `approving` (step 8 U4).
@@ -477,6 +731,14 @@ impl<E: Edge> Api<E> {
     /// The API, its one-shots hosted by `one_shots` (U4), the same the
     /// daemon's launcher stops.
     #[must_use]
+    /// This API, shared: as the edge serves it, and as what follows from
+    /// a run it hosts (a distill's write) reaches it once its call is over.
+    pub fn shared(self) -> Arc<Api<E>> {
+        let api = Arc::new(self);
+        let _ = api.me.set(Arc::downgrade(&api));
+        api
+    }
+
     pub fn hosting_one_shots(self, one_shots: Arc<daemon_application::OneShots>) -> Api<E> {
         Api {
             one_shots: Some(one_shots),
@@ -493,11 +755,12 @@ impl<E: Edge> Api<E> {
         }
     }
 
-    /// The API, its assemblies made by `assemblies`.
+    /// The API, its library reads answered through `libraries` (step 10a
+    /// U2).
     #[must_use]
-    pub fn assembling(self, assemblies: Arc<dyn Assemblies>) -> Api<E> {
+    pub fn reading(self, libraries: Arc<dyn crate::Libraries>) -> Api<E> {
         Api {
-            assemblies: Some(assemblies),
+            libraries: Some(libraries),
             ..self
         }
     }
@@ -546,20 +809,34 @@ impl<E: Edge> Api<E> {
         &self,
         request: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, ApiError> {
-        let name = ProjectName::parse(&request.name)
-            .map_err(|rejection| invalid(&request.name, &rejection))?;
+        // A library read (step 10a U2, E1): at the caller's directory, in
+        // its environment, observed first; what it said rides in the
+        // message (the MCP tool's answer is the message alone).
+        let read = self
+            .library_read(&request, |library, flags, parent| {
+                library_api::reads::assemble_context(library, flags, parent, &request)
+            })
+            .await?;
+        let mut assembled = read.answer;
+        assembled.notices.extend(read.notices);
+        Ok(assembled)
+    }
+
+    /// The root project `name` is registered at and its id, from the warm
+    /// index once it is fresh; a project nobody registered is refused
+    /// `ProjectNotFound`.
+    pub(crate) async fn registered_project(
+        &self,
+        name: &ProjectName,
+    ) -> Result<(String, String), ApiError> {
         self.parts.hosting.fresh().await;
         let row = self.parts.index.index().project_named_by(name.harp());
-        let root = row.map(|row| row.root).filter(|root| !root.is_empty());
-        let root = root.ok_or_else(|| {
+        let row = row.filter(|row| !row.root.is_empty());
+        row.map(|row| (row.root, row.project_id)).ok_or_else(|| {
             ApiError::from(ApiRefusal::of(&v1::ProjectNotFound {
-                name: request.name.clone(),
+                name: name.to_string(),
             }))
-        })?;
-        let assemblies = self.assemblies.as_ref().ok_or_else(|| ApiError::Failed {
-            detail: "this daemon makes no assembly".to_string(),
-        })?;
-        assemblies.assemble(&root, &request)
+        })
     }
 
     /// `GetDaemon`: the daemon, what it hosts and its idle time. Never its
@@ -795,7 +1072,7 @@ impl<E: Edge> Api<E> {
     }
 
     /// The project `id` as its own stream says it now.
-    async fn project(&self, id: &str) -> Result<sessions::ProjectState, ApiError> {
+    pub(crate) async fn project(&self, id: &str) -> Result<sessions::ProjectState, ApiError> {
         let pages = self
             .parts
             .edge

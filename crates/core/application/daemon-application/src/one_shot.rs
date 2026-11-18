@@ -70,6 +70,23 @@ pub trait OneShotHost: Send + Sync {
     fn host(&self, request: HostRequest, told: Told) -> Box<dyn OneShotControl>;
 }
 
+/// What follows from a hosted one-shot's outcome (step 10b, owner ruling
+/// 2026-11-18: distill's write follows from its run): handed the outcome
+/// once, after its engine ended (a stop's end when its engine was stopped),
+/// with where it was placed (none: it ended before), and answering what the
+/// run ends as. Its watchers see nothing of the end before it returns, and
+/// the run is hosted until then. It is in memory, as the one-shot is: a
+/// daemon that dies before it is handed the outcome never hands it (its run
+/// is then the sweep's, lost, and nothing follows from it).
+pub trait Reaction: Send + Sync {
+    fn react<'a>(&'a self, placed: Option<&'a Placement>, done: Done<Answer>) -> Reacted<'a>;
+}
+
+/// What a [`Reaction`] answers, once it has done what follows: the run's
+/// end. A future, so what follows is driven where the one-shot is (the
+/// root's runtime; the core spawns nothing).
+pub type Reacted<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Done<Answer>> + 'a>>;
+
 /// How a hosted one-shot's engine is stopped.
 pub trait OneShotControl: Send + Sync {
     /// Ask its engine to stop (its tree asked, then killed after the
@@ -86,6 +103,8 @@ struct State {
     /// Why its engine is being stopped, once it is.
     stopping: Option<String>,
     control: Option<Box<dyn OneShotControl>>,
+    /// What follows from its outcome, until it is handed it.
+    reaction: Option<Arc<dyn Reaction>>,
 }
 
 #[derive(Default)]
@@ -121,18 +140,31 @@ impl Told {
     /// It is over: what it noticed, then its reply and its end. A one-shot
     /// whose engine the daemon stopped ends as the stop says, whatever its
     /// turn came to (ruling 114).
-    pub fn done(&self, done: Done<Answer>) {
+    /// It is awaited by whatever drives the one-shot: a reaction's work
+    /// (a write) is done in it.
+    pub async fn done(&self, done: Done<Answer>) {
         let Done {
             mut result,
             notices,
         } = done;
-        self.0.change(|state| {
+        let (reaction, placement) = {
+            let mut state = self.0.state();
             if let Some(signal) = &state.stopping {
                 result = Err(RunError::Stopped {
                     signal: signal.clone(),
                     status: status_of(signal),
                 });
             }
+            (state.reaction.take(), state.placement.clone())
+        };
+        // Outside the lock: a reaction may take its time (a write), and the
+        // run is not ended, so not watched to its end, until it returns.
+        let done = Done { result, notices };
+        let Done { result, notices } = match reaction {
+            Some(reaction) => reaction.react(placement.as_ref(), done).await,
+            None => done,
+        };
+        self.0.change(|state| {
             let event = |event| v1::RunEvent { event: Some(event) };
             state.events.extend(
                 notices
@@ -240,7 +272,18 @@ impl OneShots {
     /// Host `request`, and answer once it is placed or ended. Blocks until
     /// then (the API's edge runs it on a blocking thread).
     pub fn create(&self, request: HostRequest) -> Created {
+        self.hosted(request, None)
+    }
+
+    /// Host `request` as [`OneShots::create`] does, its end what `reaction`
+    /// answers of its outcome.
+    pub fn create_reacting(&self, request: HostRequest, reaction: Arc<dyn Reaction>) -> Created {
+        self.hosted(request, Some(reaction))
+    }
+
+    fn hosted(&self, request: HostRequest, reaction: Option<Arc<dyn Reaction>>) -> Created {
         let entry = Arc::new(Entry::default());
+        entry.change(|state| state.reaction = reaction);
         *self.creating() += 1;
         let control = self.host.host(request, Told(Arc::clone(&entry)));
         entry.change(|state| state.control = Some(control));

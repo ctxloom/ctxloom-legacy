@@ -259,3 +259,29 @@ mod unset {
         assert!(run.get("agent").is_none(), "{run}");
     }
 }
+
+// Step 10a U2: the dry run is `CreateRun` validating only, a terminal
+// session's, every flag carried.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_a_dry_run_asks_create_run_validating_only_with_every_flag() {
+        let (_, run) = asked_once::<v1::CreateRunRequest>(&[
+            "run",
+            "--dry-run",
+            "--engine",
+            "opencode",
+            "--tag",
+            "go",
+            "hello",
+        ]);
+        assert_eq!(run.mode, v1::run::Mode::Terminal as i32);
+        assert!(run.validate_only);
+        assert_eq!(run.engine, "opencode");
+        assert_eq!(run.tags, ["go"]);
+        assert_eq!(run.prompt, "hello");
+        assert_eq!(run.globals, degraded());
+    }
+}

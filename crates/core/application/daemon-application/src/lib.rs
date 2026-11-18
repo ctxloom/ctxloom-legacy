@@ -40,8 +40,8 @@ mod terminal;
 
 pub use daemon::{Asker, Daemon, Folds, Place, Ports, Taken, HAND_OVER_PERIOD};
 pub use one_shot::{
-    Created, HostProject, HostRequest, Hosted, OneShotControl, OneShotHost, OneShots, Told, Watch,
-    STOP_GRACE_MS,
+    Created, HostProject, HostRequest, Hosted, OneShotControl, OneShotHost, OneShots, Reacted,
+    Reaction, Told, Watch, STOP_GRACE_MS,
 };
 pub use ports::{
     ChildHomes, ChildPlans, ChildWorkspaces, Ears, ForLaunch, HandOff, HandOffs, HoldFlushed,

@@ -21,7 +21,9 @@ import "google/protobuf/timestamp.proto";
 // One record of a hold: a fact kept, or where one could not be.
 message HeldRecord {
   oneof kind {
+    // A fact kept, to deliver later.
     HeldFact fact = 1;
+    // A fact that could not be kept.
     HeldGap gap = 2;
   }
 }
@@ -64,6 +66,7 @@ message HeldGap {
   // The external id of the fact dropped.
   string external_id = 2;
 
+  // The hook's clock when it dropped the fact: an age to report.
   google.protobuf.Timestamp held_at = 3;
 
   // Why: "bound" (the session's or the home's), or "disk".

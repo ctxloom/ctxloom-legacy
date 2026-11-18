@@ -283,3 +283,123 @@ fn test_the_decoded_event_rides_every_answer_kind() {
         assert!(answer.event.is_some(), "{native}");
     }
 }
+
+// O3 (owner 2026-11-17): the hooks read the library through the daemon
+// alone; one that did not answer in time leaves the engine's answer well
+// formed and empty of the library, with no read in process.
+struct NoDaemon;
+
+impl crate::HookLibrary for NoDaemon {
+    fn agents_and_profiles(&self) -> Option<(bool, bool)> {
+        None
+    }
+    fn skills(&self) -> Option<Vec<crate::HookSkill>> {
+        None
+    }
+}
+
+#[test]
+fn test_with_no_daemon_in_time_the_hooks_say_nothing_of_the_library() {
+    let w = crate::fakes::world("schema_version: 8\n");
+    let setup = w.setup.with_hook_library(Box::new(NoDaemon));
+    assert_eq!(
+        setup.session_start("claude-code", "{}").unwrap(),
+        "context=;notice=\n"
+    );
+    assert_eq!(
+        setup
+            .skill_mates("claude-code", r#"{"skill":"admit"}"#)
+            .unwrap(),
+        "context=;notice=\n"
+    );
+}
+
+#[test]
+fn test_a_listed_skill_s_bundle_is_its_name_before_skills() {
+    let listed = daemon_proto::v1::ListSkillsResponse {
+        skills: vec![
+            daemon_proto::v1::Skill {
+                name: "projects/p/remotes/acme/bundles/rules/skills/admit".to_string(),
+                tags: vec!["ctxloom:link_id=x".to_string()],
+                ..daemon_proto::v1::Skill::default()
+            },
+            daemon_proto::v1::Skill {
+                name: "not a skill's name".to_string(),
+                ..daemon_proto::v1::Skill::default()
+            },
+        ],
+        next_page_token: String::new(),
+    };
+    assert_eq!(
+        crate::hook_skills(&listed),
+        vec![crate::HookSkill {
+            name: "admit".to_string(),
+            bundle: "projects/p/remotes/acme/bundles/rules".to_string(),
+            tags: vec!["ctxloom:link_id=x".to_string()],
+        }]
+    );
+}
+
+// Owner ruling 2026-11-17 (U2 part 2's escalations): a skill's mates are
+// matched on its SKILL.md frontmatter `name:` (the `Skill`'s
+// `display_name`), as before the hooks read through the daemon, so a skill
+// whose directory and frontmatter name differ is still matched by the name
+// the engine reports.
+#[test]
+fn test_mates_are_matched_by_the_frontmatter_name_not_the_directory() {
+    let mut owned = crate::fakes::bundles();
+    owned[0].1.extend([
+        (
+            "skills/admit-dir/SKILL.md",
+            "---\nname: admit-renamed\ndescription: Admit.\n---\nA\n",
+        ),
+        (
+            "skills/admit-dir/.meta.yaml",
+            "tags: [ctxloom:link_id=pair]\n",
+        ),
+        (
+            "skills/mate-dir/SKILL.md",
+            "---\nname: mate-renamed\ndescription: Mate.\n---\nM\n",
+        ),
+        (
+            "skills/mate-dir/.meta.yaml",
+            "tags: [ctxloom:link_id=pair]\n",
+        ),
+    ]);
+    let w = crate::fakes::world_of(
+        CONFIG,
+        owned,
+        vec![Box::new(crate::fakes::Engine::all("claude-code"))],
+    );
+    let out = w
+        .setup
+        .skill_mates("claude-code", r#"{"skill":"admit-renamed"}"#)
+        .unwrap();
+    assert_eq!(
+        out,
+        "context=Skill admit-renamed completed; linked skills not yet invoked this session: mate-renamed;notice=\n"
+    );
+}
+
+#[test]
+fn test_a_listed_skill_is_judged_by_its_display_name_else_its_id() {
+    let listed = daemon_proto::v1::ListSkillsResponse {
+        skills: vec![
+            daemon_proto::v1::Skill {
+                name: "projects/p/bundles/demo/skills/admit-dir".to_string(),
+                display_name: "admit".to_string(),
+                ..daemon_proto::v1::Skill::default()
+            },
+            daemon_proto::v1::Skill {
+                name: "projects/p/bundles/demo/skills/plain".to_string(),
+                ..daemon_proto::v1::Skill::default()
+            },
+        ],
+        next_page_token: String::new(),
+    };
+    let names: Vec<String> = crate::hook_skills(&listed)
+        .into_iter()
+        .map(|skill| skill.name)
+        .collect();
+    assert_eq!(names, ["admit", "plain"]);
+}

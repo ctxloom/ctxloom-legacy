@@ -400,7 +400,7 @@ impl ChildHomes for Homes {
             return Err(format!("{key} is held"));
         }
         Ok(run_ports::HeldLock::new(
-            format!("{project_dir}/.ctxloom/sessions/{harp}.lock"),
+            format!("{project_dir}/.ctxloom/sessions/{harp}/session.lock"),
             HeldSession(Arc::clone(&self.1), key),
         ))
     }

@@ -66,7 +66,7 @@ pub use host::{
     is_absolute, search_path_led_by, search_path_separator, session_profile, WINDOWS,
     WINDOWS_PROFILE_VARIABLES, WINDOWS_STARTUP_VARIABLES,
 };
-pub use infrastructure::{Code, Infrastructure, DEAD_LETTERED};
+pub use infrastructure::{Code, Infrastructure, DEAD_LETTERED, DIAGNOSED};
 pub use launch::{Launch, LaunchAt, LaunchKind, Stdio, StopPolicy, STOP_GRACE, STOP_SIGNAL};
 pub use launcher::{
     Exit, LaunchEvent, LaunchFailure, Limits, RunnerLauncher, Running, TurnCommand, TurnLaunch,

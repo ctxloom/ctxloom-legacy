@@ -224,29 +224,33 @@ fn test_every_engine_the_build_names_is_registered() {
 #[test]
 fn test_a_library_command_is_run_over_the_home() {
     let world = World::new("library");
-    let (code, out, err) = run_line(&mut world.commands(), &["bundle", "list"]);
-    assert_eq!((code, out.as_str(), err.as_str()), (0, "{}\n", ""));
+    // A verb still in process (the library's reads are the daemon's since
+    // step 10a U2, and a unit test starts no daemon; `agent default` is a
+    // write's verb, its bare form the default it would change).
+    let (code, out, err) =
+        try_line(&mut world.commands(), Format::Text, &["agent", "default"]).unwrap();
+    assert_eq!(
+        (code, out.as_str(), err.as_str()),
+        (0, "No default agent set.\n", "")
+    );
 }
 
 #[test]
-fn test_a_setup_command_is_run_over_the_home() {
+// Step 10b U9: `clean` is a daemon write (`Clean`), never run in process:
+// with no daemon to be had (this world has none), it fails and takes
+// nothing. Its targets' paths are reclaim-application's to join.
+fn test_clean_asks_the_daemon_and_takes_nothing_without_one() {
     let world = World::new("setup");
-    let (code, out, _) = run_line(&mut world.commands(), &["clean"]);
-    assert_eq!(code, 0);
-    assert!(out.contains("\"applied\": false"), "{out}");
-    // The target below the home's app dir, joined as the platform joins it
-    // (owner ruling 2026-11-12); in JSON, where a Windows path's `\` is
-    // escaped.
-    let path = world
-        .dir
-        .join("home")
-        .join(".ctxloom")
-        .join("cache")
-        .join("bundles")
-        .display()
-        .to_string()
-        .replace('\\', "\\\\");
-    assert!(out.contains(&format!("\"path\": \"{path}\"")), "{out}");
+    let cached = world.dir.join("home/.ctxloom/cache/bundles/kept.txt");
+    crate::fixtures::mkdirs(cached.parent().expect("a directory"));
+    crate::fixtures::put_mode(&cached, "cached", 0o644);
+    let failed = try_line(&mut world.commands(), Format::Json, &["clean", "--yes"]);
+    let Err(failure) = failed else {
+        panic!("clean ran in process")
+    };
+    let code = angzarr_diagnostic::Diagnostic::code(failure.cause.as_ref()).to_string();
+    assert!(code.starts_with("daemon-"), "{code}");
+    assert!(crate::fixtures::exists(&cached), "nothing taken");
 }
 
 // auth.feature, over the process's own environment.
@@ -278,7 +282,9 @@ fn test_doctor_fails_without_the_token_and_passes_with_it() {
 #[test]
 fn test_a_dependency_command_is_run_over_the_home() {
     let world = World::new("deps");
-    let (code, out, _) = run_line(&mut world.commands(), &["remote", "list"]);
+    // A verb still in process (`remote list` and `deps list` are the
+    // daemon's since step 10a U2, and a unit test starts no daemon).
+    let (code, out, _) = run_line(&mut world.commands(), &["deps", "check"]);
     assert_eq!(code, 0);
     assert!(!out.is_empty());
 }

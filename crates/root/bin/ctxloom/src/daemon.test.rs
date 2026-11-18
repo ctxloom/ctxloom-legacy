@@ -779,6 +779,53 @@ fn a_daemon_that_holds_the_instance_lock_but_does_not_answer_is_not_serving() {
     let _ = daemon.wait();
 }
 
+// The daemon cluster's cap (owner ruling, 2026-11-18): a client whose
+// spawned daemon cannot start stops waiting once that daemon has exited.
+// It used to wait out all of its spawn wait (the wiring's `SPAWN_WAIT`, 8 s)
+// for a daemon that had died at once, so it could not finish under it.
+#[test]
+fn a_command_whose_daemon_cannot_start_fails_without_waiting_out_its_spawn_wait() {
+    if !files::runs_scripts() {
+        return;
+    }
+    const SPAWN_WAIT: Duration = Duration::from_secs(8);
+    let world = World::new();
+    let daemon_dir = world.project.home().join(".ctxloom/daemon");
+    assert!(!files::exists(&daemon_dir), "a fresh home");
+    // A file where the daemon's directory goes: no daemon can start.
+    files::put(&daemon_dir, "not a directory");
+    let began = Instant::now();
+    let ran = world.run(&["bundle", "list"]);
+    let took = began.elapsed();
+    assert_eq!(ran.code, 10, "{}", ran.said());
+    assert!(
+        ran.said().contains("no ctxloom daemon could be started"),
+        "{}",
+        ran.said()
+    );
+    assert!(took < SPAWN_WAIT, "it waited {took:?}");
+}
+
+// The same ruling: `daemon serve` that finds another daemon holding the
+// single-instance lock declines (20), which its spawner reads as another
+// daemon to wait for; the one that serves goes on serving.
+#[test]
+fn a_daemon_that_finds_another_holding_the_lock_declines() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let world = World::new();
+    let (mut daemon, _) = served(&world);
+    let mut second = world
+        .project
+        .start_with(&ENV, &["daemon", "serve", "--idle-seconds", "30"]);
+    let code = exited_within(&mut second, Duration::from_secs(30));
+    assert_eq!(code, Some(20), "{}", world.log());
+    assert!(world.serving(), "the first still serves");
+    let _ = world.run(&["daemon", "stop"]);
+    let _ = daemon.wait();
+}
+
 // The owner's ruling of 2026-11-17: a daemon never makes a file in its home
 // again once started. One whose discovery file is removed exits, and does
 // not advertise itself again; the next command starts a fresh one.

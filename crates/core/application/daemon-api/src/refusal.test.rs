@@ -5,6 +5,7 @@ use angzarr_embedded::Any;
 use daemon_proto::v1;
 
 use super::{rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection};
+use crate::CallError;
 
 fn code_of(refusal: &Any) -> String {
     rejection_of(refusal)
@@ -253,5 +254,159 @@ fn the_diagnostics_display_their_code_and_args() {
     assert_eq!(
         said(&keeps),
         "isolation-application-keeps-session harp=amber spared=1 skipped=2"
+    );
+}
+
+// Step 10a U2: a library read's refusal is the library domain's own typed
+// refusal, under its message's status, and the client maps it back by its
+// type to the same rejection (NotInGit, LibraryIgnored and PlanRejected:
+// what a read refuses); every rejection packs.
+#[test]
+fn a_library_refusal_travels_as_the_domains_own_and_comes_back_by_its_type() {
+    use library_tree::LibraryTreeRejection as Why;
+    let read = [
+        Why::NotInGit {
+            root: "/work/demo".to_string(),
+        },
+        Why::LibraryIgnored {
+            source: ".gitignore".to_string(),
+            line: 2,
+            pattern: ".ctxloom/".to_string(),
+        },
+        Why::PlanRejected {
+            code: "library-application-profile-unknown".to_string(),
+            args: std::collections::BTreeMap::from([("name".to_string(), "x".to_string())]),
+        },
+    ];
+    for rejection in read {
+        let packed = crate::library_refusal(&rejection);
+        assert_eq!(packed.code, not_in_git_status(), "{rejection:?}");
+        assert_eq!(
+            crate::rejection_of(&packed.refusal),
+            Some(crate::Rejection::Library(rejection.clone()))
+        );
+        let called = CallError::Refused(crate::Rejection::Library(rejection.clone()));
+        assert_eq!(called.code(), rejection.code());
+        assert_eq!(
+            exit_code::ExitClass::exit(&called),
+            exit_code::Exit::REFUSED
+        );
+    }
+    for rejection in [
+        Why::TreeInMotion {
+            motion: library_tree::Motion::Merging,
+            root: "/r".to_string(),
+        },
+        Why::PlanStale {
+            path: "p".to_string(),
+            seen: 1,
+            now: 2,
+        },
+        Why::ResourceExists {
+            path: "p".to_string(),
+        },
+        Why::NoSuchResource {
+            path: "p".to_string(),
+        },
+        Why::BuiltinReadOnly {
+            bundle: "ctxloom".to_string(),
+        },
+    ] {
+        let packed = crate::library_refusal(&rejection);
+        assert!(
+            packed.refusal.type_url.contains("ctxloom.library.v1."),
+            "{packed:?}"
+        );
+    }
+}
+
+/// The status `library_tree::NotInGit` declares, as the gRPC code: what
+/// every read refusal of the library domain is answered under.
+pub(crate) fn not_in_git_status() -> i32 {
+    use library_tree::Refusal;
+    angzarr_embedded::angzarr_router::error::GrpcCode::from(
+        <library_tree::NotInGit as Refusal>::REFUSAL_STATUS,
+    ) as i32
+}
+
+/// The code of the cause [`a_library_decline_is_refused_and_a_failure_failed`]
+/// wraps.
+fn cause_code() -> String {
+    library_application::AppError::NotViewable {
+        dir: String::new(),
+        path: String::new(),
+    }
+    .code()
+    .to_string()
+}
+
+// Step 10a U2 (E5): a library read's decline is its typed refusal; an
+// adapter's failure is a failure, said in its own words (step 10b U9: its
+// code AND args, so a served import of a source that is not there names
+// it, as in process).
+#[test]
+fn a_library_decline_is_refused_and_a_failure_failed() {
+    let declined = super::app_error(&library_application::AppError::NoBundlesDir);
+    let ApiError::Refused(refused) = declined else {
+        panic!("{declined:?}");
+    };
+    assert!(
+        refused.refusal.type_url.ends_with("LibraryNoBundlesDir"),
+        "{}",
+        refused.refusal.type_url
+    );
+    let cause = library_application::AppError::NotViewable {
+        dir: "nowhere".to_string(),
+        path: "x".to_string(),
+    };
+    let failed = super::app_error(&library_application::AppError::Cause(Box::new(cause)));
+    let ApiError::Diagnosed { code, args } = &failed else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(code, &cause_code());
+    assert!(args.iter().any(|arg| arg.value == "nowhere"), "{args:?}");
+}
+
+// A deps error that is no read model's decline, but declines, rides as
+// `LibraryDeclined` with its own code; one that failed is said in its own
+// words.
+#[test]
+fn a_deps_decline_rides_as_its_cause_and_a_failure_keeps_its_words() {
+    let declined = super::deps_error(&deps_application::AppError::DefaultNeedsName);
+    let ApiError::Refused(refused) = declined else {
+        panic!("{declined:?}");
+    };
+    assert!(
+        refused
+            .refusal
+            .type_url
+            .ends_with("ctxloom.v1.LibraryDeclined"),
+        "{}",
+        refused.refusal.type_url
+    );
+    let failed = super::deps_error(&deps_application::AppError::DiscoverFailed);
+    assert!(matches!(failed, ApiError::Diagnosed { .. }), "{failed:?}");
+}
+
+// An etag that is not a number is told in the daemon's own words, exit 20
+// (a decline), never a failure.
+#[test]
+fn an_etag_that_is_not_a_number_is_the_daemons_refusal() {
+    let invalid = Any::from_msg(&v1::EtagInvalid {
+        etag: "abc".to_string(),
+    })
+    .unwrap();
+    let rejection = rejection_of(&invalid);
+    assert_eq!(
+        rejection,
+        Some(Rejection::Api(ApiRejection::EtagInvalid {
+            etag: "abc".to_string()
+        }))
+    );
+    assert_eq!(
+        exit_code::ExitClass::exit(&ApiRejection::EtagInvalid {
+            etag: "abc".to_string()
+        }),
+        exit_code::Exit::REFUSED
     );
 }

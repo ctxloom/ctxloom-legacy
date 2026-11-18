@@ -128,7 +128,16 @@ fn test_create_refuses_an_existing_config_and_leaves_it_byte_for_byte_alone() {
 // the fix
 #[test]
 fn test_editing_a_project_with_no_config_says_so_and_names_the_fix() {
-    let project = Project::bare();
+    // Step 10b U3: `config edit` is the daemon's write, which a directory
+    // outside git is refused first (U12, exit 20); in git, the use case's
+    // refusal is the scenario's.
+    let outside = Project::bare();
+    outside
+        .run(&["config", "edit"])
+        .fails()
+        .contains("library-tree-not-in-git");
+    outside.file_is_absent(CONFIG);
+    let project = Project::bare_in_git();
     project
         .run(&["config", "edit"])
         .fails()
@@ -175,6 +184,18 @@ fn test_edit_opens_the_config_in_the_editor_of_the_environment() {
     project
         .run_with(&[("EDITOR", "false")], &["config", "edit"])
         .fails();
+    // A config that does not load can still be mended (step 10b U3: the
+    // daemon's write reads it as text, through the editor and back).
+    project.write(CONFIG, "schema_version: 9\nagents: [unclosed\n");
+    let mend = project.dir().join("mend.sh");
+    files::put_program(&mend, "#!/bin/sh\nprintf 'schema_version: 9\\n' > \"$1\"\n");
+    project
+        .run_with(
+            &[("EDITOR", mend.to_str().expect("utf-8"))],
+            &["config", "edit"],
+        )
+        .succeeds();
+    assert_eq!(project.read(CONFIG).as_deref(), Some("schema_version: 9\n"));
     project
         .run_with(
             &[("EDITOR", editor)],

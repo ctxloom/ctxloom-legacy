@@ -1,31 +1,11 @@
 //! The `remote` noun's answers as their API messages (OD-40, B4; design
-//! §5.10): the registry's resources and its two custom methods, browse and
-//! discover.
+//! §5.10): the registry's resources and its custom method discover (browse
+//! is the daemon's `BrowseRemote`, library-api's `deps::browsed`).
 
 use daemon_proto::v1;
-use deps_application::{
-    Browsed, Created, DefaultSet, Discovered, EditedRemote, RemoteListing, RemoveResult,
-};
+use deps_application::{Created, DefaultSet, Discovered, EditedRemote, RemoveResult};
 
-use crate::api::{count, item_kind, remote_name};
-
-/// `remote list`: `ListRemotesResponse`, each remote saying whether it is
-/// the default (OQ-7: printed true or false).
-pub(crate) fn listed(parent: &str, listing: &RemoteListing) -> v1::ListRemotesResponse {
-    v1::ListRemotesResponse {
-        remotes: listing
-            .remotes
-            .iter()
-            .map(|row| v1::Remote {
-                name: remote_name(parent, &row.name),
-                url: row.url.clone(),
-                default: Some(row.name == listing.default),
-                ..Default::default()
-            })
-            .collect(),
-        ..v1::ListRemotesResponse::default()
-    }
-}
+use crate::api::{count, remote_name};
 
 /// `remote create`: `CreateRemoteResponse`, the remote with the forge it was
 /// bound to (`forge`, as asked); a clone that failed is a notice alone.
@@ -101,26 +81,6 @@ pub(crate) fn defaulted(parent: &str, set: &DefaultSet) -> v1::SetDefaultRemoteR
         },
         applied: Some(true),
         ..v1::SetDefaultRemoteResponse::default()
-    }
-}
-
-/// `remote show`: `BrowseRemoteResponse`; a browsed bundle is not installed,
-/// so it has no resource name (OQ-B2), only its ID and its pull reference.
-pub(crate) fn browsed(parent: &str, browsed: &Browsed) -> v1::BrowseRemoteResponse {
-    v1::BrowseRemoteResponse {
-        remote: remote_name(parent, &browsed.remote),
-        url: browsed.url.clone(),
-        items: browsed
-            .items
-            .iter()
-            .map(|item| v1::BrowsedItem {
-                item: item.name.clone(),
-                kind: item_kind(item.kind),
-                path: item.path.clone(),
-                pull_reference: item.pull_ref.clone(),
-            })
-            .collect(),
-        ..v1::BrowseRemoteResponse::default()
     }
 }
 

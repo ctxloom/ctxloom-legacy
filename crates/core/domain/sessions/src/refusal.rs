@@ -92,6 +92,9 @@ impl TryFrom<&TypedRefusal> for SessionRejection {
         if let Some(NotHolder { harp }) = refusal.object() {
             return Ok(SessionRejection::NotHolder { harp });
         }
+        if let Some(removal) = removal_rejection(refusal) {
+            return Ok(removal);
+        }
         if let Some(SessionUnknown { harp }) = refusal.object() {
             return Ok(SessionRejection::SessionUnknown { harp });
         }
@@ -130,6 +133,35 @@ impl TryFrom<&TypedRefusal> for SessionRejection {
         }
         daemon_rejection(refusal).ok_or(NotOurs)
     }
+}
+
+/// The rejection a refusal of a session's removal (O2, D18) is, by its type.
+fn removal_rejection(refusal: &TypedRefusal) -> Option<SessionRejection> {
+    if let Some(crate::SessionLive { harp, reason }) = refusal.object() {
+        return Some(SessionRejection::SessionLive { harp, reason });
+    }
+    if let Some(crate::SessionLockHeld { harp, lock }) = refusal.object() {
+        return Some(SessionRejection::SessionLockHeld { harp, lock });
+    }
+    if let Some(crate::SessionKept { harp }) = refusal.object() {
+        return Some(SessionRejection::SessionKept { harp });
+    }
+    if let Some(crate::WithinRetention { harp, detail }) = refusal.object() {
+        return Some(SessionRejection::WithinRetention { harp, detail });
+    }
+    if let Some(crate::KeepsSession {
+        harp,
+        spared,
+        skipped,
+    }) = refusal.object()
+    {
+        return Some(SessionRejection::KeepsSession {
+            harp,
+            spared,
+            skipped,
+        });
+    }
+    None
 }
 
 /// The rejection a refusal of the daemon's commands (D28) is, by its type.

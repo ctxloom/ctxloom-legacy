@@ -53,9 +53,10 @@ library-application-no-context-exclusive = --no-context gives the engine no cont
 library-application-no-context-exclusive-fix = drop { $other }, or run without --no-context
 library-application-distill-failed = distilling { $reference } failed: agent run: { $cause }; nothing was written, so it keeps the distilled form it had (or none)
 library-application-distill-failed-fix = check the engine can run a one-shot (`ctxloom run --one-shot --no-context hello`), then distill it again
-library-application-no-distiller = no distiller is wired into this build
 library-application-distill-truncated = the distiller's answer for { $reference } is { $answer } characters, under 2% of its source's { $source }: rejecting as truncated; it keeps the distilled form it had (or none)
 library-application-distill-truncated-fix = distill it again, or on another model
+library-application-distill-source-moved = the source of { $reference } changed while it was being distilled, so the answer, which distills what it was before, was not written; it keeps the distilled form it had (or none)
+library-application-distill-source-moved-fix = distill it again, now that its source is as it is to stay
 library-application-saved-command = failed to load command: command not found: { $name }
 library-application-workspace = invalid workspace "{ $value }": workspace is one of none or worktree
 library-application-run-needs-dry-run = run launches the engine for a session, which this build does not do yet: run it with --one-shot for one turn, or with --dry-run to see what a launch would carry
@@ -99,6 +100,8 @@ library-application-notice-mcp-server-shadowed-fix = give your server another na
 # Step 8 texts.md §3 (D14): accepted verbatim (owner, 2026-11-16; reviewed before release).
 library-application-notice-prompt-untrusted = This project's own `ctxloom` bundle replaces ctxloom's { $prompt } prompt, but you have not trusted this project, so ctxloom used its built-in { $prompt } prompt.
 library-application-notice-prompt-untrusted-fix = Look at what trusting the project allows with `ctxloom trust`, then say yes to use the project's own prompts.
+library-application-notice-untrusted-setting = { $path } in { $file } is held back until you trust this project, so this answer is as if it were not set
+library-application-notice-untrusted-setting-fix = see what trusting the project allows with `ctxloom trust`, then say yes; or set it in your home config ({ $home_file })
 library-application-notice-checkout-left = the session's checkout { $path } (branch { $branch }) was left in place: { $reason }
 library-application-notice-checkout-left-fix = commit or discard its work; the session's next run re-enters it, and `ctxloom session remove` takes it once it is clean
 library-application-stale-distilled = the distilled form of the { $kind } { $reference } is stale: it does not match its source as it is now, or records no digest of it, so the original was used
@@ -121,6 +124,13 @@ library-application-write-bad-id-fix = choose a name such as "house-rules": lowe
 library-application-write-item-not-found = { $kind } not found: { $name }
 library-application-write-empty-edit = refusing to overwrite { $kind } "{ $name }" with an empty buffer — the editor returned no content (crash, truncated write, or a wrapper that never saved); the item is unchanged
 library-application-write-export-needs-dest = either an output file or a destination directory must be specified
+library-application-write-move-destination-exists = bundle already exists at destination: { $dest }; a move never replaces it
+# DRAFT (step 10b, owner 2026-11-18, night: a move onto a bundle there is
+# refused, `--force` or not; the fix names the removal, then the move).
+library-application-write-move-destination-exists-fix = remove the bundle there first (`ctxloom bundle remove { $bundle }` in { $dir }), then move it again
+library-application-write-move-destination-itself = destination is the bundle's own directory: { $dest }
+library-application-write-export-destination-exists = { $path } is already there; nothing was exported
+library-application-write-export-destination-exists-fix = export to a path that is not there, or move what is there aside first
 library-application-write-export-exists = { $path } already exists (pass --force to overwrite)
 library-application-write-import-exists = { $what } already exists: { $path } (use --force to overwrite)
 library-application-write-not-a-bundle = { $path } is not a bundle: it holds no bundle.yaml

@@ -26,7 +26,8 @@ pub struct Flags {
     /// `--no-companions`.
     pub no_companions: bool,
     /// Whether the user trusts the project (step 8 U2, ruling 142): the
-    /// daemon's verdict, from its trust index, for a launch it makes. Only
+    /// daemon's verdict, from its trust index, for a launch it makes and
+    /// every library read it serves (step 10a U7, D7). Only
     /// then does the project layer's own project-only settings (ruling 46's
     /// keys) apply; otherwise they are held back, said, and named in
     /// [`Config::held_back`]. Never the client's to say: no flag or variable
@@ -65,7 +66,8 @@ pub enum LegacyGo {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub value: Value,
-    /// What the files and overrides set, without the shipped registry.
+    /// What the layers set, home and project merged (`config show --raw`):
+    /// no override of the environment's or the flags', nothing filled in.
     pub raw: Value,
     pub source: Source,
     /// The project-only settings the project layer said and an untrusted
@@ -94,13 +96,15 @@ pub fn load(
     for layer in &layers {
         let mut value = read_layer(layer, notices)?;
         if project_path.as_deref() == Some(layer.path.as_str()) && !flags.trusted {
+            // Step 10a U7 (D7): held back until the user trusts the
+            // project, and said by its typed notice.
             for (key, _) in engines::strip_project_only(&mut value) {
                 held_back.push(key.clone());
-                notices.push(Notice::text(format!(
-                    "{key} in {} is ignored: a project's config cannot set it (ruling 46); put it in your home config ({})",
-                    layer.path,
-                    files.layer_path(Scope::Home)
-                )));
+                notices.push(Notice::UntrustedSetting {
+                    path: key,
+                    file: layer.path.clone(),
+                    home_file: files.layer_path(Scope::Home),
+                });
             }
         }
         let mut home_only = Vec::new();
@@ -129,10 +133,12 @@ pub fn load(
         return Err(refused(&violations));
     }
     let merged = layer::merge_layers(&values);
+    // `--raw` (GetConfig's SET): what the layers set, home and project
+    // merged, before any override or stamp (owner ruling 2026-11-17).
+    let raw = merged.clone();
     let merged = override_with(merged, environ, flags, notices)?;
     let mut merged = reduced_when_unreadable(merged, shape_failure);
     stamp(&mut merged);
-    let raw = merged.clone();
     Ok(Config {
         value: merged,
         raw,

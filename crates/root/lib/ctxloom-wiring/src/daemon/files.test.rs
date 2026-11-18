@@ -7,7 +7,7 @@ use run_ports::{Discovery, PublicCert, Token};
 
 use daemon_application::HandOff;
 
-use super::{instance_lock_path, DaemonFiles};
+use super::{instance_lock_path, DaemonFiles, Unheld};
 use crate::fixtures;
 
 fn home() -> (Rooted, std::path::PathBuf) {
@@ -29,6 +29,37 @@ fn sample() -> Discovery {
         bearer: Token::from_bytes([7; 32]),
         home: "/home/u".to_string(),
     }
+}
+
+// The daemon cluster's cap (owner ruling, 2026-11-18): a lock another holds
+// is told apart from one that cannot be taken at all (its directory cannot
+// be made), so a daemon that cannot start says so, and its spawner stops
+// waiting for it.
+#[test]
+fn a_lock_another_holds_is_told_apart_from_one_that_cannot_be_taken() {
+    let (root, home) = home();
+    let files = files(&root, &home);
+    let _held = files
+        .take_instance(Duration::ZERO)
+        .expect("the first holds it");
+    assert_eq!(
+        files.take_instance(Duration::ZERO).err(),
+        Some(Unheld::Held {
+            lock: instance_lock_path(&home, None).display().to_string()
+        }),
+        "a second finds it held"
+    );
+    let (root, home) = self::home();
+    fixtures::mkdirs(home.join(".ctxloom"));
+    fixtures::put_mode(home.join(".ctxloom/daemon"), "not a directory", 0o644);
+    let blocked = self::files(&root, &home);
+    assert!(
+        matches!(
+            blocked.take_instance(Duration::ZERO),
+            Err(Unheld::Failed(_))
+        ),
+        "a lock whose directory cannot be made is not held by anyone"
+    );
 }
 
 #[test]

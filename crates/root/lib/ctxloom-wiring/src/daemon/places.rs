@@ -4,9 +4,9 @@
 //! `worktree-git` run in the caller's environment; its configuration, read
 //! from its registered root as a command in it reads it), and the daemon's
 //! ONE store, purged stream by stream (`sessions_application::purge`, head
-//! guarded). No second connection to the store is opened.
+//! guarded), and the atomic operations a removal's trash is made by
+//! (content-fs's, O2). No second connection to the store is opened.
 
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,15 +37,11 @@ pub(crate) struct ProjectPlaces {
 impl ProjectPlaces {
     /// The caller's environment `env` (S7), as a process at `dir` sees it.
     fn snapshot(&self, dir: &str, env: &[(String, String)]) -> Arc<EnvSnapshot> {
-        let vars: Vec<(OsString, OsString)> = env
-            .iter()
-            .map(|(name, value)| (name.into(), value.into()))
-            .collect();
-        Arc::new(EnvSnapshot::from_parts(
+        Arc::new(super::caller_env(
             os::host().flavor(),
-            Ok(PathBuf::from(dir)),
-            self.temp.clone(),
-            vars,
+            &self.temp,
+            (dir, None),
+            pairs(env),
         ))
     }
 }
@@ -82,13 +78,13 @@ impl daemon_api::Places for ProjectPlaces {
     fn settings(&self, root: &str, env: &[(String, String)]) -> Box<dyn SweepConfig + Send> {
         // The project's layered configuration as a command run at its
         // registered root finds it, under this daemon's home.
+        let wiring = super::caller_wiring(&self.home, &self.temp, (root, Some(root)), pairs(env));
         let mut env: Vec<(String, String)> = env
             .iter()
             .filter(|(name, _)| name != "CTXLOOM_ROOT")
             .cloned()
             .collect();
         env.push(("CTXLOOM_ROOT".to_string(), root.to_string()));
-        let wiring = Wiring::at(self.snapshot(root, &env), self.home.clone());
         Box::new(SweepSettings::new(
             Arc::new(ConfigFilesFs::new(
                 Arc::clone(&self.fs),
@@ -107,6 +103,77 @@ impl daemon_api::Places for ProjectPlaces {
             seconds: i64::try_from(now.as_secs()).unwrap_or(i64::MAX),
             nanos: i32::try_from(now.subsec_nanos()).unwrap_or(0),
         }
+    }
+
+    fn operations(&self) -> Arc<dyn ctxloom_ports::Operations> {
+        // A removal's trash is its checkout's own (O2, QUESTIONS 8), made
+        // by the same atomic operations as a library write's.
+        Arc::new(content_fs::TreeOperations::new(Arc::clone(&self.fs)))
+    }
+}
+
+/// A tree's regenerable cache (step 10b U9, `clean`): cache-files' over
+/// this process's filesystem, its `.ctxloom` the tree's directory.
+pub(crate) struct TreeCaches(pub(crate) Arc<dyn Fs>);
+
+impl daemon_api::Caches for TreeCaches {
+    fn cache(&self, tree: &str) -> Arc<dyn ctxloom_ports::ProjectCache> {
+        Arc::new(cache_files::CacheFiles::new(
+            Arc::clone(&self.0),
+            std::path::Path::new(tree),
+        ))
+    }
+}
+
+/// `env` as name and value pairs.
+fn pairs(env: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
+    env.iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+}
+
+/// git as a library read's caller runs it (step 10a U2, protos.md §2): on
+/// the caller's `PATH`, in the caller's environment (git-cli scrubs its
+/// repository variables), over this process's filesystem; and the home's
+/// library, `<home>/.ctxloom`, when there is one.
+pub(crate) struct CallerGits {
+    pub(crate) fs: Arc<dyn Fs>,
+    pub(crate) home: PathBuf,
+    pub(crate) temp: PathBuf,
+}
+
+impl library_api::Observers for CallerGits {
+    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
+        let home = self.home.display().to_string();
+        let snapshot =
+            super::caller_env(os::host().flavor(), &self.temp, (&home, None), pairs(env));
+        Box::new(library_git::GitTrees::new(
+            Arc::clone(&self.fs),
+            Arc::new(snapshot),
+        ))
+    }
+
+    fn home_tree(&self) -> Option<String> {
+        let app = self.home.join(".ctxloom");
+        let is_dir = self
+            .fs
+            .metadata(&app)
+            .is_ok_and(|meta| meta.kind == file_system::Kind::Dir);
+        is_dir.then(|| app.display().to_string())
+    }
+}
+
+/// Each checkout's harp, in its tree's `state/checkout`: minted at the
+/// tree's first read (L2), read back after.
+pub(crate) struct TreeHarps(pub(crate) Arc<dyn Fs>);
+
+impl library_api::CheckoutHarps for TreeHarps {
+    fn harp(&self, tree: &str) -> Result<String, ctxloom_ports::Failure> {
+        crate::checkout::mint_checkout_harp(
+            self.0.as_ref(),
+            std::path::Path::new(tree),
+            crate::session_name,
+        )
+        .map_err(|e| Box::new(e) as ctxloom_ports::Failure)
     }
 }
 
@@ -132,56 +199,72 @@ impl daemon_api::Purges for StorePurges {
 #[path = "places.test.rs"]
 mod tests;
 
-/// A project's context, assembled in the daemon (slice 3 step 6, the
-/// smallest piece of T13): the library composed as a process at the
-/// project's REGISTERED root would compose it, in the caller's environment
-/// (S7) with ctxloom's `home`; a fragment named that the project lacks is
-/// said as a notice, never a refusal.
-pub(crate) struct ProjectAssemblies {
+/// The library a read is answered from (step 10a U2, E1): opened as a
+/// process at the caller's directory, in the caller's environment with
+/// ctxloom's `home` as the platform's home variable, would open it, the
+/// project's installed remote bundles in its catalog.
+pub(crate) struct ProjectLibraries {
     pub(crate) home: PathBuf,
     pub(crate) temp: PathBuf,
 }
 
-impl daemon_api::Assemblies for ProjectAssemblies {
-    fn assemble(
+impl ProjectLibraries {
+    /// A process at `dir` in the caller's environment `env`.
+    fn at(&self, dir: &str, env: &[(String, String)]) -> Wiring {
+        super::caller_wiring(&self.home, &self.temp, (dir, None), pairs(env))
+    }
+}
+
+impl daemon_api::Libraries for ProjectLibraries {
+    fn root(&self, dir: &str, env: &[(String, String)]) -> Option<String> {
+        if dir.is_empty() {
+            return None;
+        }
+        let (_, app) = self.at(dir, env).locate();
+        if !matches!(app.source, ctxloom_ports::Source::Project) {
+            return None;
+        }
+        app.path.parent().map(|root| root.display().to_string())
+    }
+
+    fn read(
         &self,
-        root: &str,
-        request: &daemon_proto::v1::AssembleContextRequest,
-    ) -> Result<daemon_proto::v1::AssembledContext, ApiError> {
-        let snapshot = super::per_call_env(
-            os::host().flavor(),
-            (root, &self.temp, &self.home),
-            request
-                .env
-                .iter()
-                .flat_map(|env| env.vars.iter())
-                .map(|var| (var.name.as_str(), var.value.as_str())),
-        );
+        dir: &str,
+        env: &[(String, String)],
+        read: &mut dyn FnMut(&library_application::Library),
+    ) -> Result<(), ApiError> {
         let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
             detail: e.code().to_string(),
         };
-        let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| failed(&e))?;
-        let library = crate::library::build(&wiring, None).map_err(|e| failed(&e))?;
-        let globals = request.globals.clone().unwrap_or_default();
-        let flags = library_application::Flags {
-            degraded: globals.degraded,
-            config_set: globals.config_set,
-            no_companions: globals.no_companions,
-            trusted: false,
+        let at = if dir.is_empty() {
+            self.home.display().to_string()
+        } else {
+            dir.to_string()
         };
-        let asked = library_application::AssembleRequest {
-            profiles: request.profiles.clone(),
-            fragments: request.fragments.clone(),
-            tags: request.tags.clone(),
-            // For a session's `context_assemble` tool: its context rides the
-            // launch, where the server is offered (s3-Q5).
-            surface: library::premise::Surface::Launch,
+        let wiring = self.at(&at, env);
+        let deps = std::rc::Rc::new(crate::commands::build_deps(&wiring).map_err(|e| failed(&e))?);
+        let library = crate::library::build(&wiring, Some(deps)).map_err(|e| failed(&e))?;
+        read(&library);
+        Ok(())
+    }
+
+    fn read_deps(
+        &self,
+        dir: &str,
+        env: &[(String, String)],
+        read: &mut dyn FnMut(&deps_application::Deps),
+    ) -> Result<(), ApiError> {
+        let at = if dir.is_empty() {
+            self.home.display().to_string()
+        } else {
+            dir.to_string()
         };
-        let assembled = library
-            .assemble(&flags, &asked)
-            .result
-            .map_err(|e| failed(&e))?;
-        Ok(assembled_context(assembled))
+        let wiring = self.at(&at, env);
+        let deps = crate::commands::build_deps(&wiring).map_err(|e| ApiError::Failed {
+            detail: angzarr_diagnostic::Diagnostic::code(&e).to_string(),
+        })?;
+        read(&deps);
+        Ok(())
     }
 }
 
@@ -196,17 +279,12 @@ pub(crate) struct ProjectTrusts {
 
 impl daemon_api::Trusts for ProjectTrusts {
     fn settings(&self, root: &str) -> Result<Vec<daemon_proto::v1::TrustSetting>, ApiError> {
-        // Read as a process there would, with ctxloom's home as the
-        // platform's home variable (`per_call_env`) and nothing else.
-        let snapshot = super::per_call_env(
-            os::host().flavor(),
-            (root, &self.temp, &self.home),
-            std::iter::empty(),
-        );
+        // Read as a process there would, with ctxloom's home and nothing
+        // else of an environment.
+        let wiring = super::caller_wiring(&self.home, &self.temp, (root, Some(root)), []);
         let failed = |e: &dyn angzarr_diagnostic::Diagnostic| ApiError::Failed {
             detail: e.code().to_string(),
         };
-        let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| failed(&e))?;
         let library = crate::library::build(&wiring, None).map_err(|e| failed(&e))?;
         let held = library.trust_settings().map_err(|e| failed(&e))?;
         Ok(held
@@ -219,57 +297,6 @@ impl daemon_api::Trusts for ProjectTrusts {
     }
 }
 
-/// An assembly as the API's message: its context, the fragments it used,
-/// and a notice for each fragment or tag named that nothing holds.
-fn assembled_context(
-    assembled: library_application::Assembled,
-) -> daemon_proto::v1::AssembledContext {
-    use daemon_proto::v1;
-    let missing = |code: &str, name: &str, what: String| v1::Notice {
-        code: code.to_string(),
-        args: vec![v1::NeedArg {
-            name: "name".to_string(),
-            value: name.to_string(),
-        }],
-        text: what,
-    };
-    let mut notices: Vec<v1::Notice> = assembled
-        .missing_fragments
-        .iter()
-        .map(|name| {
-            missing(
-                "daemon-api-assembly-missing-fragment",
-                name,
-                format!("no fragment is named {name}"),
-            )
-        })
-        .collect();
-    notices.extend(assembled.missing_tags.iter().map(|name| {
-        missing(
-            "daemon-api-assembly-missing-tag",
-            name,
-            format!("no fragment is tagged {name}"),
-        )
-    }));
-    v1::AssembledContext {
-        tokens: 0,
-        fragments: assembled
-            .fragments_loaded
-            .iter()
-            .enumerate()
-            .map(|(at, fragment)| v1::AssembledFragment {
-                fragment: fragment.clone(),
-                form: if assembled.used.get(at).is_some_and(|u| u.distilled) {
-                    v1::assembled_fragment::Form::Distilled
-                } else {
-                    v1::assembled_fragment::Form::Original
-                } as i32,
-            })
-            .collect(),
-        profiles: assembled.profiles.clone(),
-        missing_fragments: assembled.missing_fragments.clone(),
-        missing_tags: assembled.missing_tags.clone(),
-        context: assembled.context,
-        notices,
-    }
-}
+#[cfg(test)]
+#[path = "reconcile_bench.test.rs"]
+mod reconcile_bench;

@@ -175,6 +175,9 @@ impl SessionIndex {
                 root: std::mem::take(&mut row.root),
                 git_common_dir: std::mem::take(&mut row.git_common_dir),
                 root_commit: std::mem::take(&mut row.root_commit),
+                // The index keeps no removal (O2): the daemon reads them
+                // from the project's stream.
+                removals: Default::default(),
             };
             sessions::fold_project(&mut state, ProjectEvent::from_any(event)?);
             *row = ProjectRow {

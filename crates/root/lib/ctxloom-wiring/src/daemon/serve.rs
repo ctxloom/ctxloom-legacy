@@ -38,7 +38,7 @@ use run_ports::{CertMint, CertNames, ChildObservation, Discovery, SessionRecords
 use runs_application::UserGate;
 use session_files::SessionDirs;
 
-use super::files::{DaemonFiles, Instance};
+use super::files::{DaemonFiles, Instance, Unheld};
 use crate::{InProcessCore, Projectors};
 
 /// How long a daemon starting waits for the single-instance lock.
@@ -87,6 +87,35 @@ fn said(say: &Say, line: &str) {
     (say.lock().unwrap_or_else(PoisonError::into_inner))(line);
 }
 
+/// Why the daemon did not serve to its end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unserved {
+    /// Another daemon held the single-instance lock for the whole of
+    /// [`INSTANCE_WAIT`]: that one serves (or is starting, or stopping).
+    Held { lock: String },
+    /// It could not start, or its run failed: why.
+    Failed(String),
+}
+
+impl From<String> for Unserved {
+    fn from(why: String) -> Unserved {
+        Unserved::Failed(why)
+    }
+}
+
+/// The single-instance lock, waited for within [`INSTANCE_WAIT`]; held by
+/// another, the daemon declines ([`Unserved::Held`]).
+fn instance(files: &DaemonFiles) -> Result<Instance, Unserved> {
+    files
+        .take_instance(INSTANCE_WAIT)
+        .map_err(|unheld| match unheld {
+            Unheld::Held { lock } => Unserved::Held { lock },
+            Unheld::Failed(why) => {
+                Unserved::Failed(format!("the single-instance lock cannot be taken: {why}"))
+            }
+        })
+}
+
 /// Run the daemon in this process until it exits: the instance held, served,
 /// advertised, swept, then ticking. `say` is its log.
 pub(crate) fn serve(
@@ -94,7 +123,7 @@ pub(crate) fn serve(
     place: Place,
     pace: Pace,
     say: Box<dyn FnMut(&str) + Send>,
-) -> Result<(), String> {
+) -> Result<(), Unserved> {
     let Place {
         stamp,
         home,
@@ -107,9 +136,7 @@ pub(crate) fn serve(
     } = place;
     let home = home.as_path();
     let files = DaemonFiles::with_instance(Arc::clone(&fs), home, instance_lock);
-    let Some(held) = files.hold_instance(INSTANCE_WAIT) else {
-        return Err("another daemon holds the single-instance lock".to_string());
-    };
+    let held = instance(&files)?;
     let say: Say = Arc::new(Mutex::new(say));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -168,7 +195,7 @@ pub(crate) fn serve(
         };
         let endpoint = own.endpoint.clone();
         said(&say, &format!("serving at {endpoint}"));
-        let scheduler = scheduler_over(&core, &kept, pace, &say);
+        let scheduler = scheduler_over(&core, &kept, (pace, &files), &say);
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
         let terminated = hear_terminate((&fs, home), &shared, &say);
@@ -224,7 +251,7 @@ pub(crate) fn serve(
     // test's daemon outlived its home 43 minutes; ruling 114). What is left
     // ends with the process.
     runtime.shutdown_timeout(RUNTIME_END);
-    served
+    served.map_err(Unserved::Failed)
 }
 
 /// How long the daemon's exit waits for its runtime's blocking tasks.
@@ -240,17 +267,49 @@ const SCHEDULER_END: Duration = Duration::from_secs(5);
 fn scheduler_over(
     core: &InProcessCore<SqliteStore>,
     kept: &Projectors,
-    pace: Pace,
+    (pace, files): (Pace, &DaemonFiles),
     say: &Say,
 ) -> crate::scheduling::Scheduler {
     let say = Arc::clone(say);
     crate::scheduling::start(
         core.share(),
         kept.due.clone().unwrap_or_default(),
-        Arc::new(crate::SystemClock),
+        scheduler_clock(files),
         pace.poll,
         Arc::new(move |line: &str| said(&say, line)),
     )
+}
+
+/// The scheduler's clock: the system's; under test-support, held while
+/// the daemon's `test-hold-alarms` is there ([`DaemonFiles::alarms_held`]).
+#[cfg(feature = "test-support")]
+fn scheduler_clock(files: &DaemonFiles) -> Arc<dyn scheduler_ports::Clock> {
+    Arc::new(HeldAlarms {
+        files: files.clone(),
+    })
+}
+
+/// The shipped scheduler's clock is the system's.
+#[cfg(not(feature = "test-support"))]
+fn scheduler_clock(_: &DaemonFiles) -> Arc<dyn scheduler_ports::Clock> {
+    Arc::new(crate::SystemClock)
+}
+
+/// The system's clock, standing at the instant a hold of the alarms names
+/// while it lasts (test-support).
+#[cfg(feature = "test-support")]
+struct HeldAlarms {
+    files: DaemonFiles,
+}
+
+#[cfg(feature = "test-support")]
+impl scheduler_ports::Clock for HeldAlarms {
+    fn now(&self) -> angzarr_embedded::Timestamp {
+        match self.files.alarms_held_at() {
+            Some(seconds) => angzarr_embedded::Timestamp { seconds, nanos: 0 },
+            None => scheduler_ports::Clock::now(&crate::SystemClock),
+        }
+    }
 }
 
 /// What runs for the daemon's life, ended once its loop returns and before
@@ -424,6 +483,30 @@ fn timed<E: run_ports::Edge>(launcher: Daemon<E>, pace: Pace) -> Daemon<E> {
 }
 
 /// The clock's seconds since the epoch, as the daemon's start says it.
+/// The clock a kept trash slot's age is told by (G12): now; under
+/// test-support, moved on by the whole days the daemon's own environment
+/// names in `CTXLOOM_TEST_CLOCK_OFFSET` (step 10b's harness, QUESTIONS 5:
+/// the step stops the daemon and starts the next with the offset).
+fn trash_clock(env: &process_env::EnvSnapshot) -> library_api::Clock {
+    let offset = clock_offset_days(env).saturating_mul(86_400);
+    Arc::new(move || seconds_now().saturating_add(offset))
+}
+
+/// The test-support clock offset, in whole days (none, or not a number: 0).
+#[cfg(feature = "test-support")]
+fn clock_offset_days(env: &process_env::EnvSnapshot) -> i64 {
+    env.non_empty(super::CLOCK_OFFSET_VARIABLE)
+        .and_then(|days| days.to_str())
+        .and_then(|days| days.trim().parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+/// The shipped daemon's clock is the system's.
+#[cfg(not(feature = "test-support"))]
+fn clock_offset_days(_: &process_env::EnvSnapshot) -> i64 {
+    0
+}
+
 fn seconds_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -499,19 +582,7 @@ async fn start(
     // The user bearer (T12): minted at each start, advertised in the
     // discovery file alone.
     let bearer = OsTokenSource.mint();
-    let names = CertNames::new(
-        vec![
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-        ],
-        Vec::new(),
-    );
-    let certificate = hook_tls::Minter::lasting(
-        hook_tls::SystemClock,
-        run_ports::DAEMON_CERT_LIFETIME_SECONDS,
-    )
-    .mint(&names)
-    .map_err(|e| code(&e))?;
+    let certificate = daemon_certificate()?;
     let started_at = seconds_now();
     let calls = served(
         daemon_api::Api::new(daemon_api::Parts {
@@ -531,8 +602,9 @@ async fn start(
             about: about(&stamp, started_at, pace),
         })
         // The one-shots it hosts (U4).
-        .hosting_one_shots(Arc::clone(one_shots)),
-        fs,
+        .hosting_one_shots(Arc::clone(one_shots))
+        .on_os(&os),
+        (fs, files, trash_clock(env)),
         (home, temp),
         (&engines, terminals, kept),
     );
@@ -705,7 +777,7 @@ fn trusting(kept: &Projectors, (home, temp): (&Path, &Path)) -> daemon_api::Trus
 /// (step 8 U1).
 fn served(
     api: daemon_api::Api<CoreEdge>,
-    fs: &Arc<dyn Fs>,
+    (fs, files, clock): (&Arc<dyn Fs>, &DaemonFiles, library_api::Clock),
     (home, temp): (&Path, &Path),
     (engines, terminals, kept): (
         &[daemon_application::HostedEngine],
@@ -713,10 +785,16 @@ fn served(
         &Projectors,
     ),
 ) -> Arc<dyn daemon_api::Calls> {
-    Arc::new(
-        // The sessions it prepares (U5).
+    // Shared, so what follows from a run it hosts (a distill's write, step
+    // 10b) reaches it once the call that started the run has answered.
+    daemon_api::Api::shared(
+        // The sessions it prepares (U5); under test-support, a library
+        // write's kill points (step 10b U3).
         api.preparing_terminals(Arc::clone(terminals))
-            .assembling(Arc::new(super::places::ProjectAssemblies {
+            .dying_at_writes(write_kills(files))
+            // The library's reads (step 10a U2): each at the caller's
+            // directory, in its environment.
+            .reading(Arc::new(super::places::ProjectLibraries {
                 home: home.to_path_buf(),
                 temp: temp.to_path_buf(),
             }))
@@ -727,6 +805,23 @@ fn served(
             .approving(daemon_api::Approving {
                 index: kept.approvals.clone().unwrap_or_default(),
                 names: Arc::new(FreshAskNames),
+            })
+            // Each library read observes its trees first (step 10a U2),
+            // reconciled against the checkouts its kernel projects.
+            .observing(daemon_api::Observing {
+                checkouts: kept.checkouts.clone().unwrap_or_default(),
+                harps: Arc::new(super::places::TreeHarps(Arc::clone(fs))),
+                observers: Arc::new(super::places::CallerGits {
+                    fs: Arc::clone(fs),
+                    home: home.to_path_buf(),
+                    temp: temp.to_path_buf(),
+                }),
+                // A write's change is one atomic operation (step 10b U8).
+                operations: Arc::new(content_fs::TreeOperations::new(Arc::clone(fs))),
+                // A kept trash slot's age is told by it (G12).
+                clock,
+                // `clean` measures a tree's cache (step 10b U9).
+                caches: Arc::new(super::places::TreeCaches(Arc::clone(fs))),
             }),
     )
 }
@@ -838,6 +933,32 @@ fn dies_at_steps(edge: &Arc<CoreEdge>, files: &DaemonFiles) {
     }));
 }
 
+/// A library write's kill points (step 10b U3, U8; `test-die-at`'s
+/// `intended`, `staged`, `trashed`, `renamed`, `done`): under test-support
+/// the daemon that finds the switch naming the point it reached takes it
+/// and is killed outright; one held there (`test-hold-at`) waits first.
+/// Forced, never waited for (the race rule).
+#[cfg(feature = "test-support")]
+fn write_kills(files: &DaemonFiles) -> daemon_api::library_writes::DiesAt {
+    let files = files.clone();
+    Arc::new(move |point: &str| {
+        files.hold_at(point);
+        // A write recorded done and not yet answered is also where the
+        // client's write is "applied, before it is answered" (slice 3's
+        // `test-die-after-apply`, the retry's switch).
+        let applied = point == "done" && files.take_die_after_apply();
+        if applied || files.take_die_at(point) {
+            std::process::abort();
+        }
+    })
+}
+
+/// The shipped daemon is never killed by a switch.
+#[cfg(not(feature = "test-support"))]
+fn write_kills(_: &DaemonFiles) -> daemon_api::library_writes::DiesAt {
+    Arc::new(|_: &str| {})
+}
+
 /// The kill switch's step a book applied is, if any.
 #[cfg(feature = "test-support")]
 fn step_of(book: &angzarr_embedded::v1::CommandBook) -> Option<&'static str> {
@@ -901,6 +1022,7 @@ fn launcher(
             index: kept.index.clone().unwrap_or_default(),
             trusts: kept.trusts.clone().unwrap_or_default(),
             approvals: kept.approvals.clone().unwrap_or_default(),
+            checkouts: kept.checkouts.clone().unwrap_or_default(),
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })
@@ -1368,10 +1490,35 @@ impl daemon_api::Hosting for Shared {
     }
 }
 
+/// The daemon's listener certificate, minted at each start for the
+/// loopback addresses its clients dial, lasting the daemon's lifetime cap.
+fn daemon_certificate() -> Result<run_ports::HookCertificate, String> {
+    let names = CertNames::new(
+        vec![
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ],
+        Vec::new(),
+    );
+    hook_tls::Minter::lasting(
+        hook_tls::SystemClock,
+        run_ports::DAEMON_CERT_LIFETIME_SECONDS,
+    )
+    .mint(&names)
+    .map_err(|e| angzarr_diagnostic::Diagnostic::code(&e).to_string())
+}
+
 /// A session's state, from its liveness lock in its project.
 struct Locks(Arc<dyn Fs>);
 
 impl daemon_api::SessionStates for Locks {
+    fn lock(&self, project_dir: &str, harp: &str) -> String {
+        liveness::LockFiles::new(Arc::clone(&self.0), project_dir)
+            .path(harp)
+            .display()
+            .to_string()
+    }
+
     fn state(&self, project_dir: &str, harp: &str) -> session_index::State {
         use session_ports::{Liveness, LockState};
         let mut locks = liveness::LockFiles::new(Arc::clone(&self.0), project_dir);

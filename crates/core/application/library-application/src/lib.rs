@@ -23,6 +23,7 @@ mod error;
 /// In-memory ports, for this crate's tests and a driving adapter's.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fakes;
+mod home_repository;
 mod items;
 mod json;
 mod losses;
@@ -35,15 +36,14 @@ mod shown;
 mod trust;
 mod views;
 pub mod write;
-mod yamlout;
 
 pub use agents::ENGINES;
 pub use companions::CompanionInit;
 pub use config::{
     load as load_config, Flags, LegacyGo, OnRun, RegisteredCompanion, OUTPUT_DIR_DEFAULT,
 };
-pub use config_show::ConfigShown;
-pub use distill::{BundleDistilled, Distilled, Distiller, ItemDistilled};
+pub use config_show::{config_yaml, ConfigShown};
+pub use distill::{DistillAsk, ItemDistilled, ModelAsk};
 pub use engine_noun::{
     AgentSettings, AuthSetting, EngineAgent, EngineRow, EnvKey, EnvSetting, PermissionsSetting,
     RuntimeSetting, SourcedValue,
@@ -51,24 +51,41 @@ pub use engine_noun::{
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{AppError, Notice, EN_US};
+pub use home_repository::{ensure_home_repository, HomeRepository, HOME_GITIGNORE};
 pub use items::Kind as ItemKind;
 pub use library::companion::{program as companion_program, State as CompanionState};
 #[allow(unused_imports)]
 pub use library::config::engines::{AuthSource, Drive, Source, Sourced, APPROVAL_TIMEOUT_DEFAULT};
 pub use library::distill::DistilledState;
-pub use library::write::loadout::DOCUMENT as LOADOUT;
 pub use library::write::mcp::McpPatch;
 pub use library::write::profile::ProfileEdit;
+
+/// ctxloom's own loadout (`GetLoadout`, step 10a U2): the daemon answers
+/// its data, the edge writes it as the loadout document.
+pub mod loadout {
+    pub use library::write::loadout::{document, own, OwnLoadout, OwnServer};
+}
+
+/// The premise index's words and how an assembly is sectioned, for the
+/// edge that renders the index after a context it was held back from (E2).
+pub mod premise {
+    pub use library::compose::SECTION_SEPARATOR;
+    pub use library::premise::{render_on, Entry, Surface};
+}
 pub use losses::{AgentLosses, HookLosses, NotCarried};
 pub use package::{
     EnginePackage, PackageRequest, PackagedCommand, PackagedFile, PackagedHook, PackagedMcp,
     PackagedSkill,
 };
-pub use project::{Library, Outcome, RunSettings, TrustAsk};
+pub use project::{
+    Library, Outcome, RepositoryStep, RunSettings, TrustAsk, Words, LISTING_HINT, NO_PROJECT_HINT,
+    PROFILE_HINT,
+};
 pub use run::{AssembleRequest, Previewed, RunRequest};
 pub use search::SearchRequest;
 pub use trust::{HeldBack, CTXLOOM_BUNDLE_PATH};
 pub use views::*;
+pub use write::config_set::ConfigSet;
 pub use write::requests::*;
 pub use write::views::*;
 pub use write::{WriteError, WritePorts};

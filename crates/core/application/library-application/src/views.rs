@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+pub use library::model::Hook;
+pub use library::profile::{FragmentRef, ProfileHooks};
+
 fn no_text(s: &str) -> bool {
     s.is_empty()
 }
@@ -59,9 +62,8 @@ pub struct BundleRow {
 #[derive(Clone, Debug)]
 pub struct BundleList {
     pub rows: Vec<BundleRow>,
-    /// The project has no bundles directory at all.
-    pub no_root: bool,
-    /// The hint for an empty listing.
+    /// The hint for an empty listing (a project with no bundles directory
+    /// is one with no bundles: owner ruling 2026-11-17).
     pub hint: String,
 }
 
@@ -254,6 +256,10 @@ pub struct Premises {
 #[derive(Clone, Debug, Serialize)]
 pub struct SkillRow {
     pub name: String,
+    /// The name its SKILL.md frontmatter says, which an engine reports the
+    /// skill by (it may differ from its directory, the id in `name`).
+    #[serde(skip)]
+    pub display_name: String,
     #[serde(skip_serializing_if = "no_text")]
     pub description: String,
     #[serde(skip_serializing_if = "no_items")]
@@ -345,6 +351,18 @@ pub struct ProfileShow {
     pub exclude_fragments: Vec<String>,
     #[serde(skip_serializing_if = "no_items")]
     pub exclude_mcp: Vec<String>,
+    /// The fragment tags that select content (step 10a U2, owner ruling
+    /// 2026-11-17, as the four below).
+    #[serde(skip_serializing_if = "no_items")]
+    pub select_tags: Vec<String>,
+    /// The fragments it names directly, as written.
+    #[serde(skip)]
+    pub fragments: Vec<FragmentRef>,
+    /// Its hooks, each read as a hook.
+    #[serde(skip)]
+    pub hooks: ProfileHooks,
+    #[serde(skip_serializing_if = "no_items")]
+    pub deny_tools: Vec<String>,
     #[serde(skip_serializing_if = "no_text")]
     pub path: String,
     #[serde(skip_serializing_if = "no_text")]
@@ -675,6 +693,10 @@ pub struct Assembled {
     /// The context's token estimate.
     #[serde(skip)]
     pub tokens: u64,
+    /// What a premise held back, as data (E2): the index the context ends
+    /// with when the assembly rendered it, for a caller that renders it.
+    #[serde(skip)]
+    pub premised: Vec<library::premise::Entry>,
 }
 
 /// A fragment an assembly used: where it is (none when its bundle is none

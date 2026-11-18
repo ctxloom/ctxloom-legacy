@@ -433,7 +433,7 @@ pub enum Premised {
 }
 
 /// What an assembly takes besides the selection.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Options {
     /// Deliver a fragment's distilled form where it has one (config
     /// `content_form`: `distilled`, the default, unless it says `original`).
@@ -441,8 +441,21 @@ pub struct Options {
     /// When the premised fragments load.
     pub premised: Premised,
     /// Where the context goes, which words the premise index's last clause
-    /// (s3-Q5).
-    pub surface: premise::Surface,
+    /// (s3-Q5); none, the index is not rendered into the context at all:
+    /// its caller is given it as data (`Package::premised`) and renders it
+    /// at its own presentation (E2, owner 2026-11-17: the daemon's
+    /// `AssembleContext`).
+    pub surface: Option<premise::Surface>,
+}
+
+impl Default for Options {
+    fn default() -> Options {
+        Options {
+            prefer_distilled: false,
+            premised: Premised::default(),
+            surface: Some(premise::Surface::default()),
+        }
+    }
 }
 
 /// A fragment as delivered or held back.
@@ -535,8 +548,12 @@ pub fn assemble(catalog: &Catalog, selection: &Selection, options: &Options) -> 
     }
     package.context = ingest.join();
     // On demand, what was held back is offered in the premise index, which
-    // ends the context; nothing held back renders nothing.
-    let index = premise::render_on(&index_of(&package.premised), options.surface);
+    // ends the context; nothing held back renders nothing. A caller that
+    // renders the index itself (E2) is given the data alone.
+    let index = options
+        .surface
+        .map(|surface| premise::render_on(&index_of(&package.premised), surface))
+        .unwrap_or_default();
     if !index.is_empty() {
         if !package.context.is_empty() {
             package.context.push_str(SECTION_SEPARATOR);
@@ -550,7 +567,7 @@ pub fn assemble(catalog: &Catalog, selection: &Selection, options: &Options) -> 
 /// The premise index of the fragments an assembly held back: each once, by
 /// the reference its ask named, sorted by it (the same selection always
 /// renders the same index).
-fn index_of(held_back: &[Delivered]) -> Vec<premise::Entry> {
+pub fn index_of(held_back: &[Delivered]) -> Vec<premise::Entry> {
     let by_name: BTreeMap<&str, &str> = held_back
         .iter()
         .map(|d| (d.reference.as_str(), d.premise.as_str()))

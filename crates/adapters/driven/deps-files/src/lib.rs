@@ -15,7 +15,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use deps_ports::{BundleSlot, CopyOutcome, DepsFiles, RepoTree, Why};
+use deps_ports::{BundleSlot, DepsFiles, RepoTree, Why};
 use file_system::{Fs, Kind, Perms};
 use os::Mode;
 
@@ -143,16 +143,6 @@ impl DepsFiles for ProjectFiles {
 
     fn exists(&self, path: &str) -> bool {
         self.fs.exists(Path::new(path)).unwrap_or(false)
-    }
-
-    fn copy_bundle(
-        &self,
-        dir: &str,
-        name: &str,
-        files: &std::collections::BTreeMap<String, Vec<u8>>,
-        force: bool,
-    ) -> Result<CopyOutcome, Why> {
-        local::copy(self, dir, name, files, force)
     }
 }
 

@@ -20,6 +20,12 @@ use crate::tests::files;
 
 const DAY: u64 = 86_400;
 
+/// A session's lock file under `sessions`: inside its directory,
+/// `<harp>/session.lock` (step 10 U9, T28).
+pub(crate) fn session_lock(sessions: &Path, harp: &str) -> PathBuf {
+    sessions.join(harp).join("session.lock")
+}
+
 /// The uncommitted work a reaper must never destroy (Go: `j001300WIPMarker`).
 const WIP_MARKER: &str = "J001300-WIP-MARKER-5b8e21";
 
@@ -84,6 +90,8 @@ struct World {
     distill: distill::State,
     /// What j000300's and init.feature's companion scenarios keep.
     init_companions: init_companions::State,
+    /// What step 10b's write steps keep.
+    writes: writes::State,
 }
 
 impl fmt::Debug for World {
@@ -120,6 +128,7 @@ impl CommonWorld for World {
 
     fn before_line(&mut self, line: &str) {
         daemon_spec::before_line(self, line);
+        writes::before_line(self, line);
     }
 
     fn before_run(&mut self) {
@@ -127,6 +136,8 @@ impl CommonWorld for World {
         self.seed();
         self.seed_scratch();
         self.before = self.session_bytes();
+        daemon_spec::before_run(self);
+        writes::before_run(self);
     }
 }
 
@@ -155,6 +166,7 @@ impl World {
             diagnosis: diagnosis::State::default(),
             distill: distill::State::default(),
             init_companions: init_companions::State::default(),
+            writes: writes::State::default(),
         }
     }
 
@@ -217,13 +229,10 @@ impl World {
                 files::put(dir.join("essence.md"), "an older ctxloom's summary\n");
             }
             if session.kind == "running" {
-                let lock = files::open_read(
-                    self.common
-                        .project
-                        .dir()
-                        .join(".ctxloom/sessions")
-                        .join(format!("{}.lock", session.harp)),
-                )
+                let lock = files::open_read(session_lock(
+                    &self.common.project.dir().join(".ctxloom/sessions"),
+                    &session.harp,
+                ))
                 .expect("a lock file");
                 lock.lock().expect("the lock is free to take");
                 self.held.push(lock);
@@ -266,10 +275,23 @@ impl World {
     /// Make the project a git repository, once, with one commit.
     fn git_backed(&self) {
         let project = self.common.project.dir();
-        if files::exists(project.join(".git")) {
+        let in_git = files::exists(project.join(".git"));
+        // A repository with a commit is the harness's (or hers): used as it
+        // is. One `ctxloom init` made has none yet (step 10, G1: it commits
+        // nothing), so it gets the first commit here.
+        if in_git
+            && self
+                .common
+                .project
+                .git_output(project, &["rev-parse", "-q", "--verify", "HEAD"])
+                .status
+                .success()
+        {
             return;
         }
-        self.git(project, &["init", "-q"]);
+        if !in_git {
+            self.git(project, &["init", "-q"]);
+        }
         files::put(project.join("README.md"), "hello\n");
         self.git(project, &["add", "README.md"]);
         self.git(project, &["commit", "-q", "-m", "initial"]);
@@ -421,6 +443,12 @@ mod distill;
 
 #[path = "gherkin_separation.test.rs"]
 mod separation;
+
+#[path = "gherkin_library_changes.test.rs"]
+mod library_changes;
+
+#[path = "gherkin_writes.test.rs"]
+mod writes;
 
 // ------------------------------------------------------------------ given
 

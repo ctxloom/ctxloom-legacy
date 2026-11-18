@@ -107,6 +107,138 @@ mod read {
 
 mod distill {
     use crate::tests::*;
+    use daemon_proto::v1;
+
+    /// The daemon's answer to a distill that asks its model: its run.
+    fn asking(run: &str) -> v1::DistillFragmentResponse {
+        v1::DistillFragmentResponse {
+            fragment: Some(v1::Fragment {
+                name: "projects/calm-otter/bundles/demo/fragments/golang".to_string(),
+                distilled: v1::DistilledState::Fresh as i32,
+                ..v1::Fragment::default()
+            }),
+            path: "fragments/golang.distilled.md".to_string(),
+            applied: Some(false),
+            run: run.to_string(),
+            notices: vec![v1::Notice {
+                code: "library-application-stale-distilled".to_string(),
+                text: "said before".to_string(),
+                ..v1::Notice::default()
+            }],
+            ..v1::DistillFragmentResponse::default()
+        }
+    }
+
+    // Step 10b: the daemon asks the model as a run; the command follows
+    // that run to its end, and its form is written once it ends answered.
+    #[test]
+    fn test_a_distill_that_asks_follows_its_run_and_is_applied_once_it_ends() {
+        let run = "projects/calm-otter/runs/r1";
+        let asks = Asks::answering(vec![Box::new(asking(run)), Box::new(())], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang", "-f"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.code(), 0, "{}", ran.err);
+        let asked = asks.requests::<v1::DistillFragmentRequest>();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].force, "-f asks again");
+        assert_eq!(
+            asks.requests::<v1::WatchRunRequest>(),
+            [v1::WatchRunRequest {
+                name: run.to_string()
+            }],
+            "its run followed"
+        );
+        let json = ran.json();
+        assert_eq!(json["applied"], true, "{json}");
+        assert_eq!(json["run"], run);
+        assert!(ran.err.contains("stale-distilled"), "{}", ran.err);
+        let asks = Asks::answering(vec![Box::new(asking(run)), Box::new(())], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            TEXT,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(
+            ran.out,
+            "Distilled fragment \"golang\" in bundle \"demo\" (fragments/golang.distilled.md)\n"
+        );
+        assert!(!asks.requests::<v1::DistillFragmentRequest>()[0].force);
+    }
+
+    // Ruling 114: the command hears its stops BEFORE it asks the daemon to
+    // distill (whose answer is a run the daemon has started already), so a
+    // stop that arrives before the follow begins is heard, never taken by
+    // its default.
+    #[test]
+    fn test_a_distill_hears_its_stops_before_it_asks_the_daemon() {
+        let run = "projects/calm-otter/runs/r1";
+        let asks = Asks::answering(vec![Box::new(asking(run)), Box::new(())], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.code(), 0, "{}", ran.err);
+        let order: Vec<&str> = asks
+            .asked
+            .borrow()
+            .iter()
+            .map(|(_, asked)| {
+                if asked.is::<crate::tests::HearStops>() {
+                    "hear"
+                } else if asked.is::<v1::DistillFragmentRequest>() {
+                    "distill"
+                } else if asked.is::<v1::WatchRunRequest>() {
+                    "follow"
+                } else {
+                    "other"
+                }
+            })
+            .collect();
+        assert_eq!(order, ["hear", "distill", "follow"]);
+    }
+
+    // A run that ends in a failure fails the command in its end's words,
+    // what was said before it said first; nothing is applied.
+    #[test]
+    fn test_a_distill_whose_run_fails_fails_saying_what_was_said() {
+        let asks = Asks::answering(vec![Box::new(asking("projects/calm-otter/runs/r2"))], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.exit, Err("daemon-api-unreached:10".to_string()));
+        assert!(ran.out.is_empty(), "{}", ran.out);
+        assert!(ran.err.contains("stale-distilled"), "{}", ran.err);
+    }
+
+    // A distill that asks nothing (its form fresh) follows no run.
+    #[test]
+    fn test_a_distill_that_asks_nothing_follows_no_run() {
+        let asks = Asks::answering(vec![Box::new(asking(""))], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.code(), 0, "{}", ran.err);
+        assert!(asks.requests::<v1::WatchRunRequest>().is_empty());
+        assert_eq!(ran.json()["applied"], false);
+    }
 
     // Plan step 5: a form that matches its source is kept without asking
     // (applied false, saying why); one forced reads the distill prompt
@@ -273,16 +405,6 @@ mod write {
 // binary's tests alone reached.
 mod mapping {
     use super::super::*;
-    use library_application::{DistilledState, ItemRow, Preview};
-    use serde_json::json;
-
-    const PARENT: &str = "projects/p";
-
-    fn json_of<M: serde::Serialize>(message: &M) -> serde_json::Value {
-        let mut out = Vec::new();
-        crate::api::print(&mut out, message).unwrap();
-        serde_json::from_slice(&out).unwrap()
-    }
 
     fn done(status: &str, kind: &str) -> ItemDistilled {
         ItemDistilled {
@@ -295,35 +417,6 @@ mod mapping {
     }
 
     #[test]
-    fn test_a_command_marked_no_distill_answers_its_whole_response() {
-        assert_eq!(
-            json_of(&distilled(PARENT, &done("no_distill", "command"))),
-            json!({
-                "command": {
-                    "name": "projects/p/bundles/demo/commands/review",
-                    "distilled": "NONE",
-                    "no_distill": true,
-                },
-                "path": "x/review.distilled.md",
-                "applied": false,
-                "detail": ["no_distill"],
-            })
-        );
-        let made = json_of(&distilled(PARENT, &done("distilled", "command")));
-        assert!(made["command"].get("no_distill").is_none(), "{made}");
-        assert_eq!(made["applied"], true);
-    }
-
-    #[test]
-    fn test_a_fragment_marked_no_distill_says_so_with_its_path() {
-        let kept = json_of(&distilled(PARENT, &done("no_distill", "fragment")));
-        assert_eq!(kept["fragment"]["no_distill"], true, "{kept}");
-        assert_eq!(kept["path"], "x/review.distilled.md");
-        let made = json_of(&distilled(PARENT, &done("distilled", "fragment")));
-        assert!(made["fragment"].get("no_distill").is_none(), "{made}");
-    }
-
-    #[test]
     fn test_a_no_distill_item_says_nothing_was_distilled() {
         let mut out = Vec::new();
         distilled_text(&done("no_distill", "command"), &mut out).unwrap();
@@ -332,214 +425,58 @@ mod mapping {
             "command \"review\" in bundle \"demo\" is marked as no_distill: nothing distilled\n"
         );
     }
+}
 
-    fn list(kind: &str) -> ItemList {
-        ItemList {
-            rows: vec![ItemRow {
-                name: "one".to_string(),
-                tags: vec!["go".to_string()],
-                bundle: "demo".to_string(),
-                reference: "demo#x/one".to_string(),
-                remote: String::new(),
-                bundle_label: String::new(),
-            }],
-            kind: kind.to_string(),
-            bundle_filter: String::new(),
-            total: 1,
-            hint: String::new(),
-        }
+// Step 10a U2: each read's request carries `--distilled` and the
+// command's global flags.
+mod asks {
+    use crate::tests::{asked, asked_once, degraded};
+    use daemon_proto::v1;
+
+    // Step 10b: Go's two-word create is the daemon's create, asked once
+    // (no preview, no editor), Go's placeholder asked for.
+    #[test]
+    fn test_a_two_word_create_asks_the_daemon_once_for_gos_placeholder() {
+        let (under, fragment) =
+            asked_once::<v1::CreateFragmentRequest>(&["fragment", "create", "demo", "testing"]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(fragment.fragment_id, "testing");
+        assert!(fragment.placeholder);
+        assert!(!fragment.validate_only);
+        assert_eq!(fragment.globals, degraded());
+        let (_, command) =
+            asked_once::<v1::CreateCommandRequest>(&["command", "create", "demo", "second"]);
+        assert_eq!(command.command_id, "second");
+        assert!(command.placeholder);
+        assert!(!command.validate_only);
     }
 
     #[test]
-    fn test_a_listed_item_keeps_its_tags() {
-        assert_eq!(
-            json_of(&listed(PARENT, &list("command")))["commands"][0]["tags"],
-            json!(["go"])
-        );
-        assert_eq!(
-            json_of(&listed(PARENT, &list("fragment")))["fragments"][0]["tags"],
-            json!(["go"])
-        );
-    }
-
-    fn show() -> ItemShow {
-        ItemShow {
-            name: "one".to_string(),
-            bundle: "demo".to_string(),
-            reference: "demo#x/one".to_string(),
-            content: "BODY".to_string(),
-            distilled: true,
-            state: DistilledState::Stale,
-        }
-    }
-
-    #[test]
-    fn test_a_shown_item_is_its_whole_resource() {
-        assert_eq!(
-            json_of(&shown(PARENT, ItemKind::Command, &show())),
-            json!({
-                "name": "projects/p/bundles/demo/commands/one",
-                "reference": "demo#x/one",
-                "body": "BODY",
-                "body_is_distilled": true,
-                "distilled": "STALE",
-            })
-        );
-        assert_eq!(
-            json_of(&shown(PARENT, ItemKind::Fragment, &show()))["reference"],
-            "demo#x/one"
-        );
-    }
-
-    fn made(kind: &str) -> ItemCreated {
-        ItemCreated {
-            status: "created".to_string(),
-            bundle: "demo".to_string(),
-            name: "one".to_string(),
-            path: "x/one.md".to_string(),
-            kind: kind.to_string(),
-            bundle_created: true,
-        }
-    }
-
-    #[test]
-    fn test_a_created_item_answers_its_path_and_its_bundle_made() {
-        assert_eq!(
-            json_of(&created(PARENT, &made("command"))),
-            json!({
-                "command": {"name": "projects/p/bundles/demo/commands/one"},
-                "path": "x/one.md",
-                "applied": true,
-                "bundle_created": true,
-            })
-        );
-        assert_eq!(
-            json_of(&created(PARENT, &made("fragment"))),
-            json!({
-                "fragment": {"name": "projects/p/bundles/demo/fragments/one"},
-                "path": "x/one.md",
-                "applied": true,
-                "bundle_created": true,
-            })
-        );
-    }
-
-    fn edit(kind: &str) -> ItemEdited {
-        ItemEdited {
-            status: "updated".to_string(),
-            bundle: "demo".to_string(),
-            name: "one".to_string(),
-            path: "x/one.md".to_string(),
-            distilled: true,
-            kind: kind.to_string(),
-            reference: String::new(),
-            distill_skipped: false,
-        }
-    }
-
-    #[test]
-    fn test_an_edited_item_answers_its_path_and_its_fresh_form() {
-        assert_eq!(
-            json_of(&edited(PARENT, &edit("command"))),
-            json!({
-                "command": {
-                    "name": "projects/p/bundles/demo/commands/one",
-                    "distilled": "FRESH",
-                },
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-        assert_eq!(
-            json_of(&edited(PARENT, &edit("fragment"))),
-            json!({
-                "fragment": {
-                    "name": "projects/p/bundles/demo/fragments/one",
-                    "distilled": "FRESH",
-                },
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-    }
-
-    fn gone() -> Removal<ItemRemoved> {
-        Removal::Done(ItemRemoved {
-            status: "removed".to_string(),
-            bundle: "demo".to_string(),
-            name: "one".to_string(),
-            path: "x/one.md".to_string(),
-            kind: String::new(),
-        })
-    }
-
-    fn preview() -> Removal<ItemRemoved> {
-        Removal::Preview(Preview::of(
-            "one".to_string(),
-            vec!["x/one.md".to_string()],
-            "ctxloom remove it --yes".to_string(),
-        ))
-    }
-
-    #[test]
-    fn test_a_removed_command_answers_its_removal_or_its_preview() {
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Command,
-                "demo#commands/one",
-                &gone()
-            )),
-            json!({
-                "command": {"name": "projects/p/bundles/demo/commands/one"},
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Command,
-                "demo#commands/one",
-                &preview()
-            )),
-            json!({
-                "command": {"name": "projects/p/bundles/demo/commands/one"},
-                "applied": false,
-                "detail": ["x/one.md"],
-                "apply_command": "ctxloom remove it --yes",
-            })
-        );
-    }
-
-    #[test]
-    fn test_a_removed_fragment_answers_its_removal_or_its_preview() {
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Fragment,
-                "demo#fragments/one",
-                &gone()
-            )),
-            json!({
-                "fragment": {"name": "projects/p/bundles/demo/fragments/one"},
-                "path": "x/one.md",
-                "applied": true,
-            })
-        );
-        assert_eq!(
-            json_of(&removed(
-                PARENT,
-                ItemKind::Fragment,
-                "demo#fragments/one",
-                &preview()
-            )),
-            json!({
-                "fragment": {"name": "projects/p/bundles/demo/fragments/one"},
-                "applied": false,
-                "detail": ["x/one.md"],
-                "apply_command": "ctxloom remove it --yes",
-            })
-        );
+    fn test_item_reads_carry_distilled_and_the_globals() {
+        let (_, command) = asked_once::<v1::GetCommandRequest>(&[
+            "command",
+            "show",
+            "--distilled",
+            "demo#commands/review",
+        ]);
+        assert!(command.prefer_distilled);
+        assert_eq!(command.globals, degraded());
+        let (_, fragment) = asked_once::<v1::GetFragmentRequest>(&[
+            "fragment",
+            "show",
+            "--distilled",
+            "demo#fragments/golang",
+        ]);
+        assert!(fragment.prefer_distilled);
+        assert_eq!(fragment.globals, degraded());
+        let (under, index) = asked_once::<v1::GetPremiseIndexRequest>(&["fragment", "premises"]);
+        assert_eq!(under, "/premiseIndex");
+        assert_eq!(index.globals, degraded());
+        let commands = asked::<v1::ListCommandsRequest>(&["command", "list"]);
+        assert!(!commands.is_empty());
+        assert!(commands.iter().all(|(_, r)| r.globals == degraded()));
+        let fragments = asked::<v1::ListFragmentsRequest>(&["fragment", "list"]);
+        assert!(!fragments.is_empty());
+        assert!(fragments.iter().all(|(_, r)| r.globals == degraded()));
     }
 }

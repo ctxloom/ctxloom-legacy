@@ -31,6 +31,7 @@ pub struct RunSettings {
 }
 
 /// The library, over its ports.
+#[derive(Clone)]
 pub struct Library {
     pub(crate) content: Arc<dyn ContentRepo>,
     pub(crate) files: Arc<dyn ConfigFiles>,
@@ -48,13 +49,24 @@ pub struct Library {
     pub(crate) engines: Vec<Arc<dyn run_ports::Engine>>,
     /// What each engine cannot carry ([`Library::with_hook_losses`]).
     pub(crate) hook_losses: crate::losses::HookLosses,
-    /// The model distill asks ([`Library::with_distiller`]); none wired,
-    /// distill fails.
-    pub(crate) distiller: Option<Rc<dyn crate::distill::Distiller>>,
     /// Where the user's trust of the project is asked when a flag does not
     /// say it ([`Library::with_trust`]); none, an untrusted project.
     pub(crate) trust: Option<TrustAsk>,
+    /// The step `config create` takes first ([`Library::with_repository_step`]);
+    /// none, no git step.
+    pub(crate) repository: Option<RepositoryStep>,
+    /// How a diagnostic is said in a read's answer (an agent's resolution
+    /// error): the composition root's catalog; none, its code and args.
+    pub(crate) words: Option<Words>,
 }
+
+/// Make the project's directory a git repository when it is in none (step
+/// 10, G1): init's own step, which `config create` takes too, as init's
+/// scaffold without the interview (QUESTIONS.md E). Its notice (in init's
+/// words) when it made one; git missing, too old or failing is the
+/// observer's error.
+pub type RepositoryStep =
+    Rc<dyn Fn() -> Result<Option<run_ports::Advice>, ctxloom_ports::TreeError>>;
 
 /// Whether the user trusts the project, asked of her daemon (step 8 U2, D4:
 /// one `GetTrust`, which may start one): asked only where it decides
@@ -95,6 +107,9 @@ pub struct Project {
     pub(crate) trust: Option<TrustAsk>,
 }
 
+/// How a diagnostic is said, in the catalog's words.
+pub type Words = Arc<dyn Fn(&dyn angzarr_diagnostic::Diagnostic) -> String + Send + Sync>;
+
 impl Library {
     /// The library over `content` and `files`; `environ` is the process's
     /// environment.
@@ -114,9 +129,33 @@ impl Library {
             builtins: false,
             engines: Vec::new(),
             hook_losses: crate::losses::HookLosses::new(),
-            distiller: None,
             trust: None,
+            repository: None,
+            words: None,
         }
+    }
+
+    /// The library whose reads say a diagnostic in `words` (step 10a U2: a
+    /// read the daemon answers has no command's catalog to say it in).
+    pub fn with_words(mut self, words: Words) -> Library {
+        self.words = Some(words);
+        self
+    }
+
+    /// `diagnostic` in the library's words: [`Library::with_words`]'s, else
+    /// its code and args.
+    pub fn say(&self, diagnostic: &dyn angzarr_diagnostic::Diagnostic) -> String {
+        match &self.words {
+            Some(words) => words(diagnostic),
+            None => diagnostic.to_string(),
+        }
+    }
+
+    /// The library whose `config create` takes `step` before it writes
+    /// anything (step 10, G1).
+    pub fn with_repository_step(mut self, step: RepositoryStep) -> Library {
+        self.repository = Some(step);
+        self
     }
 
     /// The library asking `trust` whether the user trusts the project, where
@@ -262,8 +301,12 @@ impl Library {
                     bundle,
                 }),
                 Err(cause) => {
+                    let dir = crate::shown::parent(&manifest).to_string();
+                    // An old layout's paths are named from the project's
+                    // root, as the `git mv` that migrates them is typed.
+                    let cause = cause.located(&self.below_root(&dir), "");
                     notices.push(Notice::BundleSkipped {
-                        dir: crate::shown::parent(&manifest).to_string(),
+                        dir,
                         manifest,
                         cause: cause.clone(),
                     });
@@ -271,7 +314,7 @@ impl Library {
                 }
             }
         }
-        let origins = self.installed(&mut entries, notices);
+        let origins = self.installed(&mut entries, &mut unreadable, notices);
         let mut catalog = Catalog::new(entries).with_origins(origins);
         // ctxloom's built-in bundles are a project's (rulings 110, 111),
         // except where it has its own of the name, readable or not.
@@ -306,6 +349,21 @@ impl Library {
 }
 
 impl Library {
+    /// The shown directory `dir` as it is reached from the project's root
+    /// (the parent of its `.ctxloom`); `dir` itself when it is not below it.
+    fn below_root(&self, dir: &str) -> String {
+        let app = self.files.app_dir();
+        let Some(root) = app
+            .strip_suffix(".ctxloom")
+            .filter(|root| root.ends_with(['/', '\\']))
+        else {
+            return dir.to_string();
+        };
+        dir.strip_prefix(root)
+            .filter(|rest| !rest.is_empty())
+            .map_or_else(|| dir.to_string(), ToString::to_string)
+    }
+
     /// Where a companion runs: the project's root (the parent of its
     /// `.ctxloom`) in a project, else the caller's directory (D1, and the
     /// verified gap: a probe that names none inherits its process's).
@@ -329,6 +387,7 @@ impl Library {
     fn installed(
         &self,
         entries: &mut Vec<Entry>,
+        unreadable: &mut BTreeMap<String, BundleError>,
         notices: &mut Vec<Notice>,
     ) -> BTreeMap<String, RemoteOrigin> {
         let mut origins = BTreeMap::new();
@@ -363,16 +422,37 @@ impl Library {
                         bundle: read,
                     });
                 }
-                Err(cause) => notices.push(Notice::BundleSkipped {
-                    dir: bundle.path,
-                    manifest,
-                    cause,
-                }),
+                Err(cause) => {
+                    // An installed copy is migrated in its remote, never
+                    // here: the refusal names it, and a read of the bundle
+                    // is refused with it (owner T27).
+                    let cause = cause.located(&bundle.path, &bundle.url);
+                    if matches!(cause, BundleError::OldLayout { .. }) {
+                        unreadable.insert(bundle.name.clone(), cause.clone());
+                    }
+                    notices.push(Notice::BundleSkipped {
+                        cause,
+                        dir: bundle.path,
+                        manifest,
+                    });
+                }
             }
         }
         origins
     }
 }
+
+/// What an empty listing says outside a project.
+pub const NO_PROJECT_HINT: &str =
+    "No project here: run 'ctxloom init' to set one up with its default content.";
+
+/// What an empty listing says in a project.
+pub const LISTING_HINT: &str =
+    "Add remote bundles to a profile (ctxloom profile create/modify), then ctxloom deps pull";
+
+/// What an empty profile listing says in a project.
+pub const PROFILE_HINT: &str =
+    "Use 'ctxloom profile create <name> --include <bundle>...' to create one.";
 
 impl Project {
     /// A reference with a registered remote's name spelled out
@@ -392,11 +472,9 @@ impl Project {
     /// What to say under an empty listing.
     pub(crate) fn listing_hint(&self) -> String {
         if self.no_project() {
-            "No project here: run 'ctxloom init' to set one up with its default content."
-                .to_string()
+            NO_PROJECT_HINT.to_string()
         } else {
-            "Add remote bundles to a profile (ctxloom profile create/modify), then ctxloom deps pull"
-                .to_string()
+            LISTING_HINT.to_string()
         }
     }
 }

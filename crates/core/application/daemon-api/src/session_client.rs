@@ -36,6 +36,9 @@ pub struct Client<D> {
     /// project, so it mints none: owner ruling 2026-11-14), so nothing is
     /// recorded in it.
     unnamed: bool,
+    /// Whether a call whose daemon could not be reached is made once more
+    /// on a new one (S8); only test-support turns it off.
+    retries: bool,
 }
 
 /// What mints a write's request id (S8): unique per call.
@@ -122,6 +125,7 @@ impl<D: Daemons> Client<D> {
             env,
             ids: Box::new(String::new),
             unnamed: false,
+            retries: true,
         }
     }
 
@@ -142,6 +146,17 @@ impl<D: Daemons> Client<D> {
     /// unasked: its project has no identity, so nothing is recorded in it.
     fn nothing_recorded(&self, all: bool) -> bool {
         self.unnamed && !all && self.project.is_none()
+    }
+
+    /// This client, a call whose daemon could not be reached answered as
+    /// it is, never made on a new one: test-support's
+    /// `CTXLOOM_TEST_NO_RETRY`, which leaves what a killed daemon left.
+    #[must_use]
+    pub fn without_retry(self) -> Client<D> {
+        Client {
+            retries: false,
+            ..self
+        }
     }
 
     /// This client, each write's request id minted by `ids` (none, by
@@ -253,7 +268,7 @@ impl<D: Daemons> Client<D> {
     ) -> Result<T, CallError> {
         let api = self.daemons.reach().await.map_err(CallError::Unreached)?;
         match call(&api).await {
-            Err(Called::Unreachable { .. }) => {
+            Err(Called::Unreachable { .. }) if self.retries => {
                 let again = self.daemons.reach().await.map_err(CallError::Unreached)?;
                 Ok(call(&again).await?)
             }
@@ -429,6 +444,180 @@ impl<D: Daemons> SessionRemovals for Client<D> {
         .await
     }
 }
+
+/// The library reads a command (or a hook, O3) asks of its daemon (step
+/// 10a U2, D12: one method per row of `daemon_proto::library_reads!`),
+/// each under this client's project (`users/me` outside one), at its
+/// working directory, with its environment (E1); each answered with the
+/// notices the read said. A read's `request` says the rest (its `globals`
+/// among it); its target (a Get's `name`, a List's `parent`) is the
+/// parent followed by `under` (`library_api::names`' targets: empty for
+/// the parent itself, else `/bundles/...`).
+#[allow(async_fn_in_trait)]
+pub trait LibraryReads {
+    daemon_proto::library_reads!(library_read_declarations);
+
+    /// `context assemble`'s `AssembleContext`, named this client's parent:
+    /// the context, what a premise held back as data, and the read's
+    /// notices among its own.
+    async fn assemble_context(
+        &self,
+        request: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, CallError>;
+
+    /// `run --dry-run`'s `CreateRun` with `validate_only` (step 10a U2),
+    /// under this client's parent (`users/me` in a project nothing has
+    /// named, which the daemon then leaves unnamed): the plan, its notices
+    /// in the run's own.
+    async fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, CallError>;
+}
+
+/// [`LibraryReads`]' methods, from `daemon_proto::library_reads!`.
+macro_rules! library_read_declarations {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "`, under this client's parent.")]
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<crate::Read<v1::$response>, CallError>;
+        )*
+    };
+}
+use library_read_declarations;
+
+impl<D: Daemons> Client<D> {
+    /// The parent a library read is under: this client's project, as the
+    /// daemon names it, else the home's.
+    async fn library_parent_on(&self, api: &D::Api) -> Result<String, Called> {
+        match self.project.is_some() {
+            true => self.project(api).await,
+            false => Ok(HOME_PARENT.to_string()),
+        }
+    }
+}
+
+impl<D: Daemons> LibraryReads for Client<D> {
+    daemon_proto::library_reads!(library_read_requests);
+
+    async fn assemble_context(
+        &self,
+        request: v1::AssembleContextRequest,
+    ) -> Result<v1::AssembledContext, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::AssembleContextRequest {
+                name: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                ..request.clone()
+            };
+            api.assemble_context(request).await
+        })
+        .await
+    }
+
+    async fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::CreateRunRequest {
+                parent: self.library_parent_on(api).await?,
+                cwd: self.cwd.clone(),
+                env: Some(self.env.clone()),
+                validate_only: true,
+                ..request.clone()
+            };
+            api.create_run(request).await
+        })
+        .await
+    }
+}
+
+/// [`Client`]'s [`LibraryReads`], from `daemon_proto::library_reads!`:
+/// each request's target, directory and environment this client's (asked
+/// again on a retry, the daemon reached again).
+macro_rules! library_read_requests {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<crate::Read<v1::$response>, CallError> {
+                self.on_daemon(async |api: &D::Api| {
+                    let parent = self.library_parent_on(api).await?;
+                    let request = v1::$request {
+                        $target: format!("{parent}{under}"),
+                        cwd: self.cwd.clone(),
+                        env: Some(self.env.clone()),
+                        ..request.clone()
+                    };
+                    api.$method(request).await
+                })
+                .await
+            }
+        )*
+    };
+}
+use library_read_requests;
+
+/// The library writes a command asks of its daemon (step 10b U3, D12: one
+/// method per row of `daemon_proto::library_writes!`), each under this
+/// client's project (`users/me` outside one), with its environment and
+/// working directory (E1, as the reads carry them), and
+/// under ONE request id minted for the call (a request that names none),
+/// so its retry on a new daemon is the same write (S8, AIP-155).
+#[allow(async_fn_in_trait)]
+pub trait LibraryWrites {
+    daemon_proto::library_writes!(library_write_declarations);
+}
+
+/// [`LibraryWrites`]' methods, from `daemon_proto::library_writes!`.
+macro_rules! library_write_declarations {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "`, under this client's parent.")]
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<v1::$response, CallError>;
+        )*
+    };
+}
+use library_write_declarations;
+
+impl<D: Daemons> LibraryWrites for Client<D> {
+    daemon_proto::library_writes!(library_write_requests);
+}
+
+/// [`Client`]'s [`LibraryWrites`], from `daemon_proto::library_writes!`.
+macro_rules! library_write_requests {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<v1::$response, CallError> {
+                use crate::library_writes::LibraryWriteRequest as _;
+                let mut request = request;
+                if request.request_id().is_empty() {
+                    request.set_request_id((self.ids)());
+                }
+                request.set_env(self.env.clone());
+                request.set_cwd(self.cwd.clone());
+                self.on_daemon(async |api: &D::Api| {
+                    let parent = self.library_parent_on(api).await?;
+                    let mut request = request.clone();
+                    request.set_target(format!("{parent}{under}"));
+                    api.$method(request).await
+                })
+                .await
+            }
+        )*
+    };
+}
+use library_write_requests;
 
 #[cfg(test)]
 #[path = "session_client.test.rs"]

@@ -3,6 +3,20 @@
 //! daemon, the one owner of the store (T1, ruling 131), so no client opens
 //! the store to destroy a session.
 //!
+//! A removal is a T28 sequence on the PROJECT stream (O2, step 10b U9): the
+//! domain's `RemoveSession`, its command id the request id (which the
+//! project stream keeps when the session's own is purged), decided on the
+//! evidence gathered here ([`sessions::removal_refused`], the one judgement
+//! a preview shares) and recorded as `SessionRemovalIntended` with its
+//! steps ([`sessions::REMOVAL_STEPS`]); then each step carried out and
+//! recorded done (`RecordRemovalStepDone`): the worktrees (reclaim's, made
+//! just before the intent, so recorded done at once), the directory (its
+//! lock inside) renamed into its checkout's `state/trash/<request id>/`
+//! ([`Places::operations`]), the streams purged, the trash slot removed. A
+//! retry of a removal still open resumes it at the first step not done,
+//! never judged again; one done is answered applied from the store's facts
+//! (its name claimed, its stream empty).
+//!
 //! A removal is reclaim-application's [`reclaim_application::remove`], the
 //! one safe order both verbs share: the session's scratch worktrees
 //! classified first, the whole removal refused if one is not safe, else the
@@ -14,10 +28,9 @@
 //! which carries its plan, so the client says what was not done.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
 
 use angzarr_embedded::angzarr_router::hpb::ProjectRequest;
-use angzarr_embedded::v1::{Cover, EventBook, Uuid};
+use angzarr_embedded::v1::{Cover, DeliveryOutcome, EventBook, Uuid};
 use angzarr_embedded::{Failure, Payload, ProjectorHandler, Timestamp};
 use daemon_proto::v1;
 use isolation_application::{IsolationError, Report, Verdict as Worktree, WorktreeUse};
@@ -57,6 +70,9 @@ pub trait Places: Send + Sync {
     fn settings(&self, root: &str, env: &[(String, String)]) -> Box<dyn SweepConfig + Send>;
     /// Now: the retention's and the purge age's instant.
     fn now(&self) -> Timestamp;
+    /// The atomic operations on a project's tree (its `.ctxloom`): a
+    /// removal's trash, and the purge of its slot (O2).
+    fn operations(&self) -> std::sync::Arc<dyn ctxloom_ports::Operations>;
 }
 
 /// The daemon's one store, as a destroy purges a stream of it whole.
@@ -75,6 +91,10 @@ pub(crate) struct Removing<'a, E> {
     /// The retention cutoff of each record's project, by its id: a
     /// transcript last active after it is kept.
     retention: BTreeMap<String, Timestamp>,
+    /// The request's id (AIP-155), and whether each removal is keyed by it
+    /// with its harp (a sweep's, `{request_id}:{harp}`) or by it alone.
+    request_id: String,
+    per_harp: bool,
 }
 
 impl<E: Edge> Removing<'_, E> {
@@ -114,18 +134,12 @@ impl<E: Edge> Removing<'_, E> {
         Ok(())
     }
 
-    /// Destroy `record` (owner rulings 94, 94b, 98): its children closed and
-    /// its owner told, its stream and each of its runs' (UUIDv5(session,
-    /// 1..=n)) purged from the one store, then its directory and lock
-    /// removed, and the warm read models told the streams are gone. The streams go
-    /// first: a directory left by a failure after them names a session
-    /// nothing lists. The name's claim is kept (94c).
-    async fn destroy(
-        &self,
-        record: &SessionRecord,
-        files: &mut (dyn SessionFiles + Send),
-        mut removal: Removal,
-    ) -> Result<Removal, AppError> {
+    /// Purge `record`'s streams (owner rulings 94, 94b, 98): its children
+    /// closed and its owner told, its stream and each of its runs'
+    /// (UUIDv5(session, 1..=n)) purged from the one store, and the warm
+    /// read models told the streams are gone; how many events. The name's
+    /// claim is kept (94c).
+    async fn purge_streams(&self, record: &SessionRecord) -> Result<u64, AppError> {
         let session = uuid::Uuid::parse_str(&record.id)
             .map_err(|e| app_failed(&format!("the session id {}: {e}", record.id)))?;
         let mut roots = vec![(SESSION_DOMAIN, Uuid::from_bytes(session.into_bytes()))];
@@ -133,8 +147,9 @@ impl<E: Edge> Removing<'_, E> {
             roots.push((runs::RUN_DOMAIN, runs::run_root(&record.id, incarnation)));
         }
         self.unlink(record).await?;
+        let mut destroyed = 0;
         for (domain, root) in &roots {
-            removal.events_destroyed += self
+            destroyed += self
                 .api
                 .parts
                 .purges
@@ -143,9 +158,70 @@ impl<E: Edge> Removing<'_, E> {
                 .map_err(|e| app_failed(&e.to_string()))?;
         }
         self.forget(&roots).await;
-        removal.files.bytes_freed = files
-            .destroy_session(&record.harp)
-            .map_err(AppError::Files)?;
+        Ok(destroyed)
+    }
+
+    /// The key of `harp`'s removal: the request's id, a sweep's with the
+    /// harp (`{request_id}:{harp}`); a request with none, one of its own.
+    fn removal_key(&self, harp: &str) -> String {
+        let request = match self.request_id.as_str() {
+            "" => uuid::Uuid::now_v7().to_string(),
+            given => given.to_string(),
+        };
+        match self.per_harp {
+            true => format!("removal:{request}:{harp}"),
+            false => format!("removal:{request}"),
+        }
+    }
+
+    /// Remove `record` (O2): the domain's `RemoveSession` sent under its
+    /// removal's key, then each of its steps carried out and recorded done.
+    /// A refusal is the removal's, said as it is today; a duplicate (its key
+    /// intended before, its removal no longer open) was removed already.
+    async fn removed(
+        &self,
+        record: &SessionRecord,
+        files: &mut (dyn SessionFiles + Send),
+        mut removal: Removal,
+        (evidence, even_if_live): (sessions::RemovalEvidence, bool),
+    ) -> Result<Removal, AppError> {
+        let command = sessions::RemoveSession {
+            project: record.project_id.clone(),
+            harp: record.harp.clone(),
+            even_if_live,
+            evidence,
+        };
+        let key = self.removal_key(&record.harp);
+        let book = sessions::keyed_book(project_cover(&record.project_id), &command, &key);
+        match self.api.parts.edge.handle(book).await {
+            Ok(answered) if answered.delivery == DeliveryOutcome::Duplicate => {
+                removal.applied = true;
+                return Ok(removal);
+            }
+            Ok(_) => {}
+            Err(Failure::Rejected(rejected)) => {
+                removal.refusal = rejected
+                    .rejection::<angzarr_embedded::markup::TypedRefusal>()
+                    .and_then(|typed| sessions::SessionRejection::try_from(typed).ok())
+                    .and_then(refusal_of);
+                if removal.refusal.is_none() {
+                    return Err(app_failed(&format!("{rejected:?}")));
+                }
+                return Ok(removal);
+            }
+            Err(other) => return Err(app_failed(&format!("{other:?}"))),
+        }
+        removal.files.bytes_freed = files.size(&record.harp).map_err(AppError::Files)?;
+        let removing = Removed {
+            request_id: removal_id(&key),
+            project_id: record.project_id.clone(),
+            project_dir: record.project_dir.clone(),
+            harp: record.harp.clone(),
+        };
+        removal.events_destroyed = self
+            .api
+            .removal_steps(&removing, (Some(record), false), 0, self)
+            .await?;
         removal.applied = true;
         Ok(removal)
     }
@@ -188,24 +264,37 @@ impl<E: Edge> Removals for Removing<'_, E> {
             .states
             .state(&record.project_dir, &record.harp);
         let now = self.api.parts.places.now();
+        let mut evidence = evidence(
+            &record,
+            lock,
+            last_active,
+            (now, self.retention.get(&record.project_id).copied()),
+        );
+        evidence.blocking_lock = blocking_lock(&self.api.os, lock, || {
+            self.api
+                .parts
+                .states
+                .lock(&record.project_dir, &record.harp)
+        });
         let removal = Removal {
             harp: record.harp.clone(),
             applied: false,
             files: plan,
             events_destroyed: 0,
-            refusal: refusal(
-                &record,
-                lock,
-                last_active,
-                (now, self.retention.get(&record.project_id).copied()),
-                request.even_if_live,
-            ),
+            refusal: sessions::removal_refused(&evidence, request.even_if_live)
+                .and_then(refusal_of),
             dead_letters: Vec::new(),
         };
         if removal.refusal.is_some() || !request.yes {
             return Ok(removal);
         }
-        self.destroy(&record, files.as_mut(), removal).await
+        self.removed(
+            &record,
+            files.as_mut(),
+            removal,
+            (evidence, request.even_if_live),
+        )
+        .await
     }
 
     fn worktrees(
@@ -254,31 +343,23 @@ fn plan(survey: Vec<FileItem>) -> FilePlan {
     }
 }
 
-/// Why `record` may not be removed, if it may not: its lock (`lock`, the
-/// daemon's reading of it) does not prove its owner dead, unless
-/// `even_if_live`; then its transcript's retention, from the newest of its
-/// engine's native history (`native`) and its own capture, kept after
-/// `cutoff` (its project's; none known, [`DEFAULT_RETENTION_DAYS`] before
-/// `now`).
-fn refusal(
+/// What `record`'s removal is judged on (O2): its lock (`lock`, the
+/// daemon's reading of it) as a verdict, its kept flag, and its transcript's
+/// retention, from the newest of its engine's native history (`native`)
+/// and its own capture, kept after `cutoff` (its project's; none known,
+/// [`DEFAULT_RETENTION_DAYS`] before `now`). Its worktrees are reclaim's,
+/// judged before it (none keeps it by the time it is sent).
+fn evidence(
     record: &SessionRecord,
     lock: State,
     native: Option<Timestamp>,
     (now, cutoff): (Timestamp, Option<Timestamp>),
-    even_if_live: bool,
-) -> Option<Refusal> {
-    let harp = record.harp.clone();
-    if lock != State::Ended && !even_if_live {
-        let reason = match lock {
-            State::Live => "its lock is held: the owner is alive and running",
-            _ => "it has no lock to prove the owner ended",
-        };
-        return Some(Refusal::NotProvenDead {
-            harp,
-            reason: reason.to_string(),
-            verb: REMOVE_VERB.to_string(),
-        });
-    }
+) -> sessions::RemovalEvidence {
+    let not_ended = match lock {
+        State::Ended => String::new(),
+        State::Live => "its lock is held: the owner is alive and running".to_string(),
+        _ => "it has no lock to prove the owner ended".to_string(),
+    };
     let last_active = [native, record.last_captured]
         .into_iter()
         .flatten()
@@ -286,21 +367,57 @@ fn refusal(
     let retention = Retention {
         cutoff: Some(cutoff.unwrap_or_else(|| default_cutoff(now))),
     };
-    match retention.retains(Some(record), last_active) {
-        None => None,
-        Some(Retained::Kept) => Some(Refusal::Kept { harp }),
-        Some(Retained::Recent { ended }) => Some(Refusal::Retained {
-            harp,
-            detail: match ended {
+    let (kept, retained) = match retention.retains(Some(record), last_active) {
+        None => (false, String::new()),
+        Some(Retained::Kept) => (true, String::new()),
+        Some(Retained::Recent { ended }) => (
+            false,
+            match ended {
                 Some(at) => format!("it ended {}", session_index::stamp::rfc3339(at)),
                 None => "nothing records when it ended".to_string(),
             },
-        }),
-        Some(Retained::NoBound) => Some(Refusal::Retained {
-            harp,
-            detail: "no retention is configured".to_string(),
-        }),
+        ),
+        Some(Retained::NoBound) => (false, "no retention is configured".to_string()),
+    };
+    sessions::RemovalEvidence {
+        harp: record.harp.clone(),
+        ended: lock == State::Ended,
+        not_ended,
+        kept,
+        retained,
+        spared: 0,
+        skipped: 0,
+        blocking_lock: String::new(),
     }
+}
+
+/// The lock that keeps a session's directory from being renamed into the
+/// trash on the platform `os` (`std::env::consts::OS`'s name): its lock,
+/// `path`, when it is held on Windows, where a directory holding an open
+/// file cannot be moved (D18); none anywhere else, nor for a lock not held.
+pub(crate) fn blocking_lock(os: &str, lock: State, path: impl FnOnce() -> String) -> String {
+    match os == run_ports::WINDOWS && lock == State::Live {
+        true => path(),
+        false => String::new(),
+    }
+}
+
+/// The removal's refusal `rejection` (the domain's judgement of its
+/// evidence) in the words a person is told today (`session remove`'s
+/// refusals); none for one that is not a removal's.
+fn refusal_of(rejection: sessions::SessionRejection) -> Option<Refusal> {
+    use sessions::SessionRejection as R;
+    Some(match rejection {
+        R::SessionLive { harp, reason } => Refusal::NotProvenDead {
+            harp,
+            reason,
+            verb: REMOVE_VERB.to_string(),
+        },
+        R::SessionKept { harp } => Refusal::Kept { harp },
+        R::WithinRetention { harp, detail } => Refusal::Retained { harp, detail },
+        R::SessionLockHeld { harp, lock } => Refusal::LockHeld { harp, lock },
+        _ => return None,
+    })
 }
 
 /// The retention cutoff where none is configured: 30 days before `now`.
@@ -311,33 +428,151 @@ fn default_cutoff(now: Timestamp) -> Timestamp {
 /// The configuration key of the transcript retention.
 const RETENTION_KEY: &str = "session_transcript_retention";
 
-/// What a destroy applied, by its request id (S8), for the daemon's life:
-/// a retry of one already applied is answered with its first result.
-#[derive(Default)]
-pub(crate) struct Applied(Mutex<BTreeMap<String, Done>>);
-
-/// One applied destroy's result.
-#[derive(Clone)]
-enum Done {
-    Deleted(v1::DeleteSessionResponse),
-    Swept(v1::SweepSessionsResponse),
+/// The removal a key names, as the domain records it: its command's id.
+fn removal_id(key: &str) -> String {
+    let id = sessions::command_id(key);
+    uuid::Uuid::from_slice(&id.value)
+        .map(|id| id.to_string())
+        .unwrap_or_default()
 }
 
-impl Applied {
-    fn get(&self, id: &str) -> Option<Done> {
-        if id.is_empty() {
-            return None;
+/// The project stream of `project_id`.
+fn project_cover(project_id: &str) -> Cover {
+    Cover {
+        domain: sessions::PROJECTS_DOMAIN.to_string(),
+        root: Some(sessions::project_id_root(project_id)),
+        edition: None,
+    }
+}
+
+/// A removal being carried out: its id (the domain's, its slot's name), its
+/// session's project and harp.
+struct Removed {
+    request_id: String,
+    project_id: String,
+    project_dir: String,
+    harp: String,
+}
+
+impl<E: Edge> Api<E> {
+    /// The steps of the removal `removed` from `start` (O2,
+    /// [`sessions::REMOVAL_STEPS`]), each recorded done: its worktrees
+    /// (reclaim's, already made when it was intended: made again, WIP-safe,
+    /// only by a resume), its directory into its checkout's trash, its
+    /// streams purged (`record`'s; none left, nothing to purge), the trash
+    /// slot removed; how many events were purged.
+    async fn removal_steps(
+        &self,
+        removed: &Removed,
+        (record, resumed): (Option<&SessionRecord>, bool),
+        start: u32,
+        removing: &Removing<'_, E>,
+    ) -> Result<u64, AppError> {
+        let tree = format!("{}/.ctxloom", removed.project_dir.trim_end_matches('/'));
+        let operations = self.parts.places.operations();
+        let operate = |operation: ctxloom_ports::Operation| {
+            operations
+                .operate(&tree, &removed.request_id, &operation, &|point| {
+                    self.dies_at(point.word());
+                })
+                .map_err(|failure| app_failed(&failure.to_string()))
+                .and_then(|operated| match operated {
+                    ctxloom_ports::Operated::Exists { path } => {
+                        Err(app_failed(&format!("{path} is in the way of the removal")))
+                    }
+                    _ => Ok(()),
+                })
+        };
+        let mut destroyed = 0;
+        for (at, step) in sessions::REMOVAL_STEPS
+            .iter()
+            .enumerate()
+            .skip(start as usize)
+        {
+            match *step {
+                "worktrees" => {
+                    // A worktree that holds work is left, as reclaim leaves
+                    // it; the removal goes on (it was judged whole).
+                    if resumed {
+                        let _ = self
+                            .parts
+                            .places
+                            .worktrees(&removed.project_dir, &removed.project_id, &removing.env)
+                            .worktrees(Some(&removed.harp), true);
+                    }
+                }
+                "trash" => operate(ctxloom_ports::Operation::Trash {
+                    path: format!("sessions/{}", removed.harp),
+                })?,
+                "purge" => {
+                    if let Some(record) = record {
+                        destroyed += removing.purge_streams(record).await?;
+                    }
+                }
+                _ => operate(ctxloom_ports::Operation::Purge)?,
+            }
+            let fact = sessions::RecordRemovalStepDone {
+                request_id: removed.request_id.clone(),
+                step: at as u32,
+            };
+            let key = format!("removal:{}:{at}", removed.request_id);
+            self.parts
+                .edge
+                .handle(fact_book(project_cover(&removed.project_id), &fact, &key))
+                .await
+                .map_err(|failure| app_failed(&format!("{failure:?}")))?;
         }
-        self.0.lock().ok()?.get(id).cloned()
+        self.dies_at("done");
+        Ok(destroyed)
     }
 
-    fn keep(&self, id: &str, done: Done) {
-        if id.is_empty() {
-            return;
-        }
-        if let Ok(mut applied) = self.0.lock() {
-            applied.insert(id.to_string(), done);
-        }
+    /// The removal of `name` its request id `request_id` keyed, still open
+    /// on its project's stream: its project and how far it got.
+    async fn open_removal(
+        &self,
+        name: &SessionName,
+        request_id: &str,
+    ) -> Result<Option<(String, String, sessions::OpenRemoval)>, ApiError> {
+        let row = self
+            .parts
+            .index
+            .index()
+            .project_named_by(name.project().harp());
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let state = self.project(&row.project_id).await?;
+        let id = removal_id(&format!("removal:{request_id}"));
+        Ok(state
+            .removals
+            .get(&id)
+            .cloned()
+            .map(|open| (row.project_id.clone(), row.root.clone(), open)))
+    }
+}
+
+/// The book that records `fact` on `cover`'s stream, keyed `key` (a
+/// redelivery is a DUPLICATE).
+fn fact_book<M: angzarr_embedded::markup::DomainMessage>(
+    cover: Cover,
+    fact: &M,
+    key: &str,
+) -> angzarr_embedded::v1::CommandBook {
+    use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Fact, FactOrigin};
+    CommandBook {
+        cover: Some(cover),
+        page: Some(CommandPage {
+            body: Some(command_page::Body::Fact(Fact {
+                payload: Some(
+                    angzarr_embedded::Any::from_msg(&fact.to_wire()).expect("a fact encodes"),
+                ),
+                origin: Some(FactOrigin {
+                    external_id: key.to_string(),
+                    description: "a session removal's step".to_string(),
+                }),
+            })),
+            ..CommandPage::default()
+        }),
     }
 }
 
@@ -387,10 +622,18 @@ impl<E: Edge> Api<E> {
         let name = SessionName::parse(&request.name)
             .map_err(|rejection| invalid(&request.name, &rejection))?;
         let write = !request.validate_only;
-        if let Some(Done::Deleted(first)) = self.parts_applied(write, &request.request_id) {
-            return Ok(first);
-        }
         self.parts.hosting.fresh().await;
+        // O2: a retry of a removal still open resumes it where it got to,
+        // never judged again (its own trash would refuse it: no lock).
+        if write && !request.request_id.is_empty() {
+            if let Some((project_id, root, open)) =
+                self.open_removal(&name, &request.request_id).await?
+            {
+                return self
+                    .resumed(&request, &name, (project_id, root), open)
+                    .await;
+            }
+        }
         let record = self.parts.index.index().find_by_id(&name.uid());
         let Some(record) = record else {
             return match write && !request.request_id.is_empty() {
@@ -405,6 +648,8 @@ impl<E: Edge> Api<E> {
             records: vec![record.clone()],
             env,
             retention,
+            request_id: request.request_id.clone(),
+            per_harp: false,
         };
         let done = reclaim_application::remove(
             &mut removing,
@@ -444,6 +689,11 @@ impl<E: Edge> Api<E> {
                 detail.clone(),
                 (0, 0),
             )),
+            (Some(Refusal::LockHeld { lock, .. }), _) => Err(refused(
+                v1::removal_refusal::Reason::LockHeld,
+                lock.clone(),
+                (0, 0),
+            )),
             (
                 None,
                 Some(IsolationError::KeepsSession {
@@ -457,19 +707,51 @@ impl<E: Edge> Api<E> {
             (None, Some(other)) => Err(ApiError::Failed {
                 detail: other.to_string(),
             }),
-            (None, None) => {
-                if plan.applied == Some(true) {
-                    self.applied
-                        .keep(&request.request_id, Done::Deleted(plan.clone()));
-                }
-                Ok(plan)
-            }
+            (None, None) => Ok(plan),
         }
     }
 
-    /// What a write's request id already applied (none for a plan).
-    fn parts_applied(&self, write: bool, request_id: &str) -> Option<Done> {
-        write.then(|| self.applied.get(request_id)).flatten()
+    /// The open removal `open` of `name` resumed (O2): its steps from the
+    /// first not done, its session's record where its streams are not yet
+    /// purged; answered applied.
+    async fn resumed(
+        &self,
+        request: &v1::DeleteSessionRequest,
+        name: &SessionName,
+        (project_id, root): (String, String),
+        open: sessions::OpenRemoval,
+    ) -> Result<v1::DeleteSessionResponse, ApiError> {
+        let record = self.parts.index.index().find_by_id(&name.uid());
+        let project_dir = record
+            .as_ref()
+            .map_or(root, |record| record.project_dir.clone());
+        let removing = Removing {
+            api: self,
+            records: record.iter().cloned().collect(),
+            env: env_of(request.env.as_ref()),
+            retention: BTreeMap::new(),
+            request_id: request.request_id.clone(),
+            per_harp: false,
+        };
+        let removed = Removed {
+            request_id: open.request_id.clone(),
+            project_id,
+            project_dir,
+            harp: open.harp.clone(),
+        };
+        let destroyed = self
+            .removal_steps(&removed, (record.as_ref(), true), open.done, &removing)
+            .await
+            .map_err(|error| ApiError::Failed {
+                detail: error.to_string(),
+            })?;
+        Ok(v1::DeleteSessionResponse {
+            name: request.name.clone(),
+            harp: open.harp,
+            applied: Some(true),
+            events_destroyed: destroyed,
+            ..v1::DeleteSessionResponse::default()
+        })
     }
 
     /// A destroy retried after a restart (its request id's first result
@@ -583,11 +865,6 @@ impl<E: Edge> Api<E> {
         &self,
         request: v1::SweepSessionsRequest,
     ) -> Result<v1::SweepSessionsResponse, ApiError> {
-        if let Some(Done::Swept(first)) =
-            self.parts_applied(!request.validate_only, &request.request_id)
-        {
-            return Ok(first);
-        }
         let env = env_of(request.env.as_ref());
         let views: Vec<View> = self
             .under(&request.parent)
@@ -631,6 +908,8 @@ impl<E: Edge> Api<E> {
             records,
             env,
             retention,
+            request_id: request.request_id.clone(),
+            per_harp: true,
         };
         let report = reclaim_application::sweep(
             &mut removing,
@@ -661,10 +940,6 @@ impl<E: Edge> Api<E> {
                 .collect(),
             ..swept(&report)
         };
-        if !request.validate_only {
-            self.applied
-                .keep(&request.request_id, Done::Swept(swept.clone()));
-        }
         Ok(swept)
     }
 

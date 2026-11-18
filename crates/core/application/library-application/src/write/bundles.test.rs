@@ -15,8 +15,7 @@ const DEMO: &[(&str, &str)] = &[
     ("fragments/old.md", "OLD"),
     ("fragments/old.distilled.md", "OLD-DISTILLED"),
     ("prompts/review.md", "REVIEW"),
-    ("mcp/m.yaml", "command: m\n"),
-    ("mcp/.m.meta.yaml", "notes: n\n"),
+    ("mcp/m.yaml", "command: m\nnotes: n\n"),
     (
         "skills/s/SKILL.md",
         "---\nname: s\ndescription: d\n---\nbody",
@@ -219,7 +218,6 @@ fn test_edit_detaches_items_with_their_other_files() {
         "fragments/old.distilled.md",
         "prompts/review.md",
         "mcp/m.yaml",
-        "mcp/.m.meta.yaml",
     ] {
         assert_eq!(mem.text("demo", gone), None, "{gone}");
     }
@@ -414,7 +412,7 @@ fn test_an_export_makes_executable_what_the_sidecar_declares_and_nothing_else() 
             "---\nname: s\ndescription: d\n---\nbody",
         ),
         ("skills/s/run.sh", "#!/bin/sh\n"),
-        ("skills/.s.meta.yaml", "executable:\n  - run.sh\n"),
+        ("skills/s/.meta.yaml", "executable:\n  - run.sh\n"),
     ];
     let (library, mem) = Setup {
         bundles: &[("demo", tree)],
@@ -448,7 +446,7 @@ fn test_an_import_makes_executable_what_its_sidecar_declares_and_nothing_else() 
     );
     mem.put_user("in/mine/skills/s/run.sh", b"#!/bin/sh\n", false);
     mem.put_user(
-        "in/mine/skills/.s.meta.yaml",
+        "in/mine/skills/s/.meta.yaml",
         b"executable:\n  - run.sh\n",
         false,
     );
@@ -504,7 +502,7 @@ fn test_import_copies_a_tree_in_under_its_own_name() {
     exported_demo(&mem);
     mem.put_user("in/demo/skills/s/run.sh", b"#!/bin/sh", false);
     mem.put_user(
-        "in/demo/skills/.s.meta.yaml",
+        "in/demo/skills/s/.meta.yaml",
         b"executable:\n  - run.sh\n",
         false,
     );

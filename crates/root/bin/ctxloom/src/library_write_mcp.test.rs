@@ -13,7 +13,7 @@ const DEMO: &str = ".ctxloom/content/bundles/v2/demo";
 
 /// Go's `the project already has the bundle "demo"` with the `mcp` section the
 /// scenarios declare (`tools`: command echo, one argument, notes), as the
-/// tree Go keeps it in.
+/// tree keeps it: one file (owner T27; Go kept the notes in a sidecar).
 fn demo_with_tools(project: &Project, description: &str) {
     project.write(
         &format!("{DEMO}/bundle.yaml"),
@@ -21,11 +21,7 @@ fn demo_with_tools(project: &Project, description: &str) {
     );
     project.write(
         &format!("{DEMO}/mcp/tools.yaml"),
-        "command: echo\nargs:\n  - KEEP-THIS-ARGUMENT\n",
-    );
-    project.write(
-        &format!("{DEMO}/mcp/.tools.meta.yaml"),
-        "notes: KEEP-THESE-NOTES\n",
+        "command: echo\nargs:\n  - KEEP-THIS-ARGUMENT\nnotes: KEEP-THESE-NOTES\n",
     );
 }
 
@@ -44,7 +40,7 @@ fn test_editing_a_bundles_mcp_server_writes_the_editors_result_back() {
     project
         .file_contains(&format!("{DEMO}/mcp/tools.yaml"), "EDITED-BY-TEST")
         .file_contains(&format!("{DEMO}/mcp/tools.yaml"), "KEEP-THIS-ARGUMENT")
-        .file_contains(&format!("{DEMO}/mcp/.tools.meta.yaml"), "KEEP-THESE-NOTES");
+        .file_contains(&format!("{DEMO}/mcp/tools.yaml"), "KEEP-THESE-NOTES");
 }
 
 // mcp.feature: Scenario: Editing an MCP server that does not exist fails
@@ -123,10 +119,6 @@ fn test_a_name_the_bundle_lacks_is_created_as_a_remote_server() {
         "demo#mcp/search",
         "--url",
         "https://mcp.example.com/v1",
-        "--header",
-        "X-Team=core",
-        "--tag",
-        "search-index",
         "--notes",
         "Team search index",
         "--installation",
@@ -142,15 +134,14 @@ fn test_a_name_the_bundle_lacks_is_created_as_a_remote_server() {
         "{doc}"
     );
     assert_eq!(reports_as(&doc, "path"), manifest);
-    // Go's bytes.
+    // `--header` and `--tag` are dropped (owner ruling); the notes and
+    // installation are in the server's one file (owner T27), so the server
+    // is one write, one call (T29).
     assert_eq!(
         project.read(&format!("{DEMO}/mcp/search.yaml")).as_deref(),
-        Some("url: https://mcp.example.com/v1\nheaders:\n  X-Team: core\n")
+        Some("url: https://mcp.example.com/v1\nnotes: Team search index\ninstallation: Ask core for a seat\n")
     );
-    assert_eq!(
-        project.read(&format!("{DEMO}/mcp/.search.meta.yaml")).as_deref(),
-        Some("tags:\n  - search-index\nnotes: Team search index\ninstallation: Ask core for a seat\n")
-    );
+    assert_eq!(project.read(&format!("{DEMO}/mcp/.search.meta.yaml")), None);
     project.file_contains(&format!("{DEMO}/mcp/tools.yaml"), "KEEP-THIS-ARGUMENT");
 }
 
@@ -179,7 +170,7 @@ fn test_updating_an_existing_server_replaces_its_arguments_and_keeps_what_was_no
         .file_contains(&format!("{DEMO}/mcp/tools.yaml"), "--stdio")
         .file_contains(&format!("{DEMO}/mcp/tools.yaml"), "LOG_LEVEL: debug")
         .file_lacks(&format!("{DEMO}/mcp/tools.yaml"), "KEEP-THIS-ARGUMENT")
-        .file_contains(&format!("{DEMO}/mcp/.tools.meta.yaml"), "KEEP-THESE-NOTES");
+        .file_contains(&format!("{DEMO}/mcp/tools.yaml"), "KEEP-THESE-NOTES");
     let text = project.run(&[
         "mcp",
         "server",
@@ -194,9 +185,9 @@ fn test_updating_an_existing_server_replaces_its_arguments_and_keeps_what_was_no
 }
 
 // mcp.feature: Scenario: Clearing the old target in the same call moves a
-// server to the session endpoint
+// server to a remote endpoint
 #[test]
-fn test_clearing_the_old_target_in_the_same_call_moves_a_server_to_the_session_endpoint() {
+fn test_clearing_the_old_target_in_the_same_call_moves_a_server_to_a_remote_endpoint() {
     let project = Project::initialized();
     demo_with_tools(&project, "mcp set fixture");
     project
@@ -207,13 +198,14 @@ fn test_clearing_the_old_target_in_the_same_call_moves_a_server_to_the_session_e
             "demo#mcp/tools",
             "--command=",
             "--arg=",
-            "--served-by",
-            "session-endpoint",
+            "--url",
+            "https://mcp.example.com/v1",
         ])
         .succeeds();
     assert_eq!(
         project.read(&format!("{DEMO}/mcp/tools.yaml")).as_deref(),
-        Some("served_by: session-endpoint\n")
+        Some("url: https://mcp.example.com/v1\nnotes: KEEP-THESE-NOTES\n"),
+        "the notes, in the server's one file, are not passed and stay"
     );
 }
 

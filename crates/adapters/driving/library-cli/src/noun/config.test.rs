@@ -55,14 +55,97 @@ mod write {
     // config.feature
     #[test]
     fn test_config_create_and_edit() {
-        let (library, mem) = world();
+        let (library, mem) = Setup::default().fixture();
         assert!(refused_code(&library, &["config", "edit"], TEXT).contains("config-missing"));
-        mem.set_scaffold_for_test("config.yaml", "schema_version: 9\n");
+        assert!(mem.edits().is_empty(), "no editor before a config");
+        // Step 10b U3: the config through the editor, round trip, written
+        // whole; nothing said on success.
+        let (library, mem) = Setup {
+            layers: &["schema_version: 9\n"],
+            ..Setup::default()
+        }
+        .fixture();
+        mem.set_editor(|_, text| Ok(format!("{text}# mended\n")));
         let said = text(&library, &["config", "edit"]);
         assert_eq!(said, "");
-        assert!(!mem.opened().is_empty());
+        assert!(mem.opened().is_empty(), "nothing opened in place");
+        assert_eq!(
+            mem.config(library_application::fakes::ConfigScope::Project)
+                .unwrap(),
+            "schema_version: 9\n# mended\n"
+        );
         let (library, _) = Setup::default().fixture();
         let said = text(&library, &["config", "create", "--engine", "mock"]);
         assert!(said.starts_with("Wrote "), "{said}");
+    }
+}
+
+// Step 10a U2: the read asks the view the flag names, with the command's
+// global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_config_show_asks_its_view_with_the_globals() {
+        let (under, effective) = asked_once::<v1::GetConfigRequest>(&["config", "show"]);
+        assert_eq!(under, "/config");
+        assert_eq!(effective.view, v1::config::View::Effective as i32);
+        assert_eq!(effective.globals, degraded());
+        let (_, set) = asked_once::<v1::GetConfigRequest>(&["config", "show", "--raw"]);
+        assert_eq!(set.view, v1::config::View::Set as i32);
+    }
+}
+
+// Step 10b U3: `config edit` asks the daemon's `EditConfig`: its preview
+// (whose Edit need the CLI presents), then the apply with the editor's
+// text and the preview's etag.
+mod writes_asked {
+    use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_config_edit_previews_presents_its_edit_need_and_applies_the_answer() {
+        let previewed = v1::EditConfigResponse {
+            applied: Some(false),
+            etag: "7".to_string(),
+            needs: vec![v1::Need {
+                id: "edit".to_string(),
+                kind: Some(v1::need::Kind::Edit(v1::Edit {
+                    file_name: "config.yaml".to_string(),
+                    text: "schema_version: 9\n".to_string(),
+                    launch: None,
+                })),
+            }],
+            ..v1::EditConfigResponse::default()
+        };
+        let asks = Asks::answering(
+            vec![
+                Box::new(previewed),
+                Box::new("schema_version: 9\n# mended\n".to_string()),
+            ],
+            None,
+        );
+        let ran = go_served(&["config", "edit"], TEXT, BARE, &Project, Some(&asks));
+        let sent = asks.requests::<v1::EditConfigRequest>();
+        assert_eq!(sent.len(), 2, "{}", ran.err);
+        assert!(sent[0].validate_only);
+        assert!(sent[0].presentable.as_ref().is_some_and(|p| p.can_launch));
+        assert_eq!(sent[1].etag, "7");
+        assert!(!sent[1].validate_only);
+        assert_eq!(
+            sent[1].answers,
+            [v1::Answer {
+                need_id: "edit".to_string(),
+                answer: Some(v1::answer::Answer::Edited(
+                    "schema_version: 9\n# mended\n".to_string()
+                )),
+            }]
+        );
+        assert_eq!(
+            asks.requests::<v1::Edit>().len(),
+            1,
+            "the editor launched once"
+        );
     }
 }

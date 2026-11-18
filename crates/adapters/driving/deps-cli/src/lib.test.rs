@@ -86,6 +86,62 @@ impl Names for Project {
     }
 }
 
+/// The daemon's reads in the tests: answered as the daemon answers them
+/// (library-api's deps reads), over the fixture's dependencies, each
+/// target [`PARENT`] followed by `under`.
+struct ServedBy<'a>(&'a deps_application::Deps);
+
+/// [`ServedBy`]'s reads, from [`served_reads!`](crate::served_reads).
+macro_rules! served_by_library_api {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                under: &str,
+                request: daemon_proto::v1::$request,
+            ) -> Result<(daemon_proto::v1::$response, Vec<daemon_proto::v1::Notice>), Failure> {
+                let request = daemon_proto::v1::$request {
+                    $target: format!("{PARENT}{under}"),
+                    ..request
+                };
+                let outcome = library_api::deps::$method(self.0, PARENT, &request);
+                let read = outcome.result.map_err(IntoFailure::into_failure)?;
+                Ok((read, Vec::new()))
+            }
+        )*
+    };
+}
+
+impl Served for ServedBy<'_> {
+    crate::served_reads!(served_by_library_api);
+
+    /// The daemon's local move as it answers one (the move itself is
+    /// library-api's and the daemon's, tested there): the bundle's manifest
+    /// as its source, and where it lands below the destination project.
+    fn move_bundle(
+        &self,
+        under: &str,
+        request: daemon_proto::v1::MoveBundleRequest,
+    ) -> Result<daemon_proto::v1::MoveBundleResponse, Failure> {
+        let name = under.rsplit('/').next().unwrap_or(under).to_string();
+        let moved = deps_application::Moved {
+            status: "moved",
+            source: format!("/p/.ctxloom/content/bundles/v2/{name}/bundle.yaml"),
+            dest_kind: "path",
+            dest: format!("{}/.ctxloom/content/bundles/v2/{name}", request.destination),
+            remote: String::new(),
+            commit_sha: String::new(),
+            name,
+        };
+        Ok(daemon_proto::v1::MoveBundleResponse {
+            path: moved.dest,
+            source: moved.source,
+            applied: Some(true),
+            ..daemon_proto::v1::MoveBundleResponse::default()
+        })
+    }
+}
+
 /// A resource name under [`PARENT`].
 fn named(rest: &str) -> String {
     format!("{PARENT}/{rest}")
@@ -110,7 +166,15 @@ fn go_refreshing(fx: &Fixture, refresh: &FakeRefresh, line: &[&str], how: How) -
     .expect("a catalog");
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let exit = run(
-        &fx.deps, refresh, &Project, &noun, &call, &catalog, &mut out, &mut err,
+        &fx.deps,
+        refresh,
+        &Project,
+        &ServedBy(&fx.deps),
+        &noun,
+        &call,
+        &catalog,
+        &mut out,
+        &mut err,
     )
     .map(|exit| exit.code(true))
     .map_err(|f| (f.cause.code().to_string(), f.exit.code(true)));

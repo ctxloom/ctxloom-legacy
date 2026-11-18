@@ -145,6 +145,10 @@ pub enum AppError {
         answer: u64,
         source: u64,
     },
+    /// The item's source is no longer the one its distiller was sent (step
+    /// 10b: its digest moved while the model was asked): its answer is
+    /// stale, and nothing was written.
+    DistillSourceMoved { reference: String },
 }
 
 impl AppError {
@@ -240,6 +244,7 @@ impl Diagnostic for AppError {
             AppError::NoContextExclusive { .. } => code!("no-context-exclusive"),
             AppError::DistillFailed { .. } => code!("distill-failed"),
             AppError::DistillTruncated { .. } => code!("distill-truncated"),
+            AppError::DistillSourceMoved { .. } => code!("distill-source-moved"),
             AppError::SavedCommand { .. } => code!("saved-command"),
             AppError::Workspace { .. } => code!("workspace"),
             AppError::RunNeedsDryRun => code!("run-needs-dry-run"),
@@ -350,6 +355,9 @@ impl Diagnostic for AppError {
                 ("reference", reference.as_str().into()),
                 ("cause", Arg::Nested(Box::new(cause.clone()))),
             ],
+            AppError::DistillSourceMoved { reference } => {
+                vec![("reference", reference.as_str().into())]
+            }
             AppError::DistillTruncated {
                 reference,
                 answer,
@@ -411,6 +419,9 @@ pub enum Notice {
     /// What an engine says of a run's plan (owner ruling 168), in the
     /// engine's own words: its code, args and catalog.
     Engine(run_ports::Advice),
+    /// What the git step of `config create` did (step 10, G1), in init's
+    /// own words.
+    Git(run_ports::Advice),
     /// A bundle that was skipped, and why.
     BundleSkipped {
         manifest: String,
@@ -465,6 +476,15 @@ pub enum Notice {
     /// `prompt` (`setup-interview`, `distill`), and the user has not trusted
     /// the project, so the built-in one was used (step 8 U2, D4).
     PromptUntrusted { prompt: String },
+    /// A project-only setting (ruling 46's keys) the project's own config
+    /// `file` says, held back because the user has not trusted the project
+    /// (step 10a U7, D7): the read answers as if it were not set. Its fix
+    /// names `home_file`, where the user may set it herself.
+    UntrustedSetting {
+        path: String,
+        file: String,
+        home_file: String,
+    },
     /// A run's checkout was left in place at its end (work in it, or one
     /// that would not go): by path and branch, and why.
     CheckoutLeft {
@@ -506,7 +526,7 @@ impl Diagnostic for Notice {
     fn code(&self) -> &str {
         match self {
             Notice::Finding { .. } => code!("notice-finding"),
-            Notice::Engine(advice) => advice.code(),
+            Notice::Engine(advice) | Notice::Git(advice) => advice.code(),
             Notice::BundleSkipped { .. } => code!("notice-bundle-skipped"),
             Notice::ConfigKeyless { .. } => code!("notice-config-keyless"),
             Notice::RootIgnored { .. } => code!("notice-root-ignored"),
@@ -520,6 +540,7 @@ impl Diagnostic for Notice {
             Notice::SessionHomeHost { .. } => code!("notice-session-home-host"),
             Notice::McpServerShadowed { .. } => code!("notice-mcp-server-shadowed"),
             Notice::PromptUntrusted { .. } => code!("notice-prompt-untrusted"),
+            Notice::UntrustedSetting { .. } => code!("notice-untrusted-setting"),
             Notice::CheckoutLeft { .. } => code!("notice-checkout-left"),
             Notice::StaleDistilled { .. } => code!("stale-distilled"),
             Notice::RuntimeOverride { change, .. } => match change {
@@ -540,7 +561,7 @@ impl Diagnostic for Notice {
                 ("text", text.as_str().into()),
                 ("remedy", remedy.as_str().into()),
             ],
-            Notice::Engine(advice) => advice.args(),
+            Notice::Engine(advice) | Notice::Git(advice) => advice.args(),
             Notice::BundleSkipped {
                 manifest,
                 dir,
@@ -594,6 +615,15 @@ impl Diagnostic for Notice {
             ],
             Notice::McpServerShadowed { name } => vec![("name", name.as_str().into())],
             Notice::PromptUntrusted { prompt } => vec![("prompt", prompt.as_str().into())],
+            Notice::UntrustedSetting {
+                path,
+                file,
+                home_file,
+            } => vec![
+                ("path", path.as_str().into()),
+                ("file", file.as_str().into()),
+                ("home_file", home_file.as_str().into()),
+            ],
             Notice::CheckoutLeft {
                 path,
                 branch,
@@ -738,7 +768,9 @@ fn error_samples() -> Vec<Box<dyn Diagnostic>> {
             reference: s("demo#fragments/rules"),
             cause: angzarr_diagnostic::Report::of(&BundleError::NoManifest { bundle: s("demo") }),
         }),
-        Box::new(crate::distill::NoDistiller),
+        Box::new(AppError::DistillSourceMoved {
+            reference: s("demo#fragments/rules"),
+        }),
         Box::new(AppError::DistillTruncated {
             reference: s("demo#fragments/rules"),
             answer: 4,
@@ -818,6 +850,11 @@ fn notice_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(Notice::McpServerShadowed { name: s("ctxloom") }),
         Box::new(Notice::PromptUntrusted {
             prompt: s("setup-interview"),
+        }),
+        Box::new(Notice::UntrustedSetting {
+            path: s("engines.claude-code.command"),
+            file: s("/p/.ctxloom/config.yaml"),
+            home_file: s("/h/.ctxloom/config.yaml"),
         }),
         Box::new(Notice::CheckoutLeft {
             path: s("/h/.ctxloom/worktrees/calm-otter/amber-swift-owl/reviewer"),

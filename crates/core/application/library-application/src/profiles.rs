@@ -177,11 +177,9 @@ impl Project {
         ProfileList {
             rows,
             hint: if self.no_project() {
-                "No project here: run 'ctxloom init' to set one up with its default content."
-                    .to_string()
+                crate::NO_PROJECT_HINT.to_string()
             } else {
-                "Use 'ctxloom profile create <name> --include <bundle>...' to create one."
-                    .to_string()
+                crate::PROFILE_HINT.to_string()
             },
         }
     }
@@ -207,6 +205,10 @@ impl Project {
             variables: found.variables.clone(),
             exclude_fragments: found.exclude_fragments.clone(),
             exclude_mcp: found.exclude_mcp.clone(),
+            select_tags: found.select_tags.clone(),
+            fragments: found.fragments.clone(),
+            hooks: found.hooks.read(),
+            deny_tools: found.deny_tools.clone(),
             path: path.clone(),
             bundle: bundle_of(&key),
             default: defaults.contains(&key),

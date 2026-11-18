@@ -25,6 +25,15 @@ pub(crate) const PROJECT_MARKER: &str = ".ctxloom/project-id";
 /// The id an initialized fixture project carries, as `init` would mint one.
 pub(crate) const FIXTURE_PROJECT_ID: &str = "initialized-fixture-project";
 
+/// What a fixture project commits: the library's pathspec (step 10, L13),
+/// each that the fixture has.
+const FIXTURE_LIBRARY: [&str; 4] = [
+    ".ctxloom/config.yaml",
+    ".ctxloom/remotes.yaml",
+    ".ctxloom/lock.yaml",
+    ".ctxloom/content",
+];
+
 /// The editors Go's acceptance steps pin in the home config
 /// (`steps_fixture.go`): `sh -c <script> editor <tmpfile>`, so `$1` is the
 /// temporary file the content was written to.
@@ -92,15 +101,132 @@ impl Project {
     }
 
     /// An initialized project no `init` or run has named: its configs, and
-    /// no project id.
+    /// no project id. It is a git repository (step 10, G1: a library lives
+    /// in git) whose one commit holds the project's config alone; whatever
+    /// a later step writes stays uncommitted, as in her project before she
+    /// commits it.
     pub(crate) fn configured() -> Project {
+        let project = Project::configured_outside_git();
+        project.git_init_committing(&[".ctxloom/config.yaml"]);
+        project
+    }
+
+    /// [`configured`](Project::configured), in no git repository (step 10,
+    /// G1: such a library is refused; a project from before git was
+    /// required).
+    pub(crate) fn configured_outside_git() -> Project {
         let project = Project::bare();
-        project.write(".ctxloom/config.yaml", MINIMAL_CONFIG);
-        project.write_home(
+        project.write_configs();
+        project
+    }
+
+    /// An initialized project one level below a git repository's root
+    /// (`<root>/outer/project`, the repository `<root>/outer`, whose one
+    /// commit holds the project's config), the home outside it: in a work
+    /// tree whose root is not the project's.
+    pub(crate) fn configured_in_a_subdirectory() -> Project {
+        let project = Project::bare_in_a_subdirectory();
+        project.write_configs();
+        project.git_in(
+            project.project.parent().expect("a parent"),
+            &["add", "project/.ctxloom/config.yaml"],
+        );
+        project.git_in(
+            project.project.parent().expect("a parent"),
+            &["commit", "-qm", "initial"],
+        );
+        project
+    }
+
+    /// An empty project directory one level below a git repository's root,
+    /// which has one empty commit; the home outside it.
+    pub(crate) fn bare_in_a_subdirectory() -> Project {
+        let root = files::root();
+        let outer = root.root().join("outer");
+        let project = outer.join("project");
+        let home = root.root().join("home");
+        files::mkdirs(&project);
+        files::mkdirs(&home);
+        let project = Project::placed(root, project, home);
+        project.git_in(&outer, &["init", "-q"]);
+        project.git_in(&outer, &["commit", "-q", "--allow-empty", "-m", "initial"]);
+        project
+    }
+
+    /// An empty project directory that is a git repository with one empty
+    /// commit: her live repository, before ctxloom.
+    pub(crate) fn bare_in_git() -> Project {
+        let project = Project::bare();
+        project.git(&["init", "-q"]);
+        project.git(&["commit", "-q", "--allow-empty", "-m", "initial"]);
+        project
+    }
+
+    /// The configs an initialized project has, in the project and (with a
+    /// no-op editor) in the home.
+    fn write_configs(&self) {
+        self.write(".ctxloom/config.yaml", MINIMAL_CONFIG);
+        self.write_home(
             ".ctxloom/config.yaml",
             "schema_version: 9\neditor:\n  command: \"true\"\n",
         );
-        project
+    }
+
+    /// `git init` in the project, then one commit of `paths`.
+    pub(crate) fn git_init_committing(&self, paths: &[&str]) {
+        self.git(&["init", "-q"]);
+        let mut add = vec!["add", "--"];
+        add.extend_from_slice(paths);
+        if !paths.is_empty() {
+            self.git(&add);
+        }
+        self.git(&["commit", "-q", "--allow-empty", "-m", "initial"]);
+    }
+
+    /// The harness's git in the project, which must succeed: its stdout.
+    pub(crate) fn git(&self, args: &[&str]) -> String {
+        self.git_in(&self.project, args)
+    }
+
+    /// The harness's git in `dir`, which must succeed: its stdout.
+    pub(crate) fn git_in(&self, dir: &Path, args: &[&str]) -> String {
+        let output = self.git_output(dir, args);
+        assert!(
+            output.status.success(),
+            "git {args:?} in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// The harness's git in `dir`, whatever it exits: a fixed identity, no
+    /// system config, the temporary home as its `HOME`, and nothing else of
+    /// this process's environment (no `GIT_*` of the runner's).
+    pub(crate) fn git_output(&self, dir: &Path, args: &[&str]) -> std::process::Output {
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=Alice",
+                "-c",
+                "user.email=alice@example.invalid",
+            ])
+            .args([
+                "-c",
+                "init.defaultBranch=main",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .env_clear()
+            .env("PATH", crate::tests::host_var("PATH").unwrap_or_default())
+            .env("HOME", &self.home)
+            .env("USERPROFILE", &self.home)
+            .env("TMPDIR", crate::tests::temp_root())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git runs")
     }
 
     /// Go's "an empty project directory": nothing in it.
@@ -110,6 +236,11 @@ impl Project {
         let home = root.root().join("home");
         files::mkdirs(&project);
         files::mkdirs(&home);
+        Project::placed(root, project, home)
+    }
+
+    /// The project at `project` and its home at `home`, both under `root`.
+    fn placed(root: file_system::Rooted, project: PathBuf, home: PathBuf) -> Project {
         Project {
             _root: root,
             project,
@@ -139,9 +270,17 @@ impl Project {
             copy_tree(&source.join("home"), &project.home);
         }
         // A fixture's ctxloom project stands for an initialized one, which
-        // carries the id init mints (owner ruling 2026-11-13).
-        if files::is_dir(project.project.join(".ctxloom")) && !project.exists(PROJECT_MARKER) {
-            return project.named();
+        // is in git (step 10, G1), its library committed, and carries the id
+        // init mints (owner ruling 2026-11-13).
+        if files::is_dir(project.project.join(".ctxloom")) {
+            let library: Vec<&str> = FIXTURE_LIBRARY
+                .into_iter()
+                .filter(|rel| project.exists(rel))
+                .collect();
+            project.git_init_committing(&library);
+            if !project.exists(PROJECT_MARKER) {
+                return project.named();
+            }
         }
         project
     }
@@ -330,6 +469,7 @@ impl Project {
         let project = Project::bare();
         project.write(".ctxloom/config.yaml", MINIMAL_CONFIG);
         project.write_home(".ctxloom/config.yaml", editor.home_config());
+        project.git_init_committing(&[".ctxloom/config.yaml"]);
         project.named()
     }
 

@@ -1,10 +1,6 @@
 //! `companion`: list, and its writes, each as its API resource or its
 //! method's response (OD-40, design §3.9, §5.7); `loadout` (B2), the one
-//! fixed YAML document, unchanged.
-
-use library_application::{
-    CompanionAdded, CompanionRemoved, CompanionRow, CompanionState, CompanionStateSet, Removal,
-};
+//! YAML document, written from the daemon's `Loadout` (step 10a U2).
 
 use crate::prelude::*;
 
@@ -13,15 +9,15 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx.library.companion_list(&cx.flags);
-    resource(
-        cx,
-        outcome,
-        out,
-        err,
-        |parent, rows: &Vec<CompanionRow>| companions(parent, rows),
-        |out, rows| text::companion_list(out, rows),
-    )
+    // The daemon's read (step 10a U2), its text from the message (D10).
+    let request = v1::ListCompanionsRequest {
+        globals: cx.globals(),
+        ..v1::ListCompanionsRequest::default()
+    };
+    let read = cx.served.list_companions("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        text::companion_list(out, &crate::read_back::companions(listed))
+    })
 }
 
 pub(crate) fn write(
@@ -32,71 +28,102 @@ pub(crate) fn write(
 ) -> Result<Option<Exit>, Failure> {
     let name = text_arg(sub, "name");
     let code = match verb {
+        // The daemon's `CreateCompanion` (step 10b U3): it probes the
+        // program and registers the name in the home config; its text from
+        // the response (D10).
         "add" => {
-            let outcome = cx.library.companion_add(&cx.flags, &name);
-            api::written(
+            let request = v1::CreateCompanionRequest {
+                companion_id: name.clone(),
+                globals: cx.globals(),
+                ..v1::CreateCompanionRequest::default()
+            };
+            crate::answer_written(
                 cx,
-                outcome,
+                cx.served.create_companion("", request),
+                |m| std::mem::take(&mut m.notices),
                 out,
                 err,
-                added,
-                |done, out, _| {
-                    if done.added {
+                |m, out| {
+                    let bin = m.companion.as_ref().map_or("", |c| c.bin.as_str());
+                    if m.applied.unwrap_or(false) {
                         writeln!(
                             out,
-                            "Registered companion '{}' (its program {} answers)",
-                            done.name, done.program
+                            "Registered companion '{name}' (its program {bin} answers)"
                         )
                     } else {
-                        writeln!(
-                            out,
-                            "Companion '{}' is already registered ({})",
-                            done.name, done.program
-                        )
+                        writeln!(out, "Companion '{name}' is already registered ({bin})")
                     }
                 },
                 |_| Exit::OK,
             )?
         }
+        // The daemon's `EnableCompanion`/`DisableCompanion` (step 10b, owner
+        // 2026-11-18, night): the state written to the home config; its
+        // text from the response (D10).
         "enable" | "disable" => {
-            let state = if verb == "enable" {
-                CompanionState::Enabled
+            let under = library_api::names::named_target("companions", &name);
+            let word = if verb == "enable" {
+                "enabled"
             } else {
-                CompanionState::Disabled
+                "disabled"
             };
-            let outcome = cx.library.companion_set_state(&cx.flags, &name, state);
-            api::written(
-                cx,
-                outcome,
-                out,
-                err,
-                set,
-                |done, out, _| {
-                    let word = done.state.word();
-                    if done.changed {
-                        writeln!(out, "Companion '{}' is {word}", done.name)
-                    } else {
-                        writeln!(out, "Companion '{}' is already {word}", done.name)
-                    }
-                },
-                |_| Exit::OK,
-            )?
+            let said = |applied: Option<bool>, out: &mut dyn Write| {
+                if applied.unwrap_or(false) {
+                    writeln!(out, "Companion '{name}' is {word}")
+                } else {
+                    writeln!(out, "Companion '{name}' is already {word}")
+                }
+            };
+            if verb == "enable" {
+                let request = v1::EnableCompanionRequest {
+                    globals: cx.globals(),
+                    ..v1::EnableCompanionRequest::default()
+                };
+                crate::answer_written(
+                    cx,
+                    cx.served.enable_companion(&under, request),
+                    |m| std::mem::take(&mut m.notices),
+                    out,
+                    err,
+                    |m, out| said(m.applied, out),
+                    |_| Exit::OK,
+                )?
+            } else {
+                let request = v1::DisableCompanionRequest {
+                    globals: cx.globals(),
+                    ..v1::DisableCompanionRequest::default()
+                };
+                crate::answer_written(
+                    cx,
+                    cx.served.disable_companion(&under, request),
+                    |m| std::mem::take(&mut m.notices),
+                    out,
+                    err,
+                    |m, out| said(m.applied, out),
+                    |_| Exit::OK,
+                )?
+            }
         }
         "remove" => {
-            let outcome = cx
-                .library
-                .companion_remove(&cx.flags, &name, flag(sub, "yes"));
-            api::written(
+            let under = library_api::names::named_target("companions", &name);
+            crate::write::removal_served(
                 cx,
-                outcome,
+                flag(sub, "yes"),
+                |validate_only, answers, etag| {
+                    // DeleteCompanion carries no answers: its Confirm is
+                    // answered by the apply itself.
+                    let _ = answers;
+                    let request = v1::DeleteCompanionRequest {
+                        validate_only,
+                        etag,
+                        globals: cx.globals(),
+                        ..v1::DeleteCompanionRequest::default()
+                    };
+                    cx.served.delete_companion(&under, request)
+                },
                 out,
                 err,
-                |parent, removal| removed(parent, &name, removal),
-                |removal, out, _| match removal {
-                    Removal::Preview(preview) => crate::write::preview_text(out, preview),
-                    Removal::Done(gone) => writeln!(out, "Removed companion '{}'", gone.name),
-                },
-                crate::write::removal_exit,
+                |_, out| writeln!(out, "Removed companion '{name}'"),
             )?
         }
         _ => return Ok(None),
@@ -104,94 +131,30 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
-/// A companion's resource name under `parent`.
-fn companion_name(parent: &str, companion: &str) -> String {
-    format!("{parent}/companions/{companion}")
-}
-
-/// `companion list`: `ListCompanionsResponse`, every registered companion
-/// under `parent`, whether its program is there `resolves` (looked for,
-/// never run).
-pub(crate) fn companions(parent: &str, rows: &[CompanionRow]) -> v1::ListCompanionsResponse {
-    v1::ListCompanionsResponse {
-        companions: rows
-            .iter()
-            .map(|row| v1::Companion {
-                name: companion_name(parent, &row.name),
-                bin: row.program.clone(),
-                resolves: Some(row.exists),
-                state: state_of(row.state).into(),
-            })
-            .collect(),
-        next_page_token: String::new(),
-    }
-}
-
-/// `companion add`: the companion as registered (its program answered the
-/// probe, so it resolves), applied when the registration is new or changed
-/// one; the same registration again changes nothing.
-fn added(parent: &str, done: &CompanionAdded) -> v1::CreateCompanionResponse {
-    v1::CreateCompanionResponse {
-        companion: Some(v1::Companion {
-            name: companion_name(parent, &done.name),
-            bin: done.program.clone(),
-            resolves: Some(true),
-            state: v1::companion::State::Enabled.into(),
-        }),
-        applied: Some(done.added),
-        ..v1::CreateCompanionResponse::default()
-    }
-}
-
-/// The resource's state for a registration's.
-fn state_of(state: CompanionState) -> v1::companion::State {
-    match state {
-        CompanionState::Enabled => v1::companion::State::Enabled,
-        CompanionState::Disabled => v1::companion::State::Disabled,
-    }
-}
-
-/// `companion enable|disable`: the companion, as it is now (AIP-136).
-fn set(parent: &str, done: &CompanionStateSet) -> v1::Companion {
-    v1::Companion {
-        name: companion_name(parent, &done.name),
-        bin: done.program.clone(),
-        resolves: None,
-        state: state_of(done.state).into(),
-    }
-}
-
-/// `companion remove`: the preview (the command that applies it), or the
-/// removal done.
-fn removed(
-    parent: &str,
-    name: &str,
-    removal: &Removal<CompanionRemoved>,
-) -> v1::DeleteCompanionResponse {
-    let (applied, detail, apply_command) = match removal {
-        Removal::Preview(preview) => (false, preview.detail.clone(), preview.apply.clone()),
-        Removal::Done(gone) => (gone.removed, Vec::new(), String::new()),
-    };
-    v1::DeleteCompanionResponse {
-        companion: Some(v1::Companion {
-            name: companion_name(parent, name),
-            ..v1::Companion::default()
-        }),
-        applied: Some(applied),
-        detail,
-        apply_command,
-        ..v1::DeleteCompanionResponse::default()
-    }
-}
-
-/// `loadout`: the one fixed YAML document. The value of `--format` is a
-/// document format here, and yaml is the only one there is.
-pub(crate) fn loadout(sub: &ArgMatches, out: &mut dyn Write) -> Result<Exit, Failure> {
+/// `loadout`: the daemon's `GetLoadout` (step 10a U2), written as the one
+/// YAML document. The value of `--format` is a document format here, and
+/// yaml is the only one there is, so the output format is never asked: the
+/// document is the answer, json or text alike.
+pub(crate) fn loadout(
+    cx: &Context<'_>,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
     let asked = given(sub, "format");
     if let Some(format) = asked.filter(|f| f != "yaml") {
         return Err(AppError::from(WriteError::LoadoutFormat { format }).into_failure());
     }
-    out.write_all(LOADOUT.as_bytes())
+    let request = v1::GetLoadoutRequest {
+        globals: cx.globals(),
+        ..v1::GetLoadoutRequest::default()
+    };
+    let (loadout, notices) = cx.served.own_loadout(request)?;
+    let said: Vec<library_application::Notice> =
+        notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    let document = library_application::loadout::document(&crate::read_back::loadout(&loadout));
+    out.write_all(document.as_bytes())
         .map_err(crate::output_failure)?;
     Ok(Exit::OK)
 }

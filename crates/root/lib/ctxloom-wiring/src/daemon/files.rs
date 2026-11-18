@@ -71,6 +71,17 @@ pub(crate) fn instance_lock_path(account: &Path, overridden: Option<&Path>) -> P
         .join(DAEMON_LOCK_FILE)
 }
 
+/// Why the single-instance lock was not taken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unheld {
+    /// Another process held it for the whole wait: another daemon serves,
+    /// or is starting, or is stopping.
+    Held { lock: String },
+    /// It could not be taken at all (its directory or its file cannot be
+    /// made or locked): no daemon can start here until that changes.
+    Failed(String),
+}
+
 /// The single-instance lock, held: released when dropped. It keeps a second
 /// handle on the file it locked, to tell whether that is still the file at
 /// the lock's path ([`DaemonFiles::still_holds`]).
@@ -125,18 +136,26 @@ impl DaemonFiles {
         self.dir.join(name)
     }
 
+    /// [`Self::take_instance`], none when it was not taken.
+    #[cfg(test)]
+    pub(crate) fn hold_instance(&self, wait: Duration) -> Option<Instance> {
+        self.take_instance(wait).ok()
+    }
+
     /// The single-instance lock (D18, S-e): one daemon per OS account, the
-    /// lock whoever serves holds for its life,
-    /// waited for up to `wait`; none when another holds it still. It says
-    /// only that one daemon serves (M11): whether a daemon serves is its health check
-    /// (`daemon::live`), never this lock.
+    /// lock whoever serves holds for its life, waited for up to `wait`, or
+    /// why it was not taken: another held it for the whole wait
+    /// ([`Unheld::Held`]), or it could not be taken at all
+    /// ([`Unheld::Failed`]). It says only that one daemon serves (M11):
+    /// whether a daemon serves is its health check (`daemon::live`), never
+    /// this lock.
     ///
     /// The lock file is made once and never removed or replaced by ctxloom.
-    pub(crate) fn hold_instance(&self, wait: Duration) -> Option<Instance> {
+    pub(crate) fn take_instance(&self, wait: Duration) -> Result<Instance, Unheld> {
         let fs = self.fs.as_ref();
         let path = self.lock.as_path();
         fs.create_dir_all(self.instance_dir(), Mode::from_bits(DIR_MODE))
-            .ok()?;
+            .map_err(|e| Unheld::Failed(e.to_string()))?;
         let mut pause = until(path, wait);
         let mut held = None;
         let locked = take_current(fs, path, || {
@@ -147,10 +166,16 @@ impl DaemonFiles {
             })?);
             Ok(file)
         })
-        .ok()?;
-        Some(Instance {
+        .map_err(|e| match e {
+            LockError::Timeout { .. } => Unheld::Held {
+                lock: path.display().to_string(),
+            },
+            other => Unheld::Failed(other.to_string()),
+        })?;
+        let held = held.ok_or_else(|| Unheld::Failed("the lock was not kept".to_string()))?;
+        Ok(Instance {
             _locked: locked,
-            held: held?,
+            held,
         })
     }
 
@@ -384,6 +409,41 @@ impl DaemonFiles {
         named && self.fs.remove_file(&self.path(DIE_AT)).is_ok()
     }
 
+    /// The test-support switch that holds a library write at one point
+    /// (`test-hold-at`, its one line the point's word, as `test-die-at`'s):
+    /// while the file names `point`, the write waits there, so a test
+    /// standing for another process acts between two of its steps and then
+    /// removes the file (the race rule: the interleaving is forced, never
+    /// waited for). Bounded by `HOLD_MOST`, so a test that never lets go
+    /// cannot hang the daemon.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn hold_at(&self, point: &str) {
+        let named = || {
+            self.fs
+                .read(&self.path(HOLD_AT))
+                .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).trim() == point)
+        };
+        let deadline = std::time::Instant::now() + HOLD_MOST;
+        while named() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// The instant the test-support switch that holds the scheduler's
+    /// alarms (`test-hold-alarms`) holds them at, while it is there: its one
+    /// line, seconds since the epoch, written by the test before what it
+    /// holds was armed. While it is, the scheduler's clock stands there, so
+    /// no alarm armed since comes due; once it is gone the clock is the
+    /// system's again (a test that stands for the passing of an alarm's
+    /// time lets go of it, so the alarm fires when the test says, never
+    /// when a loaded machine is slow: the race rule). A line that is no
+    /// number holds them at none (the system's clock).
+    #[cfg(feature = "test-support")]
+    pub(crate) fn alarms_held_at(&self) -> Option<i64> {
+        let bytes = self.fs.read(&self.path(HOLD_ALARMS)).ok()?;
+        String::from_utf8_lossy(&bytes).trim().parse().ok()
+    }
+
     /// The test-support switch that makes the daemon deaf to a stop and a
     /// drain (`test-deaf-to-stop`): while it is there, each is taken and
     /// ignored, so `ctxloom shutdown` finds a daemon that will not exit.
@@ -528,6 +588,18 @@ const DIE_AFTER_APPLY: &str = "test-die-after-apply";
 /// The test-support switch that kills a daemon at a step (slice 4 U6).
 #[cfg(feature = "test-support")]
 const DIE_AT: &str = "test-die-at";
+
+/// The test-support switch that holds a write at a point (`test-hold-at`).
+#[cfg(feature = "test-support")]
+const HOLD_AT: &str = "test-hold-at";
+
+/// The test-support switch that holds the scheduler's alarms.
+#[cfg(feature = "test-support")]
+const HOLD_ALARMS: &str = "test-hold-alarms";
+
+/// The longest a write is held at a point.
+#[cfg(feature = "test-support")]
+const HOLD_MOST: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The test-support switch that fails a daemon's start-up catch-up (OD-52).
 #[cfg(feature = "test-support")]

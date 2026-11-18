@@ -89,6 +89,31 @@ mod read {
             skill["name"],
             "projects/calm-otter/bundles/demo/skills/reviewer"
         );
+        // Text, drawn from the item's message (owner ruling 2026-11-17): a
+        // body as served, else its fields as YAML, keys sorted, references
+        // short.
+        assert_eq!(
+            text_of(&["bundle", "view", "demo#fragments/dist"]),
+            "long form\n"
+        );
+        assert_eq!(
+            text_of(&["bundle", "view", "demo#fragments/dist", "-d"]),
+            "# (distilled version)\nshort form\n"
+        );
+        assert!(text_of(&["bundle", "view", "demo#mcp/tree-sitter"])
+            .starts_with("# MCP Server: tree-sitter\nargs:\n  - --stdio\ncommand: tree-sitter\n"));
+        assert_eq!(
+            text_of(&["bundle", "view", "project#profiles/dev"]),
+            "# Profile: dev\nbundles:\n  - demo\ndescription: dev profile\ntags:\n  - team\n"
+        );
+        assert!(
+            text_of(&["bundle", "view", "demo#skills/reviewer"]).starts_with("# Skill: reviewer\n")
+        );
+        // A path no item kind serves is the view's own refusal.
+        assert_eq!(
+            go(&["bundle", "view", "demo#widgets/x"], JSON, BARE).refused(),
+            "library-application-view-path:20"
+        );
         assert_eq!(
             go(&["bundle", "show", "nosuch"], JSON, BARE).refused(),
             "library-catalog-bundle-not-found:20"
@@ -322,15 +347,12 @@ mod messages {
     use std::collections::BTreeMap;
 
     use library_application::{
-        BundleCreated, BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved,
-        BundleRow, BundleShow, BundleView, McpRow, Preview, Removal, ShownCommand, ShownFragment,
-        ShownMcp, ShownSkill, Viewed,
+        BundleList, BundleRow, BundleShow, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
     };
     use serde_json::{json, Value};
 
-    use super::super::{
-        bundle, created, edited, exported, imported, listed, removed, shown, viewed,
-    };
+    use library_api::resources::bundle;
+    use library_api::resources::bundles as listed;
 
     const P: &str = "projects/calm-otter";
 
@@ -376,7 +398,6 @@ mod messages {
         assert_eq!(as_json(bundle(P, &row())), expected);
         let list = BundleList {
             rows: vec![row()],
-            no_root: false,
             hint: String::new(),
         };
         assert_eq!(as_json(listed(P, &list)), json!({ "bundles": [expected] }));
@@ -458,7 +479,7 @@ mod messages {
     fn test_a_shown_bundle_carries_its_fields_its_children_and_its_listing() {
         let b = "projects/calm-otter/bundles/demo";
         assert_eq!(
-            as_json(shown(P, &show())),
+            as_json(library_api::resources::bundle_shown(P, &show())),
             json!({
                 "name": b,
                 "origin": "PROJECT",
@@ -511,177 +532,6 @@ mod messages {
             })
         );
     }
-
-    fn view(viewed: Viewed, distilled: bool) -> BundleView {
-        BundleView {
-            bundle: "demo".to_string(),
-            path: String::new(),
-            distilled,
-            content: String::new(),
-            item: false,
-            viewed,
-        }
-    }
-
-    // `bundle view`: a command's body and whether it is the distilled form;
-    // a skill's tags, notes and path; the files, and whether the distilled
-    // forms were asked; and the bundle by its name when nothing was read.
-    #[test]
-    fn test_a_viewed_item_carries_what_was_read() {
-        let b = "projects/calm-otter/bundles/demo";
-        let command = Viewed::Body {
-            kind: "commands".to_string(),
-            name: "review".to_string(),
-            body: "short\n".to_string(),
-            distilled: true,
-        };
-        assert_eq!(
-            as_json(viewed(P, &view(command, true))),
-            json!({
-                "name": format!("{b}/commands/review"),
-                "body": "short\n",
-                "body_is_distilled": true,
-            })
-        );
-        let skill = Viewed::Skill {
-            name: "reviewer".to_string(),
-            skill: ShownSkill {
-                path: "skills/reviewer".to_string(),
-                tags: vec!["review".to_string()],
-                notes: "skill notes".to_string(),
-            },
-        };
-        assert_eq!(
-            as_json(viewed(P, &view(skill, false))),
-            json!({
-                "name": format!("{b}/skills/reviewer"),
-                "tags": ["review"],
-                "notes": "skill notes",
-                "path": "skills/reviewer",
-            })
-        );
-        let files = Viewed::Files(vec![("bundle.yaml".to_string(), "x\n".to_string())]);
-        assert_eq!(
-            as_json(viewed(P, &view(files, true))),
-            json!({
-                "name": b,
-                "files": [{"path": "bundle.yaml", "content": "x\n"}],
-                "distilled": true,
-            })
-        );
-        assert_eq!(
-            as_json(viewed(P, &view(Viewed::Nothing, false))),
-            json!({ "name": b })
-        );
-        // An MCP server is the server's own resource.
-        let mcp = Viewed::Mcp(McpRow {
-            name: "tree-sitter".to_string(),
-            command: "tree-sitter".to_string(),
-            args: Vec::new(),
-            env: BTreeMap::new(),
-            url: String::new(),
-            served_by: String::new(),
-            source: String::new(),
-            notes: String::new(),
-            installation: String::new(),
-        });
-        assert_eq!(
-            as_json(viewed(P, &view(mcp, false)))["name"],
-            format!("{b}/mcpServers/tree-sitter")
-        );
-    }
-
-    // The writes' responses: each names the bundle and carries the path,
-    // source and counts the write reported.
-    #[test]
-    fn test_the_write_responses_carry_what_the_write_reported() {
-        let b = "projects/calm-otter/bundles/demo";
-        let made = BundleCreated {
-            status: "created".to_string(),
-            name: "demo".to_string(),
-            path: "bundles/demo/bundle.yaml".to_string(),
-        };
-        assert_eq!(
-            as_json(created(P, &made)),
-            json!({"bundle": {"name": b}, "path": "bundles/demo/bundle.yaml", "applied": true})
-        );
-        let changed = BundleEdited {
-            status: "updated".to_string(),
-            name: "demo".to_string(),
-            changes: vec!["updated version".to_string()],
-            path: "bundles/demo/bundle.yaml".to_string(),
-        };
-        assert_eq!(
-            as_json(edited(P, &changed)),
-            json!({
-                "bundle": {"name": b},
-                "path": "bundles/demo/bundle.yaml",
-                "applied": true,
-                "changes": ["updated version"],
-            })
-        );
-        let gone = Removal::Done(BundleRemoved {
-            status: "removed".to_string(),
-            name: "demo".to_string(),
-            path: "bundles/demo".to_string(),
-        });
-        assert_eq!(
-            as_json(removed(P, "asked", &gone)),
-            json!({"bundle": {"name": b}, "path": "bundles/demo", "applied": true})
-        );
-        let preview = Removal::Preview(Preview::of(
-            "demo".to_string(),
-            vec!["fragments/x.md".to_string()],
-            "ctxloom bundle remove demo --yes".to_string(),
-        ));
-        assert_eq!(
-            as_json(removed(P, "demo", &preview)),
-            json!({
-                "bundle": {"name": b},
-                "applied": false,
-                "detail": ["fragments/x.md"],
-                "apply_command": "ctxloom bundle remove demo --yes",
-            })
-        );
-        let out = BundleExported {
-            status: "exported".to_string(),
-            name: "demo".to_string(),
-            source: "bundles/demo".to_string(),
-            dest: "out/demo".to_string(),
-        };
-        assert_eq!(
-            as_json(exported(P, &out)),
-            json!({
-                "bundle": b,
-                "source": "bundles/demo",
-                "destination": "out/demo",
-                "applied": true,
-            })
-        );
-        let came = BundleImported {
-            status: "imported".to_string(),
-            source: "out/demo".to_string(),
-            dest: "bundles/demo/".to_string(),
-            version: "1.0.0".to_string(),
-            fragments: 2,
-            commands: 3,
-            mcp: 4,
-        };
-        assert_eq!(
-            as_json(imported(P, &came)),
-            json!({
-                "bundle": {
-                    "name": b,
-                    "version": "1.0.0",
-                    "fragment_count": 2,
-                    "command_count": 3,
-                    "mcp_server_count": 4,
-                },
-                "path": "bundles/demo/",
-                "applied": true,
-            })
-        );
-    }
 }
 
 // `bundle distill`: the bundle, its fragments and its commands each in its
@@ -729,5 +579,145 @@ mod distill {
                 ],
             })
         );
+    }
+}
+
+// Step 10a U2: each read asks its view, `--distilled` and the command's
+// global flags; a whole bundle's view is the bundle's target, an item's
+// its reference's.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_bundle_show_list_and_view_ask_their_view_with_the_globals() {
+        let (under, show) = asked_once::<v1::GetBundleRequest>(&["bundle", "show", "demo"]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(show.view, v1::bundle::View::Full as i32);
+        assert_eq!(show.globals, degraded());
+        let (_, list) = asked_once::<v1::ListBundlesRequest>(&["bundle", "list"]);
+        assert_eq!(list.globals, degraded());
+        let (under, whole) =
+            asked_once::<v1::GetBundleRequest>(&["bundle", "view", "--distilled", "demo"]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(whole.view, v1::bundle::View::Content as i32);
+        assert!(whole.prefer_distilled);
+        assert_eq!(whole.globals, degraded());
+    }
+
+    #[test]
+    fn test_bundle_view_of_an_item_asks_its_kinds_read_with_the_globals() {
+        let (under, fragment) = asked_once::<v1::GetFragmentRequest>(&[
+            "bundle",
+            "view",
+            "--distilled",
+            "demo#fragments/golang",
+        ]);
+        assert_eq!(
+            under,
+            library_api::names::reference_target("demo#fragments/golang")
+        );
+        assert!(fragment.prefer_distilled);
+        assert_eq!(fragment.globals, degraded());
+        let (_, command) = asked_once::<v1::GetCommandRequest>(&[
+            "bundle",
+            "view",
+            "--distilled",
+            "demo#commands/review",
+        ]);
+        assert!(command.prefer_distilled);
+        assert_eq!(command.globals, degraded());
+        let (_, skill) =
+            asked_once::<v1::GetSkillRequest>(&["bundle", "view", "demo#skills/reviewer"]);
+        assert_eq!(skill.globals, degraded());
+        let (_, mcp) =
+            asked_once::<v1::GetMcpServerRequest>(&["bundle", "view", "demo#mcp/tree-sitter"]);
+        assert_eq!(mcp.globals, degraded());
+        let (_, profile) =
+            asked_once::<v1::GetProfileRequest>(&["bundle", "view", "project#profiles/dev"]);
+        assert_eq!(profile.globals, degraded());
+        let (_, other) =
+            asked_once::<v1::GetBundleRequest>(&["bundle", "view", "--distilled", "demo#notes/x"]);
+        assert_eq!(other.view, v1::bundle::View::Content as i32);
+        assert!(other.prefer_distilled);
+        assert_eq!(other.globals, degraded());
+    }
+}
+
+// Step 10b U3: `bundle edit` asks the daemon's `UpdateBundle`, its mask
+// naming the fields it was given (`description`, `version`) and its add
+// and remove lists as given (several mask paths, one step: owner ruling
+// 2026-11-18); nothing given asks no mask and no list.
+mod writes_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_bundle_edit_asks_update_bundle_with_its_mask_and_lists() {
+        let (under, edit) = asked_once::<v1::UpdateBundleRequest>(&[
+            "bundle",
+            "edit",
+            "demo",
+            "-d",
+            "new words",
+            "--version",
+            "2.0.0",
+            "--add-tag",
+            "a,b",
+            "--remove-tag",
+            "zz",
+            "--add-fragment",
+            "f",
+            "--remove-fragment",
+            "g",
+            "--add-prompt",
+            "p",
+            "--remove-prompt",
+            "q",
+            "--add-mcp",
+            "m",
+            "--remove-mcp",
+            "n",
+        ]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(edit.update_mask.unwrap().paths, ["description", "version"]);
+        let bundle = edit.bundle.unwrap();
+        assert_eq!(bundle.description, "new words");
+        assert_eq!(bundle.version, "2.0.0");
+        assert_eq!(edit.add_tags, ["a", "b"]);
+        assert_eq!(edit.remove_tags, ["zz"]);
+        assert_eq!(edit.add_fragments, ["f"]);
+        assert_eq!(edit.remove_fragments, ["g"]);
+        assert_eq!(edit.add_commands, ["p"]);
+        assert_eq!(edit.remove_commands, ["q"]);
+        assert_eq!(edit.add_mcp_servers, ["m"]);
+        assert_eq!(edit.remove_mcp_servers, ["n"]);
+        assert!(!edit.validate_only);
+        assert_eq!(edit.globals, degraded());
+        let (_, bare) = asked_once::<v1::UpdateBundleRequest>(&["bundle", "edit", "demo"]);
+        assert!(bare.update_mask.is_none_or(|m| m.paths.is_empty()));
+        assert!(bare.add_tags.is_empty() && bare.add_fragments.is_empty());
+    }
+}
+
+// Step 10b (D2's EXCEPTION): `bundle export` asks the daemon's
+// `ExportBundle` with her paths as typed (the daemon reads them below her
+// working directory), once.
+mod export_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_bundle_export_asks_export_bundle_with_its_paths() {
+        let (under, asked) =
+            asked_once::<v1::ExportBundleRequest>(&["bundle", "export", "demo", "exported"]);
+        assert_eq!(under, "/bundles/demo");
+        assert_eq!(asked.destination, "exported");
+        assert!(asked.output.is_empty());
+        assert!(!asked.validate_only);
+        assert_eq!(asked.globals, degraded());
+        let (_, asked) =
+            asked_once::<v1::ExportBundleRequest>(&["bundle", "export", "demo", "-o", "handoff"]);
+        assert_eq!(asked.output, "handoff");
     }
 }

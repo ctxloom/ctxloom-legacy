@@ -412,6 +412,13 @@ async fn purge_row<S: Removals + Send>(
                 reason.clone(),
                 format!("ctxloom session remove {harp} --even-if-live"),
             ),
+            // A sweep never asks `even_if_live`, so a held lock is
+            // NotProvenDead first; said as one should the order change.
+            Refusal::LockHeld { lock, .. } => (
+                Verdict::Skipped,
+                format!("its lock {lock} is held: end the session first"),
+                String::new(),
+            ),
         };
         return (
             row(harp, "purge", verdict, &reason, command),

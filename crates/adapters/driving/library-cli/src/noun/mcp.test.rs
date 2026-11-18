@@ -57,8 +57,6 @@ mod write {
                     "A=1",
                     "--env",
                     "B=2",
-                    "--tag",
-                    "t1",
                     "--notes",
                     "n",
                     "--installation",
@@ -89,8 +87,6 @@ mod write {
                 "",
                 "--url",
                 "https://x.example/v1",
-                "--header",
-                "H=v",
             ],
         );
         // `UpdateMcpServerResponse`: the server set, not made (it was there).
@@ -107,7 +103,7 @@ mod write {
         assert_eq!(made["created"], true, "{made}");
         let file = mem.text("demo", "mcp/tools.yaml").unwrap();
         assert!(
-            file.contains("url: https://x.example/v1") && file.contains("H: v"),
+            file.contains("url: https://x.example/v1") && !file.contains("command"),
             "{file}"
         );
     }
@@ -178,7 +174,6 @@ mod write {
 // Each view's mapping to its message, field by field (OD-40): what the
 // binary's tests alone reached.
 mod mapping {
-    use super::super::*;
     use library_application::McpListRow;
     use serde_json::json;
 
@@ -192,10 +187,10 @@ mod mapping {
 
     #[test]
     fn test_a_shown_server_is_its_whole_resource() {
-        let show = McpShow {
+        let show = library_application::McpShow {
             name: "tree".to_string(),
             found: true,
-            entries: vec![McpRow {
+            entries: vec![library_application::McpRow {
                 name: "tree".to_string(),
                 command: "tree-sitter".to_string(),
                 args: vec!["--stdio".to_string()],
@@ -208,7 +203,7 @@ mod mapping {
             }],
         };
         assert_eq!(
-            json_of(&shown(PARENT, &show)),
+            json_of(&library_api::resources::servers_shown(PARENT, &show)),
             json!({"mcp_servers": [{
                 "name": "projects/p/bundles/demo/mcpServers/tree",
                 "command": "tree-sitter",
@@ -224,7 +219,7 @@ mod mapping {
 
     #[test]
     fn test_a_listed_server_is_its_row() {
-        let list = McpList {
+        let list = library_application::McpList {
             servers: vec![McpListRow {
                 name: "tree".to_string(),
                 command: "tree-sitter".to_string(),
@@ -235,7 +230,7 @@ mod mapping {
             }],
         };
         assert_eq!(
-            json_of(&listed(PARENT, &list)),
+            json_of(&library_api::resources::servers_listed(PARENT, &list)),
             json!({"mcp_servers": [{
                 "name": "projects/p/bundles/demo/mcpServers/tree",
                 "command": "tree-sitter",
@@ -245,23 +240,74 @@ mod mapping {
             }]})
         );
     }
+}
+
+// Step 10a U2: `show` is the listing of one ID, `list` of every one, each
+// with the command's global flags.
+mod asks {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
 
     #[test]
-    fn test_a_set_server_answers_its_path() {
-        let set = McpSet {
-            status: "created".to_string(),
-            bundle: "demo".to_string(),
-            name: "tree".to_string(),
-            path: "mcp/tree.yaml".to_string(),
-        };
+    fn test_mcp_server_reads_ask_their_id_with_the_globals() {
+        let (_, show) =
+            asked_once::<v1::ListMcpServersRequest>(&["mcp", "server", "show", "tree-sitter"]);
+        assert_eq!(show.mcp_server_id, "tree-sitter");
+        assert_eq!(show.globals, degraded());
+        let (_, list) = asked_once::<v1::ListMcpServersRequest>(&["mcp", "server", "list"]);
+        assert_eq!(list.mcp_server_id, "");
+        assert_eq!(list.globals, degraded());
+    }
+}
+
+// Step 10b U3: `mcp server set` asks `UpdateMcpServer` with the fields it
+// was given named by its mask (empty, a clear), allowing a missing one;
+// `mcp server edit` asks no mask, previewed first, then applied with the
+// preview's etag.
+mod writes_asked {
+    use crate::tests::{asked, asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_mcp_server_set_asks_its_given_fields_by_mask() {
+        let (under, set) = asked_once::<v1::UpdateMcpServerRequest>(&[
+            "mcp",
+            "server",
+            "set",
+            "demo#mcp/tools",
+            "--command",
+            "run",
+            "--env",
+            "A=1",
+            "--url=",
+            "--notes",
+            "n",
+        ]);
         assert_eq!(
-            json_of(&set_of(PARENT, &set)),
-            json!({
-                "mcp_server": {"name": "projects/p/bundles/demo/mcpServers/tree"},
-                "path": "mcp/tree.yaml",
-                "applied": true,
-                "created": true,
-            })
+            under,
+            library_api::names::reference_target("demo#mcp/tools")
         );
+        assert_eq!(
+            set.update_mask.unwrap().paths,
+            ["command", "env", "url", "notes"]
+        );
+        let server = set.mcp_server.unwrap();
+        assert_eq!(server.command, "run");
+        assert_eq!(server.env.get("A").map(String::as_str), Some("1"));
+        assert_eq!(server.url, "");
+        assert!(set.allow_missing);
+        assert!(!set.validate_only);
+        assert_eq!(set.globals, degraded());
+    }
+
+    #[test]
+    fn test_mcp_server_edit_previews_then_applies_with_no_mask() {
+        let sent =
+            asked::<v1::UpdateMcpServerRequest>(&["mcp", "server", "edit", "demo#mcp/tools"]);
+        assert!(!sent.is_empty());
+        let (_, preview) = &sent[0];
+        assert!(preview.validate_only);
+        assert!(preview.update_mask.is_none());
+        assert!(preview.presentable.as_ref().is_some_and(|p| p.can_launch));
     }
 }

@@ -143,13 +143,15 @@ impl Rig {
         serde_json::from_str(&files::read(&path).expect("a launch")).expect("json")
     }
 
-    /// The session's harp, as its launch's lock names it.
+    /// The session's harp, as its launch's lock names it: the directory
+    /// the lock is inside (`sessions/<harp>/session.lock`).
     fn harp(&self) -> String {
         let launch = self.launch();
         let lock = launch["session_lock"].as_str().expect("its lock");
         Path::new(lock)
-            .file_stem()
-            .expect("a lock file")
+            .parent()
+            .and_then(Path::file_name)
+            .expect("a lock in its session's directory")
             .to_string_lossy()
             .into_owned()
     }

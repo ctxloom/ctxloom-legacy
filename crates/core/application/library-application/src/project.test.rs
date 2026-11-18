@@ -73,7 +73,7 @@ fn test_a_project_lists_the_built_in_bundles_under_their_origin() {
     }
     .fixture();
     let list = ok(library.bundle_list(&plain()));
-    assert!(!list.no_root, "the built-in bundle is there");
+    assert!(!list.rows.is_empty(), "the built-in bundle is there");
     let rows: Vec<[String; 4]> = list
         .rows
         .iter()

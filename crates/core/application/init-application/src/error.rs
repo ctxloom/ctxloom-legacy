@@ -11,6 +11,9 @@ pub enum InitError {
     Create(Failure),
     /// The directory could not be inspected: the adapter's own words.
     Files(Failure),
+    /// git could not make or read the directory's repository (missing, too
+    /// old, failing): the observer's own words (G1, G11).
+    Git(Failure),
 }
 
 impl fmt::Display for InitError {
@@ -22,13 +25,17 @@ impl fmt::Display for InitError {
 impl Diagnostic for InitError {
     fn code(&self) -> &str {
         match self {
-            InitError::Create(cause) | InitError::Files(cause) => cause.code(),
+            InitError::Create(cause) | InitError::Files(cause) | InitError::Git(cause) => {
+                cause.code()
+            }
         }
     }
 
     fn args(&self) -> Vec<(&str, Arg)> {
         match self {
-            InitError::Create(cause) | InitError::Files(cause) => cause.args(),
+            InitError::Create(cause) | InitError::Files(cause) | InitError::Git(cause) => {
+                cause.args()
+            }
         }
     }
 }

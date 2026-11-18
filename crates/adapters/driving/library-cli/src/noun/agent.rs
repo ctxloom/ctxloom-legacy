@@ -2,11 +2,8 @@
 //! its method's response (OD-40, design §3.7, §5.6). `agent default` still
 //! answers in text only.
 
-use std::collections::BTreeMap;
-
-use library_application::{AgentShow, Removal, Requirement, ResolvedAgent};
-
 use crate::prelude::*;
+use library_application::Notice;
 
 pub(crate) fn read(
     cx: &Context<'_>,
@@ -14,30 +11,26 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
+    // The daemon's reads (step 10a U2), their text from the message (D10).
     if verb == "show" {
-        let catalog = cx.catalog;
-        let say = |d: &dyn Diagnostic| catalog.message(d);
-        let outcome = cx
-            .library
-            .agent_show(&cx.flags, &text_arg(sub, "name"), &say);
-        return resource(
-            cx,
-            outcome,
-            out,
-            err,
-            |parent, show| agent_show(parent, show, &default_agent(cx)),
-            text::agent_show,
-        );
+        let request = v1::GetAgentRequest {
+            globals: cx.globals(),
+            ..v1::GetAgentRequest::default()
+        };
+        let under = library_api::names::named_target("agents", &text_arg(sub, "name"));
+        let read = cx.served.get_agent(&under, request);
+        return served(cx, read, out, err, false, |agent, out, _| {
+            text::agent_show(out, &crate::read_back::agent_show(agent))
+        });
     }
-    let outcome = cx.library.agent_list(&cx.flags);
-    resource(
-        cx,
-        outcome,
-        out,
-        err,
-        |parent, rows: &Vec<AgentRow>| agents(parent, rows, &default_agent(cx)),
-        |out, rows| text::agent_list(out, rows),
-    )
+    let request = v1::ListAgentsRequest {
+        globals: cx.globals(),
+        ..v1::ListAgentsRequest::default()
+    };
+    let read = cx.served.list_agents("", request);
+    served(cx, read, out, err, false, |listed, out, _| {
+        text::agent_list(out, &crate::read_back::agent_rows(listed))
+    })
 }
 
 pub(crate) fn write(
@@ -48,46 +41,37 @@ pub(crate) fn write(
 ) -> Result<Option<Exit>, Failure> {
     let name = text_arg(sub, "name");
     let code = match verb {
-        "create" | "edit" => {
-            let request = agent_request(sub)?;
-            if verb == "create" {
-                let outcome = cx.library.agent_write(&cx.flags, &name, &request, false);
-                api::written(
-                    cx,
-                    outcome,
-                    out,
-                    err,
-                    |parent, row| v1::CreateAgentResponse {
-                        agent: Some(agent(parent, row, &default_agent(cx))),
-                        applied: Some(true),
-                        ..v1::CreateAgentResponse::default()
-                    },
-                    |row, out, _| agent_written(row, "Created", out),
-                    |_| Exit::OK,
-                )?
-            } else {
-                let outcome = cx
-                    .library
-                    .agent_edit(&cx.flags, &name, &request, flag(sub, "yes"));
-                api::written(
-                    cx,
-                    outcome,
-                    out,
-                    err,
-                    |parent, value| edited(parent, value, &default_agent(cx)),
-                    |value, out, _| match value {
-                        AgentWritten::Preview(preview) => swap_preview_text(out, preview),
-                        AgentWritten::Done(row) => agent_written(row, "Updated", out),
-                    },
-                    // A preview would change the binding (ruling 153).
-                    |value| match value {
-                        AgentWritten::Preview(_) => Exit::WOULD_CHANGE,
-                        AgentWritten::Done(_) => Exit::OK,
-                    },
-                )?
+        "create" => created(cx, &name, sub, out, err)?,
+        "edit" => edited(cx, &name, sub, out, err)?,
+        "default" if given(sub, "name").is_some() => {
+            // The daemon's `SetDefaultAgent` (step 10b U3), its text from
+            // the response (D10); it answers in text only, as before.
+            text_only(cx, "agent default")?;
+            let request = v1::SetDefaultAgentRequest {
+                agent: name.clone(),
+                globals: cx.globals(),
+                ..v1::SetDefaultAgentRequest::default()
+            };
+            let mut answered = cx.served.set_default_agent("", request)?;
+            let said: Vec<Notice> = std::mem::take(&mut answered.notices)
+                .iter()
+                .map(library_api::reads::said)
+                .collect();
+            say_notices(&said, crate::PROG, cx.format, cx.catalog, err);
+            writeln!(out, "Set default agent to \"{}\".", answered.agent)
+                .map_err(crate::output_failure)?;
+            if !answered.defined {
+                let note = Notice::text(format!(
+                    "agent \"{}\" is not defined yet; define it with `ctxloom agent create {}`",
+                    answered.agent, answered.agent
+                ));
+                say_notices(&[note], crate::PROG, cx.format, cx.catalog, err);
             }
+            Exit::OK
         }
         "default" => {
+            // The current default: still read in process (a default may name
+            // an agent no listing has yet).
             text_only(cx, "agent default")?;
             let asked = given(sub, "name");
             let outcome = cx.library.agent_default(&cx.flags, asked.as_deref());
@@ -107,18 +91,23 @@ pub(crate) fn write(
             })?
         }
         "remove" => {
-            let outcome = cx.library.agent_remove(&cx.flags, &name, flag(sub, "yes"));
-            api::written(
+            let under = library_api::names::named_target("agents", &name);
+            crate::write::removal_served(
                 cx,
-                outcome,
+                flag(sub, "yes"),
+                |validate_only, answers, etag| {
+                    let request = v1::DeleteAgentRequest {
+                        validate_only,
+                        answers,
+                        etag,
+                        globals: cx.globals(),
+                        ..v1::DeleteAgentRequest::default()
+                    };
+                    cx.served.delete_agent(&under, request)
+                },
                 out,
                 err,
-                |parent, removal| removed(parent, &name, removal),
-                |removal, out, _| match removal {
-                    Removal::Preview(preview) => crate::write::preview_text(out, preview),
-                    Removal::Done(gone) => writeln!(out, "Removed agent \"{}\"", gone.name),
-                },
-                crate::write::removal_exit,
+                |_, out| writeln!(out, "Removed agent \"{name}\""),
             )?
         }
         _ => return Ok(None),
@@ -126,191 +115,193 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
-/// The agent a bare run binds, empty when none: what each agent's `default`
-/// says (OQ-7). Asked only for a json answer, after the answer itself was
-/// had, so its notices are the answer's own and are not said again.
-fn default_agent(cx: &Context<'_>) -> String {
-    match cx.library.agent_default(&cx.flags, None).result {
-        Ok(DefaultAgent::Current(name)) => name,
-        _ => String::new(),
-    }
-}
-
-/// An agent's resource name under `parent`.
-fn agent_name(parent: &str, agent: &str) -> String {
-    format!("{parent}/agents/{agent}")
-}
-
-/// An agent known by its name alone (a preview's, a removal's).
-fn named(parent: &str, agent: &str) -> v1::Agent {
-    v1::Agent {
-        name: agent_name(parent, agent),
-        ..Default::default()
-    }
-}
-
-/// `agent list`: `ListAgentsResponse`, every agent under `parent`.
-pub(crate) fn agents(parent: &str, rows: &[AgentRow], default: &str) -> v1::ListAgentsResponse {
-    v1::ListAgentsResponse {
-        agents: rows.iter().map(|row| agent(parent, row, default)).collect(),
-        next_page_token: String::new(),
-    }
-}
-
-/// The engine an agent references, by its resource name (design §2); an
-/// agent that names none names none.
-fn engine_ref(parent: &str, engine: &str) -> String {
-    if engine.is_empty() {
-        return String::new();
-    }
-    crate::noun::engine::engine_name(parent, engine)
-}
-
-/// An agent as its binding declares it (the BASIC view): its engine blocks
-/// keyed by engine, so `engines.<e>.model` keeps its path; its engine and
-/// profiles by their resource names (design §2: one that names no place
-/// keeps its configured text, OQ-16).
-pub(crate) fn agent(parent: &str, row: &AgentRow, default: &str) -> v1::Agent {
-    v1::Agent {
-        name: agent_name(parent, &row.name),
-        engine: engine_ref(parent, &row.engine),
-        profiles: row
-            .profiles
-            .iter()
-            .map(|profile| crate::catalog::profile_ref(parent, profile))
-            .collect(),
-        runtime: row.runtime.clone(),
-        driving: row.driving.clone(),
-        env: row.env.clone(),
-        session_home: row.session_home.clone(),
-        engines: blocks(&row.engines),
-        default: Some(row.name == default),
-        ..Default::default()
-    }
-}
-
-/// `agents.<n>.engines` as the config holds it: each engine's model, effort
-/// and permissions document, the document as written (rulings 133-139).
-fn blocks(engines: &serde_json::Value) -> BTreeMap<String, v1::AgentEngine> {
-    engines
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(engine, block)| {
-            let word = |key: &str| {
-                block
-                    .get(key)
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string()
-            };
-            let lined = v1::AgentEngine {
-                model: word("model"),
-                effort: word("effort"),
-                permissions: block.get("permissions").map(api::document),
-            };
-            (engine.clone(), lined)
-        })
-        .collect()
-}
-
-/// `agent show <agent>`: the `Agent` resource (the FULL view), its
-/// definition the resource and what it resolves to beside it.
-pub(crate) fn agent_show(parent: &str, show: &AgentShow, default: &str) -> v1::Agent {
-    v1::Agent {
-        resolved: show.resolved.as_ref().map(|r| resolved(parent, r)),
-        resolution_error: show.resolution_error.clone(),
-        requirements: show.requirements.iter().map(requirement).collect(),
-        requirements_error: show.requirements_error.clone(),
-        not_carried: show.not_carried.iter().map(api::not_carried).collect(),
-        ..agent(parent, &show.definition, default)
-    }
-}
-
-/// What an agent resolves to, its settings flat (as today), its engine by
-/// its resource name.
-fn resolved(parent: &str, agent: &ResolvedAgent) -> v1::ResolvedAgent {
-    let settings = api::settings(&agent.settings);
-    v1::ResolvedAgent {
-        profiles: agent.profiles.clone(),
-        engine: engine_ref(parent, &agent.engine),
-        model: settings.model,
-        effort: settings.effort,
-        permissions: settings.permissions,
-        runtime: settings.runtime,
-        env: settings.env,
-        context: agent.context.clone(),
-        fragments: agent.fragments.clone(),
-        driving: agent.driving.clone(),
-        session_home: settings.session_home,
-        command: agent.command.clone(),
-    }
-}
-
-fn requirement(needed: &Requirement) -> v1::Requirement {
-    v1::Requirement {
-        command: needed.command.clone(),
-        sources: needed
-            .sources
-            .iter()
-            .map(|source| v1::RequirementSource {
-                kind: source.kind.clone(),
-                reference: source.reference.clone(),
-            })
-            .collect(),
-    }
-}
-
-/// `agent edit`: the binding written, or the swap's preview (its engines and
-/// what the new one gives up; nothing written).
-fn edited(parent: &str, value: &AgentWritten, default: &str) -> v1::UpdateAgentResponse {
-    match value {
-        AgentWritten::Preview(preview) => v1::UpdateAgentResponse {
-            agent: Some(named(parent, &preview.agent)),
-            applied: Some(false),
-            apply_command: preview.apply.clone(),
-            from: preview.from.clone(),
-            to: preview.to.clone(),
-            not_carried: preview.not_carried.iter().map(api::not_carried).collect(),
-            ..v1::UpdateAgentResponse::default()
-        },
-        AgentWritten::Done(row) => v1::UpdateAgentResponse {
-            agent: Some(agent(parent, row, default)),
-            applied: Some(true),
-            ..v1::UpdateAgentResponse::default()
-        },
-    }
-}
-
-/// `agent remove`: the preview (what would go and the command that applies
-/// it), or the removal done.
-fn removed<T>(parent: &str, name: &str, removal: &Removal<T>) -> v1::DeleteAgentResponse {
-    let (applied, detail, apply_command) = match removal {
-        Removal::Preview(preview) => (false, preview.detail.clone(), preview.apply.clone()),
-        Removal::Done(_) => (true, Vec::new(), String::new()),
+/// The fields `agent create|edit` was given, as an Agent, and the mask
+/// naming them (a field given empty is named, and cleared).
+pub(crate) fn agent_given(sub: &ArgMatches) -> Result<(v1::Agent, Vec<String>), Failure> {
+    let mut agent = <v1::Agent as Default>::default();
+    let mut mask = Vec::new();
+    let mut text = |path: &str, flag: &str, field: &mut String| {
+        if let Some(value) = given(sub, flag) {
+            *field = value;
+            mask.push(path.to_string());
+        }
     };
-    v1::DeleteAgentResponse {
-        agent: Some(named(parent, name)),
-        applied: Some(applied),
-        detail,
-        apply_command,
-        ..v1::DeleteAgentResponse::default()
+    text("engine", "engine", &mut agent.engine);
+    text("model", "model", &mut agent.model);
+    text("effort", "effort", &mut agent.effort);
+    if let Some(profiles) = given_list(sub, "profiles") {
+        agent.profiles = profiles;
+        mask.push("profiles".to_string());
     }
+    if let Some(runtime) = given(sub, "runtime") {
+        agent.runtime = runtime;
+        mask.push("runtime".to_string());
+    }
+    if let Some(surfaces) = given_pairs(sub, "surface")? {
+        agent.surfaces = surfaces.into_iter().collect();
+        mask.push("surfaces".to_string());
+    }
+    if let Some(roots) = given_pairs(sub, "root")? {
+        agent.roots = roots.into_iter().collect();
+        mask.push("roots".to_string());
+    }
+    if let Some(env) = given_list(sub, "env") {
+        agent.env = env;
+        mask.push("env".to_string());
+    }
+    if let Some(home) = given(sub, "session-home") {
+        agent.session_home = home;
+        mask.push("session_home".to_string());
+    }
+    Ok((agent, mask))
 }
 
-fn agent_request(sub: &ArgMatches) -> Result<AgentRequest, Failure> {
-    Ok(AgentRequest {
-        engine: given(sub, "engine"),
-        model: given(sub, "model"),
-        effort: given(sub, "effort"),
-        profiles: given_list(sub, "profiles"),
-        runtime: given(sub, "runtime"),
-        surfaces: given_pairs(sub, "surface")?,
-        roots: given_pairs(sub, "root")?,
-        env: given_list(sub, "env"),
-        session_home: given(sub, "session-home"),
+/// `agent create <name> [flags] [--home]`: the daemon's `CreateAgent` (step
+/// 10b U3), its text from the response (D10).
+fn created(
+    cx: &Context<'_>,
+    name: &str,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let (agent, _) = agent_given(sub)?;
+    let request = v1::CreateAgentRequest {
+        agent_id: name.to_string(),
+        agent: Some(agent),
         home: flag(sub, "home"),
+        globals: cx.globals(),
+        ..v1::CreateAgentRequest::default()
+    };
+    crate::answer_written(
+        cx,
+        cx.served.create_agent("", request),
+        |m| std::mem::take(&mut m.notices),
+        out,
+        err,
+        |m, out| {
+            let agent = m.agent.clone().unwrap_or_default();
+            agent_written(&crate::read_back::agent_row(&agent), "Created", out)
+        },
+        |_| Exit::OK,
+    )
+}
+
+/// `agent edit <name> [flags] [--home] [--yes]`: the daemon's `UpdateAgent`
+/// (step 10b U3), the fields given named by its mask. Without `--yes` it is
+/// previewed first: a swap whose new engine cannot carry what the old one
+/// did is that preview, whose Confirm need is asked at a terminal (owner
+/// ruling 2026-11-18, evening, as a removal's is) and on a yes applied with
+/// the answer and the preview's etag; off a terminal, or on a no, the
+/// preview is printed and nothing applied (exit 1 under
+/// `--detailed-exitcode`, ruling 153). Any other edit is applied with the
+/// preview's etag. An apply refused stale is previewed again and ends in
+/// the refusal. `--yes` is one call.
+fn edited(
+    cx: &Context<'_>,
+    name: &str,
+    sub: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let (agent, paths) = agent_given(sub)?;
+    let under = library_api::names::named_target("agents", name);
+    let ask = |validate_only: bool, answers: Vec<v1::Answer>, etag: String| {
+        let request = v1::UpdateAgentRequest {
+            agent: Some(agent.clone()),
+            update_mask: Some(daemon_proto::google::protobuf::FieldMask {
+                paths: paths.clone(),
+            }),
+            home: flag(sub, "home"),
+            validate_only,
+            etag,
+            answers,
+            globals: cx.globals(),
+            ..v1::UpdateAgentRequest::default()
+        };
+        cx.served.update_agent(&under, request)
+    };
+    let written = if flag(sub, "yes") {
+        ask(false, Vec::new(), String::new())
+    } else {
+        let preview = ask(true, Vec::new(), String::new())?;
+        match (is_swap(&preview), confirmed(cx, &preview)) {
+            (false, _) => ask(false, Vec::new(), preview.etag),
+            (true, Some(answers)) => ask(false, answers, preview.etag),
+            (true, None) => Ok(preview),
+        }
+    };
+    // What she was shown has changed since: the apply is refused stale,
+    // and she is shown the edit as it is now, to look again.
+    if let Err(stale) = &written {
+        if stale.cause.code() == crate::write::STALE {
+            if let Ok(again) = ask(true, Vec::new(), String::new()) {
+                if is_swap(&again) {
+                    swap_preview_text(out, &swap_of(name, &again))
+                        .map_err(crate::output_failure)?;
+                }
+            }
+        }
+    }
+    crate::answer_written(
+        cx,
+        written,
+        |m| std::mem::take(&mut m.notices),
+        out,
+        err,
+        |m, out| {
+            if is_swap(m) {
+                return swap_preview_text(out, &swap_of(name, m));
+            }
+            let agent = m.agent.clone().unwrap_or_default();
+            agent_written(&crate::read_back::agent_row(&agent), "Updated", out)
+        },
+        // A preview would change the binding (ruling 153).
+        |m| {
+            if is_swap(m) {
+                Exit::WOULD_CHANGE
+            } else {
+                Exit::OK
+            }
+        },
+    )
+}
+
+/// The answers to a swap preview's Confirm need, when it asks one and she
+/// says yes at her terminal; none off a terminal, on a no, or with no need.
+fn confirmed(cx: &Context<'_>, preview: &v1::UpdateAgentResponse) -> Option<Vec<v1::Answer>> {
+    let (id, confirm) = preview.needs.iter().find_map(|need| match &need.kind {
+        Some(v1::need::Kind::Confirm(confirm)) => Some((need.id.as_str(), confirm)),
+        _ => None,
+    })?;
+    (cx.served.confirm(&confirm.text) == Some(true)).then(|| {
+        vec![v1::Answer {
+            need_id: id.to_string(),
+            answer: Some(v1::answer::Answer::Confirmed(true)),
+        }]
     })
+}
+
+/// Whether an edit's answer is a swap's preview (nothing applied).
+fn is_swap(answer: &v1::UpdateAgentResponse) -> bool {
+    !answer.to.is_empty() && answer.applied != Some(true)
+}
+
+/// A swap's preview as its answer says it.
+fn swap_of(agent: &str, answer: &v1::UpdateAgentResponse) -> SwapPreview {
+    SwapPreview {
+        status: "preview".to_string(),
+        applied: false,
+        agent: agent.to_string(),
+        from: answer.from.clone(),
+        to: answer.to.clone(),
+        not_carried: answer
+            .not_carried
+            .iter()
+            .map(crate::read_back::not_carried)
+            .collect(),
+        apply: answer.apply_command.clone(),
+    }
 }
 
 /// The binding a create or an edit wrote, in the config's shape.

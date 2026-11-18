@@ -93,17 +93,15 @@ impl LibraryCommands {
     fn wired(&mut self) -> Result<&Library, LibError> {
         if self.library.is_none() {
             let wiring = Wiring::new(Arc::clone(&self.env))?;
-            // Distill's model: a one-shot on no context (plan step 5,
-            // OD-38), hosted by a daemon of this binary's stamp (U4).
             let library = build(&wiring, self.remotes.clone())?
-                .with_distiller(Rc::new(crate::distiller::OneShotDistiller {
-                    env: Arc::clone(wiring.env()),
-                    stamp: self.version.clone(),
-                }))
-                // A project `ctxloom` bundle replaces distill's prompt only
+                // A project `ctxloom` bundle replaces init's prompt only
                 // once the user trusts the project: her daemon is asked,
-                // once, where it decides (step 8 U2, D4).
-                .with_trust(crate::daemon::trust_ask(&wiring, &self.version));
+                // once, where it decides (step 8 U2, D4). Distill's is the
+                // daemon's to read (step 10b).
+                .with_trust(crate::daemon::trust_ask(&wiring, &self.version))
+                // `config create` makes the directory a git repository as
+                // init does (step 10, G1, QUESTIONS.md E).
+                .with_repository_step(repository_step(&wiring));
             self.library = Some(library);
         }
         Ok(self
@@ -111,6 +109,68 @@ impl LibraryCommands {
             .as_ref()
             .unwrap_or_else(|| unreachable!("just built")))
     }
+}
+
+/// The git observer of `wiring`'s process: git on its `PATH`, in its
+/// environment (step 10, U12).
+pub(crate) fn observer(wiring: &Wiring) -> library_git::GitTrees {
+    library_git::GitTrees::new(wiring.fs(), Arc::clone(wiring.env()))
+}
+
+/// init's git step over the directory the command was run in, for `config
+/// create`.
+fn repository_step(wiring: &Wiring) -> library_application::RepositoryStep {
+    let observer = observer(wiring);
+    let dir = wiring.surroundings().cwd.display().to_string();
+    Rc::new(move || {
+        init_application::ensure_repository(&observer, &dir)
+            .map(|made| made.map(|notice| Box::new(notice) as run_ports::Advice))
+    })
+}
+
+/// What every library command takes first (step 10, U12; QUESTIONS.md B):
+/// the home's library made a git repository at its first read (G2), which
+/// also asks git its version, so git missing or too old fails the command
+/// (exit 10) before it reads anything. A home with no library yet has
+/// nothing to make one of. (The project's own tree is the read's, which the
+/// library domain observes and refuses outside git: U0, U2.)
+pub(crate) fn home_repository(wiring: &Wiring) -> Result<(), Failure> {
+    let app = wiring.home().join(".ctxloom");
+    let is_dir = wiring
+        .fs()
+        .metadata(&app)
+        .is_ok_and(|meta| meta.kind == Kind::Dir);
+    if !is_dir {
+        return Ok(());
+    }
+    library_application::ensure_home_repository(&observer(wiring), &app.display().to_string())
+        .map(|_| ())
+        .map_err(|e| Failure::boxed(e.into_failure(), Exit::FAILED))
+}
+
+/// The program's words for a library read's diagnostics: the wiring's
+/// catalogs and the library's own, read once, at the first diagnostic said;
+/// a catalog that does not read says each by its code and args.
+fn words() -> library_application::Words {
+    static CATALOG: std::sync::OnceLock<Option<angzarr_presentation::Catalog>> =
+        std::sync::OnceLock::new();
+    Arc::new(|d: &dyn angzarr_diagnostic::Diagnostic| {
+        let catalog = CATALOG.get_or_init(|| {
+            let mut sources = crate::catalog_sources();
+            sources.extend([
+                angzarr_yaml::EN_US,
+                library::EN_US,
+                library_application::EN_US,
+                deps::EN_US,
+                deps_application::EN_US,
+            ]);
+            angzarr_presentation::Catalog::en_us(&sources).ok()
+        });
+        match catalog {
+            Some(catalog) => catalog.message(d),
+            None => d.to_string(),
+        }
+    })
 }
 
 pub(crate) fn build(
@@ -145,7 +205,10 @@ pub(crate) fn build(
         .with_engines(advising_engines())
         // What each engine cannot carry, in its own word (its surface half): the
         // capability-loss report and the swap preview read it.
-        .with_hook_losses(hook_losses());
+        .with_hook_losses(hook_losses())
+        // A read the daemon answers says a diagnostic (an agent's resolution
+        // error) in the program's words (step 10a U2).
+        .with_words(words());
     // ctxloom's default content, built in (owner rulings 110, 111).
     let library = if builtins_withheld(wiring.env()) {
         library
@@ -246,6 +309,236 @@ impl deps_cli::Names for DaemonNames {
     }
 }
 
+/// The library reads the daemon answers (step 10a U2), as this command
+/// asks them: its project's (registered at its root, minted there if it
+/// has no identity yet), at its working directory, with its environment.
+pub(crate) struct DaemonServed {
+    pub(crate) env: Arc<EnvSnapshot>,
+    pub(crate) version: String,
+    /// The command's stops, heard once something asks
+    /// ([`library_cli::Served::hear_stops`]), for the rest of its life.
+    pub(crate) stops: std::sync::OnceLock<crate::signals::CommandStops>,
+}
+
+impl DaemonServed {
+    /// The daemon's calls for a command in `env`, of the binary `version`.
+    pub(crate) fn new(env: Arc<EnvSnapshot>, version: String) -> DaemonServed {
+        DaemonServed {
+            env,
+            version,
+            stops: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn wiring(&self) -> Result<Wiring, Failure> {
+        Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))
+    }
+}
+
+impl library_cli::Served for DaemonServed {
+    fn in_project(&self) -> bool {
+        self.wiring()
+            .is_ok_and(|wiring| wiring.ctxloom_project().is_some())
+    }
+
+    library_cli::served_reads!(served_read);
+
+    library_cli::served_writes!(served_write);
+
+    /// A distill's run followed to its end as a one-shot is (step 10b): a
+    /// signal heard here asks the daemon to stop it.
+    fn hear_stops(&self) {
+        let Ok(wiring) = self.wiring() else {
+            return;
+        };
+        let fs = wiring.fs();
+        self.stops.get_or_init(|| {
+            crate::signals::CommandStops::hearing(move || fs.os().signals(&crate::signals::HEARD))
+        });
+    }
+
+    fn follow_run(&self, run: &str) -> library_cli::RunFollowed {
+        let wiring = match self.wiring() {
+            Ok(wiring) => wiring,
+            Err(failure) => {
+                return library_cli::RunFollowed {
+                    notices: Vec::new(),
+                    ended: Err(failure),
+                }
+            }
+        };
+        self.hear_stops();
+        let stops = self.stops.get();
+        let done = crate::oneshot::client_follow(&wiring, &self.version, run, stops);
+        library_cli::RunFollowed {
+            notices: done
+                .notices
+                .iter()
+                .map(run_application::client::notice_of)
+                .collect(),
+            ended: done.result.map(|_| ()).map_err(|error| {
+                let exit = cli_support::ExitClass::exit(&error);
+                Failure::new(error, exit)
+            }),
+        }
+    }
+
+    /// The Edit need's EDITOR launch, run here on the user's terminal
+    /// (step 10b U3): the program and arguments the daemon resolved, on a
+    /// file of the document's text, what it left read back.
+    /// A write's Confirm need asked of the person at this terminal
+    /// (step 10b U3), as a trust is (`[y/N]`; a terminal stood in under
+    /// test-support); none off a terminal.
+    fn confirm(&self, question: &str) -> Option<bool> {
+        use session_cli::Asking as _;
+        let terminal = crate::sessions::TrustTerminal {
+            stood_in: crate::interview::stood_in(&self.env),
+        };
+        terminal.is_terminal().then(|| terminal.confirm(question))
+    }
+
+    fn edit_document(&self, edit: &daemon_proto::v1::Edit) -> Result<String, Failure> {
+        use ctxloom_ports::Editor as _;
+        let launch = edit.launch.as_ref().ok_or_else(|| {
+            Failure::new(
+                library_application::AppError::from(library_application::WriteError::NotWired {}),
+                Exit::FAILED,
+            )
+        })?;
+        let wiring = self.wiring()?;
+        let (around, _) = wiring.locate();
+        let editor = ProcessEditor::new(wiring.fs(), &around.temp_root);
+        let command = ctxloom_ports::EditorCommand {
+            program: launch.program.clone(),
+            args: launch.args.clone(),
+        };
+        editor
+            .edit(&command, &edit.file_name, &edit.text)
+            .map_err(|cause| {
+                Failure::new(library_application::AppError::Cause(cause), Exit::FAILED)
+            })
+    }
+
+    fn assemble_context(
+        &self,
+        request: daemon_proto::v1::AssembleContextRequest,
+    ) -> Result<daemon_proto::v1::AssembledContext, Failure> {
+        use daemon_api::LibraryReads;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.assemble_context(request))
+    }
+
+    fn preview_run(
+        &self,
+        request: daemon_proto::v1::CreateRunRequest,
+    ) -> Result<daemon_proto::v1::Run, Failure> {
+        use daemon_api::LibraryReads;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::preview_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.preview_run(request))
+    }
+
+    fn own_loadout(
+        &self,
+        request: daemon_proto::v1::GetLoadoutRequest,
+    ) -> Result<(daemon_proto::v1::Loadout, Vec<daemon_proto::v1::Notice>), Failure> {
+        use daemon_api::LibraryReads;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::home_client(&wiring, &self.version);
+        let read = crate::daemon::answered(client.get_loadout("/loadout", request))?;
+        Ok((read.answer, read.notices))
+    }
+}
+
+/// [`DaemonServed`]'s reads, from `library_cli::served_reads!`: each the
+/// daemon's (reached, or started) of this binary's stamp.
+macro_rules! served_read {
+    ($($method:ident ($rpc:ident) $request:ident . $target:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                under: &str,
+                request: daemon_proto::v1::$request,
+            ) -> Result<
+                (
+                    daemon_proto::v1::$response,
+                    Vec<daemon_proto::v1::Notice>,
+                ),
+                Failure,
+            > {
+                use daemon_api::LibraryReads;
+                let wiring = self.wiring()?;
+                let client = crate::daemon::library_client(&wiring, &self.version)?;
+                let read = crate::daemon::answered(client.$method(under, request))?;
+                Ok((read.answer, read.notices))
+            }
+        )*
+    };
+}
+use served_read;
+
+/// [`DaemonServed`]'s writes, from `library_cli::served_writes!`: each the
+/// daemon's (reached, or started) of this binary's stamp, under one
+/// request id, sent once more to a new daemon if this one could not be
+/// reached (S8).
+macro_rules! served_write {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                under: &str,
+                request: daemon_proto::v1::$request,
+            ) -> Result<daemon_proto::v1::$response, Failure> {
+                use daemon_api::LibraryWrites;
+                let wiring = self.wiring()?;
+                let client = crate::daemon::library_client(&wiring, &self.version)?;
+                crate::daemon::answered(client.$method(under, request))
+            }
+        )*
+    };
+}
+use served_write;
+
+/// `clean` through the daemon (step 10b U9), as a library write is sent.
+impl setup_cli::Cleaning for DaemonServed {
+    fn clean(
+        &self,
+        request: daemon_proto::v1::CleanRequest,
+    ) -> Result<daemon_proto::v1::CleanResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.clean("", request))
+    }
+}
+
+impl deps_cli::Served for DaemonServed {
+    deps_cli::served_reads!(served_read);
+
+    /// A local `bundle move` through the daemon (step 10b U9), as a library
+    /// write is sent.
+    fn move_bundle(
+        &self,
+        under: &str,
+        request: daemon_proto::v1::MoveBundleRequest,
+    ) -> Result<daemon_proto::v1::MoveBundleResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.move_bundle(under, request))
+    }
+}
+
+/// Whether `noun`'s verb in `call` is a read the daemon answers (step 10a
+/// U2, `library_cli::is_served_read`), whose home step is the daemon's own; every
+/// other verb still runs in process, and takes it here first.
+fn served(noun: &str, call: &Call<'_>) -> bool {
+    call.matches.subcommand_matches(noun).is_some_and(|sub| {
+        library_cli::is_served_read(noun, sub) || library_cli::is_served_write(noun, sub)
+    })
+}
+
 impl Extension for LibraryCommands {
     fn nouns(&self) -> Vec<clap::Command> {
         library_cli::nouns()
@@ -264,8 +557,14 @@ impl Extension for LibraryCommands {
             version: self.version.clone(),
             minting: minting(noun),
         };
+        if !served(noun, call) {
+            home_repository(
+                &Wiring::new(Arc::clone(&self.env)).map_err(|e| Failure::new(e, Exit::FAILED))?,
+            )?;
+        }
+        let served = DaemonServed::new(Arc::clone(&self.env), self.version.clone());
         let library = self.wired().map_err(|e| Failure::new(e, Exit::FAILED))?;
-        library_cli::run(library, &names, noun, call, catalog, out, err)
+        library_cli::run(library, &names, &served, noun, call, catalog, out, err)
     }
 }
 

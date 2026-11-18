@@ -12,7 +12,8 @@ use crate::project::{Library, Outcome, Project};
 use crate::write::plan::Plan;
 use crate::write::requests::BundleEditRequest;
 use crate::write::views::{
-    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, Preview, Removal,
+    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleMoved, BundleRemoved,
+    Preview, Removal,
 };
 use crate::write::WriteError;
 use crate::Flags;
@@ -57,12 +58,30 @@ impl Library {
         self.run(flags, |p| p.bundle_export(name, dest_dir, output))
     }
 
+    /// A local `bundle move <name> --to <dir>` (step 10b U9, QUESTIONS
+    /// 1(a)): the project's own bundle moved whole into the project at
+    /// `dir`, the same place below its `.ctxloom`, as ONE rename. A move
+    /// never replaces what is there, so a bundle there is refused (a
+    /// `--force` too); its own place is no destination.
+    pub fn bundle_move_into(&self, flags: &Flags, name: &str, dir: &str) -> Outcome<BundleMoved> {
+        self.run(flags, |p| p.bundle_move_into(name, dir))
+    }
+
     /// `bundle import <path> [--force]`: a tree named by its directory or its
     /// `bundle.yaml`, copied whole under its own name; over a bundle that is
     /// there it refuses unless forced.
     pub fn bundle_import(&self, flags: &Flags, path: &str, force: bool) -> Outcome<BundleImported> {
         self.run(flags, |p| p.bundle_import(path, force))
     }
+}
+
+/// A path as its steps say it, `.` steps and separators' spelling taken
+/// out (no filesystem asked): two names of one place compare equal.
+fn lexical(path: &str) -> Vec<String> {
+    path.split(['/', '\\'])
+        .filter(|step| !step.is_empty() && *step != ".")
+        .map(str::to_string)
+        .collect()
 }
 
 /// Whether `name` can be a bundle's: a path of plain segments, nested names
@@ -197,9 +216,7 @@ impl Project {
             &mut changes,
         )?;
         for name in &request.remove_mcp {
-            let content = plan.remove(&mcpfile::content_path(name));
-            let meta = plan.remove(&mcpfile::meta_path(name));
-            if content || meta {
+            if plan.remove(&mcpfile::content_path(name)) {
                 changes.push(format!("removed mcp: {name}"));
             }
         }
@@ -274,6 +291,9 @@ impl Project {
         } else {
             output.to_string()
         };
+        if ports.user.exists(&dest).map_err(AppError::Cause)? {
+            return Err(WriteError::ExportDestinationExists { path: dest }.into());
+        }
         let plan = self.plan_to_read(&entry.name)?;
         let puts: Vec<Put> = plan
             .files()
@@ -291,6 +311,42 @@ impl Project {
         Ok(BundleExported {
             status: "exported".to_string(),
             name: name.to_string(),
+            source: entry.manifest_path.clone(),
+            dest,
+        })
+    }
+
+    fn bundle_move_into(&self, name: &str, dir: &str) -> Result<BundleMoved, AppError> {
+        self.require_project()?;
+        let ports = self.write_ports()?;
+        let entry = self.bundle(name)?;
+        self.writable(&entry.name)?;
+        let own = self.content.bundle_names().map_err(AppError::Cause)?;
+        if !own.contains(&entry.name) {
+            return Err(AppError::cause(library::CatalogError::BundleNotFound {
+                ask: name.to_string(),
+            }));
+        }
+        let app_dir = format!("{}/.ctxloom", dir.trim_end_matches(['/', '\\']));
+        let dest = self.content.bundle_dir_in(&app_dir, &entry.name);
+        if lexical(&dest) == lexical(&self.content.bundle_dir(&entry.name)) {
+            return Err(WriteError::MoveDestinationItself { dest }.into());
+        }
+        if ports.user.exists(&dest).map_err(AppError::Cause)?
+            || !self
+                .content
+                .move_into(&entry.name, &app_dir)
+                .map_err(AppError::Cause)?
+        {
+            return Err(WriteError::MoveDestinationExists {
+                dest,
+                bundle: entry.name.clone(),
+                dir: dir.to_string(),
+            }
+            .into());
+        }
+        Ok(BundleMoved {
+            name: entry.name.clone(),
             source: entry.manifest_path.clone(),
             dest,
         })
@@ -345,27 +401,34 @@ impl Project {
             }
             .into());
         }
-        let mut plan = if there {
-            self.plan_of(&name)?
-        } else {
-            Plan::of(Files::new(), Default::default())
-        };
-        // The sidecar the import brings says what is executable, never the
-        // modes of the files imported (owner ruling 2026-11-12).
+        if there {
+            // The bundle's tree as it is (a built-in's never: it is not
+            // there), read first: one the import may not replace is said
+            // before anything is planned.
+            self.plan_of(&name)?;
+        }
+        // The new tree whole, every file imported, from nothing: a forced
+        // import REPLACES the bundle (step 10b U9, T28: the old one gone,
+        // then the new one made, which the daemon carries out as the
+        // sequence trash, create, purge), never merges into it.
+        let mut plan = Plan::of(Files::new(), Default::default());
+        // The skills' metadata the import brings says what is executable,
+        // never the modes of the files imported (owner ruling 2026-11-12).
         let exec = library::write::skill::declared_executables(&files);
         for (path, bytes) in &files {
             plan.put(path, bytes.clone(), exec.contains(path));
         }
-        let stale: Vec<String> = plan
-            .files()
-            .keys()
-            .filter(|k| !files.contains_key(*k))
-            .cloned()
-            .collect();
-        for path in stale {
-            plan.remove(&path);
+        // The new tree reads before the old one is touched.
+        library::tree::read_tree(&name, plan.files()).map_err(|cause| {
+            AppError::BundleUnreadable {
+                ask: name.clone(),
+                cause: Box::new(cause),
+            }
+        })?;
+        if there {
+            self.content.remove_bundle(&name).map_err(AppError::Cause)?;
         }
-        if !there && !self.content.claim(&name).map_err(AppError::Cause)? {
+        if !self.content.claim(&name).map_err(AppError::Cause)? {
             return Err(WriteError::ImportExists {
                 what: "bundle".to_string(),
                 path: dest,
@@ -373,9 +436,7 @@ impl Project {
             .into());
         }
         if let Err(error) = self.commit(&name, plan) {
-            if !there {
-                let _ = self.content.remove_bundle(&name);
-            }
+            let _ = self.content.remove_bundle(&name);
             return Err(error);
         }
         Ok(BundleImported {

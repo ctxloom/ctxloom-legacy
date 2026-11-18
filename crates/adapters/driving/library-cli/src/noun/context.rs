@@ -1,10 +1,8 @@
-//! `context assemble` (B3): its json the `AssembledContext` of
-//! `AssembleContext` (OD-40, design §5.9).
+//! `context assemble` (B3): the daemon's `AssembleContext` (step 10a U2),
+//! its json the `AssembledContext` (OD-40, design §5.9), its premise index
+//! rendered here, at rest (E2: presentation's), into its context.
 
-use super::search::count;
-use crate::catalog;
 use crate::prelude::*;
-use library_application::{Assembled, Located};
 
 pub(crate) fn read(
     cx: &Context<'_>,
@@ -12,58 +10,30 @@ pub(crate) fn read(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let request = AssembleRequest {
+    let request = v1::AssembleContextRequest {
         profiles: many(sub, "profile"),
         fragments: many(sub, "fragment"),
         tags: many(sub, "tag"),
-        ..AssembleRequest::default()
+        globals: cx.globals(),
+        ..v1::AssembleContextRequest::default()
     };
-    let outcome = cx.library.assemble(&cx.flags, &request);
-    resource(cx, outcome, out, err, assembled, |out, assembled| {
+    let read = cx.served.assemble_context(request).map(at_rest);
+    served(cx, read, out, err, false, |assembled, out, _| {
         writeln!(out, "{}", assembled.context)
     })
 }
 
-/// `context assemble`: `AssembledContext`, its profiles and fragments named
-/// under `parent`; one the catalog does not hold keeps the text it was asked
-/// by, as a fragment asked for and not found does (OQ-16). Its notices are
-/// said on stderr, as every notice is before T13.
-pub(crate) fn assembled(parent: &str, assembled: &Assembled) -> v1::AssembledContext {
-    let named = |text: &String, located: Option<&Option<Located>>, collection: &str| {
-        located.and_then(Option::as_ref).map_or_else(
-            || text.clone(),
-            |at| catalog::item_name(parent, &at.bundle, collection, &at.item),
-        )
-    };
-    v1::AssembledContext {
-        context: assembled.context.clone(),
-        tokens: count(assembled.tokens),
-        fragments: assembled
-            .fragments_loaded
-            .iter()
-            .enumerate()
-            .map(|(at, reference)| {
-                let used = assembled.used.get(at);
-                v1::AssembledFragment {
-                    fragment: named(reference, used.map(|u| &u.located), "fragments"),
-                    form: if used.is_some_and(|u| u.distilled) {
-                        v1::assembled_fragment::Form::Distilled
-                    } else {
-                        v1::assembled_fragment::Form::Original
-                    } as i32,
-                }
-            })
-            .collect(),
-        profiles: assembled
-            .profiles
-            .iter()
-            .enumerate()
-            .map(|(at, ask)| named(ask, assembled.profiles_located.get(at), "profiles"))
-            .collect(),
-        missing_fragments: assembled.missing_fragments.clone(),
-        missing_tags: assembled.missing_tags.clone(),
-        notices: Vec::new(),
-    }
+/// An assembly as `context assemble` shows it: its premise index rendered
+/// after its context, at rest (`ctxloom fragment show`); its notices said
+/// as every read's are, and kept in the message too, so its json carries
+/// them (owner ruling 2026-11-18, night: a stale distilled form's notice).
+pub(crate) fn at_rest(
+    mut assembled: v1::AssembledContext,
+) -> (v1::AssembledContext, Vec<v1::Notice>) {
+    library_api::premise::render_premise_index(&mut assembled, library_api::premise::Shown::AtRest);
+    assembled.premised.clear();
+    let notices = assembled.notices.clone();
+    (assembled, notices)
 }
 
 #[cfg(test)]

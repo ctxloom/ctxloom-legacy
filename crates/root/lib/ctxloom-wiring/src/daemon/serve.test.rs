@@ -189,7 +189,8 @@ fn a_childs_session_lock_is_held_once_and_let_go_when_dropped() {
         project
             .join(".ctxloom")
             .join("sessions")
-            .join("kid.lock")
+            .join("kid")
+            .join("session.lock")
             .display()
             .to_string()
     );
@@ -354,7 +355,7 @@ fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
         ],
         "the round's child, and the one-shot live"
     );
-    told.lock().unwrap()[0].done(run_application::Done {
+    crate::oneshot::polled_once(told.lock().unwrap()[0].done(run_application::Done {
         result: Ok(run_application::Answer {
             harp: "harp-1".to_string(),
             session: SESSION.to_string(),
@@ -362,7 +363,7 @@ fn a_one_shot_that_ended_is_not_hosted_before_the_loops_next_round() {
             answer: "HELLO".to_string(),
         }),
         notices: Vec::new(),
-    });
+    }));
     assert_eq!(
         kinds(&shared.hosted()),
         [("000000000009", Kind::Child)],

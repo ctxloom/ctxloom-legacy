@@ -4,46 +4,12 @@
 
 use daemon_proto::v1;
 use deps_application::{
-    Change, CheckReport, CheckedRef, Compat, DepRow, DepsListing, ExecSpec, HoldResult, PinChange,
+    Change, CheckReport, CheckedRef, Compat, DepsListing, ExecSpec, HoldResult, PinChange,
     PullReport, UpgradeReport,
 };
 
-use crate::api::{count, dependency_name, item_kind, remote_name};
+use crate::api::{count, dependency_name, item_kind};
 use crate::refresh::{self, Skipped};
-
-/// One lock entry as its Dependency: named by its identity (OQ-15), its
-/// bundle under the remote it came from, or its text where no remote
-/// matches (OQ-16).
-pub(crate) fn dependency(parent: &str, row: &DepRow) -> v1::Dependency {
-    let (bundle, remote) = if row.origin.is_empty() {
-        (row.name.clone(), String::new())
-    } else {
-        let remote = remote_name(parent, &row.origin);
-        (format!("{remote}/bundles/{}", row.name), remote)
-    };
-    v1::Dependency {
-        name: dependency_name(parent, &row.reference),
-        reference: row.reference.clone(),
-        bundle,
-        commit: row.sha.clone(),
-        constraint: row.constraint.clone(),
-        held: Some(row.held),
-        remote,
-        url: row.url.clone(),
-    }
-}
-
-/// `deps list`: `ListDependenciesResponse`.
-pub(crate) fn listed(parent: &str, listing: &DepsListing) -> v1::ListDependenciesResponse {
-    v1::ListDependenciesResponse {
-        dependencies: listing
-            .deps
-            .iter()
-            .map(|row| dependency(parent, row))
-            .collect(),
-        ..v1::ListDependenciesResponse::default()
-    }
-}
 
 /// `deps hold` and `deps unhold`: the Dependency after the write (AIP-136),
 /// read from the listing that followed it; a bundle of this project is no
@@ -53,7 +19,7 @@ pub(crate) fn held(parent: &str, held: &HoldResult, listing: &DepsListing) -> v1
         .deps
         .iter()
         .find(|row| !held.identity.is_empty() && row.reference == held.identity)
-        .map(|row| dependency(parent, row))
+        .map(|row| library_api::deps::dependency(parent, row))
         .unwrap_or_default()
 }
 

@@ -76,6 +76,9 @@ the architecture; there is no other table of crates.
 - `core/ports`: traits the core needs from outside.
 - `core/application`: command and query handlers.
 - `adapters/driven`: port implementations (stores, clock, git).
+- `adapters/support`: infrastructure driven adapters share, depending on no
+  other workspace crate, each listed in `arch-rules.toml`'s `[classes]
+  support` (step 10, G9: `git-cli`, the one git runner).
 - `adapters/driving`: the CLI (and later gRPC, MCP): translation only.
 - `root/lib`: the composition root's wiring as a library (`ctxloom-wiring`).
 - `root/bin`: the `ctxloom` binary, the composition root.
@@ -107,7 +110,10 @@ and `config-files`. Files are the truth: a command plans the files, checks the
 tree still reads, then hands the changes to the port; a refused write has
 written nothing. A config write replaces the section it owns whole, never
 heals a file that does not parse. `loadout --format yaml` is the one yaml
-output; its prose is withheld until the owner rules (D24, D8).
+output; its prose is withheld until the owner rules (D24, D8): ctxloom's
+own loadout is data (`library::write::loadout::own`, its `run:` bundle's
+version, tags, author and `mcp` servers, no description, notes or
+fragment), written as the document by `loadout::document`.
 Every item verb takes one reference, `create` too (M3, M7): `fragment|command
 create <bundle>#<kind>s/<name>` (`Library::item_create_at`) opens the editor
 on its template and stores what the editor gives back (an editor that saves
@@ -115,20 +121,43 @@ nothing stores the template; an empty buffer is
 `library-application-write-empty-edit` and writes nothing), and makes a bare
 bundle nobody had (`ItemCreated::bundle_created`); the two-word Go form
 (`<bundle> <name>`) keeps Go's placeholder, no editor, and its refusal of a
-missing bundle. `skill create <bundle>#skills/<name>` (or the two words)
-scaffolds its `SKILL.md` and opens none. `fragment|command edit` writes the
+missing bundle, and is a daemon write too (step 10b: the create requests'
+additive `placeholder`, served by library-api's `placeholder` over
+`Library::item_create`). `skill create <bundle>#skills/<name>` (or the two words)
+scaffolds its `SKILL.md` and an EMPTY `.meta.yaml` (`{}`, the empty
+mapping, `library::write::skill::EMPTY_META`) beside it, one new directory,
+and opens none. `fragment|command edit` writes the
 `.md` ALONE (owner T29, T30): it distills nothing and never touches the
 `.distilled.md` beside it, which then reads stale by its digest (below,
 "Distill"); `--no-distill` is accepted and only says so.
 Skill zips are written and read by `library::write::archive` over the `zip`
 crate (deflate only, default features off) and crc32fast.
-A file's executability is ONLY its skill sidecar's `executable:` list
-(`skills/.<n>.meta.yaml`), on every OS (owner ruling 2026-11-12; Windows
+A skill is ONE directory, its metadata inside it, `skills/<n>/.meta.yaml`
+(owner T27, 2026-11-18, evening), a file of the package (`Skill::files`)
+and so DELIVERED with it everywhere the directory is copied whole: a
+materialize into an engine's skills directory (claude's
+`.claude/skills/<n>/`, the session home's `skills/`), an export zip, an
+install and a push; `skill show` lists it. An MCP server is ONE file,
+`mcp/<n>.yaml`, its `tags`, `notes` and `installation` in it after its
+runtime fields (`library::write::mcp::content_file`), so `mcp server set
+--url X --notes Y` on a new server is one file. A bundle still in the old
+layout (`skills/.<n>.meta.yaml` or `mcp/.<n>.meta.yaml` beside the item)
+is refused per bundle (owner, QUESTIONS 2(a); D15): the tree reader's
+`BundleError::OldLayout`, `library-sidecar-old-layout`, exit 20, which
+`bundle show` (and every read through `Project::bundle`) answers with, and
+a listing names with the skipped-bundle notice while listing the rest; its
+paths are named from the project's root (`BundleError::located`), its fix
+the `git mv` that migrates it (for a server: copy the fields into its file,
+then `git rm`); an INSTALLED bundle's fix names its remote's URL to migrate
+in instead. Nothing reads or moves an old sidecar; a hook's
+`hooks/<event>/.<n>.meta.yaml` sidecar is unchanged.
+A file's executability is ONLY its skill's metadata's `executable:` list
+(`skills/<n>/.meta.yaml`), on every OS (owner ruling 2026-11-12; Windows
 reports every file executable): `library::write::skill::declared_executables`
 answers it for a bundle's tree, and nothing reads a mode from disk or git
 (`ContentRepo` has no `executable_files`, `UserFiles::read_tree` and
 `deps_ports::RepoTree` are bytes alone). `skill show`'s mode column, an
-export, an import (the sidecar it brings), an installed bundle and a pin's
+export, an import (the metadata it brings), an installed bundle and a pin's
 disclosure take it from there; an install writes the declared files 0755 as
 a convenience for running them, never read back, and a launch, which
 carries a skill whole, writes them executable where it puts them (the
@@ -139,7 +168,207 @@ and every other file 100644 (`Remotes::publish`'s `executable`, `git add
 --chmod`; a pull request's `PullRequest::executable`). Visible change on
 unix: a file chmod'ed executable but not listed shows 0644 and is pushed
 100644. Not changed: a skill zip's entry modes, which its export writes
-from the sidecar and its import turns into the sidecar's list.
+from the metadata and its import turns into the metadata's list (an
+import always writes the metadata: the archive's, else the empty mapping;
+a forced import replaces it with the directory).
+
+Step 10b U3 (writes as library-domain commands; `t13-step10.plan.md` §2
+U3, protos.md §1.1) serves `bundle create`, `fragment|command create
+<bundle>#<kind>s/<id>` and `edit`, `skill create`, `config set`, `mcp
+server set|edit` (`UpdateMcpServer`: a mask names a set's fields, a field
+named and given empty cleared; no mask is the whole server through the
+editor, the preview's Edit need; a missing server is created only when
+`allow_missing`, which the CLI always sends, else refused
+`LibraryMcpNotFound`, AIP-134; `--header`, `--tag` and `--served-by` are
+gone, owner ruling, hard migrate; a server's notes and installation are
+in its one file, owner T27, so a set of them beside a runtime field is
+one file, one call) and the
+removals `bundle|profile|agent|companion remove` in the daemon,
+`agent create|edit` (`CreateAgent`, `UpdateAgent`: the agent's fields,
+an edit's named by its mask, a field given empty cleared; `model`,
+`effort`, `surfaces` and `roots` are INPUT_ONLY Agent fields and `home`
+a field of each request, additive, owner ruling 2026-11-18; an edit
+without `--yes` is previewed first, a swap whose new engine cannot carry
+what the old one did printed as that preview and nothing applied, any
+other edit applied with the preview's etag; the summary is the answer's,
+a profile its short library reference), `config edit` (`EditConfig`,
+an additive RPC, owner ruling 2026-11-18: the config of where it is run
+through the editor as a round trip, the preview's Edit need its text and
+the apply its answer written whole and unparsed, so a config that does not
+load can still be mended; left as it was, nothing applied; outside git it
+is refused `library-tree-not-in-git` first), `profile create`
+(`CreateProfile`, under the bundle its parent names, `--bundle`, else
+the project's own, `project`, made with it the first time as one new
+directory; `--add-skill` is the INPUT_ONLY `Profile.skills`, additive),
+`profile edit|modify` (`UpdateProfile`: given flags, a patch in one call,
+its add/remove lists additive request fields and `description` by mask,
+a mask sent even naming none, so `profile modify <name>` alone changes
+nothing; no mask and no list, the editor's round trip, its preview's Edit
+need), `bundle export` (`ExportBundle`, D2's EXCEPTION, the one write
+outside ctxloom's trees: the recording library's `UserFiles` records the
+tree, `Planned::Outside`, so planning, a preview's twice, writes nothing;
+the daemon takes it aside, `daemon_api::library_writes::outside_of`, and
+on an apply makes it with no step and no intent on any stream,
+`Library::write_outside`, content-fs's `UserFiles::write_tree`: built in a
+staging directory beside it, `.<leaf>.ctxloom-staging-<pid>-<n>`, renamed
+in with NOREPLACE, the staging removed either way; its paths are the
+caller's, below her `cwd`, `-o` the additive `ExportBundleRequest.output`;
+a path that is there is refused first,
+`library-application-write-export-destination-exists`, a draft; once
+made it is recorded on its SOURCE tree's stream, the tree whose git sees
+the bundle's manifest, `RecordBundleExported` keyed `export:<request id>`
+(its event `BundleExported`, additive; `library-checkout` keeps it by
+request id), so the same request sent again is answered from the record,
+applied, its source and destination as then (AIP-155, owner 2026-11-18,
+night; `answered_before`), and a NEW request onto that destination is
+refused as before), a
+local `bundle move <b> --to <dir>` (`MoveBundle`, step 10b U9,
+QUESTIONS 1(a) owner-approved: deps-cli tells `--to` apart in process,
+`Deps::move_target`, a remote still published there, U4, anything that is
+no directory refused as before; a directory is the daemon's ONE Move of
+the bundle out of this tree into the project at `dir`,
+`Library::bundle_move_into`, `ContentRepo::move_into` recorded as
+`Planned::MovedInto`, shaped `writes::Shape::Move { into }`, its intent's
+additive `MovePath.to_tree` naming the other tree's `.ctxloom`, which
+`decide` never judges `to` on, its operation `Operation::Move { into }`,
+content-fs's one `rename_noreplace` below that tree; only its `from`
+files are expected gone, and the other tree's next read records the
+arrival; a bundle there is refused, `--force` too (owner 2026-11-18,
+night), as is its own place,
+`library-application-write-move-destination-exists|-itself`, drafts, the
+first's fix naming `ctxloom bundle remove <bundle>` in that project then
+the move again; the CLI's text and json are the move's as before, from the
+response's additive `source`; deps-application's `move_bundle` is a
+remote's move alone, `DepsFiles::copy_bundle` and its local copy gone), `companion add` (`CreateCompanion`: the daemon
+probes the program in the caller's environment and registers the name in
+the HOME config, one layer; one registered already applies nothing),
+`agent default <name>` (`SetDefaultAgent`, one layer, `defined` saying
+whether the agent is defined yet; the bare `agent default`, the current
+default, is still read in process, as a default may name an agent no
+listing has), and
+`bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
+`bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
+by the request's lists; an item beside anything else is two files,
+refused `OneChangePerCall`, so bundle.feature's listing outline edits the
+version and the fragment in two calls, coordinator 2026-11-18, for owner
+review)
+and `fragment|command|skill remove` (`DeleteFragment`, `DeleteCommand`,
+`DeleteSkill`: an item with its distilled form is several paths taken
+away, the T28 sequence of their trashes, each kept, step 10b U9; a skill
+is its one directory, one trash, owner T27), from one table (`daemon_proto::library_writes!`, every layer;
+`library_api::served_writes!`, each verb's use case and response; the
+CLI's `SERVED_WRITES`). Every write request carries the caller's `cwd`
+(97) and `env` (94), as the reads do (E1, extended to the writes on
+2026-11-17 for the owner's review), so the daemon resolves its project
+and checkout from the caller's directory and runs git in its
+environment. A write is observed as a read is, then its request
+id looked up in `library-checkout` (which keeps every intent by request
+id: a retry of a write done is answered as applied, one owed is finished
+from its step), then PLANNED: the use case over `Library::recording`,
+whose content and config ports record what it writes and write nothing,
+shaped by `library_api::writes::shape` into ONE step (a file replaced, a
+new directory, a path trashed; more than one file is
+`library-tree-one-change-per-call`), then INTENDED (the step's command
+under the request id, git's ids for what it writes from
+`TreeObserver::blob_id_of`), made by ONE atomic operation (U8,
+`ctxloom_ports::Operations`, content-fs's `TreeOperations`, through the
+`Observing`'s `operations`; `library_api::writes::operation` maps the
+step): a file written under the tree's `state/staging/<request id>/` and
+renamed over its target, a new directory built whole there and renamed
+in with NOREPLACE (one that appeared meanwhile is
+`library-tree-resource-exists`, and is left as it was), a removal one
+rename into `state/trash/<request id>/<path>` (nothing there to take is
+`library-tree-no-such-resource`); nothing is staged beside its target.
+It is then read back and recorded `RecordStepDone`, and answered with
+the path's new etag. Where one operation cannot do it, a write is a T28
+SEQUENCE (step 10b U9): `writes::Shape::Sequence`, its steps listed in its
+intent (`RunSequence`), carried out one at a time, each one atomic
+operation recorded done (`done:{request id}:{step}`), and RESUMED on a
+retry at the first step not done (`End::Pending{done}`, the recorded
+steps; a step's content, a file's bytes or a new directory's files, is
+the retry's re-plan's step of its kind at its path,
+`writes::content_for`/`operation_of`; a step that writes content the
+re-plan no longer holds fails the write). A sequence's trash is not kept:
+its last step, `Operation::Purge` (`PurgeSlot`), removes the request's own
+slot (G12(a)). `bundle import` is served (`ImportBundle`; its source the
+caller's path, read from her `cwd` when relative): a new bundle is one
+new directory, and a forced one over a bundle there is the sequence
+trash, create, purge (the use case plans the old bundle gone and a new
+one of EVERY file imported, `Planned::BundleGone` then `NewBundle`, so
+`shape` makes it the sequence; `--yes` is accepted and changes nothing,
+an import asks nothing). `clean` is served too (`Clean`, an additive RPC;
+setup-cli's `Cleaning`, the wiring's `DaemonServed`): the daemon measures
+the cache trees (`daemon_api::Caches`, cache-files') and takes each one
+present into the checkout's trash, one write, a sequence of kept trashes
+(a sequence that purges no slot of its own keeps its trash, G12), each
+said by `library-api-notice-trashed`; its text and json are the report
+they always were (`setup_cli::report_of`, from the response's additive
+`items`). A step on a path outside the library's pathspec (`cache/`,
+`sessions/`, `state/`) leaves nothing the record follows
+(`writes::in_library`). A sequence's first path is judged on the
+caller's etag, each other on its own token now. A library use case's
+failure is said in its own words, its code and args
+(`daemon_api::refusal::app_error`, as a deps failure is). A tree's staging is swept the first time a daemon
+observes the tree (`Observations::sweeping`, a read's or a write's; S50);
+the trash is never swept at start. An apply that trashed says where,
+the notice `library-api-notice-trashed` (its path and slot as the tree
+shows them, `.ctxloom/state/trash/<request id>/`, kept 7 days; texts.md
+§3, `daemon_api::library_writes::trashed_notice`). A removal's slot is in the tree's
+state (`library_tree::Slot`: its paths, the time its intent was recorded,
+`kept`; every lone removal is kept, a sequence's own is not, U9), and
+a kept slot `KEEP_DAYS` (7, G12) old or more by the daemon's clock is
+purged when the daemon next observes its tree (`Observations::purging`;
+QUESTIONS 4 says each round and at start, and the observation is where a
+tree's directory is known): the domain's `PurgeTrash` (its age the
+evidence, refused `library-tree-slot-not-due` under 7 and
+`library-tree-no-such-slot` once purged; its command id UUIDv5 of
+`purge:{tree}:{request id}`), the slot removed whole, its `PurgeSlot` step
+recorded done, which drops it from the state. Under test-support the
+daemon's clock is moved on by `CTXLOOM_TEST_CLOCK_OFFSET` whole days,
+passed on to a daemon a command starts. Each rename's directories are
+synced after it, the target's then the source's when it is another, and
+a purged slot's trash directory after the purge (owner ruling
+2026-11-18, evening; angzarr-platform's `Fs::sync_dir`: fsync on unix,
+nothing on Windows), so a power loss cannot undo a step the record holds
+done; a sync that fails fails the step, `content-fs-sync-dir`. An
+observation that sees exactly a pending intent's ids is that step done
+(`StepApplied`), so a daemon killed after the operation is recorded
+once, as ctxloom's; a step done lays its paths over the record's dirty
+set. The editor round trip is the preview's Edit need: the daemon's
+`AnsweredEditor` answers `--body` or the need's answer, else keeps the
+ask; the CLI launches the need's EDITOR itself (`Served::edit_document`).
+A removal's preview carries a Confirm need (`library_api::served_writes::
+removed_of`: its text `Remove <target>?`, drafted in the 10b spec's
+texts.md as `library-api-confirm-remove` (owner-delegated, not yet
+rendered from that id), and the preview's target as its arg `target`, from which the CLI
+prints the preview in its existing words); the CLI asks it at the terminal
+(`Served::confirm`, `[y/N]`; none off a terminal) and on a yes sends the
+apply with the answer and the preview's etag, else prints the preview and
+applies nothing (`library_cli::write::removal_served`); an apply refused
+`library-tree-plan-stale` (the bundle changed before her answer) previews
+the removal again, prints it, and ends in the refusal; `--yes` is one
+call. `DeleteCompanion` has no `answers` field, so its apply sends none.
+A preview's etag is the path's last sequence; the apply sends it back
+(`etag`) and the daemon puts it in the step's command as `seen_sequence`
+(`daemon_api::library_writes::seen_sequence`; empty, a `--yes`, is the
+path's token now), so `decide` refuses a path moved since the preview
+`library-tree-plan-stale`, whose status is ABORTED (OQ-10; angzarr core
+b1445adf). An edit's preview with no text given probes (the daemon's
+`AnsweredEditor::probing`): it plans the file its apply would write, for
+that file's etag, and still asks the Edit need; the CLI's `fragment|command
+edit` sends that etag with its apply. An etag that is not a number is
+refused `daemon-api-etag-invalid` (`ctxloom.v1.EtagInvalid`,
+INVALID_ARGUMENT, exit 20; its text a draft the owner delegated).
+`--body` (fragment|command create and edit) and `config set <key> <value>
+[--home]` (one key, coerced as an override and judged by the schema at
+its path) are the spec's new surfaces. Test-support's `test-die-at`
+kills a write at `intended`, `staged`, `trashed`, `renamed` and `done`
+(and `test-die-after-apply` at `done`); `test-hold-at` (the same words)
+holds a write at its point while the file names it (at most 30 s), so a
+test standing for another process acts between two steps; and a
+command's `CTXLOOM_TEST_NO_RETRY` turns the client's one retry off
+(`Client::without_retry`), so what a killed daemon left is left. Every
+other write still runs in process until it is served.
 
 Slice S4 (sessions) built the following. The record is the user's durable
 store (owner rulings 87a, T14, which reverses 87's store per project): a
@@ -154,7 +383,9 @@ what was committed before it was asked; `transcript show` is one too
 `transcripts/transcript.jsonl`, `records/*.jsonl`, position file or
 `metadata.json`). A session's directory, `.ctxloom/sessions/<harp>/` in the
 project, holds what its engine needs (the session home, its native
-history), and `<harp>.lock` beside it is held by its run for its life. Its
+history), and its lock INSIDE it, `<harp>/session.lock` (step 10 U9, T28:
+the directory and its lock move as one; `session_ports::lock_path`, the one
+place the path is formed), is held by its run for its life. Its
 scratch checkouts are NOT there (owner ruling 2026-11-12, Q1): they are under
 ctxloom's home, outside the project,
 `<home>/.ctxloom/worktrees/<project-id>/<harp>/<agent>`
@@ -279,11 +510,28 @@ listings); `scripts/plain-destroy-check.sh`, run by `just build`, holds the
 plain binary to knowing none of `remove`, `purge` or `sweep`. The acceptance
 tests build with the feature, and `session-cli` (and `daemon-api-grpc`)
 dev-depends on itself with it, so its tests and `--all-targets` lint compile the destroy (no
-`feature_rules` entry: the mutation recipe refuses one). A destroy purges,
-from the store, the session's stream and each run stream UUIDv5(session,
-1..=n), each guarded by the head just read (retried on a conflict), then
-removes the session's whole directory (authored files too, a login link never
-followed) and its lock; the name's claim is kept, and the daemon's warm
+`feature_rules` entry: the mutation recipe refuses one). A destroy is a T28
+sequence on the PROJECT stream (O2, step 10b U9): the domain's
+`RemoveSession` (its command id the request's, keyed `removal:{request id}`,
+a sweep's `removal:{request id}:{harp}`; the project stream keeps it when
+the session's own is purged) is decided on the evidence the daemon
+gathers (`RemovalEvidence`: the lock's verdict, kept, the retention, the
+worktrees; `sessions::removal_refused`, which a preview asks too; its
+refusals `SessionLive`, `SessionKept`, `WithinRetention`, `KeepsSession`
+are said as `session remove`'s refusals were), and recorded
+`SessionRemovalIntended` with its steps (`sessions::REMOVAL_STEPS`:
+`worktrees`, `trash`, `purge`, `purge_trash`), each then made and recorded
+`RecordRemovalStepDone` (`ProjectState.removals` holds it open until its
+last is done). The worktrees step is reclaim's, made just before the
+intent (its classification is the removal's judgement) and recorded done
+at once. Then the session's whole directory, its lock inside it (authored
+files too, a link never followed), is renamed into its checkout's
+`state/trash/<removal id>/` (`Places::operations`, content-fs's
+`TreeOperations`; the `trashed` kill point), then the session's stream and
+each run stream UUIDv5(session, 1..=n) are purged from the store, each
+guarded by the head just read (retried on a conflict), then the trash slot
+is removed (`Operation::Purge`), so none is left; the name's claim is kept,
+and the daemon's warm
 session index, pending messages and board are told the streams are gone
 (the board its runs' too, so a destroyed session leaves no board row).
 Before the purge each child the session holds is closed and its owner
@@ -303,12 +551,23 @@ active since it, within its retention, its purge refused or failed), keeps
 EVERY checkout, its clean ones held in the report saying why the session
 was kept; only a session it purges has its clean ones removed on
 `--yes`, by that purge, through `reclaim_application::remove`'s order
-(`reclaim_application::sweep`). The streams go first, so a
-failure removing the directory leaves a session nothing lists. A hook fact
+(`reclaim_application::sweep`). The directory goes first, so a
+directory that cannot be taken leaves the session whole; a retry of a
+removal still open on its project's stream resumes it at its first step
+not done, never judged again (its own trash leaves no lock to prove it
+ended). A hook fact
 redelivered after it finds no session and records nothing. It is refused, as
 before, for a session whose lock does not prove it ended (held, or none;
 the daemon reads the lock) unless `--even-if-live` (the one override), for
-a kept one, and within the transcript retention: its project's
+a held lock on Windows even with it (owner ruling 2026-11-18, D18: a
+directory holding an open file cannot be renamed into the trash there; the
+daemon, `Api::on_os` given the wiring's `os_name`, names the held lock in
+the evidence, `RemovalEvidence.blocking_lock`, by
+`daemon_api::destroy::blocking_lock`, and the domain refuses it up front,
+`sessions-session-lock-held`, said as `sessions-application-refused-lock-held`
+with its `-fix`, end the session first; the wire's
+`RemovalRefusal.Reason.LOCK_HELD`, its `detail` the lock's path; unix is
+unchanged), for a kept one, and within the transcript retention: its project's
 `session_transcript_retention`, read from its REGISTERED root (30 days
 unless configured; one that is no age is `AgeInvalid`, a configuration that
 does not read `ConfigUnreadable`, a sweep's too, the flag or not). A refused removal is the typed `RemovalRefusal`
@@ -839,7 +1098,7 @@ the URL's host. The private key lives in memory in
 `run_ports::HookCertificate` (whose `Debug` withholds it) and goes to
 `hook-listener`'s `TlsIdentity` and nowhere else: never journaled, logged, in
 an environment or in an error. The listener's limits are angzarr's generic
-`Listener` defaults (core `f6fed5e5`; `hook-listener` sets none): a TLS
+`Listener` defaults (core `b1445adf`; `hook-listener` sets none): a TLS
 handshake within 10 s, an HTTP/2 keepalive ping every 60 s answered within
 20 s, a connection closed after 1 h plus a 30 s grace (never zero: a zero
 grace is `ListenError::ZeroConnectionAgeGrace` at bind, which
@@ -916,7 +1175,7 @@ a terminal run's is its FRONTEND's instead (`runs/<request id>.lock`, taken
 before it asked; U5's start-report race, above);
 its file is removed as it is let go, so only a dead holder's is ever left (a
 refused run leaves nothing in the project). The SESSION's lock,
-`<project>/.ctxloom/sessions/<harp>.lock`, is taken once the session is
+`<project>/.ctxloom/sessions/<harp>/session.lock`, is taken once the session is
 minted and held until after its engine exits (an
 interactive session's by its frontend, from before its TUI starts until its
 exit is reported, U5), so a live session reads live (and `session remove` refuses it without
@@ -935,7 +1194,7 @@ the run's life, as the daemon does for a child it hosts, is gone (T3, T18);
 a primary removes its file once its runner started, which proves nothing.
 A child the daemon hosts holds its SESSION's lock too, for its life
 (slice 4 U6, the owner's ruling on U4: `ChildHomes::hold_session`, the
-platform's file lock at `<project>/.ctxloom/sessions/<harp>.lock`, its
+platform's file lock at `<project>/.ctxloom/sessions/<harp>/session.lock`, its
 directory made; one another holds starts nothing, tried again later), so
 another launcher's sweep (a hosted one-shot's `Launcher::step`, in the
 daemon's own process) never takes a live hosted child for lost where a
@@ -1189,12 +1448,16 @@ with its root:
   infrastructure.rs`), an enum naming each error with its status once
   (`code()`, angzarr's transport-free `Code`; `status()`, its number) and,
   where one status carries two, its reason key (`key()`: `SessionUnknown`
-  NO_SUCH_SESSION, `Parked` angzarr's `DEAD_LETTERED`). Both listeners
+  NO_SUCH_SESSION, `Parked` angzarr's `DEAD_LETTERED`, `Unmet`
+  `run_ports::DIAGNOSED`, a host precondition unmet said in a diagnostic of
+  its own: git missing or too old, FAILED_PRECONDITION, owner ruling
+  2026-11-17, never UNAVAILABLE, which a client reads as an unreachable
+  daemon). Both listeners
   answer through it: the hook listener's command half
   (`runs_application::hook_commands`: a kernel failure's `Malformed` or
   `Failed`, an unknown session's `SessionUnknown`) and the daemon's service
   (`daemon_api_grpc`'s `status_of_error`: `ApiError::Failed`,
-  `Unimplemented`; through `daemon_api`'s re-export, as a driving adapter
+  `Unimplemented`, `Diagnosed` as `Unmet`; through `daemon_api`'s re-export, as a driving adapter
   reaches no port). Both clients read an answer back through
   `Infrastructure::read(status, keys)` (`hook_sink_grpc`'s
   `delivery_of_code`, `daemon_client::called`), each mapping the error to
@@ -1251,20 +1514,48 @@ The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
 a full commit. The angzarr pins are one line, one per family member:
 
-- angzarr core `f6fed5e5` (`angzarr-diagnostic`, `angzarr-yaml`,
+- angzarr core `b1445adf` (`angzarr-diagnostic`, `angzarr-yaml`,
   `angzarr-presentation`; `angzarr-coordinator-grpc`'s `tls` feature, which
   `hook-listener` enables, is `Listener::tls`);
-- angzarr-embedded `5cee822b` on angzarr-router `bec0c2bf`;
-- angzarr-build `bd02654f` (the markup generator, `angzarr-build` and
+- angzarr-embedded `5cdb1906` on angzarr-router `b332189a`;
+- angzarr-build `d0b63bcb` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `8e4aa9a1`;
-- taskloom's crates `2b1e6032` and ctxloom-lib's `30e916fa` (on its main), built
-  on the same line,
+- angzarr-platform `a930373b` (its branch `feat/sync-dir`: `Fs::sync_dir`
+  and the `Recording` fake);
+- taskloom's crates `9389e577` and ctxloom-lib's `6a21bd0e` (each on its
+  branch `feat/platform-sync-dir`: its main, moved onto platform
+  `a930373b`), built on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
 angzarr core's, all `Apache-2.0 OR BSD-3-Clause`; this workspace is
 `AGPL-3.0-only`.
+
+The API protos' annotations and their linter are pinned too (owner rulings
+S36, S37, S57, D6; step 10 U1). googleapis' `google/api/{resource,
+field_behavior,client,launch_stage}.proto`, `google/longrunning/
+operations.proto` and `google/rpc/status.proto`, with googleapis' LICENSE
+(Apache-2.0), are vendored under `proto/third_party/google/` at ONE commit,
+`ff8fd20f` (2026-10-30), each file's SHA-256 in its manifest
+`proto/third_party/google/SHA256SUMS`, the one place the commit and the
+digests are spelled: `just vendor-googleapis`
+(`scripts/vendor-googleapis.sh fetch`) fetches them and refuses one whose
+digest is not the manifest's, and `check` holds the tree to it offline.
+angzarr's `google/api/annotations.proto` and `http.proto` are not vendored,
+and operations.proto, which imports them, is imported by nothing yet.
+daemon-proto's build adds `proto/third_party` to its include path; the
+annotations are options, so nothing of googleapis is a field. api-linter
+is release v2.4.1 (linux-amd64 archive SHA-256 `adf6b94b...`, the digest
+GitHub publishes for it), fetched once into
+`~/.cache/ctxloom-api-linter/2.4.1/` and checked before it is unpacked
+(`scripts/lint-api.sh`); `just lint-api` runs it over `proto/ctxloom/v1`
+with `proto/api-linter.yaml` (no rule disabled there; each departure is a
+commented exception at its site, S38's `answers`, S44's folded streams),
+angzarr's own protos found at the locked commit by `cargo metadata`. It
+runs on Linux x86_64 only and is NOT yet part of `just lint` or CI: the
+drafts' findings it still reports (about 2.8k: missing comments and field
+behaviours, and findings that would change the wire, awaiting the owner)
+fail it.
 
 The callback's TLS stack is one crypto provider, ring (owner, ruling 35):
 tonic's `tls-ring` (never `tls-aws-lc`; `hook-listener` and `hook-sink-grpc`
@@ -1307,7 +1598,13 @@ exited cannot hang the caller. The program's environment is exactly the one
 the adapter gives; its tests need `run-within`'s `test-support`, which waits
 out ETXTBSY. Limits (os::process's): a descendant that calls `setsid` or
 `setpgid` escapes the kill, and the program runs in a process group of its
-own, so a Ctrl-C at the terminal does not reach it: a caller that must stop
+own, so a Ctrl-C at the terminal does not reach it. The git adapters
+(`remote-git`, `worktree-git`, `library-git`) share ONE git runner, the
+support crate `git-cli` (G9): the environment scrubbed of the variables git
+calls repository-local (`git rev-parse --local-env-vars`, asked once; every
+`GIT_*` when it cannot be asked), never interactive (`GIT_TERMINAL_PROMPT=0`,
+empty `GIT_ASKPASS` and `SSH_ASKPASS`), under `run-within`; each adapter
+says a failure in its own words. A caller that must stop
 a run on a signal hears it (`Os::signals`) and requests the `Stop` it ran the
 program with (`run_within_stopped_by`: the tree asked to stop, `stop_grace`,
 then killed; the outcome `stopped`).
@@ -1631,7 +1928,9 @@ client and messages, a direct dependency at the version the lock already
 held for angzarr's server, over TLS pinning the certificate the discovery
 file names, presenting no bearer, within the wiring's `HEALTH_WAIT`, one
 second). The single-instance lock (`daemon.lock`,
-`DaemonFiles::hold_instance`, the platform's `file_lock::take_current`) says
+`DaemonFiles::take_instance`, the platform's `file_lock::take_current`;
+`Unheld::Held` when another held it for the wait, `Unheld::Failed` when it
+cannot be taken at all, its directory or file not made) says
 only that one daemon serves: its file is made once and never removed or
 replaced by ctxloom, and a serving daemon checks at each tick that the file
 at the lock's path is still the one it locked (`DaemonFiles::still_holds`:
@@ -1673,7 +1972,13 @@ logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
 within `SPAWN_WAIT`, eight seconds: S16's ten (`HOOK_BOUND`) less a
-delivery's two (`DELIVERY_MARGIN`). A stale file is left for the new daemon
+delivery's two (`DELIVERY_MARGIN`). It watches the daemon it spawned: once
+that one has exited, the wait goes on only when it declined because another
+daemon holds the single-instance lock (`daemon serve` exits 20,
+`ctxloom-wiring-daemon-instance-held`, `spawn_waits_on`), and any other exit
+(it could not start) ends the wait at once; it used to wait out the eight
+seconds for a daemon that had died (owner ruling 2026-11-18, the daemon
+cluster's cap). A stale file is left for the new daemon
 to publish over. The spawned daemon's environment is `daemon_env`'s:
 `PATH`, `TMPDIR`, `LANG`, `LC_ALL` and `run_ports::WINDOWS_STARTUP_VARIABLES`,
 matched as the platform compares names (`os::Flavor::env_key`, so Windows'
@@ -1766,14 +2071,15 @@ answers carry the plan (additive: `DeleteSessionResponse`'s harp, applied,
 files, bytes freed, events destroyed and worktrees; `SweepSessionsResponse`'s
 rows, counts, cutoff and each removal). Each carries the client's
 `request_id` (S8: `Client::with_request_ids`, a UUIDv7 minted once per call,
-the SAME on its one retry on a new daemon), and an applied destroy's answer
-is kept by it for the daemon's life (`destroy::Applied`, in memory), so a
-retry already applied is answered with its first result; after a restart a
-retried `DeleteSession` whose session the store says is destroyed (its name
-claimed by it, its stream empty) is answered applied from those facts,
-nothing counted (accepted cost: a fresh `session remove --yes` of an
-already-destroyed session, which carries a new id, is answered so too, not
-`SessionNotFound`), and a retried sweep runs again over what is left. A
+the SAME on its one retry on a new daemon). Nothing of a destroy is kept
+in memory (O2: `destroy::Applied` is gone): a retry of a removal still open
+resumes it; a retried `DeleteSession` whose session the store says is
+destroyed (its name claimed by it, its stream empty) is answered applied
+from those facts, nothing counted (AIP-155's first response is not
+reproduced: its counts are gone with the session; accepted cost: a fresh
+`session remove --yes` of an already-destroyed session, which carries a
+new id, is answered so too, not `SessionNotFound`), and a retried sweep
+runs again over what is left (each of its removals intended once). A
 destroy call's deadline is its own (`DaemonClient::destroying`, the wiring's
 `DESTROY_WAIT`: worktree-git's 30 s timeout times six git invocations times
 ten worktrees, plus `CALL_WAIT`), not a read's five seconds; a call past its
@@ -2010,7 +2316,12 @@ this session will be stopped in <span>; finish and exit") and both stop
 sentences are DRAFTS (OD-63). Under `test-support`, the daemon directory's
 `test-deaf-to-stop` makes a daemon take a stop and a drain and ignore them,
 and `test-shutdown-stop-wait` (seconds) shortens `STOP_WAIT`, so a test
-sees the exit 10. A dead
+sees the exit 10. Its `test-hold-alarms` (one line, seconds since the
+epoch) holds the scheduler's clock at that instant while it is there
+(`DaemonFiles::alarms_held_at`, serve's `HeldAlarms`), so no alarm armed
+since comes due until the test removes it: session_approvals.feature's
+asks with `approval_timeout: 2s` are held from before the ask until "the
+ask's time runs out", never ended early by a slow machine (the race rule). A dead
 frontend's lock reads free and its files are taken away by the next look;
 no process id is trusted and no signal is sent to one (Windows alike). The
 shutdown reaches the daemon without the version check (`Reach::observing`),
@@ -2127,16 +2438,27 @@ Trust is ENFORCED (step 8 U2). The daemon reads it (`TrustIndex::trusts`, by
 project id) for every launch it makes, a one-shot, a terminal session, a
 hand-off and a hosted child's start, and plans it with
 `library_application::Flags::trusted` (never the client's to say: no flag or
-variable sets it). Untrusted, `config::load` holds ruling 46's four keys back
-from the project layer as before (`Config::held_back`, the notice as before),
-and the plan names those THIS launch reads (`DryRun::untrusted`: its engine's
+variable sets it). It gates EVERY library read the daemon serves too (step
+10a U7, D7: daemon-api's `read_site`, the project's id from
+`registered_project`, a read under `users/me` untrusted), so `engine show`
+before `trust --yes` and after `--undo` holds them back, and between shows
+them. Untrusted, `config::load` holds ruling 46's four keys back from the
+project layer (`Config::held_back`), each said as the typed notice
+`library-application-notice-untrusted-setting` (`Notice::UntrustedSetting`:
+`path`, `file`, `home_file`; its `-fix` names `ctxloom trust` and the home
+config), which replaced ruling 46's untyped "a project's config cannot set
+it" warning (deleted, U7), and the plan names those THIS launch reads (`DryRun::untrusted`: its engine's
 block and its agent's, owner Q8), which are `EnqueueRun.untrusted_settings`
 (field 14): the runs aggregate refuses them LAST of its checks (Q9),
 `runs-untrusted-project-settings` (`UntrustedProjectSettings{paths}`,
 FAILED_PRECONDITION; `LaunchRefusals` field 7); the credential
 evidence is read with them held back, so an untrusted `auth.file` is reported
 once. Trusted, the project's own keys apply until the trust is revoked (S23).
-In-process library verbs still hold them back (until T13). A project's own
+An in-process library verb (a write, until 10b) is planned untrusted and
+holds them back with the same notice; init's interview read is still read
+in process and asks the daemon one `GetTrust` (`Library::with_trust`),
+since no served read answers an operational prompt yet (distill's is the
+daemon's own read since step 10b). A project's own
 `ctxloom` bundle replaces an operational prompt (init's interview, distill's)
 only once the project is trusted (D4): `Project::operational_prompt` passes it
 over for the built-in otherwise, with the notice
@@ -2352,6 +2674,423 @@ the test and forced wakes, no sleep. Not proven: a real process kill (the
 daemon firing an alarm is proven end to end by session_approvals.feature's
 expiry scenario (an ask's alarm under a 2 s `approval_timeout`).
 
+## The library domain (step 10a U0; plan `t13-step10.plan.md`, G4 superseded)
+
+Step 10a U0 adds three crates on `proto/ctxloom/library/v1/library.proto`
+(the red spec's `protos.md`, amended for G4's supersession):
+`core/wire/library-domain-proto`, `core/domain/library-tree` (G10; the
+domain is `library`) and `core/read-model/library-checkout` (`Held`). One
+stream per library TREE (L1): a project checkout's `.ctxloom/`,
+`projects/{p}/checkouts/{c}/library`, rooted on the UUIDv5 of that name
+(`sessions::root_of`), or the home's, named `users/me/library` whatever
+home it is and rooted on `users/me/checkouts/{c}/library` (QUESTIONS B(a):
+each `CTXLOOM_HOME` a stream of its own; `library_tree::TreeName`). `{c}` is
+the checkout's harp in its `.ctxloom/state/checkout` (out of git, so a git
+worktree is a checkout of its own; L2): the wiring's `checkout_harp` reads
+it and mints nothing, `mint_checkout_harp` mints it once (`O_EXCL`, a file
+left empty re-minted), for U2's first read. Nothing holds a file's text, a
+config value or a key: paths, git object ids, statuses and request ids.
+
+An observation is a FACT, `RecordTreeObserved`, keyed `obs:{tree}:
+{H(last_cause)}:{head}:{H(sorted dirty)}` (L4, `observation_key`, SHA-256
+hex, each `path NUL oid NL` in path order; `observation_book` builds the
+keyed fact), so the same sight twice is a DUPLICATE and A to B to A to B
+never collides. A FACT CARRIES NO SEQUENCE (owner, G4 superseded): the event
+it records is given one, its page's, and `apply` (`PageContext::sequence`)
+folds each named path to `{last sequence, oid}` (`library_tree::Library`,
+the aggregate's and `library-checkout`'s ONE fold); a rename empties its
+`from_path`; a baseline clears them and sets `baseline_sequence`.
+`Library::token(path)` is the etag: the greatest sequence at or under the
+path, else the baseline's. `last_cause` is the page's causation (a fact's
+external id, a command's id). The aggregate records an observation only when
+it adds something: a tree's first is its baseline; a change already held at
+the same oid is dropped (an observation made against an older state records
+only what it adds); HEAD alone moving records nothing (QUESTIONS A), nor
+does a motion alone. `RecordStepDone` (the pending intent's next step ties
+its `observed` paths to its event's sequence) and `RecordStepFailed` record
+for a pending intent only. The five commands (`ReplaceFile`,
+`CreateDirectory`, `TrashPath`, `MovePath`, `RunSequence`, each with a
+`verb`) are decided on `Evidence` in order (git: `NotInGit`/
+`LibraryIgnored`; `TreeInMotion`; `BuiltinReadOnly`; the plan's
+`PlanRejected`, which speaks as the plan's own diagnostic, or
+`library-tree-tree-unreadable`), then existence as the record knows it
+(`ResourceExists`, `NoSuchResource`) and the token the caller saw
+(`seen_sequence`, `PlanStale`); each judges only what its `refuses` lists, a
+sequence's steps their tokens alone; they record a `ChangeIntended`, which
+moves no token. Nothing sends them before 10b (U3). The texts are 10a's and
+10b's accepted drafts. Departures from the approved proto, each forced by
+angzarr-build's domain layer and wire-compatible: `Step`'s arms and
+`TreeObserved`'s cause are `optional` fields (no `oneof` is mapped), each
+`in_motion` an `optional` enum; `Evidence.root` and `TreeInMotion.root`
+carry the root the texts name; `OneChangePerCall` waits for 10b (U8), as no
+command refuses it yet. Not built here: the observer (U12's git port, U2's
+reconcile), intent attribution and supersession (10b, U13), trash. The observer and
+the reconcile are U2's (below, "A library read observes its trees first").
+
+The kernel registers the aggregate in every core, on loopback
+(`core_link`), the daemon's `library-checkout` (`Projectors::checkouts`,
+caught up at the start and each round, `Folds::checkouts`); the coordinator
+reaches the domain and the user allowlist holds its five commands and three
+facts (runs-application's `EdgeCommands::reach`, `user_allowlist`). Under
+`test-support` only, `ctxloom test library-events [--home] --format json`
+(QUESTIONS G) reads the cwd checkout's (or the home's) stream from the one
+store: `{"tree", "events": [{type, sequence, baseline, head_before,
+head_after, in_motion, changes: [{path, status, from_path?, oid?}]}]}`,
+`"tree": null` where no checkout harp was minted; it mints and records
+nothing.
+
+## git holds the library (step 10, U12; plan `t13-step10.plan.md` G1, G2, G9, G11)
+
+A library tree (a project checkout's `.ctxloom`, the home's) is in git, and
+what ctxloom knows of it is what git says: ctxloom-ports' `TreeObserver`
+(the work tree a directory is in, the ignore rule that ignores a path, a
+repository made, the commit checked out, the library's tree in a commit,
+`status --porcelain=v2 -z -uall --renames`, `diff-tree -r -M`, each file's
+object id by `hash-object --stdin-paths`, nothing stored, and the git
+operation in progress by `rev-parse --git-path` of `rebase-merge`,
+`rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` and
+`index.lock`), every path relative to the directory asked about
+(QUESTIONS.md I). `adapters/driven/library-git`'s `GitTrees` implements it,
+git on the caller's `PATH` in the caller's environment, every invocation
+`git --no-optional-locks -c core.longpaths=true`, so a read writes nothing
+into `.git`. It asks git its version once: none on the `PATH` is
+`library-git-git-missing`, older than 2.25 `library-git-git-too-old` (G11,
+QUESTIONS.md F), both failures, exit 10; a version line it cannot read is
+not judged.
+
+- `init` makes the directory it is run in a git repository when it is in
+  no work tree (G1: unasked, committing nothing), BEFORE it scaffolds, so a
+  missing git leaves nothing (exit 10); a directory below a repository's
+  root is in git, and left alone. It says
+  `init-application-notice-git-initialized` (`init_application::
+  ensure_repository`, `Init::with_repository`). `config create` takes the
+  same step before it writes (QUESTIONS.md E; `Library::
+  with_repository_step`, its notice `Notice::Git` in init's words).
+- The HOME is made a repository at its first read (G2, QUESTIONS.md B):
+  every library command first takes `library_application::
+  ensure_home_repository` over the home's `.ctxloom` (the wiring's
+  `library::home_repository`, which is also where git missing fails a read,
+  exit 10; a home with no `.ctxloom` yet is passed over). In no work tree,
+  or in one that ignores its `config.yaml` (a dotfiles repository ignoring
+  `.ctxloom`, QUESTIONS.md C: then nested), it is `git init`ed with the
+  ALLOWLIST `.gitignore` (`HOME_GITIGNORE`: `/*` then `!/.gitignore
+  !/config.yaml !/remotes.yaml !/lock.yaml !/content/`), written first and
+  only where there is none (once there it is hers), committing nothing;
+  any other work tree (her own repository at `.ctxloom`, or a dotfiles one
+  keeping it) is used as it is.
+- NOT built here (10a's other units): the reads moving into the daemon,
+  which then takes the home step per home and says the home's notice
+  `library-api-notice-home-repository-made` (U2, blocked: below).
+- The HOME COMMIT (G3, owner 2026-11-18, night; step 10b): when the
+  daemon's home step (`Observations::observe_trees`) `git init`s the home
+  and git then holds it, it records `RecordHomeRepositoryMade` on the home
+  tree's stream (keyed `home-repository-made:{tree}`; `HomeRepositoryMade`,
+  `LibraryState.home_repository_made`, all additive). After a write to the
+  home is recorded done, and only on a stream holding it, the daemon
+  commits that write (`carry_out`'s `home_commit`, through
+  `TreeObserver::commit`, library-git over git-cli): `git -c
+  user.name=ctxloom -c user.email=ctxloom@localhost -c commit.gpgsign=false
+  commit -q -m "ctxloom: <verb> (<request id>)" -- <paths>` (the library
+  paths its steps changed, staged first with `add -A`; `GIT_AUTHOR_*` and
+  `GIT_COMMITTER_*` are set to ctxloom too, as they outrank `-c`), one commit
+  per write; nothing changed, nothing committed. Never in a project tree,
+  nor in a home made before the fact existed, nor in a repository ctxloom
+  did not make; a home first made by an in-process verb (not a served one)
+  gets no fact either. A failed commit is the notice
+  `library-api-notice-home-not-committed` (a draft), and the write stands.
+- `TreeObserver::blob_ids` leaves out a path with no file (absent): the
+  reconcile asks the ids of paths it last saw dirty, some since taken away.
+
+## A library read observes its trees first (step 10a U2, in part)
+
+`core/application/library-api` is the daemon's library reads' crate. Its
+reconcile (`reconcile::sight`, pure over `TreeObserver`) asks git, in
+order: the operation in progress, HEAD and the library's tree id in it,
+`status` over the library's pathspec (`PATHSPEC`: `content/bundles/v2`,
+`config.yaml`, `remotes.yaml`, `lock.yaml`; L13), and the ids of every
+path that differs now or was dirty at the record's last sight; when the
+library's tree id moved it diffs the commits (`diff-tree -M`), and a
+last-seen commit git no longer has (or an empty HEAD) re-baselines. Each
+path is judged against what the record knew (its last dirty id, else the
+diff's, else "present at HEAD"): added, deleted, renamed where git paired
+it, type-changed, else modified; a tree's first sight is its baseline,
+what git sees uncommitted as git classes it. Nothing differing records
+nothing (no fact sent; HEAD alone moving is nothing, QUESTIONS A).
+`locate::refusal` is G1's: a project whose root is in no work tree is
+`library-tree-not-in-git`, one whose `.ctxloom/config.yaml` git ignores
+(`check-ignore` from the root) `library-tree-library-ignored`.
+`Observations::observe` runs both for a `Site` (a checkout's, or the
+home's, which takes no G1 check), naming the checkout first
+(`CheckoutHarps`: the wiring's `TreeHarps`, `mint_checkout_harp`) only
+after the refusal, reconciling against the kernel's `library-checkout`
+(projected inline, so the next read sees the last one's), and records the
+fact through the edge (`observation_book`); no lock is held across the
+recording: one sight twice against one state is a DUPLICATE, and one
+against a moved state records what it adds (forced in `observe.test.rs`).
+`observe_read` is a read's whole step: the project's checkout, then the
+home's library where it is in a work tree git does not ignore it in, in
+the caller's environment (`Observers`: the wiring's `CallerGits`, git on
+the request's `env` PATH). Its notices are `library-api-notice-tree-in-
+motion` and `-home-repository-made` (texts.md, accepted verbatim).
+`library_api::names` is the library's resource naming, one copy
+(library-cli re-exports it until each noun is served).
+
+The daemon's `Api::observing(Observing)` (serve.rs) makes every library
+read it serves (`Api::library_read`, `AssembleContext` among them) observe
+first: a refusal is the library domain's own typed refusal under its
+message's status (`daemon_api::library_refusal`; `rejection_of` maps
+`NotInGit`, `LibraryIgnored` and `PlanRejected` back to
+`Rejection::Library`, exit 20), a motion a notice. git failing is an
+internal failure; git MISSING or TOO OLD is a DIAGNOSED failure (step 10a
+U2, owner ruling 2026-11-17): `ApiError::Diagnosed {code, args}` (the
+`library-git` diagnostic's), answered FAILED_PRECONDITION
+(`run_ports::Infrastructure::Unmet`, never UNAVAILABLE, which a client
+reads as an unreachable daemon) carrying a `google.rpc.ErrorInfo` whose
+domain is `run_ports::DIAGNOSED` (`ctxloom.dev/diagnostic`), reason the
+code and metadata the args; the client reads it back as
+`Called::Diagnosed` (`daemon_client::called`, before any status is read),
+so the command says `library-git-git-missing` in its own catalog's words
+and exits 10.
+
+`just bench-reconcile` (O7; `LIBRARY_BENCH=reconcile`, else the test says
+SKIP) times `sight` over `CallerGits` on 100 000 files with 500 in
+`.ctxloom`: p95 under 50 ms for a read seeing nothing new and one seeing a
+hand edit (2026-11-17, git 2.47, this machine: p95 46 ms and 50 ms; `status`
+alone is about 28 ms, so the margin is thin; the next mitigations are O7's
+untrackedCache or fsmonitor, or fewer `rev-parse` processes).
+
+The owner's rulings of 2026-11-17 (E1, E2, E5, O3, the read notices) are
+built:
+
+- E1: every library read request (each Get, List, Search, Browse and
+  Discover of library.proto, and `AssembleContext`) carries `EnvVars env =
+  94`, `Globals globals = 96` and an optional `string cwd = 97`. A served
+  read (daemon-api `library_reads`) resolves its project by its harp, is
+  read at the caller's directory (else the registered root), finds the
+  checkout there as a process would (the root's `ProjectLibraries`; a git
+  worktree is a checkout of its own, L2), observes it and the home, then
+  opens the library in the caller's environment under its globals (never
+  `trusted`: U7).
+- E2: `AssembleContext` answers the context WITHOUT the premise index, and
+  what a premise held back as data (`AssembledContext.premised`); none of
+  `library::compose::Options.surface` / `AssembleRequest.surface` means
+  "the caller renders it". The MCP server's `context_assemble` renders it
+  on the launch (`library_api::premise::render_premise_index`, re-exported
+  by daemon-api, `Shown::Launch`); the CLI's `context assemble` renders it
+  at rest (`Shown::AtRest`) and prints the message with the index in its
+  `context` and `premised` and `notices` emptied, as the in-process answer
+  printed it. The words are still `library::premise`'s (reached through
+  `library_application::premise`): the in-process launch package and
+  materialize render with them too, so the instruction text stays in the
+  core until those are served (10b/10c).
+- E5: each decline of a library use case is a typed refusal of its own
+  (`ctxloom.v1.Library*`, library.proto, each with its `(refusal_status)`),
+  mapped back to its `library-application-*` diagnostic by its type alone
+  (`daemon_api::library_refusals`, `Rejection::LibraryRead`); a wrapped
+  cause rides as its code and flattened args (`ctxloom.v1.Cause`).
+  A read model's own refusal (`AppError::Declined`) is typed per cause too:
+  each `library` diagnostic a read declines with (the catalog's nine, the
+  profile's eleven, the config's not-a-mapping and unwritable) is its own
+  message, `ctxloom.v1.Library<Catalog|Profile|Config><Variant>`, its args
+  its fields, both ways from one table (`read_model_declines!` in
+  `library_refusals.rs`, keyed by the diagnostic's code; the deps read
+  models' declines are rows of the same table); `LibraryDeclined`
+  is left for a cause no read declines with (a write's, typed with 10b).
+- Notices: a library read's own notices (the observation's, then the use
+  case's) ride the response metadata key `ctxloom-notice-bin`
+  (`daemon_proto::NOTICE_METADATA`, one prost `Notice` per value, apart
+  from the standing warnings), carried to a client as `daemon_ports::Read`
+  and said by the CLI before its answer, in its own catalog's words (by
+  code and args). Only an ANSWERED read carries them: a refused or failed
+  read says its refusal alone (accepted, as a status has no notices).
+  `AssembleContext`'s ride in `AssembledContext.notices` instead (the MCP
+  tool's answer is the message), where the MCP edge adds its own
+  `daemon-api-assembly-missing-fragment` / `-tag` for what it asked and
+  the catalog lacks (`daemon_api::missing_notices`).
+- No bundles directory (owner ruling 2026-11-17): a project with no
+  bundles directory lists as one with no bundles ("No bundles installed."
+  and its install hint, a project's or none's), never Go's mkdir line,
+  and a read creates nothing; installing a bundle makes the directory.
+- D12: one table, `daemon_proto::library_reads!`, generates each layer's
+  part of every library read (the port's default, the client's call, the
+  API's `Calls` default, the gRPC handler, and daemon-api's `LibraryReads`,
+  the CLI's client: each `fn(under, request)`, its target the client's
+  parent, `projects/{harp}` else `users/me`, then `under`). What the daemon
+  SERVES is `library_api::served!` (each row's
+  `library_api::reads::$method(library, flags, parent, request)`), from
+  which `Api`'s `Calls` methods are generated; what the CLI asks is
+  library-cli's `served_reads!`, from which its `Served` trait, the
+  wiring's `DaemonServed` and the tests' `ServedBy` are generated. A read
+  is served by a row in each. The deps reads are the same, over their own
+  tables: `library_api::deps_served!` (`library_api::deps::$method(deps,
+  parent, request)`, `Api::deps_read`, over the `Libraries` port's
+  `read_deps`, the wiring's `ProjectLibraries` opening the project's
+  `Deps`) and deps-cli's `served_reads!` (its `Served`, which the wiring's
+  `DaemonServed` implements too); `Api::library_read` and `deps_read`
+  share one `read_site` (parent, directory, environment, flags,
+  observation). `AssembleContext` is a library read too
+  (`Api::assemble_context` through `library_read`; `LibraryReads::
+  assemble_context`, `Served::assemble_context`); the daemon's
+  `Assemblies` port and the wiring's `ProjectAssemblies` are gone.
+- Targets: a command names what it reads by its text AS TYPED
+  (`library_api::names::bundle_target`, `reference_target`), read back
+  exactly in the daemon (`bundle_under`, `reference_under`: a remote's
+  bundle, a canonical reference with slashes, a reference of no valid
+  shape, `ctxloom+local:` all round trip, `%` and `/` escaped within one
+  segment), so the use case refuses it in its own words (`invalid
+  reference format`, `bundle not found: demo#fragments/testing`).
+- One per-call builder (U2's Deletes): every call the daemon serves is
+  read as `daemon::caller_wiring(home, temp, (dir, root), env)` (over
+  `caller_env`): a process at the caller's directory in the caller's
+  environment, ctxloom's home as its home and the caller's home kept as
+  its own; `root`, when given, its `CTXLOOM_ROOT` over the caller's. The
+  library reads' `ProjectLibraries`, the trust read's `ProjectTrusts`, the
+  sweep's settings, a child's plan (`child_library`) and a hosted run
+  (`oneshot::hosted_wiring`) are all made over it; `per_call_env` (which
+  set ctxloom's home as the caller's HOME) is gone.
+- Served: `ListBundles` (`bundle list`), `GetBundle` (`bundle show`, FULL;
+  `bundle view <bundle>`, CONTENT: its files; a path no item kind serves,
+  `<bundle>#<path>` read back whole, refused as the view refuses it),
+  `bundle view <bundle>#<kind>/<item>` as the item's own read (owner
+  ruling 2026-11-17: rendered from the item's message, no source-bytes
+  field, not the file byte for byte): `GetFragment`/`GetCommand` its body
+  (`# (distilled version)` over a distilled one), `GetSkill`,
+  `GetMcpServer` (one bundle's server, a bundle of one answering whatever
+  the ID, as Go's view did) and `GetProfile` their fields as YAML under
+  `# <Kind>: <id>`, keys sorted, empty ones left out, references short
+  (library-cli's `viewed_by_the_daemon`, `read_back::{body,skill,mcp,
+  profile}_view`; a profile's `select_tags`, `fragments`, `hooks` and
+  `deny_tools` among them, below; library-application's `bundle_view` of
+  an item answers its data alone, `Viewed`, no content), `ListRemotes`
+  (`remote list`), `BrowseRemote` (`remote show`: what a remote publishes,
+  read from its cached clone as before, cloned first where none is cached;
+  `library_api::deps::browse_remote`, the remote's ID read back from its
+  name exactly; owner ruling 2026-11-17; no profiles, as before and as
+  Go), `ListDependencies` (`deps list`); a deps read's decline, a lock or
+  registry that does not read, is its own typed refusal, the deps read
+  models' ten (`ctxloom.v1.Deps<Variant>`: unreadable, too-new, too-old,
+  bad-shape, forge-type, unknown-forge, no-repository, lock-empty,
+  lock-key, lock-unreadable; E5, `read_model_declines!` beside the
+  library's), and its failure (a remote that cannot be browsed) is said
+  in its own diagnostic (`ApiError::diagnosed`, exit 10; daemon-api's
+  `refusal::deps_error`), `ListFragments`,
+  `ListCommands`, `GetFragment`, `GetCommand` (`fragment|command
+  list|show`), `GetPremiseIndex` (`fragment premises`), `ListSkills`,
+  `GetSkill` (`skill list|show`), `ListCompanions` (`companion list`, the
+  programs looked for on the caller's `PATH`), `ListProfiles`, `GetProfile`
+  (`profile list|show`; a bare name's target `/profiles/<name>`,
+  `names::profile_target`), `ListAgents`, `GetAgent` (`agent list|show`;
+  `names::named_target`; an agent's resolution error said in the program's
+  words, `Library::with_words`, the wiring's catalog), `ListEngines`,
+  `GetEngine` (`engine list|show`), `ListMcpServers` (`mcp server list`,
+  and `mcp server show <id>` as its `mcp_server_id` filter), `SearchLibrary`
+  (`search`; a `--type` word the API's `ItemKind` has no value for is
+  refused by the CLI, `library-application-search-type`, as the request
+  cannot carry it), `GetConfig` (`config show [section] [--raw]`: `SET`
+  is `--raw`; served while the daemon drains, so a drain's own timeout is
+  changed and read back while it runs), and `AssembleContext` (`context
+  assemble`). The CLI is the request and the render (D10):
+  `library_cli::served` says the read's notices, then prints the message
+  as json or its text, drawn from the message alone (library-cli's
+  `read_back`: the message read back as the view the text renderer
+  prints); a one-bundle listing that holds none asks the whole catalog
+  too, for its "exist in other bundles" line. The view-to-message mappings
+  are `library_api::resources`, the one mapping. With no daemon, a served
+  read fails (`daemon-api-unreached`, exit 10), text or json alike: a text
+  answer no longer reaches no daemon (so `scripts/plain-engines-check.sh`
+  proves the plain engine list by an agent written on a mock, refused in
+  process naming the list). The home step (G2) is the daemon's, at a read
+  (`observe_read`), said as `library-api-notice-home-repository-made`; the
+  caller takes none before a served read (`library_cli::is_served_read`,
+  its `SERVED_VERBS` table, `mcp server list|show`, `search`, `loadout`
+  and `run --dry-run`; one path), and a verb still in process takes it in process
+  first.
+- Text prints CANONICAL forms (owner rulings 2026-11-17), as the message
+  holds them, never the spelling written (no as-written field crosses the
+  wire): a reference is its SHORT library reference, harp-free, as a
+  person types it (`library_api::names::short_reference`, the names table
+  read back: a bundle by its catalog name, `demo`, `<r>/<b>`; an item
+  `<bundle>#<kind>/<id>`, `project#profiles/base`, `demo#mcp/x`; one
+  OQ-16 cannot place keeps its text): a profile's bundle, parents and
+  bundles, an agent's profiles, an MCP server's bundle, a dry run's
+  profiles, `fragment premises`; json keeps the resource name. A
+  resource's own name is the one a person types (a project profile's bare
+  name, `ctxloom+local:<b>#profiles/<p>`, else its short reference); a
+  free-form document (permissions, `config show`) has its keys sorted. The
+  Go-parity rows that printed the written spelling carry `# changed:`
+  (profile.tsv, mcp.tsv, run.tsv; library_parity's `as_canonical`).
+- `run --dry-run` is `CreateRun` with `validate_only` (`Api::preview_run`,
+  `LibraryReads::preview_run`, library-cli's `Served::preview_run`): planned
+  as a library read (its trees observed first, so a library outside git is
+  refused `library-tree-not-in-git`) at the caller's directory, in its
+  environment, under the project's trust as the daemon reads it, then
+  judged on the untrusted project settings it reads as the runs aggregate
+  judges an enqueue (`runs::pre_launch_refusal`, owner answer H:
+  `runs-untrusted-project-settings`, exit 20, with the plan's fatal findings
+  beside it one `runs-launch-refused`, exit 21); nothing is enqueued,
+  minted or started. Its `Run` (`library_api::resources::planned`) carries
+  the workspace axis and runtime the launch SETTLES on
+  (`Run.settled_workspace`, `Run.settled_runtime`, fields 19 and 20: the
+  asked or configured, else `none` and `host`; `workspace` and `runtime`
+  stay what was asked and what the agent declares, Go's top-level keys) and
+  `Run.settings_agent` (field 18, the agent the settings are of), its
+  notices in `Run.notices`, so its text (agent, axes, Settings section) is
+  drawn from the message; a plan with fatal findings prints and exits 21.
+  A dry run never mints: a project nothing has named is asked under
+  `users/me` from inside it (`daemon::preview_client`), and the daemon
+  leaves its names unresolved.
+- O3: the session-start nudge asks the daemon's `ListAgents` and
+  `ListProfiles`, the skill mates its `ListSkills` (the bundle from the
+  skill's resource name, the name its `Skill.display_name`, the SKILL.md
+  frontmatter `name:` as the package names it, else its id: owner ruling
+  2026-11-17), within the hook's bound,
+  degraded (setup-application's `HookLibrary`, the root's
+  `DaemonHookLibrary`; a hook whose environment names an endpoint asks only
+  a daemon already serving); with no daemon in time a hook says nothing of
+  the library and reads nothing in process.
+
+- A profile's message (owner ruling 2026-11-17) carries its `select_tags`
+  (11), `fragments` (12, `ProfileFragment{fragment, priority}`: an item
+  reference by its resource name, a bare name as written), `hooks` (13,
+  `ProfileHooks{unified, ext}`, field for field the library's
+  `HooksConfig`, each hook a `ProfileHook`, field for field the library's
+  `Hook`, read by `HooksConfig::read`; an entry no hook reads from left
+  out, as the package leaves it) and `deny_tools` (14), all OPTIONAL.
+  `profile show` prints them (Fragments, `(priority N)` where set; Select
+  tags; Denied tools; Hooks, each under its document path, `unified.<e>` or
+  `ext.<engine>.<e>`, on one line in YAML's flow form, keys sorted; Go
+  printed none of them), and a profile's one-item `bundle view` gives them
+  in the document's shape, keys sorted, references short.
+
+- `GetLoadout` (owner ruling 2026-11-17): `loadout` asks the daemon for
+  ctxloom's own `Loadout`, ALWAYS as `users/me/loadout` (the pattern
+  `projects/{p}/loadout` answers the same): it is the same in every project
+  and a companion probe asks it where there may be no project, git or
+  identity, so the CLI asks it through the wiring's `daemon::home_client`
+  (no project registered, minted or observed; library-cli's
+  `Served::own_loadout`, not a `served_reads!` row) and a bare directory is
+  left as it was; `GetLoadoutRequest{name, env, globals, cwd}` as every
+  library read; the resource its `run:` bundle, `LoadoutBundle{version,
+  tags, author, mcp_servers}`, each server `LoadoutMcpServer{id,
+  served_by}`, field for field `library::write::loadout::OwnLoadout`; no
+  field carries the withheld prose), answered by
+  `library_api::reads::get_loadout` (`resources::loadout`) after the home's
+  observation, as a `users/me` read; the CLI writes
+  the document from the message (`read_back::loadout`, then
+  `library_application::loadout::document`), whatever the output format,
+  after the read's notices. The in-process path (the `LOADOUT` constant
+  printed as it was) is gone; as a served read it needs a daemon. No
+  library read is left in process (U2 done), with ONE named exception
+  (D8, owner ruling 2026-11-17): the operational prompts, init's interview
+  (`SetupSessions::setup_interview`, the wiring's `interview.rs`) and
+  distill's instruction, were read in process through 10a, each asking
+  the daemon one `GetTrust` (`Library::with_trust`), because no RPC
+  answers an operational prompt; they are ruled to be served with 10b.
+  Distill's is (step 10b: the daemon plans the distill's ask, under the
+  project's trust as every served read is); init's is U6's.
+  Ruling 128's behaviour is unchanged: a trusted project's own `ctxloom`
+  bundle replaces the prompt whole, and one lacking it is refused.
+
 ## Storage is angzarr-store-sqlite
 
 ctxloom's store is ONE per user (owner T14): angzarr-store-sqlite's
@@ -2566,8 +3305,8 @@ ones (`lib.rs`'s dispatch and prelude, `api.rs`, `write.rs`'s helpers,
 `text.rs`, `commands.rs`, the harnesses `lib.test.rs`, `write.test.rs` and
 `library_cli.test.rs`) are not a noun's. A resource
 name's parent comes from `library_cli::Names`, asked only when a json
-answer prints one (text reaches no daemon; `run --dry-run`, below, asks
-always): the wiring's is the daemon's
+answer prints one (`run --dry-run`, below, asks always; a read the daemon
+serves, step 10a U2, reaches it text or json): the wiring's is the daemon's
 `ResolveProject` (`daemon_api::Client::library_parent`, the wiring's
 `daemon::library_parent`; OQ-2, so a json answer may start the daemon), or
 `users/me` outside a project, where no daemon is asked (OQ-3). ONE
@@ -2628,7 +3367,7 @@ reference among them, OQ-16, no notice yet; an ID on disk that breaks the
 grammar is named as it is). `bundle show` lists each child as a
 `BundleItem` naming it (`fragments[item$=/fragments/x]`, OQ-14), `bundle
 view <b>` is the `Bundle` with its `files`, `bundle view <b>#<kind>/<i>` the
-item's own resource (its `body` the bytes served); `mcp server show <n>` is
+item's own resource as its Get answers it (its `body` the bytes served); `mcp server show <n>` is
 `ListMcpServersResponse` filtered by the ID; `fragment premises` the
 `PremiseIndex` singleton (`<parent>/premiseIndex`, each entry's `fragment`
 a name). A removal's preview is its `Delete<Noun>Response` with `applied:
@@ -2686,8 +3425,12 @@ only. `companion list` is `ListCompanionsResponse`, each companion named
 `exists`) and its `state` (`ENABLED`/`DISABLED`); `companion add` answers
 `CreateCompanionResponse` (`applied` when the registration is new,
 `resolves` true: its program answered the probe), `remove`
-`DeleteCompanionResponse`, and `enable`/`disable` the `Companion` itself
-(AIP-136, `EnableCompanion`/`DisableCompanion`). `loadout` is unchanged.
+`DeleteCompanionResponse`, and `enable`/`disable` (served writes of the
+home config, step 10b) `EnableCompanionResponse`/`DisableCompanionResponse`
+(`companion`, `path`, `applied` when the state changed, `etag`, `notices`;
+their requests take `validate_only`): owner 2026-11-18, night, the one
+non-additive change, for these two RPCs alone (they answered the bare
+`Companion`, AIP-136). `loadout` is unchanged.
 
 Companions (M4; owner rulings OD-8 to OD-10, OD-22, 2026-11-13): a companion
 is registered by NAME alone (`companions.<n>: {state: enabled|disabled}`,
@@ -2764,9 +3507,15 @@ of each agent that has one (`Doctor::reporting_losses`, the library's
 loses something the old did not is the SWAP PREVIEW without `--yes`
 (`Library::agent_edit`, `AgentWritten::Preview`, `SwapPreview`; its json
 `UpdateAgentResponse`: `applied: false`, `from`, `to`, `not_carried`,
-`apply_command`, OD-40; the edit
-judged as the write would judge it first; nothing written; exit 1 under
-`--detailed-exitcode`). An edit that changes no engine, or loses nothing,
+`apply_command`, OD-40, and a Confirm need, `needs`; the edit
+judged as the write would judge it first; nothing written). At a terminal
+the need is asked (owner ruling 2026-11-18, evening, as a removal's is;
+its question `library-api::served_writes::swap_confirm`, a draft in the
+10b spec's texts.md §3b) and a yes applies it with the answer and the
+preview's etag; off a terminal or on a no it is the preview, printed
+(exit 1 under `--detailed-exitcode`); an apply refused stale
+(`library-tree-plan-stale`) is previewed again and ends in the refusal.
+An edit that changes no engine, or loses nothing,
 writes as ever, and `agent create` never previews. Only hooks are judged:
 a kind an engine does not carry in a session at all is not reported yet.
 opencode's losses are the unified events its plugin has no trigger for
@@ -2801,7 +3550,8 @@ library's `bundle` noun and owns `remote` and `deps`.
   `users/me`). A Remote is `<parent>/remotes/<r>`, a Dependency
   `<parent>/dependencies/<16 hex of SHA-256 of its identity>`
   (`deps::lock::dependency_id`, OQ-15). `remote show` is
-  `BrowseRemoteResponse` (a browsed bundle has no resource name), `remote
+  `BrowseRemoteResponse` (the daemon's `BrowseRemote`, mapped by
+  library-api's `deps::browsed`; a browsed bundle has no resource name), `remote
   discover` `DiscoverRemotesResponse`, `deps pull` `PullDependenciesResponse`
   (one `results` list by `State`, no status or counts: an empty pull is
   `{}`), `deps check [ref]` one `CheckDependenciesResponse` (rows by
@@ -2905,25 +3655,55 @@ context assemble json's `notices` stay empty until T13 (they are said on
 stderr), so atomic_writes.feature's two `notices[0].code` scenarios are red.
 
 `fragment|command distill <ref> [-f]` and `bundle distill <bundle> [-f]`
-(OD-39: by name; each of its fragments and commands, the first failure
-failing the command) are library-application's (`distill.rs`): an item
-marked `no_distill` is said and nothing asked; a FRESH form is kept unless
-`-f`; otherwise the `Distiller` port is handed `ctxloom#prompts/distill`
-(read through the catalog, ruling 128; the prompt's text is the owner's)
-with the body inside `<content_to_compress>` tags. An answer under 2% of
-the source is `library-application-distill-truncated` and a distiller that
-fails `library-application-distill-failed` (both exit 10): nothing is
-written, so the form there before is kept. A good answer is the
-`.distilled.md` alone (T30: its own write). json is the AIP
-`DistillFragmentResponse`/`DistillCommandResponse` (`applied` false and
-`detail` `fresh`/`no_distill` when nothing was asked), and `bundle distill`
-the `Bundle` with each item's state. The wiring's `OneShotDistiller` is a
-one-shot run on NO CONTEXT, HOSTED by the user's daemon as every one-shot is
-(U4, owner s4-Q6; `oneshot::client_one_shot`, of the binary's stamp, so it
-is set on the library `LibraryCommands` builds, and a library built
-elsewhere has no distiller); its session is an ordinary one-shot's. There is
-no `work` domain and no provenance (owner, 2026-11-13: no `distilled_in`, no
-`activity` label). `DistillFragment` (the RPC) is still not served.
+are SERVED (step 10b, owner ruling 2026-11-18, evening): the DAEMON owns
+the model call as a RUN, and the `.distilled.md` write FOLLOWS from the
+run's outcome (daemon-api's `distill.rs`). `DistillFragment` /
+`DistillCommand` (`force`, additive) plan the ask as a write's preview
+(observed, over the recording library, nothing written):
+`Library::item_distill_ask` answers an item marked `no_distill` (said,
+nothing asked) or a FRESH form without `-f` at once (`applied` false,
+`detail` `fresh`/`no_distill`, no run); otherwise the ask is
+`ctxloom#prompts/distill` (read through the catalog under the project's
+trust, ruling 128; the prompt's text is the owner's) with the body inside
+`<content_to_compress>` tags, and the call hosts it as a ONE_SHOT on NO
+CONTEXT (as `CreateRun` hosts one, `OneShots::create_reacting`) and
+answers with the run's name (`run`, additive), which the CLI follows with
+`WatchRun` (`Served::follow_run`, run-application's `client::followed`; a
+signal heard asks the daemon to stop it, and the command exits 128 plus its
+number, ruling 114). Its stops are heard from BEFORE the distill call
+(`Served::hear_stops`, the wiring's `signals::CommandStops`, on a thread
+and runtime of its own), so one that arrives while the daemon starts the
+run is not taken by its default and is told to the follow as heard
+already. The run REACTS
+(`daemon_application::Reaction`, awaited in `Told::done` on the daemon's
+runtime, before its watchers see its end; the core spawns nothing): no
+answer is `library-application-distill-failed` (its cause the run's end);
+an answer is written as a served write (`Library::item_distilled`, one
+atomic Replace), under a request id KEYED by its run
+(`sessions::command_id("distill:<run>")`), so the outcome told twice is
+one write, a DUPLICATE, and against the etag the ask's preview answered
+for the form's file, so a form edited meanwhile is refused stale
+(`PlanStale`). Its plan reads the item again: a source whose digest moved
+since the ask is `library-application-distill-source-moved` (typed
+`LibraryDistillSourceMoved`, ABORTED, exit 20; its text a DRAFT), and an
+answer under 2% of the source `library-application-distill-truncated`
+(exit 10): nothing is written, so the form there before is kept. What the
+write came to is the run's end, which the CLI says as the command's. The
+reaction is in memory as the one-shot is: a daemon that dies during the
+run loses it (the sweep's), and nothing follows. The write is made while
+the daemon drains too (`Api::write_planned`: it follows from work already
+taken), through the API as shared (`Api::shared`'s self handle). `bundle
+distill` is one run per item, each its own reaction (the plan's U13 notes
+do not decide the shape; this is the simpler one): its items are read
+as `bundle show` reads them (`GetBundle` FULL), fragments then commands,
+each distilled and followed before the next; the first failure fails the
+command and what was distilled before it stays. json is the AIP
+`DistillFragmentResponse`/`DistillCommandResponse` (`applied` true once
+its run ended answered; library-api's `distill` builds them), and `bundle
+distill` the `Bundle` with each item's state. The in-process path (the
+`Distiller` port, `OneShotDistiller`, `item_distill`, `bundle_distill`)
+is gone. There is no `work` domain and no provenance (owner, 2026-11-13: no
+`distilled_in`, no `activity` label).
 
 `run --no-context` (owner OD-38) is the user-visible context-free run, the
 one-shot, the session and the dry run alike (`RunRequest::no_context`): the
@@ -3228,8 +4008,8 @@ project is its name's (`projects/{p}`, OD-2), never resolved from a cwd.
 Its reads are the service's (`GetTranscript` and `AssembleContext` are now
 served: the transcript from the warm index, refused `TranscriptEmpty` with
 no lines; the assembly at the project's REGISTERED root in the caller's
-environment, by the wiring's `ProjectAssemblies`, a missing fragment or tag
-a notice). Its writes are the domain's commands through the coordinator's
+environment, a library read (step 10a U2), its fragments named, a missing
+fragment or tag a notice the tool's edge adds). Its writes are the domain's commands through the coordinator's
 `HandleSync` (`DaemonApi::handle_sync`, `daemon-client` over angzarr's
 coordinator client), its `requester` the caller (project uid from
 `GetProject`, its own stable id), its evidence from the target as the daemon
@@ -3423,11 +4203,15 @@ config's shape (ruling 67): `engines` (JSON) / `engines.<e>: {...}` lines
 (text, YAML flow form, keys sorted as written), each block that holds
 `permissions` followed by "passed to <engine> verbatim; ctxloom does not
 check it" (ruling 139; `agent show`, `engine show` and the dry run's Settings
-say it under the document too, and their JSON carries it as written); no
+say it under the document too). Text and JSON print the document with its
+keys sorted (E3, owner ruling 2026-11-17: they are drawn from the daemon's
+message, a `google.protobuf.Value`, which keeps no written order); what
+reaches the engine is still the document verbatim, in its written order; no
 flat model/effort, no `approver`, no "Headless posture".
 `engines.<e>.command`, `auth.file` and `session_home: host` (an engine
 block's or an agent's, `agents.<a>.session_home`) in a project layer are
-taken out with a warning (`strip_project_only`, ruling 46).
+held back until the user trusts the project (`strip_project_only`, ruling
+46; the notice `library-application-notice-untrusted-setting`, U7).
 An agent's references are resource names (design §2, B2's references): its
 `engine` `<parent>/engines/<e>`, each of its `profiles` B1's profile name
 (`library-cli`'s `catalog::profile_ref`; one that names no place keeps its
@@ -3590,7 +4374,8 @@ Windows. The checks are `just build`,
 `just test` (cargo-nextest, the one test runner, mutation included, owner
 ruling 144; required: a missing nextest fails the gate),
 `just lint` (clippy, warnings denied), `just lint-deps` (cargo-deny) and
-`just lint-os`; `just test-pkg <crate>...` is the quick loop, `just fmt` and
+`just lint-os` (`just lint-api`, api-linter over the API protos, is not
+yet a gate: see "The pins"); `just test-pkg <crate>...` is the quick loop, `just fmt` and
 `just fmt-check` cover this workspace's crates only, `just run` runs the
 binary, `just clean-target` is the only way to drop this checkout's
 `target/` (`just trim-targets`, below, sweeps the pool's by age), and `just
@@ -3696,7 +4481,9 @@ of it is apart), `sessions` (session, session_hooks, session_remove,
 session_worktrees, post_tool_hooks), `library` (bundle, fragment,
 fragment_draft_premise, command, profile, skill, mcp, mcp_resources,
 mcp_tools, search, materialize, read_extras, context_status,
-content_distill, companion, agent), `remotes` (remote, deps), `setup`
+content_distill, companion), `library_agent_changes` (agent,
+library_changes: split from `library` on 2026-11-18, which ran 88.9 s
+against its 90 s under load), `remotes` (remote, deps), `setup`
 (init, doctor, manage, auth, config, engine, clean, version, completion)
 and `other` (fault_tolerance, probes/, container, coordination_contract,
 startup_boundaries, editing, util). Every feature file is in exactly one
@@ -3706,11 +4493,12 @@ once; each runs its features `cluster_threads()` at a time (the cores
 shared among the clusters, at least 2), and a feature's scenarios take
 turns (their steps block cucumber's one executor thread), so a cluster
 lasts at least its slowest feature (`daemon`: cli/daemon.feature, about
-100 s). Each cluster's `terminate-after` is an override naming it in
+88 s alone since 6c6141047 and 4d596ae13). Each cluster's `terminate-after` is an override naming it in
 `.config/nextest.toml`, about 2.4 times its longest measured run
 (2026-11-14, 20 cores, alone, beside the binary's tests, beside 12
 crates' and in the whole workspace; the table is there), whole slow periods, at least 60 s: `daemon`
-300 s, `journeys` 150 s, `library` 90 s, `remotes`, `setup`, `sessions`
+300 s, `journeys` 150 s, `library` and `library_agent_changes` 90 s
+(one override), `remotes`, `setup`, `sessions`
 and `other` 60 s; every other test keeps 120 s. A host of fewer cores was
 not measured. Separation: each scenario has a temporary root of its own,
 so its own ctxloom home, daemon, single-instance lock, store, holds and
@@ -3910,9 +4698,9 @@ procfs, `_tests <package>` while the lock is held, and no `flock`.
 ported there (`gates/MIGRATING.md`).
 
 lefthook runs the gates one at a time, stopping at the first failure, and
-shows each gate's pass line and any failure's extract. Gates 1 to 5 run in
+shows each gate's pass line and any failure's extract. Gates 1 to 6 run in
 pre-commit (the private recipes `fmt-staged`, `secrets-scan-staged`,
-`test-commit`, ...; `just --list` hides them, they run by name). Mutation (6)
+`lint-staged`, `plain-binary`, `test-commit`, ...; `just --list` hides them, they run by name). Mutation (7)
 runs in no git hook and is not run by hand: the `closeout` skill runs `just
 closeout`, whose `mutants-batch` mutation-tests the whole batch (base to HEAD,
 the base defaulting to the merge-base with `main`) in a throwaway worktree, in
@@ -3945,10 +4733,19 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    `just fmt-check` is the check for CI and manual runs.
 2. **secrets**: gitleaks over the staged changes (`.gitleaks.toml`). A fake
    secret in a test ends its line with `gitleaks:allow`.
-3. **clippy**: `just lint`, including the core's purity rules
+3. **clippy**: `just lint-staged`: `just lint` run over the STAGED tree (owner
+   ruling 2026-11-18, night), in `_staged-tree`'s throwaway worktree with
+   test-staged's target (`target/staged`), including the core's purity rules
    (`crates/core/clippy.toml`).
-4. **deps**: `just lint-deps`, cargo-deny (`deny.toml`).
-5. **tests**: `just test-staged` runs the changed crates' OWN tests in the
+4. **plain binary**: `just plain-binary` (owner ruling 2026-11-18,
+   evening) builds the workspace without its dev-dependencies, as `just
+   build` does, and holds the binary it made to the two plain-build checks,
+   `scripts/plain-engines-check.sh` (the real engines alone, ruling 52) and
+   `scripts/plain-destroy-check.sh` (no destroy, ruling 94b); one `ok
+   plain-binary` line, its log `target/logs/plain-binary.log`. `just build`
+   ends with it.
+5. **deps**: `just lint-deps`, cargo-deny (`deny.toml`).
+6. **tests**: `just test-staged` runs the changed crates' OWN tests in the
    staged tree (HEAD plus the staged diff, a sibling worktree of the
    checkout), no dependent's (owner ruling of 2026-11-13, fast hooks,
    acceptance at landing): a library's change does not select the binary
@@ -3963,7 +4760,7 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    2026-11-13); a red scenario the branch added, or a green one it broke, is
    refused at landing by the ratchet of `land-ratchet` and
    `closeout-ratchet` (below).
-6. **mutants** (no hook; at close-out, `just mutants-batch`): `mutants-staged` mutation-tests the staged diff
+7. **mutants** (no hook; at close-out, `just mutants-batch`): `mutants-staged` mutation-tests the staged diff
    (`cargo mutants --in-diff`), holding new logic to its tier: every
    hand-written tier (domain, read models, ports, application and adapters)
    90% or more; the composition root is listed but not held (the justfile's

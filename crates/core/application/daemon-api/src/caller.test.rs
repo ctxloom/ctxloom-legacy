@@ -1041,3 +1041,40 @@ async fn a_launch_into_its_owners_own_project_is_the_same_project() {
     assert!(trust.same_project);
     assert!(!trust.trusted);
 }
+
+/// A notice as its code, its args by name and its text.
+type Said = (String, Vec<(String, String)>, String);
+
+// What an assembly did not find is said as the MCP tool's notices: each
+// missing fragment, then each missing tag, its name the arg.
+#[test]
+fn an_assemblys_missing_fragments_and_tags_are_its_notices() {
+    let assembled = v1::AssembledContext {
+        missing_fragments: vec!["gone".to_string()],
+        missing_tags: vec!["nope".to_string()],
+        ..v1::AssembledContext::default()
+    };
+    let said: Vec<Said> = super::missing_notices(&assembled)
+        .into_iter()
+        .map(|n| {
+            let args = n.args.into_iter().map(|a| (a.name, a.value)).collect();
+            (n.code, args, n.text)
+        })
+        .collect();
+    let arg = |value: &str| vec![("name".to_string(), value.to_string())];
+    assert_eq!(
+        said,
+        [
+            (
+                "daemon-api-assembly-missing-fragment".to_string(),
+                arg("gone"),
+                "no fragment is named gone".to_string()
+            ),
+            (
+                "daemon-api-assembly-missing-tag".to_string(),
+                arg("nope"),
+                "no fragment is tagged nope".to_string()
+            ),
+        ]
+    );
+}

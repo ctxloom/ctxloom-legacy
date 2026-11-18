@@ -99,6 +99,12 @@ fn daemon_env<N: AsRef<OsStr>, V: AsRef<OsStr>>(
     env
 }
 
+/// The test-support variable moving the daemon's clock on by whole days
+/// (step 10b's harness, QUESTIONS 5): passed on to a daemon a command
+/// starts, read by its trash clock.
+#[cfg(feature = "test-support")]
+pub(crate) const CLOCK_OFFSET_VARIABLE: &str = "CTXLOOM_TEST_CLOCK_OFFSET";
+
 /// The test-support variable naming the OS account's home, so a test's
 /// temporary home is the account's for the daemon (and a test can tell the
 /// account's home from a moved HOME). Read only under `test-support`.
@@ -530,9 +536,35 @@ fn be_the_daemon(
         // The environment its children's checkouts' git runs in.
         env: Arc::clone(wiring.env()),
     };
-    serve::serve(wiring.fs(), place, pace, say)
-        .map_err(|detail| failed(LibError::NoRuntime { detail }))?;
-    Ok(Exit::OK)
+    served_exit(serve::serve(wiring.fs(), place, pace, say))
+}
+
+/// `daemon serve`'s exit: a daemon that lost the single-instance lock to
+/// another declines (20: a lock another process holds), which its spawner
+/// reads as another daemon to wait for ([`spawn_waits_on`]); one that could
+/// not serve failed (10).
+fn served_exit(served: Result<(), serve::Unserved>) -> Result<Exit, Failure> {
+    match served {
+        Ok(()) => Ok(Exit::OK),
+        Err(serve::Unserved::Held { lock }) => {
+            Err(Failure::of(LibError::DaemonInstanceHeld { lock }))
+        }
+        Err(serve::Unserved::Failed(detail)) => Err(failed(LibError::NoRuntime { detail })),
+    }
+}
+
+/// Whether a client waits on for a daemon to advertise itself once the one
+/// it spawned has exited with the status `code` (`None`: a signal's): only
+/// when that one lost the single-instance lock to another daemon, which is
+/// the one to wait for. Any other exit means no daemon is coming of this
+/// spawn, so the client stops waiting (the daemon cluster's cap, owner
+/// ruling 2026-11-18: it waited out all of [`SPAWN_WAIT`] for a daemon that
+/// had died at once).
+fn spawn_waits_on(code: Option<i32>) -> bool {
+    let held = LibError::DaemonInstanceHeld {
+        lock: String::new(),
+    };
+    code == Some(i32::from(held.exit().code(false)))
 }
 
 /// The single-instance lock of `wiring`'s ACCOUNT ([`instance_lock_path`]
@@ -804,8 +836,35 @@ fn client_through<'a>(
         .cwd()
         .map(|cwd| cwd.display().to_string())
         .unwrap_or_default();
-    daemon_api::Client::new(reach, registration, cwd, env_vars(wiring.env()))
-        .with_request_ids(Box::new(request_id))
+    retrying(
+        wiring,
+        daemon_api::Client::new(reach, registration, cwd, env_vars(wiring.env()))
+            .with_request_ids(Box::new(request_id)),
+    )
+}
+
+/// The client, its call made once more on a new daemon if this one could
+/// not be reached (S8); under test-support, not when the command's
+/// environment sets `CTXLOOM_TEST_NO_RETRY` (step 10b's harness: what a
+/// killed daemon left is left).
+#[cfg(feature = "test-support")]
+fn retrying<'a>(
+    wiring: &Wiring,
+    client: daemon_api::Client<Reach<'a>>,
+) -> daemon_api::Client<Reach<'a>> {
+    match wiring.env().non_empty("CTXLOOM_TEST_NO_RETRY") {
+        Some(_) => client.without_retry(),
+        None => client,
+    }
+}
+
+/// The shipped client always retries once (S8).
+#[cfg(not(feature = "test-support"))]
+fn retrying<'a>(
+    _: &Wiring,
+    client: daemon_api::Client<Reach<'a>>,
+) -> daemon_api::Client<Reach<'a>> {
+    client
 }
 
 /// Where this process's library resource names are rooted (OD-40, OQ-2,
@@ -853,6 +912,58 @@ pub(crate) fn library_parent_if_named(
         ),
     };
     block_on(client.named_parent())?.map_err(called)
+}
+
+/// A dry run's client of the daemon (step 10a U2): its project registered,
+/// never minted (owner ruling 2026-11-14: "dry run should *not* mint"); a
+/// ctxloom project nothing has named is asked unnamed, under `users/me`,
+/// and the daemon leaves its names unresolved.
+pub(crate) fn preview_client<'a>(
+    wiring: &'a Wiring,
+    stamp: &str,
+) -> Result<daemon_api::Client<Reach<'a>>, Failure> {
+    Ok(match wiring.library_registration(crate::Minting::Never) {
+        Err(LibError::ProjectUnnamed { .. }) => client_for(wiring, stamp, None).unnamed(),
+        registration => client_for(
+            wiring,
+            stamp,
+            registration.map_err(|e| {
+                let exit = e.exit();
+                Failure::new(e, exit)
+            })?,
+        ),
+    })
+}
+
+/// This command's client of the daemon for a library read (step 10a U2):
+/// its project registered at its root (its id minted there if it has none
+/// yet), else outside a project.
+pub(crate) fn library_client<'a>(
+    wiring: &'a Wiring,
+    stamp: &str,
+) -> Result<daemon_api::Client<Reach<'a>>, Failure> {
+    let registration = wiring
+        .library_registration(crate::Minting::AtRoot)
+        .map_err(|e| {
+            let exit = e.exit();
+            Failure::new(e, exit)
+        })?;
+    Ok(client_for(wiring, stamp, registration))
+}
+
+/// This command's client of the daemon for a read of the home's alone
+/// (`loadout`, step 10a U2): asked under `users/me`, wherever it is run,
+/// so no project is registered, minted or observed for it.
+pub(crate) fn home_client<'a>(wiring: &'a Wiring, stamp: &str) -> daemon_api::Client<Reach<'a>> {
+    client_for(wiring, stamp, None)
+}
+
+/// A client call's answer, or the failure it ends the command in, in its
+/// own class.
+pub(crate) fn answered<T>(
+    call: impl std::future::Future<Output = Result<T, daemon_api::CallError>>,
+) -> Result<T, Failure> {
+    block_on(call)?.map_err(called)
 }
 
 /// The parent the daemon names for `registration` (`users/me` for none).
@@ -1042,6 +1153,15 @@ pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_
     serving(&wiring, &files).ok().flatten()
 }
 
+/// The daemon a hook's library read asks when it may start none (its
+/// environment names an endpoint, OD-13): the live one of this home its
+/// discovery file names, else none.
+pub(crate) fn hook_daemon_serving(env: &Arc<EnvSnapshot>) -> Option<run_ports::Discovery> {
+    let wiring = Wiring::new(Arc::clone(env)).ok()?;
+    let files = files_of(&wiring);
+    serving(&wiring, &files).ok().flatten()
+}
+
 /// Whether this executable may spawn itself as the daemon: a unit test's is
 /// its harness, never a ctxloom binary (spawned, it would run its tests
 /// detached), so it never does.
@@ -1094,6 +1214,12 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     if let Some(account) = account_home(env) {
         kept.push((ACCOUNT_HOME_VARIABLE.into(), account.into_os_string()));
     }
+    // A test's clock offset (step 10b, the trash's 7 days) is the daemon's
+    // clock's.
+    #[cfg(feature = "test-support")]
+    if let Some(days) = env.non_empty(CLOCK_OFFSET_VARIABLE) {
+        kept.push((CLOCK_OFFSET_VARIABLE.into(), days.to_os_string()));
+    }
     command.env_clear().envs(kept).current_dir(wiring.home());
     // DETACHED (T3, M8): a session of its own on unix (setsid), no console
     // and a process group of its own on Windows, so neither this terminal's
@@ -1101,13 +1227,25 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     // stdio null (the default) and no other handle of this command's
     // inherited, so a reader of this command's output sees its end when the
     // command exits; dropped, not waited for: it outlives this command.
-    if os::process::spawn_detached(command).is_err() {
+    let Ok(mut spawned) = os::process::spawn_detached(command) else {
         return;
-    }
+    };
     let deadline = Instant::now() + wait;
+    let mut exited = false;
     while Instant::now() < deadline {
         if files.discovery().is_some_and(|found| live(&found)) {
             return;
+        }
+        // The daemon spawned has exited: unless another holds the lock (and
+        // advertises), none is coming, and the wait is over. Looked at once,
+        // after the discovery, so one that served and exited is seen first.
+        if !exited {
+            if let Ok(Some(status)) = spawned.try_wait() {
+                if !spawn_waits_on(status.code()) {
+                    return;
+                }
+                exited = true;
+            }
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -1198,30 +1336,40 @@ pub(crate) fn child_git_user(
     crate::oneshot::git_user(&wiring, Path::new(project_dir))
 }
 
-/// The environment a call the daemon serves for the project at `root` is
-/// read in (S7), as a process in that project would read it: the caller's
-/// `env`, with the project as `CTXLOOM_ROOT` and ctxloom's `home` as the
-/// platform's home variable (`HOME`, `USERPROFILE` on Windows:
-/// `os::Flavor::home_var`, which [`Wiring::new`] reads), each over the
-/// caller's own of that name as the platform compares names.
-pub(crate) fn per_call_env<'a>(
+/// The environment of a call the daemon serves (S7; step 10a U2, the ONE
+/// builder every per-call read and run is made over): the caller's `env`
+/// as a process at `dir` (its working directory) sees it, `root`, when
+/// given, the project it is in, as `CTXLOOM_ROOT` over any the caller had
+/// (as the platform compares names).
+pub(crate) fn caller_env<'a>(
     flavor: os::Flavor,
-    (root, temp, home): (&str, &Path, &Path),
+    temp: &Path,
+    (dir, root): (&str, Option<&str>),
     env: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> EnvSnapshot {
-    let home_var = flavor.home_var();
-    let owned = [
-        flavor.env_key(run_ports::ROOT_VARIABLE),
-        flavor.env_key(home_var),
-    ];
+    let owned = flavor.env_key(run_ports::ROOT_VARIABLE);
     let mut vars: Vec<(OsString, OsString)> = env
         .into_iter()
-        .filter(|(name, _)| !owned.contains(&flavor.env_key(name)))
+        .filter(|(name, _)| root.is_none() || flavor.env_key(name) != owned)
         .map(|(name, value)| (name.into(), value.into()))
         .collect();
-    vars.push((run_ports::ROOT_VARIABLE.into(), root.into()));
-    vars.push((home_var.into(), home.as_os_str().to_os_string()));
-    EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(root)), temp.to_path_buf(), vars)
+    if let Some(root) = root {
+        vars.push((run_ports::ROOT_VARIABLE.into(), root.into()));
+    }
+    EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(dir)), temp.to_path_buf(), vars)
+}
+
+/// The wiring of a call the daemon serves: [`caller_env`]'s process, with
+/// ctxloom's `home` as its home (the caller's own home stays its own, so her
+/// login and settings are found under it, M4).
+pub(crate) fn caller_wiring<'a>(
+    home: &Path,
+    temp: &Path,
+    place: (&str, Option<&str>),
+    env: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Wiring {
+    let snapshot = caller_env(os::host().flavor(), temp, place, env);
+    Wiring::at(Arc::new(snapshot), home.to_path_buf())
 }
 
 /// The plan of a child of the project at `project_dir` (D18, D-N46): that
@@ -1286,14 +1434,14 @@ fn child_library(
     project_dir: &str,
     env: &BTreeMap<String, String>,
 ) -> Result<library_application::Library, String> {
-    let snapshot = per_call_env(
-        os::host().flavor(),
-        (project_dir, temp, home),
+    let wiring = caller_wiring(
+        home,
+        temp,
+        (project_dir, Some(project_dir)),
         env.iter()
             .map(|(name, value)| (name.as_str(), value.as_str())),
     );
     let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
-    let wiring = Wiring::new(Arc::new(snapshot)).map_err(|e| code(&e))?;
     crate::library::build(&wiring, None).map_err(|e| code(&e))
 }
 

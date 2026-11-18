@@ -878,7 +878,8 @@ fn each_infrastructure_error_reads_back_as_its_delivery() {
             | Infrastructure::DataLoss => "unavailable",
             Infrastructure::Malformed
             | Infrastructure::Unimplemented
-            | Infrastructure::Unauthenticated => "refused",
+            | Infrastructure::Unauthenticated
+            | Infrastructure::Unmet => "refused",
         };
         assert_eq!(kind, expected, "{error:?}");
     }

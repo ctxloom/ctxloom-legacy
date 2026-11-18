@@ -6,8 +6,10 @@
 //! owner 2026-11-12, slice 2 B3/re-root), so a project harp is unique for
 //! the user because a stream is.
 
-use angzarr_embedded::markup::{Context, Emit, Failed, PageContext, Refuses};
-use angzarr_embedded_macros::{aggregate, applies, handles_cmd};
+use angzarr_embedded::markup::{
+    pack_message, Bug, Context, Emit, FactEmit, Failed, PageContext, Refuses,
+};
+use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
 use crate::refusal::refuse;
 use crate::{
@@ -16,6 +18,73 @@ use crate::{
     ProjectNameCommand, ProjectNameEvent, ProjectNameState, ProjectNameTaken, ProjectNamed,
     ProjectRegistered, ProjectState, RegisterProject, SessionRejection, UnnamedProject,
 };
+use crate::{
+    KeepsSession, RecordRemovalStepDone, RemovalEvidence, RemovalStepDone, RemoveSession,
+    SessionKept, SessionLive, SessionLockHeld, SessionRemovalIntended, WithinRetention,
+};
+
+/// A session removal's steps, in order (O2, step 10b U9): its worktrees
+/// reclaimed, its directory (its lock inside) renamed into the checkout's
+/// trash, its streams purged, its trash slot removed.
+pub const REMOVAL_STEPS: [&str; 4] = ["worktrees", "trash", "purge", "purge_trash"];
+
+/// Why a session's removal is refused on `evidence`, if it is: its lock
+/// does not prove its owner ended (unless `even_if_live`), its held lock
+/// keeps its directory from being moved (D18: the evidence names it only
+/// on Windows, so `even_if_live` cannot pass it), it is kept, it
+/// ended within the transcript retention, or a worktree keeps it. The one
+/// judgement `RemoveSession`'s decide and a removal's preview share.
+pub fn removal_refused(evidence: &RemovalEvidence, even_if_live: bool) -> Option<SessionRejection> {
+    let harp = evidence.harp.clone();
+    if !evidence.ended && !even_if_live {
+        return Some(SessionRejection::SessionLive {
+            harp,
+            reason: evidence.not_ended.clone(),
+        });
+    }
+    if !evidence.blocking_lock.is_empty() {
+        return Some(SessionRejection::SessionLockHeld {
+            harp,
+            lock: evidence.blocking_lock.clone(),
+        });
+    }
+    if evidence.kept {
+        return Some(SessionRejection::SessionKept { harp });
+    }
+    if !evidence.retained.is_empty() {
+        return Some(SessionRejection::WithinRetention {
+            harp,
+            detail: evidence.retained.clone(),
+        });
+    }
+    if evidence.spared + evidence.skipped > 0 {
+        return Some(SessionRejection::KeepsSession {
+            harp,
+            spared: evidence.spared,
+            skipped: evidence.skipped,
+        });
+    }
+    None
+}
+
+/// The removal `request_id` of `harp`, intended.
+fn intended(request_id: String, harp: String) -> SessionRemovalIntended {
+    SessionRemovalIntended {
+        request_id,
+        harp,
+        steps: REMOVAL_STEPS.map(String::from).to_vec(),
+    }
+}
+
+/// The request id the command `ctx` carries: its command id.
+fn request_of(ctx: &Context) -> String {
+    ctx.command
+        .command_id
+        .as_ref()
+        .and_then(|id| uuid::Uuid::from_slice(&id.value).ok())
+        .map(|id| id.to_string())
+        .unwrap_or_default()
+}
 
 /// The project aggregate: its harp, folded from its stream.
 #[derive(Clone, Debug, Default)]
@@ -134,6 +203,79 @@ impl ProjectAggregate {
         Ok(Emit::of(None::<ProjectRegistered>))
     }
 
+    /// Remove one session (O2): judged on its evidence
+    /// ([`removal_refused`]), then intended under the request id, its
+    /// steps listed ([`REMOVAL_STEPS`]).
+    #[handles_cmd(
+        RemoveSession,
+        refuses(
+            SessionLive,
+            SessionKept,
+            WithinRetention,
+            KeepsSession,
+            SessionLockHeld
+        )
+    )]
+    fn remove(
+        &self,
+        cmd: RemoveSession,
+        ctx: &Context,
+    ) -> Result<Option<SessionRemovalIntended>, Failed<Refuses<Self, RemoveSession>>> {
+        let evidence = cmd.evidence;
+        if let Some(rejection) = removal_refused(&evidence, cmd.even_if_live) {
+            return Err(refuse!(
+                SessionRejection,
+                rejection,
+                Refuses<Self, RemoveSession>,
+                [
+                    SessionLive{harp, reason} => SessionLive,
+                    SessionKept{harp} => SessionKept,
+                    WithinRetention{harp, detail} => WithinRetention,
+                    KeepsSession{harp, spared, skipped} => KeepsSession,
+                    SessionLockHeld{harp, lock} => SessionLockHeld,
+                ]
+            ));
+        }
+        Ok(Some(intended(request_of(ctx), cmd.harp)))
+    }
+
+    /// A removal's next step done: recorded for an open removal at that
+    /// step, nothing otherwise (a redelivery, a step out of order).
+    #[handles_fact(RecordRemovalStepDone)]
+    fn removal_step(
+        &self,
+        fact: RecordRemovalStepDone,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        let next = self
+            .project
+            .removals
+            .get(&fact.request_id)
+            .is_some_and(|open| open.done == fact.step);
+        Ok(FactEmit::of(next.then(|| {
+            pack_message(&RemovalStepDone {
+                request_id: fact.request_id,
+                step: fact.step,
+            })
+        })))
+    }
+
+    #[applies(SessionRemovalIntended)]
+    fn removal_intended(&mut self, event: SessionRemovalIntended, page: &PageContext) {
+        let _ = page;
+        fold_project(
+            &mut self.project,
+            ProjectEvent::SessionRemovalIntended(event),
+        );
+    }
+
+    #[applies(RemovalStepDone)]
+    fn removal_step_done(&mut self, event: RemovalStepDone, page: &PageContext) {
+        let _ = page;
+        fold_project(&mut self.project, ProjectEvent::RemovalStepDone(event));
+    }
+
     #[applies(ProjectNamed)]
     fn named(&mut self, event: ProjectNamed, page: &PageContext) {
         let _ = page;
@@ -176,6 +318,29 @@ pub fn fold_project(state: &mut ProjectState, event: ProjectEvent) {
         ProjectEvent::ProjectIdentityAdopted(adopted) if state.root_commit.is_empty() => {
             state.git_common_dir = adopted.git_common_dir;
             state.root_commit = adopted.root_commit;
+        }
+        ProjectEvent::SessionRemovalIntended(intended) => {
+            state.removals.insert(
+                intended.request_id.clone(),
+                crate::OpenRemoval {
+                    request_id: intended.request_id,
+                    harp: intended.harp,
+                    steps: intended.steps,
+                    done: 0,
+                },
+            );
+        }
+        ProjectEvent::RemovalStepDone(done) => {
+            let finished = state
+                .removals
+                .get_mut(&done.request_id)
+                .is_some_and(|open| {
+                    open.done = open.done.max(done.step + 1);
+                    open.done as usize >= open.steps.len()
+                });
+            if finished {
+                state.removals.remove(&done.request_id);
+            }
         }
         ProjectEvent::ProjectNamed(_)
         | ProjectEvent::ProjectRegistered(_)

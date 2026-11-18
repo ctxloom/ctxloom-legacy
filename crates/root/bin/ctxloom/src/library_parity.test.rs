@@ -117,8 +117,8 @@ const OWNER_REFUSALS: [&str; 9] = [
 const REFUSED_FIXTURES: [&str; 1] = ["cfg/v8"];
 
 /// Rows where the owner overrides Go (2026-11-12): a skill file's mode is its
-/// sidecar's `executable:` declaration, on every OS, never the mode on disk
-/// Go read. The `lib` fixture's sidecar declares `scripts/run.sh`, which git
+/// metadata's `executable:` declaration, on every OS, never the mode on disk
+/// Go read. The `lib` fixture's metadata declares `scripts/run.sh`, which git
 /// checks out 0644, so Go said 0644 and this build says 0755.
 const SIDECAR_MODE_ROWS: [&str; 2] = ["skill-show-json", "skill-show-text"];
 
@@ -135,6 +135,170 @@ fn as_declared(id: &str, golden: String) -> String {
             &format!("\"sha256\": \"{SCRIPT}\",\n      \"mode\": \"0755\""),
         )
         .replace(&format!("0644  {SCRIPT}"), &format!("0755  {SCRIPT}"))
+}
+
+/// The rows whose text lists a skill's files where the owner moved its
+/// metadata into its directory (T27, 2026-11-18, evening): a file of the
+/// package, so listed first and counted (Go kept it beside the package).
+/// Each with the digest of its fixture's `.meta.yaml`.
+const SKILL_META_ROWS: [(&str, &str); 3] = [
+    (
+        "skill-show-text",
+        "96a796879d68dc7d7ad2812cddc5946e7fe0192045e2cf94228532acbd3882de",
+    ),
+    ("skill-list-text", ""),
+    (
+        "gold-skill-show-text",
+        "c2f5c3dac38dbf5631daebaf7987ee71675ba32b820bca08415de518cca9c458",
+    ),
+];
+
+/// Go's golden for a [`SKILL_META_ROWS`] row, the skill's metadata among
+/// its files: a listing's count one more, a show's `Files` led by it.
+fn as_delivered(id: &str, golden: String) -> String {
+    let Some((_, digest)) = SKILL_META_ROWS.iter().find(|(row, _)| *row == id) else {
+        return golden;
+    };
+    if digest.is_empty() {
+        return golden.replace("[2 file(s)]", "[3 file(s)]");
+    }
+    let mut out = String::new();
+    for line in golden.split_inclusive('\n') {
+        match line
+            .strip_prefix("Files (")
+            .and_then(|rest| rest.strip_suffix("):\n"))
+            .and_then(|n| n.parse::<u32>().ok())
+        {
+            Some(n) => {
+                out.push_str(&format!("Files ({}):\n", n + 1));
+                out.push_str(&format!("  0644  sha256:{digest}  .meta.yaml\n"));
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// The rows whose answer the owner changed from Go's: `bundle list` of a
+/// project with no bundles directory says what an empty one says (owner
+/// ruling 2026-11-17: "in the event of no directory, we should create it or
+/// tell the user to install bundles, which would create it"; a read never
+/// creates it), not Go's `mkdir` line. And `profile show` prints a
+/// profile's selecting tags, fragments, denied tools and hooks (owner
+/// ruling 2026-11-17, step 10a U2), which Go's printed none of: the curated
+/// golden profile's, after the sections Go printed. bundle.tsv and
+/// profile.tsv mark the rows.
+fn as_ruled(id: &str, golden: String) -> String {
+    match id {
+        "gold-profile-show-curated-text" => format!(
+            "{}\nSelect tags:\n  - ctxloom\nDenied tools:\n  - Task\nHooks:\n  unified.pre_tool:\n    - {{command: echo golden, type: command}}\n",
+            golden.trim_end()
+        ),
+        "empty-bundle-list-text" => golden.replace(
+            "No bundles directory found. Create one with: mkdir -p .ctxloom/content/bundles",
+            &format!(
+                "No bundles installed.\n{}",
+                library_application::LISTING_HINT
+            ),
+        ),
+        "noproject-bundle-list-text" => format!("No bundles installed.\n{golden}"),
+        _ => golden,
+    }
+}
+
+/// The rows whose text prints canonical forms (owner ruling 2026-11-17,
+/// corrected the same day): a profile's bundle and parents, its bundles,
+/// an MCP server's bundle and a dry run's profiles are their SHORT library
+/// references (`demo`, `project#profiles/dev`), harp-free, as a person
+/// types them, never the text written. profile.tsv, mcp.tsv and run.tsv
+/// mark them.
+const CANONICAL_ROWS: [&str; 9] = [
+    "run-dry-dev-text",
+    "gold-run-dry-auto-text",
+    "mcp-server-list-text",
+    "mcp-server-show-text",
+    "profile-list-text",
+    "profile-show-dev-text",
+    "profile-show-base-text",
+    "gold-profile-list-text",
+    "gold-profile-show-curated-text",
+];
+
+/// A bundle's short reference, as Go's text names it (`ctxloom+local:<b>`
+/// or bare): its catalog name.
+fn bundle_short(text: &str) -> String {
+    text.strip_prefix("ctxloom+local:")
+        .unwrap_or(text)
+        .to_string()
+}
+
+/// A profile's short reference, as Go's text names a parent (a project
+/// profile's bare name): `project#profiles/<name>`.
+fn profile_short(text: &str) -> String {
+    format!("project#profiles/{text}")
+}
+
+/// Go's golden for a [`CANONICAL_ROWS`] row, its references as their
+/// short references: `Bundle:` and `from bundle:` the bundle's, `parents:`
+/// and a `Parents:` item a profile's, a `Bundles:` item a bundle's.
+fn as_canonical(id: &str, golden: String) -> String {
+    if !CANONICAL_ROWS.contains(&id) {
+        return golden;
+    }
+    let mut section = "";
+    let lines: Vec<String> = golden
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let indent = &line[..line.len() - trimmed.len()];
+            if let Some(bundle) = trimmed.strip_prefix("Bundle: ") {
+                return format!("{indent}Bundle: {}", bundle_short(bundle));
+            }
+            if trimmed.starts_with("from bundle: ") {
+                let parts: Vec<String> = trimmed
+                    .split(", ")
+                    .map(|part| {
+                        if let Some(b) = part.strip_prefix("from bundle: ") {
+                            format!("from bundle: {}", bundle_short(b))
+                        } else if let Some(p) = part.strip_prefix("parents: ") {
+                            format!("parents: {}", profile_short(p))
+                        } else {
+                            part.to_string()
+                        }
+                    })
+                    .collect();
+                return format!("{indent}{}", parts.join(", "));
+            }
+            if line.starts_with("=== ") {
+                section = if line == "=== Profiles ===" {
+                    "profiles"
+                } else {
+                    ""
+                };
+                return line.to_string();
+            }
+            if section == "profiles" {
+                if let Some(p) = line.strip_prefix("  ") {
+                    return format!("  {}", profile_short(p));
+                }
+                return line.to_string();
+            }
+            if line.ends_with(':') && !line.starts_with(' ') {
+                section = match line {
+                    "Parents:" => "parents",
+                    "Bundles:" => "bundles",
+                    _ => "",
+                };
+                return line.to_string();
+            }
+            match (section, line.strip_prefix("  - ")) {
+                ("parents", Some(p)) => format!("  - {}", profile_short(p)),
+                ("bundles", Some(b)) => format!("  - {}", bundle_short(b)),
+                _ => line.to_string(),
+            }
+        })
+        .collect();
+    lines.join("\n")
 }
 
 /// Go's golden as this build words it where the owner changed it: the schema
@@ -397,7 +561,16 @@ fn mismatch(row: &Row, project: &Project) -> Option<String> {
     if !agreed {
         return Some(format!("exit {} (Go {go_exit}): {}", ran.code, ran.said()));
     }
-    let want = as_declared(&row.id, as_changed(&golden(&row.id, "stdout")));
+    let want = as_canonical(
+        &row.id,
+        as_ruled(
+            &row.id,
+            as_delivered(
+                &row.id,
+                as_declared(&row.id, as_changed(&golden(&row.id, "stdout"))),
+            ),
+        ),
+    );
     if !is_dry_run(&row.id) && carries_retired_llm(&want) {
         return None;
     }

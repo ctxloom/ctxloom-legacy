@@ -272,7 +272,12 @@ fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
     )
     .with_os(wiring.os_name())
     .with_foreign(files)
-    .with_puller(Rc::new(DepsPuller(deps))))
+    .with_puller(Rc::new(DepsPuller(deps)))
+    // The hooks read the library through the daemon (O3), within their
+    // bound from when the use cases were wired, which a hook does first.
+    .with_hook_library(Box::new(
+        crate::hook_library::DaemonHookLibrary::starting_now(Arc::clone(wiring.env())),
+    )))
 }
 
 /// The engines' callbacks that answer through the setup use cases.
@@ -400,9 +405,10 @@ impl Commands {
             flags: &call.globals,
             stamp: &stamp,
         };
+        let cleaning = crate::library::DaemonServed::new(Arc::clone(&env), stamp.clone());
         let uses = setup_cli::UseCases {
             auth: &wired.setup.auth,
-            cleaner: &wired.setup.cleaner,
+            cleaning: &cleaning,
             doctor: &wired.setup.doctor,
             init: &wired.setup.init,
             terminal: &terminal,
@@ -591,7 +597,18 @@ impl Commands {
             setup: &wired.surface,
             flags: call.globals.clone(),
         };
-        deps_cli::run(&wired.deps, &refresh, &names, noun, call, catalog, out, err)
+        let served = crate::library::DaemonServed::new(env, version);
+        deps_cli::run(
+            &wired.deps,
+            &refresh,
+            &names,
+            &served,
+            noun,
+            call,
+            catalog,
+            out,
+            err,
+        )
     }
 }
 

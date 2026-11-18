@@ -5,16 +5,26 @@
 //! no path and reads no file; an adapter (`content-fs`, `config-files`,
 //! `editor-process`, `companion-probe`) does, and hands the text and the bytes
 //! over.
+//!
+//! Step 10 (U12) adds what git sees of a library tree ([`TreeObserver`]):
+//! git holds the library, and ctxloom asks it what is checked out and what
+//! differs, never keeping a copy of its own.
+
+mod operation;
+mod tree;
 
 use std::collections::BTreeMap;
 
 use angzarr_diagnostic::Diagnostic;
 
+pub use operation::{Operated, Operation, Operations, Point, STAGING_DIR, STATE_DIR, TRASH_DIR};
+pub use tree::{IgnoreRule, Motion, PathStatus, StatusEntry, TreeChange, TreeError, TreeObserver};
+
 /// Why an adapter could not do what it was asked: its own diagnostic.
 pub type Failure = Box<dyn Diagnostic>;
 
 /// A bundle's files by path relative to the bundle (`bundle.yaml`,
-/// `fragments/solid.md`, `skills/.code-reviewer.meta.yaml`), slash separated.
+/// `fragments/solid.md`, `skills/code-reviewer/.meta.yaml`), slash separated.
 pub type TreeFiles = BTreeMap<String, Vec<u8>>;
 
 /// A file to put somewhere: its path below the directory it lands in, slash
@@ -83,6 +93,16 @@ pub trait ContentRepo {
 
     /// Where the bundle's directory is, as the user is shown it.
     fn bundle_dir(&self, name: &str) -> String;
+
+    /// Where the bundle `name` is in ANOTHER tree, the one whose `.ctxloom`
+    /// is `app_dir` (the same place below it), as the user is shown it.
+    fn bundle_dir_in(&self, app_dir: &str, name: &str) -> String;
+
+    /// The bundle `name` renamed whole into ANOTHER tree (`app_dir`, its
+    /// `.ctxloom`), at the same place below it, in one rename and never
+    /// over what is there (step 10b, QUESTIONS 1(a)): false when something
+    /// is there, and nothing was moved.
+    fn move_into(&self, name: &str, app_dir: &str) -> Result<bool, Failure>;
 }
 
 /// The user's own files, outside the project's content: where a bundle is
@@ -108,7 +128,9 @@ pub trait UserFiles {
     /// a file is there.
     fn write_file(&self, path: &str, bytes: &[u8], overwrite: bool) -> Result<bool, Failure>;
 
-    /// The files written below `dir`, its directories made.
+    /// The files put in as the new directory `dir`, whole or not at all,
+    /// never over anything there (D2's EXCEPTION for a tree written outside
+    /// ctxloom's trees: staged beside it, renamed in NOREPLACE).
     fn write_tree(&self, dir: &str, files: &[Put]) -> Result<(), Failure>;
 }
 
