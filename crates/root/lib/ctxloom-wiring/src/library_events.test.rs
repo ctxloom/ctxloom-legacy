@@ -115,7 +115,27 @@ fn an_intent_and_its_steps_print_their_request() {
         intent: Intent {
             request_id: "r-1".to_string(),
             verb: "fragment edit".to_string(),
-            steps: Vec::new(),
+            steps: vec![library_tree::Step {
+                replace: None,
+                create: None,
+                trash: None,
+                r#move: Some(library_tree::MovePath {
+                    name: String::new(),
+                    verb: String::new(),
+                    from: "content/bundles/v2/a".to_string(),
+                    to: "content/bundles/v2/b".to_string(),
+                    seen_sequence: 0,
+                    evidence: library_tree::Evidence {
+                        tree_reads: true,
+                        plan_rejection: None,
+                        builtin: false,
+                        in_motion: None,
+                        in_git: true,
+                        ignored: None,
+                        root: String::new(),
+                    },
+                }),
+            }],
             base_cause: String::new(),
             done: 0,
         },
@@ -123,7 +143,10 @@ fn an_intent_and_its_steps_print_their_request() {
     let applied = LibraryEvent::StepApplied(StepApplied {
         request_id: "r-1".to_string(),
         step: 2,
-        observed: Vec::new(),
+        observed: vec![library_tree::DirtyPath {
+            path: "content/bundles/v2/b/bundle.yaml".to_string(),
+            oid: "o".to_string(),
+        }],
     });
     let failed = LibraryEvent::ChangeFailed(ChangeFailed {
         request_id: "r-2".to_string(),
@@ -148,8 +171,11 @@ fn an_intent_and_its_steps_print_their_request() {
         json!({
             "tree": null,
             "events": [
-                {"type": "ChangeIntended", "sequence": 1, "request_id": "r-1", "verb": "fragment edit"},
-                {"type": "StepApplied", "sequence": 2, "request_id": "r-1", "step": 2},
+                {"type": "ChangeIntended", "sequence": 1, "request_id": "r-1", "verb": "fragment edit",
+                 "steps": [{"kind": "move", "path": "content/bundles/v2/a",
+                            "from": "content/bundles/v2/a", "to": "content/bundles/v2/b"}]},
+                {"type": "StepApplied", "sequence": 2, "request_id": "r-1", "step": 2,
+                 "observed": [{"path": "content/bundles/v2/b/bundle.yaml", "oid": "o"}]},
                 {"type": "ChangeFailed", "sequence": 3, "request_id": "r-2", "step": 1},
                 {"type": "IntentSuperseded", "sequence": 4, "request_id": "r-3"},
             ],

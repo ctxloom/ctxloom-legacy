@@ -51,6 +51,24 @@ fn change_row(change: &Change) -> Value {
     row
 }
 
+/// An intent's step as the reader prints it (protos.md §1.4): its kind
+/// (the oneof's case) and its paths.
+fn step_row(step: &library_tree::Step) -> Value {
+    if let Some(replace) = &step.replace {
+        return json!({"kind": "replace", "path": replace.path});
+    }
+    if let Some(create) = &step.create {
+        return json!({"kind": "create", "path": create.path});
+    }
+    if let Some(trash) = &step.trash {
+        return json!({"kind": "trash", "path": trash.path});
+    }
+    if let Some(moved) = &step.r#move {
+        return json!({"kind": "move", "path": moved.from, "from": moved.from, "to": moved.to});
+    }
+    json!({"kind": ""})
+}
+
 /// One page as the reader prints it: the event's type and its sequence,
 /// and what each kind names (never content: there is none to name).
 pub(crate) fn event_row(page: &EventPage) -> Option<Value> {
@@ -80,10 +98,16 @@ pub(crate) fn event_row(page: &EventPage) -> Option<Value> {
         Ok(LibraryEvent::ChangeIntended(intended)) => {
             row["request_id"] = intended.intent.request_id.into();
             row["verb"] = intended.intent.verb.into();
+            row["steps"] = intended.intent.steps.iter().map(step_row).collect();
         }
         Ok(LibraryEvent::StepApplied(applied)) => {
             row["request_id"] = applied.request_id.into();
             row["step"] = applied.step.into();
+            row["observed"] = applied
+                .observed
+                .iter()
+                .map(|seen| json!({"path": seen.path, "oid": seen.oid}))
+                .collect();
         }
         Ok(LibraryEvent::ChangeFailed(failed)) => {
             row["request_id"] = failed.request_id.into();

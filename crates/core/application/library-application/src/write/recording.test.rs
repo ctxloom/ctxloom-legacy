@@ -98,3 +98,15 @@ fn test_a_layer_written_twice_is_its_last_text_and_reads_back_planned() {
     assert_eq!(recorder.layer_text(Scope::Project), None);
     assert_eq!(recorder.take().len(), 1);
 }
+
+#[test]
+fn test_a_bundles_files_are_listed_below_a_directory_of_it() {
+    let (library, _) = world();
+    assert_eq!(
+        library.bundle_files("demo", ""),
+        ["bundle.yaml", "fragments/example.md"]
+    );
+    assert_eq!(library.bundle_files("demo", "fragments/"), ["example.md"]);
+    assert!(library.bundle_files("demo", "skills").is_empty());
+    assert!(library.bundle_files("nobody", "").is_empty());
+}

@@ -199,3 +199,89 @@ fn a_stream_it_holds_nothing_of_has_no_view() {
     };
     assert!(model.view(&cover).is_none());
 }
+
+fn intended(request: &str, steps: usize) -> LibraryEvent {
+    let step = library_tree::Step {
+        replace: Some(library_tree::ReplaceFile {
+            name: TREE.to_string(),
+            verb: "fragment edit".to_string(),
+            path: FILE.to_string(),
+            seen_sequence: 0,
+            new_oid: "n".to_string(),
+            evidence: library_tree::Evidence {
+                tree_reads: true,
+                plan_rejection: None,
+                builtin: false,
+                in_motion: None,
+                in_git: true,
+                ignored: None,
+                root: String::new(),
+            },
+        }),
+        create: None,
+        trash: None,
+        r#move: None,
+    };
+    LibraryEvent::ChangeIntended(library_tree::ChangeIntended {
+        intent: library_tree::Intent {
+            request_id: request.to_string(),
+            verb: "fragment edit".to_string(),
+            steps: vec![step; steps],
+            base_cause: String::new(),
+            done: 0,
+        },
+    })
+}
+
+fn applied(request: &str, step: u32) -> LibraryEvent {
+    LibraryEvent::StepApplied(StepApplied {
+        request_id: request.to_string(),
+        step,
+        observed: Vec::new(),
+    })
+}
+
+#[test]
+fn an_intent_is_known_by_its_request_id_pending_then_done() {
+    use crate::End;
+    let mut model = LibraryCheckout::new();
+    model
+        .project(&on(
+            LIBRARY_DOMAIN,
+            0,
+            vec![observed(true, &[]), intended("r-1", 2), applied("r-1", 0)],
+        ))
+        .unwrap();
+    let known = model.intent("r-1").expect("known");
+    assert_eq!(known.end, End::Pending { done: 1 });
+    assert_eq!(known.root, tree_root(TREE).value.to_vec());
+    assert_eq!(known.intent.verb, "fragment edit");
+    model
+        .project(&on(LIBRARY_DOMAIN, 3, vec![applied("r-1", 1)]))
+        .unwrap();
+    assert_eq!(model.intent("r-1").map(|k| k.end), Some(End::Done));
+    assert!(model.intent("r-2").is_none());
+}
+
+#[test]
+fn an_intent_failed_is_known_failed_and_a_stream_started_afresh_forgets_it() {
+    use crate::End;
+    let mut model = LibraryCheckout::new();
+    let failed = LibraryEvent::ChangeFailed(library_tree::ChangeFailed {
+        request_id: "r-1".to_string(),
+        step: 0,
+        ext_err_txt: "denied".to_string(),
+    });
+    model
+        .project(&on(
+            LIBRARY_DOMAIN,
+            0,
+            vec![observed(true, &[]), intended("r-1", 1), failed],
+        ))
+        .unwrap();
+    assert_eq!(model.intent("r-1").map(|k| k.end), Some(End::Failed));
+    model
+        .project(&on(LIBRARY_DOMAIN, 0, vec![observed(true, &[])]))
+        .unwrap();
+    assert!(model.intent("r-1").is_none());
+}

@@ -120,6 +120,20 @@ macro_rules! library_reads {
     };
 }
 
+/// The library's writes the daemon serves (step 10b U3, D12), one row
+/// each: `method (Rpc) Request => Response` (what each request writes,
+/// its target, is `daemon-api`'s `LibraryWriteRequest`). The same layers as
+/// [`library_reads!`]'s generate their part from it; a write's notices ride
+/// in its response's own `notices`.
+#[macro_export]
+macro_rules! library_writes {
+    ($each:ident) => {
+        $each! {
+            create_bundle (CreateBundle) CreateBundleRequest => CreateBundleResponse,
+        }
+    };
+}
+
 // The refusals' declared statuses, generated from the protos.
 include!(concat!(env!("OUT_DIR"), "/refusals.rs"));
 

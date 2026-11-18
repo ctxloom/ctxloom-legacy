@@ -347,12 +347,12 @@ mod messages {
     use std::collections::BTreeMap;
 
     use library_application::{
-        BundleCreated, BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved,
-        BundleRow, BundleShow, Preview, Removal, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
+        BundleEdited, BundleExported, BundleImported, BundleList, BundleRemoved, BundleRow,
+        BundleShow, Preview, Removal, ShownCommand, ShownFragment, ShownMcp, ShownSkill,
     };
     use serde_json::{json, Value};
 
-    use super::super::{created, edited, exported, imported, removed};
+    use super::super::{edited, exported, imported, removed};
     use library_api::resources::bundle;
     use library_api::resources::bundles as listed;
 
@@ -540,15 +540,6 @@ mod messages {
     #[test]
     fn test_the_write_responses_carry_what_the_write_reported() {
         let b = "projects/calm-otter/bundles/demo";
-        let made = BundleCreated {
-            status: "created".to_string(),
-            name: "demo".to_string(),
-            path: "bundles/demo/bundle.yaml".to_string(),
-        };
-        assert_eq!(
-            as_json(created(P, &made)),
-            json!({"bundle": {"name": b}, "path": "bundles/demo/bundle.yaml", "applied": true})
-        );
         let changed = BundleEdited {
             status: "updated".to_string(),
             name: "demo".to_string(),

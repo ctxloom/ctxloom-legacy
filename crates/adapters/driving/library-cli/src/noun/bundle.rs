@@ -2,7 +2,7 @@
 //! AIP resource or method response (OD-40, design §5.1).
 
 use library_application::{
-    BundleCreated, BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleView, Removal,
+    BundleEdited, BundleExported, BundleImported, BundleRemoved, BundleView, Removal,
 };
 
 use library_api::resources::count;
@@ -254,31 +254,37 @@ fn distill(
     )
 }
 
+/// `bundle create <name> [-d description]`: the daemon's `CreateBundle`
+/// (step 10b U3), its text from the response (D10).
 fn create(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let outcome = cx
-        .library
-        .bundle_create(&cx.flags, &name, &text_arg(sub, "description"));
-    catalog::answer(
+    let request = v1::CreateBundleRequest {
+        bundle_id: text_arg(sub, "name"),
+        bundle: Some(v1::Bundle {
+            description: text_arg(sub, "description"),
+            ..v1::Bundle::default()
+        }),
+        globals: cx.globals(),
+        ..v1::CreateBundleRequest::default()
+    };
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.create_bundle("", request),
+        |made| std::mem::take(&mut made.notices),
         out,
         err,
-        false,
-        created,
-        |made, out, _| {
+        |made, out| {
             writeln!(out, "Created bundle: {}", made.path)?;
             writeln!(
                 out,
                 "Edit its item files to add your fragments and prompts."
             )
         },
-        catalog::ok,
+        |_| Exit::OK,
     )
 }
 
@@ -407,16 +413,6 @@ fn just_named(parent: &str, catalog: &str) -> Option<v1::Bundle> {
         name: bundle_name(parent, catalog),
         ..v1::Bundle::default()
     })
-}
-
-/// `bundle create`: `CreateBundleResponse`.
-pub(crate) fn created(parent: &str, made: &BundleCreated) -> v1::CreateBundleResponse {
-    v1::CreateBundleResponse {
-        bundle: just_named(parent, &made.name),
-        path: made.path.clone(),
-        applied: Some(true),
-        ..v1::CreateBundleResponse::default()
-    }
 }
 
 /// `bundle edit`: `UpdateBundleResponse`; an edit that changed nothing

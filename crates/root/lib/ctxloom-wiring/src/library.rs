@@ -336,6 +336,8 @@ impl library_cli::Served for DaemonServed {
 
     library_cli::served_reads!(served_read);
 
+    library_cli::served_writes!(served_write);
+
     fn assemble_context(
         &self,
         request: daemon_proto::v1::AssembleContextRequest,
@@ -395,6 +397,28 @@ macro_rules! served_read {
 }
 use served_read;
 
+/// [`DaemonServed`]'s writes, from `library_cli::served_writes!`: each the
+/// daemon's (reached, or started) of this binary's stamp, under one
+/// request id, sent once more to a new daemon if this one could not be
+/// reached (S8).
+macro_rules! served_write {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method(
+                &self,
+                under: &str,
+                request: daemon_proto::v1::$request,
+            ) -> Result<daemon_proto::v1::$response, Failure> {
+                use daemon_api::LibraryWrites;
+                let wiring = self.wiring()?;
+                let client = crate::daemon::library_client(&wiring, &self.version)?;
+                crate::daemon::answered(client.$method(under, request))
+            }
+        )*
+    };
+}
+use served_write;
+
 impl deps_cli::Served for DaemonServed {
     deps_cli::served_reads!(served_read);
 }
@@ -403,9 +427,9 @@ impl deps_cli::Served for DaemonServed {
 /// U2, `library_cli::is_served_read`), whose home step is the daemon's own; every
 /// other verb still runs in process, and takes it here first.
 fn served(noun: &str, call: &Call<'_>) -> bool {
-    call.matches
-        .subcommand_matches(noun)
-        .is_some_and(|sub| library_cli::is_served_read(noun, sub))
+    call.matches.subcommand_matches(noun).is_some_and(|sub| {
+        library_cli::is_served_read(noun, sub) || library_cli::is_served_write(noun, sub)
+    })
 }
 
 impl Extension for LibraryCommands {

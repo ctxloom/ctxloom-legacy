@@ -62,6 +62,7 @@ mod hand_over;
 pub mod launch;
 mod library_reads;
 mod library_refusals;
+pub mod library_writes;
 mod refusal;
 mod runs;
 mod server;
@@ -95,7 +96,7 @@ pub use run_ports::{Infrastructure, DIAGNOSED};
 pub use runs::RunStream;
 pub use server::{About, Answer, Api, Calls, Harps, Hosting, Observing, Parts, SessionStates};
 pub use session_client::{
-    Client, LibraryReads, Removed, RequestIds, SessionReads, SessionRemovals,
+    Client, LibraryReads, LibraryWrites, Removed, RequestIds, SessionReads, SessionRemovals,
 };
 pub use start_up::StartUpIncomplete;
 pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};

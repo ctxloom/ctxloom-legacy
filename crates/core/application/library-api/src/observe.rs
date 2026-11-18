@@ -79,6 +79,17 @@ impl Site {
 pub struct Observed {
     pub tree: TreeName,
     pub notices: Vec<LibraryApiNotice>,
+    /// The git operation in progress there, if any (a write is refused
+    /// `TreeInMotion` on it, L11).
+    pub motion: Option<ctxloom_ports::Motion>,
+}
+
+/// What a write's observations came to: each tree observed, with what it
+/// came to, and everything they are to say, in order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Trees {
+    pub seen: Vec<(Site, Observed)>,
+    pub notices: Vec<LibraryApiNotice>,
 }
 
 /// Why a read was not answered.
@@ -155,7 +166,11 @@ impl<E: Edge> Observations<E> {
             })
             .into_iter()
             .collect();
-        Ok(Observed { tree, notices })
+        Ok(Observed {
+            tree,
+            notices,
+            motion: sight.motion,
+        })
     }
 }
 
@@ -172,11 +187,27 @@ impl<E: Edge> Observations<E> {
         env: &[(String, String)],
         project: Option<(ProjectName, &str)>,
     ) -> Result<Vec<LibraryApiNotice>, ReadError> {
+        Ok(self.observe_trees(observers, env, project).await?.notices)
+    }
+
+    /// A write's observations (step 10b U3): [`Observations::observe_read`]'s,
+    /// each tree with what it came to, in order: the project's checkout,
+    /// then the home's library (when git holds it). The home step's notice
+    /// rides the home's.
+    pub async fn observe_trees(
+        &self,
+        observers: &dyn Observers,
+        env: &[(String, String)],
+        project: Option<(ProjectName, &str)>,
+    ) -> Result<Trees, ReadError> {
         let observer = observers.observer(env);
+        let mut seen = Vec::new();
         let mut notices = Vec::new();
         if let Some((project, root)) = project {
             let site = Site::checkout(project, root);
-            notices.extend(self.observe(observer.as_ref(), &site).await?.notices);
+            let observed = self.observe(observer.as_ref(), &site).await?;
+            notices.extend(observed.notices.iter().cloned());
+            seen.push((site, observed));
         }
         if let Some(home) = observers.home_tree() {
             // The home step (G2, QUESTIONS.md B): the home's library made a
@@ -189,10 +220,33 @@ impl<E: Edge> Observations<E> {
                 && observer.check_ignore(&home, "config.yaml")?.is_none();
             if held {
                 let site = Site::Home { tree: home };
-                notices.extend(self.observe(observer.as_ref(), &site).await?.notices);
+                let observed = self.observe(observer.as_ref(), &site).await?;
+                notices.extend(observed.notices.iter().cloned());
+                seen.push((site, observed));
             }
         }
-        Ok(notices)
+        Ok(Trees { seen, notices })
+    }
+
+    /// The record's state of `tree` now (a default one for a tree never
+    /// observed): what a write's token is read from.
+    pub fn held(&self, tree: &TreeName) -> library_tree::Library {
+        let checkouts = self.checkouts.checkouts();
+        checkouts.tree(&tree.root()).cloned().unwrap_or_default()
+    }
+
+    /// The intent recorded under `request_id`, in any tree (step 10b U3).
+    pub fn known(&self, request_id: &str) -> Option<library_checkout::Known> {
+        self.checkouts.checkouts().intent(request_id).cloned()
+    }
+
+    /// `book` (a library command or fact) through the edge.
+    pub async fn send(
+        &self,
+        book: angzarr_embedded::v1::CommandBook,
+    ) -> Result<angzarr_embedded::Answered, angzarr_embedded::Failure<angzarr_embedded::Rejected>>
+    {
+        self.edge.handle(book).await
     }
 }
 

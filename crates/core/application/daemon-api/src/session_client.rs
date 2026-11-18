@@ -545,6 +545,63 @@ macro_rules! library_read_requests {
 }
 use library_read_requests;
 
+/// The library writes a command asks of its daemon (step 10b U3, D12: one
+/// method per row of `daemon_proto::library_writes!`), each under this
+/// client's project (`users/me` outside one), with its environment, and
+/// under ONE request id minted for the call (a request that names none),
+/// so its retry on a new daemon is the same write (S8, AIP-155).
+#[allow(async_fn_in_trait)]
+pub trait LibraryWrites {
+    daemon_proto::library_writes!(library_write_declarations);
+}
+
+/// [`LibraryWrites`]' methods, from `daemon_proto::library_writes!`.
+macro_rules! library_write_declarations {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "`, under this client's parent.")]
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<v1::$response, CallError>;
+        )*
+    };
+}
+use library_write_declarations;
+
+impl<D: Daemons> LibraryWrites for Client<D> {
+    daemon_proto::library_writes!(library_write_requests);
+}
+
+/// [`Client`]'s [`LibraryWrites`], from `daemon_proto::library_writes!`.
+macro_rules! library_write_requests {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            async fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<v1::$response, CallError> {
+                use crate::library_writes::LibraryWriteRequest as _;
+                let mut request = request;
+                if request.request_id().is_empty() {
+                    request.set_request_id((self.ids)());
+                }
+                request.set_env(self.env.clone());
+                self.on_daemon(async |api: &D::Api| {
+                    let parent = self.library_parent_on(api).await?;
+                    let mut request = request.clone();
+                    request.set_target(format!("{parent}{under}"));
+                    api.$method(request).await
+                })
+                .await
+            }
+        )*
+    };
+}
+use library_write_requests;
+
 #[cfg(test)]
 #[path = "session_client.test.rs"]
 mod tests;

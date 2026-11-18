@@ -279,7 +279,27 @@ pub trait DaemonApi: Send + Sync {
     // The library's reads (step 10a U2, D12): one method each, from the one
     // table; the default is a daemon that does not serve it.
     daemon_proto::library_reads!(library_read_methods);
+
+    // The library's writes (step 10b U3, D12), from their one table.
+    daemon_proto::library_writes!(library_write_methods);
 }
+
+/// [`DaemonApi`]'s library writes, from `daemon_proto::library_writes!`.
+macro_rules! library_write_methods {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "` (step 10b U3): a write the daemon intends, makes and records.")]
+            fn $method(
+                &self,
+                request: v1::$request,
+            ) -> impl Future<Output = Result<v1::$response, Called>> + Send {
+                let _ = request;
+                async { Err(unserved(stringify!($rpc))) }
+            }
+        )*
+    };
+}
+use library_write_methods;
 
 /// A library read's answer (step 10a U2): its message, and the notices the
 /// read said beside it (`daemon_proto::NOTICE_METADATA`), in order.

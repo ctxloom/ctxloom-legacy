@@ -532,7 +532,7 @@ async fn start(
         })
         // The one-shots it hosts (U4).
         .hosting_one_shots(Arc::clone(one_shots)),
-        fs,
+        (fs, files),
         (home, temp),
         (&engines, terminals, kept),
     );
@@ -705,7 +705,7 @@ fn trusting(kept: &Projectors, (home, temp): (&Path, &Path)) -> daemon_api::Trus
 /// (step 8 U1).
 fn served(
     api: daemon_api::Api<CoreEdge>,
-    fs: &Arc<dyn Fs>,
+    (fs, files): (&Arc<dyn Fs>, &DaemonFiles),
     (home, temp): (&Path, &Path),
     (engines, terminals, kept): (
         &[daemon_application::HostedEngine],
@@ -714,8 +714,10 @@ fn served(
     ),
 ) -> Arc<dyn daemon_api::Calls> {
     Arc::new(
-        // The sessions it prepares (U5).
+        // The sessions it prepares (U5); under test-support, a library
+        // write's kill points (step 10b U3).
         api.preparing_terminals(Arc::clone(terminals))
+            .dying_at_writes(write_kills(files))
             // The library's reads (step 10a U2): each at the caller's
             // directory, in its environment.
             .reading(Arc::new(super::places::ProjectLibraries {
@@ -849,6 +851,26 @@ fn dies_at_steps(edge: &Arc<CoreEdge>, files: &DaemonFiles) {
             }
         }
     }));
+}
+
+/// A library write's kill points (step 10b U3; `test-die-at`'s
+/// `intended`, `renamed`, `done`): under test-support the daemon that
+/// finds the switch naming the point it reached takes it and is killed
+/// outright. Forced, never waited for (the race rule).
+#[cfg(feature = "test-support")]
+fn write_kills(files: &DaemonFiles) -> daemon_api::library_writes::DiesAt {
+    let files = files.clone();
+    Arc::new(move |point: &str| {
+        if files.take_die_at(point) {
+            std::process::abort();
+        }
+    })
+}
+
+/// The shipped daemon is never killed by a switch.
+#[cfg(not(feature = "test-support"))]
+fn write_kills(_: &DaemonFiles) -> daemon_api::library_writes::DiesAt {
+    Arc::new(|_: &str| {})
 }
 
 /// The kill switch's step a book applied is, if any.

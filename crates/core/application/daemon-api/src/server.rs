@@ -243,7 +243,24 @@ pub trait Calls: Send + Sync {
     // answers its message and the notices the read said. An edge that
     // serves one fails it.
     daemon_proto::library_reads!(library_read_calls);
+
+    // The library's writes (step 10b U3, D12), from their one table.
+    daemon_proto::library_writes!(library_write_calls);
 }
+
+/// [`Calls`]'s library writes, from `daemon_proto::library_writes!`.
+macro_rules! library_write_calls {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "` (step 10b U3).")]
+            fn $method(&self, request: v1::$request) -> Answer<'_, v1::$response> {
+                let _ = request;
+                Box::pin(async { Err(not_served(stringify!($rpc))) })
+            }
+        )*
+    };
+}
+use library_write_calls;
 
 /// [`Calls`]'s library reads, from `daemon_proto::library_reads!`.
 macro_rules! library_read_calls {
@@ -434,7 +451,31 @@ impl<E: Edge + 'static> Calls for Api<E> {
     library_api::served!(served_library_reads);
     // The deps reads served (step 10a U2), as the library's.
     library_api::deps_served!(served_deps_reads);
+    // The library's writes served (step 10b U3, D12), from library-api's
+    // table: each observed, planned, intended, made and recorded.
+    library_api::served_writes!(served_library_writes);
 }
+
+/// [`Api`]'s served library writes, from `library_api::served_writes!`:
+/// each the daemon's `library_write` of its use case, answered by its
+/// response.
+macro_rules! served_library_writes {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident, $verb:literal;)*) => {
+        $(
+            fn $method(&self, request: v1::$request) -> Answer<'_, v1::$response> {
+                Box::pin(async move {
+                    let wrote = self
+                        .library_write(&request, $verb, |library, flags, apply| {
+                            library_api::served_writes::$method::plan(library, flags, &request, apply)
+                        })
+                        .await?;
+                    Ok(library_api::served_writes::$method::respond(&request, wrote))
+                })
+            }
+        )*
+    };
+}
+use served_library_writes;
 
 /// [`Api`]'s served deps reads, from `library_api::deps_served!`: each
 /// taken only while the daemon is open, observed first, then answered by
@@ -513,10 +554,13 @@ pub struct Api<E> {
     pub(crate) libraries: Option<Arc<dyn crate::Libraries>>,
     /// What a library read observes first (step 10a U2), and git as its
     /// caller runs it; none, a read observes nothing.
-    observing: Option<(
+    pub(crate) observing: Option<(
         library_api::Observations<E>,
         Arc<dyn library_api::Observers>,
     )>,
+    /// The test-support kill points of a library write (step 10b U3);
+    /// none, a write is never killed.
+    pub(crate) write_dies_at: Option<crate::library_writes::DiesAt>,
 }
 
 impl<E: Edge> Api<E> {
@@ -531,6 +575,17 @@ impl<E: Edge> Api<E> {
             approving: None,
             libraries: None,
             observing: None,
+            write_dies_at: None,
+        }
+    }
+
+    /// The API, each library write telling `dies_at` the points it reaches
+    /// (`intended`, `renamed`, `done`; test-support's kill switch).
+    #[must_use]
+    pub fn dying_at_writes(self, dies_at: crate::library_writes::DiesAt) -> Api<E> {
+        Api {
+            write_dies_at: Some(dies_at),
+            ..self
         }
     }
 

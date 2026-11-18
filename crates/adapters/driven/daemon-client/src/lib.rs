@@ -544,7 +544,39 @@ impl DaemonApi for DaemonClient {
     // observes its trees and may run companions in the daemon: an
     // assembly's deadline.
     daemon_proto::library_reads!(library_read_calls);
+
+    // The library's writes (step 10b U3, D12), from their one table, under
+    // the destroys' deadline: a write observes its trees, and its intent,
+    // operation and record are the daemon's to finish.
+    daemon_proto::library_writes!(library_write_calls);
 }
+
+/// [`DaemonClient`]'s library writes, from `daemon_proto::library_writes!`.
+macro_rules! library_write_calls {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            async fn $method(&self, request: v1::$request) -> Result<v1::$response, Called> {
+                let within = self.destroying;
+                let mut client = self.client().await?;
+                let request = self.request(request)?;
+                match tokio::time::timeout(within, client.$method(request)).await {
+                    Ok(Ok(response)) => {
+                        self.heard(response.metadata());
+                        Ok(response.into_inner())
+                    }
+                    Ok(Err(status)) => {
+                        self.heard(status.metadata());
+                        Err(came_to(stringify!($rpc), &status))
+                    }
+                    Err(_) => Err(Called::Unreachable {
+                        detail: format!("no answer within {within:?}"),
+                    }),
+                }
+            }
+        )*
+    };
+}
+use library_write_calls;
 
 /// [`DaemonClient`]'s library reads, from `daemon_proto::library_reads!`.
 macro_rules! library_read_calls {

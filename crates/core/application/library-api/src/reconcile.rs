@@ -194,7 +194,8 @@ fn status_of(status: PathStatus) -> ChangeStatus {
     }
 }
 
-fn motion_of(motion: Motion) -> library_tree::Motion {
+/// git's operation as the library domain names it.
+pub fn motion_of(motion: Motion) -> library_tree::Motion {
     match motion {
         Motion::IndexLocked => library_tree::Motion::IndexLocked,
         Motion::Merging => library_tree::Motion::Merging,

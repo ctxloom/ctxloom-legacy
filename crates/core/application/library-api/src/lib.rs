@@ -24,12 +24,14 @@ pub mod premise;
 pub mod reads;
 pub mod reconcile;
 pub mod resources;
+pub mod served_writes;
+pub mod writes;
 
 pub use locate::refusal;
 #[cfg(any(test, feature = "test-support"))]
 pub use notice::diagnostic_samples;
 pub use notice::{LibraryApiNotice, EN_US};
-pub use observe::{CheckoutHarps, Observations, Observed, Observers, ReadError, Site};
+pub use observe::{CheckoutHarps, Observations, Observed, Observers, ReadError, Site, Trees};
 pub use reconcile::{sight, Sight, PATHSPEC};
 
 #[cfg(test)]

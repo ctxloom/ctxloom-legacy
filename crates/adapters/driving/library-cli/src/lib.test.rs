@@ -66,6 +66,8 @@ impl Served for ServedBy<'_> {
 
     crate::served_reads!(served_by_library_api);
 
+    library_api::served_writes!(written_by_library_api);
+
     /// The daemon's dry run, as it plans one: under the parent the names
     /// give, unnamed where they name none.
     fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure> {
@@ -182,6 +184,51 @@ macro_rules! served_by_library_api {
     };
 }
 use served_by_library_api;
+
+/// The daemon's writes in the tests: each verb's use case run over the
+/// library itself (it writes as it goes: no intent, the operation the use
+/// case's own), answered by its response as the daemon answers it.
+macro_rules! written_by_library_api {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident, $verb:literal;)*) => {
+        $(
+            fn $method(
+                &self,
+                _under: &str,
+                request: v1::$request,
+            ) -> Result<v1::$response, Failure> {
+                let parent = self.names.parent()?;
+                let globals = request.globals.clone().unwrap_or_default();
+                let flags = library_application::Flags {
+                    degraded: globals.degraded,
+                    no_companions: globals.no_companions,
+                    config_set: globals.config_set.clone(),
+                    trusted: false,
+                };
+                let apply = !request.validate_only;
+                let outcome =
+                    library_api::served_writes::$method::plan(self.library, &flags, &request, apply);
+                let notices = outcome
+                    .notices
+                    .iter()
+                    .map(library_api::reads::notice_of)
+                    .collect();
+                let answer = outcome.result.map_err(failed)?;
+                Ok(library_api::served_writes::$method::respond(
+                    &request,
+                    library_api::served_writes::Wrote {
+                        answer: Some(answer),
+                        applied: apply,
+                        etag: String::new(),
+                        at: String::new(),
+                        parent,
+                        notices,
+                    },
+                ))
+            }
+        )*
+    };
+}
+use written_by_library_api;
 
 /// What one invocation left behind.
 pub(crate) struct Ran {

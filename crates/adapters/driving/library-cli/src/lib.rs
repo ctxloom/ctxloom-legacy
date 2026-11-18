@@ -124,6 +124,8 @@ pub trait Served {
     /// run never mints, owner ruling 2026-11-14).
     fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure>;
 
+    served_writes!(served_write);
+
     /// `loadout`: `GetLoadout`, always asked as `users/me/loadout`, its
     /// notices beside it: ctxloom's own loadout is the same in every
     /// project, and a companion probe asks it where there may be no
@@ -165,6 +167,34 @@ macro_rules! served_reads {
         }
     };
 }
+
+/// The writes this CLI asks the daemon (step 10b U3), in the shape of
+/// `daemon_proto::library_writes!`'s rows, handed to `$each` (the trait's,
+/// the wiring's and the tests' implementations of [`Served`]).
+#[macro_export]
+macro_rules! served_writes {
+    ($each:ident) => {
+        $each! {
+            create_bundle (CreateBundle) CreateBundleRequest => CreateBundleResponse,
+        }
+    };
+}
+
+/// [`Served`]'s write methods, from [`served_writes!`]: each answering the
+/// write's response, its notices inside it, or why it was not answered.
+macro_rules! served_write {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("`", stringify!($rpc), "` (step 10b U3).")]
+            fn $method(
+                &self,
+                under: &str,
+                request: v1::$request,
+            ) -> Result<v1::$response, Failure>;
+        )*
+    };
+}
+use served_write;
 
 /// [`Served`]'s methods, from [`served_reads!`].
 macro_rules! served_read {
@@ -226,6 +256,33 @@ pub(crate) fn served<M: Serialize>(
     let said: Vec<Notice> = notes.into_iter().map(Notice::text).collect();
     say_notices(&said, PROG, cx.format, cx.catalog, err);
     Ok(Exit::OK)
+}
+
+/// A served write's answer (step 10b U3, D10): the notices inside its
+/// response, said; then why it was not answered, or its message as json
+/// (without the notices, which were said), or its text, rendered from the
+/// message alone; its exit `exit`'s.
+pub(crate) fn answer_written<M: Serialize>(
+    cx: &Context<'_>,
+    written: Result<M, Failure>,
+    notices: impl FnOnce(&mut M) -> Vec<v1::Notice>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    text: impl FnOnce(&M, &mut dyn Write) -> io::Result<()>,
+    exit: impl FnOnce(&M) -> Exit,
+) -> Result<Exit, Failure> {
+    let mut message = written?;
+    let said: Vec<Notice> = notices(&mut message)
+        .iter()
+        .map(library_api::reads::said)
+        .collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+    if cx.format == Format::Json {
+        api::print(out, &message).map_err(output_failure)?;
+    } else {
+        text(&message, out).map_err(output_failure)?;
+    }
+    Ok(exit(&message))
 }
 
 /// Run `noun` (given the matches of the whole line).
@@ -316,6 +373,22 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
                 .any(|(served, verbs)| *served == noun && verbs.contains(&asked))
         }
     }
+}
+
+/// The write verbs, by noun, the daemon serves (step 10b U3): it takes the
+/// home step and observes the trees before it plans, so the caller takes
+/// none of its own.
+pub const SERVED_WRITES: &[(&str, &[&str])] = &[("bundle", &["create"])];
+
+/// Whether `noun`, given its matches `sub`, is a write the daemon serves
+/// (a verb of [`SERVED_WRITES`]).
+pub fn is_served_write(noun: &str, sub: &ArgMatches) -> bool {
+    let Some((asked, _)) = sub.subcommand() else {
+        return false;
+    };
+    SERVED_WRITES
+        .iter()
+        .any(|(served, verbs)| *served == noun && verbs.contains(&asked))
 }
 
 fn dispatch(

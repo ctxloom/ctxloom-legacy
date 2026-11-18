@@ -240,6 +240,22 @@ impl Library {
         (self, recorder)
     }
 
+    /// The files below `dir` of the bundle `bundle` (`""`: the bundle's
+    /// whole tree), each below it, sorted; none where there are none.
+    pub fn bundle_files(&self, bundle: &str, dir: &str) -> Vec<String> {
+        let Ok(tree) = self.content.read_tree(bundle) else {
+            return Vec::new();
+        };
+        let under = match dir.trim_end_matches('/') {
+            "" => String::new(),
+            dir => format!("{dir}/"),
+        };
+        tree.keys()
+            .filter_map(|path| path.strip_prefix(under.as_str()))
+            .map(str::to_string)
+            .collect()
+    }
+
     /// Make `planned` (a write [`Library::recording`] recorded) through the
     /// real ports: the write's one operation (step 10b U3), and the seam
     /// U8's atomic operations replace. A new bundle whose directory is

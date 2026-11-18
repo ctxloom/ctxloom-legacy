@@ -573,7 +573,42 @@ impl Ctxloom for Served {
     // answered with its message, the notices the read said riding as
     // `NOTICE_METADATA` (owner ruling 2026-11-17).
     daemon_proto::library_reads!(library_read_handlers);
+
+    // The library's writes (step 10b U3, D12), from their one table: each
+    // answered with its message, its notices inside it.
+    daemon_proto::library_writes!(library_write_handlers);
 }
+
+/// [`Served`]'s library writes, from `daemon_proto::library_writes!`, in
+/// the shape `tonic::async_trait` gives the generated trait's methods.
+macro_rules! library_write_handlers {
+    ($($method:ident ($rpc:ident) $request:ident => $response:ident),* $(,)?) => {
+        $(
+            fn $method<'life0, 'async_trait>(
+                &'life0 self,
+                request: Request<v1::$request>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn Future<Output = Result<Response<v1::$response>, Status>>
+                        + Send
+                        + 'async_trait,
+                >,
+            >
+            where
+                'life0: 'async_trait,
+                Self: 'async_trait,
+            {
+                Box::pin(async move {
+                    self.answer(request, |calls, message| async move {
+                        calls.$method(message).await
+                    })
+                    .await
+                })
+            }
+        )*
+    };
+}
+use library_write_handlers;
 
 /// [`Served`]'s library reads, from `daemon_proto::library_reads!`, in the
 /// shape `tonic::async_trait` gives the generated trait's methods.

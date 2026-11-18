@@ -113,7 +113,7 @@ pub(crate) fn flags_of(globals: Option<&v1::Globals>) -> Flags {
 }
 
 /// A read's environment as name and value pairs.
-fn pairs(env: Option<&v1::EnvVars>) -> Vec<(String, String)> {
+pub(crate) fn pairs(env: Option<&v1::EnvVars>) -> Vec<(String, String)> {
     env.iter()
         .flat_map(|env| env.vars.iter())
         .map(|var| (var.name.clone(), var.value.clone()))
@@ -198,16 +198,44 @@ impl<E: Edge> Api<E> {
     /// Where a read is answered: its parent, the directory and environment
     /// it is read at, its flags, and what its observation said.
     async fn read_site<Q: LibraryRequest>(&self, request: &Q) -> Result<ReadSite<'_>, ApiError> {
-        let (parent, project) = parent_of(request.target()).ok_or_else(|| {
+        let (mut site, project) = self
+            .resolve(
+                request.target(),
+                request.cwd(),
+                request.env(),
+                request.globals(),
+            )
+            .await?;
+        site.said = self
+            .observed(
+                project
+                    .as_ref()
+                    .map(|(name, root)| (name.clone(), root.as_str())),
+                request.env(),
+            )
+            .await?;
+        Ok(site)
+    }
+
+    /// Where a library call is answered, before anything is observed: the
+    /// site, and the project and checkout root its trees are observed at.
+    pub(crate) async fn resolve(
+        &self,
+        target: &str,
+        cwd: &str,
+        env: Option<&v1::EnvVars>,
+        globals: Option<&v1::Globals>,
+    ) -> Result<(ReadSite<'_>, Option<(ProjectName, String)>), ApiError> {
+        let (parent, project) = parent_of(target).ok_or_else(|| {
             ApiError::from(ApiRefusal::of(&v1::NameInvalid {
-                name: request.target().to_string(),
+                name: target.to_string(),
                 reason: "shape".to_string(),
             }))
         })?;
         let libraries = self.libraries.as_deref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon reads no library".to_string(),
         })?;
-        let env = pairs(request.env());
+        let env = pairs(env);
         let registered = match &project {
             Some(name) => Some(self.registered_project(name).await?),
             None => None,
@@ -217,36 +245,38 @@ impl<E: Edge> Api<E> {
         // `users/me` names no project, so it is untrusted.
         let trusted = registered.as_ref().is_some_and(|(_, id)| self.trusts(id));
         let registered = registered.map(|(root, _)| root);
-        let dir = match (request.cwd(), &registered) {
+        let dir = match (cwd, &registered) {
             (cwd, _) if !cwd.is_empty() => cwd.to_string(),
             (_, Some(root)) => root.clone(),
             (_, None) => String::new(),
         };
         let root = libraries.root(&dir, &env);
-        let site = project.zip(root.as_deref().or(registered.as_deref()));
-        let said = self.observed(site, request.env()).await?;
-        Ok(ReadSite {
-            libraries,
-            parent,
-            at: root.unwrap_or(dir),
-            env,
-            flags: Flags {
-                trusted,
-                ..flags_of(request.globals())
+        let observed = project.zip(root.clone().or(registered));
+        Ok((
+            ReadSite {
+                libraries,
+                parent,
+                at: root.unwrap_or(dir),
+                env,
+                flags: Flags {
+                    trusted,
+                    ..flags_of(globals)
+                },
+                said: Vec::new(),
             },
-            said,
-        })
+            observed,
+        ))
     }
 }
 
 /// Where a read is answered ([`Api::read_site`]).
-struct ReadSite<'a> {
-    libraries: &'a dyn Libraries,
-    parent: String,
-    at: String,
-    env: Vec<(String, String)>,
-    flags: Flags,
-    said: Vec<v1::Notice>,
+pub(crate) struct ReadSite<'a> {
+    pub(crate) libraries: &'a dyn Libraries,
+    pub(crate) parent: String,
+    pub(crate) at: String,
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) flags: Flags,
+    pub(crate) said: Vec<v1::Notice>,
 }
 
 impl<E: Edge> Api<E> {

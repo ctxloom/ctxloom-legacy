@@ -29,6 +29,31 @@ use library_tree::{cause_of, Library, LibraryEvent, LIBRARY_DOMAIN};
 pub struct LibraryCheckout {
     /// Each tree stream's state, by its root.
     rows: BTreeMap<Vec<u8>, Library>,
+    /// Every intent recorded, by its request id (step 10b U3): what a
+    /// write's retry finds, whether it is done or not.
+    intents: BTreeMap<String, Known>,
+}
+
+/// An intent as the record holds it, by its request id: its tree's root,
+/// the intent as recorded, and how it ended.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Known {
+    pub root: Vec<u8>,
+    pub intent: library_tree::Intent,
+    pub end: End,
+}
+
+/// Where an intent is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum End {
+    /// Steps owed: the next is `done`.
+    Pending { done: u32 },
+    /// Every step done.
+    Done,
+    /// A step failed (final).
+    Failed,
+    /// Superseded before it was done.
+    Superseded,
 }
 
 fn root_of(cover: Option<&Cover>) -> Vec<u8> {
@@ -55,19 +80,64 @@ impl LibraryCheckout {
         let root = root_of(book.cover.as_ref());
         if book.pages.first().is_none_or(|page| page.sequence == 0) {
             self.rows.remove(&root);
+            self.intents.retain(|_, known| known.root != root);
         }
         for page in &book.pages {
             let Some(event_page::Body::Event(event)) = &page.body else {
                 continue;
             };
             let event = LibraryEvent::from_any(event)?;
-            self.rows.entry(root.clone()).or_default().apply(
-                &event,
-                page.sequence,
-                cause_of(page.meta.as_ref()),
-            );
+            let row = self.rows.entry(root.clone()).or_default();
+            row.apply(&event, page.sequence, cause_of(page.meta.as_ref()));
+            let pending = row.pending.clone();
+            self.track(&root, &event, &pending);
         }
         Ok(())
+    }
+
+    /// The intents `event` names, kept by their request ids; `pending` the
+    /// tree's after it.
+    fn track(
+        &mut self,
+        root: &[u8],
+        event: &LibraryEvent,
+        pending: &BTreeMap<String, library_tree::Intent>,
+    ) {
+        let (request, end) = match event {
+            LibraryEvent::ChangeIntended(intended) => {
+                let intent = intended.intent.clone();
+                self.intents.insert(
+                    intent.request_id.clone(),
+                    Known {
+                        root: root.to_vec(),
+                        intent,
+                        end: End::Pending { done: 0 },
+                    },
+                );
+                return;
+            }
+            LibraryEvent::StepApplied(applied) => (&applied.request_id, None),
+            LibraryEvent::TreeObserved(observed) => match &observed.intended {
+                Some(request) => (request, None),
+                None => return,
+            },
+            LibraryEvent::ChangeFailed(failed) => (&failed.request_id, Some(End::Failed)),
+            LibraryEvent::IntentSuperseded(superseded) => {
+                (&superseded.request_id, Some(End::Superseded))
+            }
+        };
+        let Some(known) = self.intents.get_mut(request) else {
+            return;
+        };
+        known.end = end.unwrap_or_else(|| match pending.get(request) {
+            Some(intent) => End::Pending { done: intent.done },
+            None => End::Done,
+        });
+    }
+
+    /// The intent recorded under `request_id`, in any tree.
+    pub fn intent(&self, request_id: &str) -> Option<&Known> {
+        self.intents.get(request_id)
     }
 
     /// The tree whose stream root is `root`, if any event of it was folded.
