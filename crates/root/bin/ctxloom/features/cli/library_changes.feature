@@ -46,6 +46,26 @@ Feature: library changes — git holds the library, and the daemon records what 
   first read records one baseline: the commit and whatever git sees
   uncommitted.
 
+  A CHANGE IS REACTED TO (step 10c). Once a change is recorded, ctxloom
+  finds each live session whose loadout names what changed (a bundle it
+  draws on, or its checkout's config) and re-assembles that session's
+  context. The engine is handed it at the session's NEXT event, through the
+  one engine interface every engine implements: for claude, the
+  `additionalContext` of the next hook ctxloom answers (a prompt submitted,
+  or a tool's result). It is handed once. A change is seen by the next read,
+  and, for a tree with a live session, by the daemon's next round, read or
+  no read. A write still pending when its paths change under it is
+  superseded, and its retry refused as stale. A client may watch the
+  changes as they are recorded (`WatchLibrary`, an RPC; no command yet),
+  read here with the test build's `ctxloom test watch-library`. opencode's
+  TUI and the ACP engines are given their context through the same
+  interface when slice 10d returns; no scenario here is theirs.
+
+  OTHER TOOLS' FILES ARE NOT THE LIBRARY (L15). What materialize, `doctor
+  --fix` and `manage` write (an engine's own files, at rest) is listed in
+  their command's intent, paths and git's ids, and never observed as the
+  library.
+
   THE HOME IS A REPOSITORY TOO. When the home's `.ctxloom` is in no git
   work tree, the daemon makes it one, once, unasked. Its `.gitignore` is an
   allowlist, so only ctxloom's own files are ever seen and nothing else in
@@ -65,7 +85,8 @@ Feature: library changes — git holds the library, and the daemon records what 
                 {"type": "ChangeIntended", "sequence": n, "request_id": "<id>",
                  "verb": "<the CLI's verb>",
                  "steps": [{"kind": "replace|create|trash|move|purge",
-                            "path", "from", "to"}]},
+                            "path", "from", "to"}],
+                 "foreign": [{"path"}]},
                 {"type": "StepApplied", "sequence": n, "request_id", "step",
                  "observed": [{"path", "oid"}]},
                 {"type": "ChangeFailed", "sequence": n, "request_id", "step"},
@@ -233,17 +254,22 @@ Feature: library changes — git holds the library, and the daemon records what 
       And the output reports "events[0].changes[0].status" as "added"
       And the output does not contain "Add your content here"
 
-    Scenario: A project with no commit yet is baselined on its untracked files
+    Scenario: A project with no commit yet is baselined on its untracked files, after init's own scaffold
       # new: a fresh `git init` has no HEAD.
+      # changed: step 10c U6, init's scaffold is the daemon's CreateDirectory, so it comes first.
       Given an empty project directory
       And I run "ctxloom init --format json"
       When I run "ctxloom bundle list"
       And I run "ctxloom test library-events --format json"
       Then the command succeeds
-      And the output reports "events[0].baseline" as "true"
-      And the output reports "events[0].head_after" as ""
-      And the output reports "events[0].changes[0].path" as "config.yaml"
-      And the output reports "events[0].changes[0].status" as "added"
+      And the output reports "events" having "3" entries
+      And the output reports "events[0].type" as "ChangeIntended"
+      And the output reports "events[0].verb" as "init"
+      And the output reports "events[1].type" as "StepApplied"
+      And the output reports "events[2].baseline" as "true"
+      And the output reports "events[2].head_after" as ""
+      And the output reports "events[2].changes[0].path" as "config.yaml"
+      And the output reports "events[2].changes[0].status" as "added"
 
     Scenario: A git worktree of the project is a checkout of its own, with its own record
       # new: L2, a worktree resolves to its primary's project but is its own tree.
@@ -646,3 +672,163 @@ Feature: library changes — git holds the library, and the daemon records what 
         | home                                                                    | history                                                      |
         | the home directory is a git repository of its own                        | the home directory's repository has no commit                |
         | the home's ".ctxloom" is already a git repository with the commit "mine" | the home's ".ctxloom" repository's last commit is still "mine" |
+
+  Rule: A live session whose loadout a change touches is given its re-assembled context at its next event
+
+    Background:
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And a bundle "other" exists
+      And a profile "dev" with bundle "demo"
+      And a profile "elsewhere" with bundle "other"
+      And the project's changes are committed
+      And I run "ctxloom bundle list"
+
+    Scenario Outline: A change to a bundle a live claude session draws on reaches it, once, at its next hook
+      # new: step 10 U13 and G6/G7 (owner): re-inject automatically, through the one Engine interface; claude's is a hook's additionalContext.
+      Given <session> on the profile "dev"
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Changed while it ran
+        """
+      And I run "ctxloom bundle list"
+      And the session's assistant fires its <hook> hook
+      Then the hook exits 0, within its bound
+      And the hook's answer to the engine carries additionalContext containing "Changed while it ran"
+      And the hook's answer to the engine carries additionalContext containing "your context changed"
+      When the session's assistant fires its <hook> hook
+      Then the hook's answer to the engine carries no additionalContext
+
+      Examples:
+        | session                                                  | hook                                 |
+        | a session "brisk-copper-moth" that is still running      | UserPromptSubmit                     |
+        | a session "brisk-copper-moth" that is still running      | PostToolUse, after the tool "Read"   |
+        | a claude child "brisk-copper-moth" of "amber-quiet-heron" that is open and idle | UserPromptSubmit |
+
+    Scenario: A change to its checkout's config reaches every live session of that checkout
+      # new: step 10 U13, the config is in every loadout.
+      Given a session "brisk-copper-moth" that is still running on the profile "dev"
+      When the file ".ctxloom/config.yaml" has the line "# tuned by hand" added by hand
+      And I run "ctxloom bundle list"
+      And the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries additionalContext containing "your context changed"
+
+    Scenario: A session whose loadout does not name the changed bundle is told nothing
+      # new: step 10 U13, the paired negative; the policy is keyed by what the loadout names.
+      Given a session "brisk-copper-moth" that is still running on the profile "elsewhere"
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Changed while it ran
+        """
+      And I run "ctxloom bundle list"
+      And the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries no additionalContext
+
+    Scenario: A re-assembly is recorded in the session's own record, without its text
+      # new: step 10 U13; what the engine was handed is the session's record, by size and digest.
+      Given a session "brisk-copper-moth" that is still running on the profile "dev"
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Changed while it ran
+        """
+      And I run "ctxloom bundle list"
+      And the session's assistant fires its UserPromptSubmit hook
+      And I run "ctxloom test session-events brisk-copper-moth --format json"
+      Then the output reports "events[type=ContextRedelivered].bundles[0]" as "demo"
+      And the output does not contain "Changed while it ran"
+
+    Scenario: A change no read sees reaches a live session at the daemon's next round
+      # new: step 10 G5(b), each daemon round for a tree with a live session.
+      Given a session "brisk-copper-moth" that is still running on the profile "dev"
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Changed while it ran
+        """
+      And the daemon's next round runs
+      And I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "2" entries
+      And the output reports "events[1].changes[0].path" as "content/bundles/v2/demo/fragments/example.md"
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries additionalContext containing "Changed while it ran"
+
+    Scenario: A tree with no live session is not observed between reads
+      # new: step 10 G5(b), the paired negative; no watcher, no round for an idle tree.
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Changed with nobody running
+        """
+      And the daemon's next round runs
+      And I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "1" entries
+
+  Rule: A write still pending when its paths change under it is superseded
+
+    Scenario: A write a killed daemon left intended, whose file is then edited by hand, is refused stale on its retry, and the hand edit stands
+      # new: step 10 U13, pending intents whose bases changed are superseded.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And the project's changes are committed
+      And I run "ctxloom bundle list"
+      And the daemon will be killed outright after the write's intent is recorded, and the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand before the retry, to:
+        """
+        changed by hand meanwhile
+        """
+      When I run 'ctxloom fragment edit demo#fragments/example --body "be kinder"'
+      Then the command exits with code 20
+      And the refusal is "library-tree-plan-stale"
+      And the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" contains "changed by hand meanwhile"
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events[type=IntentSuperseded].request_id" as the value of "events[type=ChangeIntended].request_id"
+
+  Rule: WatchLibrary streams each recorded change as a thin notice
+
+    Scenario: A watcher is told of an outside change, by path and how, and never its text
+      # new: step 10 G7 (owner): WatchLibrary is built as an RPC; the CLI verb comes later.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And the project's changes are committed
+      And I run "ctxloom bundle list"
+      And "ctxloom test watch-library --count 1 --format json" is running
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Watched
+        """
+      And I run "ctxloom bundle list"
+      Then the watcher exits 0, having printed
+        | field             | value                                         |
+        | tree              | projects/{project}/checkouts/{checkout}/library |
+        | cause             | external                                      |
+        | changes[0].path   | content/bundles/v2/demo/fragments/example.md  |
+        | changes[0].status | modified                                      |
+      And the watcher printed nothing containing "Watched"
+
+    Scenario: A watcher is told of ctxloom's own write as the write it was
+      # new: step 10 G7; an applied step streams with its request id.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And the project's changes are committed
+      And I run "ctxloom bundle list"
+      And "ctxloom test watch-library --count 1 --format json" is running
+      When I run 'ctxloom fragment create demo#fragments/rules --body "be kind"'
+      Then the watcher exits 0, having printed
+        | field           | value                                       |
+        | cause           | intended                                    |
+        | verb            | fragment create                             |
+        | changes[0].path | content/bundles/v2/demo/fragments/rules.md  |
+
+  Rule: Other tools' files are listed in their command's intent, and never observed as the library
+
+    Scenario: A materialize into the project lists what it writes, and the next read records nothing of it
+      # new: step 10 U10 and L15 (T26): foreign files are effects of a command, never reconciled.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And a profile "dev" with bundle "demo"
+      And the project's changes are committed
+      And I run "ctxloom bundle list"
+      When I run "ctxloom materialize dev --target . --backend claude-code --yes"
+      And I run "ctxloom bundle list"
+      And I run "ctxloom test library-events --format json"
+      Then the command succeeds
+      And the output reports "events[1].verb" as "materialize"
+      And the output reports "events[1].foreign[path=CLAUDE.md].path" as "CLAUDE.md"
+      And the output reports "events[type=TreeObserved]" having "1" entries

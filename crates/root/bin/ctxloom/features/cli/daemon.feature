@@ -103,6 +103,11 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
   answers from the files, holding back what an untrusted project may not
   say (cli/trust.feature). No command reads a library tree itself.
 
+  SET UP HERE TOO (step 10c). init, doctor, manage, materialize, auth,
+  remotes and dependencies are the daemon's as well, and git runs in the
+  environment of the command that asked (its PATH, its credentials), never
+  the daemon's own.
+
   AND WRITTEN HERE (step 10b). Every write of the library (a create, an
   edit, a remove, an import, an export, a move, a distill, `config set`,
   `clean`) is the daemon's too: a command of the library's own domain under
@@ -206,6 +211,32 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom bundle export demo exported                            |
         | ctxloom clean --yes                                            |
         | ctxloom session remove amber-swift-owl --yes                   |
+        | ctxloom remote create origin file:///tmp/acceptance-remote.git --forge git |
+        | ctxloom deps pull                                              |
+        | ctxloom deps upgrade --yes                                     |
+        | ctxloom init                                                   |
+        | ctxloom manage install --engine claude-code --no-pull         |
+        | ctxloom manage gitignore install                               |
+        | ctxloom materialize --to out --yes                             |
+        | ctxloom doctor --fix                                           |
+
+    Scenario Outline: A setup read that cannot start a daemon fails, and diagnoses nothing in process
+      # new: step 10 U5 and D17, the cannot-start rows of the setup nouns' reads.
+      Given an initialized ctxloom project
+      And no ctxloom daemon can be started for this home
+      When I run '<command>'
+      Then the command exits with code 10
+      And the output contains "no ctxloom daemon could be started"
+      And no project store was opened, and no engine was started
+
+      Examples:
+        | command                      |
+        | ctxloom doctor               |
+        | ctxloom manage check         |
+        | ctxloom remote list          |
+        | ctxloom deps check           |
+        | ctxloom auth status          |
+        | ctxloom init prompt          |
 
   Rule: Only the user can find the daemon, or speak to it as her
 

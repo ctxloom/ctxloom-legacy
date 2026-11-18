@@ -41,8 +41,16 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
     manage uninstall,                  re-run converges (materialize writes its
     bundle move --to <remote>          record first)
 
-  A local `bundle move` is one move. The writers of other tools' files are
-  step 10c's (U10): their outline below stays red until then.
+  A local `bundle move` is one move. A writer of other tools' files lists
+  them, with git's ids for what it will write, in its intent (L15), so a
+  killed one is finished by its re-run and never observed as the library.
+
+  A PULL IS A SEQUENCE (step 10c). `deps pull` and `deps upgrade` install
+  each pinned commit's tree whole, as one new directory per commit under
+  the cache, then replace `lock.yaml` once. A pull killed between its steps
+  converges when it is run again: a tree already installed is a step done,
+  and the lock is written last, so it never names a tree that is not
+  there.
 
   TRASH. A removal renames what it removes into
   `.ctxloom/state/trash/<request id>/`, outside the library. A sequence's
@@ -350,7 +358,7 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
         | after the old bundle moved to trash, before the new one moved in | ctxloom bundle import exported/notes --force --yes          | the bundle "notes" is the imported one, whole, and no trash is left              |
 
     Scenario Outline: Another tool's files are written in steps that converge, whichever step is killed
-      # new: the foreign-file writers (step 10c, U10).
+      # new: the foreign-file writers (step 10 U10).
       Given an initialized ctxloom project
       And the daemon will be killed outright after step <step> of '<command>'
       When I run '<command>'
@@ -364,3 +372,40 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
         | ctxloom materialize --to out --yes     | 2    |
         | ctxloom doctor --fix                   | 1    |
         | ctxloom manage uninstall --yes         | 1    |
+
+  Rule: A pull is a sequence of whole trees, then the lock, and a killed pull converges
+
+    Scenario Outline: A pull killed between its steps converges when it is run again
+      # new: step 10 U4 and O6.3, a killed pull.
+      Given an initialized ctxloom project
+      And a git remote "origin" serving a ctxloom bundle
+      And a git remote "vendor" serving a ctxloom bundle
+      And I run "ctxloom profile create dev --include origin/demo --include vendor/demo"
+      And the daemon will be killed outright <between>
+      When I run "ctxloom deps pull"
+      And I run "ctxloom deps pull"
+      Then the command succeeds
+      And the file ".ctxloom/lock.yaml" contains "//bundles/demo" exactly 2 times
+      And every tree the lock pins is installed whole, once
+      And nothing is left under ".ctxloom/state/staging"
+
+      Examples:
+        | between                                                  |
+        | after the first tree is installed, before the second     |
+        | after every tree is installed, before the lock is written |
+        | after the lock is written, before the pull is answered    |
+
+    Scenario: A lock is never left naming a tree that is not installed
+      # new: step 10 U4, the lock is the sequence's last step.
+      Given an initialized ctxloom project
+      And a git remote "origin" serving a ctxloom bundle
+      And I run "ctxloom remote default origin"
+      And I run "ctxloom profile create dev --include origin/demo"
+      And the daemon will be killed outright after every tree is installed, before the lock is written
+      And the command's retry is turned off
+      When I run "ctxloom deps pull"
+      Then the command exits with code 10
+      And the file ".ctxloom/lock.yaml" does not exist
+      When I run "ctxloom deps pull"
+      Then the command succeeds
+      And every tree the lock pins is installed whole, once
