@@ -4479,22 +4479,32 @@ a test per file, so `tests::gherkin_features::features::cli::agent` runs
 once, as many as it runs tests, each in a process of its own, and a
 filterset selects one. A new feature file is listed in its directory's
 module (`every_feature_file_has_a_test_of_its_own` refuses one left out,
-and a test naming no file). A feature's scenarios take turns (their steps
-block cucumber's one executor thread), so a feature lasts the sum of its
-scenarios, and the run at least its slowest feature's
+and a test naming no file). Within one cucumber run a feature's scenarios
+take turns (their steps block cucumber's one executor thread), so
+`gherkin_common::run_feature` runs each scenario of a feature as a run of
+its own (`scenario_ids`, then `run_only` with its id, as
+`GHERKIN_SCENARIO` does), `SCENARIOS_AT_ONCE` (3) at once on threads of
+their own, their outcomes put together in the file's order; an id whose
+own run ran nothing is red, never left out. Under `GHERKIN_TIMINGS`, and
+for a feature whose scenarios cannot be listed (a parse error, reported as
+before), the feature is one run. The forcing test is
+`a_features_scenarios_run_at_once` (two scenarios that each hold until
+both daemons serve). The run lasts at least its slowest feature
 (cli/daemon.feature). A feature that would not fit the 120 s has a
 `terminate-after` of its own, an override naming it in
-`.config/nextest.toml`, about 2.4 times the longer of two whole-workspace
-runs measured on 2026-11-18 (20 cores, load 22 to 50; the table is there),
-whole 30 s periods: `daemon` 390 s, `run` 330 s, `agent` 300 s,
-`session_approvals` and `library_changes` 270 s, `atomic_writes` and
-`j000700_team_authoring` 210 s, `session_children` 150 s; every other
-feature (43.7 s at most) keeps the 120 s. Windows keeps the limits measured
-for the clusters, each given to the features that were in it (a feature
-never took longer than its cluster). A host of fewer cores was not
-measured. Measured on 2026-11-18, the whole `just test` took 254.1 s
-(nextest 133.6 s, load 8) with the clusters and 116 s (nextest 95.8 s, load
-22 to 39) with a test per feature, its scenario list byte-identical.
+`.config/nextest.toml`, 4 times (not the clusters' 2.4: one at a time,
+daemon.feature took 3.5 times as long at load 50 as at 20) the longer of
+two whole-workspace runs on 2026-11-18 (20 cores, load 18 to 28; the table
+is there), whole 30 s periods: `daemon` and `run` 180 s, `agent`,
+`session_approvals` and `library_changes` 150 s; every other feature
+(28.7 s at most) keeps the 120 s. Windows keeps the limits measured for
+the clusters, each given to the features that were in it (a feature never
+took longer than its cluster), and macOS the daemon cluster's 300 s for
+its features. A host of fewer cores was not measured. Measured on
+2026-11-18, the whole `just test` took 254.1 s (nextest 133.6 s, load 8)
+with the clusters, 116 s (nextest 95.8 s, load 22 to 39) with a test per
+feature, and 105 s (nextest 67.4 s, load 18 to 28) with its scenarios 3 at
+once, the scenario list byte-identical in each.
 Separation: each scenario has a temporary root of its own,
 so its own ctxloom home, daemon, single-instance lock, store, holds and
 stubs; ports are the system's (port 0), and the feature tests are not in the

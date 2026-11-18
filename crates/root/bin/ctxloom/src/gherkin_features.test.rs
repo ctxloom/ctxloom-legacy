@@ -13,10 +13,11 @@
 //! at once, as many as it runs tests, each in a process of its own, a
 //! filterset selects one, and a slow one has a limit of its own
 //! (`.config/nextest.toml`). Every feature file has exactly one test
-//! (`every_feature_file_has_a_test_of_its_own`). A cucumber run is let run 4
-//! scenarios at once, but its steps block its one executor thread, so a
-//! feature's scenarios take turns (the forcing test below saw it), and a
-//! feature takes the sum of its scenarios. Each scenario has a temporary
+//! (`every_feature_file_has_a_test_of_its_own`). Within one cucumber run a
+//! feature's scenarios take turns (its steps block its one executor thread),
+//! so a feature's scenarios are each a run of their own, 3 at once on
+//! threads of their own (`gherkin_common::run_feature`; the forcing test
+//! `a_features_scenarios_run_at_once`). Each scenario has a temporary
 //! root of its own (its project and its home, so its own ctxloom home,
 //! daemon, single-instance lock, store and stubs), so nothing one feature
 //! runs is another's (the forcing test
@@ -825,6 +826,73 @@ fn two_clusters_at_once_never_see_each_others_daemon_or_files() {
     endpoints.sort();
     endpoints.dedup();
     assert_eq!(endpoints.len(), 4, "four endpoints: {endpoints:?}");
+}
+
+/// The forcing test of a feature's scenarios running at once
+/// (`gherkin_common::run_feature`'s split): one feature of two scenarios,
+/// each starting a daemon through a command and holding it until both
+/// serve. Run one after the other, the first would wait out the witness's
+/// bound and fail; at once, both pass, each answered by its own daemon.
+#[test]
+fn a_features_scenarios_run_at_once() {
+    let project = super::library::Project::bare();
+    let witness = project.dir().join("witness");
+    files::mkdirs(&witness);
+    let scenario = |name: &str| {
+        format!(
+            "  Scenario: {name}\n    Given an initialized ctxloom project\n    And no ctxloom daemon is serving for this home\n    And the daemon a command starts idles for a minute\n    When I run \"ctxloom session list --format json\"\n    Then the command succeeds\n    And the daemon serving this home is witnessed in \"{}\", until \"2\" are\n\n",
+            witness.display()
+        )
+    };
+    let path = project.dir().join("both.feature");
+    files::put(
+        &path,
+        format!(
+            "# world: base\nFeature: both\n\n{}{}",
+            scenario("one"),
+            scenario("two")
+        ),
+    );
+    let run = super::gherkin::run(&path);
+    quiet_hook_undone();
+    assert!(run.passed, "{:?}", run.failures);
+    let mut got = outcomes(&path, run);
+    got.sort();
+    assert_eq!(got, [("one".to_string(), true), ("two".to_string(), true)]);
+}
+
+/// The split's outcomes are each scenario's own, in the order of the ids,
+/// and an id whose own run ran nothing is red, never left out.
+#[test]
+fn each_split_scenario_is_its_own_runs_and_one_that_ran_nothing_is_red() {
+    use super::gherkin_common::run_scenarios_at_once;
+    let ids = ["f :: a", "f :: b", "f :: c"].map(String::from);
+    let run = run_scenarios_at_once(&ids, 2, |id| FeatureRun {
+        passed: id != "f :: b",
+        scenarios: if id == "f :: c" {
+            Vec::new()
+        } else {
+            vec![(id.to_string(), id != "f :: b")]
+        },
+        failures: Vec::new(),
+    });
+    assert!(!run.passed);
+    assert_eq!(
+        run.scenarios,
+        [
+            ("f :: a".to_string(), true),
+            ("f :: b".to_string(), false),
+            ("f :: c".to_string(), false)
+        ]
+    );
+    assert_eq!(run.failures.len(), 1, "{:?}", run.failures);
+    assert_eq!(run.failures[0].scenario, "f :: c");
+    let green = run_scenarios_at_once(&ids[..1], 2, |id| FeatureRun {
+        passed: true,
+        scenarios: vec![(id.to_string(), true)],
+        failures: Vec::new(),
+    });
+    assert!(green.passed);
 }
 
 /// A feature whose other scenarios run: its `@pending` scenarios, and a
