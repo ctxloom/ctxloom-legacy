@@ -338,7 +338,12 @@ impl Project {
                 .move_into(&entry.name, &app_dir)
                 .map_err(AppError::Cause)?
         {
-            return Err(WriteError::MoveDestinationExists { dest }.into());
+            return Err(WriteError::MoveDestinationExists {
+                dest,
+                bundle: entry.name.clone(),
+                dir: dir.to_string(),
+            }
+            .into());
         }
         Ok(BundleMoved {
             name: entry.name.clone(),

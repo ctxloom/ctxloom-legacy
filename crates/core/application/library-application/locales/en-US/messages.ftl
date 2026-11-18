@@ -125,7 +125,9 @@ library-application-write-item-not-found = { $kind } not found: { $name }
 library-application-write-empty-edit = refusing to overwrite { $kind } "{ $name }" with an empty buffer — the editor returned no content (crash, truncated write, or a wrapper that never saved); the item is unchanged
 library-application-write-export-needs-dest = either an output file or a destination directory must be specified
 library-application-write-move-destination-exists = bundle already exists at destination: { $dest }; a move never replaces it
-library-application-write-move-destination-exists-fix = remove or move aside the bundle at the destination, then move again
+# DRAFT (step 10b, owner 2026-11-18, night: a move onto a bundle there is
+# refused, `--force` or not; the fix names the removal, then the move).
+library-application-write-move-destination-exists-fix = remove the bundle there first (`ctxloom bundle remove { $bundle }` in { $dir }), then move it again
 library-application-write-move-destination-itself = destination is the bundle's own directory: { $dest }
 library-application-write-export-destination-exists = { $path } is already there; nothing was exported
 library-application-write-export-destination-exists-fix = export to a path that is not there, or move what is there aside first

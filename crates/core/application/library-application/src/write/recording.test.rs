@@ -213,10 +213,38 @@ fn test_a_bundle_move_onto_a_bundle_there_or_onto_itself_is_refused() {
     let code = |outcome: crate::Outcome<crate::BundleMoved>| {
         angzarr_diagnostic::Diagnostic::code(&outcome.result.expect_err("refused")).to_string()
     };
+    let refused = recording
+        .bundle_move_into(&plain(), "demo", "/work/other")
+        .result
+        .expect_err("refused");
     assert_eq!(
-        code(recording.bundle_move_into(&plain(), "demo", "/work/other")),
+        angzarr_diagnostic::Diagnostic::code(&refused),
         "library-application-write-move-destination-exists"
     );
+    // Its fix names the removal that clears the way, there, then the move
+    // again (owner 2026-11-18, night).
+    let args: Vec<(String, String)> = angzarr_diagnostic::Diagnostic::args(&refused)
+        .into_iter()
+        .filter_map(|(name, value)| match value {
+            angzarr_diagnostic::Arg::Str(text) => Some((name.to_string(), text)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        args.contains(&("bundle".to_string(), "demo".to_string())),
+        "{args:?}"
+    );
+    assert!(
+        args.contains(&("dir".to_string(), "/work/other".to_string())),
+        "{args:?}"
+    );
+    let fix = crate::EN_US
+        .1
+        .lines()
+        .find(|line| line.starts_with("library-application-write-move-destination-exists-fix ="))
+        .expect("a fix");
+    assert!(fix.contains("ctxloom bundle remove { $bundle }"), "{fix}");
+    assert!(fix.contains("then move it again"), "{fix}");
     assert_eq!(
         code(recording.bundle_move_into(&plain(), "demo", "/p")),
         "library-application-write-move-destination-itself"

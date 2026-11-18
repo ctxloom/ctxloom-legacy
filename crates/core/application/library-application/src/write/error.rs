@@ -69,8 +69,10 @@ write_errors! {
     /// An export onto a file that is there.
     ExportExists { path } = "write-export-exists";
     /// A local bundle move onto a bundle that is there (step 10b U9: one
-    /// rename, never over what is there, `--force` or not).
-    MoveDestinationExists { dest } = "write-move-destination-exists";
+    /// rename, never over what is there, `--force` or not): `bundle` the
+    /// one moved, `dir` the project it was to land in, which its fix names
+    /// (owner 2026-11-18, night).
+    MoveDestinationExists { dest, bundle, dir } = "write-move-destination-exists";
     /// A local bundle move onto its own place.
     MoveDestinationItself { dest } = "write-move-destination-itself";
     /// A bundle export onto a path that is there (D2: put in whole, never
