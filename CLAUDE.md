@@ -207,7 +207,10 @@ rename into `state/trash/<request id>/<path>` (nothing there to take is
 It is then read back and recorded `RecordStepDone`, and answered with
 the path's new etag. A tree's staging is swept the first time a daemon
 observes the tree (`Observations::sweeping`, a read's or a write's; S50);
-the trash is never swept at start. A removal's slot is in the tree's
+the trash is never swept at start. An apply that trashed says where,
+the notice `library-api-notice-trashed` (its path and slot as the tree
+shows them, `.ctxloom/state/trash/<request id>/`, kept 7 days; texts.md
+§3, `daemon_api::library_writes::trashed_notice`). A removal's slot is in the tree's
 state (`library_tree::Slot`: its paths, the time its intent was recorded,
 `kept`; every lone removal is kept, a sequence's own will not be, U9), and
 a kept slot `KEEP_DAYS` (7, G12) old or more by the daemon's clock is

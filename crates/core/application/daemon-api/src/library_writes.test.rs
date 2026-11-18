@@ -212,3 +212,34 @@ fn test_an_etag_that_is_not_a_number_is_refused_as_an_invalid_argument() {
         Err(crate::refusal::ApiError::Refused(_))
     ));
 }
+
+// Step 10b texts.md §3 (G12): a write that took a path into the trash says
+// where it is kept, both as the tree shows them (its directory's own name
+// first); any other step says nothing.
+#[test]
+fn test_a_trash_step_says_where_its_path_is_kept() {
+    let trash = library_api::writes::Shape::Trash {
+        path: "content/bundles/v2/demo".to_string(),
+        files: Vec::new(),
+    };
+    let said = super::trashed_notice("/work/demo/.ctxloom", &trash, "r-1").expect("a notice");
+    assert_eq!(said.code, "library-api-notice-trashed");
+    assert!(
+        said.text.contains(".ctxloom/content/bundles/v2/demo")
+            && said.text.contains(".ctxloom/state/trash/r-1/"),
+        "{}",
+        said.text
+    );
+    let replace = library_api::writes::Shape::Replace {
+        path: "config.yaml".to_string(),
+        bytes: Vec::new(),
+        executable: false,
+    };
+    assert!(super::trashed_notice("/work/demo/.ctxloom", &replace, "r-1").is_none());
+    let windows = super::trashed_notice(r"C:\work\.ctxloom", &trash, "r-2").unwrap();
+    assert!(
+        windows.text.contains(".ctxloom/state/trash/r-2/"),
+        "{}",
+        windows.text
+    );
+}

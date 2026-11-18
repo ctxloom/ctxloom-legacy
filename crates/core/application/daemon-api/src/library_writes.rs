@@ -109,6 +109,25 @@ fn request_bytes(request_id: &str) -> [u8; 16] {
         .into_bytes()
 }
 
+/// What a write that took a path into the trash says (step 10b texts.md
+/// §3, G12): the path and the slot it is kept in, as the tree shows them
+/// (the tree directory's own name first, `.ctxloom/...`); none for any
+/// other step.
+fn trashed_notice(tree: &str, shape: &writes::Shape, made_under: &str) -> Option<v1::Notice> {
+    let writes::Shape::Trash { path, .. } = shape else {
+        return None;
+    };
+    let base = tree
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default();
+    Some(notice_of(&library_api::LibraryApiNotice::Trashed {
+        path: format!("{base}/{path}"),
+        slot: format!("{base}/state/trash/{made_under}/"),
+    }))
+}
+
 fn notice_of(notice: &library_api::LibraryApiNotice) -> v1::Notice {
     v1::Notice {
         code: angzarr_diagnostic::Diagnostic::code(notice).to_string(),
@@ -216,7 +235,7 @@ impl<E: Edge> Api<E> {
             End::Pending { done } => Some(done),
             _ => None,
         });
-        let etag = self
+        let (etag, trashed) = self
             .carry_out(
                 &site,
                 &landing,
@@ -225,6 +244,7 @@ impl<E: Edge> Api<E> {
                 (request_id, pending),
             )
             .await?;
+        notices.extend(trashed);
         Ok(Wrote {
             answer: Some(answer),
             applied: true,
@@ -271,7 +291,8 @@ impl<E: Edge> Api<E> {
 
     /// The write `shaped` intended under `request_id` (unless its intent
     /// is recorded already: `pending`, the step it got to), made, and its
-    /// step recorded done: the path's new token.
+    /// step recorded done: the path's new token, and, for a step that took
+    /// a path into the trash, the notice of where it is kept.
     async fn carry_out(
         &self,
         site: &crate::library_reads::ReadSite<'_>,
@@ -279,7 +300,7 @@ impl<E: Edge> Api<E> {
         (verb, etag): (&str, &str),
         shaped: &writes::Shaped,
         (request_id, pending): (&str, Option<u32>),
-    ) -> Result<String, ApiError> {
+    ) -> Result<(String, Option<v1::Notice>), ApiError> {
         let (observations, observers) =
             self.observing.as_ref().ok_or_else(|| ApiError::Failed {
                 detail: "this daemon observes no library".to_string(),
@@ -372,7 +393,10 @@ impl<E: Edge> Api<E> {
             .await
             .map_err(ApiError::failed)?;
         self.dies_at("done");
-        Ok(observations.held(tree).token(&path).to_string())
+        Ok((
+            observations.held(tree).token(&path).to_string(),
+            trashed_notice(landing.site.tree(), &shaped.shape, &request_id),
+        ))
     }
 
     /// The use case planned over the recording library at `site`: its

@@ -641,6 +641,24 @@ fn test_removing_a_bundle_with_yes_takes_the_file_and_the_listing_entry() {
         .contains("bundle not found: nosuch");
 }
 
+// Step 10b texts.md §3 (G12): a removal applied into the trash says where
+// what it took is kept, and for how long; a preview says nothing of it.
+#[test]
+fn test_a_removal_into_the_trash_says_where_it_is_kept() {
+    let project = demo();
+    let previewed = project.run(&["bundle", "remove", "demo", "--format", "text"]);
+    previewed.lacks("is kept in");
+    let ran = project.run(&["bundle", "remove", "demo", "--yes", "--format", "text"]);
+    ran.succeeds();
+    assert!(
+        ran.stderr
+            .contains(".ctxloom/content/bundles/v2/demo is kept in .ctxloom/state/trash/")
+            && ran.stderr.contains("for 7 days"),
+        "{}",
+        ran.stderr
+    );
+}
+
 // bundle.feature: Scenario Outline: The rm alias previews and destroys
 // exactly as remove does
 #[test]
