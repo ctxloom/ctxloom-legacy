@@ -58,6 +58,7 @@ tests_memory_max := "none"
 tests_swap_max := "0"
 workspace_wide := "Cargo.toml"
 red_judge := "_judge"
+staged_tests_filter := ""
 [no-exit-message]
 test-staged scope="":
     @echo "test-staged asked: [{{scope}}]"; exit "${FAKE_STAGED_RC}"

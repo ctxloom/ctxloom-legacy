@@ -4750,7 +4750,17 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    On the default branch (and wherever the branch cannot be told)
    `test-commit` asks `test-staged dependents`, which adds the workspace
    dependents as before, so red is never committed there. A staged
-   `workspace_wide` file tests the whole workspace. Red tests are committed
+   `workspace_wide` file tests the whole workspace. Every one of these runs
+   is NARROWED (2026-11-18): `staged_tests_filter`, ctxloom's
+   `scripts/staged-features.sh`, given the staged paths, prints the nextest
+   filterset the run is held to (`_tests --filter=<set>`): every test but
+   the feature runner's tests of one feature file each, and of those only
+   the staged feature files' (`tests::gherkin_features::features::<path>`),
+   so no commit runs a feature file it does not stage, whatever it changes
+   (a step definition included); the pass line says `narrowed by
+   scripts/staged-features.sh`. `just test`, and so `land-ratchet` and
+   `closeout-ratchet`, is never narrowed: every feature runs there.
+   Red tests are committed
    off the default branch only (`test-commit`), and no judge looks at them
    at commit: ctxloom's `red_judge` is `""` (the red-commit judge is gone,
    2026-11-13); a red scenario the branch added, or a green one it broke, is
