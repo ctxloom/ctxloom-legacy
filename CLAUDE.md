@@ -4700,7 +4700,7 @@ ported there (`gates/MIGRATING.md`).
 lefthook runs the gates one at a time, stopping at the first failure, and
 shows each gate's pass line and any failure's extract. Gates 1 to 6 run in
 pre-commit (the private recipes `fmt-staged`, `secrets-scan-staged`,
-`plain-binary`, `test-commit`, ...; `just --list` hides them, they run by name). Mutation (7)
+`lint-staged`, `plain-binary`, `test-commit`, ...; `just --list` hides them, they run by name). Mutation (7)
 runs in no git hook and is not run by hand: the `closeout` skill runs `just
 closeout`, whose `mutants-batch` mutation-tests the whole batch (base to HEAD,
 the base defaulting to the merge-base with `main`) in a throwaway worktree, in
@@ -4733,7 +4733,9 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    `just fmt-check` is the check for CI and manual runs.
 2. **secrets**: gitleaks over the staged changes (`.gitleaks.toml`). A fake
    secret in a test ends its line with `gitleaks:allow`.
-3. **clippy**: `just lint`, including the core's purity rules
+3. **clippy**: `just lint-staged`: `just lint` run over the STAGED tree (owner
+   ruling 2026-11-18, night), in `_staged-tree`'s throwaway worktree with
+   test-staged's target (`target/staged`), including the core's purity rules
    (`crates/core/clippy.toml`).
 4. **plain binary**: `just plain-binary` (owner ruling 2026-11-18,
    evening) builds the workspace without its dev-dependencies, as `just

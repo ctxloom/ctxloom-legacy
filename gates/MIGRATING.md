@@ -152,3 +152,15 @@ checks are ctxloom's own (its justfile, `scripts/plain-engines-check.sh` and
 a recipe of that name. It is a command of the existing pre-commit hook, so
 no `lefthook install` is needed.
 
+## The pre-commit clippy lints the staged tree (owner ruling 2026-11-18, night)
+
+pre-commit's `clippy` runs `just lint-staged`, which runs the repository's
+`lint` inside the throwaway staged worktree `_staged-tree` makes (HEAD plus
+`git diff --cached`), with test-staged's target dir (`target/staged`), so
+an unstaged edit can neither pass nor fail it. Its output is `lint`'s own
+terse line (logs in this checkout's `target/logs`, `GATE_LOG_DIR`). It is
+the same command of the existing pre-commit hook, so no `lefthook install`
+is needed. A repository copying the change takes the `lint-staged` recipe
+and the `clippy` command's `run:`; its `lint` recipe must work in a
+checkout of its own tree (it is run there).
+

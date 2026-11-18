@@ -297,6 +297,18 @@ test-staged scope="own": (_require-nextest "test-staged")
     done < <(git -C "$root" diff --cached --name-only --no-renames -z HEAD)
     echo "ok   test-staged (nothing to test: no staged change is in a crate or a workspace-wide file)"
 
+# The pre-commit clippy: the repository's own `lint`, run over the STAGED
+# tree (owner ruling 2026-11-18, night), in the throwaway worktree that
+# `_staged-tree` makes for `test-staged`, with its target dir
+# (target/staged), so an unstaged edit can neither pass nor fail it, and
+# a staged change to `lint` is run by the `lint` it stages.
+[no-exit-message]
+[private]
+[group('hook')]
+[doc("pre-commit clippy: the repository's lint over the staged tree")]
+lint-staged:
+    @just --justfile '{{gates_root}}/justfile' _staged-tree lint
+
 # The tests of a commit: lefthook's pre-commit `tests` step, and its
 # pre-merge-commit one. `test-staged` (off the default branch the changed
 # crates' own tests; on it, and wherever the branch cannot be told, their

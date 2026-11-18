@@ -36,9 +36,11 @@ pre-commit:
       priority: 3
       run: just lint-path-deps
     clippy:
-      # The repository's own `lint`.
+      # The repository's own `lint`, over the STAGED tree (`just
+      # lint-staged`: the throwaway worktree and target test-staged uses), so
+      # what is linted is what the commit holds.
       priority: 4
-      run: just lint
+      run: just lint-staged
     plain-binary:
       # The binary a build without dev-dependencies makes knows only the real
       # engines and no destroy (`just plain-binary`, which `just build` ends
