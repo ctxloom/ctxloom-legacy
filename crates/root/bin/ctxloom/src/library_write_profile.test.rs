@@ -740,7 +740,8 @@ fn test_bare_profile_remove_reports_what_would_go_and_destroys_nothing() {
         let project = demo_and_dev();
         // A json answer names the project (OD-40, OQ-2): its id is written once.
         project.run(&["test", "project-name"]).succeeds();
-        let before = project.tree(".ctxloom");
+        let mut before = project.tree(".ctxloom");
+        before.remove("state/checkout");
         let ran = with_flags(&project, &["profile", "remove", "dev"], flags);
         ran.succeeds();
         if is_text(flags) {
@@ -758,7 +759,11 @@ fn test_bare_profile_remove_reports_what_would_go_and_destroys_nothing() {
             );
         }
         project.file_contains(DEV_YAML, "- demo");
-        assert_eq!(project.tree(".ctxloom"), before);
+        // The daemon observes the checkout before it previews (step 10b
+        // U3, as a read does): its own state, never the library's.
+        let mut after = project.tree(".ctxloom");
+        after.remove("state/checkout");
+        assert_eq!(after, before);
         let listed = with_flags(&project, &["profile", "list"], flags);
         if !is_text(flags) {
             assert!(reports_as(&listed.json(), "profiles.0.name")

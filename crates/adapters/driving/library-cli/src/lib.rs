@@ -407,10 +407,10 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
 /// none of its own.
 pub const SERVED_WRITES: &[(&str, &[&str])] = &[
     ("bundle", &["create", "remove"]),
-    ("fragment", &["create", "edit", "remove"]),
-    ("command", &["create", "edit", "remove"]),
+    ("fragment", &["create", "edit"]),
+    ("command", &["create", "edit"]),
     ("config", &["set"]),
-    ("skill", &["create", "remove"]),
+    ("skill", &["create"]),
     ("profile", &["remove"]),
     ("agent", &["remove"]),
     ("companion", &["remove"]),

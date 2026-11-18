@@ -150,8 +150,12 @@ from the sidecar and its import turns into the sidecar's list.
 Step 10b U3 (writes as library-domain commands; `t13-step10.plan.md` §2
 U3, protos.md §1.1) serves `bundle create`, `fragment|command create
 <bundle>#<kind>s/<id>` and `edit`, `skill create`, `config set` and the
-removals (`bundle|fragment|command|skill|profile|agent|companion remove`)
-in the daemon, from one table (`daemon_proto::library_writes!`, every layer;
+removals `bundle|profile|agent|companion remove` in the daemon
+(`DeleteFragment`, `DeleteCommand` and `DeleteSkill` are served too, but
+the CLI's `fragment|command|skill remove` stay in process: an item with its
+distilled form, or a skill with its old-layout sidecar, is two paths, which
+one step refuses `OneChangePerCall`; they are U9's sequence and U8's T27
+layout), from one table (`daemon_proto::library_writes!`, every layer;
 `library_api::served_writes!`, each verb's use case and response; the
 CLI's `SERVED_WRITES`). Every write request carries the caller's `cwd`
 (97) and `env` (94), as the reads do (E1, extended to the writes on

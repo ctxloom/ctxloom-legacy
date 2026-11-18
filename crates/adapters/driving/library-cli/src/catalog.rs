@@ -12,7 +12,7 @@ use std::io::{self, Write};
 
 use cli_support::{say_notices, Exit};
 use daemon_proto::v1;
-use library_application::{Notice, Outcome};
+use library_application::{Notice, Outcome, Preview, Removal};
 use serde::Serialize;
 
 use crate::{failed, output_failure, Context, Failure, PROG};
@@ -76,6 +76,40 @@ pub(crate) fn answer<T, M: Serialize>(
 /// A read or a write that answers ok.
 pub(crate) fn ok<T>(_: &T) -> Exit {
     Exit::OK
+}
+
+/// What a removal's preview answers: nothing applied, what would go, and
+/// the command that applies it.
+pub(crate) struct Previewed {
+    pub(crate) detail: Vec<String>,
+    pub(crate) apply_command: String,
+}
+
+/// A removal as its API response: the preview's, or the removal done's.
+pub(crate) fn removal<T, M>(
+    removal: &Removal<T>,
+    preview: impl FnOnce(Previewed) -> M,
+    done: impl FnOnce(&T) -> M,
+) -> M {
+    match removal {
+        Removal::Preview(Preview { detail, apply, .. }) => preview(Previewed {
+            detail: detail.clone(),
+            apply_command: apply.clone(),
+        }),
+        Removal::Done(removed) => done(removed),
+    }
+}
+
+/// A removal's text: the preview, or `done`'s.
+pub(crate) fn removal_text<T>(
+    removal: &Removal<T>,
+    out: &mut dyn Write,
+    done: impl FnOnce(&T, &mut dyn Write) -> io::Result<()>,
+) -> io::Result<()> {
+    match removal {
+        Removal::Preview(preview) => crate::write::preview_text(out, preview),
+        Removal::Done(removed) => done(removed, out),
+    }
 }
 
 #[cfg(test)]

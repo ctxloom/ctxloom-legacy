@@ -1,7 +1,7 @@
 //! `skill`: list and show, and its writes (B1), each json answer its AIP
 //! resource or method response (OD-40, design §5.3).
 
-use library_application::{SkillExported, SkillImported};
+use library_application::{Removal, SkillExported, SkillImported, SkillRemoved};
 
 use crate::catalog::{self, ok};
 use crate::read_back;
@@ -115,37 +115,34 @@ fn create(
     )
 }
 
-/// `skill remove <ref> [--yes]`: the daemon's `DeleteSkill` (step 10b
-/// U3), previewed and confirmed at a terminal.
 fn remove(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let under = library_api::names::reference_target(&text_arg(sub, "ref"));
-    crate::write::removal_served(
+    let reference = text_arg(sub, "ref");
+    let outcome = cx
+        .library
+        .skill_remove(&cx.flags, &reference, flag(sub, "yes"));
+    catalog::answer(
         cx,
-        flag(sub, "yes"),
-        |validate_only, answers, etag| {
-            let request = v1::DeleteSkillRequest {
-                validate_only,
-                answers,
-                etag,
-                globals: cx.globals(),
-                ..v1::DeleteSkillRequest::default()
-            };
-            cx.served.delete_skill(&under, request)
-        },
+        outcome,
         out,
         err,
-        |gone, out| {
-            let name = gone.skill.as_ref().map_or("", |s| s.name.as_str());
-            let rest = name.split_once("/bundles/").map_or(name, |(_, rest)| rest);
-            let (bundle, skill) = rest.split_once("/skills/").unwrap_or((rest, ""));
-            writeln!(out, "Removed skill \"{skill}\" from bundle \"{bundle}\"")?;
-            writeln!(out, "  {}", gone.path)
+        false,
+        |parent, gone| removed(parent, &reference, gone),
+        |gone, out, _| {
+            catalog::removal_text(gone, out, |gone, out| {
+                writeln!(
+                    out,
+                    "Removed skill \"{}\" from bundle \"{}\"",
+                    gone.name, gone.bundle
+                )?;
+                writeln!(out, "  {}", gone.dir)
+            })
         },
+        crate::write::removal_exit,
     )
 }
 
@@ -205,6 +202,38 @@ fn import(
             writeln!(out, "  {}", done.dir)
         },
         ok,
+    )
+}
+
+/// `skill remove`: `DeleteSkillResponse`, the preview's (named by the
+/// reference asked) or the removal's.
+pub(crate) fn removed(
+    parent: &str,
+    asked: &str,
+    gone: &Removal<SkillRemoved>,
+) -> v1::DeleteSkillResponse {
+    catalog::removal(
+        gone,
+        |preview| v1::DeleteSkillResponse {
+            skill: Some(v1::Skill {
+                name: catalog::reference_name(parent, asked).unwrap_or_else(|| asked.to_string()),
+                ..v1::Skill::default()
+            }),
+            applied: Some(false),
+            detail: preview.detail,
+            apply_command: preview.apply_command,
+            ..v1::DeleteSkillResponse::default()
+        },
+        |done| v1::DeleteSkillResponse {
+            skill: Some(v1::Skill {
+                name: skill_name(parent, &done.bundle, &done.name),
+                path: done.dir.clone(),
+                ..v1::Skill::default()
+            }),
+            path: done.dir.clone(),
+            applied: Some(true),
+            ..v1::DeleteSkillResponse::default()
+        },
     )
 }
 
