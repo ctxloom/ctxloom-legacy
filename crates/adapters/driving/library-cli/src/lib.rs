@@ -28,7 +28,7 @@ mod prelude {
     pub(crate) use clap::ArgMatches;
     pub(crate) use cli_support::{flag, many, say_notices, Exit};
     pub(crate) use library_application::{
-        AgentRequest, AgentRow, AgentWritten, AppError, BundleEditRequest, DefaultAgent, ItemKind,
+        AgentRequest, AgentRow, AgentWritten, AppError, DefaultAgent, ItemKind,
         ProfileCreateRequest, ProfileEdit, ProfileEdited, SwapPreview, WriteError,
     };
 
@@ -421,7 +421,7 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
 /// home step and observes the trees before it plans, so the caller takes
 /// none of its own.
 pub const SERVED_WRITES: &[(&str, &[&str])] = &[
-    ("bundle", &["create", "remove"]),
+    ("bundle", &["create", "edit", "remove"]),
     ("fragment", &["create", "edit"]),
     ("command", &["create", "edit"]),
     ("config", &["set"]),

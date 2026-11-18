@@ -142,21 +142,17 @@ fn test_a_bundle_name_is_never_nested_and_never_climbs_out() {
 
 // bundle.feature: Scenario Outline: The listing summarizes each bundle by
 // version and by what it holds (the edit half: version and fragment count
-// after the edit)
+// after the edit). One edit per file (the approved spec's OneChangePerCall,
+// coordinator 2026-11-18): the version, then the fragment.
 #[test]
 fn test_the_listing_follows_an_edit_by_version_and_by_what_it_holds() {
     for flags in FORMATS {
         let project = demo();
         project
-            .run(&[
-                "bundle",
-                "edit",
-                "demo",
-                "--version",
-                "2.0.0",
-                "--add-fragment",
-                "testing",
-            ])
+            .run(&["bundle", "edit", "demo", "--version", "2.0.0"])
+            .succeeds();
+        project
+            .run(&["bundle", "edit", "demo", "--add-fragment", "testing"])
             .succeeds();
         let ran = with_flags(&project, &["bundle", "list"], flags);
         ran.succeeds();
@@ -206,25 +202,20 @@ fn test_metadata_edits_land_in_the_file() {
 }
 
 // bundle.feature: Scenario: Items are attached and detached by name, and the
-// manifest follows
+// manifest follows, one per call (T29: each item is its own file)
 #[test]
 fn test_items_are_attached_and_detached_by_name_and_the_manifest_follows() {
     let project = demo();
-    project
-        .run(&[
-            "bundle",
-            "edit",
-            "demo",
-            "--add-fragment",
-            "coding-standards",
-            "--add-prompt",
-            "review",
-            "--add-mcp",
-            "tree-sitter",
-            "--add-tag",
-            "golang",
-        ])
-        .succeeds();
+    for (flag, name) in [
+        ("--add-fragment", "coding-standards"),
+        ("--add-prompt", "review"),
+        ("--add-mcp", "tree-sitter"),
+        ("--add-tag", "golang"),
+    ] {
+        project
+            .run(&["bundle", "edit", "demo", flag, name])
+            .succeeds();
+    }
     project
         .file_contains(
             &format!("{DEMO}/fragments/coding-standards.md"),
@@ -254,19 +245,15 @@ fn test_items_are_attached_and_detached_by_name_and_the_manifest_follows() {
             .as_deref(),
         Some("---\ndescription: review\n---\nAdd prompt content here.")
     );
-    project
-        .run(&[
-            "bundle",
-            "edit",
-            "demo",
-            "--remove-fragment",
-            "coding-standards",
-            "--remove-mcp",
-            "tree-sitter",
-            "--remove-tag",
-            "golang",
-        ])
-        .succeeds();
+    for (flag, name) in [
+        ("--remove-fragment", "coding-standards"),
+        ("--remove-mcp", "tree-sitter"),
+        ("--remove-tag", "golang"),
+    ] {
+        project
+            .run(&["bundle", "edit", "demo", flag, name])
+            .succeeds();
+    }
     project
         .file_is_absent(&format!("{DEMO}/fragments/coding-standards.md"))
         .file_is_absent(&format!("{DEMO}/mcp/tree-sitter.yaml"))
@@ -280,6 +267,8 @@ fn test_items_are_attached_and_detached_by_name_and_the_manifest_follows() {
 
 // operations.UpdateBundle (documented condition): what an edit did is named,
 // in order, in both formats; an add of a name already there is not a change.
+// Several fields of the one manifest are one edit (owner ruling 2026-11-18);
+// an item is a file of its own, so its own edit (T29).
 #[test]
 fn test_an_edit_names_what_it_changed() {
     let project = demo();
@@ -291,12 +280,6 @@ fn test_an_edit_names_what_it_changed() {
         "2.0.0",
         "--add-tag",
         "golang",
-        "--add-fragment",
-        "testing",
-        "--add-prompt",
-        "review",
-        "--add-mcp",
-        "tree-sitter",
         "--format",
         "text",
     ]);
@@ -304,11 +287,17 @@ fn test_an_edit_names_what_it_changed() {
     let manifest = project.shown(&format!("{DEMO}/bundle.yaml"));
     assert_eq!(
         ran.stdout,
-        format!(
-            "updated version\nadded tag: golang\nset fragment: testing\nset prompt: review\nset mcp: tree-sitter\nUpdated bundle: {}\n",
-            manifest
-        )
+        format!("updated version\nadded tag: golang\nUpdated bundle: {manifest}\n")
     );
+    for (flag, name, said) in [
+        ("--add-fragment", "testing", "set fragment: testing"),
+        ("--add-prompt", "review", "set prompt: review"),
+        ("--add-mcp", "tree-sitter", "set mcp: tree-sitter"),
+    ] {
+        let ran = project.run(&["bundle", "edit", "demo", flag, name, "--format", "text"]);
+        ran.succeeds();
+        assert_eq!(ran.stdout, format!("{said}\nUpdated bundle: {manifest}\n"));
+    }
     let again = project.run(&[
         "bundle",
         "edit",
@@ -322,21 +311,16 @@ fn test_an_edit_names_what_it_changed() {
     // OD-40: `UpdateBundleResponse`, nothing applied and no change listed.
     assert_eq!(reports_as(&again.json(), "applied"), "false");
     assert_eq!(entries(&again.json(), "changes"), 0);
-    let removed = project.run(&[
-        "bundle",
-        "edit",
-        "demo",
-        "--remove-fragment",
-        "testing",
-        "--remove-tag",
-        "golang",
-        "--format",
-        "json",
-    ]);
-    let doc = removed.json();
-    assert_eq!(reports_as(&doc, "applied"), "true");
-    assert_eq!(reports_as(&doc, "changes.0"), "removed tag: golang");
-    assert_eq!(reports_as(&doc, "changes.1"), "removed fragment: testing");
+    for (flag, name, said) in [
+        ("--remove-tag", "golang", "removed tag: golang"),
+        ("--remove-fragment", "testing", "removed fragment: testing"),
+    ] {
+        let removed = project.run(&["bundle", "edit", "demo", flag, name, "--format", "json"]);
+        let doc = removed.json();
+        assert_eq!(reports_as(&doc, "applied"), "true");
+        assert_eq!(reports_as(&doc, "changes.0"), said);
+        assert_eq!(entries(&doc, "changes"), 1);
+    }
 }
 
 // bundle.feature: Scenario Outline: An edit that was told to change nothing

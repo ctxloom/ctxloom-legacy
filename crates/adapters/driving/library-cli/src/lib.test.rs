@@ -213,10 +213,17 @@ macro_rules! written_by_library_api {
                     config_set: globals.config_set.clone(),
                     trusted: false,
                 };
-                let apply = !request.validate_only;
                 // A preview writes nothing: its use case over the recording
-                // library, as the daemon plans it.
-                let previewing = self.library.clone().recording().0;
+                // library, as the daemon plans it; an apply that plans no
+                // change is applied as nothing, as the daemon answers it.
+                let (previewing, recorder) = self.library.clone().recording();
+                let mut apply = !request.validate_only;
+                if apply {
+                    let planned = library_api::served_writes::$method::plan(
+                        &previewing, &flags, &request, apply,
+                    );
+                    apply = planned.result.is_err() || !recorder.take().is_empty();
+                }
                 let library = if apply { self.library } else { &previewing };
                 let outcome =
                     library_api::served_writes::$method::plan(library, &flags, &request, apply);
@@ -1027,6 +1034,7 @@ fn is_served_writing(line: &[&str]) -> bool {
 fn test_the_daemons_writes_are_told_from_the_verbs_in_process() {
     for line in [
         &["bundle", "create", "demo"][..],
+        &["bundle", "edit", "demo", "--version", "2.0.0"],
         &["config", "set", "a.b", "c"],
         &["mcp", "server", "set", "demo#mcp/x", "--command", "echo"],
         &["mcp", "server", "edit", "demo#mcp/x"],

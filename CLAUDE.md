@@ -156,12 +156,13 @@ editor, the preview's Edit need; `--header`, `--tag` and `--served-by` are
 gone, owner ruling, hard migrate; a server's notes and installation are
 its `mcp/.<n>.meta.yaml` sidecar until T27, so a set of them beside a
 runtime field is two files, refused `OneChangePerCall`) and the
-removals `bundle|profile|agent|companion remove` in the daemon
-(`UpdateBundle`, `bundle edit`, is served too, its mask allowed several
-paths of the one `bundle.yaml` (owner ruling 2026-11-18) and its items
-added and removed by the request's lists, but the CLI's `bundle edit`
-stays in process until bundle.feature's listing outline, a two-file edit,
-is ruled on)
+removals `bundle|profile|agent|companion remove` in the daemon, and
+`bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
+`bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
+by the request's lists; an item beside anything else is two files,
+refused `OneChangePerCall`, so bundle.feature's listing outline edits the
+version and the fragment in two calls, coordinator 2026-11-18, for owner
+review)
 (`DeleteFragment`, `DeleteCommand` and `DeleteSkill` are served too, but
 the CLI's `fragment|command|skill remove` stay in process: an item with its
 distilled form, or a skill with its old-layout sidecar, is two paths, which

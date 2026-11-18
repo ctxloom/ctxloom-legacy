@@ -347,12 +347,12 @@ mod messages {
     use std::collections::BTreeMap;
 
     use library_application::{
-        BundleEdited, BundleExported, BundleImported, BundleList, BundleRow, BundleShow,
-        ShownCommand, ShownFragment, ShownMcp, ShownSkill,
+        BundleExported, BundleImported, BundleList, BundleRow, BundleShow, ShownCommand,
+        ShownFragment, ShownMcp, ShownSkill,
     };
     use serde_json::{json, Value};
 
-    use super::super::{edited, exported, imported};
+    use super::super::{exported, imported};
     use library_api::resources::bundle;
     use library_api::resources::bundles as listed;
 
@@ -540,21 +540,6 @@ mod messages {
     #[test]
     fn test_the_write_responses_carry_what_the_write_reported() {
         let b = "projects/calm-otter/bundles/demo";
-        let changed = BundleEdited {
-            status: "updated".to_string(),
-            name: "demo".to_string(),
-            changes: vec!["updated version".to_string()],
-            path: "bundles/demo/bundle.yaml".to_string(),
-        };
-        assert_eq!(
-            as_json(edited(P, &changed)),
-            json!({
-                "bundle": {"name": b},
-                "path": "bundles/demo/bundle.yaml",
-                "applied": true,
-                "changes": ["updated version"],
-            })
-        );
         let out = BundleExported {
             status: "exported".to_string(),
             name: "demo".to_string(),
@@ -703,5 +688,61 @@ mod asks {
         assert_eq!(other.view, v1::bundle::View::Content as i32);
         assert!(other.prefer_distilled);
         assert_eq!(other.globals, degraded());
+    }
+}
+
+// Step 10b U3: `bundle edit` asks the daemon's `UpdateBundle`, its mask
+// naming the fields it was given (`description`, `version`) and its add
+// and remove lists as given (several mask paths, one step: owner ruling
+// 2026-11-18); nothing given asks no mask and no list.
+mod writes_asked {
+    use crate::tests::{asked_once, degraded};
+    use daemon_proto::v1;
+
+    #[test]
+    fn test_bundle_edit_asks_update_bundle_with_its_mask_and_lists() {
+        let (under, edit) = asked_once::<v1::UpdateBundleRequest>(&[
+            "bundle",
+            "edit",
+            "demo",
+            "-d",
+            "new words",
+            "--version",
+            "2.0.0",
+            "--add-tag",
+            "a,b",
+            "--remove-tag",
+            "zz",
+            "--add-fragment",
+            "f",
+            "--remove-fragment",
+            "g",
+            "--add-prompt",
+            "p",
+            "--remove-prompt",
+            "q",
+            "--add-mcp",
+            "m",
+            "--remove-mcp",
+            "n",
+        ]);
+        assert_eq!(under, library_api::names::bundle_target("demo"));
+        assert_eq!(edit.update_mask.unwrap().paths, ["description", "version"]);
+        let bundle = edit.bundle.unwrap();
+        assert_eq!(bundle.description, "new words");
+        assert_eq!(bundle.version, "2.0.0");
+        assert_eq!(edit.add_tags, ["a", "b"]);
+        assert_eq!(edit.remove_tags, ["zz"]);
+        assert_eq!(edit.add_fragments, ["f"]);
+        assert_eq!(edit.remove_fragments, ["g"]);
+        assert_eq!(edit.add_commands, ["p"]);
+        assert_eq!(edit.remove_commands, ["q"]);
+        assert_eq!(edit.add_mcp_servers, ["m"]);
+        assert_eq!(edit.remove_mcp_servers, ["n"]);
+        assert!(!edit.validate_only);
+        assert_eq!(edit.globals, degraded());
+        let (_, bare) = asked_once::<v1::UpdateBundleRequest>(&["bundle", "edit", "demo"]);
+        assert!(bare.update_mask.is_none_or(|m| m.paths.is_empty()));
+        assert!(bare.add_tags.is_empty() && bare.add_fragments.is_empty());
     }
 }

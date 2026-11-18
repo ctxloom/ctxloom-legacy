@@ -100,7 +100,12 @@ Feature: bundle — the container authored content lives in, and everything that
       And the output reports "bundles[name$=/bundles/demo].command_count" as "<the command count>"
       And the output reports "bundles[name$=/bundles/ctxloom].origin" as "<the built-in>"
       # Move the manifest and the summary has to move with it.
-      When I run "ctxloom bundle edit demo --version 2.0.0 --add-fragment testing"
+      # changed: one edit became two (the version, then the fragment), per
+      # the approved spec's OneChangePerCall, coordinator 2026-11-18, for
+      # owner review: the two flags change two files.
+      When I run "ctxloom bundle edit demo --version 2.0.0"
+      Then the command succeeds
+      When I run "ctxloom bundle edit demo --add-fragment testing"
       Then the command succeeds
       When I run "ctxloom bundle list <flags>"
       Then the output reports "bundles[name$=/bundles/demo].version" as "<the version after edit>"

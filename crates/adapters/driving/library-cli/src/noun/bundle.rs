@@ -1,7 +1,7 @@
 //! `bundle`: list, show and view, and its writes (B1), each json answer its
 //! AIP resource or method response (OD-40, design §5.1).
 
-use library_application::{BundleEdited, BundleExported, BundleImported, BundleView};
+use library_application::{BundleExported, BundleImported, BundleView};
 
 use library_api::resources::count;
 
@@ -267,44 +267,59 @@ fn create(
     )
 }
 
+/// `bundle edit <name> [flags]`: the daemon's `UpdateBundle` (step 10b
+/// U3), its mask naming the fields given (`description`, `version`) and
+/// its add and remove lists as given: several mask paths, one step to the
+/// bundle's one file (owner ruling 2026-11-18); a change to more than one
+/// file is refused `OneChangePerCall`. Its text from the response (D10).
 fn edit(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let name = text_arg(sub, "name");
-    let request = BundleEditRequest {
-        name,
-        description: given(sub, "description"),
-        version: given(sub, "version"),
+    let mut bundle = v1::Bundle::default();
+    let mut paths = Vec::new();
+    if let Some(description) = given(sub, "description") {
+        bundle.description = description;
+        paths.push("description".to_string());
+    }
+    if let Some(version) = given(sub, "version") {
+        bundle.version = version;
+        paths.push("version".to_string());
+    }
+    let request = v1::UpdateBundleRequest {
+        bundle: Some(bundle),
+        update_mask: (!paths.is_empty())
+            .then_some(daemon_proto::google::protobuf::FieldMask { paths }),
         add_tags: many(sub, "add-tag"),
         remove_tags: many(sub, "remove-tag"),
         add_fragments: many(sub, "add-fragment"),
         remove_fragments: many(sub, "remove-fragment"),
-        add_prompts: many(sub, "add-prompt"),
-        remove_prompts: many(sub, "remove-prompt"),
-        add_mcp: many(sub, "add-mcp"),
-        remove_mcp: many(sub, "remove-mcp"),
+        add_commands: many(sub, "add-prompt"),
+        remove_commands: many(sub, "remove-prompt"),
+        add_mcp_servers: many(sub, "add-mcp"),
+        remove_mcp_servers: many(sub, "remove-mcp"),
+        globals: cx.globals(),
+        ..v1::UpdateBundleRequest::default()
     };
-    let outcome = cx.library.bundle_edit(&cx.flags, &request);
-    catalog::answer(
+    let under = library_api::names::bundle_target(&text_arg(sub, "name"));
+    crate::answer_written(
         cx,
-        outcome,
+        cx.served.update_bundle(&under, request),
+        |m| std::mem::take(&mut m.notices),
         out,
         err,
-        false,
-        edited,
-        |edited, out, _| {
-            if edited.changes.is_empty() {
+        |m, out| {
+            if m.changes.is_empty() {
                 return nothing(out);
             }
-            for change in &edited.changes {
+            for change in &m.changes {
                 writeln!(out, "{change}")?;
             }
-            writeln!(out, "Updated bundle: {}", edited.path)
+            writeln!(out, "Updated bundle: {}", m.path)
         },
-        catalog::ok,
+        |_| Exit::OK,
     )
 }
 
@@ -388,26 +403,6 @@ fn import(
         },
         catalog::ok,
     )
-}
-
-/// A bundle named and nothing else, as a write answers it.
-fn just_named(parent: &str, catalog: &str) -> Option<v1::Bundle> {
-    Some(v1::Bundle {
-        name: bundle_name(parent, catalog),
-        ..v1::Bundle::default()
-    })
-}
-
-/// `bundle edit`: `UpdateBundleResponse`; an edit that changed nothing
-/// applied nothing and lists no change.
-pub(crate) fn edited(parent: &str, edited: &BundleEdited) -> v1::UpdateBundleResponse {
-    v1::UpdateBundleResponse {
-        bundle: just_named(parent, &edited.name),
-        path: edited.path.clone(),
-        applied: Some(!edited.changes.is_empty()),
-        changes: edited.changes.clone(),
-        ..v1::UpdateBundleResponse::default()
-    }
 }
 
 /// `bundle export`: `ExportBundleResponse`.
