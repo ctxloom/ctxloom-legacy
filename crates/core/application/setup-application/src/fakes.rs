@@ -155,12 +155,20 @@ impl HookCodec for Wire {
             skill: text("skill"),
             transcript: text("transcript"),
             native_session: text("session"),
+            prompt: text("prompt"),
             ..HookEvent::default()
         })
     }
 
     fn encode(&self, _event: &str, r: &HookResponse) -> Result<String, SurfaceError> {
-        Ok(format!("context={};notice={}\n", r.context, r.notice))
+        let block = match r.block {
+            true => format!(";block={}", r.reason),
+            false => String::new(),
+        };
+        Ok(format!(
+            "context={};notice={}{block}\n",
+            r.context, r.notice
+        ))
     }
 
     fn unified_event(&self, native: &str) -> String {
@@ -168,6 +176,7 @@ impl HookCodec for Wire {
             "SessionStart" => "session_start",
             "PostToolUse" => "post_tool",
             "Stop" => "turn_end",
+            "UserPromptSubmit" => "turn_start",
             other => other,
         }
         .to_string()
@@ -398,4 +407,34 @@ pub(crate) fn world_of(
     let setup = Setup::new(library, engines, store.clone(), mem.clone(), "/p", "/p")
         .with_hook_library(Box::new(DaemonReads(read)));
     World { setup, store, mem }
+}
+
+/// Each delivery a fake inbox recorded: its ids and its wake.
+pub(crate) type Deliveries = std::sync::Arc<std::sync::Mutex<Vec<(Vec<String>, String)>>>;
+
+/// A primary's pending messages as its hooks reach them (the terminal
+/// wake): what it holds, unless the daemon did not answer (`None`), and
+/// each delivery recorded, refused when `records` is false.
+#[derive(Default)]
+pub(crate) struct Inbox {
+    pub(crate) pending: std::sync::Mutex<Option<Vec<crate::HookMessage>>>,
+    pub(crate) delivered: Deliveries,
+    pub(crate) refusing: bool,
+}
+
+impl crate::HookMessages for Inbox {
+    fn pending(&self) -> Option<Vec<crate::HookMessage>> {
+        self.pending.lock().unwrap().clone()
+    }
+
+    fn delivered(&self, ids: &[String], wake: &str) -> bool {
+        if self.refusing {
+            return false;
+        }
+        self.delivered
+            .lock()
+            .unwrap()
+            .push((ids.to_vec(), wake.to_string()));
+        true
+    }
 }

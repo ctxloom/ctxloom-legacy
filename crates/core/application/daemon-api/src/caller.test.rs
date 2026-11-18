@@ -1282,3 +1282,31 @@ async fn a_delivery_names_its_messages_and_wake_on_the_sessions_own_stream() {
         ))]
     );
 }
+
+// The terminal wake: a wake to a primary nobody watches (no ctxloom MCP
+// server connected, as with `--no-context`) is refused before it is sent,
+// the sender told it takes an inform; an inform goes as ever.
+#[tokio::test]
+async fn a_wake_to_a_primary_nobody_watches_is_refused_in_the_senders_words() {
+    let world = World::new();
+    let refused = world
+        .caller(true)
+        .send("lone-asleep-heron", sessions::Urgency::Wake, "wake up")
+        .await
+        .unwrap_err();
+    let CallError::Refused(crate::refusal::Rejection::Api(
+        crate::refusal::ApiRejection::WakeInformOnly { harp },
+    )) = &refused
+    else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(harp, "lone-asleep-heron");
+    assert!(world.commands().is_empty(), "nothing sent");
+    let awake = World::new();
+    awake
+        .caller(true)
+        .send("lone-awake-heron", sessions::Urgency::Wake, "wake up")
+        .await
+        .unwrap();
+    assert_eq!(awake.commands().len(), 1);
+}

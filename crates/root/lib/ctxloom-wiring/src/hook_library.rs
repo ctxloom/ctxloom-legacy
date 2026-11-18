@@ -21,11 +21,11 @@ use crate::Wiring;
 
 /// The user's daemon as a hook's library read reaches it, until `until`.
 pub(crate) struct HookDaemons {
-    env: Arc<EnvSnapshot>,
-    until: Instant,
+    pub(crate) env: Arc<EnvSnapshot>,
+    pub(crate) until: Instant,
     /// Whether it may start one (none where the environment names an
     /// endpoint).
-    starts: bool,
+    pub(crate) starts: bool,
 }
 
 impl HookDaemons {

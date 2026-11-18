@@ -29,6 +29,9 @@ daemon-api-assembly-missing-fragment = no fragment is named { $name }
 daemon-api-assembly-missing-tag = no fragment is tagged { $name }
 daemon-api-launch-in-progress = another launch of { $harp } is being made now
 daemon-api-launch-in-progress-fix = wait for it to finish, then look at the child: ctxloom session show { $harp }
+# The terminal wake: DRAFT wording (2026-11-18), the owner's to approve.
+daemon-api-wake-inform-only = { $harp } cannot be woken: no ctxloom MCP server is connected to its engine (a session run with --no-context has none), so it takes an inform alone, delivered at its next prompt
+daemon-api-wake-inform-only-fix = send it as an inform: ctxloom session send { $harp } inform <text>
 daemon-api-launch-lock = a child's launch lock could not be taken: { $ext_err_txt }
 # OD-52: DRAFT wording, the owner's to approve.
 daemon-api-start-up-incomplete = the daemon's start-up catch-up failed: { $why }; what it shows (sessions, transcripts, what it hosts) may be missing events until a later catch-up succeeds

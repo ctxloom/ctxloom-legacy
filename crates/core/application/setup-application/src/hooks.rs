@@ -7,6 +7,7 @@
 
 use surface_ports::{EngineSurfaces, HookCodec, HookEvent, HookResponse};
 
+use crate::delivery::{compose_context, remaining};
 use crate::{Setup, SetupError};
 
 /// The nudge Go's `operations.AgentSetupNudge` hands a project that has
@@ -128,11 +129,38 @@ impl Setup {
                     event: Some(event),
                 })
             }
-            "post_tool" => Ok(HookAnswer {
-                stdout: encode(&self.mates_response(codec, &event))?,
-                event: Some(event),
-                ..HookAnswer::default()
-            }),
+            // The terminal wake: a prompt delivers the informs and wakes
+            // (a stale wake line blocked), a tool call the steers, each in
+            // the one budget after what came before it, joined by
+            // `compose_context` (where U13's re-delivered context joins
+            // too, as its last part).
+            "turn_start" => {
+                let (messages, block) = self.prompt_delivery(&event.prompt, harp, remaining(&[]));
+                let response = HookResponse {
+                    context: compose_context(&[&messages]),
+                    block,
+                    reason: match block {
+                        true => crate::hooks_wake::STALE_WAKE.to_string(),
+                        false => String::new(),
+                    },
+                    ..HookResponse::default()
+                };
+                Ok(HookAnswer {
+                    stdout: encode(&response)?,
+                    event: Some(event),
+                    ..HookAnswer::default()
+                })
+            }
+            "post_tool" => {
+                let mut response = self.mates_response(codec, &event);
+                let steers = self.steer_delivery(harp, remaining(&[&response.context]));
+                response.context = compose_context(&[&response.context, &steers]);
+                Ok(HookAnswer {
+                    stdout: encode(&response)?,
+                    event: Some(event),
+                    ..HookAnswer::default()
+                })
+            }
             _ => Ok(HookAnswer {
                 stdout: encode(&HookResponse::default())?,
                 event: Some(event),

@@ -162,6 +162,13 @@ pub(crate) fn session_text(session: &v1::Session, out: &mut dyn Write) -> io::Re
             writeln!(out, "          permissions {}", grant.permissions)?;
         }
     }
+    // The terminal wake: one sent and not answered (disarmed), or one
+    // still awaiting its turn. DRAFT words.
+    match session.wake.as_str() {
+        "not answered" => writeln!(out, "wake:     sent, not answered")?,
+        "outstanding" => writeln!(out, "wake:     sent, awaiting its turn")?,
+        _ => {}
+    }
     if let Some(failure) = &session.last_failure {
         let said = failure.notice.as_ref().map_or("", |n| n.text.as_str());
         writeln!(out, "failed:   {}: {said}", failure.kind)?;
