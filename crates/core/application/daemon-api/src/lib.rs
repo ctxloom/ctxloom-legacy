@@ -73,6 +73,7 @@ mod shown;
 mod start_up;
 mod terminal;
 mod trust;
+mod watch;
 
 pub use approvals::{
     ask_of, settled_how, settled_of, settled_refusal, Answered, ApprovalAnswers, Approving,
@@ -104,6 +105,7 @@ pub use session_client::{
 };
 pub use start_up::StartUpIncomplete;
 pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
+pub use watch::SessionStream;
 
 /// What a call can come to, and why no daemon could be called: the port's,
 /// as a driving adapter names them (it sees the application alone).

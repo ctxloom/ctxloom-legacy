@@ -202,6 +202,18 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("WatchRun")) }
     }
 
+    /// `WatchSession` (the terminal wake): the session's signals, the one
+    /// it opened with, then each change and a keepalive, until the caller
+    /// drops it or the daemon goes; the session is watched while it is
+    /// open. The default is a daemon that does not serve it.
+    fn watch_session(
+        &self,
+        request: v1::WatchSessionRequest,
+    ) -> impl Future<Output = Result<Box<dyn SessionSignals>, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("WatchSession")) }
+    }
+
     /// The coordinator's `Handle` (T16, API Q11): `book`, a domain command
     /// under the id its page names, applied (or found applied: a
     /// DUPLICATE); whether this delivery applied it. Nothing waits for a
@@ -336,6 +348,17 @@ pub trait RunEvents: Send {
 /// A hosted run's next event, as [`RunEvents::next`] answers it.
 pub type NextEvent<'a> =
     std::pin::Pin<Box<dyn Future<Output = Option<Result<v1::RunEvent, Called>>> + Send + 'a>>;
+
+/// A watched session's signals as `WatchSession` streams them (the
+/// terminal wake): each as it comes, none once the stream ended, or what
+/// broke it (the daemon gone).
+pub trait SessionSignals: Send {
+    fn next(&mut self) -> NextSignal<'_>;
+}
+
+/// A watched session's next signal, as [`SessionSignals::next`] answers it.
+pub type NextSignal<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Option<Result<v1::SessionSignal, Called>>> + Send + 'a>>;
 
 /// The coordinator's `Handle`, as a status names it.
 pub const HANDLE: &str =

@@ -547,6 +547,31 @@ impl Ctxloom for Served {
         Ok(Response::new(Box::pin(ReceiverStream::new(heard))))
     }
 
+    /// The session's signals (the terminal wake), pumped from a blocking
+    /// thread as a run's events are, until the caller is gone: the next
+    /// signal (a keepalive at the latest) that cannot be sent ends the
+    /// pump, and so the watch.
+    async fn watch_session(
+        &self,
+        request: Request<v1::WatchSessionRequest>,
+    ) -> Result<Response<BoxStream<v1::SessionSignal>>, Status> {
+        let signals = self
+            .answer(request, |calls, message| async move {
+                calls.watch_session(message).await
+            })
+            .await?
+            .into_inner();
+        let (tell, heard) = tokio::sync::mpsc::channel(WATCH_BUFFER);
+        tokio::task::spawn_blocking(move || {
+            for signal in signals {
+                if tell.blocking_send(Ok(signal)).is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(heard))))
+    }
+
     #[cfg(feature = "session-destroy")]
     async fn delete_session(
         &self,

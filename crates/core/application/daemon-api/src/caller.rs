@@ -428,7 +428,11 @@ impl<D: Daemons> Caller<D> {
             urgency,
             text: text.to_string(),
             requester: self.requester(api).await?,
-            supported: sessions_application::urgencies_of(!held.owner.is_empty(), &held.engine),
+            supported: sessions_application::urgencies_of(
+                !held.owner.is_empty(),
+                &held.engine,
+                held.wakeable,
+            ),
         };
         self.write(api, target, &command, message_id).await
     }

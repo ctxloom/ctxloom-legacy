@@ -198,6 +198,9 @@ pub struct Scene<'a> {
     pub hosted: &'a BTreeSet<String>,
     /// The keys of the steps already taken in this process.
     pub done: &'a BTreeSet<String>,
+    /// The sessions (stable ids) whose ctxloom MCP server watches them now
+    /// (`WatchSession`): a primary among them can be woken.
+    pub wakeable: &'a BTreeSet<String>,
 }
 
 impl<'a> Scene<'a> {
@@ -212,13 +215,16 @@ impl<'a> Scene<'a> {
 
 /// The urgencies `session`'s engine takes: a child the daemon hosts on an
 /// engine with a child adapter ([`CHILD_ENGINES`]) takes all three (its
-/// engine's stream, D15; OD-58); a primary takes only an inform, since
-/// nothing wakes a terminal session yet (D7 is not built).
-pub fn supported(session: &SessionState) -> Vec<Urgency> {
+/// engine's stream, D15; OD-58); a primary takes an inform, and a wake only
+/// while its ctxloom MCP server watches it (`wakeable`: the terminal wake,
+/// owner ruling 2026-11-18), never a steer; any other session only an
+/// inform.
+pub fn supported(session: &SessionState, wakeable: bool) -> Vec<Urgency> {
     let hosted = CHILD_ENGINES.contains(&session.engine.as_str());
-    match session.owner.is_some() && hosted {
-        true => vec![Urgency::Inform, Urgency::Wake, Urgency::Steer],
-        false => vec![Urgency::Inform],
+    match (session.owner.is_some(), hosted) {
+        (true, true) => vec![Urgency::Inform, Urgency::Wake, Urgency::Steer],
+        (false, _) if wakeable => vec![Urgency::Inform, Urgency::Wake],
+        _ => vec![Urgency::Inform],
     }
 }
 
@@ -271,7 +277,8 @@ fn launches(scene: &Scene<'_>, steps: &mut Vec<Step>) {
                     });
                 }
                 Some(state) if !state.closed && !launched.prompt.trim().is_empty() => {
-                    if let Some(sent) = prompt(child, state, &launched.prompt) {
+                    let wakeable = scene.wakeable.contains(&child.session);
+                    if let Some(sent) = prompt(child, state, wakeable, &launched.prompt) {
                         steps.push(Step::Send(sent));
                     }
                 }
@@ -282,7 +289,7 @@ fn launches(scene: &Scene<'_>, steps: &mut Vec<Step>) {
 }
 
 /// A launched child's first task, as a wake keyed `launch:<child>`.
-fn prompt(child: &SessionRef, state: &SessionState, text: &str) -> Option<Sent> {
+fn prompt(child: &SessionRef, state: &SessionState, wakeable: bool, text: &str) -> Option<Sent> {
     let key = format!("launch:{}", child.session);
     Some(
         Keyed {
@@ -294,7 +301,7 @@ fn prompt(child: &SessionRef, state: &SessionState, text: &str) -> Option<Sent> 
                 urgency: Urgency::Wake,
                 text: text.to_string(),
                 requester: None,
-                supported: supported(state),
+                supported: supported(state, wakeable),
             },
         }
         .into(),
@@ -347,7 +354,8 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
         let Some(cover) = session_cover(&owner_ref.session) else {
             continue;
         };
-        let urgency = match supported(owner).contains(&Urgency::Wake) {
+        let owner_takes = supported(owner, scene.wakeable.contains(&owner_ref.session));
+        let urgency = match owner_takes.contains(&Urgency::Wake) {
             true => Urgency::Wake,
             false => Urgency::Inform,
         };
@@ -357,8 +365,7 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
             if [ORPHANED, ENDED_DRAINED].contains(&ended.cause.as_str()) {
                 continue;
             }
-            if let Some(told) = crate::notice(&me, &child.harp, owner_ref, ended, &supported(owner))
-            {
+            if let Some(told) = crate::notice(&me, &child.harp, owner_ref, ended, &owner_takes) {
                 steps.push(Step::Send(told.into()));
             }
         }
@@ -383,7 +390,7 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
                                 ended.message_ids.join(", ")
                             ),
                             requester: None,
-                            supported: supported(owner),
+                            supported: owner_takes.clone(),
                         },
                     }
                     .into(),

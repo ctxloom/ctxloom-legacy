@@ -928,3 +928,44 @@ async fn a_fresh_daemon_catches_every_read_model_up_before_its_first_round() {
         "the trust a previous daemon recorded is listed at the start"
     );
 }
+
+// The terminal wake: each round publishes a watched session's signal (its
+// pending wakes, then its outstanding wake), what its ctxloom MCP server's
+// `WatchSession` streams. A session nobody watches is published nothing.
+#[tokio::test]
+async fn each_round_publishes_a_watched_sessions_signal() {
+    let edge = Arc::new(TestEdge::new());
+    mint(&edge, OWNER, "boss", "claude-code", None).await;
+    let watches = crate::SessionWatches::new(std::time::Duration::from_secs(600));
+    let mut watch = watches.watch(OWNER, daemon_proto::v1::SessionSignal::default());
+    assert!(watch.poll().is_some(), "what it opened with");
+    let mut daemon = daemon(&edge, Vec::new(), Plans::default(), LockProbe::Unproven)
+        .watching(std::sync::Arc::clone(&watches));
+    command(
+        &edge,
+        OWNER,
+        sessions::SessionCommand::from(sessions::SendMessage {
+            message_id: "m1".to_string(),
+            urgency: sessions::Urgency::Wake,
+            text: "child kid finished its turn".to_string(),
+            requester: None,
+            supported: vec![sessions::Urgency::Inform, sessions::Urgency::Wake],
+        }),
+    )
+    .await;
+    daemon.tick(&edge.store, edge.catalog(), false).await;
+    let signal = watch.poll().expect("its pending wake was published");
+    assert_eq!(signal.wakes, ["m1"]);
+    assert_eq!(signal.outstanding_wake, "");
+    command(
+        &edge,
+        OWNER,
+        sessions::SessionCommand::from(sessions::IssueWake {
+            nonce: "0123456789abcdef".to_string(),
+        }),
+    )
+    .await;
+    daemon.tick(&edge.store, edge.catalog(), false).await;
+    let signal = watch.poll().expect("its outstanding wake was published");
+    assert_eq!(signal.outstanding_wake, "0123456789abcdef");
+}

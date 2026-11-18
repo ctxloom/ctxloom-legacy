@@ -91,9 +91,18 @@ impl DaemonApi for Fake {
     async fn get_session(&self, r: v1::GetSessionRequest) -> Result<v1::Session, Called> {
         self.ask(&format!("session {}", r.name));
         assert!(r.env.is_some(), "the caller's environment is sent");
+        // A `lone-` harp is a primary (no owner); a `lone-awake-` one is
+        // watched by its ctxloom MCP server (the terminal wake).
+        let primary = r.name.contains("/sessions/lone-");
+        let wakeable = r.name.contains("/sessions/lone-awake-");
         Ok(v1::Session {
+            owner: if primary {
+                String::new()
+            } else {
+                ME.to_string()
+            },
+            wakeable,
             name: r.name,
-            owner: ME.to_string(),
             engine: "claude-code".to_string(),
             summary: "read".to_string(),
             closed: *self.closed.lock().unwrap(),
@@ -510,13 +519,48 @@ async fn a_send_is_the_domains_command_answered_with_the_projection() {
     );
     assert_eq!(
         sent.supported.len(),
-        sessions_application::urgencies_of(true, "claude-code").len()
+        sessions_application::urgencies_of(true, "claude-code", false).len()
     );
     assert_eq!(world.command_ids(), [sessions::command_id("id-1")]);
     assert_eq!(
         world.seen.lock().unwrap().projectors,
         [vec!["session-index".to_string()]]
     );
+}
+
+/// The urgencies the one send in `world` gave as its evidence.
+fn evidence(world: &World) -> Vec<i32> {
+    let commands = world.commands();
+    let [packed] = commands.as_slice() else {
+        panic!("one send: {commands:?}");
+    };
+    wire::SendMessage::decode(packed.value.as_slice())
+        .unwrap()
+        .supported
+}
+
+// The terminal wake: a send's evidence is the target as the daemon has it,
+// so a primary whose ctxloom MCP server watches it takes a wake, and one
+// nobody watches an inform alone.
+#[tokio::test]
+async fn a_sends_evidence_offers_a_wake_to_a_primary_only_while_it_is_watched() {
+    let awake = World::new();
+    awake
+        .caller(true)
+        .send("lone-awake-heron", sessions::Urgency::Inform, "hi")
+        .await
+        .unwrap();
+    assert_eq!(
+        evidence(&awake),
+        [wire::Urgency::Inform as i32, wire::Urgency::Wake as i32]
+    );
+    let asleep = World::new();
+    asleep
+        .caller(true)
+        .send("lone-asleep-heron", sessions::Urgency::Inform, "hi")
+        .await
+        .unwrap();
+    assert_eq!(evidence(&asleep), [wire::Urgency::Inform as i32]);
 }
 
 // S8: a daemon killed after it applied the write is reached again, and the
