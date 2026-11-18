@@ -32,6 +32,16 @@ const IDLE_VARIABLE: &str = "CTXLOOM_DAEMON_IDLE_SECONDS";
 /// scenario's wait for it is.
 const IDLE_SECONDS: u64 = 2;
 
+/// The idle time of a daemon a busy scenario starts ("a ctxloom daemon is
+/// serving for this home, with <busy>"), which it must outlive: long enough
+/// for the steps that make it busy (a session seeded and launched, a few
+/// commands) to finish within it on a loaded host. Its daemon's idle clock
+/// runs from its start, and a request does not reset it, so at
+/// [`IDLE_SECONDS`] a busy step that took over 2 s found it already gone
+/// (land of 2026-11-18, load 20 and more). "The daemon's idle time passes"
+/// waits this one out, so "it still serves" is still asked after it.
+const BUSY_IDLE_SECONDS: u64 = 8;
+
 /// The idle time of a daemon a scenario's command starts: long enough to
 /// outlive the scenario's steps, short enough to leave nothing for long.
 const SPAWNED_IDLE_SECONDS: u64 = 15;
@@ -47,6 +57,9 @@ pub(super) struct State {
     /// The stores' evidence as it was before the scenario's command ran.
     store_before: Option<StoreEvidence>,
     pub(super) daemon: Option<Child>,
+    /// The idle time "the daemon's idle time passes" waits out, when not
+    /// [`IDLE_SECONDS`]: a busy daemon's [`BUSY_IDLE_SECONDS`].
+    idle_wait: Option<u64>,
     run: Option<Child>,
     /// The file whose presence lets the stub engine end.
     release: Option<PathBuf>,
@@ -1602,6 +1615,8 @@ fn serving_idle(w: &mut World) {
 
 #[given(regex = r"^a ctxloom daemon is serving for this home, with (.+)$")]
 fn serving_busy(w: &mut World, busy: String) {
+    w.daemon_spec.idle_wait = Some(BUSY_IDLE_SECONDS);
+    let start_daemon = |w: &mut World| start_daemon_idling(w, BUSY_IDLE_SECONDS);
     match busy.as_str() {
         // The session's daemon is the one serving (U5: a `run` prepares
         // its session through it), so it is started first.
@@ -1833,9 +1848,10 @@ fn her_idle_passes(w: &mut World) {
 }
 
 #[when("the daemon's idle time passes")]
-fn idle_passes(_: &mut World) {
+fn idle_passes(w: &mut World) {
     // Its idle time, and a margin for its poll and its last round.
-    std::thread::sleep(Duration::from_secs(IDLE_SECONDS + 2));
+    let idle = w.daemon_spec.idle_wait.unwrap_or(IDLE_SECONDS);
+    std::thread::sleep(Duration::from_secs(idle + 2));
 }
 
 #[when(expr = "two commands are run at once, {string} and {string}")]
