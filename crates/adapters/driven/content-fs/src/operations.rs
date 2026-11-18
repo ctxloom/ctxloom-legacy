@@ -8,6 +8,8 @@
 //!   one that appeared meanwhile is left as it was (`Exists`).
 //! - A removal is one rename into `state/trash/<request id>/<path>`.
 //! - A move is one NOREPLACE rename.
+//! - Each rename's directories are synced after it (both, when it moves
+//!   between two), and a purged slot's trash directory after the purge.
 //!
 //! A path that is not plain (absolute, climbing, empty) or that goes
 //! through a link inside the tree is refused before anything is touched.
@@ -114,11 +116,29 @@ impl TreeOperations {
         Ok(staging)
     }
 
+    /// `dir`'s entries made durable (`Fs::sync_dir`: fsync on unix,
+    /// nothing on Windows).
+    fn sync(&self, dir: &Path) -> Result<(), Failure> {
+        self.fs
+            .sync_dir(dir)
+            .map_err(|e| failed_at(ContentError::sync_dir, dir, &e))
+    }
+
+    /// The trash slot removed whole, and the trash directory synced, so a
+    /// power loss cannot bring back a slot the record dropped. A slot not
+    /// there (a retry, a tree with no trash) is done and syncs nothing.
+    fn purge(&self, slot: &Path) -> Result<(), Failure> {
+        match self.fs.remove_dir_all(slot) {
+            Ok(()) => self.sync(slot.parent().unwrap_or(slot)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(failed_at(ContentError::remove_path, slot, &e)),
+        }
+    }
+
     /// `to`'s directory made and `from` renamed there (NOREPLACE unless
     /// `replace`): whether it was renamed, false when something is at `to`.
-    /// The directory is not synced: the seam gives no way to (only
-    /// `rename_noreplace` may ask for the real path), so a power loss may
-    /// undo the rename, leaving the tree as it was and the intent owed.
+    /// Once renamed, `to`'s directory is synced, then `from`'s when it is
+    /// another, so a power loss cannot undo a rename the record holds done.
     fn rename(&self, from: &Path, to: &Path, replace: bool) -> Result<bool, Failure> {
         let dir = to.parent().unwrap_or(to);
         self.make_dirs(dir)?;
@@ -137,6 +157,11 @@ impl TreeOperations {
                     detail: e.to_string(),
                 }))
             }
+        }
+        self.sync(dir)?;
+        let source = from.parent().unwrap_or(from);
+        if source != dir {
+            self.sync(source)?;
         }
         Ok(true)
     }
@@ -273,7 +298,7 @@ impl Operations for TreeOperations {
                 self.move_path(tree, from, to)
             }
             Operation::Purge => {
-                self.remove_all(&Self::of_request(tree, TRASH_DIR, request_id)?)?;
+                self.purge(&Self::of_request(tree, TRASH_DIR, request_id)?)?;
                 Ok(Operated::Done)
             }
         }
@@ -284,7 +309,7 @@ impl Operations for TreeOperations {
     }
 
     fn purge_slot(&self, tree: &str, request_id: &str) -> Result<(), Failure> {
-        self.remove_all(&Self::of_request(Path::new(tree), TRASH_DIR, request_id)?)
+        self.purge(&Self::of_request(Path::new(tree), TRASH_DIR, request_id)?)
     }
 }
 

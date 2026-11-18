@@ -249,9 +249,12 @@ evidence, refused `library-tree-slot-not-due` under 7 and
 `purge:{tree}:{request id}`), the slot removed whole, its `PurgeSlot` step
 recorded done, which drops it from the state. Under test-support the
 daemon's clock is moved on by `CTXLOOM_TEST_CLOCK_OFFSET` whole days,
-passed on to a daemon a command starts. The rename's directory is not synced
-(the file-system seam gives no way to), so a power loss may undo it,
-leaving the intent owed. An
+passed on to a daemon a command starts. Each rename's directories are
+synced after it, the target's then the source's when it is another, and
+a purged slot's trash directory after the purge (owner ruling
+2026-11-18, evening; angzarr-platform's `Fs::sync_dir`: fsync on unix,
+nothing on Windows), so a power loss cannot undo a step the record holds
+done; a sync that fails fails the step, `content-fs-sync-dir`. An
 observation that sees exactly a pending intent's ids is that step done
 (`StepApplied`), so a daemon killed after the operation is recorded
 once, as ctxloom's; a step done lays its paths over the record's dirty
@@ -1433,9 +1436,11 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `5cdb1906` on angzarr-router `b332189a`;
 - angzarr-build `d0b63bcb` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `efbc2f6e`;
-- taskloom's crates `9ffcf92c` and ctxloom-lib's `ae7380e2` (each on its
-  main), built on the same line,
+- angzarr-platform `a930373b` (its branch `feat/sync-dir`: `Fs::sync_dir`
+  and the `Recording` fake);
+- taskloom's crates `9389e577` and ctxloom-lib's `6a21bd0e` (each on its
+  branch `feat/platform-sync-dir`: its main, moved onto platform
+  `a930373b`), built on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are

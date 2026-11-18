@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ctxloom_ports::{Operated, Operation, Operations, Point, Put};
-use file_system::{Fs, Perms, Rooted};
+use file_system::{Call, Fs, Perms, Rooted};
 use os::Mode;
 
 use super::TreeOperations;
@@ -431,4 +431,246 @@ fn test_a_path_through_a_link_is_refused() {
             os::host().flavor().from_top("/elsewhere/x.md")
         ))
         .is_err());
+}
+
+// ---------------------------------------------------------------- durability (owner ruling 2026-11-18, evening)
+
+/// Operations over a recording of a temporary root: what they renamed,
+/// synced and removed, in order.
+fn recorded() -> (Arc<Rooted>, Arc<file_system::Recording>, TreeOperations) {
+    let fs = Arc::new(Rooted::temp().expect("a temporary root"));
+    fs.create_dir_all(&at(""), Mode::from_bits(0o755)).unwrap();
+    let recording = Arc::new(file_system::Recording::over(fs.clone()));
+    let ops = TreeOperations::new(recording.clone());
+    (fs, recording, ops)
+}
+
+/// The renames, directory syncs and removals of `recording`, in order.
+fn durability(recording: &file_system::Recording) -> Vec<Call> {
+    recording
+        .calls()
+        .into_iter()
+        .filter(|call| {
+            matches!(
+                call,
+                Call::Rename { .. }
+                    | Call::RenameNoreplace { .. }
+                    | Call::SyncDir(_)
+                    | Call::RemoveDirAll(_)
+            )
+        })
+        .collect()
+}
+
+/// `rel` below `under` (`rel` empty: `under` itself).
+fn below(under: &str, rel: &str) -> PathBuf {
+    if rel.is_empty() {
+        at(under)
+    } else {
+        at(&format!("{under}/{rel}"))
+    }
+}
+
+fn staged(rel: &str) -> PathBuf {
+    below(&format!("state/staging/{REQUEST}"), rel)
+}
+
+fn slot(rel: &str) -> PathBuf {
+    below(&format!("state/trash/{REQUEST}"), rel)
+}
+
+// A replaced file's directory is synced after the rename, and the
+// staging's (the rename's other directory), before the staging goes.
+#[test]
+fn test_a_replace_syncs_both_directories_of_its_rename_after_it() {
+    let (_fs, recording, ops) = recorded();
+    let target = "content/bundles/v2/demo/fragments/a.md";
+    ops.operate(
+        &tree(),
+        REQUEST,
+        &Operation::Replace(Put::file(target, "new\n")),
+        &|_| {},
+    )
+    .map_err(|e| e.to_string())
+    .unwrap();
+    assert_eq!(
+        durability(&recording),
+        vec![
+            Call::RemoveDirAll(staged("")),
+            Call::Rename {
+                from: staged("a.md"),
+                to: at(target)
+            },
+            Call::SyncDir(at("content/bundles/v2/demo/fragments")),
+            Call::SyncDir(staged("")),
+            Call::RemoveDirAll(staged("")),
+        ]
+    );
+}
+
+#[test]
+fn test_a_new_directory_syncs_both_directories_of_its_rename_after_it() {
+    let (_fs, recording, ops) = recorded();
+    ops.operate(&tree(), REQUEST, &new_bundle(), &|_| {})
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(
+        durability(&recording),
+        vec![
+            Call::RemoveDirAll(staged("")),
+            Call::RenameNoreplace {
+                from: staged("notes"),
+                to: at("content/bundles/v2/notes")
+            },
+            Call::SyncDir(at("content/bundles/v2")),
+            Call::SyncDir(staged("")),
+            Call::RemoveDirAll(staged("")),
+        ]
+    );
+}
+
+// A rename refused (something at the target) changed no directory, so
+// none is synced.
+#[test]
+fn test_a_new_directory_refused_noreplace_syncs_nothing() {
+    let (fs, recording, ops) = recorded();
+    put(&fs, "content/bundles/v2/notes/bundle.yaml", b"other\n");
+    ops.operate(&tree(), REQUEST, &new_bundle(), &|_| {})
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert!(!durability(&recording)
+        .iter()
+        .any(|call| matches!(call, Call::SyncDir(_))));
+}
+
+#[test]
+fn test_a_removal_syncs_the_slot_s_directory_then_the_path_s_after_its_rename() {
+    let (fs, recording, ops) = recorded();
+    put(&fs, "content/bundles/v2/demo/bundle.yaml", b"d\n");
+    let path = "content/bundles/v2/demo";
+    ops.operate(
+        &tree(),
+        REQUEST,
+        &Operation::Trash {
+            path: path.to_string(),
+        },
+        &|_| {},
+    )
+    .map_err(|e| e.to_string())
+    .unwrap();
+    assert_eq!(
+        durability(&recording),
+        vec![
+            Call::RenameNoreplace {
+                from: at(path),
+                to: slot(path)
+            },
+            Call::SyncDir(slot("content/bundles/v2")),
+            Call::SyncDir(at("content/bundles/v2")),
+        ]
+    );
+}
+
+#[test]
+fn test_a_move_syncs_both_directories_of_its_rename_and_one_shared_once() {
+    let (fs, recording, ops) = recorded();
+    put(&fs, "content/bundles/v2/a/bundle.yaml", b"a\n");
+    let across = Operation::Move {
+        from: "content/bundles/v2/a".to_string(),
+        to: "content/bundles/v2/team/c".to_string(),
+    };
+    ops.operate(&tree(), REQUEST, &across, &|_| {})
+        .map_err(|e| e.to_string())
+        .unwrap();
+    let beside = Operation::Move {
+        from: "content/bundles/v2/team/c".to_string(),
+        to: "content/bundles/v2/team/d".to_string(),
+    };
+    ops.operate(&tree(), REQUEST, &beside, &|_| {})
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(
+        durability(&recording),
+        vec![
+            Call::RenameNoreplace {
+                from: at("content/bundles/v2/a"),
+                to: at("content/bundles/v2/team/c")
+            },
+            Call::SyncDir(at("content/bundles/v2/team")),
+            Call::SyncDir(at("content/bundles/v2")),
+            Call::RenameNoreplace {
+                from: at("content/bundles/v2/team/c"),
+                to: at("content/bundles/v2/team/d")
+            },
+            Call::SyncDir(at("content/bundles/v2/team")),
+        ]
+    );
+}
+
+// A purge takes its slot out of the trash directory, which is synced
+// after; a purge of nothing (a retry, a tree with no trash) syncs nothing.
+#[test]
+fn test_a_purge_syncs_the_trash_directory_after_its_slot_goes() {
+    let (fs, recording, ops) = recorded();
+    put(&fs, &format!("state/trash/{REQUEST}/content/x.md"), b"x\n");
+    put(&fs, "state/trash/older/content/y.md", b"y\n");
+    ops.operate(&tree(), REQUEST, &Operation::Purge, &|_| {})
+        .map_err(|e| e.to_string())
+        .unwrap();
+    ops.purge_slot(&tree(), "older")
+        .map_err(|e| e.to_string())
+        .unwrap();
+    ops.operate(&tree(), REQUEST, &Operation::Purge, &|_| {})
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(
+        durability(&recording),
+        vec![
+            Call::RemoveDirAll(slot("")),
+            Call::SyncDir(at("state/trash")),
+            Call::RemoveDirAll(at("state/trash/older")),
+            Call::SyncDir(at("state/trash")),
+            Call::RemoveDirAll(slot("")),
+        ]
+    );
+}
+
+#[test]
+fn test_a_purge_in_a_tree_with_no_trash_is_done_and_syncs_nothing() {
+    let (_fs, recording, ops) = recorded();
+    ops.purge_slot(&tree(), "older")
+        .map_err(|e| e.to_string())
+        .expect("a purge of nothing is done");
+    assert_eq!(
+        durability(&recording),
+        vec![Call::RemoveDirAll(at("state/trash/older"))]
+    );
+}
+
+// A directory that cannot be synced fails the operation, said in this
+// crate's words with the OS's. Unix: a directory one may rename into but
+// not open (write and search, no read) is renamed into, then not synced.
+#[test]
+fn test_a_directory_that_cannot_be_synced_fails_the_operation() {
+    if os::host().flavor() != os::Flavor::Unix {
+        return;
+    }
+    let (fs, ops) = setup();
+    put(&fs, "content/bundles/v2/a/bundle.yaml", b"a\n");
+    let locked = at("content/bundles/v2/locked");
+    fs.create_dir_all(&locked, Mode::from_bits(0o755)).unwrap();
+    fs.set_permissions(&locked, Mode::from_bits(0o300)).unwrap();
+    let failed = ops.operate(
+        &tree(),
+        REQUEST,
+        &Operation::Move {
+            from: "content/bundles/v2/a".to_string(),
+            to: "content/bundles/v2/locked/a".to_string(),
+        },
+        &|_| {},
+    );
+    fs.set_permissions(&locked, Mode::from_bits(0o755)).unwrap();
+    let failed = failed.expect_err("the sync fails the move");
+    assert_eq!(failed.code(), "content-fs-sync-dir");
+    assert!(failed.to_string().contains("locked"), "{failed}");
 }
