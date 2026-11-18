@@ -634,6 +634,46 @@ pub(crate) fn outside_id(feature: &str) -> String {
     format!("{feature} :: (outside a scenario)")
 }
 
+/// `GHERKIN_TIMINGS=<absolute file>`'s profile: each scenario's wall time,
+/// from its start to its end, appended to the file as `<seconds>\t<id>`.
+#[derive(Clone, Default)]
+struct Timings {
+    file: Option<PathBuf>,
+    started:
+        std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>>,
+}
+
+impl Timings {
+    fn asked() -> Timings {
+        Timings {
+            file: super::host_var("GHERKIN_TIMINGS").map(PathBuf::from),
+            started: std::sync::Arc::default(),
+        }
+    }
+
+    fn on(&self) -> bool {
+        self.file.is_some()
+    }
+
+    fn start(&self, id: String) {
+        if self.on() {
+            let now = std::time::Instant::now();
+            self.started.lock().expect("not poisoned").insert(id, now);
+        }
+    }
+
+    fn finish(&self, id: &str) {
+        let Some(file) = &self.file else { return };
+        let Some(start) = self.started.lock().expect("not poisoned").remove(id) else {
+            return;
+        };
+        use std::io::Write as _;
+        let line = format!("{:.2}\t{id}\n", start.elapsed().as_secs_f64());
+        // A profile, best effort: a line that cannot be written is lost.
+        let _ = files::open_append(file).and_then(|mut f| f.write_all(line.as_bytes()));
+    }
+}
+
 /// Run one feature file with the World `W`, its pending scenarios left out
 /// (and, when `only` names a scenario id, every other scenario too):
 /// whether it passed, and each scenario's outcome. A failure no scenario
@@ -664,6 +704,10 @@ where
         feature: feature.clone(),
         kept: std::sync::Arc::clone(&failures),
     };
+    let timings = Timings::asked();
+    let at_once = if timings.on() { 1 } else { 4 };
+    let stamp = timings.clone();
+    let stamped = feature.clone();
     let writer = futures::executor::block_on(
         W::cucumber::<&Path>()
             .with_writer({
@@ -673,8 +717,13 @@ where
                     .tee::<W, _>(recorder.discard_arbitrary_writes().discard_stats_writes())
             })
             .with_parser(SpacedPlaceholders)
+            .before(move |_, rule, scenario, _| {
+                stamp.start(scenario_id(&stamped, rule, scenario));
+                async {}.boxed_local()
+            })
             .after(move |feature, rule, scenario, finished, _| {
                 let id = scenario_id(&named, rule, scenario);
+                timings.finish(&id);
                 if let Some(why) = unsupported_here(finished) {
                     eprintln!("SKIP {id}: {why}");
                     skips.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -698,7 +747,7 @@ where
             })
             // The test harness's own arguments (`--exact`) are not ours.
             .with_cli(cucumber::cli::Opts::<_, _, _, cucumber::cli::Empty>::default())
-            .max_concurrent_scenarios(4)
+            .max_concurrent_scenarios(at_once)
             .fail_on_skipped()
             .filter_run(file, move |feature, rule, scenario| {
                 !is_pending(feature, rule, scenario)

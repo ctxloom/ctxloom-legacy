@@ -26,6 +26,13 @@
 //! re-confirmation, alone); a cluster holding none of them runs nothing and
 //! passes, and when no feature at all matches, every cluster fails.
 //!
+//! `GHERKIN_TIMINGS=<absolute file>` appends each scenario's wall time to
+//! the file, a line `<seconds>\t<id>` per scenario (the profile of a slow
+//! cluster: daemon.feature's, owner ruling of 2026-11-18). Under it a
+//! feature's scenarios run one at a time, so no scenario's time holds
+//! another's: they take turns anyway (above), and the cluster's time was
+//! the same either way when it was measured.
+//!
 //! `GHERKIN_RATCHET=<absolute file>` asks for the scenario list instead of a
 //! verdict: every scenario run, one line each, sorted, `red\t<id>` or
 //! `green\t<id>` (the id is `gherkin_common::scenario_id`'s, a failure no
