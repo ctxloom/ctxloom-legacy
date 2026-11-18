@@ -92,6 +92,27 @@ impl TryFrom<&TypedRefusal> for SessionRejection {
         if let Some(NotHolder { harp }) = refusal.object() {
             return Ok(SessionRejection::NotHolder { harp });
         }
+        if let Some(crate::SessionLive { harp, reason }) = refusal.object() {
+            return Ok(SessionRejection::SessionLive { harp, reason });
+        }
+        if let Some(crate::SessionKept { harp }) = refusal.object() {
+            return Ok(SessionRejection::SessionKept { harp });
+        }
+        if let Some(crate::WithinRetention { harp, detail }) = refusal.object() {
+            return Ok(SessionRejection::WithinRetention { harp, detail });
+        }
+        if let Some(crate::KeepsSession {
+            harp,
+            spared,
+            skipped,
+        }) = refusal.object()
+        {
+            return Ok(SessionRejection::KeepsSession {
+                harp,
+                spared,
+                skipped,
+            });
+        }
         if let Some(SessionUnknown { harp }) = refusal.object() {
             return Ok(SessionRejection::SessionUnknown { harp });
         }

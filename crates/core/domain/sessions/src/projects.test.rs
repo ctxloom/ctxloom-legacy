@@ -375,6 +375,7 @@ fn the_project_states_round_trip_through_the_wire() {
         root: ROOT.to_string(),
         git_common_dir: COMMON.to_string(),
         root_commit: COMMIT.to_string(),
+        ..ProjectState::default()
     };
     let wire = sessions_proto::v1::ProjectState::from(project.clone());
     assert_eq!(wire.project_id, PROJECT);
@@ -398,4 +399,205 @@ fn the_project_states_round_trip_through_the_wire() {
         (HARP, PROJECT)
     );
     assert_eq!(ProjectNameState::try_from(wire).unwrap(), claim);
+}
+
+// ------------------------------------------------- a session's removal (O2)
+
+/// Evidence of a session whose removal nothing refuses.
+fn removable(harp: &str) -> crate::RemovalEvidence {
+    crate::RemovalEvidence {
+        harp: harp.to_string(),
+        ended: true,
+        not_ended: String::new(),
+        kept: false,
+        retained: String::new(),
+        spared: 0,
+        skipped: 0,
+    }
+}
+
+fn remove(evidence: crate::RemovalEvidence, even_if_live: bool) -> crate::RemoveSession {
+    crate::RemoveSession {
+        project: PROJECT.to_string(),
+        harp: evidence.harp.clone(),
+        even_if_live,
+        evidence,
+    }
+}
+
+/// Record a removal's step done, as the daemon does: a fact keyed
+/// `{request_id}:{step}`. What it recorded.
+fn step_done(project: &mut Harness<ProjectAggregate>, request_id: &str, step: u32) -> usize {
+    use angzarr_embedded::markup::DomainMessage;
+    use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Fact, FactOrigin};
+    let fact = crate::RecordRemovalStepDone {
+        request_id: request_id.to_string(),
+        step,
+    };
+    let book = CommandBook {
+        cover: Some(project.cover().clone()),
+        page: Some(CommandPage {
+            body: Some(command_page::Body::Fact(Fact {
+                payload: Some(angzarr_embedded::Any::from_msg(&fact.to_wire()).unwrap()),
+                origin: Some(FactOrigin {
+                    external_id: format!("removal:{request_id}:{step}"),
+                    description: String::new(),
+                }),
+            })),
+            ..CommandPage::default()
+        }),
+    };
+    match project
+        .when_book(book)
+        .handled()
+        .expect("a fact is never refused")
+    {
+        angzarr_embedded::Handled::Applied(recorded) => {
+            recorded.books().iter().map(|book| book.pages.len()).sum()
+        }
+        _ => 0,
+    }
+}
+
+// Step 10b O2: a session's removal is a command of the PROJECT stream, its
+// four steps listed in its intent under its request id (the command's id),
+// and kept open until each is recorded done, in order; then nothing of it
+// is left.
+#[test]
+fn a_removal_is_intended_with_its_steps_and_open_until_each_is_done() {
+    let mut project = project();
+    project.when(name(PROJECT)).result().unwrap();
+    let events = project
+        .when(remove(removable(HARP), false))
+        .result()
+        .unwrap();
+    let [ProjectEvent::SessionRemovalIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(intended.harp, HARP);
+    assert_eq!(
+        intended.steps,
+        ["worktrees", "trash", "purge", "purge_trash"].map(String::from)
+    );
+    assert!(!intended.request_id.is_empty(), "the command's own id");
+    let id = intended.request_id.clone();
+    let open = |project: &Harness<ProjectAggregate>| {
+        project
+            .state()
+            .state()
+            .removals
+            .get(&id)
+            .map(|removal| removal.done)
+    };
+    assert_eq!(open(&project), Some(0));
+    assert_eq!(step_done(&mut project, &id, 1), 0, "not the next step");
+    assert_eq!(step_done(&mut project, &id, 0), 1);
+    assert_eq!(open(&project), Some(1));
+    assert_eq!(step_done(&mut project, "another", 1), 0, "no such removal");
+    for step in 1..4 {
+        assert_eq!(step_done(&mut project, &id, step), 1, "step {step}");
+    }
+    assert_eq!(open(&project), None, "a removal done is dropped");
+}
+
+// The removal is judged on its evidence, in today's order: the lock (unless
+// --even-if-live), keep, the retention, then the worktrees.
+#[test]
+fn a_removal_is_refused_on_its_evidence() {
+    let mut project = project();
+    project.when(name(PROJECT)).result().unwrap();
+    let live = crate::RemovalEvidence {
+        ended: false,
+        not_ended: "its lock is held".to_string(),
+        ..removable(HARP)
+    };
+    assert_eq!(
+        refused(project.when(remove(live.clone(), false)).result()),
+        "sessions-session-live"
+    );
+    let kept = crate::RemovalEvidence {
+        kept: true,
+        ..live.clone()
+    };
+    assert_eq!(
+        refused(project.when(remove(kept, true)).result()),
+        "sessions-session-kept",
+        "--even-if-live passes the lock, never keep"
+    );
+    let retained = crate::RemovalEvidence {
+        retained: "it ended an hour ago".to_string(),
+        ..removable(HARP)
+    };
+    assert_eq!(
+        refused(project.when(remove(retained, false)).result()),
+        "sessions-within-retention"
+    );
+    let spared = crate::RemovalEvidence {
+        spared: 1,
+        ..removable(HARP)
+    };
+    assert_eq!(
+        refused(project.when(remove(spared, false)).result()),
+        "sessions-keeps-session"
+    );
+    assert!(
+        project.state().state().removals.is_empty(),
+        "nothing refused is intended"
+    );
+    let anyway = project.when(remove(live, true)).result().unwrap();
+    assert_eq!(anyway.len(), 1, "--even-if-live removes it anyway");
+}
+
+// A sweep intends one removal per session it may remove, each keyed
+// `{request_id}:{harp}`; one its evidence refuses is passed over.
+#[test]
+fn a_sweep_intends_one_removal_per_removable_session() {
+    let mut project = project();
+    project.when(name(PROJECT)).result().unwrap();
+    let kept = crate::RemovalEvidence {
+        kept: true,
+        ..removable("brisk-copper-moth")
+    };
+    let events = project
+        .when(crate::SweepSessions {
+            project: PROJECT.to_string(),
+            harps: vec![HARP.to_string(), "brisk-copper-moth".to_string()],
+            evidence: vec![removable(HARP), kept],
+        })
+        .result()
+        .unwrap();
+    let [ProjectEvent::SessionRemovalIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(intended.harp, HARP);
+    assert!(
+        intended.request_id.ends_with(&format!(":{HARP}")),
+        "{}",
+        intended.request_id
+    );
+    assert_eq!(project.state().state().removals.len(), 1);
+}
+
+// The open removals round-trip through the state's wire message.
+#[test]
+fn the_open_removals_round_trip_through_the_wire() {
+    use crate::{OpenRemoval, ProjectState};
+    let mut removals = std::collections::BTreeMap::new();
+    removals.insert(
+        "r-1".to_string(),
+        OpenRemoval {
+            request_id: "r-1".to_string(),
+            harp: HARP.to_string(),
+            steps: vec!["trash".to_string()],
+            done: 1,
+        },
+    );
+    let project = ProjectState {
+        project_id: PROJECT.to_string(),
+        removals,
+        ..ProjectState::default()
+    };
+    let wire = sessions_proto::v1::ProjectState::from(project.clone());
+    assert_eq!(wire.removals["r-1"].done, 1);
+    assert_eq!(ProjectState::try_from(wire).unwrap(), project);
 }

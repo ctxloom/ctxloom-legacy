@@ -508,7 +508,7 @@ impl<E: Edge> Api<E> {
 
     /// The test-support kill point `point` of a write, when the wiring
     /// set one.
-    fn dies_at(&self, point: &str) {
+    pub(crate) fn dies_at(&self, point: &str) {
         if let Some(dies) = &self.write_dies_at {
             dies(point);
         }

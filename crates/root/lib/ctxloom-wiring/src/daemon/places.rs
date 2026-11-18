@@ -4,7 +4,8 @@
 //! `worktree-git` run in the caller's environment; its configuration, read
 //! from its registered root as a command in it reads it), and the daemon's
 //! ONE store, purged stream by stream (`sessions_application::purge`, head
-//! guarded). No second connection to the store is opened.
+//! guarded), and the atomic operations a removal's trash is made by
+//! (content-fs's, O2). No second connection to the store is opened.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -102,6 +103,12 @@ impl daemon_api::Places for ProjectPlaces {
             seconds: i64::try_from(now.as_secs()).unwrap_or(i64::MAX),
             nanos: i32::try_from(now.subsec_nanos()).unwrap_or(0),
         }
+    }
+
+    fn operations(&self) -> Arc<dyn ctxloom_ports::Operations> {
+        // A removal's trash is its checkout's own (O2, QUESTIONS 8), made
+        // by the same atomic operations as a library write's.
+        Arc::new(content_fs::TreeOperations::new(Arc::clone(&self.fs)))
     }
 }
 

@@ -10,7 +10,9 @@
 //!   scratch): a purge runs no git, so a worktree is untouched by
 //!   construction, not by a filter applied after;
 //! - a removal takes the session's directory whole, its lock inside it
-//!   (owner ruling 94b), never following a link out of it.
+//!   (owner ruling 94b), into the checkout's trash (step 10b O2, the
+//!   daemon's atomic operation); here it is only measured, never following
+//!   a link out of it.
 
 mod error;
 
@@ -154,18 +156,10 @@ impl SessionFiles for SessionDirs {
         Ok(found)
     }
 
-    fn destroy_session(&mut self, harp: &str) -> Result<u64, Report> {
-        let root = self.dir(harp);
+    fn size(&mut self, harp: &str) -> Result<u64, Report> {
         let mut found = Vec::new();
-        let mut freed = 0;
-        if self.fs.symlink_metadata(&root).is_ok() {
-            self.every_file(&root, &mut found);
-            freed = found.iter().sum();
-            self.fs
-                .remove_dir_all(&root)
-                .map_err(|e| Report::of(&FilesError::io("remove", &root, &e)))?;
-        }
-        Ok(freed)
+        self.every_file(&self.dir(harp), &mut found);
+        Ok(found.iter().sum())
     }
 }
 

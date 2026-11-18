@@ -539,8 +539,6 @@ use served_library_reads;
 /// The use cases of the daemon's API.
 pub struct Api<E> {
     pub(crate) parts: Parts<E>,
-    /// The destroys applied, by request id, for the daemon's life (S8).
-    pub(crate) applied: crate::destroy::Applied,
     /// The one-shots the daemon hosts (U4); none, `CreateRun` fails.
     pub(crate) one_shots: Option<Arc<daemon_application::OneShots>>,
     /// Where a child's hand-off is planned and kept; none, `CreateHandOff`
@@ -573,7 +571,6 @@ impl<E: Edge> Api<E> {
     pub fn new(parts: Parts<E>) -> Api<E> {
         Api {
             parts,
-            applied: crate::destroy::Applied::default(),
             one_shots: None,
             hand_offs: None,
             terminals: None,
@@ -1014,7 +1011,7 @@ impl<E: Edge> Api<E> {
     }
 
     /// The project `id` as its own stream says it now.
-    async fn project(&self, id: &str) -> Result<sessions::ProjectState, ApiError> {
+    pub(crate) async fn project(&self, id: &str) -> Result<sessions::ProjectState, ApiError> {
         let pages = self
             .parts
             .edge

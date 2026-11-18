@@ -33,7 +33,7 @@ fn root_text(cover: &Cover) -> String {
 
 /// One event as the record prints it: its type, its payload's bytes (hex:
 /// two events alike are one fact recorded twice), and what the record's
-/// readers ask of it.
+/// readers ask of it (a session removal's harp and steps among them).
 fn row(any: &angzarr_embedded::Any) -> Value {
     let kind = any.type_url.rsplit('.').next().unwrap_or_default();
     let hex: String = any.value.iter().map(|b| format!("{b:02x}")).collect();
@@ -72,6 +72,20 @@ fn row(any: &angzarr_embedded::Any) -> Value {
             }
             runs::RunEvent::RunnerStartedRecorded(started) => {
                 row["workspace"] = started.workspace.into();
+            }
+            _ => {}
+        }
+    } else if let Ok(event) = sessions::ProjectEvent::from_any(any) {
+        // A session's removal on its project's stream (O2, step 10b U9).
+        match event {
+            sessions::ProjectEvent::SessionRemovalIntended(intended) => {
+                row["request_id"] = intended.request_id.into();
+                row["harp"] = intended.harp.into();
+                row["steps"] = intended.steps.into();
+            }
+            sessions::ProjectEvent::RemovalStepDone(done) => {
+                row["request_id"] = done.request_id.into();
+                row["step"] = done.step.into();
             }
             _ => {}
         }

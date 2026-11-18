@@ -36,6 +36,19 @@ message ProjectState {
   string root = 3;
   string git_common_dir = 4;
   string root_commit = 5;
+  // O2 (step 10b U9): the session removals intended and not yet done, by
+  // request id. A removal done is dropped, so nothing of a removed session
+  // stays here.
+  map<string, OpenRemoval> removals = 6;
+}
+
+// A session's removal intended and not yet done (O2): its steps, in order,
+// and how many are done.
+message OpenRemoval {
+  string request_id = 1;
+  string harp = 2;
+  repeated string steps = 3;
+  uint32 done = 4;
 }
 
 // Name the project `harp`, once. A project already named records nothing
@@ -138,7 +151,128 @@ message ProjectNameClaimed {
   string project_id = 2;
 }
 
+// region session removal (O2, step 10b U9)
+
+// What a removal is judged on, found by the daemon before it sends the
+// command (S41: decide reads no lock, clock or disk): the lock's verdict,
+// the session's kept flag, its transcript retention, its worktrees'
+// classification.
+message RemovalEvidence {
+  string harp = 1;
+  // The lock proves the owner ended (it is there and free).
+  bool ended = 2;
+  // When it does not: why (held, or no lock), as the refusal says it.
+  string not_ended = 3;
+  bool kept = 4;
+  // Within the transcript retention: how (when it ended, or that nothing
+  // records it); empty once past it.
+  string retained = 5;
+  // Its worktrees a removal would spare (work in them) and skip (their
+  // owner not proven ended).
+  uint64 spared = 6;
+  uint64 skipped = 7;
+}
+
+// Remove one session (`session remove <harp> --yes`), a T28 sequence the
+// daemon runs on the event: its worktrees (reclaim), then its directory,
+// lock inside, renamed into the checkout's `state/trash/<request id>/`,
+// then its streams purged, then the slot removed. The steps are listed in
+// the event, and a retry resumes at the first not done. Its command id is
+// the request id, which this stream keeps when the session's own is purged.
+message RemoveSession {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.sessions.v1.ProjectState"
+    emits: ["ctxloom.sessions.v1.SessionRemovalIntended"]
+    refuses: "ctxloom.sessions.v1.SessionLive"
+    refuses: "ctxloom.sessions.v1.SessionKept"
+    refuses: "ctxloom.sessions.v1.WithinRetention"
+    refuses: "ctxloom.sessions.v1.KeepsSession"
+  };
+
+  string project = 1;
+  string harp = 2;
+  bool even_if_live = 3;
+  RemovalEvidence evidence = 4;
+}
+
+// Several, as `session sweep --yes` applies them; one intent each, keyed
+// `{request_id}:{harp}`. Each session's evidence is judged as its own
+// `RemoveSession`'s; a refused one is passed over, never the sweep's
+// refusal.
+message SweepSessions {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.sessions.v1.ProjectState"
+    emits: ["ctxloom.sessions.v1.SessionRemovalIntended"]
+  };
+
+  string project = 1;
+  repeated string harps = 2;
+  repeated RemovalEvidence evidence = 3;
+}
+
+message SessionRemovalIntended {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.ProjectState"};
+  string request_id = 1;
+  string harp = 2;
+  // `worktrees`, `trash`, `purge`, `purge_trash`, in order.
+  repeated string steps = 3;
+}
+
+// The daemon's word that a step is done (keyed `{request_id}:{step}`).
+message RecordRemovalStepDone {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.ProjectState"
+    emits: ["ctxloom.sessions.v1.RemovalStepDone"]
+  };
+  string request_id = 1;
+  uint32 step = 2;
+}
+
+message RemovalStepDone {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.ProjectState"};
+  string request_id = 1;
+  uint32 step = 2;
+}
+
+// endregion session removal
+
 // region refusals
+
+// A removal of a session whose lock does not prove its owner ended (held,
+// or no lock), without `even_if_live`. Maps back to
+// `sessions-application-refused-not-dead`'s words.
+message SessionLive {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string harp = 1;
+  string reason = 2;
+}
+
+// A removal of a session marked keep (`sessions-application-refused-kept`).
+message SessionKept {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string harp = 1;
+}
+
+// A removal within the transcript retention
+// (`sessions-application-refused-retained`).
+message WithinRetention {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string harp = 1;
+  string detail = 2;
+}
+
+// A removal a spared or skipped worktree keeps the session from
+// (`isolation-application-keeps-session`): removed whole or not at all.
+message KeepsSession {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  string harp = 1;
+  uint64 spared = 2;
+  uint64 skipped = 3;
+}
 
 // A claim on a project harp another project holds.
 message ProjectNameTaken {

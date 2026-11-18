@@ -81,6 +81,19 @@ pub enum SessionRejection {
         limit: u32,
         recent: u32,
     },
+    /// A removal of a session whose lock does not prove its owner ended,
+    /// without `--even-if-live` (O2); `reason` says why.
+    SessionLive { harp: String, reason: String },
+    /// A removal of a session marked keep (O2).
+    SessionKept { harp: String },
+    /// A removal within the transcript retention (O2); `detail` says how.
+    WithinRetention { harp: String, detail: String },
+    /// A removal a spared or skipped worktree keeps from being whole (O2).
+    KeepsSession {
+        harp: String,
+        spared: u64,
+        skipped: u64,
+    },
 }
 
 /// Its key and args, never English (angzarr decision 14.37).
@@ -118,6 +131,10 @@ impl Diagnostic for SessionRejection {
             SessionRejection::EngineMismatch { .. } => code!("engine-mismatch"),
             SessionRejection::WorkspaceMismatch { .. } => code!("workspace-mismatch"),
             SessionRejection::RehostBudgetSpent { .. } => code!("rehost-budget-spent"),
+            SessionRejection::SessionLive { .. } => code!("session-live"),
+            SessionRejection::SessionKept { .. } => code!("session-kept"),
+            SessionRejection::WithinRetention { .. } => code!("within-retention"),
+            SessionRejection::KeepsSession { .. } => code!("keeps-session"),
         }
     }
 
@@ -133,7 +150,25 @@ impl Diagnostic for SessionRejection {
             | SessionRejection::SessionUnknown { harp }
             | SessionRejection::SessionDestroyed { harp }
             | SessionRejection::SessionRunning { harp }
+            | SessionRejection::SessionKept { harp }
             | SessionRejection::NoNativeSession { harp } => vec![("harp", harp.as_str().into())],
+            SessionRejection::SessionLive { harp, reason } => vec![
+                ("harp", harp.as_str().into()),
+                ("reason", reason.as_str().into()),
+            ],
+            SessionRejection::WithinRetention { harp, detail } => vec![
+                ("harp", harp.as_str().into()),
+                ("detail", detail.as_str().into()),
+            ],
+            SessionRejection::KeepsSession {
+                harp,
+                spared,
+                skipped,
+            } => vec![
+                ("harp", harp.as_str().into()),
+                ("spared", (*spared).into()),
+                ("skipped", (*skipped).into()),
+            ],
             SessionRejection::NotOwner { requester } => {
                 vec![("requester", requester.as_str().into())]
             }
@@ -272,6 +307,20 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
             harp: harp(),
             limit: 60,
             recent: 60,
+        }),
+        Box::new(SessionRejection::SessionLive {
+            harp: harp(),
+            reason: "its lock is held: the owner is alive and running".to_string(),
+        }),
+        Box::new(SessionRejection::SessionKept { harp: harp() }),
+        Box::new(SessionRejection::WithinRetention {
+            harp: harp(),
+            detail: "it ended 2026-11-18T03:00:00Z".to_string(),
+        }),
+        Box::new(SessionRejection::KeepsSession {
+            harp: harp(),
+            spared: 1,
+            skipped: 0,
         }),
     ]
 }

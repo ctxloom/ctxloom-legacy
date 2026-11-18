@@ -639,8 +639,8 @@ fn removing_a_session_whose_home_holds_the_link_leaves_the_login_intact() {
         surveyed.iter().all(|item| !item.rel.starts_with("home")),
         "{surveyed:?}"
     );
-    dirs.destroy_session(HARP).unwrap();
-    assert!(!fs.exists(&dirs.dir(HARP)).unwrap());
+    // Measured, the link is not followed out: only the session's own bytes.
+    assert_eq!(dirs.size(HARP).unwrap(), 5);
     assert_eq!(fs.read_to_string(Path::new(&login_file())).unwrap(), SECRET);
 }
 
@@ -678,10 +678,11 @@ fn a_records_harp_exists_once_its_directory_does() {
     assert!(!SessionRecords::exists(&mut dirs, "brisk-copper-moth"));
 }
 
-// Ruling 94b: a destroy removes the session's directory whole (the home too)
-// and its lock, and counts what it freed; a session with none is no failure.
+// Step 10b O2: what a removal frees is its directory's every file (the
+// home and the lock too), measured before it is taken into the trash; the
+// measure removes nothing, and a session with no directory is 0.
 #[test]
-fn a_destroy_removes_the_whole_directory_and_its_lock() {
+fn a_sessions_size_is_every_file_of_its_directory_and_removes_nothing() {
     let (fs, mut dirs) = dirs();
     write(&fs, &dirs, "home/settings.json", "{}");
     write(&fs, &dirs, "native/history.jsonl", "abc");
@@ -691,12 +692,7 @@ fn a_destroy_removes_the_whole_directory_and_its_lock() {
         file_system::Perms::Exact(Mode::from_bits(0o600)),
     )
     .unwrap();
-    assert_eq!(dirs.destroy_session(HARP).unwrap(), 5);
-    assert!(!fs.exists(&dirs.dir(HARP)).unwrap());
-    assert!(!fs.exists(&dirs.lock_path(HARP)).unwrap());
-    assert_eq!(
-        dirs.destroy_session(HARP).unwrap(),
-        0,
-        "again: nothing there"
-    );
+    assert_eq!(dirs.size(HARP).unwrap(), 5);
+    assert!(fs.exists(&dirs.lock_path(HARP)).unwrap(), "nothing removed");
+    assert_eq!(dirs.size("brisk-copper-moth").unwrap(), 0);
 }

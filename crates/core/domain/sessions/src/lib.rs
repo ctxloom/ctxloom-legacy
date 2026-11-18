@@ -60,13 +60,15 @@ pub use harp::{validate, validate_session_name, RESERVED_PREFIX, RESERVED_REASON
 pub use lifeline::{DRAINED, REHOSTED, REHOST_BUDGET};
 pub use name::{project_id_root, root_of, ProjectName, SessionName, NAMESPACE};
 pub use names::NameClaimAggregate;
-pub use projects::{fold_project, ProjectAggregate, ProjectNameAggregate};
+pub use projects::{
+    fold_project, removal_refused, ProjectAggregate, ProjectNameAggregate, REMOVAL_STEPS,
+};
 pub use refusal::NotOurs;
 #[cfg(any(test, feature = "test-support"))]
 pub use rejection::diagnostic_samples;
 pub use rejection::{SessionRejection, EN_US};
 pub use state::{
-    Child, NameClaimState, ProjectNameState, ProjectState, SessionState, NAMES_DOMAIN,
+    Child, NameClaimState, OpenRemoval, ProjectNameState, ProjectState, SessionState, NAMES_DOMAIN,
     PROJECTS_DOMAIN, PROJECT_NAMES_DOMAIN, SESSION_DOMAIN,
 };
 

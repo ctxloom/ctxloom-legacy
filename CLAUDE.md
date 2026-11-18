@@ -422,11 +422,28 @@ listings); `scripts/plain-destroy-check.sh`, run by `just build`, holds the
 plain binary to knowing none of `remove`, `purge` or `sweep`. The acceptance
 tests build with the feature, and `session-cli` (and `daemon-api-grpc`)
 dev-depends on itself with it, so its tests and `--all-targets` lint compile the destroy (no
-`feature_rules` entry: the mutation recipe refuses one). A destroy purges,
-from the store, the session's stream and each run stream UUIDv5(session,
-1..=n), each guarded by the head just read (retried on a conflict), then
-removes the session's whole directory (authored files too, a login link never
-followed) and its lock; the name's claim is kept, and the daemon's warm
+`feature_rules` entry: the mutation recipe refuses one). A destroy is a T28
+sequence on the PROJECT stream (O2, step 10b U9): the domain's
+`RemoveSession` (its command id the request's, keyed `removal:{request id}`,
+a sweep's `removal:{request id}:{harp}`; the project stream keeps it when
+the session's own is purged) is decided on the evidence the daemon
+gathers (`RemovalEvidence`: the lock's verdict, kept, the retention, the
+worktrees; `sessions::removal_refused`, which a preview asks too; its
+refusals `SessionLive`, `SessionKept`, `WithinRetention`, `KeepsSession`
+are said as `session remove`'s refusals were), and recorded
+`SessionRemovalIntended` with its steps (`sessions::REMOVAL_STEPS`:
+`worktrees`, `trash`, `purge`, `purge_trash`), each then made and recorded
+`RecordRemovalStepDone` (`ProjectState.removals` holds it open until its
+last is done). The worktrees step is reclaim's, made just before the
+intent (its classification is the removal's judgement) and recorded done
+at once. Then the session's whole directory, its lock inside it (authored
+files too, a link never followed), is renamed into its checkout's
+`state/trash/<removal id>/` (`Places::operations`, content-fs's
+`TreeOperations`; the `trashed` kill point), then the session's stream and
+each run stream UUIDv5(session, 1..=n) are purged from the store, each
+guarded by the head just read (retried on a conflict), then the trash slot
+is removed (`Operation::Purge`), so none is left; the name's claim is kept,
+and the daemon's warm
 session index, pending messages and board are told the streams are gone
 (the board its runs' too, so a destroyed session leaves no board row).
 Before the purge each child the session holds is closed and its owner
@@ -446,8 +463,11 @@ active since it, within its retention, its purge refused or failed), keeps
 EVERY checkout, its clean ones held in the report saying why the session
 was kept; only a session it purges has its clean ones removed on
 `--yes`, by that purge, through `reclaim_application::remove`'s order
-(`reclaim_application::sweep`). The streams go first, so a
-failure removing the directory leaves a session nothing lists. A hook fact
+(`reclaim_application::sweep`). The directory goes first, so a
+directory that cannot be taken leaves the session whole; a retry of a
+removal still open on its project's stream resumes it at its first step
+not done, never judged again (its own trash leaves no lock to prove it
+ended). A hook fact
 redelivered after it finds no session and records nothing. It is refused, as
 before, for a session whose lock does not prove it ended (held, or none;
 the daemon reads the lock) unless `--even-if-live` (the one override), for
@@ -1953,14 +1973,15 @@ answers carry the plan (additive: `DeleteSessionResponse`'s harp, applied,
 files, bytes freed, events destroyed and worktrees; `SweepSessionsResponse`'s
 rows, counts, cutoff and each removal). Each carries the client's
 `request_id` (S8: `Client::with_request_ids`, a UUIDv7 minted once per call,
-the SAME on its one retry on a new daemon), and an applied destroy's answer
-is kept by it for the daemon's life (`destroy::Applied`, in memory), so a
-retry already applied is answered with its first result; after a restart a
-retried `DeleteSession` whose session the store says is destroyed (its name
-claimed by it, its stream empty) is answered applied from those facts,
-nothing counted (accepted cost: a fresh `session remove --yes` of an
-already-destroyed session, which carries a new id, is answered so too, not
-`SessionNotFound`), and a retried sweep runs again over what is left. A
+the SAME on its one retry on a new daemon). Nothing of a destroy is kept
+in memory (O2: `destroy::Applied` is gone): a retry of a removal still open
+resumes it; a retried `DeleteSession` whose session the store says is
+destroyed (its name claimed by it, its stream empty) is answered applied
+from those facts, nothing counted (AIP-155's first response is not
+reproduced: its counts are gone with the session; accepted cost: a fresh
+`session remove --yes` of an already-destroyed session, which carries a
+new id, is answered so too, not `SessionNotFound`), and a retried sweep
+runs again over what is left (each of its removals intended once). A
 destroy call's deadline is its own (`DaemonClient::destroying`, the wiring's
 `DESTROY_WAIT`: worktree-git's 30 s timeout times six git invocations times
 ten worktrees, plus `CALL_WAIT`), not a read's five seconds; a call past its

@@ -35,9 +35,16 @@ pub(crate) struct Held {
     survey: BTreeMap<String, Vec<FileItem>>,
     /// When each session's engine last wrote, by harp.
     last_active: BTreeMap<String, Timestamp>,
-    /// The sessions whose directory was destroyed, in order.
+    /// The sessions whose directory was destroyed (taken into the trash),
+    /// in order.
     destroyed: Vec<String>,
+    /// Each trash: its tree, its request, its path.
+    trashed: Vec<(String, String, String)>,
+    /// The trash slots purged, by request.
+    purged: Vec<String>,
     fail_destroy: bool,
+    /// The next purge of a slot fails (once).
+    fail_purge: bool,
     /// The verdicts of a session's worktrees, planned and applied.
     planned: Option<Vec<Verdict>>,
     applied: Option<Vec<Verdict>>,
@@ -77,16 +84,65 @@ impl SessionFiles for Files {
         Ok(self.0.held().survey.get(harp).cloned().unwrap_or_default())
     }
 
-    fn destroy_session(&mut self, harp: &str) -> Result<u64, angzarr_diagnostic::Report> {
-        let mut held = self.0.held();
-        if held.fail_destroy {
-            return Err(angzarr_diagnostic::Report::new("x-destroy-failed"));
-        }
-        held.destroyed.push(harp.to_string());
-        Ok(held
+    fn size(&mut self, harp: &str) -> Result<u64, angzarr_diagnostic::Report> {
+        Ok(self
+            .0
+            .held()
             .survey
             .get(harp)
             .map_or(0, |files| files.iter().map(|f| f.bytes).sum()))
+    }
+}
+
+/// A project's tree's atomic operations: a trash of `sessions/<harp>` is
+/// that session's directory taken; a purge drops its request's slot.
+struct Operations(Arc<FakePlaces>);
+
+impl ctxloom_ports::Operations for Operations {
+    fn operate(
+        &self,
+        tree: &str,
+        request_id: &str,
+        operation: &ctxloom_ports::Operation,
+        at: &dyn Fn(ctxloom_ports::Point),
+    ) -> Result<ctxloom_ports::Operated, ctxloom_ports::Failure> {
+        let mut held = self.0.held();
+        match operation {
+            ctxloom_ports::Operation::Trash { path } => {
+                if held.fail_destroy {
+                    return Err(Box::new(angzarr_diagnostic::Report::new(
+                        "x-destroy-failed",
+                    )));
+                }
+                let harp = path.strip_prefix("sessions/").unwrap_or(path).to_string();
+                if held.destroyed.contains(&harp) {
+                    // Retried after the rename: it is in its slot.
+                    return Ok(ctxloom_ports::Operated::Done);
+                }
+                held.destroyed.push(harp);
+                held.trashed
+                    .push((tree.to_string(), request_id.to_string(), path.clone()));
+                drop(held);
+                at(ctxloom_ports::Point::Trashed);
+            }
+            ctxloom_ports::Operation::Purge => {
+                if std::mem::take(&mut held.fail_purge) {
+                    return Err(Box::new(angzarr_diagnostic::Report::new("x-purge-failed")));
+                }
+                held.purged.push(request_id.to_string());
+            }
+            other => panic!("a removal makes no {other:?}"),
+        }
+        Ok(ctxloom_ports::Operated::Done)
+    }
+
+    fn sweep_staging(&self, _tree: &str) -> Result<(), ctxloom_ports::Failure> {
+        Ok(())
+    }
+
+    fn purge_slot(&self, _tree: &str, request_id: &str) -> Result<(), ctxloom_ports::Failure> {
+        self.0.held().purged.push(request_id.to_string());
+        Ok(())
     }
 }
 
@@ -176,6 +232,10 @@ impl Places for Arc<FakePlaces> {
 
     fn now(&self) -> Timestamp {
         at(NOW)
+    }
+
+    fn operations(&self) -> Arc<dyn ctxloom_ports::Operations> {
+        Arc::new(Operations(Arc::clone(self)))
     }
 }
 
@@ -503,16 +563,37 @@ async fn a_delete_of_a_session_nobody_holds_is_not_found() {
     assert_eq!(missing.name, name);
 }
 
-// Ruling 94b: the streams go before the directory, so a directory that
-// cannot be removed leaves a session nothing lists.
+// Step 10b O2 (T28): the directory, its lock inside, goes into the
+// checkout's trash FIRST, then the streams, so a directory that cannot be
+// taken leaves the session whole: listed, its stream as it was.
 #[tokio::test]
-async fn the_streams_go_before_the_directory() {
+async fn a_directory_that_cannot_be_trashed_leaves_the_session_whole() {
     let f = finished(HARP, transcript_and_notes(HARP)).await;
     f.places.held().fail_destroy = true;
     let failed = f.api.delete_session(delete(NAME, true)).await;
-    assert!(matches!(failed, Err(ApiError::Failed { .. })), "{failed:?}");
+    assert!(failed.is_err(), "{failed:?}");
     let (session, _) = roots(NAME);
-    assert_eq!(head(&f.world, sessions::SESSION_DOMAIN, session).await, 0);
+    assert!(head(&f.world, sessions::SESSION_DOMAIN, session).await > 0);
+}
+
+// The trash is the checkout's own (QUESTIONS 8): the session's directory,
+// `sessions/<harp>` of its project's `.ctxloom`, into the request's slot,
+// which the removal's last step purges, so none is left.
+#[tokio::test]
+async fn a_removal_trashes_the_directory_in_its_projects_tree_and_purges_its_slot() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    f.api.delete_session(delete(NAME, true)).await.unwrap();
+    let held = f.places.held();
+    let [(tree, request, path)] = &held.trashed[..] else {
+        panic!("{:?}", held.trashed)
+    };
+    assert_eq!(tree, &format!("{ROOT}/.ctxloom"));
+    assert_eq!(path, &format!("sessions/{HARP}"));
+    assert_eq!(
+        held.purged,
+        std::slice::from_ref(request),
+        "its own slot, purged"
+    );
 }
 
 fn sweep(older_than: &str, yes: bool) -> v1::SweepSessionsRequest {
@@ -798,8 +879,9 @@ async fn claimed(f: &Fixture, harp: &str) {
     f.world.handle(book).await.unwrap();
 }
 
-// S8: a destroy retried with its request id, already applied, is answered
-// with its first result, not `SessionNotFound`.
+// S8, O2: a destroy retried with its request id, already applied, is
+// answered applied (from the store: its name claimed, its stream empty),
+// not `SessionNotFound`, and nothing is destroyed twice.
 #[tokio::test]
 async fn a_destroy_retried_with_its_request_id_answers_its_first_result() {
     let f = finished(HARP, transcript_and_notes(HARP)).await;
@@ -816,8 +898,82 @@ async fn a_destroy_retried_with_its_request_id_answers_its_first_result() {
         .delete_session(delete_as(NAME, "req-1"))
         .await
         .unwrap();
-    assert_eq!(again, first);
+    assert_eq!(
+        (again.name.as_str(), again.harp.as_str(), again.applied),
+        (NAME, HARP, Some(true))
+    );
     assert_eq!(f.places.held().destroyed, [HARP], "destroyed once");
+}
+
+/// The events of the project stream, by type.
+async fn project_events(f: &Fixture) -> Vec<String> {
+    let cover = Cover {
+        domain: sessions::PROJECTS_DOMAIN.to_string(),
+        root: Some(sessions::project_id_root(PROJECT)),
+        edition: None,
+    };
+    f.world
+        .events(&cover, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|page| match page.body {
+            Some(angzarr_embedded::v1::event_page::Body::Event(event)) => Some(
+                event
+                    .type_url
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+// O2 (T28): the removal is a command of the PROJECT stream, its steps
+// listed in its intent, each recorded done; one interrupted (its last
+// step failed) is resumed by its retry from the step it got to: nothing
+// done again, nothing intended twice.
+#[tokio::test]
+async fn a_removal_is_intended_on_the_project_stream_and_resumed_by_its_retry() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    claimed(&f, HARP).await;
+    f.places.held().fail_purge = true;
+    let failed = f.api.delete_session(delete_as(NAME, "req-1")).await;
+    assert!(failed.is_err(), "{failed:?}");
+    let (session, _) = roots(NAME);
+    assert_eq!(
+        head(&f.world, sessions::SESSION_DOMAIN, session).await,
+        0,
+        "purged"
+    );
+    let restarted = f.restarted().await;
+    let again = restarted
+        .delete_session(delete_as(NAME, "req-1"))
+        .await
+        .unwrap();
+    assert_eq!(again.applied, Some(true));
+    let (destroyed, purged) = {
+        let held = f.places.held();
+        (held.destroyed.clone(), held.purged.len())
+    };
+    assert_eq!(destroyed, [HARP], "trashed once");
+    assert_eq!(purged, 1, "its slot purged on the retry");
+    let events = project_events(&f).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| *e == "SessionRemovalIntended")
+            .count(),
+        1,
+        "{events:?}"
+    );
+    assert_eq!(
+        events.iter().filter(|e| *e == "RemovalStepDone").count(),
+        4,
+        "{events:?}"
+    );
 }
 
 // Without a request id, a destroyed session is a name nobody holds.
@@ -881,9 +1037,10 @@ async fn a_planned_destroy_keeps_no_result_for_its_request_id() {
     assert_eq!(done.applied, Some(true));
 }
 
-// A sweep retried with its request id answers its first report.
+// A sweep retried with its request id destroys nothing twice: each of its
+// removals is its own, keyed `{request_id}:{harp}` on the project stream.
 #[tokio::test]
-async fn a_sweep_retried_with_its_request_id_answers_its_first_report() {
+async fn a_sweep_retried_with_its_request_id_destroys_nothing_twice() {
     let f = finished(HARP, transcript_and_notes(HARP)).await;
     let request = v1::SweepSessionsRequest {
         request_id: "sweep-1".to_string(),
@@ -892,8 +1049,17 @@ async fn a_sweep_retried_with_its_request_id_answers_its_first_report() {
     let first = f.api.sweep_sessions(request.clone()).await.unwrap();
     assert_eq!(first.counts.unwrap().done, 1);
     let again = f.api.sweep_sessions(request).await.unwrap();
-    assert_eq!(again, first);
+    assert_eq!(again.counts.unwrap().done, 0);
     assert_eq!(f.places.held().destroyed, [HARP]);
+    let events = project_events(&f).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| *e == "SessionRemovalIntended")
+            .count(),
+        1,
+        "{events:?}"
+    );
 }
 
 // ------------------------------------------------ the transcript retention

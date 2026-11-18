@@ -160,10 +160,11 @@ pub trait SessionFiles {
     /// worktrees and the scratch).
     fn survey(&mut self, harp: &str) -> Result<Vec<FileItem>, Report>;
 
-    /// Remove `harp`'s session directory whole, and its lock file beside it
-    /// (owner ruling 94b: a destroy leaves nothing of the session); the bytes
-    /// freed. Nothing there is not a failure.
-    fn destroy_session(&mut self, harp: &str) -> Result<u64, Report>;
+    /// The bytes of every regular file under `harp`'s session directory
+    /// (its lock inside it too), never following a link: what its removal
+    /// frees (step 10b O2: the directory is taken into the checkout's trash,
+    /// then purged, never removed here). None there is 0.
+    fn size(&mut self, harp: &str) -> Result<u64, Report>;
 }
 
 /// One of Go's session directories, as `session import` reads it.
