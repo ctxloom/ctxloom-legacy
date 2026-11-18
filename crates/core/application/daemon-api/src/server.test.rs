@@ -196,6 +196,10 @@ impl Hosting for Loop {
     fn home_gone(&self) -> Option<String> {
         self.home_gone.lock().unwrap().clone()
     }
+
+    fn rounds(&self) -> u32 {
+        17
+    }
 }
 
 /// Every session reads live but `ended-*` ones, unless a test set its
@@ -438,6 +442,8 @@ async fn get_daemon_says_what_it_hosts_and_how_long_it_has_been_idle() {
     assert_eq!(daemon.runs.len(), 1);
     assert_eq!(daemon.runs[0].harp, "brisk-copper-moth");
     assert_eq!((daemon.idle_seconds, daemon.idle_limit_seconds), (42, 600));
+    // The rounds its loop has finished (step 10c U13, G5(b)).
+    assert_eq!(daemon.rounds, 17);
 }
 
 // OD-52: a daemon whose start-up catch-up failed says so in GetDaemon, as

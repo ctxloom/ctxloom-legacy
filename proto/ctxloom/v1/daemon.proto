@@ -666,6 +666,11 @@ message Daemon {
   // Once it was asked to drain (`daemon stop --drain`, `ctxloom shutdown`,
   // a SIGTERM; OD-54): it takes no new call and exits once it hosts nothing.
   bool draining = 12;
+  // NEW (step 10c U13, G5(b)): the rounds its loop has finished, each of
+  // which observes the library trees a live session runs in. Told by a test
+  // build's daemon alone (the harness's "the daemon's next round runs");
+  // a count, so uint32 (OQ-12: JSON prints it as a number). Additive.
+  uint32 rounds = 13;
 }
 
 // `daemon stop [--even-if-live] [--drain]`, `ctxloom shutdown [<duration>]`.

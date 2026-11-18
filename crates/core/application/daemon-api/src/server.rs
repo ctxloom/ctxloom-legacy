@@ -67,6 +67,14 @@ pub trait Hosting: Send + Sync {
     /// ruling 2026-11-17: the daemon never makes a file in its home again
     /// once it has started); none while it is there, or cannot be told.
     fn home_gone(&self) -> Option<String>;
+    /// The rounds its loop has finished (step 10c U13, G5(b)); none told,
+    /// none.
+    // Equivalent: its one mutant (`1`) is the count of a loop that tells
+    // none, which no daemon is.
+    #[cfg_attr(test, mutants::skip)]
+    fn rounds(&self) -> u32 {
+        0
+    }
     /// What the session `session` (its stable id), which it hosts, asks
     /// with (step 8 U4): its run, engine, agent and `approval_timeout`, as
     /// of the last round; none for a session it does not host.
@@ -185,6 +193,14 @@ pub trait Calls: Send + Sync {
     fn delete_hand_off(&self, request: v1::DeleteHandOffRequest) -> Answer<'_, v1::HandOff> {
         let _ = request;
         Box::pin(async { Err(not_served("DeleteHandOff")) })
+    }
+    /// A daemon round's observation of the library trees a live session
+    /// runs in (step 10c U13, G5(b)), git run in `env` (the daemon's own:
+    /// a round has no caller): how many trees it observed. An edge that
+    /// observes nothing observes none.
+    fn observe_live(&self, env: v1::EnvVars) -> Answer<'_, u32> {
+        let _ = env;
+        Box::pin(async { Ok(0) })
     }
     /// `AssembleContext` (slice 3 step 6); as `GetTranscript`.
     fn assemble_context(
@@ -384,6 +400,10 @@ impl<E: Edge + 'static> Calls for Api<E> {
             self.open()?;
             Api::get_transcript(self, request).await
         })
+    }
+
+    fn observe_live(&self, env: v1::EnvVars) -> Answer<'_, u32> {
+        Box::pin(async move { Ok(Api::observe_live(self, &env).await) })
     }
 
     fn assemble_context(
@@ -859,6 +879,7 @@ impl<E: Edge> Api<E> {
             idle_limit_seconds: about.idle_limit_seconds,
             warnings: self.warnings(),
             draining: self.parts.hosting.draining(),
+            rounds: self.parts.hosting.rounds(),
         }
     }
 
