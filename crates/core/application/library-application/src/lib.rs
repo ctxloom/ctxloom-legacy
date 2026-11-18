@@ -43,7 +43,7 @@ pub use config::{
     load as load_config, Flags, LegacyGo, OnRun, RegisteredCompanion, OUTPUT_DIR_DEFAULT,
 };
 pub use config_show::{config_yaml, ConfigShown};
-pub use distill::{BundleDistilled, Distilled, Distiller, ItemDistilled};
+pub use distill::{DistillAsk, ItemDistilled, ModelAsk};
 pub use engine_noun::{
     AgentSettings, AuthSetting, EngineAgent, EngineRow, EnvKey, EnvSetting, PermissionsSetting,
     RuntimeSetting, SourcedValue,

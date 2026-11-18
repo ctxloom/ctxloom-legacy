@@ -764,7 +764,9 @@ fn served(
         &Projectors,
     ),
 ) -> Arc<dyn daemon_api::Calls> {
-    Arc::new(
+    // Shared, so what follows from a run it hosts (a distill's write, step
+    // 10b) reaches it once the call that started the run has answered.
+    daemon_api::Api::shared(
         // The sessions it prepares (U5); under test-support, a library
         // write's kill points (step 10b U3).
         api.preparing_terminals(Arc::clone(terminals))

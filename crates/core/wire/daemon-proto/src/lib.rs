@@ -150,6 +150,8 @@ macro_rules! library_writes {
             delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse,
             delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse,
             clean (Clean) CleanRequest => CleanResponse,
+            distill_fragment (DistillFragment) DistillFragmentRequest => DistillFragmentResponse,
+            distill_command (DistillCommand) DistillCommandRequest => DistillCommandResponse,
         }
     };
 }

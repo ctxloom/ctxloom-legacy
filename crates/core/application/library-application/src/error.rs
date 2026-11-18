@@ -145,6 +145,10 @@ pub enum AppError {
         answer: u64,
         source: u64,
     },
+    /// The item's source is no longer the one its distiller was sent (step
+    /// 10b: its digest moved while the model was asked): its answer is
+    /// stale, and nothing was written.
+    DistillSourceMoved { reference: String },
 }
 
 impl AppError {
@@ -240,6 +244,7 @@ impl Diagnostic for AppError {
             AppError::NoContextExclusive { .. } => code!("no-context-exclusive"),
             AppError::DistillFailed { .. } => code!("distill-failed"),
             AppError::DistillTruncated { .. } => code!("distill-truncated"),
+            AppError::DistillSourceMoved { .. } => code!("distill-source-moved"),
             AppError::SavedCommand { .. } => code!("saved-command"),
             AppError::Workspace { .. } => code!("workspace"),
             AppError::RunNeedsDryRun => code!("run-needs-dry-run"),
@@ -350,6 +355,9 @@ impl Diagnostic for AppError {
                 ("reference", reference.as_str().into()),
                 ("cause", Arg::Nested(Box::new(cause.clone()))),
             ],
+            AppError::DistillSourceMoved { reference } => {
+                vec![("reference", reference.as_str().into())]
+            }
             AppError::DistillTruncated {
                 reference,
                 answer,
@@ -760,7 +768,9 @@ fn error_samples() -> Vec<Box<dyn Diagnostic>> {
             reference: s("demo#fragments/rules"),
             cause: angzarr_diagnostic::Report::of(&BundleError::NoManifest { bundle: s("demo") }),
         }),
-        Box::new(crate::distill::NoDistiller),
+        Box::new(AppError::DistillSourceMoved {
+            reference: s("demo#fragments/rules"),
+        }),
         Box::new(AppError::DistillTruncated {
             reference: s("demo#fragments/rules"),
             answer: 4,

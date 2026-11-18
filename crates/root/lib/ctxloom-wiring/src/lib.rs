@@ -13,7 +13,6 @@ mod checkout;
 mod commands;
 mod core_link;
 mod daemon;
-mod distiller;
 mod error;
 mod frontend;
 mod hook_library;

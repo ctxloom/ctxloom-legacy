@@ -467,6 +467,23 @@ impl<E: Edge + 'static> Calls for Api<E> {
     fn clean(&self, request: v1::CleanRequest) -> Answer<'_, v1::CleanResponse> {
         Box::pin(async move { self.serve_clean(request).await })
     }
+
+    /// `DistillFragment` (step 10b, owner 2026-11-18): the model asked as a
+    /// run the daemon hosts, its distilled form written once it ends.
+    fn distill_fragment(
+        &self,
+        request: v1::DistillFragmentRequest,
+    ) -> Answer<'_, v1::DistillFragmentResponse> {
+        Box::pin(async move { self.distill_fragment(request).await })
+    }
+
+    /// `DistillCommand`, as `DistillFragment`.
+    fn distill_command(
+        &self,
+        request: v1::DistillCommandRequest,
+    ) -> Answer<'_, v1::DistillCommandResponse> {
+        Box::pin(async move { self.distill_command(request).await })
+    }
 }
 
 /// [`Api`]'s served library writes, from `library_api::served_writes!`:
@@ -574,6 +591,11 @@ pub struct Api<E> {
     pub(crate) write_dies_at: Option<crate::library_writes::DiesAt>,
     /// A tree's regenerable cache (step 10b U9); none, `Clean` fails.
     pub(crate) caches: Option<Arc<dyn crate::Caches>>,
+    /// This API, once it is shared ([`Api::shared`]): what a reaction to a
+    /// run it hosts (a distill's write, step 10b) makes its write through,
+    /// after the call that started the run has answered. Unset, a distill
+    /// that asks a model fails.
+    pub(crate) me: std::sync::OnceLock<std::sync::Weak<Api<E>>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -589,6 +611,7 @@ impl<E: Edge> Api<E> {
             observing: None,
             write_dies_at: None,
             caches: None,
+            me: std::sync::OnceLock::new(),
         }
     }
 
@@ -689,6 +712,14 @@ impl<E: Edge> Api<E> {
     /// The API, its one-shots hosted by `one_shots` (U4), the same the
     /// daemon's launcher stops.
     #[must_use]
+    /// This API, shared: as the edge serves it, and as what follows from
+    /// a run it hosts (a distill's write) reaches it once its call is over.
+    pub fn shared(self) -> Arc<Api<E>> {
+        let api = Arc::new(self);
+        let _ = api.me.set(Arc::downgrade(&api));
+        api
+    }
+
     pub fn hosting_one_shots(self, one_shots: Arc<daemon_application::OneShots>) -> Api<E> {
         Api {
             one_shots: Some(one_shots),

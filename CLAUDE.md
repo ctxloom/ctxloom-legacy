@@ -2384,10 +2384,10 @@ FAILED_PRECONDITION; `LaunchRefusals` field 7); the credential
 evidence is read with them held back, so an untrusted `auth.file` is reported
 once. Trusted, the project's own keys apply until the trust is revoked (S23).
 An in-process library verb (a write, until 10b) is planned untrusted and
-holds them back with the same notice; init's interview read and distill's
-prompt are still read in process and ask the daemon one `GetTrust`
-(`Library::with_trust`), since no served read answers an operational prompt
-yet. A project's own
+holds them back with the same notice; init's interview read is still read
+in process and asks the daemon one `GetTrust` (`Library::with_trust`),
+since no served read answers an operational prompt yet (distill's is the
+daemon's own read since step 10b). A project's own
 `ctxloom` bundle replaces an operational prompt (init's interview, distill's)
 only once the project is trusted (D4): `Project::operational_prompt` passes it
 over for the built-in otherwise, with the notice
@@ -2996,10 +2996,11 @@ built:
   library read is left in process (U2 done), with ONE named exception
   (D8, owner ruling 2026-11-17): the operational prompts, init's interview
   (`SetupSessions::setup_interview`, the wiring's `interview.rs`) and
-  distill's instruction (`Project::operational_prompt` under
-  `fragment distill`), are still read in process through 10a, each asking
+  distill's instruction, were read in process through 10a, each asking
   the daemon one `GetTrust` (`Library::with_trust`), because no RPC
   answers an operational prompt; they are ruled to be served with 10b.
+  Distill's is (step 10b: the daemon plans the distill's ask, under the
+  project's trust as every served read is); init's is U6's.
   Ruling 128's behaviour is unchanged: a trusted project's own `ctxloom`
   bundle replaces the prompt whole, and one lacking it is refused.
 
@@ -3557,25 +3558,50 @@ context assemble json's `notices` stay empty until T13 (they are said on
 stderr), so atomic_writes.feature's two `notices[0].code` scenarios are red.
 
 `fragment|command distill <ref> [-f]` and `bundle distill <bundle> [-f]`
-(OD-39: by name; each of its fragments and commands, the first failure
-failing the command) are library-application's (`distill.rs`): an item
-marked `no_distill` is said and nothing asked; a FRESH form is kept unless
-`-f`; otherwise the `Distiller` port is handed `ctxloom#prompts/distill`
-(read through the catalog, ruling 128; the prompt's text is the owner's)
-with the body inside `<content_to_compress>` tags. An answer under 2% of
-the source is `library-application-distill-truncated` and a distiller that
-fails `library-application-distill-failed` (both exit 10): nothing is
-written, so the form there before is kept. A good answer is the
-`.distilled.md` alone (T30: its own write). json is the AIP
-`DistillFragmentResponse`/`DistillCommandResponse` (`applied` false and
-`detail` `fresh`/`no_distill` when nothing was asked), and `bundle distill`
-the `Bundle` with each item's state. The wiring's `OneShotDistiller` is a
-one-shot run on NO CONTEXT, HOSTED by the user's daemon as every one-shot is
-(U4, owner s4-Q6; `oneshot::client_one_shot`, of the binary's stamp, so it
-is set on the library `LibraryCommands` builds, and a library built
-elsewhere has no distiller); its session is an ordinary one-shot's. There is
-no `work` domain and no provenance (owner, 2026-11-13: no `distilled_in`, no
-`activity` label). `DistillFragment` (the RPC) is still not served.
+are SERVED (step 10b, owner ruling 2026-11-18, evening): the DAEMON owns
+the model call as a RUN, and the `.distilled.md` write FOLLOWS from the
+run's outcome (daemon-api's `distill.rs`). `DistillFragment` /
+`DistillCommand` (`force`, additive) plan the ask as a write's preview
+(observed, over the recording library, nothing written):
+`Library::item_distill_ask` answers an item marked `no_distill` (said,
+nothing asked) or a FRESH form without `-f` at once (`applied` false,
+`detail` `fresh`/`no_distill`, no run); otherwise the ask is
+`ctxloom#prompts/distill` (read through the catalog under the project's
+trust, ruling 128; the prompt's text is the owner's) with the body inside
+`<content_to_compress>` tags, and the call hosts it as a ONE_SHOT on NO
+CONTEXT (as `CreateRun` hosts one, `OneShots::create_reacting`) and
+answers with the run's name (`run`, additive), which the CLI follows with
+`WatchRun` (`Served::follow_run`, run-application's `client::followed`; a
+signal heard asks the daemon to stop it). The run REACTS
+(`daemon_application::Reaction`, awaited in `Told::done` on the daemon's
+runtime, before its watchers see its end; the core spawns nothing): no
+answer is `library-application-distill-failed` (its cause the run's end);
+an answer is written as a served write (`Library::item_distilled`, one
+atomic Replace), under a request id KEYED by its run
+(`sessions::command_id("distill:<run>")`), so the outcome told twice is
+one write, a DUPLICATE, and against the etag the ask's preview answered
+for the form's file, so a form edited meanwhile is refused stale
+(`PlanStale`). Its plan reads the item again: a source whose digest moved
+since the ask is `library-application-distill-source-moved` (typed
+`LibraryDistillSourceMoved`, ABORTED, exit 20; its text a DRAFT), and an
+answer under 2% of the source `library-application-distill-truncated`
+(exit 10): nothing is written, so the form there before is kept. What the
+write came to is the run's end, which the CLI says as the command's. The
+reaction is in memory as the one-shot is: a daemon that dies during the
+run loses it (the sweep's), and nothing follows. The write is made while
+the daemon drains too (`Api::write_planned`: it follows from work already
+taken), through the API as shared (`Api::shared`'s self handle). `bundle
+distill` is one run per item, each its own reaction (the plan's U13 notes
+do not decide the shape; this is the simpler one): its items are read
+as `bundle show` reads them (`GetBundle` FULL), fragments then commands,
+each distilled and followed before the next; the first failure fails the
+command and what was distilled before it stays. json is the AIP
+`DistillFragmentResponse`/`DistillCommandResponse` (`applied` true once
+its run ended answered; library-api's `distill` builds them), and `bundle
+distill` the `Bundle` with each item's state. The in-process path (the
+`Distiller` port, `OneShotDistiller`, `item_distill`, `bundle_distill`)
+is gone. There is no `work` domain and no provenance (owner, 2026-11-13: no
+`distilled_in`, no `activity` label).
 
 `run --no-context` (owner OD-38) is the user-visible context-free run, the
 one-shot, the session and the dry run alike (`RunRequest::no_context`): the

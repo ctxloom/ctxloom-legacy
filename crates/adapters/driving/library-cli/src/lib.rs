@@ -139,6 +139,13 @@ pub trait Served {
         None
     }
 
+    /// A run the daemon answered a call with (a distill's model, step 10b:
+    /// the daemon owns the model call as a run, and what follows from it is
+    /// made once it ends), followed to its end through `WatchRun`, a signal
+    /// heard here asking the daemon to stop it, as a one-shot's: what it
+    /// said, and how it ended.
+    fn follow_run(&self, run: &str) -> RunFollowed;
+
     /// `loadout`: `GetLoadout`, always asked as `users/me/loadout`, its
     /// notices beside it: ctxloom's own loadout is the same in every
     /// project, and a companion probe asks it where there may be no
@@ -181,6 +188,13 @@ macro_rules! served_reads {
     };
 }
 
+/// What a run a call was answered with came to ([`Served::follow_run`]):
+/// what it said on the way, and its end, a failure when it ended in one.
+pub struct RunFollowed {
+    pub notices: Vec<v1::Notice>,
+    pub ended: Result<(), Failure>,
+}
+
 /// The writes this CLI asks the daemon (step 10b U3), in the shape of
 /// `daemon_proto::library_writes!`'s rows, handed to `$each` (the trait's,
 /// the wiring's and the tests' implementations of [`Served`]).
@@ -208,6 +222,8 @@ macro_rules! served_writes {
             delete_profile (DeleteProfile) DeleteProfileRequest => DeleteProfileResponse,
             delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse,
             delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse,
+            distill_fragment (DistillFragment) DistillFragmentRequest => DistillFragmentResponse,
+            distill_command (DistillCommand) DistillCommandRequest => DistillCommandResponse,
         }
     };
 }
@@ -425,9 +441,9 @@ pub fn is_served_read(noun: &str, sub: &ArgMatches) -> bool {
 /// home step and observes the trees before it plans, so the caller takes
 /// none of its own.
 pub const SERVED_WRITES: &[(&str, &[&str])] = &[
-    ("bundle", &["create", "edit", "remove", "import"]),
-    ("fragment", &["create", "edit", "remove"]),
-    ("command", &["create", "edit", "remove"]),
+    ("bundle", &["create", "edit", "remove", "import", "distill"]),
+    ("fragment", &["create", "edit", "remove", "distill"]),
+    ("command", &["create", "edit", "remove", "distill"]),
     ("config", &["set", "edit"]),
     ("skill", &["create", "remove"]),
     ("profile", &["remove"]),

@@ -8,19 +8,6 @@ use super::*;
 fn test_a_distilled_form_s_state_is_the_api_s() {
     assert_eq!(distilled(true), v1::DistilledState::Fresh as i32);
     assert_eq!(distilled(false), v1::DistilledState::None as i32);
-    use library_application::DistilledState;
-    assert_eq!(
-        distilled_state(DistilledState::None),
-        v1::DistilledState::None as i32
-    );
-    assert_eq!(
-        distilled_state(DistilledState::Fresh),
-        v1::DistilledState::Fresh as i32
-    );
-    assert_eq!(
-        distilled_state(DistilledState::Stale),
-        v1::DistilledState::Stale as i32
-    );
     assert_eq!(
         shown_distilled(true, true),
         v1::DistilledState::Stale as i32

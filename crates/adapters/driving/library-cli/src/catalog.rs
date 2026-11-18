@@ -28,17 +28,6 @@ pub(crate) fn distilled(there: bool) -> i32 {
     }
 }
 
-/// A distilled form as judged against its source now (T30, S51).
-pub(crate) fn distilled_state(state: library_application::DistilledState) -> i32 {
-    use library_application::DistilledState as State;
-    let api = match state {
-        State::None => v1::DistilledState::None,
-        State::Fresh => v1::DistilledState::Fresh,
-        State::Stale => v1::DistilledState::Stale,
-    };
-    api as i32
-}
-
 #[cfg(test)]
 pub(crate) use library_api::resources::shown_distilled;
 

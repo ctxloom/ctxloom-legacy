@@ -49,9 +49,6 @@ pub struct Library {
     pub(crate) engines: Vec<Arc<dyn run_ports::Engine>>,
     /// What each engine cannot carry ([`Library::with_hook_losses`]).
     pub(crate) hook_losses: crate::losses::HookLosses,
-    /// The model distill asks ([`Library::with_distiller`]); none wired,
-    /// distill fails.
-    pub(crate) distiller: Option<Rc<dyn crate::distill::Distiller>>,
     /// Where the user's trust of the project is asked when a flag does not
     /// say it ([`Library::with_trust`]); none, an untrusted project.
     pub(crate) trust: Option<TrustAsk>,
@@ -132,7 +129,6 @@ impl Library {
             builtins: false,
             engines: Vec::new(),
             hook_losses: crate::losses::HookLosses::new(),
-            distiller: None,
             trust: None,
             repository: None,
             words: None,
