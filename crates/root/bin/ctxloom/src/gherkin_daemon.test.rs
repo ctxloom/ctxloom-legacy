@@ -3388,6 +3388,12 @@ fn retried_once(w: &mut World) {
     }
     if let Written::Library(verb) = written {
         let events = writes::library_events(w, false);
+        // An export is recorded as made, under its request id (AIP-155).
+        if verb == "bundle export" {
+            let made = writes::made(&events, &verb);
+            assert_eq!(made.len(), 1, "one export made: {events:?}");
+            return;
+        }
         let intents = writes::intents(&events, &verb);
         assert_eq!(intents.len(), 1, "one intent of {verb}: {events:?}");
         let request = &intents[0]["request_id"];
@@ -3419,6 +3425,14 @@ fn applied_once(w: &mut World) {
         }
         Written::Library(verb) => {
             let events = writes::library_events(w, false);
+            if verb == "bundle export" {
+                assert_eq!(
+                    writes::made(&events, &verb).len(),
+                    1,
+                    "one export made: {events:?}"
+                );
+                return;
+            }
             assert_eq!(
                 writes::intents(&events, &verb).len(),
                 1,

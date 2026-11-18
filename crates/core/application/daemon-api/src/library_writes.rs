@@ -270,6 +270,11 @@ impl<E: Edge> Api<E> {
                 self.record_export(&site, (&trees, request), &destination)
                     .await?;
             }
+            if apply {
+                // Made and recorded, not yet answered: the kill point every
+                // write's retry is forced at.
+                self.dies_at("done");
+            }
             return Ok(wrote);
         }
         let Some(shaped) = shaped else {

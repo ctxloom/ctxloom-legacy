@@ -560,6 +560,17 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom bundle create notes --description "my notes"        |
         | ctxloom config set engines.claude-code.command claude-beta  |
 
+    Scenario: A bundle export whose daemon is killed under it is answered on a new daemon with what it made, made once
+      # new: AIP-155 (owner ruling 2026-11-18, night: a retried export is answered with its original result). Draft spec text, for the owner's review before release.
+      Given an initialized ctxloom project
+      And a bundle "notes" exists
+      And the daemon will be killed outright after the write is applied, before it is answered
+      When I run 'ctxloom bundle export notes exported'
+      Then the command succeeds
+      And the command started a new daemon and sent the write once more, under the same id
+      And the write was applied once, and its second delivery was a duplicate
+      And the file "exported/notes/bundle.yaml" exists
+
   Rule: The preview carries the questions, and the apply answers them
 
     Scenario Outline: Off a terminal, a preview applies nothing, and says with --detailed-exitcode whether it would change something

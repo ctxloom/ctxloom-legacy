@@ -246,6 +246,16 @@ pub(super) fn intents<'a>(events: &'a [Value], verb: &str) -> Vec<&'a Value> {
         .collect()
 }
 
+/// The records of a write the record holds as made, not intended: a
+/// `bundle export`'s `BundleExported` (AIP-155: the one write with no
+/// intent); none for any other verb.
+pub(super) fn made<'a>(events: &'a [Value], verb: &str) -> Vec<&'a Value> {
+    events
+        .iter()
+        .filter(|e| verb == "bundle export" && e["type"] == "BundleExported")
+        .collect()
+}
+
 // ------------------------------------------------------------------ git
 
 #[then("git sees nothing changed in the project")]
