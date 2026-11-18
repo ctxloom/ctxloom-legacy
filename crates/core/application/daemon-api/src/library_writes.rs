@@ -578,6 +578,7 @@ write_requests! {
     CreateCommandRequest.parent;
     UpdateCommandRequest.command.name, etag;
     UpdateConfigRequest.name, etag;
+    EditConfigRequest.name, etag;
     CreateSkillRequest.parent;
     UpdateMcpServerRequest.mcp_server.name, etag;
     CreateAgentRequest.parent;

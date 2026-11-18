@@ -545,6 +545,9 @@ service Ctxloom {
   rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse) {
     option (google.api.method_signature) = "config,update_mask";
   }
+  // `config edit`: the config through the editor, one file written whole.
+  // Additive proto extension, owner ruling 2026-11-18.
+  rpc EditConfig(EditConfigRequest) returns (EditConfigResponse);
   // `config create` (AIP-156 forbids Create on a singleton).
   rpc ScaffoldConfig(ScaffoldConfigRequest) returns (ScaffoldConfigResponse);
   // (-- endregion --)

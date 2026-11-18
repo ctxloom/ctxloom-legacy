@@ -277,6 +277,7 @@ targeted! {
     UpdateFragmentRequest => |r, t| r.fragment.get_or_insert_with(Default::default).name = t;
     UpdateCommandRequest => |r, t| r.command.get_or_insert_with(Default::default).name = t;
     UpdateConfigRequest => |r, t| r.name = t;
+    EditConfigRequest => |r, t| r.name = t;
     DeleteBundleRequest => |r, t| r.name = t;
     DeleteFragmentRequest => |r, t| r.name = t;
     DeleteCommandRequest => |r, t| r.name = t;

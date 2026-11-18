@@ -136,6 +136,7 @@ macro_rules! library_writes {
             create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse,
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse,
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse,
+            edit_config (EditConfig) EditConfigRequest => EditConfigResponse,
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse,
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse,
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse,

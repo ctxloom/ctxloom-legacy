@@ -12,7 +12,7 @@ use crate::agents::ENGINES;
 use crate::error::AppError;
 use crate::project::{Library, Outcome};
 use crate::write::editor::editor_from_env;
-use crate::write::views::ConfigCreated;
+use crate::write::views::{ConfigCreated, ConfigEdited};
 use crate::write::{WriteError, WritePorts};
 
 impl Library {
@@ -83,30 +83,41 @@ impl Library {
         Ok(ConfigCreated { path })
     }
 
-    /// `config edit`: the project's config handed to the editor of the
-    /// environment (`$VISUAL`, `$EDITOR`); there is none to edit before
-    /// `config create`.
-    pub fn config_edit(&self) -> Outcome<()> {
+    /// `config edit`, served (step 10b U3): the config of where it is run
+    /// (the project's, else the home's) handed to the editor of the
+    /// environment as `config.yaml` (an editor round trip, so the daemon's
+    /// write is the Edit need's answer), and what the editor left written
+    /// back whole, unparsed: a config that does not load is the very thing
+    /// it is for. Left as it was, nothing is written; none to edit is
+    /// refused before any editor is asked.
+    pub fn config_edited(&self) -> Outcome<ConfigEdited> {
         Outcome {
-            result: self.edited(),
+            result: self.round_tripped(),
             notices: Vec::new(),
         }
     }
 
-    fn edited(&self) -> Result<(), AppError> {
+    fn round_tripped(&self) -> Result<ConfigEdited, AppError> {
         let ports = self.write_side()?;
-        let path = format!("{}/config.yaml", ports.scaffold.app_dir());
-        if !ports
-            .scaffold
-            .exists("config.yaml")
-            .map_err(AppError::Cause)?
-        {
+        let scope = match self.files.source() {
+            ctxloom_ports::Source::Project => ctxloom_ports::Scope::Project,
+            _ => ctxloom_ports::Scope::Home,
+        };
+        let path = self.files.layer_path(scope);
+        let Some(layer) = self.files.layer(scope).map_err(AppError::Cause)? else {
             return Err(WriteError::ConfigMissing { path }.into());
-        }
-        ports
+        };
+        let edited = ports
             .editor
-            .open(&editor_from_env(&self.environ), &path)
-            .map_err(AppError::Cause)
+            .edit(&editor_from_env(&self.environ), "config.yaml", &layer.text)
+            .map_err(AppError::Cause)?;
+        let changed = edited != layer.text;
+        if changed {
+            self.files
+                .write_layer(scope, &edited)
+                .map_err(AppError::Cause)?;
+        }
+        Ok(ConfigEdited { path, changed })
     }
 }
 

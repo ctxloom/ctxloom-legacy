@@ -66,9 +66,38 @@ pub(crate) fn write(
             .map(Some)
         }
         "edit" => {
+            // The daemon's `EditConfig` (step 10b U3): its preview's Edit
+            // need presented here (the editor launched on the config's
+            // text), the apply sent with what it left and the preview's
+            // etag. It says nothing on success, as before.
             text_only(cx, "config edit")?;
-            let outcome = cx.library.config_edit();
-            finish_text(cx, outcome, out, err, |(), _, _| Ok(())).map(Some)
+            let ask = |validate_only: bool, answers: Vec<v1::Answer>, etag: String| {
+                v1::EditConfigRequest {
+                    validate_only,
+                    answers,
+                    etag,
+                    presentable: crate::noun::item::presentable(),
+                    globals: cx.globals(),
+                    ..v1::EditConfigRequest::default()
+                }
+            };
+            let preview = cx
+                .served
+                .edit_config("/config", ask(true, Vec::new(), String::new()))?;
+            let answers = crate::noun::item::edit_answers(cx, &preview.needs)?;
+            let edited = cx
+                .served
+                .edit_config("/config", ask(false, answers, preview.etag));
+            crate::answer_written(
+                cx,
+                edited,
+                |m| std::mem::take(&mut m.notices),
+                out,
+                err,
+                |_, _| Ok(()),
+                |_| Exit::OK,
+            )
+            .map(Some)
         }
         _ => Ok(None),
     }

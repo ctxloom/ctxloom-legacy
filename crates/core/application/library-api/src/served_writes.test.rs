@@ -900,3 +900,60 @@ fn test_an_agent_write_answers_the_agent_or_the_swaps_preview() {
         "projects/amber-quiet-heron/agents/dev"
     );
 }
+
+fn config_edit(answers: Vec<v1::Answer>, validate_only: bool) -> v1::EditConfigRequest {
+    v1::EditConfigRequest {
+        name: "projects/amber-quiet-heron/config".to_string(),
+        validate_only,
+        answers,
+        presentable: launching(),
+        ..v1::EditConfigRequest::default()
+    }
+}
+
+// `config edit`: its preview asks the config's text as an Edit need (and
+// plans the one layer, for its etag); its apply writes the need's answer
+// whole; an answer the same as the text applies nothing.
+#[test]
+fn test_a_config_edit_asks_its_text_and_writes_the_answer_whole() {
+    let (library, recorder) = agents().recording();
+    let preview =
+        super::edit_config::plan(&library, &plain(), &config_edit(Vec::new(), true), false)
+            .result
+            .unwrap();
+    assert_eq!(preview.needs.len(), 1, "{preview:?}");
+    let Some(v1::need::Kind::Edit(edit)) = &preview.needs[0].kind else {
+        panic!("{preview:?}")
+    };
+    assert_eq!(edit.text, AGENTS);
+    assert_eq!(one_layer(&recorder.take()).0, ctxloom_ports::Scope::Project);
+    let answer = v1::Answer {
+        need_id: super::EDIT_NEED.to_string(),
+        answer: Some(v1::answer::Answer::Edited(
+            "schema_version: 9\n".to_string(),
+        )),
+    };
+    let applied =
+        super::edit_config::plan(&library, &plain(), &config_edit(vec![answer], false), true)
+            .result
+            .unwrap();
+    assert!(applied.done.changed && applied.needs.is_empty());
+    assert_eq!(one_layer(&recorder.take()).1, "schema_version: 9\n");
+    let same = v1::Answer {
+        need_id: super::EDIT_NEED.to_string(),
+        answer: Some(v1::answer::Answer::Edited(AGENTS.to_string())),
+    };
+    let unchanged =
+        super::edit_config::plan(&library, &plain(), &config_edit(vec![same], false), true)
+            .result
+            .unwrap();
+    assert!(!unchanged.done.changed);
+    assert!(recorder.take().is_empty());
+    let answered =
+        super::edit_config::respond(&config_edit(Vec::new(), false), wrote(Some(unchanged)));
+    assert_eq!(answered.applied, Some(false), "left as it was");
+    assert_eq!(
+        answered.config.unwrap().name,
+        "projects/amber-quiet-heron/config"
+    );
+}

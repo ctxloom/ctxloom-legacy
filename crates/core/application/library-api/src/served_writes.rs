@@ -55,6 +55,7 @@ macro_rules! served_writes {
             create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse, "command create";
             update_command (UpdateCommand) UpdateCommandRequest => UpdateCommandResponse, "command edit";
             update_config (UpdateConfig) UpdateConfigRequest => UpdateConfigResponse, "config set";
+            edit_config (EditConfig) EditConfigRequest => EditConfigResponse, "config edit";
             create_skill (CreateSkill) CreateSkillRequest => CreateSkillResponse, "skill create";
             update_mcp_server (UpdateMcpServer) UpdateMcpServerRequest => UpdateMcpServerResponse, "mcp server set";
             create_agent (CreateAgent) CreateAgentRequest => CreateAgentResponse, "agent create";
@@ -846,6 +847,53 @@ pub mod update_config {
             etag: wrote.etag,
             notices: wrote.notices,
             ..v1::UpdateConfigResponse::default()
+        }
+    }
+}
+
+/// `config edit`: `EditConfig`, the config of where it is run through the
+/// editor (its preview's Edit need, its apply that need's answer), one
+/// layer written whole; left as it was, nothing is applied.
+pub mod edit_config {
+    use super::*;
+    use library_application::ConfigEdited;
+
+    pub fn plan(
+        library: &Library,
+        _flags: &Flags,
+        request: &v1::EditConfigRequest,
+        _apply: bool,
+    ) -> Outcome<Asked<ConfigEdited>> {
+        editing(
+            library,
+            (edited(&request.answers), request.validate_only),
+            can_launch(request.presentable.as_ref()),
+            |library| library.config_edited(),
+        )
+    }
+
+    pub fn respond(
+        request: &v1::EditConfigRequest,
+        wrote: Wrote<Asked<ConfigEdited>>,
+    ) -> v1::EditConfigResponse {
+        let (path, changed, needs) = match &wrote.answer {
+            Some(asked) => (
+                asked.done.path.clone(),
+                asked.done.changed,
+                asked.needs.clone(),
+            ),
+            None => (wrote.at.clone(), true, Vec::new()),
+        };
+        v1::EditConfigResponse {
+            config: Some(v1::Config {
+                name: request.name.clone(),
+                ..v1::Config::default()
+            }),
+            path,
+            applied: Some(wrote.applied && changed),
+            needs,
+            etag: wrote.etag,
+            notices: wrote.notices,
         }
     }
 }

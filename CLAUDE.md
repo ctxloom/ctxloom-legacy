@@ -164,7 +164,12 @@ a field of each request, additive, owner ruling 2026-11-18; an edit
 without `--yes` is previewed first, a swap whose new engine cannot carry
 what the old one did printed as that preview and nothing applied, any
 other edit applied with the preview's etag; the summary is the answer's,
-a profile its short library reference), and
+a profile its short library reference), `config edit` (`EditConfig`,
+an additive RPC, owner ruling 2026-11-18: the config of where it is run
+through the editor as a round trip, the preview's Edit need its text and
+the apply its answer written whole and unparsed, so a config that does not
+load can still be mended; left as it was, nothing applied; outside git it
+is refused `library-tree-not-in-git` first), and
 `bundle edit` (`UpdateBundle`: its mask allowed several paths of the one
 `bundle.yaml`, owner ruling 2026-11-18, and its items added and removed
 by the request's lists; an item beside anything else is two files,

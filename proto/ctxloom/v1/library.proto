@@ -4510,6 +4510,58 @@ message UpdateConfigResponse {
   repeated Notice notices = 92;
 }
 
+// `config edit`: the config of where it is run (the project's, else the
+// home's) through the editor, one file written whole: the preview's need is
+// an `Edit` of its text, the apply that need's answer (step 10b U3).
+// Additive proto extension, owner ruling 2026-11-18.
+message EditConfigRequest {
+  // The Config, `projects/{project}/config` or `users/me/config`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The client's id for this write (AIP-155), sent again unchanged on the one
+  // retry (API Q13).
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // The etag of the preview this apply was planned against (AIP-154): a stale
+  // one is refused `PlanStale`.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163): what the write would do and the needs a person
+  // must answer first, applying nothing.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The answer to the preview's Edit need (needs.proto): the text the editor
+  // left.
+  repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // its `$VISUAL` or `$EDITOR` is the editor the need names.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // What the caller can present of a need: ask a person, or put a program on
+  // their terminal.
+  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
+  // call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1): the daemon resolves the project and
+  // its checkout from it; empty, the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// What `config edit` did. Additive proto extension, owner ruling 2026-11-18.
+message EditConfigResponse {
+  // The Config edited.
+  Config config = 1;
+  // The file the write's one atomic operation targets (T25).
+  string path = 2;
+  // Whether the write was applied: false on a preview, and when the editor
+  // left the file as it was.
+  optional bool applied = 3;
+  // On a preview, the needs a person must answer before the apply: the Edit
+  // of the config's text.
+  repeated Need needs = 90;
+  // On a preview, the etag of what it was planned against, for the apply to
+  // send back (AIP-154).
+  string etag = 91;
+  // What is said beside the result, each notice its code, args and text.
+  repeated Notice notices = 92;
+}
+
 // `config create` (AIP-136: AIP-156 forbids Create on a singleton).
 message ScaffoldConfigRequest {
   // The Config to scaffold, `projects/{project}/config` or `users/me/config`.

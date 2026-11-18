@@ -336,3 +336,11 @@ pub struct CompanionRemoved {
 pub struct ConfigCreated {
     pub path: String,
 }
+
+/// `config edit`, served (step 10b U3): the layer edited, and whether the
+/// editor changed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigEdited {
+    pub path: String,
+    pub changed: bool,
+}
