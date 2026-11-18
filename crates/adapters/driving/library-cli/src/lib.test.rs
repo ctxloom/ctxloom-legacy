@@ -264,6 +264,7 @@ macro_rules! targeted {
 
 targeted! {
     CreateBundleRequest => |r, t| r.parent = t;
+    UpdateBundleRequest => |r, t| r.bundle.get_or_insert_with(Default::default).name = t;
     CreateFragmentRequest => |r, t| r.parent = t;
     CreateCommandRequest => |r, t| r.parent = t;
     UpdateFragmentRequest => |r, t| r.fragment.get_or_insert_with(Default::default).name = t;

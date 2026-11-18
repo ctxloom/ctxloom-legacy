@@ -305,7 +305,8 @@ service Ctxloom {
   }
   // `bundle create`.
   rpc CreateBundle(CreateBundleRequest) returns (CreateBundleResponse);
-  // `bundle edit`: ONE change per call (T29): `update_mask` names one path.
+  // `bundle edit`: ONE file changed per call (T29); `update_mask` may name
+  // several paths of that one file (owner ruling 2026-11-18).
   rpc UpdateBundle(UpdateBundleRequest) returns (UpdateBundleResponse) {
     option (google.api.method_signature) = "bundle,update_mask";
   }

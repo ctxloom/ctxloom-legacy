@@ -337,3 +337,194 @@ fn test_an_edits_preview_plans_its_file_for_its_etag_and_still_asks_the_edit_nee
     };
     assert_eq!(put.path, "fragments/example.md");
 }
+
+fn bundle_edit(
+    mask: &[&str],
+    edit: impl FnOnce(&mut v1::UpdateBundleRequest),
+) -> v1::UpdateBundleRequest {
+    let mut request = v1::UpdateBundleRequest {
+        bundle: Some(v1::Bundle {
+            name: "projects/amber-quiet-heron/bundles/demo".to_string(),
+            ..v1::Bundle::default()
+        }),
+        update_mask: Some(daemon_proto::google::protobuf::FieldMask {
+            paths: mask.iter().map(|p| p.to_string()).collect(),
+        }),
+        ..v1::UpdateBundleRequest::default()
+    };
+    edit(&mut request);
+    request
+}
+
+/// The one change a use case planned of a bundle, by its path and text.
+fn planned_writes(
+    planned: &[library_application::write::recording::Planned],
+) -> Vec<(String, String)> {
+    planned
+        .iter()
+        .flat_map(|planned| match planned {
+            library_application::write::recording::Planned::Changed { changes, .. } => changes
+                .iter()
+                .map(|change| match change {
+                    ctxloom_ports::Change::Write(put) => (
+                        put.path.clone(),
+                        String::from_utf8_lossy(&put.bytes).into_owned(),
+                    ),
+                    other => (format!("{other:?}"), String::new()),
+                })
+                .collect::<Vec<_>>(),
+            other => vec![(format!("{other:?}"), String::new())],
+        })
+        .collect()
+}
+
+#[test]
+fn test_a_bundle_edit_writes_the_fields_its_mask_names_and_its_tags_into_the_one_manifest() {
+    let (library, recorder) = demo().recording();
+    let request = bundle_edit(&["description", "tags"], |r| {
+        r.bundle.as_mut().unwrap().description = "updated-desc".to_string();
+        r.bundle.as_mut().unwrap().version = "9.9.9".to_string();
+        r.add_tags = vec!["golang".to_string()];
+    });
+    let edited = super::update_bundle::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert_eq!(edited.name, "demo");
+    assert_eq!(edited.changes.len(), 2, "{:?}", edited.changes);
+    let writes = planned_writes(&recorder.take());
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    let (path, text) = &writes[0];
+    assert_eq!(path, "bundle.yaml");
+    assert!(text.contains("updated-desc"), "{text}");
+    assert!(text.contains("golang"), "{text}");
+    // `version` was given but not named by the mask: not written.
+    assert!(!text.contains("9.9.9"), "{text}");
+}
+
+#[test]
+fn test_a_bundle_edit_adds_and_removes_each_kind_of_item_by_its_list() {
+    let (library, recorder) = demo().recording();
+    let request = bundle_edit(&["fragments", "commands", "mcp_servers"], |r| {
+        r.add_fragments = vec!["a".to_string()];
+        r.remove_fragments = vec!["example".to_string()];
+        r.add_commands = vec!["b".to_string()];
+        r.add_mcp_servers = vec!["tools".to_string()];
+    });
+    let edited = super::update_bundle::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert_eq!(
+        edited.changes,
+        [
+            "set fragment: a",
+            "removed fragment: example",
+            "set prompt: b",
+            "set mcp: tools"
+        ]
+    );
+    let changes: Vec<String> = match &recorder.take()[0] {
+        library_application::write::recording::Planned::Changed { changes, .. } => changes
+            .iter()
+            .map(|change| match change {
+                ctxloom_ports::Change::Write(put) => format!("write {}", put.path),
+                ctxloom_ports::Change::Remove { path } => format!("remove {path}"),
+                ctxloom_ports::Change::RemoveDir { path } => format!("remove dir {path}"),
+            })
+            .collect(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        changes,
+        [
+            "write fragments/a.md",
+            "remove fragments/example.md",
+            "write prompts/b.md",
+            "write mcp/tools.yaml"
+        ]
+    );
+}
+
+#[test]
+fn test_a_bundle_edit_with_no_mask_path_given_its_field_changes_nothing() {
+    let (library, recorder) = demo().recording();
+    let request = bundle_edit(&[], |r| {
+        r.bundle.as_mut().unwrap().description = "updated-desc".to_string();
+    });
+    let edited = super::update_bundle::plan(&library, &plain(), &request, true)
+        .result
+        .unwrap();
+    assert!(edited.changes.is_empty(), "{:?}", edited.changes);
+    assert!(recorder.take().is_empty());
+}
+
+#[test]
+fn test_a_bundle_edit_answers_its_changes_and_whether_it_applied() {
+    let request = bundle_edit(&["description"], |_| {});
+    let edited = |changes: &[&str]| library_application::BundleEdited {
+        status: "updated".to_string(),
+        name: "demo".to_string(),
+        changes: changes.iter().map(|c| c.to_string()).collect(),
+        path: "/work/demo/.ctxloom/content/bundles/v2/demo/bundle.yaml".to_string(),
+    };
+    let answered = super::update_bundle::respond(
+        &request,
+        wrote(Some(edited(&["description: updated-desc"]))),
+    );
+    assert_eq!(answered.applied, Some(true));
+    assert_eq!(answered.changes, ["description: updated-desc"]);
+    assert_eq!(answered.etag, "4");
+    assert_eq!(
+        answered.path,
+        "/work/demo/.ctxloom/content/bundles/v2/demo/bundle.yaml"
+    );
+    assert_eq!(
+        answered.bundle.unwrap().name,
+        "projects/amber-quiet-heron/bundles/demo"
+    );
+    // Nothing to change: nothing applied, and no change listed.
+    let unchanged = Wrote {
+        applied: false,
+        ..wrote(Some(edited(&[])))
+    };
+    let answered = super::update_bundle::respond(&request, unchanged);
+    assert_eq!(answered.applied, Some(false));
+    assert!(answered.changes.is_empty());
+    // The retry of an edit already applied.
+    let retried = super::update_bundle::respond(&request, wrote(None));
+    assert_eq!(retried.applied, Some(true));
+    assert_eq!(retried.path, "/work/demo/.ctxloom/content/bundles/v2/notes");
+}
+
+// Owner ruling 2026-11-18: several mask paths of the one manifest are one
+// step; a manifest field beside an item is two files, refused before any
+// command, naming both.
+#[test]
+fn test_a_bundle_edit_of_the_manifest_alone_is_one_step_and_beside_an_item_is_refused() {
+    let shaped = |request: &v1::UpdateBundleRequest| {
+        let library = demo();
+        let (recording, recorder) = library.clone().recording();
+        super::update_bundle::plan(&recording, &plain(), request, true)
+            .result
+            .unwrap();
+        crate::writes::shape(recorder.take(), |bundle, dir| {
+            library.bundle_files(bundle, dir)
+        })
+    };
+    let manifest = bundle_edit(&["description", "version", "tags"], |r| {
+        r.bundle.as_mut().unwrap().description = "updated-desc".to_string();
+        r.bundle.as_mut().unwrap().version = "2.0.0".to_string();
+        r.add_tags = vec!["golang".to_string()];
+    });
+    let one = shaped(&manifest).unwrap().unwrap();
+    assert_eq!(one.shape.path(), "content/bundles/v2/demo/bundle.yaml");
+    let two = bundle_edit(&["version", "fragments"], |r| {
+        r.bundle.as_mut().unwrap().version = "2.0.0".to_string();
+        r.add_fragments = vec!["testing".to_string()];
+    });
+    match shaped(&two) {
+        Err(library_tree::LibraryTreeRejection::OneChangePerCall { paths }) => {
+            assert_eq!(paths, ["bundle.yaml", "fragments/testing.md"]);
+        }
+        other => panic!("{other:?}"),
+    }
+}

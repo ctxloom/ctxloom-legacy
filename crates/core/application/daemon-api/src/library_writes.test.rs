@@ -147,6 +147,22 @@ fn test_an_update_or_a_removal_carries_its_etag_and_a_create_none() {
     assert_eq!(daemon_proto::v1::CreateBundleRequest::default().etag(), "");
 }
 
+// `bundle edit` writes the bundle its request names, against the etag it
+// carries.
+#[test]
+fn test_a_bundle_edit_writes_the_bundle_it_names_against_its_etag() {
+    use super::LibraryWriteRequest;
+    let mut edit = daemon_proto::v1::UpdateBundleRequest {
+        etag: "5".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(edit.target(), "");
+    edit.set_target("projects/p/bundles/demo".to_string());
+    assert_eq!(edit.target(), "projects/p/bundles/demo");
+    assert_eq!(edit.bundle.unwrap().name, "projects/p/bundles/demo");
+    assert_eq!(edit.etag, "5");
+}
+
 // An operation that made nothing is the domain's refusal: something at the
 // path it creates is `ResourceExists` (D4, NOREPLACE), nothing at the path
 // it takes `NoSuchResource`; one that made its change is no refusal.

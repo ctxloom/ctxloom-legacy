@@ -49,6 +49,7 @@ macro_rules! served_writes {
     ($each:ident) => {
         $each! {
             create_bundle (CreateBundle) CreateBundleRequest => CreateBundleResponse, "bundle create";
+            update_bundle (UpdateBundle) UpdateBundleRequest => UpdateBundleResponse, "bundle edit";
             create_fragment (CreateFragment) CreateFragmentRequest => CreateFragmentResponse, "fragment create";
             update_fragment (UpdateFragment) UpdateFragmentRequest => UpdateFragmentResponse, "fragment edit";
             create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse, "command create";
@@ -269,6 +270,75 @@ pub mod create_bundle {
             etag: wrote.etag,
             notices: wrote.notices,
             ..v1::CreateBundleResponse::default()
+        }
+    }
+}
+
+/// `bundle edit <bundle> [flags]`: `UpdateBundle`, the fields its mask
+/// names (`description`, `version`) and its add and remove lists, planned
+/// as one edit (owner ruling 2026-11-18: several mask paths, one step). One
+/// file changed, or refused `OneChangePerCall` by the shape of its plan;
+/// nothing to change is applied as nothing.
+pub mod update_bundle {
+    use super::*;
+    use library_application::{BundleEditRequest, BundleEdited};
+
+    /// Whether the request's mask names `path`.
+    fn masked(request: &v1::UpdateBundleRequest, path: &str) -> bool {
+        request
+            .update_mask
+            .as_ref()
+            .is_some_and(|mask| mask.paths.iter().any(|p| p == path))
+    }
+
+    pub fn plan(
+        library: &Library,
+        flags: &Flags,
+        request: &v1::UpdateBundleRequest,
+        _apply: bool,
+    ) -> Outcome<BundleEdited> {
+        let bundle = request.bundle.clone().unwrap_or_default();
+        let edit = BundleEditRequest {
+            name: names::bundle_under(parent_of(&bundle.name), &bundle.name)
+                .unwrap_or_else(|| bundle.name.clone()),
+            description: masked(request, "description").then(|| bundle.description.clone()),
+            version: masked(request, "version").then(|| bundle.version.clone()),
+            add_tags: request.add_tags.clone(),
+            remove_tags: request.remove_tags.clone(),
+            add_fragments: request.add_fragments.clone(),
+            remove_fragments: request.remove_fragments.clone(),
+            add_prompts: request.add_commands.clone(),
+            remove_prompts: request.remove_commands.clone(),
+            add_mcp: request.add_mcp_servers.clone(),
+            remove_mcp: request.remove_mcp_servers.clone(),
+        };
+        library.bundle_edit(flags, &edit)
+    }
+
+    pub fn respond(
+        request: &v1::UpdateBundleRequest,
+        wrote: Wrote<BundleEdited>,
+    ) -> v1::UpdateBundleResponse {
+        let name = request
+            .bundle
+            .as_ref()
+            .map(|b| b.name.clone())
+            .unwrap_or_default();
+        let (path, changes) = match &wrote.answer {
+            Some(edited) => (edited.path.clone(), edited.changes.clone()),
+            None => (wrote.at.clone(), Vec::new()),
+        };
+        v1::UpdateBundleResponse {
+            bundle: Some(v1::Bundle {
+                name,
+                ..v1::Bundle::default()
+            }),
+            path,
+            applied: Some(wrote.applied),
+            changes,
+            etag: wrote.etag,
+            notices: wrote.notices,
+            ..v1::UpdateBundleResponse::default()
         }
     }
 }

@@ -500,13 +500,39 @@ message CreateBundleResponse {
   repeated Notice notices = 92;
 }
 
-// `bundle edit <bundle>`: one change to its `bundle.yaml` per call.
+// `bundle edit <bundle>`: one FILE changed per call (T29 counts files, not
+// flags): its `bundle.yaml`'s own fields, or one item added or removed.
 message UpdateBundleRequest {
-  // The Bundle to change, named by its `name`: only the field `update_mask`
-  // names is written.
+  // The Bundle to change, named by its `name`: only the fields `update_mask`
+  // names are written.
   Bundle bundle = 1 [(google.api.field_behavior) = REQUIRED];
-  // Exactly ONE path (T29); more is refused `OneChangePerCall`.
+  // The paths the edit changes: `description` and `version` (set from
+  // `bundle`), and `tags`, `fragments`, `commands` and `mcp_servers` (changed
+  // by the add and remove lists below). SEVERAL paths may be named (owner
+  // ruling 2026-11-18: the spec wins over T29's one path for this request
+  // alone): what they change is applied as ONE step, so the edit must change
+  // one file. The bundle's own fields and tags are its `bundle.yaml`, one
+  // file; an item is a file of its own, so an item beside anything else is
+  // refused `ctxloom.library.v1.OneChangePerCall`, naming each file, before
+  // anything is written.
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The tags added to the bundle's own (`--add-tag`): additive proto
+  // extension, owner ruling 2026-11-18, as are the seven fields below.
+  repeated string add_tags = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The tags taken from the bundle's own (`--remove-tag`).
+  repeated string remove_tags = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The fragments added, by id, each a placeholder (`--add-fragment`).
+  repeated string add_fragments = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The fragments removed, by id (`--remove-fragment`).
+  repeated string remove_fragments = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The commands added, by id, each a placeholder (`--add-prompt`).
+  repeated string add_commands = 7 [(google.api.field_behavior) = OPTIONAL];
+  // The commands removed, by id (`--remove-prompt`).
+  repeated string remove_commands = 8 [(google.api.field_behavior) = OPTIONAL];
+  // The MCP servers added, by id, each a placeholder (`--add-mcp`).
+  repeated string add_mcp_servers = 9 [(google.api.field_behavior) = OPTIONAL];
+  // The MCP servers removed, by id (`--remove-mcp`).
+  repeated string remove_mcp_servers = 10 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];

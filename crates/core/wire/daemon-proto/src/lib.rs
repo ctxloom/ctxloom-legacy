@@ -130,6 +130,7 @@ macro_rules! library_writes {
     ($each:ident) => {
         $each! {
             create_bundle (CreateBundle) CreateBundleRequest => CreateBundleResponse,
+            update_bundle (UpdateBundle) UpdateBundleRequest => UpdateBundleResponse,
             create_fragment (CreateFragment) CreateFragmentRequest => CreateFragmentResponse,
             update_fragment (UpdateFragment) UpdateFragmentRequest => UpdateFragmentResponse,
             create_command (CreateCommand) CreateCommandRequest => CreateCommandResponse,
