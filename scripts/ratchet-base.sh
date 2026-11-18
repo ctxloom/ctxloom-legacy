@@ -133,13 +133,16 @@ cap=(env MEMORY_CAP_OPT_OUT=TESTS_MEMORY_MAX "$top/gates/memory-cap.sh" ratchet-
 "${cap[@]}" --check
 
 # The feature runner on the base, its list to $1, the rest of the arguments
-# its environment; its output appended to the log. The runner is the base's:
+# its environment; its output appended to the log. Built without cargo's
+# incremental cache (CARGO_INCREMENTAL=0, 2026-11-18): the base's tree is
+# a new commit each time, so the cache is written and never reused, while
+# target/debug and target/staged keep it. The runner is the base's:
 # its feature tests, its clusters, or its one test from before them; it runs
 # under the cap.
 run_features() {
     local list=$1
     shift
-    (cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" "GHERKIN_RATCHET=$list" "$@" \
+    (cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" CARGO_INCREMENTAL=0 "GHERKIN_RATCHET=$list" "$@" \
         "${cap[@]}" cargo nextest run --manifest-path "$wt/Cargo.toml" --package ctxloom --no-fail-fast --no-tests=fail \
         --status-level fail --final-status-level fail --success-output never --failure-output final \
         --hide-progress-bar --cargo-quiet -E "$runner_tests") \

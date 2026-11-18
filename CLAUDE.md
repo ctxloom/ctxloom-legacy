@@ -4441,7 +4441,8 @@ self-tested in `just selftest` (`scripts/slot.selftest.sh`,
 needs cargo-sweep; CI's Linux job installs it). No compiler cache is used,
 and `CARGO_INCREMENTAL` is cargo's default (owner ruling of 2026-11-16,
 after measuring: released sccache cannot share a workspace crate's compile
-between worktree paths).
+between worktree paths), but in the ratchet base's tree, built with it off
+(below).
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each
 test in a process of its own; SLOW at 30 s and killed at 120 s
@@ -4909,7 +4910,10 @@ ratchet-base <base>` (`scripts/ratchet-base.sh`): only the runner's tests
 (its feature tests, a base's clusters, or its `every_feature_runs` from
 before those), on the
 base's tip, in a throwaway worktree `.<checkout>.ratchet-base` beside the
-checkout (target dir `target/ratchet-base`), cached by sha at
+checkout (target dir `target/ratchet-base`, built with
+`CARGO_INCREMENTAL=0`: each base is a new tree, so its incremental cache
+was written and never read; `target/debug` and `target/staged` keep
+theirs), cached by sha at
 `target/ratchet/<sha>.list`; a base from before the list gets the runner
 commit that taught it applied, and says so (that commit is the first line of
 a `git log` read with `sed -n 1p`, never `head -n 1`, whose early close
