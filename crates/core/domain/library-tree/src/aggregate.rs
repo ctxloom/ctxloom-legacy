@@ -18,10 +18,10 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
 use crate::refusal::refuse;
 use crate::{
-    cause_of, ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, Evidence, External,
-    Intent, IntentSuperseded, Library, LibraryCommand, LibraryEvent, LibraryTreeRejection,
-    MovePath, RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile, RunSequence, Step,
-    StepApplied, TrashPath, TreeObserved,
+    cause_of, ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath, Evidence,
+    External, Intent, IntentSuperseded, Library, LibraryCommand, LibraryEvent,
+    LibraryTreeRejection, MovePath, RecordStepDone, RecordStepFailed, RecordTreeObserved,
+    ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeObserved,
 };
 use crate::{
     BuiltinReadOnly, LibraryIgnored, NoSuchResource, NotInGit, PlanRejected, PlanStale,
@@ -230,6 +230,79 @@ impl LibraryAggregate {
             tree_after: fact.tree_after,
             baseline,
             in_motion: fact.in_motion,
+        })
+    }
+}
+
+/// What a step leaves, as an observation would see it: each path it
+/// writes with the id it writes there; for a trash, `under` the path whose
+/// every change is a deletion.
+enum Leaves {
+    Ids(Vec<(String, String)>),
+    Gone(String),
+    /// A move: not attributed by oid (U9's).
+    Unknown,
+}
+
+fn leaves(step: &Step) -> Leaves {
+    if let Some(replace) = &step.replace {
+        return Leaves::Ids(vec![(replace.path.clone(), replace.new_oid.clone())]);
+    }
+    if let Some(create) = &step.create {
+        let dir = create.path.trim_end_matches('/');
+        return Leaves::Ids(
+            create
+                .entries
+                .iter()
+                .map(|entry| (format!("{dir}/{}", entry.path), entry.oid.clone()))
+                .collect(),
+        );
+    }
+    if let Some(trash) = &step.trash {
+        return Leaves::Gone(trash.path.clone());
+    }
+    Leaves::Unknown
+}
+
+impl LibraryAggregate {
+    /// The pending intent whose next step's new ids `changes` show (the
+    /// first by request id), that step, and what the changes say of its
+    /// paths.
+    fn attributed(&self, changes: &[crate::Change]) -> Option<(String, u32, Vec<DirtyPath>)> {
+        self.library.pending.values().find_map(|intent| {
+            let step = intent.steps.get(intent.done as usize)?;
+            let seen = match leaves(step) {
+                Leaves::Ids(ids) if !ids.is_empty() => ids
+                    .iter()
+                    .map(|(path, oid)| {
+                        changes
+                            .iter()
+                            .find(|c| &c.path == path && &c.to_oid == oid)
+                            .map(|_| DirtyPath {
+                                path: path.clone(),
+                                oid: oid.clone(),
+                            })
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                Leaves::Gone(path) => {
+                    let under = format!("{}/", path.trim_end_matches('/'));
+                    let mine: Vec<_> = changes
+                        .iter()
+                        .filter(|c| c.path == path || c.path.starts_with(&under))
+                        .collect();
+                    if mine.is_empty() || mine.iter().any(|c| !c.to_oid.is_empty()) {
+                        return None;
+                    }
+                    mine.iter()
+                        .map(|c| DirtyPath {
+                            path: c.path.clone(),
+                            oid: String::new(),
+                        })
+                        .collect()
+                }
+                _ => return None,
+            };
+            Some((intent.request_id.clone(), intent.done, seen))
         })
     }
 }
@@ -472,10 +545,47 @@ impl LibraryAggregate {
     /// An observation (L5): recorded when it adds anything to the state, a
     /// tree's first one always (its baseline, L16); another tree's, or one
     /// that adds nothing, records nothing.
+    ///
+    /// An observation that sees a pending intent's own new ids is the
+    /// intent's (U3's attribution, by oid): its step done (`StepApplied`)
+    /// when that is all it sees and the dirty set is what the step leaves,
+    /// else a `TreeObserved` caused by the intent.
     #[handles_fact(RecordTreeObserved)]
     fn observed(&self, fact: RecordTreeObserved, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
         let _ = ctx;
-        recorded(self.observation(fact))
+        let Some(mut observed) = self.observation(fact) else {
+            return recorded(None::<TreeObserved>);
+        };
+        // A baseline, or a sight past a moved HEAD (a commit, a checkout),
+        // is the outside's: its cause is the commits.
+        let moved = observed
+            .external
+            .as_ref()
+            .is_some_and(|external| external.head_after != self.library.head);
+        if observed.baseline || moved {
+            return recorded(Some(observed));
+        }
+        let Some((request_id, step, seen)) = self.attributed(&observed.changes) else {
+            return recorded(Some(observed));
+        };
+        let whole = seen.len() == observed.changes.len()
+            && observed.tree_after == self.library.tree
+            && self.library.dirty_after(&seen)
+                == observed
+                    .dirty_after
+                    .iter()
+                    .map(|d| (d.path.clone(), d.oid.clone()))
+                    .collect();
+        if whole {
+            return recorded(Some(StepApplied {
+                request_id,
+                step,
+                observed: seen,
+            }));
+        }
+        observed.external = None;
+        observed.intended = Some(request_id);
+        recorded(Some(observed))
     }
 
     /// A pending intent's next step done: what it left becomes its paths'

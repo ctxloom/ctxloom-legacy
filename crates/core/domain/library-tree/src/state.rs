@@ -120,7 +120,28 @@ impl Library {
         self.last_cause = cause;
     }
 
+    /// The dirty set once `left` (paths and the ids a step left there,
+    /// empty when it took them away) is laid over this one: what a step
+    /// done makes it. ctxloom never commits in a project, so a path it
+    /// writes differs from HEAD, and one it takes away is gone from it.
+    pub fn dirty_after(&self, left: &[crate::DirtyPath]) -> BTreeMap<String, String> {
+        let mut dirty = self.dirty.clone();
+        for path in left {
+            dirty.insert(path.path.clone(), path.oid.clone());
+        }
+        dirty
+    }
+
     fn observed(&mut self, observed: &TreeObserved, sequence: u64) {
+        if let Some(request) = &observed.intended {
+            // The intent's own change, seen: its step is done.
+            if let Some(intent) = self.pending.get_mut(request) {
+                intent.done += 1;
+                if intent.done as usize >= intent.steps.len() {
+                    self.pending.remove(request);
+                }
+            }
+        }
         if self.name.is_empty() {
             self.name = observed.name.clone();
             self.kind = Some(crate::kind_of(&observed.name));
@@ -166,6 +187,7 @@ impl Library {
     }
 
     fn applied(&mut self, applied: &StepApplied, sequence: u64) {
+        self.dirty = self.dirty_after(&applied.observed);
         for observed in &applied.observed {
             self.resources.insert(
                 observed.path.clone(),

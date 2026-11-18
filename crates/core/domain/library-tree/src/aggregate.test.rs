@@ -976,3 +976,139 @@ fn a_failed_step_ends_its_intent_once() {
 }
 
 // endregion
+
+// region attribution (step 10b U3)
+
+/// A tree with one intent: `step`, alone, pending; its request id.
+fn intending(tree: &mut Tree, step: Step) -> String {
+    let events = tree.command(sequence(vec![step])).unwrap();
+    let [LibraryEvent::ChangeIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    intended.intent.request_id.clone()
+}
+
+fn creating(path: &str, entries: &[(&str, &str)]) -> Step {
+    Step {
+        replace: None,
+        create: Some(CreateDirectory {
+            entries: dirty(entries),
+            ..create(path)
+        }),
+        trash: None,
+        r#move: None,
+    }
+}
+
+#[test]
+fn a_step_done_makes_what_it_left_the_records_dirty_set() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    tree.fact(done(&request, 0, &[(FILE, "new")]), "done:0");
+    assert_eq!(
+        tree.library().dirty,
+        BTreeMap::from([(FILE.to_string(), "new".to_string())])
+    );
+}
+
+#[test]
+fn an_observation_of_exactly_a_pending_steps_ids_is_that_step_done() {
+    let mut tree = Tree::baselined();
+    let made = "content/bundles/v2/notes";
+    let yaml = "content/bundles/v2/notes/bundle.yaml";
+    let request = intending(&mut tree, creating(made, &[("bundle.yaml", "y1")]));
+    let events = tree.observe(observation(
+        "h-0",
+        "h-0",
+        vec![change(yaml, ChangeStatus::Added, "", "y1")],
+        &[(yaml, "y1")],
+        false,
+    ));
+    let [LibraryEvent::StepApplied(applied)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(applied.request_id, request);
+    assert_eq!(applied.step, 0);
+    assert_eq!(applied.observed, dirty(&[(yaml, "y1")]));
+    let library = tree.library();
+    assert!(library.pending.is_empty());
+    assert_eq!(library.resources.get(yaml), Some(&resource(2, "y1")));
+}
+
+#[test]
+fn an_observation_of_a_steps_ids_and_more_is_recorded_as_the_intents() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    let events = tree.observe(observation(
+        "h-0",
+        "h-0",
+        vec![
+            change(FILE, ChangeStatus::Modified, "f0", "new"),
+            change(YAML, ChangeStatus::Modified, "y0", "y1"),
+        ],
+        &[(FILE, "new"), (YAML, "y1")],
+        false,
+    ));
+    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(observed.intended.as_deref(), Some(request.as_str()));
+    assert!(observed.external.is_none());
+    assert!(
+        tree.library().pending.is_empty(),
+        "the intent's step is done"
+    );
+}
+
+#[test]
+fn an_observation_of_other_ids_at_a_pending_path_is_an_outside_change() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    let events = tree.observe(edit(FILE, "by-hand"));
+    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(observed.intended, None);
+    assert!(tree.library().pending.contains_key(&request));
+}
+
+#[test]
+fn a_trash_step_is_seen_done_when_everything_under_its_path_is_gone() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(None, Some(trash(BUNDLE, 0)), None));
+    let events = tree.observe(observation(
+        "h-0",
+        "h-0",
+        vec![
+            change(FILE, ChangeStatus::Deleted, "f0", ""),
+            change(YAML, ChangeStatus::Deleted, "y0", ""),
+        ],
+        &[(FILE, ""), (YAML, "")],
+        false,
+    ));
+    let [LibraryEvent::StepApplied(applied)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(applied.request_id, request);
+    assert_eq!(applied.observed, dirty(&[(FILE, ""), (YAML, "")]));
+}
+
+// endregion
+
+#[test]
+fn a_pending_steps_ids_seen_past_a_moved_head_are_the_outsides() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    let events = tree.observe(observation(
+        "h-0",
+        "h-1",
+        vec![change(FILE, ChangeStatus::Modified, "f0", "new")],
+        &[],
+        false,
+    ));
+    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(observed.intended, None);
+    assert!(tree.library().pending.contains_key(&request));
+}
