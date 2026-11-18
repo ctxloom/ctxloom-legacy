@@ -480,4 +480,13 @@ fn test_an_export_s_recorded_source_is_spelled_as_its_answer_spells_it() {
         export_source(&tree, "content/bundles/v2/demo/bundle.yaml"),
         want
     );
+    // A directory spelled with its separator at the end is joined as
+    // content-fs joins it: one separator, never two.
+    assert_eq!(
+        export_source(
+            &format!("{tree}{sep}"),
+            "content/bundles/v2/demo/bundle.yaml"
+        ),
+        want
+    );
 }
