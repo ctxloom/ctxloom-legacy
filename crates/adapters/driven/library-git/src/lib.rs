@@ -407,7 +407,14 @@ impl TreeObserver for GitTrees {
                 return Err(TreeError::Failed(Box::new(failed(&staged, dir, &failure))))
             }
         }
+        // None of her hooks runs (owner ruling 2026-11-18): a hooks
+        // directory that is no directory, outranking her global and the
+        // repository's own `core.hooksPath` and `.git/hooks`. Not
+        // `--no-verify`, which still runs prepare-commit-msg and
+        // post-commit.
         let mut commit = vec![
+            "-c",
+            "core.hooksPath=/dev/null",
             "-c",
             "user.name=ctxloom",
             "-c",
