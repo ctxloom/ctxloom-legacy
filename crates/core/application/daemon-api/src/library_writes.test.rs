@@ -93,3 +93,15 @@ fn test_a_steps_path_is_its_kinds_own() {
     };
     assert_eq!(step_path(&step), "content/bundles/v2/demo");
 }
+
+// E1, extended to the writes: a write's directory is the one it carries,
+// set and read back through the request it is, as its environment is.
+#[test]
+fn test_a_writes_directory_is_its_requests_own() {
+    use super::LibraryWriteRequest;
+    let mut request = daemon_proto::v1::UpdateConfigRequest::default();
+    assert_eq!(request.cwd(), "");
+    request.set_cwd("/work/demo".to_string());
+    assert_eq!(request.cwd(), "/work/demo");
+    assert_eq!(request.cwd, "/work/demo");
+}

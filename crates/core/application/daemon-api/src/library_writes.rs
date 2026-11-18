@@ -45,6 +45,11 @@ pub trait LibraryWriteRequest {
     fn set_target(&mut self, target: String);
     /// The request, carrying the caller's environment (S7, E1).
     fn set_env(&mut self, env: v1::EnvVars);
+    /// The request, at the caller's working directory (E1, extended to the
+    /// writes): the daemon resolves the project and its checkout from it.
+    fn set_cwd(&mut self, cwd: String);
+    /// The caller's working directory; empty, the project's registered root.
+    fn cwd(&self) -> &str;
     /// The request, under the request id `id` (AIP-155), where it names none.
     fn set_request_id(&mut self, id: String);
     fn env(&self) -> Option<&v1::EnvVars>;
@@ -209,7 +214,12 @@ impl<E: Edge> Api<E> {
         request: &Q,
     ) -> Result<(crate::library_reads::ReadSite<'_>, library_api::Trees), ApiError> {
         let (site, project) = self
-            .resolve(request.target(), "", request.env(), request.globals())
+            .resolve(
+                request.target(),
+                request.cwd(),
+                request.env(),
+                request.globals(),
+            )
             .await?;
         let (observations, observers) =
             self.observing.as_ref().ok_or_else(|| ApiError::Failed {
@@ -494,6 +504,12 @@ macro_rules! write_requests {
                 }
                 fn set_env(&mut self, env: v1::EnvVars) {
                     self.env = Some(env);
+                }
+                fn set_cwd(&mut self, cwd: String) {
+                    self.cwd = cwd;
+                }
+                fn cwd(&self) -> &str {
+                    &self.cwd
                 }
                 fn set_request_id(&mut self, id: String) {
                     self.request_id = id;

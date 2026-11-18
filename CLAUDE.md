@@ -152,7 +152,11 @@ U3, protos.md §1.1) serves `bundle create`, `fragment|command create
 <bundle>#<kind>s/<id>` and `edit`, `skill create` and `config set` in the
 daemon, from one table (`daemon_proto::library_writes!`, every layer;
 `library_api::served_writes!`, each verb's use case and response; the
-CLI's `SERVED_WRITES`). A write is observed as a read is, then its request
+CLI's `SERVED_WRITES`). Every write request carries the caller's `cwd`
+(97) and `env` (94), as the reads do (E1, extended to the writes on
+2026-11-17 for the owner's review), so the daemon resolves its project
+and checkout from the caller's directory and runs git in its
+environment. A write is observed as a read is, then its request
 id looked up in `library-checkout` (which keeps every intent by request
 id: a retry of a write done is answered as applied, one owed is finished
 from its step), then PLANNED: the use case over `Library::recording`,

@@ -547,7 +547,8 @@ use library_read_requests;
 
 /// The library writes a command asks of its daemon (step 10b U3, D12: one
 /// method per row of `daemon_proto::library_writes!`), each under this
-/// client's project (`users/me` outside one), with its environment, and
+/// client's project (`users/me` outside one), with its environment and
+/// working directory (E1, as the reads carry them), and
 /// under ONE request id minted for the call (a request that names none),
 /// so its retry on a new daemon is the same write (S8, AIP-155).
 #[allow(async_fn_in_trait)]
@@ -589,6 +590,7 @@ macro_rules! library_write_requests {
                     request.set_request_id((self.ids)());
                 }
                 request.set_env(self.env.clone());
+                request.set_cwd(self.cwd.clone());
                 self.on_daemon(async |api: &D::Api| {
                     let parent = self.library_parent_on(api).await?;
                     let mut request = request.clone();

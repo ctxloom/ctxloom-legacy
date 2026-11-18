@@ -470,6 +470,11 @@ message CreateBundleRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `bundle create` did.
@@ -523,6 +528,14 @@ message UpdateBundleRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `bundle edit` did.
@@ -574,6 +587,14 @@ message DeleteBundleRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // A delete answers the resource as it was.
@@ -615,6 +636,14 @@ message ExportBundleRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: {status, name, source, dest}.
@@ -667,6 +696,14 @@ message ImportBundleRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The bundle imported, with its counts. was: {status, source, dest,
@@ -709,6 +746,14 @@ message MoveBundleRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `bundle move` did: the bundle under its new name.
@@ -756,6 +801,14 @@ message PushBundleRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What a push did. was: Pushed (`status`, `create_pr`, `commit_sha`,
@@ -1000,6 +1053,11 @@ message CreateFragmentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `fragment create` did.
@@ -1058,6 +1116,11 @@ message UpdateFragmentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `fragment edit` did.
@@ -1110,6 +1173,14 @@ message DeleteFragmentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `fragment remove` did.
@@ -1153,6 +1224,11 @@ message DistillFragmentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `fragment distill` did.
@@ -1193,6 +1269,11 @@ message DraftFragmentPremiseRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `fragment draft-premise` did.
@@ -1305,6 +1386,11 @@ message CreateCommandRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `command create` did.
@@ -1363,6 +1449,11 @@ message UpdateCommandRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `command edit` did.
@@ -1415,6 +1506,14 @@ message DeleteCommandRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `command remove` did.
@@ -1458,6 +1557,11 @@ message DistillCommandRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `command distill` did.
@@ -1665,6 +1769,11 @@ message CreateSkillRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `skill create` did.
@@ -1715,6 +1824,14 @@ message DeleteSkillRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `skill remove` did.
@@ -1755,6 +1872,14 @@ message ExportSkillRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `skill export` did.
@@ -1803,6 +1928,14 @@ message ImportSkillRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `skill import` did.
@@ -1950,6 +2083,11 @@ message UpdateMcpServerRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `mcp server set|edit` did.
@@ -2175,6 +2313,11 @@ message CreateProfileRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `profile create` did.
@@ -2231,6 +2374,11 @@ message UpdateProfileRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `profile edit` did.
@@ -2283,6 +2431,14 @@ message DeleteProfileRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `profile remove` did.
@@ -2323,6 +2479,14 @@ message ExportProfileRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `profile export` did.
@@ -2371,6 +2535,14 @@ message ImportProfileRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `profile import` did.
@@ -2602,6 +2774,11 @@ message CreateAgentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `agent create` did.
@@ -2659,6 +2836,11 @@ message UpdateAgentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // An engine swap's preview adds `from`, `to` and `not_carried`. was:
@@ -2718,6 +2900,14 @@ message DeleteAgentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `agent remove` did.
@@ -2758,6 +2948,14 @@ message SetDefaultAgentRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `agent default` did.
@@ -3016,6 +3214,14 @@ message CreateCompanionRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: CompanionAdded{name, command, added}.
@@ -3058,6 +3264,14 @@ message DeleteCompanionRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: CompanionRemoved{name, removed}, Preview.
@@ -3094,6 +3308,14 @@ message EnableCompanionRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `companion disable <name>` (OD-9).
@@ -3106,6 +3328,14 @@ message DisableCompanionRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // ctxloom's OWN loadout (Go's `cmd/ctxloom/loadout.yaml`): what ctxloom, as
@@ -3264,6 +3494,14 @@ message CreateRemoteRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The warning of today's `Created` is a notice.
@@ -3310,6 +3548,14 @@ message UpdateRemoteRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // The remote after the write and its `changes`, no `before` (OQ-18).
@@ -3354,6 +3600,14 @@ message DeleteRemoteRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `remote remove` did (the default cleared when it was the default).
@@ -3394,6 +3648,14 @@ message SetDefaultRemoteRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `remote default` did.
@@ -3599,6 +3861,14 @@ message HoldDependencyRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // `deps unhold <ref>`, `deps hold --undo`.
@@ -3611,6 +3881,14 @@ message ReleaseDependencyRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // How an item or a file differs between two pins. was: pin_changes::Change
@@ -3818,6 +4096,14 @@ message PullDependenciesRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: PullReport, flattened with refresh_skipped (`status`, `message` and
@@ -3960,6 +4246,14 @@ message CheckDependenciesRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: CheckReport (`missing_default_profiles` and `missing_defaults_error`,
@@ -3993,6 +4287,14 @@ message UpgradeDependenciesRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // was: UpgradeReport.
@@ -4114,6 +4416,11 @@ message UpdateConfigRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `config set` did.
@@ -4154,6 +4461,14 @@ message ScaffoldConfigRequest {
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
   // call is planned under.
   Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life:
+  // the daemon runs git in it, as it does for the reads (E1).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1, extended to the writes 2026-11-17,
+  // for the owner's review): the daemon resolves the project and its
+  // checkout from it (a git worktree is a checkout of its own, L2); empty,
+  // the project's registered root.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // What `config create` did.

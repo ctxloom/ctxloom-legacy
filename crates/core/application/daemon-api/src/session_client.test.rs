@@ -175,6 +175,16 @@ impl DaemonApi for Fake {
         })
     }
 
+    async fn create_bundle(
+        &self,
+        r: v1::CreateBundleRequest,
+    ) -> Result<v1::CreateBundleResponse, Called> {
+        self.ask("create-bundle", r.env)?;
+        self.names.lock().unwrap().push(r.parent);
+        self.names.lock().unwrap().push(format!("cwd {}", r.cwd));
+        Ok(v1::CreateBundleResponse::default())
+    }
+
     async fn create_run(&self, r: v1::CreateRunRequest) -> Result<v1::Run, Called> {
         self.ask(&format!("run {}", r.validate_only), r.env)?;
         self.names.lock().unwrap().push(r.parent);
@@ -754,4 +764,22 @@ async fn an_assembly_and_a_dry_run_are_asked_under_the_library_parent_from_the_c
         .await
         .unwrap();
     assert_eq!(home.names(), ["users/me", "cwd /tmp"]);
+}
+
+// E1, extended to the writes (2026-11-17): a write is asked under the
+// library's parent from the caller's directory, in its environment, as a
+// read is, so the daemon resolves the project and runs git as the caller
+// would.
+#[tokio::test]
+async fn a_write_is_asked_from_the_callers_directory_in_its_environment() {
+    use super::LibraryWrites;
+    let daemons = Fakes::new();
+    in_project(&daemons)
+        .create_bundle("", v1::CreateBundleRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(daemons.asked(), ["1:resolve", "1:create-bundle"]);
+    assert_eq!(daemons.names(), ["p-1", "projects/calm-otter", "cwd /work"]);
+    let envs = daemons.template.envs.lock().unwrap().clone();
+    assert_eq!(envs[1], Some(env()));
 }
