@@ -71,6 +71,17 @@ pub(crate) fn instance_lock_path(account: &Path, overridden: Option<&Path>) -> P
         .join(DAEMON_LOCK_FILE)
 }
 
+/// Why the single-instance lock was not taken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unheld {
+    /// Another process held it for the whole wait: another daemon serves,
+    /// or is starting, or is stopping.
+    Held { lock: String },
+    /// It could not be taken at all (its directory or its file cannot be
+    /// made or locked): no daemon can start here until that changes.
+    Failed(String),
+}
+
 /// The single-instance lock, held: released when dropped. It keeps a second
 /// handle on the file it locked, to tell whether that is still the file at
 /// the lock's path ([`DaemonFiles::still_holds`]).
@@ -125,18 +136,26 @@ impl DaemonFiles {
         self.dir.join(name)
     }
 
+    /// [`Self::take_instance`], none when it was not taken.
+    #[cfg(test)]
+    pub(crate) fn hold_instance(&self, wait: Duration) -> Option<Instance> {
+        self.take_instance(wait).ok()
+    }
+
     /// The single-instance lock (D18, S-e): one daemon per OS account, the
-    /// lock whoever serves holds for its life,
-    /// waited for up to `wait`; none when another holds it still. It says
-    /// only that one daemon serves (M11): whether a daemon serves is its health check
-    /// (`daemon::live`), never this lock.
+    /// lock whoever serves holds for its life, waited for up to `wait`, or
+    /// why it was not taken: another held it for the whole wait
+    /// ([`Unheld::Held`]), or it could not be taken at all
+    /// ([`Unheld::Failed`]). It says only that one daemon serves (M11):
+    /// whether a daemon serves is its health check (`daemon::live`), never
+    /// this lock.
     ///
     /// The lock file is made once and never removed or replaced by ctxloom.
-    pub(crate) fn hold_instance(&self, wait: Duration) -> Option<Instance> {
+    pub(crate) fn take_instance(&self, wait: Duration) -> Result<Instance, Unheld> {
         let fs = self.fs.as_ref();
         let path = self.lock.as_path();
         fs.create_dir_all(self.instance_dir(), Mode::from_bits(DIR_MODE))
-            .ok()?;
+            .map_err(|e| Unheld::Failed(e.to_string()))?;
         let mut pause = until(path, wait);
         let mut held = None;
         let locked = take_current(fs, path, || {
@@ -147,10 +166,16 @@ impl DaemonFiles {
             })?);
             Ok(file)
         })
-        .ok()?;
-        Some(Instance {
+        .map_err(|e| match e {
+            LockError::Timeout { .. } => Unheld::Held {
+                lock: path.display().to_string(),
+            },
+            other => Unheld::Failed(other.to_string()),
+        })?;
+        let held = held.ok_or_else(|| Unheld::Failed("the lock was not kept".to_string()))?;
+        Ok(Instance {
             _locked: locked,
-            held: held?,
+            held,
         })
     }
 

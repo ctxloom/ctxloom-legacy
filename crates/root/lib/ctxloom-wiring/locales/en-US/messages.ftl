@@ -11,6 +11,9 @@ ctxloom-wiring-project-unnamed-fix = run `ctxloom init` in { $root } to give the
 # Step 10a U0: not drafted in the red spec (a failure of the machine, exit 10).
 ctxloom-wiring-checkout = the library checkout's name at { $path } could not be read or written: { $ext_err_txt }
 ctxloom-wiring-daemon-other-home-fix = run the command with the ctxloom home { $daemon_home }, or stop that daemon from it (`ctxloom daemon stop`) before using { $home }
+# The daemon cluster's cap (owner ruling 2026-11-18). DRAFT wording, the
+# owner's to approve: `daemon serve` that lost the single-instance lock.
+ctxloom-wiring-daemon-instance-held = another ctxloom daemon holds this account's single-instance lock { $lock }, so this one does not serve
 ctxloom-wiring-seed = the test seed could not plant the session: { $ext_err_txt }
 ctxloom-wiring-test-refused = the test command { $verb } refused, as it always does
 ctxloom-wiring-test-refused-fix = nothing to fix: ask for the other test command

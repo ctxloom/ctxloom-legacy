@@ -38,7 +38,7 @@ use run_ports::{CertMint, CertNames, ChildObservation, Discovery, SessionRecords
 use runs_application::UserGate;
 use session_files::SessionDirs;
 
-use super::files::{DaemonFiles, Instance};
+use super::files::{DaemonFiles, Instance, Unheld};
 use crate::{InProcessCore, Projectors};
 
 /// How long a daemon starting waits for the single-instance lock.
@@ -87,6 +87,35 @@ fn said(say: &Say, line: &str) {
     (say.lock().unwrap_or_else(PoisonError::into_inner))(line);
 }
 
+/// Why the daemon did not serve to its end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unserved {
+    /// Another daemon held the single-instance lock for the whole of
+    /// [`INSTANCE_WAIT`]: that one serves (or is starting, or stopping).
+    Held { lock: String },
+    /// It could not start, or its run failed: why.
+    Failed(String),
+}
+
+impl From<String> for Unserved {
+    fn from(why: String) -> Unserved {
+        Unserved::Failed(why)
+    }
+}
+
+/// The single-instance lock, waited for within [`INSTANCE_WAIT`]; held by
+/// another, the daemon declines ([`Unserved::Held`]).
+fn instance(files: &DaemonFiles) -> Result<Instance, Unserved> {
+    files
+        .take_instance(INSTANCE_WAIT)
+        .map_err(|unheld| match unheld {
+            Unheld::Held { lock } => Unserved::Held { lock },
+            Unheld::Failed(why) => {
+                Unserved::Failed(format!("the single-instance lock cannot be taken: {why}"))
+            }
+        })
+}
+
 /// Run the daemon in this process until it exits: the instance held, served,
 /// advertised, swept, then ticking. `say` is its log.
 pub(crate) fn serve(
@@ -94,7 +123,7 @@ pub(crate) fn serve(
     place: Place,
     pace: Pace,
     say: Box<dyn FnMut(&str) + Send>,
-) -> Result<(), String> {
+) -> Result<(), Unserved> {
     let Place {
         stamp,
         home,
@@ -107,9 +136,7 @@ pub(crate) fn serve(
     } = place;
     let home = home.as_path();
     let files = DaemonFiles::with_instance(Arc::clone(&fs), home, instance_lock);
-    let Some(held) = files.hold_instance(INSTANCE_WAIT) else {
-        return Err("another daemon holds the single-instance lock".to_string());
-    };
+    let held = instance(&files)?;
     let say: Say = Arc::new(Mutex::new(say));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -224,7 +251,7 @@ pub(crate) fn serve(
     // test's daemon outlived its home 43 minutes; ruling 114). What is left
     // ends with the process.
     runtime.shutdown_timeout(RUNTIME_END);
-    served
+    served.map_err(Unserved::Failed)
 }
 
 /// How long the daemon's exit waits for its runtime's blocking tasks.

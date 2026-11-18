@@ -33,17 +33,23 @@ pub enum LibError {
     /// refused and writes nothing. (A command that must name its project
     /// mints the id at its root instead.)
     ProjectUnnamed { root: String },
+    /// `daemon serve` found another daemon holding the account's
+    /// single-instance lock: that one serves, and this one does not.
+    DaemonInstanceHeld { lock: String },
     /// A library tree's checkout harp (`.ctxloom/state/checkout`, L2) could
     /// not be read, minted or written.
     Checkout { path: String, detail: String },
 }
 
 impl cli_support::ExitClass for LibError {
-    /// A read in a project nothing has named is a decline (20); every other
-    /// wiring error failed (10).
+    /// A read in a project nothing has named, and a daemon that found
+    /// another holding the lock, are declines (20); every other wiring error
+    /// failed (10).
     fn exit(&self) -> cli_support::Exit {
         match self {
-            LibError::ProjectUnnamed { .. } => cli_support::Exit::REFUSED,
+            LibError::ProjectUnnamed { .. } | LibError::DaemonInstanceHeld { .. } => {
+                cli_support::Exit::REFUSED
+            }
             _ => cli_support::Exit::FAILED,
         }
     }
@@ -68,6 +74,7 @@ impl Diagnostic for LibError {
             LibError::DaemonOtherHome { .. } => code!("daemon-other-home"),
             LibError::ProjectUnnamed { .. } => code!("project-unnamed"),
             LibError::Checkout { .. } => code!("checkout"),
+            LibError::DaemonInstanceHeld { .. } => code!("daemon-instance-held"),
         }
     }
 
@@ -90,6 +97,7 @@ impl Diagnostic for LibError {
                 ("path", path.as_str().into()),
                 ("ext_err_txt", detail.as_str().into()),
             ],
+            LibError::DaemonInstanceHeld { lock } => vec![("lock", lock.as_str().into())],
         }
     }
 }
@@ -114,6 +122,9 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(LibError::ProjectUnnamed {
             root: "/work/app".to_string(),
+        }),
+        Box::new(LibError::DaemonInstanceHeld {
+            lock: "/home/u/.ctxloom/daemon/daemon.lock".to_string(),
         }),
         Box::new(LibError::Checkout {
             path: "/work/app/.ctxloom/state/checkout".to_string(),

@@ -6,8 +6,8 @@ use std::path::Path;
 
 use super::{
     account_home, caller_env, caller_wiring, daemon_env, daemon_home, instance_lock, logger,
-    request_id, under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT,
-    HOOK_BOUND, SPAWN_WAIT,
+    request_id, served_exit, spawn_waits_on, under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT,
+    DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
 };
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -37,6 +37,43 @@ fn a_spawn_wait_leaves_a_delivery_room_within_a_hooks_bound() {
         SPAWN_WAIT + DELIVERY_MARGIN <= HOOK_BOUND,
         "{SPAWN_WAIT:?} + {DELIVERY_MARGIN:?} > {HOOK_BOUND:?}"
     );
+}
+
+// The daemon cluster's cap (owner ruling, 2026-11-18): `daemon serve` that
+// lost the single-instance lock to another daemon is a decline (20, a lock
+// another process holds); one that could not serve failed (10).
+#[test]
+fn a_daemon_that_lost_the_lock_declines_and_one_that_could_not_serve_failed() {
+    use super::serve::Unserved;
+    use cli_support::Exit;
+    assert_eq!(served_exit(Ok(())).ok(), Some(Exit::OK));
+    assert_eq!(
+        served_exit(Err(Unserved::Held { lock: "l".into() }))
+            .err()
+            .map(|f| f.exit),
+        Some(Exit::REFUSED)
+    );
+    assert_eq!(
+        served_exit(Err(Unserved::Failed("no store".into())))
+            .err()
+            .map(|f| f.exit),
+        Some(Exit::FAILED)
+    );
+}
+
+// The same ruling: a client whose spawned daemon has exited waits on only
+// when it lost the lock to another daemon (that one advertises); any other
+// exit, or a signal's, means no daemon is coming of it, and the wait ends.
+#[test]
+fn a_spawn_wait_goes_on_only_for_a_daemon_that_lost_the_lock() {
+    use super::serve::Unserved;
+    let lost = served_exit(Err(Unserved::Held { lock: "l".into() })).expect_err("a decline");
+    let lost = i32::from(lost.exit.code(false));
+    assert!(spawn_waits_on(Some(lost)), "another daemon holds the lock");
+    let failed = served_exit(Err(Unserved::Failed("x".into()))).expect_err("a failure");
+    assert!(!spawn_waits_on(Some(i32::from(failed.exit.code(false)))));
+    assert!(!spawn_waits_on(Some(0)), "it served and exited");
+    assert!(!spawn_waits_on(None), "a signal ended it");
 }
 
 // M8: on Windows a variable's name is matched as Windows compares names, so

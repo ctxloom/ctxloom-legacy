@@ -536,9 +536,35 @@ fn be_the_daemon(
         // The environment its children's checkouts' git runs in.
         env: Arc::clone(wiring.env()),
     };
-    serve::serve(wiring.fs(), place, pace, say)
-        .map_err(|detail| failed(LibError::NoRuntime { detail }))?;
-    Ok(Exit::OK)
+    served_exit(serve::serve(wiring.fs(), place, pace, say))
+}
+
+/// `daemon serve`'s exit: a daemon that lost the single-instance lock to
+/// another declines (20: a lock another process holds), which its spawner
+/// reads as another daemon to wait for ([`spawn_waits_on`]); one that could
+/// not serve failed (10).
+fn served_exit(served: Result<(), serve::Unserved>) -> Result<Exit, Failure> {
+    match served {
+        Ok(()) => Ok(Exit::OK),
+        Err(serve::Unserved::Held { lock }) => {
+            Err(Failure::of(LibError::DaemonInstanceHeld { lock }))
+        }
+        Err(serve::Unserved::Failed(detail)) => Err(failed(LibError::NoRuntime { detail })),
+    }
+}
+
+/// Whether a client waits on for a daemon to advertise itself once the one
+/// it spawned has exited with the status `code` (`None`: a signal's): only
+/// when that one lost the single-instance lock to another daemon, which is
+/// the one to wait for. Any other exit means no daemon is coming of this
+/// spawn, so the client stops waiting (the daemon cluster's cap, owner
+/// ruling 2026-11-18: it waited out all of [`SPAWN_WAIT`] for a daemon that
+/// had died at once).
+fn spawn_waits_on(code: Option<i32>) -> bool {
+    let held = LibError::DaemonInstanceHeld {
+        lock: String::new(),
+    };
+    code == Some(i32::from(held.exit().code(false)))
 }
 
 /// The single-instance lock of `wiring`'s ACCOUNT ([`instance_lock_path`]
@@ -1201,13 +1227,25 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     // stdio null (the default) and no other handle of this command's
     // inherited, so a reader of this command's output sees its end when the
     // command exits; dropped, not waited for: it outlives this command.
-    if os::process::spawn_detached(command).is_err() {
+    let Ok(mut spawned) = os::process::spawn_detached(command) else {
         return;
-    }
+    };
     let deadline = Instant::now() + wait;
+    let mut exited = false;
     while Instant::now() < deadline {
         if files.discovery().is_some_and(|found| live(&found)) {
             return;
+        }
+        // The daemon spawned has exited: unless another holds the lock (and
+        // advertises), none is coming, and the wait is over. Looked at once,
+        // after the discovery, so one that served and exited is seen first.
+        if !exited {
+            if let Ok(Some(status)) = spawned.try_wait() {
+                if !spawn_waits_on(status.code()) {
+                    return;
+                }
+                exited = true;
+            }
         }
         std::thread::sleep(Duration::from_millis(20));
     }

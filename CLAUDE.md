@@ -1762,7 +1762,9 @@ client and messages, a direct dependency at the version the lock already
 held for angzarr's server, over TLS pinning the certificate the discovery
 file names, presenting no bearer, within the wiring's `HEALTH_WAIT`, one
 second). The single-instance lock (`daemon.lock`,
-`DaemonFiles::hold_instance`, the platform's `file_lock::take_current`) says
+`DaemonFiles::take_instance`, the platform's `file_lock::take_current`;
+`Unheld::Held` when another held it for the wait, `Unheld::Failed` when it
+cannot be taken at all, its directory or file not made) says
 only that one daemon serves: its file is made once and never removed or
 replaced by ctxloom, and a serving daemon checks at each tick that the file
 at the lock's path is still the one it locked (`DaemonFiles::still_holds`:
@@ -1804,7 +1806,13 @@ logged as ever. A client with no live
 daemon spawns `ctxloom daemon serve` and waits for a live one to advertise
 itself (the one spawned or another client's, whichever took the single-instance lock)
 within `SPAWN_WAIT`, eight seconds: S16's ten (`HOOK_BOUND`) less a
-delivery's two (`DELIVERY_MARGIN`). A stale file is left for the new daemon
+delivery's two (`DELIVERY_MARGIN`). It watches the daemon it spawned: once
+that one has exited, the wait goes on only when it declined because another
+daemon holds the single-instance lock (`daemon serve` exits 20,
+`ctxloom-wiring-daemon-instance-held`, `spawn_waits_on`), and any other exit
+(it could not start) ends the wait at once; it used to wait out the eight
+seconds for a daemon that had died (owner ruling 2026-11-18, the daemon
+cluster's cap). A stale file is left for the new daemon
 to publish over. The spawned daemon's environment is `daemon_env`'s:
 `PATH`, `TMPDIR`, `LANG`, `LC_ALL` and `run_ports::WINDOWS_STARTUP_VARIABLES`,
 matched as the platform compares names (`os::Flavor::env_key`, so Windows'
