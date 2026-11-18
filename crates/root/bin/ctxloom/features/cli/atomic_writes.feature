@@ -368,8 +368,8 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
 
       Examples:
         | command                                | step |
-        | ctxloom materialize --to out --yes     | 1    |
-        | ctxloom materialize --to out --yes     | 2    |
+        | ctxloom materialize --target out --yes | 1    |
+        | ctxloom materialize --target out --yes | 2    |
         | ctxloom doctor --fix                   | 1    |
         | ctxloom manage uninstall --yes         | 1    |
 

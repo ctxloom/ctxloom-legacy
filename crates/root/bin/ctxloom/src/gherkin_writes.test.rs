@@ -987,7 +987,7 @@ fn the_setup_nouns_writes_are_writes_and_their_reads_are_not() {
         "ctxloom init",
         "ctxloom manage install --engine claude-code --no-pull",
         "ctxloom manage gitignore install",
-        "ctxloom materialize --to out --yes",
+        "ctxloom materialize --target out --yes",
         "ctxloom doctor --fix",
     ] {
         assert!(is_setup_write(line), "{line}");

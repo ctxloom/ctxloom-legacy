@@ -217,7 +217,7 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom init                                                   |
         | ctxloom manage install --engine claude-code --no-pull         |
         | ctxloom manage gitignore install                               |
-        | ctxloom materialize --to out --yes                             |
+        | ctxloom materialize --target out --yes                         |
         | ctxloom doctor --fix                                           |
 
     Scenario Outline: A setup read that cannot start a daemon fails, and diagnoses nothing in process
