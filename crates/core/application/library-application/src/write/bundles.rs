@@ -216,9 +216,7 @@ impl Project {
             &mut changes,
         )?;
         for name in &request.remove_mcp {
-            let content = plan.remove(&mcpfile::content_path(name));
-            let meta = plan.remove(&mcpfile::meta_path(name));
-            if content || meta {
+            if plan.remove(&mcpfile::content_path(name)) {
                 changes.push(format!("removed mcp: {name}"));
             }
         }
@@ -409,8 +407,8 @@ impl Project {
         // then the new one made, which the daemon carries out as the
         // sequence trash, create, purge), never merges into it.
         let mut plan = Plan::of(Files::new(), Default::default());
-        // The sidecar the import brings says what is executable, never the
-        // modes of the files imported (owner ruling 2026-11-12).
+        // The skills' metadata the import brings says what is executable,
+        // never the modes of the files imported (owner ruling 2026-11-12).
         let exec = library::write::skill::declared_executables(&files);
         for (path, bytes) in &files {
             plan.put(path, bytes.clone(), exec.contains(path));

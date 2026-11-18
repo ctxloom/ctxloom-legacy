@@ -59,6 +59,50 @@ pub(crate) struct ServedBy<'a> {
     pub(crate) names: &'a dyn Names,
 }
 
+impl ServedBy<'_> {
+    /// The daemon's distill of `name`: nothing asked (fresh, no_distill),
+    /// else its run, its model answering with what it was sent, and its
+    /// write made at once, as the daemon's reaction makes it once the run
+    /// ends.
+    fn distilled(
+        &self,
+        kind: ItemKind,
+        name: &str,
+        force: bool,
+        globals: Option<&v1::Globals>,
+    ) -> Result<(library_application::ItemDistilled, String, Vec<v1::Notice>), Failure> {
+        let globals = globals.cloned().unwrap_or_default();
+        let flags = library_application::Flags {
+            degraded: globals.degraded,
+            no_companions: globals.no_companions,
+            config_set: globals.config_set.clone(),
+            trusted: false,
+        };
+        let reference = library_api::distill::reference_of(name);
+        let asked = self
+            .library
+            .item_distill_ask(&flags, kind, &reference, force);
+        let notices = asked
+            .notices
+            .iter()
+            .map(library_api::reads::notice_of)
+            .collect();
+        match asked.result.map_err(failed)? {
+            library_application::DistillAsk::Done(done) => Ok((done, String::new(), notices)),
+            library_application::DistillAsk::Model(model) => {
+                self.library
+                    .item_distilled(&flags, kind, &reference, (&model.digest, &model.request))
+                    .result
+                    .map_err(failed)?;
+                Ok((model.done, FAKE_RUN.to_string(), notices))
+            }
+        }
+    }
+}
+
+/// The run the fake daemon's distill answers with.
+pub(crate) const FAKE_RUN: &str = "projects/calm-otter/runs/0195f0a4-7b1e-7000-8000-000000000001";
+
 impl Served for ServedBy<'_> {
     fn in_project(&self) -> bool {
         self.names.parent().is_ok_and(|parent| parent != "users/me")
@@ -67,6 +111,49 @@ impl Served for ServedBy<'_> {
     crate::served_reads!(served_by_library_api);
 
     library_api::served_writes!(written_by_library_api);
+
+    /// The daemon's distill (step 10b), as `distilled` answers it.
+    fn distill_fragment(
+        &self,
+        under: &str,
+        request: v1::DistillFragmentRequest,
+    ) -> Result<v1::DistillFragmentResponse, Failure> {
+        let name = format!("{}{under}", self.names.parent()?);
+        let (done, run, notices) = self.distilled(
+            ItemKind::Fragment,
+            &name,
+            request.force,
+            request.globals.as_ref(),
+        )?;
+        Ok(library_api::distill::fragment_response(
+            &name, &done, run, notices,
+        ))
+    }
+
+    fn distill_command(
+        &self,
+        under: &str,
+        request: v1::DistillCommandRequest,
+    ) -> Result<v1::DistillCommandResponse, Failure> {
+        let name = format!("{}{under}", self.names.parent()?);
+        let (done, run, notices) = self.distilled(
+            ItemKind::Command,
+            &name,
+            request.force,
+            request.globals.as_ref(),
+        )?;
+        Ok(library_api::distill::command_response(
+            &name, &done, run, notices,
+        ))
+    }
+
+    /// The fake run's end: answered, its write made already.
+    fn follow_run(&self, _: &str) -> RunFollowed {
+        RunFollowed {
+            notices: Vec::new(),
+            ended: Ok(()),
+        }
+    }
 
     /// The library's own editor, as the CLI would launch it.
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure> {
@@ -531,6 +618,18 @@ impl Served for Asks {
 
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure> {
         self.ask("", edit.clone())
+    }
+
+    fn follow_run(&self, run: &str) -> RunFollowed {
+        RunFollowed {
+            notices: Vec::new(),
+            ended: self.ask(
+                "",
+                v1::WatchRunRequest {
+                    name: run.to_string(),
+                },
+            ),
+        }
     }
 
     fn confirm(&self, _: &str) -> Option<bool> {
@@ -1007,7 +1106,6 @@ fn test_the_daemons_reads_are_told_from_the_verbs_in_process() {
     }
     for line in [
         &["bundle", "create", "demo"][..],
-        &["fragment", "distill", "demo#fragments/x"],
         &["profile", "create", "dev"],
         &["agent", "default"],
         &["companion", "add", "acme"],

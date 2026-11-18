@@ -217,7 +217,7 @@ fn test_viewing_one_item_of_each_kind() {
         ("fragments/f.md", "plain\n"),
         ("profiles/pr.yaml", "description: d\nbundles: [two]\n"),
         ("skills/s/SKILL.md", "---\nname: s\n---\nbody\n"),
-        ("skills/.s.meta.yaml", "tags: [t]\nnotes: nn\n"),
+        ("skills/s/.meta.yaml", "tags: [t]\nnotes: nn\n"),
     ];
     let library = with(&[("one", one), ("two", two)], &[CONFIG]).library();
     let only = ok(library.bundle_view(&plain(), "one#mcp/anything", false));
@@ -351,7 +351,7 @@ fn test_skills_list_by_bundle_and_merge_tags_without_repeats() {
                 format!("---\nname: {name}\ndescription: Does {name}\n---\nbody\n"),
             ),
             (
-                format!("skills/.{name}.meta.yaml"),
+                format!("skills/{name}/.meta.yaml"),
                 "tags: [shared, own]\n".to_string(),
             ),
         ]
@@ -507,7 +507,7 @@ fn search_bundle() -> Vec<(String, String)> {
             "---\nname: by-tag\ndescription: d\n---\nb\n".to_string(),
         ),
         (
-            "skills/.by-tag.meta.yaml".to_string(),
+            "skills/by-tag/.meta.yaml".to_string(),
             "tags: [zebra]\n".to_string(),
         ),
         (

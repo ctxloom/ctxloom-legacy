@@ -1253,6 +1253,10 @@ message DistillFragmentRequest {
   string name = 1 [(google.api.field_behavior) = REQUIRED];
   // Remove the distilled form instead of writing one.
   bool clear = 2 [(google.api.field_behavior) = OPTIONAL];
+  // `-f`: distill it again even where its distilled form matches its
+  // source (step 10b, additive): without it, a fresh form is answered and
+  // nothing is asked.
+  bool force = 3 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
@@ -1284,6 +1288,12 @@ message DistillFragmentResponse {
   repeated string detail = 4;
   // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The Run that asks the model (step 10b, owner 2026-11-18: the daemon
+  // owns the model call as a run), `projects/{project}/runs/{run}`, to
+  // follow with `WatchRun`: the distilled form is written when the run
+  // ends, and the run's end is what the write came to. Empty when nothing
+  // is asked (its form is fresh, or the fragment is marked `no_distill`).
+  string run = 6;
   // On a preview, the needs a person must answer before the apply
   // (needs.proto); empty once applied.
   repeated Need needs = 90;
@@ -1588,6 +1598,10 @@ message DistillCommandRequest {
   string name = 1 [(google.api.field_behavior) = REQUIRED];
   // Remove the distilled form instead of writing one.
   bool clear = 2 [(google.api.field_behavior) = OPTIONAL];
+  // `-f`: distill it again even where its distilled form matches its
+  // source (step 10b, additive): without it, a fresh form is answered and
+  // nothing is asked.
+  bool force = 3 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
@@ -1619,6 +1633,12 @@ message DistillCommandResponse {
   repeated string detail = 4;
   // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // The Run that asks the model (step 10b, owner 2026-11-18: the daemon
+  // owns the model call as a run), `projects/{project}/runs/{run}`, to
+  // follow with `WatchRun`: the distilled form is written when the run
+  // ends, and the run's end is what the write came to. Empty when nothing
+  // is asked (its form is fresh, or the command is marked `no_distill`).
+  string run = 6;
   // On a preview, the needs a person must answer before the apply
   // (needs.proto); empty once applied.
   repeated Need needs = 90;
@@ -5125,6 +5145,16 @@ message LibraryWorkspace {
 // `library-application-run-needs-dry-run`: A run that is not a dry run.
 message LibraryRunNeedsDryRun {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_INVALID_ARGUMENT;
+}
+
+// `library-application-distill-source-moved` (step 10b, additive): the
+// item's source moved while the model was asked to distill it, so its
+// answer is stale and nothing was written. ABORTED, as a stale etag's
+// `PlanStale` is (AIP-154): distill it again.
+message LibraryDistillSourceMoved {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_ABORTED;
+  // The item, as its reference (`<bundle>#<dir>/<name>`).
+  string reference = 1;
 }
 
 // The read models' own declines (`AppError::Declined`, step 10a U2,

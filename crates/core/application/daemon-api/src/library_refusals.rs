@@ -198,6 +198,11 @@ pub(crate) fn typed(error: &AppError) -> Option<ApiRefusal> {
             value: value.clone(),
         }),
         AppError::RunNeedsDryRun => ApiRefusal::of(&v1::LibraryRunNeedsDryRun {}),
+        AppError::DistillSourceMoved { reference } => {
+            ApiRefusal::of(&v1::LibraryDistillSourceMoved {
+                reference: reference.clone(),
+            })
+        }
         // A read model's own decline is its own message; one no read
         // declines with (a write's, 10b) the cause it carries.
         AppError::Declined(declined) => {
@@ -412,6 +417,10 @@ pub fn rejection(refusal: &Any) -> Option<Report> {
         "ctxloom.v1.LibraryRunNeedsDryRun" => {
             decode::<v1::LibraryRunNeedsDryRun>(refusal)?;
             Report::new(code("run-needs-dry-run"))
+        }
+        "ctxloom.v1.LibraryDistillSourceMoved" => {
+            let r = decode::<v1::LibraryDistillSourceMoved>(refusal)?;
+            Report::new(code("distill-source-moved")).arg("reference", Arg::Str(r.reference))
         }
         "ctxloom.v1.LibraryDeclined" => {
             let cause = decode::<v1::LibraryDeclined>(refusal)?
@@ -689,6 +698,9 @@ pub(crate) fn every() -> Vec<AppError> {
             value: "value-x".to_string(),
         },
         AppError::RunNeedsDryRun,
+        AppError::DistillSourceMoved {
+            reference: "demo#fragments/rules".to_string(),
+        },
         AppError::Declined(Box::new(AppError::NoBundlesDir)),
         // Each read model's own decline (E5's remainder): its own message.
         AppError::cause(library::CatalogError::BundleNotFound {

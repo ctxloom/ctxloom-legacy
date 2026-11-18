@@ -4,6 +4,7 @@
 
 use crate::fakes::{plain, Setup, CONFIG, ENVELOPE};
 use crate::{AppError, AssembleRequest, ItemKind, Notice, RunRequest, SearchRequest};
+use angzarr_diagnostic::Diagnostic;
 use exit_code::{Exit, ExitClass};
 
 const DEMO: &[(&str, &str)] = &[
@@ -119,6 +120,65 @@ fn test_showing_an_unreadable_bundle_names_the_fault_and_a_missing_one_is_not_fo
     assert!(matches!(missing, AppError::Declined(_)));
     // Ruling 152: a bundle nobody has declines the request.
     assert_eq!(missing.exit(), Exit::REFUSED);
+}
+
+// atomic_writes.feature (owner T27, D15, QUESTIONS 2(a)): a bundle whose
+// metadata is in the old layout is refused by its own code, the paths named
+// from the project's root as the `git mv` is typed; a listing lists the rest
+// and names it with the skipped-bundle notice.
+#[test]
+fn test_a_bundle_in_the_old_layout_is_refused_naming_the_move_from_the_projects_root() {
+    let old: &[(&str, &str)] = &[
+        ENVELOPE,
+        (
+            "skills/.review.meta.yaml",
+            "description: in the old place\n",
+        ),
+    ];
+    let library = Setup {
+        bundles: &[("good", DEMO), ("demo", old)],
+        layers: &[CONFIG],
+        ..Setup::default()
+    }
+    .library();
+    let refused = library.bundle_show(&plain(), "demo").result.unwrap_err();
+    assert_eq!(refused.code(), "library-sidecar-old-layout");
+    assert_eq!(refused.exit(), Exit::REFUSED);
+    let args: Vec<(String, String)> = refused
+        .args()
+        .into_iter()
+        .filter_map(|(k, v)| match v {
+            angzarr_diagnostic::Arg::Str(s) => Some((k.to_string(), s)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        args.contains(&(
+            "old".to_string(),
+            ".ctxloom/content/bundles/v2/demo/skills/.review.meta.yaml".to_string()
+        )) && args.contains(&(
+            "new".to_string(),
+            ".ctxloom/content/bundles/v2/demo/skills/review/.meta.yaml".to_string()
+        )),
+        "{args:?}"
+    );
+    let list = library.bundle_list(&plain());
+    assert!(
+        matches!(
+            &list.notices[..],
+            [Notice::BundleSkipped {
+                cause: library::BundleError::OldLayout { .. },
+                ..
+            }]
+        ),
+        "{:?}",
+        list.notices
+    );
+    let rows = list.result.unwrap().rows;
+    assert_eq!(
+        rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["good"]
+    );
 }
 
 // config.feature / fault_tolerance.feature: an unknown key is refused naming
@@ -332,7 +392,7 @@ fn test_a_skill_mode_is_the_sidecars_declaration_and_a_headless_skill_is_withhel
         ),
         ("skills/reviewer/scripts/run.sh", "#!/bin/sh\n"),
         (
-            "skills/.reviewer.meta.yaml",
+            "skills/reviewer/.meta.yaml",
             "executable:\n  - scripts/run.sh\n",
         ),
         ("skills/headless/SKILL.md", "no frontmatter\n"),
@@ -350,7 +410,15 @@ fn test_a_skill_mode_is_the_sidecars_declaration_and_a_headless_skill_is_withhel
         .iter()
         .map(|f| (f.path.as_str(), f.mode.as_str()))
         .collect();
-    assert_eq!(modes, [("SKILL.md", "0644"), ("scripts/run.sh", "0755")]);
+    // The metadata is a file of the directory, shown with it (owner T27).
+    assert_eq!(
+        modes,
+        [
+            (".meta.yaml", "0644"),
+            ("SKILL.md", "0644"),
+            ("scripts/run.sh", "0755")
+        ]
+    );
     assert!(shown.files[0].sha256.starts_with("sha256:"));
     let list = library.skill_list(&plain(), "");
     assert!(list

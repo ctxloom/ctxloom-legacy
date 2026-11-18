@@ -93,16 +93,11 @@ impl LibraryCommands {
     fn wired(&mut self) -> Result<&Library, LibError> {
         if self.library.is_none() {
             let wiring = Wiring::new(Arc::clone(&self.env))?;
-            // Distill's model: a one-shot on no context (plan step 5,
-            // OD-38), hosted by a daemon of this binary's stamp (U4).
             let library = build(&wiring, self.remotes.clone())?
-                .with_distiller(Rc::new(crate::distiller::OneShotDistiller {
-                    env: Arc::clone(wiring.env()),
-                    stamp: self.version.clone(),
-                }))
-                // A project `ctxloom` bundle replaces distill's prompt only
+                // A project `ctxloom` bundle replaces init's prompt only
                 // once the user trusts the project: her daemon is asked,
-                // once, where it decides (step 8 U2, D4).
+                // once, where it decides (step 8 U2, D4). Distill's is the
+                // daemon's to read (step 10b).
                 .with_trust(crate::daemon::trust_ask(&wiring, &self.version))
                 // `config create` makes the directory a git repository as
                 // init does (step 10, G1, QUESTIONS.md E).
@@ -337,6 +332,32 @@ impl library_cli::Served for DaemonServed {
     library_cli::served_reads!(served_read);
 
     library_cli::served_writes!(served_write);
+
+    /// A distill's run followed to its end as a one-shot is (step 10b): a
+    /// signal heard here asks the daemon to stop it.
+    fn follow_run(&self, run: &str) -> library_cli::RunFollowed {
+        let wiring = match self.wiring() {
+            Ok(wiring) => wiring,
+            Err(failure) => {
+                return library_cli::RunFollowed {
+                    notices: Vec::new(),
+                    ended: Err(failure),
+                }
+            }
+        };
+        let done = crate::oneshot::client_follow(&wiring, &self.version, run);
+        library_cli::RunFollowed {
+            notices: done
+                .notices
+                .iter()
+                .map(run_application::client::notice_of)
+                .collect(),
+            ended: done.result.map(|_| ()).map_err(|error| {
+                let exit = cli_support::ExitClass::exit(&error);
+                Failure::new(error, exit)
+            }),
+        }
+    }
 
     /// The Edit need's EDITOR launch, run here on the user's terminal
     /// (step 10b U3): the program and arguments the daemon resolved, on a

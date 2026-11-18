@@ -413,17 +413,21 @@ fn test_export_can_name_the_destination_outright() {
 }
 
 // operations.ExportBundle / ImportBundle (documented conditions): the answer
-// in each format, the whole tree travels (items, sidecars and dotfiles
-// alike), and an export names a destination or is refused.
+// in each format, the whole tree travels (items, a skill's metadata and
+// dotfiles alike), and an export names a destination or is refused.
 #[test]
 fn test_export_and_import_answer_and_carry_the_whole_tree() {
     for flags in FORMATS {
         let project = demo();
-        project.write(&format!("{DEMO}/mcp/.search.meta.yaml"), "notes: N\n");
         project.write(
             &format!("{DEMO}/mcp/search.yaml"),
-            "url: https://x.example\n",
+            "url: https://x.example\nnotes: N\n",
         );
+        project.write(
+            &format!("{DEMO}/skills/s/SKILL.md"),
+            "---\nname: s\ndescription: d\n---\n",
+        );
+        project.write(&format!("{DEMO}/skills/s/.meta.yaml"), "tags: [t]\n");
         let exported = with_flags(&project, &["bundle", "export", "demo", "out"], flags);
         exported.succeeds();
         let manifest = project.shown(&format!("{DEMO}/bundle.yaml"));

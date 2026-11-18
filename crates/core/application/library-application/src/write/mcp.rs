@@ -1,6 +1,6 @@
 //! `mcp server set|edit` (Go's `operations.SetBundleMCP` and
-//! `cli/bundle_items.go`): the servers a bundle ships live in the bundle, as
-//! `mcp/<n>.yaml` and `mcp/.<n>.meta.yaml`; the project registers none of its
+//! `cli/bundle_items.go`): the servers a bundle ships live in the bundle, each
+//! its one file `mcp/<n>.yaml` (owner T27); the project registers none of its
 //! own.
 
 use library::model::McpServer;
@@ -41,16 +41,9 @@ fn split_reference(reference: &str) -> Result<(String, String), AppError> {
     Ok((bundle.to_string(), name.to_string()))
 }
 
-/// The server written into the plan: its content, and its sidecar where it
-/// has anything to say.
+/// The server written into the plan: its one file.
 fn write_server(plan: &mut Plan, name: &str, server: &McpServer) {
     plan.write(&mcpfile::content_path(name), mcpfile::content_file(server));
-    match mcpfile::meta_file(server) {
-        Some(meta) => plan.write(&mcpfile::meta_path(name), meta),
-        None => {
-            plan.remove(&mcpfile::meta_path(name));
-        }
-    }
 }
 
 fn refuse_fault(name: &str, server: &McpServer) -> Result<(), AppError> {

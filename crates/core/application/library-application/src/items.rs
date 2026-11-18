@@ -490,7 +490,7 @@ fn load_skill(
         files: skill
             .files
             .iter()
-            // The sidecar's declaration, on every OS (owner ruling
+            // The skill's metadata's declaration, on every OS (owner ruling
             // 2026-11-12): no mode is read.
             .map(|f| (f.path.clone(), f.bytes.clone(), f.executable))
             .collect(),

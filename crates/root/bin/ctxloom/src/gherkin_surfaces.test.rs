@@ -9,7 +9,7 @@
 //! - "the project already has the bundle ...:" takes Go's inline bundle
 //!   document and writes the tree this port reads (an envelope with inline
 //!   items is refused by the tree reader).
-//! - a skill's execute bit comes from the sidecar's `executable:` (plan 8.2),
+//! - a skill's execute bit comes from its metadata's `executable:` (plan 8.2),
 //!   not from the file's mode.
 //! - the engines are the ones this port registers: `claude-code`, `mock`,
 //!   `mock-launch`, `mock-lossy` and `mock-noskills`.
@@ -229,7 +229,7 @@ fn index_records(_w: &mut World, _harp: String, _engine: String) {
 }
 
 /// Go's inline bundle document, as the tree this port reads: the envelope, a
-/// hook per entry (its `order:` in a sidecar), a skill's tags in its sidecar.
+/// hook per entry (its `order:` in a sidecar), a skill's tags in its metadata.
 #[given(expr = "the project already has the bundle {string}:")]
 fn project_bundle(w: &mut World, step: &Step, name: String) {
     let parsed = angzarr_yaml::parse(&doc(step)).expect("a bundle document");
@@ -290,7 +290,7 @@ fn project_bundle(w: &mut World, step: &Step, name: String) {
             .filter_map(|t| t.as_str().map(str::to_string))
             .collect();
         w.common.project.write(
-            &format!("{root}/skills/.{skill}.meta.yaml"),
+            &format!("{root}/skills/{skill}/.meta.yaml"),
             &format!("tags:\n  - {}\n", tags.join("\n  - ")),
         );
     }
@@ -398,12 +398,18 @@ fn add_script(w: &mut World, marker: String, reference: String) {
         &format!("{dir}/scripts/run.sh"),
         &format!("#!/bin/sh\necho {marker}\n"),
     );
-    let sidecar = dir.replace("/skills/", "/skills/.") + ".meta.yaml";
-    let held = w.common.project.read(&sidecar).unwrap_or_default();
-    w.common.project.write(
-        &sidecar,
-        &format!("{held}executable:\n  - scripts/run.sh\n"),
-    );
+    // The skill's metadata, inside its directory (owner T27); a new
+    // skill's is the empty mapping, which a key replaces.
+    let meta = format!("{dir}/.meta.yaml");
+    let held = w.common.project.read(&meta).unwrap_or_default();
+    let held = if held.trim() == "{}" {
+        String::new()
+    } else {
+        held
+    };
+    w.common
+        .project
+        .write(&meta, &format!("{held}executable:\n  - scripts/run.sh\n"));
 }
 
 /// Go's `a companion "ctxloom-companion-<name>" shipping a "<event>" hook is
@@ -436,7 +442,7 @@ fn another_directory_bundle(w: &mut World, name: String) {
 }
 
 /// Every file of the landed skill is the authored one's, byte for byte, and
-/// none is missing or added; the modes travel by the sidecar, the ONLY word
+/// none is missing or added; the modes travel by the metadata, the ONLY word
 /// on a file's executability: the landed skill's declares what the
 /// authored one's does.
 #[then(
@@ -459,10 +465,10 @@ fn imported_match(w: &mut World, landed: String, authored: String) {
     for (rel, bytes) in &want {
         assert!(got.get(rel) == Some(bytes), "{rel} differs once imported");
     }
-    let sidecar = |dir: &str| dir.replace("/skills/", "/skills/.") + ".meta.yaml";
+    let meta = |dir: &str| format!("{dir}/.meta.yaml");
     let declared = |dir: &str| {
-        let text = w.common.project.read(&sidecar(dir)).unwrap_or_default();
-        // The sidecar's `executable:` list, one `  - <path>` line each.
+        let text = w.common.project.read(&meta(dir)).unwrap_or_default();
+        // The metadata's `executable:` list, one `  - <path>` line each.
         let mut listed: Vec<String> = text
             .lines()
             .skip_while(|l| l.trim_end() != "executable:")

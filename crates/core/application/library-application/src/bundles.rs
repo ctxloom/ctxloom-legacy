@@ -7,7 +7,7 @@ use library::distill::DistilledState;
 use library::model::Bundle;
 use library::refs::{self, ItemKind};
 use library::tree;
-use library::CatalogError;
+use library::{BundleError, CatalogError};
 
 use crate::error::AppError;
 use crate::project::{Library, Outcome, Project};
@@ -88,6 +88,11 @@ impl Project {
             Ok(entry) => Ok(entry),
             Err(CatalogError::BundleNotFound { .. } | CatalogError::ItemNotBundle { .. }) => {
                 if let Some(cause) = self.unreadable.get(ask) {
+                    // Metadata in the old layout is its own refusal, its
+                    // fix the move that migrates it (owner T27, D15).
+                    if matches!(cause, BundleError::OldLayout { .. }) {
+                        return Err(AppError::cause(cause.clone()));
+                    }
                     return Err(AppError::BundleUnreadable {
                         ask: ask.to_string(),
                         cause: Box::new(cause.clone()),

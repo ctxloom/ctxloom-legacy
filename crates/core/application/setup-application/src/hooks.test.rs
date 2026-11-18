@@ -354,7 +354,7 @@ fn test_mates_are_matched_by_the_frontmatter_name_not_the_directory() {
             "---\nname: admit-renamed\ndescription: Admit.\n---\nA\n",
         ),
         (
-            "skills/.admit-dir.meta.yaml",
+            "skills/admit-dir/.meta.yaml",
             "tags: [ctxloom:link_id=pair]\n",
         ),
         (
@@ -362,7 +362,7 @@ fn test_mates_are_matched_by_the_frontmatter_name_not_the_directory() {
             "---\nname: mate-renamed\ndescription: Mate.\n---\nM\n",
         ),
         (
-            "skills/.mate-dir.meta.yaml",
+            "skills/mate-dir/.meta.yaml",
             "tags: [ctxloom:link_id=pair]\n",
         ),
     ]);

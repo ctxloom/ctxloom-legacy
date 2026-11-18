@@ -369,7 +369,7 @@ impl World {
                 SKILL_SCRIPT,
             );
             files::put(
-                tree.join("skills/.review-checklist.meta.yaml"),
+                tree.join("skills/review-checklist/.meta.yaml"),
                 "executable:\n  - scripts/check.sh\n",
             );
             files::put(

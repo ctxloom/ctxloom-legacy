@@ -483,6 +483,41 @@ pub(crate) fn client_one_shot(
     })
 }
 
+/// The run `run` a call was answered with (a distill's model, step 10b:
+/// the daemon owns the model call as a run), followed to its end through
+/// the daemon of the stamp `stamp`, as a one-shot is: a signal heard asks
+/// the daemon to stop it.
+pub(crate) fn client_follow(wiring: &Wiring, stamp: &str, run: &str) -> Done<Answer> {
+    let refused = |error: RunError| Done {
+        result: Err(error),
+        notices: Vec::new(),
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => return refused(unmade(&e)),
+    };
+    runtime.block_on(async {
+        let api = match crate::daemon::Reach::new(wiring, stamp).reach().await {
+            Ok(api) => api,
+            Err(unreached) => return refused(RunError::Unreached(unreached)),
+        };
+        let asked = daemon_proto::v1::Run {
+            name: run.to_string(),
+            ..daemon_proto::v1::Run::default()
+        };
+        let (heard, hearing, unheard) = heard_stops(wiring);
+        let mut done = run_application::client::followed(&api, &asked, heard, None).await;
+        if let Some(hearing) = hearing {
+            hearing.abort();
+        }
+        done.notices.splice(0..0, unheard);
+        done
+    })
+}
+
 /// A command's failure, as the run's error: its diagnostic, exit and
 /// refusals, said as they were.
 pub(crate) fn failed(failure: cli_support::Failure) -> RunError {
@@ -597,25 +632,47 @@ impl daemon_application::OneShotHost for HostedOneShots {
                             told.clone(),
                         ))
                     }));
-                    let done = hosted.unwrap_or_else(|_| Done {
+                    let panicked = || Done {
                         result: Err(RunError::NotStarted {
                             detail: "the daemon's one-shot panicked".to_string(),
                         }),
                         notices: Vec::new(),
-                    });
-                    told.done(done);
+                    };
+                    let done = hosted.unwrap_or_else(|_| panicked());
+                    // Its end awaited on the daemon's runtime: what follows
+                    // from it (a distill's write, step 10b) is made there. A
+                    // reaction that panics is taken already, so the second
+                    // end is said as it is, and the run never stays open.
+                    let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        runtime.block_on(told.done(done))
+                    }));
+                    if ended.is_err() {
+                        runtime.block_on(told.done(panicked()));
+                    }
                 }
             });
         if let Err(e) = spawned {
-            told.done(Done {
+            // On the caller's runtime, where nothing may block on it: a run
+            // that never started is answered at once, its reaction too
+            // (nothing follows from a failure but its end).
+            polled_once(told.done(Done {
                 result: Err(RunError::NotStarted {
                     detail: format!("no thread for the one-shot: {e}"),
                 }),
                 notices: Vec::new(),
-            });
+            }));
         }
         control
     }
+}
+
+/// Poll `future` once: what is answered at once is done; what would wait
+/// is dropped (the core's end of a run that never started waits on
+/// nothing).
+pub(crate) fn polled_once(future: impl std::future::Future<Output = ()>) {
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let _ = future.as_mut().poll(&mut cx);
 }
 
 /// The wiring a hosted one-shot is planned and driven in: its client's

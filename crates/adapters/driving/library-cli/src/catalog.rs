@@ -17,7 +17,7 @@ use serde::Serialize;
 
 use crate::{failed, output_failure, Context, Failure, PROG};
 
-pub(crate) use library_api::names::{bundle_name, item_name, profile_ref, reference_name};
+pub(crate) use library_api::names::{item_name, profile_ref, reference_name};
 
 /// A distilled form there or not.
 pub(crate) fn distilled(there: bool) -> i32 {
@@ -26,17 +26,6 @@ pub(crate) fn distilled(there: bool) -> i32 {
     } else {
         v1::DistilledState::None as i32
     }
-}
-
-/// A distilled form as judged against its source now (T30, S51).
-pub(crate) fn distilled_state(state: library_application::DistilledState) -> i32 {
-    use library_application::DistilledState as State;
-    let api = match state {
-        State::None => v1::DistilledState::None,
-        State::Fresh => v1::DistilledState::Fresh,
-        State::Stale => v1::DistilledState::Stale,
-    };
-    api as i32
 }
 
 #[cfg(test)]

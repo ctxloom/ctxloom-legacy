@@ -429,6 +429,21 @@ impl DaemonFiles {
         }
     }
 
+    /// The instant the test-support switch that holds the scheduler's
+    /// alarms (`test-hold-alarms`) holds them at, while it is there: its one
+    /// line, seconds since the epoch, written by the test before what it
+    /// holds was armed. While it is, the scheduler's clock stands there, so
+    /// no alarm armed since comes due; once it is gone the clock is the
+    /// system's again (a test that stands for the passing of an alarm's
+    /// time lets go of it, so the alarm fires when the test says, never
+    /// when a loaded machine is slow: the race rule). A line that is no
+    /// number holds them at none (the system's clock).
+    #[cfg(feature = "test-support")]
+    pub(crate) fn alarms_held_at(&self) -> Option<i64> {
+        let bytes = self.fs.read(&self.path(HOLD_ALARMS)).ok()?;
+        String::from_utf8_lossy(&bytes).trim().parse().ok()
+    }
+
     /// The test-support switch that makes the daemon deaf to a stop and a
     /// drain (`test-deaf-to-stop`): while it is there, each is taken and
     /// ignored, so `ctxloom shutdown` finds a daemon that will not exit.
@@ -577,6 +592,10 @@ const DIE_AT: &str = "test-die-at";
 /// The test-support switch that holds a write at a point (`test-hold-at`).
 #[cfg(feature = "test-support")]
 const HOLD_AT: &str = "test-hold-at";
+
+/// The test-support switch that holds the scheduler's alarms.
+#[cfg(feature = "test-support")]
+const HOLD_ALARMS: &str = "test-hold-alarms";
 
 /// The longest a write is held at a point.
 #[cfg(feature = "test-support")]

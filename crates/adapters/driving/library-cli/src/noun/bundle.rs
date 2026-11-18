@@ -3,7 +3,7 @@
 
 use library_application::BundleView;
 
-use crate::catalog::{self, ok};
+use crate::catalog;
 use crate::prelude::*;
 
 pub(crate) fn read(
@@ -179,56 +179,91 @@ pub(crate) fn write(
     Ok(Some(code))
 }
 
-/// `bundle distill <bundle> [-f]` (OD-39: by name): each item's line in
-/// text; in json the `Bundle`, each of its items with the distilled state
-/// it was left in.
+/// `bundle distill <bundle> [-f]` (OD-39, by name; step 10b): each of the
+/// bundle's fragments, then each of its commands, as the daemon reads
+/// them, distilled as `fragment|command distill` distills one: one run per
+/// item, each its own write following from it (the plan's U13 notes do
+/// not decide the shape; this is the simpler one), each followed to its
+/// end before the next is asked. The first that fails fails the command,
+/// and what was distilled before it stays.
 fn distill(
     cx: &Context<'_>,
     sub: &ArgMatches,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx
-        .library
-        .bundle_distill(&cx.flags, &text_arg(sub, "name"), flag(sub, "force"));
-    catalog::answer(
-        cx,
-        outcome,
-        out,
-        err,
-        false,
-        |parent, done| {
-            let entry = |i: &library_application::ItemDistilled, dir: &str| v1::BundleItem {
-                item: catalog::item_name(parent, &done.bundle, dir, &i.name),
-                distilled: catalog::distilled(i.status != "no_distill"),
-                no_distill: Some(i.status == "no_distill"),
-                ..v1::BundleItem::default()
-            };
-            v1::Bundle {
-                name: catalog::bundle_name(parent, &done.bundle),
-                fragments: done
-                    .items
-                    .iter()
-                    .filter(|i| i.kind == "fragment")
-                    .map(|i| entry(i, "fragments"))
-                    .collect(),
-                commands: done
-                    .items
-                    .iter()
-                    .filter(|i| i.kind == "command")
-                    .map(|i| entry(i, "commands"))
-                    .collect(),
-                ..v1::Bundle::default()
+    let force = flag(sub, "force");
+    // Its items as `bundle show` reads them.
+    let request = v1::GetBundleRequest {
+        view: v1::bundle::View::Full as i32,
+        globals: cx.globals(),
+        ..v1::GetBundleRequest::default()
+    };
+    let target = library_api::names::bundle_target(&text_arg(sub, "name"));
+    let (bundle, mut notices) = cx.served.get_bundle(&target, request)?;
+    let items = bundle
+        .fragments
+        .iter()
+        .map(|item| (ItemKind::Fragment, item))
+        .chain(bundle.commands.iter().map(|item| (ItemKind::Command, item)));
+    let mut answers = Vec::new();
+    for (kind, item) in items {
+        let under = item
+            .item
+            .find("/bundles/")
+            .map_or(item.item.as_str(), |at| &item.item[at..]);
+        match super::item::distill_followed(cx, kind, under, force) {
+            Ok(mut answer) => {
+                notices.append(answer.notices_mut());
+                answers.push(answer);
             }
-        },
-        |done, out, _| {
-            for item in &done.items {
-                super::item::distilled_text(item, out)?;
+            Err((failure, said)) => {
+                notices.extend(said);
+                super::item::say(cx, &notices, err);
+                return Err(failure);
             }
-            Ok(())
-        },
-        ok,
-    )
+        }
+    }
+    super::item::say(cx, &notices, err);
+    let entry = |answer: &super::item::DistillAnswer| {
+        let (name, no_distill) = match answer {
+            super::item::Either::Fragment(f) => (
+                f.fragment.as_ref().map(|f| f.name.clone()),
+                answer.no_distill(),
+            ),
+            super::item::Either::Command(c) => (
+                c.command.as_ref().map(|c| c.name.clone()),
+                answer.no_distill(),
+            ),
+        };
+        v1::BundleItem {
+            item: name.unwrap_or_default(),
+            distilled: catalog::distilled(!no_distill),
+            no_distill: Some(no_distill),
+            ..v1::BundleItem::default()
+        }
+    };
+    if cx.format == Format::Json {
+        let is_command = |answer: &&super::item::DistillAnswer| {
+            matches!(answer, super::item::Either::Command(_))
+        };
+        let message = v1::Bundle {
+            name: bundle.name.clone(),
+            fragments: answers
+                .iter()
+                .filter(|a| !is_command(a))
+                .map(entry)
+                .collect(),
+            commands: answers.iter().filter(is_command).map(entry).collect(),
+            ..v1::Bundle::default()
+        };
+        api::print(out, &message).map_err(output_failure)?;
+    } else {
+        for answer in &answers {
+            super::item::distilled_text(&answer.item(), out).map_err(output_failure)?;
+        }
+    }
+    Ok(Exit::OK)
 }
 
 /// `bundle create <name> [-d description]`: the daemon's `CreateBundle`

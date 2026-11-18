@@ -725,9 +725,10 @@ fn test_a_step_outside_the_library_expects_nothing() {
     }
 }
 
-// Step 10b U9 (T28): an item taken away with its distilled form, or a skill
-// with its old-layout sidecar, is several removals: the sequence of their
-// trashes (each kept, as a removal's is), never one change per call.
+// Step 10b U9 (T28): an item taken away with its distilled form is several
+// removals: the sequence of their trashes (each kept, as a removal's is),
+// never one change per call. (A skill is one directory, its metadata inside
+// it, owner T27: its removal is one trash.)
 #[test]
 fn test_several_removals_are_the_sequence_of_their_trashes() {
     let files = |bundle: &str, dir: &str| match (bundle, dir) {
@@ -760,20 +761,12 @@ fn test_several_removals_are_the_sequence_of_their_trashes() {
     );
     let skill = Planned::Changed {
         bundle: "demo".to_string(),
-        changes: vec![
-            Change::RemoveDir {
-                path: "skills/review".to_string(),
-            },
-            Change::Remove {
-                path: "skills/.review.meta.yaml".to_string(),
-            },
-        ],
-    };
-    let Shape::Sequence(steps) = shape(vec![skill], files).unwrap().unwrap().shape else {
-        panic!()
+        changes: vec![Change::RemoveDir {
+            path: "skills/review".to_string(),
+        }],
     };
     assert_eq!(
-        steps[0],
+        shape(vec![skill], files).unwrap().unwrap().shape,
         Shape::Trash {
             path: "content/bundles/v2/demo/skills/review".to_string(),
             files: vec!["SKILL.md".to_string()],
@@ -796,28 +789,34 @@ fn test_several_removals_are_the_sequence_of_their_trashes() {
 }
 
 // A sequence's later paths are judged on their own tokens now, its first
-// on the caller's etag: a skill's old-layout sidecar removed beside its
-// directory is not refused stale for an etag that was never its own.
+// on the caller's etag: an item's distilled form removed beside it is not
+// refused stale for an etag that was never its own.
 #[test]
 fn test_a_sequences_other_paths_are_judged_on_their_own_tokens() {
     let git = Git::at("h-0", "t-0");
-    let skill = Shape::Sequence(vec![
+    let item = Shape::Sequence(vec![
         Shape::Trash {
-            path: "content/bundles/v2/demo/skills/review".to_string(),
+            path: "content/bundles/v2/demo/fragments/rules.md".to_string(),
             files: Vec::new(),
         },
         Shape::Trash {
-            path: "content/bundles/v2/demo/skills/.review.meta.yaml".to_string(),
+            path: "content/bundles/v2/demo/fragments/rules.distilled.md".to_string(),
             files: Vec::new(),
         },
     ]);
-    let token = |path: &str| if path.ends_with(".meta.yaml") { 5 } else { 1 };
+    let token = |path: &str| {
+        if path.ends_with(".distilled.md") {
+            5
+        } else {
+            1
+        }
+    };
     let Intended::Sequence(command) = intent_of(
         &git,
         "/d",
         "t",
-        "skill remove",
-        &skill,
+        "fragment remove",
+        &item,
         (3, &token),
         evidence(),
         "r",

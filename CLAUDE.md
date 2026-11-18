@@ -122,19 +122,40 @@ nothing stores the template; an empty buffer is
 bundle nobody had (`ItemCreated::bundle_created`); the two-word Go form
 (`<bundle> <name>`) keeps Go's placeholder, no editor, and its refusal of a
 missing bundle. `skill create <bundle>#skills/<name>` (or the two words)
-scaffolds its `SKILL.md` and opens none. `fragment|command edit` writes the
+scaffolds its `SKILL.md` and an EMPTY `.meta.yaml` (`{}`, the empty
+mapping, `library::write::skill::EMPTY_META`) beside it, one new directory,
+and opens none. `fragment|command edit` writes the
 `.md` ALONE (owner T29, T30): it distills nothing and never touches the
 `.distilled.md` beside it, which then reads stale by its digest (below,
 "Distill"); `--no-distill` is accepted and only says so.
 Skill zips are written and read by `library::write::archive` over the `zip`
 crate (deflate only, default features off) and crc32fast.
-A file's executability is ONLY its skill sidecar's `executable:` list
-(`skills/.<n>.meta.yaml`), on every OS (owner ruling 2026-11-12; Windows
+A skill is ONE directory, its metadata inside it, `skills/<n>/.meta.yaml`
+(owner T27, 2026-11-18, evening), a file of the package (`Skill::files`)
+and so DELIVERED with it everywhere the directory is copied whole: a
+materialize into an engine's skills directory (claude's
+`.claude/skills/<n>/`, the session home's `skills/`), an export zip, an
+install and a push; `skill show` lists it. An MCP server is ONE file,
+`mcp/<n>.yaml`, its `tags`, `notes` and `installation` in it after its
+runtime fields (`library::write::mcp::content_file`), so `mcp server set
+--url X --notes Y` on a new server is one file. A bundle still in the old
+layout (`skills/.<n>.meta.yaml` or `mcp/.<n>.meta.yaml` beside the item)
+is refused per bundle (owner, QUESTIONS 2(a); D15): the tree reader's
+`BundleError::OldLayout`, `library-sidecar-old-layout`, exit 20, which
+`bundle show` (and every read through `Project::bundle`) answers with, and
+a listing names with the skipped-bundle notice while listing the rest; its
+paths are named from the project's root (`BundleError::located`), its fix
+the `git mv` that migrates it (for a server: copy the fields into its file,
+then `git rm`); an INSTALLED bundle's fix names its remote's URL to migrate
+in instead. Nothing reads or moves an old sidecar; a hook's
+`hooks/<event>/.<n>.meta.yaml` sidecar is unchanged.
+A file's executability is ONLY its skill's metadata's `executable:` list
+(`skills/<n>/.meta.yaml`), on every OS (owner ruling 2026-11-12; Windows
 reports every file executable): `library::write::skill::declared_executables`
 answers it for a bundle's tree, and nothing reads a mode from disk or git
 (`ContentRepo` has no `executable_files`, `UserFiles::read_tree` and
 `deps_ports::RepoTree` are bytes alone). `skill show`'s mode column, an
-export, an import (the sidecar it brings), an installed bundle and a pin's
+export, an import (the metadata it brings), an installed bundle and a pin's
 disclosure take it from there; an install writes the declared files 0755 as
 a convenience for running them, never read back, and a launch, which
 carries a skill whole, writes them executable where it puts them (the
@@ -145,7 +166,9 @@ and every other file 100644 (`Remotes::publish`'s `executable`, `git add
 --chmod`; a pull request's `PullRequest::executable`). Visible change on
 unix: a file chmod'ed executable but not listed shows 0644 and is pushed
 100644. Not changed: a skill zip's entry modes, which its export writes
-from the sidecar and its import turns into the sidecar's list.
+from the metadata and its import turns into the metadata's list (an
+import always writes the metadata: the archive's, else the empty mapping;
+a forced import replaces it with the directory).
 
 Step 10b U3 (writes as library-domain commands; `t13-step10.plan.md` §2
 U3, protos.md §1.1) serves `bundle create`, `fragment|command create
@@ -154,8 +177,8 @@ server set|edit` (`UpdateMcpServer`: a mask names a set's fields, a field
 named and given empty cleared; no mask is the whole server through the
 editor, the preview's Edit need; `--header`, `--tag` and `--served-by` are
 gone, owner ruling, hard migrate; a server's notes and installation are
-its `mcp/.<n>.meta.yaml` sidecar until T27, so a set of them beside a
-runtime field is two files, refused `OneChangePerCall`) and the
+in its one file, owner T27, so a set of them beside a runtime field is
+one file, one call) and the
 removals `bundle|profile|agent|companion remove` in the daemon,
 `agent create|edit` (`CreateAgent`, `UpdateAgent`: the agent's fields,
 an edit's named by its mask, a field given empty cleared; `model`,
@@ -216,9 +239,9 @@ refused `OneChangePerCall`, so bundle.feature's listing outline edits the
 version and the fragment in two calls, coordinator 2026-11-18, for owner
 review)
 and `fragment|command|skill remove` (`DeleteFragment`, `DeleteCommand`,
-`DeleteSkill`: an item with its distilled form, or a skill with its
-old-layout sidecar, is several paths taken away, the T28 sequence of
-their trashes, each kept; step 10b U9), from one table (`daemon_proto::library_writes!`, every layer;
+`DeleteSkill`: an item with its distilled form is several paths taken
+away, the T28 sequence of their trashes, each kept, step 10b U9; a skill
+is its one directory, one trash, owner T27), from one table (`daemon_proto::library_writes!`, every layer;
 `library_api::served_writes!`, each verb's use case and response; the
 CLI's `SERVED_WRITES`). Every write request carries the caller's `cwd`
 (97) and `env` (94), as the reads do (E1, extended to the writes on
@@ -2266,7 +2289,12 @@ this session will be stopped in <span>; finish and exit") and both stop
 sentences are DRAFTS (OD-63). Under `test-support`, the daemon directory's
 `test-deaf-to-stop` makes a daemon take a stop and a drain and ignore them,
 and `test-shutdown-stop-wait` (seconds) shortens `STOP_WAIT`, so a test
-sees the exit 10. A dead
+sees the exit 10. Its `test-hold-alarms` (one line, seconds since the
+epoch) holds the scheduler's clock at that instant while it is there
+(`DaemonFiles::alarms_held_at`, serve's `HeldAlarms`), so no alarm armed
+since comes due until the test removes it: session_approvals.feature's
+asks with `approval_timeout: 2s` are held from before the ask until "the
+ask's time runs out", never ended early by a slow machine (the race rule). A dead
 frontend's lock reads free and its files are taken away by the next look;
 no process id is trusted and no signal is sent to one (Windows alike). The
 shutdown reaches the daemon without the version check (`Reach::observing`),
@@ -2400,10 +2428,10 @@ FAILED_PRECONDITION; `LaunchRefusals` field 7); the credential
 evidence is read with them held back, so an untrusted `auth.file` is reported
 once. Trusted, the project's own keys apply until the trust is revoked (S23).
 An in-process library verb (a write, until 10b) is planned untrusted and
-holds them back with the same notice; init's interview read and distill's
-prompt are still read in process and ask the daemon one `GetTrust`
-(`Library::with_trust`), since no served read answers an operational prompt
-yet. A project's own
+holds them back with the same notice; init's interview read is still read
+in process and asks the daemon one `GetTrust` (`Library::with_trust`),
+since no served read answers an operational prompt yet (distill's is the
+daemon's own read since step 10b). A project's own
 `ctxloom` bundle replaces an operational prompt (init's interview, distill's)
 only once the project is trusted (D4): `Project::operational_prompt` passes it
 over for the built-in otherwise, with the notice
@@ -3012,10 +3040,11 @@ built:
   library read is left in process (U2 done), with ONE named exception
   (D8, owner ruling 2026-11-17): the operational prompts, init's interview
   (`SetupSessions::setup_interview`, the wiring's `interview.rs`) and
-  distill's instruction (`Project::operational_prompt` under
-  `fragment distill`), are still read in process through 10a, each asking
+  distill's instruction, were read in process through 10a, each asking
   the daemon one `GetTrust` (`Library::with_trust`), because no RPC
   answers an operational prompt; they are ruled to be served with 10b.
+  Distill's is (step 10b: the daemon plans the distill's ask, under the
+  project's trust as every served read is); init's is U6's.
   Ruling 128's behaviour is unchanged: a trusted project's own `ctxloom`
   bundle replaces the prompt whole, and one lacking it is refused.
 
@@ -3573,25 +3602,50 @@ context assemble json's `notices` stay empty until T13 (they are said on
 stderr), so atomic_writes.feature's two `notices[0].code` scenarios are red.
 
 `fragment|command distill <ref> [-f]` and `bundle distill <bundle> [-f]`
-(OD-39: by name; each of its fragments and commands, the first failure
-failing the command) are library-application's (`distill.rs`): an item
-marked `no_distill` is said and nothing asked; a FRESH form is kept unless
-`-f`; otherwise the `Distiller` port is handed `ctxloom#prompts/distill`
-(read through the catalog, ruling 128; the prompt's text is the owner's)
-with the body inside `<content_to_compress>` tags. An answer under 2% of
-the source is `library-application-distill-truncated` and a distiller that
-fails `library-application-distill-failed` (both exit 10): nothing is
-written, so the form there before is kept. A good answer is the
-`.distilled.md` alone (T30: its own write). json is the AIP
-`DistillFragmentResponse`/`DistillCommandResponse` (`applied` false and
-`detail` `fresh`/`no_distill` when nothing was asked), and `bundle distill`
-the `Bundle` with each item's state. The wiring's `OneShotDistiller` is a
-one-shot run on NO CONTEXT, HOSTED by the user's daemon as every one-shot is
-(U4, owner s4-Q6; `oneshot::client_one_shot`, of the binary's stamp, so it
-is set on the library `LibraryCommands` builds, and a library built
-elsewhere has no distiller); its session is an ordinary one-shot's. There is
-no `work` domain and no provenance (owner, 2026-11-13: no `distilled_in`, no
-`activity` label). `DistillFragment` (the RPC) is still not served.
+are SERVED (step 10b, owner ruling 2026-11-18, evening): the DAEMON owns
+the model call as a RUN, and the `.distilled.md` write FOLLOWS from the
+run's outcome (daemon-api's `distill.rs`). `DistillFragment` /
+`DistillCommand` (`force`, additive) plan the ask as a write's preview
+(observed, over the recording library, nothing written):
+`Library::item_distill_ask` answers an item marked `no_distill` (said,
+nothing asked) or a FRESH form without `-f` at once (`applied` false,
+`detail` `fresh`/`no_distill`, no run); otherwise the ask is
+`ctxloom#prompts/distill` (read through the catalog under the project's
+trust, ruling 128; the prompt's text is the owner's) with the body inside
+`<content_to_compress>` tags, and the call hosts it as a ONE_SHOT on NO
+CONTEXT (as `CreateRun` hosts one, `OneShots::create_reacting`) and
+answers with the run's name (`run`, additive), which the CLI follows with
+`WatchRun` (`Served::follow_run`, run-application's `client::followed`; a
+signal heard asks the daemon to stop it). The run REACTS
+(`daemon_application::Reaction`, awaited in `Told::done` on the daemon's
+runtime, before its watchers see its end; the core spawns nothing): no
+answer is `library-application-distill-failed` (its cause the run's end);
+an answer is written as a served write (`Library::item_distilled`, one
+atomic Replace), under a request id KEYED by its run
+(`sessions::command_id("distill:<run>")`), so the outcome told twice is
+one write, a DUPLICATE, and against the etag the ask's preview answered
+for the form's file, so a form edited meanwhile is refused stale
+(`PlanStale`). Its plan reads the item again: a source whose digest moved
+since the ask is `library-application-distill-source-moved` (typed
+`LibraryDistillSourceMoved`, ABORTED, exit 20; its text a DRAFT), and an
+answer under 2% of the source `library-application-distill-truncated`
+(exit 10): nothing is written, so the form there before is kept. What the
+write came to is the run's end, which the CLI says as the command's. The
+reaction is in memory as the one-shot is: a daemon that dies during the
+run loses it (the sweep's), and nothing follows. The write is made while
+the daemon drains too (`Api::write_planned`: it follows from work already
+taken), through the API as shared (`Api::shared`'s self handle). `bundle
+distill` is one run per item, each its own reaction (the plan's U13 notes
+do not decide the shape; this is the simpler one): its items are read
+as `bundle show` reads them (`GetBundle` FULL), fragments then commands,
+each distilled and followed before the next; the first failure fails the
+command and what was distilled before it stays. json is the AIP
+`DistillFragmentResponse`/`DistillCommandResponse` (`applied` true once
+its run ended answered; library-api's `distill` builds them), and `bundle
+distill` the `Bundle` with each item's state. The in-process path (the
+`Distiller` port, `OneShotDistiller`, `item_distill`, `bundle_distill`)
+is gone. There is no `work` domain and no provenance (owner, 2026-11-13: no
+`distilled_in`, no `activity` label).
 
 `run --no-context` (owner OD-38) is the user-visible context-free run, the
 one-shot, the session and the dry run alike (`RunRequest::no_context`): the

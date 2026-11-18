@@ -223,6 +223,19 @@ impl<E: Edge> Api<E> {
         plan: impl Fn(&Library, &Flags, bool) -> Outcome<T>,
     ) -> Result<Wrote<T>, ApiError> {
         self.open()?;
+        self.write_planned(request, verb, plan).await
+    }
+
+    /// The write `request` served as [`Api::library_write`] serves it,
+    /// whether or not the daemon is open: a write that follows from work it
+    /// already took (a distill's, once its run ended) is made while it
+    /// drains too.
+    pub(crate) async fn write_planned<Q: LibraryWriteRequest, T>(
+        &self,
+        request: &Q,
+        verb: &str,
+        plan: impl Fn(&Library, &Flags, bool) -> Outcome<T>,
+    ) -> Result<Wrote<T>, ApiError> {
         let (site, trees) = self.write_site(request).await?;
         let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon observes no library".to_string(),
@@ -789,6 +802,8 @@ write_requests! {
     DeleteAgentRequest.name, etag;
     DeleteCompanionRequest.name, etag;
     CleanRequest.project, etag;
+    DistillFragmentRequest.name;
+    DistillCommandRequest.name;
 }
 
 #[cfg(test)]

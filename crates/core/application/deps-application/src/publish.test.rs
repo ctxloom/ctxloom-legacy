@@ -501,7 +501,7 @@ fn test_a_push_and_a_pull_request_commit_executable_what_the_sidecars_declare() 
         ("bundle.yaml", "description: acceptance fixture bundle\n"),
         ("skills/s/SKILL.md", "---\nname: s\n---\n"),
         ("skills/s/run.sh", "#!/bin/sh\n"),
-        ("skills/.s.meta.yaml", "executable:\n  - run.sh\n"),
+        ("skills/s/.meta.yaml", "executable:\n  - run.sh\n"),
     ];
     let want = std::collections::BTreeSet::from([format!(
         "{}/scripted/skills/s/run.sh",

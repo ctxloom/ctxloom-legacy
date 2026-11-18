@@ -24,7 +24,7 @@ pub use tree::{IgnoreRule, Motion, PathStatus, StatusEntry, TreeChange, TreeErro
 pub type Failure = Box<dyn Diagnostic>;
 
 /// A bundle's files by path relative to the bundle (`bundle.yaml`,
-/// `fragments/solid.md`, `skills/.code-reviewer.meta.yaml`), slash separated.
+/// `fragments/solid.md`, `skills/code-reviewer/.meta.yaml`), slash separated.
 pub type TreeFiles = BTreeMap<String, Vec<u8>>;
 
 /// A file to put somewhere: its path below the directory it lands in, slash

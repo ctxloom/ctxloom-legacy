@@ -372,6 +372,17 @@ pub(crate) fn resolve(commit: &str, name: &str) -> v1::ResolveProjectRequest {
 /// never ends.
 const WATCH_BOUND: usize = 16;
 
+/// `future`'s output, polled once: what a scripted host awaits (a
+/// one-shot's end) never waits on anything.
+pub(crate) fn now<F: std::future::Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    match future.as_mut().poll(&mut cx) {
+        std::task::Poll::Ready(output) => output,
+        std::task::Poll::Pending => panic!("waited on something"),
+    }
+}
+
 /// A watch's events, read to its end, which must come within
 /// [`WATCH_BOUND`] of them. Bounded, as daemon-application's tests read
 /// theirs, so a watch that never ends fails its test at once instead of

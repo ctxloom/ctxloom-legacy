@@ -107,6 +107,103 @@ mod read {
 
 mod distill {
     use crate::tests::*;
+    use daemon_proto::v1;
+
+    /// The daemon's answer to a distill that asks its model: its run.
+    fn asking(run: &str) -> v1::DistillFragmentResponse {
+        v1::DistillFragmentResponse {
+            fragment: Some(v1::Fragment {
+                name: "projects/calm-otter/bundles/demo/fragments/golang".to_string(),
+                distilled: v1::DistilledState::Fresh as i32,
+                ..v1::Fragment::default()
+            }),
+            path: "fragments/golang.distilled.md".to_string(),
+            applied: Some(false),
+            run: run.to_string(),
+            notices: vec![v1::Notice {
+                code: "library-application-stale-distilled".to_string(),
+                text: "said before".to_string(),
+                ..v1::Notice::default()
+            }],
+            ..v1::DistillFragmentResponse::default()
+        }
+    }
+
+    // Step 10b: the daemon asks the model as a run; the command follows
+    // that run to its end, and its form is written once it ends answered.
+    #[test]
+    fn test_a_distill_that_asks_follows_its_run_and_is_applied_once_it_ends() {
+        let run = "projects/calm-otter/runs/r1";
+        let asks = Asks::answering(vec![Box::new(asking(run)), Box::new(())], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang", "-f"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.code(), 0, "{}", ran.err);
+        let asked = asks.requests::<v1::DistillFragmentRequest>();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].force, "-f asks again");
+        assert_eq!(
+            asks.requests::<v1::WatchRunRequest>(),
+            [v1::WatchRunRequest {
+                name: run.to_string()
+            }],
+            "its run followed"
+        );
+        let json = ran.json();
+        assert_eq!(json["applied"], true, "{json}");
+        assert_eq!(json["run"], run);
+        assert!(ran.err.contains("stale-distilled"), "{}", ran.err);
+        let asks = Asks::answering(vec![Box::new(asking(run)), Box::new(())], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            TEXT,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(
+            ran.out,
+            "Distilled fragment \"golang\" in bundle \"demo\" (fragments/golang.distilled.md)\n"
+        );
+        assert!(!asks.requests::<v1::DistillFragmentRequest>()[0].force);
+    }
+
+    // A run that ends in a failure fails the command in its end's words,
+    // what was said before it said first; nothing is applied.
+    #[test]
+    fn test_a_distill_whose_run_fails_fails_saying_what_was_said() {
+        let asks = Asks::answering(vec![Box::new(asking("projects/calm-otter/runs/r2"))], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.exit, Err("daemon-api-unreached:10".to_string()));
+        assert!(ran.out.is_empty(), "{}", ran.out);
+        assert!(ran.err.contains("stale-distilled"), "{}", ran.err);
+    }
+
+    // A distill that asks nothing (its form fresh) follows no run.
+    #[test]
+    fn test_a_distill_that_asks_nothing_follows_no_run() {
+        let asks = Asks::answering(vec![Box::new(asking(""))], None);
+        let ran = go_served(
+            &["fragment", "distill", "demo#fragments/golang"],
+            JSON,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        assert_eq!(ran.code(), 0, "{}", ran.err);
+        assert!(asks.requests::<v1::WatchRunRequest>().is_empty());
+        assert_eq!(ran.json()["applied"], false);
+    }
 
     // Plan step 5: a form that matches its source is kept without asking
     // (applied false, saying why); one forced reads the distill prompt
@@ -291,35 +388,6 @@ mod mapping {
             name: "review".to_string(),
             path: "x/review.distilled.md".to_string(),
         }
-    }
-
-    #[test]
-    fn test_a_command_marked_no_distill_answers_its_whole_response() {
-        assert_eq!(
-            json_of(&distilled(PARENT, &done("no_distill", "command"))),
-            json!({
-                "command": {
-                    "name": "projects/p/bundles/demo/commands/review",
-                    "distilled": "NONE",
-                    "no_distill": true,
-                },
-                "path": "x/review.distilled.md",
-                "applied": false,
-                "detail": ["no_distill"],
-            })
-        );
-        let made = json_of(&distilled(PARENT, &done("distilled", "command")));
-        assert!(made["command"].get("no_distill").is_none(), "{made}");
-        assert_eq!(made["applied"], true);
-    }
-
-    #[test]
-    fn test_a_fragment_marked_no_distill_says_so_with_its_path() {
-        let kept = json_of(&distilled(PARENT, &done("no_distill", "fragment")));
-        assert_eq!(kept["fragment"]["no_distill"], true, "{kept}");
-        assert_eq!(kept["path"], "x/review.distilled.md");
-        let made = json_of(&distilled(PARENT, &done("distilled", "fragment")));
-        assert!(made["fragment"].get("no_distill").is_none(), "{made}");
     }
 
     #[test]

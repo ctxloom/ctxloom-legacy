@@ -16,7 +16,7 @@ const DEMO: &[(&str, &str)] = &[
         "---\nname: renamed\ndescription: Renamed\n---\nBODY\n",
     ),
     (
-        "skills/.reviewer.meta.yaml",
+        "skills/reviewer/.meta.yaml",
         "tags: [\"ctxloom:link_id=pair\"]\n",
     ),
 ];

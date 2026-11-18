@@ -42,7 +42,7 @@ pub struct HomeFile {
     pub rel: String,
     pub bytes: Vec<u8>,
     /// Whether it is written executable: a skill's file its sidecar declares
-    /// (`skills/.<n>.meta.yaml`'s `executable:`, the ONLY word on a file's
+    /// (`skills/<n>/.meta.yaml`'s `executable:`, the ONLY word on a file's
     /// executability), so a script a skill ships runs where the launch put
     /// it, as an install writes it.
     pub executable: bool,

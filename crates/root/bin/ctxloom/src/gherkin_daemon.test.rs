@@ -3863,6 +3863,8 @@ fn listed_trusted(w: &mut World) {
 /// bounded, until none is waiting any more.
 #[when("the ask's time runs out")]
 fn ask_expires(w: &mut World) {
+    // The time passes now: the alarm held since the ask is let go.
+    files::remove(alarms_hold(w));
     until(w, "the ask's time to run out", DAEMON_WAIT, |w| {
         waiting_asks(w, None).is_empty().then_some(())
     });
@@ -6048,7 +6050,21 @@ fn child_asking(w: &mut World, child: &str, owner: &str, tool: &str, text: &str)
             (turns(w).len() > taken).then_some(())
         });
     }
+    // Its alarm held until the scenario says its time runs out (the race
+    // rule): an `approval_timeout` of 2s must not end the ask on the wall
+    // clock while the steps before that one run on a loaded machine.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    files::put(alarms_hold(w), now.to_string());
     ask(w, child, tool, text);
+}
+
+/// The daemon's test-support hold of its scheduler's alarms
+/// (`test-hold-alarms`, the instant it holds them at): while it is there
+/// no alarm armed since comes due.
+fn alarms_hold(w: &World) -> PathBuf {
+    daemon_dir(w).join("test-hold-alarms")
 }
 
 #[given("the project's config defines no agent of its own")]

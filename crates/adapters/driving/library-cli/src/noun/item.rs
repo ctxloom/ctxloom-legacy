@@ -538,7 +538,11 @@ fn remove_served(
     )
 }
 
-/// `fragment|command distill <ref> [-f]` (plan step 5).
+/// `fragment|command distill <ref> [-f]`: the daemon's `DistillFragment`
+/// or `DistillCommand` (step 10b, owner 2026-11-18): the daemon asks the
+/// model as a run it hosts, which this command follows to its end; the
+/// distilled form is written once the run ends, and its end is what the
+/// write came to.
 fn distill(
     cx: &Context<'_>,
     kind: ItemKind,
@@ -547,17 +551,132 @@ fn distill(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let outcome = cx.library.item_distill(&cx.flags, kind, reference, force);
-    catalog::answer(
+    let under = library_api::names::reference_target(reference);
+    let distilled = distill_followed(cx, kind, &under, force).map_err(|(failure, said)| {
+        say(cx, &said, err);
+        failure
+    });
+    crate::answer_written(
         cx,
-        outcome,
+        distilled,
+        |m| std::mem::take(m.notices_mut()),
         out,
         err,
-        false,
-        distilled,
-        |done, out, _| distilled_text(done, out),
-        ok,
+        |m, out| distilled_text(&m.item(), out),
+        |_| Exit::OK,
     )
+}
+
+/// What a distill call answers, the fragment's or the command's.
+pub(crate) type DistillAnswer = Either<v1::DistillFragmentResponse, v1::DistillCommandResponse>;
+
+impl DistillAnswer {
+    /// The run that asks its model; empty when none is asked.
+    fn run(&self) -> &str {
+        match self {
+            Either::Fragment(f) => &f.run,
+            Either::Command(c) => &c.run,
+        }
+    }
+
+    /// Its run ended answered: its form is written.
+    fn applied(&mut self) {
+        match self {
+            Either::Fragment(f) => f.applied = Some(true),
+            Either::Command(c) => c.applied = Some(true),
+        }
+    }
+
+    pub(crate) fn notices_mut(&mut self) -> &mut Vec<v1::Notice> {
+        match self {
+            Either::Fragment(f) => &mut f.notices,
+            Either::Command(c) => &mut c.notices,
+        }
+    }
+
+    /// What it came to, as the text says it.
+    pub(crate) fn item(&self) -> ItemDistilled {
+        let (kind, name, path, detail) = match self {
+            Either::Fragment(f) => (
+                "fragment",
+                f.fragment.as_ref().map_or("", |f| f.name.as_str()),
+                &f.path,
+                &f.detail,
+            ),
+            Either::Command(c) => (
+                "command",
+                c.command.as_ref().map_or("", |c| c.name.as_str()),
+                &c.path,
+                &c.detail,
+            ),
+        };
+        let (bundle, name) = bundle_and_item(name);
+        ItemDistilled {
+            status: detail
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "distilled".to_string()),
+            kind: kind.to_string(),
+            bundle,
+            name,
+            path: path.clone(),
+        }
+    }
+
+    /// Whether nothing was distilled for its being marked `no_distill`.
+    pub(crate) fn no_distill(&self) -> bool {
+        self.item().status == "no_distill"
+    }
+}
+
+/// The distill of the item `under` asked of the daemon, and the run it was
+/// answered with followed to its end: its answer, its form written; else
+/// why not, with what was said before it.
+pub(crate) fn distill_followed(
+    cx: &Context<'_>,
+    kind: ItemKind,
+    under: &str,
+    force: bool,
+) -> Result<DistillAnswer, (Failure, Vec<v1::Notice>)> {
+    let asked = if kind == ItemKind::Command {
+        let request = v1::DistillCommandRequest {
+            force,
+            globals: cx.globals(),
+            ..v1::DistillCommandRequest::default()
+        };
+        cx.served
+            .distill_command(under, request)
+            .map(Either::Command)
+    } else {
+        let request = v1::DistillFragmentRequest {
+            force,
+            globals: cx.globals(),
+            ..v1::DistillFragmentRequest::default()
+        };
+        cx.served
+            .distill_fragment(under, request)
+            .map(Either::Fragment)
+    };
+    let mut answer = asked.map_err(|failure| (failure, Vec::new()))?;
+    if answer.run().is_empty() {
+        return Ok(answer);
+    }
+    let followed = cx.served.follow_run(answer.run());
+    answer.notices_mut().extend(followed.notices);
+    match followed.ended {
+        Ok(()) => {
+            answer.applied();
+            Ok(answer)
+        }
+        Err(failure) => Err((failure, std::mem::take(answer.notices_mut()))),
+    }
+}
+
+/// `notices` said, as a write's are.
+pub(crate) fn say(cx: &Context<'_>, notices: &[v1::Notice], err: &mut dyn Write) {
+    let said: Vec<library_application::Notice> =
+        notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
 }
 
 /// What one item's distillation said, in text.
@@ -579,54 +698,6 @@ pub(crate) fn distilled_text(done: &ItemDistilled, out: &mut dyn Write) -> std::
             done.kind, done.name, done.bundle, done.path
         ),
     }
-}
-
-/// `fragment|command distill`: `DistillFragmentResponse` or
-/// `DistillCommandResponse`; what was not asked (fresh, or no_distill)
-/// applied nothing, and says why in `detail`.
-pub(crate) fn distilled(
-    parent: &str,
-    done: &ItemDistilled,
-) -> Either<v1::DistillFragmentResponse, v1::DistillCommandResponse> {
-    let name = catalog::item_name(parent, &done.bundle, dir_of(&done.kind), &done.name);
-    let applied = Some(done.status == "distilled");
-    let state = if done.status == "no_distill" {
-        library_application::DistilledState::None
-    } else {
-        library_application::DistilledState::Fresh
-    };
-    let distilled = catalog::distilled_state(state);
-    let detail = if done.status == "distilled" {
-        Vec::new()
-    } else {
-        vec![done.status.clone()]
-    };
-    if is_command(&done.kind) {
-        return Either::Command(v1::DistillCommandResponse {
-            command: Some(v1::Command {
-                name,
-                distilled,
-                no_distill: (done.status == "no_distill").then_some(true),
-                ..v1::Command::default()
-            }),
-            path: done.path.clone(),
-            applied,
-            detail,
-            ..v1::DistillCommandResponse::default()
-        });
-    }
-    Either::Fragment(v1::DistillFragmentResponse {
-        fragment: Some(v1::Fragment {
-            name,
-            distilled,
-            no_distill: (done.status == "no_distill").then_some(true),
-            ..v1::Fragment::default()
-        }),
-        path: done.path.clone(),
-        applied,
-        detail,
-        ..v1::DistillFragmentResponse::default()
-    })
 }
 
 /// A fragment's message or a command's, as the kind is.
