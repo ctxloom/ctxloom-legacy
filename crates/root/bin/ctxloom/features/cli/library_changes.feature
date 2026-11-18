@@ -61,12 +61,29 @@ Feature: library changes — git holds the library, and the daemon records what 
      "events": [{"type": "TreeObserved", "sequence": n, "baseline": bool,
                  "head_before": "<oid>", "head_after": "<oid>",
                  "in_motion": bool,
-                 "changes": [{"path", "status", "from_path", "oid"}]}]}
+                 "changes": [{"path", "status", "from_path", "oid"}]},
+                {"type": "ChangeIntended", "sequence": n, "request_id": "<id>",
+                 "verb": "<the CLI's verb>",
+                 "steps": [{"kind": "replace|create|trash|move|purge",
+                            "path", "from", "to"}]},
+                {"type": "StepApplied", "sequence": n, "request_id", "step",
+                 "observed": [{"path", "oid"}]},
+                {"type": "ChangeFailed", "sequence": n, "request_id", "step"},
+                {"type": "IntentSuperseded", "sequence": n, "request_id"}]}
 
   A change's path is relative to the tree's root (`.ctxloom/`), with `/`
   separators. Changes are sorted by path. An event's `sequence` is its
   place in the tree's record; a change's `oid` is git's id for the path
-  after it (absent when deleted).
+  after it (absent when deleted). Reading the stream
+  is not a read of the library: `test library-events` observes nothing.
+
+  CTXLOOM'S OWN WRITES ARE INTENDED (step 10b, cli/atomic_writes.feature).
+  A write records its intent (the paths it will change and git's ids for
+  what it will write), makes its one change, and records it done. A read
+  that then sees those ids records nothing: the change is ctxloom's, and
+  never an outside one. A write is refused, and nothing is intended, in a
+  project outside git, where git ignores the library, or while git is in
+  the middle of an operation.
 
   Rule: A library is in git, or it is refused
 
@@ -475,3 +492,157 @@ Feature: library changes — git holds the library, and the daemon records what 
         | a merge stopped on a conflict       | a merge           |
         | a rebase stopped on a conflict      | a rebase          |
         | a commit that holds the index lock  | holds the index   |
+
+  Rule: A write of ctxloom's own is recorded as its intent, never as an outside change
+
+    Background:
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And the project's changes are committed
+      And I run "ctxloom bundle list"
+
+    Scenario: A write's own change is attributed to its intent, and the next read records nothing
+      # new: step 10 U3, an observation that sees an intent's ids is the intent's.
+      When I run 'ctxloom fragment create demo#fragments/rules --body "be kind"'
+      And I run "ctxloom bundle list"
+      And I run "ctxloom test library-events --format json"
+      Then the command succeeds
+      And the output reports "events" having "3" entries
+      And the output reports "events[1].type" as "ChangeIntended"
+      And the output reports "events[1].verb" as "fragment create"
+      And the output reports "events[1].steps" having "1" entries
+      And the output reports "events[1].steps[0].kind" as "replace"
+      And the output reports "events[1].steps[0].path" as "content/bundles/v2/demo/fragments/rules.md"
+      And the output reports "events[2].type" as "StepApplied"
+      And the output does not contain "be kind"
+
+    Scenario: A hand edit after a write of ctxloom's is still an outside change
+      # new: the paired negative; attribution is by the intent's ids, not by the path.
+      When I run 'ctxloom fragment create demo#fragments/rules --body "be kind"'
+      And the file ".ctxloom/content/bundles/v2/demo/fragments/rules.md" is changed by hand to:
+        """
+        be kinder, by hand
+        """
+      And I run "ctxloom bundle list"
+      And I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "4" entries
+      And the output reports "events[3].type" as "TreeObserved"
+      And the output reports "events[3].changes[0].path" as "content/bundles/v2/demo/fragments/rules.md"
+      And the output reports "events[3].changes[0].status" as "modified"
+
+    Scenario: ctxloom's own bundle move is one move, recorded as such
+      # new: step 10 L7 and U9, a local bundle move is one MovePath.
+      Given the project already has the file "other-project/.ctxloom/.keep":
+        """
+        """
+      When I run "ctxloom bundle move demo --to other-project"
+      And I run "ctxloom bundle list"
+      And I run "ctxloom test library-events --format json"
+      Then the command succeeds
+      And the output reports "events" having "3" entries
+      And the output reports "events[1].verb" as "bundle move"
+      And the output reports "events[1].steps" having "1" entries
+      And the output reports "events[1].steps[0].kind" as "move"
+      And the output reports "events[1].steps[0].from" as "content/bundles/v2/demo"
+      And the output reports "events[2].type" as "StepApplied"
+
+    Scenario: A write left owed by a killed daemon is finished by its retry, not recorded as outside
+      # new: step 10 U3, the kill after the operation; the retry matches the intent's ids.
+      Given the daemon will be killed outright after the write is renamed in, before it is recorded done
+      When I run 'ctxloom fragment create demo#fragments/rules --body "be kind"'
+      And I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "3" entries
+      And the output reports "events[2].type" as "StepApplied"
+      And the output reports "events[1].type" as "ChangeIntended"
+      And the output reports "events[2].request_id" as the value of "events[1].request_id"
+
+  Rule: A write is refused outside git, where git ignores the library, and while git is busy
+
+    Scenario Outline: A write in a project outside git is refused, and nothing is written or intended
+      # new: G1, the write rows of the read refusal.
+      Given an initialized ctxloom project outside git
+      And a bundle "demo" exists
+      When I run '<write>'
+      Then the command exits with code 20
+      And the refusal is "library-tree-not-in-git"
+      And the output contains "git init"
+      And the file ".ctxloom/<path>" does not exist
+      And the file ".ctxloom/state/checkout" does not exist
+
+      Examples:
+        | write                                                         | path                                         |
+        | ctxloom bundle create notes --description "my notes"          | content/bundles/v2/notes/bundle.yaml         |
+        | ctxloom fragment create demo#fragments/rules --body "be kind" | content/bundles/v2/demo/fragments/rules.md   |
+        | ctxloom profile create dev --include demo                     | content/bundles/v2/project/profiles/dev.yaml |
+
+    Scenario: A write where git ignores the library is refused, naming the rule
+      # new: G1, an ignored library is refused for a write as for a read.
+      Given an initialized ctxloom project
+      And the project already has the file ".gitignore":
+        """
+        .ctxloom/
+        """
+      When I run 'ctxloom bundle create notes --description "my notes"'
+      Then the command exits with code 20
+      And the refusal is "library-tree-library-ignored"
+      And the file ".ctxloom/content/bundles/v2/notes/bundle.yaml" does not exist
+
+    Scenario Outline: A write during a git operation is refused, and changes nothing until it ends
+      # new: L11, TreeInMotion; the read beside it is answered (the Rule above).
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And the project's changes are committed
+      And I run "ctxloom bundle list"
+      And git in the project is in the middle of <operation> on ".ctxloom/content/bundles/v2/demo/fragments/example.md"
+      When I run 'ctxloom fragment create demo#fragments/rules --body "be kind"'
+      Then the command exits with code 20
+      And the refusal is "library-tree-tree-in-motion"
+      And the output contains "<said>"
+      And the file ".ctxloom/content/bundles/v2/demo/fragments/rules.md" does not exist
+      When I run "ctxloom test library-events --format json"
+      Then the output does not contain "ChangeIntended"
+
+      Examples:
+        | operation                           | said              |
+        | a merge stopped on a conflict       | a merge           |
+        | a rebase stopped on a conflict      | a rebase          |
+        | a commit that holds the index lock  | holds the index   |
+
+  Rule: ctxloom commits only in a home repository it made, one commit per write; never in a project
+
+    Scenario: A write to the home is one commit of ctxloom's own, naming the verb and its request id
+      # new: step 10 G3, the home only; QUESTIONS D (10a), a home repository ctxloom made.
+      Given an initialized ctxloom project
+      And a companion "ctxloom-companion-acme" is on PATH, not registered
+      And I run "ctxloom bundle list"
+      When I run "ctxloom companion add acme"
+      Then the command succeeds
+      And the home's ".ctxloom" repository has exactly 1 commit
+      And the home's ".ctxloom" repository's last commit is by "ctxloom <ctxloom@localhost>"
+      And the home's ".ctxloom" repository's last commit's message is "ctxloom: companion add (<its request id>)"
+      And the home's ".ctxloom" repository's last commit changed only "config.yaml"
+      When I run "ctxloom companion remove acme --yes"
+      Then the home's ".ctxloom" repository has exactly 2 commits
+
+    Scenario: A write in a project commits nothing there
+      # new: step 10 G3, never in a project; what to commit stays hers.
+      Given an initialized ctxloom project
+      When I run 'ctxloom bundle create notes --description "my notes"'
+      Then the command succeeds
+      And the project's last commit is still "initial"
+      And the file ".ctxloom/content/bundles/v2/notes/bundle.yaml" exists
+
+    Scenario Outline: A home in a repository ctxloom did not make is written, and not committed
+      # new: step 10 G3 with 10a's QUESTIONS D(a): her own repository's history is hers.
+      Given an initialized ctxloom project
+      And a companion "ctxloom-companion-acme" is on PATH, not registered
+      And <home>
+      When I run "ctxloom companion add acme"
+      Then the command succeeds
+      And the home config registers the companion "acme" by name only
+      And <history>
+
+      Examples:
+        | home                                                                    | history                                                      |
+        | the home directory is a git repository of its own                        | the home directory's repository has no commit                |
+        | the home's ".ctxloom" is already a git repository with the commit "mine" | the home's ".ctxloom" repository's last commit is still "mine" |

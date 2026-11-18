@@ -103,6 +103,14 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
   answers from the files, holding back what an untrusted project may not
   say (cli/trust.feature). No command reads a library tree itself.
 
+  AND WRITTEN HERE (step 10b). Every write of the library (a create, an
+  edit, a remove, an import, an export, a move, a distill, `config set`,
+  `clean`) is the daemon's too: a command of the library's own domain under
+  the request id the command chose, intended, applied as one atomic
+  operation and recorded (cli/atomic_writes.feature). No command writes a
+  library tree itself, and an editor round trip is the preview's Edit need,
+  opened by the CLI at her terminal.
+
   IDLE. The daemon exits by itself once it has had no live run, no hosted
   child and no open client stream for ten minutes.
 
@@ -170,6 +178,34 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom session --frobnicate  | 20   |
         | ctxloom daemon status         | 0    |
         | ctxloom daemon stop           | 0    |
+
+    Scenario Outline: A write that cannot start a daemon fails, and changes no file
+      # new: step 10 D17, the cannot-start rows per noun: no write falls back to the files.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And a finished session "amber-swift-owl" whose transcript retention has passed
+      And the project's changes are committed
+      And no ctxloom daemon can be started for this home
+      When I run '<write>'
+      Then the command exits with code 10
+      And the output contains "no ctxloom daemon could be started"
+      And git sees nothing changed in the project
+      And no project store was opened, and no engine was started
+
+      Examples:
+        | write                                                          |
+        | ctxloom bundle create notes --description "my notes"           |
+        | ctxloom bundle remove demo --yes                               |
+        | ctxloom fragment create demo#fragments/rules --body "be kind"  |
+        | ctxloom command create demo#commands/review                    |
+        | ctxloom skill create demo#skills/review                        |
+        | ctxloom mcp server set demo#mcp/tools --command echo           |
+        | ctxloom profile create dev --include demo                      |
+        | ctxloom agent create reviewer --profiles dev                   |
+        | ctxloom config set engines.claude-code.model opus              |
+        | ctxloom bundle export demo exported                            |
+        | ctxloom clean --yes                                            |
+        | ctxloom session remove amber-swift-owl --yes                   |
 
   Rule: Only the user can find the daemon, or speak to it as her
 
@@ -522,6 +558,7 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
         | ctxloom session send brisk-copper-moth wake "check the tests" |
         | ctxloom session close brisk-copper-moth                     |
         | ctxloom bundle create notes --description "my notes"        |
+        | ctxloom config set engines.claude-code.model opus           |
 
   Rule: The preview carries the questions, and the apply answers them
 

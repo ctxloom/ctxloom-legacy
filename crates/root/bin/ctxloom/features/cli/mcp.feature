@@ -190,7 +190,8 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
     # bundle file on disk, and a field nobody passed survived — because an
     # implementation that rewrote the whole entry from the flags would satisfy
     # the first half alone. A server's tags, notes and installation live in
-    # its `.<name>.meta.yaml` sidecar beside the runtime file. The output is
+    # its one `mcp/<name>.yaml` beside its runtime fields (owner T27: no
+    # sidecar, so a server is one file, one write). The output is
     # `UpdateMcpServerResponse` (JSON off a terminal; OD-40, AIP-134
     # `allow_missing`), whose `created` separates a new entry from a changed
     # one.
@@ -217,9 +218,10 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
       And the output reports "mcp_server.name" as "projects/{project}/bundles/demo/mcpServers/search"
       And the file ".ctxloom/content/bundles/v2/demo/mcp/search.yaml" contains "url: https://mcp.example.com/v1"
       And the file ".ctxloom/content/bundles/v2/demo/mcp/search.yaml" contains "X-Team: core"
-      And the file ".ctxloom/content/bundles/v2/demo/mcp/.search.meta.yaml" contains "search-index"
-      And the file ".ctxloom/content/bundles/v2/demo/mcp/.search.meta.yaml" contains "Team search index"
-      And the file ".ctxloom/content/bundles/v2/demo/mcp/.search.meta.yaml" contains "Ask core for a seat"
+      And the file ".ctxloom/content/bundles/v2/demo/mcp/search.yaml" contains "search-index"
+      And the file ".ctxloom/content/bundles/v2/demo/mcp/search.yaml" contains "Team search index"
+      And the file ".ctxloom/content/bundles/v2/demo/mcp/search.yaml" contains "Ask core for a seat"
+      And the file ".ctxloom/content/bundles/v2/demo/mcp/.search.meta.yaml" does not exist
       And the file ".ctxloom/content/bundles/v2/demo/mcp/tools.yaml" contains "KEEP-THIS-ARGUMENT"
 
     # A repeatable flag REPLACES the stored list or map: the fixture's
@@ -234,7 +236,8 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
       And the file ".ctxloom/content/bundles/v2/demo/mcp/tools.yaml" contains "--stdio"
       And the file ".ctxloom/content/bundles/v2/demo/mcp/tools.yaml" contains "LOG_LEVEL: debug"
       And the file ".ctxloom/content/bundles/v2/demo/mcp/tools.yaml" does not contain "KEEP-THIS-ARGUMENT"
-      And the file ".ctxloom/content/bundles/v2/demo/mcp/.tools.meta.yaml" contains "KEEP-THESE-NOTES"
+      And the file ".ctxloom/content/bundles/v2/demo/mcp/tools.yaml" contains "KEEP-THESE-NOTES"
+      And the file ".ctxloom/content/bundles/v2/demo/mcp/.tools.meta.yaml" does not exist
 
     # Moving to another target means clearing the old one in the same call:
     # an empty value is a clear, not an absence.
