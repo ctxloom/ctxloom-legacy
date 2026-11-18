@@ -19,7 +19,20 @@ impl Library {
     /// rest keep their value, a name the bundle lacks is created. A server with
     /// not exactly one target is refused and nothing is saved.
     pub fn mcp_set(&self, flags: &Flags, reference: &str, patch: &McpPatch) -> Outcome<McpSet> {
-        self.run(flags, |p| p.mcp_set(reference, patch))
+        self.mcp_update(flags, reference, patch, true)
+    }
+
+    /// `UpdateMcpServer`: [`Library::mcp_set`], a name the bundle lacks
+    /// created only when `allow_missing` (AIP-134); otherwise refused
+    /// [`AppError::McpNotFound`], naming the reference, and nothing saved.
+    pub fn mcp_update(
+        &self,
+        flags: &Flags,
+        reference: &str,
+        patch: &McpPatch,
+        allow_missing: bool,
+    ) -> Outcome<McpSet> {
+        self.run(flags, |p| p.mcp_set(reference, patch, allow_missing))
     }
 
     /// `mcp server edit <bundle>#mcp/<name>`: the server through the editor.
@@ -58,11 +71,21 @@ fn refuse_fault(name: &str, server: &McpServer) -> Result<(), AppError> {
 }
 
 impl Project {
-    fn mcp_set(&self, reference: &str, patch: &McpPatch) -> Result<McpSet, AppError> {
+    fn mcp_set(
+        &self,
+        reference: &str,
+        patch: &McpPatch,
+        allow_missing: bool,
+    ) -> Result<McpSet, AppError> {
         self.require_project()?;
         let (bundle, name) = split_reference(reference)?;
         let entry = self.bundle(&bundle)?;
         let held = entry.bundle.mcp.get(&name);
+        if held.is_none() && !allow_missing {
+            return Err(AppError::McpNotFound {
+                name: reference.to_string(),
+            });
+        }
         if held.is_none() {
             // A server set creates is minted here, so its name is an ID.
             super::require_id("mcp server", &name)?;

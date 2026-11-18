@@ -386,6 +386,14 @@ mod write {
                     "event": "session_end",
                     "reason": "no session_end",
                 }],
+                "needs": [{"id": "confirm", "confirm": {
+                    "text": "Apply the move of agent \"dev\" from claude-code to opencode, giving up what opencode cannot carry?",
+                    "args": [
+                        {"name": "agent", "value": "dev"},
+                        {"name": "from", "value": "claude-code"},
+                        {"name": "to", "value": "opencode"},
+                    ],
+                }}],
             })
         );
         assert_eq!(mem.config(Scope::Project), before, "nothing is written");
@@ -634,6 +642,124 @@ mod writes_asked {
             ran.out
         );
         assert_eq!(asks.requests::<v1::UpdateAgentRequest>().len(), 1);
+    }
+
+    /// A swap's preview as the daemon answers it: its Confirm need asked.
+    fn swap_asking() -> v1::UpdateAgentResponse {
+        v1::UpdateAgentResponse {
+            agent: Some(v1::Agent {
+                name: "projects/p/agents/dev".to_string(),
+                ..<v1::Agent as Default>::default()
+            }),
+            applied: Some(false),
+            from: "claude-code".to_string(),
+            to: "opencode".to_string(),
+            apply_command: "ctxloom agent edit dev --engine opencode --yes".to_string(),
+            needs: vec![v1::Need {
+                id: "confirm".to_string(),
+                kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+                    text: "Apply the move of agent \"dev\"?".to_string(),
+                    code: String::new(),
+                    args: Vec::new(),
+                })),
+            }],
+            etag: "7".to_string(),
+            ..v1::UpdateAgentResponse::default()
+        }
+    }
+
+    fn applied() -> v1::UpdateAgentResponse {
+        v1::UpdateAgentResponse {
+            agent: Some(v1::Agent {
+                name: "projects/p/agents/dev".to_string(),
+                engine: "projects/p/engines/opencode".to_string(),
+                ..<v1::Agent as Default>::default()
+            }),
+            applied: Some(true),
+            ..v1::UpdateAgentResponse::default()
+        }
+    }
+
+    fn swap_at_terminal(
+        answers: Vec<Box<dyn std::any::Any>>,
+        yes: Option<bool>,
+    ) -> (crate::tests::Ran, Vec<v1::UpdateAgentRequest>) {
+        use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+        let asks = Asks::answering(answers, yes);
+        let ran = go_served(
+            &["agent", "edit", "dev", "--engine", "opencode"],
+            TEXT,
+            BARE,
+            &Project,
+            Some(&asks),
+        );
+        (ran, asks.requests::<v1::UpdateAgentRequest>())
+    }
+
+    // Owner ruling 2026-11-18 (evening): at a terminal the swap's preview is
+    // its Confirm need; on a yes the apply is sent with the answer and the
+    // preview's etag.
+    #[test]
+    fn test_a_swap_confirmed_at_the_terminal_is_applied_with_the_previews_etag() {
+        let (ran, sent) = swap_at_terminal(
+            vec![Box::new(swap_asking()), Box::new(applied())],
+            Some(true),
+        );
+        assert_eq!(ran.exit, Ok(0), "{}", ran.err);
+        assert!(ran.out.contains("Updated agent \"dev\""), "{}", ran.out);
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].validate_only && !sent[1].validate_only);
+        assert_eq!(sent[1].etag, "7");
+        assert_eq!(
+            sent[1].answers,
+            [v1::Answer {
+                need_id: "confirm".to_string(),
+                answer: Some(v1::answer::Answer::Confirmed(true)),
+            }]
+        );
+    }
+
+    // A no at the terminal is the preview, printed, and nothing applied.
+    #[test]
+    fn test_a_swap_declined_at_the_terminal_is_its_preview_and_applies_nothing() {
+        let (ran, sent) = swap_at_terminal(vec![Box::new(swap_asking())], Some(false));
+        assert_eq!(ran.exit, Ok(1), "{}", ran.err);
+        assert!(
+            ran.out
+                .starts_with("Moving agent \"dev\" from claude-code to opencode"),
+            "{}",
+            ran.out
+        );
+        assert_eq!(sent.len(), 1);
+    }
+
+    // What she confirmed changed before her answer reached the daemon: the
+    // apply is refused stale, and she is shown the swap again, as it is now.
+    #[test]
+    fn test_a_confirmed_swap_refused_stale_is_previewed_again() {
+        let (ran, sent) = swap_at_terminal(
+            vec![
+                Box::new(swap_asking()),
+                Box::new(crate::tests::Stale),
+                Box::new(swap_asking()),
+            ],
+            Some(true),
+        );
+        assert!(
+            matches!(&ran.exit, Err(why) if why.starts_with("library-tree-plan-stale:20")),
+            "{:?}",
+            ran.exit
+        );
+        assert!(
+            ran.out
+                .starts_with("Moving agent \"dev\" from claude-code to opencode"),
+            "{}",
+            ran.out
+        );
+        assert_eq!(
+            sent.iter().map(|r| r.validate_only).collect::<Vec<_>>(),
+            [true, false, true]
+        );
     }
 }
 

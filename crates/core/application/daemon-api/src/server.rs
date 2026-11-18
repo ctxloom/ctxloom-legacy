@@ -99,6 +99,10 @@ pub struct Observing {
 /// A session's state now, from its liveness lock in its project.
 pub trait SessionStates: Send + Sync {
     fn state(&self, project_dir: &str, harp: &str) -> State;
+
+    /// Where the session's lock is, as its adapter forms it
+    /// (`session_ports::lock_path`): what a refusal names.
+    fn lock(&self, project_dir: &str, harp: &str) -> String;
 }
 
 /// Fresh project harps to try, in order (minted outside the core).
@@ -596,6 +600,9 @@ pub struct Api<E> {
     /// after the call that started the run has answered. Unset, a distill
     /// that asks a model fails.
     pub(crate) me: std::sync::OnceLock<std::sync::Weak<Api<E>>>,
+    /// The platform's name (`std::env::consts::OS`'s), which a removal's
+    /// evidence is judged by (D18); empty is a unix.
+    pub(crate) os: String,
 }
 
 impl<E: Edge> Api<E> {
@@ -612,6 +619,18 @@ impl<E: Edge> Api<E> {
             write_dies_at: None,
             caches: None,
             me: std::sync::OnceLock::new(),
+            os: String::new(),
+        }
+    }
+
+    /// The API on the platform `os` (`std::env::consts::OS`'s name; the
+    /// wiring's `os_name`): on `windows` a held session lock blocks its
+    /// removal (D18).
+    #[must_use]
+    pub fn on_os(self, os: &str) -> Api<E> {
+        Api {
+            os: os.to_string(),
+            ..self
         }
     }
 

@@ -825,6 +825,7 @@ pub mod update_agent {
             ..v1::UpdateAgentResponse::default()
         };
         if let Some(preview) = preview {
+            answered.needs = vec![swap_confirm(&preview)];
             answered.applied = Some(false);
             answered.apply_command = preview.apply;
             answered.from = preview.from;
@@ -836,6 +837,32 @@ pub mod update_agent {
                 .collect();
         }
         answered
+    }
+}
+
+/// A swap preview's Confirm need (owner ruling 2026-11-18, evening: an
+/// `agent edit` whose new engine gives something up is confirmed at the
+/// terminal, as a removal is): its question, drafted in the 10b spec's
+/// texts.md (`library-api-confirm-swap`), and its args.
+fn swap_confirm(preview: &library_application::SwapPreview) -> v1::Need {
+    let arg = |name: &str, value: &str| v1::NeedArg {
+        name: name.to_string(),
+        value: value.to_string(),
+    };
+    v1::Need {
+        id: CONFIRM_NEED.to_string(),
+        kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+            text: format!(
+                "Apply the move of agent \"{}\" from {} to {}, giving up what {} cannot carry?",
+                preview.agent, preview.from, preview.to, preview.to
+            ),
+            code: String::new(),
+            args: vec![
+                arg("agent", &preview.agent),
+                arg("from", &preview.from),
+                arg("to", &preview.to),
+            ],
+        })),
     }
 }
 
@@ -1259,7 +1286,9 @@ pub enum McpWritten {
 /// `UpdateMcpServer`. A mask names the fields a set writes (`command`,
 /// `args`, `env`, `url`, `notes`, `installation`; a field named and given
 /// empty is cleared); no mask is the whole server through the editor, the
-/// preview's Edit need. A set creates a server its bundle lacks.
+/// preview's Edit need. A set creates a server its bundle lacks only when
+/// `allow_missing` (AIP-134; the CLI sends true), else it is refused
+/// `LibraryMcpNotFound`.
 pub mod update_mcp_server {
     use super::*;
     use library_application::{McpEdited, McpPatch};
@@ -1307,7 +1336,7 @@ pub mod update_mcp_server {
     ) -> Outcome<McpWritten> {
         let reference = reference(request);
         if !mask(request).is_empty() {
-            let set = library.mcp_set(flags, &reference, &patch(request));
+            let set = library.mcp_update(flags, &reference, &patch(request), request.allow_missing);
             return Outcome {
                 result: set.result.map(McpWritten::Set),
                 notices: set.notices,

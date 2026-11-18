@@ -36,6 +36,8 @@ pub enum ContentError {
         to: String,
         detail: String,
     },
+    /// A directory a rename changed could not be made durable.
+    SyncDir { path: String, detail: String },
     /// A request id that is not one plain name (its staging and its trash
     /// slot are named by it).
     BadRequest { request_id: String },
@@ -52,6 +54,10 @@ impl ContentError {
 
     pub(crate) fn remove_path(path: String, detail: String) -> ContentError {
         ContentError::RemovePath { path, detail }
+    }
+
+    pub(crate) fn sync_dir(path: String, detail: String) -> ContentError {
+        ContentError::SyncDir { path, detail }
     }
 
     pub(crate) fn write_file(path: String, detail: String) -> ContentError {
@@ -79,6 +85,7 @@ impl Diagnostic for ContentError {
             ContentError::RemovePath { .. } => code!("remove-path"),
             ContentError::MakeDir { .. } => code!("make-dir"),
             ContentError::Rename { .. } => code!("rename"),
+            ContentError::SyncDir { .. } => code!("sync-dir"),
             ContentError::BadRequest { .. } => code!("bad-request"),
         }
     }
@@ -90,7 +97,8 @@ impl Diagnostic for ContentError {
             | ContentError::ReadFile { path, detail }
             | ContentError::WriteFile { path, detail }
             | ContentError::RemovePath { path, detail }
-            | ContentError::MakeDir { path, detail } => vec![
+            | ContentError::MakeDir { path, detail }
+            | ContentError::SyncDir { path, detail } => vec![
                 ("path", path.as_str().into()),
                 ("ext_err_txt", detail.as_str().into()),
             ],
@@ -148,9 +156,10 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(ContentError::Rename {
             from: format!("{path}/.ctxloom/state/staging/r/notes"),
-            to: path,
-            detail,
+            to: path.clone(),
+            detail: detail.clone(),
         }),
+        Box::new(ContentError::SyncDir { path, detail }),
         Box::new(ContentError::BadRequest {
             request_id: "../x".to_string(),
         }),

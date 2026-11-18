@@ -1947,6 +1947,10 @@ message RemovalRefusal {
     // A scratch worktree of it is spared or skipped: a session is removed
     // whole or not at all.
     WORKTREES_KEEP = 4;
+    // Its lock is held where a held lock keeps its directory from being
+    // moved (D18, Windows), `even_if_live` or not; `detail` is the lock's
+    // path.
+    LOCK_HELD = 5;
   }
 
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;

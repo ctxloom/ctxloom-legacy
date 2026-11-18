@@ -572,6 +572,32 @@ fn one_write(planned: &[library_application::write::recording::Planned]) -> (Str
     writes[0].clone()
 }
 
+// An update that may not create (`allow_missing` false) of a server its
+// bundle lacks is refused McpNotFound (at the API its proto refusal, as
+// `LibraryMcpNotFound`) and plans no write; the CLI's set sends true.
+#[test]
+fn test_an_mcp_server_update_not_allowed_to_create_refuses_a_missing_one() {
+    let (library, recorder) = tools().recording();
+    let mut request = mcp_set(&["command"], |s| s.command = "echo".to_string());
+    request.allow_missing = false;
+    request.mcp_server.as_mut().unwrap().name =
+        "projects/amber-quiet-heron/bundles/demo/mcpServers/fresh".to_string();
+    let refused = super::update_mcp_server::plan(&library, &plain(), &request, true)
+        .result
+        .expect_err("a missing server is not created");
+    assert_eq!(
+        angzarr_diagnostic::Diagnostic::code(&refused),
+        "library-application-mcp-not-found"
+    );
+    assert!(planned_writes(&recorder.take()).is_empty());
+    let mut held = mcp_set(&["command"], |s| s.command = "echo".to_string());
+    held.allow_missing = false;
+    let written = super::update_mcp_server::plan(&library, &plain(), &held, true)
+        .result
+        .unwrap();
+    assert!(matches!(written, super::McpWritten::Set(_)), "{written:?}");
+}
+
 // `mcp server set`: the fields its mask names change, its env among them,
 // and the rest keep their value.
 #[test]
@@ -899,6 +925,30 @@ fn test_an_agent_write_answers_the_agent_or_the_swaps_preview() {
         swap.agent.unwrap().name,
         "projects/amber-quiet-heron/agents/dev"
     );
+    // Step 10b, owner ruling 2026-11-18 (evening): the swap's preview asks
+    // a Confirm need, as a removal's does; an applied edit asks none.
+    let arg = |name: &str, value: &str| v1::NeedArg {
+        name: name.to_string(),
+        value: value.to_string(),
+    };
+    assert_eq!(
+        swap.needs,
+        [v1::Need {
+            id: super::CONFIRM_NEED.to_string(),
+            kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+                text: "Apply the move of agent \"dev\" from claude-code to opencode, \
+                       giving up what opencode cannot carry?"
+                    .to_string(),
+                code: String::new(),
+                args: vec![
+                    arg("agent", "dev"),
+                    arg("from", "claude-code"),
+                    arg("to", "opencode"),
+                ],
+            })),
+        }]
+    );
+    assert!(done.needs.is_empty());
 }
 
 fn config_edit(answers: Vec<v1::Answer>, validate_only: bool) -> v1::EditConfigRequest {

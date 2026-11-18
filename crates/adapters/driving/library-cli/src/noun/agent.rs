@@ -190,9 +190,13 @@ fn created(
 /// `agent edit <name> [flags] [--home] [--yes]`: the daemon's `UpdateAgent`
 /// (step 10b U3), the fields given named by its mask. Without `--yes` it is
 /// previewed first: a swap whose new engine cannot carry what the old one
-/// did is that preview, printed, and nothing applied (exit 1 under
-/// `--detailed-exitcode`, ruling 153); any other edit is applied with the
-/// preview's etag. `--yes` is one call.
+/// did is that preview, whose Confirm need is asked at a terminal (owner
+/// ruling 2026-11-18, evening, as a removal's is) and on a yes applied with
+/// the answer and the preview's etag; off a terminal, or on a no, the
+/// preview is printed and nothing applied (exit 1 under
+/// `--detailed-exitcode`, ruling 153). Any other edit is applied with the
+/// preview's etag. An apply refused stale is previewed again and ends in
+/// the refusal. `--yes` is one call.
 fn edited(
     cx: &Context<'_>,
     name: &str,
@@ -202,27 +206,43 @@ fn edited(
 ) -> Result<Exit, Failure> {
     let (agent, paths) = agent_given(sub)?;
     let under = library_api::names::named_target("agents", name);
-    let ask = |validate_only: bool, etag: String| v1::UpdateAgentRequest {
-        agent: Some(agent.clone()),
-        update_mask: Some(daemon_proto::google::protobuf::FieldMask {
-            paths: paths.clone(),
-        }),
-        home: flag(sub, "home"),
-        validate_only,
-        etag,
-        globals: cx.globals(),
-        ..v1::UpdateAgentRequest::default()
+    let ask = |validate_only: bool, answers: Vec<v1::Answer>, etag: String| {
+        let request = v1::UpdateAgentRequest {
+            agent: Some(agent.clone()),
+            update_mask: Some(daemon_proto::google::protobuf::FieldMask {
+                paths: paths.clone(),
+            }),
+            home: flag(sub, "home"),
+            validate_only,
+            etag,
+            answers,
+            globals: cx.globals(),
+            ..v1::UpdateAgentRequest::default()
+        };
+        cx.served.update_agent(&under, request)
     };
     let written = if flag(sub, "yes") {
-        cx.served.update_agent(&under, ask(false, String::new()))
+        ask(false, Vec::new(), String::new())
     } else {
-        let preview = cx.served.update_agent(&under, ask(true, String::new()))?;
-        if is_swap(&preview) {
-            Ok(preview)
-        } else {
-            cx.served.update_agent(&under, ask(false, preview.etag))
+        let preview = ask(true, Vec::new(), String::new())?;
+        match (is_swap(&preview), confirmed(cx, &preview)) {
+            (false, _) => ask(false, Vec::new(), preview.etag),
+            (true, Some(answers)) => ask(false, answers, preview.etag),
+            (true, None) => Ok(preview),
         }
     };
+    // What she was shown has changed since: the apply is refused stale,
+    // and she is shown the edit as it is now, to look again.
+    if let Err(stale) = &written {
+        if stale.cause.code() == crate::write::STALE {
+            if let Ok(again) = ask(true, Vec::new(), String::new()) {
+                if is_swap(&again) {
+                    swap_preview_text(out, &swap_of(name, &again))
+                        .map_err(crate::output_failure)?;
+                }
+            }
+        }
+    }
     crate::answer_written(
         cx,
         written,
@@ -245,6 +265,21 @@ fn edited(
             }
         },
     )
+}
+
+/// The answers to a swap preview's Confirm need, when it asks one and she
+/// says yes at her terminal; none off a terminal, on a no, or with no need.
+fn confirmed(cx: &Context<'_>, preview: &v1::UpdateAgentResponse) -> Option<Vec<v1::Answer>> {
+    let (id, confirm) = preview.needs.iter().find_map(|need| match &need.kind {
+        Some(v1::need::Kind::Confirm(confirm)) => Some((need.id.as_str(), confirm)),
+        _ => None,
+    })?;
+    (cx.served.confirm(&confirm.text) == Some(true)).then(|| {
+        vec![v1::Answer {
+            need_id: id.to_string(),
+            answer: Some(v1::answer::Answer::Confirmed(true)),
+        }]
+    })
 }
 
 /// Whether an edit's answer is a swap's preview (nothing applied).

@@ -204,6 +204,10 @@ impl Hosting for Loop {
 pub(crate) struct Locks(pub(crate) Mutex<std::collections::BTreeMap<String, State>>);
 
 impl SessionStates for Locks {
+    fn lock(&self, project_dir: &str, harp: &str) -> String {
+        format!("{project_dir}/.ctxloom/sessions/{harp}/session.lock")
+    }
+
     fn state(&self, _project_dir: &str, harp: &str) -> State {
         if let Some(state) = self.0.lock().unwrap().get(harp) {
             return *state;

@@ -279,3 +279,35 @@ fn test_set_refuses_to_create_a_server_whose_name_is_no_id() {
     }
     assert_eq!(mem.writes(), 0);
 }
+
+// An update that may not create (AIP-134 `allow_missing` false) of a name
+// the bundle lacks is refused McpNotFound, naming the reference, and saves
+// nothing; one of a server the bundle holds changes it as a set does.
+#[test]
+fn test_an_update_that_may_not_create_refuses_a_missing_server_and_saves_nothing() {
+    let (library, _mem) = world();
+    let url = || McpPatch {
+        url: Some("https://mcp.example.com/v1".to_string()),
+        ..patch()
+    };
+    let refused = library.mcp_update(&plain(), "demo#mcp/search", &url(), false);
+    let refused = refused.result.expect_err("refused");
+    assert!(
+        matches!(&refused, crate::AppError::McpNotFound { name } if name == "demo#mcp/search"),
+        "{refused:?}"
+    );
+    assert!(err(library.mcp_edit(&plain(), "demo#mcp/search")).contains("McpServerNotFound"));
+    let updated = library
+        .mcp_update(
+            &plain(),
+            "demo#mcp/tools",
+            &McpPatch {
+                notes: Some("changed".to_string()),
+                ..patch()
+            },
+            false,
+        )
+        .result
+        .unwrap();
+    assert_eq!(updated.status, "updated");
+}

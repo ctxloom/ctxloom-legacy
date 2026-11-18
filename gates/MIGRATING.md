@@ -138,3 +138,17 @@ staged `workspace_wide` file tests the whole workspace as before. No hook
 is added or removed, so no `hooks-install` is needed. A repository copying
 the change takes the `test-staged`, `test-commit` and `_test-affected`
 hunks, `scripts/test-staged.selftest.sh` and `scripts/tests-exit.selftest.sh`.
+
+## The plain-binary gate (2026-11-18)
+
+pre-commit gains `plain-binary` after clippy (owner ruling 2026-11-18,
+evening): `just plain-binary` builds the workspace as `just build` does and
+runs the repository's plain-build checks over the binary it made, under
+`_run` (one `ok plain-binary` line; a failure's first line is the failing
+check's summary, its log `target/logs/plain-binary.log`). The recipe and its
+checks are ctxloom's own (its justfile, `scripts/plain-engines-check.sh` and
+`scripts/plain-destroy-check.sh`), not the gates': a repository copying
+`gates/lefthook.yml` drops the `plain-binary` command or gives its justfile
+a recipe of that name. It is a command of the existing pre-commit hook, so
+no `lefthook install` is needed.
+

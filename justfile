@@ -21,7 +21,7 @@ import 'gates/dev-local.just'
 # from the same ctxloom-lib commit the workspace pins (arch_lint_rev, kept
 # equal to Cargo.toml's by `_arch-lint-ready`'s check) and installed once per
 # commit into the user's cache, shared by every worktree.
-arch_lint_rev := "ae7380e26ee3b33dc12be166e97b19ae3980e053"
+arch_lint_rev := "6a21bd0e09f7e61a8abe5640b74759e3a3fa0445"
 arch_lint_root := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") / ".cache") / "ctxloom-arch-lint" / arch_lint_rev
 arch_lint := arch_lint_root / "bin/arch-lint"
 
@@ -101,6 +101,7 @@ windows_packages := "-p content-fs -p config-files -p cache-files -p surface-fil
 clippy_template := env("CTXLOOM_LIB_TEMPLATE", TOP + "/../ctxloom-lib/templates/clippy-disallowed.toml")
 
 # Build every crate. Needs protoc on PATH and access to github.com (angzarr-proto).
+# Then the plain binary it made is held to its checks (`plain-binary`).
 [group('check')]
 [doc("Build every crate (needs protoc and github.com)")]
 [no-exit-message]
@@ -109,15 +110,46 @@ build:
     set -euo pipefail
     terse=(-q --message-format=short)
     [ "${VERBOSE:-}" = 1 ] && terse=()
-    # Then the plain binary it made is held to knowing only the real engines
-    # (ruling 52: the mocks are test-support's; scripts/plain-engines-check.sh)
-    # and to having no destroy (ruling 94b: `session purge` is the
-    # session-destroy feature's; scripts/plain-destroy-check.sh).
+    just --justfile {{TOP}}/justfile _run build workspace cargo \
+        cargo build "${terse[@]}" --manifest-path {{TOP}}/Cargo.toml --workspace
+    exec just --justfile {{TOP}}/justfile plain-binary
+
+# The plain binary (a build of the workspace without its dev-dependencies,
+# as `build` makes it) is held to knowing only the real engines (ruling 52:
+# the mocks are test-support's; scripts/plain-engines-check.sh) and to
+# having no destroy (ruling 94b: scripts/plain-destroy-check.sh). No test
+# build can see either, since a test build unifies features. The
+# pre-commit gate after clippy (owner ruling 2026-11-18, evening), and the
+# end of `build`.
+[private]
+[group('hook')]
+[doc("pre-commit: the plain binary knows only the real engines and no destroy")]
+[no-exit-message]
+plain-binary:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    terse=(-q --message-format=short)
+    [ "${VERBOSE:-}" = 1 ] && terse=()
     target=${CARGO_TARGET_DIR:-{{TOP}}/target}
-    exec just --justfile {{TOP}}/justfile _run build workspace cargo \
+    exec just --justfile {{TOP}}/justfile _run plain-binary workspace plain-binary \
         bash -c 'cargo build "${@:3}" --manifest-path "$1/Cargo.toml" --workspace &&
             "$1/scripts/plain-engines-check.sh" "$2/debug/ctxloom" &&
-            "$1/scripts/plain-destroy-check.sh" "$2/debug/ctxloom"' build {{TOP}} "$target" "${terse[@]}"
+            "$1/scripts/plain-destroy-check.sh" "$2/debug/ctxloom"' plain-binary {{TOP}} "$target" "${terse[@]}"
+
+# `plain-binary`'s extract: a build's diagnostics as `cargo`'s are; else
+# the failing check's own words, its summary first (each check is silent
+# on a pass).
+[private]
+[positional-arguments]
+_extract-plain-binary log rc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if grep -qE '^[^ ]+:[0-9]+:[0-9]+: error|^error(\[[A-Z0-9]+\])?: ' "$1"; then
+        exec just --justfile '{{TOP}}/justfile' _extract-cargo "$1" "$2"
+    fi
+    # A build's warnings are not why it failed: the check's words are.
+    said=$(grep -vE '^[^ ]+:[0-9]+:[0-9]+: warning|^warning: ' "$1" || true)
+    if [ -n "$said" ]; then echo "$said"; else echo "failed (exit $2)"; fi
 
 # Install the Rust ctxloom beside the Go one (owner ruling 164): the PLAIN
 # binary (no test-support, no session-destroy; held to that by the same two

@@ -88,6 +88,10 @@ pub enum SessionRejection {
     SessionKept { harp: String },
     /// A removal within the transcript retention (O2); `detail` says how.
     WithinRetention { harp: String, detail: String },
+    /// A removal of a session whose held lock keeps its directory from
+    /// being moved (D18, Windows), `--even-if-live` or not; `lock` is its
+    /// path.
+    SessionLockHeld { harp: String, lock: String },
     /// A removal a spared or skipped worktree keeps from being whole (O2).
     KeepsSession {
         harp: String,
@@ -135,6 +139,7 @@ impl Diagnostic for SessionRejection {
             SessionRejection::SessionKept { .. } => code!("session-kept"),
             SessionRejection::WithinRetention { .. } => code!("within-retention"),
             SessionRejection::KeepsSession { .. } => code!("keeps-session"),
+            SessionRejection::SessionLockHeld { .. } => code!("session-lock-held"),
         }
     }
 
@@ -155,6 +160,10 @@ impl Diagnostic for SessionRejection {
             SessionRejection::SessionLive { harp, reason } => vec![
                 ("harp", harp.as_str().into()),
                 ("reason", reason.as_str().into()),
+            ],
+            SessionRejection::SessionLockHeld { harp, lock } => vec![
+                ("harp", harp.as_str().into()),
+                ("lock", lock.as_str().into()),
             ],
             SessionRejection::WithinRetention { harp, detail } => vec![
                 ("harp", harp.as_str().into()),
@@ -321,6 +330,10 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
             harp: harp(),
             spared: 1,
             skipped: 0,
+        }),
+        Box::new(SessionRejection::SessionLockHeld {
+            harp: harp(),
+            lock: "C:/work/.ctxloom/sessions/amber-swift-owl/session.lock".to_string(),
         }),
     ]
 }

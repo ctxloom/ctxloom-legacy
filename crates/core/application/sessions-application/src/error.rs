@@ -152,6 +152,10 @@ pub enum Refusal {
     /// The session ended within the transcript retention, or nothing proves
     /// when it ended; `detail` says which.
     Retained { harp: String, detail: String },
+    /// The session's lock `lock` is held, and the platform cannot move a
+    /// directory holding an open file (D18, Windows): refused whatever
+    /// `--even-if-live` says.
+    LockHeld { harp: String, lock: String },
 }
 
 impl fmt::Display for Refusal {
@@ -166,6 +170,7 @@ impl Diagnostic for Refusal {
             Refusal::NotProvenDead { .. } => code!("refused-not-dead"),
             Refusal::Kept { .. } => code!("refused-kept"),
             Refusal::Retained { .. } => code!("refused-retained"),
+            Refusal::LockHeld { .. } => code!("refused-lock-held"),
         }
     }
 
@@ -180,6 +185,10 @@ impl Diagnostic for Refusal {
             Refusal::Retained { harp, detail } => vec![
                 ("harp", harp.as_str().into()),
                 ("detail", detail.as_str().into()),
+            ],
+            Refusal::LockHeld { harp, lock } => vec![
+                ("harp", harp.as_str().into()),
+                ("lock", lock.as_str().into()),
             ],
         }
     }
@@ -313,6 +322,10 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(Refusal::Retained {
             harp: harp(),
             detail: "it ended an hour ago".to_string(),
+        }),
+        Box::new(Refusal::LockHeld {
+            harp: harp(),
+            lock: "C:/work/.ctxloom/sessions/amber-swift-owl/session.lock".to_string(),
         }),
         Box::new(RemovedNothing {
             command: "ctxloom session remove amber-swift-owl --yes".to_string(),

@@ -175,7 +175,9 @@ U3, protos.md §1.1) serves `bundle create`, `fragment|command create
 <bundle>#<kind>s/<id>` and `edit`, `skill create`, `config set`, `mcp
 server set|edit` (`UpdateMcpServer`: a mask names a set's fields, a field
 named and given empty cleared; no mask is the whole server through the
-editor, the preview's Edit need; `--header`, `--tag` and `--served-by` are
+editor, the preview's Edit need; a missing server is created only when
+`allow_missing`, which the CLI always sends, else refused
+`LibraryMcpNotFound`, AIP-134; `--header`, `--tag` and `--served-by` are
 gone, owner ruling, hard migrate; a server's notes and installation are
 in its one file, owner T27, so a set of them beside a runtime field is
 one file, one call) and the
@@ -311,9 +313,12 @@ evidence, refused `library-tree-slot-not-due` under 7 and
 `purge:{tree}:{request id}`), the slot removed whole, its `PurgeSlot` step
 recorded done, which drops it from the state. Under test-support the
 daemon's clock is moved on by `CTXLOOM_TEST_CLOCK_OFFSET` whole days,
-passed on to a daemon a command starts. The rename's directory is not synced
-(the file-system seam gives no way to), so a power loss may undo it,
-leaving the intent owed. An
+passed on to a daemon a command starts. Each rename's directories are
+synced after it, the target's then the source's when it is another, and
+a purged slot's trash directory after the purge (owner ruling
+2026-11-18, evening; angzarr-platform's `Fs::sync_dir`: fsync on unix,
+nothing on Windows), so a power loss cannot undo a step the record holds
+done; a sync that fails fails the step, `content-fs-sync-dir`. An
 observation that sees exactly a pending intent's ids is that step done
 (`StepApplied`), so a daemon killed after the operation is recorded
 once, as ctxloom's; a step done lays its paths over the record's dirty
@@ -542,7 +547,15 @@ ended). A hook fact
 redelivered after it finds no session and records nothing. It is refused, as
 before, for a session whose lock does not prove it ended (held, or none;
 the daemon reads the lock) unless `--even-if-live` (the one override), for
-a kept one, and within the transcript retention: its project's
+a held lock on Windows even with it (owner ruling 2026-11-18, D18: a
+directory holding an open file cannot be renamed into the trash there; the
+daemon, `Api::on_os` given the wiring's `os_name`, names the held lock in
+the evidence, `RemovalEvidence.blocking_lock`, by
+`daemon_api::destroy::blocking_lock`, and the domain refuses it up front,
+`sessions-session-lock-held`, said as `sessions-application-refused-lock-held`
+with its `-fix`, end the session first; the wire's
+`RemovalRefusal.Reason.LOCK_HELD`, its `detail` the lock's path; unix is
+unchanged), for a kept one, and within the transcript retention: its project's
 `session_transcript_retention`, read from its REGISTERED root (30 days
 unless configured; one that is no age is `AgeInvalid`, a configuration that
 does not read `ConfigUnreadable`, a sweep's too, the flag or not). A refused removal is the typed `RemovalRefusal`
@@ -1495,9 +1508,11 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `5cdb1906` on angzarr-router `b332189a`;
 - angzarr-build `d0b63bcb` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `efbc2f6e`;
-- taskloom's crates `9ffcf92c` and ctxloom-lib's `ae7380e2` (each on its
-  main), built on the same line,
+- angzarr-platform `a930373b` (its branch `feat/sync-dir`: `Fs::sync_dir`
+  and the `Recording` fake);
+- taskloom's crates `9389e577` and ctxloom-lib's `6a21bd0e` (each on its
+  branch `feat/platform-sync-dir`: its main, moved onto platform
+  `a930373b`), built on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
@@ -3460,9 +3475,15 @@ of each agent that has one (`Doctor::reporting_losses`, the library's
 loses something the old did not is the SWAP PREVIEW without `--yes`
 (`Library::agent_edit`, `AgentWritten::Preview`, `SwapPreview`; its json
 `UpdateAgentResponse`: `applied: false`, `from`, `to`, `not_carried`,
-`apply_command`, OD-40; the edit
-judged as the write would judge it first; nothing written; exit 1 under
-`--detailed-exitcode`). An edit that changes no engine, or loses nothing,
+`apply_command`, OD-40, and a Confirm need, `needs`; the edit
+judged as the write would judge it first; nothing written). At a terminal
+the need is asked (owner ruling 2026-11-18, evening, as a removal's is;
+its question `library-api::served_writes::swap_confirm`, a draft in the
+10b spec's texts.md §3b) and a yes applies it with the answer and the
+preview's etag; off a terminal or on a no it is the preview, printed
+(exit 1 under `--detailed-exitcode`); an apply refused stale
+(`library-tree-plan-stale`) is previewed again and ends in the refusal.
+An edit that changes no engine, or loses nothing,
 writes as ever, and `agent create` never previews. Only hooks are judged:
 a kind an engine does not carry in a session at all is not reported yet.
 opencode's losses are the unified events its plugin has no trigger for
@@ -4640,9 +4661,9 @@ procfs, `_tests <package>` while the lock is held, and no `flock`.
 ported there (`gates/MIGRATING.md`).
 
 lefthook runs the gates one at a time, stopping at the first failure, and
-shows each gate's pass line and any failure's extract. Gates 1 to 5 run in
+shows each gate's pass line and any failure's extract. Gates 1 to 6 run in
 pre-commit (the private recipes `fmt-staged`, `secrets-scan-staged`,
-`test-commit`, ...; `just --list` hides them, they run by name). Mutation (6)
+`plain-binary`, `test-commit`, ...; `just --list` hides them, they run by name). Mutation (7)
 runs in no git hook and is not run by hand: the `closeout` skill runs `just
 closeout`, whose `mutants-batch` mutation-tests the whole batch (base to HEAD,
 the base defaulting to the merge-base with `main`) in a throwaway worktree, in
@@ -4677,8 +4698,15 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    secret in a test ends its line with `gitleaks:allow`.
 3. **clippy**: `just lint`, including the core's purity rules
    (`crates/core/clippy.toml`).
-4. **deps**: `just lint-deps`, cargo-deny (`deny.toml`).
-5. **tests**: `just test-staged` runs the changed crates' OWN tests in the
+4. **plain binary**: `just plain-binary` (owner ruling 2026-11-18,
+   evening) builds the workspace without its dev-dependencies, as `just
+   build` does, and holds the binary it made to the two plain-build checks,
+   `scripts/plain-engines-check.sh` (the real engines alone, ruling 52) and
+   `scripts/plain-destroy-check.sh` (no destroy, ruling 94b); one `ok
+   plain-binary` line, its log `target/logs/plain-binary.log`. `just build`
+   ends with it.
+5. **deps**: `just lint-deps`, cargo-deny (`deny.toml`).
+6. **tests**: `just test-staged` runs the changed crates' OWN tests in the
    staged tree (HEAD plus the staged diff, a sibling worktree of the
    checkout), no dependent's (owner ruling of 2026-11-13, fast hooks,
    acceptance at landing): a library's change does not select the binary
@@ -4693,7 +4721,7 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    2026-11-13); a red scenario the branch added, or a green one it broke, is
    refused at landing by the ratchet of `land-ratchet` and
    `closeout-ratchet` (below).
-6. **mutants** (no hook; at close-out, `just mutants-batch`): `mutants-staged` mutation-tests the staged diff
+7. **mutants** (no hook; at close-out, `just mutants-batch`): `mutants-staged` mutation-tests the staged diff
    (`cargo mutants --in-diff`), holding new logic to its tier: every
    hand-written tier (domain, read models, ports, application and adapters)
    90% or more; the composition root is listed but not held (the justfile's
