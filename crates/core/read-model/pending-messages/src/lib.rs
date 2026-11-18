@@ -48,6 +48,9 @@ struct Inbound {
     sent: Vec<PendingMessage>,
     /// Closed: nothing it was sent is owed any more.
     closed: bool,
+    /// The ids a primary's hook delivered (the terminal wake): carried by
+    /// no run's turn, delivered all the same.
+    delivered: BTreeSet<String>,
 }
 
 /// What one run stream says: its session, and the message ids its turns
@@ -152,6 +155,13 @@ impl Pending {
             SessionEvent::SessionClosed(_) => {
                 self.sessions.entry(session.to_string()).or_default().closed = true;
             }
+            SessionEvent::MessagesDelivered(delivered) => {
+                self.sessions
+                    .entry(session.to_string())
+                    .or_default()
+                    .delivered
+                    .extend(delivered.message_ids);
+            }
             _ => {}
         }
     }
@@ -175,7 +185,10 @@ impl Pending {
         inbound
             .sent
             .iter()
-            .filter(|message| !self.carried(session, &message.message_id))
+            .filter(|message| {
+                !self.carried(session, &message.message_id)
+                    && !inbound.delivered.contains(&message.message_id)
+            })
             .cloned()
             .collect()
     }

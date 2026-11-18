@@ -7,7 +7,10 @@ use angzarr_embedded::testing::block_on_ready as ready;
 use angzarr_embedded::v1::{event_page, Cover, EventBook, EventPage, Uuid};
 use angzarr_embedded::{Any, Payload, ProjectorHandler};
 use runs::{run_root, RunEnqueued, RunEvent, RunMode, TurnQueued, TurnUrgency, RUN_DOMAIN};
-use sessions::{MessageSent, SessionClosed, SessionEvent, SessionRef, Urgency, SESSION_DOMAIN};
+use sessions::{
+    MessageSent, MessagesDelivered, SessionClosed, SessionEvent, SessionRef, Urgency,
+    SESSION_DOMAIN,
+};
 
 use crate::{catch_up, Pending, PendingMessage, PendingMessages};
 
@@ -121,6 +124,21 @@ fn a_turn_queued_with_a_message_consumes_it() {
         .unwrap();
     pending.project(&on_run(1, 1, 0, &[&["m2"]])).unwrap();
     assert_eq!(pending.pending(&session(1).1), vec![m1]);
+}
+
+// The terminal wake: a primary's hook delivered messages on its own stream
+// (no run's turn carried them); those, and only those, are not pending.
+#[test]
+fn a_delivery_on_the_session_consumes_the_messages_it_names() {
+    let (m1, m2) = (message("m1", Urgency::Inform), message("m2", Urgency::Wake));
+    let mut pending = Pending::new();
+    let delivered = SessionEvent::MessagesDelivered(MessagesDelivered {
+        message_ids: vec!["m1".to_string()],
+    });
+    pending
+        .project(&on_session(1, 0, vec![sent(&m1), sent(&m2), delivered]))
+        .unwrap();
+    assert_eq!(pending.pending(&session(1).1), vec![m2]);
 }
 
 // S-d, the race: the run's TurnQueued is caught up before the MessageSent it

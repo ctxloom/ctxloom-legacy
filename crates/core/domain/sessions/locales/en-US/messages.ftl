@@ -23,6 +23,8 @@ sessions-delegation-limit-fix = close a child first, or raise the limit
 sessions-untrusted-target = { $root } is another repository that has not passed the trust check
 sessions-untrusted-target-fix = review and trust that repository's configuration first
 sessions-urgency-unsupported = the session's engine cannot take a message of urgency { $urgency }
+# DRAFT (the terminal wake, 2026-11-18).
+sessions-wake-outstanding = a wake ({ $nonce }) is already outstanding: one at a time
 sessions-session-unknown = there is no session named { $harp }
 sessions-session-unknown-fix = list the sessions with `ctxloom session list`
 sessions-session-destroyed = session { $harp } was removed, and cannot be resumed

@@ -208,6 +208,8 @@ fn every_field_of_a_session() -> v1::Session {
                 text: "its last turn ran into its rate limit".to_string(),
             }),
         }),
+        wakeable: true,
+        wake: "not answered".to_string(),
     }
 }
 

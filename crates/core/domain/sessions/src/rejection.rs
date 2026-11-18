@@ -53,6 +53,8 @@ pub enum SessionRejection {
     UntrustedTarget { root: String },
     /// An urgency the recipient's engine cannot honour (S-c).
     UrgencyUnsupported { urgency: String },
+    /// A wake while another is outstanding (the terminal wake).
+    WakeOutstanding { nonce: String },
     /// A resume of a name no session holds (owner ruling 115).
     SessionUnknown { harp: String },
     /// A resume of a session `session remove` destroyed.
@@ -128,6 +130,7 @@ impl Diagnostic for SessionRejection {
             SessionRejection::DelegationLimit { .. } => code!("delegation-limit"),
             SessionRejection::UntrustedTarget { .. } => code!("untrusted-target"),
             SessionRejection::UrgencyUnsupported { .. } => code!("urgency-unsupported"),
+            SessionRejection::WakeOutstanding { .. } => code!("wake-outstanding"),
             SessionRejection::SessionUnknown { .. } => code!("session-unknown"),
             SessionRejection::SessionDestroyed { .. } => code!("session-destroyed"),
             SessionRejection::SessionRunning { .. } => code!("session-running"),
@@ -188,6 +191,7 @@ impl Diagnostic for SessionRejection {
             SessionRejection::UrgencyUnsupported { urgency } => {
                 vec![("urgency", urgency.as_str().into())]
             }
+            SessionRejection::WakeOutstanding { nonce } => vec![("nonce", nonce.as_str().into())],
             SessionRejection::EngineMismatch {
                 harp,
                 engine,
@@ -297,6 +301,9 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(SessionRejection::UrgencyUnsupported {
             urgency: "steer".to_string(),
+        }),
+        Box::new(SessionRejection::WakeOutstanding {
+            nonce: "0123456789abcdef".to_string(),
         }),
         Box::new(SessionRejection::SessionUnknown { harp: harp() }),
         Box::new(SessionRejection::SessionDestroyed { harp: harp() }),
