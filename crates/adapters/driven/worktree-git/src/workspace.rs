@@ -489,7 +489,6 @@ impl Workspaces for GitWorkspaces {
         let is =
             |path: &Path, kind: Kind| self.fs.metadata(path).is_ok_and(|meta| meta.kind == kind);
         Ok(is(&self.sessions.join(harp), Kind::Dir)
-            || is(&self.sessions.join(format!("{harp}.lock")), Kind::File)
             || self
                 .worktrees
                 .as_ref()

@@ -99,7 +99,7 @@ fn a_sessions_checkout_under_the_account_home_is_found_and_spared() {
     let project = root.root().join("work/calm");
     fixtures::mkdirs(project.join(".ctxloom/sessions/amber-swift-owl"));
     fixtures::put_mode(
-        project.join(".ctxloom/sessions/amber-swift-owl.lock"),
+        project.join(".ctxloom/sessions/amber-swift-owl/session.lock"),
         "",
         0o644,
     );

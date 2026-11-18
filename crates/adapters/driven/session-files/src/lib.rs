@@ -1,7 +1,7 @@
 //! A session's files, through the file-system seam: its directory,
 //! `<project>/.ctxloom/sessions/<harp>/` (the session home and the engine's
-//! native history; no transcript file, owner ruling 87a), and its lock
-//! beside it.
+//! native history; no transcript file, owner ruling 87a), its lock inside
+//! it (`session.lock`, step 10 U9).
 //!
 //! - the native history's last activity is its newest file mtime: not a
 //!   directory's own, not a symlink's (Go: `TranscriptActivity`);
@@ -9,8 +9,8 @@
 //!   ephemeral ones (the engine homes, the locks, the worktrees, the
 //!   scratch): a purge runs no git, so a worktree is untouched by
 //!   construction, not by a filter applied after;
-//! - a removal takes the session's directory whole, and its lock (owner
-//!   ruling 94b), never following a link out of it.
+//! - a removal takes the session's directory whole, its lock inside it
+//!   (owner ruling 94b), never following a link out of it.
 
 mod error;
 
@@ -62,12 +62,10 @@ impl SessionDirs {
         self.project.join(".ctxloom").join("sessions").join(harp)
     }
 
-    /// `<project>/.ctxloom/sessions/<harp>.lock`, beside the directory.
+    /// `<project>/.ctxloom/sessions/<harp>/session.lock`, inside the
+    /// directory ([`session_ports::lock_path`]).
     pub fn lock_path(&self, harp: &str) -> PathBuf {
-        self.project
-            .join(".ctxloom")
-            .join("sessions")
-            .join(format!("{harp}.lock"))
+        session_ports::lock_path(&self.dir(harp))
     }
 }
 
@@ -119,7 +117,7 @@ impl SessionDirs {
             match entry.kind {
                 Kind::Dir if top_level && EPHEMERAL.contains(&rel.as_str()) => {}
                 Kind::Dir => self.files_under(&path, root, found)?,
-                Kind::File if top_level && rel == SIDECAR => {}
+                Kind::File if top_level && (rel == SIDECAR || rel == session_ports::LOCK_FILE) => {}
                 Kind::File => {
                     let bytes = self
                         .fs
@@ -166,12 +164,6 @@ impl SessionFiles for SessionDirs {
             self.fs
                 .remove_dir_all(&root)
                 .map_err(|e| Report::of(&FilesError::io("remove", &root, &e)))?;
-        }
-        let lock = self.lock_path(harp);
-        match self.fs.remove_file(&lock) {
-            Ok(()) => {}
-            Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(e) => return Err(Report::of(&FilesError::io("remove", &lock, &e))),
         }
         Ok(freed)
     }

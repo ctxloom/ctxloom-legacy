@@ -44,6 +44,26 @@ pub trait ProjectStores {
     ) -> impl Future<Output = Result<Option<&Self::Store>, StoreError>> + Send;
 }
 
+/// The file name of a session's lock, inside its directory (step 10 U9,
+/// T28): the directory and its lock are renamed as one.
+pub const LOCK_FILE: &str = "session.lock";
+
+/// Where a session's lock is: `<session dir>/session.lock`, the one place
+/// its path is formed (every adapter that takes, probes or names it asks
+/// here).
+pub fn lock_path(session_dir: &std::path::Path) -> std::path::PathBuf {
+    session_dir.join(LOCK_FILE)
+}
+
+/// The project a session's lock (as [`lock_path`] forms it under
+/// `<project>/.ctxloom/sessions/<harp>/`) is of; none for a path too short
+/// to be one.
+pub fn lock_project(lock: &std::path::Path) -> Option<&std::path::Path> {
+    lock.ancestors()
+        .nth(4)
+        .filter(|dir| !dir.as_os_str().is_empty())
+}
+
 /// What a session's liveness lock says: the lock and nothing else, never the
 /// session's end stamp (Go: `sessionlock.Inspect`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

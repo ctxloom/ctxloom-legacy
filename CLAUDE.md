@@ -277,7 +277,9 @@ what was committed before it was asked; `transcript show` is one too
 `transcripts/transcript.jsonl`, `records/*.jsonl`, position file or
 `metadata.json`). A session's directory, `.ctxloom/sessions/<harp>/` in the
 project, holds what its engine needs (the session home, its native
-history), and `<harp>.lock` beside it is held by its run for its life. Its
+history), and its lock INSIDE it, `<harp>/session.lock` (step 10 U9, T28:
+the directory and its lock move as one; `session_ports::lock_path`, the one
+place the path is formed), is held by its run for its life. Its
 scratch checkouts are NOT there (owner ruling 2026-11-12, Q1): they are under
 ctxloom's home, outside the project,
 `<home>/.ctxloom/worktrees/<project-id>/<harp>/<agent>`
@@ -1039,7 +1041,7 @@ a terminal run's is its FRONTEND's instead (`runs/<request id>.lock`, taken
 before it asked; U5's start-report race, above);
 its file is removed as it is let go, so only a dead holder's is ever left (a
 refused run leaves nothing in the project). The SESSION's lock,
-`<project>/.ctxloom/sessions/<harp>.lock`, is taken once the session is
+`<project>/.ctxloom/sessions/<harp>/session.lock`, is taken once the session is
 minted and held until after its engine exits (an
 interactive session's by its frontend, from before its TUI starts until its
 exit is reported, U5), so a live session reads live (and `session remove` refuses it without
@@ -1058,7 +1060,7 @@ the run's life, as the daemon does for a child it hosts, is gone (T3, T18);
 a primary removes its file once its runner started, which proves nothing.
 A child the daemon hosts holds its SESSION's lock too, for its life
 (slice 4 U6, the owner's ruling on U4: `ChildHomes::hold_session`, the
-platform's file lock at `<project>/.ctxloom/sessions/<harp>.lock`, its
+platform's file lock at `<project>/.ctxloom/sessions/<harp>/session.lock`, its
 directory made; one another holds starts nothing, tried again later), so
 another launcher's sweep (a hosted one-shot's `Launcher::step`, in the
 daemon's own process) never takes a live hosted child for lost where a

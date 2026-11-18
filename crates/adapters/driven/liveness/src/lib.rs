@@ -47,12 +47,11 @@ impl LockFiles {
         }
     }
 
-    /// Where `harp`'s lock is: `<project>/.ctxloom/sessions/<harp>.lock`.
+    /// Where `harp`'s lock is: inside its directory,
+    /// `<project>/.ctxloom/sessions/<harp>/session.lock`
+    /// ([`session_ports::lock_path`]).
     pub fn path(&self, harp: &str) -> PathBuf {
-        self.project
-            .join(".ctxloom")
-            .join("sessions")
-            .join(format!("{harp}.lock"))
+        session_ports::lock_path(&self.project.join(".ctxloom").join("sessions").join(harp))
     }
 }
 

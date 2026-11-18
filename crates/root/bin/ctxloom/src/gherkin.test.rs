@@ -20,16 +20,10 @@ use crate::tests::files;
 
 const DAY: u64 = 86_400;
 
-/// A session's lock file under `sessions`: inside its directory
-/// (`<harp>/session.lock`, step 10 T28) where the seed put it there, else
-/// beside it (`<harp>.lock`), where a ctxloom from before T28 puts it.
+/// A session's lock file under `sessions`: inside its directory,
+/// `<harp>/session.lock` (step 10 U9, T28).
 pub(crate) fn session_lock(sessions: &Path, harp: &str) -> PathBuf {
-    let inside = sessions.join(harp).join("session.lock");
-    if files::exists(&inside) {
-        inside
-    } else {
-        sessions.join(format!("{harp}.lock"))
-    }
+    sessions.join(harp).join("session.lock")
 }
 
 /// The uncommitted work a reaper must never destroy (Go: `j001300WIPMarker`).

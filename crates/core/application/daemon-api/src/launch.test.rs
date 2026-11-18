@@ -26,7 +26,7 @@ fn launch(kind: LaunchKind, stdio: Stdio) -> Launch {
         incarnation: 3,
     };
     launch.session_home = "/work/.ctxloom/sessions/amber-swift-owl/home".to_string();
-    launch.session_lock = "/work/.ctxloom/sessions/amber-swift-owl.lock".to_string();
+    launch.session_lock = "/work/.ctxloom/sessions/amber-swift-owl/session.lock".to_string();
     launch
 }
 

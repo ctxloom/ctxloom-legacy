@@ -50,7 +50,7 @@ fn request(kind: LaunchKind) -> LaunchRequest {
         effort: String::new(),
         settings: Default::default(),
         child_permissions: Default::default(),
-        session_lock: "/work/proj/.ctxloom/sessions/amber-swift-owl.lock".to_string(),
+        session_lock: "/work/proj/.ctxloom/sessions/amber-swift-owl/session.lock".to_string(),
     }
 }
 

@@ -128,7 +128,7 @@ impl ChildHomes for NoHomes {
 
     fn hold_session(&self, project_dir: &str, harp: &str) -> Result<run_ports::HeldLock, String> {
         Ok(run_ports::HeldLock::new(
-            format!("{project_dir}/.ctxloom/sessions/{harp}.lock"),
+            format!("{project_dir}/.ctxloom/sessions/{harp}/session.lock"),
             (),
         ))
     }

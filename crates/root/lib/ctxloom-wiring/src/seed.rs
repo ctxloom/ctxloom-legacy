@@ -367,7 +367,7 @@ impl Wiring {
             write(&dir.join(rel), "authored\n")?;
         }
         if seed.lock_free {
-            let lock = sessions_dir.join(format!("{}.lock", seed.harp));
+            let lock = session_ports::lock_path(&sessions_dir.join(&seed.harp));
             if let Some(parent) = lock.parent() {
                 self.fs
                     .create_dir_all(parent, Mode::from_bits(0o755))

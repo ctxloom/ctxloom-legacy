@@ -1324,7 +1324,7 @@ fn alices_session_with_child(w: &mut World, owner: String, child: String) {
         .common
         .project
         .dir()
-        .join(format!(".ctxloom/sessions/{owner}.lock"));
+        .join(format!(".ctxloom/sessions/{owner}/session.lock"));
     let release = dir.join("release");
     let holder = dir.join("holds-lock");
     files::put_program(&holder, &holds_lock());

@@ -353,14 +353,16 @@ fn a_session_is_known_by_its_directory() {
     assert!(!ws.session_known("../escape").unwrap());
 }
 
-// A session whose directory was never written (one that wrote nothing in
-// it, as the test seed's) is still known by the lock it left beside it: the
-// file its state is read from.
+// A session whose directory holds nothing but its lock (one that wrote
+// nothing else in it, as the test seed's) is known by it.
 #[test]
 fn a_session_is_known_by_its_lock_alone() {
     let f = Fixture::new();
-    mkdirs(f.sessions());
-    put(f.sessions().join("amber-swift-owl.lock"), "");
+    mkdirs(f.sessions().join("amber-swift-owl"));
+    put(
+        f.sessions().join("amber-swift-owl").join("session.lock"),
+        "",
+    );
     let ws = f.adapter();
     assert!(ws.session_known("amber-swift-owl").unwrap());
     assert!(!ws.session_known("nobody").unwrap());

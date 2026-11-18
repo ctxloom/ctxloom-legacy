@@ -101,16 +101,32 @@ fn at(seconds: i64) -> Option<Timestamp> {
 
 // ------------------------------------------------------------------- places
 
-// The lock is beside the session directory, never inside it.
+// Step 10 U9 (T28): the lock is inside the session directory.
 #[test]
-fn the_lock_is_beside_the_session_directory() {
+fn the_lock_is_inside_the_session_directory() {
     let (_, dirs) = dirs();
     assert_eq!(
         dirs.lock_path(HARP),
         Path::new(&host_path(
-            "/work/proj/.ctxloom/sessions/amber-swift-owl.lock"
+            "/work/proj/.ctxloom/sessions/amber-swift-owl/session.lock"
         ))
     );
+}
+
+// The lock inside the directory is the run's, never a file a person wrote:
+// the survey does not name it.
+#[test]
+fn the_survey_does_not_name_the_lock() {
+    let (fs, mut dirs) = dirs();
+    write(&fs, &dirs, "native/history.jsonl", "abc");
+    write(&fs, &dirs, "session.lock", "");
+    let rels: Vec<String> = dirs
+        .survey(HARP)
+        .unwrap()
+        .into_iter()
+        .map(|item| item.rel)
+        .collect();
+    assert_eq!(rels, vec!["native/history.jsonl".to_string()]);
 }
 
 // ----------------------------------------------------------- last activity
@@ -683,15 +699,4 @@ fn a_destroy_removes_the_whole_directory_and_its_lock() {
         0,
         "again: nothing there"
     );
-}
-
-// Ruling 94b: a lock that is not there is no failure of a destroy; one that
-// cannot be removed (a directory in its place) is.
-#[test]
-fn a_lock_that_cannot_be_removed_is_the_destroys_error() {
-    let (fs, mut dirs) = dirs();
-    write(&fs, &dirs, "home/settings.json", "{}");
-    fs.create_dir_all(&dirs.lock_path(HARP).join("inside"), Mode::from_bits(0o755))
-        .unwrap();
-    assert!(dirs.destroy_session(HARP).is_err());
 }

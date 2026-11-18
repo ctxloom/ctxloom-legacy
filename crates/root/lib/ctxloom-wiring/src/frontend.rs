@@ -646,13 +646,10 @@ async fn terminal(
     done
 }
 
-/// The project whose session the launch's lock is of: three up from it
-/// (`<project>/.ctxloom/sessions/<harp>.lock`), else this command's.
+/// The project whose session the launch's lock is of
+/// ([`session_ports::lock_project`]), else this command's.
 fn project_of(launch: &Launch, wiring: &Wiring) -> PathBuf {
-    Path::new(&launch.session_lock)
-        .ancestors()
-        .nth(3)
-        .filter(|dir| !dir.as_os_str().is_empty())
+    session_ports::lock_project(Path::new(&launch.session_lock))
         .map_or_else(|| wiring.project_dir(), Path::to_path_buf)
 }
 

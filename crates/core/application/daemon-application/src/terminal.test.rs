@@ -160,7 +160,7 @@ fn frontended(told: Told, reports: Arc<Script>, lock: LockProbe) -> (Frontended,
         waits: Arc::clone(&clock) as Arc<dyn Waits>,
         locks: Arc::new(Locks(lock)),
         project_dir: "/work".to_string(),
-        lock_path: Arc::new(|harp: &str| format!("/work/.ctxloom/sessions/{harp}.lock")),
+        lock_path: Arc::new(|harp: &str| format!("/work/.ctxloom/sessions/{harp}/session.lock")),
         finder: Arc::new(Finder),
     };
     (frontended, clock)
@@ -212,7 +212,7 @@ fn test_the_launch_is_handed_over_with_the_session_lock_and_its_start_is_the_fro
         }
     );
     let mut expected = launch();
-    expected.session_lock = "/work/.ctxloom/sessions/amber-quiet-heron.lock".to_string();
+    expected.session_lock = "/work/.ctxloom/sessions/amber-quiet-heron/session.lock".to_string();
     assert_eq!(handed, expected);
 }
 

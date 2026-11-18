@@ -189,7 +189,8 @@ fn a_childs_session_lock_is_held_once_and_let_go_when_dropped() {
         project
             .join(".ctxloom")
             .join("sessions")
-            .join("kid.lock")
+            .join("kid")
+            .join("session.lock")
             .display()
             .to_string()
     );
