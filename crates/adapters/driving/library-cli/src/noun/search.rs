@@ -22,7 +22,7 @@ pub(crate) fn read(
         kind: kind as i32,
         local: flag(sub, "local"),
         remote: flag(sub, "remote"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::SearchLibraryRequest::default()
     };
     let read = cx.served.search_library("", request);

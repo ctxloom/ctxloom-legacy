@@ -54,6 +54,8 @@ pub struct Asked {
     pub request: OneShot,
     /// The request's id (AIP-155).
     pub request_id: String,
+    /// Which client asks (its kind, program and version stamp).
+    pub client: v1::Client,
 }
 
 /// The signal that asks the run to stop, once one is heard (its name:
@@ -79,22 +81,26 @@ pub fn create_request(asked: &Asked) -> v1::CreateRunRequest {
         command: request.run.saved_command.clone(),
         workspace: request.run.workspace.clone(),
         no_context: request.run.no_context,
-        cwd: asked.cwd.clone(),
         request_id: asked.request_id.clone(),
-        env: Some(v1::EnvVars {
-            vars: asked
-                .env
-                .iter()
-                .map(|(name, value)| v1::EnvVar {
-                    name: name.clone(),
-                    value: value.clone(),
-                })
-                .collect(),
-        }),
-        globals: Some(v1::Globals {
-            degraded: asked.flags.degraded,
-            no_companions: asked.flags.no_companions,
-            config_set: asked.flags.config_set.clone(),
+        caller: Some(v1::Caller {
+            cwd: asked.cwd.clone(),
+            env: Some(v1::EnvVars {
+                vars: asked
+                    .env
+                    .iter()
+                    .map(|(name, value)| v1::EnvVar {
+                        name: name.clone(),
+                        value: value.clone(),
+                    })
+                    .collect(),
+            }),
+            globals: Some(v1::Globals {
+                degraded: asked.flags.degraded,
+                no_companions: asked.flags.no_companions,
+                config_set: asked.flags.config_set.clone(),
+            }),
+            presentable: None,
+            client: Some(asked.client.clone()),
         }),
         ..v1::CreateRunRequest::default()
     }
@@ -103,7 +109,11 @@ pub fn create_request(asked: &Asked) -> v1::CreateRunRequest {
 /// The one-shot a `CreateRun` request asks for, and its flags: what the
 /// daemon plans (the inverse of [`create_request`]).
 pub fn asked_of(request: &v1::CreateRunRequest) -> (OneShot, Flags) {
-    let globals = request.globals.clone().unwrap_or_default();
+    let globals = request
+        .caller
+        .as_ref()
+        .and_then(|caller| caller.globals.clone())
+        .unwrap_or_default();
     let one_shot = OneShot {
         run: library_application::RunRequest {
             agent: request.agent.clone(),

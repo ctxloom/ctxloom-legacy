@@ -58,7 +58,7 @@ pub(crate) fn serve(
             stamp: stamp.to_string(),
         },
         &session,
-        crate::daemon::env_vars(env),
+        crate::daemon::caller_of(env, daemon_proto::v1::client::Kind::Mcp, stamp),
         Box::new(crate::daemon::request_id),
     )
     // `child_launch` names a child that names none, and holds its launch

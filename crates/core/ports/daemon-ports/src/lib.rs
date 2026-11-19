@@ -551,7 +551,7 @@ pub enum Called {
     /// Any other status: its gRPC code and the text it carried.
     Failed { code: i32, detail: String },
     /// A failure the daemon said in a diagnostic of its own (step 10a U2:
-    /// `library-git-git-missing`, ...): its code and its args, as text,
+    /// `library-application-bundle-unreadable`, ...): its code and its args, as text,
     /// said in its own catalog's words.
     Diagnosed {
         code: String,

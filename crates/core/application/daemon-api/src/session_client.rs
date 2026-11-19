@@ -14,6 +14,7 @@
 
 use daemon_ports::{Called, DaemonApi, Daemons};
 use daemon_proto::v1;
+use daemon_proto::{Carries as _, CarriesMut as _};
 
 use crate::client::CallError;
 
@@ -28,8 +29,11 @@ const HOME_PARENT: &str = "users/me";
 pub struct Client<D> {
     daemons: D,
     project: Option<v1::ResolveProjectRequest>,
-    cwd: String,
-    env: v1::EnvVars,
+    /// What every request made on the user's behalf carries of this client
+    /// (owner, 2026-11-18): its working directory, its whole environment
+    /// (S7) and which client it is; a command's own flags and presentable
+    /// are the request's.
+    caller: v1::Caller,
     /// Mints a write's request id (S8), once per call, retry included.
     ids: RequestIds,
     /// Its directory's project has no identity yet (a session read names no
@@ -126,24 +130,31 @@ pub trait SessionRemovals {
 
 impl<D: Daemons> Client<D> {
     /// A client reaching its daemon through `daemons`, in `project` (what
-    /// it resolved of its working directory `cwd`; none outside a project),
-    /// with the caller's environment `env` (S7).
+    /// it resolved of its working directory; none outside a project), as
+    /// `caller` (its directory, its whole environment, which client it is).
     pub fn new(
         daemons: D,
         project: Option<v1::ResolveProjectRequest>,
-        cwd: String,
-        env: v1::EnvVars,
+        caller: v1::Caller,
     ) -> Client<D> {
         Client {
             daemons,
             project,
-            cwd,
-            env,
+            caller,
             ids: Box::new(String::new),
             unnamed: false,
             retries: true,
             before_retry: None,
         }
+    }
+
+    /// `own`, a request's own caller (a command's flags and presentable),
+    /// with what this client says that it does not: its directory, its
+    /// environment and which client it is.
+    fn filled(&self, own: Option<&v1::Caller>) -> v1::Caller {
+        let mut filled = own.cloned().unwrap_or_default();
+        filled.fill_from(&self.caller);
+        filled
     }
 
     /// This client, its directory's project one with no identity yet (a
@@ -210,8 +221,7 @@ impl<D: Daemons> Client<D> {
                 // What the hook's other parts left of its one budget
                 // (`setup_application::remaining`).
                 budget: u32::try_from(budget).unwrap_or(u32::MAX),
-                env: Some(self.env.clone()),
-                cwd: self.cwd.clone(),
+                caller: Some(self.caller.clone()),
             };
             api.redeliver_context(request).await
         })
@@ -225,7 +235,6 @@ impl<D: Daemons> Client<D> {
         };
         let request = v1::GetDaemonRequest {
             name: "daemon".to_string(),
-            env: Some(self.env.clone()),
         };
         // One that stopped answering since it was found serves no more.
         match api.get_daemon(request).await {
@@ -243,7 +252,6 @@ impl<D: Daemons> Client<D> {
         let request = v1::StopDaemonRequest {
             name: "daemon".to_string(),
             even_if_live,
-            env: Some(self.env.clone()),
             ..v1::StopDaemonRequest::default()
         };
         match api.stop_daemon(request).await {
@@ -268,7 +276,6 @@ impl<D: Daemons> Client<D> {
             name: "daemon".to_string(),
             drain: true,
             drain_timeout_seconds: within.map(|within| within.as_secs()),
-            env: Some(self.env.clone()),
             ..v1::StopDaemonRequest::default()
         };
         match api.stop_daemon(request).await {
@@ -306,7 +313,6 @@ impl<D: Daemons> Client<D> {
         }
         let request = v1::GetDaemonRequest {
             name: "daemon".to_string(),
-            env: Some(self.env.clone()),
         };
         self.on_daemon(async |api: &D::Api| api.get_daemon(request.clone()).await)
             .await?;
@@ -337,11 +343,11 @@ impl<D: Daemons> Client<D> {
     async fn project(&self, api: &D::Api) -> Result<String, Called> {
         let Some(request) = &self.project else {
             return Err(refused(&v1::ProjectUnknown {
-                cwd: self.cwd.clone(),
+                cwd: self.caller.cwd.clone(),
             }));
         };
         let request = v1::ResolveProjectRequest {
-            env: Some(self.env.clone()),
+            caller: Some(self.filled(request.caller())),
             ..request.clone()
         };
         Ok(api.resolve_project(request).await?.name)
@@ -383,7 +389,6 @@ impl<D: Daemons> SessionReads for Client<D> {
             let request = v1::ListSessionsRequest {
                 parent: self.parent(api, all).await?,
                 state: state as i32,
-                env: Some(self.env.clone()),
                 ..v1::ListSessionsRequest::default()
             };
             api.list_sessions(request).await
@@ -405,7 +410,6 @@ impl<D: Daemons> SessionReads for Client<D> {
                 parent: self.parent(api, all).await?,
                 words: words.clone(),
                 state: state as i32,
-                env: Some(self.env.clone()),
                 ..v1::SearchSessionsRequest::default()
             };
             api.search_sessions(request).await
@@ -417,7 +421,6 @@ impl<D: Daemons> SessionReads for Client<D> {
         self.on_daemon(async |api: &D::Api| {
             let request = v1::GetSessionRequest {
                 name: format!("{}/sessions/{harp}", self.project(api).await?),
-                env: Some(self.env.clone()),
             };
             api.get_session(request).await
         })
@@ -449,7 +452,7 @@ impl<D: Daemons> Client<D> {
             let request = v1::DeleteSessionRequest {
                 name: format!("{}/sessions/{harp}", self.project(api).await?),
                 request_id: request_id.clone(),
-                env: Some(self.env.clone()),
+                caller: Some(self.caller.clone()),
                 ..asked.clone()
             };
             match api.delete_session(request).await {
@@ -523,7 +526,7 @@ impl<D: Daemons> SessionRemovals for Client<D> {
                 project,
                 request_id: request_id.clone(),
                 validate_only: !yes,
-                env: Some(self.env.clone()),
+                caller: Some(self.caller.clone()),
                 ..v1::SweepSessionsRequest::default()
             };
             api.sweep_sessions(request).await
@@ -595,8 +598,7 @@ impl<D: Daemons> LibraryReads for Client<D> {
         self.on_daemon(async |api: &D::Api| {
             let request = v1::AssembleContextRequest {
                 name: self.library_parent_on(api).await?,
-                cwd: self.cwd.clone(),
-                env: Some(self.env.clone()),
+                caller: Some(self.filled(request.caller())),
                 ..request.clone()
             };
             api.assemble_context(request).await
@@ -608,8 +610,7 @@ impl<D: Daemons> LibraryReads for Client<D> {
         self.on_daemon(async |api: &D::Api| {
             let request = v1::CreateRunRequest {
                 parent: self.library_parent_on(api).await?,
-                cwd: self.cwd.clone(),
-                env: Some(self.env.clone()),
+                caller: Some(self.filled(request.caller())),
                 validate_only: true,
                 ..request.clone()
             };
@@ -632,12 +633,9 @@ macro_rules! library_read_requests {
             ) -> Result<crate::Read<v1::$response>, CallError> {
                 self.on_daemon(async |api: &D::Api| {
                     let parent = self.library_parent_on(api).await?;
-                    let request = v1::$request {
-                        $target: format!("{parent}{under}"),
-                        cwd: self.cwd.clone(),
-                        env: Some(self.env.clone()),
-                        ..request.clone()
-                    };
+                    let mut request = request.clone();
+                    request.$target = format!("{parent}{under}");
+                    request.fill_caller_from(&self.caller);
                     api.$method(request).await
                 })
                 .await
@@ -691,8 +689,7 @@ macro_rules! library_write_requests {
                 if request.request_id().is_empty() {
                     request.set_request_id((self.ids)());
                 }
-                request.set_env(self.env.clone());
-                request.set_cwd(self.cwd.clone());
+                request.fill_caller(&self.caller);
                 self.on_daemon(async |api: &D::Api| {
                     let parent = self.library_parent_on(api).await?;
                     let mut request = request.clone();

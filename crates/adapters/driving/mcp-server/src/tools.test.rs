@@ -311,7 +311,7 @@ async fn child_launch_launches_the_sessions_own_child() {
     let caller = daemon_api::Caller::new(
         daemons.clone(),
         "projects/calm-quiet-heron/sessions/amber-quiet-heron",
-        daemon_proto::v1::EnvVars::default(),
+        daemon_proto::v1::Caller::default(),
         Box::new(|| "id-1".to_string()),
     )
     .unwrap_or_else(|_| panic!("a name"))
@@ -362,7 +362,7 @@ async fn child_launch_with_a_project_launches_the_child_there() {
     let caller = daemon_api::Caller::new(
         daemons.clone(),
         "projects/calm-quiet-heron/sessions/amber-quiet-heron",
-        daemon_proto::v1::EnvVars::default(),
+        daemon_proto::v1::Caller::default(),
         Box::new(|| "id-1".to_string()),
     )
     .unwrap_or_else(|_| panic!("a name"))
@@ -436,7 +436,7 @@ fn session_caller(daemons: &Launching) -> daemon_api::Caller<Launching> {
     daemon_api::Caller::new(
         daemons.clone(),
         "projects/calm-quiet-heron/sessions/amber-quiet-heron",
-        daemon_proto::v1::EnvVars::default(),
+        daemon_proto::v1::Caller::default(),
         Box::new(|| "id-1".to_string()),
     )
     .unwrap_or_else(|_| panic!("a name"))

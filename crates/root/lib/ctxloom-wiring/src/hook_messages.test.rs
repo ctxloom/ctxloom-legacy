@@ -29,6 +29,7 @@ fn test_a_hooks_first_reach_trusts_the_discovery_file_and_a_second_probes() {
     );
     let daemons = HookDaemons::trusting(
         Arc::clone(wiring.env()),
+        "v1.2.3-abc",
         Instant::now() + Duration::from_secs(2),
         false,
     );

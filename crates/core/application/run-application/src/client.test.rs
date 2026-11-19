@@ -14,6 +14,7 @@ use library_application::{Flags, RunRequest};
 
 use super::*;
 use crate::one_shot::OneShot;
+use daemon_proto::Carries as _;
 
 const RUN: &str = "projects/calm-otter/runs/0195f0a4-7b1e-7000-8000-000000000001";
 const SESSION: &str = "projects/calm-otter/sessions/amber-quiet-heron";
@@ -46,6 +47,12 @@ fn asked() -> Asked {
             session: "old-heron".to_string(),
         },
         request_id: "r1".to_string(),
+        client: v1::Client {
+            kind: v1::client::Kind::Cli as i32,
+            program: "ctxloom".to_string(),
+            program_dir: "/opt/ctxloom".to_string(),
+            version: "v1.2.3-abc".to_string(),
+        },
     }
 }
 
@@ -54,10 +61,11 @@ fn test_a_create_request_carries_the_whole_line_and_reads_back_as_it() {
     let asked = asked();
     let request = create_request(&asked);
     assert_eq!(request.mode, v1::run::Mode::OneShot as i32);
-    assert_eq!(request.cwd, "/work");
+    assert_eq!(request.caller_cwd(), "/work");
+    assert_eq!(request.caller_client(), Some(&asked.client));
     assert_eq!(request.request_id, "r1");
     assert_eq!(request.profiles, ["review"]);
-    let env = request.env.clone().unwrap();
+    let env = request.caller_env().cloned().unwrap();
     assert_eq!(env.vars[0].name, "PATH");
     assert_eq!(env.vars[0].value, "/bin");
     let (one_shot, flags) = asked_of(&request);

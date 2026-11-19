@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use daemon_ports::{Called, CommandBook, DaemonApi, Daemons, Projection, Synced, Unreached};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use prost::Message;
 use sessions_proto::v1 as wire;
 
@@ -16,6 +17,21 @@ const ME: &str = "projects/calm-quiet-heron/sessions/amber-quiet-heron";
 const CHILD: &str = "projects/calm-quiet-heron/sessions/brisk-copper-moth";
 
 /// What one test's daemons saw.
+/// What the tests' caller's requests carry of it: its client, whose version
+/// the daemon admits.
+fn context() -> v1::Caller {
+    v1::Caller {
+        env: Some(v1::EnvVars::default()),
+        client: Some(v1::Client {
+            kind: v1::client::Kind::Mcp as i32,
+            program: "ctxloom".to_string(),
+            program_dir: "/opt/ctxloom".to_string(),
+            version: "v1.2.3-abc".to_string(),
+        }),
+        ..v1::Caller::default()
+    }
+}
+
 #[derive(Default)]
 struct Seen {
     /// Each call, `<daemon>:<what>`.
@@ -61,7 +77,7 @@ impl DaemonApi for Fake {
     // Only a launch into another project resolves one (step 8 Q1): the
     // directory's, `bold-api-pine`.
     async fn resolve_project(&self, r: v1::ResolveProjectRequest) -> Result<v1::Project, Called> {
-        self.ask(&format!("resolve {}", r.cwd));
+        self.ask(&format!("resolve {}", r.caller_cwd()));
         Ok(v1::Project {
             name: "projects/bold-api-pine".to_string(),
             uid: r.project_id,
@@ -90,7 +106,6 @@ impl DaemonApi for Fake {
 
     async fn get_session(&self, r: v1::GetSessionRequest) -> Result<v1::Session, Called> {
         self.ask(&format!("session {}", r.name));
-        assert!(r.env.is_some(), "the caller's environment is sent");
         // A `lone-` harp is a primary (no owner); a `lone-awake-` one is
         // watched by its ctxloom MCP server (the terminal wake).
         let primary = r.name.contains("/sessions/lone-");
@@ -127,7 +142,6 @@ impl DaemonApi for Fake {
         r: v1::ListSessionsRequest,
     ) -> Result<v1::ListSessionsResponse, Called> {
         self.ask(&format!("list {}", r.parent));
-        assert!(r.env.is_some(), "the caller's environment is sent");
         Ok(v1::ListSessionsResponse::default())
     }
 
@@ -142,7 +156,11 @@ impl DaemonApi for Fake {
         &self,
         r: v1::DeleteSessionRequest,
     ) -> Result<v1::DeleteSessionResponse, Called> {
-        assert!(r.env.is_some(), "the caller's environment is sent");
+        assert_eq!(
+            r.caller_client(),
+            context().client.as_ref(),
+            "the caller's working context is sent"
+        );
         self.ask(&format!(
             "delete {} {} {} {} {}",
             r.name,
@@ -158,7 +176,11 @@ impl DaemonApi for Fake {
         &self,
         r: v1::CreateFragmentRequest,
     ) -> Result<v1::CreateFragmentResponse, Called> {
-        assert!(r.env.is_some(), "the caller's environment is sent");
+        assert_eq!(
+            r.caller_client(),
+            context().client.as_ref(),
+            "the caller's working context is sent"
+        );
         self.ask(&format!(
             "fragment {} {} {} {}",
             r.parent, r.fragment_id, r.request_id, r.validate_only
@@ -184,7 +206,11 @@ impl DaemonApi for Fake {
             r.fragments.join(","),
             r.tags.join(",")
         ));
-        assert!(r.env.is_some(), "the caller's environment is sent");
+        assert_eq!(
+            r.caller_client(),
+            context().client.as_ref(),
+            "the caller's working context is sent"
+        );
         Ok(v1::AssembledContext {
             context: "CTX".to_string(),
             ..v1::AssembledContext::default()
@@ -204,7 +230,11 @@ impl DaemonApi for Fake {
                 false => format!(" into {}", r.project),
             }
         ));
-        assert!(r.env.is_some(), "the caller's environment is sent");
+        assert_eq!(
+            r.caller_client(),
+            context().client.as_ref(),
+            "the caller's working context is sent"
+        );
         // The engine asked, else the agent's: here, opencode.
         let engine = match r.engine.is_empty() {
             true => "opencode".to_string(),
@@ -382,7 +412,7 @@ impl World {
         Caller::user(
             self.reached(projecting),
             "projects/calm-quiet-heron",
-            v1::EnvVars::default(),
+            context(),
             Box::new(move || {
                 let mut n = ids.lock().unwrap();
                 *n += 1;
@@ -404,7 +434,7 @@ impl World {
                 closed: Arc::clone(&self.closed),
             },
             ME,
-            v1::EnvVars::default(),
+            context(),
             Box::new(move || {
                 let mut n = ids.lock().unwrap();
                 *n += 1;
@@ -459,7 +489,7 @@ fn a_caller_is_a_sessions_resource_name_and_nothing_else() {
             closed: Arc::default(),
         },
         "brisk-copper-moth",
-        v1::EnvVars::default(),
+        context(),
         Box::new(String::new),
     );
     let Err(CallError::Refused(rejection)) = refused else {
@@ -820,7 +850,10 @@ async fn a_launch_into_another_project_names_the_child_there_with_its_trust() {
     let caller = world.user(false).resolving(Arc::new(move |dir: &str| {
         seen.lock().unwrap().push(dir.to_string());
         Ok(v1::ResolveProjectRequest {
-            cwd: "/work/api".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/api".to_string(),
+                ..v1::Caller::default()
+            }),
             project_id: "api-otter".to_string(),
             root: "/work/api".to_string(),
             ..v1::ResolveProjectRequest::default()
@@ -1140,7 +1173,10 @@ async fn a_launch_into_its_owners_own_project_is_the_same_project() {
     let world = World::new();
     let caller = world.user(false).resolving(Arc::new(|_: &str| {
         Ok(v1::ResolveProjectRequest {
-            cwd: "/work/app".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/app".to_string(),
+                ..v1::Caller::default()
+            }),
             project_id: "calm-otter".to_string(),
             root: "/work/app".to_string(),
             ..v1::ResolveProjectRequest::default()

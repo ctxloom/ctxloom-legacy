@@ -74,8 +74,10 @@ impl<D: Daemons> Caller<D> {
             urgencies: urgencies.iter().map(ToString::to_string).collect(),
             wake_nonce: nonce.to_string(),
             budget: u32::try_from(budget).unwrap_or(u32::MAX),
-            env: Some(self.env().clone()),
-            cwd: cwd.to_string(),
+            caller: Some(v1::Caller {
+                cwd: cwd.to_string(),
+                ..self.context().clone()
+            }),
         };
         on_daemon!(self, |api| api.deliver_hook_context(request.clone()).await)
     }

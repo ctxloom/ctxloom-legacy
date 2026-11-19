@@ -12,6 +12,8 @@ daemon-api-daemon-hosting-fix = wait for them to end, or end them with it: ctxlo
 # OD-62 (2026-11-15): DRAFT wording, the owner's to approve (the successor
 # version is gone).
 daemon-api-draining = the serving daemon, ctxloom { $daemon }, is shutting down and takes no new call; it still hosts: { $harps }
+daemon-api-client-version = the serving daemon is ctxloom { $daemon }, and this { $kind } client is ctxloom { $client }: one ctxloom version serves at a time
+daemon-api-client-version-fix = stop the serving daemon, and the next command starts this version's: ctxloom daemon stop
 daemon-api-draining-fix = run the command again once it has exited (the next daemon resumes each child it handed over); to stop what it hosts now: ctxloom shutdown now
 # Owner ruling 2026-11-17: DRAFT wording, the owner's to approve.
 daemon-api-home-gone = the daemon's home { $home } is gone, so it creates nothing there and is exiting

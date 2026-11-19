@@ -59,7 +59,6 @@ pub async fn reconcile<A: DaemonApi>(
     };
     let request = daemon_proto::v1::GetDaemonRequest {
         name: "daemon".to_string(),
-        ..daemon_proto::v1::GetDaemonRequest::default()
     };
     let found = api.get_daemon(request).await.map_err(SkewError::Call)?;
     if !found.runs.is_empty() {

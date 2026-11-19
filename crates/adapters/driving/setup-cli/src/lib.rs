@@ -197,7 +197,7 @@ fn auth(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let answered = uses.reading.auth_status(v1::GetAuthStatusRequest {
-        globals: Some(uses.globals.clone()),
+        caller: v1::Caller::of(Some(uses.globals.clone()), None),
         ..v1::GetAuthStatusRequest::default()
     })?;
     say_v1(&answered.notices, format, catalog, err);
@@ -267,7 +267,7 @@ fn doctor(
             fix: true,
             deps: sub.get_flag("deps"),
             all: sub.get_flag("all"),
-            globals: Some(uses.globals.clone()),
+            caller: v1::Caller::of(Some(uses.globals.clone()), None),
             ..v1::RunDoctorRequest::default()
         })?;
         for r in &answered.removed {
@@ -283,7 +283,7 @@ fn doctor(
     let answered = uses.reading.doctor(v1::RunDoctorRequest {
         deps: sub.get_flag("deps"),
         all: sub.get_flag("all"),
-        globals: Some(uses.globals.clone()),
+        caller: v1::Caller::of(Some(uses.globals.clone()), None),
         ..v1::RunDoctorRequest::default()
     })?;
     say_v1(&answered.notices, format, catalog, err);
@@ -449,7 +449,7 @@ fn add_remotes(
                 forge: forge.clone(),
                 ..Default::default()
             }),
-            globals: Some(uses.globals.clone()),
+            caller: v1::Caller::of(Some(uses.globals.clone()), None),
             ..v1::CreateRemoteRequest::default()
         };
         match uses.initializing.add_remote(request) {
@@ -483,7 +483,7 @@ fn init(
         // under the project's trust. Said with their remedy: a passed-over
         // prompt names `ctxloom trust`.
         let read = uses.reading.init_prompt(v1::GetInitPromptRequest {
-            globals: Some(uses.globals.clone()),
+            caller: v1::Caller::of(Some(uses.globals.clone()), None),
             ..v1::GetInitPromptRequest::default()
         })?;
         say_v1(&read.notices, format, catalog, err);
@@ -496,11 +496,13 @@ fn init(
     let at_terminal = uses.terminal.is_terminal();
     let preview = uses.initializing.init_project(v1::InitProjectRequest {
         validate_only: true,
-        presentable: Some(v1::Presentable {
-            can_ask: at_terminal,
-            can_launch: at_terminal,
-        }),
-        globals: Some(uses.globals.clone()),
+        caller: v1::Caller::of(
+            Some(uses.globals.clone()),
+            Some(v1::Presentable {
+                can_ask: at_terminal,
+                can_launch: at_terminal,
+            }),
+        ),
         ..v1::InitProjectRequest::default()
     })?;
     let answers = if at_terminal {
@@ -511,7 +513,7 @@ fn init(
     let done = uses.initializing.init_project(v1::InitProjectRequest {
         etag: preview.etag.clone(),
         answers: answers.clone(),
-        globals: Some(uses.globals.clone()),
+        caller: v1::Caller::of(Some(uses.globals.clone()), None),
         ..v1::InitProjectRequest::default()
     })?;
     say_v1(&done.notices, format, catalog, err);

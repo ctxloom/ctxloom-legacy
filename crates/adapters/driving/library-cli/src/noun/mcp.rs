@@ -24,7 +24,7 @@ pub(crate) fn read(
         } else {
             String::new()
         },
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListMcpServersRequest::default()
     };
     let read = cx.served.list_mcp_servers("", request);
@@ -107,7 +107,7 @@ fn set_served(
         mcp_server: Some(server),
         update_mask: Some(daemon_proto::google::protobuf::FieldMask { paths }),
         allow_missing: true,
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::UpdateMcpServerRequest::default()
     };
     let under = library_api::names::reference_target(reference);
@@ -143,8 +143,7 @@ fn edit_served(
             validate_only,
             answers,
             etag,
-            presentable: crate::noun::item::presentable(),
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), cx.presentable()),
             ..v1::UpdateMcpServerRequest::default()
         };
     let preview = cx

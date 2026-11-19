@@ -175,7 +175,7 @@ fn started(refusing: bool, failing: bool) -> World {
         feed: Arc::new(Mutex::new(Some(fed))),
         refusing,
     };
-    let caller = daemon_api::Caller::new(daemon, ME, v1::EnvVars::default(), Box::new(String::new))
+    let caller = daemon_api::Caller::new(daemon, ME, v1::Caller::default(), Box::new(String::new))
         .unwrap_or_else(|_| panic!("a name"));
     let wakes = Wakes {
         post: Arc::new(Socket {

@@ -260,11 +260,22 @@ impl Handed {
         Handed::with(env, BTreeMap::new())
     }
 
+    /// A hand-off of `env` whose launcher ran `program`.
+    fn programmed(env: BTreeMap<String, String>, program: Option<crate::Program>) -> Handed {
+        Handed(Mutex::new(Some(crate::HandOff {
+            env,
+            launcher: BTreeMap::new(),
+            agent: String::new(),
+            program,
+        })))
+    }
+
     fn with(env: BTreeMap<String, String>, launcher: BTreeMap<String, String>) -> Handed {
         Handed(Mutex::new(Some(crate::HandOff {
             env,
             launcher,
             agent: String::new(),
+            program: None,
         })))
     }
 }
@@ -1028,12 +1039,14 @@ async fn each_launch_is_composed_from_its_launchers_places() {
     let asked: Arc<Mutex<Vec<BTreeMap<String, String>>>> = Arc::default();
     let for_launch: crate::ForLaunch = {
         let (composed, asked) = (Arc::clone(&composed), Arc::clone(&asked));
-        Arc::new(move |launcher: &BTreeMap<String, String>| {
-            asked.lock().unwrap().push(launcher.clone());
-            let engine: Arc<dyn Engine> = composed.clone();
-            let child: Arc<dyn ChildEngine> = composed.clone();
-            (engine, child)
-        })
+        Arc::new(
+            move |launcher: &BTreeMap<String, String>, _: Option<&crate::Program>| {
+                asked.lock().unwrap().push(launcher.clone());
+                let engine: Arc<dyn Engine> = composed.clone();
+                let child: Arc<dyn ChildEngine> = composed.clone();
+                (engine, child)
+            },
+        )
     };
     let launcher = BTreeMap::from([(
         "CLAUDE_CONFIG_DIR".to_string(),
@@ -1082,6 +1095,83 @@ async fn each_launch_is_composed_from_its_launchers_places() {
         !started[0].env.contains_key("CLAUDE_CONFIG_DIR"),
         "where her settings are is never the child's"
     );
+}
+
+/// The programs a hosted child's launch was composed with, and the
+/// environment it was started in, its hand-off's launcher having run
+/// `program` and the daemon's own program being in `/daemon/bin`.
+async fn launched_running(
+    program: Option<crate::Program>,
+) -> (Vec<Option<crate::Program>>, BTreeMap<String, String>) {
+    let mut world = World::new(Box::new(Plans));
+    let composed = Arc::new(Scripted::default());
+    let asked: Arc<Mutex<Vec<Option<crate::Program>>>> = Arc::default();
+    let for_launch: crate::ForLaunch = {
+        let (composed, asked) = (Arc::clone(&composed), Arc::clone(&asked));
+        Arc::new(
+            move |_: &BTreeMap<String, String>, program: Option<&crate::Program>| {
+                asked.lock().unwrap().push(program.cloned());
+                let engine: Arc<dyn Engine> = composed.clone();
+                let child: Arc<dyn ChildEngine> = composed.clone();
+                (engine, child)
+            },
+        )
+    };
+    world.daemon = Daemon::new(Ports {
+        edge: Arc::clone(&world.edge),
+        engines: vec![HostedEngine {
+            engine: world.engine.clone(),
+            child: world.engine.clone(),
+            transcripts: Arc::new(|_| None),
+            for_launch: Some(for_launch),
+        }],
+        plans: Box::new(Plans),
+        hand_offs: Box::new(Handed::programmed(
+            BTreeMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+            program,
+        )),
+        homes: Box::new(world.homes.clone()),
+        ears: Box::new(Listening::default()),
+        run_locks: Arc::new(Locks(LockProbe::Unproven)),
+        place: Place {
+            home: "/home/u".to_string(),
+            program_dir: Some("/daemon/bin".to_string()),
+            os: "linux".to_string(),
+            user_home: None,
+        },
+        folds: Folds::default(),
+        say: Box::new(|_| {}),
+    });
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    let started = composed.started.lock().unwrap().clone();
+    assert_eq!(started.len(), 1, "started composed");
+    let asked = asked.lock().unwrap().clone();
+    (asked, started[0].env.clone())
+}
+
+// Owner, 2026-11-18: a hosted child runs its LAUNCHER's program, not the
+// daemon's: its engine is composed calling it (its hooks, its statusline)
+// and its engine's PATH leads with the launcher's directory.
+#[tokio::test]
+async fn a_hosted_child_runs_its_launchers_program() {
+    let program = crate::Program {
+        name: "ctxloom-dev".to_string(),
+        dir: "/opt/client/bin".to_string(),
+    };
+    let (asked, env) = launched_running(Some(program.clone())).await;
+    assert_eq!(asked, [Some(program)]);
+    assert_eq!(env["PATH"], "/opt/client/bin:/usr/bin");
+}
+
+// A launcher that named no program leaves the daemon's own: its directory
+// leads the child's PATH.
+#[tokio::test]
+async fn a_hosted_child_whose_launcher_named_no_program_runs_the_daemons() {
+    let (asked, env) = launched_running(None).await;
+    assert_eq!(asked, [None]);
+    assert_eq!(env["PATH"], "/daemon/bin:/usr/bin");
 }
 
 // What the child says is recorded as its run's facts: its engine's session
@@ -1427,6 +1517,7 @@ async fn hosting_from_within(
             env: BTreeMap::from([("SECRET".to_string(), "v".to_string())]),
             launcher: BTreeMap::new(),
             agent: "reviewer".to_string(),
+            program: None,
         },
     );
     let mut world = World::built_within(

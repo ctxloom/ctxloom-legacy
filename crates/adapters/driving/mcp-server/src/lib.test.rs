@@ -132,7 +132,7 @@ async fn the_server_answers_the_handshake_and_its_list_over_its_transport() {
     let caller = daemon_api::Caller::new(
         Nowhere,
         "projects/calm-quiet-heron/sessions/amber-quiet-heron",
-        daemon_proto::v1::EnvVars::default(),
+        daemon_proto::v1::Caller::default(),
         Box::new(String::new),
     )
     .unwrap_or_else(|_| panic!("a name"));
@@ -195,7 +195,7 @@ async fn a_server_saying_its_errors_says_them_so() {
     let caller = daemon_api::Caller::new(
         Nowhere,
         "projects/calm-quiet-heron/sessions/amber-quiet-heron",
-        daemon_proto::v1::EnvVars::default(),
+        daemon_proto::v1::Caller::default(),
         Box::new(String::new),
     )
     .unwrap_or_else(|_| panic!("a name"));
@@ -388,7 +388,7 @@ impl Engine {
         let caller = daemon_api::Caller::new(
             daemons,
             "projects/calm-quiet-heron/sessions/brisk-copper-moth",
-            daemon_proto::v1::EnvVars::default(),
+            daemon_proto::v1::Caller::default(),
             Box::new(|| "id".to_string()),
         )
         .unwrap_or_else(|_| panic!("a name"));

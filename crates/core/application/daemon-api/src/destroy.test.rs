@@ -311,7 +311,10 @@ async fn finished(harp: &str, files: Vec<FileItem>) -> Fixture {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api
         .resolve_project(v1::ResolveProjectRequest {
-            cwd: ROOT.to_string(),
+            caller: Some(v1::Caller {
+                cwd: ROOT.to_string(),
+                ..v1::Caller::default()
+            }),
             project_id: PROJECT.to_string(),
             root: ROOT.to_string(),
             ..v1::ResolveProjectRequest::default()
@@ -336,11 +339,14 @@ fn delete(name: &str, yes: bool) -> v1::DeleteSessionRequest {
     v1::DeleteSessionRequest {
         name: name.to_string(),
         validate_only: !yes,
-        env: Some(v1::EnvVars {
-            vars: vec![v1::EnvVar {
-                name: "GIT_TRACE".to_string(),
-                value: "0".to_string(),
-            }],
+        caller: Some(v1::Caller {
+            env: Some(v1::EnvVars {
+                vars: vec![v1::EnvVar {
+                    name: "GIT_TRACE".to_string(),
+                    value: "0".to_string(),
+                }],
+            }),
+            ..v1::Caller::default()
         }),
         ..v1::DeleteSessionRequest::default()
     }
@@ -406,7 +412,6 @@ async fn a_delete_destroys_the_session_its_runs_and_its_directory() {
         .api
         .get_session(v1::GetSessionRequest {
             name: NAME.to_string(),
-            env: None,
         })
         .await;
     let (_, missing): (_, v1::SessionNotFound) = refused(gone);

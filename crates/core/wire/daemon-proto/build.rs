@@ -60,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(std::env::var("OUT_DIR")?);
     let set = std::fs::read(out.join("angzarr.descriptors"))?;
     std::fs::write(out.join("refusals.rs"), refusals(&set)?)?;
+    std::fs::write(out.join("carries.rs"), carries(&set)?)?;
     json(&out, &set)?;
     let server = std::env::var_os("CARGO_FEATURE_SERVER").is_some();
     let client = std::env::var_os("CARGO_FEATURE_CLIENT").is_some();
@@ -139,6 +140,47 @@ fn services(
         .out_dir(&dir)
         .compile_fds(fds)?;
     Ok(())
+}
+
+/// `Carries` for every top-level message of `PACKAGE`: `CALLER` true, and
+/// the field answered, for a message with a `caller` field of type
+/// `Caller`; false and none for every other (owner, 2026-11-18: one
+/// `Caller`, at one field number, on every request made on a user's
+/// behalf). `carries.rs`.
+fn carries(set: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+    use prost::Message;
+    let fds = prost_types::FileDescriptorSet::decode(set)?;
+    let caller = format!(".{PACKAGE}.Caller");
+    let mut found = Vec::new();
+    for file in fds.file.iter().filter(|file| file.package() == PACKAGE) {
+        for message in &file.message_type {
+            let carried = message
+                .field
+                .iter()
+                .any(|field| field.name() == "caller" && field.type_name() == caller);
+            found.push((message.name().to_string(), carried));
+        }
+    }
+    found.sort();
+    let mut source = String::new();
+    for (name, carried) in found {
+        if carried {
+            source.push_str(&format!(
+                "\nimpl Carries for crate::v1::{name} {{\n    const CALLER: bool = true;\n    \
+                 fn caller(&self) -> Option<&crate::v1::Caller> {{\n        self.caller.as_ref()\n    }}\n    \
+                 fn caller_field(&mut self) -> Option<&mut Option<crate::v1::Caller>> {{\n        Some(&mut self.caller)\n    }}\n}}\n\
+                 \nimpl CarriesMut for crate::v1::{name} {{\n    \
+                 fn caller_slot(&mut self) -> &mut Option<crate::v1::Caller> {{\n        &mut self.caller\n    }}\n}}\n"
+            ));
+        } else {
+            source.push_str(&format!(
+                "\nimpl Carries for crate::v1::{name} {{\n    const CALLER: bool = false;\n    \
+                 fn caller(&self) -> Option<&crate::v1::Caller> {{\n        None\n    }}\n    \
+                 fn caller_field(&mut self) -> Option<&mut Option<crate::v1::Caller>> {{\n        None\n    }}\n}}\n"
+            ));
+        }
+    }
+    Ok(source)
 }
 
 /// A reader of protobuf's wire format: just what the walk needs.

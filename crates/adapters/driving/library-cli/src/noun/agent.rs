@@ -14,7 +14,7 @@ pub(crate) fn read(
     // The daemon's reads (step 10a U2), their text from the message (D10).
     if verb == "show" {
         let request = v1::GetAgentRequest {
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::GetAgentRequest::default()
         };
         let under = library_api::names::named_target("agents", &text_arg(sub, "name"));
@@ -24,7 +24,7 @@ pub(crate) fn read(
         });
     }
     let request = v1::ListAgentsRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListAgentsRequest::default()
     };
     let read = cx.served.list_agents("", request);
@@ -49,7 +49,7 @@ pub(crate) fn write(
             text_only(cx, "agent default")?;
             let request = v1::SetDefaultAgentRequest {
                 agent: name.clone(),
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::SetDefaultAgentRequest::default()
             };
             let mut answered = cx.served.set_default_agent("", request)?;
@@ -100,7 +100,7 @@ pub(crate) fn write(
                         validate_only,
                         answers,
                         etag,
-                        globals: cx.globals(),
+                        caller: v1::Caller::of(cx.globals(), None),
                         ..v1::DeleteAgentRequest::default()
                     };
                     cx.served.delete_agent(&under, request)
@@ -170,7 +170,7 @@ fn created(
         agent_id: name.to_string(),
         agent: Some(agent),
         home: flag(sub, "home"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::CreateAgentRequest::default()
     };
     crate::answer_written(
@@ -216,7 +216,7 @@ fn edited(
             validate_only,
             etag,
             answers,
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::UpdateAgentRequest::default()
         };
         cx.served.update_agent(&under, request)

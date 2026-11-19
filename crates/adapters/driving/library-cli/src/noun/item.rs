@@ -34,7 +34,7 @@ pub(crate) fn read(
             if command {
                 let request = v1::GetCommandRequest {
                     prefer_distilled,
-                    globals: cx.globals(),
+                    caller: v1::Caller::of(cx.globals(), None),
                     ..v1::GetCommandRequest::default()
                 };
                 let read = cx.served.get_command(&under, request);
@@ -48,7 +48,7 @@ pub(crate) fn read(
             }
             let request = v1::GetFragmentRequest {
                 prefer_distilled,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetFragmentRequest::default()
             };
             let read = cx.served.get_fragment(&under, request);
@@ -62,7 +62,7 @@ pub(crate) fn read(
         }
         "premises" => {
             let request = v1::GetPremiseIndexRequest {
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetPremiseIndexRequest::default()
             };
             let read = cx.served.get_premise_index("/premiseIndex", request);
@@ -107,7 +107,7 @@ fn listed_by_the_daemon(
     };
     if kind == "command" {
         let request = || v1::ListCommandsRequest {
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::ListCommandsRequest::default()
         };
         let every = || {
@@ -126,7 +126,7 @@ fn listed_by_the_daemon(
         });
     }
     let request = || v1::ListFragmentsRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListFragmentsRequest::default()
     };
     let every = || {
@@ -225,15 +225,6 @@ fn bundle_and_item(name: &str) -> (String, String) {
     (bundle, item)
 }
 
-/// What the CLI can present of a need (step 10b U3): it launches the
-/// editor on the user's terminal, and asks nothing else here.
-pub(crate) fn presentable() -> Option<v1::Presentable> {
-    Some(v1::Presentable {
-        can_ask: false,
-        can_launch: true,
-    })
-}
-
 /// The answer to `needs`' Edit need, the editor launched on its document
 /// (step 10b U3: the preview's Edit need, presented by the CLI); none
 /// when it asks none.
@@ -290,8 +281,7 @@ fn create_served(
             placeholder,
             validate_only,
             answers,
-            presentable: presentable(),
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), cx.presentable()),
             ..v1::CreateCommandRequest::default()
         };
         let mut answers = Vec::new();
@@ -322,8 +312,7 @@ fn create_served(
         placeholder,
         validate_only,
         answers,
-        presentable: presentable(),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), cx.presentable()),
         ..v1::CreateFragmentRequest::default()
     };
     let mut answers = Vec::new();
@@ -401,8 +390,7 @@ fn edit_served(
                 validate_only,
                 answers,
                 etag,
-                presentable: presentable(),
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), cx.presentable()),
                 ..v1::UpdateCommandRequest::default()
             }
         };
@@ -441,8 +429,7 @@ fn edit_served(
                 validate_only,
                 answers,
                 etag,
-                presentable: presentable(),
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), cx.presentable()),
                 ..v1::UpdateFragmentRequest::default()
             }
         };
@@ -499,7 +486,7 @@ fn remove_served(
                     validate_only,
                     answers,
                     etag,
-                    globals: cx.globals(),
+                    caller: v1::Caller::of(cx.globals(), None),
                     ..v1::DeleteCommandRequest::default()
                 };
                 cx.served.delete_command(&under, request)
@@ -520,7 +507,7 @@ fn remove_served(
                 validate_only,
                 answers,
                 etag,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::DeleteFragmentRequest::default()
             };
             cx.served.delete_fragment(&under, request)
@@ -639,7 +626,7 @@ pub(crate) fn distill_followed(
     let asked = if kind == ItemKind::Command {
         let request = v1::DistillCommandRequest {
             force,
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::DistillCommandRequest::default()
         };
         cx.served
@@ -648,7 +635,7 @@ pub(crate) fn distill_followed(
     } else {
         let request = v1::DistillFragmentRequest {
             force,
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::DistillFragmentRequest::default()
         };
         cx.served

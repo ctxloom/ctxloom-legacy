@@ -680,8 +680,9 @@ service Ctxloom {
 message GetDaemonRequest {
   // `daemon`.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Daemon"];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94;
+  reserved "env";
 }
 
 // A run the daemon hosts.
@@ -780,8 +781,9 @@ message StopDaemonRequest {
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94;
+  reserved "env";
 }
 
 // (-- endregion --)
@@ -802,9 +804,12 @@ message StopDaemonRequest {
 message ResolveProjectRequest {
   // `projects/{project}` the client expects (its session's), or empty.
   string name = 1 [(google.api.field_behavior) = OPTIONAL];
-  // The client's working directory, named in the refusal of one in no
-  // project.
-  string cwd = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 2, 94;
+  reserved "cwd", "env";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
   // The project id the client resolved (taskloom's project-registry
   // identity); empty, the directory is in no project, refused
   // `ProjectUnknown`.
@@ -817,8 +822,6 @@ message ResolveProjectRequest {
   // outside git. A change from the registered one is refused
   // `ProjectIdentityMismatch`.
   string root_commit = 6 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // A project: a directory tree ctxloom works in, registered once and named by
@@ -869,14 +872,12 @@ message InitProjectRequest {
   // One answer to each need the preview asked (needs.proto); an apply that
   // leaves one unanswered is refused `NeedsUnanswered`.
   repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
-  // What the caller can present of a need: ask a person, or put a program on
-  // their terminal.
-  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
-  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
-  // call is planned under.
-  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94, 95, 96;
+  reserved "env", "presentable", "globals";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // What a client does next, decided by the daemon (API Q7).
@@ -938,15 +939,12 @@ message AssembleContextRequest {
   // matches records nothing, and no session is marked owed by this.
   // Additive.
   bool refresh = 6 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
-  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
-  // call is planned under.
-  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's working directory (E1, owner 2026-11-17): the daemon
-  // resolves the project and its checkout from it (a git worktree is a
-  // checkout of its own, L2); empty, the project's registered root.
-  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94, 96, 97;
+  reserved "env", "globals", "cwd";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // One fragment as the assembly used it.
@@ -1128,8 +1126,9 @@ message SessionRotation {
 message GetSessionRequest {
   // The Session to read, `projects/{project}/sessions/{session}`.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Session"];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94;
+  reserved "env";
 }
 
 // `session list [--all] [--state]`, and `session transcript list`
@@ -1147,8 +1146,9 @@ message ListSessionsRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94;
+  reserved "env";
 }
 
 // The sessions found, most recently started first.
@@ -1175,8 +1175,9 @@ message SearchSessionsRequest {
   // A previous response's `next_page_token`, to answer the page after it;
   // empty, the first page.
   string page_token = 81 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94;
+  reserved "env";
 }
 
 // `session remove <harp> [--even-if-live] [--yes]`.
@@ -1202,11 +1203,12 @@ message DeleteSessionRequest {
   // (-- api-linter: core::0135::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's environment (S7): git runs in it for the worktrees.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
-  // What the caller can present of a need: ask a person, or put a program on
-  // their terminal.
-  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94, 95;
+  reserved "env", "presentable";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // One file a removal destroys.
@@ -1316,11 +1318,12 @@ message SweepSessionsRequest {
   // One answer to each need the preview asked (needs.proto); an apply that
   // leaves one unanswered is refused `NeedsUnanswered`.
   repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
-  // What the caller can present of a need: ask a person, or put a program on
-  // their terminal.
-  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94, 95;
+  reserved "env", "presentable";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // One row of a sweep: a session's fate, or one of its scratch worktrees'.
@@ -1400,10 +1403,12 @@ message RedeliverContextRequest {
   // 10,000; 0 is the whole 10,000. Over it, only the changed fragments are
   // given whole, else a pointer to `ctxloom context assemble`. Additive.
   uint32 budget = 3 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's working directory (E1): the session's checkout.
-  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94, 97;
+  reserved "env", "cwd";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // 10c (the lean hook RPC): a live session's hook asks for all it carries.
@@ -1422,10 +1427,12 @@ message DeliverHookContextRequest {
   // the hook's own parts before it (the skill mates line) left of claude's
   // 10,000; 0 is the whole 10,000.
   uint32 budget = 5 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's working directory (E1): the session's checkout.
-  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94, 97;
+  reserved "env", "cwd";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // 10c (the lean hook RPC): what the hook carries to its engine.
@@ -1452,8 +1459,12 @@ message RedeliveredContext {
 message WatchLibraryRequest {
   // `projects/{project}` or `users/me`.
   string parent = 1 [(google.api.field_behavior) = REQUIRED];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94;
+  reserved "env";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // One recorded change of a library tree, as a thin notice: the paths and
@@ -1608,8 +1619,12 @@ message CreateHandOffRequest {
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
-  // The child's environment (S7, S10).
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 94;
+  reserved "env";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
 }
 
 // A hand-off withdrawn, its `LaunchChild` refused.
@@ -1772,9 +1787,12 @@ message CreateRunRequest {
   string workspace = 11 [(google.api.field_behavior) = OPTIONAL];
   // `--no-context`.
   bool no_context = 12 [(google.api.field_behavior) = OPTIONAL];
-  // The client's working directory: where the run is planned from, as a
-  // process there would plan it (with `env`).
-  string cwd = 13 [(google.api.field_behavior) = OPTIONAL];
+  // Moved into `caller` (owner, 2026-11-18).
+  reserved 13, 94, 95, 96;
+  reserved "cwd", "env", "presentable", "globals";
+  // The client's working context (needs.proto), as every request made on a
+  // user's behalf carries it (owner, 2026-11-18).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
   // A TERMINAL run's own lock (its launcher lock, `RunEnqueued.
   // launcher_lock`), which the frontend took BEFORE it asked and holds
   // until its start report is recorded (U5's start-report race, owner
@@ -1794,14 +1812,6 @@ message CreateRunRequest {
   // (-- api-linter: core::0133::request-unknown-fields=disabled
   //     aip.dev/not-precedent: a write's answers to the needs its preview asked are ctxloom's (S38, API Q2). --)
   repeated Answer answers = 93 [(google.api.field_behavior) = OPTIONAL];
-  // The caller's whole environment (S7), held in memory for the call's life.
-  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
-  // What the caller can present of a need: ask a person, or put a program on
-  // their terminal.
-  Presentable presentable = 95 [(google.api.field_behavior) = OPTIONAL];
-  // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
-  // call is planned under.
-  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
 }
 
 // A run by its name.
@@ -2171,6 +2181,22 @@ message ProjectNotFound {
 
   // The Project's name as given.
   string name = 1;
+}
+
+// A request whose client is not this daemon's version (owner, 2026-11-18):
+// its `Caller.client.version` is not the daemon's own stamp, or it names none
+// (no `Caller`). Every kind of client alike: one ctxloom version runs at a
+// time (OD-61/OD-62), so the fix is `ctxloom daemon stop`, after which the
+// client's own version starts.
+message ClientVersionMismatch {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  // The client's stamp; empty when it named none.
+  string client_version = 1;
+  // The daemon's own stamp.
+  string daemon_version = 2;
+  // The kind of client.
+  Client.Kind kind = 3;
 }
 
 // `StopDaemon` while it hosts live runs (S12), unless `even_if_live`: how

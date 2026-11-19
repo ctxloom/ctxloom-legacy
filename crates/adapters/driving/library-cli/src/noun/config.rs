@@ -19,7 +19,7 @@ pub(crate) fn read(
     let request = v1::GetConfigRequest {
         view: view as i32,
         section: text_arg(sub, "section"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::GetConfigRequest::default()
     };
     let read = cx.served.get_config("/config", request);
@@ -50,7 +50,7 @@ pub(crate) fn write(
                 path: text_arg(sub, "key"),
                 value: text_arg(sub, "value"),
                 home: flag(sub, "home"),
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::UpdateConfigRequest::default()
             };
             let set = cx.served.update_config("/config", request);
@@ -76,8 +76,7 @@ pub(crate) fn write(
                     validate_only,
                     answers,
                     etag,
-                    presentable: crate::noun::item::presentable(),
-                    globals: cx.globals(),
+                    caller: v1::Caller::of(cx.globals(), cx.presentable()),
                     ..v1::EditConfigRequest::default()
                 }
             };

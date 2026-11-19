@@ -65,8 +65,7 @@ impl<E: Edge> Api<E> {
                     name: request.name.clone(),
                     carried_by: request.carried_by.clone(),
                     budget: u32::try_from(left).unwrap_or(u32::MAX),
-                    env: request.env.clone(),
-                    cwd: request.cwd.clone(),
+                    caller: request.caller.clone(),
                 })
                 .await?
             }

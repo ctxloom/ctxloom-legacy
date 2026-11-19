@@ -5,9 +5,9 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use super::{
-    account_home, caller_env, caller_wiring, daemon_env, daemon_home, instance_lock, logger,
-    request_id, served_exit, spawn_waits_on, tail_of, under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT,
-    DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
+    account_home, caller_env, caller_temp, caller_wiring, daemon_env, daemon_home, instance_lock,
+    logger, request_id, served_exit, spawn_waits_on, tail_of, under_home, ACCOUNT_HOME_VARIABLE,
+    CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
 };
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -426,6 +426,57 @@ fn test_a_hooks_unprobed_daemon_is_its_homes_discovery_without_a_health_check() 
         super::hook_daemon_unprobed(&env).is_none(),
         "another home's"
     );
+}
+
+/// `pairs` as a snapshot's variables.
+fn vars_of(pairs: &[(&str, &str)]) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    pairs
+        .iter()
+        .map(|(name, value)| ((*name).into(), (*value).into()))
+        .collect()
+}
+
+// Owner, 2026-11-18: a call's temporary directory is the caller's, read
+// from her environment as the platform's standard library reads it, never
+// the daemon's own.
+#[test]
+fn a_calls_temporary_directory_is_the_callers() {
+    use os::Flavor::{Unix, Windows};
+    let own = Path::new("/daemon-tmp");
+    let temp = |flavor, pairs: &[(&str, &str)]| caller_temp(flavor, &vars_of(pairs), own);
+    assert_eq!(
+        temp(Unix, &[("TMPDIR", "/her/tmp"), ("HOME", "/h")]),
+        Path::new("/her/tmp")
+    );
+    assert_eq!(temp(Unix, &[("HOME", "/h")]), Path::new("/tmp"));
+    assert_eq!(
+        temp(Unix, &[("TMPDIR", ""), ("HOME", "/h")]),
+        Path::new("/tmp")
+    );
+    assert_eq!(
+        temp(Windows, &[("tmp", "C:\\a"), ("TEMP", "C:\\t")]),
+        Path::new("C:\\a")
+    );
+    assert_eq!(
+        temp(Windows, &[("Temp", "C:\\t"), ("UserProfile", "C:\\u")]),
+        Path::new("C:\\t")
+    );
+    assert_eq!(
+        temp(Windows, &[("USERPROFILE", "C:\\u")]),
+        Path::new("C:\\u")
+    );
+    assert_eq!(temp(Windows, &[("windir", "C:\\W")]), Path::new("C:\\W"));
+    let snapshot = caller_env(Unix, own, ("/work", None), [("TMPDIR", "/her/tmp")]);
+    assert_eq!(snapshot.temp_dir(), Path::new("/her/tmp"));
+}
+
+#[test]
+fn a_call_with_no_environment_is_in_the_daemons_temporary_directory() {
+    let own = Path::new("/daemon-tmp");
+    assert_eq!(caller_temp(os::Flavor::Unix, &[], own), own);
+    assert_eq!(caller_temp(os::Flavor::Windows, &[], own), own);
+    let snapshot = caller_env(os::Flavor::Unix, own, ("/work", None), []);
+    assert_eq!(snapshot.temp_dir(), own);
 }
 
 // A daemon that died before it served is told by the END of its log: its

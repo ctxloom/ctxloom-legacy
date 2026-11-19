@@ -92,7 +92,10 @@ pub struct Caller<D> {
     pub(crate) project: ProjectName,
     /// The session this caller is; none: the user.
     me: Option<SessionName>,
-    env: v1::EnvVars,
+    /// What every request made on its user's behalf carries of this client
+    /// (owner, 2026-11-18): its directory, its whole environment (S7) and
+    /// which client it is.
+    context: v1::Caller,
     pub(crate) ids: RequestIds,
     /// Mints a child's harp where a launch names none.
     names: Option<RequestIds>,
@@ -212,12 +215,12 @@ pub fn urgency_of(word: &str) -> Option<Urgency> {
 
 impl<D: Daemons> Caller<D> {
     /// The session `session` names (its resource name), reaching its daemon
-    /// through `daemons`, with the caller's environment `env` (S7), each
+    /// through `daemons`, as `context` (its directory, its whole environment, S7, and which client it is), each
     /// write's id minted by `ids`.
     pub fn new(
         daemons: D,
         session: &str,
-        env: v1::EnvVars,
+        context: v1::Caller,
         ids: RequestIds,
     ) -> Result<Caller<D>, CallError> {
         let session = SessionName::parse(session)
@@ -226,7 +229,7 @@ impl<D: Daemons> Caller<D> {
             daemons,
             project: session.project(),
             me: Some(session),
-            env,
+            context,
             ids,
             names: None,
             locks: None,
@@ -239,7 +242,7 @@ impl<D: Daemons> Caller<D> {
     pub fn user(
         daemons: D,
         project: &str,
-        env: v1::EnvVars,
+        context: v1::Caller,
         ids: RequestIds,
     ) -> Result<Caller<D>, CallError> {
         let project = ProjectName::parse(project)
@@ -248,7 +251,7 @@ impl<D: Daemons> Caller<D> {
             daemons,
             project,
             me: None,
-            env,
+            context,
             ids,
             names: None,
             locks: None,
@@ -292,9 +295,17 @@ impl<D: Daemons> Caller<D> {
         self.me.as_ref()
     }
 
-    /// The environment this caller asks in.
-    pub(crate) fn env(&self) -> &v1::EnvVars {
-        &self.env
+    /// What this caller's requests carry of it.
+    pub(crate) fn context(&self) -> &v1::Caller {
+        &self.context
+    }
+
+    /// `own`, a request's own caller (a tool's presentable), with what this
+    /// caller says that it does not.
+    fn filled(&self, own: Option<&v1::Caller>) -> v1::Caller {
+        let mut filled = own.cloned().unwrap_or_default();
+        filled.fill_from(&self.context);
+        filled
     }
 
     /// `target`: a session of this caller's project by its harp, or any
@@ -315,7 +326,6 @@ impl<D: Daemons> Caller<D> {
         };
         let request = v1::ListSessionsRequest {
             parent,
-            env: Some(self.env.clone()),
             ..v1::ListSessionsRequest::default()
         };
         on_daemon!(self, |api| api.list_sessions(request.clone()).await)
@@ -330,7 +340,6 @@ impl<D: Daemons> Caller<D> {
     async fn read(&self, api: &D::Api, name: &SessionName) -> Result<v1::Session, Called> {
         api.get_session(v1::GetSessionRequest {
             name: name.to_string(),
-            env: Some(self.env.clone()),
         })
         .await
     }
@@ -408,7 +417,7 @@ impl<D: Daemons> Caller<D> {
         let request = v1::DeleteSessionRequest {
             name: self.target(harp)?.to_string(),
             request_id: (self.ids)(),
-            env: Some(self.env.clone()),
+            caller: Some(self.filled(asked.caller.as_ref())),
             ..asked
         };
         on_daemon!(self, |api| api.delete_session(request.clone()).await)
@@ -429,7 +438,7 @@ impl<D: Daemons> Caller<D> {
                 library_api::names::bundle_target(bundle)
             ),
             request_id: (self.ids)(),
-            env: Some(self.env.clone()),
+            caller: Some(self.filled(asked.caller.as_ref())),
             ..asked
         };
         on_daemon!(self, |api| api.create_fragment(request.clone()).await)
@@ -449,7 +458,7 @@ impl<D: Daemons> Caller<D> {
             name: self.project.to_string(),
             fragments,
             tags,
-            env: Some(self.env.clone()),
+            caller: Some(self.context.clone()),
             ..v1::AssembleContextRequest::default()
         };
         let mut assembled: v1::AssembledContext =
@@ -786,7 +795,7 @@ impl<D: Daemons> Caller<D> {
                     .map(|target| target.name.clone())
                     .unwrap_or_default(),
                 request_id: request_id.to_string(),
-                env: Some(self.env.clone()),
+                caller: Some(self.context.clone()),
             })
             .await?;
         // The engine it is planned on: asked, else its agent's (the

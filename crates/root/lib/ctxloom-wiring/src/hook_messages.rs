@@ -19,15 +19,18 @@ use crate::hook_library::HookDaemons;
 /// The hook's session's one call over the user's daemon.
 pub(crate) struct DaemonHookContexts {
     pub(crate) env: Arc<EnvSnapshot>,
+    /// The binary's stamp, which the daemon admits only when it is its own.
+    pub(crate) stamp: String,
     /// When the hook's bound ends.
     pub(crate) until: Instant,
 }
 
 impl DaemonHookContexts {
     /// A hook's call, its bound starting now.
-    pub(crate) fn starting_now(env: Arc<EnvSnapshot>) -> DaemonHookContexts {
+    pub(crate) fn starting_now(env: Arc<EnvSnapshot>, stamp: &str) -> DaemonHookContexts {
         DaemonHookContexts {
             env,
+            stamp: stamp.to_string(),
             until: Instant::now() + crate::daemon::HOOK_BOUND,
         }
     }
@@ -47,11 +50,11 @@ impl HookContexts for DaemonHookContexts {
             .env
             .utf8(run_ports::ENDPOINT_VARIABLE)
             .is_none_or(str::is_empty);
-        let daemons = HookDaemons::trusting(Arc::clone(&self.env), self.until, starts);
+        let daemons = HookDaemons::trusting(Arc::clone(&self.env), &self.stamp, self.until, starts);
         let caller = Caller::new(
             daemons,
             &session,
-            crate::daemon::env_vars(&self.env),
+            crate::daemon::caller_of(&self.env, daemon_proto::v1::client::Kind::Hook, &self.stamp),
             Box::new(crate::daemon::request_id),
         )
         .ok()?;

@@ -188,7 +188,7 @@ fn install(
     cx.setup.check_engine(engine.as_deref()).map_err(failed)?;
     let request = v1::InstallManageRequest {
         engine: engine.clone().unwrap_or_default(),
-        globals: Some(library_api::reads::globals_of(&cx.flags)),
+        caller: v1::Caller::of(Some(library_api::reads::globals_of(&cx.flags)), None),
         ..v1::InstallManageRequest::default()
     };
     let preview = cx.foreign.install_manage(v1::InstallManageRequest {
@@ -230,7 +230,7 @@ fn manage(
         "install" => install(cx, args, out, err)?,
         "uninstall" => {
             let answered = cx.foreign.uninstall(v1::UninstallManageRequest {
-                globals: Some(library_api::reads::globals_of(&cx.flags)),
+                caller: v1::Caller::of(Some(library_api::reads::globals_of(&cx.flags)), None),
                 ..v1::UninstallManageRequest::default()
             })?;
             say_v1(cx, &answered.notices, err);
@@ -289,7 +289,7 @@ fn manage(
         _ => {
             if args.subcommand_name() == Some("install") {
                 let answered = cx.foreign.install_gitignore(v1::InstallGitignoreRequest {
-                    globals: Some(library_api::reads::globals_of(&cx.flags)),
+                    caller: v1::Caller::of(Some(library_api::reads::globals_of(&cx.flags)), None),
                     ..v1::InstallGitignoreRequest::default()
                 })?;
                 say_v1(cx, &answered.notices, err);
@@ -315,7 +315,7 @@ struct StatuslineAnswer {
 
 fn check(cx: &Context<'_>, out: &mut dyn Write, err: &mut dyn Write) -> Result<(), Failure> {
     let answered = cx.foreign.check(v1::CheckManageRequest {
-        globals: Some(library_api::reads::globals_of(&cx.flags)),
+        caller: v1::Caller::of(Some(library_api::reads::globals_of(&cx.flags)), None),
         ..v1::CheckManageRequest::default()
     })?;
     say_v1(cx, &answered.notices, err);
@@ -361,7 +361,7 @@ fn materialize(
         surfaces: many(args, "surface"),
         release: flag(args, "release"),
         dry_run: flag(args, "dry-run"),
-        globals: Some(library_api::reads::globals_of(&cx.flags)),
+        caller: v1::Caller::of(Some(library_api::reads::globals_of(&cx.flags)), None),
         ..v1::MaterializeRequest::default()
     })?;
     say_v1(cx, &answered.notices, err);

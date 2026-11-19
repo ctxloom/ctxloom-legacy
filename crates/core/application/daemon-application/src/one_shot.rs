@@ -57,6 +57,10 @@ pub struct HostRequest {
     pub env: BTreeMap<String, String>,
     pub flags: Flags,
     pub request: OneShot,
+    /// The client's program (owner, 2026-11-18): what the run's hooks and
+    /// statusline run and its engine's `PATH` leads with; none, the
+    /// daemon's own.
+    pub program: Option<crate::Program>,
     /// A terminal run's own lock, held by its frontend since before it
     /// asked (U5's start-report race): the run journals it as its launcher
     /// lock while it reads held. None: a one-shot, or an older frontend.
