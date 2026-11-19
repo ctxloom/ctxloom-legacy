@@ -2087,14 +2087,28 @@ fn alices_daemon_killed(w: &mut World) {
 /// The lifeline's forcing test (gherkin_features.test.rs): the scenario's
 /// commands are given a lifeline (`CTXLOOM_TEST_LIFELINE`) that a process
 /// of its own holds, not the test process, so a step can kill its holder
-/// outright as nextest's timeout kills a test. The holder is one `sh` that
-/// locks the file on its descriptor 9 and becomes `sleep`, keeping it.
+/// outright as nextest's timeout kills a test. The holder is the binary's
+/// `test hold-lock`, which takes it through the platform's file lock, as
+/// the daemon does (macOS has no `flock(1)`, CI 2026-11-19).
 #[given("the scenario's commands have a lifeline a process of their own holds")]
 fn own_lifeline(w: &mut World) {
     let path = w.common.project.dir().join("lifeline.lock");
-    let holder = Command::new("sh")
-        .args(["-c", "exec 9>\"$1\"; flock -x 9; exec sleep 600", "sh"])
+    let home = w.common.project.home();
+    let mut holder = Command::new(crate::tests::binary());
+    holder
+        .args(["test", "hold-lock"])
         .arg(&path)
+        .env_clear()
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("TMPDIR", crate::tests::temp_root());
+    for name in ["PATH", "SystemRoot"] {
+        if let Some(value) = crate::tests::host_var(name) {
+            holder.env(name, value);
+        }
+    }
+    let holder = holder
+        .current_dir(w.common.project.dir())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

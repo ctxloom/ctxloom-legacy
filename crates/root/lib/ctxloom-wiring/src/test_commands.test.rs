@@ -49,7 +49,8 @@ fn the_noun_is_hidden_and_has_a_verb_for_each_test_command() {
             "library-events",
             "watch-library",
             "record",
-            "seed-rehosts"
+            "seed-rehosts",
+            "hold-lock"
         ]
     );
 }
