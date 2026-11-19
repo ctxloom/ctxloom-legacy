@@ -658,6 +658,11 @@ impl<E: Edge + 'static> Calls for Api<E> {
         })
     }
 
+    /// `InitProject` (step 10c U6): a project's `.ctxloom` created whole.
+    fn init_project(&self, request: v1::InitProjectRequest) -> Answer<'_, v1::InitProjectResponse> {
+        Box::pin(Api::init_project(self, request))
+    }
+
     /// `CreateRemote` (step 10c U4): `remotes.yaml`, one library write.
     fn create_remote(
         &self,

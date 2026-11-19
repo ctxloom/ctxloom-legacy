@@ -88,6 +88,58 @@ fn test_a_scaffold_file_is_that_file_replaced_in_the_content_tree() {
     ));
 }
 
+// Step 10c U6: a tree written whole where it was not (a first init's
+// scaffold) is ONE new directory, the tree's root itself, in the content
+// tree.
+#[test]
+fn test_a_new_tree_is_one_new_directory_at_the_trees_root() {
+    let files = vec![put("config.yaml", "a"), put("remotes.yaml", "b")];
+    let shaped = shape(
+        vec![Planned::NewTree {
+            files: files.clone(),
+        }],
+        none,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(shaped.lands, Lands::Content);
+    assert_eq!(
+        shaped.shape,
+        Shape::Create {
+            path: String::new(),
+            files
+        }
+    );
+}
+
+// What a root create leaves is each of its files at its own path (no
+// leading separator), the tree's private state left out.
+#[test]
+fn test_a_root_create_expects_each_file_at_its_own_path() {
+    let root = Shape::Create {
+        path: String::new(),
+        files: vec![put("config.yaml", "a"), put("state/checkout", "c\n")],
+    };
+    let Intended::Create(create) = intent_of("t", "init", &root, (0, &|_| 0), evidence(), "r")
+    else {
+        panic!()
+    };
+    let step = library_tree::Step {
+        create: Some(create),
+        replace: None,
+        trash: None,
+        r#move: None,
+        purge: None,
+    };
+    assert_eq!(
+        expected_step(&step, Some(&root)),
+        [DirtyPath {
+            path: "config.yaml".to_string(),
+            oid: library_tree::content_id(b"a"),
+        }]
+    );
+}
+
 #[test]
 fn test_one_file_written_or_taken_away_is_that_one_step() {
     let write = Planned::Changed {

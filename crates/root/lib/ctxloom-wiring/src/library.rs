@@ -557,6 +557,43 @@ impl surface_cli::Foreign for DaemonServed {
     }
 }
 
+/// `init` through the daemon (step 10c U6): its preview and apply where this
+/// process stands, the project it named bound at its root, and each
+/// `--remote` registered as `remote create` registers it.
+impl setup_cli::Initializing for DaemonServed {
+    fn init_project(
+        &self,
+        request: daemon_proto::v1::InitProjectRequest,
+    ) -> Result<daemon_proto::v1::InitProjectResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        // Never minted here: a new project's id is the daemon's to name,
+        // and minting it would make `.ctxloom` before init creates it whole
+        // (step 10c U6).
+        let client = crate::daemon::preview_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.init_project("", request))
+    }
+
+    fn bind_project(&self, project_id: &str) -> Result<(), Failure> {
+        let wiring = self.wiring()?;
+        let bound = if project_id.is_empty() {
+            wiring.mint_project()
+        } else {
+            wiring.bind_project(project_id)
+        };
+        bound
+            .map(|_| ())
+            .map_err(|e| Failure::new(e, cli_support::Exit::FAILED))
+    }
+
+    fn add_remote(
+        &self,
+        request: daemon_proto::v1::CreateRemoteRequest,
+    ) -> Result<daemon_proto::v1::CreateRemoteResponse, Failure> {
+        deps_cli::Served::create_remote(self, "", request)
+    }
+}
+
 /// `doctor`, `auth status` and `init prompt` through the daemon (step 10c
 /// U5, U6), each answered where this process stands.
 impl setup_cli::SetupReading for DaemonServed {

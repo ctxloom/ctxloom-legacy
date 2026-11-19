@@ -255,6 +255,18 @@ impl Scaffold for ScaffoldFs {
         })
     }
 
+    fn is_new(&self) -> Result<bool, Failure> {
+        self.fs
+            .exists(&self.app_dir)
+            .map(|there| !there)
+            .map_err(|e| {
+                Box::new(ConfigFileError::Read {
+                    path: self.app_dir.display().to_string(),
+                    detail: e.to_string(),
+                }) as Failure
+            })
+    }
+
     fn read(&self, rel: &str) -> Result<Option<Vec<u8>>, Failure> {
         let path = self.below(rel)?;
         match self.fs.read(&path) {

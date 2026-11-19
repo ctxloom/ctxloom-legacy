@@ -96,6 +96,10 @@ impl CheckoutHarps for Harps {
         *self.0.lock().unwrap() += 1;
         Ok(HARP.to_string())
     }
+
+    fn fresh(&self) -> String {
+        HARP.to_string()
+    }
 }
 
 fn site() -> Site {
@@ -242,20 +246,26 @@ async fn two_reads_that_see_one_change_against_one_state_record_it_once() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_read_outside_git_is_refused_before_its_checkout_is_named() {
+async fn a_read_outside_git_is_observed() {
+    // The library is git-free (owner, 2026-11-18): no refusal outside git.
+    // No git operation is asked of a tree git does not hold.
     let under = under();
-    let git = Git::default();
-    let refused = under
+    let git = Git {
+        motion: Some(Motion::Merging),
+        ..Git::default()
+    };
+    let observed = under
         .observations
         .observe((&git, &git), &site())
         .await
-        .unwrap_err();
-    assert!(matches!(
-        refused,
-        ReadError::Refused(LibraryTreeRejection::NotInGit { ref root }) if root == "/work/demo"
-    ));
-    assert_eq!(*under.harps.0.lock().unwrap(), 0);
-    assert_eq!(*under.world.handled.lock().unwrap(), 0);
+        .expect("observed outside git");
+    assert_eq!(*under.harps.0.lock().unwrap(), 1);
+    assert_eq!(observed.motion, None);
+    assert!(
+        !git.calls().iter().any(|call| call == "in_motion"),
+        "{:?}",
+        git.calls()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -571,7 +581,7 @@ async fn a_home_that_is_a_repository_already_is_used_as_it_is_and_nothing_said()
 #[tokio::test(flavor = "current_thread")]
 async fn a_refused_checkout_observes_no_home_and_says_why() {
     let under = under();
-    let callers = callers(Git::default, Some("/h/.ctxloom"));
+    let callers = callers(ignoring, Some("/h/.ctxloom"));
     let project = ProjectName::new("calm-otter").unwrap();
     let refused = under
         .observations
@@ -580,9 +590,21 @@ async fn a_refused_checkout_observes_no_home_and_says_why() {
         .unwrap_err();
     assert!(matches!(
         refused,
-        ReadError::Refused(LibraryTreeRejection::NotInGit { .. })
+        ReadError::Refused(LibraryTreeRejection::LibraryIgnored { .. })
     ));
     assert_eq!(*under.world.handled.lock().unwrap(), 0);
+}
+
+/// git in a work tree that ignores the library: still refused (a library
+/// git holds is followed only where git does not ignore it).
+fn ignoring() -> Git {
+    let mut git = Git::at("c1", "t1");
+    git.ignored = Some(ctxloom_ports::IgnoreRule {
+        source: ".gitignore".to_string(),
+        line: 1,
+        pattern: ".ctxloom/".to_string(),
+    });
+    git
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -716,7 +738,7 @@ async fn a_refused_tree_is_not_swept() {
     )
     .sweeping(Arc::clone(&sweeps) as Arc<dyn ctxloom_ports::Operations>);
     let refused = observations
-        .observe((&Git::default(), &Git::default()), &site())
+        .observe((&ignoring(), &ignoring()), &site())
         .await;
     assert!(refused.is_err());
     assert!(sweeps.0.lock().unwrap().is_empty());

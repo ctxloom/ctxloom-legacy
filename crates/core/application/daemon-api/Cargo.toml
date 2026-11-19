@@ -20,6 +20,7 @@ exit-code.workspace = true
 isolation-application.workspace = true
 # A library read's observation first (step 10a U2): the reconcile, the
 # checkouts it reconciles against, and the library domain's refusals.
+init-application.workspace = true
 library-api.workspace = true
 # The premise index's words, rendered at a driving edge from the data an
 # assembly answers (E2).

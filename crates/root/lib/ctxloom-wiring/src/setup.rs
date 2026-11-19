@@ -1,64 +1,17 @@
 //! The setup commands (S12) wired: the cache, the doctor's files and the
 //! scaffold over the process's filesystem, and the use cases over them.
 
-use std::rc::Rc;
 use std::sync::Arc;
 
 use auth_application::Auth;
-use config_files::{ConfigFilesFs, ScaffoldFs};
+use config_files::ConfigFilesFs;
 use content_fs::UserFilesFs;
-use deps_application::Deps;
 use doctor_checks::{Doctor, GitIdentity};
-use init_application::{Create, Failure, Init};
-use library_application::Library;
 
 use crate::{LibError, ProcessEnv, Wiring};
 
 /// The nouns these commands own.
 pub(crate) const NOUNS: [&str; 4] = ["auth", "clean", "doctor", "init"];
-
-/// `config create`, as init's scaffold of a new project, and the output
-/// directory init then writes into it. The environment builds a library over
-/// the project as it is when the directory is written: the one built for the
-/// scaffold saw no project yet.
-struct ConfigCreate(Library, Arc<process_env::EnvSnapshot>);
-
-impl Create for ConfigCreate {
-    fn create(&self) -> Result<(), Failure> {
-        let created = self.0.config_create("");
-        created
-            .result
-            .map(|_| ())
-            .map_err(|e| Box::new(e) as Failure)
-    }
-
-    fn deps(&self) -> Result<Rc<Deps>, Failure> {
-        let wiring = Wiring::new(Arc::clone(&self.1)).map_err(|e| Box::new(e) as Failure)?;
-        crate::commands::build_deps(&wiring)
-            .map(Rc::new)
-            .map_err(|e| Box::new(e) as Failure)
-    }
-
-    fn set_output_dir(&self, dir: &str) -> Result<(), Failure> {
-        let wiring = Wiring::new(Arc::clone(&self.1)).map_err(|e| Box::new(e) as Failure)?;
-        let library = crate::library::build(&wiring, None).map_err(|e| Box::new(e) as Failure)?;
-        library
-            .set_output_dir(&library_application::Flags::default(), dir)
-            .result
-            .map(|_| ())
-            .map_err(|e| Box::new(e) as Failure)
-    }
-
-    fn set_premised(&self, word: &str) -> Result<(), Failure> {
-        let wiring = Wiring::new(Arc::clone(&self.1)).map_err(|e| Box::new(e) as Failure)?;
-        let library = crate::library::build(&wiring, None).map_err(|e| Box::new(e) as Failure)?;
-        library
-            .set_premised(&library_application::Flags::default(), word)
-            .result
-            .map(|_| ())
-            .map_err(|e| Box::new(e) as Failure)
-    }
-}
 
 /// The identity git commits with in the directory ctxloom was run in, asked
 /// of git as a session home's is (`oneshot::identity_git`: her environment,
@@ -79,16 +32,11 @@ impl GitIdentity for GitIdentityIn {
 pub(crate) struct SetupUseCases {
     pub(crate) auth: Auth,
     pub(crate) doctor: Doctor,
-    pub(crate) init: Init,
 }
 
 impl SetupUseCases {
     /// The use cases of the binary stamped `version` (doctor reports it).
-    pub(crate) fn build(
-        wiring: &Wiring,
-        deps: Rc<Deps>,
-        version: &str,
-    ) -> Result<SetupUseCases, LibError> {
+    pub(crate) fn build(wiring: &Wiring, version: &str) -> Result<SetupUseCases, LibError> {
         let fs = wiring.fs();
         let home = wiring.home().to_path_buf();
         let (around, app) = wiring.locate();
@@ -165,28 +113,9 @@ impl SetupUseCases {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX)),
         );
-        let init = Init::new(
-            Arc::new(ScaffoldFs::new(Arc::clone(&fs), &around.cwd)),
-            user,
-            deps,
-            Box::new(ConfigCreate(
-                crate::library::build(wiring, None)?,
-                Arc::clone(wiring.env()),
-            )),
-        )
-        // The directory init is run in made a git repository when it is in
-        // none (step 10, G1), by git on her PATH.
-        .with_repository(
-            Arc::new(library_git::GitTrees::new(
-                Arc::clone(&fs),
-                Arc::clone(wiring.env()),
-            )),
-            &around.cwd.display().to_string(),
-        );
         Ok(SetupUseCases {
             auth: Auth::new(Arc::new(ProcessEnv::from_snapshot(wiring.env()))),
             doctor,
-            init,
         })
     }
 }

@@ -4991,6 +4991,9 @@ message GetInitPromptRequest {
 // over, untrusted).
 message GetInitPromptResponse {
   string text = 1;
+  // 10c U6 (additive): each enabled registered companion's setup guidance,
+  // in order, which the interview carries after ctxloom's own (j000300).
+  repeated string companion_guidance = 2;
   repeated Notice notices = 92;
 }
 

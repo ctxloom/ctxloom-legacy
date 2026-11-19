@@ -41,24 +41,21 @@ Feature: init — the setup interview, and what it does to a project that alread
   when conditional guidance loads, owner ruling of 2026-11-12) are
   answered before the interview.
 
-  GIT IS REQUIRED (step 10, G1). A project's library lives in git, and
-  every library command in a directory git does not hold is refused
-  (cli/library_changes.feature). So init makes the directory a git
-  repository when it is in none, unasked, and says so. It commits nothing:
-  what to commit, and when, stays hers. A directory already in a work tree,
-  the repository's root or below it, is left as it is.
+  THE LIBRARY IS GIT-FREE (owner, 2026-11-18; DRAFT text under the
+  standing ruling, replacing step 10's G1 paragraph). init asks nothing of
+  git and runs none: it makes no repository, wherever it is run, and
+  commits nothing. A directory in a work tree, or in none, is left as it
+  is.
 
   INIT IS THE DAEMON'S (step 10c). Its questions are the daemon's preview:
   the CLI presents them at her terminal (an output folder to type, a word
   to choose, companions to confirm) and applies with her answers. The
-  preview says, before anything is asked, that it will make the directory
-  a git repository when it is in none; nothing is asked about that (G1).
-  The apply creates `.ctxloom` as ONE directory, built under its own
-  staging and renamed in, so a killed init leaves no half project and its
-  retry creates it whole; the checkout is named and its baseline recorded
-  after it. Off a terminal nothing is asked, each question keeps its
-  suggestion, and what only an answer would write is not written. The
-  interview is a terminal run the daemon plans, as every `ctxloom run`.
+  apply creates `.ctxloom` as ONE directory, built under its own staging
+  and renamed in, so a killed init leaves no half project and its retry
+  creates it whole; the checkout is named and its baseline recorded after
+  it. Off a terminal nothing is asked, each question keeps its suggestion,
+  and what only an answer would write is not written. The interview is a
+  terminal run the daemon plans, as every `ctxloom run`.
 
   The interactive interview needs a terminal too. Off one, init resolves the
   engine and returns without launching anything, which is precisely what makes
@@ -193,20 +190,17 @@ Feature: init — the setup interview, and what it does to a project that alread
       Then the command succeeds
       And the output does not contain "[built-in"
 
-  Rule: Init makes the project a git repository when it is in none, and commits nothing
+  Rule: Init asks nothing of git and runs none
 
-    Scenario: A first init outside git runs git init, says so, and commits nothing
-      # new: step 10, G1 (owner, 2026-11-16): init runs git init unasked.
+    Scenario: A first init outside git makes no repository
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 G1's "A first init outside git runs git init, says so, and commits nothing".
       Given an empty project directory
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
       When I run "ctxloom init"
       Then the command succeeds
-      And the output contains "made this directory a git repository"
-      And the file ".git/HEAD" exists
-      And the project's git repository has no commit
+      And the output does not contain "git repository"
+      And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" exists
-      When I run "ctxloom bundle list"
-      Then the command succeeds
 
     Scenario: A first init inside a git repository runs no git init
       # new: step 10, G1; a work tree is enough.
@@ -218,26 +212,24 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" exists
 
-    Scenario: Re-running init on a project outside git makes it a repository, and leaves its configuration alone
-      # new: step 10, G1; a project from before git was required.
+    Scenario: Re-running init on a project outside git leaves it as it is
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 G1's "Re-running init on a project outside git makes it a repository, and leaves its configuration alone".
       Given an initialized ctxloom project outside git
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
       When I run "ctxloom init"
       Then the command succeeds
       And the output contains "ctxloom directory already exists"
-      And the output contains "made this directory a git repository"
-      And the file ".git/HEAD" exists
+      And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" contains "schema_version: 9"
       And the file ".ctxloom/config.yaml" does not contain "engine:"
 
-    Scenario: With no git on the PATH, init fails before it scaffolds anything
-      # new: step 10, G11; git missing is exit 10.
+    Scenario: With no git on the PATH, init still creates the project
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 G11's "With no git on the PATH, init fails before it scaffolds anything".
       Given an empty project directory
       And git is not on the PATH
       When I run "ctxloom init"
-      Then the command exits with code 10
-      And the error is "library-git-git-missing"
-      And the file ".ctxloom/config.yaml" does not exist
+      Then the command succeeds
+      And the file ".ctxloom/config.yaml" exists
 
   Rule: Init is the daemon's: its preview carries the questions, and its apply creates the project whole
 
@@ -269,17 +261,16 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the file ".ctxloom/content/bundles/v2/project/profiles/default.yaml" exists
       And nothing is left under ".ctxloom/state/staging"
 
-    Scenario: At her terminal, init's preview says it will make the directory a repository, and asks nothing about it
-      # new: step 10 U6 with G1 (owner): git init is said, never asked.
+    Scenario: At her terminal, init asks nothing about git, and makes no repository
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 U6's "At her terminal, init's preview says it will make the directory a repository, and asks nothing about it".
       Given an empty project directory
       And claude-code is the only engine installed, and nothing reaches the network
       When Alice runs init at a terminal, taking every recommendation:
         """
         ctxloom init
         """
-      Then init's terminal output says "will make this directory a git repository"
-      And init asked her nothing about git
-      And the file ".git/HEAD" exists
+      Then init asked her nothing about git
+      And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" contains "dir: ctxloom/"
 
     Scenario: Off a terminal, init asks nothing and writes none of what only an answer would

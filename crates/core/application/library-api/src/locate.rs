@@ -1,7 +1,9 @@
-//! Whether a library tree is git's (G1): a project's library is refused
-//! outside a git work tree (`library-tree-not-in-git`) and where git
-//! ignores it (`library-tree-library-ignored`), each the library domain's
-//! own refusal, for a read as for a write (exit 20).
+//! Whether a library tree git holds is one it ignores: such a library is
+//! refused (`library-tree-library-ignored`, the library domain's own
+//! refusal, for a read as for a write, exit 20). The library is git-free
+//! (owner, 2026-11-18; step 10c U6 took out G1's refusal outside a work
+//! tree, `library-tree-not-in-git`, which init no longer avoids by running
+//! `git init`): a library in no work tree is read as any other.
 
 use ctxloom_ports::{TreeError, TreeObserver};
 use library_tree::LibraryTreeRejection;
@@ -10,16 +12,16 @@ use library_tree::LibraryTreeRejection;
 const PROBE: &str = ".ctxloom/config.yaml";
 
 /// Why the library of the project at `root` (its `.ctxloom` there) is not
-/// read, if it is not: none when it is in a work tree git does not ignore
-/// it in.
+/// read, if it is not: none when it is in no work tree, or in one git does
+/// not ignore it in.
 pub fn refusal(
     observer: &dyn TreeObserver,
     root: &str,
 ) -> Result<Option<LibraryTreeRejection>, TreeError> {
+    // The library is git-free (owner, 2026-11-18): a library in no work
+    // tree is read as any other; only one git holds and ignores is refused.
     if observer.work_tree(root)?.is_none() {
-        return Ok(Some(LibraryTreeRejection::NotInGit {
-            root: root.to_string(),
-        }));
+        return Ok(None);
     }
     Ok(observer
         .check_ignore(root, PROBE)?

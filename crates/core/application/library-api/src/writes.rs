@@ -232,6 +232,15 @@ pub fn shape(
                 paths: paths_of(&one),
             }),
         },
+        // A tree written whole where it was not (step 10c U6: a first
+        // init's scaffold): one new directory, the tree's root itself.
+        Planned::NewTree { files } => shaped(
+            Lands::Content,
+            Shape::Create {
+                path: String::new(),
+                files: files.clone(),
+            },
+        ),
         // A tree outside ctxloom's trees is no tree's step (D2's
         // EXCEPTION): the daemon takes it aside before it shapes.
         Planned::Outside { .. } => Ok(None),
@@ -339,7 +348,9 @@ fn paths_of(planned: &Planned) -> Vec<String> {
         Planned::BundleGone { bundle } => vec![bundle.clone()],
         Planned::Changed { changes, .. } => changes.iter().map(change_path).collect(),
         Planned::Outside { dir, .. } => vec![dir.clone()],
-        Planned::TreeFiles { files } => files.iter().map(|put| put.path.clone()).collect(),
+        Planned::TreeFiles { files } | Planned::NewTree { files } => {
+            files.iter().map(|put| put.path.clone()).collect()
+        }
         Planned::MovedInto { bundle, .. } => vec![bundle.clone()],
     }
 }
@@ -567,7 +578,12 @@ fn expected_in_tree(step: &Step, shape: Option<&Shape>) -> Vec<DirtyPath> {
             .entries
             .iter()
             .map(|entry| DirtyPath {
-                path: format!("{}/{}", create.path, entry.path),
+                // A root create's (step 10c U6) are the tree's own paths.
+                path: if create.path.is_empty() {
+                    entry.path.clone()
+                } else {
+                    format!("{}/{}", create.path, entry.path)
+                },
                 oid: entry.oid.clone(),
             })
             .collect();

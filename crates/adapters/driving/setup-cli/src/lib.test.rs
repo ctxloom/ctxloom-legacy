@@ -12,7 +12,7 @@ use doctor_checks::{
     ConfigFiles, Executables, Failure as PortFailure, GitIdentity, LayerText, Put, Scope, Source,
     UserFiles,
 };
-use init_application::{Ended, LaunchFailure, Scaffold};
+use init_application::{Ended, LaunchFailure};
 use reclaim_application::{Cleaner, ProjectCache};
 
 use super::*;
@@ -64,10 +64,6 @@ impl Terminal for Person {
 struct NoCompanions;
 
 impl init_application::Companions for NoCompanions {
-    fn shipped_available(&self) -> Vec<String> {
-        Vec::new()
-    }
-
     fn add(&self, name: &str) -> Result<init_application::Added, init_application::NotAdded> {
         Err(init_application::NotAdded::Missing {
             program: format!("ctxloom-companion-{name}"),
@@ -147,25 +143,119 @@ impl Sessions for Launches {
     }
 }
 
-/// The scaffold, which lands, over the project the dependency use cases
-/// already see.
-struct Made(Rc<deps_application::Deps>);
+/// `init` as the daemon answers it (step 10c U6), over the test's world: a
+/// preview asks init's needs of a project not there yet (the shipped
+/// companions found, `shipped`), an apply makes it (the answers chosen as
+/// the daemon chooses them) and names its project; `--remote` is
+/// registered by the dependency use cases.
+struct InitIn<'a> {
+    world: &'a World,
+    shipped: Vec<String>,
+    deps: Rc<deps_application::Deps>,
+    bound: Mutex<Vec<String>>,
+}
 
-impl init_application::Create for Made {
-    fn create(&self) -> Result<(), PortFailure> {
+impl super::Initializing for InitIn<'_> {
+    fn init_project(
+        &self,
+        request: daemon_proto::v1::InitProjectRequest,
+    ) -> Result<daemon_proto::v1::InitProjectResponse, Failure> {
+        use daemon_proto::v1;
+        use init_application::needs;
+        let fresh = &self.world.fresh;
+        let existed = !fresh.load(std::sync::atomic::Ordering::SeqCst);
+        let app_dir = "/work/.ctxloom".to_string();
+        if request.validate_only {
+            let asked = if existed {
+                Vec::new()
+            } else {
+                needs::needs(&self.shipped)
+                    .into_iter()
+                    .map(|need| v1::Need {
+                        id: need.id,
+                        optional: true,
+                        kind: Some(match need.kind {
+                            needs::Kind::Ask { suggestion } => v1::need::Kind::Ask(v1::Ask {
+                                text: need.text,
+                                suggestion,
+                                ..v1::Ask::default()
+                            }),
+                            needs::Kind::Choose { choices } => v1::need::Kind::Choose(v1::Choose {
+                                text: need.text,
+                                choices,
+                                ..v1::Choose::default()
+                            }),
+                            needs::Kind::Confirm => v1::need::Kind::Confirm(v1::Confirm {
+                                text: need.text,
+                                ..v1::Confirm::default()
+                            }),
+                        }),
+                    })
+                    .collect()
+            };
+            return Ok(v1::InitProjectResponse {
+                app_dir,
+                existed,
+                needs: asked,
+                ..v1::InitProjectResponse::default()
+            });
+        }
+        if existed {
+            return Ok(v1::InitProjectResponse {
+                app_dir,
+                existed,
+                ..v1::InitProjectResponse::default()
+            });
+        }
+        fresh.store(false, std::sync::atomic::Ordering::SeqCst);
+        let given: Vec<(String, needs::Given)> = request
+            .answers
+            .iter()
+            .filter_map(|answer| {
+                Some((
+                    answer.need_id.clone(),
+                    match answer.answer.clone()? {
+                        v1::answer::Answer::Text(text) => needs::Given::Text(text),
+                        v1::answer::Answer::Chosen(word) => needs::Given::Chosen(word),
+                        v1::answer::Answer::Confirmed(yes) => needs::Given::Confirmed(yes),
+                        v1::answer::Answer::Edited(text) => needs::Given::Text(text),
+                    },
+                ))
+            })
+            .collect();
+        let chosen = needs::chosen(&given);
+        Ok(v1::InitProjectResponse {
+            app_dir,
+            project_id: "calm-otter".to_string(),
+            output_dir: chosen.output_dir.unwrap_or_default(),
+            premised: chosen.premised.unwrap_or_default(),
+            ..v1::InitProjectResponse::default()
+        })
+    }
+
+    fn bind_project(&self, project_id: &str) -> Result<(), Failure> {
+        self.bound.lock().unwrap().push(project_id.to_string());
         Ok(())
     }
 
-    fn set_output_dir(&self, _: &str) -> Result<(), PortFailure> {
-        Ok(())
-    }
-
-    fn set_premised(&self, _: &str) -> Result<(), PortFailure> {
-        Ok(())
-    }
-
-    fn deps(&self) -> Result<Rc<deps_application::Deps>, PortFailure> {
-        Ok(Rc::clone(&self.0))
+    fn add_remote(
+        &self,
+        request: daemon_proto::v1::CreateRemoteRequest,
+    ) -> Result<daemon_proto::v1::CreateRemoteResponse, Failure> {
+        let remote = request.remote.unwrap_or_default();
+        let outcome = self.deps.remote_create(&deps_application::CreateRequest {
+            name: request.remote_id,
+            url: remote.url,
+            forge: remote.forge,
+        });
+        let created = outcome.result.map_err(|e| Failure::new(e, Exit::FAILED))?;
+        Ok(daemon_proto::v1::CreateRemoteResponse {
+            remote: Some(daemon_proto::v1::Remote {
+                url: created.url,
+                ..Default::default()
+            }),
+            ..daemon_proto::v1::CreateRemoteResponse::default()
+        })
     }
 }
 
@@ -243,18 +333,6 @@ impl UserFiles for World {
     }
 }
 
-impl Scaffold for World {
-    fn app_dir(&self) -> String {
-        "/work/.ctxloom".to_string()
-    }
-    fn exists(&self, _: &str) -> Result<bool, PortFailure> {
-        Ok(true)
-    }
-    fn write(&self, _: &[Put]) -> Result<(), PortFailure> {
-        Ok(())
-    }
-}
-
 struct Git;
 
 impl Executables for Git {
@@ -274,6 +352,8 @@ struct Run {
     out: String,
     err: String,
     world: Arc<World>,
+    /// The project ids init bound at its root.
+    bound: Vec<String>,
 }
 
 fn go(line: &[&str], format: Format, configure: impl FnOnce(&World, &Fixture)) -> Run {
@@ -314,7 +394,7 @@ fn go_with(
         out,
         person,
         sessions,
-        &NoCompanions,
+        (&NoCompanions, &[]),
     )
 }
 
@@ -383,6 +463,7 @@ impl super::SetupReading for ReadingIn<'_> {
             .map_err(|refused| Failure::boxed(refused.cause, refused.exit))?;
         Ok(daemon_proto::v1::GetInitPromptResponse {
             text: read.text,
+            companion_guidance: Vec::new(),
             notices: read
                 .notices
                 .iter()
@@ -445,7 +526,7 @@ fn go_with_companions(
     out: &mut dyn Write,
     person: &Person,
     sessions: &Launches,
-    companions: &dyn init_application::Companions,
+    (companions, shipped): (&dyn init_application::Companions, &[&str]),
 ) -> Run {
     let world = Arc::new(World::default());
     let fixture = Fixture::new();
@@ -461,13 +542,12 @@ fn go_with_companions(
         Some("/home/u"),
         "0.1.0",
     );
-    let deps = Rc::new(fixture.deps);
-    let init = Init::new(
-        world.clone(),
-        world.clone(),
-        Rc::clone(&deps),
-        Box::new(Made(deps)),
-    );
+    let initializing = InitIn {
+        world: &world,
+        shipped: shipped.iter().map(ToString::to_string).collect(),
+        deps: Rc::new(fixture.deps),
+        bound: Mutex::default(),
+    };
     let uses = UseCases {
         auth: &auth,
         cleaning: &CleaningIn(cleaner),
@@ -479,7 +559,7 @@ fn go_with_companions(
         },
         globals: daemon_proto::v1::Globals::default(),
         doctor: &doctor,
-        init: &init,
+        initializing: &initializing,
         terminal: person,
         sessions,
         prompts: sessions,
@@ -503,11 +583,13 @@ fn go_with_companions(
     .expect("catalog");
     let mut err = Vec::new();
     let exit = run(&uses, &noun, &call, &catalog, out, &mut err);
+    let bound = initializing.bound.lock().unwrap().clone();
     Run {
         exit,
         out: String::new(),
         err: String::from_utf8(err).unwrap(),
         world,
+        bound,
     }
 }
 
@@ -793,6 +875,27 @@ fn init_of_a_new_project_says_what_it_made_and_pulls_nothing() {
     assert_eq!(r.out, "Created ctxloom directory: /work/.ctxloom\n");
 }
 
+// Step 10c U6: the project the daemon named for a first init is bound at
+// its root under that id; a re-run's is bound as it is found (no id given).
+#[test]
+fn a_first_init_binds_the_project_the_daemon_named_and_a_re_run_binds_it_as_found() {
+    let first = go(&["init"], Format::Text, |world, _| {
+        world.fresh.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    assert_eq!(first.exit.unwrap(), Exit::OK);
+    assert_eq!(first.bound, ["calm-otter"]);
+    let again = go(&["init"], Format::Text, token);
+    assert_eq!(again.bound, [""]);
+}
+
+// init.feature: the personal remote is "personal"; the next are numbered.
+#[test]
+fn the_remotes_are_named_personal_then_numbered() {
+    assert_eq!(super::personal_name(0), "personal");
+    assert_eq!(super::personal_name(1), "personal-2");
+    assert_eq!(super::personal_name(2), "personal-3");
+}
+
 // Rulings 89, 106: a first init at a terminal asks where a session's outputs
 // go, before the interview, and says where they will go and that they can be
 // committed.
@@ -840,10 +943,6 @@ struct SomeCompanions {
 }
 
 impl init_application::Companions for SomeCompanions {
-    fn shipped_available(&self) -> Vec<String> {
-        vec!["ltk".to_string(), "reprise".to_string()]
-    }
-
     fn add(&self, name: &str) -> Result<init_application::Added, init_application::NotAdded> {
         if !["ltk", "reprise", "acme"].contains(&name) {
             return Err(init_application::NotAdded::Missing {
@@ -878,7 +977,7 @@ fn a_first_init_at_a_terminal_offers_the_companions_and_says_what_it_added() {
             interview_code: Some(1),
             ..Launches::default()
         },
-        &companions,
+        (&companions, &["ltk", "reprise"]),
     );
     let out = String::from_utf8(out).unwrap();
     let err = r.err.clone();
@@ -1093,13 +1192,12 @@ fn a_noun_the_line_does_not_carry_is_a_usage_failure() {
         Some("/h"),
         "0",
     );
-    let deps = Rc::new(fixture.deps);
-    let init = Init::new(
-        world.clone(),
-        world.clone(),
-        Rc::clone(&deps),
-        Box::new(Made(deps)),
-    );
+    let initializing = InitIn {
+        world: &world,
+        shipped: Vec::new(),
+        deps: Rc::new(fixture.deps),
+        bound: Mutex::default(),
+    };
     let uses = UseCases {
         auth: &auth,
         cleaning: &CleaningIn(cleaner),
@@ -1111,7 +1209,7 @@ fn a_noun_the_line_does_not_carry_is_a_usage_failure() {
         },
         globals: daemon_proto::v1::Globals::default(),
         doctor: &doctor,
-        init: &init,
+        initializing: &initializing,
         terminal: &Person::default(),
         sessions: &Launches::default(),
         prompts: &Launches::default(),

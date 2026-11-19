@@ -1507,9 +1507,15 @@ fn daemon_dir(w: &World) -> PathBuf {
 
 #[given("no ctxloom daemon can be started for this home")]
 fn unstartable(w: &mut World) {
+    // A daemon an earlier step's command started (step 10c U6: init is the
+    // daemon's) is stopped, and its directory taken away.
+    if files::exists(daemon_dir(w)) {
+        let stopped = run_now(w, &["daemon", "stop"]);
+        assert_eq!(stopped.code, 0, "daemon stop: {}", stopped.said());
+        files::remove_tree(daemon_dir(w));
+    }
     // A file where the daemon's directory goes: no daemon can take its
     // single-instance lock there, advertise itself or log.
-    assert!(!files::exists(daemon_dir(w)), "a fresh home");
     files::put(daemon_dir(w), "not a directory");
 }
 
@@ -3591,9 +3597,17 @@ fn no_mint(w: &mut World) {
         !files::exists(w.common.project.dir().join(".ctxloom/sessions")),
         "no session directory was made"
     );
-    assert!(
-        !files::exists(w.common.project.home().join(".ctxloom/ctxloom.db")),
-        "the store was never opened, so nothing was minted in it"
+    // The store as the Given left it (step 10c U6: an init before is the
+    // daemon's, which opened it) is as it was, so nothing was minted in it.
+    let before = w
+        .daemon_spec
+        .store_before
+        .clone()
+        .expect("the stores were looked at before the command ran");
+    assert_eq!(
+        store_evidence(w).stores,
+        before.stores,
+        "the store was opened, so a session may have been minted in it"
     );
 }
 

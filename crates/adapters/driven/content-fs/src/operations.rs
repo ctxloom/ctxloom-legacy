@@ -5,7 +5,11 @@
 //! - A file is written under `state/staging/<request id>/` and renamed over
 //!   its target; nothing temporary is ever beside the target.
 //! - A new directory is built whole there, then renamed in with NOREPLACE:
-//!   one that appeared meanwhile is left as it was (`Exists`).
+//!   one that appeared meanwhile is left as it was (`Exists`). The tree
+//!   itself made whole (its root, `""`: a first init's `.ctxloom`, step 10c
+//!   U6) cannot be staged inside itself: it alone is built BESIDE it, under
+//!   `<tree>.staging/<request id>/`, then renamed in the same way; that
+//!   staging is swept with the tree's.
 //! - A removal is one rename into `state/trash/<request id>/<path>`.
 //! - A move is one NOREPLACE rename, within the tree or into another
 //!   (its target below that tree's directory; QUESTIONS 1(a)).
@@ -29,6 +33,14 @@ use os::Mode;
 
 use crate::error::ContentError;
 use crate::join_rel;
+
+/// Where the tree `tree` is staged when it is made whole (step 10c U6):
+/// beside it, `<tree>.staging`, never inside the directory it creates.
+fn beside(tree: &Path) -> PathBuf {
+    let mut name = tree.file_name().unwrap_or_default().to_os_string();
+    name.push(".staging");
+    tree.with_file_name(name)
+}
 
 /// The atomic operations, on a filesystem.
 pub struct TreeOperations {
@@ -111,10 +123,25 @@ impl TreeOperations {
 
     /// A fresh staging for the request: an earlier try's dropped.
     fn staging(&self, tree: &Path, request_id: &str) -> Result<PathBuf, Failure> {
-        let staging = Self::of_request(tree, STAGING_DIR, request_id)?;
-        self.remove_all(&staging)?;
-        self.make_dirs(&staging)?;
-        Ok(staging)
+        self.fresh(&Self::of_request(tree, STAGING_DIR, request_id)?)
+    }
+
+    /// `dir` removed when nothing is left in it (another request's staging
+    /// is never touched); none there is done.
+    fn drop_if_empty(&self, dir: &Path) -> Result<(), Failure> {
+        match self.fs.read_dir(dir) {
+            Ok(entries) if entries.is_empty() => self.remove_all(dir),
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(failed_at(ContentError::list_dir, dir, &e)),
+        }
+    }
+
+    /// `dir` made afresh: what an earlier try left there dropped.
+    fn fresh(&self, dir: &Path) -> Result<PathBuf, Failure> {
+        self.remove_all(dir)?;
+        self.make_dirs(dir)?;
+        Ok(dir.to_path_buf())
     }
 
     /// `dir`'s entries made durable (`Fs::sync_dir`: fsync on unix,
@@ -191,7 +218,6 @@ impl TreeOperations {
         (path, files): (&str, &[Put]),
         at: &dyn Fn(Point),
     ) -> Result<Operated, Failure> {
-        let target = self.inside(tree, path)?;
         for put in files {
             if !is_plain_relative(&put.path) || put.path.contains('\0') {
                 return Err(Box::new(ContentError::BadPath {
@@ -199,8 +225,21 @@ impl TreeOperations {
                 }));
             }
         }
-        let staging = self.staging(tree, request_id)?;
-        let staged = staging.join(leaf(path));
+        // The tree's root: staged beside it (step 10c U6).
+        let (target, staging, staged) = if path.is_empty() {
+            if !is_plain_relative(request_id) || request_id.contains('/') {
+                return Err(Box::new(ContentError::BadRequest {
+                    request_id: request_id.to_string(),
+                }));
+            }
+            let staging = self.fresh(&beside(tree).join(request_id))?;
+            (tree.to_path_buf(), staging.clone(), staging)
+        } else {
+            let target = self.inside(tree, path)?;
+            let staging = self.staging(tree, request_id)?;
+            let staged = staging.join(leaf(path));
+            (target, staging, staged)
+        };
         self.make_dirs(&staged)?;
         for put in files {
             self.write(&join_rel(&staged, &put.path), put)?;
@@ -208,6 +247,9 @@ impl TreeOperations {
         at(Point::Staged);
         let renamed = self.rename(&staged, &target, false)?;
         self.remove_all(&staging)?;
+        if path.is_empty() {
+            self.drop_if_empty(&beside(tree))?;
+        }
         Ok(if renamed {
             Operated::Done
         } else {
@@ -373,7 +415,8 @@ impl Operations for TreeOperations {
     }
 
     fn sweep_staging(&self, tree: &str) -> Result<(), Failure> {
-        self.remove_all(&join_rel(Path::new(tree), STAGING_DIR))
+        self.remove_all(&join_rel(Path::new(tree), STAGING_DIR))?;
+        self.remove_all(&beside(Path::new(tree)))
     }
 
     fn purge_slot(&self, tree: &str, request_id: &str) -> Result<(), Failure> {

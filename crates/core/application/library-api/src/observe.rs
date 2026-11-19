@@ -39,6 +39,10 @@ pub fn listed_as_held(
 pub trait CheckoutHarps: Send + Sync {
     /// The harp of the checkout whose library is the directory `tree`.
     fn harp(&self, tree: &str) -> Result<String, Failure>;
+
+    /// A fresh harp, minted and written nowhere (step 10c U6: a first
+    /// init's checkout and project, staged with its scaffold).
+    fn fresh(&self) -> String;
 }
 
 /// git as a read's caller runs it: on the caller's `PATH`, in the caller's
@@ -304,18 +308,54 @@ impl<E: Edge> Observations<E> {
         (observer, scanner): (&dyn TreeObserver, &dyn LibraryScanner),
         site: &Site,
     ) -> Result<Observed, ReadError> {
+        // A checkout git does not hold has no git operation in motion to
+        // ask of (the library is git-free, owner 2026-11-18).
+        let mut held = true;
         if let Site::Checkout { root, .. } = site {
             if let Some(refused) = locate::refusal(observer, root)? {
                 return Err(ReadError::Refused(refused));
             }
+            held = observer.work_tree(root)?.is_some();
         }
+        let motion = if held {
+            observer.in_motion(site.tree())?
+        } else {
+            None
+        };
+        self.observed(scanner, site, motion).await
+    }
+
+    /// A fresh harp ([`CheckoutHarps::fresh`]), written nowhere.
+    pub fn fresh_harp(&self) -> String {
+        self.harps.fresh()
+    }
+
+    /// Observe `site` as [`Observations::observe`] does, but with no git
+    /// asked anything (step 10c U6): a tree a first init has just created,
+    /// its baseline recorded in any directory (the library is git-free,
+    /// owner 2026-11-18), nothing in motion.
+    pub async fn observe_created(
+        &self,
+        scanner: &dyn LibraryScanner,
+        site: &Site,
+    ) -> Result<Observed, ReadError> {
+        self.observed(scanner, site, None).await
+    }
+
+    /// `site` observed through `scanner`, the git operation in progress
+    /// there `motion`.
+    async fn observed(
+        &self,
+        scanner: &dyn LibraryScanner,
+        site: &Site,
+        motion: Option<ctxloom_ports::Motion>,
+    ) -> Result<Observed, ReadError> {
         self.sweep_once(site.tree())?;
         let tree = self.tree_name(site)?;
         let held = {
             let checkouts = self.checkouts.checkouts();
             checkouts.tree(&tree.root()).cloned().unwrap_or_default()
         };
-        let motion = observer.in_motion(site.tree())?;
         let files = scanner.scan(site.tree()).map_err(ReadError::Failed)?;
         if let Some(clock) = &self.clock {
             self.scanned

@@ -109,6 +109,24 @@ pub(crate) fn registry<N>(
         .expect("PROJECT_MARKER is a relative path of plain names")
 }
 
+/// The names a first init's project is minted with (step 10c U6): its id
+/// the one the daemon named it by, every other name harp-names'.
+struct Minted(String);
+
+impl ports::Names for Minted {
+    fn task_id(&mut self) -> String {
+        HarpNames.task_id()
+    }
+
+    fn task_id_for(&mut self, request_id: &str, position: u64) -> String {
+        HarpNames.task_id_for(request_id, position)
+    }
+
+    fn project_id(&mut self) -> String {
+        self.0.clone()
+    }
+}
+
 /// How many fresh harps a project's naming tries before it gives up (S54).
 const PROJECT_HARP_TRIES: usize = 3;
 
@@ -506,6 +524,20 @@ impl Wiring {
     /// root (the nearest `.ctxloom`'s, never a subfolder) when none is bound
     /// yet: a run's, a bare `init`'s, and a command's that must name its
     /// project (owner ruling 2026-11-14).
+    /// The project the daemon named `project_id` for a first init (step 10c
+    /// U6) bound at its root: taskloom's registry mints it as that id (its
+    /// index and its marker), as a first naming would have minted one.
+    pub(crate) fn bind_project(&self, project_id: &str) -> Result<ports::Project, LibError> {
+        use ports::ProjectIdentity as _;
+        registry(
+            Arc::clone(&self.fs),
+            self.environment(),
+            Minted(project_id.to_string()),
+        )
+        .for_write(None)
+        .map_err(LibError::Project)
+    }
+
     pub(crate) fn mint_project(&self) -> Result<ports::Project, LibError> {
         use ports::ProjectIdentity as _;
         registry(Arc::clone(&self.fs), self.environment(), HarpNames)

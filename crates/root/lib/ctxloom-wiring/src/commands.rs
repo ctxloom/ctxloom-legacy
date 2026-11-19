@@ -398,7 +398,7 @@ impl Commands {
                 .with_remotes(deps.clone())
                 .with_version(&self.version);
             let surface = build_setup(&wiring, deps.clone())?;
-            let setup = SetupUseCases::build(&wiring, deps.clone(), &self.version)?;
+            let setup = SetupUseCases::build(&wiring, &self.version)?;
             self.wired = Some(Wired {
                 deps,
                 library,
@@ -440,33 +440,16 @@ impl Commands {
             reading: &cleaning,
             globals: library_api::reads::globals_of(&call.globals),
             doctor: &wired.setup.doctor,
-            init: &wired.setup.init,
+            initializing: &cleaning,
             terminal: &terminal,
             sessions: &sessions,
             prompts: &sessions,
             companions: &sessions,
         };
-        let done = setup_cli::run(&uses, noun, call, catalog, out, err)?;
-        if mints(noun, call) {
-            // `init` names the project it set up (owner rulings 2026-11-13
-            // and 14: it mints the project's id), at the root the one
-            // resolver finds now that its `.ctxloom` is there.
-            Wiring::new(Arc::clone(&env))
-                .and_then(|wiring| wiring.mint_project())
-                .map_err(|e| Failure::new(e, Exit::FAILED))?;
-        }
-        Ok(done)
+        // `init` names the project it set up (owner rulings 2026-11-13 and
+        // 14), as the daemon named it (step 10c U6: `Initializing`).
+        setup_cli::run(&uses, noun, call, catalog, out, err)
     }
-}
-
-/// Whether the setup command `noun` mints its project's id: a bare `init`
-/// (owner ruling 2026-11-13), never `init prompt`, which only prints.
-fn mints(noun: &str, call: &Call<'_>) -> bool {
-    noun == "init"
-        && call
-            .matches
-            .subcommand_matches(noun)
-            .is_some_and(|init| init.subcommand_name().is_none())
 }
 
 impl Extension for Commands {

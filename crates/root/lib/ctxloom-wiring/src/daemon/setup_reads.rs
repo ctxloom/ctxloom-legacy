@@ -47,7 +47,7 @@ impl daemon_api::SetupReads for SetupReaders {
         let deps = Rc::new(crate::commands::build_deps(&wiring).map_err(|e| failed(&e))?);
         Ok(match ask {
             SetupRead::Doctor { deps: only } => {
-                let uses = crate::setup::SetupUseCases::build(&wiring, deps, &self.stamp)
+                let uses = crate::setup::SetupUseCases::build(&wiring, &self.stamp)
                     .map_err(|e| failed(&e))?;
                 SetupAnswer::Doctor(v1::RunDoctorResponse {
                     checks: setup_cli::wire::checks(&uses.doctor.report(only)),
@@ -55,7 +55,7 @@ impl daemon_api::SetupReads for SetupReaders {
                 })
             }
             SetupRead::AuthStatus => {
-                let uses = crate::setup::SetupUseCases::build(&wiring, deps, &self.stamp)
+                let uses = crate::setup::SetupUseCases::build(&wiring, &self.stamp)
                     .map_err(|e| failed(&e))?;
                 let rows = uses.auth.status(&uses.doctor.layer_texts());
                 SetupAnswer::AuthStatus(v1::GetAuthStatusResponse {
@@ -97,9 +97,20 @@ fn init_prompt(
         let exit = e.exit();
         refused(&e, exit)
     })?;
+    // Each enabled registered companion's guidance, asked through the
+    // library's one probe at the caller's site (OD-8, D1).
+    let companion_guidance = library
+        .companion_inits(flags)
+        .result
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| c.init.setup_guidance)
+        .filter(|g| !g.is_empty())
+        .collect();
     Ok(SetupAnswer::InitPrompt(v1::GetInitPromptResponse {
         // As `init prompt` has always printed it: a line after it.
         text: format!("{text}\n"),
+        companion_guidance,
         notices: read
             .notices
             .iter()

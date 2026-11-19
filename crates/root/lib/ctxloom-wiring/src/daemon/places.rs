@@ -182,6 +182,10 @@ impl library_api::CheckoutHarps for TreeHarps {
         )
         .map_err(|e| Box::new(e) as ctxloom_ports::Failure)
     }
+
+    fn fresh(&self) -> String {
+        crate::session_name()
+    }
 }
 
 /// The daemon's one store, as the destroy purges it.

@@ -63,6 +63,8 @@ struct State {
     home: Option<usize>,
     user: BTreeMap<String, File>,
     scaffold: BTreeMap<String, File>,
+    /// The scaffold's directory is not there yet (step 10c U6).
+    fresh: bool,
     /// Every mutating call, in order.
     log: Vec<String>,
     editor: Option<Editing>,
@@ -265,6 +267,11 @@ impl Mem {
     }
 
     /// A file of the scaffold already there.
+    /// The scaffold's directory not there yet: a first init's (step 10c U6).
+    pub fn set_fresh_for_test(&self) {
+        self.lock().fresh = true;
+    }
+
     pub fn set_scaffold_for_test(&self, rel: &str, text: &str) {
         self.lock().scaffold.insert(
             rel.to_string(),
@@ -559,8 +566,13 @@ impl Scaffold for Mem {
         Ok(self.lock().scaffold.get(rel).map(|file| file.bytes.clone()))
     }
 
+    fn is_new(&self) -> Result<bool, Failure> {
+        Ok(self.lock().fresh)
+    }
+
     fn write(&self, files: &[Put]) -> Result<(), Failure> {
         let mut state = self.lock();
+        state.fresh = false;
         state.log.push("scaffold".to_string());
         for put in files {
             state.scaffold.insert(
@@ -664,6 +676,7 @@ impl Setup<'_> {
             home: None,
             user: BTreeMap::new(),
             scaffold: BTreeMap::new(),
+            fresh: false,
             log: Vec::new(),
             editor: None,
             companions: self

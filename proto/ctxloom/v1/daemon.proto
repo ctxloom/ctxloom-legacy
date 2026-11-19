@@ -877,6 +877,18 @@ message InitProjectResponse {
   // What the client does next: the setup session's launch, then the restart
   // offer's preview.
   Continuation then = 2;
+  // 10c U6 (additive): the project's `.ctxloom`.
+  string app_dir = 3;
+  // 10c U6 (additive): it was there already, so nothing was written (a
+  // re-run).
+  bool existed = 4;
+  // 10c U6 (additive): the id the new project was named by, for the client
+  // to bind at its root (taskloom's marker and index); empty for a re-run.
+  string project_id = 5;
+  // 10c U6 (additive): the `output.dir` an answer wrote, else empty.
+  string output_dir = 6;
+  // 10c U6 (additive): the `config.premised` an answer wrote, else empty.
+  string premised = 7;
   // On a preview, the needs a person must answer before the apply
   // (needs.proto); empty once applied.
   repeated Need needs = 90;

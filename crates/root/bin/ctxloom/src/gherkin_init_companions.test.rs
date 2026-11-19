@@ -337,18 +337,35 @@ fn questions(said: &str) -> Vec<&str> {
     said.lines().filter(|line| line.contains('?')).collect()
 }
 
-/// No question init asked at the stood-in terminal names git (G1: `git
-/// init` is said, never asked); init asked something, so the check bites.
+/// No question init asked at the stood-in terminal names git (the library
+/// is git-free, owner 2026-11-18); init asked something, so the check
+/// bites.
 #[then("init asked her nothing about git")]
 fn asked_nothing_of_git(w: &mut World) {
     let said = w.said();
     let asked = questions(&said);
     assert!(!asked.is_empty(), "init asked nothing at all:\n{said}");
-    let of_git: Vec<&&str> = asked
-        .iter()
-        .filter(|line| line.to_lowercase().contains("git"))
-        .collect();
+    let of_git: Vec<&&str> = asked.iter().filter(|line| names_git(line)).collect();
     assert!(of_git.is_empty(), "init asked about git: {of_git:?}");
+}
+
+/// Whether `line` names git, as a word of its own: "gitignored" (the
+/// output folder's question says what is not ignored) is no question of
+/// git.
+fn names_git(line: &str) -> bool {
+    line.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| word == "git")
+}
+
+/// A question of git names it as a word.
+#[test]
+fn a_question_of_git_names_it_as_a_word() {
+    assert!(names_git("Run git init here? [Y/n]"));
+    assert!(names_git("Make this a Git repository?"));
+    assert!(!names_git(
+        "Where should outputs go? It is not gitignored, so they can be committed. [ctxloom/]"
+    ));
 }
 
 /// A question is a line with a question mark; a notice is not one.

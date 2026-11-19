@@ -272,6 +272,15 @@ pub trait Scaffold {
     /// directories made (mode 0644 files, 0755 directories).
     fn write(&self, files: &[Put]) -> Result<(), Failure>;
 
+    /// Whether that directory itself is not there yet (step 10c U6: a first
+    /// init's tree, created whole). False by default: a scaffold that keeps
+    /// no directory is never new.
+    // Equivalent: its one mutant is this default body.
+    #[cfg_attr(test, mutants::skip)]
+    fn is_new(&self) -> Result<bool, Failure> {
+        Ok(false)
+    }
+
     /// The bytes of the file at `rel` below that directory; none where it
     /// is not there (step 10c U5: what a write compares itself with). None
     /// by default: a scaffold that keeps no file to read reads as empty.

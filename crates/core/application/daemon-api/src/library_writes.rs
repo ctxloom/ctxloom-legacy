@@ -167,9 +167,9 @@ pub(crate) struct Made<'a> {
 /// What a use case planned: its outcome, its recorded writes shaped, and
 /// a tree it writes outside ctxloom's trees, if any (D2's EXCEPTION:
 /// `bundle export`).
-struct Planned<T> {
-    outcome: Outcome<T>,
-    shaped: Result<Option<writes::Shaped>, library_tree::LibraryTreeRejection>,
+pub(crate) struct Planned<T> {
+    pub(crate) outcome: Outcome<T>,
+    pub(crate) shaped: Result<Option<writes::Shaped>, library_tree::LibraryTreeRejection>,
     outside: Option<Outside>,
 }
 
@@ -557,7 +557,7 @@ impl<E: Edge> Api<E> {
     /// outcome, and what it would write shaped into its one step. A
     /// preview's etag is its apply's path's, so its apply is planned too
     /// (recorded, never performed) to name that path.
-    fn planned<T>(
+    pub(crate) fn planned<T>(
         &self,
         site: &crate::library_reads::ReadSite<'_>,
         apply: bool,
@@ -1019,6 +1019,7 @@ write_requests! {
     CheckManageRequest.project;
     GetInitPromptRequest.project;
     InstallGitignoreRequest.project, etag;
+    InitProjectRequest.name, etag;
     DistillFragmentRequest.name;
     DistillCommandRequest.name;
     CreateRemoteRequest.parent;

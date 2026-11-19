@@ -257,22 +257,19 @@ Feature: library changes — git holds the library, and the daemon records what 
       And the output reports "events[0].changes[1].status" as "added"
       And the output does not contain "Add your content here"
 
-    Scenario: A project with no commit yet is baselined on its untracked files, after init's own scaffold
-      # new: a fresh `git init` has no HEAD.
-      # changed: step 10c U6, init's scaffold is the daemon's CreateDirectory, so it comes first.
+    Scenario: A fresh project's first record is init's own scaffold, then its baseline
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces "A project with no commit yet is baselined on its untracked files, after init's own scaffold"; the scanner sees no commit or HEAD, and the scaffold's files are its step's, so its baseline lists no change of its own.
       Given an empty project directory
       And I run "ctxloom init --format json"
-      When I run "ctxloom bundle list"
-      And I run "ctxloom test library-events --format json"
+      When I run "ctxloom test library-events --format json"
       Then the command succeeds
       And the output reports "events" having "3" entries
       And the output reports "events[0].type" as "ChangeIntended"
       And the output reports "events[0].verb" as "init"
       And the output reports "events[1].type" as "StepApplied"
+      And the output reports "events[1].observed[0].path" as "config.yaml"
       And the output reports "events[2].baseline" as "true"
-      And the output reports "events[2].head_after" as ""
-      And the output reports "events[2].changes[0].path" as "config.yaml"
-      And the output reports "events[2].changes[0].status" as "added"
+      And the output reports "events[2].changes" having "0" entries
 
     Scenario: A git worktree of the project is a checkout of its own, with its own record
       # new: L2, a worktree resolves to its primary's project but is its own tree.

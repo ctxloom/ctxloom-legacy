@@ -12,7 +12,7 @@ use crate::agents::ENGINES;
 use crate::error::AppError;
 use crate::project::{Library, Outcome};
 use crate::write::editor::editor_from_env;
-use crate::write::views::{ConfigCreated, ConfigEdited, GitignoreInstalled};
+use crate::write::views::{ConfigCreated, ConfigEdited, GitignoreInstalled, ProjectInitialized};
 use crate::write::{WriteError, WritePorts};
 
 impl Library {
@@ -54,6 +54,30 @@ impl Library {
         }
     }
 
+    /// `init`'s scaffold (step 10c U6): a project's `.ctxloom` written whole
+    /// through the scaffold when its directory is not there, the config
+    /// holding what init was `answered`; a directory that is there is init's
+    /// re-run, and nothing is written. No git: the library is git-free.
+    pub fn project_init(&self, answered: &scaffold::Answered) -> Outcome<ProjectInitialized> {
+        let result = (|| {
+            let scaffold = &self.write_side()?.scaffold;
+            let existed = !scaffold.is_new().map_err(AppError::Cause)?;
+            if !existed {
+                let config = scaffold::initial_config_with("claude-code", answered);
+                let files = scaffold_files(scaffold.as_ref(), config)?;
+                scaffold.write(&files).map_err(AppError::Cause)?;
+            }
+            Ok(ProjectInitialized {
+                app_dir: scaffold.app_dir(),
+                existed,
+            })
+        })();
+        Outcome {
+            result,
+            notices: Vec::new(),
+        }
+    }
+
     pub fn config_create(&self, engine: &str) -> Outcome<ConfigCreated> {
         let mut notices = Vec::new();
         let result = self.created(engine, &mut notices);
@@ -86,24 +110,7 @@ impl Library {
             let made = step().map_err(|e| AppError::Cause(e.into_failure()))?;
             notices.extend(made.map(crate::Notice::Git));
         }
-        let bundle = format!("content/bundles/v2/{PROJECT_BUNDLE}");
-        let mut files = vec![
-            Put::file("config.yaml", scaffold::initial_config(engine)),
-            Put::file("remotes.yaml", DEFAULT_REMOTES),
-        ];
-        let manifest = format!("{bundle}/bundle.yaml");
-        if !scaffold.exists(&manifest).map_err(AppError::Cause)? {
-            files.push(Put::file(manifest, new_envelope("1.0.0", "")));
-        }
-        // ctxloom's private state (sessions, cache, the project id) out of
-        // git from the start; one that is there is the project's.
-        if !scaffold.exists(".gitignore").map_err(AppError::Cause)? {
-            files.push(Put::file(".gitignore", scaffold::nested_gitignore()));
-        }
-        let seed = format!("{bundle}/{}", profile_path(SEED_NAME));
-        if !scaffold.exists(&seed).map_err(AppError::Cause)? {
-            files.push(Put::file(seed, SEED_PROFILE));
-        }
+        let files = scaffold_files(scaffold.as_ref(), scaffold::initial_config(engine))?;
         scaffold.write(&files).map_err(AppError::Cause)?;
         Ok(ConfigCreated { path })
     }
@@ -144,6 +151,36 @@ impl Library {
         }
         Ok(ConfigEdited { path, changed })
     }
+}
+
+/// What a new project's `.ctxloom` holds: `config`, the default remotes
+/// registry, the project bundle's manifest, the nested `.gitignore` of
+/// ctxloom's private state and the seeded default profile, each but the
+/// first two only where `scaffold` has none (one that is there is the
+/// project's).
+fn scaffold_files(
+    scaffold: &dyn ctxloom_ports::Scaffold,
+    config: String,
+) -> Result<Vec<Put>, AppError> {
+    let bundle = format!("content/bundles/v2/{PROJECT_BUNDLE}");
+    let mut files = vec![
+        Put::file("config.yaml", config),
+        Put::file("remotes.yaml", DEFAULT_REMOTES),
+    ];
+    let manifest = format!("{bundle}/bundle.yaml");
+    if !scaffold.exists(&manifest).map_err(AppError::Cause)? {
+        files.push(Put::file(manifest, new_envelope("1.0.0", "")));
+    }
+    // ctxloom's private state (sessions, cache, the project id) out of
+    // git from the start; one that is there is the project's.
+    if !scaffold.exists(".gitignore").map_err(AppError::Cause)? {
+        files.push(Put::file(".gitignore", scaffold::nested_gitignore()));
+    }
+    let seed = format!("{bundle}/{}", profile_path(SEED_NAME));
+    if !scaffold.exists(&seed).map_err(AppError::Cause)? {
+        files.push(Put::file(seed, SEED_PROFILE));
+    }
+    Ok(files)
 }
 
 #[cfg(test)]

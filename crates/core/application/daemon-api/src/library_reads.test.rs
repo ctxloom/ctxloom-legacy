@@ -173,10 +173,10 @@ async fn a_read_with_no_directory_is_answered_at_the_registered_root() {
     assert_eq!(opened.0.lock().unwrap()[0].0, ROOT);
 }
 
-// A library read outside git is refused by the library domain, and nothing
-// is opened (G1).
+// A library read outside git is answered: the library is git-free (owner,
+// 2026-11-18).
 #[tokio::test]
-async fn a_library_read_outside_git_opens_nothing() {
+async fn a_library_read_outside_git_is_answered() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
@@ -187,14 +187,14 @@ async fn a_library_read_outside_git_opens_nothing() {
         .await
         .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
         .observing(observing(&f.world, &gits));
-    let refused = api
+    let read = api
         .list_profiles(v1::ListProfilesRequest {
             parent: "projects/calm-quiet-heron".to_string(),
             ..v1::ListProfilesRequest::default()
         })
         .await;
-    assert!(matches!(refused, Err(ApiError::Refused(_))), "{refused:?}");
-    assert!(opened.0.lock().unwrap().is_empty());
+    assert!(read.is_ok(), "{read:?}");
+    assert_eq!(opened.0.lock().unwrap()[0].0, ROOT);
 }
 
 // E5: a decline of the read's use case is its typed refusal.
@@ -316,39 +316,6 @@ async fn assemble_context_observes_the_projects_library_first() {
     assert_eq!(f.world.events(&cover, 0).await.unwrap().len(), 1);
 }
 
-// Step 10a U2 (G1): an assembly outside git is refused with the library
-// domain's own refusal, before anything is opened.
-#[tokio::test]
-async fn assemble_context_outside_git_is_refused_before_it_assembles() {
-    let f = fixture(vec!["calm-quiet-heron"]);
-    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
-    f.catch_up().await;
-    let opened = Arc::new(Opened::default());
-    let api = f
-        .restarted()
-        .await
-        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
-        .observing(observing(&f.world, &Arc::new(Gits::default())));
-    let refused = api
-        .assemble_context(v1::AssembleContextRequest {
-            name: "projects/calm-quiet-heron".to_string(),
-            ..v1::AssembleContextRequest::default()
-        })
-        .await;
-    let Err(ApiError::Refused(refusal)) = refused else {
-        panic!("not refused: {refused:?}");
-    };
-    assert_eq!(
-        crate::rejection_of(&refusal.refusal),
-        Some(crate::Rejection::Library(
-            library_tree::LibraryTreeRejection::NotInGit {
-                root: ROOT.to_string()
-            }
-        ))
-    );
-    assert!(opened.0.lock().unwrap().is_empty());
-}
-
 /// The library a dry run plans over: one agent, the default, on claude.
 #[derive(Default)]
 struct WithAgent(Mutex<Vec<String>>);
@@ -446,37 +413,6 @@ async fn an_unnamed_projects_preview_names_nothing() {
         .unwrap();
     assert_eq!(run.name, "");
     assert_eq!(run.engine, "claude-code");
-}
-
-// G1: a preview outside git is refused by the library domain before it is
-// planned.
-#[tokio::test]
-async fn a_preview_outside_git_is_refused_before_it_is_planned() {
-    let f = fixture(vec!["calm-quiet-heron"]);
-    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
-    f.catch_up().await;
-    let opened = Arc::new(Opened::default());
-    let api = f
-        .restarted()
-        .await
-        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
-        .observing(observing(&f.world, &Arc::new(Gits::default())));
-    let refused = api
-        .create_run(v1::CreateRunRequest {
-            parent: "projects/calm-quiet-heron".to_string(),
-            mode: v1::run::Mode::Terminal as i32,
-            validate_only: true,
-            ..v1::CreateRunRequest::default()
-        })
-        .await;
-    let Err(ApiError::Refused(refusal)) = refused else {
-        panic!("not refused: {refused:?}");
-    };
-    assert!(
-        refusal.refusal.type_url.ends_with("NotInGit"),
-        "{refusal:?}"
-    );
-    assert!(opened.0.lock().unwrap().is_empty());
 }
 
 // Step 10a U2: the deps reads are answered as the library's, observed

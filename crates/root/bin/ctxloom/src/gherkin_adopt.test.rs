@@ -196,6 +196,29 @@ fn set_up(w: &mut World) {
     w.before_run();
     w.common.run_lines("ctxloom init", "");
     w.ran().succeeds();
+    // init is the daemon's (step 10c U6): the daemon it started is stopped
+    // and its directory taken away, so she has set the project up and no
+    // daemon has served her yet, as before.
+    let env: Vec<(&str, &str)> = w
+        .common
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let stopped = w.common.project.run_with(&env, &["daemon", "stop"]);
+    assert_eq!(stopped.code, 0, "daemon stop: {}", stopped.said());
+    // Its store closed (a closed store leaves no write-ahead log), bounded:
+    // what a later step compares the store with is the store at rest.
+    let wal = w.common.project.home().join(".ctxloom/ctxloom.db-wal");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while files::exists(&wal) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the stopped daemon never closed its store"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    files::remove_tree(w.common.project.home().join(".ctxloom/daemon"));
 }
 
 #[given("Alice has started her assistant through ctxloom")]

@@ -1225,6 +1225,7 @@ dependencies = [
  "deps-application",
  "exit-code",
  "hex",
+ "init-application",
  "isolation-application",
  "library",
  "library-api",
@@ -2727,7 +2728,6 @@ dependencies = [
  "deps-application",
  "exit-code",
  "mutants",
- "serde",
 ]
 
 [[package]]

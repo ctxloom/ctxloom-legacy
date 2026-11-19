@@ -34,6 +34,9 @@ pub enum Planned {
     /// Files written below the tree's `.ctxloom` by its scaffold (step 10c
     /// U5: `manage gitignore install`'s `.gitignore`), each relative to it.
     TreeFiles { files: Vec<Put> },
+    /// A tree's `.ctxloom` written whole where it was not (step 10c U6: a
+    /// first init's scaffold), each file relative to it.
+    NewTree { files: Vec<Put> },
     /// A tree written OUTSIDE ctxloom's trees (`bundle export`; D2's
     /// EXCEPTION: staged beside it and renamed in NOREPLACE, no intent on
     /// any stream), its directory as the use case named it.
@@ -136,6 +139,12 @@ impl Recorder {
 
     fn tree_files(&self, files: &[Put]) {
         self.lock().push(Planned::TreeFiles {
+            files: files.to_vec(),
+        });
+    }
+
+    fn new_tree(&self, files: &[Put]) {
+        self.lock().push(Planned::NewTree {
             files: files.to_vec(),
         });
     }
@@ -288,8 +297,18 @@ impl ctxloom_ports::Scaffold for RecordingScaffold {
         self.inner.read(rel)
     }
 
+    fn is_new(&self) -> Result<bool, Failure> {
+        self.inner.is_new()
+    }
+
+    /// A tree's own files, or (its directory not there yet, step 10c U6)
+    /// the tree written whole.
     fn write(&self, files: &[Put]) -> Result<(), Failure> {
-        self.recorder.tree_files(files);
+        if self.inner.is_new()? {
+            self.recorder.new_tree(files);
+        } else {
+            self.recorder.tree_files(files);
+        }
         Ok(())
     }
 }

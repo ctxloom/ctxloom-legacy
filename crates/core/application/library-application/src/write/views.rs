@@ -362,3 +362,12 @@ pub struct GitignoreInstalled {
     /// Whether it was written: it was not what ctxloom writes.
     pub written: bool,
 }
+
+/// What a first init's scaffold came to (step 10c U6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectInitialized {
+    /// The project's `.ctxloom`.
+    pub app_dir: String,
+    /// It was there already: nothing was written.
+    pub existed: bool,
+}

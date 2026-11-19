@@ -812,3 +812,124 @@ fn another_tools_file_removed_never_takes_the_directory_it_keeps_though_it_is_le
         "the kept directory went"
     );
 }
+
+/// The staging a root create uses, beside the tree (step 10c U6).
+fn beside(rel: &str) -> PathBuf {
+    let flavor = os::host().flavor();
+    rel.split('/').fold(
+        PathBuf::from(flavor.from_top(&format!("{TREE}.staging"))),
+        |path, step| path.join(step),
+    )
+}
+
+/// Every file below `dir`, relative to it, sorted.
+fn files_at(fs: &Rooted, dir: &Path) -> Vec<String> {
+    fn walk(fs: &Rooted, dir: &Path, prefix: &str, out: &mut Vec<String>) {
+        let Ok(entries) = fs.read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let name = entry.name.to_string_lossy().into_owned();
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            match entry.kind {
+                file_system::Kind::Dir => walk(fs, &dir.join(&entry.name), &rel, out),
+                _ => out.push(rel),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(fs, dir, "", &mut out);
+    out.sort();
+    out
+}
+
+fn new_tree() -> Operation {
+    Operation::CreateDir {
+        path: String::new(),
+        files: vec![
+            Put::file("config.yaml", "schema_version: 9\n"),
+            Put::file("state/checkout", "amber-swift-owl\n"),
+        ],
+    }
+}
+
+// Step 10c U6: a tree created whole (a first init's `.ctxloom`) cannot be
+// staged inside itself: it is built under `<tree>.staging/<request>/`,
+// beside it, and renamed in; at its `staged` point the tree is not there.
+#[test]
+fn test_a_new_tree_is_staged_whole_beside_it_and_then_renamed_in() {
+    let (fs, ops) = setup();
+    fs.remove_dir_all(&at("")).unwrap();
+    let seen = RefCell::new(Vec::new());
+    let done = ops
+        .operate(&tree(), REQUEST, &new_tree(), &|point| {
+            seen.borrow_mut().push((
+                point,
+                files_at(&fs, &beside("")),
+                fs.exists(&at("")).unwrap(),
+            ));
+        })
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(done, Operated::Done);
+    assert_eq!(
+        seen.into_inner(),
+        vec![(
+            Point::Staged,
+            vec![
+                format!("{REQUEST}/config.yaml"),
+                format!("{REQUEST}/state/checkout"),
+            ],
+            false
+        )]
+    );
+    assert_eq!(files(&fs, ""), vec!["config.yaml", "state/checkout"]);
+    assert!(!fs.exists(&beside("")).unwrap(), "nothing staged left");
+}
+
+// NOREPLACE: a tree that appeared meanwhile is never renamed over.
+#[test]
+fn test_a_new_tree_is_never_renamed_over_one_that_appeared_meanwhile() {
+    let (fs, ops) = setup();
+    fs.remove_dir_all(&at("")).unwrap();
+    let done = ops
+        .operate(&tree(), REQUEST, &new_tree(), &|point| {
+            if point == Point::Staged {
+                put(&fs, "config.yaml", b"theirs\n");
+            }
+        })
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(
+        done,
+        Operated::Exists {
+            path: String::new()
+        }
+    );
+    assert_eq!(files(&fs, ""), vec!["config.yaml"]);
+    assert_eq!(
+        read(&fs, "config.yaml").as_deref(),
+        Some(b"theirs\n".as_slice())
+    );
+    assert!(!fs.exists(&beside("")).unwrap(), "nothing staged left");
+}
+
+// What a killed root create left beside the tree is swept with its
+// staging.
+#[test]
+fn test_the_sweep_drops_a_new_tree_s_staging_beside_it() {
+    let (fs, ops) = setup();
+    let left = beside(&format!("{REQUEST}/config.yaml"));
+    fs.create_dir_all(left.parent().unwrap(), Mode::from_bits(0o755))
+        .unwrap();
+    fs.write_atomic(&left, b"x\n", Perms::Exact(Mode::from_bits(0o644)))
+        .unwrap();
+    ops.sweep_staging(&tree())
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert!(!fs.exists(&beside("")).unwrap());
+}

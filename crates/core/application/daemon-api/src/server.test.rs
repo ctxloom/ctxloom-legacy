@@ -1398,6 +1398,10 @@ impl library_api::CheckoutHarps for OneHarp {
     fn harp(&self, _: &str) -> Result<String, ctxloom_ports::Failure> {
         Ok("brisk-copper-moth".to_string())
     }
+
+    fn fresh(&self) -> String {
+        "brisk-copper-moth".to_string()
+    }
 }
 
 pub(crate) fn observing(world: &World, gits: &Arc<Gits>) -> crate::Observing {
