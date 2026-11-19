@@ -1,6 +1,6 @@
 //! `agent`: list and show, and its writes (B2), each as its API resource or
-//! its method's response (OD-40, design §3.7, §5.6). `agent default` still
-//! answers in text only.
+//! its method's response (OD-40, design §3.7, §5.6). `agent default <agent>`
+//! answers its response; the bare `agent default` still answers in text only.
 
 use crate::prelude::*;
 use library_application::Notice;
@@ -45,29 +45,35 @@ pub(crate) fn write(
         "edit" => edited(cx, &name, sub, out, err)?,
         "default" if given(sub, "name").is_some() => {
             // The daemon's `SetDefaultAgent` (step 10b U3), its text from
-            // the response (D10); it answers in text only, as before.
-            text_only(cx, "agent default")?;
+            // the response (D10), its json the response (json off a
+            // terminal, as every verb's: smoke 2026-11-19).
             let request = v1::SetDefaultAgentRequest {
                 agent: name.clone(),
                 caller: v1::Caller::of(cx.globals(), None),
                 ..v1::SetDefaultAgentRequest::default()
             };
-            let mut answered = cx.served.set_default_agent("", request)?;
-            let said: Vec<Notice> = std::mem::take(&mut answered.notices)
-                .iter()
-                .map(library_api::reads::said)
-                .collect();
-            say_notices(&said, crate::PROG, cx.format, cx.catalog, err);
-            writeln!(out, "Set default agent to \"{}\".", answered.agent)
-                .map_err(crate::output_failure)?;
-            if !answered.defined {
+            let answered = cx.served.set_default_agent("", request);
+            let undefined = answered
+                .as_ref()
+                .ok()
+                .filter(|m| !m.defined)
+                .map(|m| m.agent.clone());
+            let code = crate::answer_written(
+                cx,
+                answered,
+                |m| std::mem::take(&mut m.notices),
+                out,
+                err,
+                |m, out| writeln!(out, "Set default agent to \"{}\".", m.agent),
+                |_| Exit::OK,
+            )?;
+            if let Some(agent) = undefined {
                 let note = Notice::text(format!(
-                    "agent \"{}\" is not defined yet; define it with `ctxloom agent create {}`",
-                    answered.agent, answered.agent
+                    "agent \"{agent}\" is not defined yet; define it with `ctxloom agent create {agent}`"
                 ));
                 say_notices(&[note], crate::PROG, cx.format, cx.catalog, err);
             }
-            Exit::OK
+            code
         }
         "default" => {
             // The current default: still read in process (a default may name

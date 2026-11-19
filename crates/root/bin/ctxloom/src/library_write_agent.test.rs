@@ -584,9 +584,12 @@ fn test_with_nothing_bound_the_report_says_so_and_naming_an_agent_binds_it() {
         .run(&["agent", "default", "--format", "text"])
         .succeeds()
         .contains("Default agent: developer");
-    // Go's answer, and the format it does not honour yet.
+    // Go's answer, asked for by name (off a terminal the default is json,
+    // smoke 2026-11-19), and the format the bare read does not honour yet.
     assert_eq!(
-        project.run(&["agent", "default", "developer"]).stdout,
+        project
+            .run(&["agent", "default", "developer", "--format", "text"])
+            .stdout,
         "Set default agent to \"developer\".\n"
     );
     project

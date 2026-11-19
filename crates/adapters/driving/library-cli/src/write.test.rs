@@ -117,3 +117,33 @@ fn test_the_text_only_verbs_refuse_json_and_write_nothing() {
         assert_eq!(mem.writes(), before, "{line:?} wrote");
     }
 }
+
+// Smoke 2026-11-19: off a terminal with no --format, `profile create` and
+// `agent default <agent>` answer json, as every other verb does there
+// (CLAUDE.md: "`--format` is `json` or `text` (json off a terminal)"); json
+// asked for by name is json too.
+#[test]
+fn test_profile_create_and_agent_default_answer_json_off_a_terminal() {
+    const DERIVED: How = How {
+        explicit: None,
+        terminal: false,
+        degraded: false,
+    };
+    let (library, _) = world();
+    let created = run_on(
+        &library,
+        &["profile", "create", "base", "-i", "demo"],
+        DERIVED,
+    );
+    assert_eq!(created.code(), 0, "{}", created.err);
+    let name = created.json()["profile"]["name"].clone();
+    assert!(
+        name.as_str().is_some_and(|n| n.ends_with("/profiles/base")),
+        "{}",
+        created.out
+    );
+    let set = run_on(&library, &["agent", "default", "dev"], DERIVED);
+    assert_eq!(set.code(), 0, "{}", set.err);
+    assert_eq!(set.json()["agent"], "dev", "{}", set.out);
+    assert_eq!(json(&library, &["agent", "default", "dev"])["agent"], "dev");
+}

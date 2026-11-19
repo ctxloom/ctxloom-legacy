@@ -33,6 +33,7 @@ mod run;
 mod search;
 mod shown;
 mod trust;
+mod unresolved;
 mod views;
 pub mod write;
 
@@ -81,6 +82,7 @@ pub use project::{
 pub use run::{AssembleRequest, Previewed, RunRequest};
 pub use search::SearchRequest;
 pub use trust::{HeldBack, CTXLOOM_BUNDLE_PATH};
+pub use unresolved::AgentUnresolved;
 pub use views::*;
 pub use write::config_set::ConfigSet;
 pub use write::requests::*;

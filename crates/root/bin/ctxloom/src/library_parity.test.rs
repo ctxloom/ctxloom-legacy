@@ -262,6 +262,9 @@ fn as_canonical(id: &str, golden: String) -> String {
                             format!("from bundle: {}", bundle_short(b))
                         } else if let Some(p) = part.strip_prefix("parents: ") {
                             format!("parents: {}", profile_short(p))
+                        } else if part == "1 bundles" {
+                            // Divergence (smoke 2026-11-19): one is singular.
+                            "1 bundle".to_string()
                         } else {
                             part.to_string()
                         }

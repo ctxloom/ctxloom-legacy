@@ -30,7 +30,8 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
   refuses (today, an agent credential no run can authenticate with), and it
   makes doctor exit 20, run's status for the refusal it guarantees, after the
   whole report is written. A USAGE error (a --format this build cannot render)
-  exits 10.
+  exits 20, a refusal like any other (DRAFT, rulings 152 and 153: a usage
+  error, an unknown format among them, is a decline, 20; was "exits 10").
 
   THE LIBRARY IS GIT-FREE (DRAFT, owner 2026-11-18, superseding step 10's
   G1 to G3). A library works in any directory, so doctor has no row for the
@@ -48,7 +49,8 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
 
   Rule: A credential no run can authenticate with is a fail row, and fails doctor
 
-    Scenario: A missing agent credential is a fail row with run's fix, and exit 3
+    Scenario: A missing agent credential is a fail row with run's fix, and exit 20
+      # changed: DRAFT, rulings 152 and 153: the title said Go's "exit 3"; a fail row is run's refusal, 20, as the Then below already asserts.
       # substitution: exit codes per rulings 149, 152, 153 (10 failed, 20 refused, 21 fatal findings; Go's 1, 2, 3); a fail row is run's refusal, 20.
       Given an initialized ctxloom project
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to ""
