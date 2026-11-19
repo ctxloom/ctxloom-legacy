@@ -161,6 +161,50 @@ pub(crate) fn remove_tree(path: impl AsRef<Path>) {
         .expect("a directory to remove");
 }
 
+/// A directory and everything below it, removed while a process still
+/// writing into it may refill it once more (a live daemon's last round
+/// before it sees its home gone, CI on macOS 2026-11-19): a removal that
+/// finds it refilled (`DirectoryNotEmpty`) is made again, at most
+/// [`SETTLE_TRIES`] times.
+pub(crate) fn remove_tree_settling(path: impl AsRef<Path>) {
+    remove_tree_settling_by(path.as_ref(), |dir| fs().remove_dir_all(dir));
+}
+
+/// How many removals [`remove_tree_settling`] makes.
+const SETTLE_TRIES: u32 = 20;
+
+/// [`remove_tree_settling`], each removal made by `remove`.
+fn remove_tree_settling_by(path: &Path, mut remove: impl FnMut(&Path) -> std::io::Result<()>) {
+    for _ in 1..SETTLE_TRIES {
+        match remove(path) {
+            Err(refilled) if refilled.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            done => return done.expect("a directory to remove"),
+        }
+    }
+    remove(path).expect("a directory to remove");
+}
+
+// The same: the race forced, its first removal finding the directory
+// refilled.
+#[test]
+fn a_tree_refilled_under_its_removal_is_removed_again() {
+    let root = root();
+    let dir = root.root().join("refilled");
+    put(dir.join("a/b.txt"), "b");
+    let mut made = 0;
+    remove_tree_settling_by(&dir, |dir| {
+        made += 1;
+        if made == 1 {
+            return Err(std::io::Error::from(std::io::ErrorKind::DirectoryNotEmpty));
+        }
+        fs().remove_dir_all(dir)
+    });
+    assert_eq!(made, 2);
+    assert!(!exists(&dir), "it is gone");
+}
+
 pub(crate) fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) {
     fs().rename(from.as_ref(), to.as_ref()).expect("a rename");
 }

@@ -633,8 +633,8 @@ fn delete_ctxloom(w: &mut World) {
         .ok()
         .and_then(|bytes| run_ports::Discovery::decode(&bytes))
         .map(|found| found.pid);
-    files::remove_tree(w.common.project.dir().join(".ctxloom"));
-    files::remove_tree(w.common.project.home().join(".ctxloom"));
+    files::remove_tree_settling(w.common.project.dir().join(".ctxloom"));
+    files::remove_tree_settling(w.common.project.home().join(".ctxloom"));
     if let Some(pid) = daemon {
         assert!(
             exited_within(pid, DAEMON_EXIT_WAIT),
