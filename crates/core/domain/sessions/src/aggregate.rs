@@ -33,10 +33,11 @@ use crate::{
     SessionClosed, SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
 };
 use crate::{
-    AssistantTextShown, CaptureGapped, Compacted, ContextRedelivered, ConversationCleared,
-    LoadoutRecorded, PromptSubmitted, RecordAssistantText, RecordCaptureGap, RecordCompaction,
-    RecordContextRedelivered, RecordConversationCleared, RecordLoadout, RecordPromptSubmitted,
-    RecordToolCall, RecordTurnEnded, SessionEnded, SessionReopened, ToolCalled, TurnEnded,
+    AssistantTextShown, CaptureGapped, Compacted, ContextOwed, ContextRedelivered,
+    ConversationCleared, LoadoutRecorded, PromptSubmitted, RecordAssistantText, RecordCaptureGap,
+    RecordCompaction, RecordContextOwed, RecordContextRedelivered, RecordConversationCleared,
+    RecordLoadout, RecordPromptSubmitted, RecordToolCall, RecordTurnEnded, SessionEnded,
+    SessionReopened, ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -498,6 +499,7 @@ impl SessionAggregate {
             size: fact.size,
             sha256: fact.sha256,
             carried_by: fact.carried_by,
+            covered: fact.covered,
         }))
     }
 
@@ -509,6 +511,20 @@ impl SessionAggregate {
         record(live(&self.session).ok().map(|_| LoadoutRecorded {
             loadout: fact.loadout,
             incarnation: fact.incarnation,
+            covered: fact.covered,
+        }))
+    }
+
+    /// RecordContextOwed (step 10c U13 rework): a library change a live
+    /// session's loadout draws on, recorded by the daemon's OwedContexts
+    /// projector; nothing on a stream with no live session.
+    #[handles_fact(RecordContextOwed)]
+    fn context_owed(&self, fact: RecordContextOwed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        record(live(&self.session).ok().map(|_| ContextOwed {
+            tree: fact.tree,
+            sequence: fact.sequence,
+            bundles: fact.bundles,
         }))
     }
 
@@ -543,6 +559,14 @@ impl SessionAggregate {
     #[cfg_attr(test, mutants::skip)]
     #[applies(CaptureGapped)]
     fn applied_capturegapped(&mut self, event: CaptureGapped, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    // Equivalent: an owed change carries no aggregate state (step 10c U13
+    // rework; the session index folds it).
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(ContextOwed)]
+    fn applied_contextowed(&mut self, event: ContextOwed, page: &PageContext) {
         fold(&mut self.session, event.into(), page);
     }
 

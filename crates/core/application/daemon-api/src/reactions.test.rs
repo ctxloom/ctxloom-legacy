@@ -91,3 +91,149 @@ fn a_recorded_change_is_a_thin_notice_to_a_watcher_of_its_tree() {
     assert!(watches("users/me", "users/me/library"));
     assert!(!watches("users/me", &recorded.tree));
 }
+
+/// An engine that carries a context at every hook, as claude's
+/// additionalContext does; it drives nothing.
+struct Carries;
+
+impl run_ports::Engine for Carries {
+    fn name(&self) -> &str {
+        "claude-code"
+    }
+    fn prepare(
+        &self,
+        _: &run_ports::PrepareRequest,
+    ) -> Result<run_ports::Prepared, run_ports::EngineError> {
+        unreachable!("a delivery prepares nothing")
+    }
+    fn drive_turn(
+        &self,
+        _: &run_ports::TurnRequest,
+    ) -> Result<run_ports::TurnCommand, run_ports::EngineError> {
+        unreachable!("a delivery drives nothing")
+    }
+    fn finish_turn(&self, _: &run_ports::TurnOutput) -> run_ports::TurnOutcome {
+        unreachable!("a delivery drives nothing")
+    }
+    fn drive_interactive(
+        &self,
+        _: &run_ports::TurnRequest,
+    ) -> Result<run_ports::TurnCommand, run_ports::EngineError> {
+        unreachable!("a delivery drives nothing")
+    }
+    fn deliver_context(&self, _: &str, context: &str) -> run_ports::ContextDelivery {
+        run_ports::ContextDelivery::HookContext(context.to_string())
+    }
+}
+
+const TREE: &str = "projects/calm-quiet-heron/checkouts/c/library";
+
+/// `fact` recorded on the session `harp`'s stream, keyed `key`.
+async fn on_session<F: angzarr_embedded::markup::DomainMessage>(
+    f: &crate::server::tests::Fixture,
+    harp: &str,
+    fact: &F,
+    key: &str,
+) {
+    use run_ports::Edge as _;
+    let name = format!("projects/calm-quiet-heron/sessions/{harp}");
+    let cover = angzarr_embedded::v1::Cover {
+        domain: sessions::SESSION_DOMAIN.to_string(),
+        root: Some(sessions::SessionName::parse(&name).unwrap().root()),
+        edition: None,
+    };
+    f.world
+        .handle(sessions::fact_book(cover, fact, key))
+        .await
+        .unwrap();
+}
+
+fn owed_at(sequence: u64) -> sessions::RecordContextOwed {
+    sessions::RecordContextOwed {
+        tree: TREE.to_string(),
+        sequence,
+        bundles: vec!["demo".to_string()],
+    }
+}
+
+// Step 10c U13 rework, the race forced: a change recorded while a context
+// is being re-assembled and handed is past the positions the delivery
+// covers (read before it was assembled), so it stays owed and the next
+// hook collects it. The old wall-clock mark (`context_since`, the
+// delivery's own instant) lost it. A batch handed again is a DUPLICATE,
+// and with nothing owed nothing is collected.
+#[tokio::test]
+async fn test_a_change_recorded_while_a_context_is_handed_stays_owed() {
+    let f = crate::server::tests::fixture(vec![]);
+    f.mint("amber-swift-owl").await;
+    let loadout = sessions::RecordLoadout {
+        loadout: sessions::SessionLoadout {
+            agent: "dev".to_string(),
+            profiles: Vec::new(),
+            bundles: vec!["demo".to_string()],
+        },
+        incarnation: 1,
+        covered: vec![sessions::TreePosition {
+            tree: TREE.to_string(),
+            sequence: 3,
+        }],
+    };
+    on_session(&f, "amber-swift-owl", &loadout, "loadout:1").await;
+    on_session(&f, "amber-swift-owl", &owed_at(4), "owed:4").await;
+    f.catch_up().await;
+    let record = || f.index.index().find("amber-swift-owl").unwrap();
+    let before = record();
+    let collected = f
+        .api
+        .collect(&before, &Carries, "PostToolUse", || async {
+            // Mid-delivery: the next change lands, owed to the session.
+            on_session(&f, "amber-swift-owl", &owed_at(5), "owed:5").await;
+            f.catch_up().await;
+            Ok("the context".to_string())
+        })
+        .await
+        .unwrap();
+    let (text, changed) = collected.expect("delivered");
+    assert!(text.contains("the context"), "{text}");
+    assert_eq!(changed, ["demo"]);
+    f.catch_up().await;
+    let handed = record().context.unwrap();
+    assert_eq!(handed.covered.get(TREE), Some(&4));
+    assert_eq!(
+        handed.owed_positions(),
+        [sessions::TreePosition {
+            tree: TREE.to_string(),
+            sequence: 5,
+        }],
+        "the change recorded mid-delivery stays owed"
+    );
+    // The same batch handed again (a second hook that read it first): a
+    // DUPLICATE, nothing handed.
+    let again = f
+        .api
+        .collect(&before, &Carries, "PostToolUse", || async {
+            Ok("the context".to_string())
+        })
+        .await
+        .unwrap();
+    assert_eq!(again, None);
+    // The next hook collects the change left owed, and then nothing is.
+    let next = f
+        .api
+        .collect(&record(), &Carries, "UserPromptSubmit", || async {
+            Ok("the context, again".to_string())
+        })
+        .await
+        .unwrap();
+    assert!(next.is_some());
+    f.catch_up().await;
+    assert!(record().context.unwrap().owed.is_empty());
+    let none = f
+        .api
+        .collect(&record(), &Carries, "UserPromptSubmit", || async {
+            panic!("nothing owed is never assembled")
+        })
+        .await
+        .unwrap();
+    assert_eq!(none, None);
+}

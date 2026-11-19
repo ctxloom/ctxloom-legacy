@@ -64,7 +64,7 @@ fn view(harp: &str, state: State, ended_days_ago: i64, kept: bool) -> View {
             title: String::new(),
             name: String::new(),
             loadout: None,
-            context_since: None,
+            context: None,
         },
         state,
         title: None,

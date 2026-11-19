@@ -300,3 +300,45 @@ impl daemon_api::Trusts for ProjectTrusts {
 #[cfg(test)]
 #[path = "reconcile_bench.test.rs"]
 mod reconcile_bench;
+
+/// The library trees each live session draws on (step 10c U13 rework),
+/// as the daemon's OwedContexts handler asks: its project's checkout's (the
+/// project directory's, and each of its own scratch checkouts', each by the
+/// harp its library was named with: one never read is no tree yet), and the
+/// home's. Read, never minted.
+pub(crate) struct LibraryTrees {
+    pub(crate) fs: Arc<dyn Fs>,
+    pub(crate) index: session_index::SessionIndexes,
+    /// ctxloom's home, whose `worktrees/` holds the sessions' checkouts.
+    pub(crate) home: PathBuf,
+}
+
+impl daemon_application::owed::SessionTrees for LibraryTrees {
+    fn trees(&self, record: &session_index::SessionRecord) -> Vec<String> {
+        let project = self
+            .index
+            .index()
+            .project_harp(&record.project_id)
+            .map(str::to_string);
+        let mut trees = Vec::new();
+        if let Some(project) = project {
+            let checkouts =
+                isolation_ports::session_worktrees(&self.home, &record.project_id, &record.harp);
+            let mut dirs = vec![PathBuf::from(&record.project_dir)];
+            if let Ok(entries) = self.fs.read_dir(&checkouts) {
+                dirs.extend(entries.into_iter().map(|entry| checkouts.join(entry.name)));
+            }
+            for dir in dirs {
+                let app = dir.join(".ctxloom");
+                if let Ok(Some(checkout)) = crate::checkout::checkout_harp(self.fs.as_ref(), &app) {
+                    let tree = format!("projects/{project}/checkouts/{checkout}/library");
+                    if !trees.contains(&tree) {
+                        trees.push(tree);
+                    }
+                }
+            }
+        }
+        trees.push(library_tree::HOME_TREE.to_string());
+        trees
+    }
+}

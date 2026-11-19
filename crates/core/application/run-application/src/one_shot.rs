@@ -1320,6 +1320,7 @@ where
         let fact = sessions::RecordLoadout {
             loadout: crate::loadout_of_plan(&agent, &plan.profiles, &plan.fragments),
             incarnation,
+            covered: Vec::new(),
         };
         let key = sessions::loadout_key(session, incarnation);
         let _ = self

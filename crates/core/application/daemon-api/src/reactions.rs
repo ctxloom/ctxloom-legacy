@@ -24,7 +24,6 @@
 use std::sync::Arc;
 
 use angzarr_embedded::v1::{Cover, DeliveryOutcome, Uuid};
-use daemon_application::reactions::owed;
 use daemon_proto::v1;
 use run_ports::{ContextDelivery, Edge};
 use session_index::{SessionRecord, State};
@@ -185,8 +184,13 @@ impl<E: Edge> Api<E> {
     }
 
     /// `RedeliverContext`: what the live session `request.name` names is
-    /// owed at its engine's hook `request.carried_by`, handed and recorded;
-    /// nothing when it is owed nothing, has no loadout recorded, or its
+    /// owed, COLLECTED at its engine's hook `request.carried_by` (step 10c
+    /// U13 rework): its trees observed first (a hook event is a need), the
+    /// loop's next round awaited (whose OwedContexts handler records what
+    /// the observation owes), then every change its index holds owed, in
+    /// one re-assembly, handed and recorded as covering the positions read
+    /// before it was assembled, so a change recorded meanwhile stays owed.
+    /// Nothing when it is owed nothing, has no loadout recorded, or its
     /// engine cannot carry it at this hook (it stays owed). A session the
     /// daemon does not know is refused `SessionNotFound`.
     pub async fn redeliver_context(
@@ -194,8 +198,7 @@ impl<E: Edge> Api<E> {
         request: v1::RedeliverContextRequest,
     ) -> Result<v1::RedeliveredContext, ApiError> {
         let none = v1::RedeliveredContext::default();
-        let (Some(deliveries), Some((observations, _))) =
-            (self.deliveries.as_ref(), self.observing.as_ref())
+        let (Some(deliveries), Some(_)) = (self.deliveries.as_ref(), self.observing.as_ref())
         else {
             return Ok(none);
         };
@@ -205,61 +208,103 @@ impl<E: Edge> Api<E> {
                 reason: "shape".to_string(),
             }))
         })?;
-        self.parts.hosting.fresh().await;
-        let record = self
-            .parts
-            .index
-            .index()
-            .find_by_id(&name.uid())
-            .ok_or_else(|| {
-                ApiError::from(ApiRefusal::of(&v1::SessionNotFound {
-                    name: request.name.clone(),
-                }))
-            })?;
-        let (Some(loadout), Some(since)) = (record.loadout.clone(), record.context_since) else {
-            return Ok(none);
+        let known = |api: &Self| {
+            api.parts
+                .index
+                .index()
+                .find_by_id(&name.uid())
+                .ok_or_else(|| {
+                    ApiError::from(ApiRefusal::of(&v1::SessionNotFound {
+                        name: request.name.clone(),
+                    }))
+                })
         };
-        // A read (G5(a)): the session's trees observed first, so a change
-        // no read has seen is seen now.
+        let record = known(self)?;
         let parent = name.project().to_string();
         let cwd = match request.cwd.as_str() {
             "" => record.project_dir.clone(),
             cwd => cwd.to_string(),
         };
-        let names = self
-            .session_trees(&parent, &cwd, request.env.as_ref())
+        if record.loadout.is_none() {
+            return Ok(none);
+        }
+        // A hook event is a need: the session's trees observed, then the
+        // round after it, whose handler records what that owes.
+        self.session_trees(&parent, &cwd, request.env.as_ref())
             .await?;
-        let log = observations.recorded_since(0);
-        let Some(owing) = owed(&loadout, (since.seconds, since.nanos), &names, &log) else {
+        self.parts.hosting.fresh().await;
+        let record = known(self)?;
+        let Some(loadout) = record.loadout.clone() else {
             return Ok(none);
         };
+        if record
+            .context
+            .as_ref()
+            .is_none_or(|handed| handed.owed.is_empty())
+        {
+            return Ok(none);
+        }
         let Some(engine) = deliveries.engine(&record.engine) else {
             return Ok(none);
         };
-        let context = self
-            .reassembled(&loadout, (parent, cwd), request.env.clone())
+        let env = request.env.clone();
+        let collected = self
+            .collect(&record, engine.as_ref(), &request.carried_by, || {
+                self.reassembled(&loadout, (parent, cwd), env)
+            })
             .await?;
-        let framed = run_launcher::redelivered_context(&owing.changed, &context);
-        let ContextDelivery::HookContext(text) =
-            engine.deliver_context(&request.carried_by, &framed)
+        Ok(
+            collected.map_or(none, |(context, changed)| v1::RedeliveredContext {
+                context,
+                changed,
+            }),
+        )
+    }
+
+    /// Everything `record`'s session is owed, collected: what the delivery
+    /// covers read BEFORE `reassemble` runs (a change recorded while it is
+    /// assembled or handed is past it, and stays owed), the context framed
+    /// and handed to `engine` at `carried_by`, and recorded keyed by the
+    /// positions. The text and what changed; none when nothing is owed,
+    /// the engine cannot carry it here, or another hook was handed it first.
+    pub(crate) async fn collect<F, A>(
+        &self,
+        record: &SessionRecord,
+        engine: &dyn run_ports::Engine,
+        carried_by: &str,
+        reassemble: F,
+    ) -> Result<Option<(String, Vec<String>)>, ApiError>
+    where
+        F: FnOnce() -> A,
+        A: std::future::Future<Output = Result<String, ApiError>>,
+    {
+        let Some(handed) = record
+            .context
+            .as_ref()
+            .filter(|handed| !handed.owed.is_empty())
         else {
-            return Ok(none);
+            return Ok(None);
+        };
+        let covered = handed.owed_positions();
+        let changed = handed.owed_bundles();
+        let context = reassemble().await?;
+        let framed = run_launcher::redelivered_context(&changed, &context);
+        let ContextDelivery::HookContext(text) = engine.deliver_context(carried_by, &framed) else {
+            return Ok(None);
         };
         let fact = sessions::RecordContextRedelivered {
-            bundles: owing.changed.clone(),
-            cause: owing.cause.clone(),
+            bundles: changed.clone(),
+            cause: sessions::positions_text(&covered),
             size: u64::try_from(text.len()).unwrap_or(u64::MAX),
             sha256: hex::encode(Sha256::digest(text.as_bytes())),
-            carried_by: request.carried_by.clone(),
+            carried_by: carried_by.to_string(),
+            covered,
         };
-        if !self.redelivered(&record, &fact).await? {
-            // Another hook of the same change was handed it first.
-            return Ok(none);
+        if !self.redelivered(record, &fact).await? {
+            // Another hook of the same batch was handed it first.
+            return Ok(None);
         }
-        Ok(v1::RedeliveredContext {
-            context: text,
-            changed: owing.changed,
-        })
+        Ok(Some((text, changed)))
     }
 
     /// The trees a session at `cwd` of the project `parent` draws on (its
@@ -329,8 +374,9 @@ impl<E: Edge> Api<E> {
         Ok(assembled.context)
     }
 
-    /// `fact` recorded on `record`'s session, keyed by its change's cause:
-    /// whether this was its first delivery (a repeat is a DUPLICATE).
+    /// `fact` recorded on `record`'s session, keyed by the positions it
+    /// covers: whether this was its first delivery (a batch handed again is
+    /// a DUPLICATE).
     async fn redelivered(
         &self,
         record: &SessionRecord,
@@ -344,7 +390,7 @@ impl<E: Edge> Api<E> {
             root: Some(Uuid::from_bytes(*root.as_bytes())),
             edition: None,
         };
-        let key = sessions::redelivery_key(&record.id, &fact.cause);
+        let key = sessions::redelivery_key(&record.id, &sessions::positions_text(&fact.covered));
         let answered = self
             .parts
             .edge

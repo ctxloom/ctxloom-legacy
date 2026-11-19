@@ -5,16 +5,14 @@
 //! agent, its profiles, and the bundles its fragments came from (and its
 //! tree's config always). Each recorded change (a `TreeObserved` or a
 //! `StepApplied`, the events whose sequences move the resources' tokens:
-//! one mechanism) is held against the loadout of every session live when
-//! it is recorded, against the loadout of each session whose context was
-//! handed to it before then: one whose loadout it [`touched`] is [`owed`] a
-//! re-assembly, which its engine is handed at the session's next event and
-//! recorded once, keyed by the change's cause. Owing is derived from the
-//! record (the session's loadout and last re-assembly, the trees' changes),
-//! never kept: an owed delivery stays owed until a re-assembly is recorded
-//! (a hook that cannot reach the daemon in time, or an event the engine
-//! cannot carry it at, leaves it owed), across a daemon's restart too.
-//! Nothing here reads a file or a clock.
+//! one mechanism) is held against the loadout of each live session on its
+//! tree by the OwedContexts handler ([`crate::owed`]): one whose loadout it
+//! [`touched`] is recorded owed it, and its next hook collects every
+//! change owed in one re-assembly. An owed delivery stays owed until a
+//! re-assembly covering it is recorded (a hook that cannot reach the
+//! daemon in time, or an event the engine cannot carry it at, leaves it
+//! owed), across a daemon's restart too. Nothing here reads a file or a
+//! clock.
 //!
 //! `daemon_application::Reaction` (distill's seam, 10b) reacts to a hosted
 //! run's OUTCOME; a library change is no run's, so this policy is a seam of
@@ -95,49 +93,6 @@ pub fn touched(loadout: &SessionLoadout, paths: &[String]) -> Vec<String> {
         }
     }
     named.into_iter().collect()
-}
-
-/// What a session is owed: what changed (sorted), and the cause of the
-/// latest change, which its delivery answers.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Owing {
-    pub changed: Vec<String>,
-    pub cause: String,
-}
-
-/// What a session whose context was last handed to it at `since` (seconds
-/// and nanos) is owed by `log`, for its `loadout` on its `trees`: every
-/// change of one of them recorded after `since` that [`touched`] the
-/// loadout, together; none when none did.
-pub fn owed(
-    loadout: &SessionLoadout,
-    since: (i64, i32),
-    trees: &[String],
-    log: &[library_checkout::Recorded],
-) -> Option<Owing> {
-    let mut changed = BTreeSet::new();
-    let mut cause = None;
-    for recorded in log {
-        if recorded.recorded_at <= since || !trees.contains(&recorded.tree) {
-            continue;
-        }
-        let paths: Vec<String> = recorded
-            .changes
-            .iter()
-            .flat_map(|change| [change.path.clone(), change.from_path.clone()])
-            .filter(|path| !path.is_empty())
-            .collect();
-        let named = touched(loadout, &paths);
-        if named.is_empty() {
-            continue;
-        }
-        changed.extend(named);
-        cause = Some(recorded.cause.clone());
-    }
-    cause.map(|cause| Owing {
-        changed: changed.into_iter().collect(),
-        cause,
-    })
 }
 
 #[cfg(test)]

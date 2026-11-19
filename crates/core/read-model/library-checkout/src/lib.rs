@@ -331,6 +331,11 @@ impl LibraryCheckout {
         self.intents.get(request_id)
     }
 
+    /// Every tree folded, in no order a reader relies on.
+    pub fn trees(&self) -> impl Iterator<Item = &Library> {
+        self.rows.values()
+    }
+
     /// The tree whose stream root is `root`, if any event of it was folded.
     pub fn tree(&self, root: &angzarr_embedded::v1::Uuid) -> Option<&Library> {
         self.rows.get(&root.value.to_vec())

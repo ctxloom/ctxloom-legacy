@@ -1089,6 +1089,13 @@ fn launcher(
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })
+    // What each live session is owed, recorded as each round catches up
+    // (step 10c U13 rework).
+    .owing(Arc::new(super::places::LibraryTrees {
+        fs: Arc::clone(fs),
+        index: kept.index.clone().unwrap_or_default(),
+        home: home.to_path_buf(),
+    }))
     // A child's program found on its own PATH, as every launch's (T10).
     .finding(Arc::new(
         host_launcher::HostLauncher::default().searching(Arc::clone(fs)),

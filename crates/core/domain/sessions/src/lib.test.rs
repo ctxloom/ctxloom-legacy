@@ -114,6 +114,7 @@ fn a_facts_book_carries_it_under_its_key() {
             bundles: Vec::new(),
         },
         incarnation: 1,
+        covered: Vec::new(),
     };
     let book = crate::fact_book(cover.clone(), &fact, "loadout:s:1");
     assert_eq!(book.cover, Some(cover));
@@ -122,4 +123,39 @@ fn a_facts_book_carries_it_under_its_key() {
     };
     assert_eq!(body.origin.unwrap().external_id, "loadout:s:1");
     assert!(body.payload.unwrap().type_url.ends_with("RecordLoadout"));
+}
+
+// Step 10c U13 rework: a redelivery is keyed by the positions it covers,
+// spelled one way whatever their order; the owed keys name the tree and the
+// sequence.
+#[test]
+fn positions_are_one_text_whatever_their_order_and_keys_name_them() {
+    let at = |tree: &str, sequence| crate::TreePosition {
+        tree: tree.to_string(),
+        sequence,
+    };
+    let text = crate::positions_text(&[
+        at("users/me/library", 2),
+        at("projects/p/checkouts/c/library", 9),
+    ]);
+    assert_eq!(text, "projects/p/checkouts/c/library@9,users/me/library@2");
+    assert_eq!(
+        crate::positions_text(&[
+            at("projects/p/checkouts/c/library", 9),
+            at("users/me/library", 2)
+        ]),
+        text
+    );
+    assert_ne!(
+        crate::redelivery_key("s", &text),
+        crate::redelivery_key("s", "projects/p/checkouts/c/library@9,users/me/library@3")
+    );
+    assert_eq!(
+        crate::owed_key("s", "users/me/library", 4),
+        "owed:s:users/me/library@4"
+    );
+    assert_eq!(
+        crate::owed_at_load_key("s", "users/me/library", 4),
+        "owed-at-load:s:users/me/library@4"
+    );
 }

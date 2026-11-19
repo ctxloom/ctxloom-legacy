@@ -248,6 +248,10 @@ message RecordContextRedelivered {
   string sha256 = 4;
   // The engine's hook it rode (`UserPromptSubmit`, `PostToolUse`).
   string carried_by = 5;
+  // 10c (U13 rework): the tree stream positions the delivery covers, read
+  // from the session's owed changes before it was re-assembled; a change
+  // recorded past them stays owed. Additive.
+  repeated TreePosition covered = 6;
 }
 
 message ContextRedelivered {
@@ -258,6 +262,43 @@ message ContextRedelivered {
   uint64 size = 3;
   string sha256 = 4;
   string carried_by = 5;
+  repeated TreePosition covered = 6;
+}
+
+// 10c (U13 rework): a library tree stream's position, its name
+// (`projects/{p}/checkouts/{c}/library`, `users/me/library`) and a sequence
+// of it. Additive.
+message TreePosition {
+  string tree = 1;
+  uint64 sequence = 2;
+}
+
+// 10c (U13 rework, owner 2026-11-18): a library change a live session's
+// loadout draws on, recorded on that session by the daemon's OwedContexts
+// projector as it handles the change's event: the tree, the event's
+// sequence, and the bundles (and `config`) of the loadout it touched,
+// sorted. external_id `owed:<session>:<tree>@<sequence>` (or, at a
+// loadout, `owed-at-load:<session>:<tree>@<sequence>`), so a book handed
+// again is a DUPLICATE. Never refused: a stream with no live session
+// records nothing. The session's next hook collects every change owed
+// past its covered positions in one delivery. Additive.
+message RecordContextOwed {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.ContextOwed"]
+  };
+
+  string tree = 1;
+  uint64 sequence = 2;
+  repeated string bundles = 3;
+}
+
+message ContextOwed {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  string tree = 1;
+  uint64 sequence = 2;
+  repeated string bundles = 3;
 }
 
 message ConversationCleared {
