@@ -38,6 +38,9 @@ run-application.workspace = true
 # The framing of a live session's re-assembled context (step 10c U13).
 run-launcher.workspace = true
 run-ports.workspace = true
+# A hook's messages and its one budget, composed where they are joined
+# (`compose_context`, the lean hook RPC).
+setup-application.workspace = true
 # A destroy's run streams, UUIDv5(session, n).
 runs.workspace = true
 session-index.workspace = true

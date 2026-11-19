@@ -404,49 +404,50 @@ fn test_a_listed_skill_is_judged_by_its_display_name_else_its_id() {
     assert_eq!(names, ["admit", "plain"]);
 }
 
-/// The daemon owing a re-assembly (step 10c U13): what each hook asked it,
-/// `<harp> <hook>`, and the context it answers.
+/// The daemon owing a re-assembly (step 10c U13): what each hook's one
+/// call asked it, `<hook> <budget>`, and the context it answers.
 #[derive(Default)]
 struct Owes(std::sync::Mutex<Vec<String>>);
 
-impl crate::HookLibrary for Owes {
-    fn agents_and_profiles(&self) -> Option<(bool, bool)> {
-        None
-    }
-    fn skills(&self) -> Option<Vec<crate::HookSkill>> {
-        None
-    }
-    fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
-        self.0
-            .lock()
-            .unwrap()
-            .push(format!("{harp} {hook} {budget}"));
-        Some("re-assembled".to_string())
+impl crate::HookContexts for Owes {
+    fn hook_context(
+        &self,
+        hook: &str,
+        _: &[&str],
+        _: &str,
+        budget: usize,
+    ) -> Option<crate::HookCarried> {
+        self.0.lock().unwrap().push(format!("{hook} {budget}"));
+        Some(crate::HookCarried {
+            context: "re-assembled".to_string(),
+            delivered: false,
+        })
     }
 }
 
 // Step 10c U13 (G6/G7): at a prompt submitted or a tool's result, the hook
-// asks the daemon what its session is owed, by its harp and its engine's
-// own hook name, and carries it as its context; no other hook asks.
+// asks the daemon once (the lean hook RPC) what its session carries, by its
+// engine's own hook name, and carries it as its context; no other hook
+// asks.
 #[test]
 fn test_a_prompt_or_a_tool_result_carries_the_context_its_session_is_owed() {
     let owes = std::sync::Arc::new(Owes::default());
     struct Shared(std::sync::Arc<Owes>);
-    impl crate::HookLibrary for Shared {
-        fn agents_and_profiles(&self) -> Option<(bool, bool)> {
-            self.0.agents_and_profiles()
-        }
-        fn skills(&self) -> Option<Vec<crate::HookSkill>> {
-            self.0.skills()
-        }
-        fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
-            self.0.redelivered(harp, hook, budget)
+    impl crate::HookContexts for Shared {
+        fn hook_context(
+            &self,
+            hook: &str,
+            urgencies: &[&str],
+            wake: &str,
+            budget: usize,
+        ) -> Option<crate::HookCarried> {
+            self.0.hook_context(hook, urgencies, wake, budget)
         }
     }
     let w = crate::fakes::world(CONFIG);
     let setup = w
         .setup
-        .with_hook_library(Box::new(Shared(std::sync::Arc::clone(&owes))));
+        .with_hook_contexts(Box::new(Shared(std::sync::Arc::clone(&owes))));
     for native in ["UserPromptSubmit", "PostToolUse"] {
         let answer = setup
             .execute_hook("claude-code", native, "{}", "brisk-copper-moth")
@@ -460,20 +461,17 @@ fn test_a_prompt_or_a_tool_result_carries_the_context_its_session_is_owed() {
     }
     assert_eq!(
         *owes.0.lock().unwrap(),
-        [
-            "brisk-copper-moth UserPromptSubmit 10000",
-            "brisk-copper-moth PostToolUse 10000"
-        ],
+        ["UserPromptSubmit 10000", "PostToolUse 10000"],
         "nothing else in the answer: the whole budget"
     );
 }
 
 // A tool's result that completed a skill carries its mates' line and the
-// owed context both, the line first.
+// owed context both, the line first, the call given what the line left.
 #[test]
 fn test_a_skills_mates_and_an_owed_context_are_carried_together() {
-    struct Both;
-    impl crate::HookLibrary for Both {
+    struct Mates;
+    impl crate::HookLibrary for Mates {
         fn agents_and_profiles(&self) -> Option<(bool, bool)> {
             None
         }
@@ -485,13 +483,28 @@ fn test_a_skills_mates_and_an_owed_context_are_carried_together() {
             };
             Some(vec![skill("admit"), skill("unattended")])
         }
-        fn redelivered(&self, _: &str, _: &str, budget: usize) -> Option<String> {
+    }
+    struct Left;
+    impl crate::HookContexts for Left {
+        fn hook_context(
+            &self,
+            _: &str,
+            _: &[&str],
+            _: &str,
+            budget: usize,
+        ) -> Option<crate::HookCarried> {
             assert!(budget < 10_000, "what the mates line left: {budget}");
-            Some("re-assembled".to_string())
+            Some(crate::HookCarried {
+                context: "re-assembled".to_string(),
+                delivered: false,
+            })
         }
     }
     let w = crate::fakes::world(CONFIG);
-    let setup = w.setup.with_hook_library(Box::new(Both));
+    let setup = w
+        .setup
+        .with_hook_library(Box::new(Mates))
+        .with_hook_contexts(Box::new(Left));
     let answer = setup
         .execute_hook(
             "claude-code",

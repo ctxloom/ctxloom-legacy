@@ -26,9 +26,24 @@ pub(crate) struct HookDaemons {
     /// Whether it may start one (none where the environment names an
     /// endpoint).
     pub(crate) starts: bool,
+    /// Whether its first reach is the discovery file's daemon, asked with
+    /// no health check (the lean hook RPC: a probe is a TLS connection of
+    /// its own); a later reach (the first answered unreachable) probes.
+    pub(crate) trusts: std::sync::atomic::AtomicBool,
 }
 
 impl HookDaemons {
+    /// The daemon of a hook's one call (the lean hook RPC): its first
+    /// reach trusts the discovery file.
+    pub(crate) fn trusting(env: Arc<EnvSnapshot>, until: Instant, starts: bool) -> HookDaemons {
+        HookDaemons {
+            env,
+            until,
+            starts,
+            trusts: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
+
     fn remaining(&self) -> Duration {
         self.until.saturating_duration_since(Instant::now())
     }
@@ -54,6 +69,11 @@ impl Daemons for HookDaemons {
     }
 
     async fn reach(&self) -> Result<daemon_client::DaemonClient, Unreached> {
+        if self.trusts.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            if let Some(found) = crate::daemon::hook_daemon_unprobed(&self.env) {
+                return Ok(self.client(&found));
+            }
+        }
         let wait = self
             .remaining()
             .saturating_sub(crate::daemon::DELIVERY_MARGIN)
@@ -102,6 +122,7 @@ impl DaemonHookLibrary {
             env: Arc::clone(&self.env),
             until: self.until,
             starts,
+            trusts: std::sync::atomic::AtomicBool::new(false),
         };
         let client = daemon_api::Client::new(
             daemons,
@@ -157,19 +178,6 @@ impl HookLibrary for DaemonHookLibrary {
                 !agents.answer.agents.is_empty(),
                 !profiles.answer.profiles.is_empty(),
             ))
-        })
-    }
-
-    /// The context the live session `harp` is owed at `hook`, as the
-    /// daemon re-assembled and its engine's delivery put it (step 10c U13);
-    /// none owed, or no daemon in time, none.
-    fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
-        if harp.is_empty() {
-            return None;
-        }
-        self.ask(async |client| {
-            let answered = client.redeliver_context(harp, hook, budget).await.ok()?;
-            Some(answered.context).filter(|context| !context.is_empty())
         })
     }
 

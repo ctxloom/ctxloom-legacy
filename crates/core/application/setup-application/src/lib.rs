@@ -40,7 +40,7 @@ pub use delivery::{
 pub use error::diagnostic_samples;
 pub use error::{SetupError, EN_US};
 pub use hooks::{harp_marker, hook_skills, HookAnswer, HookLibrary, HookSkill};
-pub use hooks_wake::HookMessages;
+pub use hooks_wake::{HookCarried, HookContexts};
 pub use manage::{
     BackendStatus, CheckReport, GitignoreReport, HookRow, HooksEvent, HooksList, InstallPlan,
     InstallReport, InstallRequest, PullReport, SurfaceCurrency, UninstallReport,
@@ -84,7 +84,7 @@ pub struct Setup {
     hook_library: Option<Box<dyn hooks::HookLibrary>>,
     /// A primary's pending messages, as its hooks deliver them (the
     /// terminal wake); none, they deliver none.
-    hook_messages: Option<Box<dyn hooks_wake::HookMessages>>,
+    hook_contexts: Option<Box<dyn hooks_wake::HookContexts>>,
 }
 
 impl Setup {
@@ -109,7 +109,7 @@ impl Setup {
             cwd: cwd.into(),
             os: String::new(),
             hook_library: None,
-            hook_messages: None,
+            hook_contexts: None,
         }
     }
 

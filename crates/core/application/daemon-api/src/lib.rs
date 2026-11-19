@@ -63,6 +63,7 @@ mod distill;
 mod foreign;
 mod hand_off;
 mod hand_over;
+mod hook_context;
 pub mod launch;
 mod library_reads;
 mod library_refusals;

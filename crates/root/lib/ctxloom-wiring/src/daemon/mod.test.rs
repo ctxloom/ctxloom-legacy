@@ -387,3 +387,43 @@ fn a_path_under_the_home_is_said_with_the_platforms_separator() {
         r"~\.ctxloom\daemon\daemon.log"
     );
 }
+
+/// A discovery of `home`'s daemon at an endpoint nothing listens on.
+fn dead_discovery(home: &str) -> run_ports::Discovery {
+    run_ports::Discovery {
+        stamp: "v0.1.0-abc1234".to_string(),
+        pid: 7,
+        endpoint: "https://127.0.0.1:1".to_string(),
+        cert: run_ports::PublicCert::from_der(vec![0x30, 0x00]).unwrap(),
+        bearer: run_ports::Token::from_bytes([7; 32]),
+        home: home.to_string(),
+    }
+}
+
+// The lean hook RPC (owner budget 2026-11-18): a hook's one call asks the
+// daemon its discovery file names with NO health check (a TLS connection of
+// its own), so even a daemon that would not answer one is named; never a
+// daemon of another home.
+#[test]
+fn test_a_hooks_unprobed_daemon_is_its_homes_discovery_without_a_health_check() {
+    let world = crate::commands::tests::World::new("hook-unprobed");
+    let wiring = world.wiring();
+    let env = std::sync::Arc::clone(wiring.env());
+    assert!(
+        super::hook_daemon_unprobed(&env).is_none(),
+        "none published"
+    );
+    let home = wiring.home().display().to_string();
+    super::publish_for_test(&wiring, &dead_discovery(&home));
+    let found = super::hook_daemon_unprobed(&env).expect("named, unprobed");
+    assert_eq!(found.endpoint, "https://127.0.0.1:1");
+    assert!(
+        super::hook_daemon_serving(&env).is_none(),
+        "probed, it is not live"
+    );
+    super::publish_for_test(&wiring, &dead_discovery("/another/home"));
+    assert!(
+        super::hook_daemon_unprobed(&env).is_none(),
+        "another home's"
+    );
+}

@@ -239,6 +239,9 @@ pub(crate) struct Fixture {
     pub(crate) hosting: Arc<Loop>,
     pub(crate) places: Arc<FakePlaces>,
     pub(crate) locks: Arc<Locks>,
+    /// The pending messages the API reads, caught up only by
+    /// [`Fixture::catch_up_pending`] (a round's, in the daemon).
+    pub(crate) pending: pending_messages::PendingMessages,
     pub(crate) api: Api<World>,
 }
 
@@ -249,10 +252,11 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
     let hosting = Arc::new(Loop::default());
     let places = Arc::new(FakePlaces::default());
     let locks = Arc::new(Locks::default());
+    let pending = pending_messages::PendingMessages::default();
     let api = Api::new(Parts {
         edge: Arc::clone(&world),
         index: index.clone(),
-        pending: pending_messages::PendingMessages::default(),
+        pending: pending.clone(),
         board: board.clone(),
         hosting: Arc::clone(&hosting) as Arc<dyn Hosting>,
         states: Arc::clone(&locks) as Arc<dyn SessionStates>,
@@ -276,6 +280,7 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
         hosting,
         places,
         locks,
+        pending,
         api,
     }
 }
@@ -291,6 +296,15 @@ impl Fixture {
             .unwrap();
         let mut board = daemon_board::caught_up(self.board.clone());
         board
+            .step(&self.world.store, self.world.registry.catalog())
+            .await
+            .unwrap();
+    }
+
+    /// The pending messages caught up with what the store holds: a round.
+    pub(crate) async fn catch_up_pending(&self) {
+        let mut caught = pending_messages::caught_up(self.pending.clone());
+        caught
             .step(&self.world.store, self.world.registry.catalog())
             .await
             .unwrap();

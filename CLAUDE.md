@@ -3603,16 +3603,33 @@ it starts, so `ctxloom mcp serve` (the stdio server it starts from
 turn start)"}`, `run_ports::wake_line`), and disarmed after 60 s
 (`DisarmWake`; a post that fails, at once). A wake is a nudge: the session's
 pending messages are the truth. Its prompt hook (`turn_start`) delivers its
-informs and wakes as `additionalContext`; a tool call's (`post_tool`) asks for
-none (a primary is offered no steer, and `GetSession` waits for a fresh
-daemon round: about 90 ms a tool call, measured by `just hook-latency`
-against the owner's 20 ms budget). They are recorded first (`DeliverMessages`, which redeems the wake its
-prompt was; pending-messages drops them) and are a primary's alone (a child's
-are fed as turns). A wake line that delivered nothing is blocked; a human's
+informs and wakes as `additionalContext`; a tool call's (`post_tool`)
+delivers none (a primary is offered no steer). A hook asks the daemon ONCE
+(the lean hook RPC, owner budget 2026-11-18: under 20 ms added per hook at
+p95, `just hook-latency`): `DeliverHookContext` (additive, daemon.proto;
+setup-application's `HookContexts`, the wiring's `DaemonHookContexts`, a
+`Caller` of the hook's own session, `Caller::hook_context`), answered from
+the projections with NO round awaited (`GetSession`'s `Hosting::fresh` is
+not on the hook path): the pending messages of the urgencies the hook
+names, fitted by `messages_context`, recorded by `DeliverMessages` (which
+redeems the wake its prompt was), then what the session is owed (as
+`RedeliverContext`) within what the messages left, joined by
+`compose_context`, the ids THIS call recorded in `HookContext.delivered`.
+A message is delivered ONCE however many hooks ask within one round (the
+pending projection folds per round, so both read it pending): the session
+aggregate keeps `SessionState.pending_messages` (field 30, additive;
+`MessageSent` adds, `MessagesDelivered` removes) and `DeliverMessages`
+records only ids still pending, and a DUPLICATE delivers nothing (forced in
+daemon-api's `hook_context` test). The hook's call trusts the discovery
+file first, unprobed (`HookDaemons::trusting`,
+`daemon::hook_daemon_unprobed`: a health check is a TLS connection of its
+own); reached unreachable, it probes and starts one as every hook does.
+Delivered messages are a primary's alone (a child's are fed as turns). A wake line that delivered nothing is blocked; a human's
 prompt never is. One hook answer has ONE 10,000-character context budget
 (claude's cap), shared in order by setup-application's `compose_context`:
-the skill mates line, the messages (given what is left; past it they wait
-behind a pointer to `session show`), then U13's re-delivered context. The
+the skill mates line (the hook's own), then the daemon's part: the messages
+(given what is left; past it they wait behind a pointer to `session show`),
+then U13's re-delivered context. The
 daemon publishes each watched session's `SessionSignal` every round (its
 pending wakes, its outstanding wake) and repeats it every 5 s, so a gone
 watcher is noticed. A primary takes `Wake` (never `Steer`) only while

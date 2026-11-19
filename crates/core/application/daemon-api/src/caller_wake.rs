@@ -56,6 +56,30 @@ impl<D: Daemons> Caller<D> {
         Ok(())
     }
 
+    /// `DeliverHookContext` of this caller's own session (10c, the lean
+    /// hook RPC): all its hook `carried_by` carries, in ONE call: its
+    /// pending messages of `urgencies` (with the wake `nonce` its prompt
+    /// is, empty for none), each recorded delivered once, then what it is
+    /// owed, within `budget` characters (0: the whole), at `cwd`.
+    pub async fn hook_context(
+        &self,
+        carried_by: &str,
+        (urgencies, nonce): (&[&str], &str),
+        budget: usize,
+        cwd: &str,
+    ) -> Result<v1::HookContext, CallError> {
+        let request = v1::DeliverHookContextRequest {
+            name: self.own()?.to_string(),
+            carried_by: carried_by.to_string(),
+            urgencies: urgencies.iter().map(ToString::to_string).collect(),
+            wake_nonce: nonce.to_string(),
+            budget: u32::try_from(budget).unwrap_or(u32::MAX),
+            env: Some(self.env().clone()),
+            cwd: cwd.to_string(),
+        };
+        on_daemon!(self, |api| api.deliver_hook_context(request.clone()).await)
+    }
+
     /// The messages `ids` its hook delivered, and the wake `nonce` its
     /// prompt was (empty for none), keyed `deliver:<session>:<nonce>:<ids,
     /// comma-joined>`; whether this call applied it.

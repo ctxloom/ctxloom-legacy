@@ -150,13 +150,15 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         SessionEvent::IncarnationOwed(_) => lifeline::apply(state, event),
         // Retired (owner 2026-11-15: no stop latch): it folds to nothing.
         SessionEvent::StopOrdered(_) => {}
-        // A message and a clear are the read side's (the pending messages,
-        // the delivery and clear policies): no state of the session.
-        SessionEvent::MessageSent(_) | SessionEvent::ClearRequested(_) => {}
-        // The terminal wake's journal; a delivery is the read side's.
+        // A clear is the read side's (the clear policy): no state of the
+        // session.
+        SessionEvent::ClearRequested(_) => {}
+        // The terminal wake's journal, and the messages still pending, so a
+        // delivery records each once (the lean hook RPC).
         SessionEvent::WakeIssued(_)
         | SessionEvent::WakeDisarmed(_)
         | SessionEvent::WakeRedeemed(_)
+        | SessionEvent::MessageSent(_)
         | SessionEvent::MessagesDelivered(_) => wake::apply(state, event),
         SessionEvent::SessionClosed(_)
         | SessionEvent::SessionReopened(_)

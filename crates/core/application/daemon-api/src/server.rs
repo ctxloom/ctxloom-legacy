@@ -213,6 +213,14 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("RedeliverContext")) })
     }
+    /// `DeliverHookContext` (10c, the lean hook RPC); as `GetTranscript`.
+    fn deliver_hook_context(
+        &self,
+        request: v1::DeliverHookContextRequest,
+    ) -> Answer<'_, v1::HookContext> {
+        let _ = request;
+        Box::pin(async { Err(not_served("DeliverHookContext")) })
+    }
     /// `AssembleContext` (slice 3 step 6); as `GetTranscript`.
     fn assemble_context(
         &self,
@@ -441,6 +449,13 @@ impl<E: Edge + 'static> Calls for Api<E> {
         request: v1::RedeliverContextRequest,
     ) -> Answer<'_, v1::RedeliveredContext> {
         Box::pin(async move { Api::redeliver_context(self, request).await })
+    }
+
+    fn deliver_hook_context(
+        &self,
+        request: v1::DeliverHookContextRequest,
+    ) -> Answer<'_, v1::HookContext> {
+        Box::pin(async move { Api::deliver_hook_context(self, request).await })
     }
 
     fn watch_library(

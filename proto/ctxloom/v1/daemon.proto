@@ -606,6 +606,19 @@ service Ctxloom {
   // (-- api-linter: core::0136::response-message-name=disabled
   //     aip.dev/not-precedent: the hook's answer, a context or none. --)
   rpc RedeliverContext(RedeliverContextRequest) returns (RedeliveredContext);
+  // `projects/{project}/sessions/{session}:deliverHookContext` (AIP-136;
+  // 10c, the lean hook RPC, owner budget 2026-11-18: under 20 ms added per
+  // hook at p95): a live session's hook asks ONCE for everything it
+  // carries, answered from the projections with no round awaited: a
+  // primary's pending messages of the urgencies asked (each recorded
+  // delivered by `DeliverMessages`, which records an id once, so two hooks
+  // within one round never deliver a message twice), then what the session
+  // is owed (as `RedeliverContext`), within what the messages left, joined
+  // by `setup_application::compose_context` under the hook's one budget.
+  // Additive (10c).
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: the hook's answer, a context or none. --)
+  rpc DeliverHookContext(DeliverHookContextRequest) returns (HookContext);
 
   // The rest of the CLI, drafted with the milestone that ports each, by
   // these rules (S33): hooks; remotes' DiscoverRemotes;
@@ -1344,6 +1357,40 @@ message RedeliverContextRequest {
   EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
   // The caller's working directory (E1): the session's checkout.
   string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// 10c (the lean hook RPC): a live session's hook asks for all it carries.
+message DeliverHookContextRequest {
+  // `projects/{project}/sessions/{session}`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The engine's native hook the context rides (`UserPromptSubmit`,
+  // `PostToolUse`), as `RedeliverContextRequest.carried_by`.
+  string carried_by = 2 [(google.api.field_behavior) = REQUIRED];
+  // The urgencies of the pending messages this hook delivers (`inform`,
+  // `wake`); none, it delivers no message (a tool call's).
+  repeated string urgencies = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The wake the hook's prompt is (`run_ports::wake_nonce`); empty: none.
+  string wake_nonce = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The characters of the hook's one answer this context may take, what
+  // the hook's own parts before it (the skill mates line) left of claude's
+  // 10,000; 0 is the whole 10,000.
+  uint32 budget = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1): the session's checkout.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// 10c (the lean hook RPC): what the hook carries to its engine.
+message HookContext {
+  // The messages delivered, then the owed context, joined; empty: none.
+  string context = 1;
+  // The ids of the messages THIS call recorded delivered, in the order
+  // sent (none: it delivered none, a wake line then being stale).
+  repeated string delivered = 2;
+  // The bundles (and `config`) whose change the owed context answers,
+  // sorted.
+  repeated string changed = 3;
 }
 
 // 10c (U13): what the hook carries to its engine: the re-assembled context,

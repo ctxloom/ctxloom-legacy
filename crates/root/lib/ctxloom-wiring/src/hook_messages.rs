@@ -1,49 +1,53 @@
-//! A primary's hooks reach its pending messages THROUGH THE DAEMON (the
-//! terminal wake, owner ruling 2026-11-18), as the library reads do
-//! (`hook_library`): the hook's session (`CTXLOOM_SESSION`) as a caller of
-//! the user's daemon, within the hook's bound. A child's messages are the
-//! daemon's to feed as turns, so its hooks deliver none; with no session
-//! named, or no daemon in time, none either.
+//! A live session's hooks reach what they carry THROUGH THE DAEMON in ONE
+//! call (the lean hook RPC, owner budget 2026-11-18: under 20 ms added per
+//! hook at p95): `DeliverHookContext` of the hook's session
+//! (`CTXLOOM_SESSION`) as a caller of the user's daemon, within the hook's
+//! bound. Its daemon is the one the discovery file names, asked with no
+//! health check first (a TLS connection of its own); only when it cannot
+//! be reached is it probed, and started, as every hook's daemon is. With no
+//! session named, or no daemon in time, the hook carries nothing.
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use daemon_api::Caller;
 use process_env::EnvSnapshot;
-use setup_application::{HookMessage, HookMessages};
+use setup_application::{HookCarried, HookContexts};
 
 use crate::hook_library::HookDaemons;
 
-/// The hook's session's messages over the user's daemon.
-pub(crate) struct DaemonHookMessages {
+/// The hook's session's one call over the user's daemon.
+pub(crate) struct DaemonHookContexts {
     pub(crate) env: Arc<EnvSnapshot>,
     /// When the hook's bound ends.
     pub(crate) until: Instant,
 }
 
-impl DaemonHookMessages {
-    /// A hook's messages, its bound starting now.
-    pub(crate) fn starting_now(env: Arc<EnvSnapshot>) -> DaemonHookMessages {
-        DaemonHookMessages {
+impl DaemonHookContexts {
+    /// A hook's call, its bound starting now.
+    pub(crate) fn starting_now(env: Arc<EnvSnapshot>) -> DaemonHookContexts {
+        DaemonHookContexts {
             env,
             until: Instant::now() + crate::daemon::HOOK_BOUND,
         }
     }
+}
 
-    /// `call` with the hook's session as the daemon's caller, within the
-    /// bound; none when no session is named or nothing answers.
-    fn ask<T>(&self, call: impl AsyncFnOnce(&Caller<HookDaemons>, &str) -> Option<T>) -> Option<T> {
+impl HookContexts for DaemonHookContexts {
+    fn hook_context(
+        &self,
+        hook: &str,
+        urgencies: &[&str],
+        wake: &str,
+        budget: usize,
+    ) -> Option<HookCarried> {
         let session = self.env.non_empty(run_ports::SESSION_VARIABLE)?;
         let session = session.to_string_lossy().into_owned();
         let starts = self
             .env
             .utf8(run_ports::ENDPOINT_VARIABLE)
             .is_none_or(str::is_empty);
-        let daemons = HookDaemons {
-            env: Arc::clone(&self.env),
-            until: self.until,
-            starts,
-        };
+        let daemons = HookDaemons::trusting(Arc::clone(&self.env), self.until, starts);
         let caller = Caller::new(
             daemons,
             &session,
@@ -51,43 +55,33 @@ impl DaemonHookMessages {
             Box::new(crate::daemon::request_id),
         )
         .ok()?;
+        let cwd = self
+            .env
+            .cwd()
+            .map(|cwd| cwd.display().to_string())
+            .unwrap_or_default();
         let within = self.until.saturating_duration_since(Instant::now());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .ok()?;
-        runtime
-            .block_on(async { tokio::time::timeout(within, call(&caller, &session)).await })
-            .ok()
-            .flatten()
-    }
-}
-
-impl HookMessages for DaemonHookMessages {
-    fn pending(&self) -> Option<Vec<HookMessage>> {
-        self.ask(async |caller, session| {
-            let shown = caller.get_session(session).await.ok()?;
-            // A child's are fed as its turns.
-            if !shown.owner.is_empty() {
-                return None;
-            }
-            Some(
-                shown
-                    .pending
-                    .into_iter()
-                    .map(|message| HookMessage {
-                        id: message.message_id,
-                        urgency: message.urgency,
-                        text: message.text,
-                        sender: message.sender,
-                    })
-                    .collect(),
-            )
+        let answered = runtime
+            .block_on(async {
+                tokio::time::timeout(
+                    within,
+                    caller.hook_context(hook, (urgencies, wake), budget, &cwd),
+                )
+                .await
+            })
+            .ok()?
+            .ok()?;
+        Some(HookCarried {
+            context: answered.context,
+            delivered: !answered.delivered.is_empty(),
         })
     }
-
-    fn delivered(&self, ids: &[String], wake: &str) -> bool {
-        self.ask(async |caller, _| caller.deliver(ids, wake).await.ok())
-            .is_some()
-    }
 }
+
+#[cfg(test)]
+#[path = "hook_messages.test.rs"]
+mod tests;

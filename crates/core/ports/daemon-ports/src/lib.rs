@@ -213,6 +213,17 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("RedeliverContext")) }
     }
 
+    /// `DeliverHookContext` (10c, the lean hook RPC): all a live session's
+    /// hook carries, its messages then what it is owed, in one call. The
+    /// default is a daemon that does not serve it.
+    fn deliver_hook_context(
+        &self,
+        request: v1::DeliverHookContextRequest,
+    ) -> impl Future<Output = Result<v1::HookContext, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("DeliverHookContext")) }
+    }
+
     /// `WatchLibrary` (step 10c G7): each recorded change of the named
     /// library trees, as a thin notice, from the call on; unbounded in time.
     /// The default is a daemon that does not serve it.

@@ -5,8 +5,8 @@
 
 use crate::aggregate::tests::Session;
 use crate::{
-    CloseSession, DeliverMessages, DisarmWake, IssueWake, MessagesDelivered, SessionEvent,
-    WakeDisarmed, WakeIssued, WakeRedeemed,
+    CloseSession, DeliverMessages, DisarmWake, IssueWake, MessageSent, MessagesDelivered,
+    SessionEvent, WakeDisarmed, WakeIssued, WakeRedeemed,
 };
 
 const NONCE: &str = "0123456789abcdef";
@@ -107,6 +107,7 @@ fn a_disarm_of_a_wake_not_outstanding_records_nothing() {
 #[test]
 fn a_redeem_then_a_disarm_leaves_the_wake_answered() {
     let mut session = issued();
+    sent(&mut session, &["m1"]);
     let events = session.run(deliver(&["m1"], NONCE)).unwrap();
     assert_eq!(
         events,
@@ -142,9 +143,22 @@ fn a_disarm_then_a_late_redeem_leaves_the_wake_answered() {
 }
 
 // A human's prompt delivers what waits and redeems nothing.
+/// `ids` sent to the session, each an inform.
+fn sent(session: &mut Session, ids: &[&str]) {
+    for id in ids {
+        session.given([SessionEvent::MessageSent(MessageSent {
+            message_id: id.to_string(),
+            urgency: crate::Urgency::Inform,
+            text: format!("text of {id}"),
+            sender: None,
+        })]);
+    }
+}
+
 #[test]
 fn a_delivery_with_no_wake_records_the_messages_alone() {
     let mut session = issued();
+    sent(&mut session, &["m1", "m2"]);
     let events = session.run(deliver(&["m1", "m2"], "")).unwrap();
     assert_eq!(
         events,
@@ -170,5 +184,50 @@ fn a_delivery_to_no_session_is_refused() {
     assert_eq!(
         session.run(deliver(&["m1"], "")).unwrap_err().0,
         "sessions-no-session"
+    );
+}
+
+// The lean hook RPC (owner budget 2026-11-18): a message is delivered ONCE
+// whatever asks again. Two hooks within one round both read it pending
+// from a projection not yet caught up; the second's delivery records
+// nothing of it. Forced by running both deliveries against one state.
+#[test]
+fn test_a_message_is_delivered_once_whatever_asks_again() {
+    let mut session = Session::minted();
+    sent(&mut session, &["m1"]);
+    assert_eq!(session.state().pending_messages, ["m1"]);
+    let first = session.run(deliver(&["m1"], "")).unwrap();
+    assert_eq!(
+        first,
+        vec![SessionEvent::MessagesDelivered(MessagesDelivered {
+            message_ids: vec!["m1".to_string()]
+        })]
+    );
+    assert!(session.state().pending_messages.is_empty());
+    assert!(
+        session.run(deliver(&["m1"], "")).unwrap().is_empty(),
+        "delivered already: nothing"
+    );
+    sent(&mut session, &["m2"]);
+    let both = session.run(deliver(&["m1", "m2"], "")).unwrap();
+    assert_eq!(
+        both,
+        vec![SessionEvent::MessagesDelivered(MessagesDelivered {
+            message_ids: vec!["m2".to_string()]
+        })],
+        "only what is still pending"
+    );
+}
+
+// An id never sent is not delivered; a wake it carries is still redeemed.
+#[test]
+fn test_an_id_never_sent_is_not_delivered() {
+    let mut session = issued();
+    let events = session.run(deliver(&["never"], NONCE)).unwrap();
+    assert_eq!(
+        events,
+        vec![SessionEvent::WakeRedeemed(WakeRedeemed {
+            nonce: NONCE.to_string()
+        })]
     );
 }
