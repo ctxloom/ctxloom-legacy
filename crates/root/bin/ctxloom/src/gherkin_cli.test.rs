@@ -163,3 +163,18 @@ fn remote_holds(w: &mut World, name: String, file: String, bundle: String, text:
         .remote_file(&name, &format!("{}/{file}", tree_bundle(&bundle)));
     assert!(held.contains(&text), "{bundle}/{file} on {name}: {held}");
 }
+
+/// config.feature: Go's inline `profiles:` block, added to the project's
+/// config as Go once read it: `profiles.<name>.bundles: [<bundle>]`.
+#[given(expr = "a profile {string} is defined inline in config with bundle {string}")]
+fn inline_profile(w: &mut World, name: String, bundle: String) {
+    let config = w
+        .common
+        .project
+        .read(".ctxloom/config.yaml")
+        .unwrap_or_else(|| crate::tests::library::MINIMAL_CONFIG.to_string());
+    w.common.project.write(
+        ".ctxloom/config.yaml",
+        &format!("{config}profiles:\n  {name}:\n    bundles:\n      - {bundle}\n"),
+    );
+}
