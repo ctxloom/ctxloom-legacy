@@ -105,6 +105,15 @@ fn daemon_env<N: AsRef<OsStr>, V: AsRef<OsStr>>(
 #[cfg(feature = "test-support")]
 pub(crate) const CLOCK_OFFSET_VARIABLE: &str = "CTXLOOM_TEST_CLOCK_OFFSET";
 
+/// The test-support variable naming a test's LIFELINE: a lock file the
+/// test process holds for its life (the harness's `tests::lifeline`). A
+/// daemon given it that can take that lock has outlived its test (one
+/// killed by nextest's timeout drops nothing, so nothing else stops it):
+/// it ends what it hosts and exits (`serve::Lifeline`). Passed on to a
+/// daemon a command starts. Read only under `test-support`.
+#[cfg(feature = "test-support")]
+pub(crate) const LIFELINE_VARIABLE: &str = "CTXLOOM_TEST_LIFELINE";
+
 /// The test-support variable naming the OS account's home, so a test's
 /// temporary home is the account's for the daemon (and a test can tell the
 /// account's home from a moved HOME). Read only under `test-support`.
@@ -1219,6 +1228,11 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     #[cfg(feature = "test-support")]
     if let Some(days) = env.non_empty(CLOCK_OFFSET_VARIABLE) {
         kept.push((CLOCK_OFFSET_VARIABLE.into(), days.to_os_string()));
+    }
+    // A test's lifeline is its daemon's, whoever starts it.
+    #[cfg(feature = "test-support")]
+    if let Some(line) = env.non_empty(LIFELINE_VARIABLE) {
+        kept.push((LIFELINE_VARIABLE.into(), line.to_os_string()));
     }
     command.env_clear().envs(kept).current_dir(wiring.home());
     // DETACHED (T3, M8): a session of its own on unix (setsid), no console

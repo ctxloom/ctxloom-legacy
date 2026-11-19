@@ -38,6 +38,14 @@
 #                        the commit. It runs in the checkout, the staged index
 #                        and target/logs/test-staged.log in place. "" lets
 #                        every red commit through (whatever went red).
+#   staged_tests_filter  a program, relative to the checkout, that narrows
+#                        `test-staged`: given the staged paths, one per line
+#                        on stdin, in the staged tree, it prints a nextest
+#                        filterset (nothing: no narrowing) that the run of
+#                        the selected crates, or of the workspace, is held
+#                        to (`_tests --filter=<set>`). "" runs every test of
+#                        what is selected. `test` and the landing gates are
+#                        never narrowed.
 #   mutants_memory_max   the mutation run's memory cap (systemd's MemoryMax:
 #                        `16G`, ...), or `none` to run it uncapped, said in
 #                        its log (gates/memory-cap.sh).
@@ -386,8 +394,16 @@ _test-affected scope:
             whole="$path"
         fi
     done < <(git diff --cached --name-only --no-renames -z HEAD)
+    # The narrowing `staged_tests_filter` gives, of the staged paths.
+    narrow=() narrowed=
+    if [ -n '{{staged_tests_filter}}' ]; then
+        expr=$(git diff --cached --name-only --no-renames HEAD | "$root/{{staged_tests_filter}}") \
+            || { echo "FAIL test-staged: {{staged_tests_filter}} did not say what to run" >&2; exit 121; }
+        if [ -n "$expr" ]; then narrow=("--filter=$expr") narrowed="; narrowed by {{staged_tests_filter}}"; fi
+    fi
     if [ -n "$whole" ]; then
-        exec just --justfile "$root/justfile" _test-workspace test-staged "workspace: $whole is staged"
+        exec just --justfile "$root/justfile" _test-workspace test-staged "workspace: $whole is staged$narrowed" \
+            ${narrow[@]+"${narrow[@]}"}
     fi
     if [ "${#selected[@]}" -eq 0 ]; then
         echo "ok   test-staged (nothing to test: the staged change is in no crate's sources or manifest)"
@@ -397,8 +413,8 @@ _test-affected scope:
     changed=$(printf '%s\n' $changed | sort | tr '\n' ' ')
     if [ '{{scope}}' != dependents ]; then
         mapfile -t packages < <(printf '%s\n' "${!selected[@]}" | sort)
-        exec just --justfile "$root/justfile" _run test-staged "changed: ${changed% }" tests \
-            just --justfile "$root/justfile" _tests "${packages[@]}"
+        exec just --justfile "$root/justfile" _run test-staged "changed: ${changed% }$narrowed" tests \
+            just --justfile "$root/justfile" _tests ${narrow[@]+"${narrow[@]}"} "${packages[@]}"
     fi
     # Dependents, transitively: every workspace crate depending (normal, dev or
     # build) on a selected one is selected too, until nothing changes.
@@ -417,11 +433,13 @@ _test-affected scope:
         done
     done
     mapfile -t packages < <(printf '%s\n' "${!selected[@]}" | sort)
-    exec just --justfile "$root/justfile" _run test-staged "changed: ${changed% }; with dependents: ${packages[*]}" tests \
-        just --justfile "$root/justfile" _tests "${packages[@]}"
+    exec just --justfile "$root/justfile" _run test-staged "changed: ${changed% }; with dependents: ${packages[*]}$narrowed" tests \
+        just --justfile "$root/justfile" _tests ${narrow[@]+"${narrow[@]}"} "${packages[@]}"
 
 # The test run of `test` and `test-staged`: cargo-nextest over the packages
-# named (or --workspace), each test in its own process, without stopping at
+# named (or --workspace), held to the filterset of a leading
+# `--filter=<set>` when one is given (`test-staged`'s, from
+# `staged_tests_filter`; doc tests are not narrowed), each test in its own process, without stopping at
 # the first failure; then the doc tests of those with a library, which nextest
 # cannot run, once the rest pass. `feature_rules` turns on the features of the
 # packages selected (all of them for --workspace), after `features_prepare`.
@@ -467,7 +485,9 @@ _tests +packages:
     cap=(env MEMORY_CAP_OPT_OUT=TESTS_MEMORY_MAX "$root/gates/memory-cap.sh" tests '{{tests_memory_max}}' '{{tests_swap_max}}')
     "${cap[@]}" --check || exit 121
     lock=()
-    [ "$1" != --workspace ] || lock=("$root/gates/tests-lock.sh" tests)
+    whole=$1
+    [[ $whole != --filter=* ]] || whole=${2:-}
+    [ "$whole" != --workspace ] || lock=("$root/gates/tests-lock.sh" tests)
     rc=0
     ${lock[@]+"${lock[@]}"} "${cap[@]}" just --justfile "$root/justfile" _tests-capped "$@" || rc=$?
     case "$rc" in
@@ -489,7 +509,12 @@ _tests-capped +packages:
     cargo_terse=(-q --message-format=short)
     if [ "${VERBOSE:-}" = 1 ]; then terse=(); cargo_terse=(); fi
     read -ra rules <<< "{{feature_rules}}"
-    features=()
+    features=() narrow=()
+    # `--filter=<set>` first: the nextest filterset the run is held to.
+    if [[ $1 == --filter=* ]]; then
+        narrow=(-E "${1#--filter=}")
+        shift
+    fi
     if [ "$1" = --workspace ]; then
         selection=(--workspace)
         doc=(--workspace)
@@ -515,7 +540,7 @@ _tests-capped +packages:
     cargo test --manifest-path "$root/Cargo.toml" --no-run ${cargo_terse[@]+"${cargo_terse[@]}"} ${selection[@]+"${selection[@]}"} ${features[@]+"${features[@]}"}
     rc=0
     cargo nextest run --manifest-path "$root/Cargo.toml" --no-fail-fast --no-tests=pass ${terse[@]+"${terse[@]}"} \
-        ${selection[@]+"${selection[@]}"} ${features[@]+"${features[@]}"} || rc=$?
+        ${selection[@]+"${selection[@]}"} ${features[@]+"${features[@]}"} ${narrow[@]+"${narrow[@]}"} || rc=$?
     case "$rc" in
         0|100|101) ;;
         *)
@@ -921,11 +946,17 @@ push-check remote *lefthook:
 # and `merge-check`'s. Under the machine-wide test lock
 # (gates/tests-lock.sh), taken outside `_run` so that a run waiting on it
 # says so on the terminal, not in the gate's log, and so that the gate's
-# duration is the run's, not the wait's.
+# duration is the run's, not the wait's. `narrow`, `test-staged`'s alone,
+# is `--filter=<set>` (`staged_tests_filter`'s).
 [positional-arguments]
 [no-exit-message]
-_test-workspace gate scope:
-    @'{{gates_root}}/gates/tests-lock.sh' "$1" just --justfile '{{gates_root}}/justfile' _run "$1" "$2" tests just --justfile '{{gates_root}}/justfile' _tests --workspace
+_test-workspace gate scope *narrow:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gate=$1 scope=$2
+    shift 2
+    exec '{{gates_root}}/gates/tests-lock.sh' "$gate" just --justfile '{{gates_root}}/justfile' _run "$gate" "$scope" tests \
+        just --justfile '{{gates_root}}/justfile' _tests "$@" --workspace
 
 # lefthook's post-merge step. A fast-forward runs no hook git has, so no
 # hook can refuse one; this checks the default branch just after one. When a

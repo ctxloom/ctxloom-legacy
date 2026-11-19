@@ -4496,12 +4496,13 @@ self-tested in `just selftest` (`scripts/slot.selftest.sh`,
 needs cargo-sweep; CI's Linux job installs it). No compiler cache is used,
 and `CARGO_INCREMENTAL` is cargo's default (owner ruling of 2026-11-16,
 after measuring: released sccache cannot share a workspace crate's compile
-between worktree paths).
+between worktree paths), but in the ratchet base's tree, built with it off
+(below).
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each
 test in a process of its own; SLOW at 30 s and killed at 120 s
 (`terminate-after`; the longest unit test takes about 5 s), except the
-feature runner's clusters, below; a test that leaves a
+feature runner's slowest features, below; a test that leaves a
 child holding its stdout or stderr past 200 ms FAILS (`leak-timeout`
 `result = "fail"`); retries 0 (a retry would pass a flake, and a flake is a
 finding); the `ports` test group runs the tests that bind a port, or free
@@ -4516,7 +4517,22 @@ as one FILE, `target/test-guard/inherited-home`, so a test that keeps one
 from the process and writes under it fails (ENOTDIR) instead of writing
 into the caller's; the wiring's
 `test_the_run_inherits_no_home_a_test_could_write_into` holds the run to
-it. The wiring's tests read the process environment through
+it. A test process holds a LIFELINE for its life (2026-11-18, test-support
+only): `tests::lifeline()`, an advisory lock on
+`<temp>/ctxloom-test-lifelines/<pid>-<nanos>.lock` (one whose lock is free
+is removed when the next is made), named to every `ctxloom` it spawns as
+`CTXLOOM_TEST_LIFELINE` (`workspace.test.rs` holds every spawner with a
+cleared environment to it) and passed on by a client to a daemon it
+spawns. A test-support daemon tries the lock each round
+(`serve::Lifeline`); once it can take it, its test is gone (a test killed
+by nextest's timeout drops no TempDir, and its detached daemon, kept busy
+by a child mid-turn, never idled out: six were found hours old), so it
+says `its test is gone: ending what it hosts`, ends them as a stop even if
+live does, and exits. The kernel lets the lock go however the test ended,
+and a reused pid names no lock. A plain build reads no such variable. The
+forcing test is `a_daemon_whose_test_is_killed_ends_what_it_hosts_and_exits`
+(its lifeline held by a process of the scenario's own, killed outright).
+The wiring's tests read the process environment through
 `host_snapshot()` (which drops those names, as `Env` unsets them), under
 the `ENV_LOCK` its `Env` tests hold while they change it. `_tests`
 exits with codes of its own, never nextest's passed through (nextest's 102
@@ -4525,42 +4541,48 @@ a doc test failed, 121 nextest failed otherwise (`nextest exited <code>` in
 the log); 100 and 120 are red tests, 101 and 121 are refused on every
 branch (`scripts/tests-exit.selftest.sh`).
 
-The feature runner is split into CLUSTERS of feature files by area (owner
-ruling of 2026-11-14: one test of all ~580 scenarios outgrew 120 s once
-slice 4 made every one-shot start a daemon): `gherkin_features.test.rs`'s
-`CLUSTERS`, one test each, `tests::gherkin_features::clusters::<name>`:
-`journeys` (journeys/), `daemon` (daemon, session_children, mcp_serve,
-trust, session_approvals, atomic_writes, the daemon spec's files, and
-run.feature whole: since slice 4 every one-shot starts a daemon, so no Rule
-of it is apart), `sessions` (session, session_hooks, session_remove,
-session_worktrees, post_tool_hooks), `library` (bundle, fragment,
-fragment_draft_premise, command, profile, skill, mcp, mcp_resources,
-mcp_tools, search, materialize, read_extras, context_status,
-content_distill, companion), `library_agent_changes` (agent,
-library_changes: split from `library` on 2026-11-18, which ran 88.9 s
-against its 90 s under load), `remotes` (remote, deps), `setup`
-(init, doctor, manage, auth, config, engine, clean, version, completion)
-and `other` (fault_tolerance, probes/, container, coordination_contract,
-startup_boundaries, editing, util). Every feature file is in exactly one
-(`every_feature_file_is_in_exactly_one_cluster`, which also refuses an
-entry naming no file and a cluster with no test). nextest runs them at
-once; each runs its features `cluster_threads()` at a time (the cores
-shared among the clusters, at least 2), and a feature's scenarios take
-turns (their steps block cucumber's one executor thread), so a cluster
-lasts at least its slowest feature (`daemon`: cli/daemon.feature, about
-88 s alone since 6c6141047 and 4d596ae13). Each cluster's `terminate-after` is an override naming it in
-`.config/nextest.toml`, about 2.4 times its longest measured run
-(2026-11-14, 20 cores, alone, beside the binary's tests, beside 12
-crates' and in the whole workspace; the table is there), whole slow periods, at least 60 s: `daemon`
-300 s, `journeys` 150 s, `library` and `library_agent_changes` 90 s
-(one override), `remotes`, `setup`, `sessions`
-and `other` 60 s; every other test keeps 120 s. A host of fewer cores was
-not measured. Separation: each scenario has a temporary root of its own,
+The feature runner is ONE TEST PER FEATURE FILE (2026-11-18, superseding
+the clusters of the owner's ruling of 2026-11-14, whose
+`library_agent_changes` timed out at 90 s under load), named by its path:
+`gherkin_features.test.rs`'s `features` module, a module per directory and
+a test per file, so `tests::gherkin_features::features::cli::agent` runs
+`cli/agent.feature` (`feature_of_test`, `test_of_feature`). nextest runs them at
+once, as many as it runs tests, each in a process of its own, and a
+filterset selects one. A new feature file is listed in its directory's
+module (`every_feature_file_has_a_test_of_its_own` refuses one left out,
+and a test naming no file). Within one cucumber run a feature's scenarios
+take turns (their steps block cucumber's one executor thread), so
+`gherkin_common::run_feature` runs each scenario of a feature as a run of
+its own (`scenario_ids`, then `run_only` with its id, as
+`GHERKIN_SCENARIO` does), `SCENARIOS_AT_ONCE` (3) at once on threads of
+their own, their outcomes put together in the file's order; an id whose
+own run ran nothing is red, never left out. Under `GHERKIN_TIMINGS`, and
+for a feature whose scenarios cannot be listed (a parse error, reported as
+before), the feature is one run. The forcing test is
+`a_features_scenarios_run_at_once` (two scenarios that each hold until
+both daemons serve). The run lasts at least its slowest feature
+(cli/daemon.feature). A feature that would not fit the 120 s has a
+`terminate-after` of its own, an override naming it in
+`.config/nextest.toml`, 4 times (not the clusters' 2.4: one at a time,
+daemon.feature took 3.5 times as long at load 50 as at 20) the longer of
+two whole-workspace runs on 2026-11-18 (20 cores, load 18 to 28; the table
+is there), whole 30 s periods: `daemon` and `run` 180 s, `agent`,
+`session_approvals` and `library_changes` 150 s; every other feature
+(28.7 s at most) keeps the 120 s. Windows keeps the limits measured for
+the clusters, each given to the features that were in it (a feature never
+took longer than its cluster), and macOS the daemon cluster's 300 s for
+its features. A host of fewer cores was not measured. Measured on
+2026-11-18, the whole `just test` took 254.1 s (nextest 133.6 s, load 8)
+with the clusters, 116 s (nextest 95.8 s, load 22 to 39) with a test per
+feature, and 105 s (nextest 67.4 s, load 18 to 28) with its scenarios 3 at
+once, the scenario list byte-identical in each.
+Separation: each scenario has a temporary root of its own,
 so its own ctxloom home, daemon, single-instance lock, store, holds and
-stubs; ports are the system's (port 0), and the clusters are not in the
+stubs; ports are the system's (port 0), and the feature tests are not in the
 `ports` group (they share no port).
-`two_clusters_at_once_never_see_each_others_daemon_or_files` is the forcing
-test: two clusters at once, four scenarios each starting a daemon through a
+`two_clusters_at_once_never_see_each_others_daemon_or_files` (its name from
+the clusters) is the forcing test: two runs at once, four scenarios each
+starting a daemon through a
 command and holding it until all four serve, each answered by its own
 alone, four pids, homes and endpoints (its steps are
 `gherkin_separation.test.rs`; a home shared between scenarios fails it).
@@ -4809,7 +4831,17 @@ hook with `just hooks-install` once more (`gates/MIGRATING.md`).
    On the default branch (and wherever the branch cannot be told)
    `test-commit` asks `test-staged dependents`, which adds the workspace
    dependents as before, so red is never committed there. A staged
-   `workspace_wide` file tests the whole workspace. Red tests are committed
+   `workspace_wide` file tests the whole workspace. Every one of these runs
+   is NARROWED (2026-11-18): `staged_tests_filter`, ctxloom's
+   `scripts/staged-features.sh`, given the staged paths, prints the nextest
+   filterset the run is held to (`_tests --filter=<set>`): every test but
+   the feature runner's tests of one feature file each, and of those only
+   the staged feature files' (`tests::gherkin_features::features::<path>`),
+   so no commit runs a feature file it does not stage, whatever it changes
+   (a step definition included); the pass line says `narrowed by
+   scripts/staged-features.sh`. `just test`, and so `land-ratchet` and
+   `closeout-ratchet`, is never narrowed: every feature runs there.
+   Red tests are committed
    off the default branch only (`test-commit`), and no judge looks at them
    at commit: ctxloom's `red_judge` is `""` (the red-commit judge is gone,
    2026-11-13); a red scenario the branch added, or a green one it broke, is
@@ -4904,7 +4936,7 @@ tip's. It may turn red green, never add a red scenario or break a green one
 (`FAIL ratchet: N new red scenarios: B broke green, A added red`, each named,
 capped). Every other test failure fails `test` as ever. The scenario list is
 the feature runner's: `GHERKIN_RATCHET=<absolute file>` makes
-its clusters write a line per scenario, sorted, `red<TAB><id>` or
+its feature tests write a line per scenario, sorted, `red<TAB><id>` or
 `green<TAB><id>` (the id `<feature path under features/> :: [<rule> ::
 ]<scenario>[ :: | <example row> |]`; a failure no scenario owns is `<feature>
 :: (outside a scenario)`), and pass whatever failed, so only the ratchet's
@@ -4913,19 +4945,20 @@ judge (`scripts/ratchet-judge.sh`) decides. Beside the list it writes
 `red<TAB><id>`, `  step: <keyword> <text>`, its message indented, capped at
 2000 bytes), since a passing test's console output is never shown; the
 judge's FAIL line names it (`why: <list>.failures`), and the base's is cached
-beside its list. The clusters of one nextest run assemble that one list,
+beside its list. The feature tests of one nextest run assemble that one list,
 and its failures file, between them: each, holding `<list>.lock`, replaces
 the lines and records of the features it ran and keeps the rest, sorted as
 one; `<list>.run` names the run that wrote it (`NEXTEST_RUN_ID`), so what
 an earlier run left is dropped and the file is exactly the run's scenarios.
-`GHERKIN_RATCHET_BASE=<absolute file>`, a base's list, judges each cluster
+`GHERKIN_RATCHET_BASE=<absolute file>`, a base's list, judges each feature
 against it in the test itself: it fails naming each of its scenarios red
 here and not red there (`broke green`, `added red`, the judge's rule) and
 passes the base's red, so a mutation run of a tree with red spec still has
 the runner judging (`mutants-shard`, `closeout-ratchet`'s mutants-batch).
 `GHERKIN_SCENARIO=<id>` runs that one scenario alone, `GHERKIN_ONLY=<text>`
-the features whose path holds it; a cluster holding none passes having run
-nothing, and when no feature matches at all every cluster fails. A
+the features whose path holds it; a feature's test they leave out passes
+having run nothing, and when no feature matches at all every feature's test
+fails. A
 cached base list can freeze a flaky scenario's colour, so every scenario
 whose colour on the branch differs from the base's list is RE-CONFIRMED on
 the base before it is judged (owner, 2026-11-14; `ratchet-base.sh <base>
@@ -4934,11 +4967,23 @@ in its feature file. A difference both re-runs give the base's listed colour
 is reproduced and judged as ever (a new red stays one, a turned green
 passes); one that is not, or was not re-run, is `FLAKY <id>`, named with its
 colours and its failures-file reason, and FAILS the ratchet whichever way it
-went: a flake is a finding, never a pass. The base's list is `just
+went: a flake is a finding, never a pass. What a re-confirmation found is
+cached by the base's sha, `target/ratchet/<sha>.reconfirm` (and
+`.reconfirm.failures`) beside its list (2026-11-18: a land spent 651 s
+re-confirming 14), so a later land on the same base re-runs only the ids
+not cached there (`note ratchet: K of the N ... re-confirmed ... before`);
+only an id both re-runs gave its listed colour is cached (a flaky one is
+re-run every time), and the cache is renamed into place once its
+re-confirmation succeeded, failures first, so an interrupted run's work
+does not count (`closeout-ratchet.selftest.sh` kills one mid-way). The base's list is `just
 ratchet-base <base>` (`scripts/ratchet-base.sh`): only the runner's tests
-(its clusters, or a base's `every_feature_runs` from before them), on the
+(its feature tests, a base's clusters, or its `every_feature_runs` from
+before those), on the
 base's tip, in a throwaway worktree `.<checkout>.ratchet-base` beside the
-checkout (target dir `target/ratchet-base`), cached by sha at
+checkout (target dir `target/ratchet-base`, built with
+`CARGO_INCREMENTAL=0`: each base is a new tree, so its incremental cache
+was written and never read; `target/debug` and `target/staged` keep
+theirs), cached by sha at
 `target/ratchet/<sha>.list`; a base from before the list gets the runner
 commit that taught it applied, and says so (that commit is the first line of
 a `git log` read with `sed -n 1p`, never `head -n 1`, whose early close

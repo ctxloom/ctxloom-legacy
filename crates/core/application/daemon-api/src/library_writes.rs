@@ -651,7 +651,7 @@ impl<E: Edge> Api<E> {
         let fact = library_tree::RecordBundleExported {
             request_id: request_id.to_string(),
             bundle,
-            source: format!("{}/{manifest}", source.tree()),
+            source: export_source(source.tree(), &manifest),
             destination: destination.to_string(),
         };
         observations
@@ -736,6 +736,19 @@ pub(crate) fn not_made(operated: ctxloom_ports::Operated) -> Option<ApiError> {
         }
     };
     Some(ApiError::Refused(crate::library_refusal(&rejection)))
+}
+
+/// Where an export read its bundle's manifest, `manifest` (`/`-separated)
+/// under the tree's directory `tree`: spelled as content-fs spells the
+/// manifest path the export answered, the directory joined segment by
+/// segment, so the platform's separator throughout (AIP-155: a retry answers
+/// what the export answered, on Windows too).
+fn export_source(tree: &str, manifest: &str) -> String {
+    manifest
+        .split('/')
+        .fold(std::path::PathBuf::from(tree), |path, part| path.join(part))
+        .display()
+        .to_string()
 }
 
 /// The answer of a write tried before under `request_id` (its intent

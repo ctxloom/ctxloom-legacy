@@ -1,36 +1,40 @@
 //! Feature discovery: every `.feature` file under `features/` is run, with the
 //! World its `# world:` header line names (`gherkin_common::world_of`). Adding
-//! a feature needs no hand-written test, only its place in a cluster
-//! ([`CLUSTERS`]); `gherkin_lint.test.rs` has the convention and the parity
-//! lint. A `@pending` scenario (Go's, not yet ported: tagged on itself, its
-//! Rule or its Feature) is left out of the run; a feature tagged `@pending`
-//! as a whole has no World and is not run at all.
+//! a feature needs no hand-written test, only its name in the `features`
+//! module of its directory; `gherkin_lint.test.rs` has the convention and
+//! the parity lint. A `@pending` scenario (Go's, not yet ported: tagged on
+//! itself, its Rule or its Feature) is left out of the run; a feature tagged
+//! `@pending` as a whole has no World and is not run at all.
 //!
-//! The features run in CLUSTERS (owner ruling of 2026-11-14): each cluster
-//! is one test, `tests::gherkin_features::clusters::<name>`, so nextest runs
-//! the clusters at once, each in a process of its own, and each has a limit
-//! of its own (`.config/nextest.toml`). Every feature file is in exactly one
-//! cluster (`every_feature_file_is_in_exactly_one_cluster`). Within a
-//! cluster the features run concurrently, as many at once as the machine's
-//! cores shared among the clusters ([`cluster_threads`]). A cucumber run is
-//! let run 4 scenarios at once, but its steps block its one executor
-//! thread, so a feature's scenarios take turns (the forcing test below saw
-//! it), and a cluster takes at least as long as its slowest feature. Each
-//! scenario has a temporary root of its own (its project and its home, so
-//! its own ctxloom home, daemon, single-instance lock, store and stubs), so
-//! nothing a cluster runs is another's (the forcing test
-//! `two_clusters_at_once_never_see_each_others_daemon_or_files`).
+//! Each feature file is ONE TEST (2026-11-18, superseding the clusters of
+//! the owner's ruling of 2026-11-14), named by its path:
+//! `tests::gherkin_features::features::cli::agent` runs `cli/agent.feature`
+//! ([`feature_of_test`], [`test_of_feature`]). So nextest runs the features
+//! at once, as many as it runs tests, each in a process of its own, a
+//! filterset selects one, and a slow one has a limit of its own
+//! (`.config/nextest.toml`). Every feature file has exactly one test
+//! (`every_feature_file_has_a_test_of_its_own`). Within one cucumber run a
+//! feature's scenarios take turns (its steps block its one executor thread),
+//! so a feature's scenarios are each a run of their own, 3 at once on
+//! threads of their own (`gherkin_common::run_feature`; the forcing test
+//! `a_features_scenarios_run_at_once`). Each scenario has a temporary
+//! root of its own (its project and its home, so its own ctxloom home,
+//! daemon, single-instance lock, store and stubs), so nothing one feature
+//! runs is another's (the forcing test
+//! `two_clusters_at_once_never_see_each_others_daemon_or_files`: two runs of
+//! two features each, at once).
 //!
 //! `GHERKIN_ONLY=<text>` runs only the features whose path contains it, and
 //! `GHERKIN_SCENARIO=<id>` only the scenario of that id (the ratchet's
-//! re-confirmation, alone); a cluster holding none of them runs nothing and
-//! passes, and when no feature at all matches, every cluster fails.
+//! re-confirmation, alone); a feature's test that neither leaves in runs
+//! nothing and passes, and when no feature at all matches, every feature's
+//! test fails.
 //!
 //! `GHERKIN_TIMINGS=<absolute file>` appends each scenario's wall time to
 //! the file, a line `<seconds>\t<id>` per scenario (the profile of a slow
-//! cluster: daemon.feature's, owner ruling of 2026-11-18). Under it a
+//! feature: daemon.feature's, owner ruling of 2026-11-18). Under it a
 //! feature's scenarios run one at a time, so no scenario's time holds
-//! another's: they take turns anyway (above), and the cluster's time was
+//! another's: they take turns anyway (above), and the feature's time was
 //! the same either way when it was measured.
 //!
 //! `GHERKIN_RATCHET=<absolute file>` asks for the scenario list instead of a
@@ -39,8 +43,8 @@
 //! scenario owns the feature's `outside_id`), is written to the file, and the
 //! test passes whatever failed. Beside it, `<file>.failures` says why each
 //! red scenario is red: its failed step and what it said (capped), which the
-//! console's output, hidden on a pass, no longer does. The clusters of one
-//! nextest run assemble the one list between them: each, holding the lock
+//! console's output, hidden on a pass, no longer does. The feature tests of
+//! one nextest run assemble the one list between them: each, holding the lock
 //! `<file>.lock`, replaces the lines of the features it ran with its own and
 //! keeps the rest, sorted as one list ([`merged_list`], [`merged_failures`]);
 //! what an earlier run left is dropped, because `<file>.run` names the run
@@ -50,7 +54,7 @@
 //! nothing else sets it.
 //!
 //! `GHERKIN_RATCHET_BASE=<absolute file>`, a base's scenario list (`just
-//! ratchet-base`'s), judges each cluster against it, in the test itself: it
+//! ratchet-base`'s), judges each feature against it, in the test itself: it
 //! fails naming each of its scenarios red here and not red in the base
 //! (scripts/ratchet-judge.sh's rule: one the base lists green `broke green`,
 //! one it does not list `added red`), and passes a scenario the base lists
@@ -71,123 +75,31 @@ use super::gherkin_common::{
 use super::host_var;
 use crate::tests::files;
 
-/// One cluster of feature files, run as one test: its name (its test's
-/// name under `clusters::`) and its files, each a path under `features/`,
-/// or a directory's (ending `/`: every file below it).
-pub(crate) struct Cluster {
-    pub(crate) name: &'static str,
-    pub(crate) files: &'static [&'static str],
-}
-
-/// The clusters, by area (owner ruling of 2026-11-14). Every feature file is
-/// in exactly one, by name or by its directory; a new file goes in the
-/// cluster of its area, else `other`.
-pub(crate) const CLUSTERS: &[Cluster] = &[
-    Cluster {
-        name: "journeys",
-        files: &["journeys/"],
-    },
-    // The user daemon's spec (gherkin_daemon.test.rs's files), and run.feature
-    // whole: since slice 4 every one-shot starts a daemon, so its Rules
-    // cannot be told apart by that.
-    Cluster {
-        name: "daemon",
-        files: &[
-            "cli/daemon.feature",
-            "cli/shutdown.feature",
-            "cli/session_children.feature",
-            "cli/mcp_serve.feature",
-            "cli/run.feature",
-            "cli/trust.feature",
-            "cli/session_approvals.feature",
-            "cli/atomic_writes.feature",
-        ],
-    },
-    Cluster {
-        name: "sessions",
-        files: &[
-            "cli/session.feature",
-            "cli/session_hooks.feature",
-            "cli/session_remove.feature",
-            "cli/session_worktrees.feature",
-            "cli/post_tool_hooks.feature",
-        ],
-    },
-    Cluster {
-        name: "library",
-        files: &[
-            "cli/bundle.feature",
-            "cli/fragment.feature",
-            "cli/fragment_draft_premise.feature",
-            "cli/command.feature",
-            "cli/profile.feature",
-            "cli/skill.feature",
-            "cli/mcp.feature",
-            "cli/mcp_resources.feature",
-            "cli/mcp_tools.feature",
-            "cli/search.feature",
-            "cli/materialize.feature",
-            "cli/read_extras.feature",
-            "cli/context_status.feature",
-            "cli/content_distill.feature",
-            "cli/companion.feature",
-        ],
-    },
-    // Split from `library` (2026-11-18): the library cluster ran 88.9 s
-    // against its 90 s limit under load; these two are its slowest, and
-    // share its limit (.config/nextest.toml).
-    Cluster {
-        name: "library_agent_changes",
-        files: &["cli/agent.feature", "cli/library_changes.feature"],
-    },
-    Cluster {
-        name: "remotes",
-        files: &["cli/remote.feature", "cli/deps.feature"],
-    },
-    Cluster {
-        name: "setup",
-        files: &[
-            "cli/init.feature",
-            "cli/doctor.feature",
-            "cli/manage.feature",
-            "cli/auth.feature",
-            "cli/config.feature",
-            "cli/engine.feature",
-            "cli/clean.feature",
-            "cli/version.feature",
-            "cli/completion.feature",
-        ],
-    },
-    Cluster {
-        name: "other",
-        files: &[
-            "fault_tolerance.feature",
-            "probes/",
-            "cli/container.feature",
-            "cli/coordination_contract.feature",
-            "cli/startup_boundaries.feature",
-            "cli/editing.feature",
-            "cli/util.feature",
-        ],
-    },
-];
-
-/// Whether the cluster entry `entry` names the feature file `rel`: the file
-/// itself, or (ending `/`) a directory it is below.
-fn names(entry: &str, rel: &str) -> bool {
-    if entry.ends_with('/') {
-        rel.starts_with(entry)
+/// The feature file the test `name` of the module `module` (its
+/// `module_path!()`) runs: the module's path below `gherkin_features::features`,
+/// each `::` a `/`, then the test's name, `.feature` added. So the test
+/// `tests::gherkin_features::features::cli::agent` runs `cli/agent.feature`,
+/// and `...::features::fault_tolerance` runs `fault_tolerance.feature`.
+fn feature_of_test(module: &str, name: &str) -> String {
+    let below = module
+        .split_once("gherkin_features::features")
+        .map_or("", |(_, rest)| rest)
+        .trim_start_matches("::");
+    if below.is_empty() {
+        format!("{name}.feature")
     } else {
-        rel == entry
+        format!("{}/{name}.feature", below.replace("::", "/"))
     }
 }
 
-/// The feature files of `all` that `cluster` holds, in `all`'s order.
-fn members(cluster: &Cluster, all: &[String]) -> Vec<String> {
-    all.iter()
-        .filter(|rel| cluster.files.iter().any(|entry| names(entry, rel)))
-        .cloned()
-        .collect()
+/// The nextest test name of the feature file `rel` (a path under
+/// `features/`): [`feature_of_test`]'s inverse.
+fn test_of_feature(rel: &str) -> String {
+    let path = rel.strip_suffix(".feature").unwrap_or(rel);
+    format!(
+        "tests::gherkin_features::features::{}",
+        path.replace('/', "::")
+    )
 }
 
 /// Run one feature with its World: whether it passed, and each scenario's
@@ -220,19 +132,6 @@ struct Ran {
     outcomes: Vec<(String, bool)>,
     /// Each failed step.
     steps_failed: Vec<Failure>,
-}
-
-/// How many features of a cluster run at once: the machine's cores shared
-/// among the clusters, which nextest runs at once, so all of them together
-/// run about as many features at once as the one test of every feature did
-/// (a thread per core); at least 2, so a small host's cluster is not one
-/// feature after another.
-fn cluster_threads() -> usize {
-    std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(4)
-        .div_ceil(CLUSTERS.len())
-        .max(2)
 }
 
 /// Run `features` concurrently, `threads` at a time (`only`: the one
@@ -416,7 +315,7 @@ fn run_id() -> String {
 
 /// Put a run's list and failures (`ran`: the features it ran) into the list
 /// `file` and its failures file, under the lock `<file>.lock`: merged into
-/// what another cluster of the same run (`run`, kept in `<file>.run`) wrote
+/// what another feature test of the same run (`run`, kept in `<file>.run`) wrote
 /// there, and in place of what an earlier run left.
 fn put_ratchet(file: &std::path::Path, run: &str, ran: &[String], list: &str, failures: &str) {
     let lock = beside(file, ".lock");
@@ -438,27 +337,38 @@ fn put_ratchet(file: &std::path::Path, run: &str, ran: &[String], list: &str, fa
     files::put(failures_path(file), merged_why);
 }
 
-/// Run the cluster `name`: its features that `GHERKIN_ONLY` and
-/// `GHERKIN_SCENARIO` leave in, then either the verdict (every one passed)
-/// or, under `GHERKIN_RATCHET`, its part of the scenario list.
-fn run_cluster(name: &str) {
+/// Which of `all` the test of `rel` runs: `rel` itself, when its path
+/// holds `only` (`GHERKIN_ONLY`) and it is the feature of `scenario`
+/// (`GHERKIN_SCENARIO`), else nothing; and whether any feature of `all` is
+/// left in at all (when none is, every feature's test fails).
+fn selected(
+    all: Vec<String>,
+    only: &str,
+    scenario: Option<&str>,
+    rel: &str,
+) -> (bool, Vec<String>) {
+    let chosen: Vec<String> = all
+        .into_iter()
+        .filter(|f| f.contains(only))
+        .filter(|f| scenario.is_none_or(|id| feature_of(id) == f))
+        .collect();
+    let any = !chosen.is_empty();
+    (any, chosen.into_iter().filter(|f| f == rel).collect())
+}
+
+/// Run the feature file `rel`, the one a test of `features` names, when
+/// `GHERKIN_ONLY` and `GHERKIN_SCENARIO` leave it in, then either the
+/// verdict (it passed) or, under `GHERKIN_RATCHET`, its part of the
+/// scenario list.
+fn run_listed(rel: &str) {
     let only = host_var("GHERKIN_ONLY")
         .map(|v| v.to_string_lossy().into_owned())
         .unwrap_or_default();
     let ratchet = host_var("GHERKIN_RATCHET").map(std::path::PathBuf::from);
     let base = host_var("GHERKIN_RATCHET_BASE").map(std::path::PathBuf::from);
     let scenario = host_var("GHERKIN_SCENARIO").map(|v| v.to_string_lossy().into_owned());
-    let chosen: Vec<String> = feature_files()
-        .into_iter()
-        .filter(|f| f.contains(&only))
-        .filter(|f| scenario.as_deref().is_none_or(|id| feature_of(id) == f))
-        .collect();
-    assert!(!chosen.is_empty(), "no feature matches {only:?}");
-    let cluster = CLUSTERS
-        .iter()
-        .find(|c| c.name == name)
-        .unwrap_or_else(|| panic!("no cluster {name}"));
-    let features = members(cluster, &chosen);
+    let (any, features) = selected(feature_files(), &only, scenario.as_deref(), rel);
+    assert!(any, "no feature matches {only:?}");
     if let Some(file) = &ratchet {
         assert!(
             file.is_absolute(),
@@ -481,7 +391,7 @@ fn run_cluster(name: &str) {
     if features.is_empty() {
         return;
     }
-    let ran = run_features(&features, scenario.as_deref(), cluster_threads());
+    let ran = run_features(&features, scenario.as_deref(), 1);
     if let Some(file) = ratchet {
         put_ratchet(
             &file,
@@ -539,89 +449,221 @@ fn new_red(base: &str, outcomes: &[(String, bool)]) -> Vec<String> {
         .collect()
 }
 
-/// One test per cluster, named by it: `clusters::<name>`, which
-/// `.config/nextest.toml` gives its limit by.
-mod clusters {
-    macro_rules! clusters {
+/// One test per feature file (2026-11-18, superseding the clusters of the
+/// owner's ruling of 2026-11-14), named by its path ([`feature_of_test`]),
+/// so nextest runs every feature at once, each in a process of its own,
+/// and a filterset selects one (`test(=tests::gherkin_features::features::cli::agent)`).
+/// `.config/nextest.toml` gives a slow feature its limit by that name. A new
+/// feature file is listed in the module of its directory (a new directory
+/// is a module of its own, added to [`listed`]);
+/// `every_feature_file_has_a_test_of_its_own` refuses one left out.
+mod features {
+    macro_rules! features {
         ($($name:ident),* $(,)?) => {
             $(
                 #[test]
                 fn $name() {
-                    super::run_cluster(stringify!($name));
+                    crate::tests::gherkin_features::run_listed(
+                        &crate::tests::gherkin_features::feature_of_test(module_path!(), stringify!($name)),
+                    );
                 }
             )*
-            /// The clusters that have a test.
-            pub(super) const TESTED: &[&str] = &[$(stringify!($name)),*];
+            /// This module's tests: its path and each test's name.
+            pub(crate) const LISTED: &[(&str, &str)] = &[$((module_path!(), stringify!($name))),*];
         };
     }
 
-    clusters!(
-        journeys,
-        daemon,
-        sessions,
-        library,
-        library_agent_changes,
-        remotes,
-        setup,
-        other
-    );
-}
+    features!(fault_tolerance);
 
-/// Every feature file is in exactly one cluster; every cluster has a test of
-/// its name and every entry of one names a file, so none is stale.
-#[test]
-fn every_feature_file_is_in_exactly_one_cluster() {
-    let all = feature_files();
-    assert!(!all.is_empty());
-    for rel in &all {
-        let holders: Vec<&str> = CLUSTERS
-            .iter()
-            .filter(|c| c.files.iter().any(|entry| names(entry, rel)))
-            .map(|c| c.name)
-            .collect();
-        assert_eq!(
-            holders.len(),
-            1,
-            "{rel} must be in exactly one cluster, not {holders:?}"
+    pub(super) mod cli {
+        features!(
+            agent,
+            atomic_writes,
+            auth,
+            bundle,
+            clean,
+            command,
+            companion,
+            completion,
+            config,
+            container,
+            content_distill,
+            context_status,
+            coordination_contract,
+            daemon,
+            deps,
+            doctor,
+            editing,
+            engine,
+            fragment,
+            fragment_draft_premise,
+            init,
+            library_changes,
+            manage,
+            materialize,
+            mcp,
+            mcp_resources,
+            mcp_serve,
+            mcp_tools,
+            post_tool_hooks,
+            profile,
+            read_extras,
+            remote,
+            run,
+            search,
+            session,
+            session_approvals,
+            session_children,
+            session_hooks,
+            session_remove,
+            session_worktrees,
+            shutdown,
+            skill,
+            startup_boundaries,
+            trust,
+            util,
+            version,
         );
     }
-    for cluster in CLUSTERS {
-        for entry in cluster.files {
-            assert!(
-                all.iter().any(|rel| names(entry, rel)),
-                "{}'s {entry} names no feature file",
-                cluster.name
-            );
-        }
+
+    pub(super) mod journeys {
+        features!(
+            j000100_adopt_and_back_out,
+            j000200_setup,
+            j000300_source_augmentation,
+            j000400_multi_engine,
+            j000600_agent_skill,
+            j000700_team_authoring,
+            j000800_onboarding,
+            j001000_transcript_capture,
+            j001200_recall,
+            j001300_closeout,
+            j001800_guardrails,
+            j001900_diagnosis,
+            j002000_engine_switch,
+            j002100_delegation,
+            j002200_isolation,
+            j002300_cross_engine_delegation,
+            j002400_container,
+            j002700_user_daemon,
+            j002800_trusting_a_project,
+        );
     }
-    let names: Vec<&str> = CLUSTERS.iter().map(|c| c.name).collect();
-    assert_eq!(
-        names,
-        clusters::TESTED,
-        "each cluster has a test of its name"
-    );
+
+    pub(super) mod probes {
+        features!(
+            capability_context_approaches,
+            capability_hook_firing,
+            capability_mcp_round_trip,
+            capability_native_history,
+            capability_plan_sentinel,
+            distill_live,
+            engine_isolation_matrix,
+            isolation_probe,
+            remote_content_live,
+        );
+    }
 }
 
-/// A cluster entry names its file, or every file below its directory.
+/// Every feature test, by the feature file it runs, sorted.
+fn listed() -> Vec<String> {
+    let mut all: Vec<String> = [
+        features::LISTED,
+        features::cli::LISTED,
+        features::journeys::LISTED,
+        features::probes::LISTED,
+    ]
+    .concat()
+    .into_iter()
+    .map(|(module, name)| feature_of_test(module, name))
+    .collect();
+    all.sort();
+    all
+}
+
+/// A feature's test runs its own feature alone, when GHERKIN_ONLY and
+/// GHERKIN_SCENARIO leave it in; and says when they leave in no feature at
+/// all.
 #[test]
-fn a_cluster_entry_names_its_file_or_its_directory() {
-    assert!(names("cli/run.feature", "cli/run.feature"));
-    assert!(!names("cli/run.feature", "cli/run.feature.bak"));
-    assert!(!names("cli/run", "cli/run.feature"));
-    assert!(names("journeys/", "journeys/j1.feature"));
-    assert!(!names("journeys/", "cli/journeys.feature"));
-    let cluster = Cluster {
-        name: "c",
-        files: &["a/", "b.feature"],
+fn a_features_test_runs_its_own_feature_when_it_is_chosen() {
+    let all = || {
+        ["cli/a.feature", "cli/b.feature"]
+            .map(String::from)
+            .to_vec()
     };
-    let all = ["a/x.feature", "b.feature", "c.feature", "a/y.feature"].map(String::from);
     assert_eq!(
-        members(&cluster, &all),
-        ["a/x.feature", "b.feature", "a/y.feature"]
+        selected(all(), "", None, "cli/a.feature"),
+        (true, vec!["cli/a.feature".to_string()])
+    );
+    assert_eq!(
+        selected(all(), "b.feat", None, "cli/a.feature"),
+        (true, vec![])
+    );
+    assert_eq!(
+        selected(all(), "", Some("cli/b.feature :: s"), "cli/b.feature"),
+        (true, vec!["cli/b.feature".to_string()])
+    );
+    assert_eq!(
+        selected(all(), "", Some("cli/b.feature :: s"), "cli/a.feature"),
+        (true, vec![])
+    );
+    assert_eq!(
+        selected(all(), "nothing", None, "cli/a.feature"),
+        (false, vec![])
     );
 }
 
-/// The clusters of a run assemble one list: each replaces the lines of the
+/// Every feature file has a test of its own, and every test runs a feature
+/// file: none is left out and none is stale.
+#[test]
+fn every_feature_file_has_a_test_of_its_own() {
+    let mut all = feature_files();
+    assert!(!all.is_empty());
+    all.sort();
+    assert_eq!(listed(), all, "each feature file has a test in `features`");
+}
+
+/// A feature's test is named by its path: its directories are modules, its
+/// file name the test.
+#[test]
+fn a_features_test_is_named_by_its_path() {
+    let module = "ctxloom::tests::gherkin_features::features";
+    assert_eq!(
+        feature_of_test(&format!("{module}::cli"), "agent"),
+        "cli/agent.feature"
+    );
+    assert_eq!(
+        feature_of_test(&format!("{module}::journeys"), "j1"),
+        "journeys/j1.feature"
+    );
+    assert_eq!(
+        feature_of_test(module, "fault_tolerance"),
+        "fault_tolerance.feature"
+    );
+    assert_eq!(
+        feature_of_test(&format!("{module}::a::b"), "c"),
+        "a/b/c.feature"
+    );
+    assert_eq!(
+        test_of_feature("a/b/c.feature"),
+        "tests::gherkin_features::features::a::b::c"
+    );
+    assert_eq!(
+        test_of_feature("cli/agent.feature"),
+        "tests::gherkin_features::features::cli::agent"
+    );
+    assert_eq!(
+        test_of_feature("fault_tolerance.feature"),
+        "tests::gherkin_features::features::fault_tolerance"
+    );
+    for rel in feature_files() {
+        let test = test_of_feature(&rel);
+        let (module, name) = test.rsplit_once("::").expect("a path");
+        assert_eq!(feature_of_test(&format!("ctxloom::{module}"), name), rel);
+    }
+}
+
+/// The feature tests of a run assemble one list: each replaces the lines of the
 /// features it ran and keeps the others', sorted by id.
 #[test]
 fn a_clusters_list_replaces_its_features_lines_and_keeps_the_others() {
@@ -640,7 +682,7 @@ fn a_clusters_list_replaces_its_features_lines_and_keeps_the_others() {
     );
 }
 
-/// The failures files of a run's clusters merge the same way, record by
+/// The failures files of a run's feature tests merge the same way, record by
 /// record, each kept whole.
 #[test]
 fn a_clusters_failures_replace_its_features_records_and_keep_the_others() {
@@ -673,7 +715,7 @@ fn a_clusters_failures_replace_its_features_records_and_keep_the_others() {
     );
 }
 
-/// Two clusters of one run assemble their list in the file, and a later run
+/// Two feature tests of one run assemble their list in the file, and a later run
 /// replaces it whole: what the earlier one left is gone.
 #[test]
 fn the_ratchet_file_holds_the_runs_clusters_and_nothing_an_earlier_run_left() {
@@ -715,9 +757,9 @@ fn the_ratchet_file_holds_the_runs_clusters_and_nothing_an_earlier_run_left() {
     );
 }
 
-/// The forcing test of the clusters' separation: two clusters run at once
-/// (here two threads of one process, which share more than nextest's two
-/// processes do), each of two features, which run at once, a scenario each
+/// The forcing test of the features' separation: two runs at once (here
+/// two threads of one process, which share more than nextest's processes,
+/// one per feature, do), each of two features, which run at once, a scenario each
 /// (a feature's scenarios take turns: their steps block). Each scenario
 /// starts a daemon through a command and holds it until all four serve at
 /// once, asking its own all the while. Each was answered by its own daemon
@@ -784,6 +826,99 @@ fn two_clusters_at_once_never_see_each_others_daemon_or_files() {
     endpoints.sort();
     endpoints.dedup();
     assert_eq!(endpoints.len(), 4, "four endpoints: {endpoints:?}");
+}
+
+/// The forcing test of a feature's scenarios running at once
+/// (`gherkin_common::run_feature`'s split): one feature of two scenarios,
+/// each starting a daemon through a command and holding it until both
+/// serve. Run one after the other, the first would wait out the witness's
+/// bound and fail; at once, both pass, each answered by its own daemon.
+#[test]
+fn a_features_scenarios_run_at_once() {
+    let project = super::library::Project::bare();
+    let witness = project.dir().join("witness");
+    files::mkdirs(&witness);
+    let scenario = |name: &str| {
+        format!(
+            "  Scenario: {name}\n    Given an initialized ctxloom project\n    And no ctxloom daemon is serving for this home\n    And the daemon a command starts idles for a minute\n    When I run \"ctxloom session list --format json\"\n    Then the command succeeds\n    And the daemon serving this home is witnessed in \"{}\", until \"2\" are\n\n",
+            witness.display()
+        )
+    };
+    let path = project.dir().join("both.feature");
+    files::put(
+        &path,
+        format!(
+            "# world: base\nFeature: both\n\n{}{}",
+            scenario("one"),
+            scenario("two")
+        ),
+    );
+    let run = super::gherkin::run(&path);
+    quiet_hook_undone();
+    assert!(run.passed, "{:?}", run.failures);
+    let mut got = outcomes(&path, run);
+    got.sort();
+    assert_eq!(got, [("one".to_string(), true), ("two".to_string(), true)]);
+}
+
+/// The forcing test of the lifeline (`tests::lifeline`, the wiring's
+/// `serve::Lifeline`): a daemon hosting a child, whose test (here a process
+/// of the scenario's own holding the lifeline) is killed outright, as
+/// nextest's timeout kills one, ends the child and exits within a bounded
+/// wait. Without the lifeline nothing stops it: the child keeps it busy,
+/// so it never idles out.
+#[test]
+fn a_daemon_whose_test_is_killed_ends_what_it_hosts_and_exits() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let project = super::library::Project::bare();
+    let path = project.dir().join("lifeline.feature");
+    files::put(
+        &path,
+        "# world: base\nFeature: lifeline\n\n  Scenario: its test is killed\n    Given an initialized ctxloom project\n    And the scenario's commands have a lifeline a process of their own holds\n    And a ctxloom daemon is serving for this home, with a child it hosts\n    When the lifeline's holder is killed outright\n    Then the daemon and the child it hosts are gone within 30 seconds\n",
+    );
+    let run = super::gherkin::run(&path);
+    quiet_hook_undone();
+    assert!(run.passed, "{:?}", run.failures);
+    assert_eq!(
+        outcomes(&path, run),
+        [("its test is killed".to_string(), true)]
+    );
+}
+
+/// The split's outcomes are each scenario's own, in the order of the ids,
+/// and an id whose own run ran nothing is red, never left out.
+#[test]
+fn each_split_scenario_is_its_own_runs_and_one_that_ran_nothing_is_red() {
+    use super::gherkin_common::run_scenarios_at_once;
+    let ids = ["f :: a", "f :: b", "f :: c"].map(String::from);
+    let run = run_scenarios_at_once(&ids, 2, |id| FeatureRun {
+        passed: id != "f :: b",
+        scenarios: if id == "f :: c" {
+            Vec::new()
+        } else {
+            vec![(id.to_string(), id != "f :: b")]
+        },
+        failures: Vec::new(),
+    });
+    assert!(!run.passed);
+    assert_eq!(
+        run.scenarios,
+        [
+            ("f :: a".to_string(), true),
+            ("f :: b".to_string(), false),
+            ("f :: c".to_string(), false)
+        ]
+    );
+    assert_eq!(run.failures.len(), 1, "{:?}", run.failures);
+    assert_eq!(run.failures[0].scenario, "f :: c");
+    let green = run_scenarios_at_once(&ids[..1], 2, |id| FeatureRun {
+        passed: true,
+        scenarios: vec![(id.to_string(), true)],
+        failures: Vec::new(),
+    });
+    assert!(green.passed);
 }
 
 /// A feature whose other scenarios run: its `@pending` scenarios, and a
@@ -1101,7 +1236,7 @@ fn the_scenario_list_is_sorted_and_says_red_or_green() {
     assert_eq!(scenario_list(&outcomes), "red\ta\ngreen\tb\nred\tc\n");
 }
 
-/// Against a base's list a cluster passes the scenarios the base lists red,
+/// Against a base's list a feature passes the scenarios the base lists red,
 /// whichever colour they are here, and fails each other red one: broke
 /// green where the base lists it green, added red where it lists none.
 #[test]

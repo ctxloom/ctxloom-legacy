@@ -605,6 +605,7 @@ fn fire_late(w: &World, event: &str, payload: &str) -> Ran {
         .args(["hook", "claude-code", "execute", event])
         .env_clear()
         .env("TMPDIR", crate::tests::temp_root())
+        .env(crate::tests::LIFELINE, crate::tests::lifeline())
         .current_dir(w.common.project.dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

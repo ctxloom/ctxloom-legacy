@@ -198,6 +198,7 @@ impl World {
             .env("HOME", &home)
             .env("USERPROFILE", &home)
             .env("TMPDIR", crate::tests::temp_root())
+            .env(crate::tests::LIFELINE, crate::tests::lifeline())
             .env("CTXLOOM_ROOT", &dir)
             .current_dir(&dir)
             .stdin(Stdio::piped())

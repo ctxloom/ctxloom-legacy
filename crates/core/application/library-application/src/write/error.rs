@@ -31,6 +31,7 @@ macro_rules! write_errors {
         }
 
         /// One value of every error here, for the catalog test.
+        #[cfg(any(test, feature = "test-support"))]
         pub fn samples() -> Vec<Box<dyn Diagnostic>> {
             vec![$(Box::new(WriteError::$variant {
                 $($field: stringify!($field).to_string()),*

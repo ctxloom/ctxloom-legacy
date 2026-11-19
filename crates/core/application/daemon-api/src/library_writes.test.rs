@@ -5,7 +5,10 @@ use library_api::{Observed, Site};
 use library_tree::TreeName;
 use sessions::ProjectName;
 
-use super::{answered_before, commit_message, commit_paths, landing_of, request_bytes, step_path};
+use super::{
+    answered_before, commit_message, commit_paths, export_source, landing_of, request_bytes,
+    step_path,
+};
 
 fn observed(tree: TreeName) -> Observed {
     Observed {
@@ -451,4 +454,39 @@ async fn test_an_export_made_before_is_answered_from_its_record() {
         &mut said
     )
     .is_none());
+}
+
+// An export's record names its source as the export's own answer named it
+// (AIP-155: a retry answers what the export answered): content-fs's
+// manifest path, the tree's directory joined segment by segment, so the
+// platform's separator throughout (`\` on Windows, never a `/` after the
+// tree's own).
+#[test]
+fn test_an_export_s_recorded_source_is_spelled_as_its_answer_spells_it() {
+    let sep = std::path::MAIN_SEPARATOR_STR;
+    let tree = ["", "w", ".ctxloom"].join(sep);
+    let want = [
+        "",
+        "w",
+        ".ctxloom",
+        "content",
+        "bundles",
+        "v2",
+        "demo",
+        "bundle.yaml",
+    ]
+    .join(sep);
+    assert_eq!(
+        export_source(&tree, "content/bundles/v2/demo/bundle.yaml"),
+        want
+    );
+    // A directory spelled with its separator at the end is joined as
+    // content-fs joins it: one separator, never two.
+    assert_eq!(
+        export_source(
+            &format!("{tree}{sep}"),
+            "content/bundles/v2/demo/bundle.yaml"
+        ),
+        want
+    );
 }
