@@ -1809,6 +1809,27 @@ pub mod delete_bundle {
             needs: removed.needs,
             etag: wrote.etag,
             notices: wrote.notices,
+            dependents: match &wrote.answer {
+                Some(Removal::Preview(preview)) => preview
+                    .dependents
+                    .iter()
+                    .map(|dependent| dependent_name(&wrote.parent, dependent))
+                    .collect(),
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    /// A dependent's resource name: a profile as a profile's `parents`
+    /// names it, an agent by its name.
+    fn dependent_name(parent: &str, dependent: &library_application::Dependent) -> String {
+        match dependent.kind {
+            library_application::DependentKind::Profile => {
+                names::profile_ref(parent, &dependent.name)
+            }
+            library_application::DependentKind::Agent => {
+                crate::resources::agent_name(parent, &dependent.name)
+            }
         }
     }
 }

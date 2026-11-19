@@ -255,16 +255,32 @@ impl Project {
                     parts.push(format!("{n} {what}"));
                 }
             }
-            let detail = if parts.is_empty() {
+            let mut detail = if parts.is_empty() {
                 Vec::new()
             } else {
                 vec![parts.join(", ")]
             };
-            return Ok(Removal::Preview(Preview::of(
+            // Owner ruling 2026-11-19: every profile and agent that includes
+            // it is named, and a run of each is refused until it is edited.
+            // DRAFT text.
+            let dependents = self.bundle_dependents(&entry.name);
+            for dependent in &dependents {
+                detail.push(format!(
+                    "{} {} includes it",
+                    dependent.kind.word(),
+                    dependent.name
+                ));
+            }
+            if !dependents.is_empty() {
+                detail.push("a run of each is refused until it is edited".to_string());
+            }
+            let mut preview = Preview::of(
                 format!("bundle \"{name}\""),
                 detail,
                 format!("ctxloom bundle remove {name} --yes"),
-            )));
+            );
+            preview.dependents = dependents;
+            return Ok(Removal::Preview(preview));
         }
         let (dir, path) = (entry.name.clone(), entry.manifest_path.clone());
         self.content.remove_bundle(&dir).map_err(AppError::Cause)?;

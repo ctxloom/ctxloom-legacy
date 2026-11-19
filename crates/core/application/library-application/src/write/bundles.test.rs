@@ -314,6 +314,106 @@ fn test_remove_without_yes_names_the_cost_and_destroys_nothing() {
     assert!(mem.text("demo", "bundle.yaml").is_some());
 }
 
+// Owner ruling 2026-11-19: the preview names every profile and agent that
+// includes the bundle (a local reference, or through a parent), and says a
+// run of each is refused until it is edited.
+#[test]
+fn test_remove_without_yes_names_every_profile_and_agent_that_includes_it() {
+    use crate::write::views::{Dependent, DependentKind};
+    let (library, mem) = Setup {
+        bundles: &[
+            ("demo", DEMO),
+            (
+                "other",
+                &[
+                    ENVELOPE,
+                    ("profiles/direct.yaml", "bundles: [demo]\n"),
+                    ("profiles/spelled.yaml", "bundles: [ctxloom+local:demo]\n"),
+                    ("profiles/unrelated.yaml", "bundles: [other]\n"),
+                ],
+            ),
+            (
+                "project",
+                &[
+                    ENVELOPE,
+                    ("profiles/child.yaml", "parents: [other#profiles/direct]\n"),
+                    ("profiles/grandchild.yaml", "parents: [child]\n"),
+                    ("profiles/scoped.yaml", "bundles: [demo#fragments/example]\n"),
+                    ("profiles/item.yaml", "bundle_items: [demo#prompts/review]\n"),
+                    ("profiles/orphan.yaml", "parents: [demo#profiles/p]\n"),
+                    ("profiles/plain.yaml", "parents: [other#profiles/unrelated]\n"),
+                    // A bare command name is a command, not the bundle.
+                    ("profiles/bare.yaml", "commands: [demo]\n"),
+                ],
+            ),
+        ],
+        layers: &["schema_version: 9\nagents:\n  a:\n    profiles: [grandchild]\n  b:\n    profiles: [plain]\n  c:\n    profiles: [demo#profiles/p]\n"],
+        ..Setup::default()
+    }
+    .fixture();
+    let Removal::Preview(preview) = library
+        .bundle_remove(&plain(), "demo", false)
+        .result
+        .unwrap()
+    else {
+        panic!("a preview");
+    };
+    let profile = |name: &str| Dependent {
+        kind: DependentKind::Profile,
+        name: name.to_string(),
+    };
+    let agent = |name: &str| Dependent {
+        kind: DependentKind::Agent,
+        name: name.to_string(),
+    };
+    assert_eq!(
+        preview.dependents,
+        [
+            profile("child"),
+            profile("grandchild"),
+            profile("item"),
+            profile("orphan"),
+            profile("other#profiles/direct"),
+            profile("other#profiles/spelled"),
+            profile("scoped"),
+            agent("a"),
+            agent("c"),
+        ]
+    );
+    assert_eq!(
+        preview.detail,
+        [
+            "2 fragment(s), 1 command(s), 1 MCP server(s), 1 skill package(s), 1 profile(s)",
+            "profile child includes it",
+            "profile grandchild includes it",
+            "profile item includes it",
+            "profile orphan includes it",
+            "profile other#profiles/direct includes it",
+            "profile other#profiles/spelled includes it",
+            "profile scoped includes it",
+            "agent a includes it",
+            "agent c includes it",
+            "a run of each is refused until it is edited",
+        ]
+    );
+    assert_eq!(mem.writes(), 0);
+}
+
+// A bundle nothing includes says nothing of dependents.
+#[test]
+fn test_remove_of_a_bundle_nothing_includes_names_no_dependent() {
+    let (library, _mem) = world();
+    let Removal::Preview(preview) = library
+        .bundle_remove(&plain(), "other", false)
+        .result
+        .unwrap()
+    else {
+        panic!("a preview");
+    };
+    assert!(preview.dependents.is_empty(), "{:?}", preview.dependents);
+    assert_eq!(preview.detail, ["1 fragment(s)"]);
+}
+
 #[test]
 fn test_remove_of_an_empty_bundle_names_no_detail() {
     let (library, _mem) = Setup {
