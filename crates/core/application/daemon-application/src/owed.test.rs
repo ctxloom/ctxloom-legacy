@@ -131,6 +131,35 @@ fn a_change_is_owed_to_the_live_sessions_it_touches_past_their_context() {
 
 // A loadout is owed, at once, each path its trees changed past the
 // positions it covers that it touched: at the latest such sequence.
+// The order a hosted child's launch makes (CreateHandOff observes its
+// tree first): its config's change is observed apart and covered by its
+// loadout, then a change to its bundle ALONE is recorded past it. The
+// loadout is its plan's (canonical references), and that change is still
+// owed, with the bundle it touched.
+#[test]
+fn a_bundle_change_alone_is_owed_to_a_plans_loadout_past_a_covered_config_change() {
+    let plan = crate::reactions::loadout_of_plan(
+        "dev",
+        &["dev".to_string()],
+        &["ctxloom+local:demo#fragments/example".to_string()],
+    );
+    let record = SessionRecord {
+        loadout: Some(plan),
+        ..live("child", &[(TREE, 1)])
+    };
+    let sessions = vec![(record, vec![TREE.to_string()])];
+    assert!(owed_by(&change(TREE, 1, &["config.yaml"]), &sessions).is_empty());
+    let owed = owed_by(&change(TREE, 2, &[DEMO]), &sessions);
+    assert_eq!(
+        owed,
+        vec![(
+            "child".to_string(),
+            vec!["demo".to_string()],
+            vec![DEMO.to_string()]
+        )]
+    );
+}
+
 #[test]
 fn a_loadout_is_owed_what_changed_past_its_positions() {
     let rows = |tree: &str| match tree {

@@ -4039,6 +4039,7 @@ dependencies = [
  "daemon-proto",
  "exit-code",
  "isolation-ports",
+ "library",
  "library-application",
  "mutants",
  "ports",

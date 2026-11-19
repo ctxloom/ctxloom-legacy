@@ -14,6 +14,7 @@ angzarr-embedded.workspace = true
 # The one-shot's client (U4): the daemon's API as a port, its messages.
 daemon-ports.workspace = true
 daemon-proto.workspace = true
+library.workspace = true
 library-application.workspace = true
 ports.workspace = true
 run-launcher.workspace = true

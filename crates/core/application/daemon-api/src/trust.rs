@@ -131,6 +131,9 @@ impl<E: run_ports::Edge> crate::Api<E> {
                 name: name.project().to_string(),
             }))
         })?;
+        // Its tree observed before its settings are read there (step 10 U11).
+        self.observed(Some((name.project().clone(), root.as_str())))
+            .await?;
         let settings = sorted(trusting.trusts.settings(&root)?);
         let held = trusting.index.index().named(&name.to_string());
         let mut trust = held.map(|row| row.resource()).unwrap_or_default();
