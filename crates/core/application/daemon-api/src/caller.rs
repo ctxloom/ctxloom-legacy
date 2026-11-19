@@ -54,6 +54,9 @@ const USER_CLOSE: &str = "closed by the user";
 /// Why a run is stopped by `session stop` (S19).
 const STOP_REASON: &str = "stopped by the user";
 
+/// The id of a close's one need, its cascade's confirmation (D16).
+pub const CLOSE_NEED: &str = "confirm";
+
 /// How many open children an owner may hold when nothing says (the
 /// delegation limit's evidence, D-N14; no config key yet).
 pub const DELEGATION_LIMIT: u32 = 4;
@@ -339,6 +342,97 @@ impl<D: Daemons> Caller<D> {
             name: format!("{name}/transcript"),
         };
         on_daemon!(self, |api| api.get_transcript(request.clone()).await)
+    }
+
+    /// `child_close`'s preview (step 10c U11, D16; S40: a domain write is
+    /// previewed by its resource's `Get`): a close of `target` that takes
+    /// open children with it (the cascade closes each, and each of theirs)
+    /// asks to confirm, naming every one, nearest first; a close that takes
+    /// none asks nothing.
+    pub async fn close_needs(&self, target: &str) -> Result<Vec<v1::Need>, CallError> {
+        let name = self.target(target)?;
+        let top = on_daemon!(self, |api| self.read(api, &name).await)?;
+        let mut next: std::collections::VecDeque<String> = top.children.into();
+        // The target itself is never one it takes with it (a family that
+        // names its owner back).
+        let mut seen = std::collections::BTreeSet::from([name.to_string()]);
+        let mut taken = Vec::new();
+        while let Some(child) = next.pop_front() {
+            if !seen.insert(child.clone()) {
+                continue;
+            }
+            let child = SessionName::parse(&child)
+                .map_err(|rejection| not_a_name(&child, &reason_of(&rejection)))?;
+            let held = on_daemon!(self, |api| self.read(api, &child).await)?;
+            if held.closed {
+                continue;
+            }
+            taken.push(child.harp().to_string());
+            next.extend(held.children);
+        }
+        if taken.is_empty() {
+            return Ok(Vec::new());
+        }
+        let quoted: Vec<String> = taken.iter().map(|harp| format!("\"{harp}\"")).collect();
+        let arg = |name: &str, value: String| v1::NeedArg {
+            name: name.to_string(),
+            value,
+        };
+        Ok(vec![v1::Need {
+            id: CLOSE_NEED.to_string(),
+            kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+                text: format!(
+                    "Close \"{}\" and, with it, {}?",
+                    name.harp(),
+                    quoted.join(", ")
+                ),
+                code: String::new(),
+                args: vec![
+                    arg("target", name.harp().to_string()),
+                    arg("children", taken.join(", ")),
+                ],
+            })),
+            optional: false,
+        }])
+    }
+
+    /// `DeleteSession` of this caller's project's session `harp`, as
+    /// `asked` (its preview, or the apply of one), under an id minted here
+    /// and in the caller's environment (step 10c U11: the test build's
+    /// tool presents its needs).
+    pub async fn delete_session(
+        &self,
+        harp: &str,
+        asked: v1::DeleteSessionRequest,
+    ) -> Result<v1::DeleteSessionResponse, CallError> {
+        let request = v1::DeleteSessionRequest {
+            name: self.target(harp)?.to_string(),
+            request_id: (self.ids)(),
+            env: Some(self.env.clone()),
+            ..asked
+        };
+        on_daemon!(self, |api| api.delete_session(request.clone()).await)
+    }
+
+    /// `CreateFragment` in the bundle `bundle` of this caller's project, as
+    /// `asked`, under an id minted here and in the caller's environment
+    /// (step 10c U11: the test build's tool presents its Edit need).
+    pub async fn create_fragment(
+        &self,
+        bundle: &str,
+        asked: v1::CreateFragmentRequest,
+    ) -> Result<v1::CreateFragmentResponse, CallError> {
+        let request = v1::CreateFragmentRequest {
+            parent: format!(
+                "{}{}",
+                self.project,
+                library_api::names::bundle_target(bundle)
+            ),
+            request_id: (self.ids)(),
+            env: Some(self.env.clone()),
+            ..asked
+        };
+        on_daemon!(self, |api| api.create_fragment(request.clone()).await)
     }
 
     /// `context_assemble`: the fragments `fragments` (and those of `tags`)

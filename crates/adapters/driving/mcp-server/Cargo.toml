@@ -14,8 +14,9 @@ daemon-api.workspace = true
 daemon-proto.workspace = true
 # The official Rust MCP SDK (ruling 150, OD/s3-Q1), pinned exactly, its
 # default features off: the server and the stdio transport alone (no macros,
-# no HTTP, no TLS; elicitation is added when a tool carries needs, OD-5).
-rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-io"] }
+# no HTTP, no TLS) and elicitation (step 10c U11: a preview's needs are
+# put to the engine; it brings `url`, already in the lock).
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-io", "elicitation"] }
 serde.workspace = true
 serde_json.workspace = true
 # `time`: the terminal wake's 60 s and the watch's re-open.

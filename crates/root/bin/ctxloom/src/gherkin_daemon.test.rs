@@ -3848,21 +3848,55 @@ fn applied_once(w: &mut World) {
     assert_eq!(applied, 1, "{events:?}");
 }
 
+/// The question a session removal's preview asks (step 10c U11), as the
+/// daemon words its Confirm need.
+fn removal_question(harp: &str) -> String {
+    format!("Remove session \"{harp}\"?")
+}
+
+/// Whether `session show` still finds `harp` (else it names no session).
+fn still_held(w: &World, harp: &str) -> bool {
+    let ran = run_now(w, &["session", "show", harp, "--format", "json"]);
+    match ran.code {
+        0 => true,
+        20 => false,
+        _ => panic!("session show {harp}: {}", ran.said()),
+    }
+}
+
 #[then("the daemon's confirmation was asked at her terminal, and the session is gone")]
-fn asked_at_terminal(_: &mut World) {
-    red("the daemon's confirmation was asked at her terminal")
+fn asked_at_terminal(w: &mut World) {
+    let ran = w.common.ran();
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    let question = format!("{} [y/N] ", removal_question("amber-swift-owl"));
+    assert!(
+        ran.stderr.contains(&question),
+        "asked {question:?}: {}",
+        ran.said()
+    );
+    assert!(!still_held(w, "amber-swift-owl"), "the session is gone");
 }
 
 #[when("its orchestrator calls a ctxloom tool whose daemon call asks for confirmation")]
-fn tool_asks(_: &mut World) {
-    red("its orchestrator calls a ctxloom tool whose daemon call asks for confirmation")
+fn tool_asks(w: &mut World) {
+    // The test build's tool (QUESTIONS.md 7): a session removal, whose
+    // preview asks to confirm it, of a session that has ended.
+    w.plant("amber-swift-owl", "finished");
+    w.before_run();
+    let session = json!({"session": "amber-swift-owl"});
+    engine_calls(w, "amber-quiet-heron", "test_remove_session", session);
 }
 
 #[then(
     "the question reached its engine as an MCP elicitation, and the engine's answer reached the daemon"
 )]
-fn elicited(_: &mut World) {
-    red("the question reached its engine as an MCP elicitation")
+fn elicited(w: &mut World) {
+    let asked = &w.daemon_spec.elicited;
+    assert_eq!(asked.len(), 1, "one question: {asked:?}");
+    assert_eq!(asked[0]["message"], removal_question("amber-swift-owl"));
+    let answered = crate::tests::mcp_serve::answered_json(w.daemon_spec.tool.as_ref().unwrap());
+    assert_eq!(answered["applied"], true, "{answered}");
+    assert!(!still_held(w, "amber-swift-owl"), "the session is gone");
 }
 
 #[given(expr = "an interactive session {string} whose assistant is running on its terminal")]
@@ -5006,8 +5040,20 @@ fn sees_options(w: &mut World) {
 // ------------------------------------- the architecture rulings T13-T30
 
 #[then("the removal was previewed first, and applied with her answer and the preview's tag")]
-fn previewed_then_applied(_: &mut World) {
-    red("the removal was previewed, then applied with the answer and tag")
+fn previewed_then_applied(w: &mut World) {
+    // What she was asked is the preview's own question (the daemon's Confirm
+    // need: the CLI asks nothing of its own), and the daemon destroys only
+    // on an apply that carries the preview's tag and her yes (its own
+    // refusals otherwise: `PlanStale`, `NeedsUnanswered`), once.
+    let ran = w.common.ran();
+    let question = removal_question("amber-swift-owl");
+    assert_eq!(ran.stderr.matches(&question).count(), 1, "{}", ran.said());
+    let intended = record(w)
+        .iter()
+        .flat_map(|s| s["events"].as_array().cloned().unwrap_or_default())
+        .filter(|e| e["type"] == "SessionRemovalIntended" && e["harp"] == "amber-swift-owl")
+        .count();
+    assert_eq!(intended, 1, "one removal applied");
 }
 
 #[given(
@@ -5605,14 +5651,55 @@ fn tool_retried(w: &mut World) {
     assert_eq!(count_of(&events, "SessionClosed"), 1, "{events:?}");
 }
 
+/// The text an engine answers an Edit elicitation with.
+const NEW_TEXT: &str = "# Brief\n\nWritten by the engine, through its MCP elicitation.\n";
+
+/// Where the scenario's editor stub marks that it ran.
+fn editor_ran(w: &World) -> PathBuf {
+    w.common.project.home().join("editor-ran")
+}
+
 #[when("its engine calls a tool whose change asks for an edited document, and answers the elicitation with new text")]
-fn tool_edit(_: &mut World) {
-    red("an engine answers an edit need with text")
+fn tool_edit(w: &mut World) {
+    // An EDITOR that marks its run, in the engine's environment: a client
+    // that cannot launch one is never handed it.
+    let editor = w.common.project.home().join("bin/editor");
+    let mark = editor_ran(w);
+    files::put_program(&editor, &format!("#!/bin/sh\ntouch '{}'\n", mark.display()));
+    w.common
+        .env
+        .push(("EDITOR".to_string(), editor.display().to_string()));
+    w.before_run();
+    let me = session_name(w, "amber-quiet-heron");
+    let env = env_of(w);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut mcp = crate::tests::mcp_serve::Mcp::for_session_eliciting(&w.common.project, &me, &env);
+    let answer = |_: &Value| json!({"action": "accept", "content": {"text": NEW_TEXT}});
+    let arguments = json!({"bundle": "notes", "fragment": "brief"});
+    let (answered, elicited) = mcp.call_answering("test_create_fragment", arguments, &answer);
+    let (code, err) = mcp.finish();
+    assert_eq!(code, 0, "the server failed: {err}");
+    w.daemon_spec.tool = Some(answered);
+    w.daemon_spec.elicited = elicited;
 }
 
 #[then("the daemon applied the new text, and no editor was started")]
-fn applied_text(_: &mut World) {
-    red("the daemon applied the new text without an editor")
+fn applied_text(w: &mut World) {
+    let asked = &w.daemon_spec.elicited;
+    assert_eq!(asked.len(), 1, "one question: {asked:?}");
+    let field = &asked[0]["requestedSchema"]["properties"]["text"];
+    assert_eq!(field["type"], "string", "{asked:?}");
+    let tool = w.daemon_spec.tool.clone().unwrap();
+    assert_ne!(tool["isError"], true, "{tool}");
+    let written = files::read(
+        w.common
+            .project
+            .dir()
+            .join(".ctxloom/content/bundles/v2/notes/fragments/brief.md"),
+    )
+    .expect("the fragment was written");
+    assert_eq!(written, NEW_TEXT);
+    assert!(!files::exists(editor_ran(w)), "no editor was started");
 }
 
 #[given(expr = "a child {string} whose engine runs in a container")]
@@ -5759,8 +5846,30 @@ fn foreign_converged(w: &mut World) {
 // ------------------------------------- the rulings after T30 (S42, S53)
 
 #[then("nothing was applied, and the daemon answered the preview")]
-fn preview_only(_: &mut World) {
-    red("nothing was applied, and the daemon answered the preview")
+fn preview_only(w: &mut World) {
+    // Off a terminal the command says the daemon's answer to its preview
+    // (json off a terminal): the plan, applied nowhere, or the refusal of a
+    // session nobody holds; the session and the bundle are as they were.
+    let ran = w.common.ran();
+    match ran.code {
+        20 => {
+            let refused: Value = serde_json::from_str(ran.stderr.trim())
+                .unwrap_or_else(|e| panic!("a refusal's envelope: {e}: {}", ran.said()));
+            let code = refused["code"].as_str().unwrap_or_default();
+            assert!(code.ends_with("not-found"), "{}", ran.said());
+        }
+        _ => assert_eq!(ran.json()["applied"], false, "{}", ran.said()),
+    }
+    assert!(still_held(w, "amber-swift-owl"), "the session is kept");
+    assert!(
+        files::exists(
+            w.common
+                .project
+                .dir()
+                .join(".ctxloom/content/bundles/v2/notes/bundle.yaml")
+        ),
+        "the bundle is kept"
+    );
 }
 
 /// S55: a title moves nothing. Every planted session's lock is under its

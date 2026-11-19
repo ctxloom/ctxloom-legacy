@@ -121,6 +121,7 @@ pub fn destroy<R: SessionRemovals>(
     session: &Session,
     removals: &R,
     holds: &dyn SessionHolds,
+    asking: &dyn crate::Asking,
     format: Format,
     out: &mut dyn Write,
 ) -> Result<Done, Failure> {
@@ -145,7 +146,9 @@ pub fn destroy<R: SessionRemovals>(
                     };
                     sweep(removals, holds, &ask, format, out).await
                 }
-                (None, Some(harp)) => remove(removals, holds, harp, args, format, out).await,
+                (None, Some(harp)) => {
+                    remove(removals, (holds, asking), harp, args, format, out).await
+                }
                 (None, None) => unreachable!("clap requires a session or an age"),
             },
             Some(SessionVerb::Sweep(args)) => {
@@ -612,16 +615,36 @@ async fn rename<S: SessionService>(
 #[cfg(feature = "session-destroy")]
 async fn remove<R: SessionRemovals>(
     removals: &R,
-    holds: &dyn SessionHolds,
+    (holds, asking): (&dyn SessionHolds, &dyn crate::Asking),
     harp: &str,
     args: &RemoveArgs,
     format: Format,
     out: &mut dyn Write,
 ) -> Result<Done, Failure> {
-    let removed = removals
+    let mut removed = removals
         .delete_session(harp, args.yes, args.even_if_live)
         .await
         .map_err(call_failure)?;
+    // At her terminal (step 10c U11), the preview's confirmation is asked
+    // there, and her yes is the apply of what it showed: its tag, and her
+    // answer. A no, or no terminal, leaves the preview.
+    let mut answered = false;
+    if let (false, true, Removed::Done(plan)) = (args.yes, asking.is_terminal(), &removed) {
+        if let Some((id, question)) = confirmation(&plan.needs) {
+            if asking.confirm(question) {
+                let answers = vec![v1::Answer {
+                    need_id: id.to_string(),
+                    answer: Some(v1::answer::Answer::Confirmed(true)),
+                }];
+                let etag = plan.etag.clone();
+                removed = removals
+                    .apply_removal(harp, args.even_if_live, &etag, answers)
+                    .await
+                    .map_err(call_failure)?;
+                answered = true;
+            }
+        }
+    }
     let (plan, why) = match removed {
         Removed::Done(plan) => (plan, None),
         Removed::Refused { plan, why } => (plan, Some(why)),
@@ -664,7 +687,7 @@ async fn remove<R: SessionRemovals>(
             set_aside: held.set_aside,
         }));
     }
-    if !args.yes {
+    if !args.yes && !answered {
         // Not refused, so `--yes` would destroy the session.
         done.would_change = true;
         let flag = if args.even_if_live {
@@ -677,6 +700,15 @@ async fn remove<R: SessionRemovals>(
         }));
     }
     Ok(done)
+}
+
+/// A removal preview's Confirm need: its id and its question.
+#[cfg(feature = "session-destroy")]
+fn confirmation(needs: &[v1::Need]) -> Option<(&str, &str)> {
+    needs.iter().find_map(|need| match &need.kind {
+        Some(v1::need::Kind::Confirm(confirm)) => Some((need.id.as_str(), confirm.text.as_str())),
+        _ => None,
+    })
 }
 
 /// `session sweep`'s purge age flag.

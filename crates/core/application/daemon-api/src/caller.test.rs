@@ -95,7 +95,18 @@ impl DaemonApi for Fake {
         // watched by its ctxloom MCP server (the terminal wake).
         let primary = r.name.contains("/sessions/lone-");
         let wakeable = r.name.contains("/sessions/lone-awake-");
+        // A cascade's family (step 10c U11, D16): `tall-oak-crow` holds an
+        // open child and a `shut-` (closed) one; its open child holds one
+        // more, and names its owner back.
+        let at = |harp: &str| format!("projects/calm-quiet-heron/sessions/{harp}");
+        let children = match r.name.rsplit('/').next().unwrap_or_default() {
+            "tall-oak-crow" => vec![at("olive-quiet-finch"), at("shut-tawny-wren")],
+            "olive-quiet-finch" => vec![at("deep-grey-mole"), at("tall-oak-crow")],
+            _ => Vec::new(),
+        };
+        let shut = r.name.contains("/sessions/shut-");
         Ok(v1::Session {
+            children,
             owner: if primary {
                 String::new()
             } else {
@@ -105,7 +116,7 @@ impl DaemonApi for Fake {
             name: r.name,
             engine: "claude-code".to_string(),
             summary: "read".to_string(),
-            closed: *self.closed.lock().unwrap(),
+            closed: shut || *self.closed.lock().unwrap(),
             incarnation: 2,
             ..v1::Session::default()
         })
@@ -125,6 +136,34 @@ impl DaemonApi for Fake {
         _: v1::SearchSessionsRequest,
     ) -> Result<v1::ListSessionsResponse, Called> {
         unreachable!()
+    }
+
+    async fn delete_session(
+        &self,
+        r: v1::DeleteSessionRequest,
+    ) -> Result<v1::DeleteSessionResponse, Called> {
+        assert!(r.env.is_some(), "the caller's environment is sent");
+        self.ask(&format!(
+            "delete {} {} {} {} {}",
+            r.name,
+            r.request_id,
+            r.validate_only,
+            r.etag,
+            r.answers.len()
+        ));
+        Ok(v1::DeleteSessionResponse::default())
+    }
+
+    async fn create_fragment(
+        &self,
+        r: v1::CreateFragmentRequest,
+    ) -> Result<v1::CreateFragmentResponse, Called> {
+        assert!(r.env.is_some(), "the caller's environment is sent");
+        self.ask(&format!(
+            "fragment {} {} {} {}",
+            r.parent, r.fragment_id, r.request_id, r.validate_only
+        ));
+        Ok(v1::CreateFragmentResponse::default())
     }
 
     async fn get_transcript(&self, r: v1::GetTranscriptRequest) -> Result<v1::Transcript, Called> {
@@ -1309,4 +1348,69 @@ async fn a_wake_to_a_primary_nobody_watches_is_refused_in_the_senders_words() {
         .await
         .unwrap();
     assert_eq!(awake.commands().len(), 1);
+}
+
+// Step 10c U11, D16 (S40): a close that takes open children with it asks
+// to confirm, naming each it takes, nearest first, and none closed already;
+// a close that takes none asks nothing.
+#[tokio::test]
+async fn a_close_that_takes_children_asks_to_confirm_naming_each() {
+    let world = World::new();
+    let needs = world
+        .caller(false)
+        .close_needs("tall-oak-crow")
+        .await
+        .unwrap();
+    let asked: Vec<(&str, &str)> = needs
+        .iter()
+        .filter_map(|need| match &need.kind {
+            Some(v1::need::Kind::Confirm(c)) if !need.optional => {
+                Some((need.id.as_str(), c.text.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        asked,
+        [(
+            "confirm",
+            "Close \"tall-oak-crow\" and, with it, \"olive-quiet-finch\", \"deep-grey-mole\"?"
+        )]
+    );
+    assert!(world
+        .caller(false)
+        .close_needs("deep-grey-mole")
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+// The test build's tools' calls (step 10c U11): a removal and a fragment's
+// creation, each of this caller's project, under an id minted for it.
+#[tokio::test]
+async fn a_removal_and_a_fragment_are_asked_in_the_callers_project() {
+    let world = World::new();
+    let caller = world.caller(false);
+    let apply = v1::DeleteSessionRequest {
+        etag: "e-1".to_string(),
+        answers: vec![v1::Answer::default()],
+        ..v1::DeleteSessionRequest::default()
+    };
+    caller
+        .delete_session("ended-amber-owl", apply)
+        .await
+        .unwrap();
+    let asked = v1::CreateFragmentRequest {
+        fragment_id: "brief".to_string(),
+        validate_only: true,
+        ..v1::CreateFragmentRequest::default()
+    };
+    caller.create_fragment("notes", asked).await.unwrap();
+    assert_eq!(
+        world.asked(),
+        [
+            "1:delete projects/calm-quiet-heron/sessions/ended-amber-owl id-1 false e-1 1",
+            "2:fragment projects/calm-quiet-heron/bundles/notes brief id-2 true"
+        ]
+    );
 }

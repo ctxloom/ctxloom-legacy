@@ -103,6 +103,16 @@ pub trait SessionRemovals {
         even_if_live: bool,
     ) -> Result<Removed, CallError>;
 
+    /// `session remove <harp>` at a terminal (step 10c U11): the apply of
+    /// the preview tagged `etag`, with the person's `answers` to its needs.
+    async fn apply_removal(
+        &self,
+        harp: &str,
+        even_if_live: bool,
+        etag: &str,
+        answers: Vec<v1::Answer>,
+    ) -> Result<Removed, CallError>;
+
     /// `session sweep`: this project's sessions (`all`: every project's)
     /// by the sweep's table, purged before `older_than` (none: the
     /// configured age); without `yes` the report.
@@ -425,23 +435,22 @@ impl<D: Daemons> SessionReads for Client<D> {
     }
 }
 
-impl<D: Daemons> SessionRemovals for Client<D> {
-    async fn delete_session(
+impl<D: Daemons> Client<D> {
+    /// `asked` of the session `harp` (its name, request id and environment
+    /// this client's), the plan or the removal, refused with its plan.
+    async fn removal(
         &self,
         harp: &str,
-        yes: bool,
-        even_if_live: bool,
+        asked: v1::DeleteSessionRequest,
     ) -> Result<Removed, CallError> {
         // One id for the call, its retry on a new daemon included (S8).
         let request_id = (self.ids)();
         self.on_daemon(async |api: &D::Api| {
             let request = v1::DeleteSessionRequest {
                 name: format!("{}/sessions/{harp}", self.project(api).await?),
-                even_if_live,
                 request_id: request_id.clone(),
-                validate_only: !yes,
                 env: Some(self.env.clone()),
-                ..v1::DeleteSessionRequest::default()
+                ..asked.clone()
             };
             match api.delete_session(request).await {
                 Ok(done) => Ok(Removed::Done(done)),
@@ -461,6 +470,38 @@ impl<D: Daemons> SessionRemovals for Client<D> {
             }
         })
         .await
+    }
+}
+
+impl<D: Daemons> SessionRemovals for Client<D> {
+    async fn delete_session(
+        &self,
+        harp: &str,
+        yes: bool,
+        even_if_live: bool,
+    ) -> Result<Removed, CallError> {
+        let asked = v1::DeleteSessionRequest {
+            even_if_live,
+            validate_only: !yes,
+            ..v1::DeleteSessionRequest::default()
+        };
+        self.removal(harp, asked).await
+    }
+
+    async fn apply_removal(
+        &self,
+        harp: &str,
+        even_if_live: bool,
+        etag: &str,
+        answers: Vec<v1::Answer>,
+    ) -> Result<Removed, CallError> {
+        let asked = v1::DeleteSessionRequest {
+            even_if_live,
+            etag: etag.to_string(),
+            answers,
+            ..v1::DeleteSessionRequest::default()
+        };
+        self.removal(harp, asked).await
     }
 
     async fn sweep_sessions(
