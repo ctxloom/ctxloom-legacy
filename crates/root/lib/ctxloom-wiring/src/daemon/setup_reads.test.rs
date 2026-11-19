@@ -142,8 +142,8 @@ fn auth_status_reads_the_callers_environment_and_never_its_values() {
 }
 
 // doctor.feature: the credentials row is read from the caller's
-// environment (moved from the in-process command's test): a fail without
-// the token, no fail with it.
+// environment (moved from the in-process command's test): a warn without
+// the token (the primary signs in), ok with it.
 #[test]
 fn doctors_credentials_row_reads_the_callers_environment() {
     let world = project();
@@ -163,10 +163,12 @@ fn doctors_credentials_row_reads_the_callers_environment() {
             .unwrap(),
         other => panic!("{other:?}"),
     };
-    assert_eq!(row(&pairs(&world)).status, "fail");
+    // The built-in source: the primary signs in, only a child is refused
+    // (owner ruling 2026-11-19).
+    assert_eq!(row(&pairs(&world)).status, "warn");
     let mut env = pairs(&world);
     env.push(("CLAUDE_CODE_OAUTH_TOKEN".to_string(), "x".to_string()));
-    assert_ne!(row(&env).status, "fail");
+    assert_eq!(row(&env).status, "ok");
 }
 
 // manage check reads the caller's project: its work directory is there.

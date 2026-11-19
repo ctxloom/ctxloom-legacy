@@ -681,6 +681,44 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | false                 | 2 fragment(s), 1 command(s)  | ctxloom bundle remove demo --yes   | projects/{project}/bundles/demo |
         | --format text | Nothing was removed   | 2 fragment(s), 1 command(s)  | ctxloom bundle remove demo --yes   | demo                      |
 
+    # A profile that names the bundle, one that inherits it through a parent,
+    # and an agent standing on either would each have its run refused once
+    # the bundle is gone, so the preview names each and says so before
+    # anything goes; --yes still removes it.
+    Scenario: Bare bundle remove names every profile and agent that includes it
+      # new: DRAFT, owner ruling 2026-11-19 (batch 2, `bundle remove`).
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And a bundle "other" exists
+      And a profile "dev" with bundle "demo"
+      And a profile "unrelated" with bundle "other"
+      And the project already has the file ".ctxloom/content/bundles/v2/project/profiles/child.yaml":
+        """
+        description: inherits demo through its parent
+        parents:
+          - dev
+        """
+      And I run "ctxloom agent create reviewer --profiles child"
+      When Alice asks what removing the bundle would cost:
+        """
+        ctxloom bundle remove demo --format json
+        """
+      Then the command succeeds
+      And the output reports "dependents.0" as "projects/{project}/bundles/project/profiles/child"
+      And the output reports "dependents.1" as "projects/{project}/bundles/project/profiles/dev"
+      And the output reports "dependents.2" as "projects/{project}/agents/reviewer"
+      And the output does not contain "unrelated"
+      When I run "ctxloom bundle remove demo --format text"
+      Then the command succeeds
+      And the output contains "profile child includes it"
+      And the output contains "profile dev includes it"
+      And the output contains "agent reviewer includes it"
+      And the output contains "a run of each is refused until it is edited"
+      And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" exists
+      When I run "ctxloom bundle remove demo --yes"
+      Then the command succeeds
+      And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" does not exist
+
     Scenario Outline: Removing a bundle with --yes takes the file and the listing entry
       # changed: step 11 (draft), OD-23 (owner, 2026-11-16) and ruling 127: the listing keeps the built-in `ctxloom` bundle, so it is never empty; the removed bundle is gone from it.
       Given an initialized ctxloom project

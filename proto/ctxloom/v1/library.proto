@@ -605,6 +605,12 @@ message DeleteBundleResponse {
   repeated string detail = 4;
   // The exact command that applies this preview (OQ-8); empty once applied.
   string apply_command = 5;
+  // On a preview, the resource name of every Profile and Agent that includes
+  // the bundle (it names the bundle, a parent of it does, or, for an agent,
+  // one of its profiles does): a run of each is refused once the bundle is
+  // gone, until it is edited (owner ruling 2026-11-19). Profiles first, then
+  // agents, each in name order; empty once applied.
+  repeated string dependents = 6;
   // On a preview, the needs a person must answer before the apply
   // (needs.proto); empty once applied.
   repeated Need needs = 90;

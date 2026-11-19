@@ -4,14 +4,14 @@
 #   only, and its distilled form reads stale by its digest until `distill`
 #   runs again; Go's "an edit distills what it saved, and a failed
 #   distillation fails the edit" is reworded to that.
-# NOT ported: the first scenario's agent axis (`ctxloom://fragments/<name>`
-#   read by a session's agent) waits on the MCP server's resources (daemon
-#   slice 3), so that scenario is @pending.
+# NOT ported: deleted (OD-48 amended, owner 2026-11-19: tools-only is the ruled design,
+#   so the MCP server serves no resources): the first scenario's agent axis
+#   (`ctxloom://fragments/<name>` read by a session's agent).
 @doc
 Feature: Editing content
   edit opens content for modification. Flag-driven edits change metadata directly;
   editor-driven edits round-trip the content through the configured editor. With a
-  marker editor the change is observable in the bundle file and across MCP.
+  marker editor the change is observable in the bundle file.
 
   What remains here is the ITEM nouns' editor round-trip. The bundle's own
   `edit` (flag-driven metadata and item attachment) moved to
@@ -24,10 +24,6 @@ Feature: Editing content
   # distilled form beside it is left as it was, and from then on reads STALE
   # by its digest (assembly serves the original) until `fragment distill`
   # runs again.
-  #
-  # The agent axis is a SESSION started after the edit: its endpoint serves
-  # the package its launch carried, which is the edited content.
-  @pending
   Scenario: Editing a fragment lands the change across axes
     Given a ctxloom project with a marker editor
     And a bundle "demo" exists
@@ -37,9 +33,6 @@ Feature: Editing content
     Then the command succeeds
     And the file ".ctxloom/content/bundles/v2/demo/fragments/testing.md" contains "EDITED-BY-TEST"
     And "ctxloom fragment show demo#fragments/testing" says its distilled form is stale
-    Given a session owner is standing on the profile "dev"
-    When the agent reads resource "ctxloom://fragments/testing"
-    Then the resource contains "EDITED-BY-TEST"
 
   Scenario: Editing a prompt lands the change in the bundle
     Given a ctxloom project with a marker editor

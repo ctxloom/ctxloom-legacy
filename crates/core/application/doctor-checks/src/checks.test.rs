@@ -260,17 +260,74 @@ fn credentials(layers: &[&str], exported: &'static [&'static str]) -> checks::Ch
     checks::credentials(&layers, &Auth::new(Arc::new(Exports(exported))))
 }
 
-// doctor.feature: "A missing agent credential is a fail row with run's fix".
+// Owner ruling 2026-11-19: a missing token refuses only a child when the
+// primary can sign in (the built-in source shares claude's own login), so
+// the row is a warn naming what a child needs, in the refusal's words.
 #[test]
-fn a_missing_claude_token_is_a_fail_row_with_runs_fix() {
+fn a_missing_claude_token_is_a_warn_row_when_the_primary_can_sign_in() {
     let check = credentials(&["schema_version: 8\n"], &[]);
     assert_eq!(check.marker, "DOCTOR-CHECK-CREDENTIALS-m5");
+    assert_eq!(check.status, Status::Warn);
+    assert_eq!(
+        check.detail,
+        "claude-code (auth token): a child agent run of claude-code needs a credential in the environment (any one of: CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY), and none is set; the primary interactive session can still sign in with claude-code's own login"
+    );
+    assert_eq!(
+        check.remedy,
+        "for a child agent, export one of CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, or name the variable it reads in engines.claude-code.auth.env and export that (for claude-code, `claude setup-token` makes CLAUDE_CODE_OAUTH_TOKEN)"
+    );
+}
+
+// `auth: token` is the built-in source spelled out: the primary shares the
+// engine's own login, as with no auth at all.
+#[test]
+fn an_explicit_token_source_is_a_warn_row_too() {
+    let token = "schema_version: 9\nengines:\n  claude-code:\n    auth: token\n";
+    assert_eq!(credentials(&[token], &[]).status, Status::Warn);
+}
+
+// A source naming variables and a file: the primary runs on the file, so a
+// missing variable refuses only a child.
+#[test]
+fn a_source_with_a_file_is_a_warn_row_when_its_variable_is_missing() {
+    let both = "schema_version: 9\nengines:\n  claude-code:\n    auth:\n      env: [TEAM_TOKEN]\n      file: ~/team.json\n";
+    let check = credentials(&[both], &[]);
+    assert_eq!(check.status, Status::Warn);
+    assert_eq!(
+        check.detail,
+        "claude-code (auth token): a child agent run of claude-code needs a credential in the environment (any one of: TEAM_TOKEN), and none is set; the primary interactive session can still sign in with the file engines.claude-code.auth names"
+    );
+    assert_eq!(
+        check.remedy,
+        "for a child agent, export TEAM_TOKEN, or name the variable it reads in engines.claude-code.auth.env and export that"
+    );
+    assert_eq!(credentials(&[both], &["TEAM_TOKEN"]).status, Status::Ok);
+}
+
+// Nothing can run: a source of variables alone, none exported, shares no
+// login with the primary either, so the row stays a fail.
+#[test]
+fn a_source_of_variables_alone_missing_is_a_fail_row() {
+    let team = "schema_version: 9\nengines:\n  claude-code:\n    auth:\n      env: [TEAM_TOKEN]\n";
+    let check = credentials(&[team], &[]);
     assert_eq!(check.status, Status::Fail);
-    assert!(check.detail.contains("claude-code"), "{}", check.detail);
-    assert!(check
-        .detail
-        .contains("none of CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY is exported"));
-    assert!(check.remedy.contains("claude setup-token"));
+    assert_eq!(
+        check.detail,
+        "claude-code (auth token): TEAM_TOKEN is not exported"
+    );
+    assert_eq!(check.remedy, "export TEAM_TOKEN");
+}
+
+// A fail outranks a warn: one engine nothing can run on fails the row.
+#[test]
+fn an_engine_nothing_can_run_on_fails_the_row_beside_a_warned_one() {
+    let mixed = "schema_version: 9\nengines:\n  opencode:\n    auth:\n      env: [TEAM_TOKEN]\nagents:\n  c:\n    engine: claude-code\n  o:\n    engine: opencode\n";
+    let check = credentials(&[mixed], &[]);
+    assert_eq!(check.status, Status::Fail);
+    assert_eq!(
+        check.detail,
+        "opencode (auth token): TEAM_TOKEN is not exported"
+    );
 }
 
 #[test]
@@ -291,7 +348,7 @@ fn an_exported_token_is_ok_and_the_row_says_it_does_not_test_acceptance() {
 // No project and no config at all is the shipped default: claude-code.
 #[test]
 fn with_no_config_at_all_the_shipped_default_engine_is_checked() {
-    assert_eq!(credentials(&[], &[]).status, Status::Fail);
+    assert_eq!(credentials(&[], &[]).status, Status::Warn);
     assert_eq!(credentials(&[], TOKEN).status, Status::Ok);
 }
 
@@ -313,7 +370,7 @@ fn login_needs_no_credential_from_the_environment() {
 fn the_auth_of_the_highest_layer_wins() {
     let home = "schema_version: 9\nengines:\n  claude-code:\n    auth: login\n";
     let project = "schema_version: 9\nengines:\n  claude-code:\n    auth: token\n";
-    assert_eq!(credentials(&[home, project], &[]).status, Status::Fail);
+    assert_eq!(credentials(&[home, project], &[]).status, Status::Warn);
     assert_eq!(credentials(&[project, home], &[]).status, Status::Info);
 }
 
@@ -357,13 +414,12 @@ fn a_file_only_source_is_a_warn_row_usable_by_the_primary_not_by_children() {
 
 #[test]
 fn several_variables_missing_are_said_as_none_of_them() {
-    let check = credentials(&["schema_version: 9\n"], &[]);
-    assert!(
-        check
-            .detail
-            .contains("none of CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY is exported"),
-        "{}",
-        check.detail
+    let team =
+        "schema_version: 9\nengines:\n  claude-code:\n    auth:\n      env: [A_TOKEN, B_TOKEN]\n";
+    let check = credentials(&[team], &[]);
+    assert_eq!(
+        check.detail,
+        "claude-code (auth token): none of A_TOKEN, B_TOKEN is exported"
     );
 }
 
@@ -408,17 +464,17 @@ fn opencode_is_keyless_without_its_optional_key_and_never_fails() {
 #[test]
 fn an_agent_naming_an_engine_is_checked_and_one_naming_none_is_the_default() {
     let named = "schema_version: 9\nagents:\n  dev:\n    engine: claude-code\n";
-    assert_eq!(credentials(&[named], &[]).status, Status::Fail);
+    assert_eq!(credentials(&[named], &[]).status, Status::Warn);
     let mocked = "schema_version: 9\nagents:\n  dev:\n    engine: mock\n";
     assert_eq!(credentials(&[mocked], &[]).status, Status::Info);
     let silent = "schema_version: 9\nagents:\n  dev:\n    profiles: [p]\n";
-    assert_eq!(credentials(&[silent], &[]).status, Status::Fail);
+    assert_eq!(credentials(&[silent], &[]).status, Status::Warn);
 }
 
 #[test]
 fn a_config_that_will_not_parse_is_the_setup_markers_to_report_and_checks_the_default() {
     let check = credentials(&["schema_version: [unclosed\n"], &[]);
-    assert_eq!(check.status, Status::Fail);
+    assert_eq!(check.status, Status::Warn);
 }
 
 // An agent is bound by a non-empty engine OR a non-empty profile list: each

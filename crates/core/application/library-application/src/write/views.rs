@@ -25,6 +25,39 @@ pub struct Preview {
     #[serde(skip_serializing_if = "no_items")]
     pub detail: Vec<String>,
     pub apply: String,
+    /// What a run would be refused on once the target is gone (a bundle
+    /// removal's, owner ruling 2026-11-19); empty for every other removal.
+    #[serde(skip_serializing_if = "no_items")]
+    pub dependents: Vec<Dependent>,
+}
+
+/// A profile or an agent that includes a bundle being removed: its run is
+/// refused once the bundle is gone, until it is edited.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Dependent {
+    pub kind: DependentKind,
+    /// The profile as a profile's `parents` names it (a project profile
+    /// bare, another bundle's `<bundle>#profiles/<name>`), or the agent's
+    /// name.
+    pub name: String,
+}
+
+/// What kind of thing a [`Dependent`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DependentKind {
+    Profile,
+    Agent,
+}
+
+impl DependentKind {
+    /// The word a person reads it by.
+    pub fn word(self) -> &'static str {
+        match self {
+            DependentKind::Profile => "profile",
+            DependentKind::Agent => "agent",
+        }
+    }
 }
 
 impl Preview {
@@ -36,6 +69,7 @@ impl Preview {
             target,
             detail,
             apply,
+            dependents: Vec::new(),
         }
     }
 }

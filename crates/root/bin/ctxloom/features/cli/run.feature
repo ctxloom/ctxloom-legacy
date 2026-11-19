@@ -5,7 +5,9 @@
 # NOT ported: the scenarios tagged @pending, each with its reason (the
 #   launch's findings in the agent's context, a resume folding in its
 #   conversation, the worktree's git exclude, the auth refusals, a run on the
-#   mock engine, the opencode TUI, the containers). Plan override: clap's usage error says
+#   mock engine, the containers). Deleted (OD-29, owner 2026-11-13): the
+#   Rule "An opencode label runs opencode's own TUI on ctxloom's terminal"
+#   (its label, mail-drain and wake socket are dead terms). Plan override: clap's usage error says
 #   "unexpected argument" where cobra said "unknown flag"; the step maps one to
 #   the other (plan 8.2).
 @doc
@@ -480,25 +482,6 @@ Feature: run — assembling a project's context and handing it to an engine
       And the mock recorded input does not contain "DOCTOR-CHECK-STARTUP-FINDINGS"
       And the mock recorded input does not contain "unknown key `runt1me`"
 
-  @pending
-  Rule: An opencode label runs opencode's own TUI on ctxloom's terminal
-
-    # A SCRIPTED opencode (the label's binary_path) stands in for the real
-    # CLI: no model, no network. It records what it was handed and exits, so
-    # the record proves the interactive launch end to end — the TUI's argv
-    # (the prompt a flag, not stdin), a terminal on both ends, the assembled
-    # guidance in the AGENTS.md delivered to its config dir, Alice's own
-    # tui.json carried in beside it (the relocated config would otherwise
-    # drop her theme), the snapshot default a TUI's /undo needs, and the
-    # bridge plugin that carries her session's hooks, mail and wake.
-    @opencode
-    Scenario: An opencode label's run is opencode's TUI on a terminal, with the guidance and Alice's TUI preferences
-      Given Alice has an opencode label served by a scripted opencode TUI, and a fragment of guidance
-      And Alice keeps her own opencode TUI preferences
-      When Alice runs the opencode label interactively with the prompt "hello tui"
-      Then the scripted opencode TUI ran on a terminal with the prompt as a flag, the guidance and Alice's preferences in its config dir
-      And the bridge plugin in its config dir fires ctxloom's session-start and mail-drain for opencode, and the TUI is told its wake socket
-
   # Owner ruling 115 (2026-11-10): `run --session <harp>` resumes a session,
   # a one-shot's or the terminal's: its engine is handed its own session
   # (claude's `--resume <id>`, opencode's `--session <id>`), in the same
@@ -594,6 +577,7 @@ Feature: run — assembling a project's context and handing it to an engine
       Then none of the per-agent worktree config artifacts appear in the project's git status
       And the shared git exclude file carries the ctxloom per-agent worktree config block
 
+  # Pending (OD-48, containers): no run launches into a container yet (step 7).
   @pending
   Rule: Every gate that loses a requested container refuses the run, --degraded or not
 

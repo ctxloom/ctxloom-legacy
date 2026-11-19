@@ -373,6 +373,51 @@ fn test_a_bundle_removal_plans_its_bundle_gone_and_its_preview_nothing() {
     );
 }
 
+// Owner ruling 2026-11-19: a bundle removal's preview answers every profile
+// and agent that includes the bundle, by resource name, profiles first.
+#[test]
+fn test_a_bundle_removals_preview_names_its_dependents_by_resource_name() {
+    use super::delete_bundle;
+    use library_application::{Dependent, DependentKind, Preview, Removal};
+    let request = v1::DeleteBundleRequest {
+        name: "projects/amber-quiet-heron/bundles/demo".to_string(),
+        validate_only: true,
+        ..v1::DeleteBundleRequest::default()
+    };
+    let mut preview = Preview::of(
+        "bundle \"demo\"".to_string(),
+        Vec::new(),
+        "ctxloom bundle remove demo --yes".to_string(),
+    );
+    preview.dependents = vec![
+        Dependent {
+            kind: DependentKind::Profile,
+            name: "dev".to_string(),
+        },
+        Dependent {
+            kind: DependentKind::Profile,
+            name: "other#profiles/direct".to_string(),
+        },
+        Dependent {
+            kind: DependentKind::Agent,
+            name: "reviewer".to_string(),
+        },
+    ];
+    let mut previewed = wrote(Some(Removal::Preview(preview)));
+    previewed.applied = false;
+    let answered = delete_bundle::respond(&request, previewed);
+    assert_eq!(
+        answered.dependents,
+        [
+            "projects/amber-quiet-heron/bundles/project/profiles/dev",
+            "projects/amber-quiet-heron/bundles/other/profiles/direct",
+            "projects/amber-quiet-heron/agents/reviewer",
+        ]
+    );
+    let applied = delete_bundle::respond(&request, wrote(None));
+    assert!(applied.dependents.is_empty());
+}
+
 // A profile removal answers the profile's canonical name, the project
 // bundle's, whatever form it was asked by.
 #[test]

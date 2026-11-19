@@ -662,20 +662,46 @@ fn doctor_prints_its_report_and_exits_zero_when_no_row_failed() {
     assert!(all.out.contains("[ok]"), "{}", all.out);
 }
 
-// doctor.feature: "A missing agent credential is a fail row with run's fix,
-// and exit 3": the whole report is written first.
+/// A launch whose claude-code credential is a variable alone, and unset:
+/// nothing can run on it.
+fn variables_alone(world: &World, _: &Fixture) {
+    world.config.lock().unwrap().push(
+        "schema_version: 9\nengines:\n  claude-code:\n    auth:\n      env: [CLAUDE_CODE_OAUTH_TOKEN]\n".to_string(),
+    );
+}
+
+// doctor.feature: "A credential nothing can run on is a fail row, and exit
+// 20": the whole report is written first.
 #[test]
 fn doctor_exits_refused_after_the_whole_report_when_a_credential_is_missing() {
-    let r = go(&["doctor"], Format::Text, none);
+    let r = go(&["doctor"], Format::Text, variables_alone);
     assert_eq!(r.exit.unwrap(), Exit::REFUSED);
     assert!(
         r.out.contains("[fail] DOCTOR-CHECK-CREDENTIALS-m5"),
         "{}",
         r.out
     );
-    assert!(r.out.contains("claude setup-token"), "{}", r.out);
+    assert!(
+        r.out.contains("export CLAUDE_CODE_OAUTH_TOKEN"),
+        "{}",
+        r.out
+    );
     assert!(r.out.contains("DOCTOR-CHECK-INGESTION-q7") || r.out.contains("[warn]"));
-    let json = go(&["doctor"], Format::Json, none);
+    // The built-in source: the primary signs in with claude's own login, so
+    // only a child is refused, a warn, exit 0 (owner ruling 2026-11-19).
+    let builtin = go(&["doctor"], Format::Text, none);
+    assert_eq!(builtin.exit.unwrap(), Exit::OK);
+    assert!(
+        builtin.out.contains("[warn] DOCTOR-CHECK-CREDENTIALS-m5"),
+        "{}",
+        builtin.out
+    );
+    assert!(
+        builtin.out.contains("claude setup-token"),
+        "{}",
+        builtin.out
+    );
+    let json = go(&["doctor"], Format::Json, variables_alone);
     assert_eq!(json.exit.unwrap(), Exit::REFUSED);
     assert!(
         json.out

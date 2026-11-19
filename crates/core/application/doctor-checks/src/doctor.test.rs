@@ -471,13 +471,26 @@ fn a_report_fails_only_when_a_row_fails() {
     assert!(!report(&[Status::Ok, Status::Warn, Status::Info]).failed());
 }
 
-// doctor.feature: "A missing agent credential is a fail row with run's fix,
-// and exit 3": the project's config is what is checked, and the report fails.
+// doctor.feature: "A credential nothing can run on is a fail row, and exit
+// 20": the project's config is what is checked, and the report fails; with
+// the built-in source the primary signs in, so it is a warn (owner ruling
+// 2026-11-19) and the report does not fail.
 #[test]
-fn a_missing_credential_fails_the_report_and_an_exported_one_does_not() {
-    let report = doctor_with_token(&project(), true, false).report(false);
+fn a_missing_credential_fails_the_report_only_when_nothing_can_run() {
+    let mem = project();
+    mem.files.lock().unwrap().insert(
+        "/work/.ctxloom/config.yaml".to_string(),
+        "schema_version: 9\nengines:\n  claude-code:\n    auth:\n      env: [CLAUDE_CODE_OAUTH_TOKEN]\n".to_string(),
+    );
+    let report = doctor_with_token(&mem, true, false).report(false);
     assert_eq!(status(&report, "DOCTOR-CHECK-CREDENTIALS-m5"), Status::Fail);
     assert!(report.failed());
+    let report = doctor_with_token(&mem, true, true).report(false);
+    assert_eq!(status(&report, "DOCTOR-CHECK-CREDENTIALS-m5"), Status::Ok);
+    assert!(!report.failed());
+    let report = doctor_with_token(&project(), true, false).report(false);
+    assert_eq!(status(&report, "DOCTOR-CHECK-CREDENTIALS-m5"), Status::Warn);
+    assert!(!report.failed());
     let report = doctor_with_token(&project(), true, true).report(false);
     assert_eq!(status(&report, "DOCTOR-CHECK-CREDENTIALS-m5"), Status::Ok);
     assert!(!report.failed());

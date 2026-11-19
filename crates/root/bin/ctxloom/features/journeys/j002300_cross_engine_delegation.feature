@@ -44,6 +44,7 @@ Feature: Delegation — each child sees only its own context, and hears from and
 
   # A child on opencode works from the guidance its session home delivered to
   # it, as a child on Claude Code does.
+  # Pending: an opencode child waits on the ACP engine (slice 10d; ACP parked).
   @opencode @pending
   Scenario: A child delegated to an opencode agent runs on opencode and reports what its delivered context says
     # substitution: an agent on the opencode engine, launched by `child_launch`; what the child reports is what Alice sees
