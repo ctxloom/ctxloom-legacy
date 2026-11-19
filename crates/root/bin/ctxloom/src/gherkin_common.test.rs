@@ -368,9 +368,14 @@ macro_rules! common_steps {
                 w.common_mut().project = Project::initialized();
             }
 
+            /// A directory, not yet a project: her commands find the
+            /// project from where she types them, as hers do, with no
+            /// `CTXLOOM_ROOT` (an empty one is none), so outside any project
+            /// is outside any project.
             #[given("an empty project directory")]
             fn empty(w: &mut World) {
                 w.common_mut().project = Project::bare();
+                w.common_mut().set_env("CTXLOOM_ROOT", String::new());
             }
 
             /// A project from before git was required (step 10, G1).
