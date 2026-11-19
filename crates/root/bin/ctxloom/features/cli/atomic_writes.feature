@@ -371,7 +371,7 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
         | ctxloom materialize --target out --yes | 1    |
         | ctxloom materialize --target out --yes | 2    |
         | ctxloom doctor --fix                   | 1    |
-        | ctxloom manage uninstall --yes         | 1    |
+        | ctxloom manage uninstall               | 1    |
 
   Rule: A pull is a sequence of whole trees, then the lock, and a killed pull converges
 
