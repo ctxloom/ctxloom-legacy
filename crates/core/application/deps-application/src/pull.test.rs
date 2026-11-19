@@ -315,6 +315,10 @@ fn test_a_closure_part_that_cannot_be_reached_keeps_its_previous_entries_and_is_
     let again = pull(&fx);
     assert!(again.incomplete);
     assert_eq!(again.unreachable, vec![kit]);
+    // A parent's bundle out of reach is a part kept, never a failed pin:
+    // only a profile's own bundle reference fails the pull.
+    assert_eq!(again.errors, 0, "{:?}", again.failed);
+    assert!(again.failure().is_none());
     assert!(fx.files.lock_text().expect("a lock").contains(&sha));
 }
 
