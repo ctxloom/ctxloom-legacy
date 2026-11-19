@@ -2,8 +2,9 @@
 //! (release/0.7).
 //!
 //! The signal is an EXCLUSIVE FILE LOCK that the session-owning process holds
-//! on `<project>/.ctxloom/sessions/<harp>.lock` for as long as it runs, BESIDE the
-//! session directory and never inside it. A probe tries the lock:
+//! on `<project>/.ctxloom/sessions/<harp>/session.lock` for as long as it runs,
+//! INSIDE the session directory (`session_ports::lock_path`, step 10 U9: the
+//! two move as one). A probe tries the lock:
 //!
 //! - it acquires it: the owner is DEAD, the kernel having released the lock
 //!   however the owner ended (a kill, a crash, power loss): [`LockState::Free`];

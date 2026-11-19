@@ -126,7 +126,7 @@ message Launch {
   // context file, login links): the frontend writes nothing.
   string session_home = 8;
 
-  // The session's lock (`<project>/.ctxloom/sessions/<harp>.lock`), which
+  // The session's lock (`<project>/.ctxloom/sessions/<harp>/session.lock`), which
   // the process that starts the engine TAKES before it starts it and holds
   // until the engine has exited and the exit is reported (rulings 85, 92):
   // the frontend for a TERMINAL launch, the daemon for a hosted one. An
