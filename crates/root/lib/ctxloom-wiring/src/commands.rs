@@ -247,8 +247,21 @@ pub fn hosted_engines(wiring: &Wiring, program: &str) -> Vec<daemon_application:
 /// The setup use cases over the process's home, working directory and
 /// project.
 fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
+    let files = Arc::new(SurfaceFiles::new(
+        wiring.fs(),
+        wiring.home().join(".ctxloom/records"),
+    ));
+    build_setup_over(wiring, deps, files)
+}
+
+/// The setup use cases over `files`, the surface store they deliver
+/// through (a recording one in the daemon, step 10c U10).
+pub(crate) fn build_setup_over(
+    wiring: &Wiring,
+    deps: Rc<Deps>,
+    files: Arc<SurfaceFiles>,
+) -> Result<Setup, LibError> {
     let fs = wiring.fs();
-    let home = wiring.home().to_path_buf();
     let cwd = wiring.env().cwd().unwrap_or_else(|_| PathBuf::from("."));
     let (_, app) = wiring.locate();
     let project_dir = match app.source {
@@ -257,10 +270,6 @@ fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
         }
         ctxloom_ports::Source::Home => cwd.clone(),
     };
-    let files = Arc::new(SurfaceFiles::new(
-        Arc::clone(&fs),
-        home.join(".ctxloom/records"),
-    ));
     let library = crate::library::build(wiring, Some(deps.clone()))?;
     Ok(Setup::new(
         library,
@@ -409,6 +418,7 @@ impl Commands {
         let uses = setup_cli::UseCases {
             auth: &wired.setup.auth,
             cleaning: &cleaning,
+            fixing: &cleaning,
             doctor: &wired.setup.doctor,
             init: &wired.setup.init,
             terminal: &terminal,
@@ -586,7 +596,8 @@ impl Commands {
             }
         }
         if SURFACE_NOUNS.contains(&noun) {
-            return surface_cli::run(&wired.surface, noun, call, catalog, out, err);
+            let foreign = crate::library::DaemonServed::new(Arc::clone(&env), version.clone());
+            return surface_cli::run(&wired.surface, &foreign, noun, call, catalog, out, err);
         }
         let ours =
             OWN_NOUNS.contains(&noun) || (noun == "bundle" && deps_cli::is_bundle_verb(&verb));

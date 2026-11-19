@@ -40,6 +40,27 @@ impl ProjectFiles {
         ProjectFiles { fs, app_dir }
     }
 
+    /// Where `install(slot, sha)` puts its tree, below the app directory
+    /// (step 10c U4: the daemon's new directory for it).
+    pub fn install_path(&self, slot: &deps_ports::BundleSlot, sha: &str) -> String {
+        installed::relative_path(self, slot, sha)
+    }
+
+    /// The trees `install(slot, sha)` replaces, below the app directory;
+    /// nothing is removed.
+    pub fn replaced_by(&self, slot: &deps_ports::BundleSlot, sha: &str) -> Vec<String> {
+        installed::replaced(self, slot, sha)
+    }
+
+    /// What `prune(keep)` would take, removing nothing: each tree below the
+    /// app directory, and the identities that would go.
+    ///
+    /// # Errors
+    /// A tree's marker that does not read.
+    pub fn prunable(&self, keep: &[(String, String)]) -> Result<(Vec<String>, Vec<String>), Why> {
+        installed::prunable(self, keep)
+    }
+
     fn read_text(&self, path: &Path) -> Result<Option<String>, Why> {
         match self.fs.read_to_string(path) {
             Ok(text) => Ok(Some(text)),

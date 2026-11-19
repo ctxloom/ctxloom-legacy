@@ -158,6 +158,9 @@ macro_rules! library_writes {
             delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse,
             delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse,
             clean (Clean) CleanRequest => CleanResponse,
+            materialize (Materialize) MaterializeRequest => MaterializeResponse,
+            uninstall_manage (UninstallManage) UninstallManageRequest => UninstallManageResponse,
+            run_doctor (RunDoctor) RunDoctorRequest => RunDoctorResponse,
             distill_fragment (DistillFragment) DistillFragmentRequest => DistillFragmentResponse,
             distill_command (DistillCommand) DistillCommandRequest => DistillCommandResponse,
         }

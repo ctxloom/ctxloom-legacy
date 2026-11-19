@@ -526,6 +526,62 @@ impl<E: Edge + 'static> Calls for Api<E> {
         Box::pin(async move { self.serve_clean(request).await })
     }
 
+    /// `Materialize` (step 10c U10): other tools' files, one sequence.
+    fn materialize(&self, request: v1::MaterializeRequest) -> Answer<'_, v1::MaterializeResponse> {
+        Box::pin(async move {
+            let ask = crate::foreign::ForeignAsk::Materialize(&request);
+            match self
+                .foreign_write(&request, "materialize", ask, request.dry_run)
+                .await?
+            {
+                crate::foreign::ForeignAnswer::Materialized(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("materialize answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `UninstallManage` (step 10c U10): every engine's claims given back.
+    fn uninstall_manage(
+        &self,
+        request: v1::UninstallManageRequest,
+    ) -> Answer<'_, v1::UninstallManageResponse> {
+        Box::pin(async move {
+            let ask = crate::foreign::ForeignAsk::Uninstall;
+            match self
+                .foreign_write(&request, "manage uninstall", ask, false)
+                .await?
+            {
+                crate::foreign::ForeignAnswer::Uninstalled(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("manage uninstall answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `RunDoctor` (step 10c U10 serves its `--fix`; U5 the checks).
+    fn run_doctor(&self, request: v1::RunDoctorRequest) -> Answer<'_, v1::RunDoctorResponse> {
+        Box::pin(async move {
+            if !request.fix {
+                return Err(ApiError::Unimplemented {
+                    method: "RunDoctor without --fix".to_string(),
+                });
+            }
+            let ask = crate::foreign::ForeignAsk::DoctorFix;
+            match self
+                .foreign_write(&request, "doctor --fix", ask, false)
+                .await?
+            {
+                crate::foreign::ForeignAnswer::Fixed(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("doctor --fix answered {other:?}"),
+                }),
+            }
+        })
+    }
+
     /// `DistillFragment` (step 10b, owner 2026-11-18): the model asked as a
     /// run the daemon hosts, its distilled form written once it ends.
     fn distill_fragment(
@@ -660,6 +716,9 @@ pub struct Api<E> {
     /// The engines a live session's re-assembled context is handed through
     /// (step 10c U13); none, `RedeliverContext` answers nothing.
     pub(crate) deliveries: Option<Arc<dyn crate::reactions::Deliveries>>,
+    /// The setup use cases that write other tools' files (step 10c U10);
+    /// none, `Materialize`, `UninstallManage` and `RunDoctor` fail.
+    pub(crate) foreign: Option<Arc<dyn crate::foreign::ForeignPlans>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -678,6 +737,16 @@ impl<E: Edge> Api<E> {
             me: std::sync::OnceLock::new(),
             os: String::new(),
             deliveries: None,
+            foreign: None,
+        }
+    }
+
+    /// The API, other tools' files planned by `plans` (step 10c U10).
+    #[must_use]
+    pub fn writing_foreign(self, plans: Arc<dyn crate::foreign::ForeignPlans>) -> Api<E> {
+        Api {
+            foreign: Some(plans),
+            ..self
         }
     }
 

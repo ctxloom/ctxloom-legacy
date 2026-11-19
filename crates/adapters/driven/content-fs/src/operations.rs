@@ -276,6 +276,57 @@ impl TreeOperations {
 }
 
 /// The last step of a `/`-separated path.
+impl TreeOperations {
+    /// Another tool's file (step 10c U10): written whole, atomically
+    /// beside it, its directories made; or removed, with each directory
+    /// that leaves empty below `keep`. Done already is done.
+    fn outside(
+        &self,
+        path: &Path,
+        bytes: Option<&[u8]>,
+        executable: bool,
+        keep: &Path,
+    ) -> Result<Operated, Failure> {
+        if !path.is_absolute() {
+            return Err(Box::new(ContentError::BadPath {
+                path: path.display().to_string(),
+            }));
+        }
+        let Some(bytes) = bytes else {
+            match self.fs.remove_file(path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                    return Err(failed_at(ContentError::write_file, path, &e))
+                }
+                _ => {}
+            }
+            let mut dir = path.parent();
+            while let Some(here) = dir.filter(|here| *here != keep && here.starts_with(keep)) {
+                let empty = self
+                    .fs
+                    .read_dir(here)
+                    .is_ok_and(|entries| entries.is_empty());
+                if !empty || self.fs.remove_dir_all(here).is_err() {
+                    break;
+                }
+                dir = here.parent();
+            }
+            return Ok(Operated::Done);
+        };
+        if let Some(dir) = path.parent() {
+            self.make_dirs(dir)?;
+        }
+        let perms = if executable {
+            Perms::Exact(Mode::from_bits(0o755))
+        } else {
+            Perms::KeepOr(Mode::FILE)
+        };
+        self.fs
+            .write_atomic(path, bytes, perms)
+            .map_err(|e| failed_at(ContentError::write_file, path, &e))?;
+        Ok(Operated::Done)
+    }
+}
+
 fn leaf(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -307,6 +358,17 @@ impl Operations for TreeOperations {
                 self.purge(&Self::of_request(tree, TRASH_DIR, request_id)?)?;
                 Ok(Operated::Done)
             }
+            Operation::Outside {
+                path,
+                bytes,
+                executable,
+                keep,
+            } => self.outside(
+                Path::new(path),
+                bytes.as_deref(),
+                *executable,
+                Path::new(keep),
+            ),
         }
     }
 

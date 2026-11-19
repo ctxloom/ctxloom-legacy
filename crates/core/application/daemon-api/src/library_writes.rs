@@ -919,6 +919,10 @@ macro_rules! write_requests {
     ($($request:ident . $($field:ident).+ $(, $etag:ident)? ;)*) => {
         $(
             impl LibraryWriteRequest for v1::$request {
+                // What the request writes, its resource or parent: a
+                // request with a field of its own named `target` (a
+                // materialize's, where it writes on disk) is not that.
+                #[allow(clippy::misnamed_getters)]
                 fn target(&self) -> &str {
                     write_requests!(@get self $($field).+)
                 }
@@ -997,6 +1001,9 @@ write_requests! {
     DeleteAgentRequest.name, etag;
     DeleteCompanionRequest.name, etag;
     CleanRequest.project, etag;
+    MaterializeRequest.project, etag;
+    UninstallManageRequest.project, etag;
+    RunDoctorRequest.project, etag;
     DistillFragmentRequest.name;
     DistillCommandRequest.name;
 }

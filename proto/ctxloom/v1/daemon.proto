@@ -559,6 +559,20 @@ service Ctxloom {
   // cache tree there into the trash (each a TrashPath of one sequence,
   // kept 7 days, G12). Additive proto extension, owner ruling 2026-11-18.
   rpc Clean(CleanRequest) returns (CleanResponse);
+  // `materialize`: `projects/{project}:materialize` (AIP-136; step 10c U10,
+  // protos.md §4.2). Planned by the daemon, then written as ONE retryable
+  // sequence: its record of what it claims first, then each other tool's
+  // file a step of its own, every one listed in the intent (L15, T26).
+  // Additive proto extension, step 10c U10.
+  rpc Materialize(MaterializeRequest) returns (MaterializeResponse);
+  // `manage uninstall`: `projects/{project}:uninstallManage` (AIP-136; step
+  // 10c U10), every engine's claims given back as `Materialize` writes.
+  // Additive proto extension, step 10c U10.
+  rpc UninstallManage(UninstallManageRequest) returns (UninstallManageResponse);
+  // `doctor`: `projects/{project}:runDoctor` (AIP-136; step 10c U10 serves
+  // its `--fix`, the stale hook entries taken out as `Materialize` writes;
+  // U5 adds the checks). Additive proto extension, step 10c U10.
+  rpc RunDoctor(RunDoctorRequest) returns (RunDoctorResponse);
   // (-- endregion --)
 
   // `search`: `projects/{project}:searchLibrary` (AIP-136, stateless).

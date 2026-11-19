@@ -513,6 +513,43 @@ impl setup_cli::Cleaning for DaemonServed {
     }
 }
 
+/// The setup writes of other tools' files through the daemon (step 10c
+/// U10), as a library write is sent.
+impl surface_cli::Foreign for DaemonServed {
+    fn materialize(
+        &self,
+        request: daemon_proto::v1::MaterializeRequest,
+    ) -> Result<daemon_proto::v1::MaterializeResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.materialize("", request))
+    }
+
+    fn uninstall(
+        &self,
+        request: daemon_proto::v1::UninstallManageRequest,
+    ) -> Result<daemon_proto::v1::UninstallManageResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.uninstall_manage("", request))
+    }
+}
+
+/// `doctor --fix` through the daemon (step 10c U10).
+impl setup_cli::DoctorFixing for DaemonServed {
+    fn fix(
+        &self,
+        request: daemon_proto::v1::RunDoctorRequest,
+    ) -> Result<daemon_proto::v1::RunDoctorResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.run_doctor("", request))
+    }
+}
+
 impl deps_cli::Served for DaemonServed {
     deps_cli::served_reads!(served_read);
 

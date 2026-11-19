@@ -878,3 +878,30 @@ fn a_doctor_reporting_the_holds_has_their_row_before_the_stated_limit() {
     // Doctor's json says the row as the others are said.
     assert!(!report.failed(), "a warning is advisory");
 }
+
+// Step 10c U10: a doctor writing through other files reads and writes
+// them alone, so the daemon's recording one plans its fix and writes none.
+#[test]
+fn a_doctor_writing_through_other_files_fixes_them_and_leaves_its_own() {
+    let mem = retired(project());
+    let stale =
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"ctxloom hook inject-context abc"}]}]}}"#;
+    let through = Arc::new(Mem::default());
+    for files in [&mem, &through] {
+        files
+            .files
+            .lock()
+            .unwrap()
+            .insert("/work/.claude/settings.json".to_string(), stale.to_string());
+    }
+    let doctor = doctor(&mem, true).writing_through(through.clone());
+    assert_eq!(doctor.fix().unwrap().len(), 1);
+    assert_eq!(
+        mem.files.lock().unwrap()["/work/.claude/settings.json"],
+        stale,
+        "its own files were written"
+    );
+    assert!(
+        !through.files.lock().unwrap()["/work/.claude/settings.json"].contains("inject-context")
+    );
+}

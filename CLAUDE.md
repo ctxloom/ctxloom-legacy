@@ -370,6 +370,37 @@ command's `CTXLOOM_TEST_NO_RETRY` turns the client's one retry off
 (`Client::without_retry`), so what a killed daemon left is left. Every
 other write still runs in process until it is served.
 
+Other tools' files are the daemon's too (step 10c U10, L15, T26):
+`materialize`, `manage uninstall` and `doctor --fix` are served
+(`Materialize`, `UninstallManage`, `RunDoctor` with `fix`; additive RPCs;
+`surface_cli::Foreign`, setup-cli's `DoctorFixing`, the wiring's
+`DaemonServed`). The daemon runs the use case where the caller stands
+(`daemon_api::ForeignPlans`, the wiring's `daemon::foreign`) over a
+RECORDING store that writes nothing (`SurfaceFiles::recording`, its own
+reads seeing what it recorded; the doctor's `writing_through` recording
+user files), then writes what it recorded as ONE sequence on the
+checkout's stream (`Api::foreign_write`): the writer's claims record
+(`<home>/.ctxloom/records/*.claims.yaml`) first, then each file a
+`ReplaceFile` marked `foreign` (project-relative, or absolute outside the
+project), every path and git's id for it listed in the intent
+(`Intent.foreign`, `RunSequence.foreign`), each made by
+`Operation::Outside` (written whole beside itself, as an engine's files
+always were, or removed with the directories that leaves empty below its
+`keep`) and recorded done, so its retry resumes at the first step not done
+(a removal the re-plan no longer holds is made from its intent alone),
+and a re-run converges. The domain refuses a foreign step anywhere but a
+sequence of a foreign writer's verb (`library_tree::FOREIGN_WRITERS`,
+`PlanRejected` `library-tree-foreign-outside-writer`, a bug), judges no
+token of one, and folds its `StepApplied` into `LibraryState.foreign`,
+never `resources` or the dirty set. The kill point after the `n`th step
+is `step-<n>`. A use case's own error is answered in band (the response's
+`error` and `exit`, said from the client's catalog), so its exit is what
+it always was. `materialize --diff` and `manage install`'s refresh (and a
+pull's) still deliver in process. The cache's install facts are in the
+domain (`RecordTreeInstalled` completes a pending create step as
+`TreeInstalled`, its cache path tied to its sequence in `resources`);
+nothing sends one yet (U4's pull is not served).
+
 Slice S4 (sessions) built the following. The record is the user's durable
 store (owner rulings 87a, T14, which reverses 87's store per project): a
 session's state goes through angzarr-embedded over the ONE per-user

@@ -818,6 +818,12 @@ fn served(
                 temp: temp.to_path_buf(),
             }))
             .handing_off(super::files::api_hand_offs(fs, (home, temp), engines))
+            // Other tools' files, planned where the caller stands and
+            // written as one sequence (step 10c U10).
+            .writing_foreign(Arc::new(super::foreign::ForeignWriters {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+            }))
             // The trusts it reads (step 8 U1).
             .trusting(trusting(kept, (home, temp)))
             // The asks it records and reads (step 8 U4).

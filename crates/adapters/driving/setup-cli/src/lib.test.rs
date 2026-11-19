@@ -321,6 +321,30 @@ fn go_with(
 /// `clean` as the daemon makes it, in process over the test's world.
 struct CleaningIn(Cleaner);
 
+/// `doctor --fix` as the daemon makes it: the doctor's own fix, its
+/// removals said as the API says them.
+struct FixingIn<'a>(&'a Doctor);
+
+impl super::DoctorFixing for FixingIn<'_> {
+    fn fix(
+        &self,
+        _: daemon_proto::v1::RunDoctorRequest,
+    ) -> Result<daemon_proto::v1::RunDoctorResponse, Failure> {
+        let removed = self.0.fix().map_err(|e| Failure::boxed(e, Exit::FAILED))?;
+        Ok(daemon_proto::v1::RunDoctorResponse {
+            removed: removed
+                .into_iter()
+                .map(|r| daemon_proto::v1::RemovedHook {
+                    file: r.file,
+                    event: r.event,
+                    sub: r.sub,
+                })
+                .collect(),
+            ..daemon_proto::v1::RunDoctorResponse::default()
+        })
+    }
+}
+
 impl super::Cleaning for CleaningIn {
     fn clean(
         &self,
@@ -383,6 +407,7 @@ fn go_with_companions(
     let uses = UseCases {
         auth: &auth,
         cleaning: &CleaningIn(cleaner),
+        fixing: &FixingIn(&doctor),
         doctor: &doctor,
         init: &init,
         terminal: person,
@@ -1008,6 +1033,7 @@ fn a_noun_the_line_does_not_carry_is_a_usage_failure() {
     let uses = UseCases {
         auth: &auth,
         cleaning: &CleaningIn(cleaner),
+        fixing: &FixingIn(&doctor),
         doctor: &doctor,
         init: &init,
         terminal: &Person::default(),

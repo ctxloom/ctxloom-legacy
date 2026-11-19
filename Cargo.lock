@@ -5148,6 +5148,8 @@ dependencies = [
  "angzarr-presentation",
  "clap",
  "cli-support",
+ "daemon-proto",
+ "library-api",
  "library-application",
  "serde",
  "serde_json",

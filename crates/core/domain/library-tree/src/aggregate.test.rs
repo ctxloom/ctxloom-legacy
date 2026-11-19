@@ -1392,3 +1392,177 @@ fn test_a_bundle_exported_is_recorded_as_made_and_changes_no_resource() {
     );
     assert_eq!(tree.library().resources, before);
 }
+
+// region foreign writers (step 10c U10, L15, T26)
+
+/// A foreign `ReplaceFile`: another tool's file, project-relative.
+fn foreign(path: &str, seen: u64) -> ReplaceFile {
+    ReplaceFile {
+        foreign: true,
+        verb: "materialize".to_string(),
+        ..replace(path, seen)
+    }
+}
+
+fn foreign_file(path: &str, oid: &str) -> crate::ForeignFile {
+    crate::ForeignFile {
+        path: path.to_string(),
+        new_oid: oid.to_string(),
+    }
+}
+
+#[test]
+fn a_foreign_writers_sequence_lists_its_files_in_its_intent_and_judges_no_token_of_theirs() {
+    let mut tree = Tree::baselined();
+    // A library path of the same name moved on: a foreign step is never
+    // judged on a library token (no client is given one).
+    tree.observe(edit("CLAUDE.md", "c1"));
+    let mut cmd = sequence(vec![
+        step_of(
+            Some(foreign("/home/a/.ctxloom/records/x.claims.yaml", 0)),
+            None,
+            None,
+        ),
+        step_of(Some(foreign("CLAUDE.md", 0)), None, None),
+    ]);
+    cmd.verb = "materialize".to_string();
+    cmd.foreign = vec![
+        foreign_file("/home/a/.ctxloom/records/x.claims.yaml", "r1"),
+        foreign_file("CLAUDE.md", "c2"),
+    ];
+    let events = tree.command(cmd.clone()).unwrap();
+    let [LibraryEvent::ChangeIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(intended.intent.foreign, cmd.foreign);
+    assert_eq!(intended.intent.verb, "materialize");
+    assert_eq!(intended.intent.steps.len(), 2);
+}
+
+#[test]
+fn a_foreign_file_outside_a_foreign_writers_sequence_is_a_plan_rejection() {
+    let mut tree = Tree::baselined();
+    let rejected = |code: &str| {
+        Err(LibraryTreeRejection::PlanRejected {
+            code: code.to_string(),
+            args: BTreeMap::new(),
+        })
+    };
+    // Alone, as a command of its own.
+    assert_eq!(
+        tree.command(foreign("CLAUDE.md", 0)),
+        rejected(crate::FOREIGN_OUTSIDE_WRITER)
+    );
+    // In the sequence of a verb that writes no other tool's files.
+    let mut cmd = sequence(vec![step_of(Some(foreign("CLAUDE.md", 0)), None, None)]);
+    cmd.verb = "bundle import".to_string();
+    assert_eq!(tree.command(cmd), rejected(crate::FOREIGN_OUTSIDE_WRITER));
+    // Each foreign writer's verb takes one.
+    for verb in crate::FOREIGN_WRITERS {
+        let mut cmd = sequence(vec![step_of(Some(foreign("CLAUDE.md", 0)), None, None)]);
+        cmd.verb = (*verb).to_string();
+        assert_eq!(tree.command(cmd).map(|e| e.len()), Ok(1), "{verb}");
+    }
+    assert_eq!(tree.event_count(), 1 + crate::FOREIGN_WRITERS.len());
+}
+
+#[test]
+fn a_foreign_steps_done_is_folded_apart_from_the_library_and_moves_no_token() {
+    let mut tree = Tree::baselined();
+    let mut cmd = sequence(vec![
+        step_of(Some(foreign("CLAUDE.md", 0)), None, None),
+        step_of(Some(replace("lock.yaml", 0)), None, None),
+    ]);
+    cmd.verb = "materialize".to_string();
+    cmd.foreign = vec![foreign_file("CLAUDE.md", "c2")];
+    let [LibraryEvent::ChangeIntended(intended)] = &tree.command(cmd).unwrap()[..] else {
+        panic!("no intent")
+    };
+    let request = intended.intent.request_id.clone();
+    let events = tree.fact(done(&request, 0, &[("CLAUDE.md", "c2")]), "done:0");
+    assert_eq!(events.len(), 1, "{events:?}");
+    let library = tree.library();
+    assert_eq!(library.foreign.get("CLAUDE.md"), Some(&resource(2, "c2")));
+    assert_eq!(library.resources.get("CLAUDE.md"), None);
+    assert_eq!(library.dirty.get("CLAUDE.md"), None);
+    assert_eq!(library.token("CLAUDE.md"), 0);
+    // The library step after it is the library's as ever.
+    tree.fact(done(&request, 1, &[("lock.yaml", "l1")]), "done:1");
+    let library = tree.library();
+    assert_eq!(library.resources.get("lock.yaml"), Some(&resource(3, "l1")));
+    assert_eq!(library.foreign.get("lock.yaml"), None);
+    assert!(library.pending.is_empty());
+    assert_eq!(
+        library
+            .wire()
+            .foreign
+            .get("CLAUDE.md")
+            .map(|r| (r.sequence, r.oid.as_str())),
+        Some((2, "c2"))
+    );
+}
+
+// region install facts (step 10c U4, L9, protos.md §1.2)
+
+const CACHE_TREE: &str = "cache/bundles/example.com/r/demo/abc123";
+
+fn installed(request: &str, step: u32) -> crate::RecordTreeInstalled {
+    crate::RecordTreeInstalled {
+        request_id: request.to_string(),
+        step,
+        identity: "ctxloom+file:///r//bundles/demo".to_string(),
+        sha: "abc123".to_string(),
+        tree: "t-demo".to_string(),
+    }
+}
+
+/// A pull's intent: the tree's new directory, then the lock.
+fn pulled(tree: &mut Tree) -> String {
+    let steps = vec![
+        Step {
+            replace: None,
+            create: Some(create(CACHE_TREE)),
+            trash: None,
+            r#move: None,
+            purge: None,
+        },
+        step_of(Some(replace("lock.yaml", 0)), None, None),
+    ];
+    let [LibraryEvent::ChangeIntended(intended)] = &tree.command(sequence(steps)).unwrap()[..]
+    else {
+        panic!("no intent")
+    };
+    intended.intent.request_id.clone()
+}
+
+#[test]
+fn a_tree_installed_completes_its_create_and_ties_its_cache_path_to_its_sequence() {
+    let mut tree = Tree::baselined();
+    let request = pulled(&mut tree);
+    let events = tree.fact(installed(&request, 0), "installed:0");
+    let [LibraryEvent::TreeInstalled(got)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(
+        (got.step, got.sha.as_str(), got.tree.as_str()),
+        (0, "abc123", "t-demo")
+    );
+    assert_eq!(got.identity, "ctxloom+file:///r//bundles/demo");
+    let library = tree.library();
+    assert_eq!(
+        library.resources.get(CACHE_TREE),
+        Some(&resource(2, "t-demo"))
+    );
+    assert_eq!(library.pending.get(&request).map(|i| i.done), Some(1));
+    // The same fact again records nothing; a step not next records nothing.
+    assert!(tree
+        .fact(installed(&request, 0), "installed:0-again")
+        .is_empty());
+    assert!(tree.fact(installed(&request, 1), "installed:1").is_empty());
+    assert!(tree
+        .fact(installed("nobody", 0), "installed:nobody")
+        .is_empty());
+    // The lock, the sequence's last step, completes it.
+    tree.fact(done(&request, 1, &[("lock.yaml", "l1")]), "done:1");
+    assert!(tree.library().pending.is_empty());
+}

@@ -248,7 +248,19 @@ mod commands_run {
             },
         };
         let mut err = Vec::new();
-        let exit = run(&world.setup, &noun, &call, &catalog(), out, &mut err);
+        let foreign = crate::wire::InProcess {
+            setup: &world.setup,
+            notice_of: &said,
+        };
+        let exit = run(
+            &world.setup,
+            &foreign,
+            &noun,
+            &call,
+            &catalog(),
+            out,
+            &mut err,
+        );
         let ran = Ran {
             exit,
             out: String::new(),
@@ -283,6 +295,10 @@ mod commands_run {
         };
         let failure = run(
             &world.setup,
+            &crate::wire::InProcess {
+                setup: &world.setup,
+                notice_of: &said,
+            },
             "materialize",
             &call,
             &catalog(),
@@ -321,6 +337,10 @@ mod commands_run {
         let mut out = Vec::new();
         run(
             &world.setup,
+            &crate::wire::InProcess {
+                setup: &world.setup,
+                notice_of: &said,
+            },
             "manage",
             &call,
             &catalog(),
@@ -333,6 +353,10 @@ mod commands_run {
         let mut out = Vec::new();
         run(
             &world.setup,
+            &crate::wire::InProcess {
+                setup: &world.setup,
+                notice_of: &said,
+            },
             "manage",
             &call,
             &catalog(),
@@ -500,6 +524,10 @@ mod commands_run {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let exit = run(
             &world.setup,
+            &crate::wire::InProcess {
+                setup: &world.setup,
+                notice_of: &said,
+            },
             "materialize",
             &call,
             &catalog(),
@@ -637,6 +665,10 @@ mod commands_run {
         let mut out = Vec::new();
         let failure = run(
             &world.setup,
+            &crate::wire::InProcess {
+                setup: &world.setup,
+                notice_of: &said,
+            },
             "materialize",
             &call,
             &catalog(),
@@ -710,8 +742,13 @@ mod commands_run {
             let setup = world(CONFIG).setup.with_foreign(files.clone());
             let matches = parse(line);
             let (_, sub) = matches.subcommand().expect("util");
+            let foreign = crate::wire::InProcess {
+                setup: &setup,
+                notice_of: &said,
+            };
             let cx = Context {
                 setup: &setup,
+                foreign: &foreign,
                 flags: Flags::default(),
                 format,
                 catalog: &catalog(),
@@ -747,8 +784,13 @@ mod commands_run {
             let setup = world(CONFIG).setup;
             let matches = parse(WRITE);
             let (_, sub) = matches.subcommand().unwrap();
+            let foreign = crate::wire::InProcess {
+                setup: &setup,
+                notice_of: &said,
+            };
             let cx = Context {
                 setup: &setup,
+                foreign: &foreign,
                 flags: Flags::default(),
                 format: Format::Text,
                 catalog: &catalog(),
@@ -762,8 +804,13 @@ mod commands_run {
             let matches = parse(&["util"]);
             let (_, sub) = matches.subcommand().unwrap();
             let setup = world(CONFIG).setup;
+            let foreign = crate::wire::InProcess {
+                setup: &setup,
+                notice_of: &said,
+            };
             let cx = Context {
                 setup: &setup,
+                foreign: &foreign,
                 flags: Flags::default(),
                 format: Format::Text,
                 catalog: &catalog(),
@@ -779,5 +826,14 @@ mod commands_run {
                 Exit::OK
             );
         }
+    }
+}
+
+/// A diagnostic as the API says a notice: its code and en-US text.
+fn said(cause: &dyn angzarr_diagnostic::Diagnostic) -> daemon_proto::v1::Notice {
+    daemon_proto::v1::Notice {
+        code: cause.code().to_string(),
+        text: cause.to_string(),
+        ..daemon_proto::v1::Notice::default()
     }
 }

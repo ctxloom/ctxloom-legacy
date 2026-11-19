@@ -71,6 +71,10 @@ pub struct Library {
     /// Whether ctxloom made this tree a repository of its own (G3): only
     /// then are its writes committed.
     pub home_repository_made: bool,
+    /// Each foreign writer's file (step 10c U10, L15), project-relative,
+    /// at the sequence of the step that wrote it: a record only, never
+    /// observed and never a token.
+    pub foreign: BTreeMap<String, Resource>,
 }
 
 /// The cause an event's page names: a fact's external id, else the
@@ -153,9 +157,7 @@ impl Library {
             LibraryEvent::HomeRepositoryMade(_) => self.home_repository_made = true,
             // The read model keeps it; the tree is as it was.
             LibraryEvent::BundleExported(_) => {}
-            // Step 10c U4 folds an installed tree into `resources` under its
-            // cache path (protos.md §1.2); nothing records one yet.
-            LibraryEvent::TreeInstalled(_) => {}
+            LibraryEvent::TreeInstalled(installed) => self.installed(installed, sequence),
         }
         self.last_cause = cause;
     }
@@ -238,8 +240,28 @@ impl Library {
     }
 
     fn applied(&mut self, applied: &StepApplied, sequence: u64) {
-        self.dirty = self.dirty_after(&applied.observed);
-        for observed in &applied.observed {
+        let foreign = self
+            .pending
+            .get(&applied.request_id)
+            .and_then(|intent| intent.steps.get(applied.step as usize))
+            .and_then(|step| step.replace.as_ref())
+            .is_some_and(|replace| replace.foreign);
+        if foreign {
+            // Another tool's file: recorded apart, and the library (its
+            // dirty set and its tokens) is as it was.
+            for observed in &applied.observed {
+                self.foreign.insert(
+                    observed.path.clone(),
+                    Resource {
+                        sequence,
+                        oid: observed.oid.clone(),
+                    },
+                );
+            }
+        } else {
+            self.dirty = self.dirty_after(&applied.observed);
+        }
+        for observed in applied.observed.iter().filter(|_| !foreign) {
             self.resources.insert(
                 observed.path.clone(),
                 Resource {
@@ -261,6 +283,31 @@ impl Library {
         intent.done = intent.done.max(applied.step + 1);
         if intent.done as usize >= intent.steps.len() {
             self.pending.remove(&applied.request_id);
+        }
+    }
+
+    /// A tree installed into the cache (step 10c U4): its create step done,
+    /// and its directory's path tied to this sequence and the tree's id.
+    fn installed(&mut self, installed: &crate::TreeInstalled, sequence: u64) {
+        let Some(intent) = self.pending.get_mut(&installed.request_id) else {
+            return;
+        };
+        if let Some(create) = intent
+            .steps
+            .get(installed.step as usize)
+            .and_then(|step| step.create.as_ref())
+        {
+            self.resources.insert(
+                create.path.clone(),
+                Resource {
+                    sequence,
+                    oid: installed.tree.clone(),
+                },
+            );
+        }
+        intent.done = intent.done.max(installed.step + 1);
+        if intent.done as usize >= intent.steps.len() {
+            self.pending.remove(&installed.request_id);
         }
     }
 
@@ -330,9 +377,19 @@ impl Library {
                 .collect(),
             baseline_sequence: self.baseline_sequence,
             home_repository_made: self.home_repository_made,
-            // Step 10c U10 folds a foreign writer's steps here (protos.md
-            // §1.1); none is recorded yet.
-            foreign: Default::default(),
+            foreign: self
+                .foreign
+                .iter()
+                .map(|(path, resource)| {
+                    (
+                        path.clone(),
+                        wire::Resource {
+                            sequence: resource.sequence,
+                            oid: resource.oid.clone(),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }

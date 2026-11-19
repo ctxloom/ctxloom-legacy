@@ -107,6 +107,14 @@ impl Doctor {
         }
     }
 
+    /// The doctor, its files (what `--fix` reads and writes) `files`: a
+    /// recording store's in the daemon (step 10c U10), whose write is then
+    /// one sequence of the files it would have written.
+    #[must_use]
+    pub fn writing_through(self, files: Arc<dyn UserFiles>) -> Doctor {
+        Doctor { files, ..self }
+    }
+
     /// This doctor, reporting what `held` holds, judged by this ctxloom's
     /// stamp `own` (the one a command flushes as) at `now`, seconds since
     /// the epoch (s4-Q14, H4).

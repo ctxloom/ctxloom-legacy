@@ -49,6 +49,12 @@ pub trait Cleaning {
     fn clean(&self, request: v1::CleanRequest) -> Result<v1::CleanResponse, Failure>;
 }
 
+/// `doctor --fix` through the daemon (step 10c U10): the stale entries
+/// taken out as one sequence of other tools' files.
+pub trait DoctorFixing {
+    fn fix(&self, request: v1::RunDoctorRequest) -> Result<v1::RunDoctorResponse, Failure>;
+}
+
 /// The report `answered` says, as `clean` has always printed it.
 pub fn report_of(answered: &v1::CleanResponse) -> CleanReport {
     CleanReport {
@@ -73,6 +79,8 @@ pub struct UseCases<'a> {
     pub auth: &'a Auth,
     /// `clean`, the daemon's (step 10b U9).
     pub cleaning: &'a dyn Cleaning,
+    /// `doctor --fix`, the daemon's (step 10c U10).
+    pub fixing: &'a dyn DoctorFixing,
     pub doctor: &'a Doctor,
     pub init: &'a Init,
     /// Whether a person is there, and her answer.
@@ -193,11 +201,19 @@ fn doctor(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     if sub.get_flag("fix") {
-        let removed = uses
-            .doctor
-            .fix()
-            .map_err(|e| Failure::boxed(e, Exit::FAILED))?;
-        for r in &removed {
+        let answered = uses.fixing.fix(v1::RunDoctorRequest {
+            fix: true,
+            deps: sub.get_flag("deps"),
+            all: sub.get_flag("all"),
+            ..v1::RunDoctorRequest::default()
+        })?;
+        if let Some(error) = &answered.error {
+            return Err(Failure::new(
+                library_api::reads::reported(error),
+                Exit::FAILED,
+            ));
+        }
+        for r in &answered.removed {
             let _ = writeln!(
                 err,
                 "removed stale hook entry: {} runs `ctxloom hook {}` in {}",

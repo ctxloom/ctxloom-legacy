@@ -23,6 +23,13 @@ pub fn said(notice: &v1::Notice) -> library_application::Notice {
     run_application::client::noticed(notice)
 }
 
+/// The diagnostic a daemon's notice said (its code and flattened args,
+/// rebuilt), for a client to say in its own catalog's words or end a
+/// command with (step 10c U10: a setup use case's error, in band).
+pub fn reported(notice: &v1::Notice) -> angzarr_diagnostic::Report {
+    run_application::client::report_of(&notice.code, &notice.args)
+}
+
 /// A notice a read said, as the daemon answers it: its code, flattened
 /// args and text.
 pub fn notice_of(notice: &library_application::Notice) -> v1::Notice {

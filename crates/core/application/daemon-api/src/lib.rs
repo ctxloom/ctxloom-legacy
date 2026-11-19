@@ -59,6 +59,7 @@ mod clean;
 mod client;
 mod destroy;
 mod distill;
+mod foreign;
 mod hand_off;
 mod hand_over;
 pub mod launch;
@@ -87,6 +88,7 @@ pub use client::{
     newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,
 };
 pub use destroy::{Places, Purges};
+pub use foreign::{ForeignAnswer, ForeignAsk, ForeignPlanned, ForeignPlans, ForeignPut};
 pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
 pub use hand_over::HandingOver;
 pub use library_api::premise::{render_premise_index, Shown};

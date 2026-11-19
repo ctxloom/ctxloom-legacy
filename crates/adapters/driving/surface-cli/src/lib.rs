@@ -8,6 +8,7 @@
 
 mod commands;
 mod text;
+pub mod wire;
 
 use cli_support::{Exit, ExitClass};
 use std::io::{self, Read, Write};
@@ -15,10 +16,12 @@ use std::io::{self, Read, Write};
 use angzarr_presentation::{Catalog, Format};
 use clap::ArgMatches;
 use cli_support::{flag, many, one, say_notices};
+use daemon_proto::v1;
 use library_application::Flags;
 use serde::Serialize;
 use setup_application::{
-    DiffRequest, InstallRequest, MaterializeRequest, Setup, SetupError, SurfaceSpec,
+    DiffRequest, EngineOutcome, InstallRequest, MaterializeResult, NotCarried, Setup, SetupError,
+    SurfaceSpec, UninstallReport,
 };
 
 pub use commands::nouns;
@@ -47,8 +50,70 @@ fn failed(error: SetupError) -> Failure {
     error.into_failure()
 }
 
+/// The setup writes the daemon makes (step 10c U10): other tools' files,
+/// written as one sequence of its own.
+pub trait Foreign {
+    fn materialize(
+        &self,
+        request: v1::MaterializeRequest,
+    ) -> Result<v1::MaterializeResponse, Failure>;
+    fn uninstall(
+        &self,
+        request: v1::UninstallManageRequest,
+    ) -> Result<v1::UninstallManageResponse, Failure>;
+}
+
+/// A use case's error the daemon answered in band (its code and args, said
+/// from this catalog), ending the command with the exit it said.
+fn in_band(error: Option<&v1::Notice>, exit: i32) -> Result<(), Failure> {
+    let Some(error) = error else {
+        return Ok(());
+    };
+    let exit = match u8::try_from(exit).unwrap_or(10) {
+        20 => Exit::REFUSED,
+        21 => Exit::FATAL_FINDINGS,
+        _ => Exit::FAILED,
+    };
+    Err(Failure::new(library_api::reads::reported(error), exit))
+}
+
+/// The report a materialize's answer says, as it has always been printed.
+pub fn materialize_report(answered: &v1::MaterializeResponse) -> MaterializeResult {
+    MaterializeResult {
+        target: answered.target.clone(),
+        created: answered.created,
+        profiles: answered.profiles.clone(),
+        engines: answered
+            .engines
+            .iter()
+            .map(|engine| EngineOutcome {
+                engine: engine.engine.clone(),
+                wrote: engine.wrote.clone(),
+                released: engine.released.clone(),
+                context_file: engine.context_file.clone(),
+                not_carried: engine
+                    .not_carried
+                    .iter()
+                    .map(|lost| NotCarried {
+                        surface: lost.surface.clone(),
+                        reason: lost.reason.clone(),
+                    })
+                    .collect(),
+                skipped: engine.skipped.clone(),
+                warnings: engine.warnings.clone(),
+                refused: Vec::new(),
+            })
+            .collect(),
+        status: answered.status.clone(),
+        errors: answered.errors.clone(),
+        warnings: answered.warnings.clone(),
+        failures: Vec::new(),
+    }
+}
+
 struct Context<'a> {
     setup: &'a Setup,
+    foreign: &'a dyn Foreign,
     flags: Flags,
     format: Format,
     catalog: &'a Catalog,
@@ -57,6 +122,7 @@ struct Context<'a> {
 /// Run `noun` (given the matches of the whole line).
 pub fn run(
     setup: &Setup,
+    foreign: &dyn Foreign,
     noun: &str,
     call: &Call<'_>,
     catalog: &Catalog,
@@ -70,6 +136,7 @@ pub fn run(
     });
     let cx = Context {
         setup,
+        foreign,
         flags: call.globals.clone(),
         format,
         catalog,
@@ -133,7 +200,18 @@ fn manage(
             emit(cx, out, &done.value, |w| text::install(w, &done.value))?;
         }
         "uninstall" => {
-            let report = cx.setup.uninstall().map_err(failed)?;
+            let answered = cx.foreign.uninstall(v1::UninstallManageRequest {
+                globals: Some(library_api::reads::globals_of(&cx.flags)),
+                ..v1::UninstallManageRequest::default()
+            })?;
+            say_v1(cx, &answered.notices, err);
+            in_band(answered.error.as_ref(), answered.exit)?;
+            let report = UninstallReport {
+                status: answered.status,
+                backends: answered.backends,
+                errors: answered.errors,
+                note: answered.note,
+            };
             emit(cx, out, &report, |w| text::uninstall(w, &report))?;
             if let Some(first) = report.errors.first() {
                 return Err(failed(SetupError::Request {
@@ -190,6 +268,12 @@ fn manage(
     Ok(Exit::OK)
 }
 
+/// The daemon's notices, said as the use case's own were.
+fn say_v1(cx: &Context<'_>, notices: &[v1::Notice], err: &mut dyn Write) {
+    let said: Vec<_> = notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, cx.format, cx.catalog, err);
+}
+
 #[derive(Serialize)]
 struct StatuslineAnswer {
     status: &'static str,
@@ -229,28 +313,32 @@ fn materialize(
         })?;
         return Ok(Exit::OK);
     }
-    let request = MaterializeRequest {
+    // Parsed above so a malformed one is refused before the daemon is
+    // asked; the daemon parses what it is sent.
+    let _ = surfaces;
+    let answered = cx.foreign.materialize(v1::MaterializeRequest {
         profiles: many(args, "profiles"),
-        target: one(args, "target"),
+        target: one(args, "target").unwrap_or_default(),
         yes: flag(args, "yes"),
-        engines: many(args, "backend"),
-        surfaces,
+        backends: many(args, "backend"),
+        surfaces: many(args, "surface"),
         release: flag(args, "release"),
         dry_run: flag(args, "dry-run"),
-        leave_launch_context: false,
-        flags: cx.flags.clone(),
-    };
-    let mut done = cx.setup.materialize(&request).map_err(failed)?;
-    say_notices(&done.notices, PROG, cx.format, cx.catalog, err);
-    for failure in &done.value.failures {
-        done.value.errors.push(cx.catalog.message(failure));
-    }
-    emit(cx, out, &done.value, |w| text::materialize(w, &done.value))?;
+        globals: Some(library_api::reads::globals_of(&cx.flags)),
+        ..v1::MaterializeRequest::default()
+    })?;
+    say_v1(cx, &answered.notices, err);
+    in_band(answered.error.as_ref(), answered.exit)?;
+    let report = materialize_report(&answered);
+    emit(cx, out, &report, |w| text::materialize(w, &report))?;
     // A delivery that was refused leaves the file as it was, and the command
     // is refused (ruling 152): a script gating on the exit code must not
     // believe it landed.
-    match done.value.failures.into_iter().next() {
-        Some(first) => Err(Failure::new(first, Exit::REFUSED)),
+    match answered.failures.first() {
+        Some(first) => Err(Failure::new(
+            library_api::reads::reported(first),
+            Exit::REFUSED,
+        )),
         None => Ok(Exit::OK),
     }
 }

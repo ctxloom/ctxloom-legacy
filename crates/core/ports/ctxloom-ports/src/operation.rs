@@ -10,7 +10,10 @@
 //!   request, `state/trash/<request id>/<path>`;
 //! - [`Operation::Move`]: one path renamed to another, never over one;
 //! - [`Operation::Purge`]: the request's own trash slot removed whole (a
-//!   sequence's last step, T28, so it leaves no trash; G12(a)).
+//!   sequence's last step, T28, so it leaves no trash; G12(a));
+//! - [`Operation::Outside`]: ANOTHER tool's file (step 10c U10, L15), at
+//!   its absolute path outside every tree, written whole (atomically,
+//!   beside it, as that tool's own files always were) or removed.
 //!
 //! Nothing is ever staged beside its target: staging and trash are below
 //! the tree's `state/` (gitignored, outside the library's pathspec). Every
@@ -48,6 +51,16 @@ pub enum Operation {
     },
     /// The trash slot of the request removed whole; none there is done.
     Purge,
+    /// Another tool's file at the ABSOLUTE `path`: `bytes` written whole
+    /// (`executable` gives it 0755), or (none) removed with the directories
+    /// that leaves empty, up to and never including `keep`. What is there
+    /// already is done: a re-run converges.
+    Outside {
+        path: String,
+        bytes: Option<Vec<u8>>,
+        executable: bool,
+        keep: String,
+    },
 }
 
 /// A point an operation reaches, where a test-support switch may stop the

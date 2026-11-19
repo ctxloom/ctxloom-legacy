@@ -100,6 +100,9 @@ pub(super) struct State {
     stub_on_path: bool,
     /// What the interactive session's command came to, once it ended.
     session_ran: Option<crate::tests::Ran>,
+    /// A foreign writer killed after one of its steps (step 10c U10): its
+    /// command, and the file its run must leave as it says.
+    foreign_run: Option<(String, Leaves)>,
     /// A command a step started and left running (`I start ...`), for a
     /// later step to wait for.
     started: Option<Child>,
@@ -1701,8 +1704,68 @@ fn old_and_new_notes(w: &mut World) {
     );
 }
 
+/// What a foreign writer's run leaves (step 10c U10), project-relative: a
+/// file holding a text, or a file gone, or a file without a text.
+#[derive(Clone, Debug)]
+pub(super) enum Leaves {
+    Holding(&'static str, &'static str),
+    Without(&'static str, &'static str),
+    Gone(&'static str),
+}
+
+/// `after step <n> of '<command>'`: the kill point after a foreign
+/// writer's `n`th step, and the command.
+fn foreign_step(when: &str) -> Option<(usize, String)> {
+    let rest = when.strip_prefix("after step ")?;
+    let (n, command) = rest.split_once(" of '")?;
+    Some((n.parse().ok()?, command.strip_suffix('\'')?.to_string()))
+}
+
+/// A Go-era hook entry `doctor --fix` takes out (once Go is retired).
+const STALE_HOOK: &str = "ctxloom hook inject-context abc";
+
+/// What `command` presupposes, planted (a stale hook to take out, claims to
+/// give back), and what its run must leave.
+fn foreign_presupposed(w: &mut World, command: &str) -> Leaves {
+    match command {
+        "ctxloom doctor --fix" => {
+            // Its report passes, so the run's exit is the fix's: an agent
+            // credential is exported (doctor's credentials row).
+            w.common
+                .set_env("CLAUDE_CODE_OAUTH_TOKEN", "not-a-real-token".to_string());
+            let home_config = w.common.project.home().join(".ctxloom/config.yaml");
+            let said = files::read(&home_config).unwrap_or_default();
+            files::put(&home_config, format!("{said}legacy:\n  go: retired\n"));
+            files::put(
+                w.common.project.dir().join(".claude/settings.json"),
+                format!(
+                    r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{STALE_HOOK}"}}]}}]}}}}"#
+                ),
+            );
+            Leaves::Without(".claude/settings.json", STALE_HOOK)
+        }
+        "ctxloom manage uninstall --yes" | "ctxloom manage uninstall" => {
+            let ran = run_now(w, &["materialize", "--yes", "--backend", "claude-code"]);
+            assert_eq!(ran.code, 0, "the claims to give back: {}", ran.said());
+            assert!(files::exists(w.common.project.dir().join("CLAUDE.md")));
+            Leaves::Gone("CLAUDE.md")
+        }
+        "ctxloom materialize --target out --yes" => Leaves::Holding("out/CLAUDE.md", "ctxloom"),
+        other => panic!("no foreign writer the harness knows: {other}"),
+    }
+}
+
 #[given(regex = r"^the daemon will be killed outright (.+)$")]
 fn killed_at(w: &mut World, step: &cucumber::gherkin::Step, when: String) {
+    if let Some((n, command)) = foreign_step(&when) {
+        // Killed once its `n`th step is recorded done (step 10c U10); the
+        // CLI's one retry finishes it on a new daemon.
+        let leaves = foreign_presupposed(w, &command);
+        w.daemon_spec.foreign_run = Some((command, leaves));
+        w.daemon_spec.before_kill = discovery_if_serving(w);
+        files::put(daemon_dir(w).join(DIE_AT), format!("step-{n}"));
+        return;
+    }
     if let Some(rel) = superseded_file(&when) {
         // Killed once its intent is recorded, and the file changed by hand
         // before the CLI's retry reaches a new daemon (step 10c U13).
@@ -5411,9 +5474,72 @@ fn remove_converged(w: &mut World, harp: String) {
     assert!(writes::empty(&trash), "the trash holds {}", trash.display());
 }
 
+/// Every file below the project and ctxloom's records, with its bytes,
+/// but ctxloom's own state there (its sessions, its staging and trash, its
+/// caches, git's directory), which a run changes on its own.
+fn foreign_snapshot(w: &World) -> Vec<(PathBuf, Vec<u8>)> {
+    fn walk(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+        for entry in files::children(dir) {
+            let name = entry.file_name().map(|n| n.to_string_lossy().to_string());
+            if matches!(
+                name.as_deref(),
+                Some(".git" | "state" | "sessions" | "cache" | "daemon")
+            ) {
+                continue;
+            }
+            if files::is_dir(&entry) {
+                walk(&entry, out);
+            } else {
+                out.push((entry.clone(), files::read_bytes(&entry).unwrap_or_default()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(w.common.project.dir(), &mut out);
+    walk(&w.common.project.home().join(".ctxloom/records"), &mut out);
+    out.sort();
+    out
+}
+
+/// The kill was taken after the step the scenario named, the files hold
+/// what the command writes, and one more run, uninterrupted, changes
+/// nothing: what the killed run and its re-run left is what one run leaves.
 #[then("the files it writes are as one uninterrupted run would leave them")]
-fn foreign_converged(_: &mut World) {
-    red("the foreign writer converged")
+fn foreign_converged(w: &mut World) {
+    let (command, leaves) = w
+        .daemon_spec
+        .foreign_run
+        .clone()
+        .expect("a foreign writer was killed after a step");
+    assert!(
+        !files::exists(daemon_dir(w).join(DIE_AT)),
+        "the daemon never took its kill: {:?}",
+        files::read(daemon_dir(w).join(DIE_AT)).unwrap_or_default()
+    );
+    let at = |rel: &str| w.common.project.dir().join(rel);
+    match leaves {
+        Leaves::Holding(rel, text) => {
+            let held = files::read(at(rel)).unwrap_or_else(|_| panic!("{rel} was not written"));
+            assert!(held.contains(text), "{rel} holds {held:?}");
+        }
+        Leaves::Without(rel, text) => {
+            let held = files::read(at(rel)).unwrap_or_default();
+            assert!(!held.contains(text), "{rel} still holds {text:?}: {held:?}");
+        }
+        Leaves::Gone(rel) => assert!(!files::exists(at(rel)), "{rel} is still there"),
+    }
+    let before = foreign_snapshot(w);
+    let args: Vec<&str> = command.split(' ').skip(1).collect();
+    let again = run_now(w, &args);
+    assert_eq!(again.code, 0, "{command} once more: {}", again.said());
+    let after = foreign_snapshot(w);
+    let changed: Vec<&PathBuf> = after
+        .iter()
+        .filter(|file| !before.contains(file))
+        .chain(before.iter().filter(|file| !after.contains(file)))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(changed.is_empty(), "one more run changed {changed:?}");
 }
 
 // ------------------------------------- the rulings after T30 (S42, S53)

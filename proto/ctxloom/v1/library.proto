@@ -4709,6 +4709,159 @@ message CleanResponse {
   repeated Notice notices = 92;
 }
 
+// `materialize [profiles...] [--target] [--yes] [--backend] [--surface]
+// [--release] [--dry-run]` (step 10c U10). Additive proto extension.
+message MaterializeRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // The profile set; none, the default agent's.
+  repeated string profiles = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Where, as the caller named it (relative to its `cwd`); empty, the
+  // project's directory, which needs `yes`.
+  string target = 3 [(google.api.field_behavior) = OPTIONAL];
+  bool yes = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The engines (`--backend`); none, the configured ones.
+  repeated string backends = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The kinds, each `kind[=mechanism[:destination]]` as given; none, every
+  // kind.
+  repeated string surfaces = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The empty plan for the selected kinds.
+  bool release = 7 [(google.api.field_behavior) = OPTIONAL];
+  // Plan and report; write nothing.
+  bool dry_run = 8 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the
+  // one retry: the retry resumes its sequence at the first step not done.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // Unset: a write of other tools' files alone takes no etag (protos.md
+  // §4.2).
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163); as `dry_run`.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags the call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1).
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One engine's part of a materialize, as its report has always said it.
+message MaterializedEngine {
+  string engine = 1;
+  // The kinds delivered (in a dry run, that would change).
+  repeated string wrote = 2;
+  // The selected kinds this run left with nothing.
+  repeated string released = 3;
+  // The file the context was written to.
+  string context_file = 4;
+  // Each kind the engine does not carry, and why.
+  repeated NotCarried not_carried = 5;
+  // Each command or skill the engine would not carry, and each value left
+  // standing.
+  repeated string skipped = 6;
+  repeated string warnings = 7;
+}
+
+// What `materialize` did, as its report has always said it.
+message MaterializeResponse {
+  string target = 1;
+  // The target did not exist and was created.
+  bool created = 2;
+  repeated string profiles = 3;
+  repeated MaterializedEngine engines = 4;
+  // `applied`, `partial`, `failed`, `released`, `planned` or `nothing`.
+  string status = 5;
+  // Each refused kind's cause, in words.
+  repeated string errors = 6;
+  repeated string warnings = 7;
+  // Each refused kind's cause, its code and args: the first is what the
+  // command is refused with.
+  repeated Notice failures = 8;
+  // The use case's own error, when it refused or failed before anything was
+  // written, in its code and args (the client says it from its catalog);
+  // absent when it did not.
+  Notice error = 9;
+  // The exit that error ends the command with, in ctxloom's codes (10
+  // failed, 20 refused, 21 fatal findings); 0 with no error.
+  int32 exit = 10;
+  repeated Notice notices = 92;
+}
+
+// `manage uninstall` (step 10c U10). Additive proto extension.
+message UninstallManageRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // Unset: a write of other tools' files alone takes no etag.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// What `manage uninstall` did, as its report has always said it.
+message UninstallManageResponse {
+  // `released`, or `partial` when an engine's kind could not be given back.
+  string status = 1;
+  // The engines whose every kind was given back.
+  repeated string backends = 2;
+  repeated string errors = 3;
+  string note = 4;
+  // The use case's own error, when it refused or failed before anything was
+  // written, in its code and args (the client says it from its catalog);
+  // absent when it did not.
+  Notice error = 5;
+  // The exit that error ends the command with, in ctxloom's codes (10
+  // failed, 20 refused, 21 fatal findings); 0 with no error.
+  int32 exit = 6;
+  repeated Notice notices = 92;
+}
+
+// `doctor [--deps] [--all] [--fix]` (step 10c U10 serves `--fix`; U5 the
+// checks). Additive proto extension.
+message RunDoctorRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // Take every stale hook entry out first (a write).
+  bool fix = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Only what this machine needs.
+  bool deps = 3 [(google.api.field_behavior) = OPTIONAL];
+  // Every check, passing ones too.
+  bool all = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for the fix (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // Unset: a write of other tools' files alone takes no etag.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One stale hook entry `doctor --fix` took out.
+message RemovedHook {
+  // The settings file, as doctor shows it.
+  string file = 1;
+  string event = 2;
+  // The `ctxloom hook` verb it ran.
+  string sub = 3;
+}
+
+// What `doctor` did (step 10c U10: the fix's removals; U5 adds the checks).
+message RunDoctorResponse {
+  repeated RemovedHook removed = 1;
+  // The use case's own error, when it refused or failed before anything was
+  // written, in its code and args (the client says it from its catalog);
+  // absent when it did not.
+  Notice error = 2;
+  // The exit that error ends the command with, in ctxloom's codes (10
+  // failed, 20 refused, 21 fatal findings); 0 with no error.
+  int32 exit = 3;
+  repeated Notice notices = 92;
+}
+
 // What `config edit` did. Additive proto extension, owner ruling 2026-11-18.
 message EditConfigResponse {
   // The Config edited.

@@ -25,13 +25,36 @@ use crate::{
     BundleExported, ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath,
     Evidence, External, HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand,
     LibraryEvent, LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordBundleExported,
-    RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile,
-    RunSequence, Step, StepApplied, TrashPath, TreeInstalled, TreeObserved, KEEP_DAYS,
+    RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed, RecordTreeInstalled,
+    RecordTreeObserved, ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeInstalled,
+    TreeObserved, KEEP_DAYS,
 };
 
 /// The code a plan's rejection takes when the tree no longer reads and the
 /// plan named no diagnostic of its own.
 pub const TREE_UNREADABLE: &str = "library-tree-tree-unreadable";
+
+/// The verbs that write other tools' files (step 10c U10, L15, T26): only
+/// a sequence of one of them may hold a foreign step.
+pub const FOREIGN_WRITERS: &[&str] = &[
+    "materialize",
+    "doctor --fix",
+    "manage install",
+    "manage uninstall",
+    "bundle move",
+];
+
+/// The code of a foreign step planned where no foreign writer's sequence
+/// holds it (protos.md §1.1: a bug of the plan, never the caller's).
+pub const FOREIGN_OUTSIDE_WRITER: &str = "library-tree-foreign-outside-writer";
+
+/// A foreign step planned where nothing may hold one.
+fn foreign_outside() -> LibraryTreeRejection {
+    LibraryTreeRejection::PlanRejected {
+        code: FOREIGN_OUTSIDE_WRITER.to_string(),
+        args: Default::default(),
+    }
+}
 
 /// The library aggregate: one tree, folded from its stream.
 #[derive(Clone, Debug, Default)]
@@ -162,7 +185,7 @@ impl LibraryAggregate {
     /// away (T28), so the operation's own NOREPLACE is the word on that
     /// (10b, U8).
     fn step(&self, step: &Step) -> Result<(), LibraryTreeRejection> {
-        if let Some(replace) = &step.replace {
+        if let Some(replace) = step.replace.as_ref().filter(|replace| !replace.foreign) {
             return self.fresh(&replace.path, replace.seen_sequence);
         }
         if let Some(trash) = &step.trash {
@@ -190,7 +213,8 @@ impl LibraryAggregate {
                 steps,
                 base_cause: self.library.last_cause.clone(),
                 done: 0,
-                // Step 10c U10 lists a foreign writer's files here.
+                // A foreign writer's sequence lists its files (step 10c
+                // U10): `sequence` sets them.
                 foreign: Vec::new(),
             },
         }
@@ -445,6 +469,12 @@ impl LibraryAggregate {
             builtin: true,
         };
         judge(&cmd.evidence, &cmd.path, checks)
+            .and_then(|()| {
+                if cmd.foreign {
+                    return Err(foreign_outside());
+                }
+                Ok(())
+            })
             .and_then(|()| self.one_file(&cmd.path))
             .and_then(|()| self.fresh(&cmd.path, cmd.seen_sequence))
             .map_err(|rejection| {
@@ -640,7 +670,18 @@ impl LibraryAggregate {
             plan: true,
             builtin: false,
         };
+        let writes_foreign = FOREIGN_WRITERS.contains(&cmd.verb.as_str());
         judge(&cmd.evidence, "", checks)
+            .and_then(|()| {
+                let foreign = cmd
+                    .steps
+                    .iter()
+                    .any(|step| step.replace.as_ref().is_some_and(|r| r.foreign));
+                if foreign && !writes_foreign {
+                    return Err(foreign_outside());
+                }
+                Ok(())
+            })
             .and_then(|()| cmd.steps.iter().try_for_each(|step| self.step(step)))
             .map_err(|rejection| {
                 refuse!(
@@ -656,7 +697,9 @@ impl LibraryAggregate {
                     ]
                 )
             })?;
-        Ok(Some(self.intent(cmd.verb, cmd.steps, ctx)))
+        let mut intended = self.intent(cmd.verb, cmd.steps, ctx);
+        intended.intent.foreign = cmd.foreign;
+        Ok(Some(intended))
     }
 
     /// The purge of a kept trash slot (G12, L12): the slot must be in the
@@ -770,6 +813,36 @@ impl LibraryAggregate {
         }))
     }
 
+    /// A pending intent's next step, a new directory in the cache, done as
+    /// an installed tree (step 10c U4, protos.md §1.2): its sha's tree
+    /// whole. A step not next, or not a new directory, records nothing.
+    #[handles_fact(RecordTreeInstalled)]
+    fn tree_was_installed(
+        &self,
+        fact: RecordTreeInstalled,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        let next_create = self
+            .library
+            .pending
+            .get(&fact.request_id)
+            .is_some_and(|intent| {
+                fact.step == intent.done
+                    && intent
+                        .steps
+                        .get(fact.step as usize)
+                        .is_some_and(|step| step.create.is_some())
+            });
+        recorded(next_create.then_some(TreeInstalled {
+            request_id: fact.request_id,
+            step: fact.step,
+            identity: fact.identity,
+            sha: fact.sha,
+            tree: fact.tree,
+        }))
+    }
+
     /// A pending intent's step failed: final.
     #[handles_fact(RecordStepFailed)]
     fn step_failed(&self, fact: RecordStepFailed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
@@ -857,9 +930,6 @@ impl LibraryAggregate {
             .apply_page(&LibraryEvent::ChangeFailed(event), page.sequence, page.meta);
     }
 
-    // Equivalent until step 10c U4 folds it (protos.md §1.2): nothing
-    // records a `TreeInstalled` yet, and the fold changes nothing for it.
-    #[cfg_attr(test, mutants::skip)]
     #[applies(TreeInstalled)]
     fn tree_installed(&mut self, event: TreeInstalled, page: &PageContext) {
         self.library.apply_page(
