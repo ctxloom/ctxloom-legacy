@@ -107,6 +107,7 @@ leak-timeout = { period = "200ms", result = "fail" }
 # scenario dials a port it freed, so they share no port and run at once.
 [test-groups]
 ports = { max-threads = 1 }
+deps-windows = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = '''
@@ -252,6 +253,23 @@ filter = '''
     )
 '''
 slow-timeout = { period = "30s", terminate-after = 15, grace-period = "10s" }
+
+# The split features run one at a time on Windows (`deps-windows`), as the one
+# file did: run at once (the first branch run after the split, CI run
+# 44622601022) their daemons and git starved the 4 cores, deps_upstream took
+# 161 s against about 94 s sequential, and cli/doctor, at its 180 s, timed
+# out, having passed before.
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = '''
+    package(ctxloom) & (
+        test(=tests::gherkin_features::features::cli::deps)
+        | test(=tests::gherkin_features::features::cli::deps_pins)
+        | test(=tests::gherkin_features::features::cli::deps_trees)
+        | test(=tests::gherkin_features::features::cli::deps_upstream)
+    )
+'''
+test-group = 'deps-windows'
 
 # cli/deps timed out at this 360 s on Windows (CI run 44595606753). Measured
 # 2026-11-19 on windows-latest (CI run 44612264008, GHERKIN_TIMINGS, the
