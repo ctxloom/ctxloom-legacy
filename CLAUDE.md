@@ -1598,6 +1598,23 @@ re-assembled context at its next hook, ONCE per batch:
   changed fragments, whole (asked of the library by the owed paths), else
   a pointer to `ctxloom context assemble`, else nothing (still owed).
 
+Step 10 U11's forcing checks are the binary's `workspace.test.rs`:
+`test_no_cli_crate_depends_on_an_application_crate_but_the_departures` (no
+`*-cli` driving crate's `[dependencies]` names a `crates/core/application`
+crate; today's 23 edges are `CLI_APPLICATION_DEPARTURES`, each with what it
+is used for, because step 10a U2's deletion of them is not done; a new edge
+or a stale entry fails) and
+`test_nothing_in_the_daemon_opens_a_library_tree_outside_the_observation`
+(the daemon's root sources, `ctxloom-wiring`'s `daemon/`, `oneshot.rs` and
+`frontend.rs`, open a library, `library::build(`, `build_setup(`,
+`build_setup_over(`, only at `DAEMON_LIBRARY_OPENS`' files and counts, each
+reached through the observation or a stated departure; daemon-api and
+daemon-application open none). A hosted one-shot and a terminal run observe
+their trees first (`Api::observe_for`), as a setup read does; the trust
+preview and a hosted child's plan (`CreateHandOff`, and its output root at
+its launch) are the departures: observing at the hand-off broke
+library_changes' refresh re-injection scenario, not yet root-caused.
+
 ## Architecture: hexagonal around CQRS/ES (checked by `just lint-arch`, and in review)
 
 Dependencies point inward; a review refuses a change that breaks these, and
@@ -2328,8 +2345,8 @@ none started is `Unreached::NotStarted`, `daemon-ports-not-started` (exit
 another home's or a busy other version's is `Unreached::Declined` (20).
 Each call resolves its project first (`ResolveProject`, S6; outside a
 project a read of its own is `ProjectUnknown`; `--all` lists `projects/-`),
-sends the caller's WHOLE environment in every request (`EnvVars env = 94`,
-S7; the reads ignore it), and a call whose daemon could not be reached
+sends its `Caller` (below) in every request made on the user's behalf
+(S7; a read by name carries none), and a call whose daemon could not be reached
 mid-call is made once more, whole, on the daemon reached again (S8). Their
 `--format json` is the answer's proto3 JSON (ruling 146, the message's
 generated serde (OQ-21): proto field names, a default left out, an enum by
@@ -3038,12 +3055,62 @@ scanner walks the library alone): p95 under 50 ms for a read seeing nothing
 new and one seeing a hand edit. (Its git-era figures, p95 46 and 50 ms, were
 `git status`'s.)
 
+ONE `Caller` message (owner, 2026-11-18; needs.proto): the client's working
+context, carried at field 98 of every request made on a user's behalf
+(everything that plans, reads the library, runs git, writes or launches).
+It replaced the hand-copied `env` (94), `presentable` (95), `globals` (96)
+and `cwd` (97), and CreateRun's `cwd` (13) and ResolveProject's `cwd` (2),
+all reserved (a non-additive change, ruled); InitProject's `cwd` (2), the
+directory to initialize, stays. It holds `cwd`, the WHOLE `env` (the daemon
+takes a call's temporary directory from it, `TMPDIR`, else `/tmp`; on
+Windows `TMP`, `TEMP`, `USERPROFILE`, the Windows directory; only a call
+with no environment at all is in the daemon's own: the wiring's
+`caller_temp`), `globals`, `presentable` and `client` (`Client`: kind
+`CLI|MCP|HOOK`, the running binary's file name and directory, the version
+stamp). NOT in it (ruled): the umask (a known limit for group-shared
+trees), the caller's session (a domain command's `requester`), locale, TZ,
+uid, OS and render flags. Reads by name and the daemon's lifecycle carry
+none: the binary's `workspace.test.rs` reads the descriptor set
+(`daemon_proto::descriptors()`) and FAILS any RPC whose request lacks
+`Caller caller = 98`, but those of its explicit `CALLERLESS_RPCS` (GetDaemon,
+StopDaemon, GetProject, the session reads, transcripts, WatchSession,
+ListWorktrees, DeleteHandOff, GetRun, WatchRun, the approvals and trusts),
+and fails a listed one that carries it. Rust reads it through
+`daemon_proto::Carries` (generated for every message by daemon-proto's
+build: `CALLER`, `caller()`, `caller_env()`, `caller_cwd()`,
+`caller_globals()`, `caller_presentable()`, `caller_client()`) and writes it
+through `CarriesMut` and `Caller::fill_from` (each part only where the
+request names none: a command sets its own flags and presentable). The
+transport fills it: `daemon_client::DaemonClient::filling(caller)` fills
+every request it sends (the wiring's `caller_of(env, kind, stamp)`, set
+where each client is made: `Reach::client`, `MCP` for a never-stopping
+reach, `resolve`, `HookDaemons`), so no path that builds a request can
+leave its client out. The daemon REFUSES a client whose stamp is not its
+own, whatever its kind (`Calls::admit`, `daemon_api::admit`, asked by the
+gRPC edge's `answer` for every request whose type carries a `Caller`,
+before its use case): the typed `ClientVersionMismatch`
+(failed-precondition), `daemon-api-client-version`, exit 20, its fix
+`ctxloom daemon stop`; a request with no client names no version and is
+refused alike. Under test-support a spawned daemon is given its client's
+`CTXLOOM_TEST_STAMP`. A launch runs the CLIENT's program, not the daemon's
+`/proc/self/exe` (within ruling 37's same-user trust: the client can name
+nothing she could not run herself): a hosted one-shot's and a terminal
+run's `HostRequest.program`, a hosted child's `HandOff.program`
+(`daemon_application::Program`, `daemon_api::program_of`), for its hooks'
+and statusline's command (`ForLaunch` composed with it) and to lead its
+engine's `PATH`; none named, the daemon's own. A child's program is kept
+beside its hand-off in the daemon's memory (`HandedPrograms`), never in the
+file (its format unchanged): a daemon started again between the hand-off
+and the launch runs its own. Not built (escalated): the CLI saying
+`can_launch` only at a terminal; library-cli still says it can launch the
+editor everywhere, as the editing scenarios edit off a terminal.
+
 The owner's rulings of 2026-11-17 (E1, E2, E5, O3, the read notices) are
 built:
 
 - E1: every library read request (each Get, List, Search, Browse and
-  Discover of library.proto, and `AssembleContext`) carries `EnvVars env =
-  94`, `Globals globals = 96` and an optional `string cwd = 97`. A served
+  Discover of library.proto, and `AssembleContext`) carries its `Caller`
+  (its `cwd`, `env` and `globals`; below). A served
   read (daemon-api `library_reads`) resolves its project by its harp, is
   read at the caller's directory (else the registered root), finds the
   checkout there as a process would (the root's `ProjectLibraries`; a git

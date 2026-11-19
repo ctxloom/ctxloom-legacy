@@ -17,6 +17,7 @@
 //! and the interview is a terminal `CreateRun`, as every `ctxloom run`.
 
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use init_application::needs::{self, Given};
 use library::write::scaffold::Answered;
 use library_api::writes::{self, Shape};
@@ -166,11 +167,10 @@ impl<E: Edge> Api<E> {
     ) -> Result<v1::InstallManageResponse, ApiError> {
         let init = v1::InitProjectRequest {
             name: request.project.clone(),
-            cwd: request.cwd.clone(),
+            cwd: request.caller_cwd().to_string(),
+            caller: request.caller.clone(),
             request_id: request.request_id.clone(),
             validate_only: request.validate_only,
-            env: request.env.clone(),
-            globals: request.globals.clone(),
             ..v1::InitProjectRequest::default()
         };
         let done = self
@@ -182,9 +182,7 @@ impl<E: Edge> Api<E> {
             let gitignore = v1::InstallGitignoreRequest {
                 project: request.project.clone(),
                 request_id: request.request_id.clone(),
-                env: request.env.clone(),
-                globals: request.globals.clone(),
-                cwd: request.cwd.clone(),
+                caller: request.caller.clone(),
                 ..v1::InstallGitignoreRequest::default()
             };
             let wrote = self
@@ -216,9 +214,9 @@ impl<E: Edge> Api<E> {
         let (site, _) = self
             .resolve(
                 request.target(),
-                request.cwd(),
-                request.env(),
-                request.globals(),
+                request.caller_cwd(),
+                request.caller_env(),
+                request.caller_globals(),
             )
             .await?;
         let chosen = needs::chosen(&given_of(&request.answers));
@@ -372,8 +370,7 @@ impl<E: Edge> Api<E> {
             .resolve_project(v1::ResolveProjectRequest {
                 project_id: project_id.clone(),
                 root: root.to_string(),
-                cwd: request.cwd.clone(),
-                env: request.env.clone(),
+                caller: request.caller.clone(),
                 ..v1::ResolveProjectRequest::default()
             })
             .await?;

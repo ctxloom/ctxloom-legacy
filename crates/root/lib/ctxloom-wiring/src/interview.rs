@@ -175,7 +175,10 @@ impl SetupSessions<'_> {
     fn read_prompt(&self) -> Result<daemon_proto::v1::GetInitPromptResponse, PromptFailure> {
         crate::library::DaemonServed::new(Arc::clone(self.env), self.stamp.to_string())
             .init_prompt(daemon_proto::v1::GetInitPromptRequest {
-                globals: Some(library_api::reads::globals_of(self.flags)),
+                caller: daemon_proto::v1::Caller::of(
+                    Some(library_api::reads::globals_of(self.flags)),
+                    None,
+                ),
                 ..daemon_proto::v1::GetInitPromptRequest::default()
             })
             .map_err(|failure| PromptFailure {
@@ -225,7 +228,10 @@ impl Companions for SetupSessions<'_> {
             crate::library::DaemonServed::new(Arc::clone(self.env), self.stamp.to_string());
         let request = daemon_proto::v1::CreateCompanionRequest {
             companion_id: name.to_string(),
-            globals: Some(library_api::reads::globals_of(self.flags)),
+            caller: daemon_proto::v1::Caller::of(
+                Some(library_api::reads::globals_of(self.flags)),
+                None,
+            ),
             ..daemon_proto::v1::CreateCompanionRequest::default()
         };
         match served.create_companion("", request) {

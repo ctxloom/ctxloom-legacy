@@ -19,7 +19,7 @@ pub(crate) fn read(
     // The daemon's reads (step 10a U2), their text from the message (D10).
     if verb == "show" {
         let request = v1::GetProfileRequest {
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::GetProfileRequest::default()
         };
         let under = library_api::names::profile_target(&text_arg(sub, "name"));
@@ -29,7 +29,7 @@ pub(crate) fn read(
         });
     }
     let request = v1::ListProfilesRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListProfilesRequest::default()
     };
     let in_project = cx.served.in_project();
@@ -83,7 +83,7 @@ fn create(
             skills: many(sub, "add-skill"),
             ..<v1::Profile as Default>::default()
         }),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::CreateProfileRequest::default()
     };
     let asked = request.profile.clone().unwrap_or_default();
@@ -155,7 +155,7 @@ fn modify(
         include_fragments: many(sub, "include-fragment"),
         exclude_mcp_servers: many(sub, "exclude-mcp"),
         include_mcp_servers: many(sub, "include-mcp"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::UpdateProfileRequest::default()
     };
     let under = library_api::names::profile_target(&name);
@@ -195,8 +195,7 @@ fn edit_in_editor(
             validate_only,
             answers,
             etag,
-            presentable: crate::noun::item::presentable(),
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), cx.presentable()),
             ..v1::UpdateProfileRequest::default()
         };
     let preview = cx
@@ -288,7 +287,7 @@ fn remove(
                 validate_only,
                 answers,
                 etag,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::DeleteProfileRequest::default()
             };
             cx.served.delete_profile(&under, request)

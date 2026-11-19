@@ -54,7 +54,6 @@ async fn shown(f: &Fixture) -> v1::Session {
     f.api
         .get_session(v1::GetSessionRequest {
             name: NAME.to_string(),
-            ..v1::GetSessionRequest::default()
         })
         .await
         .unwrap()

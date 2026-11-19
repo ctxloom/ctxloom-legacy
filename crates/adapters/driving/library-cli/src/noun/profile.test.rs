@@ -383,6 +383,8 @@ mod mapping {
 mod writes_asked {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_profile_create_asks_create_profile_with_its_fields() {
@@ -404,7 +406,7 @@ mod writes_asked {
         assert_eq!(under, "");
         assert_eq!(made.profile_id, "clinic");
         assert!(!made.validate_only);
-        assert_eq!(made.globals, degraded());
+        assert_eq!(made.caller_globals().cloned(), degraded());
         let profile = made.profile.unwrap();
         assert_eq!(profile.description, "day-to-day");
         assert_eq!(profile.parents, ["base"]);
@@ -443,7 +445,7 @@ mod writes_asked {
         ]);
         assert_eq!(under, "/profiles/dev");
         assert!(!patch.validate_only);
-        assert_eq!(patch.globals, degraded());
+        assert_eq!(patch.caller_globals().cloned(), degraded());
         assert_eq!(patch.update_mask.unwrap().paths, ["description"]);
         assert_eq!(patch.profile.unwrap().description, "words");
         assert_eq!(
@@ -498,7 +500,7 @@ mod writes_asked {
         let sent = asks.requests::<v1::UpdateProfileRequest>();
         assert_eq!(sent.len(), 2, "{}", ran.err);
         assert!(sent[0].validate_only && sent[0].update_mask.is_none());
-        assert!(sent[0].presentable.as_ref().is_some_and(|p| p.can_launch));
+        assert!(sent[0].caller_presentable().is_some_and(|p| p.can_launch));
         assert!(!sent[1].validate_only && sent[1].update_mask.is_none());
         assert_eq!(sent[1].etag, "7");
         assert_eq!(
@@ -517,12 +519,14 @@ mod writes_asked {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_profile_reads_carry_the_globals() {
         let (_, show) = asked_once::<v1::GetProfileRequest>(&["profile", "show", "dev"]);
-        assert_eq!(show.globals, degraded());
+        assert_eq!(show.caller_globals().cloned(), degraded());
         let (_, list) = asked_once::<v1::ListProfilesRequest>(&["profile", "list"]);
-        assert_eq!(list.globals, degraded());
+        assert_eq!(list.caller_globals().cloned(), degraded());
     }
 }

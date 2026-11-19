@@ -40,22 +40,14 @@ use crate::refusal::{ApiError, ApiRefusal};
 use crate::server::Api;
 
 /// What every library write request carries besides its own fields.
-pub trait LibraryWriteRequest {
+/// (its caller: [`daemon_proto::CarriesMut`]).
+pub trait LibraryWriteRequest: daemon_proto::CarriesMut {
     /// What it writes: a resource name, or a parent.
     fn target(&self) -> &str;
     /// The request, writing `target` (a client names its parent so).
     fn set_target(&mut self, target: String);
-    /// The request, carrying the caller's environment (S7, E1).
-    fn set_env(&mut self, env: v1::EnvVars);
-    /// The request, at the caller's working directory (E1, extended to the
-    /// writes): the daemon resolves the project and its checkout from it.
-    fn set_cwd(&mut self, cwd: String);
-    /// The caller's working directory; empty, the project's registered root.
-    fn cwd(&self) -> &str;
     /// The request, under the request id `id` (AIP-155), where it names none.
     fn set_request_id(&mut self, id: String);
-    fn env(&self) -> Option<&v1::EnvVars>;
-    fn globals(&self) -> Option<&v1::Globals>;
     /// The client's id for the write (AIP-155): the command's id.
     fn request_id(&self) -> &str;
     fn validate_only(&self) -> bool;
@@ -329,9 +321,9 @@ impl<E: Edge> Api<E> {
         let (site, project) = self
             .resolve(
                 request.target(),
-                request.cwd(),
-                request.env(),
-                request.globals(),
+                request.caller_cwd(),
+                request.caller_env(),
+                request.caller_globals(),
             )
             .await?;
         let (observations, observers) =
@@ -852,23 +844,8 @@ macro_rules! write_requests {
                 fn set_target(&mut self, target: String) {
                     write_requests!(@set self target $($field).+)
                 }
-                fn env(&self) -> Option<&v1::EnvVars> {
-                    self.env.as_ref()
-                }
-                fn set_env(&mut self, env: v1::EnvVars) {
-                    self.env = Some(env);
-                }
-                fn set_cwd(&mut self, cwd: String) {
-                    self.cwd = cwd;
-                }
-                fn cwd(&self) -> &str {
-                    &self.cwd
-                }
                 fn set_request_id(&mut self, id: String) {
                     self.request_id = id;
-                }
-                fn globals(&self) -> Option<&v1::Globals> {
-                    self.globals.as_ref()
                 }
                 fn request_id(&self) -> &str {
                     &self.request_id

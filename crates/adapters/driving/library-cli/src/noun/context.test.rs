@@ -123,11 +123,13 @@ mod read {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_context_assemble_carries_the_globals() {
         let (_, request) = asked_once::<v1::AssembleContextRequest>(&["context", "assemble"]);
-        assert_eq!(request.globals, degraded());
+        assert_eq!(request.caller_globals().cloned(), degraded());
     }
 }
 
@@ -136,6 +138,8 @@ mod asks {
 // are said as every read's are.
 mod notices {
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_an_assembly_keeps_its_notices_in_its_message_and_says_them() {
@@ -157,6 +161,8 @@ mod notices {
 mod refresh {
     use crate::tests::{go_served, Asks, Project, BARE, TEXT};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     // Step 10c U13 rework (owner, 2026-11-18): `context refresh` asks the
     // daemon to assemble with `refresh` set (it forgets what it has seen and

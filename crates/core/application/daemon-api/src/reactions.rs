@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use angzarr_embedded::v1::{Cover, DeliveryOutcome, Uuid};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use run_ports::{ContextDelivery, Edge};
 use session_index::SessionRecord;
 use sessions::SessionName;
@@ -167,7 +168,7 @@ impl<E: Edge> Api<E> {
         };
         let record = known(self)?;
         let parent = name.project().to_string();
-        let cwd = match request.cwd.as_str() {
+        let cwd = match request.caller_cwd() {
             "" => record.project_dir.clone(),
             cwd => cwd.to_string(),
         };
@@ -178,7 +179,7 @@ impl<E: Edge> Api<E> {
         // scan of the last five minutes); what that owes is recorded by the
         // next round's handler, and collected at a later hook. No round is
         // awaited: what is owed is read from the projection as it is.
-        self.session_trees(&parent, &cwd, request.env.as_ref())
+        self.session_trees(&parent, &cwd, request.caller_env())
             .await?;
         let Some(loadout) = record.loadout.clone() else {
             return Ok(none);
@@ -193,7 +194,7 @@ impl<E: Edge> Api<E> {
         let Some(engine) = deliveries.engine(&record.engine) else {
             return Ok(none);
         };
-        let env = request.env.clone();
+        let env = request.caller_env().cloned();
         let budget = budget_of(request.budget);
         let reassemble = || self.reassembled(&loadout, (parent, cwd.clone()), env.clone());
         let fragments =
@@ -230,11 +231,14 @@ impl<E: Edge> Api<E> {
             };
             let request = v1::GetFragmentRequest {
                 name: name.clone(),
-                env: env.clone(),
-                cwd: cwd.to_string(),
-                globals: Some(v1::Globals {
-                    degraded: true,
-                    ..v1::Globals::default()
+                caller: Some(v1::Caller {
+                    cwd: cwd.to_string(),
+                    env: env.clone(),
+                    globals: Some(v1::Globals {
+                        degraded: true,
+                        ..v1::Globals::default()
+                    }),
+                    ..v1::Caller::default()
                 }),
                 ..v1::GetFragmentRequest::default()
             };
@@ -360,12 +364,15 @@ impl<E: Edge> Api<E> {
                     false => String::new(),
                 },
                 profiles: loadout.profiles.clone(),
-                env,
-                globals: Some(v1::Globals {
-                    degraded: true,
-                    ..v1::Globals::default()
+                caller: Some(v1::Caller {
+                    cwd,
+                    env,
+                    globals: Some(v1::Globals {
+                        degraded: true,
+                        ..v1::Globals::default()
+                    }),
+                    ..v1::Caller::default()
                 }),
-                cwd,
                 ..v1::AssembleContextRequest::default()
             })
             .await?;

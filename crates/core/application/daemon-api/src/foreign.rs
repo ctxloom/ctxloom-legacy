@@ -301,9 +301,9 @@ impl<E: Edge> Api<E> {
         let (site, project) = self
             .resolve(
                 request.target(),
-                request.cwd(),
-                request.env(),
-                request.globals(),
+                request.caller_cwd(),
+                request.caller_env(),
+                request.caller_globals(),
             )
             .await?;
         let (observations, observers) =

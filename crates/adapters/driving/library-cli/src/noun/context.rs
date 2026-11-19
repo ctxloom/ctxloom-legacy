@@ -14,7 +14,7 @@ pub(crate) fn read(
         profiles: many(sub, "profile"),
         fragments: many(sub, "fragment"),
         tags: many(sub, "tag"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::AssembleContextRequest::default()
     };
     let read = cx.served.assemble_context(request).map(at_rest);
@@ -39,7 +39,7 @@ pub(crate) fn refresh(
 ) -> Result<Exit, Failure> {
     let request = v1::AssembleContextRequest {
         refresh: true,
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::AssembleContextRequest::default()
     };
     let read = cx

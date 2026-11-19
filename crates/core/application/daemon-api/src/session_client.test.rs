@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use daemon_ports::{Called, DaemonApi, Daemons, Unreached};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use exit_code::{Exit, ExitClass};
 
 use super::{Client, Removed, SessionReads, SessionRemovals};
@@ -19,8 +20,9 @@ type Asked = Arc<Mutex<Vec<String>>>;
 struct Fake {
     n: usize,
     asked: Asked,
-    /// Each request's environment, as it came.
-    envs: Arc<Mutex<Vec<Option<v1::EnvVars>>>>,
+    /// Each request's caller, as it came (none for a request that carries
+    /// no `Caller`).
+    envs: Arc<Mutex<Vec<Option<v1::Caller>>>>,
     /// The requests' resource names and parents, as they came.
     names: Arc<Mutex<Vec<String>>>,
     /// The daemons that cannot be reached mid-call.
@@ -30,7 +32,7 @@ struct Fake {
 }
 
 impl Fake {
-    fn ask(&self, rpc: &str, env: Option<v1::EnvVars>) -> Result<(), Called> {
+    fn ask(&self, rpc: &str, env: Option<v1::Caller>) -> Result<(), Called> {
         self.asked.lock().unwrap().push(format!("{}:{rpc}", self.n));
         self.envs.lock().unwrap().push(env);
         match self.dying.lock().unwrap().contains(&self.n) && rpc != "resolve" {
@@ -43,8 +45,8 @@ impl Fake {
 }
 
 impl DaemonApi for Fake {
-    async fn get_daemon(&self, r: v1::GetDaemonRequest) -> Result<v1::Daemon, Called> {
-        self.ask("get", r.env)?;
+    async fn get_daemon(&self, _: v1::GetDaemonRequest) -> Result<v1::Daemon, Called> {
+        self.ask("get", None)?;
         Ok(v1::Daemon {
             pid: 7,
             ..v1::Daemon::default()
@@ -56,13 +58,13 @@ impl DaemonApi for Fake {
             true => format!("drain {:?} {}", r.drain_timeout_seconds, r.even_if_live),
             false => format!("stop {}", r.even_if_live),
         };
-        self.ask(&rpc, r.env)?;
+        self.ask(&rpc, None)?;
         self.names.lock().unwrap().push(r.name);
         Ok(v1::Daemon::default())
     }
 
     async fn resolve_project(&self, r: v1::ResolveProjectRequest) -> Result<v1::Project, Called> {
-        self.ask("resolve", r.env)?;
+        self.ask("resolve", r.caller.clone())?;
         self.names.lock().unwrap().push(r.project_id);
         Ok(v1::Project {
             name: "projects/calm-otter".to_string(),
@@ -75,7 +77,7 @@ impl DaemonApi for Fake {
     }
 
     async fn get_session(&self, r: v1::GetSessionRequest) -> Result<v1::Session, Called> {
-        self.ask("get-session", r.env)?;
+        self.ask("get-session", None)?;
         self.names.lock().unwrap().push(r.name.clone());
         Ok(v1::Session {
             name: r.name,
@@ -87,11 +89,13 @@ impl DaemonApi for Fake {
         &self,
         r: v1::RedeliverContextRequest,
     ) -> Result<v1::RedeliveredContext, Called> {
-        self.ask("redeliver", r.env)?;
-        self.names
-            .lock()
-            .unwrap()
-            .push(format!("{} cwd {} budget {}", r.name, r.cwd, r.budget));
+        self.ask("redeliver", r.caller.clone())?;
+        self.names.lock().unwrap().push(format!(
+            "{} cwd {} budget {}",
+            r.name,
+            r.caller_cwd(),
+            r.budget
+        ));
         Ok(v1::RedeliveredContext {
             context: format!("owed:{}", r.carried_by),
             changed: Vec::new(),
@@ -113,7 +117,7 @@ impl DaemonApi for Fake {
         &self,
         r: v1::ListSessionsRequest,
     ) -> Result<v1::ListSessionsResponse, Called> {
-        self.ask(&format!("list {}", r.state), r.env)?;
+        self.ask(&format!("list {}", r.state), None)?;
         self.names.lock().unwrap().push(r.parent);
         Ok(v1::ListSessionsResponse {
             sessions: vec![v1::Session::default()],
@@ -125,7 +129,7 @@ impl DaemonApi for Fake {
         &self,
         r: v1::SearchSessionsRequest,
     ) -> Result<v1::ListSessionsResponse, Called> {
-        self.ask(&format!("search {} {}", r.state, r.words.join(" ")), r.env)?;
+        self.ask(&format!("search {} {}", r.state, r.words.join(" ")), None)?;
         self.names.lock().unwrap().push(r.parent);
         Ok(v1::ListSessionsResponse::default())
     }
@@ -146,7 +150,7 @@ impl DaemonApi for Fake {
             .lock()
             .unwrap()
             .push(format!("{}:{}", self.n, r.request_id));
-        self.ask(&rpc, r.env)?;
+        self.ask(&rpc, r.caller.clone())?;
         self.names.lock().unwrap().push(r.name.clone());
         let plan = v1::DeleteSessionResponse {
             name: r.name.clone(),
@@ -178,7 +182,7 @@ impl DaemonApi for Fake {
             .lock()
             .unwrap()
             .push(format!("{}:{}", self.n, r.request_id));
-        self.ask(&rpc, r.env)?;
+        self.ask(&rpc, r.caller.clone())?;
         self.names.lock().unwrap().push(r.parent);
         self.names.lock().unwrap().push(r.project);
         Ok(v1::SweepSessionsResponse::default())
@@ -188,9 +192,12 @@ impl DaemonApi for Fake {
         &self,
         r: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, Called> {
-        self.ask("assemble", r.env)?;
-        self.names.lock().unwrap().push(r.name);
-        self.names.lock().unwrap().push(format!("cwd {}", r.cwd));
+        self.ask("assemble", r.caller.clone())?;
+        self.names.lock().unwrap().push(r.name.clone());
+        self.names
+            .lock()
+            .unwrap()
+            .push(format!("cwd {}", r.caller_cwd()));
         Ok(v1::AssembledContext {
             context: "ASSEMBLED".to_string(),
             ..v1::AssembledContext::default()
@@ -201,16 +208,22 @@ impl DaemonApi for Fake {
         &self,
         r: v1::CreateBundleRequest,
     ) -> Result<v1::CreateBundleResponse, Called> {
-        self.ask("create-bundle", r.env)?;
-        self.names.lock().unwrap().push(r.parent);
-        self.names.lock().unwrap().push(format!("cwd {}", r.cwd));
+        self.ask("create-bundle", r.caller.clone())?;
+        self.names.lock().unwrap().push(r.parent.clone());
+        self.names
+            .lock()
+            .unwrap()
+            .push(format!("cwd {}", r.caller_cwd()));
         Ok(v1::CreateBundleResponse::default())
     }
 
     async fn create_run(&self, r: v1::CreateRunRequest) -> Result<v1::Run, Called> {
-        self.ask(&format!("run {}", r.validate_only), r.env)?;
-        self.names.lock().unwrap().push(r.parent);
-        self.names.lock().unwrap().push(format!("cwd {}", r.cwd));
+        self.ask(&format!("run {}", r.validate_only), r.caller.clone())?;
+        self.names.lock().unwrap().push(r.parent.clone());
+        self.names
+            .lock()
+            .unwrap()
+            .push(format!("cwd {}", r.caller_cwd()));
         Ok(v1::Run {
             context: "PLANNED".to_string(),
             ..v1::Run::default()
@@ -290,22 +303,43 @@ fn env() -> v1::EnvVars {
     }
 }
 
+/// Which client the tests' is.
+fn client() -> v1::Client {
+    v1::Client {
+        kind: v1::client::Kind::Cli as i32,
+        program: "ctxloom".to_string(),
+        program_dir: "/opt/ctxloom".to_string(),
+        version: "v1.2.3-abc".to_string(),
+    }
+}
+
+/// The tests' client at `cwd`, in [`env`].
+fn caller(cwd: &str) -> v1::Caller {
+    v1::Caller {
+        cwd: cwd.to_string(),
+        env: Some(env()),
+        client: Some(client()),
+        ..v1::Caller::default()
+    }
+}
+
 fn in_project(daemons: &Fakes) -> Client<Fakes> {
     let project = v1::ResolveProjectRequest {
         project_id: "p-1".to_string(),
         root: "/work".to_string(),
         ..v1::ResolveProjectRequest::default()
     };
-    Client::new(daemons.clone(), Some(project), "/work".to_string(), env())
+    Client::new(daemons.clone(), Some(project), caller("/work"))
 }
 
 fn outside(daemons: &Fakes) -> Client<Fakes> {
-    Client::new(daemons.clone(), None, "/tmp".to_string(), env())
+    Client::new(daemons.clone(), None, caller("/tmp"))
 }
 
 // A listing reaches a daemon, resolves its project with it first (S6), and
-// lists under the project the daemon named; every request carries the
-// caller's whole environment (S7).
+// lists under the project the daemon named; the resolve carries the
+// client's whole caller (its directory, environment and client, owner
+// 2026-11-18), the listing (a read by name) none.
 #[tokio::test]
 async fn a_listing_resolves_its_project_first_and_sends_its_environment() {
     let daemons = Fakes::new();
@@ -317,7 +351,7 @@ async fn a_listing_resolves_its_project_first_and_sends_its_environment() {
     assert_eq!(daemons.asked(), ["1:resolve", "1:list 1"]);
     assert_eq!(daemons.names(), ["p-1", "projects/calm-otter"]);
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs, [Some(env()), Some(env())]);
+    assert_eq!(envs, [Some(caller("/work")), None]);
 }
 
 // --all lists every project's; in a project it is resolved all the same,
@@ -430,7 +464,10 @@ async fn show_and_search_address_the_resolved_project() {
         ]
     );
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs, vec![Some(env()); 4]);
+    assert_eq!(
+        envs,
+        [Some(caller("/work")), None, Some(caller("/work")), None]
+    );
 }
 
 // S8: a daemon that dies mid-call is replaced: the call is made once more,
@@ -509,7 +546,11 @@ async fn status_and_stop_start_no_daemon() {
     assert_eq!(daemons.asked(), ["0:get", "0:stop true"]);
     assert_eq!(daemons.names(), ["daemon"]);
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs, vec![Some(env()); 2]);
+    assert_eq!(
+        envs,
+        vec![None; 2],
+        "the daemon's lifecycle carries no caller"
+    );
     assert_eq!(daemons.reaches(), 0);
 }
 
@@ -563,7 +604,7 @@ async fn a_removal_asks_the_daemon_of_this_projects_session() {
         ["p-1", "projects/calm-otter/sessions/brisk-copper-moth"]
     );
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs.last(), Some(&Some(env())));
+    assert_eq!(envs.last(), Some(&Some(caller("/work"))));
     in_project(&daemons)
         .delete_session("brisk-copper-moth", true, false)
         .await
@@ -633,7 +674,7 @@ async fn a_sweep_names_its_parent_and_its_project() {
     );
     assert_eq!(daemons.asked().last().unwrap(), "1:sweep true 90d");
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs.last(), Some(&Some(env())));
+    assert_eq!(envs.last(), Some(&Some(caller("/work"))));
     let outside_daemons = Fakes::new();
     outside(&outside_daemons)
         .sweep_sessions(true, None, true)
@@ -720,7 +761,7 @@ async fn a_dry_runs_parent_reaches_the_daemon_even_with_nothing_to_resolve() {
     assert_eq!(unnamed.unwrap(), None);
     assert_eq!(unnamed_daemons.asked(), ["1:get"]);
     let envs = unnamed_daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs, vec![Some(env())], "the caller's environment sent");
+    assert_eq!(envs, vec![None], "GetDaemon carries no caller");
     // A daemon gone mid-call: asked once more, on the daemon reached again.
     let dying = Fakes::new();
     dying.template.dying.lock().unwrap().push(1);
@@ -804,8 +845,8 @@ async fn an_assembly_and_a_dry_run_are_asked_under_the_library_parent_from_the_c
         ]
     );
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs[1], Some(env()));
-    assert_eq!(envs[3], Some(env()));
+    assert_eq!(envs[1], Some(caller("/work")));
+    assert_eq!(envs[3], Some(caller("/work")));
     let home = Fakes::new();
     outside(&home)
         .assemble_context(v1::AssembleContextRequest::default())
@@ -829,7 +870,43 @@ async fn a_write_is_asked_from_the_callers_directory_in_its_environment() {
     assert_eq!(daemons.asked(), ["1:resolve", "1:create-bundle"]);
     assert_eq!(daemons.names(), ["p-1", "projects/calm-otter", "cwd /work"]);
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs[1], Some(env()));
+    assert_eq!(envs[1], Some(caller("/work")));
+}
+
+// Owner, 2026-11-18: a command's own part of its caller (its flags, what it
+// can present) is kept, and the client fills the rest: its directory, its
+// environment and which client it is.
+#[tokio::test]
+async fn a_write_keeps_its_own_flags_and_presentable_and_carries_the_clients_context() {
+    use super::LibraryWrites;
+    let daemons = Fakes::new();
+    let globals = v1::Globals {
+        degraded: true,
+        ..v1::Globals::default()
+    };
+    let presentable = v1::Presentable {
+        can_ask: false,
+        can_launch: true,
+    };
+    in_project(&daemons)
+        .create_bundle(
+            "",
+            v1::CreateBundleRequest {
+                caller: v1::Caller::of(Some(globals.clone()), Some(presentable)),
+                ..v1::CreateBundleRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    let envs = daemons.template.envs.lock().unwrap().clone();
+    assert_eq!(
+        envs[1],
+        Some(v1::Caller {
+            globals: Some(globals),
+            presentable: Some(presentable),
+            ..caller("/work")
+        })
+    );
 }
 
 // Test-support's `CTXLOOM_TEST_NO_RETRY` (step 10b's harness): a client
@@ -902,5 +979,5 @@ async fn a_hook_asks_for_its_sessions_owed_context_by_name() {
         ]
     );
     let envs = daemons.template.envs.lock().unwrap().clone();
-    assert_eq!(envs[1], Some(env()));
+    assert_eq!(envs[1], Some(caller("/work")));
 }

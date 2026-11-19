@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use ctxloom_ports::{Editor, EditorCommand, Failure};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use library_application::{
     BundleCreated, Flags, ItemCreated, ItemEdited, ItemKind, ItemRemoved, Library, Outcome, Removal,
 };
@@ -537,7 +538,7 @@ pub mod update_profile {
         let outcome = editing(
             library,
             (edited(&request.answers), request.validate_only),
-            can_launch(request.presentable.as_ref()),
+            can_launch(request.caller_presentable()),
             |library| library.profile_edit(flags, &name),
         );
         Outcome {
@@ -998,7 +999,7 @@ pub mod create_fragment {
         editing(
             library,
             (given(body, &request.answers), false),
-            can_launch(request.presentable.as_ref()),
+            can_launch(request.caller_presentable()),
             |library| library.item_create_at(flags, ItemKind::Fragment, &reference),
         )
     }
@@ -1069,7 +1070,7 @@ pub mod create_command {
         editing(
             library,
             (given(body, &request.answers), false),
-            can_launch(request.presentable.as_ref()),
+            can_launch(request.caller_presentable()),
             |library| library.item_create_at(flags, ItemKind::Command, &reference),
         )
     }
@@ -1141,7 +1142,7 @@ pub mod update_fragment {
                 given(&fragment.body, &request.answers),
                 request.validate_only,
             ),
-            can_launch(request.presentable.as_ref()),
+            can_launch(request.caller_presentable()),
             |library| {
                 library.item_edit(
                     flags,
@@ -1204,7 +1205,7 @@ pub mod update_command {
                 given(&command.body, &request.answers),
                 request.validate_only,
             ),
-            can_launch(request.presentable.as_ref()),
+            can_launch(request.caller_presentable()),
             |library| {
                 library.item_edit(
                     flags,
@@ -1304,7 +1305,7 @@ pub mod edit_config {
         editing(
             library,
             (edited(&request.answers), request.validate_only),
-            can_launch(request.presentable.as_ref()),
+            can_launch(request.caller_presentable()),
             |library| library.config_edited(),
         )
     }
@@ -1457,7 +1458,7 @@ pub mod update_mcp_server {
         let edited = editing(
             library,
             (edited(&request.answers), request.validate_only),
-            can_launch(request.presentable.as_ref()),
+            can_launch(request.caller_presentable()),
             |library| library.mcp_edit(flags, &reference),
         );
         Outcome {
@@ -1623,7 +1624,7 @@ pub mod move_bundle {
         library.bundle_move_into(
             flags,
             &bundle,
-            &below_cwd(&request.cwd, &request.destination),
+            &below_cwd(request.caller_cwd(), &request.destination),
         )
     }
 
@@ -1637,14 +1638,14 @@ pub mod move_bundle {
             None => {
                 let bundle = names::bundle_under(parent_of(&request.name), &request.name)
                     .unwrap_or_else(|| request.name.clone());
-                let dir = below_cwd(&request.cwd, &request.destination);
+                let dir = below_cwd(request.caller_cwd(), &request.destination);
                 let dir = dir.trim_end_matches(['/', '\\']);
                 let at = format!("{dir}/.ctxloom/{}/{bundle}", crate::writes::BUNDLES);
                 (String::new(), at)
             }
         };
         v1::MoveBundleResponse {
-            path: as_typed(&request.cwd, &dest),
+            path: as_typed(request.caller_cwd(), &dest),
             source,
             applied: Some(wrote.applied),
             etag: wrote.etag,
@@ -1674,8 +1675,8 @@ pub mod export_bundle {
         library.bundle_export(
             flags,
             &bundle,
-            &below_cwd(&request.cwd, &request.destination),
-            &below_cwd(&request.cwd, &request.output),
+            &below_cwd(request.caller_cwd(), &request.destination),
+            &below_cwd(request.caller_cwd(), &request.output),
         )
     }
 
@@ -1684,9 +1685,15 @@ pub mod export_bundle {
         wrote: Wrote<BundleExported>,
     ) -> v1::ExportBundleResponse {
         let (source, destination) = match &wrote.answer {
-            Some(done) => (done.source.clone(), as_typed(&request.cwd, &done.dest)),
+            Some(done) => (
+                done.source.clone(),
+                as_typed(request.caller_cwd(), &done.dest),
+            ),
             // A retry of an export made before: what it answered then.
-            None => (wrote.source.clone(), as_typed(&request.cwd, &wrote.at)),
+            None => (
+                wrote.source.clone(),
+                as_typed(request.caller_cwd(), &wrote.at),
+            ),
         };
         v1::ExportBundleResponse {
             bundle: request.name.clone(),
@@ -1707,10 +1714,10 @@ pub mod import_bundle {
     /// when relative.
     fn source(request: &v1::ImportBundleRequest) -> String {
         let given = std::path::Path::new(&request.source);
-        if given.is_absolute() || request.cwd.is_empty() {
+        if given.is_absolute() || request.caller_cwd().is_empty() {
             return request.source.clone();
         }
-        std::path::Path::new(&request.cwd)
+        std::path::Path::new(request.caller_cwd())
             .join(given)
             .display()
             .to_string()

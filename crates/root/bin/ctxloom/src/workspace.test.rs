@@ -571,3 +571,403 @@ fn test_nothing_but_the_m10b_kept_list_calls_hook_environment() {
         "hook_environment is M10b's alone (OD-13): {callers:#?}"
     );
 }
+
+/// The `Ctxloom` RPCs whose request carries no [`daemon_proto::v1::Caller`]
+/// (owner, 2026-11-18): the reads by name (a run, a session, its transcript,
+/// an approval, a trust, the project, a worktree listing not yet served) and
+/// the daemon's own lifecycle (`GetDaemon`, `StopDaemon`, which a client of
+/// another version must still reach to stop it). Every other RPC acts on a
+/// user's behalf (it plans, reads the library, runs git, writes or launches)
+/// and carries one.
+const CALLERLESS_RPCS: &[&str] = &[
+    "GetDaemon",
+    "StopDaemon",
+    "GetProject",
+    "GetSession",
+    "ListSessions",
+    "SearchSessions",
+    "GetTranscript",
+    "WatchTranscript",
+    "WatchSession",
+    "ListWorktrees",
+    "DeleteHandOff",
+    "GetRun",
+    "WatchRun",
+    "CreateApproval",
+    "GetApproval",
+    "ListApprovals",
+    "WaitApproval",
+    "GetTrust",
+    "ListTrusts",
+];
+
+/// Each RPC of the `Ctxloom` service, by name, and whether its request has a
+/// `caller` field of type `Caller` at 98.
+fn rpcs_carrying_the_caller() -> Vec<(String, bool)> {
+    let set = daemon_proto::descriptors().expect("the descriptor set decodes");
+    let package: Vec<_> = set
+        .file
+        .iter()
+        .filter(|file| file.package() == "ctxloom.v1")
+        .collect();
+    let carries = |input: &str| {
+        let name = input.trim_start_matches(".ctxloom.v1.");
+        package
+            .iter()
+            .flat_map(|file| &file.message_type)
+            .filter(|message| message.name() == name)
+            .flat_map(|message| &message.field)
+            .any(|field| {
+                field.name() == "caller"
+                    && field.number() == 98
+                    && field.type_name() == ".ctxloom.v1.Caller"
+            })
+    };
+    package
+        .iter()
+        .flat_map(|file| &file.service)
+        .filter(|service| service.name() == "Ctxloom")
+        .flat_map(|service| &service.method)
+        .map(|method| (method.name().to_string(), carries(method.input_type())))
+        .collect()
+}
+
+#[test]
+fn test_every_request_made_on_a_users_behalf_carries_the_caller() {
+    let rpcs = rpcs_carrying_the_caller();
+    assert!(rpcs.len() > 100, "read only {} RPCs", rpcs.len());
+    let without: Vec<_> = rpcs
+        .iter()
+        .filter(|(name, carried)| !carried && !CALLERLESS_RPCS.contains(&name.as_str()))
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        without.is_empty(),
+        "these requests act on a user's behalf and carry no `Caller caller = 98`: {without:#?}"
+    );
+}
+
+#[test]
+fn test_the_callerless_list_names_only_rpcs_that_carry_no_caller() {
+    let rpcs = rpcs_carrying_the_caller();
+    for listed in CALLERLESS_RPCS {
+        match rpcs.iter().find(|(name, _)| name == listed) {
+            None => panic!("{listed} is listed callerless and is no RPC"),
+            Some((_, true)) => panic!("{listed} is listed callerless and carries a Caller"),
+            Some((_, false)) => {}
+        }
+    }
+}
+
+/// The CLI crates' dependencies on application crates there are today (step
+/// 10 U11's forcing check): every one is a DEPARTURE from the rule, listed
+/// with what it is used for, until the CLI crates are request and render
+/// alone (step 10a U2's "the CLI crates' application dependencies" deletion,
+/// not done yet). A new edge fails the check; so does an entry here whose
+/// edge is gone (take it out).
+const CLI_APPLICATION_DEPARTURES: &[(&str, &str, &str)] = &[
+    (
+        "container-cli",
+        "isolation-application",
+        "its error and container rows, rendered",
+    ),
+    (
+        "ctxloom-cli",
+        "library-application",
+        "the global `Flags` it parses",
+    ),
+    (
+        "deps-cli",
+        "deps-application",
+        "the rows it renders and its catalog",
+    ),
+    (
+        "deps-cli",
+        "library-api",
+        "resource names, reads' flags, the deps resources",
+    ),
+    (
+        "hook-cli",
+        "setup-application",
+        "`HookAnswer`, what a hook answers its engine",
+    ),
+    (
+        "library-cli",
+        "library-application",
+        "`Flags`, `SourcedValue`, `AgentSettings` and hints, rendered",
+    ),
+    (
+        "library-cli",
+        "library-api",
+        "resource names, resources and served writes' helpers",
+    ),
+    ("run-cli", "library-application", "its catalog (`EN_US`)"),
+    (
+        "run-cli",
+        "run-application",
+        "the run's use case, in process",
+    ),
+    (
+        "session-cli",
+        "daemon-api",
+        "the daemon's client (`CallError`, `Written`, `Removed`)",
+    ),
+    (
+        "session-cli",
+        "isolation-application",
+        "worktree verdicts and rows, rendered",
+    ),
+    (
+        "session-cli",
+        "reclaim-application",
+        "holds and `parse_age`",
+    ),
+    (
+        "session-cli",
+        "sessions-application",
+        "timestamps, urgencies and classes",
+    ),
+    (
+        "setup-cli",
+        "auth-application",
+        "auth rows and their catalog",
+    ),
+    ("setup-cli", "deps-application", "deps' errors and notices"),
+    ("setup-cli", "doctor-checks", "doctor's `Report`"),
+    (
+        "setup-cli",
+        "init-application",
+        "init's companions and prompts ports",
+    ),
+    ("setup-cli", "library-api", "reads' flags"),
+    ("setup-cli", "reclaim-application", "clean's `CleanReport`"),
+    (
+        "setup-cli",
+        "sessions-application",
+        "its errors and catalog",
+    ),
+    ("surface-cli", "library-api", "reads' flags"),
+    ("surface-cli", "library-application", "the global `Flags`"),
+    (
+        "surface-cli",
+        "setup-application",
+        "materialize's diff and the hooks' status, rendered",
+    ),
+];
+
+/// The package name a crate directory's `Cargo.toml` gives.
+fn package_name(manifest: &str) -> Option<String> {
+    let package = manifest.split("[package]").nth(1)?;
+    package.lines().find_map(|line| {
+        let value = line.trim().strip_prefix("name")?.trim().strip_prefix('=')?;
+        Some(value.trim().trim_matches('"').to_string())
+    })
+}
+
+/// The names a manifest's `[dependencies]` table lists (not its dev or
+/// build dependencies).
+fn dependency_names(manifest: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut inside = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            inside = line == "[dependencies]";
+            continue;
+        }
+        if !inside || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let name = line
+            .split(['=', '.', ' '])
+            .next()
+            .unwrap_or_default()
+            .trim_matches('"');
+        if !name.is_empty() {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+/// The package names of the crates directly under `dir`.
+fn packages_under(dir: &Path) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for path in files::children(dir) {
+        let Ok(manifest) = files::read(path.join("Cargo.toml")) else {
+            continue;
+        };
+        if let Some(name) = package_name(&manifest) {
+            found.push((name, manifest));
+        }
+    }
+    found
+}
+
+/// The rule (step 10 U11): no CLI crate (a driving adapter named `*-cli`)
+/// depends on an application crate (`crates/core/application/*`); the CLI
+/// is request and render, and every use case runs in the daemon. Today's
+/// edges are the listed departures.
+#[test]
+fn test_no_cli_crate_depends_on_an_application_crate_but_the_departures() {
+    let root = super::repo_root();
+    let applications: Vec<String> = packages_under(&root.join("crates/core/application"))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert!(applications.len() > 10, "read {applications:?}");
+    let clis: Vec<(String, String)> = packages_under(&root.join("crates/adapters/driving"))
+        .into_iter()
+        .filter(|(name, _)| name.ends_with("-cli"))
+        .collect();
+    assert!(clis.len() > 5, "read {} CLI crates", clis.len());
+    let mut edges = Vec::new();
+    for (cli, manifest) in &clis {
+        for dependency in dependency_names(manifest) {
+            if applications.contains(&dependency) {
+                edges.push((cli.clone(), dependency));
+            }
+        }
+    }
+    let listed = |cli: &str, application: &str| {
+        CLI_APPLICATION_DEPARTURES
+            .iter()
+            .any(|(c, a, _)| *c == cli && *a == application)
+    };
+    let new: Vec<_> = edges.iter().filter(|(c, a)| !listed(c, a)).collect();
+    assert!(
+        new.is_empty(),
+        "a CLI crate depends on an application crate (the CLI is request and render): {new:#?}"
+    );
+    let stale: Vec<_> = CLI_APPLICATION_DEPARTURES
+        .iter()
+        .filter(|(c, a, _)| !edges.iter().any(|(ec, ea)| ec == c && ea == a))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "a departure whose edge is gone, take it out: {stale:#?}"
+    );
+}
+
+#[test]
+fn test_a_manifests_dependencies_are_its_dependencies_table_alone() {
+    let manifest = "[package]\nname = \"demo-cli\"\n\n[dependencies]\n# a note\nlibrary-application.workspace = true\nclap = { workspace = true }\n\"quoted\" = \"1\"\n\n[dev-dependencies]\nrun-application.workspace = true\n";
+    assert_eq!(package_name(manifest).as_deref(), Some("demo-cli"));
+    assert_eq!(
+        dependency_names(manifest),
+        ["library-application", "clap", "quoted"]
+    );
+}
+
+/// Every place the daemon's sources open a library tree (step 10 U11's
+/// forcing check), by file, with how many opens it holds and how each is
+/// reached: through the observation (the scanner, `library_api::observe`)
+/// first, else a stated DEPARTURE. An open added anywhere else, or a count
+/// that moves, fails the check: the new open is to follow an observation.
+const DAEMON_LIBRARY_OPENS: &[(&str, usize, &str)] = &[
+    (
+        "crates/root/lib/ctxloom-wiring/src/daemon/places.rs",
+        2,
+        "a library read's library, once `library_reads` observed its trees (`read_site`); \
+         DEPARTURE: the trust preview (`GetTrust`, `ListTrusts`, reads by name) reads the \
+         project's own layer at its registered root unobserved",
+    ),
+    (
+        "crates/root/lib/ctxloom-wiring/src/daemon/setup_reads.rs",
+        2,
+        "a setup read's (doctor, auth status, init prompt), once `setup_read` observed its trees",
+    ),
+    (
+        "crates/root/lib/ctxloom-wiring/src/daemon/foreign.rs",
+        1,
+        "a foreign writer's, once `observe_trees` observed the tree it records in",
+    ),
+    (
+        "crates/root/lib/ctxloom-wiring/src/daemon/deps.rs",
+        1,
+        "a dependency write's, once the write observed the tree it lands in",
+    ),
+    (
+        "crates/root/lib/ctxloom-wiring/src/daemon/mod.rs",
+        1,
+        "DEPARTURE: a hosted child's plan (`CreateHandOff`), and its output root and git \
+         identity read again at its launch, are read unobserved (observing at the hand-off \
+         broke library_changes' refresh re-injection scenario: to root-cause first)",
+    ),
+    (
+        "crates/root/lib/ctxloom-wiring/src/oneshot.rs",
+        1,
+        "a hosted one-shot's or terminal run's plan, once `observe_for` observed its trees",
+    ),
+];
+
+/// What opens a library tree in the root's sources.
+const LIBRARY_OPENERS: &[&str] = &["library::build(", "build_setup(", "build_setup_over("];
+
+/// How many library opens `text` holds (a definition, `fn build(` or `fn
+/// build_setup(`, is none).
+fn library_opens(text: &str) -> usize {
+    LIBRARY_OPENERS
+        .iter()
+        .map(|opener| {
+            text.match_indices(opener)
+                .filter(|(at, _)| !text[..*at].ends_with("fn "))
+                .count()
+        })
+        .sum()
+}
+
+/// The rule (step 10 U11): nothing in the daemon reads a library tree
+/// outside the observation. The daemon's root sources (`ctxloom-wiring`'s
+/// `daemon/`, and the hosted runs' `oneshot.rs` and `frontend.rs`) open a
+/// library only where [`DAEMON_LIBRARY_OPENS`] lists; the core's daemon
+/// crates (daemon-api, daemon-application) open none at all (they reach a
+/// library through their ports, each observed first).
+#[test]
+fn test_nothing_in_the_daemon_opens_a_library_tree_outside_the_observation() {
+    let root = super::repo_root();
+    let wiring = root.join("crates/root/lib/ctxloom-wiring/src");
+    let mut sources = Vec::new();
+    files(&wiring.join("daemon"), &mut sources);
+    sources.push(wiring.join("oneshot.rs"));
+    sources.push(wiring.join("frontend.rs"));
+    for core in ["daemon-api", "daemon-application"] {
+        files(
+            &root.join("crates/core/application").join(core),
+            &mut sources,
+        );
+    }
+    let mut found = Vec::new();
+    for path in sources {
+        let name = path.to_string_lossy().replace('\\', "/");
+        if !name.ends_with(".rs") || name.ends_with(".test.rs") {
+            continue;
+        }
+        let text = files::read(&path).expect("a source");
+        let opens = library_opens(&text);
+        if opens > 0 {
+            let relative = path
+                .strip_prefix(&root)
+                .expect("under the repository")
+                .to_string_lossy()
+                .replace('\\', "/");
+            found.push((relative, opens));
+        }
+    }
+    let mut listed: Vec<(String, usize)> = DAEMON_LIBRARY_OPENS
+        .iter()
+        .map(|(file, count, _)| ((*file).to_string(), *count))
+        .collect();
+    found.sort();
+    listed.sort();
+    assert_eq!(
+        found, listed,
+        "a library open in the daemon that is not listed (it is to follow an observation)"
+    );
+}
+
+#[test]
+fn test_a_library_open_is_counted_and_its_definition_is_not() {
+    let text = "fn build(w) {}\nlet a = crate::library::build(&w, None);\nfn build_setup(x) {}\nbuild_setup_over(&w, d, f);\n";
+    assert_eq!(library_opens(text), 2);
+}

@@ -53,6 +53,7 @@
 //!   the user's answer ([`ApprovalAnswers`]) through `HandleSync` on
 //!   `pending-approvals`, and the MCP server's ask, wait and withdrawal.
 
+mod admit;
 mod approvals;
 mod caller;
 mod caller_wake;
@@ -83,6 +84,7 @@ mod trust;
 mod waker;
 mod watch;
 
+pub use admit::{admit, program_of};
 pub use approvals::{
     ask_of, settled_how, settled_of, settled_refusal, Answered, ApprovalAnswers, Approving,
     AskNames,

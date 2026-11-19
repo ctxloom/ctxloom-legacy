@@ -48,7 +48,7 @@ pub use one_shot::{
 };
 pub use ports::{
     ChildHomes, ChildPlans, ChildWorkspaces, Ears, ForLaunch, HandOff, HandOffs, HoldFlushed,
-    HostedEngine, Kept, Monotonic, StartHolds, Transcripts,
+    HostedEngine, Kept, Monotonic, Program, StartHolds, Transcripts,
 };
 pub use run_launcher::{Sweeper, Swept};
 pub use terminal::{

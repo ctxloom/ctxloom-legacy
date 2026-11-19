@@ -11,7 +11,7 @@ pub(crate) fn read(
 ) -> Result<Exit, Failure> {
     // The daemon's read (step 10a U2), its text from the message (D10).
     let request = v1::ListCompanionsRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListCompanionsRequest::default()
     };
     let read = cx.served.list_companions("", request);
@@ -34,7 +34,7 @@ pub(crate) fn write(
         "add" => {
             let request = v1::CreateCompanionRequest {
                 companion_id: name.clone(),
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::CreateCompanionRequest::default()
             };
             crate::answer_written(
@@ -76,7 +76,7 @@ pub(crate) fn write(
             };
             if verb == "enable" {
                 let request = v1::EnableCompanionRequest {
-                    globals: cx.globals(),
+                    caller: v1::Caller::of(cx.globals(), None),
                     ..v1::EnableCompanionRequest::default()
                 };
                 crate::answer_written(
@@ -90,7 +90,7 @@ pub(crate) fn write(
                 )?
             } else {
                 let request = v1::DisableCompanionRequest {
-                    globals: cx.globals(),
+                    caller: v1::Caller::of(cx.globals(), None),
                     ..v1::DisableCompanionRequest::default()
                 };
                 crate::answer_written(
@@ -116,7 +116,7 @@ pub(crate) fn write(
                     let request = v1::DeleteCompanionRequest {
                         validate_only,
                         etag,
-                        globals: cx.globals(),
+                        caller: v1::Caller::of(cx.globals(), None),
                         ..v1::DeleteCompanionRequest::default()
                     };
                     cx.served.delete_companion(&under, request)
@@ -146,7 +146,7 @@ pub(crate) fn loadout(
         return Err(AppError::from(WriteError::LoadoutFormat { format }).into_failure());
     }
     let request = v1::GetLoadoutRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::GetLoadoutRequest::default()
     };
     let (loadout, notices) = cx.served.own_loadout(request)?;

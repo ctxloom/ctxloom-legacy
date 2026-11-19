@@ -100,7 +100,10 @@ fn test_a_fragment_create_with_a_body_stores_it_and_asks_nothing() {
             body: "be kind".to_string(),
             ..v1::Fragment::default()
         }),
-        presentable: launching(),
+        caller: Some(v1::Caller {
+            presentable: launching(),
+            ..v1::Caller::default()
+        }),
         ..v1::CreateFragmentRequest::default()
     };
     let asked = super::create_fragment::plan(&library, &plain(), &request, true)
@@ -133,7 +136,10 @@ fn test_a_two_word_create_writes_gos_placeholder_and_refuses_a_missing_bundle() 
                 parent: parent.clone(),
                 fragment_id: "rules".to_string(),
                 placeholder: true,
-                presentable: launching(),
+                caller: Some(v1::Caller {
+                    presentable: launching(),
+                    ..v1::Caller::default()
+                }),
                 ..v1::CreateFragmentRequest::default()
             };
             let asked = super::create_fragment::plan(&library, &plain(), &request, true)
@@ -145,7 +151,10 @@ fn test_a_two_word_create_writes_gos_placeholder_and_refuses_a_missing_bundle() 
                 parent: parent.clone(),
                 command_id: "rules".to_string(),
                 placeholder: true,
-                presentable: launching(),
+                caller: Some(v1::Caller {
+                    presentable: launching(),
+                    ..v1::Caller::default()
+                }),
                 ..v1::CreateCommandRequest::default()
             };
             let asked = super::create_command::plan(&library, &plain(), &request, true)
@@ -196,7 +205,10 @@ fn test_a_fragment_edit_with_no_body_asks_its_edit_need_and_applies_the_answer()
             name: name.to_string(),
             ..v1::Fragment::default()
         }),
-        presentable: launching(),
+        caller: Some(v1::Caller {
+            presentable: launching(),
+            ..v1::Caller::default()
+        }),
         ..v1::UpdateFragmentRequest::default()
     };
     let (library, recorder) = demo().recording();
@@ -388,7 +400,10 @@ fn test_an_edits_preview_plans_its_file_for_its_etag_and_still_asks_the_edit_nee
             name: "projects/amber-quiet-heron/bundles/demo/fragments/example".to_string(),
             ..v1::Fragment::default()
         }),
-        presentable: launching(),
+        caller: Some(v1::Caller {
+            presentable: launching(),
+            ..v1::Caller::default()
+        }),
         validate_only: true,
         ..v1::UpdateFragmentRequest::default()
     };
@@ -630,7 +645,10 @@ fn mcp_set(mask: &[&str], server: impl FnOnce(&mut v1::McpServer)) -> v1::Update
             paths: mask.iter().map(|p| p.to_string()).collect(),
         }),
         allow_missing: true,
-        presentable: launching(),
+        caller: Some(v1::Caller {
+            presentable: launching(),
+            ..v1::Caller::default()
+        }),
         ..v1::UpdateMcpServerRequest::default()
     }
 }
@@ -1027,7 +1045,10 @@ fn config_edit(answers: Vec<v1::Answer>, validate_only: bool) -> v1::EditConfigR
         name: "projects/amber-quiet-heron/config".to_string(),
         validate_only,
         answers,
-        presentable: launching(),
+        caller: Some(v1::Caller {
+            presentable: launching(),
+            ..v1::Caller::default()
+        }),
         ..v1::EditConfigRequest::default()
     }
 }
@@ -1084,7 +1105,10 @@ fn import_request(source: &str, force: bool) -> v1::ImportBundleRequest {
         parent: "projects/amber-quiet-heron".to_string(),
         source: source.to_string(),
         force,
-        cwd: "/work/demo".to_string(),
+        caller: Some(v1::Caller {
+            cwd: "/work/demo".to_string(),
+            ..v1::Caller::default()
+        }),
         ..v1::ImportBundleRequest::default()
     }
 }
@@ -1319,7 +1343,10 @@ fn profile_update(
         update_mask: (!mask.is_empty()).then(|| daemon_proto::google::protobuf::FieldMask {
             paths: mask.iter().map(|p| p.to_string()).collect(),
         }),
-        presentable: launching(),
+        caller: Some(v1::Caller {
+            presentable: launching(),
+            ..v1::Caller::default()
+        }),
         ..v1::UpdateProfileRequest::default()
     };
     edit(&mut request);
@@ -1455,7 +1482,10 @@ fn test_a_bundle_export_plans_its_tree_below_the_callers_directory_and_answers_i
     let request = v1::ExportBundleRequest {
         name: "projects/amber-quiet-heron/bundles/demo".to_string(),
         destination: "exported".to_string(),
-        cwd: "/work".to_string(),
+        caller: Some(v1::Caller {
+            cwd: "/work".to_string(),
+            ..v1::Caller::default()
+        }),
         ..v1::ExportBundleRequest::default()
     };
     let done = super::export_bundle::plan(&library, &plain(), &request, true)
@@ -1514,7 +1544,10 @@ fn test_a_bundle_move_plans_its_one_move_and_answers_where_it_landed_as_typed() 
     let request = v1::MoveBundleRequest {
         name: "projects/amber-quiet-heron/bundles/demo".to_string(),
         destination: "other".to_string(),
-        cwd: "/work".to_string(),
+        caller: Some(v1::Caller {
+            cwd: "/work".to_string(),
+            ..v1::Caller::default()
+        }),
         ..v1::MoveBundleRequest::default()
     };
     let done = super::move_bundle::plan(&library, &plain(), &request, true)

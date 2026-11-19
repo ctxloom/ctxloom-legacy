@@ -415,7 +415,7 @@ async fn test_tool<D: Daemons, E: Elicit>(
             let harp = text(tool, args, "session").map_err(refused)?;
             let asked = v1::DeleteSessionRequest {
                 validate_only: true,
-                presentable: presentable(),
+                caller: v1::Caller::of(None, presentable()),
                 ..v1::DeleteSessionRequest::default()
             };
             let preview = caller.delete_session(harp, asked).await.map_err(failed)?;
@@ -425,7 +425,7 @@ async fn test_tool<D: Daemons, E: Elicit>(
             let apply = v1::DeleteSessionRequest {
                 etag: preview.etag,
                 answers,
-                presentable: presentable(),
+                caller: v1::Caller::of(None, presentable()),
                 ..v1::DeleteSessionRequest::default()
             };
             let done = caller.delete_session(harp, apply).await.map_err(failed)?;
@@ -439,7 +439,7 @@ async fn test_tool<D: Daemons, E: Elicit>(
                 fragment: Some(v1::Fragment::default()),
                 validate_only,
                 answers,
-                presentable: presentable(),
+                caller: v1::Caller::of(None, presentable()),
                 ..v1::CreateFragmentRequest::default()
             };
             let preview = caller

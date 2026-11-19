@@ -192,6 +192,7 @@ async fn host_terminal(
         output_dir,
         synced,
         project,
+        program,
     } = hosted;
     let fs = wiring.fs();
     let project_dir = wiring.project_dir();
@@ -213,7 +214,15 @@ async fn host_terminal(
         runner,
         locks: Box::new(Unheld),
     };
-    let mut runs = runs_over(&wiring, library, &output_dir, driven, core, project);
+    let mut runs = runs_over(
+        &wiring,
+        library,
+        &output_dir,
+        driven,
+        core,
+        project,
+        &program,
+    );
     // U5's start-report race: the run's own lock is its frontend's.
     runs.held_by_frontend(request.launcher_lock.clone());
     let mut done = runs.interactive(&request.flags, &request.request).await;
@@ -404,6 +413,11 @@ pub(crate) fn client_terminal(
             flags: flags.clone(),
             request: request.clone(),
             request_id: crate::daemon::request_id(),
+            client: crate::daemon::calling_client(
+                wiring.env(),
+                daemon_proto::v1::client::Kind::Cli,
+                stamp,
+            ),
         };
         let mut done = beside(terminal(wiring, stamp, &asked, &stop), watching).await;
         if let Some(hearing) = hearing {

@@ -163,13 +163,15 @@ mod write {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_companion_reads_carry_the_globals() {
         let (_, list) = asked_once::<v1::ListCompanionsRequest>(&["companion", "list"]);
-        assert_eq!(list.globals, degraded());
+        assert_eq!(list.caller_globals().cloned(), degraded());
         let (_, loadout) = asked_once::<v1::GetLoadoutRequest>(&["loadout"]);
-        assert_eq!(loadout.globals, degraded());
+        assert_eq!(loadout.caller_globals().cloned(), degraded());
     }
 }
 
@@ -178,6 +180,8 @@ mod asks {
 mod add_asked {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_companion_add_asks_create_companion_with_its_name() {
@@ -186,7 +190,7 @@ mod add_asked {
         assert_eq!(under, "");
         assert_eq!(asked.companion_id, "acme");
         assert!(!asked.validate_only);
-        assert_eq!(asked.globals, degraded());
+        assert_eq!(asked.caller_globals().cloned(), degraded());
     }
 
     // Step 10b (owner 2026-11-18, night): `companion enable|disable` ask
@@ -198,11 +202,11 @@ mod add_asked {
             asked_once::<v1::EnableCompanionRequest>(&["companion", "enable", "acme"]);
         assert_eq!(under, "/companions/acme");
         assert!(!asked.validate_only);
-        assert_eq!(asked.globals, degraded());
+        assert_eq!(asked.caller_globals().cloned(), degraded());
         let (under, asked) =
             asked_once::<v1::DisableCompanionRequest>(&["companion", "disable", "acme"]);
         assert_eq!(under, "/companions/acme");
         assert!(!asked.validate_only);
-        assert_eq!(asked.globals, degraded());
+        assert_eq!(asked.caller_globals().cloned(), degraded());
     }
 }

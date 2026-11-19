@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use daemon_application::{TerminalCreated, Terminals};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use run_ports::Edge;
 
 use crate::refusal::ApiError;
@@ -50,13 +51,15 @@ impl<E: Edge> Api<E> {
     ) -> Result<v1::Run, ApiError> {
         let terminals = Arc::clone(self.terminals()?);
         let project = self.host_project(&request.parent).await?;
+        // Planned outside the daemon's reads: its trees observed first.
+        self.observe_for(&request).await?;
         let (asked, mut flags) = run_application::client::asked_of(&request);
         // The project's trust is the daemon's to read, never the client's
         // to say (step 8 U2).
         flags.trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
         let env = request
-            .env
-            .clone()
+            .caller_env()
+            .cloned()
             .unwrap_or_default()
             .vars
             .into_iter()
@@ -64,8 +67,9 @@ impl<E: Edge> Api<E> {
             .collect();
         let created = terminals.create(daemon_application::HostRequest {
             project,
-            cwd: request.cwd.clone(),
+            cwd: request.caller_cwd().to_string(),
             env,
+            program: crate::program_of(request.caller_client()),
             flags,
             request: asked,
             launcher_lock: Some(request.launcher_lock.clone()).filter(|lock| !lock.is_empty()),

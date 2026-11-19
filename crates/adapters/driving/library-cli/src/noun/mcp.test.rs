@@ -247,16 +247,18 @@ mod mapping {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_mcp_server_reads_ask_their_id_with_the_globals() {
         let (_, show) =
             asked_once::<v1::ListMcpServersRequest>(&["mcp", "server", "show", "tree-sitter"]);
         assert_eq!(show.mcp_server_id, "tree-sitter");
-        assert_eq!(show.globals, degraded());
+        assert_eq!(show.caller_globals().cloned(), degraded());
         let (_, list) = asked_once::<v1::ListMcpServersRequest>(&["mcp", "server", "list"]);
         assert_eq!(list.mcp_server_id, "");
-        assert_eq!(list.globals, degraded());
+        assert_eq!(list.caller_globals().cloned(), degraded());
     }
 }
 
@@ -267,6 +269,8 @@ mod asks {
 mod writes_asked {
     use crate::tests::{asked, asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_mcp_server_set_asks_its_given_fields_by_mask() {
@@ -297,7 +301,10 @@ mod writes_asked {
         assert_eq!(server.url, "");
         assert!(set.allow_missing);
         assert!(!set.validate_only);
-        assert_eq!(set.globals, degraded());
+        assert_eq!(
+            set.caller.as_ref().and_then(|c| c.globals.clone()),
+            degraded()
+        );
     }
 
     #[test]
@@ -308,6 +315,6 @@ mod writes_asked {
         let (_, preview) = &sent[0];
         assert!(preview.validate_only);
         assert!(preview.update_mask.is_none());
-        assert!(preview.presentable.as_ref().is_some_and(|p| p.can_launch));
+        assert!(preview.caller_presentable().is_some_and(|p| p.can_launch));
     }
 }

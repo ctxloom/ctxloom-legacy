@@ -108,6 +108,8 @@ mod read {
 mod distill {
     use crate::tests::*;
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     /// The daemon's answer to a distill that asks its model: its run.
     fn asking(run: &str) -> v1::DistillFragmentResponse {
@@ -432,6 +434,8 @@ mod mapping {
 mod asks {
     use crate::tests::{asked, asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     // Step 10b: Go's two-word create is the daemon's create, asked once
     // (no preview, no editor), Go's placeholder asked for.
@@ -443,7 +447,7 @@ mod asks {
         assert_eq!(fragment.fragment_id, "testing");
         assert!(fragment.placeholder);
         assert!(!fragment.validate_only);
-        assert_eq!(fragment.globals, degraded());
+        assert_eq!(fragment.caller_globals().cloned(), degraded());
         let (_, command) =
             asked_once::<v1::CreateCommandRequest>(&["command", "create", "demo", "second"]);
         assert_eq!(command.command_id, "second");
@@ -460,7 +464,7 @@ mod asks {
             "demo#commands/review",
         ]);
         assert!(command.prefer_distilled);
-        assert_eq!(command.globals, degraded());
+        assert_eq!(command.caller_globals().cloned(), degraded());
         let (_, fragment) = asked_once::<v1::GetFragmentRequest>(&[
             "fragment",
             "show",
@@ -468,15 +472,19 @@ mod asks {
             "demo#fragments/golang",
         ]);
         assert!(fragment.prefer_distilled);
-        assert_eq!(fragment.globals, degraded());
+        assert_eq!(fragment.caller_globals().cloned(), degraded());
         let (under, index) = asked_once::<v1::GetPremiseIndexRequest>(&["fragment", "premises"]);
         assert_eq!(under, "/premiseIndex");
-        assert_eq!(index.globals, degraded());
+        assert_eq!(index.caller_globals().cloned(), degraded());
         let commands = asked::<v1::ListCommandsRequest>(&["command", "list"]);
         assert!(!commands.is_empty());
-        assert!(commands.iter().all(|(_, r)| r.globals == degraded()));
+        assert!(commands
+            .iter()
+            .all(|(_, r)| r.caller_globals().cloned() == degraded()));
         let fragments = asked::<v1::ListFragmentsRequest>(&["fragment", "list"]);
         assert!(!fragments.is_empty());
-        assert!(fragments.iter().all(|(_, r)| r.globals == degraded()));
+        assert!(fragments
+            .iter()
+            .all(|(_, r)| r.caller_globals().cloned() == degraded()));
     }
 }

@@ -108,8 +108,11 @@ async fn each_setup_read_is_answered_where_the_caller_stands() {
         .run_doctor(v1::RunDoctorRequest {
             deps: true,
             project: "users/me".to_string(),
-            cwd: "/work/a".to_string(),
-            env: env(),
+            caller: Some(v1::Caller {
+                cwd: "/work/a".to_string(),
+                env: env(),
+                ..v1::Caller::default()
+            }),
             ..v1::RunDoctorRequest::default()
         })
         .await
@@ -118,8 +121,11 @@ async fn each_setup_read_is_answered_where_the_caller_stands() {
     let auth = api
         .get_auth_status(v1::GetAuthStatusRequest {
             project: "users/me".to_string(),
-            cwd: "/work/b".to_string(),
-            env: env(),
+            caller: Some(v1::Caller {
+                cwd: "/work/b".to_string(),
+                env: env(),
+                ..v1::Caller::default()
+            }),
             ..v1::GetAuthStatusRequest::default()
         })
         .await
@@ -128,8 +134,11 @@ async fn each_setup_read_is_answered_where_the_caller_stands() {
     let check = api
         .check_manage(v1::CheckManageRequest {
             project: "users/me".to_string(),
-            cwd: "/work/c".to_string(),
-            env: env(),
+            caller: Some(v1::Caller {
+                cwd: "/work/c".to_string(),
+                env: env(),
+                ..v1::Caller::default()
+            }),
             ..v1::CheckManageRequest::default()
         })
         .await
@@ -138,8 +147,11 @@ async fn each_setup_read_is_answered_where_the_caller_stands() {
     let prompt = api
         .get_init_prompt(v1::GetInitPromptRequest {
             project: "users/me".to_string(),
-            cwd: "/work/d".to_string(),
-            env: env(),
+            caller: Some(v1::Caller {
+                cwd: "/work/d".to_string(),
+                env: env(),
+                ..v1::Caller::default()
+            }),
             ..v1::GetInitPromptRequest::default()
         })
         .await

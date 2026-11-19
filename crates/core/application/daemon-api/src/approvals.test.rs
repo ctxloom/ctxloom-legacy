@@ -517,7 +517,7 @@ fn user() -> (Caller<Reached>, Arc<Mutex<Seen>>) {
     let caller = Caller::user(
         Reached(Arc::clone(&seen)),
         "projects/calm-quiet-heron",
-        v1::EnvVars::default(),
+        v1::Caller::default(),
         ids(),
     )
     .unwrap();
@@ -762,7 +762,7 @@ async fn a_sessions_ask_wait_and_withdrawal_reach_the_daemon_as_its_own() {
     let caller = Caller::new(
         Reached(Arc::clone(&seen)),
         CHILD_NAME,
-        v1::EnvVars::default(),
+        v1::Caller::default(),
         ids(),
     )
     .unwrap();

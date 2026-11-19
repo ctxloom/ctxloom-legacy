@@ -8,6 +8,7 @@ use clap::Command;
 use library_application::fakes::{Setup, ENVELOPE};
 
 use super::*;
+pub(crate) use daemon_proto::Carries as _;
 
 pub(crate) const DEMO: &[(&str, &str)] = &[
     ENVELOPE,
@@ -123,7 +124,7 @@ impl Served for ServedBy<'_> {
             ItemKind::Fragment,
             &name,
             request.force,
-            request.globals.as_ref(),
+            request.caller_globals(),
         )?;
         Ok(library_api::distill::fragment_response(
             &name, &done, run, notices,
@@ -140,7 +141,7 @@ impl Served for ServedBy<'_> {
             ItemKind::Command,
             &name,
             request.force,
-            request.globals.as_ref(),
+            request.caller_globals(),
         )?;
         Ok(library_api::distill::command_response(
             &name, &done, run, notices,
@@ -169,7 +170,7 @@ impl Served for ServedBy<'_> {
     /// give, unnamed where they name none.
     fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, Failure> {
         let parent = self.names.named_parent()?;
-        let globals = request.globals.clone().unwrap_or_default();
+        let globals = request.caller_globals().cloned().unwrap_or_default();
         let flags = library_application::Flags {
             degraded: globals.degraded,
             no_companions: globals.no_companions,
@@ -225,7 +226,7 @@ impl Served for ServedBy<'_> {
         request: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, Failure> {
         let parent = self.names.parent()?;
-        let globals = request.globals.clone().unwrap_or_default();
+        let globals = request.caller_globals().cloned().unwrap_or_default();
         let flags = library_application::Flags {
             degraded: globals.degraded,
             no_companions: globals.no_companions,
@@ -263,7 +264,7 @@ macro_rules! served_by_library_api {
                     $target: format!("{parent}{under}"),
                     ..request
                 };
-                let globals = request.globals.clone().unwrap_or_default();
+                let globals = request.caller_globals().cloned().unwrap_or_default();
                 let flags = library_application::Flags {
                     degraded: globals.degraded,
                     no_companions: globals.no_companions,
@@ -297,7 +298,7 @@ macro_rules! written_by_library_api {
                 let parent = self.names.parent()?;
                 let mut request = request;
                 Targeted::target(&mut request, format!("{parent}{under}"));
-                let globals = request.globals.clone().unwrap_or_default();
+                let globals = request.caller_globals().cloned().unwrap_or_default();
                 let flags = library_application::Flags {
                     degraded: globals.degraded,
                     no_companions: globals.no_companions,

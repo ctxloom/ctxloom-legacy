@@ -39,7 +39,7 @@ pub(crate) fn read(
         workspace: text_arg(sub, "workspace"),
         no_context: flag(sub, "no-context"),
         validate_only: true,
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::CreateRunRequest::default()
     };
     let mut run = cx.served.preview_run(request)?;

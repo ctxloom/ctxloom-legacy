@@ -806,6 +806,32 @@ fn a_command_whose_daemon_cannot_start_fails_without_waiting_out_its_spawn_wait(
     assert!(took < SPAWN_WAIT, "it waited {took:?}");
 }
 
+// The plain binary's smoke test (2026-11-19): a ctxloom home not made yet
+// (`just install`'s `~/.ctxloom-rs` on a new machine) still gets a daemon.
+// The client ran its spawn in that directory, which failed and was dropped,
+// so every command was `daemon-ports-not-started` naming a log nobody wrote.
+#[test]
+fn a_ctxloom_home_not_made_yet_gets_a_daemon() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let world = World::new();
+    let fresh = world.project.home().join("not-made-yet");
+    assert!(!files::exists(&fresh), "a home not made yet");
+    let mut env = ENV.to_vec();
+    env.push(("CTXLOOM_HOME", fresh.to_str().unwrap()));
+    let listed = world
+        .project
+        .run_with(&env, &["bundle", "list", "--format", "json"]);
+    assert_eq!(listed.code, 0, "{}", listed.said());
+    assert!(
+        files::exists(fresh.join(".ctxloom/daemon/daemon.log")),
+        "the daemon served from the new home"
+    );
+    let stopped = world.project.run_with(&env, &["daemon", "stop"]);
+    assert_eq!(stopped.code, 0, "{}", stopped.said());
+}
+
 // The same ruling: `daemon serve` that finds another daemon holding the
 // single-instance lock declines (20), which its spawner reads as another
 // daemon to wait for; the one that serves goes on serving.

@@ -200,11 +200,13 @@ mod mapping {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_search_carries_the_globals() {
         let (_, request) = asked_once::<v1::SearchLibraryRequest>(&["search", "go"]);
         assert_eq!(request.query, "go");
-        assert_eq!(request.globals, degraded());
+        assert_eq!(request.caller_globals().cloned(), degraded());
     }
 }

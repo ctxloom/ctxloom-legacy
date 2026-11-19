@@ -95,16 +95,17 @@ fn test_a_steps_path_is_its_kinds_own() {
     assert_eq!(step_path(&purge), "state/trash/r-0");
 }
 
-// E1, extended to the writes: a write's directory is the one it carries,
-// set and read back through the request it is, as its environment is.
+// E1, extended to the writes: a write's directory is the one its caller
+// carries, set and read back through the request it is, as its environment
+// is (owner, 2026-11-18: one `Caller`).
 #[test]
 fn test_a_writes_directory_is_its_requests_own() {
-    use super::LibraryWriteRequest;
+    use daemon_proto::{Carries as _, CarriesMut as _};
     let mut request = daemon_proto::v1::UpdateConfigRequest::default();
-    assert_eq!(request.cwd(), "");
-    request.set_cwd("/work/demo".to_string());
-    assert_eq!(request.cwd(), "/work/demo");
-    assert_eq!(request.cwd, "/work/demo");
+    assert_eq!(request.caller_cwd(), "");
+    request.set_caller_cwd("/work/demo".to_string());
+    assert_eq!(request.caller_cwd(), "/work/demo");
+    assert_eq!(request.caller.as_ref().unwrap().cwd, "/work/demo");
 }
 
 // Step 10b U3 (G4 superseded): a write is planned against the etag its

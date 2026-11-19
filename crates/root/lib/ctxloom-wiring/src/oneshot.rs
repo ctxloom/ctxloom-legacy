@@ -152,7 +152,8 @@ impl Driven<HostLauncher> {
 
 /// The run use cases over `core`, for the run `wiring` is in: the project
 /// `project` (named `project_harp`), its engine started and its session's
-/// lock held as `driven` says.
+/// lock held as `driven` says, its callbacks running `program` (the
+/// client's, owner 2026-11-18) and its engine's `PATH` led by its directory.
 pub(crate) fn runs_over<K: Core, L: run_ports::RunnerLauncher>(
     wiring: &Wiring,
     library: Library,
@@ -160,6 +161,7 @@ pub(crate) fn runs_over<K: Core, L: run_ports::RunnerLauncher>(
     driven: Driven<L>,
     core: K,
     (project, project_harp): (Project, String),
+    program: &crate::program::Program,
 ) -> Runs<K, L, SessionDirs>
 where
     K::Edge: 'static,
@@ -167,9 +169,8 @@ where
     let Driven { runner, locks } = driven;
     let project_dir = wiring.project_dir();
     let orders = Arc::new(Orders::new());
-    // The engines' callbacks run this binary, by its file name, and its
-    // directory leads their PATH (owner ruling 163).
-    let program = crate::program::running();
+    // The engines' callbacks run the client's binary, by its file name, and
+    // its directory leads their PATH (owner rulings 163, 2026-11-18).
     let LaunchEngines { claude, opencode } = launch_engines(wiring, &program.name);
     // The run locks: this run's own, and those another process's runs
     // are judged by (rulings 86, 92, 93).
@@ -472,6 +473,11 @@ pub(crate) fn client_one_shot(
             flags: flags.clone(),
             request: request.clone(),
             request_id: crate::daemon::request_id(),
+            client: crate::daemon::calling_client(
+                wiring.env(),
+                daemon_proto::v1::client::Kind::Cli,
+                stamp,
+            ),
         };
         let (heard, hearing, unheard) = heard_stops(wiring);
         let mut done = run_application::client::one_shot(&api, &asked, heard).await;
@@ -732,6 +738,8 @@ pub(crate) struct Hosted {
     /// What the dependencies' pull at the run's start said (`sync.on_run`).
     pub(crate) synced: Vec<library_application::Notice>,
     pub(crate) project: (Project, String),
+    /// The program its callbacks run: its client's, else the daemon's own.
+    pub(crate) program: crate::program::Program,
 }
 
 /// The set-up of a run the daemon hosts for `request`: the dependencies
@@ -782,6 +790,7 @@ pub(crate) async fn hosted_setup(
         output_dir,
         synced,
         project: (project, project_harp),
+        program: crate::program::of_client(request.program.as_ref()),
     })
 }
 
@@ -810,6 +819,7 @@ async fn host_one_shot(
         output_dir,
         synced,
         project,
+        program,
     } = hosted;
     let mut runs = runs_over(
         &wiring,
@@ -818,6 +828,7 @@ async fn host_one_shot(
         Driven::here(&wiring, stop),
         core,
         project,
+        &program,
     )
     .telling(Box::new(move |placed| told.placed(placed)));
     let mut done = runs.one_shot(&request.flags, &request.request).await;

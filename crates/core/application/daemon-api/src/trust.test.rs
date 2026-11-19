@@ -377,7 +377,7 @@ fn user(
             etags: Arc::new(Mutex::new(etags)),
         },
         "projects/calm-quiet-heron",
-        v1::EnvVars::default(),
+        v1::Caller::default(),
         Box::new(move || {
             let mut n = ids.lock().unwrap();
             *n += 1;

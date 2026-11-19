@@ -11,7 +11,7 @@ pub(crate) fn read(
 ) -> Result<Exit, Failure> {
     if verb == "show" {
         let request = v1::GetEngineRequest {
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::GetEngineRequest::default()
         };
         let under = library_api::names::named_target("engines", &text_arg(sub, "engine"));
@@ -21,7 +21,7 @@ pub(crate) fn read(
         });
     }
     let request = v1::ListEnginesRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListEnginesRequest::default()
     };
     let read = cx.served.list_engines("", request);

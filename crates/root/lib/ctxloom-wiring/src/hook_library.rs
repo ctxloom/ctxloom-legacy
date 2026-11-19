@@ -22,6 +22,9 @@ use crate::Wiring;
 /// The user's daemon as a hook's library read reaches it, until `until`.
 pub(crate) struct HookDaemons {
     pub(crate) env: Arc<EnvSnapshot>,
+    /// The binary's stamp, which its every request names (the daemon
+    /// admits only its own).
+    pub(crate) stamp: String,
     pub(crate) until: Instant,
     /// Whether it may start one (none where the environment names an
     /// endpoint).
@@ -35,9 +38,15 @@ pub(crate) struct HookDaemons {
 impl HookDaemons {
     /// The daemon of a hook's one call (the lean hook RPC): its first
     /// reach trusts the discovery file.
-    pub(crate) fn trusting(env: Arc<EnvSnapshot>, until: Instant, starts: bool) -> HookDaemons {
+    pub(crate) fn trusting(
+        env: Arc<EnvSnapshot>,
+        stamp: &str,
+        until: Instant,
+        starts: bool,
+    ) -> HookDaemons {
         HookDaemons {
             env,
+            stamp: stamp.to_string(),
             until,
             starts,
             trusts: std::sync::atomic::AtomicBool::new(true),
@@ -49,7 +58,11 @@ impl HookDaemons {
     }
 
     fn client(&self, found: &run_ports::Discovery) -> daemon_client::DaemonClient {
-        daemon_client::DaemonClient::new(found, self.remaining())
+        daemon_client::DaemonClient::new(found, self.remaining()).filling(crate::daemon::caller_of(
+            &self.env,
+            v1::client::Kind::Hook,
+            &self.stamp,
+        ))
     }
 
     fn found(&self, wait: Duration) -> Option<run_ports::Discovery> {
@@ -88,15 +101,18 @@ impl Daemons for HookDaemons {
 /// The hooks' library reads over the user's daemon (O3).
 pub(crate) struct DaemonHookLibrary {
     pub(crate) env: Arc<EnvSnapshot>,
+    /// The binary's stamp, which the daemon admits only when it is its own.
+    pub(crate) stamp: String,
     /// When the hook's bound ends.
     pub(crate) until: Instant,
 }
 
 impl DaemonHookLibrary {
     /// A hook's reads, its bound starting now.
-    pub(crate) fn starting_now(env: Arc<EnvSnapshot>) -> DaemonHookLibrary {
+    pub(crate) fn starting_now(env: Arc<EnvSnapshot>, stamp: &str) -> DaemonHookLibrary {
         DaemonHookLibrary {
             env,
+            stamp: stamp.to_string(),
             until: Instant::now() + crate::daemon::HOOK_BOUND,
         }
     }
@@ -109,17 +125,13 @@ impl DaemonHookLibrary {
     ) -> Option<T> {
         let wiring = Wiring::new(Arc::clone(&self.env)).ok()?;
         let registration = wiring.library_registration(crate::Minting::AtRoot).ok()?;
-        let cwd = wiring
-            .env()
-            .cwd()
-            .map(|cwd| cwd.display().to_string())
-            .unwrap_or_default();
         let starts = self
             .env
             .utf8(run_ports::ENDPOINT_VARIABLE)
             .is_none_or(str::is_empty);
         let daemons = HookDaemons {
             env: Arc::clone(&self.env),
+            stamp: self.stamp.clone(),
             until: self.until,
             starts,
             trusts: std::sync::atomic::AtomicBool::new(false),
@@ -127,8 +139,7 @@ impl DaemonHookLibrary {
         let client = daemon_api::Client::new(
             daemons,
             registration,
-            cwd,
-            crate::daemon::env_vars(wiring.env()),
+            crate::daemon::caller_of(wiring.env(), v1::client::Kind::Hook, &self.stamp),
         );
         let within = self.until.saturating_duration_since(Instant::now());
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -158,7 +169,7 @@ impl HookLibrary for DaemonHookLibrary {
                 .list_agents(
                     "",
                     v1::ListAgentsRequest {
-                        globals: Some(degraded()),
+                        caller: v1::Caller::of(Some(degraded()), None),
                         ..v1::ListAgentsRequest::default()
                     },
                 )
@@ -168,7 +179,7 @@ impl HookLibrary for DaemonHookLibrary {
                 .list_profiles(
                     "",
                     v1::ListProfilesRequest {
-                        globals: Some(degraded()),
+                        caller: v1::Caller::of(Some(degraded()), None),
                         ..v1::ListProfilesRequest::default()
                     },
                 )
@@ -187,7 +198,7 @@ impl HookLibrary for DaemonHookLibrary {
                 .list_skills(
                     "",
                     v1::ListSkillsRequest {
-                        globals: Some(degraded()),
+                        caller: v1::Caller::of(Some(degraded()), None),
                         ..v1::ListSkillsRequest::default()
                     },
                 )

@@ -17,6 +17,7 @@ use std::sync::Arc;
 use angzarr_embedded::v1::{event_page, Cover};
 use angzarr_embedded::{Failure, Payload, Timestamp};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use pending_messages::PendingMessages;
 use run_ports::Edge;
 use session_index::{title_of, Captured, SessionIndex, SessionIndexes, SessionRecord, State, View};
@@ -292,6 +293,16 @@ pub trait Calls: Send + Sync {
         Vec::new()
     }
 
+    /// Whether a request whose caller is `caller` is served (owner,
+    /// 2026-11-18): the edge asks it of every request that carries a
+    /// `Caller`, before its use case. The daemon admits only a client of its
+    /// own version ([`crate::admit`]); an edge with no version of its own
+    /// admits every one.
+    fn admit(&self, caller: Option<&v1::Caller>) -> Result<(), ApiError> {
+        let _ = caller;
+        Ok(())
+    }
+
     // The library's reads (step 10a U2, D12), from the one table; each
     // answers its message and the notices the read said. An edge that
     // serves one fails it.
@@ -362,6 +373,10 @@ fn not_served(method: &str) -> ApiError {
 impl<E: Edge + 'static> Calls for Api<E> {
     fn warnings(&self) -> Vec<v1::Notice> {
         Api::warnings(self)
+    }
+
+    fn admit(&self, caller: Option<&v1::Caller>) -> Result<(), ApiError> {
+        crate::admit(&self.parts.about.version, caller)
     }
 
     fn get_daemon(&self) -> Answer<'_, v1::Daemon> {
@@ -1395,7 +1410,10 @@ impl<E: Edge> Api<E> {
         request: v1::ResolveProjectRequest,
     ) -> Result<v1::Project, ApiError> {
         if request.project_id.is_empty() {
-            return Err(ApiRefusal::of(&v1::ProjectUnknown { cwd: request.cwd }).into());
+            return Err(ApiRefusal::of(&v1::ProjectUnknown {
+                cwd: request.caller_cwd().to_string(),
+            })
+            .into());
         }
         let expected = match request.name.is_empty() {
             true => String::new(),

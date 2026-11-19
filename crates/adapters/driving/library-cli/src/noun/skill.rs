@@ -19,7 +19,7 @@ pub(crate) fn read(
     if verb == "show" {
         let under = library_api::names::reference_target(&text_arg(sub, "ref"));
         let request = v1::GetSkillRequest {
-            globals: cx.globals(),
+            caller: v1::Caller::of(cx.globals(), None),
             ..v1::GetSkillRequest::default()
         };
         let read = cx.served.get_skill(&under, request);
@@ -32,7 +32,7 @@ pub(crate) fn read(
     }
     let bundle = text_arg(sub, "bundle");
     let request = || v1::ListSkillsRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListSkillsRequest::default()
     };
     let under = match bundle.as_str() {
@@ -93,7 +93,7 @@ fn create(
             description: text_arg(sub, "description"),
             ..v1::Skill::default()
         }),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::CreateSkillRequest::default()
     };
     let under = library_api::names::bundle_target(&bundle);
@@ -132,7 +132,7 @@ fn remove(
                 validate_only,
                 answers,
                 etag,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::DeleteSkillRequest::default()
             };
             cx.served.delete_skill(&under, request)

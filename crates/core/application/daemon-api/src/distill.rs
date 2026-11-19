@@ -75,12 +75,27 @@ fn keyed_request_id(key: &str) -> String {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ItemWrite {
     pub(crate) name: String,
-    pub(crate) env: Option<v1::EnvVars>,
-    pub(crate) globals: Option<v1::Globals>,
-    pub(crate) cwd: String,
+    /// Its caller, as the distill request carried it.
+    pub(crate) caller: Option<v1::Caller>,
     pub(crate) request_id: String,
     pub(crate) validate_only: bool,
     pub(crate) etag: String,
+}
+
+impl daemon_proto::Carries for ItemWrite {
+    const CALLER: bool = true;
+    fn caller(&self) -> Option<&v1::Caller> {
+        self.caller.as_ref()
+    }
+    fn caller_field(&mut self) -> Option<&mut Option<v1::Caller>> {
+        Some(&mut self.caller)
+    }
+}
+
+impl daemon_proto::CarriesMut for ItemWrite {
+    fn caller_slot(&mut self) -> &mut Option<v1::Caller> {
+        &mut self.caller
+    }
 }
 
 impl LibraryWriteRequest for ItemWrite {
@@ -90,23 +105,8 @@ impl LibraryWriteRequest for ItemWrite {
     fn set_target(&mut self, target: String) {
         self.name = target;
     }
-    fn set_env(&mut self, env: v1::EnvVars) {
-        self.env = Some(env);
-    }
-    fn set_cwd(&mut self, cwd: String) {
-        self.cwd = cwd;
-    }
-    fn cwd(&self) -> &str {
-        &self.cwd
-    }
     fn set_request_id(&mut self, id: String) {
         self.request_id = id;
-    }
-    fn env(&self) -> Option<&v1::EnvVars> {
-        self.env.as_ref()
-    }
-    fn globals(&self) -> Option<&v1::Globals> {
-        self.globals.as_ref()
     }
     fn request_id(&self) -> &str {
         &self.request_id
@@ -134,9 +134,7 @@ impl Asked {
             kind: ItemKind::Fragment,
             write: ItemWrite {
                 name: request.name.clone(),
-                env: request.env.clone(),
-                globals: request.globals.clone(),
-                cwd: request.cwd.clone(),
+                caller: request.caller.clone(),
                 ..ItemWrite::default()
             },
             force: request.force,
@@ -148,9 +146,7 @@ impl Asked {
             kind: ItemKind::Command,
             write: ItemWrite {
                 name: request.name.clone(),
-                env: request.env.clone(),
-                globals: request.globals.clone(),
-                cwd: request.cwd.clone(),
+                caller: request.caller.clone(),
                 ..ItemWrite::default()
             },
             force: request.force,
@@ -377,9 +373,7 @@ impl<E: Edge + 'static> Api<E> {
             mode: v1::run::Mode::OneShot as i32,
             prompt: model.request.clone(),
             no_context: true,
-            cwd: asked.write.cwd.clone(),
-            env: asked.write.env.clone(),
-            globals: asked.write.globals.clone(),
+            caller: asked.write.caller.clone(),
             ..v1::CreateRunRequest::default()
         };
         let host = self.one_shot_request(&run_request).await?;

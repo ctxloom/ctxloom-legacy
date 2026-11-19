@@ -23,11 +23,26 @@ struct Scripted {
     release: Mutex<Option<mpsc::Receiver<()>>>,
     /// The daemon's standing warnings (OD-55).
     warnings: Vec<v1::Notice>,
+    /// The daemon's own version: a request's caller is admitted by it
+    /// (`daemon_api::admit`); none, every caller is.
+    version: Option<String>,
+    /// Each caller the edge asked to be admitted, in order.
+    admitted: Mutex<Vec<Option<v1::Caller>>>,
+    /// How many assemblies ran.
+    assembled: Mutex<u32>,
 }
 
 impl Calls for Scripted {
     fn warnings(&self) -> Vec<v1::Notice> {
         self.warnings.clone()
+    }
+
+    fn admit(&self, caller: Option<&v1::Caller>) -> Result<(), ApiError> {
+        self.admitted.lock().unwrap().push(caller.cloned());
+        match &self.version {
+            Some(version) => daemon_api::admit(version, caller),
+            None => Ok(()),
+        }
     }
 
     fn get_daemon(&self) -> Answer<'_, v1::Daemon> {
@@ -131,6 +146,7 @@ impl Calls for Scripted {
         &self,
         request: v1::AssembleContextRequest,
     ) -> Answer<'_, v1::AssembledContext> {
+        *self.assembled.lock().unwrap() += 1;
         Box::pin(async move {
             Ok(v1::AssembledContext {
                 context: request.fragments.join(","),
@@ -386,10 +402,7 @@ async fn the_user_bearer_is_answered() {
     let name = "projects/calm-otter/sessions/amber-swift-owl".to_string();
     let session = client
         .get_session(with_bearer(
-            v1::GetSessionRequest {
-                name: name.clone(),
-                ..v1::GetSessionRequest::default()
-            },
+            v1::GetSessionRequest { name: name.clone() },
             BEARER,
         ))
         .await
@@ -500,6 +513,79 @@ async fn the_transcript_and_the_assembly_are_served() {
         .unwrap()
         .into_inner();
     assert_eq!(assembled.context, "a,b");
+}
+
+/// A caller of the client stamped `version`.
+fn caller_of(version: &str) -> v1::Caller {
+    v1::Caller {
+        client: Some(v1::Client {
+            kind: v1::client::Kind::Mcp as i32,
+            version: version.to_string(),
+            ..v1::Client::default()
+        }),
+        ..v1::Caller::default()
+    }
+}
+
+// Owner, 2026-11-18: a request made on a user's behalf is admitted by its
+// client's version before its use case: one of another version (or none)
+// is refused failed-precondition with its typed `ClientVersionMismatch`,
+// and its use case never runs; one of the daemon's own is answered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_client_of_another_version_is_refused_before_its_use_case() {
+    let calls = Arc::new(Scripted {
+        version: Some("v1.2.3-abc".to_string()),
+        ..Scripted::default()
+    });
+    let mut client = CtxloomClient::new(serve(Arc::clone(&calls)).await);
+    let assemble = |caller: Option<v1::Caller>| {
+        with_bearer(
+            v1::AssembleContextRequest {
+                fragments: vec!["a".to_string()],
+                caller,
+                ..v1::AssembleContextRequest::default()
+            },
+            BEARER,
+        )
+    };
+    for caller in [Some(caller_of("v1.2.4-def")), None] {
+        let status = client.assemble_context(assemble(caller)).await.unwrap_err();
+        assert_eq!(status.code(), Code::FailedPrecondition);
+        let details = super::RpcStatus::decode(status.details()).unwrap();
+        let mismatch =
+            v1::ClientVersionMismatch::decode(details.details[0].value.as_slice()).unwrap();
+        assert_eq!(mismatch.daemon_version, "v1.2.3-abc");
+    }
+    assert_eq!(*calls.assembled.lock().unwrap(), 0, "no use case ran");
+    let answered = client
+        .assemble_context(assemble(Some(caller_of("v1.2.3-abc"))))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(answered.context, "a");
+    assert_eq!(*calls.assembled.lock().unwrap(), 1);
+}
+
+// A read by name carries no caller, and the edge asks nothing of its
+// client: a session of a client of any version is read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_read_by_name_is_admitted_whatever_its_client() {
+    let calls = Arc::new(Scripted {
+        version: Some("v1.2.3-abc".to_string()),
+        ..Scripted::default()
+    });
+    let mut client = CtxloomClient::new(serve(Arc::clone(&calls)).await);
+    let name = "projects/calm-otter/sessions/amber-swift-owl".to_string();
+    let session = client
+        .get_session(with_bearer(
+            v1::GetSessionRequest { name: name.clone() },
+            BEARER,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(session.name, name);
+    assert!(calls.admitted.lock().unwrap().is_empty());
 }
 
 // Step 10a U2 (owner ruling 2026-11-17): a library read answers its
@@ -1102,28 +1188,28 @@ async fn the_trust_and_approvals_rpcs_are_served() {
     assert_eq!(waited.name, "waited/ask-tidy-wren");
 }
 
-// Step 10a U2: a failure the daemon says in a diagnostic of its own (git
-// missing) travels as its code and args in a `google.rpc.ErrorInfo`, so the
+// Step 10a U2: a failure the daemon says in a diagnostic of its own (a
+// bundle that does not read) travels as its code and args in a `google.rpc.ErrorInfo`, so the
 // client says it in that diagnostic's words.
 #[test]
 fn a_diagnosed_failure_carries_its_code_and_args() {
     let status = super::status_of_error(ApiError::Diagnosed {
-        code: "library-git-git-too-old".to_string(),
+        code: "library-application-bundle-unreadable".to_string(),
         args: vec![v1::NeedArg {
-            name: "version".to_string(),
-            value: "2.20.0".to_string(),
+            name: "ask".to_string(),
+            value: "demo".to_string(),
         }],
     });
-    // Owner ruling 2026-11-17: a missing or too-old git is a precondition
-    // of the host unmet, failed-precondition; not INTERNAL, and not
-    // UNAVAILABLE, which the client reads as an unreachable daemon.
+    // Owner ruling 2026-11-17: a diagnosed failure is a precondition of the
+    // host unmet, failed-precondition; not INTERNAL, and not UNAVAILABLE,
+    // which the client reads as an unreachable daemon.
     assert_eq!(status.code() as i32, Infrastructure::Unmet.status());
     assert_eq!(status.code(), tonic::Code::FailedPrecondition);
     let details = super::RpcStatus::decode(status.details()).unwrap().details;
     assert_eq!(details.len(), 1);
     assert!(details[0].type_url.ends_with("/google.rpc.ErrorInfo"));
     let info = super::ErrorInfo::decode(details[0].value.as_slice()).unwrap();
-    assert_eq!(info.reason, "library-git-git-too-old");
+    assert_eq!(info.reason, "library-application-bundle-unreadable");
     assert_eq!(info.domain, super::DIAGNOSED_DOMAIN);
-    assert_eq!(info.metadata["version"], "2.20.0");
+    assert_eq!(info.metadata["ask"], "demo");
 }
