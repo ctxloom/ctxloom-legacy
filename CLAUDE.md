@@ -1213,7 +1213,7 @@ the URL's host. The private key lives in memory in
 `run_ports::HookCertificate` (whose `Debug` withholds it) and goes to
 `hook-listener`'s `TlsIdentity` and nowhere else: never journaled, logged, in
 an environment or in an error. The listener's limits are angzarr's generic
-`Listener` defaults (core `b1445adf`; `hook-listener` sets none): a TLS
+`Listener` defaults (core `03663846`; `hook-listener` sets none): a TLS
 handshake within 10 s, an HTTP/2 keepalive ping every 60 s answered within
 20 s, a connection closed after 1 h plus a 30 s grace (never zero: a zero
 grace is `ListenError::ZeroConnectionAgeGrace` at bind, which
@@ -1742,17 +1742,17 @@ The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
 a full commit. The angzarr pins are one line, one per family member:
 
-- angzarr core `b1445adf` (`angzarr-diagnostic`, `angzarr-yaml`,
+- angzarr core `03663846` (`angzarr-diagnostic`, `angzarr-yaml`,
   `angzarr-presentation`; `angzarr-coordinator-grpc`'s `tls` feature, which
   `hook-listener` enables, is `Listener::tls`);
-- angzarr-embedded `5cdb1906` on angzarr-router `b332189a`;
-- angzarr-build `d0b63bcb` (the markup generator, `angzarr-build` and
+- angzarr-embedded `23a507fa` on angzarr-router `5e887e16` (it carries the
+  `Bus`, step 10e; cherenkov's line);
+- angzarr-build `4201d14e` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `4be00eae` (its branch `os-local-socket`:
-  `os::socket::post_local`, the terminal wake's post);
-- taskloom's crates `c321d474` and ctxloom-lib's `1e5a190b` (each on its
-  branch `feat/platform-local-socket`: the rev pinned before, moved onto
-  platform `4be00eae`), built on the same line,
+- angzarr-platform `ef3a446d` (its main: `os::socket::post_local`, the
+  terminal wake's post, merged with `CommitNotify`);
+- taskloom's crates `f3866b92` and ctxloom-lib's `b4095392` (each its main),
+  built on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are

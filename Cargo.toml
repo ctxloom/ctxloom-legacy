@@ -13,60 +13,60 @@ publish = false
 [workspace.dependencies]
 # The runtime pair: the lock holds ONE angzarr-embedded, angzarr-proto,
 # angzarr-ports and angzarr-diagnostic (and one of every angzarr crate). The
-# pins agree: angzarr-embedded 5cdb190 (angzarr-router b332189), angzarr core
-# b1445ad, angzarr-build d0b63bc and angzarr-platform 4be00ea are one line of
-# revs, taskloom's crates (c321d47) and ctxloom-lib's (1e5a190) are built on the
+# pins agree: angzarr-embedded 23a507f (angzarr-router 5e887e1), angzarr core
+# 03663846, angzarr-build 4201d14 and angzarr-platform ef3a446 are one line of
+# revs, taskloom's crates (f3866b9) and ctxloom-lib's (b409539) are built on the
 # same ones, and moving any of them moves the others with it.
 #
 # angzarr-proto, angzarr-ports and angzarr-store-sqlite are reached through
 # angzarr-embedded's re-exports and its `sqlite` feature, and are not pinned
 # here; angzarr-diagnostic, the coded-error trait every crate implements, is
 # pinned at the same core rev.
-angzarr-embedded = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "5cdb1906ff279e329805331e5dac18498319943a" }
+angzarr-embedded = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "23a507fa952d498bca5647aa36c9e9e24128e403" }
 # The markup macros the hand-written domains use (`#[aggregate]`), at the same
 # embedded rev, so the lock holds one angzarr-embedded.
 # The host: `App` and its exposure seam (`serve_in`), which the in-process
 # edge adapter wraps. At the pin the rest of the lock shares.
-angzarr-embedded-host = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "5cdb1906ff279e329805331e5dac18498319943a" }
-angzarr-embedded-macros = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "5cdb1906ff279e329805331e5dac18498319943a" }
+angzarr-embedded-host = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "23a507fa952d498bca5647aa36c9e9e24128e403" }
+angzarr-embedded-macros = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "23a507fa952d498bca5647aa36c9e9e24128e403" }
 # The kernel runner (retry, dead letters, typed refusals) every context sends
 # its commands through, at the one angzarr-embedded rev.
-angzarr-embedded-runner = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "5cdb1906ff279e329805331e5dac18498319943a" }
+angzarr-embedded-runner = { git = "https://github.com/angzarr-io/angzarr-embedded", rev = "23a507fa952d498bca5647aa36c9e9e24128e403" }
 # angzarr-build (with angzarr-codegen; the markup domain layer generator, in
 # its own repository): a build dependency of the wire and domain crates, pinned
-# by full commit, on angzarr core b1445ad (the rev the pins above share), as
+# by full commit, on angzarr core 03663846 (the rev the pins above share), as
 # taskloom pins it.
-angzarr-build = { git = "https://github.com/angzarr-io/angzarr-build", rev = "d0b63bcba66a7fa511c79f7b4c69f2bda2a58405" }
-angzarr-diagnostic = { git = "https://github.com/angzarr-io/angzarr", rev = "b1445adf7450b09aad19b5ce09fdf6742da1f5b0" }
+angzarr-build = { git = "https://github.com/angzarr-io/angzarr-build", rev = "4201d14e9bc73069898743e4fedd7b81bdd04b22" }
+angzarr-diagnostic = { git = "https://github.com/angzarr-io/angzarr", rev = "03663846fc7609378739f616e785e88b99ba0a1c" }
 # angzarr-yaml, the one reader for every config and Go-written file (owner
 # ruling, 2026-10-31): versioned documents migrated on read, strict decode.
-angzarr-yaml = { git = "https://github.com/angzarr-io/angzarr", rev = "b1445adf7450b09aad19b5ce09fdf6742da1f5b0" }
+angzarr-yaml = { git = "https://github.com/angzarr-io/angzarr", rev = "03663846fc7609378739f616e785e88b99ba0a1c" }
 # The distributed transport's generated gRPC client (and, for a test's fake
 # server, its service trait): the hook process's way to the run's listener.
-angzarr-proto-transport-distributed = { git = "https://github.com/angzarr-io/angzarr", rev = "b1445adf7450b09aad19b5ce09fdf6742da1f5b0" }
+angzarr-proto-transport-distributed = { git = "https://github.com/angzarr-io/angzarr", rev = "03663846fc7609378739f616e785e88b99ba0a1c" }
 # Presentation at the driving edge (json or text, catalogs, envelopes).
-angzarr-presentation = { git = "https://github.com/angzarr-io/angzarr", rev = "b1445adf7450b09aad19b5ce09fdf6742da1f5b0" }
-# The coordinator edge (core b1445ad): the gate (Gate, Principal, Allowlist,
+angzarr-presentation = { git = "https://github.com/angzarr-io/angzarr", rev = "03663846fc7609378739f616e785e88b99ba0a1c" }
+# The coordinator edge (core 03663846): the gate (Gate, Principal, Allowlist,
 # Credential), the Commands half and the gRPC server that serves them on a
 # unix socket. Transport-free except angzarr-coordinator-grpc.
-angzarr-coordinator = { default-features = false, git = "https://github.com/angzarr-io/angzarr", rev = "b1445adf7450b09aad19b5ce09fdf6742da1f5b0" }
-angzarr-coordinator-grpc = { default-features = false, git = "https://github.com/angzarr-io/angzarr", rev = "b1445adf7450b09aad19b5ce09fdf6742da1f5b0" }
+angzarr-coordinator = { default-features = false, git = "https://github.com/angzarr-io/angzarr", rev = "03663846fc7609378739f616e785e88b99ba0a1c" }
+angzarr-coordinator-grpc = { default-features = false, git = "https://github.com/angzarr-io/angzarr", rev = "03663846fc7609378739f616e785e88b99ba0a1c" }
 # Each test's scratch directory (a short path, for a socket): a dev-dependency.
-angzarr-test-dir = { git = "https://github.com/angzarr-io/angzarr", rev = "b1445adf7450b09aad19b5ce09fdf6742da1f5b0" }
+angzarr-test-dir = { git = "https://github.com/angzarr-io/angzarr", rev = "03663846fc7609378739f616e785e88b99ba0a1c" }
 # The platform crates: os, the file-system seam, advisory locks.
-os = { git = "https://github.com/angzarr-io/angzarr-platform", rev = "4be00eaeb7fa82285806792ea38cfb554925e2af" }
-file-system = { git = "https://github.com/angzarr-io/angzarr-platform", rev = "4be00eaeb7fa82285806792ea38cfb554925e2af" }
-file-lock = { git = "https://github.com/angzarr-io/angzarr-platform", rev = "4be00eaeb7fa82285806792ea38cfb554925e2af" }
+os = { git = "https://github.com/angzarr-io/angzarr-platform", rev = "ef3a446db82ef6aac2786f1258e5eba9aa36986c" }
+file-system = { git = "https://github.com/angzarr-io/angzarr-platform", rev = "ef3a446db82ef6aac2786f1258e5eba9aa36986c" }
+file-lock = { git = "https://github.com/angzarr-io/angzarr-platform", rev = "ef3a446db82ef6aac2786f1258e5eba9aa36986c" }
 
 # taskloom, by commit (D3 (b), D2 (a)): harp-names and the ports it implements.
-# c321d47 is taskloom's pin on the same angzarr family; only these crates are consumed.
-harp-names = { git = "https://github.com/ctxloom/taskloom", rev = "c321d474625e44a9ca9565b16cf1bc299d6aa0b1" }
-ports = { git = "https://github.com/ctxloom/taskloom", rev = "c321d474625e44a9ca9565b16cf1bc299d6aa0b1" }
+# f3866b9 is taskloom's pin on the same angzarr family; only these crates are consumed.
+harp-names = { git = "https://github.com/ctxloom/taskloom", rev = "f3866b9203a10d62402539bd5578977f6f6da749" }
+ports = { git = "https://github.com/ctxloom/taskloom", rev = "f3866b9203a10d62402539bd5578977f6f6da749" }
 # taskloom's system adapter: the clock, command ids, delay and jitter ports.
-system = { git = "https://github.com/ctxloom/taskloom", rev = "c321d474625e44a9ca9565b16cf1bc299d6aa0b1" }
+system = { git = "https://github.com/ctxloom/taskloom", rev = "f3866b9203a10d62402539bd5578977f6f6da749" }
 # taskloom's project identity (the work root, the `.project-id` marker and the
 # home registry of projects), read through, not copied (D2 (a)).
-project-registry = { git = "https://github.com/ctxloom/taskloom", rev = "c321d474625e44a9ca9565b16cf1bc299d6aa0b1" }
+project-registry = { git = "https://github.com/ctxloom/taskloom", rev = "f3866b9203a10d62402539bd5578977f6f6da749" }
 # Harp's word lists, at taskloom's rev, so the lock holds one.
 harp-core = { git = "https://github.com/benjaminabbitt/harp", rev = "e27196f5a425ffcf8e443aab95d2bf085cd2b134" }
 
@@ -176,26 +176,26 @@ container-cli = { path = "crates/adapters/driving/container-cli" }
 # ctxloom-lib, the shared substrate (S2): the driving edge's call, failure, notices
 # and argument shims. Pinned by full commit over https, as taskloom pins it;
 # its angzarr pins are the ones above.
-cli-support = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+cli-support = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 # process-env (S3): the environment read once into a snapshot the composition root hands down.
-process-env = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+process-env = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 # project-dir (S4): the ancestor walk with injected rules, and the checked project id.
-project-dir = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+project-dir = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 # run-within (S6): a program run under a deadline, its tree killed, its output bounded.
-run-within = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+run-within = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 # duration-text (S9): a span or date as an age, and the cutoff it makes.
-duration-text = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+duration-text = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 # sqlite-store-opener (S5): places and opens a project's SQLite store under a file name the caller
 # names, refusing a store from before the embedded store; ctxloom-store-sqlite is its adapter.
-sqlite-store-opener = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+sqlite-store-opener = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 
 # exit-code: the exit-code convention as a pure type (rulings 149, 152, 153), so the
 # core's errors say their class; cli-support re-exports it for the edge.
-exit-code = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+exit-code = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 
 # fixture-program: a test's fake program, linked to a committed shim that sh runs the
 # script through, so no file a test wrote is exec'd (ETXTBSY). A dev-dependency only.
-fixture-program = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "1e5a190b6eb97bce72b50ca089b33baa999b6a0f" }
+fixture-program = { git = "https://github.com/ctxloom/ctxloom-lib", rev = "b4095392316095550345797679d7943e282f4c8a" }
 
 # HTTP for forge-github (owner, 2026-11-04): the blocking client, so the
 # synchronous CLI holds no runtime of its own. Its TLS is rustls on ring
