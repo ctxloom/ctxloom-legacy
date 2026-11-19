@@ -297,7 +297,13 @@ impl Common {
             Ok(doc) => {
                 let (path, value) = (self.named(path), self.named(value));
                 if let Err(why) = holds(&doc, &path, &value) {
-                    panic!("{why}: {}", ran.said());
+                    // A path the spec writes with `/` is reported in the
+                    // host's spelling (`\` on Windows), as a person reads it
+                    // there (CI on Windows, 2026-11-19).
+                    let hosts = host_spelled(&value);
+                    if hosts == value || holds(&doc, &path, &hosts).is_err() {
+                        panic!("{why}: {}", ran.said());
+                    }
                 }
             }
             Err(_) => {
@@ -1313,4 +1319,12 @@ fn the_recording_gits_log_reads_as_each_call_and_its_caller() {
             (7, "ls-remote".to_string()),
         ]
     );
+}
+
+/// `value` with each `/` the host's separator: itself off Windows.
+fn host_spelled(value: &str) -> String {
+    match os::host().flavor() {
+        os::Flavor::Windows => value.replace('/', "\\"),
+        os::Flavor::Unix => value.to_string(),
+    }
 }
