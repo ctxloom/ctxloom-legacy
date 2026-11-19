@@ -150,3 +150,33 @@ fn recording_user_files_write_nothing_and_read_back_what_they_recorded() {
     );
     assert!(recording.take().is_empty());
 }
+
+// Step 10c U5: `manage check`'s report, said by the daemon, is the report
+// the CLI prints, field for field.
+#[test]
+fn a_manage_check_report_reads_back_field_for_field() {
+    use setup_application::{BackendStatus, CheckReport, SurfaceCurrency};
+    use surface_cli::wire::{check_report, checked};
+    let made = CheckReport {
+        work_dir: "/work/demo".to_string(),
+        manage_statusline: true,
+        backends: vec![BackendStatus {
+            backend: "claude-code".to_string(),
+            settings_exists: true,
+            hooks_present: false,
+            hooks_at_launch: true,
+            status_line: true,
+            mcp_present: false,
+        }],
+        surfaces: vec![SurfaceCurrency {
+            route: "hooks".to_string(),
+            backend: "claude-code".to_string(),
+            status: "stale".to_string(),
+        }],
+    };
+    let back = check_report(&checked(&made));
+    assert_eq!(
+        serde_json::to_value(&back).unwrap(),
+        serde_json::to_value(&made).unwrap()
+    );
+}

@@ -17,6 +17,7 @@ mod foreign;
 pub(crate) mod heard;
 mod places;
 mod serve;
+mod setup_reads;
 pub(crate) mod shutdown;
 #[cfg(feature = "test-support")]
 pub(crate) mod watch;

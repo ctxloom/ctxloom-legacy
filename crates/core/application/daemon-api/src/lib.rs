@@ -72,6 +72,7 @@ mod refusal;
 mod runs;
 mod server;
 mod session_client;
+mod setup_reads;
 mod shown;
 mod start_up;
 mod terminal;
@@ -109,6 +110,7 @@ pub use server::{About, Answer, Api, Calls, Harps, Hosting, Observing, Parts, Se
 pub use session_client::{
     Client, LibraryReads, LibraryWrites, Removed, RequestIds, SessionReads, SessionRemovals,
 };
+pub use setup_reads::{SetupAnswer, SetupRead, SetupReads};
 pub use start_up::StartUpIncomplete;
 pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
 

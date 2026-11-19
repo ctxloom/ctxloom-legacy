@@ -1017,6 +1017,9 @@ write_requests! {
     MaterializeRequest.project, etag;
     UninstallManageRequest.project, etag;
     RunDoctorRequest.project, etag;
+    GetAuthStatusRequest.project;
+    CheckManageRequest.project;
+    GetInitPromptRequest.project;
     DistillFragmentRequest.name;
     DistillCommandRequest.name;
     CreateRemoteRequest.parent;

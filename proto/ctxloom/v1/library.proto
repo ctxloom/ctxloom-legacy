@@ -4852,6 +4852,18 @@ message RemovedHook {
   string sub = 3;
 }
 
+// One row of `doctor`'s report (step 10c U5), as its JSON names it.
+message DoctorCheck {
+  // Its `DOCTOR-CHECK-*` marker.
+  string marker = 1;
+  string name = 2;
+  // `ok`, `warn`, `fail` or `info`.
+  string status = 3;
+  string detail = 4;
+  // What to do about a warning or failure; empty otherwise.
+  string remedy = 5;
+}
+
 // What `doctor` did (step 10c U10: the fix's removals; U5 adds the checks).
 message RunDoctorResponse {
   repeated RemovedHook removed = 1;
@@ -4859,6 +4871,98 @@ message RunDoctorResponse {
   // `MaterializeResponse`'s 9 and 10.
   reserved 2, 3;
   reserved "error", "exit";
+  // The report's rows, in order (step 10c U5). Additive.
+  repeated DoctorCheck checks = 4;
+  repeated Notice notices = 92;
+}
+
+// `auth status` (step 10c U5), read where the caller stands.
+message GetAuthStatusRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One engine's credential (step 10c U5): its variables by NAME, never a
+// value.
+message AuthStatusRow {
+  string engine = 1;
+  string mode = 2;
+  // Whether it is exported: a variable row's alone; a file row has none.
+  optional bool present = 3;
+  repeated string vars = 4;
+  // The variable it was found in, by name.
+  string via = 5;
+  string message = 6;
+  string remedy = 7;
+  // `primary` for a source that is a file alone; empty otherwise.
+  string usable_by = 8;
+}
+
+// What `auth status` reports (step 10c U5).
+message GetAuthStatusResponse {
+  repeated AuthStatusRow rows = 1;
+  repeated Notice notices = 92;
+}
+
+// `manage check` (step 10c U5), read where the caller stands.
+message CheckManageRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One engine's wiring, as `manage check` reads it off its own files.
+message ManagedBackend {
+  string backend = 1;
+  bool settings_exists = 2;
+  bool hooks_present = 3;
+  bool hooks_at_launch = 4;
+  bool statusline = 5;
+  bool mcp_present = 6;
+}
+
+// A kind ctxloom delivered at rest, and whether its file still shows it.
+message ManagedSurface {
+  string route = 1;
+  string backend = 2;
+  // `materialized` or `stale`.
+  string status = 3;
+}
+
+// What `manage check` shows (step 10c U5).
+message CheckManageResponse {
+  string work_dir = 1;
+  bool manage_statusline = 2;
+  repeated ManagedBackend backends = 3;
+  repeated ManagedSurface surfaces = 4;
+  repeated Notice notices = 92;
+}
+
+// `init prompt` (step 10c U6), read where the caller stands.
+message GetInitPromptRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// The setup interview (step 10c U6): its body as the caller's catalog
+// holds it, and what reading it noticed (a project `ctxloom` bundle passed
+// over, untrusted).
+message GetInitPromptResponse {
+  string text = 1;
   repeated Notice notices = 92;
 }
 

@@ -402,6 +402,22 @@ which `CallError` classes 21), a failure (10) said in its own words
 (`ApiError::Diagnosed`); nothing is written. `materialize --diff` and
 `manage install`'s refresh still deliver in process.
 
+The setup reads are the daemon's (step 10c U5, U6, D1): `doctor` (its
+checks, `RunDoctor` without `fix`, `RunDoctorResponse.checks`), `auth
+status` (`GetAuthStatus`), `manage check` (`CheckManage`) and `init
+prompt` (`GetInitPrompt`), additive RPCs riding `library_writes!`'s
+plumbing (`write_requests!`: cwd, env, globals), through setup-cli's
+`SetupReading` and `surface_cli::Foreign::check` (the wiring's
+`DaemonServed`). The daemon runs each use case where the caller stands
+(`daemon_api::SetupReads`, the wiring's `daemon::setup_reads`, through
+`caller_wiring`), the project's trust its own (`init prompt`'s
+`Flags.trusted`, never asked back), and the CLI reads the answer back
+into the report it always printed (setup-cli's and surface-cli's
+`wire`), so with no daemon each fails, exit 10, diagnosing nothing in
+process (QUESTIONS 8). doctor's rows hold owned text
+(`doctor_checks::Check`'s `marker` and `name`, auth's `Row` `mode` and
+`usable_by` are `String`s) so the client rebuilds them.
+
 The remotes' and the dependencies' writes are the daemon's (step 10c U4,
 protos.md §1.2, L9): `remote create|edit|remove|default` (`CreateRemote`,
 `UpdateRemote` with `new_remote_id` and a mask naming each flag given,

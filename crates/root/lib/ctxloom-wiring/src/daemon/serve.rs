@@ -651,7 +651,7 @@ async fn start(
         )))
         .on_os(&os),
         (fs, files, trash_clock(env)),
-        (home, temp),
+        (home, temp, &stamp),
         (&engines, terminals, kept),
     );
     shared.observing_live(&calls, super::env_vars(env));
@@ -835,7 +835,7 @@ fn trusting(kept: &Projectors, (home, temp): (&Path, &Path)) -> daemon_api::Trus
 fn served(
     api: daemon_api::Api<CoreEdge>,
     (fs, files, clock): (&Arc<dyn Fs>, &DaemonFiles, library_api::Clock),
-    (home, temp): (&Path, &Path),
+    (home, temp, stamp): (&Path, &Path, &str),
     (engines, terminals, kept): (
         &[daemon_application::HostedEngine],
         &Arc<daemon_application::Terminals>,
@@ -861,6 +861,13 @@ fn served(
             .writing_foreign(Arc::new(super::foreign::ForeignWriters {
                 home: home.to_path_buf(),
                 temp: temp.to_path_buf(),
+            }))
+            // The setup reads, each answered where the caller stands (step
+            // 10c U5, U6).
+            .reading_setup(Arc::new(super::setup_reads::SetupReaders {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+                stamp: stamp.to_string(),
             }))
             // The remotes', the lock's and the cache's writes, planned
             // where the caller stands, git in its environment (step 10c U4).

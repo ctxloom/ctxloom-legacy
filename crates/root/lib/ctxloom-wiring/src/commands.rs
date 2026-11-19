@@ -259,7 +259,7 @@ pub fn hosted_engines(wiring: &Wiring, program: &str) -> Vec<daemon_application:
 
 /// The setup use cases over the process's home, working directory and
 /// project.
-fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
+pub(crate) fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
     let files = Arc::new(SurfaceFiles::new(
         wiring.fs(),
         wiring.home().join(".ctxloom/records"),
@@ -432,6 +432,8 @@ impl Commands {
             auth: &wired.setup.auth,
             cleaning: &cleaning,
             fixing: &cleaning,
+            reading: &cleaning,
+            globals: library_api::reads::globals_of(&call.globals),
             doctor: &wired.setup.doctor,
             init: &wired.setup.init,
             terminal: &terminal,

@@ -535,6 +535,50 @@ impl surface_cli::Foreign for DaemonServed {
         let client = crate::daemon::library_client(&wiring, &self.version)?;
         crate::daemon::answered(client.uninstall_manage("", request))
     }
+
+    fn check(
+        &self,
+        request: daemon_proto::v1::CheckManageRequest,
+    ) -> Result<daemon_proto::v1::CheckManageResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.check_manage("", request))
+    }
+}
+
+/// `doctor`, `auth status` and `init prompt` through the daemon (step 10c
+/// U5, U6), each answered where this process stands.
+impl setup_cli::SetupReading for DaemonServed {
+    fn doctor(
+        &self,
+        request: daemon_proto::v1::RunDoctorRequest,
+    ) -> Result<daemon_proto::v1::RunDoctorResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.run_doctor("", request))
+    }
+
+    fn auth_status(
+        &self,
+        request: daemon_proto::v1::GetAuthStatusRequest,
+    ) -> Result<daemon_proto::v1::GetAuthStatusResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.get_auth_status("", request))
+    }
+
+    fn init_prompt(
+        &self,
+        request: daemon_proto::v1::GetInitPromptRequest,
+    ) -> Result<daemon_proto::v1::GetInitPromptResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.get_init_prompt("", request))
+    }
 }
 
 /// `doctor --fix` through the daemon (step 10c U10).

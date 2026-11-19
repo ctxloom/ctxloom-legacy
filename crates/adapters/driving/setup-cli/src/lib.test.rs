@@ -345,6 +345,70 @@ impl super::DoctorFixing for FixingIn<'_> {
     }
 }
 
+/// The setup reads answered in process, as the daemon answers them where
+/// the caller stands (step 10c U5, U6).
+struct ReadingIn<'a> {
+    doctor: &'a Doctor,
+    auth: &'a Auth,
+    prompts: &'a dyn init_application::Prompts,
+}
+
+impl super::SetupReading for ReadingIn<'_> {
+    fn doctor(
+        &self,
+        request: daemon_proto::v1::RunDoctorRequest,
+    ) -> Result<daemon_proto::v1::RunDoctorResponse, Failure> {
+        Ok(daemon_proto::v1::RunDoctorResponse {
+            checks: super::wire::checks(&self.doctor.report(request.deps)),
+            ..daemon_proto::v1::RunDoctorResponse::default()
+        })
+    }
+
+    fn auth_status(
+        &self,
+        _: daemon_proto::v1::GetAuthStatusRequest,
+    ) -> Result<daemon_proto::v1::GetAuthStatusResponse, Failure> {
+        let rows = self.auth.status(&self.doctor.layer_texts());
+        Ok(daemon_proto::v1::GetAuthStatusResponse {
+            rows: super::wire::auth_rows(&rows),
+            ..daemon_proto::v1::GetAuthStatusResponse::default()
+        })
+    }
+
+    fn init_prompt(
+        &self,
+        _: daemon_proto::v1::GetInitPromptRequest,
+    ) -> Result<daemon_proto::v1::GetInitPromptResponse, Failure> {
+        let read = init_application::prompt(self.prompts)
+            .map_err(|refused| Failure::boxed(refused.cause, refused.exit))?;
+        Ok(daemon_proto::v1::GetInitPromptResponse {
+            text: read.text,
+            notices: read
+                .notices
+                .iter()
+                .map(|notice| daemon_proto::v1::Notice {
+                    code: notice.code().to_string(),
+                    // The fakes' notices carry text args alone.
+                    args: notice
+                        .args()
+                        .into_iter()
+                        .filter_map(|(name, arg)| match arg {
+                            angzarr_diagnostic::Arg::Str(value) => {
+                                Some(daemon_proto::v1::NeedArg {
+                                    name: name.to_string(),
+                                    value,
+                                })
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                    text: notice.to_string(),
+                })
+                .collect(),
+        })
+    }
+}
+
 impl super::Cleaning for CleaningIn {
     fn clean(
         &self,
@@ -408,6 +472,12 @@ fn go_with_companions(
         auth: &auth,
         cleaning: &CleaningIn(cleaner),
         fixing: &FixingIn(&doctor),
+        reading: &ReadingIn {
+            doctor: &doctor,
+            auth: &auth,
+            prompts: sessions,
+        },
+        globals: daemon_proto::v1::Globals::default(),
         doctor: &doctor,
         init: &init,
         terminal: person,
@@ -574,8 +644,8 @@ fn doctor_fix_removes_a_stale_entry_and_names_it_on_the_error_stream() {
 fn the_exit_of_a_report_is_three_only_when_a_row_failed() {
     use doctor_checks::{Check, Report, Status};
     let row = |status| Check {
-        marker: "DOCTOR-CHECK-X-a1",
-        name: "x",
+        marker: "DOCTOR-CHECK-X-a1".to_string(),
+        name: "x".to_string(),
         status,
         detail: String::new(),
         remedy: String::new(),
@@ -1034,6 +1104,12 @@ fn a_noun_the_line_does_not_carry_is_a_usage_failure() {
         auth: &auth,
         cleaning: &CleaningIn(cleaner),
         fixing: &FixingIn(&doctor),
+        reading: &ReadingIn {
+            doctor: &doctor,
+            auth: &auth,
+            prompts: &Launches::default(),
+        },
+        globals: daemon_proto::v1::Globals::default(),
         doctor: &doctor,
         init: &init,
         terminal: &Person::default(),

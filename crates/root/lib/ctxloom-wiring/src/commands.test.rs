@@ -253,32 +253,6 @@ fn test_clean_asks_the_daemon_and_takes_nothing_without_one() {
     assert!(crate::fixtures::exists(&cached), "nothing taken");
 }
 
-// auth.feature, over the process's own environment.
-#[test]
-fn test_auth_status_reads_the_launch_environment_and_never_its_values() {
-    let mut world = World::new("auth");
-    let (code, out, _) = run_line(&mut world.commands(), &["auth", "status"]);
-    assert_eq!(code, 0);
-    assert!(out.contains("\"present\": false"), "{out}");
-    world.set("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-fixture-not-real"); // gitleaks:allow
-    let (code, out, err) = run_line(&mut world.commands(), &["auth", "status"]);
-    assert_eq!(code, 0);
-    assert!(out.contains("\"present\": true"), "{out}");
-    assert!(!out.contains("fixture-not-real") && !err.contains("fixture-not-real"));
-}
-
-// doctor.feature: the credentials row is read from the same environment.
-#[test]
-fn test_doctor_fails_without_the_token_and_passes_with_it() {
-    let mut world = World::new("doctor-credentials");
-    let (code, out, _) = run_line(&mut world.commands(), &["doctor"]);
-    assert_eq!(code, 20);
-    assert!(out.contains("DOCTOR-CHECK-CREDENTIALS-m5"), "{out}");
-    world.set("CLAUDE_CODE_OAUTH_TOKEN", "x");
-    let (code, _, _) = run_line(&mut world.commands(), &["doctor"]);
-    assert_eq!(code, 0);
-}
-
 #[test]
 fn test_a_dependency_command_is_run_over_the_home() {
     let world = World::new("deps");

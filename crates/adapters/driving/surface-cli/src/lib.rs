@@ -61,6 +61,9 @@ pub trait Foreign {
         &self,
         request: v1::UninstallManageRequest,
     ) -> Result<v1::UninstallManageResponse, Failure>;
+    /// `manage check`, the daemon's read (step 10c U5): each engine's
+    /// wiring read off its files where the caller stands.
+    fn check(&self, request: v1::CheckManageRequest) -> Result<v1::CheckManageResponse, Failure>;
 }
 
 /// The report a materialize's answer says, as it has always been printed.
@@ -266,9 +269,13 @@ struct StatuslineAnswer {
 }
 
 fn check(cx: &Context<'_>, out: &mut dyn Write, err: &mut dyn Write) -> Result<(), Failure> {
-    let done = cx.setup.check(&cx.flags).map_err(failed)?;
-    say_notices(&done.notices, PROG, cx.format, cx.catalog, err);
-    emit(cx, out, &done.value, |w| text::check(w, &done.value))
+    let answered = cx.foreign.check(v1::CheckManageRequest {
+        globals: Some(library_api::reads::globals_of(&cx.flags)),
+        ..v1::CheckManageRequest::default()
+    })?;
+    say_v1(cx, &answered.notices, err);
+    let report = wire::check_report(&answered);
+    emit(cx, out, &report, |w| text::check(w, &report))
 }
 
 fn materialize(

@@ -19,6 +19,7 @@
 
 mod commands;
 mod text;
+pub mod wire;
 
 use cli_support::Exit;
 use std::io::Write;
@@ -55,6 +56,20 @@ pub trait DoctorFixing {
     fn fix(&self, request: v1::RunDoctorRequest) -> Result<v1::RunDoctorResponse, Failure>;
 }
 
+/// The setup reads through the daemon (step 10c U5 and U6, D1): each
+/// answered where the caller stands, none in process.
+pub trait SetupReading {
+    fn doctor(&self, request: v1::RunDoctorRequest) -> Result<v1::RunDoctorResponse, Failure>;
+    fn auth_status(
+        &self,
+        request: v1::GetAuthStatusRequest,
+    ) -> Result<v1::GetAuthStatusResponse, Failure>;
+    fn init_prompt(
+        &self,
+        request: v1::GetInitPromptRequest,
+    ) -> Result<v1::GetInitPromptResponse, Failure>;
+}
+
 /// The report `answered` says, as `clean` has always printed it.
 pub fn report_of(answered: &v1::CleanResponse) -> CleanReport {
     CleanReport {
@@ -81,6 +96,11 @@ pub struct UseCases<'a> {
     pub cleaning: &'a dyn Cleaning,
     /// `doctor --fix`, the daemon's (step 10c U10).
     pub fixing: &'a dyn DoctorFixing,
+    /// `doctor`, `auth status` and `init prompt`, the daemon's (step 10c
+    /// U5, U6).
+    pub reading: &'a dyn SetupReading,
+    /// The call's global flags, as each request carries them.
+    pub globals: v1::Globals,
     pub doctor: &'a Doctor,
     pub init: &'a Init,
     /// Whether a person is there, and her answer.
@@ -131,16 +151,33 @@ pub fn run<G>(
         )
     })?;
     match noun {
-        "auth" => auth(uses, format, out),
+        "auth" => auth(uses, format, catalog, out, err),
         "clean" => clean(uses, sub, format, catalog, out, err),
-        "doctor" => doctor(uses, sub, format, out, err),
+        "doctor" => doctor(uses, sub, format, catalog, out, err),
         _ => init(uses, sub, format, catalog, out, err),
     }
 }
 
-/// `auth` and `auth status`: the credential report.
-fn auth(uses: &UseCases<'_>, format: Format, out: &mut dyn Write) -> Result<Exit, Failure> {
-    let rows = uses.auth.status(&uses.doctor.layer_texts());
+/// The daemon's notices, said as the use case's own were.
+fn say_v1(notices: &[v1::Notice], format: Format, catalog: &Catalog, err: &mut dyn Write) {
+    let said: Vec<_> = notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, format, catalog, err);
+}
+
+/// `auth` and `auth status`: the credential report, the daemon's.
+fn auth(
+    uses: &UseCases<'_>,
+    format: Format,
+    catalog: &Catalog,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let answered = uses.reading.auth_status(v1::GetAuthStatusRequest {
+        globals: Some(uses.globals.clone()),
+        ..v1::GetAuthStatusRequest::default()
+    })?;
+    say_v1(&answered.notices, format, catalog, err);
+    let rows = wire::rows_of(&answered.rows);
     match format {
         Format::Json => write_json(out, &rows),
         Format::Text => text::auth(&rows, out),
@@ -197,6 +234,7 @@ fn doctor(
     uses: &UseCases<'_>,
     sub: &ArgMatches,
     format: Format,
+    catalog: &Catalog,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
@@ -205,6 +243,7 @@ fn doctor(
             fix: true,
             deps: sub.get_flag("deps"),
             all: sub.get_flag("all"),
+            globals: Some(uses.globals.clone()),
             ..v1::RunDoctorRequest::default()
         })?;
         for r in &answered.removed {
@@ -215,7 +254,16 @@ fn doctor(
             );
         }
     }
-    let report = uses.doctor.report(sub.get_flag("deps"));
+    // The checks, the daemon's (step 10c U5): diagnosed where the caller
+    // stands, never in process.
+    let answered = uses.reading.doctor(v1::RunDoctorRequest {
+        deps: sub.get_flag("deps"),
+        all: sub.get_flag("all"),
+        globals: Some(uses.globals.clone()),
+        ..v1::RunDoctorRequest::default()
+    })?;
+    say_v1(&answered.notices, format, catalog, err);
+    let report = wire::report(&answered.checks);
     match format {
         Format::Json => write_json(out, &report),
         Format::Text => text::doctor(&report, sub.get_flag("all"), out),
@@ -303,15 +351,14 @@ fn init(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     if sub.subcommand_matches("prompt").is_some() {
-        let read = init_application::prompt(uses.prompts)
-            .map_err(|refused| Failure::boxed(refused.cause, refused.exit))?;
-        // Said with their remedy: a passed-over prompt names `ctxloom trust`.
-        let notices: Vec<angzarr_diagnostic::Report> = read
-            .notices
-            .iter()
-            .map(|notice| angzarr_diagnostic::Report::of(notice.as_ref()))
-            .collect();
-        say_notices(&notices, PROG, format, catalog, err);
+        // The daemon's (step 10c U6): read through the caller's catalog
+        // under the project's trust. Said with their remedy: a passed-over
+        // prompt names `ctxloom trust`.
+        let read = uses.reading.init_prompt(v1::GetInitPromptRequest {
+            globals: Some(uses.globals.clone()),
+            ..v1::GetInitPromptRequest::default()
+        })?;
+        say_v1(&read.notices, format, catalog, err);
         write!(out, "{}", read.text).map_err(output)?;
         return Ok(Exit::OK);
     }

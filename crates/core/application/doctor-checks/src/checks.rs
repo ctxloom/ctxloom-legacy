@@ -20,8 +20,8 @@ pub enum Status {
 /// One row of the report.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct Check {
-    pub marker: &'static str,
-    pub name: &'static str,
+    pub marker: String,
+    pub name: String,
     pub status: Status,
     pub detail: String,
     /// What to do about a warning or failure.
@@ -37,8 +37,8 @@ fn row(
     remedy: &str,
 ) -> Check {
     Check {
-        marker,
-        name,
+        marker: marker.to_string(),
+        name: name.to_string(),
         status,
         detail: detail.to_string(),
         remedy: remedy.to_string(),

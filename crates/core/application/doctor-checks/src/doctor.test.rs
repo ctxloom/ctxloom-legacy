@@ -458,8 +458,8 @@ fn without_a_project_only_the_user_mcp_file_is_read() {
 #[test]
 fn a_report_fails_only_when_a_row_fails() {
     let row = |status| crate::Check {
-        marker: "M",
-        name: "n",
+        marker: "M".to_string(),
+        name: "n".to_string(),
         status,
         detail: String::new(),
         remedy: String::new(),
@@ -727,7 +727,7 @@ fn the_foreign_worktrees_row_is_asked_of_the_project_and_precedes_the_stated_lim
     let report = doctor(&mem, true)
         .reporting_worktrees(foreign.clone())
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(
         markers[n - 2],
@@ -769,7 +769,7 @@ fn a_doctor_reporting_stale_distilled_forms_warns_of_each_before_the_stated_limi
     let report = doctor(&mem, true)
         .reporting_stale_distilled(Box::new(|| vec!["demo#fragments/rules".to_string()]))
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(
         markers[n - 2],
@@ -797,7 +797,7 @@ fn the_companions_row_comes_just_before_the_stated_limit() {
             notices: Vec::new(),
         }))
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(
         markers[n - 2..],
@@ -860,7 +860,7 @@ fn a_doctor_reporting_the_holds_has_their_row_before_the_stated_limit() {
     let report = doctor(&mem, true)
         .reporting_holds(Arc::new(held), "v0.4.0-abc1234", 1_794_700_800)
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(markers[n - 2], crate::HELD_FACTS_MARKER, "{markers:?}");
     assert_eq!(markers[n - 1], "DOCTOR-CHECK-INGESTION-q7");
@@ -922,7 +922,7 @@ fn a_doctor_reporting_old_layouts_warns_of_each_naming_the_move() {
             )]
         }))
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(markers[n - 2], "DOCTOR-CHECK-SIDECARS-u4", "{markers:?}");
     let found = row(&report, "DOCTOR-CHECK-SIDECARS-u4");

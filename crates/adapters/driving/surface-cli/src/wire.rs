@@ -6,7 +6,8 @@
 
 use daemon_proto::v1;
 use setup_application::{
-    MaterializeRequest, MaterializeResult, Setup, SetupError, SurfaceSpec, UninstallReport,
+    BackendStatus, CheckReport, MaterializeRequest, MaterializeResult, Setup, SetupError,
+    SurfaceCurrency, SurfaceSpec, UninstallReport,
 };
 
 use cli_support::{ExitClass, Failure};
@@ -75,6 +76,66 @@ pub fn uninstalled(report: &UninstallReport) -> v1::UninstallManageResponse {
     }
 }
 
+/// `manage check`'s report as the API says it (step 10c U5).
+pub fn checked(report: &CheckReport) -> v1::CheckManageResponse {
+    v1::CheckManageResponse {
+        work_dir: report.work_dir.clone(),
+        manage_statusline: report.manage_statusline,
+        backends: report
+            .backends
+            .iter()
+            .map(|b| v1::ManagedBackend {
+                backend: b.backend.clone(),
+                settings_exists: b.settings_exists,
+                hooks_present: b.hooks_present,
+                hooks_at_launch: b.hooks_at_launch,
+                statusline: b.status_line,
+                mcp_present: b.mcp_present,
+            })
+            .collect(),
+        surfaces: report
+            .surfaces
+            .iter()
+            .map(|s| v1::ManagedSurface {
+                route: s.route.clone(),
+                backend: s.backend.clone(),
+                status: s.status.clone(),
+            })
+            .collect(),
+        ..v1::CheckManageResponse::default()
+    }
+}
+
+/// The report the API's `manage check` answer says, as it has always
+/// been printed.
+pub fn check_report(answered: &v1::CheckManageResponse) -> CheckReport {
+    CheckReport {
+        work_dir: answered.work_dir.clone(),
+        manage_statusline: answered.manage_statusline,
+        backends: answered
+            .backends
+            .iter()
+            .map(|b| BackendStatus {
+                backend: b.backend.clone(),
+                settings_exists: b.settings_exists,
+                hooks_present: b.hooks_present,
+                hooks_at_launch: b.hooks_at_launch,
+                status_line: b.statusline,
+                mcp_present: b.mcp_present,
+            })
+            .collect(),
+        surfaces: answered
+            .surfaces
+            .iter()
+            .map(|s| SurfaceCurrency {
+                route: s.route.clone(),
+                backend: s.backend.clone(),
+                status: s.status.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// The use case's request a materialize's message asks for, under `flags`.
 ///
 /// # Errors
@@ -121,6 +182,20 @@ impl super::Foreign for InProcess<'_> {
                 let exit = error.exit();
                 Failure::new(error, exit)
             })
+    }
+
+    fn check(&self, _: v1::CheckManageRequest) -> Result<v1::CheckManageResponse, Failure> {
+        let flags = library_application::Flags::default();
+        match self.setup.check(&flags) {
+            Ok(done) => Ok(v1::CheckManageResponse {
+                notices: done.notices.iter().map(|n| (self.notice_of)(n)).collect(),
+                ..checked(&done.value)
+            }),
+            Err(error) => {
+                let exit = error.exit();
+                Err(Failure::new(error, exit))
+            }
+        }
     }
 
     fn uninstall(

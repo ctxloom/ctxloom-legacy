@@ -572,9 +572,13 @@ impl<E: Edge + 'static> Calls for Api<E> {
     fn run_doctor(&self, request: v1::RunDoctorRequest) -> Answer<'_, v1::RunDoctorResponse> {
         Box::pin(async move {
             if !request.fix {
-                return Err(ApiError::Unimplemented {
-                    method: "RunDoctor without --fix".to_string(),
-                });
+                let ask = crate::setup_reads::SetupRead::Doctor { deps: request.deps };
+                return match self.setup_read(&request, ask).await? {
+                    crate::setup_reads::SetupAnswer::Doctor(answer) => Ok(answer),
+                    other => Err(ApiError::Failed {
+                        detail: format!("doctor answered {other:?}"),
+                    }),
+                };
             }
             let ask = crate::foreign::ForeignAsk::DoctorFix;
             match self
@@ -584,6 +588,51 @@ impl<E: Edge + 'static> Calls for Api<E> {
                 crate::foreign::ForeignAnswer::Fixed(answer) => Ok(answer),
                 other => Err(ApiError::Failed {
                     detail: format!("doctor --fix answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `GetAuthStatus` (step 10c U5): read where the caller stands.
+    fn get_auth_status(
+        &self,
+        request: v1::GetAuthStatusRequest,
+    ) -> Answer<'_, v1::GetAuthStatusResponse> {
+        Box::pin(async move {
+            let ask = crate::setup_reads::SetupRead::AuthStatus;
+            match self.setup_read(&request, ask).await? {
+                crate::setup_reads::SetupAnswer::AuthStatus(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("auth status answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `CheckManage` (step 10c U5): read where the caller stands.
+    fn check_manage(&self, request: v1::CheckManageRequest) -> Answer<'_, v1::CheckManageResponse> {
+        Box::pin(async move {
+            let ask = crate::setup_reads::SetupRead::CheckManage;
+            match self.setup_read(&request, ask).await? {
+                crate::setup_reads::SetupAnswer::CheckManage(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("manage check answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `GetInitPrompt` (step 10c U6): read where the caller stands.
+    fn get_init_prompt(
+        &self,
+        request: v1::GetInitPromptRequest,
+    ) -> Answer<'_, v1::GetInitPromptResponse> {
+        Box::pin(async move {
+            let ask = crate::setup_reads::SetupRead::InitPrompt;
+            match self.setup_read(&request, ask).await? {
+                crate::setup_reads::SetupAnswer::InitPrompt(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("init prompt answered {other:?}"),
                 }),
             }
         })
@@ -874,6 +923,10 @@ pub struct Api<E> {
     /// (step 10c U4); none, the remotes' writes, `PullDependencies` and
     /// `UpgradeDependencies` fail.
     pub(crate) deps: Option<Arc<dyn crate::deps_writes::DepsPlans>>,
+    /// The setup use cases that read (step 10c U5); none, `RunDoctor`
+    /// without `--fix`, `GetAuthStatus`, `CheckManage` and `GetInitPrompt`
+    /// fail.
+    pub(crate) setup_reads: Option<Arc<dyn crate::setup_reads::SetupReads>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -893,6 +946,7 @@ impl<E: Edge> Api<E> {
             os: String::new(),
             deliveries: None,
             foreign: None,
+            setup_reads: None,
             deps: None,
         }
     }
@@ -903,6 +957,15 @@ impl<E: Edge> Api<E> {
     pub fn writing_deps(self, plans: Arc<dyn crate::deps_writes::DepsPlans>) -> Api<E> {
         Api {
             deps: Some(plans),
+            ..self
+        }
+    }
+
+    /// The API answering the setup reads through `reads` (step 10c U5).
+    #[must_use]
+    pub fn reading_setup(self, reads: Arc<dyn crate::setup_reads::SetupReads>) -> Api<E> {
+        Api {
+            setup_reads: Some(reads),
             ..self
         }
     }

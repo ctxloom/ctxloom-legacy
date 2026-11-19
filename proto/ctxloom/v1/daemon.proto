@@ -582,6 +582,23 @@ service Ctxloom {
   // its `--fix`, the stale hook entries taken out as `Materialize` writes;
   // U5 adds the checks). Additive proto extension, step 10c U10.
   rpc RunDoctor(RunDoctorRequest) returns (RunDoctorResponse);
+  // `auth status`: `projects/{project}:getAuthStatus` (step 10c U5, D1):
+  // each engine's credential as the caller's environment exports it, by
+  // variable name and never its value. Additive proto extension, step 10c
+  // U5.
+  // (-- api-linter: core::0131::request-name-required=disabled
+  //     aip.dev/not-precedent: a read of the caller's place, its cwd. --)
+  rpc GetAuthStatus(GetAuthStatusRequest) returns (GetAuthStatusResponse);
+  // `manage check`: `projects/{project}:checkManage` (step 10c U5): each
+  // engine's wiring read off its own files where the caller stands.
+  // Additive proto extension, step 10c U5.
+  rpc CheckManage(CheckManageRequest) returns (CheckManageResponse);
+  // `init prompt`: `projects/{project}:getInitPrompt` (step 10c U6): the
+  // setup interview as the caller's catalog holds it (owner ruling 128).
+  // Additive proto extension, step 10c U6.
+  // (-- api-linter: core::0131::request-name-required=disabled
+  //     aip.dev/not-precedent: a read of the caller's place, its cwd. --)
+  rpc GetInitPrompt(GetInitPromptRequest) returns (GetInitPromptResponse);
   // (-- endregion --)
 
   // `search`: `projects/{project}:searchLibrary` (AIP-136, stateless).

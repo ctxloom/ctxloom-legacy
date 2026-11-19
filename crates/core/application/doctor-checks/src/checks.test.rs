@@ -660,7 +660,7 @@ fn test_a_stale_distilled_form_is_a_warning_naming_each() {
 fn a_bundle_in_the_old_layout_warns_naming_its_move() {
     let quiet = checks::sidecars(&[]);
     assert_eq!(
-        (quiet.marker, quiet.status),
+        (quiet.marker.as_str(), quiet.status),
         ("DOCTOR-CHECK-SIDECARS-u4", Status::Ok)
     );
     let found = checks::sidecars(&[
