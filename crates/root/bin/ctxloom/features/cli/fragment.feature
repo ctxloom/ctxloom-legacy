@@ -1,7 +1,8 @@
 # world: surfaces
 # Ported from cli/fragment.feature (rev f36e8dfb2)
-# NOT ported: the scenarios tagged @pending: create, show, remove, the MCP
-#   resource reads, the editor and distill scenarios. Left out: the Rule
+# NOT ported: the scenarios tagged @pending: those that read the agent's MCP
+#   resource (create, the single read, the removal's), which this port has
+#   no reads of. Left out: the Rule
 #   "Materializing a profile never destroys a team's hand-authored context
 #   file": j000400_multi_engine already carries it.
 @doc
@@ -53,13 +54,15 @@ Feature: fragment — reusable context units, and the engine surface each one re
       When the agent reads resource "ctxloom://fragments"
       Then the resource contains "testing"
 
-  @pending
   Rule: A fragment's content reaches a person and an agent byte for byte, and is findable by name
 
     # The MIME type is a static field on the envelope: every MCP resource
     # returning an EMPTY body left this green on the type alone. The body is
     # the resource. The session endpoint serves the fragment as the SESSION's
     # package carries it, so the owner stands on a profile that selects it.
+    # Still pending (step 11): it reads the agent's MCP resource, and this
+    # port has no MCP resource reads.
+    @pending
     Scenario: Reading a single fragment over MCP
       Given an initialized ctxloom project
       And a bundle "demo" exists
@@ -78,7 +81,6 @@ Feature: fragment — reusable context units, and the engine surface each one re
       Then the command succeeds
       And the output contains "testing"
 
-  @pending
   Rule: Removing a fragment removes it from the manifest and from every listing
 
     # Bare `remove` is a preview: it must leave the manifest untouched. A
@@ -107,6 +109,9 @@ Feature: fragment — reusable context units, and the engine surface each one re
     # trimmed the cached listing (leaving the YAML entry behind) and a remove
     # that only trimmed the YAML (leaving a stale listing or a stale MCP
     # resource) would each satisfy exactly one of these three checks alone.
+    # Still pending (step 11): it reads the agent's MCP resource, and this
+    # port has no MCP resource reads.
+    @pending
     Scenario: Removing a fragment removes it from the manifest, the listing, and the agent's resource
       Given an initialized ctxloom project
       And a bundle "demo" exists

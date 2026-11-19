@@ -1,9 +1,8 @@
 # world: surfaces
 # Ported from cli/command.feature (rev f36e8dfb2)
-# NOT ported: the scenarios tagged @pending: create, the MCP resource reads
-#   (`the agent reads resource` has no MCP session in this port), remove, the
-#   --no-distill edit and distill refusals (they need an editor and the
-#   distiller), and the misspelled --bundle filter.
+# NOT ported: the scenarios tagged @pending, each with its reason: create,
+#   the MCP resource reads (`the agent reads resource` has no MCP session in
+#   this port), remove, and distilling a no_distill command.
 @doc
 Feature: command — authoring reusable prompt templates for AI coding assistants
 
@@ -46,6 +45,9 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
         | engine      |
         | claude-code |
 
+  # Still pending (step 11): not built here. Its scenario reads the agent's
+  # MCP resource (`the agent reads resource "ctxloom://commands"`), and this
+  # port has no MCP resource reads.
   @pending
   Rule: Creating a command writes real content, and it reaches every surface
 
@@ -102,6 +104,9 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
       Then the resource MIME type is "text/markdown"
       And the resource contains "COMMAND-BODY-review"
 
+  # Still pending (step 11): not built here. Its scenario reads the agent's
+  # MCP resource (`the agent reads resource "ctxloom://commands"`), and this
+  # port has no MCP resource reads.
   @pending
   Rule: Removing a command removes it from the manifest and from every listing
 
@@ -146,7 +151,6 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
       When the agent reads resource "ctxloom://commands"
       Then the resource does not contain "review"
 
-  @pending
   Rule: --no-distill controls whether an edit gets re-distilled, honestly
 
     # --no-distill is a per-invocation opt-out, distinct from the item's own
@@ -193,13 +197,16 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
       And the output contains "refusing to overwrite"
       And the file ".ctxloom/content/bundles/v2/demo/prompts/review.md" contains "COMMAND-BODY-review"
 
-  @pending
   Rule: A command already marked no_distill is reported, not silently skipped
 
     # no_distill is checked BEFORE the distiller-availability check, so this
     # answer is the same whether or not an LLM is even configured — the
     # author's own declaration wins first, and distill says so rather than
     # exiting 0 with no explanation of which of the two reasons applied.
+    # Still pending (step 11): the response's shape differs. `command distill`
+    # of a no_distill command answers `{"applied": false, "detail":
+    # ["no_distill"], ...}` (exit 0): no `reason` for the step to read.
+    @pending
     Scenario Outline: Distilling a command marked no_distill reports why it did nothing
       Given an initialized ctxloom project
       And the project already has the bundle "demo":
@@ -224,7 +231,6 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
       | --format json | no_distill                     |
       | --format text | is marked as no_distill        |
 
-  @pending
   Rule: A --bundle filter that names nothing is refused, not answered empty
 
     # The UNFILTERED listing is non-empty whenever any command exists

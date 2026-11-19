@@ -41,7 +41,6 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
   This is the comprehensive per-noun spec: what the noun DOES, leaf by leaf,
   hermetically against a seeded project.
 
-  @pending
   Rule: A binding is written down, and read back whole
 
     Every axis an invocation names is stored, and the listing reads all of them
@@ -75,6 +74,12 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
     # it has no field of its own. The structured rows pin the ENTRY the write
     # returned instead — which is the same claim made against the thing that
     # was actually stored, rather than against the echo.
+    # Still pending (step 11): the text row is stale against the owner's
+    # ruling of 2026-11-17 (a text row names a reference by its short form):
+    # the listing says "profiles: project#profiles/dev", not "profiles: dev".
+    # The json rows run green. A draft edit for the owner: the text row's
+    # `profiles: dev` -> `profiles: project#profiles/dev`.
+    @pending
     Scenario Outline: Creating a binding records every axis, and the listing reads each one back
       Given an initialized ctxloom project
       And a profile "dev" exists
@@ -408,7 +413,6 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
       And the output contains "home config"
       And the file ".ctxloom/config.yaml" does not contain "session_home: host"
 
-  @pending
   Rule: --env declares which host environment variables a binding's runs see
 
     Scenario: Create records the declared environment names, and show reads them back
@@ -888,7 +892,6 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
       Then the command succeeds
       And the output does not contain "for its requirements"
 
-  @pending
   Rule: The default agent is what a bare run binds
 
     `ctxloom run` with no --agent and no -p/-f/-t binds the DEFAULT AGENT: its

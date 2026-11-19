@@ -1,9 +1,9 @@
 # world: base
 # Ported from cli/config.feature (rev f36e8dfb2)
-# NOT ported: the Rules tagged @pending (every Rule but the last).
+# NOT ported: the scenarios tagged @pending, each with its reason.
 # OD-40 (aip/configuration, 2026-11-13; OQ-19): the JSON steps read the AIP resource (library.proto's
 #   `Config` singleton, design §3.9, §5.8): `{name: projects/{project}/config, document: {...}}`, so
-#   a path into the configuration starts `document.`. Still pending.
+#   a path into the configuration starts `document.`.
 
 @doc
 Feature: config — the project's one configuration document, read and scaffolded
@@ -33,7 +33,6 @@ Feature: config — the project's one configuration document, read and scaffolde
   engine-axis matrix lives; this file asserts what create writes and what it
   refuses.
 
-  @pending
   Rule: The bare noun renders the whole document
 
     Someone typing a noun on its own wants to know what they have. `ctxloom
@@ -129,7 +128,6 @@ Feature: config — the project's one configuration document, read and scaffolde
       And the output is valid JSON
       And the output contains "claude-code"
 
-  @pending
   Rule: A section view narrows, and narrowing is asserted by what is absent
 
     `config show <section>` claims to answer a smaller question than bare `show`.
@@ -185,6 +183,10 @@ Feature: config — the project's one configuration document, read and scaffolde
     # refused the same way: by file, key path and the type that was expected.
     # It used to be a warning, and the command ran on a setting the schema
     # could not vouch for.
+    # Still pending (step 11): the message differs. The refusal names the file
+    # and `session_reap_age`, but says the value "does not match pattern
+    # '^[0-9]+(d|w|h|m|s)$'", never "expected string".
+    @pending
     Scenario: A config value of the wrong type is refused, naming the file, key and expected type
       Given an initialized ctxloom project
       And the project already has the file ".ctxloom/config.yaml":
@@ -203,6 +205,11 @@ Feature: config — the project's one configuration document, read and scaffolde
 
     # --degraded is the escape hatch for every fatal startup finding, this one
     # included: the violation is still reported, and the command runs.
+    # Still pending (step 11): the behaviour differs. The config loads and the
+    # finding is said, but `config show agents` of a project with no agents is
+    # `{"document": {}}`: nothing names claude-code; and the finding's words
+    # are the pattern's, never "expected string".
+    @pending
     Scenario: Under --degraded a config value of the wrong type is warned about and the config loads
       Given an initialized ctxloom project
       And the project already has the file ".ctxloom/config.yaml":
@@ -244,7 +251,6 @@ Feature: config — the project's one configuration document, read and scaffolde
       And the output contains "unknown command"
       And the output contains "shwo"
 
-  @pending
   Rule: Create writes the scaffold, and never over an existing config
 
     `config create` materializes what a project needs to BE a ctxloom project
@@ -287,6 +293,11 @@ Feature: config — the project's one configuration document, read and scaffolde
     # verbatim: `schema_version: 8` is the fixture's own content (it tracks
     # config.CurrentConfigVersion — bump both together), and `engine:` is a
     # key only the scaffold writes — its absence is what says no scaffold ran.
+    # Still pending (step 11): stale. The fixture's config is the current
+    # generation, `schema_version: 9`, and the scenario's own note says the
+    # `8` tracks the current version ("bump both together"); a draft edit for
+    # the owner: 8 -> 9 in its two steps.
+    @pending
     Scenario: Create refuses an existing config and leaves it byte-for-byte alone
       Given an initialized ctxloom project
       And the file ".ctxloom/config.yaml" contains "schema_version: 8"
@@ -299,7 +310,6 @@ Feature: config — the project's one configuration document, read and scaffolde
       And the file ".ctxloom/config.yaml" contains "schema_version: 8"
       And the file ".ctxloom/config.yaml" does not contain "engine:"
 
-  @pending
   Rule: Edit refuses to open an editor on a config that is not there
 
     `config edit` hands the file to $EDITOR, which is why its success path has
@@ -313,6 +323,11 @@ Feature: config — the project's one configuration document, read and scaffolde
     # The positive half of this claim lives in the create scenarios above: a
     # scaffolded project genuinely HAS the file this refusal is about, so
     # "absent" here means absent, not unwritten-by-the-fixture.
+    # Still pending (step 11): awaiting the git-free undo (owner, 2026-11-18).
+    # The empty directory is refused `library-tree-not-in-git` before the
+    # config is looked for; under the git-free ruling the library works in
+    # any directory, and the undo unit that drops the refusal has not landed.
+    @pending
     Scenario: Editing a project with no config says so and names the fix
       Given an empty project directory
       When Alice reaches for the editor before the project has a config:

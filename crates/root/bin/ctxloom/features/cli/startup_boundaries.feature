@@ -1,5 +1,16 @@
 # Ported from cli/startup_boundaries.feature (rev f36e8dfb2)
-# NOT ported: any of it yet (the Feature is @pending).
+# NOT ported: any of it yet (the Feature is @pending). Step 11 found each
+#   scenario's behaviour differs from its text or is not built:
+#   - the dry-run start: the mock engine is a surface half alone and drives
+#     no run, so nothing delivers MOCK_CONTEXT.md into a session home, and a
+#     run says nothing like Go's "syncing remote bundles and profiles from
+#     config" (the comment above its step says so);
+#   - the home lockfile: ctxloom's own loadout carries none of its text, the
+#     `isolation-axes` fragment included (library::write::loadout, D24), so
+#     `-f isolation-axes` resolves nothing; and an unreadable lock is
+#     `deps-lock-unreadable`, never "failed to parse lockfile";
+#   - the refused run's record: a refused run leaves nothing, no session
+#     minted (owner ruling 73g), so no record says why it ended.
 
 @pending
 Feature: What a start writes, and whose pins it reads

@@ -1,6 +1,6 @@
 # world: base
 # Ported from cli/bundle.feature (rev f36e8dfb2)
-# NOT ported: the Rules tagged @pending (every Rule but the first).
+# NOT ported: the scenarios tagged @pending, each with its reason.
 # OD-23 (owner, 2026-11-16, "amend the count"): the listing holds the created
 #   bundle AND the built-in `ctxloom` (origin `ctxloom/builtin`, ruling 127).
 # OD-40 (aip/catalog and aip/remotes, 2026-11-13; OQ-19): the JSON steps read
@@ -137,7 +137,6 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | 2                      | 1.0.0         | BUILTIN                     |
         | --format text | Installed bundles (2): | demo (v1.0.0) | ctxloom (v1.0.0) [built-in] |
 
-  @pending
   Rule: Show renders the container's structure, never an item's body
 
     `show` is the map: which sections exist, how many entries each holds, what
@@ -213,7 +212,6 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | 2              |
         | --format text | Fragments (2): |
 
-  @pending
   Rule: View hands back bytes, and `#path` drills from the container into one item
 
     Without a path, `view` dumps the bundle's stored YAML verbatim. With one,
@@ -324,7 +322,6 @@ Feature: bundle — the container authored content lives in, and everything that
       Then the command succeeds
       And the output contains "FRAGMENT-BODY-testing"
 
-  @pending
   Rule: Editing a bundle changes the manifest, and a no-op edit says it changed nothing
 
     The flag form of `edit` is the scriptable one: it sets metadata and
@@ -384,6 +381,14 @@ Feature: bundle — the container authored content lives in, and everything that
 
     # THE REFUSAL IS PROVEN BY WHAT DID NOT HAPPEN: an edit that wrote the
     # first file and refused the second would pass an exit-code check.
+    # Still pending (step 11): the third row's behaviour differs, and the
+    # first two meet a fixture gap. `bundle edit demo --remove-fragment
+    # example --remove-prompt example` is applied (exit 0, both removed) where
+    # the row expects the one-change refusal. The other two are refused as
+    # written, but the refused command's first read mints the checkout harp,
+    # `.ctxloom/state/checkout`, which the fixture project (no scaffold
+    # .gitignore, whose `/state` would hide it) shows git as untracked.
+    @pending
     Scenario Outline: An edit that would change more than one file is refused, and changes none
       # new: T29, S52 (owner): OneChangePerCall, exit 20.
       Given an initialized ctxloom project
@@ -415,6 +420,10 @@ Feature: bundle — the container authored content lives in, and everything that
     # An edit with no flags is a person who does not yet know what to type, and
     # the answer is help plus a plain statement that nothing happened — not a
     # silent exit 0 that reads as a successful edit.
+    # Still pending (step 11): the text row. `bundle edit demo --format text`
+    # says "No changes made." and no count, and the step reads the count "0"
+    # from a text output; the json rows run green.
+    @pending
     Scenario Outline: An edit that was told to change nothing says so
       Given an initialized ctxloom project
       And a bundle "demo" exists
@@ -431,7 +440,6 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | false              |
         | --format text | No changes made.   |
 
-  @pending
   Rule: A bundle travels as its tree, and an import never clobbers without being told to
 
     Export copies the bundle as-is; import copies it back. "Observable" is the
@@ -504,7 +512,6 @@ Feature: bundle — the container authored content lives in, and everything that
       And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" does not contain "LOCAL-EDIT-MARKER"
       And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" contains "acceptance fixture bundle"
 
-  @pending
   Rule: A push lands the bundle's whole tree in the remote's repository
 
     `bundle push` writes every file of the authored tree to the remote's
@@ -534,7 +541,6 @@ Feature: bundle — the container authored content lives in, and everything that
       # the repository's history rather than replacing it.
       And the remote "team" holds file "fragments/demo-frag.md" of bundle "demo" containing "Demo fragment content."
 
-  @pending
   Rule: A move relocates the bundle, and the source goes only once the destination holds it
 
     `bundle move --to` takes a configured remote name or an existing
@@ -579,7 +585,6 @@ Feature: bundle — the container authored content lives in, and everything that
       And the output contains "neither a configured remote nor an existing directory"
       And the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" contains "# Example Fragment"
 
-  @pending
   Rule: An authored bundle is not an installed dependency
 
     A local bundle is authored here; a dependency is pinned in the lockfile
@@ -599,7 +604,6 @@ Feature: bundle — the container authored content lives in, and everything that
       When I run "ctxloom deps unhold demo"
       Then the command succeeds
 
-  @pending
   Rule: ctxloom's built-in bundle is listed under its origin, read-only, and a project bundle of the same name overrides it
 
     ctxloom ships one bundle in the binary (owner rulings 110, 111, narrowed
@@ -649,7 +653,6 @@ Feature: bundle — the container authored content lives in, and everything that
       When I run "ctxloom bundle list --format text"
       Then the output contains "ctxloom (v1.0.0) [built-in]"
 
-  @pending
   Rule: Removal reports first and destroys only when told to
 
     `remove` is the destroyer, and its bare form is a preview: it names what
@@ -686,6 +689,11 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | false                 | 2 fragment(s), 1 command(s)  | ctxloom bundle remove demo --yes   | projects/{project}/bundles/demo |
         | --format text | Nothing was removed   | 2 fragment(s), 1 command(s)  | ctxloom bundle remove demo --yes   | demo                      |
 
+    # Still pending (step 11): stale against OD-23 and ruling 127. After the
+    # removal the listing still holds the built-in `ctxloom` bundle (origin
+    # BUILTIN; text "Installed bundles (1)"), so it is not empty and never
+    # says "No bundles installed.".
+    @pending
     Scenario Outline: Removing a bundle with --yes takes the file and the listing entry
       Given an initialized ctxloom project
       And a bundle "demo" exists

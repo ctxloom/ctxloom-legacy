@@ -14,7 +14,9 @@
 //! front of it again; an id it never had is claude's own error. Every launch
 //! writes down its input, the resumed conversation and the prompt, beside the
 //! stub (`model-input`), so "the mock recorded input" is what the last model
-//! asked had in front of it. It fires the turn's prompt and words through the
+//! asked had in front of it; with it, every file its command line named (the
+//! appended system prompt: the context) and its session home's
+//! `settings.json` (the permissions, a profile's `deny_tools` among them). It fires the turn's prompt and words through the
 //! hooks its one `--settings` file registers, as separate processes with its
 //! own environment, so ctxloom records them as it records claude's.
 //!
@@ -43,6 +45,11 @@ const ANSWER: &str =
 
 /// The stub model (see the head of this file).
 const MODEL_STUB: &str = r#"here="$(dirname "$0")"
+given=""
+for a in "$@"; do
+  [ -f "$a" ] && given="$given$(cat "$a")
+"
+done
 settings=""
 resume=""
 while [ $# -gt 0 ]; do
@@ -67,6 +74,8 @@ fi
 {
   [ -z "$resume" ] || cat "$history/$id"
   printf '%s\n' "$prompt"
+  printf '%s' "$given"
+  [ ! -f "$CLAUDE_CONFIG_DIR/settings.json" ] || cat "$CLAUDE_CONFIG_DIR/settings.json"
 } > "$here/model-input"
 reply="$(cat "$here/model-reply")"
 turn=0

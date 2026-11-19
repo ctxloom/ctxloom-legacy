@@ -6,9 +6,9 @@
 //! a stub model: j001200's stub `claude` first on `PATH` ("the mock LLM"),
 //! which writes down what it was asked (`model-input`) and answers what the
 //! steps staged (`model-reply`). Nothing reaches a real model. A Background
-//! that says "the mock LLM responds" before the content is written puts the
-//! project's agent on the mock engine, which runs nothing; the step that
-//! writes the content to distill puts it back on Claude Code, the stub.
+//! that says "the mock LLM responds" stages that stub; the step that writes
+//! the content to distill stages it again, the project's agent on Claude
+//! Code.
 
 use cucumber::{given, then, when};
 use serde_json::Value;

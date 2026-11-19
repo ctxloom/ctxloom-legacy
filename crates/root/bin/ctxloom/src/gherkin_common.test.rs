@@ -634,9 +634,12 @@ macro_rules! common_steps {
                 w.common().project.file_counts(&rel, &text, times);
             }
 
+            /// Go's: a file that is not there contains nothing.
             #[then(expr = "the file {string} does not contain {string}")]
             fn file_lacks(w: &mut World, rel: String, text: String) {
-                w.common().project.file_lacks(&rel, &text);
+                if w.common().project.exists(&rel) {
+                    w.common().project.file_lacks(&rel, &text);
+                }
             }
 
             #[then(expr = "the file {string} exists")]

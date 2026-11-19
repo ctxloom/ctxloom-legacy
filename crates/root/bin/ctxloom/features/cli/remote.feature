@@ -1,12 +1,12 @@
+# world: surfaces
 # Ported from cli/remote.feature (rev f36e8dfb2)
-# NOT ported: any of it yet (the Feature is @pending).
+# NOT ported: nothing.
 # OD-40 (aip/remotes, B4, 2026-11-13; OQ-19): the JSON steps read the AIP
 #   messages of library.proto (design §5.10): a remote is named
 #   `projects/{project}/remotes/<r>`, and a removal's preview says
 #   `apply_command`.
 
 @doc
-@pending
 Feature: remote — registering the sources content comes from, and browsing them
 
   Covers: `ctxloom remote create`, `remote edit`, `remote list`, `remote show`, `remote
@@ -307,6 +307,11 @@ Feature: remote — registering the sources content comes from, and browsing the
     # Outside any project a remote is registered in the home layer, and on a
     # machine ctxloom has never run on, that registration creates the home
     # .ctxloom directory — which its owner must then be able to use.
+    # Still pending (step 11): the harness names the project by CTXLOOM_ROOT
+    # on every run, so an empty directory IS the project and the remote is
+    # registered in its .ctxloom; outside any project needs a run with no
+    # root (remote_feature.test.rs's contract test runs it so).
+    @pending
     Scenario: Registering a first remote outside any project creates a usable home registry
       Given an empty project directory
       And the home has no ".ctxloom" directory yet

@@ -255,7 +255,6 @@ Feature: profile — the composition that decides what an agent actually receive
       And the output contains "No changes made."
       And the file ".ctxloom/content/bundles/v2/project/profiles/dev.yaml" contains "- demo"
 
-  @pending
   Rule: The mask hides inherited content without deleting it
 
     A profile cannot remove an item from a bundle it does not own, so
@@ -332,7 +331,6 @@ Feature: profile — the composition that decides what an agent actually receive
       Then the command succeeds
       And the file "restored/.mcp.json" registers an MCP server named "tree-sitter"
 
-  @pending
   Rule: A profile is edited by flag or by editor, and both land in the file
 
     # A profile is a structured document, so the append-a-line marker editor
@@ -444,7 +442,6 @@ Feature: profile — the composition that decides what an agent actually receive
     # error text: a guard that printed the message and overwrote anyway would
     # pass an exit-code check and still have eaten the local edit. The forced
     # retry afterwards proves the guard was the only thing in the way.
-    @pending
     Scenario: Importing over an existing profile refuses, and the local edit survives
       Given an initialized ctxloom project
       And a bundle "demo" exists
@@ -471,7 +468,6 @@ Feature: profile — the composition that decides what an agent actually receive
     # export that quietly assembled, or a materialize that quietly copied the
     # definition, would each satisfy a file-exists check on both destinations
     # and be entirely wrong.
-    @pending
     Scenario: Export carries the definition and materialize carries the assembled context
       Given an initialized ctxloom project
       And a bundle "demo" exists

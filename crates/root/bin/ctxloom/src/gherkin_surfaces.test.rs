@@ -68,6 +68,8 @@ struct World {
     /// The daemon a step started for the home (deps.feature's U4 rule),
     /// kept serving to the scenario's end.
     daemon: Option<std::process::Child>,
+    /// What the CLI contract features' steps keep.
+    cli: cli::State,
 }
 
 impl fmt::Debug for World {
@@ -106,6 +108,7 @@ impl World {
             onboarding: onboarding::State::default(),
             remotes: None,
             daemon: None,
+            cli: cli::State::default(),
         }
     }
 
@@ -123,6 +126,9 @@ mod onboarding;
 
 #[path = "gherkin_session_home.test.rs"]
 mod session_home;
+
+#[path = "gherkin_surfaces_cli.test.rs"]
+mod cli;
 
 // ------------------------------------------------------------------ given
 
@@ -268,7 +274,9 @@ fn index_records(_w: &mut World, _harp: String, _engine: String) {
 }
 
 /// Go's inline bundle document, as the tree this port reads: the envelope, a
-/// hook per entry (its `order:` in a sidecar), a skill's tags in its metadata.
+/// hook per entry (its `order:` in a sidecar), a fragment or command per
+/// entry (its fields its front matter), a server per `mcp:` entry, a skill's
+/// tags in its metadata.
 #[given(expr = "the project already has the bundle {string}:")]
 fn project_bundle(w: &mut World, step: &Step, name: String) {
     let parsed = angzarr_yaml::parse(&doc(step)).expect("a bundle document");
@@ -315,6 +323,48 @@ fn project_bundle(w: &mut World, step: &Step, name: String) {
                 );
             }
         }
+    }
+    // A fragment or a command is its one file, its `content` the body and
+    // every other field its front matter.
+    for (key, dir) in [("fragments", "fragments"), ("commands", "prompts")] {
+        for (item, body) in parsed
+            .get(key)
+            .and_then(angzarr_yaml::Value::as_map)
+            .unwrap_or_default()
+        {
+            let fields = body.as_map().unwrap_or_default();
+            let content = fields
+                .iter()
+                .find(|(k, _)| k == "content")
+                .and_then(|(_, v)| v.as_str())
+                .unwrap_or_default();
+            let front: Vec<(String, angzarr_yaml::Value)> = fields
+                .iter()
+                .filter(|(k, _)| k != "content")
+                .cloned()
+                .collect();
+            let text = if front.is_empty() {
+                format!("{content}\n")
+            } else {
+                let front = angzarr_yaml::write(&angzarr_yaml::Value::Map(front), usize::MAX);
+                format!("---\n{front}---\n{content}\n")
+            };
+            w.common
+                .project
+                .write(&format!("{root}/{dir}/{item}.md"), &text);
+        }
+    }
+    // A server is its one file, `mcp/<name>.yaml` (owner T27), its fields
+    // as Go's inline entry gave them.
+    for (server, body) in parsed
+        .get("mcp")
+        .and_then(angzarr_yaml::Value::as_map)
+        .unwrap_or_default()
+    {
+        w.common.project.write(
+            &format!("{root}/mcp/{server}.yaml"),
+            &angzarr_yaml::write(body, usize::MAX),
+        );
     }
     for (skill, body) in parsed
         .get("skills")
@@ -564,10 +614,17 @@ fn materialize_profile(w: &mut World, profile: String, engine: String) {
 
 // ------------------------------------------------------------------- then
 
-/// A pattern of `\A`, `\z`, `\n`, `\n?`, `[\s\S]*` and literal text, which is
-/// all Go's scenarios use.
+/// A pattern of `\A`, `\z`, `\n`, `\n?`, `\s+`, `[\s\S]*` and literal text,
+/// led by `(?s)` (its `.*` then any text, `[\s\S]*`) or `(?m)^` (starting at
+/// a line's start), which is all Go's scenarios use.
 fn matches(pattern: &str, text: &str) -> bool {
     fn go(p: &str, t: &str, at_start: bool) -> bool {
+        if let Some(rest) = p.strip_prefix("\\s+") {
+            let spaces = t.len() - t.trim_start().len();
+            return (1..=spaces)
+                .filter(|i| t.is_char_boundary(*i))
+                .any(|i| go(rest, &t[i..], false));
+        }
         if let Some(rest) = p.strip_prefix("\\A") {
             return at_start && go(rest, t, at_start);
         }
@@ -590,6 +647,14 @@ fn matches(pattern: &str, text: &str) -> bool {
             (Some(a), Some(b)) if a == b => go(&p[a.len_utf8()..], &t[b.len_utf8()..], false),
             _ => false,
         }
+    }
+    if let Some(rest) = pattern.strip_prefix("(?s)") {
+        return matches(&rest.replace(".*", "[\\s\\S]*"), text);
+    }
+    if let Some(rest) = pattern.strip_prefix("(?m)^") {
+        return (0..=text.len())
+            .filter(|i| *i == 0 || text.as_bytes()[i - 1] == b'\n')
+            .any(|i| go(rest, &text[i..], false));
     }
     // An unanchored pattern may start anywhere.
     if pattern.starts_with("\\A") {

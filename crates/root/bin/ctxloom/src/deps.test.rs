@@ -250,6 +250,83 @@ impl Remotes {
         let files = demo_tree("1.1.0", "Demo bundle", fragment, content, true);
         self.advance_with(name, &files);
     }
+
+    /// Go's `the remote "<name>" ships an MCP server "<server>" running
+    /// "<command>" and a skill script printing "<say>"`.
+    pub(crate) fn ships(&mut self, name: &str, server: &str, command: &str, say: &str) {
+        let root = tree_bundle("demo");
+        let files = vec![
+            (
+                format!("{root}/mcp/{server}.yaml"),
+                format!("command: {command}\nenv:\n  API_KEY: secret-{say}\n"),
+            ),
+            (
+                format!("{root}/skills/runner/SKILL.md"),
+                "---\nname: runner\ndescription: Runs things.\n---\n\nbody\n".to_string(),
+            ),
+            (
+                format!("{root}/skills/runner/scripts/run.sh"),
+                format!("#!/bin/sh\necho {say}\n"),
+            ),
+        ];
+        self.advance_with(name, &files);
+    }
+
+    /// Go's `UnpublishFromRemote`: a commit that deletes `paths`.
+    pub(crate) fn unpublish(&mut self, name: &str, paths: &[String]) {
+        let work = self.work_clone(name);
+        for rel in paths {
+            files::remove(work.join(rel));
+        }
+        git_in(&work, &["add", "-A"]);
+        git_in(&work, &["commit", "-m", "unpublish"]);
+        git_in(&work, &["push", "origin", "main"]);
+    }
+
+    /// Go's `the remote "<name>" stops publishing bundle "<bundle>"`.
+    pub(crate) fn stops_publishing(&mut self, name: &str, bundle: &str) {
+        let root = tree_bundle(bundle);
+        self.unpublish(
+            name,
+            &[
+                format!("{root}/bundle.yaml"),
+                format!("{root}/fragments/demo-frag.md"),
+                format!("{root}/prompts/demo-skill.md"),
+            ],
+        );
+    }
+
+    /// Go's `RemoteFile`: `path` as the remote's default branch holds it.
+    pub(crate) fn remote_file(&self, name: &str, path: &str) -> String {
+        git_in(&self.bare[name], &["show", &format!("HEAD:{path}")])
+    }
+
+    /// A bare repository whose `main` holds `files`, registered in
+    /// `project` as the remote `name`.
+    pub(crate) fn publish(
+        &mut self,
+        project: &Project,
+        env: &[(&str, &str)],
+        name: &str,
+        files: &[(String, String)],
+    ) {
+        let bare = self.seed_bare(files);
+        self.register(project, env, name, bare);
+    }
+
+    /// The `file://` address the remote `name` was registered at.
+    pub(crate) fn url(&self, name: &str) -> String {
+        files::file_url(&self.seeded[name])
+    }
+
+    /// Go's `BreakRemote`: the bare repository renamed out from under its
+    /// `file://` address, so every later clone or fetch fails.
+    pub(crate) fn becomes_unreachable(&mut self, name: &str) {
+        let bare = self.bare[name].clone();
+        let broken = PathBuf::from(format!("{}.unreachable", bare.display()));
+        files::rename(&bare, &broken);
+        self.bare.insert(name.to_string(), broken);
+    }
 }
 
 /// A project, and the git remotes its scenario seeds.
@@ -338,10 +415,6 @@ impl World {
         );
     }
 
-    fn work_clone(&mut self, name: &str) -> PathBuf {
-        self.remotes.work_clone(name)
-    }
-
     /// Go's `AdvanceRemote`: a commit that rewrites `files`.
     pub(crate) fn advance_with(&mut self, name: &str, files: &[(String, String)]) {
         self.remotes.advance_with(name, files);
@@ -360,55 +433,17 @@ impl World {
     /// Go's `the remote "<name>" ships an MCP server "<server>" running
     /// "<command>" and a skill script printing "<say>"`.
     pub(crate) fn ships(&mut self, name: &str, server: &str, command: &str, say: &str) {
-        let root = tree_bundle("demo");
-        let files = vec![
-            (
-                format!("{root}/mcp/{server}.yaml"),
-                format!("command: {command}\nenv:\n  API_KEY: secret-{say}\n"),
-            ),
-            (
-                format!("{root}/skills/runner/SKILL.md"),
-                "---\nname: runner\ndescription: Runs things.\n---\n\nbody\n".to_string(),
-            ),
-            (
-                format!("{root}/skills/runner/scripts/run.sh"),
-                format!("#!/bin/sh\necho {say}\n"),
-            ),
-        ];
-        self.advance_with(name, &files);
-    }
-
-    /// Go's `UnpublishFromRemote`: a commit that deletes `paths`.
-    pub(crate) fn unpublish(&mut self, name: &str, paths: &[String]) {
-        let work = self.work_clone(name);
-        for rel in paths {
-            files::remove(work.join(rel));
-        }
-        git_in(&work, &["add", "-A"]);
-        git_in(&work, &["commit", "-m", "unpublish"]);
-        git_in(&work, &["push", "origin", "main"]);
+        self.remotes.ships(name, server, command, say);
     }
 
     /// Go's `the remote "<name>" stops publishing bundle "<bundle>"`.
     pub(crate) fn stops_publishing(&mut self, name: &str, bundle: &str) {
-        let root = tree_bundle(bundle);
-        self.unpublish(
-            name,
-            &[
-                format!("{root}/bundle.yaml"),
-                format!("{root}/fragments/demo-frag.md"),
-                format!("{root}/prompts/demo-skill.md"),
-            ],
-        );
+        self.remotes.stops_publishing(name, bundle);
     }
 
-    /// Go's `BreakRemote`: the bare repository renamed out from under its
-    /// `file://` address, so every later clone or fetch fails.
+    /// Go's `BreakRemote`.
     pub(crate) fn becomes_unreachable(&mut self, name: &str) {
-        let bare = self.remotes.bare[name].clone();
-        let broken = PathBuf::from(format!("{}.unreachable", bare.display()));
-        files::rename(&bare, &broken);
-        self.remotes.bare.insert(name.to_string(), broken);
+        self.remotes.becomes_unreachable(name);
     }
 
     /// Tag the remote's default branch tip `tag`.
@@ -418,16 +453,13 @@ impl World {
 
     /// Go's `RemoteFile`: `path` as the remote's default branch holds it.
     pub(crate) fn remote_file(&self, name: &str, path: &str) -> String {
-        git_in(&self.remotes.bare[name], &["show", &format!("HEAD:{path}")])
+        self.remotes.remote_file(name, path)
     }
 
     /// Go's `the remote "<name>"'s cached clone is forced back to its first
     /// commit`: the one clone under `.ctxloom/cache/repos`.
     pub(crate) fn clone_forced_back_to_first_commit(&self) {
-        let clone = find_clone(&self.project.dir().join(".ctxloom/cache/repos"))
-            .expect("a cached clone of the remote");
-        let first = git_in(&clone, &["rev-list", "--max-parents=0", "HEAD"]);
-        git_in(&clone, &["reset", "--hard", first.trim()]);
+        clone_forced_back_to_first_commit(&self.project);
     }
 
     /// The text of a file of the project, if it is there.
@@ -461,6 +493,15 @@ impl World {
 }
 
 /// The first directory below `dir` holding a `.git`.
+/// Go's `the remote "<name>"'s cached clone is forced back to its first
+/// commit`: the one clone under `project`'s `.ctxloom/cache/repos`.
+pub(crate) fn clone_forced_back_to_first_commit(project: &Project) {
+    let clone = find_clone(&project.dir().join(".ctxloom/cache/repos"))
+        .expect("a cached clone of the remote");
+    let first = git_in(&clone, &["rev-list", "--max-parents=0", "HEAD"]);
+    git_in(&clone, &["reset", "--hard", first.trim()]);
+}
+
 fn find_clone(dir: &Path) -> Option<PathBuf> {
     for path in files::children(dir) {
         if files::is_dir(path.join(".git")) {
