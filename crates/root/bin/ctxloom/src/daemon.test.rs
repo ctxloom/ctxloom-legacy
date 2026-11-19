@@ -1100,7 +1100,7 @@ fn a_daemon_whose_home_is_removed_exits_and_writes_nothing_there_again() {
     let world = World::new();
     let (mut daemon, _) = served(&world);
     let home = world.project.home().join(".ctxloom");
-    files::remove_tree(&home);
+    files::remove_tree_settling(&home);
     let code = exited_within(&mut daemon, Duration::from_secs(20));
     assert_eq!(code, Some(0), "it exits once its home is gone");
     let left: Vec<String> = if files::is_dir(&home) {
@@ -1149,7 +1149,7 @@ fn a_daemon_whose_home_is_removed_exits_with_its_lock_elsewhere() {
             .filter(|b| !b.is_empty())
     });
     let home = world.project.home().join(".ctxloom");
-    files::remove_tree(&home);
+    files::remove_tree_settling(&home);
     let code = exited_within(&mut daemon.0, Duration::from_secs(20));
     assert_eq!(code, Some(0), "it exits once its home is gone");
     assert!(
@@ -2227,7 +2227,7 @@ fn two_sigterms_stop_an_idle_daemon_whose_home_was_removed() {
     let (daemon, _) = served(&world);
     let mut daemon = Killed(daemon);
     let pid = daemon.0.id();
-    files::remove_tree(world.project.home().join(".ctxloom"));
+    files::remove_tree_settling(world.project.home().join(".ctxloom"));
     let _ = std::process::Command::new("kill")
         .args(["-TERM", &pid.to_string()])
         .status();

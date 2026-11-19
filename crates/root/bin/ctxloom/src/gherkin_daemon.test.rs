@@ -5251,6 +5251,15 @@ fn rehosted_n(w: &mut World, child: String, owner: String, times: i64) {
         "the child and owner the harness hosts"
     );
     child_mid_turn(w, child.clone());
+    // The seed re-hosts its session, which needs the native conversation its
+    // first turn binds: waited for, not raced (CI on macOS, 2026-11-19:
+    // `NoNativeSession`).
+    until(w, "the child's conversation bound", DAEMON_WAIT, |w| {
+        shown(w, CHILD)["native_session"]
+            .as_str()
+            .is_some_and(|native| !native.is_empty())
+            .then_some(())
+    });
     // Its daemon is killed outright with its turn in flight; then its past
     // re-hosts are planted, as earlier daemons would have recorded them,
     // its host lost again after the last.
