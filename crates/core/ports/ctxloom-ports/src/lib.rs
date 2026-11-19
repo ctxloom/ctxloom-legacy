@@ -5,14 +5,9 @@
 //! no path and reads no file; an adapter (`content-fs`, `config-files`,
 //! `editor-process`, `companion-probe`) does, and hands the text and the bytes
 //! over.
-//!
-//! Step 10 (U12) adds what git sees of a library tree ([`TreeObserver`]):
-//! git holds the library, and ctxloom asks it what is checked out and what
-//! differs, never keeping a copy of its own.
 
 mod operation;
 mod scan;
-mod tree;
 
 use std::collections::BTreeMap;
 
@@ -20,7 +15,6 @@ use angzarr_diagnostic::Diagnostic;
 
 pub use operation::{Operated, Operation, Operations, Point, STAGING_DIR, STATE_DIR, TRASH_DIR};
 pub use scan::{LibraryScanner, LIBRARY_PATHS};
-pub use tree::{IgnoreRule, Motion, PathStatus, StatusEntry, TreeChange, TreeError, TreeObserver};
 
 /// Why an adapter could not do what it was asked: its own diagnostic.
 pub type Failure = Box<dyn Diagnostic>;

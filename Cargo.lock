@@ -969,7 +969,6 @@ dependencies = [
  "library",
  "library-api",
  "library-application",
- "library-git",
  "library-tree",
  "mcp-server",
  "os",
@@ -1098,7 +1097,6 @@ dependencies = [
  "library-checkout",
  "library-cli",
  "library-domain-proto",
- "library-git",
  "library-tree",
  "liveness",
  "mcp-server",
@@ -3035,21 +3033,6 @@ dependencies = [
  "angzarr-build",
  "prost",
  "prost-types",
-]
-
-[[package]]
-name = "library-git"
-version = "0.1.0"
-dependencies = [
- "angzarr-diagnostic",
- "ctxloom-ports",
- "file-system",
- "fixture-program",
- "git-cli",
- "mutants",
- "os",
- "process-env",
- "run-within",
 ]
 
 [[package]]

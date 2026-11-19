@@ -1805,7 +1805,7 @@ the adapter gives; its tests need `run-within`'s `test-support`, which waits
 out ETXTBSY. Limits (os::process's): a descendant that calls `setsid` or
 `setpgid` escapes the kill, and the program runs in a process group of its
 own, so a Ctrl-C at the terminal does not reach it. The git adapters
-(`remote-git`, `worktree-git`, `library-git`) share ONE git runner, the
+(`remote-git`, `worktree-git`) share ONE git runner, the
 support crate `git-cli` (G9): the environment scrubbed of the variables git
 calls repository-local (`git rev-parse --local-env-vars`, asked once; every
 `GIT_*` when it cannot be asked), never interactive (`GIT_TERMINAL_PROMPT=0`,
@@ -2970,18 +2970,12 @@ nothing but its cause, so a stream a 10b daemon wrote replays
 (`LibraryState.home_repository_made`, 11, is reserved).
 
 git stays where a feature needs it: child checkouts (`worktree-git`),
-remote bundles (`remote-git`), the session home's identity seed, and,
-until slot-1's U6 rebuilds init in the daemon without it, init's own git
-step: `init` makes the directory it is run in a git repository when it is
-in no work tree (`init_application::ensure_repository`,
-`Init::with_repository`, `init-application-notice-git-initialized`), over
-ctxloom-ports' `TreeObserver` and `adapters/driven/library-git`'s
-`GitTrees` (git on the caller's `PATH`, every invocation `git
---no-optional-locks -c core.longpaths=true`; git missing is
-`library-git-git-missing`, older than 2.25 `library-git-git-too-old`, exit
-10). That step is the port's and the crate's LAST user: they go with it
-(their status, diff, blob-id, motion and commit methods, and the commit's
-no-hooks override, serve nothing on the library path now).
+remote bundles (`remote-git`) and the session home's identity seed. Init
+asks no git (step 10c U6) and neither does `config create`, so
+ctxloom-ports' `TreeObserver`, `adapters/driven/library-git` (`GitTrees`,
+its `library-git-*` diagnostics), `init_application::ensure_repository`
+and `init-application-notice-git-initialized` are gone with their last
+user.
 
 ## A library read observes its trees first (step 10a U2, in part)
 

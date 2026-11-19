@@ -8,28 +8,23 @@
 //! from her answers ([`companions`], D2), the setup interview's mechanism
 //! ([`interview`]: on a terminal, the interview and the offer to restart
 //! into the configured session) and `init prompt`'s body ([`prompt`]).
-//! No git is asked or run for init: the library is git-free (owner,
-//! 2026-11-18). ([`ensure_repository`] is `config create`'s, QUESTIONS.md
-//! E, until the git-free undo takes it out.)
+//! No git is asked or run for init, nor for `config create`: the library
+//! is git-free (owner, 2026-11-18).
 //!
 //! NOT BUILT: the interview's own questions (the engine asks them). The
 //! agent-token guide is the driving adapter's, from `auth-application`.
 
 mod companions;
-mod git;
 mod interview;
 pub mod needs;
 
-pub use ctxloom_ports::{Failure, Scaffold, TreeObserver, UserFiles};
+pub use ctxloom_ports::{Failure, Scaffold, UserFiles};
 use exit_code::Exit;
 
 pub use companions::{
     accepted as accepted_companions, offer_question, register as register_companions, Added,
     Answer, Companions, CompanionsAnswered, NotAdded, BY_NAME_ID, COMPANIONS_BY_NAME,
 };
-#[cfg(any(test, feature = "test-support"))]
-pub use git::diagnostic_samples;
-pub use git::{ensure_repository, GitInitialized, EN_US};
 pub use interview::{
     interview, Ended, Interviewed, LaunchFailure, Outcome, Sessions, Terminal, RESTART_COMMAND,
     RESTART_QUESTION,

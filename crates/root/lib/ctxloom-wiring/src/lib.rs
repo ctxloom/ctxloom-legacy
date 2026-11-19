@@ -268,7 +268,6 @@ pub fn catalog_sources() -> Vec<angzarr_presentation::Source> {
     sources.extend(sessions_application::CATALOGS);
     sources.extend(isolation_application::CATALOGS);
     sources.extend([worktree_git::EN_US, container_cli::EN_US]);
-    sources.extend([library_git::EN_US, init_application::EN_US]);
     sources.extend([library_tree::EN_US, library_api::EN_US]);
     sources.push(tasks_ports::EN_US);
     sources.extend([scheduler::EN_US, scheduler_loop::EN_US]);
