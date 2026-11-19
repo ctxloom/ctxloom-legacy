@@ -869,8 +869,8 @@ const DAEMON_LIBRARY_OPENS: &[(&str, usize, &str)] = &[
         "crates/root/lib/ctxloom-wiring/src/daemon/places.rs",
         2,
         "a library read's library, once `library_reads` observed its trees (`read_site`); \
-         DEPARTURE: the trust preview (`GetTrust`, `ListTrusts`, reads by name) reads the \
-         project's own layer at its registered root unobserved",
+         the trust preview's (`GetTrust`), once `get_trust` observed the project's tree at its \
+         registered root",
     ),
     (
         "crates/root/lib/ctxloom-wiring/src/daemon/setup_reads.rs",

@@ -1610,11 +1610,11 @@ or a stale entry fails) and
 `build_setup_over(`, only at `DAEMON_LIBRARY_OPENS`' files and counts, each
 reached through the observation or a stated departure; daemon-api and
 daemon-application open none). A hosted one-shot and a terminal run observe
-their trees first (`Api::observe_for`), as a setup read does, and so does a
-hosted child's hand-off (`CreateHandOff`, before its plan); the departures
-are the trust preview and a hosted child's plan and output root read again
-at each launch (the daemon loop's `start`, which has no observation to
-reach). A plan's loadout
+their trees first (`Api::observe_for`), as a setup read does, and so do the
+trust preview (`GetTrust`, at the project's registered root) and a hosted
+child's hand-off (`CreateHandOff`, before its plan); the one departure is a
+hosted child's plan and output root read again at each launch (the daemon
+loop's `start`, which has no observation to reach). A plan's loadout
 (`run_application::loadout_of_plan`) names a local bundle by its directory
 (`ctxloom+local:demo` is `demo`), as a change's path is judged against it:
 spelled as referenced, a bundle edit observed apart from a config edit owed

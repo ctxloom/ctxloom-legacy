@@ -27,11 +27,19 @@ fn setting(path: &str, value: &str) -> v1::TrustSetting {
 struct Settings {
     said: Mutex<Vec<v1::TrustSetting>>,
     read_at: Mutex<Vec<String>>,
+    /// The observation's scans, counted; how many there had been at each
+    /// read.
+    scans: Option<Arc<std::sync::atomic::AtomicU32>>,
+    scans_at_read: Mutex<Vec<u32>>,
 }
 
 impl Trusts for Settings {
     fn settings(&self, root: &str) -> Result<Vec<v1::TrustSetting>, ApiError> {
         self.read_at.lock().unwrap().push(root.to_string());
+        if let Some(scans) = &self.scans {
+            let seen = scans.load(std::sync::atomic::Ordering::SeqCst);
+            self.scans_at_read.lock().unwrap().push(seen);
+        }
         Ok(self.said.lock().unwrap().clone())
     }
 }
@@ -95,6 +103,35 @@ async fn get_trust_previews_at_the_registered_root_sorted_with_its_etag() {
         .await,
     );
     assert_eq!(invalid.name, "projects/calm-quiet-heron");
+}
+
+// Step 10 U11: the preview reads the project's own layer at its
+// registered root, so that tree is observed BEFORE it is read, as a read's
+// is (nothing in the daemon reads a library tree outside the observation).
+#[tokio::test]
+async fn get_trust_observes_the_projects_tree_before_it_reads_its_settings() {
+    let f = fixture(vec!["calm-quiet-heron"]);
+    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
+    f.catch_up().await;
+    let gits = Arc::new(crate::server::tests::Gits::default());
+    let settings = Arc::new(Settings {
+        scans: Some(Arc::clone(&gits.scans)),
+        ..Settings::default()
+    });
+    let api = f
+        .restarted()
+        .await
+        .trusting(Trusting {
+            trusts: Arc::clone(&settings) as Arc<dyn Trusts>,
+            index: trust_index::TrustIndexes::default(),
+        })
+        .observing(crate::server::tests::observing(&f.world, &gits));
+    api.get_trust(v1::GetTrustRequest {
+        name: NAME.to_string(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(*settings.scans_at_read.lock().unwrap(), vec![1]);
 }
 
 #[tokio::test]
