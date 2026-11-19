@@ -629,6 +629,22 @@ fn test_an_old_layout_refusal_is_located_below_its_bundle_and_names_an_installed
         },
         "spelled as the directory is"
     );
+    // A relative directory is spelled as it is typed from the project's
+    // root, with `/`, whatever the host joined it with (CI on Windows,
+    // 2026-11-19: `.ctxloom\content\...\demo/skills/...`, half and half).
+    assert_eq!(
+        refused
+            .clone()
+            .located(r".ctxloom\content\bundles\v2\demo", ""),
+        BundleError::OldLayout {
+            bundle: "demo".to_string(),
+            kind: "skill".to_string(),
+            old: ".ctxloom/content/bundles/v2/demo/skills/.r.meta.yaml".to_string(),
+            new: ".ctxloom/content/bundles/v2/demo/skills/r/.meta.yaml".to_string(),
+            remote: String::new(),
+        },
+        "a relative directory, with `/`"
+    );
     let installed = refused.located("/c/b", "https://git.example/x.git");
     let said = installed.english();
     assert!(said.contains("/c/b/skills/.r.meta.yaml"), "{said}");

@@ -355,18 +355,7 @@ impl Project {
     fn bundle_import(&self, path: &str, force: bool) -> Result<BundleImported, AppError> {
         self.require_project()?;
         let ports = self.write_ports()?;
-        let typed = path.trim_end_matches('/');
-        let dir = match typed.strip_suffix("bundle.yaml") {
-            Some(parent) if parent.is_empty() || parent.ends_with('/') => {
-                let parent = parent.trim_end_matches('/');
-                if parent.is_empty() {
-                    "."
-                } else {
-                    parent
-                }
-            }
-            _ => typed,
-        };
+        let dir = import_dir(path);
         let files: Files = ports.user.read_tree(dir).map_err(AppError::Cause)?;
         if !files.contains_key("bundle.yaml") {
             return Err(WriteError::NotABundle {
@@ -374,7 +363,7 @@ impl Project {
             }
             .into());
         }
-        let name = dir.rsplit('/').next().unwrap_or(dir).to_string();
+        let name = import_name(dir).to_string();
         if !valid_bundle_name(&name) || name == "." {
             return Err(WriteError::BadBundleName {}.into());
         }
@@ -465,6 +454,30 @@ fn remove_items(
             changes.push(format!("removed {kind}: {name}"));
         }
     }
+}
+
+/// The directory an import reads, from the path it was given (the bundle's
+/// directory, or its `bundle.yaml`), either separator: the daemon joins a
+/// relative one to the caller's directory as the platform joins, so on
+/// Windows it is `C:\\...\\handoff/bundle.yaml` (CI, 2026-11-19).
+fn import_dir(path: &str) -> &str {
+    let typed = path.trim_end_matches(['/', '\\']);
+    match typed.strip_suffix("bundle.yaml") {
+        Some(parent) if parent.is_empty() || parent.ends_with(['/', '\\']) => {
+            let parent = parent.trim_end_matches(['/', '\\']);
+            if parent.is_empty() {
+                "."
+            } else {
+                parent
+            }
+        }
+        _ => typed,
+    }
+}
+
+/// The bundle an import of `dir` makes: its last segment, either separator.
+fn import_name(dir: &str) -> &str {
+    dir.rsplit(['/', '\\']).next().unwrap_or(dir)
 }
 
 #[cfg(test)]

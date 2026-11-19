@@ -6,8 +6,8 @@ use std::path::Path;
 
 use super::{
     account_home, caller_env, caller_temp, caller_wiring, daemon_env, daemon_home, instance_lock,
-    logger, request_id, served_exit, spawn_waits_on, under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT,
-    DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
+    logger, request_id, served_exit, spawn_waits_on, tail_of, under_home, ACCOUNT_HOME_VARIABLE,
+    CALL_WAIT, DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
 };
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -509,4 +509,14 @@ fn a_call_with_no_environment_is_in_the_daemons_temporary_directory() {
     assert_eq!(caller_temp(os::Flavor::Windows, &[], own), own);
     let snapshot = caller_env(os::Flavor::Unix, own, ("/work", None), []);
     assert_eq!(snapshot.temp_dir(), own);
+}
+
+// A daemon that died before it served is told by the END of its log: its
+// last lines, blank ones left out, in order.
+#[test]
+fn a_died_daemon_is_told_by_its_logs_last_lines() {
+    let log = "1 serving at x\n\n2 a\n3 b\n   \n4 c\n";
+    assert_eq!(tail_of(log, 2), "3 b\n4 c");
+    assert_eq!(tail_of(log, 9), "1 serving at x\n2 a\n3 b\n4 c");
+    assert_eq!(tail_of("", 3), "");
 }

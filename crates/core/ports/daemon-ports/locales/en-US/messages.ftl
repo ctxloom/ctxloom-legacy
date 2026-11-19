@@ -6,3 +6,5 @@ daemon-ports-unimplemented-fix = the daemon may be another version of ctxloom: c
 daemon-ports-unreachable = the daemon could not be reached: { $ext_err_txt }
 daemon-ports-failed = the daemon's call failed ({ $code }): { $ext_err_txt }
 daemon-ports-not-started = no ctxloom daemon could be started; its log is { $log }
+daemon-ports-exited = no ctxloom daemon could be started: the one started exited ({ $status }); the end of its log { $log }:
+    { $tail }

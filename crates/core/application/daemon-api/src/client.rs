@@ -239,7 +239,9 @@ impl ExitClass for CallError {
             }
             CallError::Call(_)
             | CallError::LaunchLock { .. }
-            | CallError::Unreached(daemon_ports::Unreached::NotStarted { .. }) => Exit::FAILED,
+            | CallError::Unreached(
+                daemon_ports::Unreached::NotStarted { .. } | daemon_ports::Unreached::Exited { .. },
+            ) => Exit::FAILED,
         }
     }
 }

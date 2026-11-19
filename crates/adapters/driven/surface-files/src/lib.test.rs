@@ -611,17 +611,20 @@ fn a_recording_store_writes_nothing_and_plans_what_the_writing_store_would_leave
     let recorded = recording.take_recorded();
     // The record first, then each file once, as it would be left.
     assert!(recorded[0].record, "{recorded:?}");
-    assert_eq!(recorded[0].path, "/home/records/_project.claims.yaml");
+    assert_eq!(
+        recorded[0].path,
+        joined("/home/records", "_project.claims.yaml")
+    );
     assert_eq!(recorded[0].keep, "/home/records");
     assert!(recorded[1..].iter().all(|r| !r.record));
     let paths: Vec<&str> = recorded.iter().map(|r| r.path.as_str()).collect();
     assert_eq!(
         paths,
         [
-            "/home/records/_project.claims.yaml",
-            "/project/CLAUDE.md",
-            "/project/CLAUDE.md.json",
-            "/project/gone.md",
+            joined("/home/records", "_project.claims.yaml"),
+            joined("/project", "CLAUDE.md"),
+            joined("/project", "CLAUDE.md.json"),
+            joined("/project", "gone.md"),
         ]
     );
     for r in &recorded {
@@ -650,15 +653,25 @@ fn a_recorded_removal_keeps_the_target_and_the_records_directory() {
         .filter(|r| r.bytes.is_none())
         .map(|r| (r.path.as_str(), r.keep.as_str()))
         .collect();
+    let (claims, ours) = (
+        joined("/home/records", "_project.claims.yaml"),
+        joined("/project", "made/by/us.md"),
+    );
     assert_eq!(
         gone,
         [
-            ("/home/records/_project.claims.yaml", "/home/records"),
-            ("/project/made/by/us.md", "/project"),
+            (claims.as_str(), "/home/records"),
+            (ours.as_str(), "/project"),
         ]
     );
     assert!(
         f.get("made/by/us.md").is_some(),
         "a recording store removed"
     );
+}
+
+/// `rel` under `dir` as the platform joins them (`\` on Windows), as the
+/// store names the file it writes (CI on Windows, 2026-11-19).
+fn joined(dir: &str, rel: &str) -> String {
+    Path::new(dir).join(rel).display().to_string()
 }

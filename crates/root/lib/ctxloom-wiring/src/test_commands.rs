@@ -103,7 +103,18 @@ enum TestVerb {
         /// How many re-hosts
         count: u32,
     },
+    /// Take the exclusive lock at a path through the platform's file lock
+    /// (as the daemon takes a lifeline), print `held`, and keep it until
+    /// killed (at most ten minutes)
+    HoldLock {
+        /// The lock file's absolute path
+        path: std::path::PathBuf,
+    },
 }
+
+/// How long `test hold-lock` waits for its lock, and how long it holds it.
+const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+const HOLD_FOR: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// What `ctxloom test seed-session` plants (see the acceptance tests).
 #[derive(Args, Debug, Clone, Default)]
@@ -308,6 +319,16 @@ pub(crate) fn run(
         TestVerb::SeedRehosts { harp, count } => {
             let wiring = wiring().map_err(failed)?;
             wiring.seed_rehosts(&harp, count).map_err(failed)
+        }
+        TestVerb::HoldLock { path } => {
+            // The platform's lock, not `flock(1)`, which macOS has not
+            // (CI, 2026-11-19).
+            let fs = wiring().map_err(failed)?.fs();
+            let held = file_lock::lock_within(&*fs, &path, HOLD_WAIT).map_err(failed)?;
+            output(writeln!(out, "held").and_then(|()| out.flush()))?;
+            std::thread::sleep(HOLD_FOR);
+            drop(held);
+            Ok(())
         }
         TestVerb::OpenStore { project } => {
             let path = wiring()

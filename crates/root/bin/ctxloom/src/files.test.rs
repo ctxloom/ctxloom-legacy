@@ -58,6 +58,33 @@ pub(crate) fn file_url(path: &Path) -> String {
     }
 }
 
+/// The path a `file://` URL names, the inverse of [`file_url`]: on Windows
+/// `file:///C:/a/b` is `C:/a/b` (no leading `/` before the drive); anything
+/// that is not a file URL is the path as written.
+pub(crate) fn path_of_file_url(url: &str) -> PathBuf {
+    let Some(rest) = url.strip_prefix("file://") else {
+        return PathBuf::from(url);
+    };
+    match os::host().flavor() {
+        os::Flavor::Unix => PathBuf::from(rest),
+        os::Flavor::Windows => PathBuf::from(rest.strip_prefix('/').unwrap_or(rest)),
+    }
+}
+
+// CI on Windows (2026-11-19): a lock's `file:///C:/...` URL was read as the
+// path `/C:/...`, which is no directory there. A URL made of a path is read
+// back as that path.
+#[test]
+fn a_file_url_is_read_back_as_the_path_it_was_made_of() {
+    let dir = root();
+    let path = dir.root().join("remote.git");
+    assert_eq!(path_of_file_url(&file_url(&path)), path);
+    assert_eq!(
+        path_of_file_url("/plain/path"),
+        PathBuf::from("/plain/path")
+    );
+}
+
 /// The host's own filesystem (no root), for real paths.
 pub(crate) fn fs() -> Arc<dyn Fs> {
     let os = os::host();
@@ -159,6 +186,50 @@ pub(crate) fn remove(path: impl AsRef<Path>) {
 pub(crate) fn remove_tree(path: impl AsRef<Path>) {
     fs().remove_dir_all(path.as_ref())
         .expect("a directory to remove");
+}
+
+/// A directory and everything below it, removed while a process still
+/// writing into it may refill it once more (a live daemon's last round
+/// before it sees its home gone, CI on macOS 2026-11-19): a removal that
+/// finds it refilled (`DirectoryNotEmpty`) is made again, at most
+/// [`SETTLE_TRIES`] times.
+pub(crate) fn remove_tree_settling(path: impl AsRef<Path>) {
+    remove_tree_settling_by(path.as_ref(), |dir| fs().remove_dir_all(dir));
+}
+
+/// How many removals [`remove_tree_settling`] makes.
+const SETTLE_TRIES: u32 = 20;
+
+/// [`remove_tree_settling`], each removal made by `remove`.
+fn remove_tree_settling_by(path: &Path, mut remove: impl FnMut(&Path) -> std::io::Result<()>) {
+    for _ in 1..SETTLE_TRIES {
+        match remove(path) {
+            Err(refilled) if refilled.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            done => return done.expect("a directory to remove"),
+        }
+    }
+    remove(path).expect("a directory to remove");
+}
+
+// The same: the race forced, its first removal finding the directory
+// refilled.
+#[test]
+fn a_tree_refilled_under_its_removal_is_removed_again() {
+    let root = root();
+    let dir = root.root().join("refilled");
+    put(dir.join("a/b.txt"), "b");
+    let mut made = 0;
+    remove_tree_settling_by(&dir, |dir| {
+        made += 1;
+        if made == 1 {
+            return Err(std::io::Error::from(std::io::ErrorKind::DirectoryNotEmpty));
+        }
+        fs().remove_dir_all(dir)
+    });
+    assert_eq!(made, 2);
+    assert!(!exists(&dir), "it is gone");
 }
 
 pub(crate) fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) {

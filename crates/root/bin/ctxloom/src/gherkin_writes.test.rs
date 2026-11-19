@@ -914,7 +914,7 @@ fn installed_whole(w: &mut World) {
         // The remote publishes each bundle where every repository does
         // (deps-ports' `BUNDLES_IN_REPOSITORY`).
         let published = format!(".ctxloom/content/bundles/v2/{bundle}/");
-        let repo = PathBuf::from(url.strip_prefix("file://").unwrap_or(&url));
+        let repo = files::path_of_file_url(&url);
         let listed = w
             .common
             .project

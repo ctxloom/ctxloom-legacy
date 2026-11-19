@@ -268,6 +268,7 @@ impl World {
                 "-c",
                 "init.defaultBranch=main",
             ])
+            .args(crate::tests::library::NO_MAINTENANCE)
             .args(args)
             .current_dir(dir)
             .env_clear()

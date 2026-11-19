@@ -21,6 +21,7 @@ fn the_samples_hold_a_value_of_every_outcome() {
             "daemon-ports-unreachable",
             "daemon-ports-failed",
             "daemon-ports-not-started",
+            "daemon-ports-exited",
         ]
     );
 }
@@ -65,6 +66,33 @@ fn an_unreached_daemon_says_why_in_its_words() {
     assert_eq!(declined.code(), "daemon-ports-unauthenticated");
     assert_eq!(declined, declined.clone());
     assert_ne!(declined, not_started);
+}
+
+// A daemon started that exited at once is told by how it exited and the end
+// of its log, and not shown by that log in a Debug.
+#[test]
+fn an_exited_daemon_names_its_status_and_its_logs_end() {
+    use crate::Unreached;
+    let exited = Unreached::Exited {
+        log: "~/.ctxloom/daemon/daemon.log".to_string(),
+        status: "signal: 11 (SIGSEGV)".to_string(),
+        tail: "has overflowed its stack".to_string(),
+    };
+    assert_eq!(exited.code(), "daemon-ports-exited");
+    assert_eq!(
+        exited.to_string(),
+        "daemon-ports-exited log=~/.ctxloom/daemon/daemon.log status=\"signal: 11 (SIGSEGV)\" tail=\"has overflowed its stack\""
+    );
+    assert_eq!(
+        format!("{exited:?}"),
+        "Exited { log: \"~/.ctxloom/daemon/daemon.log\", status: \"signal: 11 (SIGSEGV)\", .. }"
+    );
+    assert_ne!(
+        exited,
+        Unreached::NotStarted {
+            log: "~/.ctxloom/daemon/daemon.log".to_string()
+        }
+    );
 }
 
 // An outcome is shown as its code and its args, so a log names what the

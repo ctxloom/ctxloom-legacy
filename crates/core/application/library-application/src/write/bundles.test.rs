@@ -689,3 +689,20 @@ fn test_import_refuses_a_directory_whose_name_is_no_id() {
     assert!(got.contains("BadId"), "{got}");
     assert_eq!(mem.writes(), 0);
 }
+
+// CI on Windows (2026-11-19): the daemon joined a relative import to the
+// caller's directory with `\`, and the bundle's name was taken after the last
+// `/` alone, so it was the whole path, refused as a traversal. Either
+// separator ends a segment.
+#[test]
+fn an_imports_directory_and_name_are_read_with_either_separator() {
+    use super::{import_dir, import_name};
+    assert_eq!(import_dir(r"C:\p\handoff/bundle.yaml"), r"C:\p\handoff");
+    assert_eq!(import_dir(r"C:\p\handoff\bundle.yaml"), r"C:\p\handoff");
+    assert_eq!(import_dir(r"C:\p\handoff\"), r"C:\p\handoff");
+    assert_eq!(import_dir("handoff/bundle.yaml"), "handoff");
+    assert_eq!(import_dir("bundle.yaml"), ".");
+    assert_eq!(import_dir("a/handoffbundle.yaml"), "a/handoffbundle.yaml");
+    assert_eq!(import_name(r"C:\p\handoff"), "handoff");
+    assert_eq!(import_name("p/handoff"), "handoff");
+}
