@@ -304,6 +304,29 @@ impl DaemonApi for Fake {
                     .unwrap(),
             });
         }
+        // The coordinator's refusal of a command names its type alone, the
+        // object dropped: a send whose text is "not mine" is refused so.
+        if let Some(angzarr_embedded::v1::command_page::Body::Command(command)) =
+            book.page.as_ref().and_then(|page| page.body.clone())
+        {
+            let packed = command.payload.unwrap_or_default();
+            if packed
+                .type_url
+                .ends_with("/ctxloom.sessions.v1.SendMessage")
+                && wire::SendMessage::decode(packed.value.as_slice())
+                    .unwrap()
+                    .text
+                    == "not mine"
+            {
+                return Err(Called::Refused {
+                    code: 9,
+                    refusal: prost_types::Any {
+                        type_url: "type.googleapis.com/ctxloom.sessions.v1.NotOwner".to_string(),
+                        value: Vec::new(),
+                    },
+                });
+            }
+        }
         let target = book
             .cover
             .as_ref()
@@ -1449,4 +1472,61 @@ async fn a_removal_and_a_fragment_are_asked_in_the_callers_project() {
             "2:fragment projects/calm-quiet-heron/bundles/notes brief id-2 true"
         ]
     );
+}
+
+// The coordinator names a refused command's refusal by its type alone (the
+// status carries no object), so a NotOwner reaches the client with no
+// requester and reads "session  is not this session's owner". The requester
+// is the caller itself, which knows its own id: the refusal says it.
+#[tokio::test]
+async fn a_not_owner_refusal_the_coordinator_named_by_type_alone_names_its_requester() {
+    let world = World::new();
+    let caller = world.caller(true);
+    let refused = caller
+        .send("brisk-copper-moth", sessions::Urgency::Wake, "not mine")
+        .await;
+    let me = sessions::SessionName::parse(ME).unwrap();
+    let Err(CallError::Refused(crate::Rejection::Sessions(rejection))) = refused else {
+        panic!("refused in the sessions domain's words: {refused:?}");
+    };
+    assert_eq!(
+        rejection,
+        sessions::SessionRejection::NotOwner {
+            requester: me.uid()
+        }
+    );
+}
+
+// Only an empty NotOwner is told its requester: one that carries it, any
+// other refusal, any other call, and the user (who names none) are as they
+// came.
+#[test]
+fn only_an_empty_not_owner_is_told_its_requester() {
+    let world = World::new();
+    let caller = world.caller(true);
+    let refused = |any| Called::Refused {
+        code: 9,
+        refusal: any,
+    };
+    let filled = refused(
+        prost_types::Any::from_msg(&wire::NotOwner {
+            requester: "theirs".to_string(),
+        })
+        .unwrap(),
+    );
+    assert_eq!(caller.naming_requester(filled.clone()), filled);
+    let other = refused(prost_types::Any {
+        type_url: "type.googleapis.com/ctxloom.sessions.v1.SessionIsClosed".to_string(),
+        value: Vec::new(),
+    });
+    assert_eq!(caller.naming_requester(other.clone()), other);
+    let down = Called::Unreachable {
+        detail: "gone".to_string(),
+    };
+    assert_eq!(caller.naming_requester(down.clone()), down);
+    let bare = refused(prost_types::Any {
+        type_url: "type.googleapis.com/ctxloom.sessions.v1.NotOwner".to_string(),
+        value: Vec::new(),
+    });
+    assert_eq!(world.user(false).naming_requester(bare.clone()), bare);
 }

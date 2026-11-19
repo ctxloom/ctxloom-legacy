@@ -4900,6 +4900,21 @@ fn tool_failed_naming(w: &mut World, code: String, named: String) {
     assert!(said.contains(&named), "{answered}");
 }
 
+#[then(expr = "the tool's refusal names the stable id of {string} as the requester")]
+fn tool_refusal_names_requester(w: &mut World, harp: String) {
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    let uid = shown(w, &harp)["uid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{harp} has a stable id"))
+        .to_string();
+    assert!(!uid.is_empty(), "{harp}'s stable id");
+    let said = answered.to_string();
+    assert!(
+        said.contains(&format!("session {uid} is not this session's owner")),
+        "the requester {uid} is named: {answered}"
+    );
+}
+
 #[then(expr = "the tool answered with the child's session, named under the project {string}")]
 fn tool_answered_in_project(w: &mut World, project: String) {
     let session = tool_session(w);

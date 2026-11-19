@@ -100,4 +100,8 @@ Feature: The coordination tools advertise a closed vocabulary, and refuse what i
       And a child "olive-quiet-finch" of "brisk-copper-moth" that is open and idle
       When the engine of "olive-quiet-finch" calls "child_send" for "brisk-copper-moth" with wake "check the tests"
       Then the tool failed with "sessions-not-owner", naming "only its owner may do that"
+      # DRAFT (2026-11-19): the refusal names the requester by its stable id
+      # (it once read "session  is not this session's owner", the coordinator
+      # naming a refusal's type alone).
+      And the tool's refusal names the stable id of "olive-quiet-finch" as the requester
       And no message "check the tests" was sent to "brisk-copper-moth"
