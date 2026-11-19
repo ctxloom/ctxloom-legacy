@@ -175,7 +175,6 @@ fn an_event_s_change_names_its_paths() {
         dirty_after: Vec::new(),
         tree_after: String::new(),
         baseline: false,
-        in_motion: None,
     });
     let at = Timestamp {
         seconds: 3,
@@ -240,7 +239,6 @@ async fn observe(edge: &TestEdge, base: &str, path: &str, oid: &str) {
             oid: oid.to_string(),
         }],
         baseline: base.is_empty(),
-        in_motion: None,
     };
     edge.handle(library_tree::observation_book(&tree_name(), &fact))
         .await

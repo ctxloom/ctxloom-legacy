@@ -117,7 +117,6 @@ fn a_reconcile_on_a_large_repository_is_within_its_budget() {
     let gits = super::CallerGits {
         fs: fixtures::fs(),
         home: root.root().join("home"),
-        temp: root.root().join("tmp"),
         scanner: std::sync::Arc::new(super::TreeScanner::new(fixtures::fs())),
     };
     let scanner = gits.scanner();

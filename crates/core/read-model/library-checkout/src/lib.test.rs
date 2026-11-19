@@ -46,7 +46,6 @@ fn observed(baseline: bool, changes: &[(&str, &str)]) -> LibraryEvent {
             .collect(),
         tree_after: "t-1".to_string(),
         baseline,
-        in_motion: None,
     })
 }
 
@@ -213,10 +212,6 @@ fn intended(request: &str, steps: usize) -> LibraryEvent {
                 tree_reads: true,
                 plan_rejection: None,
                 builtin: false,
-                in_motion: None,
-                in_git: true,
-                ignored: None,
-                root: String::new(),
             },
         }),
         create: None,

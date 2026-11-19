@@ -412,32 +412,52 @@ pub(crate) fn world_of(
 /// Each delivery a fake inbox recorded: its ids and its wake.
 pub(crate) type Deliveries = std::sync::Arc<std::sync::Mutex<Vec<(Vec<String>, String)>>>;
 
-/// A primary's pending messages as its hooks reach them (the terminal
-/// wake): what it holds, unless the daemon did not answer (`None`), and
-/// each delivery recorded, refused when `records` is false.
+/// Each call a hook made: its hook, urgencies and budget.
+pub(crate) type Asked = Arc<std::sync::Mutex<Vec<(String, Vec<String>, usize)>>>;
+
+/// A daemon as a hook's one call reaches it (`DeliverHookContext`): the
+/// session's pending messages, unless the daemon did not answer (`None`),
+/// each delivery recorded (refused when `refusing`: nothing delivered),
+/// then `owed`, joined within the budget, as the daemon joins them.
 #[derive(Default)]
 pub(crate) struct Inbox {
     pub(crate) pending: std::sync::Mutex<Option<Vec<crate::HookMessage>>>,
     pub(crate) delivered: Deliveries,
     pub(crate) refusing: bool,
-    /// How many times a hook asked for the pending messages.
-    pub(crate) asked: Arc<std::sync::atomic::AtomicUsize>,
+    /// What the session is owed (U13).
+    pub(crate) owed: String,
+    /// Each call's hook, urgencies and budget, in order.
+    pub(crate) asked: Asked,
 }
 
-impl crate::HookMessages for Inbox {
-    fn pending(&self) -> Option<Vec<crate::HookMessage>> {
-        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.pending.lock().unwrap().clone()
-    }
-
-    fn delivered(&self, ids: &[String], wake: &str) -> bool {
-        if self.refusing {
-            return false;
+impl crate::HookContexts for Inbox {
+    fn hook_context(
+        &self,
+        hook: &str,
+        urgencies: &[&str],
+        wake: &str,
+        budget: usize,
+    ) -> Option<crate::HookCarried> {
+        self.asked.lock().unwrap().push((
+            hook.to_string(),
+            urgencies.iter().map(ToString::to_string).collect(),
+            budget,
+        ));
+        let pending = self.pending.lock().unwrap().clone()?;
+        let offered = crate::messages_context(&pending, urgencies, "amber-quiet-heron", budget);
+        let mut messages = String::new();
+        let mut delivered = false;
+        if (!offered.ids.is_empty() || !wake.is_empty()) && !self.refusing {
+            self.delivered
+                .lock()
+                .unwrap()
+                .push((offered.ids.clone(), wake.to_string()));
+            delivered = !offered.ids.is_empty();
+            messages = offered.context;
         }
-        self.delivered
-            .lock()
-            .unwrap()
-            .push((ids.to_vec(), wake.to_string()));
-        true
+        Some(crate::HookCarried {
+            context: crate::compose_context(&[&messages, &self.owed]),
+            delivered,
+        })
     }
 }

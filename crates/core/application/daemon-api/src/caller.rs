@@ -289,6 +289,11 @@ impl<D: Daemons> Caller<D> {
         self.me.as_ref()
     }
 
+    /// The environment this caller asks in.
+    pub(crate) fn env(&self) -> &v1::EnvVars {
+        &self.env
+    }
+
     /// `target`: a session of this caller's project by its harp, or any
     /// session by its full name.
     pub fn target(&self, target: &str) -> Result<SessionName, CallError> {

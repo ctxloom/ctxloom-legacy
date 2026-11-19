@@ -63,6 +63,9 @@ pub struct SessionState {
     /// The last wake, disarmed unanswered with nothing issued or redeemed
     /// after it, by its nonce: `session show`'s "wake sent, not answered".
     pub wake_unanswered: String,
+    /// The ids of the messages sent and not yet delivered, in the order
+    /// sent: what a `DeliverMessages` may still record (the lean hook RPC).
+    pub pending_messages: Vec<String>,
 }
 
 impl From<SessionState> for sessions_proto::v1::SessionState {
@@ -100,6 +103,7 @@ impl From<SessionState> for sessions_proto::v1::SessionState {
             workspace: value.workspace,
             wake_outstanding: value.wake_outstanding,
             wake_unanswered: value.wake_unanswered,
+            pending_messages: value.pending_messages,
         }
     }
 }
@@ -154,6 +158,7 @@ impl TryFrom<sessions_proto::v1::SessionState> for SessionState {
             workspace: value.workspace,
             wake_outstanding: value.wake_outstanding,
             wake_unanswered: value.wake_unanswered,
+            pending_messages: value.pending_messages,
         })
     }
 }

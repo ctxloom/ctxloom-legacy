@@ -242,17 +242,13 @@ pub(crate) fn pull_sequence(
     }
 }
 
-/// The evidence a deps write is decided on: the tree read, in git (its
-/// observation refused it otherwise), at `root`.
-fn evidence_at(root: &str) -> Evidence {
+/// The evidence a deps write is decided on: the tree read (the library is
+/// git-free, owner 2026-11-18, so no git evidence).
+fn evidence() -> Evidence {
     Evidence {
         tree_reads: true,
         plan_rejection: None,
         builtin: false,
-        in_motion: None,
-        in_git: true,
-        ignored: None,
-        root: root.to_string(),
     }
 }
 
@@ -320,7 +316,6 @@ impl<E: Edge> Api<E> {
             };
             let (etag, _) = self
                 .carry_out(
-                    &site,
                     &landing,
                     (verb, request.etag()),
                     &shaped,
@@ -436,12 +431,13 @@ impl<E: Edge> Api<E> {
     }
 
     /// A pull's plan intended as its sequence under the request `id` on
-    /// `tree` (below the project's `root`): each id taken of
+    /// `tree` (the project's root beside it unread: the library is
+    /// git-free, so no evidence names it): each id taken of
     /// its content (the lock's) or given (`foreign`'s), each token the
     /// tree's now. Its recorded steps.
     async fn intend_pull(
         &self,
-        (tree, root): (&library_tree::TreeName, &str),
+        (tree, _root): (&library_tree::TreeName, &str),
         (verb, id): (&str, uuid::Uuid),
         planned: &DepsPlanned,
         foreign: &[(String, String, &ForeignPut)],
@@ -469,7 +465,7 @@ impl<E: Edge> Api<E> {
             verb,
             (&planned.installs, lock, &removed),
             &listed,
-            &evidence_at(root),
+            &evidence(),
         );
         for step in &mut sequence.steps {
             if let Some(purge) = step.purge.as_mut() {

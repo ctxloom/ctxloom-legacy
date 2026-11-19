@@ -23,7 +23,7 @@ fn installed(sha: &str) -> DepsTree {
 // listed in the intent; every step under the pull's verb, on its tree.
 #[test]
 fn a_pull_is_its_trees_then_its_lock_then_what_it_takes_away_then_other_tools_files() {
-    let evidence = evidence_at("/w");
+    let evidence = evidence();
     let sequence = pull_sequence(
         &tree(),
         "deps pull",
@@ -103,7 +103,7 @@ fn a_pull_with_nothing_to_take_away_has_no_purge_and_one_with_no_lock_no_lock_st
         "deps upgrade",
         (&[installed("a1")], None, &[]),
         &[],
-        &evidence_at("/w"),
+        &evidence(),
     );
     assert_eq!(sequence.steps.len(), 1);
     assert!(sequence.steps[0].create.is_some());

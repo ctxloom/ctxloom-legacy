@@ -426,10 +426,6 @@ impl<E: Edge> Api<E> {
             tree_reads: true,
             plan_rejection: None,
             builtin: false,
-            in_motion: None,
-            in_git: true,
-            ignored: None,
-            root: root.to_string(),
         };
         let (start, steps) = match pending {
             Some(pending) => pending,
@@ -476,13 +472,10 @@ impl<E: Edge> Api<E> {
             TreeName::Home { .. } => unreachable!("an init's tree is a checkout's"),
         };
         let observed = observations
-            .observe_created(scanner.as_ref(), &Site::checkout(project, root))
+            .observe(scanner.as_ref(), &Site::checkout(project, root))
             .await
-            .map_err(|error| match error {
-                library_api::ReadError::Refused(rejection) => {
-                    ApiError::Refused(crate::library_refusal(&rejection))
-                }
-                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            .map_err(|library_api::ReadError::Failed(failure)| {
+                ApiError::diagnosed(failure.as_ref())
             })?;
         self.dies_at("done");
         Ok(observed.notices.iter().map(notice_of).collect())

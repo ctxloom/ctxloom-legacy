@@ -12,10 +12,10 @@ use angzarr_embedded::{Any, Failure, Handled, Registry};
 
 use crate::{
     observation_key, tree_root, Change, ChangeStatus, CreateDirectory, DirtyPath, Evidence,
-    LibraryAggregate, LibraryCommand, LibraryEvent, LibraryIgnored, LibraryTreeRejection, Motion,
-    MovePath, PlanRejected, PurgeTrash, RecordBundleExported, RecordHomeRepositoryMade,
-    RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile, Resource, RunSequence, Step,
-    TrashPath, TreeKind, KEEP_DAYS, LIBRARY_DOMAIN, TREE_UNREADABLE,
+    LibraryAggregate, LibraryCommand, LibraryEvent, LibraryTreeRejection, MovePath, PlanRejected,
+    PurgeTrash, RecordBundleExported, RecordStepDone, RecordStepFailed, RecordTreeObserved,
+    ReplaceFile, Resource, RunSequence, Step, TrashPath, TreeKind, KEEP_DAYS, LIBRARY_DOMAIN,
+    TREE_UNREADABLE,
 };
 
 const TREE: &str = "projects/amber-quiet-heron/checkouts/brisk-copper-moth/library";
@@ -156,7 +156,6 @@ fn observation(
         changes,
         dirty_after: dirty(dirty_after),
         baseline,
-        in_motion: None,
     }
 }
 
@@ -176,10 +175,6 @@ fn evidence() -> Evidence {
         tree_reads: true,
         plan_rejection: None,
         builtin: false,
-        in_motion: None,
-        in_git: true,
-        ignored: None,
-        root: "/work/demo".to_string(),
     }
 }
 
@@ -276,7 +271,6 @@ fn listing(tree: &Tree, files: &[(&str, &str)]) -> crate::RecordTreeListed {
         kind: TreeKind::Checkout,
         base_cause: tree.library().last_cause,
         files: dirty(files),
-        in_motion: None,
     }
 }
 
@@ -651,22 +645,6 @@ fn another_trees_observation_records_nothing() {
     assert!(tree.observe(other).is_empty());
 }
 
-#[test]
-fn an_observation_in_motion_says_so() {
-    let mut tree = Tree::baselined();
-    let mut merging = edit(FILE, "conflicted");
-    merging.in_motion = Some(Motion::Merging);
-    let events = tree.observe(merging.clone());
-    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
-        panic!("{events:?}")
-    };
-    assert_eq!(observed.in_motion, Some(Motion::Merging));
-    assert!(
-        tree.observe(merging).is_empty(),
-        "the same merge seen again"
-    );
-}
-
 // endregion
 
 // region commands
@@ -717,65 +695,6 @@ fn a_change_undone_since_still_moves_the_token() {
     tree.observe(edit(FILE, "f1"));
     tree.observe(edit(FILE, "base"));
     assert_eq!(tree.command(replace(FILE, 0)), Err(stale(FILE, 0, 2)));
-}
-
-#[test]
-fn a_tree_outside_git_is_refused_naming_its_root() {
-    let mut tree = Tree::baselined();
-    let mut cmd = replace(FILE, 0);
-    cmd.evidence.in_git = false;
-    assert_eq!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::NotInGit {
-            root: "/work/demo".to_string()
-        })
-    );
-}
-
-#[test]
-fn a_library_git_ignores_is_refused_naming_the_rule() {
-    let mut tree = Tree::baselined();
-    let mut cmd = trash(FILE, 0);
-    cmd.evidence.in_git = false;
-    cmd.evidence.ignored = Some(LibraryIgnored {
-        source: ".gitignore".to_string(),
-        line: 3,
-        pattern: ".ctxloom/".to_string(),
-    });
-    assert_eq!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::LibraryIgnored {
-            source: ".gitignore".to_string(),
-            line: 3,
-            pattern: ".ctxloom/".to_string(),
-        })
-    );
-}
-
-#[test]
-fn a_write_during_a_git_operation_is_refused_before_the_token_is_judged() {
-    let mut tree = Tree::baselined();
-    let mut cmd = replace(FILE, 99);
-    cmd.evidence.in_motion = Some(Motion::Rebasing);
-    assert_eq!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::TreeInMotion {
-            motion: Motion::Rebasing,
-            root: "/work/demo".to_string(),
-        })
-    );
-}
-
-#[test]
-fn git_is_judged_before_motion() {
-    let mut tree = Tree::baselined();
-    let mut cmd = moved(FILE, YAML, 0);
-    cmd.evidence.in_git = false;
-    cmd.evidence.in_motion = Some(Motion::Merging);
-    assert!(matches!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::NotInGit { .. })
-    ));
 }
 
 #[test]
@@ -1461,26 +1380,6 @@ fn a_move_into_another_tree_does_not_judge_its_target_on_this_record() {
             path: BUNDLE.to_string()
         })
     );
-}
-
-// G3 (owner 2026-11-18, night): the home step's `git init` is recorded once,
-// and the state holds it; a second record of it adds nothing.
-#[test]
-fn test_a_home_repository_made_is_recorded_once_and_held() {
-    let mut tree = Tree::new();
-    assert!(!tree.library().home_repository_made);
-    let made = RecordHomeRepositoryMade {
-        name: TREE.to_string(),
-    };
-    let events = tree.fact(made.clone(), "home-repository-made:one");
-    assert!(
-        matches!(events.as_slice(), [LibraryEvent::HomeRepositoryMade(_)]),
-        "{events:?}"
-    );
-    assert!(tree.library().home_repository_made);
-    assert!(tree.library().wire().home_repository_made);
-    assert!(tree.fact(made, "home-repository-made:two").is_empty());
-    assert!(tree.library().home_repository_made);
 }
 
 // AIP-155 (owner 2026-11-18, night): an export is recorded on its source

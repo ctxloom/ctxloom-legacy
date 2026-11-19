@@ -128,23 +128,17 @@ fn test_create_refuses_an_existing_config_and_leaves_it_byte_for_byte_alone() {
 // the fix
 #[test]
 fn test_editing_a_project_with_no_config_says_so_and_names_the_fix() {
-    // Step 10b U3: `config edit` is the daemon's write; the library is
-    // git-free (owner, 2026-11-18), so outside git and in it alike the use
-    // case's refusal is the scenario's.
-    let outside = Project::bare();
-    outside
-        .run(&["config", "edit"])
-        .fails()
-        .contains("no config at")
-        .contains("ctxloom config create");
-    outside.file_is_absent(CONFIG);
-    let project = Project::bare_in_git();
-    project
-        .run(&["config", "edit"])
-        .fails()
-        .contains("no config at")
-        .contains("ctxloom config create");
-    project.file_is_absent(CONFIG);
+    // Step 10b U3: `config edit` is the daemon's write; the use case's
+    // refusal is the scenario's, in git or not (the library is git-free,
+    // owner 2026-11-18).
+    for project in [Project::bare(), Project::bare_in_git()] {
+        project
+            .run(&["config", "edit"])
+            .fails()
+            .contains("no config at")
+            .contains("ctxloom config create");
+        project.file_is_absent(CONFIG);
+    }
 }
 
 // cli/config.go edit (documented condition): the config file is handed to

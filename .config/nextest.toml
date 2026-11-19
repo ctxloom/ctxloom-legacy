@@ -177,7 +177,7 @@ test-group = 'ports'
 # The clusters: daemon (cli/ daemon, shutdown, session_children, mcp_serve,
 # run, trust, session_approvals, atomic_writes), journeys (journeys/),
 # library (cli/ bundle, fragment, fragment_draft_premise, command, profile,
-# skill, mcp, mcp_resources, mcp_tools, search, materialize, read_extras,
+# skill, mcp, mcp_tools, search, materialize, read_extras,
 # context_status, content_distill, companion, agent, library_changes),
 # remotes (cli/ remote, deps), setup (cli/ init, doctor, manage, auth,
 # config, engine, clean, version, completion), sessions (cli/ session,
@@ -240,7 +240,6 @@ filter = '''
         | test(=tests::gherkin_features::features::cli::profile)
         | test(=tests::gherkin_features::features::cli::skill)
         | test(=tests::gherkin_features::features::cli::mcp)
-        | test(=tests::gherkin_features::features::cli::mcp_resources)
         | test(=tests::gherkin_features::features::cli::mcp_tools)
         | test(=tests::gherkin_features::features::cli::search)
         | test(=tests::gherkin_features::features::cli::materialize)

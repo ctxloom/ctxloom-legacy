@@ -39,7 +39,6 @@ fn observed(baseline: bool, changes: Vec<Change>, dirty: &[(&str, &str)]) -> Lib
             .collect(),
         tree_after: "t-1".to_string(),
         baseline,
-        in_motion: None,
     })
 }
 
@@ -56,10 +55,6 @@ fn intent(request: &str, steps: usize) -> LibraryEvent {
                 tree_reads: true,
                 plan_rejection: None,
                 builtin: false,
-                in_motion: None,
-                in_git: true,
-                ignored: None,
-                root: String::new(),
             },
         }),
         create: None,
@@ -404,4 +399,27 @@ fn the_wire_state_carries_every_part_of_the_fold() {
     );
     assert_eq!(wire.baseline_sequence, 4);
     assert_eq!(Library::default().wire().kind, 0);
+}
+
+// The library is git-free (owner 2026-11-18): `HomeRepositoryMade` is never
+// emitted again, but a stream a 10b daemon wrote holds it, and replays: it
+// folds as nothing but its cause, which the next fact's key chains on.
+#[test]
+fn test_a_home_repository_made_a_10b_stream_holds_folds_as_nothing_but_its_cause() {
+    let mut library = Library::default();
+    library.apply(
+        &observed(true, vec![change(FILE, ChangeStatus::Added, "f1")], &[]),
+        1,
+        "obs:one".to_string(),
+    );
+    let mut expected = library.clone();
+    library.apply(
+        &LibraryEvent::HomeRepositoryMade(crate::HomeRepositoryMade {
+            name: TREE.to_string(),
+        }),
+        2,
+        "home-repository-made:x".to_string(),
+    );
+    expected.last_cause = "home-repository-made:x".to_string();
+    assert_eq!(library, expected);
 }

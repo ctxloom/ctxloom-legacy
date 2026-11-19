@@ -22,7 +22,7 @@ fn every_message_is_in_the_library_package() {
         v1::ChangeFailed::type_url(),
         v1::IntentSuperseded::type_url(),
         v1::PlanStale::type_url(),
-        v1::NotInGit::type_url(),
+        v1::BuiltinReadOnly::type_url(),
     ] {
         assert!(url.starts_with("/ctxloom.library.v1."), "{url}");
     }

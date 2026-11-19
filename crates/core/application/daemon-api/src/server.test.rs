@@ -239,6 +239,9 @@ pub(crate) struct Fixture {
     pub(crate) hosting: Arc<Loop>,
     pub(crate) places: Arc<FakePlaces>,
     pub(crate) locks: Arc<Locks>,
+    /// The pending messages the API reads, caught up only by
+    /// [`Fixture::catch_up_pending`] (a round's, in the daemon).
+    pub(crate) pending: pending_messages::PendingMessages,
     pub(crate) api: Api<World>,
 }
 
@@ -249,10 +252,11 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
     let hosting = Arc::new(Loop::default());
     let places = Arc::new(FakePlaces::default());
     let locks = Arc::new(Locks::default());
+    let pending = pending_messages::PendingMessages::default();
     let api = Api::new(Parts {
         edge: Arc::clone(&world),
         index: index.clone(),
-        pending: pending_messages::PendingMessages::default(),
+        pending: pending.clone(),
         board: board.clone(),
         hosting: Arc::clone(&hosting) as Arc<dyn Hosting>,
         states: Arc::clone(&locks) as Arc<dyn SessionStates>,
@@ -276,6 +280,7 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
         hosting,
         places,
         locks,
+        pending,
         api,
     }
 }
@@ -291,6 +296,15 @@ impl Fixture {
             .unwrap();
         let mut board = daemon_board::caught_up(self.board.clone());
         board
+            .step(&self.world.store, self.world.registry.catalog())
+            .await
+            .unwrap();
+    }
+
+    /// The pending messages caught up with what the store holds: a round.
+    pub(crate) async fn catch_up_pending(&self) {
+        let mut caught = pending_messages::caught_up(self.pending.clone());
+        caught
             .step(&self.world.store, self.world.registry.catalog())
             .await
             .unwrap();
@@ -1276,92 +1290,21 @@ async fn get_transcript_answers_each_captured_line() {
     assert!(lines[1].contains("second words"), "{lines:?}");
 }
 
-/// git as a read's caller would run it, from a table: the project's work
-/// tree (none: outside git), the operation in progress, and the
-/// environment each read was observed in.
+/// The trees a read sees, from a table: no files, each scan counted.
 #[derive(Default)]
 pub(crate) struct Gits {
-    pub(crate) work_tree: Option<String>,
-    pub(crate) motion: Option<ctxloom_ports::Motion>,
-    pub(crate) envs: std::sync::Mutex<Vec<Vec<(String, String)>>>,
+    /// How many times its scanner scanned a tree.
+    pub(crate) scans: Arc<std::sync::atomic::AtomicU32>,
     /// How many times its scanner was told to forget what it saw.
     pub(crate) forgot: Arc<std::sync::atomic::AtomicU32>,
 }
 
-struct TableGit {
-    work_tree: Option<String>,
-    motion: Option<ctxloom_ports::Motion>,
-}
-
-impl ctxloom_ports::TreeObserver for TableGit {
-    fn work_tree(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-        Ok(self.work_tree.clone())
-    }
-    fn check_ignore(
-        &self,
-        _: &str,
-        _: &str,
-    ) -> Result<Option<ctxloom_ports::IgnoreRule>, ctxloom_ports::TreeError> {
-        Ok(None)
-    }
-    fn init_repository(&self, _: &str, _: Option<&str>) -> Result<(), ctxloom_ports::TreeError> {
-        Ok(())
-    }
-    fn head(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-        Ok(Some("c1".to_string()))
-    }
-    fn library_tree(&self, _: &str, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-        Ok(Some("t1".to_string()))
-    }
-    fn status(
-        &self,
-        _: &str,
-        _: &[&str],
-    ) -> Result<Vec<ctxloom_ports::StatusEntry>, ctxloom_ports::TreeError> {
-        Ok(Vec::new())
-    }
-    fn diff_tree(
-        &self,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: &[&str],
-    ) -> Result<Vec<ctxloom_ports::TreeChange>, ctxloom_ports::TreeError> {
-        Ok(Vec::new())
-    }
-    fn blob_ids(
-        &self,
-        _: &str,
-        _: &[&str],
-    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::TreeError> {
-        Ok(Default::default())
-    }
-    fn blob_id_of(&self, _: &str, _: &str, _: &[u8]) -> Result<String, ctxloom_ports::TreeError> {
-        unreachable!("not asked")
-    }
-
-    fn in_motion(
-        &self,
-        _: &str,
-    ) -> Result<Option<ctxloom_ports::Motion>, ctxloom_ports::TreeError> {
-        Ok(self.motion)
-    }
-    fn commit(&self, _: &str, _: &str, _: &[&str]) -> Result<(), ctxloom_ports::TreeError> {
-        Ok(())
-    }
-}
-
 impl library_api::Observers for Gits {
-    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
-        self.envs.lock().unwrap().push(env.to_vec());
-        Box::new(TableGit {
-            work_tree: self.work_tree.clone(),
-            motion: self.motion,
-        })
-    }
-
     fn scanner(&self) -> Arc<dyn ctxloom_ports::LibraryScanner> {
-        Arc::new(NoFiles(Arc::clone(&self.forgot)))
+        Arc::new(NoFiles {
+            scans: Arc::clone(&self.scans),
+            forgot: Arc::clone(&self.forgot),
+        })
     }
 
     fn home_tree(&self) -> Option<String> {
@@ -1370,14 +1313,18 @@ impl library_api::Observers for Gits {
 }
 
 /// A scanner that finds no file (these tests' trees are empty), counting
-/// each time it is told to forget.
-struct NoFiles(Arc<std::sync::atomic::AtomicU32>);
+/// each scan and each time it is told to forget.
+struct NoFiles {
+    scans: Arc<std::sync::atomic::AtomicU32>,
+    forgot: Arc<std::sync::atomic::AtomicU32>,
+}
 
 impl ctxloom_ports::LibraryScanner for NoFiles {
     fn scan(
         &self,
         _: &str,
     ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(Default::default())
     }
     fn content_ids(
@@ -1388,7 +1335,8 @@ impl ctxloom_ports::LibraryScanner for NoFiles {
         Ok(Default::default())
     }
     fn forget(&self) {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.forgot
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

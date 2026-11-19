@@ -512,6 +512,16 @@ impl Ctxloom for Served {
         .await
     }
 
+    async fn deliver_hook_context(
+        &self,
+        request: Request<v1::DeliverHookContextRequest>,
+    ) -> Result<Response<v1::HookContext>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.deliver_hook_context(message).await
+        })
+        .await
+    }
+
     async fn get_run(
         &self,
         request: Request<v1::GetRunRequest>,

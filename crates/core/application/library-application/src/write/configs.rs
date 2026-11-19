@@ -22,13 +22,6 @@ impl Library {
             .ok_or_else(|| WriteError::NotWired {}.into())
     }
 
-    /// `config create [--engine E]`: the config, the default remotes registry,
-    /// the seeded default profile and the nested `.gitignore` of ctxloom's
-    /// private state; it refuses an existing config.
-    ///
-    /// Before anything is written, the directory is made a git repository
-    /// when it is in none (step 10, G1, [`Library::with_repository_step`]),
-    /// and the notice says so.
     /// `manage gitignore install` (step 10c U5): `.ctxloom/.gitignore`
     /// written whole through the scaffold when it is not what ctxloom
     /// writes; whether it was, and the `.ctxloom` it is in.
@@ -97,17 +90,18 @@ impl Library {
         }
     }
 
+    /// `config create [--engine E]`: the config, the default remotes registry,
+    /// the seeded default profile and the nested `.gitignore` of ctxloom's
+    /// private state; it refuses an existing config. It makes no git
+    /// repository (the library is git-free, owner 2026-11-18).
     pub fn config_create(&self, engine: &str) -> Outcome<ConfigCreated> {
-        let mut notices = Vec::new();
-        let result = self.created(engine, &mut notices);
-        Outcome { result, notices }
+        Outcome {
+            result: self.created(engine),
+            notices: Vec::new(),
+        }
     }
 
-    fn created(
-        &self,
-        engine: &str,
-        notices: &mut Vec<crate::Notice>,
-    ) -> Result<ConfigCreated, AppError> {
+    fn created(&self, engine: &str) -> Result<ConfigCreated, AppError> {
         let scaffold = &self.write_side()?.scaffold;
         let path = format!("{}/config.yaml", scaffold.app_dir());
         if scaffold.exists("config.yaml").map_err(AppError::Cause)? {
@@ -124,10 +118,6 @@ impl Library {
                 valid: ENGINES.join(", "),
             }
             .into());
-        }
-        if let Some(step) = &self.repository {
-            let made = step().map_err(|e| AppError::Cause(e.into_failure()))?;
-            notices.extend(made.map(crate::Notice::Git));
         }
         let files = scaffold_files(scaffold.as_ref(), scaffold::initial_config(engine))?;
         scaffold.write(&files).map_err(AppError::Cause)?;

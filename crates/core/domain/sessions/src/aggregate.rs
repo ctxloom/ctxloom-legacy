@@ -750,9 +750,6 @@ impl SessionAggregate {
         fold(&mut self.session, event.into(), page);
     }
 
-    // Equivalent: a message is the read side's; `crate::apply` changes no
-    // state for it.
-    #[cfg_attr(test, mutants::skip)]
     #[applies(MessageSent)]
     fn message_sent(&mut self, event: MessageSent, page: &PageContext) {
         fold(&mut self.session, event.into(), page);
@@ -781,9 +778,6 @@ impl SessionAggregate {
         fold(&mut self.session, event.into(), page);
     }
 
-    // Equivalent: a delivery is the read side's; `crate::apply` changes no
-    // state for it.
-    #[cfg_attr(test, mutants::skip)]
     #[applies(MessagesDelivered)]
     fn messages_delivered(&mut self, event: MessagesDelivered, page: &PageContext) {
         fold(&mut self.session, event.into(), page);

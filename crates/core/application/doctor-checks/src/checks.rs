@@ -291,7 +291,7 @@ pub fn hooks(settings: &[(String, String)], name: &str) -> Check {
 
 /// `GITIGNORE-f6`: a blanket `.ctxloom` ignore rule predates content moving
 /// into `.ctxloom/`; left in place it un-tracks the project's own content,
-/// a fail row.
+/// a warning (the library is git-free, owner 2026-11-18).
 /// And the other half: ctxloom's private state that git can see
 /// (`unignored`, the patterns no ignore file covers).
 pub fn gitignore(text: Option<&str>, unignored: &[&str]) -> Check {
@@ -315,12 +315,10 @@ pub fn gitignore(text: Option<&str>, unignored: &[&str]) -> Check {
             )
         });
     match blanket {
-        // A fail (step 10c U5, QUESTIONS 10): a library git ignores is
-        // refused, so every run there is.
         Some(rule) => row(
             M,
             N,
-            Status::Fail,
+            Status::Warn,
             &format!(
                 ".gitignore has the blanket rule `{rule}`: it un-tracks the project's own content under .ctxloom, so `git add` reports nothing and a content repository publishes an empty tree"
             ),

@@ -300,10 +300,11 @@ pub(crate) fn build_setup_over(
     .with_hook_library(Box::new(
         crate::hook_library::DaemonHookLibrary::starting_now(Arc::clone(wiring.env())),
     ))
-    // A primary's pending messages, delivered by its hooks (the terminal
-    // wake), through the daemon too.
-    .with_hook_messages(Box::new(
-        crate::hook_messages::DaemonHookMessages::starting_now(Arc::clone(wiring.env())),
+    // What a live session's hooks carry (a primary's pending messages, the
+    // terminal wake, and what it is owed, U13), through the daemon too, in
+    // ONE call (the lean hook RPC).
+    .with_hook_contexts(Box::new(
+        crate::hook_messages::DaemonHookContexts::starting_now(Arc::clone(wiring.env())),
     )))
 }
 

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use angzarr_embedded::markup::TypedRefusal;
 
 use super::*;
-use crate::{ChangeFailed, LibraryTreeRejection, Motion};
+use crate::{ChangeFailed, LibraryTreeRejection};
 
 /// One refusal message of every rejection, with the rejection it must read
 /// back as: the table of the domain.
@@ -51,36 +51,6 @@ fn table() -> Vec<(TypedRefusal, LibraryTreeRejection)> {
                 args,
             },
         ),
-        (
-            TypedRefusal::of(&TreeInMotion {
-                motion: Motion::Rebasing,
-                root: "/w".to_string(),
-            }),
-            LibraryTreeRejection::TreeInMotion {
-                motion: Motion::Rebasing,
-                root: "/w".to_string(),
-            },
-        ),
-        (
-            TypedRefusal::of(&NotInGit {
-                root: "/w".to_string(),
-            }),
-            LibraryTreeRejection::NotInGit {
-                root: "/w".to_string(),
-            },
-        ),
-        (
-            TypedRefusal::of(&LibraryIgnored {
-                source: ".gitignore".to_string(),
-                line: 2,
-                pattern: ".ctxloom/*".to_string(),
-            }),
-            LibraryTreeRejection::LibraryIgnored {
-                source: ".gitignore".to_string(),
-                line: 2,
-                pattern: ".ctxloom/*".to_string(),
-            },
-        ),
     ]
 }
 
@@ -106,8 +76,11 @@ fn a_message_that_is_no_refusal_of_ours_is_none_of_ours() {
 // tree stays a failed precondition. Compared, never spelled.
 #[test]
 fn test_a_stale_plan_is_refused_under_a_status_of_its_own() {
-    let precondition = <TreeInMotion as crate::Refusal>::REFUSAL_STATUS;
-    assert_eq!(<NotInGit as crate::Refusal>::REFUSAL_STATUS, precondition);
+    let precondition = <BuiltinReadOnly as crate::Refusal>::REFUSAL_STATUS;
+    assert_eq!(
+        <PlanRejected as crate::Refusal>::REFUSAL_STATUS,
+        precondition
+    );
     assert_ne!(<PlanStale as crate::Refusal>::REFUSAL_STATUS, precondition);
     assert_ne!(
         <PlanStale as crate::Refusal>::REFUSAL_STATUS,

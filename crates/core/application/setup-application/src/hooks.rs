@@ -39,18 +39,6 @@ pub trait HookLibrary {
 
     /// The project's skills (`ListSkills`).
     fn skills(&self) -> Option<Vec<HookSkill>>;
-
-    /// What the live session `harp` is owed at its engine's hook `hook`
-    /// (step 10c U13, G6/G7, `RedeliverContext`) within `budget` characters
-    /// (what the hook's other parts left): its re-assembled context, as its
-    /// engine's delivery put it. None when it is owed nothing, or no daemon
-    /// answered in time (it stays owed).
-    // Equivalent: its one mutant (`None`) is this default body.
-    #[cfg_attr(test, mutants::skip)]
-    fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
-        let _ = (harp, hook, budget);
-        None
-    }
 }
 
 /// The skills a `ListSkills` answer lists, as a hook judges them: each by
@@ -142,14 +130,13 @@ impl Setup {
                 })
             }
             // The terminal wake: a prompt delivers the informs and wakes
-            // (a stale wake line blocked), in the one budget, joined by
-            // `compose_context`; U13's re-delivered context joins as its
-            // last part, within what the messages left (step 10c U13).
+            // (a stale wake line blocked) and what the session is owed (step
+            // 10c U13), in ONE daemon call (the lean hook RPC), which joins
+            // them by `compose_context` within the one budget.
             "turn_start" => {
-                let (messages, block) = self.prompt_delivery(&event.prompt, harp, remaining(&[]));
-                let owed = self.owed_context(harp, native, remaining(&[&messages]));
+                let (carried, block) = self.prompt_delivery(&event.prompt, native, remaining(&[]));
                 let response = HookResponse {
-                    context: compose_context(&[&messages, &owed]),
+                    context: compose_context(&[&carried]),
                     block,
                     reason: match block {
                         true => crate::hooks_wake::STALE_WAKE.to_string(),
@@ -163,13 +150,15 @@ impl Setup {
                     ..HookAnswer::default()
                 })
             }
-            // A tool call asks the daemon for no messages: it would deliver
-            // a steer, and a primary is offered none (owner ruling
-            // 2026-11-18). It carries what the session is owed (U13), after
-            // the skill mates line, in the same budget.
+            // A tool call delivers no message: it would be a steer, and a
+            // primary is offered none (owner ruling 2026-11-18). It carries
+            // what the session is owed (U13), after the skill mates line,
+            // in the same budget, in its one daemon call.
             "post_tool" => {
                 let mut response = self.mates_response(codec, &event);
-                let owed = self.owed_context(harp, native, remaining(&[&response.context]));
+                let owed = self
+                    .carried(native, &[], "", remaining(&[&response.context]))
+                    .context;
                 response.context = compose_context(&[&response.context, &owed]);
                 Ok(HookAnswer {
                     stdout: encode(&response)?,
@@ -212,15 +201,6 @@ impl Setup {
                 },
             )
             .map_err(SetupError::cause)
-    }
-
-    /// What the live session `harp` is owed at its engine's hook `native`
-    /// (step 10c U13), within `budget` characters of the hook's answer;
-    /// empty when nothing is, or no daemon answered (it stays owed).
-    fn owed_context(&self, harp: &str, native: &str, budget: usize) -> String {
-        self.hook_library()
-            .and_then(|library| library.redelivered(harp, native, budget))
-            .unwrap_or_default()
     }
 
     /// The session-start notice: the nudge to set up agents when the project

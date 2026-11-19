@@ -5,16 +5,12 @@ use library_api::{Observed, Site};
 use library_tree::TreeName;
 use sessions::ProjectName;
 
-use super::{
-    answered_before, commit_message, commit_paths, export_source, landing_of, request_bytes,
-    step_path,
-};
+use super::{answered_before, export_source, landing_of, request_bytes, step_path};
 
 fn observed(tree: TreeName) -> Observed {
     Observed {
         tree,
         notices: Vec::new(),
-        motion: None,
     }
 }
 
@@ -51,14 +47,10 @@ fn test_content_lands_in_the_checkout_else_the_home_and_a_layer_in_its_scope() {
     );
     let home = seen(false);
     assert_eq!(
-        landing_of(&home, Lands::Content).map(|l| l.root()),
+        landing_of(&home, Lands::Content).map(|l| l.site.tree().to_string()),
         Some("/home/alice/.ctxloom".to_string())
     );
     assert!(landing_of(&home, Lands::Layer(Scope::Project)).is_none());
-    assert_eq!(
-        landing_of(&both, Lands::Content).map(|l| l.root()),
-        Some("/work/demo".to_string())
-    );
 }
 
 #[test]
@@ -86,10 +78,6 @@ fn test_a_steps_path_is_its_kinds_own() {
                 tree_reads: true,
                 plan_rejection: None,
                 builtin: false,
-                in_motion: None,
-                in_git: true,
-                ignored: None,
-                root: String::new(),
             },
             keep: true,
         }),
@@ -307,10 +295,6 @@ fn evidence() -> library_tree::Evidence {
         tree_reads: true,
         plan_rejection: None,
         builtin: false,
-        in_motion: None,
-        in_git: true,
-        ignored: None,
-        root: String::new(),
     }
 }
 
@@ -337,64 +321,6 @@ fn replaced(path: &str) -> library_tree::Step {
         }),
         ..bare()
     }
-}
-
-fn moved(from: &str, to: &str, to_tree: &str) -> library_tree::Step {
-    library_tree::Step {
-        r#move: Some(library_tree::MovePath {
-            name: String::new(),
-            verb: String::new(),
-            from: from.to_string(),
-            to: to.to_string(),
-            seen_sequence: 0,
-            evidence: evidence(),
-            to_tree: to_tree.to_string(),
-        }),
-        ..bare()
-    }
-}
-
-// G3: a home write's commit names what its steps changed in the library,
-// each once: a move both its ends (but only the end in this tree), never
-// a purge's slot or anything outside the library's pathspec.
-#[test]
-fn test_a_home_commit_names_each_library_path_its_steps_changed_once() {
-    let purge = library_tree::Step {
-        purge: Some(library_tree::PurgeSlot {
-            request_id: "r-0".to_string(),
-        }),
-        ..bare()
-    };
-    let steps = [
-        replaced("config.yaml"),
-        moved("content/bundles/v2/a", "content/bundles/v2/b", ""),
-        moved(
-            "content/bundles/v2/c",
-            "content/bundles/v2/c",
-            "/work/other/.ctxloom",
-        ),
-        purge,
-        replaced("config.yaml"),
-        replaced("state/checkout"),
-    ];
-    assert_eq!(
-        commit_paths(&steps),
-        [
-            "config.yaml",
-            "content/bundles/v2/a",
-            "content/bundles/v2/b",
-            "content/bundles/v2/c"
-        ]
-    );
-}
-
-// texts.md 6 (QUESTIONS 6): the subject alone, no body.
-#[test]
-fn test_a_home_commit_s_message_names_its_verb_and_request_id() {
-    assert_eq!(
-        commit_message("companion add", "0195f1e2-0000-7000-8000-000000000000"),
-        "ctxloom: companion add (0195f1e2-0000-7000-8000-000000000000)"
-    );
 }
 
 // AIP-155 (owner 2026-11-18, night): an export made before under a request
@@ -512,7 +438,6 @@ async fn test_a_retry_of_a_superseded_write_is_refused_stale() {
                 .collect(),
             changes,
             baseline,
-            in_motion: None,
         }
     };
     observations

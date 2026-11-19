@@ -1214,6 +1214,22 @@ pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_
     serving(&wiring, &files).ok().flatten()
 }
 
+/// The daemon of this home the discovery file names, NOT probed (the lean
+/// hook RPC: a health check is a TLS connection of its own): what a hook's
+/// one call asks first; reached unreachable, it probes ([`hook_daemon`]).
+/// None for a daemon of another home.
+pub(crate) fn hook_daemon_unprobed(env: &Arc<EnvSnapshot>) -> Option<run_ports::Discovery> {
+    let wiring = Wiring::new(Arc::clone(env)).ok()?;
+    let found = files_of(&wiring).discovery()?;
+    (found.home == wiring.home().display().to_string()).then_some(found)
+}
+
+/// `discovery` published as `wiring`'s home's daemon's, for a test.
+#[cfg(test)]
+pub(crate) fn publish_for_test(wiring: &Wiring, discovery: &run_ports::Discovery) {
+    files_of(wiring).publish(discovery).unwrap();
+}
+
 /// The daemon a hook's library read asks when it may start none (its
 /// environment names an endpoint, OD-13): the live one of this home its
 /// discovery file names, else none.

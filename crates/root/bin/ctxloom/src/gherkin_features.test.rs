@@ -502,7 +502,6 @@ mod features {
             manage,
             materialize,
             mcp,
-            mcp_resources,
             mcp_serve,
             mcp_tools,
             post_tool_hooks,

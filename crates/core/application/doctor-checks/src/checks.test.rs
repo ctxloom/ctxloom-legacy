@@ -13,11 +13,11 @@ fn files(path: &str, text: &str) -> Vec<(String, String)> {
     vec![(path.to_string(), text.to_string())]
 }
 
-// doctor.feature: "A blanket ignore rule is a fail row, and fails doctor"
-// and "A blanket rule spelled as a glob is the same finding" (step 10c
-// U5, QUESTIONS 10): a library git ignores is refused, so it fails.
+// doctor.feature: "A blanket ignore rule is reported as a warning, with
+// exit 0" (the library is git-free, owner 2026-11-18: a library git
+// ignores is not refused, so the rule is a warning).
 #[test]
-fn a_blanket_ignore_rule_fails_and_names_the_install() {
+fn a_blanket_ignore_rule_warns_and_names_the_install() {
     for rule in [
         ".ctxloom/",
         ".ctxloom",
@@ -26,7 +26,7 @@ fn a_blanket_ignore_rule_fails_and_names_the_install() {
         ".ctxloom/**",
     ] {
         let check = checks::gitignore(Some(&format!("target/\n{rule}\n")), &[]);
-        assert_eq!(check.status, Status::Fail, "{rule}");
+        assert_eq!(check.status, Status::Warn, "{rule}");
         assert!(check.detail.contains("blanket"));
         assert_eq!(check.remedy, "ctxloom manage gitignore install");
     }

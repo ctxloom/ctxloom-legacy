@@ -83,6 +83,11 @@ message SessionState {
   // The nonce of the last wake, when it was disarmed unanswered and no
   // wake was issued or redeemed after it; empty otherwise.
   string wake_unanswered = 29;
+  // 10c (the lean hook RPC, owner budget 2026-11-18): the ids of the
+  // messages sent to it and not yet delivered, in the order sent, so a
+  // `DeliverMessages` records each id once whatever asks again (two hooks
+  // within one round deliver a message once). Additive.
+  repeated string pending_messages = 30;
 }
 
 // Who a session was minted for (Go's Origin): an empty origin reads as a

@@ -1,20 +1,20 @@
-//! A primary's hooks and its pending messages (the terminal wake, owner
-//! ruling 2026-11-18). The session's pending messages are the truth; a wake
-//! only starts the turn whose prompt's hook delivers them:
+//! A primary's hooks and what they carry (the terminal wake, owner ruling
+//! 2026-11-18; the lean hook RPC, owner budget 2026-11-18: under 20 ms
+//! added per hook at p95). A hook asks the daemon ONCE
+//! ([`HookContexts::hook_context`], `DeliverHookContext`), which answers
+//! from its projections with no round awaited: the session's pending
+//! messages of the urgencies the hook delivers, each recorded delivered
+//! once, then what the session is owed (step 10c U13), joined within the
+//! one budget (`crate::delivery`).
 //!
 //! - `turn_start` (claude's UserPromptSubmit) delivers its informs and
 //!   wakes; a prompt that IS a wake line (`run_ports::wake_nonce`) redeems
 //!   its wake, and is blocked when it delivered nothing (a stale wake: no
 //!   model call spent on it); a human's prompt is never blocked;
-//! - `post_tool` (PostToolUse) asks for none: it would deliver a steer,
-//!   and a primary is offered none (a child's messages are its turns).
-//!
-//! What is delivered is what was recorded delivered first
-//! ([`HookMessages::delivered`]): what could not be recorded waits, never
-//! given twice. The messages are the first part of a hook's one budget
-//! (`crate::delivery`).
+//! - `post_tool` (PostToolUse) delivers no message: it would be a steer,
+//!   and a primary is offered none (a child's messages are its turns). It
+//!   carries what the session is owed alone.
 
-use crate::delivery::{messages_context, HookMessage};
 use crate::Setup;
 
 /// Why a stale wake line was blocked. DRAFT (2026-11-18).
@@ -22,67 +22,72 @@ pub(crate) const STALE_WAKE: &str =
     "ctxloom: a wake with no message waiting for it; nothing was sent to the model";
 
 /// The urgencies a prompt delivers.
-const AT_A_PROMPT: &[&str] = &["inform", "wake"];
+pub(crate) const AT_A_PROMPT: &[&str] = &["inform", "wake"];
 
-/// A primary's pending messages as its hooks reach them: THROUGH THE
-/// DAEMON, within the hook's bound, as the library reads are.
-pub trait HookMessages {
-    /// The hook's session's pending messages, in the order sent, when it is
-    /// a primary; none for a child (the daemon feeds its messages as
-    /// turns), and when no daemon answered in time.
-    fn pending(&self) -> Option<Vec<HookMessage>>;
+/// What one hook carries, as the daemon answered it.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct HookCarried {
+    /// The messages delivered, then the owed context, joined.
+    pub context: String,
+    /// Whether any message was recorded delivered by this hook's call.
+    pub delivered: bool,
+}
 
-    /// `ids` delivered, and the wake `wake` (empty: none) its prompt was,
-    /// recorded (`DeliverMessages`); whether it was.
-    fn delivered(&self, ids: &[String], wake: &str) -> bool;
+/// What a live session's hooks carry, THROUGH THE DAEMON, within the
+/// hook's bound, as the library reads are.
+pub trait HookContexts {
+    /// ONE call for the hook `hook` (the engine's native name): the
+    /// pending messages of `urgencies` (none: no message), recorded
+    /// delivered with the wake `wake` (empty: none), then what the session
+    /// is owed, within `budget` characters. None when no session is named
+    /// or no daemon answered in time (nothing delivered; owed stays owed).
+    fn hook_context(
+        &self,
+        hook: &str,
+        urgencies: &[&str],
+        wake: &str,
+        budget: usize,
+    ) -> Option<HookCarried>;
 }
 
 impl Setup {
-    /// The setup, its hooks delivering a primary's messages through
-    /// `messages`.
+    /// The setup, its hooks carrying what the daemon answers through
+    /// `contexts`.
     #[must_use]
-    pub fn with_hook_messages(mut self, messages: Box<dyn HookMessages>) -> Setup {
-        self.hook_messages = Some(messages);
+    pub fn with_hook_contexts(mut self, contexts: Box<dyn HookContexts>) -> Setup {
+        self.hook_contexts = Some(contexts);
         self
     }
 
-    /// What the messages of `urgencies` give the session `harp`, within
-    /// `budget`, once recorded with the wake `wake`: their context (empty
-    /// when nothing was recorded).
-    fn deliver_messages(
+    /// What the hook `native` carries: the messages of `urgencies` (with
+    /// the wake `wake`) and the owed context, within `budget`; nothing
+    /// with no daemon in time.
+    pub(crate) fn carried(
         &self,
+        native: &str,
         urgencies: &[&str],
         wake: &str,
-        harp: &str,
         budget: usize,
-    ) -> String {
-        let Some(inbox) = self.hook_messages.as_deref() else {
-            return String::new();
-        };
-        // No daemon in time: nothing read, nothing recorded.
-        let Some(pending) = inbox.pending() else {
-            return String::new();
-        };
-        let delivery = messages_context(&pending, urgencies, harp, budget);
-        let something = !delivery.ids.is_empty() || !wake.is_empty();
-        if !something || !inbox.delivered(&delivery.ids, wake) {
-            return String::new();
-        }
-        delivery.context
+    ) -> HookCarried {
+        self.hook_contexts
+            .as_deref()
+            .and_then(|contexts| contexts.hook_context(native, urgencies, wake, budget))
+            .unwrap_or_default()
     }
 
-    /// A prompt's delivery: its informs and wakes' context, and whether the
-    /// prompt is to be blocked (a wake line that delivered nothing).
+    /// A prompt's answer: its informs and wakes and its owed context, and
+    /// whether the prompt is to be blocked (a wake line that delivered
+    /// nothing).
     pub(crate) fn prompt_delivery(
         &self,
         prompt: &str,
-        harp: &str,
+        native: &str,
         budget: usize,
     ) -> (String, bool) {
         let wake = run_ports::wake_nonce(prompt);
-        let context = self.deliver_messages(AT_A_PROMPT, wake.unwrap_or_default(), harp, budget);
-        let block = wake.is_some() && context.is_empty();
-        (context, block)
+        let carried = self.carried(native, AT_A_PROMPT, wake.unwrap_or_default(), budget);
+        let block = wake.is_some() && !carried.delivered;
+        (carried.context, block)
     }
 }
 

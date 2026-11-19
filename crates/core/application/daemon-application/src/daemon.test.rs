@@ -775,7 +775,6 @@ async fn observed(edge: &TestEdge) -> library_tree::TreeName {
         changes: Vec::new(),
         dirty_after: Vec::new(),
         baseline: true,
-        in_motion: None,
     };
     edge.serve(
         library_tree::observation_book(&tree, &fact),

@@ -2,14 +2,15 @@
 # NOT ported: nothing; Go read its library from disk on every call, and kept no record of it.
 
 @doc
-Feature: library changes — git holds the library, and the daemon records what changed in it, once, when a read sees it
+Feature: library changes — the daemon records what changed in a library, once, when a read sees it
 
   A library tree is a project checkout's `.ctxloom/` or the home's
   `~/.ctxloom/`. ctxloom's own content in it (`content/bundles/v2/**`,
-  `config.yaml`, `remotes.yaml`, `lock.yaml`) is a git pathspec, and git
-  holds it: ctxloom keeps no copy, no manifest and no digest of its own. A
-  tree outside git is refused, and so is a tree git ignores. Nothing under
-  `sessions/`, `state/` or `cache/` is the library.
+  `config.yaml`, `remotes.yaml`, `lock.yaml`) is the library; ctxloom keeps
+  no copy of it. DRAFT (the library is git-free, owner 2026-11-18): a
+  library works in any directory, in git or not, and whatever git ignores;
+  ctxloom asks git nothing of it. Nothing under `sessions/`, `state/` or
+  `cache/` is the library.
 
   EVERY READ OBSERVES. The daemon answers every read of the library (a
   listing, a show, a search, context assemble, a dry run, a hook's read).
@@ -23,13 +24,13 @@ Feature: library changes — git holds the library, and the daemon records what 
   nothing. Two reads that see the same change at once record it once.
 
   THE RECORD IS THIN. An observation names paths, how they changed, and the
-  commits it saw. It never holds a file's text: git has that. The record
+  hash of each file's bytes. It never holds a file's text. The record
   lets ctxloom react to a change (a running session is told; see
   cli/daemon.feature), never restore one.
 
   EACH PATH HAS A SEQUENCE. Every event in a tree's record has a sequence,
   its place in that record, and an event that names a path ties the path's
-  git id to that sequence. A path's last sequence is its tag (the etag a
+  content id to that sequence. A path's last sequence is its tag (the etag a
   preview carries; a bundle's is the latest of its files'), so a write
   planned against a path is refused as stale once anything newer has been
   recorded of it, even a change undone since. An observation, the fact a
@@ -64,15 +65,12 @@ Feature: library changes — git holds the library, and the daemon records what 
 
   OTHER TOOLS' FILES ARE NOT THE LIBRARY (L15). What materialize, `doctor
   --fix` and `manage` write (an engine's own files, at rest) is listed in
-  their command's intent, paths and git's ids, and never observed as the
-  library.
+  their command's intent, paths and content ids, in any directory, and
+  never observed as the library.
 
-  THE HOME IS A REPOSITORY TOO. When the home's `.ctxloom` is in no git
-  work tree, the daemon makes it one, once, unasked. Its `.gitignore` is an
-  allowlist, so only ctxloom's own files are ever seen and nothing else in
-  the home is tracked by accident. A home already inside a repository (a
-  dotfiles one) is used as it is. ctxloom commits nothing in a project; the
-  home's commits come with the writes (cli/atomic_writes.feature).
+  THE HOME IS NOT MADE A REPOSITORY (DRAFT, the library is git-free, owner
+  2026-11-18). The home's library is recorded wherever it is, and ctxloom
+  commits nothing, in the home or in a project: the record is the history.
 
   The records are read here with the test build's
   `ctxloom test library-events [--home] --format json`, which prints the
@@ -81,7 +79,6 @@ Feature: library changes — git holds the library, and the daemon records what 
     {"tree": "projects/<p>/checkouts/<c>/library",
      "events": [{"type": "TreeObserved", "sequence": n, "baseline": bool,
                  "head_before": "<oid>", "head_after": "<oid>",
-                 "in_motion": bool,
                  "changes": [{"path", "status", "from_path", "oid"}]},
                 {"type": "ChangeIntended", "sequence": n, "request_id": "<id>",
                  "verb": "<the CLI's verb>",
@@ -101,102 +98,65 @@ Feature: library changes — git holds the library, and the daemon records what 
   is not a read of the library: `test library-events` observes nothing.
 
   CTXLOOM'S OWN WRITES ARE INTENDED (step 10b, cli/atomic_writes.feature).
-  A write records its intent (the paths it will change and git's ids for
-  what it will write), makes its one change, and records it done. A read
+  A write records its intent (the paths it will change and the content ids
+  of what it will write), makes its one change, and records it done. A read
   that then sees those ids records nothing: the change is ctxloom's, and
-  never an outside one. A write is refused, and nothing is intended, in a
-  project outside git, where git ignores the library, or while git is in
-  the middle of an operation.
+  never an outside one. DRAFT (git-free): a write is made in any directory,
+  and whatever git is doing.
 
-  Rule: A library is in git, or it is refused
+  Rule: A library is read and recorded in any directory, in git or not
 
-    Scenario Outline: A library read in a project outside git is refused, naming git init
-      # new: G1, git is required.
+    Scenario Outline: A library read in a project outside git is answered, and its baseline recorded
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "refused, naming git init" (G1, superseded).
       Given an initialized ctxloom project outside git
       When I run "<command>"
-      Then the command exits with code 20
-      And the refusal is "library-tree-not-in-git"
-      And the output contains "git init"
-      And the file ".ctxloom/state/checkout" does not exist
+      Then the command succeeds
+      And the output does not contain "git init"
+      And the file ".ctxloom/state/checkout" exists
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events[0].baseline" as "true"
 
       Examples:
         | command                                  |
         | ctxloom bundle list                      |
         | ctxloom context assemble --format json   |
-        | ctxloom run --dry-run                    |
         | ctxloom fragment list                    |
 
-    Scenario Outline: A library git ignores is refused, naming the rule and its fix
-      # new: G1, an ignored library is refused with doctor's fix.
+    Scenario: A library git ignores is read and recorded as any other
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "refused, naming the rule and its fix" (G1, superseded).
       Given an initialized ctxloom project
       And the project already has the file ".gitignore":
         """
-        <rule>
+        .ctxloom/
         """
       When I run "ctxloom bundle list"
-      Then the command exits with code 20
-      And the refusal is "library-tree-library-ignored"
-      And the output contains ".gitignore"
-      And the output contains "<rule>"
-      And the output contains "ctxloom manage gitignore install"
-
-      Examples:
-        | rule       |
-        | .ctxloom/  |
-        | .ctxloom/* |
-
-    Scenario: A project in a subdirectory of a repository is in git
-      # new: in a work tree is enough; the repository's root need not be the project's.
-      Given an initialized ctxloom project in a subdirectory of a git repository
-      When I run "ctxloom bundle list"
       Then the command succeeds
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events[0].baseline" as "true"
 
-    Scenario: With no git on the PATH, a read fails and says why
-      # new: G11, git missing is exit 10.
+    Scenario: With no git on the PATH, a library read is answered and recorded
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "fails and says why" (G11, superseded for the library).
       Given an initialized ctxloom project
       And git is not on the PATH
       When I run "ctxloom bundle list"
-      Then the command exits with code 10
-      And the error is "library-git-git-missing"
-      And the output contains "on the PATH"
+      Then the command succeeds
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events[0].baseline" as "true"
 
-  Rule: The home is a git repository, made once, tracking ctxloom's own files alone
+  Rule: The home's library is recorded wherever it is, and is never made a repository
 
-    Scenario: The first daemon makes the home's ctxloom directory a repository that sees only ctxloom's files
-      # new: G2(a), the allowlist ignore.
+    Scenario: The first read records the home's library, and makes it no repository
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "makes the home's ctxloom directory a repository" (G2, superseded).
       Given an initialized ctxloom project
-      And the home already has the file ".ctxloom/records/2025-old.jsonl":
-        """
-        {"left": "by an older ctxloom"}
-        """
       When I run "ctxloom bundle list"
       Then the command succeeds
-      And the output contains "a git repository of ctxloom's own files"
-      And the home's ".ctxloom" is a git repository with no commit
-      And the home's file ".ctxloom/.gitignore" is exactly:
-        """
-        # ctxloom: only what is listed here is ctxloom's own, and seen by git.
-        /*
-        !/.gitignore
-        !/config.yaml
-        !/remotes.yaml
-        !/lock.yaml
-        !/content/
-        """
-      And git in the home's ".ctxloom" sees exactly these untracked files:
-        | .gitignore  |
-        | config.yaml |
-
-    Scenario: A home made a repository is made once, and its .gitignore is hers from then on
-      # new: G2, idempotent.
-      Given an initialized ctxloom project
-      And I run "ctxloom bundle list"
-      And the home's file ".ctxloom/.gitignore" has the line "!/notes.md" added by hand
-      And I run "ctxloom daemon stop"
-      When I run "ctxloom bundle list"
+      And the output does not contain "git repository"
+      And the home's file ".ctxloom/.git" does not exist
+      And the home's file ".ctxloom/.gitignore" does not exist
+      When I run "ctxloom test library-events --home --format json"
       Then the command succeeds
-      And the output does not contain "a git repository of ctxloom's own files"
-      And the home's file ".ctxloom/.gitignore" contains "!/notes.md"
+      And the output reports "tree" as "users/me/library"
+      And the output reports "events[0].baseline" as "true"
 
     Scenario: A home whose ctxloom directory is already a repository is used as it is
       # new: G2, an existing repository is never re-made.
@@ -499,29 +459,6 @@ Feature: library changes — git holds the library, and the daemon records what 
       And the output reports "events[1].changes[1].path" as "content/bundles/v2/demo/fragments/moved.md"
       And the output reports "events[1].changes[1].status" as "added"
 
-  Rule: While git is in the middle of an operation, a read records what it sees and says so
-
-    Scenario Outline: A read during a git operation is answered, recorded as in motion, and says so
-      # new: L11; a write then is refused (cli/atomic_writes.feature, 10b).
-      Given an initialized ctxloom project
-      And a bundle "demo" exists
-      And the project's changes are committed
-      And I run "ctxloom bundle list"
-      And git in the project is in the middle of <operation> on ".ctxloom/content/bundles/v2/demo/fragments/example.md"
-      When I run "ctxloom bundle list --format json"
-      Then the command succeeds
-      And the output contains "<said>"
-      When I run "ctxloom test library-events --format json"
-      Then the output reports "events" having "2" entries
-      And the output reports "events[1].in_motion" as "true"
-      And the output reports "events[1].changes[0].path" as "content/bundles/v2/demo/fragments/example.md"
-
-      Examples:
-        | operation                           | said              |
-        | a merge stopped on a conflict       | a merge           |
-        | a rebase stopped on a conflict      | a rebase          |
-        | a commit that holds the index lock  | holds the index   |
-
   Rule: A write of ctxloom's own is recorded as its intent, never as an outside change
 
     Background:
@@ -585,18 +522,18 @@ Feature: library changes — git holds the library, and the daemon records what 
       And the output reports "events[1].type" as "ChangeIntended"
       And the output reports "events[2].request_id" as the value of "events[1].request_id"
 
-  Rule: A write is refused outside git, where git ignores the library, and while git is busy
+  Rule: A write is made in any directory, and whatever git is doing
 
-    Scenario Outline: A write in a project outside git is refused, and nothing is written or intended
-      # new: G1, the write rows of the read refusal.
+    Scenario Outline: A write in a project outside git is made, and recorded as its intent
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "refused, and nothing is written or intended" (G1, superseded).
       Given an initialized ctxloom project outside git
       And a bundle "demo" exists
       When I run '<write>'
-      Then the command exits with code 20
-      And the refusal is "library-tree-not-in-git"
-      And the output contains "git init"
-      And the file ".ctxloom/<path>" does not exist
-      And the file ".ctxloom/state/checkout" does not exist
+      Then the command succeeds
+      And the file ".ctxloom/<path>" exists
+      When I run "ctxloom test library-events --format json"
+      Then the output contains "ChangeIntended"
+      And the output contains "StepApplied"
 
       Examples:
         | write                                                         | path                                         |
@@ -604,54 +541,39 @@ Feature: library changes — git holds the library, and the daemon records what 
         | ctxloom fragment create demo#fragments/rules --body "be kind" | content/bundles/v2/demo/fragments/rules.md   |
         | ctxloom profile create dev --include demo                     | content/bundles/v2/project/profiles/dev.yaml |
 
-    Scenario: A write where git ignores the library is refused, naming the rule
-      # new: G1, an ignored library is refused for a write as for a read.
+    Scenario: A write where git ignores the library is made
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "refused, naming the rule" (G1, superseded).
       Given an initialized ctxloom project
       And the project already has the file ".gitignore":
         """
         .ctxloom/
         """
       When I run 'ctxloom bundle create notes --description "my notes"'
-      Then the command exits with code 20
-      And the refusal is "library-tree-library-ignored"
-      And the file ".ctxloom/content/bundles/v2/notes/bundle.yaml" does not exist
+      Then the command succeeds
+      And the file ".ctxloom/content/bundles/v2/notes/bundle.yaml" exists
 
-    Scenario Outline: A write during a git operation is refused, and changes nothing until it ends
-      # new: L11, TreeInMotion; the read beside it is answered (the Rule above).
+    Scenario: A write while git is in the middle of a merge is made
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "refused, and changes nothing until it ends" (L11, superseded for the library).
       Given an initialized ctxloom project
       And a bundle "demo" exists
       And the project's changes are committed
       And I run "ctxloom bundle list"
-      And git in the project is in the middle of <operation> on ".ctxloom/content/bundles/v2/demo/fragments/example.md"
+      And git in the project is in the middle of a merge stopped on a conflict on ".ctxloom/content/bundles/v2/demo/fragments/example.md"
       When I run 'ctxloom fragment create demo#fragments/rules --body "be kind"'
-      Then the command exits with code 20
-      And the refusal is "library-tree-tree-in-motion"
-      And the output contains "<said>"
-      And the file ".ctxloom/content/bundles/v2/demo/fragments/rules.md" does not exist
-      When I run "ctxloom test library-events --format json"
-      Then the output does not contain "ChangeIntended"
+      Then the command succeeds
+      And the file ".ctxloom/content/bundles/v2/demo/fragments/rules.md" exists
 
-      Examples:
-        | operation                           | said              |
-        | a merge stopped on a conflict       | a merge           |
-        | a rebase stopped on a conflict      | a rebase          |
-        | a commit that holds the index lock  | holds the index   |
+  Rule: ctxloom commits nothing, in the home or in a project
 
-  Rule: ctxloom commits only in a home repository it made, one commit per write; never in a project
-
-    Scenario: A write to the home is one commit of ctxloom's own, naming the verb and its request id
-      # new: step 10 G3, the home only; QUESTIONS D (10a), a home repository ctxloom made.
+    Scenario: A write to the home commits nothing, and makes no repository
+      # new: DRAFT (the library is git-free, owner 2026-11-18): was "one commit of ctxloom's own, naming the verb and its request id" (G3, superseded).
       Given an initialized ctxloom project
       And a companion "ctxloom-companion-acme" is on PATH, not registered
       And I run "ctxloom bundle list"
       When I run "ctxloom companion add acme"
       Then the command succeeds
-      And the home's ".ctxloom" repository has exactly 1 commit
-      And the home's ".ctxloom" repository's last commit is by "ctxloom <ctxloom@localhost>"
-      And the home's ".ctxloom" repository's last commit's message is "ctxloom: companion add (<its request id>)"
-      And the home's ".ctxloom" repository's last commit changed only "config.yaml"
-      When I run "ctxloom companion remove acme --yes"
-      Then the home's ".ctxloom" repository has exactly 2 commits
+      And the home config registers the companion "acme" by name only
+      And the home's file ".ctxloom/.git" does not exist
 
     Scenario: A write in a project commits nothing there
       # new: step 10 G3, never in a project; what to commit stays hers.
@@ -707,6 +629,34 @@ Feature: library changes — git holds the library, and the daemon records what 
         | a session "brisk-copper-moth" that is still running      | UserPromptSubmit                     |
         | a session "brisk-copper-moth" that is still running      | PostToolUse, after the tool "Read"   |
         | a claude child "brisk-copper-moth" of "amber-quiet-heron" that is open and idle | UserPromptSubmit |
+
+    Scenario: A refresh that finds nothing changed records nothing and hands nothing
+      # new: DRAFT (step 10c U13 rework, `ctxloom context refresh`, owner 2026-11-18): the memo is dropped and every file hashed again; the record compares, so the same files record no event and owe no session anything.
+      Given a session "brisk-copper-moth" that is still running on the profile "dev"
+      When I run "ctxloom context refresh --format text"
+      Then the command succeeds
+      And the output contains "observed afresh"
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "1" entries
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries no additionalContext
+
+    Scenario: A refresh after a hand edit owes a live session the change, and its next hook collects it
+      # new: DRAFT (step 10c U13 rework, `ctxloom context refresh`, owner 2026-11-18): a hook trusts a scan of the last five minutes, so a hand edit is seen when something needs the tree; a refresh is that need, said out loud.
+      Given a session "brisk-copper-moth" that is still running on the profile "dev"
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Changed while it ran
+        """
+      And I run "ctxloom context refresh"
+      Then the command succeeds
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "2" entries
+      And the output reports "events[1].changes[0].path" as "content/bundles/v2/demo/fragments/example.md"
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries additionalContext containing "Changed while it ran"
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries no additionalContext
 
     Scenario: A change to its checkout's config reaches every live session of that checkout
       # new: step 10 U13, the config is in every loadout.

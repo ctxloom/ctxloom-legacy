@@ -48,9 +48,12 @@ pub(crate) fn wake_disarmed(
     }))
 }
 
-/// What a delivery records: the messages delivered, if any, and the wake its
-/// prompt redeemed, when its nonce is the outstanding wake's or the last
-/// unanswered one's (a turn that came after its wake was disarmed).
+/// What a delivery records: the messages delivered, if any (each id still
+/// pending, so a message is delivered ONCE whatever asks again: two hooks
+/// within one round both read it pending, and the second records nothing
+/// of it), and the wake its prompt redeemed, when its nonce is the
+/// outstanding wake's or the last unanswered one's (a turn that came after
+/// its wake was disarmed).
 pub(crate) fn delivered(
     held: &SessionState,
     deliver: &DeliverMessages,
@@ -59,8 +62,14 @@ pub(crate) fn delivered(
     let nonce = deliver.wake_nonce.as_str();
     let answers =
         !nonce.is_empty() && (held.wake_outstanding == nonce || held.wake_unanswered == nonce);
-    let messages = (!deliver.message_ids.is_empty()).then(|| MessagesDelivered {
-        message_ids: deliver.message_ids.clone(),
+    let pending: Vec<String> = deliver
+        .message_ids
+        .iter()
+        .filter(|id| held.pending_messages.contains(id))
+        .cloned()
+        .collect();
+    let messages = (!pending.is_empty()).then_some(MessagesDelivered {
+        message_ids: pending,
     });
     let redeemed = answers.then(|| WakeRedeemed {
         nonce: nonce.to_string(),
@@ -82,6 +91,16 @@ pub(crate) fn apply(state: &mut SessionState, event: &SessionEvent) {
         SessionEvent::WakeRedeemed(_) => {
             state.wake_outstanding.clear();
             state.wake_unanswered.clear();
+        }
+        SessionEvent::MessageSent(sent) => {
+            if !state.pending_messages.contains(&sent.message_id) {
+                state.pending_messages.push(sent.message_id.clone());
+            }
+        }
+        SessionEvent::MessagesDelivered(delivered) => {
+            state
+                .pending_messages
+                .retain(|id| !delivered.message_ids.contains(id));
         }
         _ => {}
     }

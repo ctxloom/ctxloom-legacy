@@ -158,6 +158,9 @@ pub(super) struct State {
     child_turns_before: std::collections::BTreeMap<String, usize>,
     /// The child the last tool call named.
     tool_child: Option<String>,
+    /// The part of a listed tool a step read (its input schema, or its
+    /// description as a JSON string): the coordination contract.
+    read_tool: Option<Value>,
     /// The children a step had write a file at once, and the file's name.
     writers: Vec<String>,
     written: Option<String>,
@@ -6946,6 +6949,171 @@ fn tools_are(w: &mut World, tools: String) {
         .collect();
     names.sort();
     assert_eq!(names, wanted);
+}
+
+/// The tool `name` as ctxloom's MCP server lists it to the engine of
+/// "amber-quiet-heron": its whole listing entry.
+fn listed_tool(w: &mut World, name: &str) -> Value {
+    lists_tools(w);
+    let listed = w.daemon_spec.tool.clone().expect("the tools were listed");
+    listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no tools: {listed}"))
+        .iter()
+        .find(|t| t["name"] == name)
+        .cloned()
+        .unwrap_or_else(|| panic!("no tool {name}: {listed}"))
+}
+
+#[when(regex = r#"^its engine reads the "([^"]+)" tool's (input contract|description)$"#)]
+fn reads_tool(w: &mut World, name: String, part: String) {
+    let tool = listed_tool(w, &name);
+    let read = match part.as_str() {
+        "input contract" => tool["inputSchema"].clone(),
+        _ => tool["description"].clone(),
+    };
+    assert!(!read.is_null(), "{name} has no {part}: {tool}");
+    w.daemon_spec.read_tool = Some(read);
+}
+
+#[then(regex = r#"^its "([^"]+)" argument's vocabulary is exactly:$"#)]
+fn vocabulary_exactly(w: &mut World, step: &cucumber::gherkin::Step, argument: String) {
+    let schema = w
+        .daemon_spec
+        .read_tool
+        .clone()
+        .expect("a contract was read");
+    let wanted: Vec<String> = step
+        .table
+        .as_ref()
+        .expect("a table of the words")
+        .rows
+        .iter()
+        .map(|row| row[0].trim().to_string())
+        .collect();
+    let advertised: Vec<String> = schema["properties"][&argument]["enum"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{argument} enumerates no vocabulary: {schema}"))
+        .iter()
+        .map(|word| word.as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(advertised, wanted, "{schema}");
+}
+
+#[then(regex = r"^it requires the arguments (.+)$")]
+fn requires_arguments(w: &mut World, names: String) {
+    let schema = w
+        .daemon_spec
+        .read_tool
+        .clone()
+        .expect("a contract was read");
+    let mut wanted: Vec<String> = names
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect();
+    wanted.sort();
+    let mut required: Vec<String> = schema["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("nothing required: {schema}"))
+        .iter()
+        .map(|name| name.as_str().unwrap_or_default().to_string())
+        .collect();
+    required.sort();
+    assert_eq!(required, wanted, "{schema}");
+}
+
+#[then(expr = "it says {string}")]
+fn description_says(w: &mut World, text: String) {
+    let read = w
+        .daemon_spec
+        .read_tool
+        .clone()
+        .expect("a description was read");
+    let description = read
+        .as_str()
+        .unwrap_or_else(|| panic!("not a description: {read}"));
+    assert!(description.contains(&text), "{description:?}");
+}
+
+#[when(
+    regex = r#"^the engine of "([^"]+)" calls "child_send" for "([^"]+)" with the urgency "([^"]*)" and "([^"]*)"$"#
+)]
+fn tool_send_any_urgency(
+    w: &mut World,
+    owner: String,
+    child: String,
+    urgency: String,
+    text: String,
+) {
+    w.daemon_spec.tool_child = Some(child.clone());
+    engine_calls(
+        w,
+        &owner,
+        "child_send",
+        json!({"child": child, "urgency": urgency, "text": text}),
+    );
+}
+
+#[then(expr = "no message {string} was sent to {string}")]
+fn no_message_sent(w: &mut World, text: String, harp: String) {
+    let events = session_events(w, &harp);
+    assert!(
+        !events
+            .iter()
+            .any(|e| e["type"] == "MessageSent" && e["text"] == text.as_str()),
+        "{events:?}"
+    );
+}
+
+#[then("the tool answered with the child's session, closed")]
+fn tool_answered_closed(w: &mut World) {
+    let session = tool_session(w);
+    let harp = w.daemon_spec.tool_child.clone().expect("a child was named");
+    assert_eq!(session["name"], session_name(w, &harp), "{session}");
+    assert_eq!(session["closed"], true, "{session}");
+}
+
+#[then(expr = "{string} was closed once")]
+fn closed_once(w: &mut World, harp: String) {
+    let events = session_events(w, &harp);
+    assert_eq!(count_of(&events, "SessionClosed"), 1, "{events:?}");
+}
+
+#[when(regex = r#"^the engine of "([^"]+)" calls "context_assemble" with the fragments (.+)$"#)]
+fn tool_assemble(w: &mut World, owner: String, names: String) {
+    w.before_run();
+    let bundles: Vec<String> = names
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect();
+    engine_calls(w, &owner, "context_assemble", json!({ "bundles": bundles }));
+}
+
+/// The context the last `context_assemble` call answered.
+fn assembled_context(w: &World) -> String {
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    assert_ne!(answered["isError"], true, "the tool failed: {answered}");
+    let assembled = crate::tests::mcp_serve::answered_json(&answered);
+    assembled["context"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no context: {assembled}"))
+        .to_string()
+}
+
+#[then(expr = "the tool answered with a context holding {string}")]
+fn context_holds(w: &mut World, marker: String) {
+    let context = assembled_context(w);
+    assert!(context.contains(&marker), "{context}");
+}
+
+#[then(expr = "the assembled context does not hold {string}")]
+fn context_lacks(w: &mut World, marker: String) {
+    let context = assembled_context(w);
+    assert!(!context.contains(&marker), "{context}");
 }
 
 #[when(expr = "its engine sends {string} to ctxloom's MCP server before {string}")]

@@ -9,7 +9,7 @@ use super::{
     content_for, expected, expected_step, intent_of, left_by, operation, operation_of, shape,
     Intended, Lands, Shape,
 };
-use crate::fakes::Git;
+use crate::fakes::Tree;
 
 fn put(path: &str, text: &str) -> Put {
     Put {
@@ -250,10 +250,6 @@ fn evidence() -> Evidence {
         tree_reads: true,
         plan_rejection: None,
         builtin: false,
-        in_motion: None,
-        in_git: true,
-        ignored: None,
-        root: "/work/demo".to_string(),
     }
 }
 
@@ -298,7 +294,7 @@ fn test_an_intent_names_the_content_ids_of_what_it_writes() {
 
 #[test]
 fn test_a_trash_expects_each_of_its_files_gone_and_what_is_left_is_read_back() {
-    let git = Git::at("h-0", "t-0").file("content/bundles/v2/demo/kept.md", "k");
+    let git = Tree::default().file("content/bundles/v2/demo/kept.md", "k");
     let trash = Shape::Trash {
         path: "content/bundles/v2/demo".to_string(),
         files: vec!["bundle.yaml".to_string(), "kept.md".to_string()],

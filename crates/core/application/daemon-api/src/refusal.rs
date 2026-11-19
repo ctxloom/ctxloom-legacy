@@ -652,11 +652,8 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
     let library: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
         refusal,
         [
-            library_tree::NotInGit,
-            library_tree::LibraryIgnored,
             library_tree::PlanRejected,
             // A write's (step 10b U3).
-            library_tree::TreeInMotion,
             library_tree::ResourceExists,
             library_tree::NoSuchResource,
             library_tree::BuiltinReadOnly,
@@ -681,18 +678,7 @@ pub fn library_refusal(rejection: &library_tree::LibraryTreeRejection) -> ApiRef
         )
     }
     match rejection.clone() {
-        Why::NotInGit { root } => typed(&library_tree::NotInGit { root }),
-        Why::LibraryIgnored {
-            source,
-            line,
-            pattern,
-        } => typed(&library_tree::LibraryIgnored {
-            source,
-            line,
-            pattern,
-        }),
         Why::PlanRejected { code, args } => typed(&library_tree::PlanRejected { code, args }),
-        Why::TreeInMotion { motion, root } => typed(&library_tree::TreeInMotion { motion, root }),
         Why::PlanStale { path, seen, now } => typed(&library_tree::PlanStale { path, seen, now }),
         Why::ResourceExists { path } => typed(&library_tree::ResourceExists { path }),
         Why::NoSuchResource { path } => typed(&library_tree::NoSuchResource { path }),

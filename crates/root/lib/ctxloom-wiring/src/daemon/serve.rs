@@ -894,7 +894,6 @@ fn served(
                 observers: Arc::new(super::places::CallerGits {
                     fs: Arc::clone(fs),
                     home: home.to_path_buf(),
-                    temp: temp.to_path_buf(),
                     scanner: Arc::new(super::places::TreeScanner::new(Arc::clone(fs))),
                 }),
                 // A write's change is one atomic operation (step 10b U8).
