@@ -249,11 +249,12 @@ fn changed(
         several
             if several
                 .iter()
-                .all(|change| !matches!(change, Change::Write(_))) =>
+                .all(|change| !matches!(change, Change::Write(_)))
+                && one_item(several) =>
         {
             // Several paths taken away (an item with its distilled form):
             // the sequence of their trashes (T28), each kept as a removal's
-            // is.
+            // is. Two items' are two changes (T29), refused below.
             Ok(Some(Shape::Sequence(
                 several
                     .iter()
@@ -305,6 +306,20 @@ fn changed(
             }
         }
     }
+}
+
+/// Whether `changes` are one item's paths: its file and its distilled form
+/// (`<dir>/<name>.md` beside `<dir>/<name>.distilled.md`).
+fn one_item(changes: &[Change]) -> bool {
+    let item = |change: &Change| {
+        let path = change_path(change);
+        match path.strip_suffix(".distilled.md") {
+            Some(stem) => format!("{stem}.md"),
+            None => path,
+        }
+    };
+    let first = changes.first().map(item);
+    changes.iter().all(|change| Some(item(change)) == first)
 }
 
 fn change_path(change: &Change) -> String {
