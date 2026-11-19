@@ -46,6 +46,10 @@ use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
 
 pub use tools::{tools, TOOL_NAMES};
 
+/// How long the server's runtime is given, once its input ended, to let
+/// go of what its tasks hold.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// The noun's hidden verb.
 pub const VERB: &str = "serve";
 
@@ -262,7 +266,7 @@ where
         .map_err(|e| failed(e.to_string()))?;
     let (lines, written) = std::sync::mpsc::channel::<Vec<u8>>();
     let serving = std::thread::spawn(move || {
-        runtime.block_on(async move {
+        let served = runtime.block_on(async move {
             // The terminal wake's poster, for the server's life.
             if let Some(wakes) = server.wakes.take() {
                 tokio::spawn(wake::keep_awake(Arc::clone(&server.caller), wakes));
@@ -287,7 +291,12 @@ where
                 .map_err(|e| failed(e.to_string()))?;
             running.waiting().await.map_err(|e| failed(e.to_string()))?;
             Ok(())
-        })
+        });
+        // What the wake's poster still holds (a call in flight, a blocking
+        // read) is let go within a bound, never waited on: the server ends
+        // with its input.
+        runtime.shutdown_timeout(SHUTDOWN_GRACE);
+        served
     });
     for bytes in written {
         out.write_all(&bytes)

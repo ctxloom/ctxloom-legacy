@@ -229,12 +229,18 @@ async fn a_wake_answered_before_its_time_is_not_disarmed() {
     assert_eq!(world.commands(), ["IssueWake"]);
 }
 
+// A wake the daemon refuses is never posted, and is tried again at the
+// next signal (its keepalive).
 #[tokio::test(start_paused = true)]
-async fn a_wake_the_daemon_refuses_is_never_posted() {
+async fn a_wake_the_daemon_refuses_is_never_posted_and_is_tried_again() {
     let world = started(true, false);
     world.signal(&["m1"], "");
     settle().await;
     assert_eq!(world.commands(), ["IssueWake"]);
+    assert!(world.posted().is_empty());
+    world.signal(&["m1"], "");
+    settle().await;
+    assert_eq!(world.commands(), ["IssueWake", "IssueWake"]);
     assert!(world.posted().is_empty());
 }
 

@@ -4,7 +4,8 @@
 //! session (`WatchSession`) and does what [`daemon_api::Waker`] decides with
 //! each signal: a wake due is issued (journaled), then posted on the socket
 //! and timed; one not answered in [`daemon_api::DISARM_AFTER`] is disarmed;
-//! one whose post fails is disarmed at once. A watch that ends (the daemon
+//! one whose post fails is disarmed at once; one not issued is tried again
+//! at the next signal. A watch that ends (the daemon
 //! gone) is opened again after [`WATCH_AGAIN`], the poster's state kept.
 //! Nothing here is a message: what the wake is for, the session's next
 //! prompt's hook delivers.
@@ -94,7 +95,7 @@ async fn act_on<D>(
     match act {
         Some(WakeAct::Wake(nonce)) => {
             if caller.issue_wake(&nonce).await.is_err() {
-                waker.failed(&nonce);
+                waker.not_issued(&nonce);
                 return;
             }
             match wakes.post.post(&wake_line(&nonce)) {

@@ -7370,6 +7370,11 @@ fn was_woken(w: &mut World, owner: String, text: String) {
             answered.get("decision").is_none(),
             "not blocked: {answered}"
         );
+        // Her engine's end closes the server's input: it exits, its poster
+        // with it.
+        let server = w.daemon_spec.engine.take().expect("her server");
+        let (code, err) = server.finish();
+        assert_eq!(code, 0, "her server at the end of its input: {err}");
         return;
     }
     let before = w

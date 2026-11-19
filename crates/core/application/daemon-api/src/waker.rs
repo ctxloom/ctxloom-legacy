@@ -12,6 +12,8 @@
 //!   outstanding (its turn redeemed it). The daemon's signal can lag the
 //!   issue, so the wake is cleared by a signal only once one has shown it
 //!   outstanding.
+//! - A wake the daemon did not issue is tried again at the next signal; one
+//!   whose post failed is not.
 //! - A wake outstanding at the first signal is a gone poster's (a session
 //!   has one, its MCP server, started again): disarmed.
 
@@ -37,6 +39,8 @@ pub enum WakeAct {
 struct Armed {
     nonce: String,
     seen: bool,
+    /// The ids it was the first wake for.
+    ids: Vec<String>,
 }
 
 /// One session's poster.
@@ -86,16 +90,38 @@ impl Waker {
         if !due {
             return None;
         }
-        self.woken_for.extend(signal.wakes.iter().cloned());
+        let ids: Vec<String> = signal
+            .wakes
+            .iter()
+            .filter(|id| !self.woken_for.contains(*id))
+            .cloned()
+            .collect();
+        self.woken_for.extend(ids.iter().cloned());
         let nonce = mint();
         self.armed = Some(Armed {
             nonce: nonce.clone(),
             seen: false,
+            ids,
         });
         Some(WakeAct::Wake(nonce))
     }
 
-    /// The wake `nonce` could not be issued or posted: forgotten.
+    /// The wake `nonce` was not issued (the daemon not reached, or it
+    /// refused): forgotten, and what it was for woken for again at the
+    /// next signal (the keepalive repeats it).
+    pub fn not_issued(&mut self, nonce: &str) {
+        if self.armed() != Some(nonce) {
+            return;
+        }
+        if let Some(armed) = self.armed.take() {
+            for id in &armed.ids {
+                self.woken_for.remove(id);
+            }
+        }
+    }
+
+    /// The wake `nonce` could not be posted: forgotten, its messages left
+    /// for the next prompt (a socket that is gone is not tried again).
     pub fn failed(&mut self, nonce: &str) {
         if self.armed() == Some(nonce) {
             self.armed = None;

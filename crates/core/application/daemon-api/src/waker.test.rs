@@ -99,10 +99,11 @@ fn a_wake_whose_time_ran_out_is_disarmed_and_its_messages_wait() {
     );
 }
 
-// A wake that could not be issued or posted is forgotten: nothing to
-// disarm, and its messages wait for the next prompt.
+// A wake whose post failed is forgotten: nothing to disarm, and its
+// messages wait for the next prompt (a socket that is gone is not tried
+// at every signal).
 #[test]
-fn a_wake_not_issued_is_forgotten() {
+fn a_wake_not_posted_is_forgotten() {
     let mut waker = Waker::new();
     assert!(waker.heard(&signal(&["m1"], ""), mint(N1)).is_some());
     waker.failed(N1);
@@ -131,4 +132,19 @@ fn a_wake_outstanding_later_that_is_not_ours_is_waited_out() {
     let mut waker = Waker::new();
     assert_eq!(waker.heard(&signal(&[], ""), never()), None);
     assert_eq!(waker.heard(&signal(&["m1"], N2), never()), None);
+}
+
+// A wake the daemon could not issue (not reached in time) is tried again at
+// the next signal (the keepalive repeats it), with a nonce of its own.
+#[test]
+fn a_wake_not_issued_is_tried_again_at_the_next_signal() {
+    let mut waker = Waker::new();
+    assert!(waker.heard(&signal(&["m1"], ""), mint(N1)).is_some());
+    waker.not_issued(N1);
+    assert_eq!(waker.armed(), None);
+    assert_eq!(waker.expired(N1), None);
+    assert_eq!(
+        waker.heard(&signal(&["m1"], ""), mint(N2)),
+        Some(WakeAct::Wake(N2.to_string()))
+    );
 }
