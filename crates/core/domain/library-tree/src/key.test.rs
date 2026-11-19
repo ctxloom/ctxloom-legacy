@@ -87,7 +87,6 @@ fn an_observations_book_is_a_fact_on_the_trees_stream_keyed_by_what_it_saw() {
         changes: Vec::new(),
         dirty_after: vec![dirty("a", "1")],
         baseline: false,
-        in_motion: None,
     };
     let book = observation_book(&tree, &fact);
     let cover = book.cover.unwrap();
@@ -108,4 +107,14 @@ fn an_observations_book_is_a_fact_on_the_trees_stream_keyed_by_what_it_saw() {
     )
     .unwrap();
     assert_eq!(back, fact.to_wire());
+}
+
+// Step 10c U13 rework: a content id is the SHA-256 of the bytes, in hex.
+#[test]
+fn a_content_id_is_the_sha256_of_its_bytes() {
+    assert_eq!(
+        crate::content_id(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_ne!(crate::content_id(b"abc"), crate::content_id(b"abd"));
 }

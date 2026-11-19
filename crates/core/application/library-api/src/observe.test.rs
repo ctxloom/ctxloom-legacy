@@ -10,15 +10,13 @@ use angzarr_embedded::{
     Answered, Failure, Handled, Kernel, OnRetryable, Registry, Rejected, Sampled, StoreError,
     StreamRef,
 };
-use ctxloom_ports::{IgnoreRule, Motion, PathStatus};
 use library_checkout::LibraryCheckouts;
 use library_tree::{LibraryTreeRejection, TreeName, LIBRARY_DOMAIN};
 use run_ports::{Edge, Unserved};
 use sessions::ProjectName;
 
 use super::{CheckoutHarps, Observations, ReadError, Site};
-use crate::fakes::Git;
-use crate::LibraryApiNotice;
+use crate::fakes::Tree;
 
 const BUNDLE: &str = "content/bundles/v2/demo/bundle.yaml";
 const HARP: &str = "brisk-copper-moth";
@@ -96,6 +94,10 @@ impl CheckoutHarps for Harps {
         *self.0.lock().unwrap() += 1;
         Ok(HARP.to_string())
     }
+
+    fn fresh(&self) -> String {
+        HARP.to_string()
+    }
 }
 
 fn site() -> Site {
@@ -147,7 +149,7 @@ async fn events(world: &World) -> Vec<EventPage> {
 #[tokio::test(flavor = "current_thread")]
 async fn a_first_read_records_the_baseline_and_a_read_that_sees_nothing_new_records_nothing() {
     let under = under();
-    let git = Git::at("c1", "t1");
+    let git = Tree::default();
     let observed = under.observations.observe(&git, &site()).await.unwrap();
     assert_eq!(observed.tree, tree());
     assert!(observed.notices.is_empty());
@@ -161,7 +163,8 @@ async fn a_first_read_records_the_baseline_and_a_read_that_sees_nothing_new_reco
         .cloned()
         .unwrap();
     assert!(held.baselined);
-    assert_eq!(held.head, "c1");
+    // Seen by the scanner (step 10c U13 rework): no commit is recorded.
+    assert_eq!((held.head.as_str(), held.tree.as_str()), ("", ""));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -169,12 +172,10 @@ async fn a_change_is_recorded_once_by_the_read_that_sees_it() {
     let under = under();
     under
         .observations
-        .observe(&Git::at("c1", "t1"), &site())
+        .observe(&Tree::default(), &site())
         .await
         .unwrap();
-    let edited = Git::at("c1", "t1")
-        .file(BUNDLE, "b2")
-        .says(BUNDLE, PathStatus::Modified);
+    let edited = Tree::default().file(BUNDLE, "b2");
     under.observations.observe(&edited, &site()).await.unwrap();
     under.observations.observe(&edited, &site()).await.unwrap();
     assert_eq!(events(&under.world).await.len(), 2);
@@ -195,164 +196,62 @@ async fn two_reads_that_see_one_change_against_one_state_record_it_once() {
     let under = under();
     under
         .observations
-        .observe(&Git::at("c1", "t1"), &site())
+        .observe(&Tree::default(), &site())
         .await
         .unwrap();
-    let edited = Git::at("c1", "t1")
-        .file(BUNDLE, "b2")
-        .says(BUNDLE, PathStatus::Modified);
     let held = under
         .checkouts
         .checkouts()
         .tree(&tree().root())
         .cloned()
         .unwrap();
-    let first = crate::sight(&edited, "/work/demo/.ctxloom", &tree(), &held).unwrap();
-    let second = crate::sight(&edited, "/work/demo/.ctxloom", &tree(), &held).unwrap();
-    for sight in [first, second] {
-        let fact = sight.fact.unwrap();
+    let listing = library_tree::RecordTreeListed {
+        name: tree().to_string(),
+        kind: library_tree::TreeKind::Checkout,
+        base_cause: held.last_cause.clone(),
+        files: vec![library_tree::DirtyPath {
+            path: BUNDLE.to_string(),
+            oid: "b2".to_string(),
+        }],
+    };
+    for _ in 0..2 {
         under
             .world
-            .handle(library_tree::observation_book(&tree(), &fact))
+            .handle(library_tree::listing_book(&tree(), &listing))
             .await
             .unwrap();
     }
     assert_eq!(events(&under.world).await.len(), 2);
 }
 
+// The library is git-free (owner 2026-11-18, superseding G1): a checkout
+// is named and observed wherever it is; nothing asks git.
 #[tokio::test(flavor = "current_thread")]
-async fn a_read_outside_git_is_refused_before_its_checkout_is_named() {
+async fn a_read_names_its_checkout_and_records_its_baseline() {
     let under = under();
-    let git = Git::default();
-    let refused = under.observations.observe(&git, &site()).await.unwrap_err();
-    assert!(matches!(
-        refused,
-        ReadError::Refused(LibraryTreeRejection::NotInGit { ref root }) if root == "/work/demo"
-    ));
-    assert_eq!(*under.harps.0.lock().unwrap(), 0);
-    assert_eq!(*under.world.handled.lock().unwrap(), 0);
+    let git = Tree::default().file("config.yaml", "c0");
+    under.observations.observe(&git, &site()).await.unwrap();
+    assert_eq!(*under.harps.0.lock().unwrap(), 1);
+    assert_eq!(events(&under.world).await.len(), 1);
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_read_of_a_library_git_ignores_is_refused_before_its_checkout_is_named() {
-    let under = under();
-    let mut git = Git::at("c1", "t1");
-    git.ignored = Some(IgnoreRule {
-        source: ".gitignore".to_string(),
-        line: 1,
-        pattern: ".ctxloom/".to_string(),
-    });
-    let refused = under.observations.observe(&git, &site()).await.unwrap_err();
-    assert!(matches!(
-        refused,
-        ReadError::Refused(LibraryTreeRejection::LibraryIgnored { .. })
-    ));
-    assert_eq!(*under.harps.0.lock().unwrap(), 0);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn the_home_is_observed_without_the_project_checks() {
-    let under = under();
-    let git = Git {
-        work_tree: None,
-        ..Git::at("c1", "t1")
-    };
-    let home = Site::Home {
-        tree: "/h/.ctxloom".to_string(),
-    };
-    let observed = under.observations.observe(&git, &home).await.unwrap();
-    assert_eq!(observed.tree, TreeName::home(HARP).unwrap());
-    assert!(!git.calls().iter().any(|c| c == "work_tree"));
-    assert_eq!(home.tree(), "/h/.ctxloom");
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn a_read_during_a_git_operation_says_so_naming_the_tree() {
-    let under = under();
-    let mut git = Git::at("c1", "t1");
-    git.motion = Some(Motion::Rebasing);
-    let observed = under.observations.observe(&git, &site()).await.unwrap();
-    assert_eq!(
-        observed.notices,
-        vec![LibraryApiNotice::TreeInMotion {
-            motion: Motion::Rebasing,
-            root: "/work/demo/.ctxloom".to_string(),
-        }]
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn git_failing_fails_the_read() {
+async fn a_scan_failing_fails_the_read() {
     struct Broken;
-    impl ctxloom_ports::TreeObserver for Broken {
-        fn work_tree(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-            Ok(Some("/work/demo".to_string()))
-        }
-        fn check_ignore(
+    impl ctxloom_ports::LibraryScanner for Broken {
+        fn scan(
             &self,
             _: &str,
-            _: &str,
-        ) -> Result<Option<IgnoreRule>, ctxloom_ports::TreeError> {
-            Ok(None)
+        ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+            Err(Box::new(LibraryTreeRejection::NoSuchResource {
+                path: "stand-in".to_string(),
+            }))
         }
-        fn init_repository(
-            &self,
-            _: &str,
-            _: Option<&str>,
-        ) -> Result<(), ctxloom_ports::TreeError> {
-            Ok(())
-        }
-        fn head(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-            Ok(None)
-        }
-        fn library_tree(
-            &self,
-            _: &str,
-            _: &str,
-        ) -> Result<Option<String>, ctxloom_ports::TreeError> {
-            Ok(None)
-        }
-        fn status(
+        fn content_ids(
             &self,
             _: &str,
             _: &[&str],
-        ) -> Result<Vec<ctxloom_ports::StatusEntry>, ctxloom_ports::TreeError> {
-            Ok(Vec::new())
-        }
-        fn diff_tree(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: &[&str],
-        ) -> Result<Vec<ctxloom_ports::TreeChange>, ctxloom_ports::TreeError> {
-            Ok(Vec::new())
-        }
-        fn blob_ids(
-            &self,
-            _: &str,
-            _: &[&str],
-        ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::TreeError> {
-            Ok(Default::default())
-        }
-        fn blob_id_of(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[u8],
-        ) -> Result<String, ctxloom_ports::TreeError> {
-            unreachable!("not asked")
-        }
-
-        fn in_motion(&self, _: &str) -> Result<Option<Motion>, ctxloom_ports::TreeError> {
-            Err(ctxloom_ports::TreeError::GitMissing(Box::new(
-                LibraryTreeRejection::NotInGit {
-                    root: "stand-in".to_string(),
-                },
-            )))
-        }
-
-        fn commit(&self, _: &str, _: &str, _: &[&str]) -> Result<(), ctxloom_ports::TreeError> {
+        ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
             unreachable!("not asked")
         }
     }
@@ -366,18 +265,20 @@ async fn git_failing_fails_the_read() {
     assert_eq!(*under.world.handled.lock().unwrap(), 0);
 }
 
-/// git as the caller runs it: a fresh table each read, the environment it
-/// was asked with kept.
+/// The trees a read sees: a fresh table each read, each scanner handed out
+/// counted.
 struct Callers {
-    git: Box<dyn Fn() -> Git + Send + Sync>,
+    git: Box<dyn Fn() -> Tree + Send + Sync>,
     home: Option<String>,
-    env: Mutex<Vec<Vec<(String, String)>>>,
+    scans: Arc<Mutex<usize>>,
 }
 
 impl super::Observers for Callers {
-    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
-        self.env.lock().unwrap().push(env.to_vec());
-        Box::new((self.git)())
+    fn scanner(&self) -> Arc<dyn ctxloom_ports::LibraryScanner> {
+        Arc::new(Counted {
+            tree: (self.git)(),
+            scans: Arc::clone(&self.scans),
+        })
     }
 
     fn home_tree(&self) -> Option<String> {
@@ -385,11 +286,35 @@ impl super::Observers for Callers {
     }
 }
 
-fn callers(git: impl Fn() -> Git + Send + Sync + 'static, home: Option<&str>) -> Callers {
+/// A scanner counting each scan into its callers' count.
+struct Counted {
+    tree: Tree,
+    scans: Arc<Mutex<usize>>,
+}
+
+impl ctxloom_ports::LibraryScanner for Counted {
+    fn scan(
+        &self,
+        dir: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        *self.scans.lock().unwrap() += 1;
+        self.tree.scan(dir)
+    }
+
+    fn content_ids(
+        &self,
+        dir: &str,
+        paths: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        self.tree.content_ids(dir, paths)
+    }
+}
+
+fn callers(git: impl Fn() -> Tree + Send + Sync + 'static, home: Option<&str>) -> Callers {
     Callers {
         git: Box::new(git),
         home: home.map(str::to_string),
-        env: Mutex::new(Vec::new()),
+        scans: Arc::new(Mutex::new(0)),
     }
 }
 
@@ -398,18 +323,21 @@ fn home_events_root() -> angzarr_embedded::v1::Uuid {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_read_observes_its_checkout_then_the_home_in_the_callers_environment() {
+async fn a_read_observes_its_checkout_then_the_home() {
     let under = under();
-    let callers = callers(|| Git::at("c1", "t1"), Some("/h/.ctxloom"));
-    let env = vec![("PATH".to_string(), "/usr/bin".to_string())];
+    let callers = callers(Tree::default, Some("/h/.ctxloom"));
     let project = ProjectName::new("calm-otter").unwrap();
     let notices = under
         .observations
-        .observe_read(&callers, &env, Some((project, "/work/demo")))
+        .observe_read(&callers, Some((project, "/work/demo")))
         .await
         .unwrap();
     assert!(notices.is_empty());
-    assert_eq!(*callers.env.lock().unwrap(), vec![env]);
+    assert_eq!(
+        *callers.scans.lock().unwrap(),
+        2,
+        "the checkout, then the home"
+    );
     assert_eq!(events(&under.world).await.len(), 1);
     let home = Cover {
         domain: LIBRARY_DOMAIN.to_string(),
@@ -419,139 +347,52 @@ async fn a_read_observes_its_checkout_then_the_home_in_the_callers_environment()
     assert_eq!(under.world.events(&home, 0).await.unwrap().len(), 1);
 }
 
-// G2, the home step in the daemon (step 10a U2): a home whose library is in
-// no work tree, or in one that ignores it, is made a repository of its own
-// at its first read, and the read says so; one already a repository is
-// used as it is, and nothing is said.
+// The library is git-free (owner 2026-11-18, superseding G2): a home's
+// library is observed whenever it has one, never made a repository, and
+// nothing is said.
 #[tokio::test(flavor = "current_thread")]
-async fn a_home_in_no_work_tree_or_one_git_ignores_is_made_a_repository_and_said() {
-    for git in [
-        Box::new(|| Git {
-            work_tree: None,
-            ..Git::at("c1", "t1")
-        }) as Box<dyn Fn() -> Git + Send + Sync>,
-        Box::new(|| {
-            let mut git = Git::at("c1", "t1");
-            git.work_tree = Some("/h".to_string());
-            git.ignored = Some(IgnoreRule {
-                source: "/h/.gitignore".to_string(),
-                line: 1,
-                pattern: ".ctxloom".to_string(),
-            });
-            git
-        }),
-    ] {
-        let under = under();
-        let callers = Callers {
-            git,
-            home: Some("/h/.ctxloom".to_string()),
-            env: Mutex::new(Vec::new()),
-        };
-        let said = under
-            .observations
-            .observe_read(&callers, &[], None)
-            .await
-            .unwrap();
-        assert_eq!(
-            said,
-            vec![LibraryApiNotice::HomeRepositoryMade {
-                path: "/h/.ctxloom".to_string()
-            }]
-        );
-    }
-}
-
-// G3 (owner 2026-11-18, night): the home step's init, once git holds the
-// home, is recorded on the home's stream, so its writes are committed
-// there; a second read records it no more.
-#[tokio::test(flavor = "current_thread")]
-async fn a_home_ctxloom_made_a_repository_is_recorded_made_once() {
+async fn a_home_s_library_is_observed_as_it_is_and_nothing_said() {
     let under = under();
     let callers = callers(
-        || Git {
-            work_tree: None,
-            inits_to: Some("/h/.ctxloom".to_string()),
-            ..Git::at("c1", "t1")
-        },
-        Some("/h/.ctxloom"),
-    );
-    let read = || under.observations.observe_read(&callers, &[], None);
-    read().await.unwrap();
-    let home = TreeName::home(HARP).unwrap();
-    assert!(under.observations.held(&home).home_repository_made);
-    let cover = Cover {
-        domain: LIBRARY_DOMAIN.to_string(),
-        root: Some(home_events_root()),
-        edition: None,
-    };
-    let first = under.world.events(&cover, 0).await.unwrap().len();
-    read().await.unwrap();
-    assert_eq!(under.world.events(&cover, 0).await.unwrap().len(), first);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn a_home_that_is_a_repository_already_is_used_as_it_is_and_nothing_said() {
-    let under = under();
-    let callers = callers(
-        || Git {
-            work_tree: Some("/h/.ctxloom".to_string()),
-            ..Git::at("c1", "t1")
-        },
+        || Tree::default().file("config.yaml", "c0"),
         Some("/h/.ctxloom"),
     );
     let said = under
         .observations
-        .observe_read(&callers, &[], None)
+        .observe_read(&callers, None)
         .await
         .unwrap();
     assert!(said.is_empty(), "{said:?}");
-    // G3: a repository ctxloom did not make is never committed in.
-    let home = TreeName::home(HARP).unwrap();
-    assert!(!under.observations.held(&home).home_repository_made);
+    let home = Cover {
+        domain: LIBRARY_DOMAIN.to_string(),
+        root: Some(home_events_root()),
+        edition: None,
+    };
+    assert_eq!(under.world.events(&home, 0).await.unwrap().len(), 1);
 }
 
+// The library is git-free: a checkout in no work tree and the home beside
+// it are both observed.
 #[tokio::test(flavor = "current_thread")]
-async fn a_refused_checkout_observes_no_home_and_says_why() {
-    let under = under();
-    let callers = callers(Git::default, Some("/h/.ctxloom"));
-    let project = ProjectName::new("calm-otter").unwrap();
-    let refused = under
-        .observations
-        .observe_read(&callers, &[], Some((project, "/work/demo")))
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        refused,
-        ReadError::Refused(LibraryTreeRejection::NotInGit { .. })
-    ));
-    assert_eq!(*under.world.handled.lock().unwrap(), 0);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn both_trees_say_their_motion() {
+async fn a_checkout_outside_git_and_the_home_are_both_observed() {
     let under = under();
     let callers = callers(
-        || {
-            let mut git = Git::at("c1", "t1");
-            git.motion = Some(Motion::Merging);
-            git
-        },
+        || Tree::default().file("config.yaml", "c0"),
         Some("/h/.ctxloom"),
     );
     let project = ProjectName::new("calm-otter").unwrap();
-    let notices = under
+    under
         .observations
-        .observe_read(&callers, &[], Some((project, "/work/demo/")))
+        .observe_read(&callers, Some((project, "/work/demo")))
         .await
         .unwrap();
-    let roots: Vec<String> = notices
-        .into_iter()
-        .map(|notice| match notice {
-            LibraryApiNotice::TreeInMotion { root, .. } => root,
-            other => panic!("{other:?}"),
-        })
-        .collect();
-    assert_eq!(roots, vec!["/work/demo/.ctxloom", "/h/.ctxloom"]);
+    assert_eq!(events(&under.world).await.len(), 1);
+    let home = Cover {
+        domain: LIBRARY_DOMAIN.to_string(),
+        root: Some(home_events_root()),
+        edition: None,
+    };
+    assert_eq!(under.world.events(&home, 0).await.unwrap().len(), 1);
 }
 
 #[test]
@@ -565,31 +406,6 @@ fn a_checkouts_library_is_its_ctxloom() {
             tree: "/work/demo/.ctxloom".to_string(),
         }
     );
-}
-
-// A home git does not hold (no work tree, after the home step) is not
-// observed: nothing is recorded for it.
-#[tokio::test(flavor = "current_thread")]
-async fn a_home_git_does_not_hold_is_not_observed() {
-    let under = under();
-    let callers = callers(
-        || Git {
-            work_tree: None,
-            ..Git::at("c1", "t1")
-        },
-        Some("/h/.ctxloom"),
-    );
-    under
-        .observations
-        .observe_read(&callers, &[], None)
-        .await
-        .unwrap();
-    let home = Cover {
-        domain: LIBRARY_DOMAIN.to_string(),
-        root: Some(home_events_root()),
-        edition: None,
-    };
-    assert!(under.world.events(&home, 0).await.unwrap().is_empty());
 }
 
 /// The operations port, counting the sweeps of each tree.
@@ -632,7 +448,7 @@ async fn a_tree_s_staging_is_swept_at_its_first_observation_alone() {
         Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
     )
     .sweeping(Arc::clone(&sweeps) as Arc<dyn ctxloom_ports::Operations>);
-    let git = Git::at("c1", "t1");
+    let git = Tree::default();
     observations.observe(&git, &site()).await.unwrap();
     observations.observe(&git, &site()).await.unwrap();
     let home = Site::Home {
@@ -643,23 +459,6 @@ async fn a_tree_s_staging_is_swept_at_its_first_observation_alone() {
         *sweeps.0.lock().unwrap(),
         vec!["/work/demo/.ctxloom", "/home/alice/.ctxloom"]
     );
-}
-
-// A tree a read is refused (outside git) is not touched.
-#[tokio::test(flavor = "current_thread")]
-async fn a_refused_tree_is_not_swept() {
-    let checkouts = LibraryCheckouts::default();
-    let world = World::new(&checkouts);
-    let sweeps = Arc::new(Sweeps::default());
-    let observations = Observations::new(
-        world,
-        checkouts,
-        Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
-    )
-    .sweeping(Arc::clone(&sweeps) as Arc<dyn ctxloom_ports::Operations>);
-    let refused = observations.observe(&Git::default(), &site()).await;
-    assert!(refused.is_err());
-    assert!(sweeps.0.lock().unwrap().is_empty());
 }
 
 /// The operations port, recording each slot purged.
@@ -710,7 +509,7 @@ async fn with_a_slot(
         checkouts.clone(),
         Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
     );
-    let git = Git::at("c1", "t1");
+    let git = Tree::default();
     plain.observe(&git, &site()).await.unwrap();
     let trash = crate::writes::Intended::Trash(library_tree::TrashPath {
         name: tree().to_string(),
@@ -721,10 +520,6 @@ async fn with_a_slot(
             tree_reads: true,
             plan_rejection: None,
             builtin: false,
-            in_motion: None,
-            in_git: true,
-            ignored: None,
-            root: "/work/demo".to_string(),
         },
         keep: true,
     });
@@ -762,7 +557,7 @@ async fn with_a_slot(
 #[tokio::test(flavor = "current_thread")]
 async fn a_kept_slot_seven_days_old_is_purged_at_its_tree_s_next_observation_once() {
     let (observations, purges, _world, _) = with_a_slot(8).await;
-    let git = Git::at("c1", "t1");
+    let git = Tree::default();
     observations.observe(&git, &site()).await.unwrap();
     assert_eq!(
         *purges.0.lock().unwrap(),
@@ -779,9 +574,110 @@ async fn a_kept_slot_seven_days_old_is_purged_at_its_tree_s_next_observation_onc
 async fn a_slot_younger_than_seven_days_is_kept() {
     let (observations, purges, _world, _) = with_a_slot(6).await;
     observations
-        .observe(&Git::at("c1", "t1"), &site())
+        .observe(&Tree::default(), &site())
         .await
         .unwrap();
     assert!(purges.0.lock().unwrap().is_empty());
     assert!(observations.held(&tree()).trashed.contains_key(REMOVAL));
+}
+
+// Step 10c U13 rework: a scan that finds what the record lists records
+// nothing; one of a tree never listed, or one git last saw (it held no
+// listing), or one that differs, is recorded.
+#[test]
+fn test_a_scan_is_as_held_only_against_a_listing_of_the_same_files() {
+    let files = std::collections::BTreeMap::from([(BUNDLE.to_string(), "b1".to_string())]);
+    let listed = library_tree::Library {
+        baselined: true,
+        dirty: files.clone(),
+        ..library_tree::Library::default()
+    };
+    assert!(crate::listed_as_held(&listed, &files));
+    let other = std::collections::BTreeMap::from([(BUNDLE.to_string(), "b2".to_string())]);
+    assert!(!crate::listed_as_held(&listed, &other));
+    let never = library_tree::Library {
+        baselined: false,
+        ..listed.clone()
+    };
+    assert!(!crate::listed_as_held(&never, &files));
+    let by_git = library_tree::Library {
+        head: "c1".to_string(),
+        ..listed.clone()
+    };
+    assert!(!crate::listed_as_held(&by_git, &files));
+    let by_git_tree = library_tree::Library {
+        tree: "t1".to_string(),
+        ..listed
+    };
+    assert!(!crate::listed_as_held(&by_git_tree, &files));
+    let mut taken = library_tree::Library {
+        baselined: true,
+        dirty: files.clone(),
+        ..library_tree::Library::default()
+    };
+    taken.dirty.insert("gone.md".to_string(), String::new());
+    assert!(
+        crate::listed_as_held(&taken, &files),
+        "a path held gone is absent"
+    );
+}
+
+// Step 10c U13 rework (owner, 2026-11-18): a hook's observation trusts a
+// scan of its trees within the trust window by the daemon's clock, and
+// scans nothing then; past it, or once `forget` dropped what was seen,
+// it scans again. Without a clock every hook scans.
+#[tokio::test(flavor = "current_thread")]
+async fn test_a_hook_trusts_a_scan_within_its_window_and_forget_drops_it() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let now = Arc::new(AtomicI64::new(1_000));
+    let clock = Arc::clone(&now);
+    let under = under();
+    let observations = Observations::new(
+        Arc::clone(&under.world),
+        under.checkouts.clone(),
+        Arc::clone(&under.harps) as Arc<dyn CheckoutHarps>,
+    )
+    .purging(Arc::new(move || clock.load(Ordering::SeqCst)));
+    let hooked = callers(Tree::default, None);
+    let project = || Some((ProjectName::new("calm-otter").unwrap(), "/work/demo"));
+    let scans = |callers: &Callers| *callers.scans.lock().unwrap();
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 1, "never scanned: scanned");
+    now.store(1_299, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 1, "within the window: trusted");
+    now.store(1_300, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 2, "at the window's end: scanned");
+    observations.forget(&hooked);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 3, "forgotten: scanned");
+    // A read always scans.
+    observations
+        .observe_trees(&hooked, project())
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 4);
+    // No clock: every hook scans.
+    let unclocked = callers(Tree::default, None);
+    for _ in 0..2 {
+        under
+            .observations
+            .observe_trees_trusting(&unclocked, project(), 300)
+            .await
+            .unwrap();
+    }
+    assert_eq!(scans(&unclocked), 2);
 }

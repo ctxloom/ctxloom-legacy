@@ -29,6 +29,7 @@
 //!   watches its own session and posts a wake when a message would wake it.
 
 pub mod approval;
+mod elicit;
 mod tools;
 pub mod wake;
 
@@ -143,7 +144,7 @@ where
         let arguments = request.arguments.unwrap_or_default();
         let answered = match request.name.as_ref() {
             tools::APPROVAL_PROMPT => self.prompt(&arguments, &context).await,
-            name => tools::dispatch(&self.caller, name, &arguments).await,
+            name => tools::dispatch(&self.caller, &Engine(&context), name, &arguments).await,
         };
         Ok(match answered {
             Ok(texts) => {
@@ -211,6 +212,30 @@ where
         Ok(vec![
             approval::answer_of(&settled, &input, &self.say).to_string()
         ])
+    }
+}
+
+/// The engine of a call, asked through its MCP peer (step 10c U11).
+struct Engine<'a>(&'a RequestContext<RoleServer>);
+
+impl tools::Elicit for Engine<'_> {
+    // The peer's own capability, which only a live client sets: the
+    // acceptance tests drive it (mcp_serve.feature).
+    #[cfg_attr(test, mutants::skip)]
+    fn can(&self) -> bool {
+        self.0
+            .peer
+            .supported_elicitation_modes()
+            .contains(&rmcp::service::ElicitationMode::Form)
+    }
+
+    // A request over the live transport (see above).
+    #[cfg_attr(test, mutants::skip)]
+    async fn ask(&self, params: serde_json::Value) -> Option<(String, Option<serde_json::Value>)> {
+        let params: rmcp::model::ElicitRequestParams = serde_json::from_value(params).ok()?;
+        let answered = self.0.peer.create_elicitation(params).await.ok()?;
+        let action = serde_json::to_value(&answered.action).ok()?;
+        Some((action.as_str()?.to_string(), answered.content))
     }
 }
 

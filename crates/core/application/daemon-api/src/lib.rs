@@ -58,18 +58,24 @@ mod caller;
 mod caller_wake;
 mod clean;
 mod client;
+mod deps_writes;
 mod destroy;
 mod distill;
+mod foreign;
 mod hand_off;
 mod hand_over;
+mod hook_context;
+mod init;
 pub mod launch;
 mod library_reads;
 mod library_refusals;
 pub mod library_writes;
+mod reactions;
 mod refusal;
 mod runs;
 mod server;
 mod session_client;
+mod setup_reads;
 mod shown;
 mod start_up;
 mod terminal;
@@ -89,13 +95,17 @@ pub use clean::Caches;
 pub use client::{
     newer, reconcile, reconcile_session, resolve, stop, CallError, Reconciled, SkewError,
 };
+pub use deps_writes::{DepsAnswer, DepsAsk, DepsPlanned, DepsPlans, DepsTree};
 pub use destroy::{Places, Purges};
+pub use foreign::{ForeignAnswer, ForeignAsk, ForeignPlanned, ForeignPlans, ForeignPut};
 pub use hand_off::{HandOffContent, HandOffs, HandingOff, Planned};
 pub use hand_over::HandingOver;
 pub use library_api::premise::{render_premise_index, Shown};
 pub use library_reads::{Libraries, LibraryRequest};
+pub use reactions::{Deliveries, LibraryPoll, Wake};
 pub use refusal::{
-    library_refusal, rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection,
+    deps_error, library_refusal, rejection_of, setup_error, ApiError, ApiRefusal, ApiRejection,
+    Rejection, RemovalRejection,
 };
 pub use run_ports::{wake_line, wake_nonce, WakePost};
 /// The infrastructure tree's one root (owner, 2026-11-14), for the daemon's
@@ -106,6 +116,7 @@ pub use server::{About, Answer, Api, Calls, Harps, Hosting, Observing, Parts, Se
 pub use session_client::{
     Client, LibraryReads, LibraryWrites, Removed, RequestIds, SessionReads, SessionRemovals,
 };
+pub use setup_reads::{SetupAnswer, SetupRead, SetupReads};
 pub use start_up::StartUpIncomplete;
 pub use trust::{etag_of, TrustWrites, Trusted, Trusting, Trusts, TRUST_INDEX};
 pub use waker::{WakeAct, Waker, DISARM_AFTER};

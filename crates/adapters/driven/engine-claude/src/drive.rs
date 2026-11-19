@@ -19,8 +19,8 @@
 use std::collections::BTreeMap;
 
 use run_ports::{
-    copy_in, Credentials, Engine, EngineError, HomeFile, LeftOut, PrepareRequest, Prepared,
-    SessionHome, TurnCommand, TurnOutcome, TurnOutput, TurnRequest,
+    copy_in, ContextDelivery, Credentials, Engine, EngineError, HomeFile, LeftOut, PrepareRequest,
+    Prepared, SessionHome, TurnCommand, TurnOutcome, TurnOutput, TurnRequest,
 };
 
 use surface_ports::Json;
@@ -354,6 +354,18 @@ impl Engine for Claude {
     /// The human's terminal run: no print mode, no stream, the context in
     /// the system prompt, and the prompt (when she gave one) as the
     /// conversation's opening. The command is given her terminal.
+    /// At the next prompt submitted or tool result (step 10c U13; QUESTIONS
+    /// 3(a)): the hook's context, which claude 2.1.325's hook schema takes
+    /// as `hookSpecificOutput.additionalContext` on both. It caps one
+    /// hook's additionalContext at 10,000 characters and shows the model a
+    /// preview of a longer one, which this hands over whole all the same.
+    fn deliver_context(&self, hook: &str, context: &str) -> ContextDelivery {
+        match hook {
+            "UserPromptSubmit" | "PostToolUse" => ContextDelivery::HookContext(context.to_string()),
+            _ => ContextDelivery::NotHere,
+        }
+    }
+
     fn drive_interactive(&self, request: &TurnRequest) -> Result<TurnCommand, EngineError> {
         let mut command = TurnCommand::new(program(request));
         command.args.push("--append-system-prompt-file".to_string());

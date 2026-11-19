@@ -660,6 +660,9 @@ where
                     .await)
             }
         };
+        // What its plan draws on, recorded on its session (step 10c U13).
+        self.record_loadout(&session, incarnation, &previewed.plan)
+            .await;
         let lock = match self.locks.hold(&harp) {
             Ok(lock) => lock,
             Err(lock) => {
@@ -1294,6 +1297,38 @@ where
             .await
             .map(drop)
             .map_err(|failure| RunError::Session(CoreError::from_failure(failure)))
+    }
+
+    /// The loadout of `plan` recorded as the incarnation `incarnation`'s of
+    /// the session `session` (step 10c U13; keyed by both, so it is
+    /// recorded once). Best effort: one not recorded leaves the run as it
+    /// is, and a change is told the session at no hook.
+    async fn record_loadout(
+        &self,
+        session: &str,
+        incarnation: u32,
+        plan: &library_application::DryRun,
+    ) {
+        let Ok(id) = uuid::Uuid::parse_str(session) else {
+            return;
+        };
+        let cover = Cover {
+            domain: SESSION_DOMAIN.to_string(),
+            root: Some(Uuid::from_bytes(*id.as_bytes())),
+            edition: None,
+        };
+        let agent = planned_agent(plan);
+        let fact = sessions::RecordLoadout {
+            loadout: crate::loadout_of_plan(&agent, &plan.profiles, &plan.fragments),
+            incarnation,
+            covered: Vec::new(),
+        };
+        let key = sessions::loadout_key(session, incarnation);
+        let _ = self
+            .core
+            .edge()
+            .handle(sessions::fact_book(cover, &fact, &key))
+            .await;
     }
 
     /// The run's stream holds its end.

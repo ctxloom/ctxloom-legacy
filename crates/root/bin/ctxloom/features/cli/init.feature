@@ -41,12 +41,21 @@ Feature: init — the setup interview, and what it does to a project that alread
   when conditional guidance loads, owner ruling of 2026-11-12) are
   answered before the interview.
 
-  GIT IS REQUIRED (step 10, G1). A project's library lives in git, and
-  every library command in a directory git does not hold is refused
-  (cli/library_changes.feature). So init makes the directory a git
-  repository when it is in none, unasked, and says so. It commits nothing:
-  what to commit, and when, stays hers. A directory already in a work tree,
-  the repository's root or below it, is left as it is.
+  THE LIBRARY IS GIT-FREE (owner, 2026-11-18; DRAFT text under the
+  standing ruling, replacing step 10's G1 paragraph). init asks nothing of
+  git and runs none: it makes no repository, wherever it is run, and
+  commits nothing. A directory in a work tree, or in none, is left as it
+  is.
+
+  INIT IS THE DAEMON'S (step 10c). Its questions are the daemon's preview:
+  the CLI presents them at her terminal (an output folder to type, a word
+  to choose, companions to confirm) and applies with her answers. The
+  apply creates `.ctxloom` as ONE directory, built under its own staging
+  and renamed in, so a killed init leaves no half project and its retry
+  creates it whole; the checkout is named and its baseline recorded after
+  it. Off a terminal nothing is asked, each question keeps its suggestion,
+  and what only an answer would write is not written. The interview is a
+  terminal run the daemon plans, as every `ctxloom run`.
 
   The interactive interview needs a terminal too. Off one, init resolves the
   engine and returns without launching anything, which is precisely what makes
@@ -181,20 +190,17 @@ Feature: init — the setup interview, and what it does to a project that alread
       Then the command succeeds
       And the output does not contain "[built-in"
 
-  Rule: Init makes the project a git repository when it is in none, and commits nothing
+  Rule: Init asks nothing of git and runs none
 
-    Scenario: A first init outside git runs git init, says so, and commits nothing
-      # new: step 10, G1 (owner, 2026-11-16): init runs git init unasked.
+    Scenario: A first init outside git makes no repository
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 G1's "A first init outside git runs git init, says so, and commits nothing".
       Given an empty project directory
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
       When I run "ctxloom init"
       Then the command succeeds
-      And the output contains "made this directory a git repository"
-      And the file ".git/HEAD" exists
-      And the project's git repository has no commit
+      And the output does not contain "git repository"
+      And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" exists
-      When I run "ctxloom bundle list"
-      Then the command succeeds
 
     Scenario: A first init inside a git repository runs no git init
       # new: step 10, G1; a work tree is enough.
@@ -206,26 +212,85 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" exists
 
-    Scenario: Re-running init on a project outside git makes it a repository, and leaves its configuration alone
-      # new: step 10, G1; a project from before git was required.
+    Scenario: Re-running init on a project outside git leaves it as it is
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 G1's "Re-running init on a project outside git makes it a repository, and leaves its configuration alone".
       Given an initialized ctxloom project outside git
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
       When I run "ctxloom init"
       Then the command succeeds
       And the output contains "ctxloom directory already exists"
-      And the output contains "made this directory a git repository"
-      And the file ".git/HEAD" exists
+      And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" contains "schema_version: 9"
       And the file ".ctxloom/config.yaml" does not contain "engine:"
 
-    Scenario: With no git on the PATH, init fails before it scaffolds anything
-      # new: step 10, G11; git missing is exit 10.
+    Scenario: With no git on the PATH, init still creates the project
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 G11's "With no git on the PATH, init fails before it scaffolds anything".
       Given an empty project directory
       And git is not on the PATH
       When I run "ctxloom init"
+      Then the command succeeds
+      And the file ".ctxloom/config.yaml" exists
+
+  Rule: Init is the daemon's: its preview carries the questions, and its apply creates the project whole
+
+    Scenario: Init creates .ctxloom as one directory, and that is its checkout's first record
+      # new: step 10 U6, the apply is one CreateDirectory, then the checkout and its baseline.
+      Given an empty project directory that is a git repository
+      And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
+      When I run "ctxloom init"
+      And I run "ctxloom test library-events --format json"
+      Then the command succeeds
+      And the output reports "events[0].type" as "ChangeIntended"
+      And the output reports "events[0].verb" as "init"
+      And the output reports "events[0].steps" having "1" entries
+      And the output reports "events[0].steps[0].kind" as "create"
+      And the output reports "events[1].type" as "StepApplied"
+      And the output reports "events[2].baseline" as "true"
+      And nothing is left under ".ctxloom/state/staging"
+
+    Scenario: An init killed in the middle of its scaffold leaves no half project, and its retry creates it whole
+      # new: step 10 U6 and U8; a killed init converges on its one retry.
+      Given an empty project directory that is a git repository
+      And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
+      And the daemon will be killed outright after the write is staged, before it is renamed in
+      When I run "ctxloom init"
+      Then the command succeeds
+      And the command started a new daemon and sent the write once more, under the same id
+      And the file ".ctxloom/config.yaml" exists
+      And the file ".ctxloom/remotes.yaml" contains "schema_version: 1"
+      And the file ".ctxloom/content/bundles/v2/project/profiles/default.yaml" exists
+      And nothing is left under ".ctxloom/state/staging"
+
+    Scenario: At her terminal, init asks nothing about git, and makes no repository
+      # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 U6's "At her terminal, init's preview says it will make the directory a repository, and asks nothing about it".
+      Given an empty project directory
+      And claude-code is the only engine installed, and nothing reaches the network
+      When Alice runs init at a terminal, taking every recommendation:
+        """
+        ctxloom init
+        """
+      Then init asked her nothing about git
+      And the file ".git" does not exist
+      And the file ".ctxloom/config.yaml" contains "dir: ctxloom/"
+
+    Scenario: Off a terminal, init asks nothing and writes none of what only an answer would
+      # new: step 10 U6, a question off a terminal keeps its suggestion and is not an error.
+      Given an empty project directory that is a git repository
+      And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
+      When I run "ctxloom init --format json"
+      Then the command succeeds
+      And the file ".ctxloom/config.yaml" does not contain "output:"
+      And the file ".ctxloom/config.yaml" does not contain "premised"
+
+    Scenario: An init that cannot start a daemon creates nothing, and runs no git init
+      # new: step 10 U6 and D9: init always reaches or starts the daemon; no in-process scaffold.
+      Given an empty project directory
+      And no ctxloom daemon can be started for this home
+      When I run "ctxloom init"
       Then the command exits with code 10
-      And the error is "library-git-git-missing"
-      And the file ".ctxloom/config.yaml" does not exist
+      And the output contains "no ctxloom daemon could be started"
+      And the file ".ctxloom" does not exist
+      And the file ".git" does not exist
 
   Rule: Init never takes the agent token; without one it says how to create and export it, and carries on
 
@@ -402,8 +467,8 @@ Feature: init — the setup interview, and what it does to a project that alread
 
   Rule: A first init asks its questions at the terminal, and says what it chose for the rest
 
-    Init's questions are asked in-process, on the user's own terminal, before
-    any engine is involved. Two things are not asked: init says, in one line,
+    Init's questions are the daemon's preview, asked by the CLI on the
+    user's own terminal, before any engine is involved. Two things are not asked: init says, in one line,
     that a delegation commits uncommitted work (the parent's off-branch before
     a child's worktree is carved from it, reaching the parent's branch only
     once the child has started; the child's on its own branch when its run

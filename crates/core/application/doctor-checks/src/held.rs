@@ -128,8 +128,8 @@ fn described(hold: &HoldSummary, own: &str, now: i64) -> (String, bool) {
 /// The row: `status`, `detail` and `remedy`.
 fn row(status: Status, detail: String, remedy: &str) -> Check {
     Check {
-        marker: MARKER,
-        name: NAME,
+        marker: MARKER.to_string(),
+        name: NAME.to_string(),
         status,
         detail,
         remedy: remedy.to_string(),

@@ -158,8 +158,23 @@ macro_rules! library_writes {
             delete_agent (DeleteAgent) DeleteAgentRequest => DeleteAgentResponse,
             delete_companion (DeleteCompanion) DeleteCompanionRequest => DeleteCompanionResponse,
             clean (Clean) CleanRequest => CleanResponse,
+            materialize (Materialize) MaterializeRequest => MaterializeResponse,
+            uninstall_manage (UninstallManage) UninstallManageRequest => UninstallManageResponse,
+            run_doctor (RunDoctor) RunDoctorRequest => RunDoctorResponse,
+            get_auth_status (GetAuthStatus) GetAuthStatusRequest => GetAuthStatusResponse,
+            check_manage (CheckManage) CheckManageRequest => CheckManageResponse,
+            get_init_prompt (GetInitPrompt) GetInitPromptRequest => GetInitPromptResponse,
+            install_gitignore (InstallGitignore) InstallGitignoreRequest => InstallGitignoreResponse,
+            init_project (InitProject) InitProjectRequest => InitProjectResponse,
+            install_manage (InstallManage) InstallManageRequest => InstallManageResponse,
             distill_fragment (DistillFragment) DistillFragmentRequest => DistillFragmentResponse,
             distill_command (DistillCommand) DistillCommandRequest => DistillCommandResponse,
+            create_remote (CreateRemote) CreateRemoteRequest => CreateRemoteResponse,
+            update_remote (UpdateRemote) UpdateRemoteRequest => UpdateRemoteResponse,
+            delete_remote (DeleteRemote) DeleteRemoteRequest => DeleteRemoteResponse,
+            set_default_remote (SetDefaultRemote) SetDefaultRemoteRequest => SetDefaultRemoteResponse,
+            pull_dependencies (PullDependencies) PullDependenciesRequest => PullDependenciesResponse,
+            upgrade_dependencies (UpgradeDependencies) UpgradeDependenciesRequest => UpgradeDependenciesResponse,
         }
     };
 }

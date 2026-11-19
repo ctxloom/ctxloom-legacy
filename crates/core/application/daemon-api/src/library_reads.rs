@@ -211,7 +211,6 @@ impl<E: Edge> Api<E> {
                 project
                     .as_ref()
                     .map(|(name, root)| (name.clone(), root.as_str())),
-                request.env(),
             )
             .await?;
         Ok(site)

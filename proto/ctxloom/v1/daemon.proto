@@ -547,6 +547,15 @@ service Ctxloom {
   rpc HoldDependency(HoldDependencyRequest) returns (Dependency);
   // `deps unhold`, `deps hold --undo`: the dependency, released.
   rpc ReleaseDependency(ReleaseDependencyRequest) returns (Dependency);
+  // `deps pull` (step 10c U4, protos.md §1.2): planned where the caller
+  // stands, git run in its environment, then made as ONE retryable
+  // sequence on the checkout's stream: a new directory per pinned commit's
+  // tree, each completed by its `RecordTreeInstalled`, then `lock.yaml`.
+  // A killed pull converges on its retry or its re-run.
+  rpc PullDependencies(PullDependenciesRequest) returns (PullDependenciesResponse);
+  // `deps upgrade [reference] [--yes]` (step 10c U4): as a pull; without
+  // `--yes` (`validate_only`) a preview that writes nothing.
+  rpc UpgradeDependencies(UpgradeDependenciesRequest) returns (UpgradeDependenciesResponse);
   // (-- endregion --)
 
   // (-- region config: `projects/{project}/config`, `users/me/config` (singletons) --)
@@ -568,10 +577,83 @@ service Ctxloom {
   // cache tree there into the trash (each a TrashPath of one sequence,
   // kept 7 days, G12). Additive proto extension, owner ruling 2026-11-18.
   rpc Clean(CleanRequest) returns (CleanResponse);
+  // `materialize`: `projects/{project}:materialize` (AIP-136; step 10c U10,
+  // protos.md §4.2). Planned by the daemon, then written as ONE retryable
+  // sequence: its record of what it claims first, then each other tool's
+  // file a step of its own, every one listed in the intent (L15, T26).
+  // Additive proto extension, step 10c U10.
+  rpc Materialize(MaterializeRequest) returns (MaterializeResponse);
+  // `manage uninstall`: `projects/{project}:uninstallManage` (AIP-136; step
+  // 10c U10), every engine's claims given back as `Materialize` writes.
+  // Additive proto extension, step 10c U10.
+  rpc UninstallManage(UninstallManageRequest) returns (UninstallManageResponse);
+  // `doctor`: `projects/{project}:runDoctor` (AIP-136; step 10c U10 serves
+  // its `--fix`, the stale hook entries taken out as `Materialize` writes;
+  // U5 adds the checks). Additive proto extension, step 10c U10.
+  rpc RunDoctor(RunDoctorRequest) returns (RunDoctorResponse);
+  // `auth status`: `projects/{project}:getAuthStatus` (step 10c U5, D1):
+  // each engine's credential as the caller's environment exports it, by
+  // variable name and never its value. Additive proto extension, step 10c
+  // U5.
+  // (-- api-linter: core::0131::request-name-required=disabled
+  //     aip.dev/not-precedent: a read of the caller's place, its cwd. --)
+  rpc GetAuthStatus(GetAuthStatusRequest) returns (GetAuthStatusResponse);
+  // `manage check`: `projects/{project}:checkManage` (step 10c U5): each
+  // engine's wiring read off its own files where the caller stands.
+  // Additive proto extension, step 10c U5.
+  rpc CheckManage(CheckManageRequest) returns (CheckManageResponse);
+  // `init prompt`: `projects/{project}:getInitPrompt` (step 10c U6): the
+  // setup interview as the caller's catalog holds it (owner ruling 128).
+  // Additive proto extension, step 10c U6.
+  // (-- api-linter: core::0131::request-name-required=disabled
+  //     aip.dev/not-precedent: a read of the caller's place, its cwd. --)
+  rpc GetInitPrompt(GetInitPromptRequest) returns (GetInitPromptResponse);
+  // `manage gitignore install`: `projects/{project}:installGitignore` (step
+  // 10c U5): `.ctxloom/.gitignore` written whole, one `ReplaceFile` of the
+  // project's library, when it is not what ctxloom writes. Additive proto
+  // extension, step 10c U5.
+  rpc InstallGitignore(InstallGitignoreRequest) returns (InstallGitignoreResponse);
+  // `manage install` (step 10c U6): a new project's `.ctxloom` created whole,
+  // as init creates it, for the engine asked; one there gets ctxloom's
+  // `.gitignore`. Additive.
+  rpc InstallManage(InstallManageRequest) returns (InstallManageResponse);
   // (-- endregion --)
 
   // `search`: `projects/{project}:searchLibrary` (AIP-136, stateless).
   rpc SearchLibrary(SearchLibraryRequest) returns (SearchLibraryResponse);
+  // `projects/{project}:watchLibrary` and `users/me:watchLibrary` (AIP-136,
+  // a server stream; step 10 G7, owner: the RPC now, the CLI verb later):
+  // each `TreeObserved` and `StepApplied` of the named trees (every checkout
+  // of the project, or the home), from the moment of the call, as a thin
+  // notice. Never content. The test build's `ctxloom test watch-library` is
+  // its one client. Additive (10c).
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: a daemon-folded stream of the trees' changes, as WatchTranscript's. --)
+  rpc WatchLibrary(WatchLibraryRequest) returns (stream LibraryChange);
+  // `projects/{project}/sessions/{session}:redeliverContext` (AIP-136; step
+  // 10c U13, G6/G7, protos.md §2-§3): asked by a live session's hook at its
+  // next event. When a change to what the session's loadout names is owed
+  // it, the daemon re-assembles the session's context, hands it to the
+  // session's engine's delivery (`run_ports::Engine::deliver_context`),
+  // records it in the session's record by size and SHA-256
+  // (`RecordContextRedelivered`, once per change) and answers the context the
+  // hook carries; otherwise, nothing. Additive (10c).
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: the hook's answer, a context or none. --)
+  rpc RedeliverContext(RedeliverContextRequest) returns (RedeliveredContext);
+  // `projects/{project}/sessions/{session}:deliverHookContext` (AIP-136;
+  // 10c, the lean hook RPC, owner budget 2026-11-18: under 20 ms added per
+  // hook at p95): a live session's hook asks ONCE for everything it
+  // carries, answered from the projections with no round awaited: a
+  // primary's pending messages of the urgencies asked (each recorded
+  // delivered by `DeliverMessages`, which records an id once, so two hooks
+  // within one round never deliver a message twice), then what the session
+  // is owed (as `RedeliverContext`), within what the messages left, joined
+  // by `setup_application::compose_context` under the hook's one budget.
+  // Additive (10c).
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: the hook's answer, a context or none. --)
+  rpc DeliverHookContext(DeliverHookContextRequest) returns (HookContext);
 
   // The rest of the CLI, drafted with the milestone that ports each, by
   // these rules (S33): hooks; remotes' DiscoverRemotes;
@@ -666,6 +748,11 @@ message Daemon {
   // Once it was asked to drain (`daemon stop --drain`, `ctxloom shutdown`,
   // a SIGTERM; OD-54): it takes no new call and exits once it hosts nothing.
   bool draining = 12;
+  // NEW (step 10c U13, G5(b)): the rounds its loop has finished, each of
+  // which observes the library trees a live session runs in. Told by a test
+  // build's daemon alone (the harness's "the daemon's next round runs");
+  // a count, so uint32 (OQ-12: JSON prints it as a number). Additive.
+  uint32 rounds = 13;
 }
 
 // `daemon stop [--even-if-live] [--drain]`, `ctxloom shutdown [<duration>]`.
@@ -807,6 +894,18 @@ message InitProjectResponse {
   // What the client does next: the setup session's launch, then the restart
   // offer's preview.
   Continuation then = 2;
+  // 10c U6 (additive): the project's `.ctxloom`.
+  string app_dir = 3;
+  // 10c U6 (additive): it was there already, so nothing was written (a
+  // re-run).
+  bool existed = 4;
+  // 10c U6 (additive): the id the new project was named by, for the client
+  // to bind at its root (taskloom's marker and index); empty for a re-run.
+  string project_id = 5;
+  // 10c U6 (additive): the `output.dir` an answer wrote, else empty.
+  string output_dir = 6;
+  // 10c U6 (additive): the `config.premised` an answer wrote, else empty.
+  string premised = 7;
   // On a preview, the needs a person must answer before the apply
   // (needs.proto); empty once applied.
   repeated Need needs = 90;
@@ -832,6 +931,13 @@ message AssembleContextRequest {
   repeated string fragments = 4 [(google.api.field_behavior) = OPTIONAL];
   // The tags whose fragments to load.
   repeated string tags = 5 [(google.api.field_behavior) = OPTIONAL];
+  // 10c (U13 rework, `ctxloom context refresh`; owner 2026-11-18): the
+  // daemon drops what it has seen of the trees (the scanner's hashes and
+  // when each was scanned) and observes them now, before it assembles.
+  // What differs is recorded as any read's observation; a tree that
+  // matches records nothing, and no session is marked owed by this.
+  // Additive.
+  bool refresh = 6 [(google.api.field_behavior) = OPTIONAL];
   // The caller's whole environment (S7), held in memory for the call's life.
   EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
@@ -1278,6 +1384,116 @@ message SweepSessionsResponse {
 message GetTranscriptRequest {
   // `projects/{project}/sessions/{session}/transcript`.
   string name = 1 [(google.api.field_behavior) = REQUIRED, (google.api.resource_reference).type = "ctxloom.dev/Transcript"];
+}
+
+// `ctxloom test watch-library`: watch a project's library trees, or the
+// home's (10c, G7).
+// 10c (U13): a live session's hook asks for the context it is owed.
+message RedeliverContextRequest {
+  // `projects/{project}/sessions/{session}`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The engine's native hook the context would ride (`UserPromptSubmit`,
+  // `PostToolUse`): what the engine's delivery is asked at.
+  string carried_by = 2 [(google.api.field_behavior) = REQUIRED];
+  // 10c (U13 rework): the characters of the hook's one answer this context
+  // may take, what the parts before it (the messages) left of claude's
+  // 10,000; 0 is the whole 10,000. Over it, only the changed fragments are
+  // given whole, else a pointer to `ctxloom context assemble`. Additive.
+  uint32 budget = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1): the session's checkout.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// 10c (the lean hook RPC): a live session's hook asks for all it carries.
+message DeliverHookContextRequest {
+  // `projects/{project}/sessions/{session}`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The engine's native hook the context rides (`UserPromptSubmit`,
+  // `PostToolUse`), as `RedeliverContextRequest.carried_by`.
+  string carried_by = 2 [(google.api.field_behavior) = REQUIRED];
+  // The urgencies of the pending messages this hook delivers (`inform`,
+  // `wake`); none, it delivers no message (a tool call's).
+  repeated string urgencies = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The wake the hook's prompt is (`run_ports::wake_nonce`); empty: none.
+  string wake_nonce = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The characters of the hook's one answer this context may take, what
+  // the hook's own parts before it (the skill mates line) left of claude's
+  // 10,000; 0 is the whole 10,000.
+  uint32 budget = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1): the session's checkout.
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// 10c (the lean hook RPC): what the hook carries to its engine.
+message HookContext {
+  // The messages delivered, then the owed context, joined; empty: none.
+  string context = 1;
+  // The ids of the messages THIS call recorded delivered, in the order
+  // sent (none: it delivered none, a wake line then being stale).
+  repeated string delivered = 2;
+  // The bundles (and `config`) whose change the owed context answers,
+  // sorted.
+  repeated string changed = 3;
+}
+
+// 10c (U13): what the hook carries to its engine: the re-assembled context,
+// framed, as the engine's delivery put it; empty when none is owed, or this
+// event cannot carry it (the session stays owed).
+message RedeliveredContext {
+  string context = 1;
+  // The bundles (and `config`) whose change it answers, sorted.
+  repeated string changed = 2;
+}
+
+message WatchLibraryRequest {
+  // `projects/{project}` or `users/me`.
+  string parent = 1 [(google.api.field_behavior) = REQUIRED];
+  // The caller's whole environment (S7), held in memory for the call's life.
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One recorded change of a library tree, as a thin notice: the paths and
+// how, never their content (10c, G7; G4 superseded).
+message LibraryChange {
+  // What made the change.
+  enum Cause {
+    // Not set.
+    CAUSE_UNSPECIFIED = 0;
+    // Made outside ctxloom (an editor, a commit, a checkout, a pull).
+    EXTERNAL = 1;
+    // A write of ctxloom's own (an applied step).
+    INTENDED = 2;
+  }
+  // `projects/{p}/checkouts/{c}/library` or `users/me/library`.
+  string tree = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // What made it.
+  Cause cause = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The write's id; INTENDED only.
+  string request_id = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The CLI's verb of the write; INTENDED only.
+  string verb = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // Each path changed, and how.
+  repeated ChangeSummary changes = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // When the change was recorded.
+  google.protobuf.Timestamp observed_at = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // The event's sequence in the tree's stream: every path in `changes` now
+  // has it as its etag (G4 superseded), so a watcher knows its preview is
+  // stale without a read.
+  uint64 sequence = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
+}
+
+// One path a `LibraryChange` names.
+message ChangeSummary {
+  // Relative to the library root.
+  string path = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // `added`, `modified`, `deleted`, `renamed`, `type_changed`.
+  string status = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // A rename's old path; empty otherwise.
+  string from_path = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // One D27 line, as its JSON envelope.

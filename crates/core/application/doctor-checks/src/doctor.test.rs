@@ -458,8 +458,8 @@ fn without_a_project_only_the_user_mcp_file_is_read() {
 #[test]
 fn a_report_fails_only_when_a_row_fails() {
     let row = |status| crate::Check {
-        marker: "M",
-        name: "n",
+        marker: "M".to_string(),
+        name: "n".to_string(),
         status,
         detail: String::new(),
         remedy: String::new(),
@@ -727,7 +727,7 @@ fn the_foreign_worktrees_row_is_asked_of_the_project_and_precedes_the_stated_lim
     let report = doctor(&mem, true)
         .reporting_worktrees(foreign.clone())
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(
         markers[n - 2],
@@ -769,7 +769,7 @@ fn a_doctor_reporting_stale_distilled_forms_warns_of_each_before_the_stated_limi
     let report = doctor(&mem, true)
         .reporting_stale_distilled(Box::new(|| vec!["demo#fragments/rules".to_string()]))
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(
         markers[n - 2],
@@ -797,7 +797,7 @@ fn the_companions_row_comes_just_before_the_stated_limit() {
             notices: Vec::new(),
         }))
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(
         markers[n - 2..],
@@ -860,7 +860,7 @@ fn a_doctor_reporting_the_holds_has_their_row_before_the_stated_limit() {
     let report = doctor(&mem, true)
         .reporting_holds(Arc::new(held), "v0.4.0-abc1234", 1_794_700_800)
         .report(false);
-    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
     let n = markers.len();
     assert_eq!(markers[n - 2], crate::HELD_FACTS_MARKER, "{markers:?}");
     assert_eq!(markers[n - 1], "DOCTOR-CHECK-INGESTION-q7");
@@ -877,4 +877,65 @@ fn a_doctor_reporting_the_holds_has_their_row_before_the_stated_limit() {
         .any(|c| c.marker == crate::HELD_FACTS_MARKER));
     // Doctor's json says the row as the others are said.
     assert!(!report.failed(), "a warning is advisory");
+}
+
+// Step 10c U10: a doctor writing through other files reads and writes
+// them alone, so the daemon's recording one plans its fix and writes none.
+#[test]
+fn a_doctor_writing_through_other_files_fixes_them_and_leaves_its_own() {
+    let mem = retired(project());
+    let stale =
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"ctxloom hook inject-context abc"}]}]}}"#;
+    let through = Arc::new(Mem::default());
+    for files in [&mem, &through] {
+        files
+            .files
+            .lock()
+            .unwrap()
+            .insert("/work/.claude/settings.json".to_string(), stale.to_string());
+    }
+    let doctor = doctor(&mem, true).writing_through(through.clone());
+    assert_eq!(doctor.fix().unwrap().len(), 1);
+    assert_eq!(
+        mem.files.lock().unwrap()["/work/.claude/settings.json"],
+        stale,
+        "its own files were written"
+    );
+    assert!(
+        !through.files.lock().unwrap()["/work/.claude/settings.json"].contains("inject-context")
+    );
+}
+
+// doctor.feature: "A bundle in the old metadata layout is a warning naming
+// the git mv" (step 10c U5, D15): a doctor asked for the bundles in the old
+// layout says each as it is told, its fix the move, before the stated
+// limit; one not asked has no such row.
+#[test]
+fn a_doctor_reporting_old_layouts_warns_of_each_naming_the_move() {
+    let mem = project();
+    let report = doctor(&mem, true)
+        .reporting_old_layouts(Box::new(|| {
+            vec![(
+                "demo keeps its skill metadata at old, where ctxloom no longer reads it"
+                    .to_string(),
+                "git mv old new".to_string(),
+            )]
+        }))
+        .report(false);
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker.as_str()).collect();
+    let n = markers.len();
+    assert_eq!(markers[n - 2], "DOCTOR-CHECK-SIDECARS-u4", "{markers:?}");
+    let found = row(&report, "DOCTOR-CHECK-SIDECARS-u4");
+    assert_eq!(found.status, Status::Warn);
+    assert!(
+        found.detail.contains("demo keeps its skill metadata"),
+        "{}",
+        found.detail
+    );
+    assert_eq!(found.remedy, "git mv old new");
+    let plain = doctor(&mem, true).report(false);
+    assert!(!plain
+        .checks
+        .iter()
+        .any(|c| c.marker == "DOCTOR-CHECK-SIDECARS-u4"));
 }

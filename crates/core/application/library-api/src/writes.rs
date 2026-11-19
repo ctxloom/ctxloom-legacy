@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 
 pub use ctxloom_ports::Scope;
-use ctxloom_ports::{Change, Operation, Put, TreeError, TreeObserver};
+use ctxloom_ports::{Change, Operation, Put};
 use library_application::write::recording::Planned;
 use library_tree::{
     CreateDirectory, DirtyPath, Evidence, LibraryTreeRejection, MovePath, PurgeSlot, ReplaceFile,
@@ -216,6 +216,31 @@ pub fn shape(
                 into: Some(app_dir.clone()),
             },
         ),
+        // A file of the tree's own, its scaffold's (step 10c U5): one file
+        // replaced; several are more than one change.
+        Planned::TreeFiles { files } => match &files[..] {
+            [] => Ok(None),
+            [put] => shaped(
+                Lands::Content,
+                Shape::Replace {
+                    path: put.path.clone(),
+                    bytes: put.bytes.clone(),
+                    executable: put.executable,
+                },
+            ),
+            _ => Err(LibraryTreeRejection::OneChangePerCall {
+                paths: paths_of(&one),
+            }),
+        },
+        // A tree written whole where it was not (step 10c U6: a first
+        // init's scaffold): one new directory, the tree's root itself.
+        Planned::NewTree { files } => shaped(
+            Lands::Content,
+            Shape::Create {
+                path: String::new(),
+                files: files.clone(),
+            },
+        ),
         // A tree outside ctxloom's trees is no tree's step (D2's
         // EXCEPTION): the daemon takes it aside before it shapes.
         Planned::Outside { .. } => Ok(None),
@@ -338,28 +363,28 @@ fn paths_of(planned: &Planned) -> Vec<String> {
         Planned::BundleGone { bundle } => vec![bundle.clone()],
         Planned::Changed { changes, .. } => changes.iter().map(change_path).collect(),
         Planned::Outside { dir, .. } => vec![dir.clone()],
+        Planned::TreeFiles { files } | Planned::NewTree { files } => {
+            files.iter().map(|put| put.path.clone()).collect()
+        }
         Planned::MovedInto { bundle, .. } => vec![bundle.clone()],
     }
 }
 
 /// A write's command: the step its shape is, against the token `seen` of
-/// its path, the ids git would give what it writes asked of `observer` in
-/// the tree `dir`, under `verb` and the evidence `evidence`; a sequence's
+/// its path, the content ids of what it writes (`library_tree::content_id`,
+/// step 10c U13 rework), under `verb` and the evidence `evidence`; a sequence's
 /// is a `RunSequence` of its steps (T28), its trash not kept (its last
 /// step, the purge of `request_id`'s own slot, removes it), each step on
 /// its first path judged on `seen` (the caller's etag), each other on its
 /// own path's token now (`token_now`).
-#[allow(clippy::too_many_arguments)]
 pub fn intent_of(
-    observer: &dyn TreeObserver,
-    dir: &str,
     tree: &str,
     verb: &str,
     shape: &Shape,
     (seen, token_now): (u64, &dyn Fn(&str) -> u64),
     evidence: Evidence,
     request_id: &str,
-) -> Result<Intended, TreeError> {
+) -> Intended {
     if let Shape::Sequence(shapes) = shape {
         // A sequence that purges its own slot keeps no trash (G12(a));
         // one that does not (`clean`) keeps each, as a lone removal does.
@@ -375,40 +400,34 @@ pub fn intent_of(
             } else {
                 token_now(one.path())
             };
-            let intended = one_intent(observer, dir, tree, verb, one, seen, evidence.clone())?;
+            let intended = one_intent(tree, verb, one, seen, evidence.clone());
             let mut step = intended.step(request_id);
             if let Some(trash) = step.trash.as_mut() {
                 trash.keep = keep;
             }
             steps.push(step);
         }
-        return Ok(Intended::Sequence(RunSequence {
+        return Intended::Sequence(RunSequence {
+            foreign: Vec::new(),
             name: tree.to_string(),
             verb: verb.to_string(),
             steps,
             evidence,
-        }));
+        });
     }
-    one_intent(observer, dir, tree, verb, shape, seen, evidence)
+    one_intent(tree, verb, shape, seen, evidence)
 }
 
-/// The command of one step: its shape's kind, its ids asked of `observer`.
-fn one_intent(
-    observer: &dyn TreeObserver,
-    dir: &str,
-    tree: &str,
-    verb: &str,
-    shape: &Shape,
-    seen: u64,
-    evidence: Evidence,
-) -> Result<Intended, TreeError> {
-    Ok(match shape {
+/// The command of one step: its shape's kind, its content ids.
+fn one_intent(tree: &str, verb: &str, shape: &Shape, seen: u64, evidence: Evidence) -> Intended {
+    match shape {
         Shape::Replace { path, bytes, .. } => Intended::Replace(ReplaceFile {
+            foreign: false,
             name: tree.to_string(),
             verb: verb.to_string(),
             path: path.clone(),
             seen_sequence: seen,
-            new_oid: observer.blob_id_of(dir, path, bytes)?,
+            new_oid: library_tree::content_id(bytes),
             evidence,
         }),
         Shape::Create { path, files } => {
@@ -416,7 +435,7 @@ fn one_intent(
             for put in files {
                 entries.push(DirtyPath {
                     path: put.path.clone(),
-                    oid: observer.blob_id_of(dir, &format!("{path}/{}", put.path), &put.bytes)?,
+                    oid: library_tree::content_id(&put.bytes),
                 });
             }
             Intended::Create(CreateDirectory {
@@ -449,12 +468,13 @@ fn one_intent(
         // A purge, or a sequence, is only ever a step of one ([`intent_of`]
         // makes those): alone, it is a sequence of nothing.
         Shape::Purge | Shape::Sequence(_) => Intended::Sequence(RunSequence {
+            foreign: Vec::new(),
             name: tree.to_string(),
             verb: verb.to_string(),
             steps: Vec::new(),
             evidence,
         }),
-    })
+    }
 }
 
 /// A step with none of its arms set, for one arm to be laid over.
@@ -573,7 +593,12 @@ fn expected_in_tree(step: &Step, shape: Option<&Shape>) -> Vec<DirtyPath> {
             .entries
             .iter()
             .map(|entry| DirtyPath {
-                path: format!("{}/{}", create.path, entry.path),
+                // A root create's (step 10c U6) are the tree's own paths.
+                path: if create.path.is_empty() {
+                    entry.path.clone()
+                } else {
+                    format!("{}/{}", create.path, entry.path)
+                },
                 oid: entry.oid.clone(),
             })
             .collect();
@@ -642,15 +667,15 @@ pub fn operation_of(step: &Step, shape: Option<&Shape>) -> Option<Operation> {
     operation(shape?)
 }
 
-/// What a step left, as git sees it now: each path it changed with its id
-/// there (empty where nothing is).
+/// What a step left, as the scanner sees it now: each path it changed with
+/// its content id there (empty where nothing is).
 pub fn left_by(
-    observer: &dyn TreeObserver,
+    scanner: &dyn ctxloom_ports::LibraryScanner,
     dir: &str,
     paths: &[DirtyPath],
-) -> Result<Vec<DirtyPath>, TreeError> {
+) -> Result<Vec<DirtyPath>, ctxloom_ports::Failure> {
     let asked: Vec<&str> = paths.iter().map(|p| p.path.as_str()).collect();
-    let ids: BTreeMap<String, String> = observer.blob_ids(dir, &asked)?;
+    let ids: BTreeMap<String, String> = scanner.content_ids(dir, &asked)?;
     Ok(paths
         .iter()
         .map(|p| DirtyPath {

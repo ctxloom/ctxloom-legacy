@@ -12,13 +12,12 @@ syntax = "proto3";
 // The wire is the one a oneof has (each arm its own field number), so a
 // later oneof reads every record written now. Each `in_motion` is an
 // `optional` enum (the domain layer maps a set enum alone; the wire is the
-// same). `Evidence` gains `root`, the tree's root as the application found
-// it, which `NotInGit` and `TreeInMotion` (10b's text names it) carry.
+// same).
 // `OneChangePerCall` (T29, D14) came with 10b (U3): the application refuses
 // a plan of several files before any command, and `ReplaceFile` refuses a
 // path the record knows holds several (a directory, not one file).
 //
-// THE LIBRARY: what ctxloom observed of a library TREE in git, and (from
+// THE LIBRARY: what ctxloom observed of a library TREE, and (from
 // 10b) what it intended to change there. A tree is a project checkout's
 // `.ctxloom/` or the home's `.ctxloom/`. Its content is a git pathspec
 // (L13): `content/bundles/v2/**`, `config.yaml`, `remotes.yaml`,
@@ -46,10 +45,18 @@ syntax = "proto3";
 // a client is shown and sends back. A FACT CARRIES NO SEQUENCE: it says
 // what was seen, and the sequence is the one its event is recorded at.
 //
-// A GIT OPERATION IN PROGRESS (L11): `index.lock`, `MERGE_HEAD` or a
-// `rebase-*` directory (found by `rev-parse --git-path`). A read records
-// what it sees, marked `in_motion`, and says so. A write is refused
-// `TreeInMotion` (10b).
+// THE LIBRARY IS GIT-FREE (owner 2026-11-18, superseding G1, G2, G3 and
+// L11): the daemon's scanner lists a tree's files with their content ids
+// (`RecordTreeListed`), in any directory, in git or not. Nothing here is
+// refused for git's sake, no git operation in progress is recorded, and
+// ctxloom makes no repository and no commit. RESERVED, never reused: the
+// `in_motion` fields (TreeObserved 8, RecordTreeObserved 10,
+// RecordTreeListed 5, Evidence 4), `Evidence.in_git` (5), `.ignored` (6)
+// and `.root` (7), `LibraryState.home_repository_made` (11); the messages
+// `Motion`, `RecordHomeRepositoryMade`, `TreeInMotion`, `NotInGit` and
+// `LibraryIgnored` are gone, and their names are not to be taken again.
+// `HomeRepositoryMade` (an event) stays, never emitted, so a stream that
+// holds one still replays.
 package ctxloom.library.v1;
 
 import "google/protobuf/timestamp.proto";
@@ -98,17 +105,6 @@ message DirtyPath {
   string oid = 2;
 }
 
-// Which git operation was in progress.
-enum Motion {
-  MOTION_UNSPECIFIED = 0;
-  // `index.lock` held.
-  INDEX_LOCKED = 1;
-  MERGING = 2;
-  REBASING = 3;
-  CHERRY_PICKING = 4;
-  REVERTING = 5;
-}
-
 // region state
 
 message LibraryState {
@@ -139,10 +135,16 @@ message LibraryState {
   // The sequence of the tree's last baseline: the token of every path no
   // event has named since.
   uint64 baseline_sequence = 10;
-  // 10b (G3, owner 2026-11-18, night): ctxloom made this tree a git
-  // repository of its own (`HomeRepositoryMade`), so each write to it is
-  // committed there. Only the home's is ever set. Additive.
-  bool home_repository_made = 11;
+  // Was `bool home_repository_made = 11` (G3, gone with the git-free
+  // ruling).
+  reserved 11;
+  reserved "home_repository_made";
+  // 10c (U10, L15; G4 superseded): each foreign file a foreign writer's
+  // `StepApplied` left, project-relative, at that event's sequence. A
+  // record only: never observed, so no client is given its sequence as an
+  // etag. Additive (protos.md §1.1 drafted it as 11, which 10b's
+  // `home_repository_made` took first).
+  map<string, Resource> foreign = 12;
 }
 
 // A resource's place in the record (G4 superseded): the sequence of the
@@ -185,23 +187,37 @@ message RecordTreeObserved {
   // The tree's first observation (L16): `changes` lists what was dirty
   // then, and nothing of what HEAD holds.
   bool baseline = 9;
-  // None when no git operation was in progress.
-  optional Motion in_motion = 10;
+  // Was `optional Motion in_motion = 10` (L11, gone: the library is
+  // git-free).
+  reserved 10;
+  reserved "in_motion";
 }
 
-// 10b (G3, owner 2026-11-18, night): ctxloom made the home's library a
-// git repository of its own (`git init`, the home step, G2), so its writes
-// are committed there, one commit per write. Recorded where the home step
-// ran the init; a home made before this fact existed, or one already in a
-// repository, has none, and is never committed. Keyed
-// `home-repository-made:{tree}`, so a second is a DUPLICATE. Additive.
-message RecordHomeRepositoryMade {
+// 10c (U13 rework, the scanner; owner 2026-11-18): every file of a tree's
+// library as the daemon's scanner found it walking the tree, each with its
+// content id (the SHA-256 of its bytes, ctxloom's digest; never git's).
+// The aggregate compares it with the listing its state holds and records a
+// TreeObserved of each path added, changed or gone (the first listing a
+// baseline of every file), or nothing when they match; an intent's own
+// change is attributed as a read's is. Keyed
+// `listed:{tree}:{H(base_cause)}:{H(sorted listing)}` (`listing_key`),
+// chained on the cause the scanner read so A to B to A is three. No git is
+// asked: a library observes in any directory. Additive.
+message RecordTreeListed {
   option (io.angzarr.v1.fact) = {
     component: "ctxloom.library.v1.LibraryState"
-    emits: ["ctxloom.library.v1.HomeRepositoryMade"]
+    emits: ["ctxloom.library.v1.TreeObserved"]
   };
 
   string name = 1;
+  TreeKind kind = 2;
+  // The `last_cause` the scanner read.
+  string base_cause = 3;
+  // Every file found, sorted by path, its `oid` the content id.
+  repeated DirtyPath files = 4;
+  // Was `optional Motion in_motion = 5` (gone: the library is git-free).
+  reserved 5;
+  reserved "in_motion";
 }
 
 // 10b (owner 2026-11-18, night; AIP-155): a bundle of this tree was
@@ -251,6 +267,27 @@ message RecordStepFailed {
   string ext_err_txt = 3;
 }
 
+// 10c (U4, L9): a pinned commit's tree, installed whole into the cache
+// (`cache/bundles/<segments>/<bundle>/<sha>/`, gitignored, outside the
+// pathspec), completing a `deps pull`'s or `deps upgrade`'s `CreateDirectory`
+// step in place of `RecordStepDone`. Its presence and its `.identity` marker
+// are all a read checks. Like every fact it carries ids and no sequence (G4
+// superseded). Additive.
+message RecordTreeInstalled {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.TreeInstalled"]
+  };
+
+  string request_id = 1;
+  uint32 step = 2;
+  // `<remote canonical>//bundles/<bundle>`.
+  string identity = 3;
+  string sha = 4;
+  // git's tree id of the installed tree.
+  string tree = 5;
+}
+
 // endregion
 
 // region commands (U0; first sent in 10b, U3)
@@ -264,15 +301,10 @@ message Evidence {
   optional PlanRejected plan_rejection = 2;
   // The path is the built-in bundle's (ruling 127).
   bool builtin = 3;
-  // None when no git operation is in progress.
-  optional Motion in_motion = 4;
-  // The tree is in a git work tree, and git does not ignore it (G1).
-  bool in_git = 5;
-  // When `in_git` is false because git ignores it: which rule.
-  optional LibraryIgnored ignored = 6;
-  // The tree's root as the application found it (the project's root, or
-  // the home's `.ctxloom`): what `NotInGit` names.
-  string root = 7;
+  // Were `in_motion` (4), `in_git` (5), `ignored` (6) and `root` (7), git's
+  // evidence (G1, L11; gone: the library is git-free).
+  reserved 4, 5, 6, 7;
+  reserved "in_motion", "in_git", "ignored", "root";
 }
 
 // One step of an intent: exactly one of its fields is set (a oneof on the
@@ -304,9 +336,6 @@ message ReplaceFile {
     refuses: "ctxloom.library.v1.PlanStale"
     refuses: "ctxloom.library.v1.BuiltinReadOnly"
     refuses: "ctxloom.library.v1.PlanRejected"
-    refuses: "ctxloom.library.v1.TreeInMotion"
-    refuses: "ctxloom.library.v1.NotInGit"
-    refuses: "ctxloom.library.v1.LibraryIgnored"
     refuses: "ctxloom.library.v1.OneChangePerCall"
   };
 
@@ -318,6 +347,11 @@ message ReplaceFile {
   uint64 seen_sequence = 4;
   string new_oid = 5;
   Evidence evidence = 6;
+  // 10c (U10, L15): another tool's file. `path` is then project-relative
+  // and outside the tree, and `seen_sequence` is unset and not judged;
+  // `decide` refuses one that is not a step of a foreign writer's
+  // `RunSequence` (`PlanRejected`, a bug). Additive.
+  bool foreign = 7;
 }
 
 // A new directory, staged under `state/` then renamed in, never over
@@ -329,9 +363,6 @@ message CreateDirectory {
     refuses: "ctxloom.library.v1.ResourceExists"
     refuses: "ctxloom.library.v1.BuiltinReadOnly"
     refuses: "ctxloom.library.v1.PlanRejected"
-    refuses: "ctxloom.library.v1.TreeInMotion"
-    refuses: "ctxloom.library.v1.NotInGit"
-    refuses: "ctxloom.library.v1.LibraryIgnored"
   };
 
   string name = 1;
@@ -349,9 +380,6 @@ message TrashPath {
     refuses: "ctxloom.library.v1.NoSuchResource"
     refuses: "ctxloom.library.v1.PlanStale"
     refuses: "ctxloom.library.v1.BuiltinReadOnly"
-    refuses: "ctxloom.library.v1.TreeInMotion"
-    refuses: "ctxloom.library.v1.NotInGit"
-    refuses: "ctxloom.library.v1.LibraryIgnored"
   };
 
   string name = 1;
@@ -392,9 +420,6 @@ message MovePath {
     refuses: "ctxloom.library.v1.NoSuchResource"
     refuses: "ctxloom.library.v1.ResourceExists"
     refuses: "ctxloom.library.v1.PlanStale"
-    refuses: "ctxloom.library.v1.TreeInMotion"
-    refuses: "ctxloom.library.v1.NotInGit"
-    refuses: "ctxloom.library.v1.LibraryIgnored"
   };
 
   string name = 1;
@@ -421,15 +446,14 @@ message RunSequence {
     emits: ["ctxloom.library.v1.ChangeIntended"]
     refuses: "ctxloom.library.v1.PlanStale"
     refuses: "ctxloom.library.v1.PlanRejected"
-    refuses: "ctxloom.library.v1.TreeInMotion"
-    refuses: "ctxloom.library.v1.NotInGit"
-    refuses: "ctxloom.library.v1.LibraryIgnored"
   };
 
   string name = 1;
   string verb = 2;
   repeated Step steps = 3;
   Evidence evidence = 4;
+  // 10c (U10, L15): the other tools' files its steps write. Additive.
+  repeated ForeignFile foreign = 5;
 }
 
 // endregion
@@ -461,8 +485,9 @@ message TreeObserved {
   repeated DirtyPath dirty_after = 5;
   string tree_after = 6;
   bool baseline = 7;
-  // None when no git operation was in progress.
-  optional Motion in_motion = 8;
+  // Was `optional Motion in_motion = 8` (gone: the library is git-free).
+  reserved 8;
+  reserved "in_motion";
 }
 
 // 10b: an intent, as recorded.
@@ -474,6 +499,21 @@ message Intent {
   string base_cause = 4;
   // The steps done so far.
   uint32 done = 5;
+  // 10c (U10, L15): what else the command writes, in its own steps
+  // (materialize, doctor --fix, manage install|uninstall, bundle move --to
+  // <remote>). Additive.
+  repeated ForeignFile foreign = 6;
+}
+
+// 10c (U10, L15, T26): a file of another tool's that a command writes (an
+// engine's own config, context file or hooks, at rest), relative to the
+// PROJECT's root, with git's id for what it will write (`hash-object
+// --path`, not written to the object store). Never reconciled: the tree's
+// pathspec excludes it.
+message ForeignFile {
+  string path = 1;
+  // Absent for a file the command removes.
+  string new_oid = 2;
 }
 
 // 10b (U8): what a trash slot holds.
@@ -521,8 +561,9 @@ message BundleExported {
   string destination = 4;
 }
 
-// 10b (G3): the home's library is a repository ctxloom made; `apply` sets
-// `home_repository_made`. Additive.
+// 10b (G3, gone with the git-free ruling, owner 2026-11-18): the home's
+// library was a repository ctxloom made. RESERVED: never emitted again,
+// and applied as nothing; kept so a stream a 10b daemon wrote replays.
 message HomeRepositoryMade {
   option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
   string name = 1;
@@ -533,6 +574,19 @@ message IntentSuperseded {
   option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
   string request_id = 1;
   string by_cause = 2;
+}
+
+// 10c (U4, L9): `RecordTreeInstalled`, recorded at a sequence: `apply` sets
+// `resources["cache/bundles/<segments>/<bundle>/<sha>"]` to `{that sequence,
+// tree}`. The cache is immutable by sha, so no client compares a token
+// against it. Additive.
+message TreeInstalled {
+  option (io.angzarr.v1.event) = {component: "ctxloom.library.v1.LibraryState"};
+  string request_id = 1;
+  uint32 step = 2;
+  string identity = 3;
+  string sha = 4;
+  string tree = 5;
 }
 
 // endregion
@@ -599,35 +653,6 @@ message PlanRejected {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
   string code = 1;
   map<string, string> args = 2;
-}
-
-// `library-tree-tree-in-motion` (L11).
-message TreeInMotion {
-  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
-  Motion motion = 1;
-  // The tree's root, as `Evidence.root` named it.
-  string root = 2;
-}
-
-// The tree is in no git work tree (G1). `library-tree-not-in-git`. A READ
-// is refused with this same message (daemon.proto §2), so a person sees
-// one code whether they read or write.
-message NotInGit {
-  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
-  // The project's root, or the home's `.ctxloom`.
-  string root = 1;
-}
-
-// Git ignores the library (G1): `git check-ignore -v` of the tree's
-// `config.yaml`. `library-tree-library-ignored`. A read is refused with it
-// too. Added to U0's list: the plan names the condition, not the message.
-message LibraryIgnored {
-  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
-  // The ignore file, relative to the repository's root (`.gitignore`,
-  // `.git/info/exclude`, or the global excludes file's path).
-  string source = 1;
-  uint32 line = 2;
-  string pattern = 3;
 }
 
 // endregion

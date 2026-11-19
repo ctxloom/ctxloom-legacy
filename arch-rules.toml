@@ -21,8 +21,8 @@ dev_checked = ["adapters/driven", "adapters/driving"]
 # CLI and the server both write through.
 presentation = ["presentation", "*-presentation"]
 # Shared infrastructure crates every driven adapter may use, listed by name
-# (step 10, G9: git-cli, the one git runner of remote-git, worktree-git and
-# library-git).
+# (step 10, G9: git-cli, the one git runner of remote-git and
+# worktree-git).
 support = ["git-cli"]
 
 [roles."core/wire"]

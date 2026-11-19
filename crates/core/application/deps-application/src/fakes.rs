@@ -283,6 +283,23 @@ impl Remotes for FakeRemotes {
         })
     }
 
+    /// A stand-in for git's id (no fake computes one): the commit and the
+    /// bundle's path, where that commit has the bundle.
+    fn bundle_tree(&self, repo: &Repository, sha: &str, bundle: &str) -> Result<String, Why> {
+        let url = repo.url.as_str();
+        self.cloned(url, |repo| {
+            let commit = repo
+                .tree_at(sha)
+                .ok_or_else(|| format!("bad object {sha}"))?;
+            let prefix = format!("{BUNDLES}/{bundle}/");
+            if commit.files.keys().any(|path| path.starts_with(&prefix)) {
+                Ok(format!("tree:{sha}:{bundle}"))
+            } else {
+                Err(format!("no tree {prefix} at {sha}"))
+            }
+        })
+    }
+
     fn list_bundles(&self, repo: &Repository) -> Result<Vec<String>, Why> {
         let url = repo.url.as_str();
         self.cloned(url, |repo| {

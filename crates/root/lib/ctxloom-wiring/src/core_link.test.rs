@@ -621,7 +621,6 @@ async fn an_observation_through_the_edge_is_answered_by_the_library_checkout() {
             oid: "y1".to_string(),
         }],
         baseline: true,
-        in_motion: None,
     };
     let book = library_tree::observation_book(&tree, &fact);
     let synced = core

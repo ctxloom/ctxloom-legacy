@@ -14,7 +14,7 @@ use sessions::{
     SessionAggregate, SessionCommand, SetKept, SESSION_DOMAIN,
 };
 
-use super::{SessionIndex, SessionIndexes, SessionRecord};
+use super::{OwedChange, SessionIndex, SessionIndexes, SessionRecord};
 
 type Index = CatchUp<SessionIndexes>;
 
@@ -1066,4 +1066,212 @@ fn the_resource_carries_the_binding_places_and_rotations() {
             }),
         }]
     );
+}
+
+// Step 10c U13: a session's record carries the loadout its stream last
+// recorded (a later incarnation's replaces an earlier one's), none before
+// one is, and none of another session's.
+#[test]
+fn a_record_carries_the_loadout_its_session_last_recorded() {
+    let loadout = |profile: &str| sessions::SessionLoadout {
+        agent: String::new(),
+        profiles: vec![profile.to_string()],
+        bundles: vec![format!("{profile}-bundle")],
+    };
+    let recorded = |id: u8, n: u32, profile: &str| {
+        let payload = wire(&sessions::RecordLoadout {
+            loadout: loadout(profile),
+            incarnation: n,
+            covered: Vec::new(),
+        });
+        fact(id, payload, &format!("loadout:{id}:{n}"))
+    };
+    let mut project = Project::new();
+    let mut index = SessionIndex::catch_up();
+    project.run(&mut index, FIRST, mint("amber-swift-owl"));
+    project.run(&mut index, SECOND, mint("brisk-copper-moth"));
+    let of = |index: &Index, harp: &str| {
+        index
+            .projector()
+            .index()
+            .find(harp)
+            .and_then(|record| record.loadout)
+    };
+    assert_eq!(of(&index, "amber-swift-owl"), None);
+    project.run_book(&mut index, recorded(FIRST, 1, "dev"));
+    assert_eq!(of(&index, "amber-swift-owl"), Some(loadout("dev")));
+    project.run_book(&mut index, recorded(FIRST, 2, "review"));
+    assert_eq!(of(&index, "amber-swift-owl"), Some(loadout("review")));
+    assert_eq!(of(&index, "brisk-copper-moth"), None);
+    assert_eq!(
+        of(&project.rebuilt(), "amber-swift-owl"),
+        Some(loadout("review")),
+        "caught up afresh, as another process's index"
+    );
+    // Its context, as of its last loadout: recorded at the Project's clock
+    // (the second loadout at 104), covering no position yet.
+    let handed = |index: &Index, harp: &str| {
+        index
+            .projector()
+            .index()
+            .find(harp)
+            .and_then(|record| record.context)
+    };
+    assert_eq!(
+        handed(&index, "amber-swift-owl").map(|h| h.loaded_at.seconds),
+        Some(104)
+    );
+    assert_eq!(handed(&index, "brisk-copper-moth"), None);
+    // Purged and minted again: nothing of the old stream's loadout is left.
+    project.purge(FIRST);
+    project.run(&mut index, FIRST, mint("bright-keen-hawk"));
+    assert_eq!(of(&index, "bright-keen-hawk"), None);
+    assert_eq!(
+        index
+            .projector()
+            .index()
+            .find("bright-keen-hawk")
+            .and_then(|record| record.context),
+        None
+    );
+}
+
+/// A position of `tree` at `sequence`.
+fn at(tree: &str, sequence: u64) -> sessions::TreePosition {
+    sessions::TreePosition {
+        tree: tree.to_string(),
+        sequence,
+    }
+}
+
+// Step 10c U13 rework: a session's owed changes are folded from its own
+// stream, past the positions its context covers; a re-assembly covers what
+// it names and no more, so a change recorded while it was being handed
+// (past its positions) stays owed (the old wall-clock mark lost it).
+#[test]
+fn test_a_session_is_owed_each_change_past_what_its_context_covers() {
+    const TREE: &str = "projects/p/checkouts/c/library";
+    const HOME: &str = "users/me/library";
+    let mut project = Project::new();
+    let mut index = SessionIndex::catch_up();
+    project.run(&mut index, FIRST, mint("amber-swift-owl"));
+    let loadout = wire(&sessions::RecordLoadout {
+        loadout: sessions::SessionLoadout {
+            agent: "a".to_string(),
+            profiles: Vec::new(),
+            bundles: vec!["demo".to_string()],
+        },
+        incarnation: 1,
+        covered: vec![at(TREE, 3)],
+    });
+    project.run_book(&mut index, fact(FIRST, loadout, "loadout:1:1"));
+    let owed = |tree: &str, sequence: u64, bundles: &[&str]| {
+        let payload = wire(&sessions::RecordContextOwed {
+            tree: tree.to_string(),
+            sequence,
+            bundles: bundles.iter().map(|b| b.to_string()).collect(),
+            paths: bundles.iter().map(|b| format!("{b}.md")).collect(),
+        });
+        fact(
+            FIRST,
+            payload,
+            &format!("owed:{tree}@{sequence}:{}", bundles.join("+")),
+        )
+    };
+    let handed = |index: &Index| {
+        index
+            .projector()
+            .index()
+            .find("amber-swift-owl")
+            .and_then(|record| record.context)
+            .expect("its context")
+    };
+    assert_eq!(handed(&index).covered.get(TREE), Some(&3));
+    // At or below its covered position: not owed.
+    project.run_book(&mut index, owed(TREE, 3, &["demo"]));
+    assert!(handed(&index).owed.is_empty(), "{:?}", handed(&index));
+    project.run_book(&mut index, owed(TREE, 4, &["demo"]));
+    project.run_book(&mut index, owed(TREE, 4, &["config"]));
+    project.run_book(&mut index, owed(HOME, 2, &["demo"]));
+    // Recorded out of order (two streams' books): the latest still counts.
+    project.run_book(&mut index, owed(HOME, 1, &["demo"]));
+    assert_eq!(
+        handed(&index).owed_positions(),
+        vec![at(TREE, 4), at(HOME, 2)],
+        "each tree's latest, sorted by tree"
+    );
+    assert_eq!(handed(&index).owed_bundles(), vec!["config", "demo"]);
+    assert_eq!(
+        handed(&index).owed_paths(),
+        [(TREE, "config.md"), (TREE, "demo.md"), (HOME, "demo.md")]
+            .map(|(t, p)| (t.to_string(), p.to_string()))
+            .to_vec(),
+        "every path owed, with its tree, sorted, its merges included"
+    );
+    // A delivery of the batch read so far: a change recorded meanwhile
+    // (sequence 5) is past what it covers, and stays owed.
+    project.run_book(&mut index, owed(TREE, 5, &["demo"]));
+    let delivered = wire(&sessions::RecordContextRedelivered {
+        bundles: vec!["config".to_string(), "demo".to_string()],
+        cause: String::new(),
+        size: 1,
+        sha256: String::new(),
+        carried_by: "UserPromptSubmit".to_string(),
+        covered: vec![at(TREE, 4), at(HOME, 2)],
+    });
+    project.run_book(&mut index, fact(FIRST, delivered, "reinject:1:a"));
+    let now = handed(&index);
+    assert_eq!(now.covered.get(TREE), Some(&4));
+    assert_eq!(now.covered.get(HOME), Some(&2));
+    assert_eq!(
+        now.owed,
+        vec![OwedChange {
+            tree: TREE.to_string(),
+            sequence: 5,
+            bundles: vec!["demo".to_string()],
+            paths: vec!["demo.md".to_string()],
+        }]
+    );
+    // A later incarnation's loadout is a fresh assembly: nothing owed.
+    let again = wire(&sessions::RecordLoadout {
+        loadout: sessions::SessionLoadout {
+            agent: "a".to_string(),
+            profiles: Vec::new(),
+            bundles: Vec::new(),
+        },
+        incarnation: 2,
+        covered: vec![at(TREE, 5)],
+    });
+    project.run_book(&mut index, fact(FIRST, again, "loadout:1:2"));
+    assert!(handed(&index).owed.is_empty());
+    assert_eq!(
+        project
+            .rebuilt()
+            .projector()
+            .index()
+            .find("amber-swift-owl")
+            .and_then(|record| record.context)
+            .map(|h| h.covered),
+        Some([(TREE.to_string(), 5)].into_iter().collect()),
+        "caught up afresh, as another process's index"
+    );
+}
+
+// A context covering a position of a tree is owed what is past it there;
+// covering none, what was recorded after its loadout.
+#[test]
+fn test_a_context_owes_past_its_position_else_after_its_loadout() {
+    let handed = super::Handed {
+        loaded_at: Timestamp {
+            seconds: 100,
+            nanos: 0,
+        },
+        covered: [("t".to_string(), 4)].into_iter().collect(),
+        owed: Vec::new(),
+    };
+    let at = |seconds| Timestamp { seconds, nanos: 0 };
+    assert!(handed.owes("other", 1, at(101)));
+    assert!(!handed.owes("other", 1, at(100)));
+    assert!(!handed.owes("t", 4, at(i64::MAX)));
+    assert!(handed.owes("t", 5, at(0)));
 }

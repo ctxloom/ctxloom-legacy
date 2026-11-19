@@ -35,6 +35,66 @@ pub struct LibraryCheckout {
     /// Every export recorded, by its request id (AIP-155), with its tree's
     /// root: what an export's retry is answered with.
     exports: BTreeMap<String, (Vec<u8>, library_tree::BundleExported)>,
+    /// Who is told each change as it is recorded (step 10c U13 rework,
+    /// `WatchLibrary`): no log is kept; a watcher is told what is recorded
+    /// from when it watched, and woken by its own signal.
+    watchers: std::sync::Mutex<Vec<Watcher>>,
+    /// Each tree's last sequence told, by its root, so a stream folded
+    /// afresh (a catch-up) tells nothing twice.
+    logged: BTreeMap<Vec<u8>, u64>,
+    /// The place of the last change told.
+    last: u64,
+}
+
+/// What wakes a watcher once a change is told it: the catch-up's signal.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// One watcher: where its changes go, and what wakes it.
+struct Watcher {
+    told: std::sync::mpsc::Sender<Recorded>,
+    wake: Wake,
+}
+
+/// One recorded change of a tree (step 10c U13, G7; protos.md §4.1): a
+/// `TreeObserved` or a `StepApplied`, as a thin notice. Never content.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recorded {
+    /// Its place in the log, from 1.
+    pub at: u64,
+    /// `projects/{p}/checkouts/{c}/library` or `users/me/library`.
+    pub tree: String,
+    /// The event's sequence in its tree's stream: each path's new token.
+    pub sequence: u64,
+    /// The cause the event records (an observation's external id, a
+    /// step's fact's).
+    pub cause: String,
+    /// ctxloom's own write: its request id and verb; none for an outside
+    /// change.
+    pub intended: Option<(String, String)>,
+    pub changes: Vec<Changed>,
+    /// When it was recorded, seconds and nanos since the epoch.
+    pub recorded_at: (i64, i32),
+}
+
+/// One path of a [`Recorded`] change.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Changed {
+    pub path: String,
+    /// `added`, `modified`, `deleted`, `renamed`, `type_changed`.
+    pub status: String,
+    /// A rename's old path.
+    pub from_path: String,
+}
+
+/// A change's status as a notice says it.
+fn status_text(status: library_tree::ChangeStatus) -> &'static str {
+    match status {
+        library_tree::ChangeStatus::Added => "added",
+        library_tree::ChangeStatus::Modified => "modified",
+        library_tree::ChangeStatus::Deleted => "deleted",
+        library_tree::ChangeStatus::Renamed => "renamed",
+        library_tree::ChangeStatus::TypeChanged => "type_changed",
+    }
 }
 
 /// An intent as the record holds it, by its request id: its tree's root,
@@ -57,6 +117,50 @@ pub enum End {
     Failed,
     /// Superseded before it was done.
     Superseded,
+}
+
+/// The paths `event` changes, as a notice says them, judged against `row`
+/// as it was before it: an observation's changes as git saw them, a step's
+/// paths each added, modified or deleted by what the record held there.
+/// None for an event that changes no path.
+fn changes_of(row: &Library, event: &LibraryEvent) -> Option<Vec<Changed>> {
+    match event {
+        LibraryEvent::TreeObserved(observed) => Some(
+            observed
+                .changes
+                .iter()
+                .map(|change| Changed {
+                    path: change.path.clone(),
+                    status: status_text(change.status).to_string(),
+                    from_path: change.from_path.clone(),
+                })
+                .collect(),
+        ),
+        LibraryEvent::StepApplied(applied) => Some(
+            applied
+                .observed
+                .iter()
+                .map(|path| {
+                    let was = row
+                        .resources
+                        .get(&path.path)
+                        .is_some_and(|resource| !resource.oid.is_empty())
+                        || row.dirty.get(&path.path).is_some_and(|oid| !oid.is_empty());
+                    let status = match (path.oid.is_empty(), was) {
+                        (true, _) => "deleted",
+                        (false, true) => "modified",
+                        (false, false) => "added",
+                    };
+                    Changed {
+                        path: path.path.clone(),
+                        status: status.to_string(),
+                        from_path: String::new(),
+                    }
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 fn root_of(cover: Option<&Cover>) -> Vec<u8> {
@@ -92,7 +196,19 @@ impl LibraryCheckout {
             };
             let event = LibraryEvent::from_any(event)?;
             let row = self.rows.entry(root.clone()).or_default();
+            let changes = changes_of(row, &event);
             row.apply_page(&event, page.sequence, page.meta.as_ref());
+            let tree = row.name.clone();
+            if let Some(changes) = changes {
+                self.log_change(
+                    &root,
+                    &event,
+                    (page.sequence, page.meta.as_ref()),
+                    tree,
+                    changes,
+                );
+            }
+            let row = self.rows.entry(root.clone()).or_default();
             let pending = row.pending.clone();
             self.track(&root, &event, &pending);
         }
@@ -131,6 +247,9 @@ impl LibraryCheckout {
             }
             // The tree's, naming no intent (G3).
             LibraryEvent::HomeRepositoryMade(_) => return,
+            // Step 10c U4 makes it complete its pull's step, as a
+            // `StepApplied` does; nothing records one yet.
+            LibraryEvent::TreeInstalled(_) => return,
             LibraryEvent::BundleExported(exported) => {
                 self.exports.insert(
                     exported.request_id.clone(),
@@ -148,6 +267,78 @@ impl LibraryCheckout {
         });
     }
 
+    /// `event`, recorded at `sequence` with `meta` on the stream rooted at
+    /// `root` (the tree `tree`), logged as the change `changes`, unless the
+    /// stream logged it before.
+    fn log_change(
+        &mut self,
+        root: &[u8],
+        event: &LibraryEvent,
+        (sequence, meta): (u64, Option<&angzarr_embedded::v1::EventMeta>),
+        tree: String,
+        changes: Vec<Changed>,
+    ) {
+        if self.logged.get(root).is_some_and(|last| *last >= sequence) {
+            return;
+        }
+        self.logged.insert(root.to_vec(), sequence);
+        let request = match event {
+            LibraryEvent::StepApplied(applied) => Some(applied.request_id.clone()),
+            LibraryEvent::TreeObserved(observed) => observed.intended.clone(),
+            _ => None,
+        };
+        let intended = request.map(|request| {
+            let verb = self
+                .intents
+                .get(&request)
+                .map(|known| known.intent.verb.clone())
+                .unwrap_or_default();
+            (request, verb)
+        });
+        let recorded_at = meta
+            .and_then(|meta| meta.recorded_at.as_ref())
+            .map_or((0, 0), |at| (at.seconds, at.nanos));
+        self.last += 1;
+        let recorded = Recorded {
+            at: self.last,
+            tree,
+            sequence,
+            cause: library_tree::cause_of(meta),
+            intended,
+            changes,
+            recorded_at,
+        };
+        // A watcher gone is let go here; each other is told, then woken.
+        let mut watchers = self
+            .watchers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        watchers.retain(|watcher| watcher.told.send(recorded.clone()).is_ok());
+        for watcher in watchers.iter() {
+            (watcher.wake)();
+        }
+    }
+
+    /// A watcher of every change recorded from now on, oldest first: told
+    /// each as it is folded and woken by `wake` (step 10c U13 rework: the
+    /// catch-up's signal, no poll and no log).
+    pub fn watch(&self, wake: Wake) -> std::sync::mpsc::Receiver<Recorded> {
+        let (told, heard) = std::sync::mpsc::channel();
+        self.watchers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Watcher { told, wake });
+        heard
+    }
+
+    /// How many watchers are told.
+    pub fn watching(&self) -> usize {
+        self.watchers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
     /// The export recorded under `request_id`, in any tree (AIP-155).
     pub fn export(&self, request_id: &str) -> Option<&library_tree::BundleExported> {
         self.exports.get(request_id).map(|(_, exported)| exported)
@@ -156,6 +347,11 @@ impl LibraryCheckout {
     /// The intent recorded under `request_id`, in any tree.
     pub fn intent(&self, request_id: &str) -> Option<&Known> {
         self.intents.get(request_id)
+    }
+
+    /// Every tree folded, in no order a reader relies on.
+    pub fn trees(&self) -> impl Iterator<Item = &Library> {
+        self.rows.values()
     }
 
     /// The tree whose stream root is `root`, if any event of it was folded.

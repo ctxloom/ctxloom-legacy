@@ -864,12 +864,56 @@ pub(crate) fn reports_as(doc: &Value, path: &str) -> String {
 /// printed is empty: proto3 JSON leaves an empty list out (OD-40, design
 /// §8.1), so an absent one has none.
 pub(crate) fn entries(doc: &Value, path: &str) -> usize {
+    // A path ending in a `[key=value]` selector counts every element it
+    // matches (step 10c U10: `events[type=TreeObserved]` having 1 entries),
+    // where reading it picks the first.
+    if let Some((list, key, value)) = selected(path) {
+        return at(doc, list).and_then(Value::as_array).map_or(0, |all| {
+            all.iter()
+                .filter(|element| element[key].as_str() == Some(value))
+                .count()
+        });
+    }
     match at(doc, path) {
         Some(Value::Array(a)) => a.len(),
         Some(Value::Object(o)) => o.len(),
         None => 0,
         other => panic!("no list at {path}: {other:?} in {doc}"),
     }
+}
+
+/// A path whose last segment is a `[key=value]` selector: the list before
+/// it, the key and the value; none for any other path.
+fn selected(path: &str) -> Option<(&str, &str, &str)> {
+    let inner = path.strip_suffix(']')?;
+    let open = inner.rfind('[')?;
+    let (key, value) = inner[open + 1..].split_once('=')?;
+    if key.ends_with('$') || inner[open + 1..].contains('[') {
+        return None;
+    }
+    Some((&path[..open], key, value))
+}
+
+#[test]
+fn a_path_ending_in_a_selector_has_as_many_entries_as_it_matches() {
+    let doc = serde_json::json!({"events": [
+        {"type": "TreeObserved", "a": 1, "b": 2},
+        {"type": "StepApplied"},
+        {"type": "TreeObserved"}
+    ]});
+    assert_eq!(entries(&doc, "events[type=TreeObserved]"), 2);
+    assert_eq!(entries(&doc, "events[type=StepApplied]"), 1);
+    assert_eq!(entries(&doc, "events[type=Nothing]"), 0);
+    assert_eq!(entries(&doc, "events"), 3);
+    // An index or an ends-with selector reads as ever.
+    assert_eq!(entries(&doc, "events[0]"), 3);
+    assert_eq!(
+        entries(
+            &serde_json::json!({"x": [{"k": "ab", "y": [1]}]}),
+            "x[k$=b].y"
+        ),
+        1
+    );
 }
 
 /// What proto3 JSON leaves out, read back as text: a false, a zero, an

@@ -373,6 +373,18 @@ pub struct Planned {
 /// there is one), said as a notice. Never a refusal: the run goes on.
 pub type Advice = Box<dyn angzarr_diagnostic::Diagnostic + Send + Sync>;
 
+/// How a re-assembled context reaches a live session at the hook its
+/// engine fired (step 10c U13, G6/G7: one polymorphic interface, every
+/// engine).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextDelivery {
+    /// The hook's answer carries this as its context (claude:
+    /// `hookSpecificOutput.additionalContext`, which its codec writes).
+    HookContext(String),
+    /// Not at this hook: the session stays owed, for its next.
+    NotHere,
+}
+
 /// An agent engine's contribution to running a child.
 pub trait Engine: Send + Sync {
     /// The engine's name.
@@ -406,6 +418,17 @@ pub trait Engine: Send + Sync {
 
     /// The command of the human's terminal run.
     fn drive_interactive(&self, request: &TurnRequest) -> Result<TurnCommand, EngineError>;
+
+    /// How `context`, a live session's re-assembled context, is handed to
+    /// the engine at its native hook `hook` (step 10c U13, G6/G7, owner: one
+    /// polymorphic interface, every engine; protos.md §3). An engine that
+    /// cannot carry it there answers [`ContextDelivery::NotHere`], and the session
+    /// stays owed; by default none can (opencode's TUI and the ACP profiles
+    /// are slice 10d's).
+    fn deliver_context(&self, hook: &str, context: &str) -> ContextDelivery {
+        let _ = (hook, context);
+        ContextDelivery::NotHere
+    }
 
     /// The home files (relative to it) the engine merges its own keys into
     /// rather than writes whole, because the engine itself keeps state in

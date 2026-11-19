@@ -137,7 +137,10 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         | SessionEvent::SessionEnded(_)
         | SessionEvent::Compacted(_)
         | SessionEvent::ConversationCleared(_)
-        | SessionEvent::CaptureGapped(_) => {}
+        | SessionEvent::CaptureGapped(_)
+        | SessionEvent::ContextRedelivered(_)
+        | SessionEvent::ContextOwed(_)
+        | SessionEvent::LoadoutRecorded(_) => {}
         // A run's end is when the session's last run ended (the proto's
         // RecordEnd: IncarnationEnded supersedes it), at its page's instant.
         SessionEvent::IncarnationEnded(_) => {
@@ -147,13 +150,15 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         SessionEvent::IncarnationOwed(_) => lifeline::apply(state, event),
         // Retired (owner 2026-11-15: no stop latch): it folds to nothing.
         SessionEvent::StopOrdered(_) => {}
-        // A message and a clear are the read side's (the pending messages,
-        // the delivery and clear policies): no state of the session.
-        SessionEvent::MessageSent(_) | SessionEvent::ClearRequested(_) => {}
-        // The terminal wake's journal; a delivery is the read side's.
+        // A clear is the read side's (the clear policy): no state of the
+        // session.
+        SessionEvent::ClearRequested(_) => {}
+        // The terminal wake's journal, and the messages still pending, so a
+        // delivery records each once (the lean hook RPC).
         SessionEvent::WakeIssued(_)
         | SessionEvent::WakeDisarmed(_)
         | SessionEvent::WakeRedeemed(_)
+        | SessionEvent::MessageSent(_)
         | SessionEvent::MessagesDelivered(_) => wake::apply(state, event),
         SessionEvent::SessionClosed(_)
         | SessionEvent::SessionReopened(_)
@@ -322,6 +327,71 @@ pub(crate) fn live(state: &SessionState) -> Result<&SessionState, SessionRejecti
         return Err(SessionRejection::NoSession);
     }
     Ok(state)
+}
+
+/// The external id of a session's loadout for its incarnation
+/// `incarnation` (step 10c U13): `loadout:<session>:<incarnation>`.
+pub fn loadout_key(session: &str, incarnation: u32) -> String {
+    format!("loadout:{session}:{incarnation}")
+}
+
+/// The external id of a context redelivered to `session` covering the tree
+/// positions `cause` names (step 10c U13 rework, [`positions_text`]):
+/// `reinject:<session>:<H(positions)>`, H the UUIDv5 of the text, so a
+/// batch handed again is a DUPLICATE.
+pub fn redelivery_key(session: &str, cause: &str) -> String {
+    let hashed = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, cause.as_bytes());
+    format!("reinject:{session}:{hashed}")
+}
+
+/// Tree positions as one text, each `<tree>@<sequence>`, sorted by tree,
+/// joined by `,` (step 10c U13 rework): what a redelivery's key hashes and
+/// its record names as its cause.
+pub fn positions_text(positions: &[TreePosition]) -> String {
+    let mut named: Vec<String> = positions
+        .iter()
+        .map(|position| format!("{}@{}", position.tree, position.sequence))
+        .collect();
+    named.sort();
+    named.join(",")
+}
+
+/// The external id of a change owed to `session` (step 10c U13 rework):
+/// `owed:<session>:<tree>@<sequence>`, so the projector's book handed again
+/// records it once.
+pub fn owed_key(session: &str, tree: &str, sequence: u64) -> String {
+    format!("owed:{session}:{tree}@{sequence}")
+}
+
+/// The external id of a change owed to `session` found when its loadout
+/// was handled (step 10c U13 rework): `owed-at-load:<session>:<tree>@<seq>`.
+pub fn owed_at_load_key(session: &str, tree: &str, sequence: u64) -> String {
+    format!("owed-at-load:{session}:{tree}@{sequence}")
+}
+
+/// The book that records `fact` on the session stream `cover` names, keyed
+/// by `external_id`, so a repeat is answered DUPLICATE.
+pub fn fact_book(
+    cover: angzarr_embedded::v1::Cover,
+    fact: &impl angzarr_embedded::markup::DomainMessage,
+    external_id: &str,
+) -> angzarr_embedded::v1::CommandBook {
+    use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Fact, FactOrigin};
+    CommandBook {
+        cover: Some(cover),
+        page: Some(CommandPage {
+            body: Some(command_page::Body::Fact(Fact {
+                payload: Some(
+                    angzarr_embedded::Any::from_msg(&fact.to_wire()).expect("a fact encodes"),
+                ),
+                origin: Some(FactOrigin {
+                    external_id: external_id.to_string(),
+                    description: String::new(),
+                }),
+            })),
+            ..CommandPage::default()
+        }),
+    }
 }
 
 /// The book that records `bind` on the session stream `cover` names: a Fact

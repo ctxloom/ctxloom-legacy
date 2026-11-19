@@ -12,15 +12,16 @@ use angzarr_embedded::{Any, Failure, Handled, Registry};
 
 use crate::{
     observation_key, tree_root, Change, ChangeStatus, CreateDirectory, DirtyPath, Evidence,
-    LibraryAggregate, LibraryCommand, LibraryEvent, LibraryIgnored, LibraryTreeRejection, Motion,
-    MovePath, PlanRejected, PurgeTrash, RecordBundleExported, RecordHomeRepositoryMade,
-    RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile, Resource, RunSequence, Step,
-    TrashPath, TreeKind, KEEP_DAYS, LIBRARY_DOMAIN, TREE_UNREADABLE,
+    LibraryAggregate, LibraryCommand, LibraryEvent, LibraryTreeRejection, MovePath, PlanRejected,
+    PurgeTrash, RecordBundleExported, RecordStepDone, RecordStepFailed, RecordTreeObserved,
+    ReplaceFile, Resource, RunSequence, Step, TrashPath, TreeKind, KEEP_DAYS, LIBRARY_DOMAIN,
+    TREE_UNREADABLE,
 };
 
 const TREE: &str = "projects/amber-quiet-heron/checkouts/brisk-copper-moth/library";
 const FILE: &str = "content/bundles/v2/demo/fragments/example.md";
 const YAML: &str = "content/bundles/v2/demo/bundle.yaml";
+const FRAGMENT: &str = "content/bundles/v2/demo/fragments/a.md";
 const BUNDLE: &str = "content/bundles/v2/demo";
 
 fn cover() -> Cover {
@@ -155,7 +156,6 @@ fn observation(
         changes,
         dirty_after: dirty(dirty_after),
         baseline,
-        in_motion: None,
     }
 }
 
@@ -175,15 +175,12 @@ fn evidence() -> Evidence {
         tree_reads: true,
         plan_rejection: None,
         builtin: false,
-        in_motion: None,
-        in_git: true,
-        ignored: None,
-        root: "/work/demo".to_string(),
     }
 }
 
 fn replace(path: &str, seen: u64) -> ReplaceFile {
     ReplaceFile {
+        foreign: false,
         name: TREE.to_string(),
         verb: "fragment edit".to_string(),
         path: path.to_string(),
@@ -242,6 +239,7 @@ fn step_of(
 
 fn sequence(steps: Vec<Step>) -> RunSequence {
     RunSequence {
+        foreign: Vec::new(),
         name: TREE.to_string(),
         verb: "deps pull".to_string(),
         steps,
@@ -265,6 +263,120 @@ fn resource(sequence: u64, oid: &str) -> Resource {
 }
 
 // region observations
+
+/// A listing of `files` (path, content id) against the tree's last cause.
+fn listing(tree: &Tree, files: &[(&str, &str)]) -> crate::RecordTreeListed {
+    crate::RecordTreeListed {
+        name: TREE.to_string(),
+        kind: TreeKind::Checkout,
+        base_cause: tree.library().last_cause,
+        files: dirty(files),
+    }
+}
+
+/// `fact` recorded keyed as a scanner keys it.
+fn listed(tree: &mut Tree, fact: crate::RecordTreeListed) -> Vec<LibraryEvent> {
+    let key = crate::listing_key(TREE, &fact.base_cause, &fact.files);
+    tree.fact(fact, &key)
+}
+
+// Step 10c U13 rework (the scanner, owner 2026-11-18): a listing of every
+// file with its content id is compared with the listing the state holds:
+// the first is a baseline of every file; then each path added, changed or
+// gone is one change of one event, each path's token its sequence; a
+// listing that matches records nothing; A to B to A is three, never a
+// duplicate. No git is asked: no head, no tree id.
+#[test]
+fn test_a_listing_records_each_path_added_changed_or_gone_against_the_last() {
+    let mut tree = Tree::new();
+    let first = listing(&tree, &[(YAML, "y1"), (FRAGMENT, "f1")]);
+    let events = listed(&mut tree, first);
+    let [LibraryEvent::TreeObserved(baseline)] = &events[..] else {
+        panic!("one baseline: {events:?}")
+    };
+    assert!(baseline.baseline);
+    assert_eq!(baseline.changes.len(), 2, "every file: {baseline:?}");
+    assert!(baseline
+        .changes
+        .iter()
+        .all(|c| c.status == ChangeStatus::Added));
+    let same = listing(&tree, &[(YAML, "y1"), (FRAGMENT, "f1")]);
+    assert!(
+        listed(&mut tree, same).is_empty(),
+        "a match records nothing"
+    );
+    let next = listing(&tree, &[(FRAGMENT, "f2"), ("remotes.yaml", "r1")]);
+    let events = listed(&mut tree, next);
+    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
+        panic!("one observation: {events:?}")
+    };
+    assert!(!observed.baseline);
+    let said: Vec<(&str, ChangeStatus, &str, &str)> = observed
+        .changes
+        .iter()
+        .map(|c| {
+            (
+                c.path.as_str(),
+                c.status,
+                c.from_oid.as_str(),
+                c.to_oid.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (YAML, ChangeStatus::Deleted, "y1", ""),
+            (FRAGMENT, ChangeStatus::Modified, "f1", "f2"),
+            ("remotes.yaml", ChangeStatus::Added, "", "r1"),
+        ],
+        "sorted by path"
+    );
+    let library = tree.library();
+    assert_eq!(library.resources.get(FRAGMENT), Some(&resource(1, "f2")));
+    assert_eq!(library.resources.get(YAML), Some(&resource(1, "")));
+    assert_eq!((library.head.as_str(), library.tree.as_str()), ("", ""));
+    // Back to what it was, then on again: each is recorded.
+    let back = listing(&tree, &[(FRAGMENT, "f1"), ("remotes.yaml", "r1")]);
+    assert_eq!(listed(&mut tree, back).len(), 1);
+    let again = listing(&tree, &[(FRAGMENT, "f2"), ("remotes.yaml", "r1")]);
+    assert_eq!(listed(&mut tree, again).len(), 1);
+    assert_eq!(
+        tree.library().resources.get(FRAGMENT),
+        Some(&resource(3, "f2"))
+    );
+}
+
+// A path a step took away is held with an empty id: absent. A listing
+// without it matches, and records nothing.
+#[test]
+fn test_a_path_held_gone_is_absent_from_the_listing_compared() {
+    let mut tree = Tree::new();
+    let first = listing(&tree, &[(YAML, "y1"), (FRAGMENT, "f1")]);
+    listed(&mut tree, first);
+    let mut held = tree.library();
+    held.dirty.insert(FRAGMENT.to_string(), String::new());
+    assert_eq!(held.listed().get(FRAGMENT), None, "gone");
+    assert_eq!(
+        super::listing_changes(&held.listed(), &dirty(&[(YAML, "y1")])),
+        Vec::new(),
+        "nothing changed"
+    );
+}
+
+// A listing's key chains on the cause the scanner read and hashes the
+// listing in path order: the same listing against another cause is another
+// key; one listed in any order is the same.
+#[test]
+fn test_a_listing_key_chains_on_its_cause_and_is_its_listing_s_whatever_the_order() {
+    let a = dirty(&[(YAML, "y"), (FRAGMENT, "f")]);
+    let b = dirty(&[(FRAGMENT, "f"), (YAML, "y")]);
+    let key = crate::listing_key(TREE, "c1", &a);
+    assert!(key.starts_with(&format!("listed:{TREE}:")), "{key}");
+    assert_eq!(key, crate::listing_key(TREE, "c1", &b));
+    assert_ne!(key, crate::listing_key(TREE, "c2", &a));
+    assert_ne!(key, crate::listing_key(TREE, "c1", &dirty(&[(YAML, "y")])));
+}
 
 #[test]
 fn a_trees_first_observation_is_its_baseline_listing_what_is_dirty() {
@@ -533,22 +645,6 @@ fn another_trees_observation_records_nothing() {
     assert!(tree.observe(other).is_empty());
 }
 
-#[test]
-fn an_observation_in_motion_says_so() {
-    let mut tree = Tree::baselined();
-    let mut merging = edit(FILE, "conflicted");
-    merging.in_motion = Some(Motion::Merging);
-    let events = tree.observe(merging.clone());
-    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
-        panic!("{events:?}")
-    };
-    assert_eq!(observed.in_motion, Some(Motion::Merging));
-    assert!(
-        tree.observe(merging).is_empty(),
-        "the same merge seen again"
-    );
-}
-
 // endregion
 
 // region commands
@@ -599,65 +695,6 @@ fn a_change_undone_since_still_moves_the_token() {
     tree.observe(edit(FILE, "f1"));
     tree.observe(edit(FILE, "base"));
     assert_eq!(tree.command(replace(FILE, 0)), Err(stale(FILE, 0, 2)));
-}
-
-#[test]
-fn a_tree_outside_git_is_refused_naming_its_root() {
-    let mut tree = Tree::baselined();
-    let mut cmd = replace(FILE, 0);
-    cmd.evidence.in_git = false;
-    assert_eq!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::NotInGit {
-            root: "/work/demo".to_string()
-        })
-    );
-}
-
-#[test]
-fn a_library_git_ignores_is_refused_naming_the_rule() {
-    let mut tree = Tree::baselined();
-    let mut cmd = trash(FILE, 0);
-    cmd.evidence.in_git = false;
-    cmd.evidence.ignored = Some(LibraryIgnored {
-        source: ".gitignore".to_string(),
-        line: 3,
-        pattern: ".ctxloom/".to_string(),
-    });
-    assert_eq!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::LibraryIgnored {
-            source: ".gitignore".to_string(),
-            line: 3,
-            pattern: ".ctxloom/".to_string(),
-        })
-    );
-}
-
-#[test]
-fn a_write_during_a_git_operation_is_refused_before_the_token_is_judged() {
-    let mut tree = Tree::baselined();
-    let mut cmd = replace(FILE, 99);
-    cmd.evidence.in_motion = Some(Motion::Rebasing);
-    assert_eq!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::TreeInMotion {
-            motion: Motion::Rebasing,
-            root: "/work/demo".to_string(),
-        })
-    );
-}
-
-#[test]
-fn git_is_judged_before_motion() {
-    let mut tree = Tree::baselined();
-    let mut cmd = moved(FILE, YAML, 0);
-    cmd.evidence.in_git = false;
-    cmd.evidence.in_motion = Some(Motion::Merging);
-    assert!(matches!(
-        tree.command(cmd),
-        Err(LibraryTreeRejection::NotInGit { .. })
-    ));
 }
 
 #[test]
@@ -1067,16 +1104,67 @@ fn an_observation_of_a_steps_ids_and_more_is_recorded_as_the_intents() {
     );
 }
 
+// Changed by step 10c U13 (protos.md §1.3): an outside change at a pending
+// intent's path, whose ids are not the intent's, supersedes the intent.
 #[test]
-fn an_observation_of_other_ids_at_a_pending_path_is_an_outside_change() {
+fn an_observation_of_other_ids_at_a_pending_path_supersedes_the_intent() {
     let mut tree = Tree::baselined();
     let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    let last = tree.library().last_cause;
+    let key = observation_key(TREE, &last, "h-0", &dirty(&[(FILE, "by-hand")]));
     let events = tree.observe(edit(FILE, "by-hand"));
-    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
+    let [LibraryEvent::TreeObserved(observed), LibraryEvent::IntentSuperseded(superseded)] =
+        &events[..]
+    else {
         panic!("{events:?}")
     };
     assert_eq!(observed.intended, None);
+    assert_eq!(superseded.request_id, request);
+    assert_eq!(superseded.by_cause, key);
+    assert!(tree.library().pending.is_empty(), "no longer pending");
+}
+
+#[test]
+fn an_outside_change_of_another_path_leaves_a_pending_intent_pending() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(Some(replace(FILE, 0)), None, None));
+    let events = tree.observe(edit(YAML, "by-hand"));
+    let [LibraryEvent::TreeObserved(_)] = &events[..] else {
+        panic!("{events:?}")
+    };
     assert!(tree.library().pending.contains_key(&request));
+}
+
+#[test]
+fn an_outside_edit_under_a_path_a_pending_trash_takes_supersedes_it() {
+    let mut tree = Tree::baselined();
+    let request = intending(&mut tree, step_of(None, Some(trash(BUNDLE, 0)), None));
+    let events = tree.observe(edit(FILE, "by-hand"));
+    let [LibraryEvent::TreeObserved(_), LibraryEvent::IntentSuperseded(superseded)] = &events[..]
+    else {
+        panic!("{events:?}")
+    };
+    assert_eq!(superseded.request_id, request);
+}
+
+#[test]
+fn a_file_made_by_hand_where_a_pending_creation_creates_supersedes_it() {
+    let mut tree = Tree::baselined();
+    let made = "content/bundles/v2/notes";
+    let other = "content/bundles/v2/notes/fragments/x.md";
+    let request = intending(&mut tree, creating(made, &[("bundle.yaml", "y1")]));
+    let events = tree.observe(observation(
+        "h-0",
+        "h-0",
+        vec![change(other, ChangeStatus::Added, "", "x1")],
+        &[(other, "x1")],
+        false,
+    ));
+    let [LibraryEvent::TreeObserved(_), LibraryEvent::IntentSuperseded(superseded)] = &events[..]
+    else {
+        panic!("{events:?}")
+    };
+    assert_eq!(superseded.request_id, request);
 }
 
 #[test]
@@ -1294,26 +1382,6 @@ fn a_move_into_another_tree_does_not_judge_its_target_on_this_record() {
     );
 }
 
-// G3 (owner 2026-11-18, night): the home step's `git init` is recorded once,
-// and the state holds it; a second record of it adds nothing.
-#[test]
-fn test_a_home_repository_made_is_recorded_once_and_held() {
-    let mut tree = Tree::new();
-    assert!(!tree.library().home_repository_made);
-    let made = RecordHomeRepositoryMade {
-        name: TREE.to_string(),
-    };
-    let events = tree.fact(made.clone(), "home-repository-made:one");
-    assert!(
-        matches!(events.as_slice(), [LibraryEvent::HomeRepositoryMade(_)]),
-        "{events:?}"
-    );
-    assert!(tree.library().home_repository_made);
-    assert!(tree.library().wire().home_repository_made);
-    assert!(tree.fact(made, "home-repository-made:two").is_empty());
-    assert!(tree.library().home_repository_made);
-}
-
 // AIP-155 (owner 2026-11-18, night): an export is recorded on its source
 // tree as it was made, so its retry is answered with it; the tree's state
 // is otherwise unchanged.
@@ -1338,4 +1406,178 @@ fn test_a_bundle_exported_is_recorded_as_made_and_changes_no_resource() {
         "/p/.ctxloom/content/bundles/v2/demo/bundle.yaml"
     );
     assert_eq!(tree.library().resources, before);
+}
+
+// region foreign writers (step 10c U10, L15, T26)
+
+/// A foreign `ReplaceFile`: another tool's file, project-relative.
+fn foreign(path: &str, seen: u64) -> ReplaceFile {
+    ReplaceFile {
+        foreign: true,
+        verb: "materialize".to_string(),
+        ..replace(path, seen)
+    }
+}
+
+fn foreign_file(path: &str, oid: &str) -> crate::ForeignFile {
+    crate::ForeignFile {
+        path: path.to_string(),
+        new_oid: oid.to_string(),
+    }
+}
+
+#[test]
+fn a_foreign_writers_sequence_lists_its_files_in_its_intent_and_judges_no_token_of_theirs() {
+    let mut tree = Tree::baselined();
+    // A library path of the same name moved on: a foreign step is never
+    // judged on a library token (no client is given one).
+    tree.observe(edit("CLAUDE.md", "c1"));
+    let mut cmd = sequence(vec![
+        step_of(
+            Some(foreign("/home/a/.ctxloom/records/x.claims.yaml", 0)),
+            None,
+            None,
+        ),
+        step_of(Some(foreign("CLAUDE.md", 0)), None, None),
+    ]);
+    cmd.verb = "materialize".to_string();
+    cmd.foreign = vec![
+        foreign_file("/home/a/.ctxloom/records/x.claims.yaml", "r1"),
+        foreign_file("CLAUDE.md", "c2"),
+    ];
+    let events = tree.command(cmd.clone()).unwrap();
+    let [LibraryEvent::ChangeIntended(intended)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(intended.intent.foreign, cmd.foreign);
+    assert_eq!(intended.intent.verb, "materialize");
+    assert_eq!(intended.intent.steps.len(), 2);
+}
+
+#[test]
+fn a_foreign_file_outside_a_foreign_writers_sequence_is_a_plan_rejection() {
+    let mut tree = Tree::baselined();
+    let rejected = |code: &str| {
+        Err(LibraryTreeRejection::PlanRejected {
+            code: code.to_string(),
+            args: BTreeMap::new(),
+        })
+    };
+    // Alone, as a command of its own.
+    assert_eq!(
+        tree.command(foreign("CLAUDE.md", 0)),
+        rejected(crate::FOREIGN_OUTSIDE_WRITER)
+    );
+    // In the sequence of a verb that writes no other tool's files.
+    let mut cmd = sequence(vec![step_of(Some(foreign("CLAUDE.md", 0)), None, None)]);
+    cmd.verb = "bundle import".to_string();
+    assert_eq!(tree.command(cmd), rejected(crate::FOREIGN_OUTSIDE_WRITER));
+    // Each foreign writer's verb takes one.
+    for verb in crate::FOREIGN_WRITERS {
+        let mut cmd = sequence(vec![step_of(Some(foreign("CLAUDE.md", 0)), None, None)]);
+        cmd.verb = (*verb).to_string();
+        assert_eq!(tree.command(cmd).map(|e| e.len()), Ok(1), "{verb}");
+    }
+    assert_eq!(tree.event_count(), 1 + crate::FOREIGN_WRITERS.len());
+}
+
+#[test]
+fn a_foreign_steps_done_is_folded_apart_from_the_library_and_moves_no_token() {
+    let mut tree = Tree::baselined();
+    let mut cmd = sequence(vec![
+        step_of(Some(foreign("CLAUDE.md", 0)), None, None),
+        step_of(Some(replace("lock.yaml", 0)), None, None),
+    ]);
+    cmd.verb = "materialize".to_string();
+    cmd.foreign = vec![foreign_file("CLAUDE.md", "c2")];
+    let [LibraryEvent::ChangeIntended(intended)] = &tree.command(cmd).unwrap()[..] else {
+        panic!("no intent")
+    };
+    let request = intended.intent.request_id.clone();
+    let events = tree.fact(done(&request, 0, &[("CLAUDE.md", "c2")]), "done:0");
+    assert_eq!(events.len(), 1, "{events:?}");
+    let library = tree.library();
+    assert_eq!(library.foreign.get("CLAUDE.md"), Some(&resource(2, "c2")));
+    assert_eq!(library.resources.get("CLAUDE.md"), None);
+    assert_eq!(library.dirty.get("CLAUDE.md"), None);
+    assert_eq!(library.token("CLAUDE.md"), 0);
+    // The library step after it is the library's as ever.
+    tree.fact(done(&request, 1, &[("lock.yaml", "l1")]), "done:1");
+    let library = tree.library();
+    assert_eq!(library.resources.get("lock.yaml"), Some(&resource(3, "l1")));
+    assert_eq!(library.foreign.get("lock.yaml"), None);
+    assert!(library.pending.is_empty());
+    assert_eq!(
+        library
+            .wire()
+            .foreign
+            .get("CLAUDE.md")
+            .map(|r| (r.sequence, r.oid.as_str())),
+        Some((2, "c2"))
+    );
+}
+
+// region install facts (step 10c U4, L9, protos.md §1.2)
+
+const CACHE_TREE: &str = "cache/bundles/example.com/r/demo/abc123";
+
+fn installed(request: &str, step: u32) -> crate::RecordTreeInstalled {
+    crate::RecordTreeInstalled {
+        request_id: request.to_string(),
+        step,
+        identity: "ctxloom+file:///r//bundles/demo".to_string(),
+        sha: "abc123".to_string(),
+        tree: "t-demo".to_string(),
+    }
+}
+
+/// A pull's intent: the tree's new directory, then the lock.
+fn pulled(tree: &mut Tree) -> String {
+    let steps = vec![
+        Step {
+            replace: None,
+            create: Some(create(CACHE_TREE)),
+            trash: None,
+            r#move: None,
+            purge: None,
+        },
+        step_of(Some(replace("lock.yaml", 0)), None, None),
+    ];
+    let [LibraryEvent::ChangeIntended(intended)] = &tree.command(sequence(steps)).unwrap()[..]
+    else {
+        panic!("no intent")
+    };
+    intended.intent.request_id.clone()
+}
+
+#[test]
+fn a_tree_installed_completes_its_create_and_ties_its_cache_path_to_its_sequence() {
+    let mut tree = Tree::baselined();
+    let request = pulled(&mut tree);
+    let events = tree.fact(installed(&request, 0), "installed:0");
+    let [LibraryEvent::TreeInstalled(got)] = &events[..] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(
+        (got.step, got.sha.as_str(), got.tree.as_str()),
+        (0, "abc123", "t-demo")
+    );
+    assert_eq!(got.identity, "ctxloom+file:///r//bundles/demo");
+    let library = tree.library();
+    assert_eq!(
+        library.resources.get(CACHE_TREE),
+        Some(&resource(2, "t-demo"))
+    );
+    assert_eq!(library.pending.get(&request).map(|i| i.done), Some(1));
+    // The same fact again records nothing; a step not next records nothing.
+    assert!(tree
+        .fact(installed(&request, 0), "installed:0-again")
+        .is_empty());
+    assert!(tree.fact(installed(&request, 1), "installed:1").is_empty());
+    assert!(tree
+        .fact(installed("nobody", 0), "installed:nobody")
+        .is_empty());
+    // The lock, the sequence's last step, completes it.
+    tree.fact(done(&request, 1, &[("lock.yaml", "l1")]), "done:1");
+    assert!(tree.library().pending.is_empty());
 }

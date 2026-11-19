@@ -47,6 +47,7 @@ fn the_noun_is_hidden_and_has_a_verb_for_each_test_command() {
             "session-name",
             "session-events",
             "library-events",
+            "watch-library",
             "record",
             "seed-rehosts"
         ]
@@ -255,6 +256,8 @@ fn every_seed_flag_lands_in_the_seed() {
         "--other-file",
         "b.md",
         "--resumable",
+        "--profile",
+        "dev",
     ]);
     assert_eq!(
         format!("{seed:?}"),
@@ -272,6 +275,9 @@ fn every_seed_flag_lands_in_the_seed() {
                 native: Some(("n1".to_string(), "/t/n1.jsonl".to_string())),
                 other_files: vec!["a.md".to_string(), "b.md".to_string()],
                 resumable: true,
+                // A profile's loadout is the daemon's assembly of it, which
+                // the command asks for (step 10c U13), not the arguments'.
+                loadout: None,
             }
         )
     );

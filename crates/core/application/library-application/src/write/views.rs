@@ -353,3 +353,21 @@ pub struct ConfigEdited {
     pub path: String,
     pub changed: bool,
 }
+
+/// What `manage gitignore install` did (step 10c U5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitignoreInstalled {
+    /// The `.ctxloom` the file is in.
+    pub app_dir: String,
+    /// Whether it was written: it was not what ctxloom writes.
+    pub written: bool,
+}
+
+/// What a first init's scaffold came to (step 10c U6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectInitialized {
+    /// The project's `.ctxloom`.
+    pub app_dir: String,
+    /// It was there already: nothing was written.
+    pub existed: bool,
+}

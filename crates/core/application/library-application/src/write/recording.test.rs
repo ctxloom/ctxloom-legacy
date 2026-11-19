@@ -251,3 +251,123 @@ fn test_a_bundle_move_onto_a_bundle_there_or_onto_itself_is_refused() {
     );
     assert!(recorder.take().is_empty());
 }
+
+// Step 10c U5: `manage gitignore install` writes `.ctxloom/.gitignore`
+// through the scaffold: planned as that one file of the tree, writing
+// nothing; one already as ctxloom writes it plans nothing.
+#[test]
+fn test_the_nested_gitignore_is_planned_as_one_file_of_the_tree_when_it_differs() {
+    let want = library::write::scaffold::nested_gitignore();
+    let (library, mem) = world();
+    let (recording, recorder) = library.recording();
+    assert!(recording.gitignore_install().result.unwrap().written);
+    assert_eq!(mem.scaffold_text(".gitignore"), None);
+    let planned = recorder.take();
+    let [Planned::TreeFiles { files }] = &planned[..] else {
+        panic!("{planned:?}")
+    };
+    let [put] = &files[..] else {
+        panic!("{files:?}")
+    };
+    assert_eq!(
+        (put.path.as_str(), put.bytes.as_slice()),
+        (".gitignore", want.as_bytes())
+    );
+    let (library, mem) = world();
+    mem.set_scaffold_for_test(".gitignore", &want);
+    let (recording, recorder) = library.recording();
+    assert!(!recording.gitignore_install().result.unwrap().written);
+    assert!(recorder.take().is_empty());
+}
+
+// Not recording, the same use case writes the file through the scaffold.
+#[test]
+fn test_the_nested_gitignore_is_written_through_the_scaffold() {
+    let (library, mem) = world();
+    let installed = library.gitignore_install().result.unwrap();
+    assert_eq!(installed.app_dir, "/work/.ctxloom");
+    assert!(installed.written);
+    assert_eq!(
+        mem.scaffold_text(".gitignore"),
+        Some(library::write::scaffold::nested_gitignore())
+    );
+}
+
+// Step 10c U6: a first init's scaffold, its directory not there yet, is
+// planned as ONE new tree holding every file (the config with init's
+// answers in it), writing nothing.
+#[test]
+fn test_a_first_init_is_planned_as_one_new_tree_and_writes_nothing() {
+    use library::write::scaffold::{self, Answered};
+    let (library, mem) = world();
+    mem.set_fresh_for_test();
+    let answered = Answered {
+        output_dir: Some("out/".to_string()),
+        premised: None,
+    };
+    let (recording, recorder) = library.recording();
+    let init = recording.project_init("", &answered).result.unwrap();
+    assert_eq!(init.app_dir, "/work/.ctxloom");
+    assert!(!init.existed);
+    assert_eq!(mem.scaffold_text("config.yaml"), None);
+    let planned = recorder.take();
+    let [Planned::NewTree { files }] = &planned[..] else {
+        panic!("{planned:?}")
+    };
+    let paths: Vec<&str> = files.iter().map(|put| put.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "config.yaml",
+            "remotes.yaml",
+            "content/bundles/v2/project/bundle.yaml",
+            ".gitignore",
+            "content/bundles/v2/project/profiles/default.yaml",
+        ]
+    );
+    assert_eq!(
+        files[0].bytes,
+        scaffold::initial_config_with("claude-code", &answered).into_bytes()
+    );
+}
+
+// A tree that is there is init's re-run: nothing is planned or written.
+#[test]
+fn test_init_of_a_project_there_plans_nothing() {
+    let (library, mem) = world();
+    let (recording, recorder) = library.recording();
+    let init = recording
+        .project_init("", &library::write::scaffold::Answered::default())
+        .result
+        .unwrap();
+    assert!(init.existed);
+    assert!(recorder.take().is_empty());
+    assert_eq!(mem.writes(), 0);
+}
+
+// `manage install --engine` (step 10c U6): the new tree's default agent
+// runs that engine; one this build does not know is refused, nothing
+// planned.
+#[test]
+fn a_new_tree_s_engine_is_the_one_asked_and_an_unknown_one_is_refused() {
+    use library::write::scaffold::{self, Answered};
+    let (library, mem) = world();
+    mem.set_fresh_for_test();
+    let (recording, recorder) = library.clone().recording();
+    recording
+        .project_init("opencode", &Answered::default())
+        .result
+        .unwrap();
+    let planned = recorder.take();
+    let [Planned::NewTree { files }] = &planned[..] else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(
+        files[0].bytes,
+        scaffold::initial_config_with("opencode", &Answered::default()).into_bytes()
+    );
+    let (recording, recorder) = library.recording();
+    let refused = recording.project_init("totally-bogus", &Answered::default());
+    assert!(refused.result.is_err());
+    assert!(recorder.take().is_empty());
+}

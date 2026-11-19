@@ -130,13 +130,13 @@ impl Setup {
                 })
             }
             // The terminal wake: a prompt delivers the informs and wakes
-            // (a stale wake line blocked), in the one budget, joined by
-            // `compose_context` (where U13's re-delivered context joins
-            // too, as its last part).
+            // (a stale wake line blocked) and what the session is owed (step
+            // 10c U13), in ONE daemon call (the lean hook RPC), which joins
+            // them by `compose_context` within the one budget.
             "turn_start" => {
-                let (messages, block) = self.prompt_delivery(&event.prompt, harp, remaining(&[]));
+                let (carried, block) = self.prompt_delivery(&event.prompt, native, remaining(&[]));
                 let response = HookResponse {
-                    context: compose_context(&[&messages]),
+                    context: compose_context(&[&carried]),
                     block,
                     reason: match block {
                         true => crate::hooks_wake::STALE_WAKE.to_string(),
@@ -150,11 +150,16 @@ impl Setup {
                     ..HookAnswer::default()
                 })
             }
-            // A tool call asks the daemon for no messages: it would deliver
-            // a steer, and a primary is offered none (owner ruling
-            // 2026-11-18), so the call would only cost the hook its latency.
+            // A tool call delivers no message: it would be a steer, and a
+            // primary is offered none (owner ruling 2026-11-18). It carries
+            // what the session is owed (U13), after the skill mates line,
+            // in the same budget, in its one daemon call.
             "post_tool" => {
-                let response = self.mates_response(codec, &event);
+                let mut response = self.mates_response(codec, &event);
+                let owed = self
+                    .carried(native, &[], "", remaining(&[&response.context]))
+                    .context;
+                response.context = compose_context(&[&response.context, &owed]);
                 Ok(HookAnswer {
                     stdout: encode(&response)?,
                     event: Some(event),

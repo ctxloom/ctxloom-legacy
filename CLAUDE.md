@@ -195,8 +195,7 @@ a profile its short library reference), `config edit` (`EditConfig`,
 an additive RPC, owner ruling 2026-11-18: the config of where it is run
 through the editor as a round trip, the preview's Edit need its text and
 the apply its answer written whole and unparsed, so a config that does not
-load can still be mended; left as it was, nothing applied; outside git it
-is refused `library-tree-not-in-git` first), `profile create`
+load can still be mended; left as it was, nothing applied), `profile create`
 (`CreateProfile`, under the bundle its parent names, `--bundle`, else
 the project's own, `project`, made with it the first time as one new
 directory; `--add-skill` is the INPUT_ONLY `Profile.skills`, additive),
@@ -269,8 +268,9 @@ whose content and config ports record what it writes and write nothing,
 shaped by `library_api::writes::shape` into ONE step (a file replaced, a
 new directory, a path trashed; more than one file is
 `library-tree-one-change-per-call`), then INTENDED (the step's command
-under the request id, git's ids for what it writes from
-`TreeObserver::blob_id_of`), made by ONE atomic operation (U8,
+under the request id, the content ids of what it writes,
+`library_tree::content_id`, the SHA-256 of the bytes; step 10c U13 rework),
+made by ONE atomic operation (U8,
 `ctxloom_ports::Operations`, content-fs's `TreeOperations`, through the
 `Observing`'s `operations`; `library_api::writes::operation` maps the
 step): a file written under the tree's `state/staging/<request id>/` and
@@ -348,6 +348,32 @@ applies nothing (`library_cli::write::removal_served`); an apply refused
 `library-tree-plan-stale` (the bundle changed before her answer) previews
 the removal again, prints it, and ends in the refusal; `--yes` is one
 call. `DeleteCompanion` has no `answers` field, so its apply sends none.
+`session remove`'s preview carries the same Confirm need (step 10c U11:
+`daemon_api::destroy::removal_confirm`, id `confirm`, `Remove session
+"<harp>"?`) and an etag, the UUIDv5 of the plan's files (rel, class, size)
+and worktrees (path, verdict) (`removal_etag`); at her terminal session-cli
+asks it (`session_cli::Asking`) and her yes is
+`SessionRemovals::apply_removal`, the preview's etag and her answer. An
+apply that names an etag is refused, before anything is destroyed,
+`daemon-api-needs-unanswered` (`ctxloom.v1.NeedsUnanswered`) without a
+confirmed answer and `daemon-api-plan-stale` (`ctxloom.v1.PlanStale`,
+ABORTED) when its plan now tags otherwise; a retry whose session is gone is
+answered as before. ctxloom's MCP server is an eliciting client (rmcp's
+`elicitation` feature): each need of a preview is a form elicitation
+(`mcp_server::elicit`: a Confirm the boolean `confirmed`, a Choose a string
+among its choices, an Ask or an Edit the string `text`, the suggestion or
+the document's text its default; an optional need's field not required),
+put only to an engine that declared form elicitation; a required need not
+answered (or not yes) declines the write and nothing is applied. An Edit is
+answered with the document's new text, and no editor is started (the
+request's `presentable` says `can_ask`, never `can_launch`). D16 (S40):
+`child_close` of a child holding open children previews its cascade as
+`GetSession`'s children (`Caller::close_needs`, every open descendant named,
+nearest first) and asks to confirm it; a no is answered `"<child>" was not
+closed: ...` and closes nothing; a child with none closes unasked. The test
+build's tools `test_remove_session` and `test_create_fragment` (callable,
+never listed; QUESTIONS.md 7) drive a removal's Confirm and a fragment's
+Edit through the elicitation.
 A preview's etag is the path's last sequence; the apply sends it back
 (`etag`) and the daemon puts it in the step's command as `seen_sequence`
 (`daemon_api::library_writes::seen_sequence`; empty, a `--yes`, is the
@@ -369,6 +395,95 @@ test standing for another process acts between two steps; and a
 command's `CTXLOOM_TEST_NO_RETRY` turns the client's one retry off
 (`Client::without_retry`), so what a killed daemon left is left. Every
 other write still runs in process until it is served.
+
+Other tools' files are the daemon's too (step 10c U10, L15, T26):
+`materialize`, `manage uninstall` and `doctor --fix` are served
+(`Materialize`, `UninstallManage`, `RunDoctor` with `fix`; additive RPCs;
+`surface_cli::Foreign`, setup-cli's `DoctorFixing`, the wiring's
+`DaemonServed`). The daemon runs the use case where the caller stands
+(`daemon_api::ForeignPlans`, the wiring's `daemon::foreign`) over a
+RECORDING store that writes nothing (`SurfaceFiles::recording`, its own
+reads seeing what it recorded; the doctor's `writing_through` recording
+user files), then writes what it recorded as ONE sequence on the
+checkout's stream (`Api::foreign_write`): the writer's claims record
+(`<home>/.ctxloom/records/*.claims.yaml`) first, then each file a
+`ReplaceFile` marked `foreign` (project-relative, or absolute outside the
+project), every path and git's id for it listed in the intent
+(`Intent.foreign`, `RunSequence.foreign`), each made by
+`Operation::Outside` (written whole beside itself, as an engine's files
+always were, or removed with the directories that leaves empty below its
+`keep`) and recorded done, so its retry resumes at the first step not done
+(a removal the re-plan no longer holds is made from its intent alone),
+and a re-run converges. The domain refuses a foreign step anywhere but a
+sequence of a foreign writer's verb (`library_tree::FOREIGN_WRITERS`,
+`PlanRejected` `library-tree-foreign-outside-writer`, a bug), judges no
+token of one, and folds its `StepApplied` into `LibraryState.foreign`,
+never `resources` or the dirty set. The kill point after the `n`th step
+is `step-<n>`. A use case's own error is the call's, never in band
+(`daemon_api::setup_error`, by the class it says of itself): a decline
+(20) the typed refusal `SetupDeclined`, fatal findings (21)
+`SetupFatalFindings`, each its diagnostic's code and args as its `Cause`
+(the client's `Rejection::LibraryRead`, and `Rejection::FatalFindings`,
+which `CallError` classes 21), a failure (10) said in its own words
+(`ApiError::Diagnosed`); nothing is written. `materialize --diff` and
+`manage install`'s refresh still deliver in process.
+
+The setup reads are the daemon's (step 10c U5, U6, D1): `doctor` (its
+checks, `RunDoctor` without `fix`, `RunDoctorResponse.checks`), `auth
+status` (`GetAuthStatus`), `manage check` (`CheckManage`) and `init
+prompt` (`GetInitPrompt`), additive RPCs riding `library_writes!`'s
+plumbing (`write_requests!`: cwd, env, globals), through setup-cli's
+`SetupReading` and `surface_cli::Foreign::check` (the wiring's
+`DaemonServed`). The daemon runs each use case where the caller stands
+(`daemon_api::SetupReads`, the wiring's `daemon::setup_reads`, through
+`caller_wiring`), the project's trust its own (`init prompt`'s
+`Flags.trusted`, never asked back), and the CLI reads the answer back
+into the report it always printed (setup-cli's and surface-cli's
+`wire`), so with no daemon each fails, exit 10, diagnosing nothing in
+process (QUESTIONS 8). doctor's rows hold owned text
+(`doctor_checks::Check`'s `marker` and `name`, auth's `Row` `mode` and
+`usable_by` are `String`s) so the client rebuilds them. `manage gitignore
+install` is a library write (`InstallGitignore`, `surface_cli::Foreign::
+install_gitignore`): `Library::gitignore_install` writes `.ctxloom/.gitignore`
+through the scaffold when it differs (`Scaffold::read`), the recording
+scaffold plans it as `Planned::TreeFiles`, and it is one `ReplaceFile` of the
+content tree.
+
+The remotes' and the dependencies' writes are the daemon's (step 10c U4,
+protos.md §1.2, L9): `remote create|edit|remove|default` (`CreateRemote`,
+`UpdateRemote` with `new_remote_id` and a mask naming each flag given,
+`DeleteRemote`, `SetDefaultRemote`) and `deps pull|upgrade`
+(`PullDependencies`, `UpgradeDependencies`; additive RPCs), each through
+deps-cli's `Served` writes (`deps_cli::served_writes!`, the wiring's
+`DaemonServed`), its text read back from the answer (deps-cli's
+`written`). The daemon plans each where the caller stands
+(`daemon_api::DepsPlans`, the wiring's `daemon::deps`): the deps use case
+in a wiring of the caller's directory and ENVIRONMENT, so git runs on the
+caller's `PATH` with its `HOME` and credentials (`GIT_*` scrubbed by
+remote-git as ever), over a RECORDING store
+(`deps_files::RecordingDepsFiles`: the registry, the lock, each tree
+installed with its files and identity marker, each tree replaced or pruned
+recorded, never made, and read back by the reads after). A remote's write
+is one library write of `remotes.yaml` (`Api::carry_out`). A pull or an
+upgrade is ONE `RunSequence` (verb `deps pull` or `deps upgrade`) on the
+checkout's stream (`Api::deps_write`, daemon-api's `deps_writes`): a
+`CreateDirectory` per tree, no entries (the cache is presence and
+identity, never content), made whole by `Operation::CreateDir` into
+`cache/bundles/<segments>/<bundle>/<sha>` and completed by
+`RecordTreeInstalled` whose `tree` is git's own tree id as remote-git
+reports it (`Remotes::bundle_tree`; nothing in ctxloom computes a git
+id); then `lock.yaml` (written only where it differs); then each tree it
+no longer keeps into the sequence's own trash and the purge of its slot;
+then, for a consented refresh (`--yes`), each engine file as a foreign
+step (`deps pull` is a foreign writer). A tree already renamed in whole
+is a step done, so a killed pull converges on its retry or its re-run,
+and the lock never names a tree that is not installed. The kill points
+are `tree-installed` (after the first tree), `trees-installed` (after
+the last), `done`. A consented refresh the project refuses once the pull
+applied is the answer's `refresh_refusal`, and the command ends refused
+(20) after the report, as in process. `remote list` gives each remote's
+forge. Not served yet: `deps check`, `hold|unhold`, `bundle push|move
+--to <remote>` and `manage install`'s pull.
 
 Slice S4 (sessions) built the following. The record is the user's durable
 store (owner rulings 87a, T14, which reverses 87's store per project): a
@@ -1413,6 +1528,76 @@ X` asks the plan for X (its engine block drives it). A launch whose agent `runti
 the engine's (or swaps container ownerships) says so as a notice. `init`'s
 token guide asks the configured source.
 
+## The general flow: facts in, aggregates decide, projections drive the work (owner, 2026-11-18)
+
+THE pattern for every domain (owner: "events/facts come in, aggregate
+decides, emits events, projector/agent runner handles those events
+(possibly batching them)"; "we read from the projection, and the
+projection updates the worker agents"):
+
+1. Outside state enters as FACTS (an angzarr `Fact`), keyed by
+   `FactOrigin.external_id`, so a resend is a DUPLICATE (the coordinator
+   derives the command id from it). A tree's files enter as one
+   `RecordTreeListed`; a hook's observations as the capture facts.
+2. AGGREGATES decide and apply, purely (`#[handles_fact]`, `decide`,
+   `#[applies]`): the library aggregate compares a listing with the hashes
+   its state holds and records only what differs.
+3. PROJECTORS fold events into read models (angzarr `ProjectorHandler`,
+   caught up by `CatchUp`: held in memory, `CatchUp::new`, or with its
+   positions in the store, `CatchUp::stored`).
+4. Every READ answers from a projection (the session index, the library
+   checkouts, the board), never by folding a stream or observing per call
+   beyond its own need.
+5. Event HANDLERS (a projector, or the agent runner that hosts the
+   sessions) consume those events, possibly batching them, and drive work
+   outward: the runner sets or delivers what a session is owed, and the
+   edge (a hook, or a stream) hands it to the engine. Built: the daemon's
+   loop (`daemon_application::Daemon::tick`, the runner) steps
+   `daemon_application::owed::OwedContexts` under `CatchUp::stored` over
+   the library and sessions domains (positions under `owed-contexts`, so
+   a later daemon resumes and a re-handed book records nothing twice); it
+   records `RecordContextOwed` on each live session a change touches
+   (keyed `owed:<session>:<tree>@<seq>`), the session index folds it, and
+   the hook only COLLECTS (`RedeliverContext`). `WatchLibrary` is woken by
+   the fold itself (`LibraryCheckout::watch`), never polled.
+6. A CACHE in front of an observation is the edge's (never projector
+   state), keyed by stat; an invalidation (`ctxloom context refresh`,
+   `Observations::forget`) wipes the memo, never the projection, and the
+   re-observation emits facts only where content hashes differ.
+
+## Re-injection is projection-driven (step 10c U13 rework, owner 2026-11-18)
+
+A live session whose loadout a library change touches is handed its
+re-assembled context at its next hook, ONCE per batch:
+
+- Per-tree stream POSITIONS, not time: a session's loadout records the
+  positions its project's trees were at before its plan
+  (`RecordLoadout.covered`, read from the checkouts projection by the
+  daemon; a one-shot's and a seed's cover none, and then a change recorded
+  after the loadout is owed). The session index folds
+  `session_index::Handed` (`loaded_at`, `covered`, `owed`: one
+  `OwedChange {tree, sequence, bundles, paths}` per tree and sequence).
+  A loadout is also owed at once what its trees changed past its
+  positions (`owed-at-load:` keys), so a change between the plan and the
+  loadout is not lost.
+- COLLECTION (`daemon_api::Api::redeliver_context`, then `collect`): the
+  positions it covers are read BEFORE the re-assembly, so a change recorded
+  mid-delivery stays owed (the race forced in daemon-api's reactions
+  test); one delivery covers every change owed (batching), keyed
+  `reinject:<session>:<H(positions)>` (`sessions::positions_text`), and
+  records `RecordContextRedelivered.covered`. No round is awaited: a hook
+  observes its trees only past `HOOK_TRUST_SECONDS` (300) since their last
+  scan (`Observations::observe_trees_trusting`), and what that records is
+  collected at a later hook. No round, timer or watcher observes a tree
+  (G5(b) superseded); every read, preview and write scans (through the
+  memo).
+- ONE BUDGET per hook answer, claude's 10,000 characters
+  (`run_launcher::HOOK_CONTEXT_BUDGET`): `RedeliverContextRequest.budget`
+  is what the parts before it left (0, the whole). Over it,
+  `run_launcher::redelivered_within` gives a framing line and only the
+  changed fragments, whole (asked of the library by the owed paths), else
+  a pointer to `ctxloom context assemble`, else nothing (still owed).
+
 ## Architecture: hexagonal around CQRS/ES (checked by `just lint-arch`, and in review)
 
 Dependencies point inward; a review refuses a change that breaks these, and
@@ -1620,7 +1805,7 @@ the adapter gives; its tests need `run-within`'s `test-support`, which waits
 out ETXTBSY. Limits (os::process's): a descendant that calls `setsid` or
 `setpgid` escapes the kill, and the program runs in a process group of its
 own, so a Ctrl-C at the terminal does not reach it. The git adapters
-(`remote-git`, `worktree-git`, `library-git`) share ONE git runner, the
+(`remote-git`, `worktree-git`) share ONE git runner, the
 support crate `git-cli` (G9): the environment scrubbed of the variables git
 calls repository-local (`git rev-parse --local-env-vars`, asked once; every
 `GIT_*` when it cannot be asked), never interactive (`GIT_TERMINAL_PROMPT=0`,
@@ -2731,8 +2916,7 @@ does a motion alone. `RecordStepDone` (the pending intent's next step ties
 its `observed` paths to its event's sequence) and `RecordStepFailed` record
 for a pending intent only. The five commands (`ReplaceFile`,
 `CreateDirectory`, `TrashPath`, `MovePath`, `RunSequence`, each with a
-`verb`) are decided on `Evidence` in order (git: `NotInGit`/
-`LibraryIgnored`; `TreeInMotion`; `BuiltinReadOnly`; the plan's
+`verb`) are decided on `Evidence` in order (`BuiltinReadOnly`; the plan's
 `PlanRejected`, which speaks as the plan's own diagnostic, or
 `library-tree-tree-unreadable`), then existence as the record knows it
 (`ResourceExists`, `NoSuchResource`) and the token the caller saw
@@ -2741,10 +2925,13 @@ sequence's steps their tokens alone; they record a `ChangeIntended`, which
 moves no token. Nothing sends them before 10b (U3). The texts are 10a's and
 10b's accepted drafts. Departures from the approved proto, each forced by
 angzarr-build's domain layer and wire-compatible: `Step`'s arms and
-`TreeObserved`'s cause are `optional` fields (no `oneof` is mapped), each
-`in_motion` an `optional` enum; `Evidence.root` and `TreeInMotion.root`
-carry the root the texts name; `OneChangePerCall` waits for 10b (U8), as no
-command refuses it yet. Not built here: the observer (U12's git port, U2's
+`TreeObserved`'s cause are `optional` fields (no `oneof` is mapped);
+`OneChangePerCall` waits for 10b (U8), as no command refuses it yet. git is
+no evidence (the library is git-free, below): the git refusals
+`NotInGit`, `LibraryIgnored` and `TreeInMotion`, the `Motion` enum and every
+`in_motion` field are gone, their fields RESERVED (`Evidence` 4 to 7,
+`TreeObserved` 8, `RecordTreeObserved` 10, `RecordTreeListed` 5) and their
+names never reused. Not built here: the observer (U12's git port, U2's
 reconcile), intent attribution and supersession (10b, U13), trash. The observer and
 the reconcile are U2's (below, "A library read observes its trees first").
 
@@ -2756,129 +2943,100 @@ facts (runs-application's `EdgeCommands::reach`, `user_allowlist`). Under
 `test-support` only, `ctxloom test library-events [--home] --format json`
 (QUESTIONS G) reads the cwd checkout's (or the home's) stream from the one
 store: `{"tree", "events": [{type, sequence, baseline, head_before,
-head_after, in_motion, changes: [{path, status, from_path?, oid?}]}]}`,
+head_after, changes: [{path, status, from_path?, oid?}]}]}`,
 `"tree": null` where no checkout harp was minted; it mints and records
 nothing.
 
-## git holds the library (step 10, U12; plan `t13-step10.plan.md` G1, G2, G9, G11)
+## The library is git-free (owner 2026-11-18; superseding G1, G2, G3 and L11)
 
-A library tree (a project checkout's `.ctxloom`, the home's) is in git, and
-what ctxloom knows of it is what git says: ctxloom-ports' `TreeObserver`
-(the work tree a directory is in, the ignore rule that ignores a path, a
-repository made, the commit checked out, the library's tree in a commit,
-`status --porcelain=v2 -z -uall --renames`, `diff-tree -r -M`, each file's
-object id by `hash-object --stdin-paths`, nothing stored, and the git
-operation in progress by `rev-parse --git-path` of `rebase-merge`,
-`rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` and
-`index.lock`), every path relative to the directory asked about
-(QUESTIONS.md I). `adapters/driven/library-git`'s `GitTrees` implements it,
-git on the caller's `PATH` in the caller's environment, every invocation
-`git --no-optional-locks -c core.longpaths=true`, so a read writes nothing
-into `.git`. It asks git its version once: none on the `PATH` is
-`library-git-git-missing`, older than 2.25 `library-git-git-too-old` (G11,
-QUESTIONS.md F), both failures, exit 10; a version line it cannot read is
-not judged.
+The scanner sees a library tree (below), so nothing on the library path
+asks git: a library works in ANY directory, in git or not, whatever git
+ignores and whatever git is doing. No read or write is refused for git's
+sake (`library-tree-not-in-git`, `-library-ignored` and `-tree-in-motion`
+are gone, with `locate::refusal`, `reconcile::motion_of` and the read
+notices `library-api-notice-tree-in-motion`); git missing fails no library
+command. The HOME is never made a repository (the home step,
+`ensure_home_repository`, `HOME_GITIGNORE` and
+`library-api-notice-home-repository-made` are gone) and ctxloom commits
+nothing, in the home or a project (G3's home commit, `home_commit`,
+`library-api-notice-home-not-committed` and the `RecordHomeRepositoryMade`
+fact are gone): the event store is the history. The home's library is
+observed whenever it has a `.ctxloom`. `config create` makes no
+repository (`with_repository_step` and `Notice::Git` are gone). Foreign
+writes (U10) are recorded in any directory: U10's unrecorded outside-git
+fallback is gone. Accepted cost: the home loses its per-write git history.
+`HomeRepositoryMade` stays a decodable EVENT, never emitted and folded as
+nothing but its cause, so a stream a 10b daemon wrote replays
+(`LibraryState.home_repository_made`, 11, is reserved).
 
-- `init` makes the directory it is run in a git repository when it is in
-  no work tree (G1: unasked, committing nothing), BEFORE it scaffolds, so a
-  missing git leaves nothing (exit 10); a directory below a repository's
-  root is in git, and left alone. It says
-  `init-application-notice-git-initialized` (`init_application::
-  ensure_repository`, `Init::with_repository`). `config create` takes the
-  same step before it writes (QUESTIONS.md E; `Library::
-  with_repository_step`, its notice `Notice::Git` in init's words).
-- The HOME is made a repository at its first read (G2, QUESTIONS.md B):
-  every library command first takes `library_application::
-  ensure_home_repository` over the home's `.ctxloom` (the wiring's
-  `library::home_repository`, which is also where git missing fails a read,
-  exit 10; a home with no `.ctxloom` yet is passed over). In no work tree,
-  or in one that ignores its `config.yaml` (a dotfiles repository ignoring
-  `.ctxloom`, QUESTIONS.md C: then nested), it is `git init`ed with the
-  ALLOWLIST `.gitignore` (`HOME_GITIGNORE`: `/*` then `!/.gitignore
-  !/config.yaml !/remotes.yaml !/lock.yaml !/content/`), written first and
-  only where there is none (once there it is hers), committing nothing;
-  any other work tree (her own repository at `.ctxloom`, or a dotfiles one
-  keeping it) is used as it is.
-- NOT built here (10a's other units): the reads moving into the daemon,
-  which then takes the home step per home and says the home's notice
-  `library-api-notice-home-repository-made` (U2, blocked: below).
-- The HOME COMMIT (G3, owner 2026-11-18, night; step 10b): when the
-  daemon's home step (`Observations::observe_trees`) `git init`s the home
-  and git then holds it, it records `RecordHomeRepositoryMade` on the home
-  tree's stream (keyed `home-repository-made:{tree}`; `HomeRepositoryMade`,
-  `LibraryState.home_repository_made`, all additive). After a write to the
-  home is recorded done, and only on a stream holding it, the daemon
-  commits that write (`carry_out`'s `home_commit`, through
-  `TreeObserver::commit`, library-git over git-cli): `git -c
-  user.name=ctxloom -c user.email=ctxloom@localhost -c commit.gpgsign=false
-  commit -q -m "ctxloom: <verb> (<request id>)" -- <paths>` (the library
-  paths its steps changed, staged first with `add -A`; `GIT_AUTHOR_*` and
-  `GIT_COMMITTER_*` are set to ctxloom too, as they outrank `-c`), one commit
-  per write; nothing changed, nothing committed. Never in a project tree,
-  nor in a home made before the fact existed, nor in a repository ctxloom
-  did not make; a home first made by an in-process verb (not a served one)
-  gets no fact either. A failed commit is the notice
-  `library-api-notice-home-not-committed` (a draft), and the write stands.
-- `TreeObserver::blob_ids` leaves out a path with no file (absent): the
-  reconcile asks the ids of paths it last saw dirty, some since taken away.
+git stays where a feature needs it: child checkouts (`worktree-git`),
+remote bundles (`remote-git`) and the session home's identity seed. Init
+asks no git (step 10c U6) and neither does `config create`, so
+ctxloom-ports' `TreeObserver`, `adapters/driven/library-git` (`GitTrees`,
+its `library-git-*` diagnostics), `init_application::ensure_repository`
+and `init-application-notice-git-initialized` are gone with their last
+user.
 
 ## A library read observes its trees first (step 10a U2, in part)
 
-`core/application/library-api` is the daemon's library reads' crate. Its
-reconcile (`reconcile::sight`, pure over `TreeObserver`) asks git, in
-order: the operation in progress, HEAD and the library's tree id in it,
-`status` over the library's pathspec (`PATHSPEC`: `content/bundles/v2`,
-`config.yaml`, `remotes.yaml`, `lock.yaml`; L13), and the ids of every
-path that differs now or was dirty at the record's last sight; when the
-library's tree id moved it diffs the commits (`diff-tree -M`), and a
-last-seen commit git no longer has (or an empty HEAD) re-baselines. Each
-path is judged against what the record knew (its last dirty id, else the
-diff's, else "present at HEAD"): added, deleted, renamed where git paired
-it, type-changed, else modified; a tree's first sight is its baseline,
-what git sees uncommitted as git classes it. Nothing differing records
-nothing (no fact sent; HEAD alone moving is nothing, QUESTIONS A).
-`locate::refusal` is G1's: a project whose root is in no work tree is
-`library-tree-not-in-git`, one whose `.ctxloom/config.yaml` git ignores
-(`check-ignore` from the root) `library-tree-library-ignored`.
-`Observations::observe` runs both for a `Site` (a checkout's, or the
-home's, which takes no G1 check), naming the checkout first
-(`CheckoutHarps`: the wiring's `TreeHarps`, `mint_checkout_harp`) only
-after the refusal, reconciling against the kernel's `library-checkout`
+`core/application/library-api` is the daemon's library reads' crate. A
+tree is SEEN BY THE SCANNER, never by git (step 10c U13 rework, owner
+2026-11-18): `ctxloom_ports::LibraryScanner` (the wiring's `TreeScanner`,
+handed out by `Observers::scanner`, one per daemon) walks the library's
+paths (`ctxloom_ports::LIBRARY_PATHS`: `content/bundles/v2`, `config.yaml`,
+`remotes.yaml`, `lock.yaml`; L13) and hashes each file:
+`library_tree::content_id`, the SHA-256 of its bytes, ctxloom's digest and
+never git's (no SHA-1 is added). Its edge memo, keyed by path and stat
+(length and mtime), reuses a hash whose file is unchanged and had settled
+(`SETTLED`, 2 s, git's racily-clean case) when hashed; `forget` drops it.
+`Observations::observe` sends ONE `RecordTreeListed` (every file and its
+content id, keyed `listed:{tree}:{H(base_cause)}:{H(sorted listing)}`,
+`library_tree::listing_key`, chained so A to B to A is three) unless the
+scan matches what the record lists (`listed_as_held`; a path a step took
+away, held with an empty id, is absent: `Library::listed`); the AGGREGATE
+compares it (`listing_changes`: each path added, modified or deleted,
+sorted; a move is a delete and a create) and records the `TreeObserved`
+a read's would be, the first a baseline of every file, an intent's own
+change attributed as before. Writes' intents and steps name content ids
+(`writes::intent_of` asks nothing; `left_by` and an export's manifest ask
+the scanner). No git is asked at all (the library is git-free, above).
+`Observations::observe(scanner, site)` observes a `Site` (a checkout's, or
+the home's), naming the checkout first (`CheckoutHarps`: the wiring's
+`TreeHarps`, `mint_checkout_harp`), reconciling against the kernel's `library-checkout`
 (projected inline, so the next read sees the last one's), and records the
 fact through the edge (`observation_book`); no lock is held across the
 recording: one sight twice against one state is a DUPLICATE, and one
 against a moved state records what it adds (forced in `observe.test.rs`).
 `observe_read` is a read's whole step: the project's checkout, then the
-home's library where it is in a work tree git does not ignore it in, in
-the caller's environment (`Observers`: the wiring's `CallerGits`, git on
-the request's `env` PATH). Its notices are `library-api-notice-tree-in-
-motion` and `-home-repository-made` (texts.md, accepted verbatim).
+home's library when it has one (`Observers`: the wiring's `CallerGits`,
+the daemon's one scanner and the home); it says no notice of its own now
+(its `notices` plumbing is kept, empty).
 `library_api::names` is the library's resource naming, one copy
 (library-cli re-exports it until each noun is served).
 
 The daemon's `Api::observing(Observing)` (serve.rs) makes every library
 read it serves (`Api::library_read`, `AssembleContext` among them) observe
-first: a refusal is the library domain's own typed refusal under its
-message's status (`daemon_api::library_refusal`; `rejection_of` maps
-`NotInGit`, `LibraryIgnored` and `PlanRejected` back to
-`Rejection::Library`, exit 20), a motion a notice. git failing is an
-internal failure; git MISSING or TOO OLD is a DIAGNOSED failure (step 10a
-U2, owner ruling 2026-11-17): `ApiError::Diagnosed {code, args}` (the
-`library-git` diagnostic's), answered FAILED_PRECONDITION
+first: the library domain's refusals travel as its own typed refusals
+under their messages' status (`daemon_api::library_refusal`;
+`rejection_of` maps `PlanRejected` and the write refusals back to
+`Rejection::Library`, exit 20). A failure an adapter diagnoses (once git
+missing or too old, now e.g. a deps read's) is a DIAGNOSED failure (step
+10a U2, owner ruling 2026-11-17): `ApiError::Diagnosed {code, args}` (the
+adapter's diagnostic's), answered FAILED_PRECONDITION
 (`run_ports::Infrastructure::Unmet`, never UNAVAILABLE, which a client
 reads as an unreachable daemon) carrying a `google.rpc.ErrorInfo` whose
 domain is `run_ports::DIAGNOSED` (`ctxloom.dev/diagnostic`), reason the
 code and metadata the args; the client reads it back as
 `Called::Diagnosed` (`daemon_client::called`, before any status is read),
-so the command says `library-git-git-missing` in its own catalog's words
-and exits 10.
+so the command says the diagnostic in its own catalog's words and exits
+10.
 
 `just bench-reconcile` (O7; `LIBRARY_BENCH=reconcile`, else the test says
-SKIP) times `sight` over `CallerGits` on 100 000 files with 500 in
-`.ctxloom`: p95 under 50 ms for a read seeing nothing new and one seeing a
-hand edit (2026-11-17, git 2.47, this machine: p95 46 ms and 50 ms; `status`
-alone is about 28 ms, so the margin is thin; the next mitigations are O7's
-untrackedCache or fsmonitor, or fewer `rev-parse` processes).
+SKIP) times an observation's scan over `CallerGits`' scanner, its memo
+warm, on a repository of 100 000 files with 500 in `.ctxloom` (the
+scanner walks the library alone): p95 under 50 ms for a read seeing nothing
+new and one seeing a hand edit. (Its git-era figures, p95 46 and 50 ms, were
+`git status`'s.)
 
 The owner's rulings of 2026-11-17 (E1, E2, E5, O3, the read notices) are
 built:
@@ -3020,12 +3178,10 @@ built:
   read fails (`daemon-api-unreached`, exit 10), text or json alike: a text
   answer no longer reaches no daemon (so `scripts/plain-engines-check.sh`
   proves the plain engine list by an agent written on a mock, refused in
-  process naming the list). The home step (G2) is the daemon's, at a read
-  (`observe_read`), said as `library-api-notice-home-repository-made`; the
-  caller takes none before a served read (`library_cli::is_served_read`,
-  its `SERVED_VERBS` table, `mcp server list|show`, `search`, `loadout`
-  and `run --dry-run`; one path), and a verb still in process takes it in process
-  first.
+  process naming the list). There is no home step (git-free), in the
+  daemon or in process (`library_cli::is_served_read`'s `SERVED_VERBS`
+  table, `mcp server list|show`, `search`, `loadout` and `run --dry-run`,
+  still says which verbs are served).
 - Text prints CANONICAL forms (owner rulings 2026-11-17), as the message
   holds them, never the spelling written (no as-written field crosses the
   wire): a reference is its SHORT library reference, harp-free, as a
@@ -3042,8 +3198,7 @@ built:
   (profile.tsv, mcp.tsv, run.tsv; library_parity's `as_canonical`).
 - `run --dry-run` is `CreateRun` with `validate_only` (`Api::preview_run`,
   `LibraryReads::preview_run`, library-cli's `Served::preview_run`): planned
-  as a library read (its trees observed first, so a library outside git is
-  refused `library-tree-not-in-git`) at the caller's directory, in its
+  as a library read (its trees observed first) at the caller's directory, in its
   environment, under the project's trust as the daemon reads it, then
   judged on the untrusted project settings it reads as the runs aggregate
   judges an enqueue (`runs::pre_launch_refusal`, owner answer H:
@@ -3526,16 +3681,33 @@ it starts, so `ctxloom mcp serve` (the stdio server it starts from
 turn start)"}`, `run_ports::wake_line`), and disarmed after 60 s
 (`DisarmWake`; a post that fails, at once). A wake is a nudge: the session's
 pending messages are the truth. Its prompt hook (`turn_start`) delivers its
-informs and wakes as `additionalContext`; a tool call's (`post_tool`) asks for
-none (a primary is offered no steer, and `GetSession` waits for a fresh
-daemon round: about 90 ms a tool call, measured by `just hook-latency`
-against the owner's 20 ms budget). They are recorded first (`DeliverMessages`, which redeems the wake its
-prompt was; pending-messages drops them) and are a primary's alone (a child's
-are fed as turns). A wake line that delivered nothing is blocked; a human's
+informs and wakes as `additionalContext`; a tool call's (`post_tool`)
+delivers none (a primary is offered no steer). A hook asks the daemon ONCE
+(the lean hook RPC, owner budget 2026-11-18: under 20 ms added per hook at
+p95, `just hook-latency`): `DeliverHookContext` (additive, daemon.proto;
+setup-application's `HookContexts`, the wiring's `DaemonHookContexts`, a
+`Caller` of the hook's own session, `Caller::hook_context`), answered from
+the projections with NO round awaited (`GetSession`'s `Hosting::fresh` is
+not on the hook path): the pending messages of the urgencies the hook
+names, fitted by `messages_context`, recorded by `DeliverMessages` (which
+redeems the wake its prompt was), then what the session is owed (as
+`RedeliverContext`) within what the messages left, joined by
+`compose_context`, the ids THIS call recorded in `HookContext.delivered`.
+A message is delivered ONCE however many hooks ask within one round (the
+pending projection folds per round, so both read it pending): the session
+aggregate keeps `SessionState.pending_messages` (field 30, additive;
+`MessageSent` adds, `MessagesDelivered` removes) and `DeliverMessages`
+records only ids still pending, and a DUPLICATE delivers nothing (forced in
+daemon-api's `hook_context` test). The hook's call trusts the discovery
+file first, unprobed (`HookDaemons::trusting`,
+`daemon::hook_daemon_unprobed`: a health check is a TLS connection of its
+own); reached unreachable, it probes and starts one as every hook does.
+Delivered messages are a primary's alone (a child's are fed as turns). A wake line that delivered nothing is blocked; a human's
 prompt never is. One hook answer has ONE 10,000-character context budget
 (claude's cap), shared in order by setup-application's `compose_context`:
-the skill mates line, the messages (given what is left; past it they wait
-behind a pointer to `session show`), then U13's re-delivered context. The
+the skill mates line (the hook's own), then the daemon's part: the messages
+(given what is left; past it they wait behind a pointer to `session show`),
+then U13's re-delivered context. The
 daemon publishes each watched session's `SessionSignal` every round (its
 pending wakes, its outstanding wake) and repeats it every 5 s, so a gone
 watcher is noticed. A primary takes `Wake` (never `Steer`) only while

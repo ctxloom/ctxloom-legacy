@@ -707,25 +707,29 @@ fn many(name: &'static str, short: char, help: &'static str) -> Arg {
 }
 
 fn context() -> Command {
-    noun("context", "Assemble context").subcommand(
-        Command::new("assemble")
-            .about("Assemble the context of a profile set, fragments and tags")
-            .arg(many(
-                "profile",
-                'p',
-                "Profile(s) to compose (can be repeated)",
-            ))
-            .arg(many(
-                "fragment",
-                'f',
-                "Fragment(s) to include (can be repeated)",
-            ))
-            .arg(many(
-                "tag",
-                't',
-                "Include fragments with this tag (can be repeated)",
-            )),
-    )
+    noun("context", "Assemble context")
+        .subcommand(Command::new("refresh").about(
+            "Forget what the daemon has seen of the library and observe it now (a DRAFT, step 10c)",
+        ))
+        .subcommand(
+            Command::new("assemble")
+                .about("Assemble the context of a profile set, fragments and tags")
+                .arg(many(
+                    "profile",
+                    'p',
+                    "Profile(s) to compose (can be repeated)",
+                ))
+                .arg(many(
+                    "fragment",
+                    'f',
+                    "Fragment(s) to include (can be repeated)",
+                ))
+                .arg(many(
+                    "tag",
+                    't',
+                    "Include fragments with this tag (can be repeated)",
+                )),
+        )
 }
 
 fn run() -> Command {

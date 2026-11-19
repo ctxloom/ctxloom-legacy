@@ -3709,6 +3709,9 @@ message UpdateRemoteRequest {
   google.protobuf.FieldMask update_mask = 2 [(google.api.field_behavior) = OPTIONAL];
   // The client's id for this write (AIP-155), sent again unchanged on the one
   // retry (API Q13).
+  // `remote edit --name`: the remote's new ID (step 10c U4); empty keeps
+  // it. Additive proto extension.
+  string new_remote_id = 3 [(google.api.field_behavior) = OPTIONAL];
   string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
   // The etag of the preview this apply was planned against (AIP-154): a stale
   // one is refused `PlanStale`. Empty with `--yes`: the write is planned and
@@ -4311,6 +4314,11 @@ message PullDependenciesResponse {
   Reconciliation reconciliation = 13;
   // Set when the refresh was previewed and not written. was: refresh_skipped.
   ProjectRefresh skipped_refresh = 14;
+  // A consented refresh (`--yes`) the project refused after the pull
+  // applied (`deps-application-refresh-aborted`, step 10c U4): the pull's
+  // trees and lock are written, and the command ends refused (exit 20)
+  // after the report, as in process. Additive proto extension.
+  Notice refresh_refusal = 15;
   // On a preview, the needs a person must answer before the apply
   // (needs.proto); empty once applied.
   repeated Need needs = 90;
@@ -4706,6 +4714,318 @@ message CleanResponse {
   uint64 bytes = 5;
   repeated Need needs = 90;
   string etag = 91;
+  repeated Notice notices = 92;
+}
+
+// `materialize [profiles...] [--target] [--yes] [--backend] [--surface]
+// [--release] [--dry-run]` (step 10c U10). Additive proto extension.
+message MaterializeRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // The profile set; none, the default agent's.
+  repeated string profiles = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Where, as the caller named it (relative to its `cwd`); empty, the
+  // project's directory, which needs `yes`.
+  string target = 3 [(google.api.field_behavior) = OPTIONAL];
+  bool yes = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The engines (`--backend`); none, the configured ones.
+  repeated string backends = 5 [(google.api.field_behavior) = OPTIONAL];
+  // The kinds, each `kind[=mechanism[:destination]]` as given; none, every
+  // kind.
+  repeated string surfaces = 6 [(google.api.field_behavior) = OPTIONAL];
+  // The empty plan for the selected kinds.
+  bool release = 7 [(google.api.field_behavior) = OPTIONAL];
+  // Plan and report; write nothing.
+  bool dry_run = 8 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again unchanged on the
+  // one retry: the retry resumes its sequence at the first step not done.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // Unset: a write of other tools' files alone takes no etag (protos.md
+  // §4.2).
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  // The preview (AIP-163); as `dry_run`.
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's whole environment (S7).
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  // The global flags the call is planned under.
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  // The caller's working directory (E1).
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One engine's part of a materialize, as its report has always said it.
+message MaterializedEngine {
+  string engine = 1;
+  // The kinds delivered (in a dry run, that would change).
+  repeated string wrote = 2;
+  // The selected kinds this run left with nothing.
+  repeated string released = 3;
+  // The file the context was written to.
+  string context_file = 4;
+  // Each kind the engine does not carry, and why.
+  repeated NotCarried not_carried = 5;
+  // Each command or skill the engine would not carry, and each value left
+  // standing.
+  repeated string skipped = 6;
+  repeated string warnings = 7;
+}
+
+// What `materialize` did, as its report has always said it.
+message MaterializeResponse {
+  string target = 1;
+  // The target did not exist and was created.
+  bool created = 2;
+  repeated string profiles = 3;
+  repeated MaterializedEngine engines = 4;
+  // `applied`, `partial`, `failed`, `released`, `planned` or `nothing`.
+  string status = 5;
+  // Each refused kind's cause, in words.
+  repeated string errors = 6;
+  repeated string warnings = 7;
+  // Each refused kind's cause, its code and args: the first is what the
+  // command is refused with.
+  repeated Notice failures = 8;
+  // 9 and 10 were an in-band error and exit (prerelease, step 10c U10): a
+  // use case's refusal is the call's typed refusal now (`SetupDeclined`,
+  // `SetupFatalFindings`), its failure the call's diagnosed failure.
+  reserved 9, 10;
+  reserved "error", "exit";
+  repeated Notice notices = 92;
+}
+
+// `manage uninstall` (step 10c U10). Additive proto extension.
+message UninstallManageRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // Unset: a write of other tools' files alone takes no etag.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// What `manage uninstall` did, as its report has always said it.
+message UninstallManageResponse {
+  // `released`, or `partial` when an engine's kind could not be given back.
+  string status = 1;
+  // The engines whose every kind was given back.
+  repeated string backends = 2;
+  repeated string errors = 3;
+  string note = 4;
+  // 5 and 6 were an in-band error and exit (prerelease, step 10c U10), as
+  // `MaterializeResponse`'s 9 and 10.
+  reserved 5, 6;
+  reserved "error", "exit";
+  repeated Notice notices = 92;
+}
+
+// `doctor [--deps] [--all] [--fix]` (step 10c U10 serves `--fix`; U5 the
+// checks). Additive proto extension.
+message RunDoctorRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // Take every stale hook entry out first (a write).
+  bool fix = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Only what this machine needs.
+  bool deps = 3 [(google.api.field_behavior) = OPTIONAL];
+  // Every check, passing ones too.
+  bool all = 4 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for the fix (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  // Unset: a write of other tools' files alone takes no etag.
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One stale hook entry `doctor --fix` took out.
+message RemovedHook {
+  // The settings file, as doctor shows it.
+  string file = 1;
+  string event = 2;
+  // The `ctxloom hook` verb it ran.
+  string sub = 3;
+}
+
+// One row of `doctor`'s report (step 10c U5), as its JSON names it.
+message DoctorCheck {
+  // Its `DOCTOR-CHECK-*` marker.
+  string marker = 1;
+  string name = 2;
+  // `ok`, `warn`, `fail` or `info`.
+  string status = 3;
+  string detail = 4;
+  // What to do about a warning or failure; empty otherwise.
+  string remedy = 5;
+}
+
+// What `doctor` did (step 10c U10: the fix's removals; U5 adds the checks).
+message RunDoctorResponse {
+  repeated RemovedHook removed = 1;
+  // 2 and 3 were an in-band error and exit (prerelease, step 10c U10), as
+  // `MaterializeResponse`'s 9 and 10.
+  reserved 2, 3;
+  reserved "error", "exit";
+  // The report's rows, in order (step 10c U5). Additive.
+  repeated DoctorCheck checks = 4;
+  repeated Notice notices = 92;
+}
+
+// `auth status` (step 10c U5), read where the caller stands.
+message GetAuthStatusRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One engine's credential (step 10c U5): its variables by NAME, never a
+// value.
+message AuthStatusRow {
+  string engine = 1;
+  string mode = 2;
+  // Whether it is exported: a variable row's alone; a file row has none.
+  optional bool present = 3;
+  repeated string vars = 4;
+  // The variable it was found in, by name.
+  string via = 5;
+  string message = 6;
+  string remedy = 7;
+  // `primary` for a source that is a file alone; empty otherwise.
+  string usable_by = 8;
+}
+
+// What `auth status` reports (step 10c U5).
+message GetAuthStatusResponse {
+  repeated AuthStatusRow rows = 1;
+  repeated Notice notices = 92;
+}
+
+// `manage check` (step 10c U5), read where the caller stands.
+message CheckManageRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One engine's wiring, as `manage check` reads it off its own files.
+message ManagedBackend {
+  string backend = 1;
+  bool settings_exists = 2;
+  bool hooks_present = 3;
+  bool hooks_at_launch = 4;
+  bool statusline = 5;
+  bool mcp_present = 6;
+}
+
+// A kind ctxloom delivered at rest, and whether its file still shows it.
+message ManagedSurface {
+  string route = 1;
+  string backend = 2;
+  // `materialized` or `stale`.
+  string status = 3;
+}
+
+// What `manage check` shows (step 10c U5).
+message CheckManageResponse {
+  string work_dir = 1;
+  bool manage_statusline = 2;
+  repeated ManagedBackend backends = 3;
+  repeated ManagedSurface surfaces = 4;
+  repeated Notice notices = 92;
+}
+
+// `manage gitignore install` (step 10c U5), written where the caller
+// stands.
+message InstallGitignoreRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// What `manage gitignore install` did (step 10c U5).
+message InstallGitignoreResponse {
+  // `updated` or `unchanged`.
+  string status = 1;
+  // The project's own `.gitignore`.
+  string path = 2;
+  // `.ctxloom/.gitignore`, the file it writes.
+  string nested_path = 3;
+  bool nested_written = 4;
+  // The file's token once written.
+  string etag = 91;
+  repeated Notice notices = 92;
+}
+
+// `manage install` (step 10c U6). Additive.
+message InstallManageRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // `--engine`: the new project's default agent's engine; empty,
+  // claude-code.
+  string engine = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// What `manage install` did (step 10c U6).
+message InstallManageResponse {
+  // The project's `.ctxloom`.
+  string app_dir = 1;
+  // It was not there, and was created whole (on a preview: it would be).
+  bool initialized = 2;
+  // The project's own `.gitignore`.
+  string gitignore = 3;
+  // `updated` or `unchanged`: `.ctxloom/.gitignore`.
+  string gitignore_status = 4;
+  // The id a new project was named by, for the client to bind at its
+  // root; empty when it was there.
+  string project_id = 5;
+  repeated Notice notices = 92;
+}
+
+// `init prompt` (step 10c U6), read where the caller stands.
+message GetInitPromptRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// The setup interview (step 10c U6): its body as the caller's catalog
+// holds it, and what reading it noticed (a project `ctxloom` bundle passed
+// over, untrusted).
+message GetInitPromptResponse {
+  string text = 1;
+  // 10c U6 (additive): each enabled registered companion's setup guidance,
+  // in order, which the interview carries after ctxloom's own (j000300).
+  repeated string companion_guidance = 2;
   repeated Notice notices = 92;
 }
 
@@ -5498,6 +5818,23 @@ message DepsLockUnreadable {
 message LibraryDeclined {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
   // The diagnostic that declined.
+  Cause cause = 1;
+}
+
+// A setup use case's decline (`materialize`, `manage uninstall`, step 10c
+// U10): the request or the state forbids it, as that use case's own
+// diagnostic (exit 20).
+message SetupDeclined {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // The diagnostic that declined.
+  Cause cause = 1;
+}
+
+// A setup use case refused over the plan's fatal findings (a strict
+// `materialize`), as its own diagnostic (exit 21).
+message SetupFatalFindings {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // The diagnostic that refused.
   Cause cause = 1;
 }
 

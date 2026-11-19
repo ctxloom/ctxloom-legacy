@@ -39,7 +39,13 @@ pub struct Client<D> {
     /// Whether a call whose daemon could not be reached is made once more
     /// on a new one (S8); only test-support turns it off.
     retries: bool,
+    /// What runs before that one retry (test-support's
+    /// `CTXLOOM_TEST_BEFORE_RETRY`, step 10c U13's harness); none, nothing.
+    before_retry: Option<BeforeRetry>,
 }
+
+/// What a client runs before its one retry.
+pub type BeforeRetry = Box<dyn Fn() + Send + Sync>;
 
 /// What mints a write's request id (S8): unique per call.
 pub type RequestIds = Box<dyn Fn() -> String + Send + Sync>;
@@ -97,6 +103,16 @@ pub trait SessionRemovals {
         even_if_live: bool,
     ) -> Result<Removed, CallError>;
 
+    /// `session remove <harp>` at a terminal (step 10c U11): the apply of
+    /// the preview tagged `etag`, with the person's `answers` to its needs.
+    async fn apply_removal(
+        &self,
+        harp: &str,
+        even_if_live: bool,
+        etag: &str,
+        answers: Vec<v1::Answer>,
+    ) -> Result<Removed, CallError>;
+
     /// `session sweep`: this project's sessions (`all`: every project's)
     /// by the sweep's table, purged before `older_than` (none: the
     /// configured age); without `yes` the report.
@@ -126,6 +142,7 @@ impl<D: Daemons> Client<D> {
             ids: Box::new(String::new),
             unnamed: false,
             retries: true,
+            before_retry: None,
         }
     }
 
@@ -159,10 +176,46 @@ impl<D: Daemons> Client<D> {
         }
     }
 
+    /// This client, `then` run once before a call whose daemon could not
+    /// be reached is made again (test-support's
+    /// `CTXLOOM_TEST_BEFORE_RETRY`: a person's edit between the loss and
+    /// the retry, forced rather than waited for).
+    #[must_use]
+    pub fn before_retry(self, then: BeforeRetry) -> Client<D> {
+        Client {
+            before_retry: Some(then),
+            ..self
+        }
+    }
+
     /// This client, each write's request id minted by `ids` (none, by
     /// default).
     pub fn with_request_ids(self, ids: RequestIds) -> Client<D> {
         Client { ids, ..self }
+    }
+
+    /// `RedeliverContext` (step 10c U13): what the live session `harp` of
+    /// this client's project, at its engine's hook `carried_by`, is to
+    /// carry: a re-assembled context, or none.
+    pub async fn redeliver_context(
+        &self,
+        harp: &str,
+        carried_by: &str,
+        budget: usize,
+    ) -> Result<v1::RedeliveredContext, CallError> {
+        self.on_daemon(async |api: &D::Api| {
+            let request = v1::RedeliverContextRequest {
+                name: format!("{}/sessions/{harp}", self.project(api).await?),
+                carried_by: carried_by.to_string(),
+                // What the hook's other parts left of its one budget
+                // (`setup_application::remaining`).
+                budget: u32::try_from(budget).unwrap_or(u32::MAX),
+                env: Some(self.env.clone()),
+                cwd: self.cwd.clone(),
+            };
+            api.redeliver_context(request).await
+        })
+        .await
     }
 
     /// `daemon status`: the serving daemon, or none (S14: none is started).
@@ -269,6 +322,9 @@ impl<D: Daemons> Client<D> {
         let api = self.daemons.reach().await.map_err(CallError::Unreached)?;
         match call(&api).await {
             Err(Called::Unreachable { .. }) if self.retries => {
+                if let Some(then) = &self.before_retry {
+                    then();
+                }
                 let again = self.daemons.reach().await.map_err(CallError::Unreached)?;
                 Ok(call(&again).await?)
             }
@@ -379,23 +435,22 @@ impl<D: Daemons> SessionReads for Client<D> {
     }
 }
 
-impl<D: Daemons> SessionRemovals for Client<D> {
-    async fn delete_session(
+impl<D: Daemons> Client<D> {
+    /// `asked` of the session `harp` (its name, request id and environment
+    /// this client's), the plan or the removal, refused with its plan.
+    async fn removal(
         &self,
         harp: &str,
-        yes: bool,
-        even_if_live: bool,
+        asked: v1::DeleteSessionRequest,
     ) -> Result<Removed, CallError> {
         // One id for the call, its retry on a new daemon included (S8).
         let request_id = (self.ids)();
         self.on_daemon(async |api: &D::Api| {
             let request = v1::DeleteSessionRequest {
                 name: format!("{}/sessions/{harp}", self.project(api).await?),
-                even_if_live,
                 request_id: request_id.clone(),
-                validate_only: !yes,
                 env: Some(self.env.clone()),
-                ..v1::DeleteSessionRequest::default()
+                ..asked.clone()
             };
             match api.delete_session(request).await {
                 Ok(done) => Ok(Removed::Done(done)),
@@ -415,6 +470,38 @@ impl<D: Daemons> SessionRemovals for Client<D> {
             }
         })
         .await
+    }
+}
+
+impl<D: Daemons> SessionRemovals for Client<D> {
+    async fn delete_session(
+        &self,
+        harp: &str,
+        yes: bool,
+        even_if_live: bool,
+    ) -> Result<Removed, CallError> {
+        let asked = v1::DeleteSessionRequest {
+            even_if_live,
+            validate_only: !yes,
+            ..v1::DeleteSessionRequest::default()
+        };
+        self.removal(harp, asked).await
+    }
+
+    async fn apply_removal(
+        &self,
+        harp: &str,
+        even_if_live: bool,
+        etag: &str,
+        answers: Vec<v1::Answer>,
+    ) -> Result<Removed, CallError> {
+        let asked = v1::DeleteSessionRequest {
+            even_if_live,
+            etag: etag.to_string(),
+            answers,
+            ..v1::DeleteSessionRequest::default()
+        };
+        self.removal(harp, asked).await
     }
 
     async fn sweep_sessions(

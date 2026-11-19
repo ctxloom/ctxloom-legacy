@@ -821,6 +821,27 @@ struct Daemon {
     holds_fail: bool,
     /// Each hold discarded, by name.
     discarded: std::cell::RefCell<Vec<String>>,
+    /// The person at the terminal and her answer (step 10c U11); none, no
+    /// terminal.
+    terminal: Option<bool>,
+    /// Each question asked at the terminal.
+    asked: std::cell::RefCell<Vec<String>>,
+    /// Each apply of a preview sent: harp, even_if_live, etag, answers.
+    applies: std::cell::RefCell<Vec<Applied>>,
+}
+
+/// An apply of a preview, as sent: harp, even_if_live, etag, answers.
+type Applied = (String, bool, String, Vec<v1::Answer>);
+
+impl crate::Asking for Daemon {
+    fn is_terminal(&self) -> bool {
+        self.terminal.is_some()
+    }
+
+    fn confirm(&self, question: &str) -> bool {
+        self.asked.borrow_mut().push(question.to_string());
+        self.terminal == Some(true)
+    }
 }
 
 fn hold_failure() -> reclaim_application::HoldError {
@@ -868,6 +889,19 @@ impl daemon_api::SessionRemovals for Daemon {
             }))
     }
 
+    async fn apply_removal(
+        &self,
+        harp: &str,
+        even_if_live: bool,
+        etag: &str,
+        answers: Vec<v1::Answer>,
+    ) -> Result<daemon_api::Removed, daemon_api::CallError> {
+        self.applies
+            .borrow_mut()
+            .push((harp.to_string(), even_if_live, etag.to_string(), answers));
+        Ok(daemon_api::Removed::Done(plan(true)))
+    }
+
     async fn sweep_sessions(
         &self,
         all: bool,
@@ -883,7 +917,7 @@ fn destroy_go(daemon: &Daemon, format: Format, words: &[&str]) -> Ran {
     let session = parsed(words);
     assert!(crate::is_destroy(&session), "{words:?}");
     let mut out = Vec::new();
-    let result = crate::destroy(&session, daemon, daemon, format, &mut out);
+    let result = crate::destroy(&session, daemon, daemon, daemon, format, &mut out);
     Ran {
         out: String::from_utf8(out).unwrap(),
         result,
@@ -931,6 +965,84 @@ fn refused_with(why: Refusal) -> Daemon {
         }),
         ..Daemon::default()
     }
+}
+
+/// A preview asking its confirmation, tagged `e-7`, for a daemon whose
+/// terminal is `terminal`.
+fn asking(terminal: Option<bool>) -> Daemon {
+    let mut preview = plan(false);
+    preview.etag = "e-7".to_string();
+    preview.needs = vec![v1::Need {
+        id: "confirm".to_string(),
+        kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+            text: "Remove session \"amber-swift-owl\"?".to_string(),
+            ..v1::Confirm::default()
+        })),
+        optional: false,
+    }];
+    Daemon {
+        terminal,
+        ..done_with(preview)
+    }
+}
+
+// Step 10c U11: at her terminal the preview's own question is asked, and
+// her yes applies what it showed, its tag and her answer sent back; what is
+// said is the removal applied, nothing left that would change.
+#[test]
+fn at_a_terminal_a_yes_applies_the_preview_with_its_tag_and_her_answer() {
+    let daemon = asking(Some(true));
+    let ran = destroy_go(&daemon, Format::Json, &["remove", "amber-swift-owl"]);
+    assert_eq!(
+        *daemon.asked.borrow(),
+        ["Remove session \"amber-swift-owl\"?"]
+    );
+    let confirmed = vec![v1::Answer {
+        need_id: "confirm".to_string(),
+        answer: Some(v1::answer::Answer::Confirmed(true)),
+    }];
+    assert_eq!(
+        *daemon.applies.borrow(),
+        [(
+            "amber-swift-owl".to_string(),
+            false,
+            "e-7".to_string(),
+            confirmed
+        )]
+    );
+    assert_eq!(json_of(&ran)["applied"], true);
+    let done = ran.result.unwrap();
+    assert!(!done.would_change);
+    assert!(done
+        .notices
+        .iter()
+        .all(|n| n.code() != "sessions-application-removed-nothing"));
+}
+
+// Her no, or no terminal at all, applies nothing: the preview stands.
+#[test]
+fn a_no_or_no_terminal_applies_nothing() {
+    for (terminal, questions) in [(Some(false), 1), (None, 0)] {
+        let daemon = asking(terminal);
+        let ran = destroy_go(&daemon, Format::Json, &["remove", "amber-swift-owl"]);
+        assert_eq!(daemon.asked.borrow().len(), questions, "{terminal:?}");
+        assert!(daemon.applies.borrow().is_empty(), "{terminal:?}");
+        assert_eq!(json_of(&ran)["applied"], false);
+        assert!(ran.result.unwrap().would_change, "{terminal:?}");
+    }
+}
+
+// `--yes` is one call: nothing is asked, even at a terminal.
+#[test]
+fn yes_at_a_terminal_asks_nothing() {
+    let daemon = asking(Some(true));
+    destroy_go(
+        &daemon,
+        Format::Json,
+        &["remove", "amber-swift-owl", "--yes"],
+    );
+    assert!(daemon.asked.borrow().is_empty());
+    assert!(daemon.applies.borrow().is_empty());
 }
 
 // Owner ruling 98, ruling 146: `session remove` reports the destroy first:

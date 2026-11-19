@@ -74,6 +74,26 @@ impl Mcp {
     /// `ctxloom mcp serve` for the session `session` (its resource name, as
     /// the engine's environment carries it), initialized.
     pub(crate) fn for_session(project: &Project, session: &str, env: &[(&str, &str)]) -> Mcp {
+        Mcp::for_session_with(project, session, env, json!({}))
+    }
+
+    /// [`Mcp::for_session`], the client declaring it can elicit (MCP's
+    /// `elicitation` capability; step 10c U11): its calls are made with
+    /// [`Mcp::call_eliciting`].
+    pub(crate) fn for_session_eliciting(
+        project: &Project,
+        session: &str,
+        env: &[(&str, &str)],
+    ) -> Mcp {
+        Mcp::for_session_with(project, session, env, json!({"elicitation": {}}))
+    }
+
+    fn for_session_with(
+        project: &Project,
+        session: &str,
+        env: &[(&str, &str)],
+        capabilities: Value,
+    ) -> Mcp {
         let mut all = vec![("CTXLOOM_SESSION", session), IDLE];
         all.extend_from_slice(env);
         let mut mcp = Mcp::spawn(project, &all);
@@ -81,7 +101,7 @@ impl Mcp {
             "initialize",
             json!({
                 "protocolVersion": "2025-06-18",
-                "capabilities": {},
+                "capabilities": capabilities,
                 "clientInfo": {"name": "acceptance", "version": "0"}
             }),
         );
@@ -165,6 +185,62 @@ impl Mcp {
             .unwrap_or_else(|| panic!("{tool} was not answered with a result: {answer}"))
     }
 
+    /// `tools/call` of `tool` with `arguments`, every elicitation the
+    /// server asks meanwhile answered: accepted with each field of its
+    /// schema filled ([`accepted_content`]), or declined. Its result, and
+    /// each `elicitation/create` request's params, in order.
+    pub(crate) fn call_eliciting(
+        &mut self,
+        tool: &str,
+        arguments: Value,
+        accept: bool,
+    ) -> (Value, Vec<Value>) {
+        let answer = |params: &Value| match accept {
+            true => json!({"action": "accept", "content": accepted_content(params)}),
+            false => json!({"action": "decline"}),
+        };
+        self.call_answering(tool, arguments, &answer)
+    }
+
+    /// [`Mcp::call_eliciting`], each elicitation answered with what
+    /// `answer` makes of its params (step 10c U11: an Edit answered with a
+    /// document's new text).
+    pub(crate) fn call_answering(
+        &mut self,
+        tool: &str,
+        arguments: Value,
+        answer: &dyn Fn(&Value) -> Value,
+    ) -> (Value, Vec<Value>) {
+        let id = json!(self.start_call(tool, arguments));
+        let mut asked = Vec::new();
+        let deadline = Instant::now() + ANSWER_WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let line = self.lines.recv_timeout(left).unwrap_or_else(|_| {
+                panic!(
+                    "no answer to {tool} within {ANSWER_WAIT:?}; it said {:?}",
+                    self.said
+                )
+            });
+            self.said.push(line.clone());
+            let message: Value = serde_json::from_str(&line)
+                .unwrap_or_else(|e| panic!("stdout is JSON-RPC only, not {line:?}: {e}"));
+            if message.get("id") == Some(&id) && message.get("method").is_none() {
+                let result = message
+                    .get("result")
+                    .cloned()
+                    .unwrap_or_else(|| panic!("{tool} was not answered with a result: {message}"));
+                return (result, asked);
+            }
+            if message["method"] == "elicitation/create" {
+                let params = message["params"].clone();
+                let result = answer(&params);
+                asked.push(params);
+                self.send(json!({"jsonrpc": "2.0", "id": message["id"], "result": result}));
+            }
+        }
+    }
+
     /// Close its stdin and wait for it (bounded): its exit code, and what it
     /// wrote to stderr. What it wrote to stdout after is in `said`.
     pub(crate) fn finish(mut self) -> (i32, String) {
@@ -205,6 +281,23 @@ impl Drop for Mcp {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// What an accepting client answers an elicitation's `requestedSchema`
+/// with: `true` for each boolean field, its default (else empty) for each
+/// other.
+pub(crate) fn accepted_content(params: &Value) -> Value {
+    let mut content = serde_json::Map::new();
+    if let Some(fields) = params["requestedSchema"]["properties"].as_object() {
+        for (name, field) in fields {
+            let value = match field["type"].as_str() {
+                Some("boolean") => json!(true),
+                _ => field.get("default").cloned().unwrap_or_else(|| json!("")),
+            };
+            content.insert(name.clone(), value);
+        }
+    }
+    Value::Object(content)
 }
 
 /// The first text content of a tool's result, as JSON.
@@ -487,4 +580,21 @@ fn test_an_older_sessions_call_is_refused_and_the_daemon_serves_on() {
     assert_eq!(discovered(&world.project).pid, old.pid, "the same daemon");
     let (code, err) = mcp.finish();
     assert_eq!(code, 0, "{err}");
+}
+
+/// An accepting client fills each field the schema asks for: a boolean
+/// `true`, another its default, else empty; a schema with no fields is
+/// answered with none.
+#[test]
+fn an_accepted_elicitation_fills_each_field_of_its_schema() {
+    let params = json!({"message": "close?", "requestedSchema": {"type": "object", "properties": {
+        "confirmed": {"type": "boolean"},
+        "dir": {"type": "string", "default": "ctxloom/"},
+        "name": {"type": "string"}
+    }}});
+    assert_eq!(
+        accepted_content(&params),
+        json!({"confirmed": true, "dir": "ctxloom/", "name": ""})
+    );
+    assert_eq!(accepted_content(&json!({"message": "?"})), json!({}));
 }

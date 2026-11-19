@@ -11,7 +11,7 @@ use deps_application::Refresh;
 use cli_support::FixOf;
 
 /// The refresh a pull skipped, its refusals in words.
-pub(crate) struct Skipped {
+pub struct Skipped {
     target: String,
     engines: Vec<Engine>,
 }
@@ -30,7 +30,7 @@ struct Refused {
 }
 
 /// `refresh`, its refusals said from the catalog.
-pub(crate) fn view(refresh: &Refresh, catalog: &Catalog) -> Skipped {
+pub fn view(refresh: &Refresh, catalog: &Catalog) -> Skipped {
     Skipped {
         target: refresh.target.clone(),
         engines: refresh
@@ -49,6 +49,36 @@ pub(crate) fn view(refresh: &Refresh, catalog: &Catalog) -> Skipped {
                         fix: catalog
                             .render(&FixOf(r.cause.as_ref(), format!("{}-fix", r.cause.code())))
                             .unwrap_or_default(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+/// The refresh a pull's answer carries (step 10c U4), read back: each
+/// engine by its ID, each refusal in the words it was said in.
+pub(crate) fn from_message(message: &v1::ProjectRefresh) -> Skipped {
+    Skipped {
+        target: message.target.clone(),
+        engines: message
+            .engines
+            .iter()
+            .map(|e| Engine {
+                engine: e
+                    .engine
+                    .rsplit_once("/engines/")
+                    .map_or(e.engine.as_str(), |(_, id)| id)
+                    .to_string(),
+                wrote: e.written_kinds.clone(),
+                released: e.released_kinds.clone(),
+                refused: e
+                    .refused_kinds
+                    .iter()
+                    .map(|r| Refused {
+                        kind: r.kind.clone(),
+                        reason: r.reason.clone(),
+                        fix: r.fix.clone(),
                     })
                     .collect(),
             })

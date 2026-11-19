@@ -60,6 +60,44 @@ fn test_what_it_scaffolds_is_a_config_this_build_reads() {
     }
 }
 
+// Step 10c U6: init's answers are written in the config the scaffold
+// creates, so its one create holds them: `output.dir` and
+// `config.premised`, each only when answered, the keys sorted as a fresh
+// document's are.
+#[test]
+fn test_init_answers_ride_in_the_scaffolded_config() {
+    assert_eq!(
+        initial_config_with("claude-code", &Answered::default()),
+        initial_config("claude-code")
+    );
+    let both = initial_config_with(
+        "opencode",
+        &Answered {
+            output_dir: Some("out/".to_string()),
+            premised: Some("always".to_string()),
+        },
+    );
+    assert_eq!(
+        both,
+        "agents:\n  default:\n    engine: opencode\n    profiles:\n      - default\n    runtime: host\nconfig:\n  premised: always\ndefault_agent: default\noutput:\n  dir: out/\nschema_version: 9\n"
+    );
+    let doc = angzarr_yaml::parse(&both).unwrap();
+    let violations = crate::config::schema::validate(&doc);
+    assert!(violations.is_empty(), "{violations:?}");
+    let dir_only = initial_config_with(
+        "mock",
+        &Answered {
+            output_dir: Some("ctxloom/".to_string()),
+            premised: None,
+        },
+    );
+    assert!(
+        dir_only.contains("output:\n  dir: ctxloom/\n"),
+        "{dir_only}"
+    );
+    assert!(!dir_only.contains("premised"), "{dir_only}");
+}
+
 // The nested `.gitignore`: the comment, then each private-state pattern on a
 // line of its own, and nothing it lists is left to git.
 #[test]

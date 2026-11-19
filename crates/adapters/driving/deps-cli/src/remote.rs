@@ -9,7 +9,7 @@ use crate::api::{count, remote_name};
 
 /// `remote create`: `CreateRemoteResponse`, the remote with the forge it was
 /// bound to (`forge`, as asked); a clone that failed is a notice alone.
-pub(crate) fn created(parent: &str, made: &Created, forge: &str) -> v1::CreateRemoteResponse {
+pub fn created(parent: &str, made: &Created, forge: &str) -> v1::CreateRemoteResponse {
     v1::CreateRemoteResponse {
         remote: Some(v1::Remote {
             name: remote_name(parent, &made.name),
@@ -25,7 +25,7 @@ pub(crate) fn created(parent: &str, made: &Created, forge: &str) -> v1::CreateRe
 /// `remote edit`: `UpdateRemoteResponse`, the remote after the write and its
 /// `changes` (OQ-18: no `before`); an edit that changed nothing applied
 /// nothing. A default that followed a rename is the remote's `default`.
-pub(crate) fn edited(parent: &str, edited: &EditedRemote) -> v1::UpdateRemoteResponse {
+pub fn edited(parent: &str, edited: &EditedRemote) -> v1::UpdateRemoteResponse {
     let after = &edited.after;
     v1::UpdateRemoteResponse {
         remote: Some(v1::Remote {
@@ -43,11 +43,7 @@ pub(crate) fn edited(parent: &str, edited: &EditedRemote) -> v1::UpdateRemoteRes
 
 /// `remote remove`: `DeleteRemoteResponse`, the preview's (what would go,
 /// and the command that applies it) or the removal's.
-pub(crate) fn removed(
-    parent: &str,
-    asked: &str,
-    removal: &RemoveResult,
-) -> v1::DeleteRemoteResponse {
+pub fn removed(parent: &str, asked: &str, removal: &RemoveResult) -> v1::DeleteRemoteResponse {
     let named = |remote: &str| {
         Some(v1::Remote {
             name: remote_name(parent, remote),
@@ -72,7 +68,7 @@ pub(crate) fn removed(
 
 /// `remote default`: `SetDefaultRemoteResponse`, the remote now the default
 /// (none, cleared).
-pub(crate) fn defaulted(parent: &str, set: &DefaultSet) -> v1::SetDefaultRemoteResponse {
+pub fn defaulted(parent: &str, set: &DefaultSet) -> v1::SetDefaultRemoteResponse {
     v1::SetDefaultRemoteResponse {
         remote: if set.name.is_empty() {
             String::new()

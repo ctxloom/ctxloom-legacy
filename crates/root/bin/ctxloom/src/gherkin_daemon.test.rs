@@ -81,6 +81,10 @@ pub(super) struct State {
     registered: Option<(String, PathBuf)>,
     /// What an engine's call of a ctxloom tool was answered.
     tool: Option<Value>,
+    /// Each elicitation the server asked of the last tool call (step 10c
+    /// U11), and whether the engine accepts the next ones.
+    elicited: Vec<Value>,
+    declines: bool,
     /// The daemon a tool's call found before it was killed.
     before_kill: Option<run_ports::Discovery>,
     /// A second project's directory (U5: two sessions, two projects).
@@ -112,6 +116,9 @@ pub(super) struct State {
     stub_on_path: bool,
     /// What the interactive session's command came to, once it ended.
     session_ran: Option<crate::tests::Ran>,
+    /// A foreign writer killed after one of its steps (step 10c U10): its
+    /// command, and the file its run must leave as it says.
+    foreign_run: Option<(String, Leaves)>,
     /// A command a step started and left running (`I start ...`), for a
     /// later step to wait for.
     started: Option<Child>,
@@ -1209,7 +1216,7 @@ fn run_events(w: &World, harp: &str) -> Vec<String> {
     if ran.code != 0 {
         return Vec::new();
     }
-    ran.json()
+    ran.json()["events"]
         .as_array()
         .map(|events| {
             events
@@ -1503,9 +1510,15 @@ fn daemon_dir(w: &World) -> PathBuf {
 
 #[given("no ctxloom daemon can be started for this home")]
 fn unstartable(w: &mut World) {
+    // A daemon an earlier step's command started (step 10c U6: init is the
+    // daemon's) is stopped, and its directory taken away.
+    if files::exists(daemon_dir(w)) {
+        let stopped = run_now(w, &["daemon", "stop"]);
+        assert_eq!(stopped.code, 0, "daemon stop: {}", stopped.said());
+        files::remove_tree(daemon_dir(w));
+    }
     // A file where the daemon's directory goes: no daemon can take its
     // single-instance lock there, advertise itself or log.
-    assert!(!files::exists(daemon_dir(w)), "a fresh home");
     files::put(daemon_dir(w), "not a directory");
 }
 
@@ -1738,6 +1751,10 @@ fn die_at(when: &str) -> Option<&'static str> {
         // A sequence's (T28): after its first step, the trash, is applied.
         "after the session's directory moved to trash, before the purge"
         | "after the old bundle moved to trash, before the new one moved in" => "trashed",
+        // A pull's (step 10c U4, O6.3): its sequence's trees, then its lock.
+        "after the first tree is installed, before the second" => "tree-installed",
+        "after every tree is installed, before the lock is written" => "trees-installed",
+        "after the lock is written, before the pull is answered" => "done",
         _ => return None,
     })
 }
@@ -1781,8 +1798,76 @@ fn old_and_new_notes(w: &mut World) {
     );
 }
 
+/// What a foreign writer's run leaves (step 10c U10), project-relative: a
+/// file holding a text, or a file gone, or a file without a text.
+#[derive(Clone, Debug)]
+pub(super) enum Leaves {
+    Holding(&'static str, &'static str),
+    Without(&'static str, &'static str),
+    Gone(&'static str),
+}
+
+/// `after step <n> of '<command>'`: the kill point after a foreign
+/// writer's `n`th step, and the command.
+fn foreign_step(when: &str) -> Option<(usize, String)> {
+    let rest = when.strip_prefix("after step ")?;
+    let (n, command) = rest.split_once(" of '")?;
+    Some((n.parse().ok()?, command.strip_suffix('\'')?.to_string()))
+}
+
+/// A Go-era hook entry `doctor --fix` takes out (once Go is retired).
+const STALE_HOOK: &str = "ctxloom hook inject-context abc";
+
+/// What `command` presupposes, planted (a stale hook to take out, claims to
+/// give back), and what its run must leave.
+fn foreign_presupposed(w: &mut World, command: &str) -> Leaves {
+    match command {
+        "ctxloom doctor --fix" => {
+            // Its report passes, so the run's exit is the fix's: an agent
+            // credential is exported (doctor's credentials row).
+            w.common
+                .set_env("CLAUDE_CODE_OAUTH_TOKEN", "not-a-real-token".to_string());
+            let home_config = w.common.project.home().join(".ctxloom/config.yaml");
+            let said = files::read(&home_config).unwrap_or_default();
+            files::put(&home_config, format!("{said}legacy:\n  go: retired\n"));
+            files::put(
+                w.common.project.dir().join(".claude/settings.json"),
+                format!(
+                    r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{STALE_HOOK}"}}]}}]}}}}"#
+                ),
+            );
+            Leaves::Without(".claude/settings.json", STALE_HOOK)
+        }
+        "ctxloom manage uninstall --yes" | "ctxloom manage uninstall" => {
+            let ran = run_now(w, &["materialize", "--yes", "--backend", "claude-code"]);
+            assert_eq!(ran.code, 0, "the claims to give back: {}", ran.said());
+            assert!(files::exists(w.common.project.dir().join("CLAUDE.md")));
+            Leaves::Gone("CLAUDE.md")
+        }
+        "ctxloom materialize --target out --yes" => Leaves::Holding("out/CLAUDE.md", "ctxloom"),
+        other => panic!("no foreign writer the harness knows: {other}"),
+    }
+}
+
 #[given(regex = r"^the daemon will be killed outright (.+)$")]
-fn killed_at(w: &mut World, when: String) {
+fn killed_at(w: &mut World, step: &cucumber::gherkin::Step, when: String) {
+    if let Some((n, command)) = foreign_step(&when) {
+        // Killed once its `n`th step is recorded done (step 10c U10); the
+        // CLI's one retry finishes it on a new daemon.
+        let leaves = foreign_presupposed(w, &command);
+        w.daemon_spec.foreign_run = Some((command, leaves));
+        w.daemon_spec.before_kill = discovery_if_serving(w);
+        files::put(daemon_dir(w).join(DIE_AT), format!("step-{n}"));
+        return;
+    }
+    if let Some(rel) = superseded_file(&when) {
+        // Killed once its intent is recorded, and the file changed by hand
+        // before the CLI's retry reaches a new daemon (step 10c U13).
+        w.daemon_spec.before_kill = discovery_if_serving(w);
+        files::put(daemon_dir(w).join(DIE_AT), "intended");
+        edit_before_retry(w, &rel, &crate::tests::gherkin_common::doc(step));
+        return;
+    }
     if let Some(step) = die_at(&when) {
         // Killed already (a scenario that planted what its daemon left).
         if w.daemon_spec.killed {
@@ -1809,6 +1894,40 @@ fn killed_at(w: &mut World, when: String) {
     // none.
     w.daemon_spec.before_kill = discovery_if_serving(w);
     files::put(daemon_dir(w).join(DIE_AFTER_APPLY), "once");
+}
+
+/// The file a kill's `when` says is changed by hand before the retry
+/// (`after the write's intent is recorded, and the file "<rel>" is changed
+/// by hand before the retry, to:`), project-relative; none for any other.
+fn superseded_file(when: &str) -> Option<String> {
+    let rest = when.strip_prefix("after the write's intent is recorded, and the file \"")?;
+    let (rel, tail) = rest.split_once('"')?;
+    (tail == " is changed by hand before the retry, to:").then(|| rel.to_string())
+}
+
+/// The test-support program the CLI runs before its one retry (step 10c
+/// U13's harness), so a test stands for a person between the daemon's loss
+/// and the write sent again: the race forced, never waited for.
+const BEFORE_RETRY: &str = "CTXLOOM_TEST_BEFORE_RETRY";
+
+/// The CLI's retry runs a program that writes `text` over `rel` first.
+fn edit_before_retry(w: &mut World, rel: &str, text: &str) {
+    let dir = w.common.project.home().join("..").join("before-retry");
+    let body = dir.join("hand-edit.txt");
+    files::put(&body, format!("{text}\n"));
+    let target = rel
+        .split('/')
+        .fold(w.common.project.dir().to_path_buf(), |path, part| {
+            path.join(part)
+        });
+    files::put_program(
+        dir.join("edit"),
+        &format!("cp '{}' '{}'\n", body.display(), target.display()),
+    );
+    w.common.set_env(
+        BEFORE_RETRY,
+        dir.join("edit").to_str().expect("utf-8").to_string(),
+    );
 }
 
 /// The discovery file of the daemon serving now, when one has written one
@@ -1851,6 +1970,10 @@ fn child_closed(w: &mut World, child: String) {
 
 #[given(expr = "a child {string} of {string} that is open and idle")]
 fn child_of_idle(w: &mut World, child: String, owner: String) {
+    if (child.as_str(), owner.as_str()) == ("olive-quiet-finch", "brisk-copper-moth") {
+        grandchild_idle(w);
+        return;
+    }
     if (child.as_str(), owner.as_str()) == ("brisk-copper-moth", "amber-quiet-heron") {
         return idle_child(w);
     }
@@ -1858,6 +1981,51 @@ fn child_of_idle(w: &mut World, child: String, owner: String) {
     // launched by Alice and idle once its first turn ended.
     user_launches(w, &owner, &child, None);
     first_turn_told(w, &owner, &child);
+}
+
+/// The hosted claude child, its agent planned on `profile` (step 10c U13:
+/// its loadout names that profile's bundles), open and idle; the session
+/// a later hook fires in.
+#[given(expr = "a claude child {string} of {string} that is open and idle on the profile {string}")]
+fn claude_child_on(w: &mut World, child: String, owner: String, profile: String) {
+    assert_eq!(
+        (child.as_str(), owner.as_str()),
+        ("brisk-copper-moth", "amber-quiet-heron"),
+        "the child and owner the harness hosts"
+    );
+    w.daemon_spec
+        .project_says
+        .push(format!("agents.default.profiles: [{profile}]"));
+    idle_child(w);
+    w.seeded_harps.push(child);
+}
+
+/// The hosted child's own child (step 10c D16): launched by the child,
+/// `olive-quiet-finch`, its first turn ended and told to it.
+fn grandchild_idle(w: &mut World) {
+    let mut env = env_of(w);
+    env.push(("ANTHROPIC_API_KEY".to_string(), "a-key".to_string())); // gitleaks:allow
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let launched = w.common.project.run_with(
+        &env,
+        &[
+            "session",
+            "launch",
+            "brisk-copper-moth",
+            "--name",
+            "olive-quiet-finch",
+            "a task",
+        ],
+    );
+    assert_eq!(launched.code, 0, "{}", launched.said());
+    // Its first turn's end is its run's record (its owner, itself a
+    // hosted child, is told it through its own conversation).
+    until(w, "the grandchild's first turn to end", DAEMON_WAIT, |w| {
+        run_events(w, "olive-quiet-finch")
+            .iter()
+            .any(|kind| kind == "TurnCompletedRecorded")
+            .then_some(())
+    });
 }
 
 /// A child no session holds open: one nothing launched.
@@ -2157,6 +2325,50 @@ fn library_hook_fires(w: &mut World, hook: String, skill: String) {
         "tool_response": "ok",
     });
     fire(w, "PostToolUse", &payload.to_string());
+}
+
+/// A hook after a plain tool's call (step 10c U13: a tool's result is an
+/// event a re-assembly may ride).
+#[when(regex = r#"^the session's assistant fires its PostToolUse, after the tool "([^"]+)" hook$"#)]
+fn tool_hook_fires(w: &mut World, tool: String) {
+    let payload = json!({
+        "session_id": "9d764b45-a56a-48d7-ac9d-c2a16c5669f1",
+        "hook_event_name": "PostToolUse",
+        "cwd": w.common.project.dir().to_str().expect("utf-8"),
+        "tool_name": tool,
+        "tool_input": {"file_path": "README.md"},
+        "tool_response": "ok",
+    });
+    fire(w, "PostToolUse", &payload.to_string());
+}
+
+/// The `additionalContext` of a hook's answer, as claude reads it
+/// (`hookSpecificOutput.additionalContext` of its stdout's JSON); none
+/// when the answer is no JSON, or has none.
+fn additional_context(stdout: &str) -> Option<String> {
+    let answer: Value = serde_json::from_str(stdout.trim()).ok()?;
+    answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .map(str::to_string)
+}
+
+#[then(expr = "the hook's answer to the engine carries additionalContext containing {string}")]
+fn context_carried(w: &mut World, text: String) {
+    let fired = fired(w);
+    let context = additional_context(&fired.ran.stdout)
+        .unwrap_or_else(|| panic!("no additionalContext: {}", fired.ran.said()));
+    assert!(context.contains(&text), "{text:?} is not in {context:?}");
+}
+
+#[then("the hook's answer to the engine carries no additionalContext")]
+fn no_context(w: &mut World) {
+    let fired = fired(w);
+    assert_eq!(
+        additional_context(&fired.ran.stdout),
+        None,
+        "{}",
+        fired.ran.said()
+    );
 }
 
 #[then("the hook exits 0, within its bound")]
@@ -3388,9 +3600,17 @@ fn no_mint(w: &mut World) {
         !files::exists(w.common.project.dir().join(".ctxloom/sessions")),
         "no session directory was made"
     );
-    assert!(
-        !files::exists(w.common.project.home().join(".ctxloom/ctxloom.db")),
-        "the store was never opened, so nothing was minted in it"
+    // The store as the Given left it (step 10c U6: an init before is the
+    // daemon's, which opened it) is as it was, so nothing was minted in it.
+    let before = w
+        .daemon_spec
+        .store_before
+        .clone()
+        .expect("the stores were looked at before the command ran");
+    assert_eq!(
+        store_evidence(w).stores,
+        before.stores,
+        "the store was opened, so a session may have been minted in it"
     );
 }
 
@@ -3642,21 +3862,55 @@ fn applied_once(w: &mut World) {
     assert_eq!(applied, 1, "{events:?}");
 }
 
+/// The question a session removal's preview asks (step 10c U11), as the
+/// daemon words its Confirm need.
+fn removal_question(harp: &str) -> String {
+    format!("Remove session \"{harp}\"?")
+}
+
+/// Whether `session show` still finds `harp` (else it names no session).
+fn still_held(w: &World, harp: &str) -> bool {
+    let ran = run_now(w, &["session", "show", harp, "--format", "json"]);
+    match ran.code {
+        0 => true,
+        20 => false,
+        _ => panic!("session show {harp}: {}", ran.said()),
+    }
+}
+
 #[then("the daemon's confirmation was asked at her terminal, and the session is gone")]
-fn asked_at_terminal(_: &mut World) {
-    red("the daemon's confirmation was asked at her terminal")
+fn asked_at_terminal(w: &mut World) {
+    let ran = w.common.ran();
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    let question = format!("{} [y/N] ", removal_question("amber-swift-owl"));
+    assert!(
+        ran.stderr.contains(&question),
+        "asked {question:?}: {}",
+        ran.said()
+    );
+    assert!(!still_held(w, "amber-swift-owl"), "the session is gone");
 }
 
 #[when("its orchestrator calls a ctxloom tool whose daemon call asks for confirmation")]
-fn tool_asks(_: &mut World) {
-    red("its orchestrator calls a ctxloom tool whose daemon call asks for confirmation")
+fn tool_asks(w: &mut World) {
+    // The test build's tool (QUESTIONS.md 7): a session removal, whose
+    // preview asks to confirm it, of a session that has ended.
+    w.plant("amber-swift-owl", "finished");
+    w.before_run();
+    let session = json!({"session": "amber-swift-owl"});
+    engine_calls(w, "amber-quiet-heron", "test_remove_session", session);
 }
 
 #[then(
     "the question reached its engine as an MCP elicitation, and the engine's answer reached the daemon"
 )]
-fn elicited(_: &mut World) {
-    red("the question reached its engine as an MCP elicitation")
+fn elicited(w: &mut World) {
+    let asked = &w.daemon_spec.elicited;
+    assert_eq!(asked.len(), 1, "one question: {asked:?}");
+    assert_eq!(asked[0]["message"], removal_question("amber-swift-owl"));
+    let answered = crate::tests::mcp_serve::answered_json(w.daemon_spec.tool.as_ref().unwrap());
+    assert_eq!(answered["applied"], true, "{answered}");
+    assert!(!still_held(w, "amber-swift-owl"), "the session is gone");
 }
 
 #[given(expr = "an interactive session {string} whose assistant is running on its terminal")]
@@ -4800,8 +5054,20 @@ fn sees_options(w: &mut World) {
 // ------------------------------------- the architecture rulings T13-T30
 
 #[then("the removal was previewed first, and applied with her answer and the preview's tag")]
-fn previewed_then_applied(_: &mut World) {
-    red("the removal was previewed, then applied with the answer and tag")
+fn previewed_then_applied(w: &mut World) {
+    // What she was asked is the preview's own question (the daemon's Confirm
+    // need: the CLI asks nothing of its own), and the daemon destroys only
+    // on an apply that carries the preview's tag and her yes (its own
+    // refusals otherwise: `PlanStale`, `NeedsUnanswered`), once.
+    let ran = w.common.ran();
+    let question = removal_question("amber-swift-owl");
+    assert_eq!(ran.stderr.matches(&question).count(), 1, "{}", ran.said());
+    let intended = record(w)
+        .iter()
+        .flat_map(|s| s["events"].as_array().cloned().unwrap_or_default())
+        .filter(|e| e["type"] == "SessionRemovalIntended" && e["harp"] == "amber-swift-owl")
+        .count();
+    assert_eq!(intended, 1, "one removal applied");
 }
 
 #[given(
@@ -5209,11 +5475,69 @@ fn engine_calls(w: &mut World, owner: &str, tool: &str, arguments: Value) {
     let me = session_name(w, owner);
     let env = env_of(w);
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let mut mcp = crate::tests::mcp_serve::Mcp::for_session(&w.common.project, &me, &env);
-    let answered = mcp.call(tool, arguments);
+    // A client that can elicit (step 10c U11), so a tool that asks first is
+    // seen asking, and one that does not is seen not to.
+    let mut mcp = crate::tests::mcp_serve::Mcp::for_session_eliciting(&w.common.project, &me, &env);
+    let (answered, elicited) = mcp.call_eliciting(tool, arguments, !w.daemon_spec.declines);
     let (code, err) = mcp.finish();
     assert_eq!(code, 0, "the server failed: {err}");
     w.daemon_spec.tool = Some(answered);
+    w.daemon_spec.elicited = elicited;
+}
+
+#[when(
+    regex = r#"^the engine of "([^"]+)" calls "child_close" for "([^"]+)", and answers its elicitation (yes|no)$"#
+)]
+fn close_answering(w: &mut World, owner: String, child: String, answer: String) {
+    w.daemon_spec.declines = answer == "no";
+    engine_calls(w, &owner, "child_close", json!({"child": child}));
+}
+
+#[then(regex = r#"^the elicitation asked to confirm closing "([^"]+)" and, with it, "([^"]+)"$"#)]
+fn asked_cascade(w: &mut World, child: String, grandchild: String) {
+    let asked = &w.daemon_spec.elicited;
+    assert_eq!(asked.len(), 1, "one question: {asked:?}");
+    let message = asked[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(&child) && message.contains(&grandchild),
+        "{message:?} names {child} and {grandchild}"
+    );
+}
+
+#[then("no elicitation was sent")]
+fn none_elicited(w: &mut World) {
+    let asked = &w.daemon_spec.elicited;
+    assert!(asked.is_empty(), "the server asked: {asked:?}");
+}
+
+/// Whether `harp` is closed, as `session show` says.
+fn is_closed(w: &World, harp: &str) -> bool {
+    shown(w, harp)["closed"] == Value::Bool(true)
+}
+
+#[then(regex = r#"^"([^"]+)" is closed, and the tool said so$"#)]
+fn closed_said(w: &mut World, harp: String) {
+    tool_session(w);
+    assert!(is_closed(w, &harp), "{harp} is closed");
+}
+
+#[then(regex = r#"^"([^"]+)" and "([^"]+)" are closed, and the tool said so$"#)]
+fn both_closed_said(w: &mut World, one: String, two: String) {
+    tool_session(w);
+    assert!(is_closed(w, &one), "{one} is closed");
+    assert!(is_closed(w, &two), "{two} is closed");
+}
+
+#[then("neither is closed, and the tool answered that the close was declined")]
+fn neither_closed(w: &mut World) {
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    assert!(
+        answered.to_string().contains("was not closed"),
+        "the tool said the close was declined: {answered}"
+    );
+    for harp in ["brisk-copper-moth", "olive-quiet-finch"] {
+        assert!(!is_closed(w, harp), "{harp} is not closed");
+    }
 }
 
 /// The events of the session `harp`'s stream, as `ctxloom test
@@ -5222,7 +5546,7 @@ fn engine_calls(w: &mut World, owner: &str, tool: &str, arguments: Value) {
 fn session_events(w: &World, harp: &str) -> Vec<Value> {
     let ran = run_now(w, &["test", "session-events", harp]);
     assert_eq!(ran.code, 0, "{}", ran.said());
-    ran.json().as_array().cloned().unwrap_or_default()
+    ran.json()["events"].as_array().cloned().unwrap_or_default()
 }
 
 /// How many of `events` are of the type `name` (its message's name).
@@ -5341,14 +5665,55 @@ fn tool_retried(w: &mut World) {
     assert_eq!(count_of(&events, "SessionClosed"), 1, "{events:?}");
 }
 
+/// The text an engine answers an Edit elicitation with.
+const NEW_TEXT: &str = "# Brief\n\nWritten by the engine, through its MCP elicitation.\n";
+
+/// Where the scenario's editor stub marks that it ran.
+fn editor_ran(w: &World) -> PathBuf {
+    w.common.project.home().join("editor-ran")
+}
+
 #[when("its engine calls a tool whose change asks for an edited document, and answers the elicitation with new text")]
-fn tool_edit(_: &mut World) {
-    red("an engine answers an edit need with text")
+fn tool_edit(w: &mut World) {
+    // An EDITOR that marks its run, in the engine's environment: a client
+    // that cannot launch one is never handed it.
+    let editor = w.common.project.home().join("bin/editor");
+    let mark = editor_ran(w);
+    files::put_program(&editor, &format!("#!/bin/sh\ntouch '{}'\n", mark.display()));
+    w.common
+        .env
+        .push(("EDITOR".to_string(), editor.display().to_string()));
+    w.before_run();
+    let me = session_name(w, "amber-quiet-heron");
+    let env = env_of(w);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut mcp = crate::tests::mcp_serve::Mcp::for_session_eliciting(&w.common.project, &me, &env);
+    let answer = |_: &Value| json!({"action": "accept", "content": {"text": NEW_TEXT}});
+    let arguments = json!({"bundle": "notes", "fragment": "brief"});
+    let (answered, elicited) = mcp.call_answering("test_create_fragment", arguments, &answer);
+    let (code, err) = mcp.finish();
+    assert_eq!(code, 0, "the server failed: {err}");
+    w.daemon_spec.tool = Some(answered);
+    w.daemon_spec.elicited = elicited;
 }
 
 #[then("the daemon applied the new text, and no editor was started")]
-fn applied_text(_: &mut World) {
-    red("the daemon applied the new text without an editor")
+fn applied_text(w: &mut World) {
+    let asked = &w.daemon_spec.elicited;
+    assert_eq!(asked.len(), 1, "one question: {asked:?}");
+    let field = &asked[0]["requestedSchema"]["properties"]["text"];
+    assert_eq!(field["type"], "string", "{asked:?}");
+    let tool = w.daemon_spec.tool.clone().unwrap();
+    assert_ne!(tool["isError"], true, "{tool}");
+    let written = files::read(
+        w.common
+            .project
+            .dir()
+            .join(".ctxloom/content/bundles/v2/notes/fragments/brief.md"),
+    )
+    .expect("the fragment was written");
+    assert_eq!(written, NEW_TEXT);
+    assert!(!files::exists(editor_ran(w)), "no editor was started");
 }
 
 #[given(expr = "a child {string} whose engine runs in a container")]
@@ -5424,16 +5789,101 @@ fn remove_converged(w: &mut World, harp: String) {
     assert!(writes::empty(&trash), "the trash holds {}", trash.display());
 }
 
+/// Every file below the project and ctxloom's records, with its bytes,
+/// but ctxloom's own state there (its sessions, its staging and trash, its
+/// caches, git's directory), which a run changes on its own.
+fn foreign_snapshot(w: &World) -> Vec<(PathBuf, Vec<u8>)> {
+    fn walk(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+        for entry in files::children(dir) {
+            let name = entry.file_name().map(|n| n.to_string_lossy().to_string());
+            if matches!(
+                name.as_deref(),
+                Some(".git" | "state" | "sessions" | "cache" | "daemon")
+            ) {
+                continue;
+            }
+            if files::is_dir(&entry) {
+                walk(&entry, out);
+            } else {
+                out.push((entry.clone(), files::read_bytes(&entry).unwrap_or_default()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(w.common.project.dir(), &mut out);
+    walk(&w.common.project.home().join(".ctxloom/records"), &mut out);
+    out.sort();
+    out
+}
+
+/// The kill was taken after the step the scenario named, the files hold
+/// what the command writes, and one more run, uninterrupted, changes
+/// nothing: what the killed run and its re-run left is what one run leaves.
 #[then("the files it writes are as one uninterrupted run would leave them")]
-fn foreign_converged(_: &mut World) {
-    red("the foreign writer converged")
+fn foreign_converged(w: &mut World) {
+    let (command, leaves) = w
+        .daemon_spec
+        .foreign_run
+        .clone()
+        .expect("a foreign writer was killed after a step");
+    assert!(
+        !files::exists(daemon_dir(w).join(DIE_AT)),
+        "the daemon never took its kill: {:?}",
+        files::read(daemon_dir(w).join(DIE_AT)).unwrap_or_default()
+    );
+    let at = |rel: &str| w.common.project.dir().join(rel);
+    match leaves {
+        Leaves::Holding(rel, text) => {
+            let held = files::read(at(rel)).unwrap_or_else(|_| panic!("{rel} was not written"));
+            assert!(held.contains(text), "{rel} holds {held:?}");
+        }
+        Leaves::Without(rel, text) => {
+            let held = files::read(at(rel)).unwrap_or_default();
+            assert!(!held.contains(text), "{rel} still holds {text:?}: {held:?}");
+        }
+        Leaves::Gone(rel) => assert!(!files::exists(at(rel)), "{rel} is still there"),
+    }
+    let before = foreign_snapshot(w);
+    let args: Vec<&str> = command.split(' ').skip(1).collect();
+    let again = run_now(w, &args);
+    assert_eq!(again.code, 0, "{command} once more: {}", again.said());
+    let after = foreign_snapshot(w);
+    let changed: Vec<&PathBuf> = after
+        .iter()
+        .filter(|file| !before.contains(file))
+        .chain(before.iter().filter(|file| !after.contains(file)))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(changed.is_empty(), "one more run changed {changed:?}");
 }
 
 // ------------------------------------- the rulings after T30 (S42, S53)
 
 #[then("nothing was applied, and the daemon answered the preview")]
-fn preview_only(_: &mut World) {
-    red("nothing was applied, and the daemon answered the preview")
+fn preview_only(w: &mut World) {
+    // Off a terminal the command says the daemon's answer to its preview
+    // (json off a terminal): the plan, applied nowhere, or the refusal of a
+    // session nobody holds; the session and the bundle are as they were.
+    let ran = w.common.ran();
+    match ran.code {
+        20 => {
+            let refused: Value = serde_json::from_str(ran.stderr.trim())
+                .unwrap_or_else(|e| panic!("a refusal's envelope: {e}: {}", ran.said()));
+            let code = refused["code"].as_str().unwrap_or_default();
+            assert!(code.ends_with("not-found"), "{}", ran.said());
+        }
+        _ => assert_eq!(ran.json()["applied"], false, "{}", ran.said()),
+    }
+    assert!(still_held(w, "amber-swift-owl"), "the session is kept");
+    assert!(
+        files::exists(
+            w.common
+                .project
+                .dir()
+                .join(".ctxloom/content/bundles/v2/notes/bundle.yaml")
+        ),
+        "the bundle is kept"
+    );
 }
 
 /// S55: a title moves nothing. Every planted session's lock is under its
@@ -5942,7 +6392,7 @@ fn engine_stopped_and_recorded(w: &mut World) {
     until(w, "the session's end recorded", DAEMON_WAIT, |w| {
         let ran = run_now(w, &["test", "session-events", &harp]);
         let types: Vec<String> = if ran.code == 0 {
-            ran.json()
+            ran.json()["events"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default()
@@ -6061,7 +6511,7 @@ fn caused_events(w: &World, harp: &str, run: bool) -> Vec<(String, String)> {
     if ran.code != 0 {
         return Vec::new();
     }
-    ran.json()
+    ran.json()["events"]
         .as_array()
         .cloned()
         .unwrap_or_default()
@@ -7018,7 +7468,7 @@ fn end_cause(said: &str) -> &'static str {
 fn run_rows(w: &World) -> Vec<Value> {
     let ran = run_now(w, &["test", "session-events", &tui_harp(w), "--run", "1"]);
     assert_eq!(ran.code, 0, "{}", ran.said());
-    ran.json().as_array().cloned().unwrap_or_default()
+    ran.json()["events"].as_array().cloned().unwrap_or_default()
 }
 
 /// The run's one end, once it is recorded.
@@ -7117,6 +7567,48 @@ fn log_says_lost_without_hold(w: &mut World) {
         "{log}"
     );
     assert_eq!(holds(w).len(), 1, "the hold is left: {:?}", holds(w));
+}
+
+/// A hook's answer carries additionalContext only as claude reads it: the
+/// string under `hookSpecificOutput`; text that is no JSON, or JSON without
+/// it, carries none.
+#[test]
+fn a_hooks_additional_context_is_read_as_claude_reads_it() {
+    let answer = r#"{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"ctxloom: your context changed"}}"#;
+    assert_eq!(
+        additional_context(&format!("{answer}\n")).as_deref(),
+        Some("ctxloom: your context changed")
+    );
+    assert_eq!(
+        additional_context(r#"{"additionalContext":"top level"}"#),
+        None
+    );
+    assert_eq!(additional_context(r#"{"hookSpecificOutput":{}}"#), None);
+    assert_eq!(additional_context("ctxloom: not json"), None);
+    assert_eq!(additional_context(""), None);
+}
+
+/// Only the superseded-write kill names a file: its path, from the step's
+/// own words; every other kill, or one worded otherwise, names none.
+#[test]
+fn a_kill_that_changes_a_file_before_the_retry_names_the_file() {
+    assert_eq!(
+        superseded_file(
+            "after the write's intent is recorded, and the file \".ctxloom/a.md\" is changed by hand before the retry, to:"
+        )
+        .as_deref(),
+        Some(".ctxloom/a.md")
+    );
+    assert_eq!(
+        superseded_file("after the write's intent is recorded, before it is staged"),
+        None
+    );
+    assert_eq!(
+        superseded_file(
+            "after the write's intent is recorded, and the file \".ctxloom/a.md\" is changed by hand, to:"
+        ),
+        None
+    );
 }
 
 // ------------------------------------------ step 9: delegation, several children

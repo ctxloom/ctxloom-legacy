@@ -46,7 +46,6 @@ fn observed(baseline: bool, changes: &[(&str, &str)]) -> LibraryEvent {
             .collect(),
         tree_after: "t-1".to_string(),
         baseline,
-        in_motion: None,
     })
 }
 
@@ -203,6 +202,7 @@ fn a_stream_it_holds_nothing_of_has_no_view() {
 fn intended(request: &str, steps: usize) -> LibraryEvent {
     let step = library_tree::Step {
         replace: Some(library_tree::ReplaceFile {
+            foreign: false,
             name: TREE.to_string(),
             verb: "fragment edit".to_string(),
             path: FILE.to_string(),
@@ -212,10 +212,6 @@ fn intended(request: &str, steps: usize) -> LibraryEvent {
                 tree_reads: true,
                 plan_rejection: None,
                 builtin: false,
-                in_motion: None,
-                in_git: true,
-                ignored: None,
-                root: String::new(),
             },
         }),
         create: None,
@@ -225,6 +221,7 @@ fn intended(request: &str, steps: usize) -> LibraryEvent {
     };
     LibraryEvent::ChangeIntended(library_tree::ChangeIntended {
         intent: library_tree::Intent {
+            foreign: Vec::new(),
             request_id: request.to_string(),
             verb: "fragment edit".to_string(),
             steps: vec![step; steps],
@@ -313,4 +310,94 @@ fn an_export_is_known_by_its_request_id_with_what_it_answered() {
         .project(&on(LIBRARY_DOMAIN, 0, vec![observed(true, &[])]))
         .unwrap();
     assert!(model.export("r-9").is_none());
+}
+
+// Step 10c U13 (G7, protos.md §4.1): every recorded change is logged once,
+// in order, as a thin notice: its tree, its sequence, its cause, its paths
+// and how each changed, and for ctxloom's own step its request and verb (a
+// path it wrote over one there was modified, a new one added). A book that
+// folds the stream afresh logs nothing it logged before; other events are
+// no change.
+#[test]
+fn each_recorded_change_is_told_to_each_watcher_once_in_order() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+    let mut model = LibraryCheckout::new();
+    let woken = Arc::new(AtomicU32::new(0));
+    let wake = Arc::clone(&woken);
+    let heard = model.watch(Arc::new(move || {
+        wake.fetch_add(1, Ordering::SeqCst);
+    }));
+    model
+        .project(&on(
+            LIBRARY_DOMAIN,
+            0,
+            vec![observed(true, &[(FILE, "a")]), intended("r-1", 1)],
+        ))
+        .unwrap();
+    let applied = LibraryEvent::StepApplied(StepApplied {
+        request_id: "r-1".to_string(),
+        step: 0,
+        observed: vec![
+            DirtyPath {
+                path: FILE.to_string(),
+                oid: "b".to_string(),
+            },
+            DirtyPath {
+                path: "content/bundles/v2/demo/fragments/new.md".to_string(),
+                oid: "c".to_string(),
+            },
+        ],
+    });
+    model
+        .project(&on(LIBRARY_DOMAIN, 2, vec![applied]))
+        .unwrap();
+    let told: Vec<super::Recorded> = heard.try_iter().collect();
+    assert_eq!(told.len(), 2, "the intent is no change: {told:?}");
+    assert_eq!(woken.load(Ordering::SeqCst), 2, "woken at each change");
+    let (first, second) = (&told[0], &told[1]);
+    assert_eq!(first.tree, TREE);
+    assert_eq!((first.at, first.sequence), (1, 0));
+    assert_eq!(first.cause, "obs:0");
+    assert_eq!(first.intended, None);
+    assert_eq!(first.changes[0].path, FILE);
+    assert_eq!(first.changes[0].status, "modified");
+    assert_eq!((second.at, second.sequence), (2, 2));
+    assert_eq!(
+        second.intended,
+        Some(("r-1".to_string(), "fragment edit".to_string()))
+    );
+    let statuses: Vec<(&str, &str)> = second
+        .changes
+        .iter()
+        .map(|c| (c.path.as_str(), c.status.as_str()))
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            (FILE, "modified"),
+            ("content/bundles/v2/demo/fragments/new.md", "added")
+        ]
+    );
+    // A watcher from now on is told only what is recorded from now on.
+    let later = model.watch(Arc::new(|| {}));
+    assert!(later.try_iter().next().is_none());
+    // Folded afresh from sequence 0 (a catch-up): nothing is told again.
+    model
+        .project(&on(LIBRARY_DOMAIN, 0, vec![observed(true, &[(FILE, "a")])]))
+        .unwrap();
+    assert!(heard.try_iter().next().is_none());
+    assert!(later.try_iter().next().is_none());
+    // A watcher gone is let go at the next change: nothing is kept for it.
+    drop(heard);
+    drop(later);
+    model
+        .project(&on(
+            LIBRARY_DOMAIN,
+            3,
+            vec![observed(false, &[(FILE, "d")])],
+        ))
+        .unwrap();
+    assert_eq!(model.watching(), 0);
+    assert_eq!(woken.load(Ordering::SeqCst), 2, "no watcher, nobody woken");
 }

@@ -5,16 +5,12 @@ use library_api::{Observed, Site};
 use library_tree::TreeName;
 use sessions::ProjectName;
 
-use super::{
-    answered_before, commit_message, commit_paths, export_source, landing_of, request_bytes,
-    step_path,
-};
+use super::{answered_before, export_source, landing_of, request_bytes, step_path};
 
 fn observed(tree: TreeName) -> Observed {
     Observed {
         tree,
         notices: Vec::new(),
-        motion: None,
     }
 }
 
@@ -51,14 +47,10 @@ fn test_content_lands_in_the_checkout_else_the_home_and_a_layer_in_its_scope() {
     );
     let home = seen(false);
     assert_eq!(
-        landing_of(&home, Lands::Content).map(|l| l.root()),
+        landing_of(&home, Lands::Content).map(|l| l.site.tree().to_string()),
         Some("/home/alice/.ctxloom".to_string())
     );
     assert!(landing_of(&home, Lands::Layer(Scope::Project)).is_none());
-    assert_eq!(
-        landing_of(&both, Lands::Content).map(|l| l.root()),
-        Some("/work/demo".to_string())
-    );
 }
 
 #[test]
@@ -86,10 +78,6 @@ fn test_a_steps_path_is_its_kinds_own() {
                 tree_reads: true,
                 plan_rejection: None,
                 builtin: false,
-                in_motion: None,
-                in_git: true,
-                ignored: None,
-                root: String::new(),
             },
             keep: true,
         }),
@@ -307,10 +295,6 @@ fn evidence() -> library_tree::Evidence {
         tree_reads: true,
         plan_rejection: None,
         builtin: false,
-        in_motion: None,
-        in_git: true,
-        ignored: None,
-        root: String::new(),
     }
 }
 
@@ -327,6 +311,7 @@ fn bare() -> library_tree::Step {
 fn replaced(path: &str) -> library_tree::Step {
     library_tree::Step {
         replace: Some(library_tree::ReplaceFile {
+            foreign: false,
             name: String::new(),
             verb: String::new(),
             path: path.to_string(),
@@ -336,64 +321,6 @@ fn replaced(path: &str) -> library_tree::Step {
         }),
         ..bare()
     }
-}
-
-fn moved(from: &str, to: &str, to_tree: &str) -> library_tree::Step {
-    library_tree::Step {
-        r#move: Some(library_tree::MovePath {
-            name: String::new(),
-            verb: String::new(),
-            from: from.to_string(),
-            to: to.to_string(),
-            seen_sequence: 0,
-            evidence: evidence(),
-            to_tree: to_tree.to_string(),
-        }),
-        ..bare()
-    }
-}
-
-// G3: a home write's commit names what its steps changed in the library,
-// each once: a move both its ends (but only the end in this tree), never
-// a purge's slot or anything outside the library's pathspec.
-#[test]
-fn test_a_home_commit_names_each_library_path_its_steps_changed_once() {
-    let purge = library_tree::Step {
-        purge: Some(library_tree::PurgeSlot {
-            request_id: "r-0".to_string(),
-        }),
-        ..bare()
-    };
-    let steps = [
-        replaced("config.yaml"),
-        moved("content/bundles/v2/a", "content/bundles/v2/b", ""),
-        moved(
-            "content/bundles/v2/c",
-            "content/bundles/v2/c",
-            "/work/other/.ctxloom",
-        ),
-        purge,
-        replaced("config.yaml"),
-        replaced("state/checkout"),
-    ];
-    assert_eq!(
-        commit_paths(&steps),
-        [
-            "config.yaml",
-            "content/bundles/v2/a",
-            "content/bundles/v2/b",
-            "content/bundles/v2/c"
-        ]
-    );
-}
-
-// texts.md 6 (QUESTIONS 6): the subject alone, no body.
-#[test]
-fn test_a_home_commit_s_message_names_its_verb_and_request_id() {
-    assert_eq!(
-        commit_message("companion add", "0195f1e2-0000-7000-8000-000000000000"),
-        "ctxloom: companion add (0195f1e2-0000-7000-8000-000000000000)"
-    );
 }
 
 // AIP-155 (owner 2026-11-18, night): an export made before under a request
@@ -450,6 +377,114 @@ async fn test_an_export_made_before_is_answered_from_its_record() {
     assert!(answered_before::<()>(
         (&trees, observations),
         ("r-2", None),
+        "projects/p",
+        &mut said
+    )
+    .is_none());
+}
+
+// Step 10c U13 (protos.md §1.3): a retry of a write whose intent an outside
+// change superseded is refused stale (`PlanStale`, ABORTED, exit 20),
+// naming its first step's path, the token the intent was decided on and
+// the path's token now; a write still pending is planned again.
+#[tokio::test]
+async fn test_a_retry_of_a_superseded_write_is_refused_stale() {
+    use std::sync::Arc;
+    let f = crate::server::tests::fixture(vec![]);
+    let gits = Arc::new(crate::server::tests::Gits::default());
+    let api = f
+        .api
+        .observing(crate::server::tests::observing(&f.world, &gits));
+    let (observations, _) = api.observing.as_ref().expect("observing");
+    let seen = seen(true);
+    let root = seen[0].1.tree.root().value.to_vec();
+    let trees = library_api::Trees {
+        seen,
+        notices: Vec::new(),
+    };
+    let path = "content/bundles/v2/demo/fragments/example.md";
+    let mut step = replaced(path);
+    if let Some(replace) = step.replace.as_mut() {
+        replace.seen_sequence = 3;
+    }
+    let known = |end| library_checkout::Known {
+        root: root.clone(),
+        intent: library_tree::Intent {
+            foreign: Vec::new(),
+            request_id: "r-1".to_string(),
+            verb: "fragment edit".to_string(),
+            steps: vec![step.clone()],
+            base_cause: String::new(),
+            done: 0,
+        },
+        end,
+    };
+    // The path's token now is the edit's sequence, 1 (the baseline's 0).
+    let tree = trees.seen[0].1.tree.clone();
+    let sight = |baseline: bool, base_cause: &str, changes: Vec<library_tree::Change>| {
+        library_tree::RecordTreeObserved {
+            name: tree.to_string(),
+            kind: library_tree::TreeKind::Checkout,
+            base_cause: base_cause.to_string(),
+            head_before: "h-0".to_string(),
+            head_after: "h-0".to_string(),
+            tree_after: "t-0".to_string(),
+            dirty_after: changes
+                .iter()
+                .map(|change| library_tree::DirtyPath {
+                    path: change.path.clone(),
+                    oid: change.to_oid.clone(),
+                })
+                .collect(),
+            changes,
+            baseline,
+        }
+    };
+    observations
+        .send(library_api::writes::step_book(
+            &tree,
+            &sight(true, "", vec![]),
+            "obs-0",
+        ))
+        .await
+        .expect("baselined");
+    let edit = library_tree::Change {
+        path: path.to_string(),
+        status: library_tree::ChangeStatus::Modified,
+        from_oid: "a".to_string(),
+        to_oid: "by-hand".to_string(),
+        from_path: String::new(),
+    };
+    observations
+        .send(library_api::writes::step_book(
+            &tree,
+            &sight(false, "obs-0", vec![edit]),
+            "obs-1",
+        ))
+        .await
+        .expect("edited");
+    let mut said = Vec::new();
+    let superseded = known(library_checkout::End::Superseded);
+    let refused = answered_before::<()>(
+        (&trees, observations),
+        ("r-1", Some(&superseded)),
+        "projects/p",
+        &mut said,
+    )
+    .expect("answered");
+    let expected = crate::library_refusal(&library_tree::LibraryTreeRejection::PlanStale {
+        path: path.to_string(),
+        seen: 3,
+        now: 1,
+    });
+    match refused {
+        Err(crate::ApiError::Refused(refusal)) => assert_eq!(refusal, expected),
+        other => panic!("not refused stale: {:?}", other.map(|_| ())),
+    }
+    let pending = known(library_checkout::End::Pending { done: 0 });
+    assert!(answered_before::<()>(
+        (&trees, observations),
+        ("r-1", Some(&pending)),
         "projects/p",
         &mut said
     )

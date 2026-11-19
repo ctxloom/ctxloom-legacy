@@ -36,7 +36,7 @@ const CLAUDE_REMEDY: &str = "run `claude setup-token` and export CLAUDE_CODE_OAU
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct Row {
     pub engine: String,
-    pub mode: &'static str,
+    pub mode: String,
     /// Whether the credential is exported: a variable row's alone. A file
     /// row has none (owner ruling 65): nothing here looks at a file.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,8 +55,8 @@ pub struct Row {
     /// Who the credential serves when it is not every run: `primary` for a
     /// source that is a file alone (owner ruling 53), which the human's own
     /// interactive session may use and no child agent can.
-    #[serde(skip_serializing_if = "str::is_empty")]
-    pub usable_by: &'static str,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub usable_by: String,
 }
 
 /// Whether one configured engine could authenticate a run.
@@ -160,31 +160,31 @@ impl Auth {
             if let Some(file) = &need.file {
                 return Row {
                     engine: need.engine.clone(),
-                    mode: FILE,
+                    mode: FILE.to_string(),
                     present: None,
                     vars: Vec::new(),
                     via: file.clone(),
                     message: file_only_message(&need.engine),
                     remedy: remedy(&need),
-                    usable_by: PRIMARY,
+                    usable_by: PRIMARY.to_string(),
                 };
             }
             let found = need.vars.iter().find(|v| self.env.is_exported(v)).cloned();
             if found.is_none() && !need.required {
                 return Row {
                     engine: need.engine.clone(),
-                    mode: TOKEN,
+                    mode: TOKEN.to_string(),
                     present: Some(false),
                     vars: Vec::new(),
                     via: String::new(),
                     message: keyless_message(&need),
                     remedy: String::new(),
-                    usable_by: "",
+                    usable_by: String::new(),
                 };
             }
             Row {
                 engine: need.engine.clone(),
-                mode: TOKEN,
+                mode: TOKEN.to_string(),
                 present: Some(found.is_some()),
                 vars: found.iter().cloned().collect(),
                 remedy: if found.is_some() {
@@ -194,7 +194,7 @@ impl Auth {
                 },
                 via: found.unwrap_or_default(),
                 message: String::new(),
-                usable_by: "",
+                usable_by: String::new(),
             }
         })
         .collect()

@@ -12,6 +12,7 @@ syntax = "proto3";
 package ctxloom.sessions.v1;
 
 import "google/protobuf/timestamp.proto";
+import "ctxloom/sessions/v1/capture.proto";
 import "ctxloom/sessions/v1/daemon.proto";
 import "io/angzarr/v1/options.proto";
 
@@ -82,6 +83,11 @@ message SessionState {
   // The nonce of the last wake, when it was disarmed unanswered and no
   // wake was issued or redeemed after it; empty otherwise.
   string wake_unanswered = 29;
+  // 10c (the lean hook RPC, owner budget 2026-11-18): the ids of the
+  // messages sent to it and not yet delivered, in the order sent, so a
+  // `DeliverMessages` records each id once whatever asks again (two hooks
+  // within one round deliver a message once). Additive.
+  repeated string pending_messages = 30;
 }
 
 // Who a session was minted for (Go's Origin): an empty origin reads as a
@@ -496,3 +502,40 @@ message RehostBudgetSpent {
 }
 
 // endregion refusals
+
+// 10c (U13, G6/G7): what a session's run was planned to draw on, so a
+// change to it can be told the session. Names only: the agent (empty, the
+// default agent), the profiles it composed and the bundles they name
+// whole, as its plan resolved them. Never content. Additive.
+message SessionLoadout {
+  string agent = 1;
+  repeated string profiles = 2;
+  repeated string bundles = 3;
+}
+
+// 10c (U13): the loadout of the session's incarnation `incarnation`,
+// recorded once its run is planned (a hosted child's, a seeded one's).
+// external_id `loadout:<session>:<incarnation>`, so a repeat is a
+// DUPLICATE; a later incarnation's replaces it. Never refused: on a stream
+// with no session it records nothing. Additive.
+message RecordLoadout {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.LoadoutRecorded"]
+  };
+
+  SessionLoadout loadout = 1;
+  uint32 incarnation = 2;
+  // 10c (U13 rework): the tree stream positions its context was assembled
+  // at, read before the plan; none (a one-shot, a seed) and a change is
+  // owed when recorded after the loadout. Additive.
+  repeated TreePosition covered = 3;
+}
+
+message LoadoutRecorded {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  SessionLoadout loadout = 1;
+  uint32 incarnation = 2;
+  repeated TreePosition covered = 3;
+}

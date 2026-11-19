@@ -5,8 +5,6 @@ use std::fmt;
 
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 
-use crate::Motion;
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LibraryTreeRejection {
     /// The path's sequence moved since the token the caller sent.
@@ -24,16 +22,6 @@ pub enum LibraryTreeRejection {
         code: String,
         args: BTreeMap<String, String>,
     },
-    /// A git operation is in progress in the tree (L11).
-    TreeInMotion { motion: Motion, root: String },
-    /// The tree is in no git work tree (G1).
-    NotInGit { root: String },
-    /// git ignores the library (G1).
-    LibraryIgnored {
-        source: String,
-        line: u32,
-        pattern: String,
-    },
     /// The change would change more than one file (T29, D14): each, below
     /// its bundle.
     OneChangePerCall { paths: Vec<String> },
@@ -41,17 +29,6 @@ pub enum LibraryTreeRejection {
     NoSuchSlot { request_id: String },
     /// The slot is younger than [`crate::KEEP_DAYS`] (G12).
     SlotNotDue { request_id: String, age_days: u32 },
-}
-
-/// A motion as the catalog's selector names it.
-pub fn motion_word(motion: Motion) -> &'static str {
-    match motion {
-        Motion::IndexLocked => "index-locked",
-        Motion::Merging => "merging",
-        Motion::Rebasing => "rebasing",
-        Motion::CherryPicking => "cherry-picking",
-        Motion::Reverting => "reverting",
-    }
 }
 
 impl fmt::Display for LibraryTreeRejection {
@@ -68,9 +45,6 @@ impl Diagnostic for LibraryTreeRejection {
             LibraryTreeRejection::NoSuchResource { .. } => code!("no-such-resource"),
             LibraryTreeRejection::BuiltinReadOnly { .. } => code!("builtin-read-only"),
             LibraryTreeRejection::PlanRejected { code, .. } => code,
-            LibraryTreeRejection::TreeInMotion { .. } => code!("tree-in-motion"),
-            LibraryTreeRejection::NotInGit { .. } => code!("not-in-git"),
-            LibraryTreeRejection::LibraryIgnored { .. } => code!("library-ignored"),
             LibraryTreeRejection::OneChangePerCall { .. } => code!("one-change-per-call"),
             LibraryTreeRejection::NoSuchSlot { .. } => code!("no-such-slot"),
             LibraryTreeRejection::SlotNotDue { .. } => code!("slot-not-due"),
@@ -93,20 +67,6 @@ impl Diagnostic for LibraryTreeRejection {
                 .iter()
                 .map(|(name, value)| (name.as_str(), value.as_str().into()))
                 .collect(),
-            LibraryTreeRejection::TreeInMotion { motion, root } => vec![
-                ("motion", motion_word(*motion).into()),
-                ("root", root.as_str().into()),
-            ],
-            LibraryTreeRejection::NotInGit { root } => vec![("root", root.as_str().into())],
-            LibraryTreeRejection::LibraryIgnored {
-                source,
-                line,
-                pattern,
-            } => vec![
-                ("source", source.as_str().into()),
-                ("line", (*line).into()),
-                ("pattern", pattern.as_str().into()),
-            ],
             LibraryTreeRejection::OneChangePerCall { paths } => vec![
                 ("count", paths.len().into()),
                 ("paths", paths.join(", ").into()),
@@ -146,18 +106,6 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(LibraryTreeRejection::NoSuchResource { path: path() }),
         Box::new(LibraryTreeRejection::BuiltinReadOnly {
             bundle: "ctxloom".to_string(),
-        }),
-        Box::new(LibraryTreeRejection::TreeInMotion {
-            motion: Motion::Merging,
-            root: "/work/demo".to_string(),
-        }),
-        Box::new(LibraryTreeRejection::NotInGit {
-            root: "/work/demo".to_string(),
-        }),
-        Box::new(LibraryTreeRejection::LibraryIgnored {
-            source: ".gitignore".to_string(),
-            line: 1,
-            pattern: ".ctxloom/".to_string(),
         }),
         Box::new(LibraryTreeRejection::OneChangePerCall {
             paths: vec!["fragments/a.md".to_string(), "fragments/b.md".to_string()],

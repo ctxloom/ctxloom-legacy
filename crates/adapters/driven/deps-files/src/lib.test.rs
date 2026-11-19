@@ -408,3 +408,44 @@ fn test_installing_a_commit_replaces_the_trees_of_other_commits_by_any_abbreviat
     );
     assert!(files.is_installed(&slot(IDENTITY), SHA));
 }
+
+// Step 10c U4: what an install and a prune would do, planned, doing nothing.
+#[test]
+fn test_an_install_and_a_prune_are_planned_below_the_app_dir_and_remove_nothing() {
+    let (files, fs) = files();
+    let other = "ctxloom+git://example.test/o/r//bundles/other";
+    files
+        .install(&slot(IDENTITY), SHA, &demo_tree("A\n"), &none())
+        .expect("installs");
+    files
+        .install(&slot(other), SHA, &demo_tree("O\n"), &none())
+        .expect("installs");
+    let demo = format!("cache/bundles/example.test/o/r/demo/{SHA}");
+    assert_eq!(
+        files.install_path(&slot(IDENTITY), NEXT),
+        format!("cache/bundles/example.test/o/r/demo/{NEXT}")
+    );
+    // A new commit replaces the identity's other trees; the same one, none.
+    assert_eq!(files.replaced_by(&slot(IDENTITY), NEXT), [demo]);
+    assert!(files.replaced_by(&slot(IDENTITY), SHA).is_empty());
+    let beside = format!("/proj/.ctxloom/cache/bundles/example.test/o/r/demo/{NEXT}");
+    put(&fs, &format!("{beside}/{IDENTITY_MARKER}"), IDENTITY);
+    let (dirs, gone) = files
+        .prunable(&[(IDENTITY.to_string(), SHA.to_string())])
+        .expect("planned");
+    let mut dirs = dirs;
+    dirs.sort();
+    assert_eq!(
+        dirs,
+        [
+            format!("cache/bundles/example.test/o/r/demo/{NEXT}"),
+            format!("cache/bundles/example.test/o/r/other/{SHA}"),
+        ]
+    );
+    assert_eq!(gone, [other.to_string()]);
+    assert!(
+        files.is_installed(&slot(other), SHA),
+        "a plan removed a tree"
+    );
+    assert!(files.exists(&beside));
+}

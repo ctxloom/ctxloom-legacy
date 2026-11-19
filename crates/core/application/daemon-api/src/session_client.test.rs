@@ -83,6 +83,21 @@ impl DaemonApi for Fake {
         })
     }
 
+    async fn redeliver_context(
+        &self,
+        r: v1::RedeliverContextRequest,
+    ) -> Result<v1::RedeliveredContext, Called> {
+        self.ask("redeliver", r.env)?;
+        self.names
+            .lock()
+            .unwrap()
+            .push(format!("{} cwd {} budget {}", r.name, r.cwd, r.budget));
+        Ok(v1::RedeliveredContext {
+            context: format!("owed:{}", r.carried_by),
+            changed: Vec::new(),
+        })
+    }
+
     async fn get_transcript(&self, r: v1::GetTranscriptRequest) -> Result<v1::Transcript, Called> {
         self.ask("get-transcript", None)?;
         self.names.lock().unwrap().push(r.name.clone());
@@ -119,7 +134,14 @@ impl DaemonApi for Fake {
         &self,
         r: v1::DeleteSessionRequest,
     ) -> Result<v1::DeleteSessionResponse, Called> {
-        let rpc = format!("delete {} {}", r.validate_only, r.even_if_live);
+        let mut rpc = format!("delete {} {}", r.validate_only, r.even_if_live);
+        // An apply of a preview (step 10c U11): its tag and each answer.
+        if !r.etag.is_empty() {
+            rpc.push_str(&format!(" etag={}", r.etag));
+            for answer in &r.answers {
+                rpc.push_str(&format!(" {}={:?}", answer.need_id, answer.answer));
+            }
+        }
         self.request_ids
             .lock()
             .unwrap()
@@ -549,6 +571,32 @@ async fn a_removal_asks_the_daemon_of_this_projects_session() {
     assert_eq!(daemons.asked().last().unwrap(), "2:delete false false");
 }
 
+// Step 10c U11: the apply of a preview sends its tag and the answers, as
+// an apply (not `validate_only`), of this project's session.
+#[tokio::test]
+async fn a_removals_apply_sends_its_previews_tag_and_answers() {
+    let daemons = Fakes::new();
+    let answers = vec![v1::Answer {
+        need_id: "confirm".to_string(),
+        answer: Some(v1::answer::Answer::Confirmed(true)),
+    }];
+    in_project(&daemons)
+        .apply_removal("brisk-copper-moth", true, "e-7", answers)
+        .await
+        .unwrap();
+    assert_eq!(
+        daemons.asked(),
+        [
+            "1:resolve",
+            "1:delete false true etag=e-7 confirm=Some(Confirmed(true))"
+        ]
+    );
+    assert_eq!(
+        daemons.names().last().unwrap(),
+        "projects/calm-otter/sessions/brisk-copper-moth"
+    );
+}
+
 // A refused removal is its plan and why, in the refusing use case's words.
 #[tokio::test]
 async fn a_refused_removal_carries_its_plan() {
@@ -801,4 +849,58 @@ async fn a_client_that_does_not_retry_reaches_one_daemon_only() {
         daemons.template.request_ids.lock().unwrap().clone(),
         ["1:req-1"]
     );
+}
+
+// Step 10c U13's harness (`CTXLOOM_TEST_BEFORE_RETRY`): what a client is
+// told to do before its one retry runs once, after the first daemon was
+// lost and before a second is reached (the race forced, never waited
+// for); a call that needs no retry never runs it.
+#[tokio::test]
+async fn what_runs_before_a_retry_runs_once_between_the_two_daemons() {
+    let daemons = Fakes::new();
+    daemons.template.dying.lock().unwrap().push(1);
+    let reached = Arc::clone(&daemons.reached);
+    let ran: Arc<Mutex<Vec<usize>>> = Arc::default();
+    let seen = Arc::clone(&ran);
+    let client = in_project(&daemons).before_retry(Box::new(move || {
+        seen.lock().unwrap().push(*reached.lock().unwrap());
+    }));
+    client
+        .list_sessions(false, v1::session::State::Unspecified)
+        .await
+        .unwrap();
+    assert_eq!(*ran.lock().unwrap(), [1], "once, after the first reach");
+    assert_eq!(daemons.reaches(), 2);
+    let fine = Fakes::new();
+    let none: Arc<Mutex<usize>> = Arc::default();
+    let counted = Arc::clone(&none);
+    in_project(&fine)
+        .before_retry(Box::new(move || *counted.lock().unwrap() += 1))
+        .list_sessions(false, v1::session::State::Unspecified)
+        .await
+        .unwrap();
+    assert_eq!(*none.lock().unwrap(), 0, "no retry, nothing run");
+}
+
+// Step 10c U13: a hook asks the daemon for what its session is owed, named
+// under its project as resolved, at its engine's hook, with the client's
+// directory and environment.
+#[tokio::test]
+async fn a_hook_asks_for_its_sessions_owed_context_by_name() {
+    let daemons = Fakes::new();
+    let answered = in_project(&daemons)
+        .redeliver_context("brisk-copper-moth", "PostToolUse", 4_321)
+        .await
+        .unwrap();
+    assert_eq!(answered.context, "owed:PostToolUse");
+    assert_eq!(daemons.asked(), ["1:resolve", "1:redeliver"]);
+    assert_eq!(
+        daemons.names(),
+        [
+            "p-1",
+            "projects/calm-otter/sessions/brisk-copper-moth cwd /work budget 4321"
+        ]
+    );
+    let envs = daemons.template.envs.lock().unwrap().clone();
+    assert_eq!(envs[1], Some(env()));
 }

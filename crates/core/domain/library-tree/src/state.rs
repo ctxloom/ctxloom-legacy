@@ -68,9 +68,10 @@ pub struct Library {
     pub baseline_sequence: u64,
     /// Whether a baseline was ever recorded.
     pub baselined: bool,
-    /// Whether ctxloom made this tree a repository of its own (G3): only
-    /// then are its writes committed.
-    pub home_repository_made: bool,
+    /// Each foreign writer's file (step 10c U10, L15), project-relative,
+    /// at the sequence of the step that wrote it: a record only, never
+    /// observed and never a token.
+    pub foreign: BTreeMap<String, Resource>,
 }
 
 /// The cause an event's page names: a fact's external id, else the
@@ -150,11 +151,25 @@ impl Library {
             LibraryEvent::StepApplied(applied) => self.applied(applied, sequence),
             LibraryEvent::ChangeFailed(failed) => self.failed(failed),
             LibraryEvent::IntentSuperseded(superseded) => self.superseded(superseded),
-            LibraryEvent::HomeRepositoryMade(_) => self.home_repository_made = true,
+            // Never emitted since the git-free ruling: a 10b stream's is
+            // nothing to fold (its cause still chains).
+            LibraryEvent::HomeRepositoryMade(_) => {}
             // The read model keeps it; the tree is as it was.
             LibraryEvent::BundleExported(_) => {}
+            LibraryEvent::TreeInstalled(installed) => self.installed(installed, sequence),
         }
         self.last_cause = cause;
+    }
+
+    /// The tree's listing as its record holds it (step 10c U13 rework):
+    /// every path at its content id, one a step took away (its id empty)
+    /// left out.
+    pub fn listed(&self) -> BTreeMap<String, String> {
+        self.dirty
+            .iter()
+            .filter(|(_, oid)| !oid.is_empty())
+            .map(|(path, oid)| (path.clone(), oid.clone()))
+            .collect()
     }
 
     /// The dirty set once `left` (paths and the ids a step left there,
@@ -235,8 +250,28 @@ impl Library {
     }
 
     fn applied(&mut self, applied: &StepApplied, sequence: u64) {
-        self.dirty = self.dirty_after(&applied.observed);
-        for observed in &applied.observed {
+        let foreign = self
+            .pending
+            .get(&applied.request_id)
+            .and_then(|intent| intent.steps.get(applied.step as usize))
+            .and_then(|step| step.replace.as_ref())
+            .is_some_and(|replace| replace.foreign);
+        if foreign {
+            // Another tool's file: recorded apart, and the library (its
+            // dirty set and its tokens) is as it was.
+            for observed in &applied.observed {
+                self.foreign.insert(
+                    observed.path.clone(),
+                    Resource {
+                        sequence,
+                        oid: observed.oid.clone(),
+                    },
+                );
+            }
+        } else {
+            self.dirty = self.dirty_after(&applied.observed);
+        }
+        for observed in applied.observed.iter().filter(|_| !foreign) {
             self.resources.insert(
                 observed.path.clone(),
                 Resource {
@@ -258,6 +293,31 @@ impl Library {
         intent.done = intent.done.max(applied.step + 1);
         if intent.done as usize >= intent.steps.len() {
             self.pending.remove(&applied.request_id);
+        }
+    }
+
+    /// A tree installed into the cache (step 10c U4): its create step done,
+    /// and its directory's path tied to this sequence and the tree's id.
+    fn installed(&mut self, installed: &crate::TreeInstalled, sequence: u64) {
+        let Some(intent) = self.pending.get_mut(&installed.request_id) else {
+            return;
+        };
+        if let Some(create) = intent
+            .steps
+            .get(installed.step as usize)
+            .and_then(|step| step.create.as_ref())
+        {
+            self.resources.insert(
+                create.path.clone(),
+                Resource {
+                    sequence,
+                    oid: installed.tree.clone(),
+                },
+            );
+        }
+        intent.done = intent.done.max(installed.step + 1);
+        if intent.done as usize >= intent.steps.len() {
+            self.pending.remove(&installed.request_id);
         }
     }
 
@@ -326,7 +386,19 @@ impl Library {
                 })
                 .collect(),
             baseline_sequence: self.baseline_sequence,
-            home_repository_made: self.home_repository_made,
+            foreign: self
+                .foreign
+                .iter()
+                .map(|(path, resource)| {
+                    (
+                        path.clone(),
+                        wire::Resource {
+                            sequence: resource.sequence,
+                            oid: resource.oid.clone(),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }

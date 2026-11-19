@@ -39,6 +39,9 @@ pub enum LibError {
     /// A library tree's checkout harp (`.ctxloom/state/checkout`, L2) could
     /// not be read, minted or written.
     Checkout { path: String, detail: String },
+    /// A library tree could not be walked or a file of it read (step 10c
+    /// U13 rework, the scanner).
+    Scan { path: String, detail: String },
 }
 
 impl cli_support::ExitClass for LibError {
@@ -74,6 +77,7 @@ impl Diagnostic for LibError {
             LibError::DaemonOtherHome { .. } => code!("daemon-other-home"),
             LibError::ProjectUnnamed { .. } => code!("project-unnamed"),
             LibError::Checkout { .. } => code!("checkout"),
+            LibError::Scan { .. } => code!("scan"),
             LibError::DaemonInstanceHeld { .. } => code!("daemon-instance-held"),
         }
     }
@@ -93,7 +97,7 @@ impl Diagnostic for LibError {
                 ("daemon_home", daemon_home.as_str().into()),
             ],
             LibError::ProjectUnnamed { root } => vec![("root", root.as_str().into())],
-            LibError::Checkout { path, detail } => vec![
+            LibError::Checkout { path, detail } | LibError::Scan { path, detail } => vec![
                 ("path", path.as_str().into()),
                 ("ext_err_txt", detail.as_str().into()),
             ],
@@ -128,6 +132,10 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(LibError::Checkout {
             path: "/work/app/.ctxloom/state/checkout".to_string(),
+            detail: "permission denied".to_string(),
+        }),
+        Box::new(LibError::Scan {
+            path: "/work/app/.ctxloom".to_string(),
             detail: "permission denied".to_string(),
         }),
         Box::new(LibError::Store(StoreOpenError::Open(

@@ -1,8 +1,8 @@
 //! A read's first step (step 10a U2): its tree observed, and what changed
 //! recorded as the library domain's one fact, before the read opens the
-//! library. A project's tree outside git, or one git ignores, is refused
-//! before anything is minted or recorded (G1). The checkout is named at its
-//! first read (L2), and what the record holds of it is read from the warm
+//! library. A tree is observed in any directory, in git or not (the library
+//! is git-free, owner 2026-11-18). The checkout is named at its first read
+//! (L2), and what the record holds of it is read from the warm
 //! `library-checkout` (U0), never folded per read.
 //!
 //! No lock is held across the recording: two reads that see the same thing
@@ -15,27 +15,42 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use ctxloom_ports::{Failure, Operations, TreeError, TreeObserver};
+use ctxloom_ports::{Failure, LibraryScanner, Operations};
 use library_checkout::LibraryCheckouts;
-use library_tree::{observation_book, LibraryTreeRejection, TreeName};
+use library_tree::{listing_book, DirtyPath, RecordTreeListed, TreeName};
 use run_ports::Edge;
 use sessions::ProjectName;
 
-use crate::{locate, reconcile, LibraryApiNotice};
+use crate::LibraryApiNotice;
+
+/// Whether a scan that found `files` is what `held` already lists: a
+/// tree listed before (never a git-era one, which held no listing), the
+/// same paths at the same content ids (a path a step took away, held with
+/// an empty id, absent). Such a scan records nothing.
+pub fn listed_as_held(
+    held: &library_tree::Library,
+    files: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    held.baselined && held.head.is_empty() && held.tree.is_empty() && held.listed() == *files
+}
 
 /// Where a checkout's harp is kept (`<tree>/state/checkout`, out of git),
 /// minted at its tree's first read and read back after.
 pub trait CheckoutHarps: Send + Sync {
     /// The harp of the checkout whose library is the directory `tree`.
     fn harp(&self, tree: &str) -> Result<String, Failure>;
+
+    /// A fresh harp, minted and written nowhere (step 10c U6: a first
+    /// init's checkout and project, staged with its scaffold).
+    fn fresh(&self) -> String;
 }
 
-/// git as a read's caller runs it: on the caller's `PATH`, in the caller's
-/// environment (protos.md §2), and the home whose library every read reads
-/// beside its project's.
+/// What a read's trees are seen by: the scanner, and the home whose library
+/// every read reads beside its project's.
 pub trait Observers: Send + Sync {
-    /// The observer of a read whose caller's environment is `env`.
-    fn observer(&self, env: &[(String, String)]) -> Box<dyn TreeObserver>;
+    /// The scanner every tree is seen through (step 10c U13 rework): no
+    /// git, so no environment; its memo shared by every read.
+    fn scanner(&self) -> Arc<dyn LibraryScanner>;
 
     /// The home's library directory (its `.ctxloom`), when it has one.
     fn home_tree(&self) -> Option<String>;
@@ -44,8 +59,8 @@ pub trait Observers: Send + Sync {
 /// The tree a read is of.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Site {
-    /// A project checkout's library: the project, the checkout's root (what
-    /// the refusals name) and its `.ctxloom` there.
+    /// A project checkout's library: the project, the checkout's root and
+    /// its `.ctxloom` there.
     Checkout {
         project: ProjectName,
         root: String,
@@ -80,9 +95,6 @@ impl Site {
 pub struct Observed {
     pub tree: TreeName,
     pub notices: Vec<LibraryApiNotice>,
-    /// The git operation in progress there, if any (a write is refused
-    /// `TreeInMotion` on it, L11).
-    pub motion: Option<ctxloom_ports::Motion>,
 }
 
 /// What a write's observations came to: each tree observed, with what it
@@ -96,16 +108,8 @@ pub struct Trees {
 /// Why a read was not answered.
 #[derive(Debug)]
 pub enum ReadError {
-    /// The library domain's refusal (exit 20).
-    Refused(LibraryTreeRejection),
-    /// git missing, too old or failing, or the record not written (exit 10).
+    /// The scan or the record failed (exit 10).
     Failed(Failure),
-}
-
-impl From<TreeError> for ReadError {
-    fn from(error: TreeError) -> ReadError {
-        ReadError::Failed(error.into_failure())
-    }
 }
 
 /// The observations of the daemon's reads, recorded through its edge.
@@ -121,6 +125,9 @@ pub struct Observations<E> {
     /// The daemon's clock, in seconds since the epoch, by which a kept
     /// trash slot's age is told (G12); none, nothing is purged.
     clock: Option<Clock>,
+    /// When each tree (its directory) was last scanned, by the clock (step
+    /// 10c U13 rework): what a hook's observation trusts.
+    scanned: Mutex<std::collections::BTreeMap<String, i64>>,
 }
 
 /// The daemon's clock: now, in seconds since the epoch.
@@ -141,6 +148,7 @@ impl<E: Edge> Observations<E> {
             operations: None,
             swept: Mutex::new(BTreeSet::new()),
             clock: None,
+            scanned: Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
@@ -245,6 +253,11 @@ impl<E: Edge> Observations<E> {
         Ok(())
     }
 
+    /// A fresh harp ([`CheckoutHarps::fresh`]), written nowhere.
+    pub fn fresh_harp(&self) -> String {
+        self.harps.fresh()
+    }
+
     /// The stream `site`'s tree is recorded on, by its harp.
     fn tree_name(&self, site: &Site) -> Result<TreeName, ReadError> {
         let harp = self.harps.harp(site.tree()).map_err(ReadError::Failed)?;
@@ -255,126 +268,132 @@ impl<E: Edge> Observations<E> {
         .map_err(|rejection| ReadError::Failed(Box::new(rejection)))
     }
 
-    /// The home step's `git init` recorded on the home tree's stream (G3,
-    /// owner 2026-11-18, night): only a home with it is committed in. Keyed
-    /// by the tree, so a second is a DUPLICATE.
-    async fn record_home_made(&self, home: &str) -> Result<(), ReadError> {
-        let tree = self.tree_name(&Site::Home {
-            tree: home.to_string(),
-        })?;
-        let fact = library_tree::RecordHomeRepositoryMade {
-            name: tree.to_string(),
-        };
-        self.edge
-            .handle(crate::writes::step_book(
-                &tree,
-                &fact,
-                &format!("home-repository-made:{tree}"),
-            ))
-            .await
-            .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
-        Ok(())
-    }
-
-    /// Observe `site` through `observer` (git in the caller's environment),
-    /// recording what changed since the record's state of it.
+    /// Observe `site`: its files found by `scanner` (step 10c U13 rework:
+    /// no git sees the tree) and, when they differ from what the record
+    /// lists, the listing recorded for the aggregate to compare.
     pub async fn observe(
         &self,
-        observer: &dyn TreeObserver,
+        scanner: &dyn LibraryScanner,
         site: &Site,
     ) -> Result<Observed, ReadError> {
-        if let Site::Checkout { root, .. } = site {
-            if let Some(refused) = locate::refusal(observer, root)? {
-                return Err(ReadError::Refused(refused));
-            }
-        }
         self.sweep_once(site.tree())?;
         let tree = self.tree_name(site)?;
         let held = {
             let checkouts = self.checkouts.checkouts();
             checkouts.tree(&tree.root()).cloned().unwrap_or_default()
         };
-        let sight = reconcile::sight(observer, site.tree(), &tree, &held)?;
-        if let Some(fact) = &sight.fact {
+        let files = scanner.scan(site.tree()).map_err(ReadError::Failed)?;
+        if let Some(clock) = &self.clock {
+            self.scanned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(site.tree().to_string(), clock());
+        }
+        if !listed_as_held(&held, &files) {
+            let fact = RecordTreeListed {
+                name: tree.to_string(),
+                kind: tree.kind(),
+                base_cause: held.last_cause.clone(),
+                files: files
+                    .into_iter()
+                    .map(|(path, oid)| DirtyPath { path, oid })
+                    .collect(),
+            };
             self.edge
-                .handle(observation_book(&tree, fact))
+                .handle(listing_book(&tree, &fact))
                 .await
                 .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
         }
         self.purge_due(site.tree(), &tree).await?;
-        let notices = sight
-            .motion
-            .map(|motion| LibraryApiNotice::TreeInMotion {
-                motion,
-                root: site.tree().to_string(),
-            })
-            .into_iter()
-            .collect();
         Ok(Observed {
             tree,
-            notices,
-            motion: sight.motion,
+            notices: Vec::new(),
         })
     }
 }
 
 impl<E: Edge> Observations<E> {
     /// A read's observations (U2): the project's checkout at `root`, then
-    /// the home's library, each through git in the caller's environment
-    /// `env`. A home whose library is in no work tree, or in one that
-    /// ignores it, is made a repository of its own first (G2, the home
-    /// step, said once: `library-api-notice-home-repository-made`). What
-    /// both are to say, in order.
+    /// the home's library, when it has one. The home is never made a
+    /// repository (the library is git-free, owner 2026-11-18, superseding
+    /// G2). What both are to say, in order.
     pub async fn observe_read(
         &self,
         observers: &dyn Observers,
-        env: &[(String, String)],
         project: Option<(ProjectName, &str)>,
     ) -> Result<Vec<LibraryApiNotice>, ReadError> {
-        Ok(self.observe_trees(observers, env, project).await?.notices)
+        Ok(self.observe_trees(observers, project).await?.notices)
     }
 
     /// A write's observations (step 10b U3): [`Observations::observe_read`]'s,
     /// each tree with what it came to, in order: the project's checkout,
-    /// then the home's library (when git holds it). The home step's notice
-    /// rides the home's.
+    /// then the home's library (when it has one).
     pub async fn observe_trees(
         &self,
         observers: &dyn Observers,
-        env: &[(String, String)],
         project: Option<(ProjectName, &str)>,
     ) -> Result<Trees, ReadError> {
-        let observer = observers.observer(env);
+        let scanner = observers.scanner();
+        let seeing = scanner.as_ref();
         let mut seen = Vec::new();
         let mut notices = Vec::new();
         if let Some((project, root)) = project {
             let site = Site::checkout(project, root);
-            let observed = self.observe(observer.as_ref(), &site).await?;
+            let observed = self.observe(seeing, &site).await?;
             notices.extend(observed.notices.iter().cloned());
             seen.push((site, observed));
         }
         if let Some(home) = observers.home_tree() {
-            // The home step (G2, QUESTIONS.md B): the home's library made a
-            // repository of ctxloom's own files at its first read, once.
-            let made = library_application::ensure_home_repository(observer.as_ref(), &home)?;
-            if made == library_application::HomeRepository::Made {
-                notices.push(LibraryApiNotice::HomeRepositoryMade { path: home.clone() });
-            }
-            let held = observer.work_tree(&home)?.is_some()
-                && observer.check_ignore(&home, "config.yaml")?.is_none();
-            if held {
-                if made == library_application::HomeRepository::Made {
-                    // G3: a home git holds, made by ctxloom: its writes are
-                    // committed there from now on.
-                    self.record_home_made(&home).await?;
-                }
-                let site = Site::Home { tree: home };
-                let observed = self.observe(observer.as_ref(), &site).await?;
-                notices.extend(observed.notices.iter().cloned());
-                seen.push((site, observed));
-            }
+            let site = Site::Home { tree: home };
+            let observed = self.observe(seeing, &site).await?;
+            notices.extend(observed.notices.iter().cloned());
+            seen.push((site, observed));
         }
         Ok(Trees { seen, notices })
+    }
+
+    /// [`Observations::observe_trees`] as a hook asks it (step 10c U13
+    /// rework: re-injection trusts an observation up to `trust` seconds
+    /// old): nothing when every tree it would observe was scanned within
+    /// `trust` by the daemon's clock, else every one observed. With no
+    /// clock every hook observes.
+    pub async fn observe_trees_trusting(
+        &self,
+        observers: &dyn Observers,
+        project: Option<(ProjectName, &str)>,
+        trust: i64,
+    ) -> Result<(), ReadError> {
+        let dirs: Vec<String> = project
+            .as_ref()
+            .map(|(name, root)| Site::checkout(name.clone(), root).tree().to_string())
+            .into_iter()
+            .chain(observers.home_tree())
+            .collect();
+        if let Some(clock) = &self.clock {
+            let now = clock();
+            let scanned = self
+                .scanned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let trusted = dirs
+                .iter()
+                .all(|dir| scanned.get(dir).is_some_and(|at| now - at < trust));
+            if trusted {
+                return Ok(());
+            }
+        }
+        self.observe_trees(observers, project).await.map(|_| ())
+    }
+
+    /// Every memo of what was seen dropped (`ctxloom context refresh`):
+    /// the scanner's hashes and when each tree was scanned, so the next
+    /// observation hashes every file again. The record is untouched.
+    pub fn forget(&self, observers: &dyn Observers) {
+        observers.scanner().forget();
+        self.scanned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// The record's state of `tree` now (a default one for a tree never
@@ -387,6 +406,12 @@ impl<E: Edge> Observations<E> {
     /// The export recorded under `request_id`, in any tree (AIP-155).
     pub fn exported(&self, request_id: &str) -> Option<library_tree::BundleExported> {
         self.checkouts.checkouts().export(request_id).cloned()
+    }
+
+    /// The checkouts these observations reconcile against, shared: what a
+    /// watcher watches (step 10c G7).
+    pub fn checkouts(&self) -> LibraryCheckouts {
+        self.checkouts.clone()
     }
 
     /// The intent recorded under `request_id`, in any tree (step 10b U3).

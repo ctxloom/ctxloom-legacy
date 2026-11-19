@@ -139,6 +139,7 @@ impl AnsweredEditor {
             ..v1::Launch::default()
         });
         Some(v1::Need {
+            optional: false,
             id: EDIT_NEED.to_string(),
             kind: Some(v1::need::Kind::Edit(v1::Edit {
                 file_name,
@@ -942,6 +943,7 @@ fn swap_confirm(preview: &library_application::SwapPreview) -> v1::Need {
         value: value.to_string(),
     };
     v1::Need {
+        optional: false,
         id: CONFIRM_NEED.to_string(),
         kind: Some(v1::need::Kind::Confirm(v1::Confirm {
             text: format!(
@@ -1551,6 +1553,7 @@ pub fn removed_of<T>(answer: Option<&Removal<T>>, applied: bool) -> Removed {
             detail: preview.detail.clone(),
             apply_command: preview.apply.clone(),
             needs: vec![v1::Need {
+                optional: false,
                 id: CONFIRM_NEED.to_string(),
                 kind: Some(v1::need::Kind::Confirm(v1::Confirm {
                     text: format!("Remove {}?", preview.target),

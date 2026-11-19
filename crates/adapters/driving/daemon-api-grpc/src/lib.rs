@@ -502,6 +502,26 @@ impl Ctxloom for Served {
         .await
     }
 
+    async fn redeliver_context(
+        &self,
+        request: Request<v1::RedeliverContextRequest>,
+    ) -> Result<Response<v1::RedeliveredContext>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.redeliver_context(message).await
+        })
+        .await
+    }
+
+    async fn deliver_hook_context(
+        &self,
+        request: Request<v1::DeliverHookContextRequest>,
+    ) -> Result<Response<v1::HookContext>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.deliver_hook_context(message).await
+        })
+        .await
+    }
+
     async fn get_run(
         &self,
         request: Request<v1::GetRunRequest>,
@@ -541,6 +561,39 @@ impl Ctxloom for Served {
             for event in events {
                 if tell.blocking_send(Ok(event)).is_err() {
                     return;
+                }
+            }
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(heard))))
+    }
+
+    /// The named trees' changes (step 10c G7), drained on a task of their
+    /// own into the response stream each time the catch-up signals one
+    /// recorded (step 10c U13 rework: no poll), until the caller is gone.
+    async fn watch_library(
+        &self,
+        request: Request<v1::WatchLibraryRequest>,
+    ) -> Result<Response<BoxStream<v1::LibraryChange>>, Status> {
+        let signal = std::sync::Arc::new(tokio::sync::Notify::new());
+        let woken = std::sync::Arc::clone(&signal);
+        let wake: daemon_api::Wake = std::sync::Arc::new(move || woken.notify_one());
+        let mut poll = self
+            .answer(request, |calls, message| async move {
+                calls.watch_library(message, wake).await
+            })
+            .await?
+            .into_inner();
+        let (tell, heard) = tokio::sync::mpsc::channel(WATCH_BUFFER);
+        tokio::spawn(async move {
+            loop {
+                for change in poll() {
+                    if tell.send(Ok(change)).await.is_err() {
+                        return;
+                    }
+                }
+                tokio::select! {
+                    () = signal.notified() => {}
+                    () = tell.closed() => return,
                 }
             }
         });

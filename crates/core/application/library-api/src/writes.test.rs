@@ -9,7 +9,7 @@ use super::{
     content_for, expected, expected_step, intent_of, left_by, operation, operation_of, shape,
     Intended, Lands, Shape,
 };
-use crate::fakes::Git;
+use crate::fakes::Tree;
 
 fn put(path: &str, text: &str) -> Put {
     Put {
@@ -59,6 +59,85 @@ fn test_a_layer_is_its_config_file_replaced_in_its_tree() {
     let shaped = shape(vec![planned], none).unwrap().unwrap();
     assert_eq!(shaped.lands, Lands::Layer(Scope::Home));
     assert_eq!(shaped.shape.path(), "config.yaml");
+}
+
+// Step 10c U5: a file the scaffold writes below the tree's `.ctxloom`
+// (`manage gitignore install`'s) is that one file replaced in the content
+// tree; several are more than one change.
+#[test]
+fn test_a_scaffold_file_is_that_file_replaced_in_the_content_tree() {
+    let one = Planned::TreeFiles {
+        files: vec![put(".gitignore", "/cache\n")],
+    };
+    let shaped = shape(vec![one], none).unwrap().unwrap();
+    assert_eq!(shaped.lands, Lands::Content);
+    assert_eq!(
+        shaped.shape,
+        Shape::Replace {
+            path: ".gitignore".to_string(),
+            bytes: b"/cache\n".to_vec(),
+            executable: false,
+        }
+    );
+    let several = Planned::TreeFiles {
+        files: vec![put(".gitignore", "a"), put("remotes.yaml", "b")],
+    };
+    assert!(matches!(
+        shape(vec![several], none),
+        Err(LibraryTreeRejection::OneChangePerCall { paths }) if paths == [".gitignore", "remotes.yaml"]
+    ));
+}
+
+// Step 10c U6: a tree written whole where it was not (a first init's
+// scaffold) is ONE new directory, the tree's root itself, in the content
+// tree.
+#[test]
+fn test_a_new_tree_is_one_new_directory_at_the_trees_root() {
+    let files = vec![put("config.yaml", "a"), put("remotes.yaml", "b")];
+    let shaped = shape(
+        vec![Planned::NewTree {
+            files: files.clone(),
+        }],
+        none,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(shaped.lands, Lands::Content);
+    assert_eq!(
+        shaped.shape,
+        Shape::Create {
+            path: String::new(),
+            files
+        }
+    );
+}
+
+// What a root create leaves is each of its files at its own path (no
+// leading separator), the tree's private state left out.
+#[test]
+fn test_a_root_create_expects_each_file_at_its_own_path() {
+    let root = Shape::Create {
+        path: String::new(),
+        files: vec![put("config.yaml", "a"), put("state/checkout", "c\n")],
+    };
+    let Intended::Create(create) = intent_of("t", "init", &root, (0, &|_| 0), evidence(), "r")
+    else {
+        panic!()
+    };
+    let step = library_tree::Step {
+        create: Some(create),
+        replace: None,
+        trash: None,
+        r#move: None,
+        purge: None,
+    };
+    assert_eq!(
+        expected_step(&step, Some(&root)),
+        [DirtyPath {
+            path: "config.yaml".to_string(),
+            oid: library_tree::content_id(b"a"),
+        }]
+    );
 }
 
 #[test]
@@ -171,31 +250,16 @@ fn evidence() -> Evidence {
         tree_reads: true,
         plan_rejection: None,
         builtin: false,
-        in_motion: None,
-        in_git: true,
-        ignored: None,
-        root: "/work/demo".to_string(),
     }
 }
 
 #[test]
-fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
-    let git = Git::at("h-0", "t-0");
+fn test_an_intent_names_the_content_ids_of_what_it_writes() {
     let create = Shape::Create {
         path: "content/bundles/v2/notes".to_string(),
         files: vec![put("bundle.yaml", "v")],
     };
-    let intended = intent_of(
-        &git,
-        "/d",
-        "t",
-        "bundle create",
-        &create,
-        (0, &|_| 9),
-        evidence(),
-        "r",
-    )
-    .unwrap();
+    let intended = intent_of("t", "bundle create", &create, (0, &|_| 9), evidence(), "r");
     let Intended::Create(command) = &intended else {
         panic!("{intended:?}")
     };
@@ -204,14 +268,14 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
         command.entries,
         vec![DirtyPath {
             path: "bundle.yaml".to_string(),
-            oid: "id-of:content/bundles/v2/notes/bundle.yaml:v".to_string(),
+            oid: library_tree::content_id(b"v"),
         }]
     );
     assert_eq!(
         expected(&intended, &create),
         vec![DirtyPath {
             path: "content/bundles/v2/notes/bundle.yaml".to_string(),
-            oid: "id-of:content/bundles/v2/notes/bundle.yaml:v".to_string(),
+            oid: library_tree::content_id(b"v"),
         }]
     );
     let replace = Shape::Replace {
@@ -219,41 +283,23 @@ fn test_an_intent_names_the_ids_git_would_give_what_it_writes() {
         bytes: b"a".to_vec(),
         executable: false,
     };
-    let Intended::Replace(command) = intent_of(
-        &git,
-        "/d",
-        "t",
-        "config set",
-        &replace,
-        (4, &|_| 9),
-        evidence(),
-        "r",
-    )
-    .unwrap() else {
+    let Intended::Replace(command) =
+        intent_of("t", "config set", &replace, (4, &|_| 9), evidence(), "r")
+    else {
         panic!()
     };
     assert_eq!(command.seen_sequence, 4);
-    assert_eq!(command.new_oid, "id-of:config.yaml:a");
+    assert_eq!(command.new_oid, library_tree::content_id(b"a"));
 }
 
 #[test]
 fn test_a_trash_expects_each_of_its_files_gone_and_what_is_left_is_read_back() {
-    let git = Git::at("h-0", "t-0").file("content/bundles/v2/demo/kept.md", "k");
+    let git = Tree::default().file("content/bundles/v2/demo/kept.md", "k");
     let trash = Shape::Trash {
         path: "content/bundles/v2/demo".to_string(),
         files: vec!["bundle.yaml".to_string(), "kept.md".to_string()],
     };
-    let intended = intent_of(
-        &git,
-        "/d",
-        "t",
-        "bundle remove",
-        &trash,
-        (2, &|_| 9),
-        evidence(),
-        "r",
-    )
-    .unwrap();
+    let intended = intent_of("t", "bundle remove", &trash, (2, &|_| 9), evidence(), "r");
     let paths = expected(&intended, &trash);
     assert_eq!(paths.len(), 2);
     assert!(paths.iter().all(|p| p.oid.is_empty()));
@@ -271,18 +317,7 @@ fn test_a_writes_book_carries_its_request_id_as_the_command_id() {
         bytes: b"a".to_vec(),
         executable: false,
     };
-    let git = Git::at("h-0", "t-0");
-    let intended = intent_of(
-        &git,
-        "/d",
-        "t",
-        "config set",
-        &replace,
-        (0, &|_| 9),
-        evidence(),
-        "r",
-    )
-    .unwrap();
+    let intended = intent_of("t", "config set", &replace, (0, &|_| 9), evidence(), "r");
     let id = [7u8; 16];
     let book = super::command_book(&tree, &intended, id);
     let page = book.page.unwrap();
@@ -389,22 +424,13 @@ fn test_an_executable_file_stays_executable_in_its_operation() {
 // only a sequence's own trash, which its last step removes, is not.
 #[test]
 fn test_a_lone_removal_is_kept_in_the_trash() {
-    let git = Git::at("h-0", "t-0");
     let trash = Shape::Trash {
         path: "content/bundles/v2/demo".to_string(),
         files: vec!["bundle.yaml".to_string()],
     };
-    let Intended::Trash(command) = intent_of(
-        &git,
-        "/d",
-        "t",
-        "bundle remove",
-        &trash,
-        (3, &|_| 9),
-        evidence(),
-        "r",
-    )
-    .unwrap() else {
+    let Intended::Trash(command) =
+        intent_of("t", "bundle remove", &trash, (3, &|_| 9), evidence(), "r")
+    else {
         panic!("not a trash")
     };
     assert!(command.keep);
@@ -475,19 +501,15 @@ fn test_a_bundle_replaced_whole_is_the_sequence_trash_create_purge() {
 // slot, its first path judged on the token the caller saw.
 #[test]
 fn test_a_sequences_intent_lists_its_steps_its_trash_its_own() {
-    let git = Git::at("h-0", "t-0");
     let shaped = shape(forced_import(), demo_files).unwrap().unwrap();
     let intended = intent_of(
-        &git,
-        "/d",
         "t",
         "bundle import",
         &shaped.shape,
         (5, &|_| 9),
         evidence(),
         "r-1",
-    )
-    .unwrap();
+    );
     let Intended::Sequence(command) = &intended else {
         panic!("{intended:?}")
     };
@@ -505,7 +527,7 @@ fn test_a_sequences_intent_lists_its_steps_its_trash_its_own() {
         create.entries,
         vec![DirtyPath {
             path: "bundle.yaml".to_string(),
-            oid: "id-of:content/bundles/v2/demo/bundle.yaml:v: 2\n".to_string(),
+            oid: library_tree::content_id(b"v: 2\n"),
         }]
     );
     assert_eq!(
@@ -562,19 +584,15 @@ fn test_a_sequences_intent_lists_its_steps_its_trash_its_own() {
 // same path, none when the re-plan has none there.
 #[test]
 fn test_a_resumed_step_takes_its_content_from_the_replans_step_at_its_path() {
-    let git = Git::at("h-0", "t-0");
     let shaped = shape(forced_import(), demo_files).unwrap().unwrap();
     let Intended::Sequence(command) = intent_of(
-        &git,
-        "/d",
         "t",
         "bundle import",
         &shaped.shape,
         (5, &|_| 9),
         evidence(),
         "r-1",
-    )
-    .unwrap() else {
+    ) else {
         panic!()
     };
     // Re-planned after the trash: the bundle is gone, so the plan is a new
@@ -606,19 +624,15 @@ fn test_a_resumed_step_takes_its_content_from_the_replans_step_at_its_path() {
 #[test]
 fn test_a_recorded_step_is_made_with_the_plans_content() {
     use ctxloom_ports::Operation;
-    let git = Git::at("h-0", "t-0");
     let shaped = shape(forced_import(), demo_files).unwrap().unwrap();
     let Intended::Sequence(command) = intent_of(
-        &git,
-        "/d",
         "t",
         "bundle import",
         &shaped.shape,
         (5, &|_| 9),
         evidence(),
         "r-1",
-    )
-    .unwrap() else {
+    ) else {
         panic!()
     };
     assert_eq!(
@@ -647,7 +661,6 @@ fn test_a_recorded_step_is_made_with_the_plans_content() {
 // keeps none.
 #[test]
 fn test_a_sequence_with_no_purge_keeps_its_trash() {
-    let git = Git::at("h-0", "t-0");
     let clean = Shape::Sequence(vec![
         Shape::Trash {
             path: "cache/repos".to_string(),
@@ -658,17 +671,8 @@ fn test_a_sequence_with_no_purge_keeps_its_trash() {
             files: Vec::new(),
         },
     ]);
-    let Intended::Sequence(command) = intent_of(
-        &git,
-        "/d",
-        "t",
-        "clean",
-        &clean,
-        (0, &|_| 9),
-        evidence(),
-        "r",
-    )
-    .unwrap() else {
+    let Intended::Sequence(command) = intent_of("t", "clean", &clean, (0, &|_| 9), evidence(), "r")
+    else {
         panic!()
     };
     assert!(command
@@ -681,22 +685,12 @@ fn test_a_sequence_with_no_purge_keeps_its_trash() {
 // `state/`) leaves nothing the record follows: git never sees it.
 #[test]
 fn test_a_step_outside_the_library_expects_nothing() {
-    let git = Git::at("h-0", "t-0");
     let cache = Shape::Trash {
         path: "cache/context".to_string(),
         files: Vec::new(),
     };
-    let Intended::Trash(trash) = intent_of(
-        &git,
-        "/d",
-        "t",
-        "clean",
-        &cache,
-        (0, &|_| 9),
-        evidence(),
-        "r",
-    )
-    .unwrap() else {
+    let Intended::Trash(trash) = intent_of("t", "clean", &cache, (0, &|_| 9), evidence(), "r")
+    else {
         panic!()
     };
     let step = library_tree::Step {
@@ -793,7 +787,6 @@ fn test_several_removals_are_the_sequence_of_their_trashes() {
 // refused stale for an etag that was never its own.
 #[test]
 fn test_a_sequences_other_paths_are_judged_on_their_own_tokens() {
-    let git = Git::at("h-0", "t-0");
     let item = Shape::Sequence(vec![
         Shape::Trash {
             path: "content/bundles/v2/demo/fragments/rules.md".to_string(),
@@ -811,17 +804,9 @@ fn test_a_sequences_other_paths_are_judged_on_their_own_tokens() {
             1
         }
     };
-    let Intended::Sequence(command) = intent_of(
-        &git,
-        "/d",
-        "t",
-        "fragment remove",
-        &item,
-        (3, &token),
-        evidence(),
-        "r",
-    )
-    .unwrap() else {
+    let Intended::Sequence(command) =
+        intent_of("t", "fragment remove", &item, (3, &token), evidence(), "r")
+    else {
         panic!()
     };
     let seen: Vec<u64> = command
@@ -862,18 +847,14 @@ fn test_a_bundle_moved_into_another_tree_is_one_move_out_of_this_one() {
             into: into.clone(),
         })
     );
-    let git = Git::at("h-0", "t-0");
     let intended = intent_of(
-        &git,
-        "/d",
         "t",
         "bundle move",
         &shaped.shape,
         (3, &|_| 9),
         evidence(),
         "r",
-    )
-    .unwrap();
+    );
     let Intended::Move(command) = &intended else {
         panic!("{intended:?}")
     };

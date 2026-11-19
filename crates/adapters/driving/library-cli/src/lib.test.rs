@@ -984,6 +984,7 @@ fn previewed_removal() -> v1::DeleteBundleResponse {
         detail: vec!["1 fragment(s)".to_string()],
         apply_command: "ctxloom bundle remove notes --yes".to_string(),
         needs: vec![v1::Need {
+            optional: false,
             id: "confirm".to_string(),
             kind: Some(v1::need::Kind::Confirm(v1::Confirm {
                 text: "Remove bundle \"notes\"?".to_string(),

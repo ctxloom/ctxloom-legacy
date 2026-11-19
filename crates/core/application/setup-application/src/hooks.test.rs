@@ -403,3 +403,120 @@ fn test_a_listed_skill_is_judged_by_its_display_name_else_its_id() {
         .collect();
     assert_eq!(names, ["admit", "plain"]);
 }
+
+/// The daemon owing a re-assembly (step 10c U13): what each hook's one
+/// call asked it, `<hook> <budget>`, and the context it answers.
+#[derive(Default)]
+struct Owes(std::sync::Mutex<Vec<String>>);
+
+impl crate::HookContexts for Owes {
+    fn hook_context(
+        &self,
+        hook: &str,
+        _: &[&str],
+        _: &str,
+        budget: usize,
+    ) -> Option<crate::HookCarried> {
+        self.0.lock().unwrap().push(format!("{hook} {budget}"));
+        Some(crate::HookCarried {
+            context: "re-assembled".to_string(),
+            delivered: false,
+        })
+    }
+}
+
+// Step 10c U13 (G6/G7): at a prompt submitted or a tool's result, the hook
+// asks the daemon once (the lean hook RPC) what its session carries, by its
+// engine's own hook name, and carries it as its context; no other hook
+// asks.
+#[test]
+fn test_a_prompt_or_a_tool_result_carries_the_context_its_session_is_owed() {
+    let owes = std::sync::Arc::new(Owes::default());
+    struct Shared(std::sync::Arc<Owes>);
+    impl crate::HookContexts for Shared {
+        fn hook_context(
+            &self,
+            hook: &str,
+            urgencies: &[&str],
+            wake: &str,
+            budget: usize,
+        ) -> Option<crate::HookCarried> {
+            self.0.hook_context(hook, urgencies, wake, budget)
+        }
+    }
+    let w = crate::fakes::world(CONFIG);
+    let setup = w
+        .setup
+        .with_hook_contexts(Box::new(Shared(std::sync::Arc::clone(&owes))));
+    for native in ["UserPromptSubmit", "PostToolUse"] {
+        let answer = setup
+            .execute_hook("claude-code", native, "{}", "brisk-copper-moth")
+            .unwrap();
+        assert_eq!(answer.stdout, "context=re-assembled;notice=\n", "{native}");
+    }
+    for native in ["SessionStart", "Stop"] {
+        setup
+            .execute_hook("claude-code", native, "{}", "brisk-copper-moth")
+            .unwrap();
+    }
+    assert_eq!(
+        *owes.0.lock().unwrap(),
+        ["UserPromptSubmit 10000", "PostToolUse 10000"],
+        "nothing else in the answer: the whole budget"
+    );
+}
+
+// A tool's result that completed a skill carries its mates' line and the
+// owed context both, the line first, the call given what the line left.
+#[test]
+fn test_a_skills_mates_and_an_owed_context_are_carried_together() {
+    struct Mates;
+    impl crate::HookLibrary for Mates {
+        fn agents_and_profiles(&self) -> Option<(bool, bool)> {
+            None
+        }
+        fn skills(&self) -> Option<Vec<crate::HookSkill>> {
+            let skill = |name: &str| crate::HookSkill {
+                name: name.to_string(),
+                bundle: "rules".to_string(),
+                tags: vec!["ctxloom:link_id=x".to_string()],
+            };
+            Some(vec![skill("admit"), skill("unattended")])
+        }
+    }
+    struct Left;
+    impl crate::HookContexts for Left {
+        fn hook_context(
+            &self,
+            _: &str,
+            _: &[&str],
+            _: &str,
+            budget: usize,
+        ) -> Option<crate::HookCarried> {
+            assert!(budget < 10_000, "what the mates line left: {budget}");
+            Some(crate::HookCarried {
+                context: "re-assembled".to_string(),
+                delivered: false,
+            })
+        }
+    }
+    let w = crate::fakes::world(CONFIG);
+    let setup = w
+        .setup
+        .with_hook_library(Box::new(Mates))
+        .with_hook_contexts(Box::new(Left));
+    let answer = setup
+        .execute_hook(
+            "claude-code",
+            "PostToolUse",
+            r#"{"skill":"admit"}"#,
+            "brisk-copper-moth",
+        )
+        .unwrap();
+    assert!(
+        answer.stdout.starts_with("context=Skill admit completed;")
+            && answer.stdout.contains("\n\nre-assembled;notice="),
+        "{}",
+        answer.stdout
+    );
+}

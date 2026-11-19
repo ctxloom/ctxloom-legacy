@@ -5,20 +5,16 @@
 //! no path and reads no file; an adapter (`content-fs`, `config-files`,
 //! `editor-process`, `companion-probe`) does, and hands the text and the bytes
 //! over.
-//!
-//! Step 10 (U12) adds what git sees of a library tree ([`TreeObserver`]):
-//! git holds the library, and ctxloom asks it what is checked out and what
-//! differs, never keeping a copy of its own.
 
 mod operation;
-mod tree;
+mod scan;
 
 use std::collections::BTreeMap;
 
 use angzarr_diagnostic::Diagnostic;
 
 pub use operation::{Operated, Operation, Operations, Point, STAGING_DIR, STATE_DIR, TRASH_DIR};
-pub use tree::{IgnoreRule, Motion, PathStatus, StatusEntry, TreeChange, TreeError, TreeObserver};
+pub use scan::{LibraryScanner, LIBRARY_PATHS};
 
 /// Why an adapter could not do what it was asked: its own diagnostic.
 pub type Failure = Box<dyn Diagnostic>;
@@ -269,6 +265,25 @@ pub trait Scaffold {
     /// The files written below that directory, each atomically, its
     /// directories made (mode 0644 files, 0755 directories).
     fn write(&self, files: &[Put]) -> Result<(), Failure>;
+
+    /// Whether that directory itself is not there yet (step 10c U6: a first
+    /// init's tree, created whole). False by default: a scaffold that keeps
+    /// no directory is never new.
+    // Equivalent: its one mutant is this default body.
+    #[cfg_attr(test, mutants::skip)]
+    fn is_new(&self) -> Result<bool, Failure> {
+        Ok(false)
+    }
+
+    /// The bytes of the file at `rel` below that directory; none where it
+    /// is not there (step 10c U5: what a write compares itself with). None
+    /// by default: a scaffold that keeps no file to read reads as empty.
+    // Equivalent: its one mutant is this default body.
+    #[cfg_attr(test, mutants::skip)]
+    fn read(&self, rel: &str) -> Result<Option<Vec<u8>>, Failure> {
+        let _ = rel;
+        Ok(None)
+    }
 }
 
 /// An editor to run: a program and the arguments that come before the file.

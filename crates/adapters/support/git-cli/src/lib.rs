@@ -1,5 +1,5 @@
 //! Running git, for every adapter that runs it (step 10, G9: one runner, not
-//! a copy per adapter): `remote-git`, `worktree-git` and `library-git`.
+//! a copy per adapter): `remote-git` and `worktree-git`.
 //!
 //! A git is run in the environment its caller gives, less the variables git
 //! itself calls local to a repository (`GIT_DIR` and its siblings, and the

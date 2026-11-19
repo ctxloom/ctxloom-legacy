@@ -710,3 +710,226 @@ fn test_a_directory_that_cannot_be_synced_fails_the_operation() {
     assert_eq!(failed.code(), "content-fs-sync-dir");
     assert!(failed.to_string().contains("locked"), "{failed}");
 }
+
+// region another tool's files (step 10c U10, L15)
+
+/// `rel` below the project (the tree's parent), as an absolute path.
+fn in_project(rel: &str) -> String {
+    rel.split('/')
+        .fold(
+            PathBuf::from(tree()).parent().unwrap().to_path_buf(),
+            |path, step| path.join(step),
+        )
+        .display()
+        .to_string()
+}
+
+fn outside(rel: &str, bytes: Option<&[u8]>) -> Operation {
+    Operation::Outside {
+        path: in_project(rel),
+        bytes: bytes.map(<[u8]>::to_vec),
+        executable: false,
+        keep: in_project(""),
+    }
+}
+
+#[test]
+fn another_tools_file_is_written_whole_where_it_is_named_and_stages_nothing_in_the_tree() {
+    let (fs, ops) = setup();
+    let (done, points) = operate(&fs, &ops, &outside("out/CLAUDE.md", Some(b"# ctx\n")));
+    assert_eq!(done, Operated::Done);
+    assert!(points.is_empty(), "{points:?}");
+    assert_eq!(
+        fs.read(Path::new(&in_project("out/CLAUDE.md"))).ok(),
+        Some(b"# ctx\n".to_vec())
+    );
+    assert!(files(&fs, "state").is_empty(), "{:?}", files(&fs, "state"));
+    // Written again: the same bytes, nothing else changed.
+    let (again, _) = operate(&fs, &ops, &outside("out/CLAUDE.md", Some(b"# ctx\n")));
+    assert_eq!(again, Operated::Done);
+    let (replaced, _) = operate(&fs, &ops, &outside("out/CLAUDE.md", Some(b"# two\n")));
+    assert_eq!(replaced, Operated::Done);
+    assert_eq!(
+        fs.read(Path::new(&in_project("out/CLAUDE.md"))).ok(),
+        Some(b"# two\n".to_vec())
+    );
+}
+
+#[test]
+fn another_tools_file_removed_takes_the_directories_it_leaves_empty_but_never_what_it_keeps() {
+    let (fs, ops) = setup();
+    operate(&fs, &ops, &outside("a/b/c/settings.json", Some(b"{}")));
+    operate(&fs, &ops, &outside("a/other.md", Some(b"x")));
+    let (done, _) = operate(&fs, &ops, &outside("a/b/c/settings.json", None));
+    assert_eq!(done, Operated::Done);
+    assert!(
+        fs.metadata(Path::new(&in_project("a/b"))).is_err(),
+        "a/b is left"
+    );
+    assert!(fs.metadata(Path::new(&in_project("a/other.md"))).is_ok());
+    // Removed again: nothing there is done.
+    assert_eq!(
+        operate(&fs, &ops, &outside("a/b/c/settings.json", None)).0,
+        Operated::Done
+    );
+    operate(&fs, &ops, &outside("a/other.md", None));
+    assert!(
+        fs.metadata(Path::new(&in_project("a"))).is_err(),
+        "a is left"
+    );
+    assert!(
+        fs.metadata(Path::new(&in_project(""))).is_ok(),
+        "the kept directory went"
+    );
+}
+
+#[test]
+fn another_tools_file_must_be_named_absolutely() {
+    let (_fs, ops) = setup();
+    let relative = Operation::Outside {
+        path: "CLAUDE.md".to_string(),
+        bytes: Some(b"x".to_vec()),
+        executable: false,
+        keep: String::new(),
+    };
+    assert!(ops.operate(&tree(), REQUEST, &relative, &|_| {}).is_err());
+}
+
+#[test]
+fn another_tools_file_removed_never_takes_the_directory_it_keeps_though_it_is_left_empty() {
+    let (fs, ops) = setup();
+    let in_kept = |bytes: Option<&[u8]>| Operation::Outside {
+        path: in_project("kept/inner/x.md"),
+        bytes: bytes.map(<[u8]>::to_vec),
+        executable: false,
+        keep: in_project("kept"),
+    };
+    operate(&fs, &ops, &in_kept(Some(b"x")));
+    operate(&fs, &ops, &in_kept(None));
+    assert!(fs.metadata(Path::new(&in_project("kept/inner"))).is_err());
+    assert!(
+        fs.metadata(Path::new(&in_project("kept"))).is_ok(),
+        "the kept directory went"
+    );
+}
+
+/// The staging a root create uses, beside the tree (step 10c U6).
+fn beside(rel: &str) -> PathBuf {
+    let flavor = os::host().flavor();
+    rel.split('/').fold(
+        PathBuf::from(flavor.from_top(&format!("{TREE}.staging"))),
+        |path, step| path.join(step),
+    )
+}
+
+/// Every file below `dir`, relative to it, sorted.
+fn files_at(fs: &Rooted, dir: &Path) -> Vec<String> {
+    fn walk(fs: &Rooted, dir: &Path, prefix: &str, out: &mut Vec<String>) {
+        let Ok(entries) = fs.read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let name = entry.name.to_string_lossy().into_owned();
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            match entry.kind {
+                file_system::Kind::Dir => walk(fs, &dir.join(&entry.name), &rel, out),
+                _ => out.push(rel),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(fs, dir, "", &mut out);
+    out.sort();
+    out
+}
+
+fn new_tree() -> Operation {
+    Operation::CreateDir {
+        path: String::new(),
+        files: vec![
+            Put::file("config.yaml", "schema_version: 9\n"),
+            Put::file("state/checkout", "amber-swift-owl\n"),
+        ],
+    }
+}
+
+// Step 10c U6: a tree created whole (a first init's `.ctxloom`) cannot be
+// staged inside itself: it is built under `<tree>.staging/<request>/`,
+// beside it, and renamed in; at its `staged` point the tree is not there.
+#[test]
+fn test_a_new_tree_is_staged_whole_beside_it_and_then_renamed_in() {
+    let (fs, ops) = setup();
+    fs.remove_dir_all(&at("")).unwrap();
+    let seen = RefCell::new(Vec::new());
+    let done = ops
+        .operate(&tree(), REQUEST, &new_tree(), &|point| {
+            seen.borrow_mut().push((
+                point,
+                files_at(&fs, &beside("")),
+                fs.exists(&at("")).unwrap(),
+            ));
+        })
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(done, Operated::Done);
+    assert_eq!(
+        seen.into_inner(),
+        vec![(
+            Point::Staged,
+            vec![
+                format!("{REQUEST}/config.yaml"),
+                format!("{REQUEST}/state/checkout"),
+            ],
+            false
+        )]
+    );
+    assert_eq!(files(&fs, ""), vec!["config.yaml", "state/checkout"]);
+    assert!(!fs.exists(&beside("")).unwrap(), "nothing staged left");
+}
+
+// NOREPLACE: a tree that appeared meanwhile is never renamed over.
+#[test]
+fn test_a_new_tree_is_never_renamed_over_one_that_appeared_meanwhile() {
+    let (fs, ops) = setup();
+    fs.remove_dir_all(&at("")).unwrap();
+    let done = ops
+        .operate(&tree(), REQUEST, &new_tree(), &|point| {
+            if point == Point::Staged {
+                put(&fs, "config.yaml", b"theirs\n");
+            }
+        })
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(
+        done,
+        Operated::Exists {
+            path: String::new()
+        }
+    );
+    assert_eq!(files(&fs, ""), vec!["config.yaml"]);
+    assert_eq!(
+        read(&fs, "config.yaml").as_deref(),
+        Some(b"theirs\n".as_slice())
+    );
+    assert!(!fs.exists(&beside("")).unwrap(), "nothing staged left");
+}
+
+// What a killed root create left beside the tree is swept with its
+// staging.
+#[test]
+fn test_the_sweep_drops_a_new_tree_s_staging_beside_it() {
+    let (fs, ops) = setup();
+    let left = beside(&format!("{REQUEST}/config.yaml"));
+    fs.create_dir_all(left.parent().unwrap(), Mode::from_bits(0o755))
+        .unwrap();
+    fs.write_atomic(&left, b"x\n", Perms::Exact(Mode::from_bits(0o644)))
+        .unwrap();
+    ops.sweep_staging(&tree())
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert!(!fs.exists(&beside("")).unwrap());
+}

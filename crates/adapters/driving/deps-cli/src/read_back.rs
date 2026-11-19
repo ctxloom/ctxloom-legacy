@@ -19,6 +19,7 @@ pub(crate) fn remotes(listed: &v1::ListRemotesResponse) -> RemoteListing {
         .map(|remote| RemoteRow {
             name: id_in(&remote.name, "remotes").to_string(),
             url: remote.url.clone(),
+            forge: remote.forge.clone(),
         })
         .collect();
     let default = listed

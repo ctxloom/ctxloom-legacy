@@ -19,6 +19,7 @@
 
 mod commands;
 mod text;
+pub mod wire;
 
 use cli_support::Exit;
 use std::io::Write;
@@ -31,7 +32,7 @@ use cli_support::{say_notices, say_warning};
 use daemon_proto::v1;
 use deps_application::Notice;
 use doctor_checks::Doctor;
-use init_application::{interview, Init, InitRequest, Outcome, Prompts, Sessions, Terminal};
+use init_application::{interview, Outcome, Prompts, Sessions, Terminal};
 use reclaim_application::{CleanReport, CleanTarget};
 use sessions_application::RemovedNothing;
 
@@ -47,6 +48,49 @@ pub use cli_support::{Call, Failure};
 /// taken into the project's trash, or (`validate_only`) reported.
 pub trait Cleaning {
     fn clean(&self, request: v1::CleanRequest) -> Result<v1::CleanResponse, Failure>;
+}
+
+/// `doctor --fix` through the daemon (step 10c U10): the stale entries
+/// taken out as one sequence of other tools' files.
+pub trait DoctorFixing {
+    fn fix(&self, request: v1::RunDoctorRequest) -> Result<v1::RunDoctorResponse, Failure>;
+}
+
+/// The setup reads through the daemon (step 10c U5 and U6, D1): each
+/// answered where the caller stands, none in process.
+pub trait SetupReading {
+    fn doctor(&self, request: v1::RunDoctorRequest) -> Result<v1::RunDoctorResponse, Failure>;
+    fn auth_status(
+        &self,
+        request: v1::GetAuthStatusRequest,
+    ) -> Result<v1::GetAuthStatusResponse, Failure>;
+    fn init_prompt(
+        &self,
+        request: v1::GetInitPromptRequest,
+    ) -> Result<v1::GetInitPromptResponse, Failure>;
+}
+
+/// `init` through the daemon (step 10c U6): its preview's needs and its
+/// apply, then what the client does with what it answered.
+pub trait Initializing {
+    /// `InitProject`: a preview (`validate_only`) or an apply.
+    fn init_project(
+        &self,
+        request: v1::InitProjectRequest,
+    ) -> Result<v1::InitProjectResponse, Failure>;
+
+    /// The project at the root bound (taskloom's marker and index; owner
+    /// rulings 2026-11-13 and 14: init names its project): as the daemon
+    /// named it, `project_id`, for a new one; for one that was there
+    /// (`project_id` empty), the id it has, else one minted.
+    fn bind_project(&self, project_id: &str) -> Result<(), Failure>;
+
+    /// `--remote`'s repository registered as `remote create` registers it
+    /// (`CreateRemote`).
+    fn add_remote(
+        &self,
+        request: v1::CreateRemoteRequest,
+    ) -> Result<v1::CreateRemoteResponse, Failure>;
 }
 
 /// The report `answered` says, as `clean` has always printed it.
@@ -73,8 +117,16 @@ pub struct UseCases<'a> {
     pub auth: &'a Auth,
     /// `clean`, the daemon's (step 10b U9).
     pub cleaning: &'a dyn Cleaning,
+    /// `doctor --fix`, the daemon's (step 10c U10).
+    pub fixing: &'a dyn DoctorFixing,
+    /// `doctor`, `auth status` and `init prompt`, the daemon's (step 10c
+    /// U5, U6).
+    pub reading: &'a dyn SetupReading,
+    /// The call's global flags, as each request carries them.
+    pub globals: v1::Globals,
     pub doctor: &'a Doctor,
-    pub init: &'a Init,
+    /// `init`, the daemon's (step 10c U6).
+    pub initializing: &'a dyn Initializing,
     /// Whether a person is there, and her answer.
     pub terminal: &'a dyn Terminal,
     /// The interactive sessions the interview launches.
@@ -123,16 +175,33 @@ pub fn run<G>(
         )
     })?;
     match noun {
-        "auth" => auth(uses, format, out),
+        "auth" => auth(uses, format, catalog, out, err),
         "clean" => clean(uses, sub, format, catalog, out, err),
-        "doctor" => doctor(uses, sub, format, out, err),
+        "doctor" => doctor(uses, sub, format, catalog, out, err),
         _ => init(uses, sub, format, catalog, out, err),
     }
 }
 
-/// `auth` and `auth status`: the credential report.
-fn auth(uses: &UseCases<'_>, format: Format, out: &mut dyn Write) -> Result<Exit, Failure> {
-    let rows = uses.auth.status(&uses.doctor.layer_texts());
+/// The daemon's notices, said as the use case's own were.
+fn say_v1(notices: &[v1::Notice], format: Format, catalog: &Catalog, err: &mut dyn Write) {
+    let said: Vec<_> = notices.iter().map(library_api::reads::said).collect();
+    say_notices(&said, PROG, format, catalog, err);
+}
+
+/// `auth` and `auth status`: the credential report, the daemon's.
+fn auth(
+    uses: &UseCases<'_>,
+    format: Format,
+    catalog: &Catalog,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let answered = uses.reading.auth_status(v1::GetAuthStatusRequest {
+        globals: Some(uses.globals.clone()),
+        ..v1::GetAuthStatusRequest::default()
+    })?;
+    say_v1(&answered.notices, format, catalog, err);
+    let rows = wire::rows_of(&answered.rows);
     match format {
         Format::Json => write_json(out, &rows),
         Format::Text => text::auth(&rows, out),
@@ -189,15 +258,19 @@ fn doctor(
     uses: &UseCases<'_>,
     sub: &ArgMatches,
     format: Format,
+    catalog: &Catalog,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     if sub.get_flag("fix") {
-        let removed = uses
-            .doctor
-            .fix()
-            .map_err(|e| Failure::boxed(e, Exit::FAILED))?;
-        for r in &removed {
+        let answered = uses.fixing.fix(v1::RunDoctorRequest {
+            fix: true,
+            deps: sub.get_flag("deps"),
+            all: sub.get_flag("all"),
+            globals: Some(uses.globals.clone()),
+            ..v1::RunDoctorRequest::default()
+        })?;
+        for r in &answered.removed {
             let _ = writeln!(
                 err,
                 "removed stale hook entry: {} runs `ctxloom hook {}` in {}",
@@ -205,7 +278,16 @@ fn doctor(
             );
         }
     }
-    let report = uses.doctor.report(sub.get_flag("deps"));
+    // The checks, the daemon's (step 10c U5): diagnosed where the caller
+    // stands, never in process.
+    let answered = uses.reading.doctor(v1::RunDoctorRequest {
+        deps: sub.get_flag("deps"),
+        all: sub.get_flag("all"),
+        globals: Some(uses.globals.clone()),
+        ..v1::RunDoctorRequest::default()
+    })?;
+    say_v1(&answered.notices, format, catalog, err);
+    let report = wire::report(&answered.checks);
     match format {
         Format::Json => write_json(out, &report),
         Format::Text => text::doctor(&report, sub.get_flag("all"), out),
@@ -238,32 +320,92 @@ fn token_guide() -> Notice {
     )
 }
 
-/// A first init's companion questions, put at the terminal, and what came
-/// of the answers said.
-fn ask_companions(
+/// The names the `--remote` repositories are registered under.
+fn personal_name(index: usize) -> String {
+    match index {
+        0 => "personal".to_string(),
+        n => format!("personal-{}", n + 1),
+    }
+}
+
+/// Each of init's needs put at the terminal, in order, and answered as the
+/// person answered (step 10c U6): an `Ask` with what she typed (none typed,
+/// empty: its suggestion stands), a `Choose` with one of its words (asked
+/// again, at most [`init_application::PREMISED_TRIES`] times, while her
+/// answer is neither; then, or for a bare Enter or a closed input, the
+/// first), a `Confirm` with her yes or no.
+fn answered(terminal: &dyn Terminal, needs: &[v1::Need]) -> Vec<v1::Answer> {
+    use v1::answer::Answer as Given;
+    use v1::need::Kind;
+    needs
+        .iter()
+        .filter_map(|need| {
+            let given = match need.kind.as_ref()? {
+                Kind::Ask(ask) => Given::Text(
+                    terminal
+                        .ask(&ask.text, &ask.suggestion)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                ),
+                Kind::Choose(choose) => Given::Chosen(chosen(terminal, choose)),
+                Kind::Confirm(confirm) => Given::Confirmed(terminal.confirm(&confirm.text)),
+                Kind::Edit(_) => return None,
+            };
+            Some(v1::Answer {
+                need_id: need.id.clone(),
+                answer: Some(given),
+            })
+        })
+        .collect()
+}
+
+/// A `Choose` asked as [`answered`] asks it.
+fn chosen(terminal: &dyn Terminal, choose: &v1::Choose) -> String {
+    let first = choose.choices.first().cloned().unwrap_or_default();
+    for _ in 0..init_application::PREMISED_TRIES {
+        let typed = terminal.ask(&choose.text, &first);
+        match typed.map(|line| line.trim().to_lowercase()).as_deref() {
+            None | Some("") => break,
+            Some(word) if choose.choices.iter().any(|c| c == word) => return word.to_string(),
+            Some(_) => {}
+        }
+    }
+    first
+}
+
+/// The companion answers among `answers` as init's companion registration
+/// reads them (D2): an offer's `yes` or `no`, the names typed.
+fn companion_answers(answers: &[v1::Answer]) -> Vec<init_application::Answer> {
+    answers
+        .iter()
+        .filter(|answer| {
+            answer.need_id.starts_with("companion:")
+                || answer.need_id == init_application::BY_NAME_ID
+        })
+        .map(|answer| init_application::Answer {
+            id: answer.need_id.clone(),
+            given: match &answer.answer {
+                Some(v1::answer::Answer::Confirmed(yes)) => {
+                    Some(if *yes { "yes" } else { "no" }.to_string())
+                }
+                Some(v1::answer::Answer::Text(text)) => Some(text.clone()),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
+/// A first init's companions registered from her `answers` (M4), and what
+/// came of each said.
+fn add_companions(
     uses: &UseCases<'_>,
+    answers: &[v1::Answer],
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), Failure> {
-    use init_application::{Added, Answer, Asked};
-    let answers: Vec<Answer> = init_application::companion_questions(uses.companions)
-        .into_iter()
-        .map(|question| Answer {
-            given: match question.asked {
-                Asked::YesNo => Some(
-                    if uses.terminal.confirm(&question.prompt) {
-                        "yes"
-                    } else {
-                        "no"
-                    }
-                    .to_string(),
-                ),
-                Asked::Words => uses.terminal.ask(&question.prompt, ""),
-            },
-            id: question.id,
-        })
-        .collect();
-    let done = init_application::register_companions(uses.companions, &answers);
+    use init_application::Added;
+    let done = init_application::register_companions(uses.companions, &companion_answers(answers));
     for (name, added) in &done.added {
         match added {
             Added::New => writeln!(out, "Added companion \"{name}\""),
@@ -284,6 +426,50 @@ fn ask_companions(
     Ok(())
 }
 
+/// Each `--remote` registered, said; one that would not register is a
+/// warning, and init goes on.
+fn add_remotes(
+    uses: &UseCases<'_>,
+    sub: &ArgMatches,
+    catalog: &Catalog,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), Failure> {
+    let forge = sub.get_one::<String>("forge").cloned().unwrap_or_default();
+    let urls: Vec<String> = sub
+        .get_many::<String>("remote")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    for (index, url) in urls.iter().enumerate() {
+        let name = personal_name(index);
+        let request = v1::CreateRemoteRequest {
+            remote_id: name.clone(),
+            remote: Some(v1::Remote {
+                url: url.clone(),
+                forge: forge.clone(),
+                ..Default::default()
+            }),
+            globals: Some(uses.globals.clone()),
+            ..v1::CreateRemoteRequest::default()
+        };
+        match uses.initializing.add_remote(request) {
+            Ok(created) => {
+                say_v1(&created.notices, Format::Text, catalog, err);
+                let url = created.remote.map_or_else(|| url.clone(), |r| r.url);
+                writeln!(out, "Added remote \"{name}\": {url}").map_err(output)?;
+            }
+            Err(failure) => {
+                let why = Notice::text(format!(
+                    "failed to add remote \"{name}\" ({url}): {}",
+                    catalog.message(failure.cause.as_ref())
+                ));
+                say_warning(&why, PROG, Format::Text, catalog, err);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn init(
     uses: &UseCases<'_>,
     sub: &ArgMatches,
@@ -293,34 +479,43 @@ fn init(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     if sub.subcommand_matches("prompt").is_some() {
-        let read = init_application::prompt(uses.prompts)
-            .map_err(|refused| Failure::boxed(refused.cause, refused.exit))?;
-        // Said with their remedy: a passed-over prompt names `ctxloom trust`.
-        let notices: Vec<angzarr_diagnostic::Report> = read
-            .notices
-            .iter()
-            .map(|notice| angzarr_diagnostic::Report::of(notice.as_ref()))
-            .collect();
-        say_notices(&notices, PROG, format, catalog, err);
+        // The daemon's (step 10c U6): read through the caller's catalog
+        // under the project's trust. Said with their remedy: a passed-over
+        // prompt names `ctxloom trust`.
+        let read = uses.reading.init_prompt(v1::GetInitPromptRequest {
+            globals: Some(uses.globals.clone()),
+            ..v1::GetInitPromptRequest::default()
+        })?;
+        say_v1(&read.notices, format, catalog, err);
         write!(out, "{}", read.text).map_err(output)?;
         return Ok(Exit::OK);
     }
-    let request = InitRequest {
-        remotes: sub
-            .get_many::<String>("remote")
-            .map(|v| v.cloned().collect())
-            .unwrap_or_default(),
-        forge: sub.get_one::<String>("forge").cloned().unwrap_or_default(),
+    // The daemon's (step 10c U6): its preview asks; at a terminal she
+    // answers, off one nobody does and each question keeps its suggestion
+    // unwritten; then the apply creates the project whole.
+    let at_terminal = uses.terminal.is_terminal();
+    let preview = uses.initializing.init_project(v1::InitProjectRequest {
+        validate_only: true,
+        presentable: Some(v1::Presentable {
+            can_ask: at_terminal,
+            can_launch: at_terminal,
+        }),
+        globals: Some(uses.globals.clone()),
+        ..v1::InitProjectRequest::default()
+    })?;
+    let answers = if at_terminal {
+        answered(uses.terminal, &preview.needs)
+    } else {
+        Vec::new()
     };
-    let done = uses
-        .init
-        .init(&request)
-        .map_err(|e| failure(e, Exit::FAILED))?;
-    // The directory made a git repository (step 10, G1): said first, as it
-    // was done first.
-    if let Some(made) = &done.git {
-        say_warning(made, PROG, format, catalog, err);
-    }
+    let done = uses.initializing.init_project(v1::InitProjectRequest {
+        etag: preview.etag.clone(),
+        answers: answers.clone(),
+        globals: Some(uses.globals.clone()),
+        ..v1::InitProjectRequest::default()
+    })?;
+    say_v1(&done.notices, format, catalog, err);
+    uses.initializing.bind_project(&done.project_id)?;
     if done.existed {
         // A re-run is no refusal: the directory is kept and init goes on, to
         // the remotes it was given, the token guide and the interview.
@@ -332,46 +527,27 @@ fn init(
         .map_err(output)?;
     } else {
         writeln!(out, "Created ctxloom directory: {}", done.app_dir).map_err(output)?;
-        // A first init at a terminal asks where a session's outputs go
-        // (rulings 89, 106); off one, the default stands unasked.
-        if let Some(dir) = uses
-            .init
-            .choose_output_dir(uses.terminal)
-            .map_err(|e| failure(e, Exit::FAILED))?
-        {
+        if !done.output_dir.is_empty() {
             writeln!(
                 out,
-                "Session outputs go to {dir} (not gitignored: they can be committed)"
+                "Session outputs go to {} (not gitignored: they can be committed)",
+                done.output_dir
             )
             .map_err(output)?;
         }
-        // Then when conditional guidance loads (owner ruling of 2026-11-12);
-        // off a terminal, on-demand stands unasked.
-        if let Some(word) = uses
-            .init
-            .choose_premised(uses.terminal)
-            .map_err(|e| failure(e, Exit::FAILED))?
-        {
-            let said = if word == init_application::PREMISED_ALWAYS {
+        if !done.premised.is_empty() {
+            let said = if done.premised == init_application::PREMISED_ALWAYS {
                 "Conditional guidance always loads"
             } else {
                 "Conditional guidance loads only when it applies"
             };
-            writeln!(out, "{said} (config.premised: {word})").map_err(output)?;
+            writeln!(out, "{said} (config.premised: {})", done.premised).map_err(output)?;
         }
-        // Then the companions (M4): asked here, the questions and answers
-        // data at the use case's port (D2); off a terminal, none.
-        if uses.terminal.is_terminal() {
-            ask_companions(uses, out, err)?;
-        }
+        // Then the companions she accepted (M4), each registered as
+        // `companion add` registers it.
+        add_companions(uses, &answers, out, err)?;
     }
-    for remote in &done.remotes {
-        writeln!(out, "Added remote \"{}\": {}", remote.name, remote.url).map_err(output)?;
-    }
-    let notices: &[Notice] = &done.notices;
-    for notice in notices {
-        say_warning(notice, PROG, Format::Text, catalog, err);
-    }
+    add_remotes(uses, sub, catalog, out, err)?;
     // Delegated agents authenticate with a token the human mints and
     // exports; init guides her to it, and never blocks on it or asks for it.
     let layers = uses.doctor.layer_texts();

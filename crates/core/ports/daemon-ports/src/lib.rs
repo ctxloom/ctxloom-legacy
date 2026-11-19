@@ -202,6 +202,39 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("WatchRun")) }
     }
 
+    /// `RedeliverContext` (step 10c U13): what a live session's hook is to
+    /// carry to its engine, a re-assembled context or none. The default is
+    /// a daemon that does not serve it.
+    fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> impl Future<Output = Result<v1::RedeliveredContext, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("RedeliverContext")) }
+    }
+
+    /// `DeliverHookContext` (10c, the lean hook RPC): all a live session's
+    /// hook carries, its messages then what it is owed, in one call. The
+    /// default is a daemon that does not serve it.
+    fn deliver_hook_context(
+        &self,
+        request: v1::DeliverHookContextRequest,
+    ) -> impl Future<Output = Result<v1::HookContext, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("DeliverHookContext")) }
+    }
+
+    /// `WatchLibrary` (step 10c G7): each recorded change of the named
+    /// library trees, as a thin notice, from the call on; unbounded in time.
+    /// The default is a daemon that does not serve it.
+    fn watch_library(
+        &self,
+        request: v1::WatchLibraryRequest,
+    ) -> impl Future<Output = Result<Box<dyn LibraryChanges>, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("WatchLibrary")) }
+    }
+
     /// `WatchSession` (the terminal wake): the session's signals, the one
     /// it opened with, then each change and a keepalive, until the caller
     /// drops it or the daemon goes; the session is watched while it is
@@ -348,6 +381,16 @@ pub trait RunEvents: Send {
 /// A hosted run's next event, as [`RunEvents::next`] answers it.
 pub type NextEvent<'a> =
     std::pin::Pin<Box<dyn Future<Output = Option<Result<v1::RunEvent, Called>>> + Send + 'a>>;
+
+/// A library's recorded changes, as `WatchLibrary` streams them (step 10c
+/// G7): each in order, waited for, until the stream ends (`None`) or breaks.
+pub trait LibraryChanges: Send {
+    fn next(&mut self) -> NextChange<'_>;
+}
+
+/// A library's next change, as [`LibraryChanges::next`] answers it.
+pub type NextChange<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Option<Result<v1::LibraryChange, Called>>> + Send + 'a>>;
 
 /// A watched session's signals as `WatchSession` streams them (the
 /// terminal wake): each as it comes, none once the stream ended, or what

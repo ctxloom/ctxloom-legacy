@@ -107,11 +107,7 @@ async fn a_library_read_is_observed_then_answered_at_the_callers_directory() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        motion: Some(ctxloom_ports::Motion::Rebasing),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     let opened = Arc::new(Opened::default());
     let api = f
         .restarted()
@@ -131,17 +127,14 @@ async fn a_library_read_is_observed_then_answered_at_the_callers_directory() {
         read.answer.skills[0].name,
         "projects/calm-quiet-heron/bundles/demo/skills/reviewer"
     );
-    assert_eq!(read.notices[0].code, "library-api-notice-tree-in-motion");
+    assert!(read.notices.is_empty(), "{:?}", read.notices);
     let opened = opened.0.lock().unwrap();
     assert_eq!(opened[0].0, "/work/calm-wt");
     assert_eq!(
         opened[0].1,
         vec![("PATH".to_string(), "/opt/git/bin".to_string())]
     );
-    assert_eq!(
-        *gits.envs.lock().unwrap(),
-        vec![vec![("PATH".to_string(), "/opt/git/bin".to_string())]]
-    );
+    assert_eq!(gits.scans.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 // With no directory of its own, a read is answered at the project's
@@ -151,10 +144,7 @@ async fn a_read_with_no_directory_is_answered_at_the_registered_root() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     let opened = Arc::new(Opened::default());
     let api = f
         .restarted()
@@ -173,10 +163,11 @@ async fn a_read_with_no_directory_is_answered_at_the_registered_root() {
     assert_eq!(opened.0.lock().unwrap()[0].0, ROOT);
 }
 
-// A library read outside git is refused by the library domain, and nothing
-// is opened (G1).
+// A library read is answered wherever its project is, git or none (the
+// library is git-free, owner 2026-11-18, superseding G1): observed, then
+// opened.
 #[tokio::test]
-async fn a_library_read_outside_git_opens_nothing() {
+async fn a_library_read_is_observed_and_answered_in_any_directory() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
@@ -187,14 +178,14 @@ async fn a_library_read_outside_git_opens_nothing() {
         .await
         .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
         .observing(observing(&f.world, &gits));
-    let refused = api
-        .list_profiles(v1::ListProfilesRequest {
-            parent: "projects/calm-quiet-heron".to_string(),
-            ..v1::ListProfilesRequest::default()
-        })
-        .await;
-    assert!(matches!(refused, Err(ApiError::Refused(_))), "{refused:?}");
-    assert!(opened.0.lock().unwrap().is_empty());
+    api.list_profiles(v1::ListProfilesRequest {
+        parent: "projects/calm-quiet-heron".to_string(),
+        ..v1::ListProfilesRequest::default()
+    })
+    .await
+    .unwrap();
+    assert_eq!(gits.scans.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(opened.0.lock().unwrap().len(), 1);
 }
 
 // E5: a decline of the read's use case is its typed refusal.
@@ -275,11 +266,7 @@ async fn assemble_context_observes_the_projects_library_first() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        motion: Some(ctxloom_ports::Motion::Merging),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     let api = f
         .restarted()
         .await
@@ -291,18 +278,9 @@ async fn assemble_context_observes_the_projects_library_first() {
         ..v1::AssembleContextRequest::default()
     };
     let made = api.assemble_context(request.clone()).await.unwrap();
-    assert_eq!(made.notices.len(), 1, "{:?}", made.notices);
-    assert_eq!(made.notices[0].code, "library-api-notice-tree-in-motion");
-    assert!(
-        made.notices[0].text.contains("merging"),
-        "{:?}",
-        made.notices
-    );
+    assert!(made.notices.is_empty(), "{:?}", made.notices);
     api.assemble_context(request).await.unwrap();
-    assert_eq!(
-        *gits.envs.lock().unwrap(),
-        vec![vec![("PATH".to_string(), "/usr/bin".to_string())]; 2]
-    );
+    assert_eq!(gits.scans.load(std::sync::atomic::Ordering::SeqCst), 2);
     let tree = library_tree::TreeName::checkout(
         sessions::ProjectName::new("calm-quiet-heron").unwrap(),
         "brisk-copper-moth",
@@ -314,39 +292,6 @@ async fn assemble_context_observes_the_projects_library_first() {
         edition: None,
     };
     assert_eq!(f.world.events(&cover, 0).await.unwrap().len(), 1);
-}
-
-// Step 10a U2 (G1): an assembly outside git is refused with the library
-// domain's own refusal, before anything is opened.
-#[tokio::test]
-async fn assemble_context_outside_git_is_refused_before_it_assembles() {
-    let f = fixture(vec!["calm-quiet-heron"]);
-    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
-    f.catch_up().await;
-    let opened = Arc::new(Opened::default());
-    let api = f
-        .restarted()
-        .await
-        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
-        .observing(observing(&f.world, &Arc::new(Gits::default())));
-    let refused = api
-        .assemble_context(v1::AssembleContextRequest {
-            name: "projects/calm-quiet-heron".to_string(),
-            ..v1::AssembleContextRequest::default()
-        })
-        .await;
-    let Err(ApiError::Refused(refusal)) = refused else {
-        panic!("not refused: {refused:?}");
-    };
-    assert_eq!(
-        crate::rejection_of(&refusal.refusal),
-        Some(crate::Rejection::Library(
-            library_tree::LibraryTreeRejection::NotInGit {
-                root: ROOT.to_string()
-            }
-        ))
-    );
-    assert!(opened.0.lock().unwrap().is_empty());
 }
 
 /// The library a dry run plans over: one agent, the default, on claude.
@@ -398,10 +343,7 @@ async fn a_preview_is_the_plan_named_under_its_project() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     let opened = Arc::new(WithAgent::default());
     let api = f
         .restarted()
@@ -448,37 +390,6 @@ async fn an_unnamed_projects_preview_names_nothing() {
     assert_eq!(run.engine, "claude-code");
 }
 
-// G1: a preview outside git is refused by the library domain before it is
-// planned.
-#[tokio::test]
-async fn a_preview_outside_git_is_refused_before_it_is_planned() {
-    let f = fixture(vec!["calm-quiet-heron"]);
-    f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
-    f.catch_up().await;
-    let opened = Arc::new(Opened::default());
-    let api = f
-        .restarted()
-        .await
-        .reading(Arc::clone(&opened) as Arc<dyn Libraries>)
-        .observing(observing(&f.world, &Arc::new(Gits::default())));
-    let refused = api
-        .create_run(v1::CreateRunRequest {
-            parent: "projects/calm-quiet-heron".to_string(),
-            mode: v1::run::Mode::Terminal as i32,
-            validate_only: true,
-            ..v1::CreateRunRequest::default()
-        })
-        .await;
-    let Err(ApiError::Refused(refusal)) = refused else {
-        panic!("not refused: {refused:?}");
-    };
-    assert!(
-        refusal.refusal.type_url.ends_with("NotInGit"),
-        "{refusal:?}"
-    );
-    assert!(opened.0.lock().unwrap().is_empty());
-}
-
 // Step 10a U2: the deps reads are answered as the library's, observed
 // first, at the caller's directory; a lock that does not read is a decline
 // (exit 20), its cause the read model's own diagnostic.
@@ -487,10 +398,7 @@ async fn a_deps_read_is_observed_then_answered_and_a_decline_carries_its_cause()
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     let opened = Arc::new(Opened::default());
     let api = f
         .restarted()
@@ -536,10 +444,7 @@ async fn a_remote_is_browsed_as_a_deps_read_and_its_failure_keeps_its_words() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     let opened = Arc::new(Opened::default());
     let api = f
         .restarted()
@@ -655,10 +560,7 @@ async fn reading_trusts(trusted: bool) -> crate::Api<crate::server::tests::World
         .await
         .unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     f.restarted()
         .await
         .reading(Arc::new(SaysCommand))
@@ -706,18 +608,14 @@ async fn a_trusted_projects_read_shows_its_own_setting() {
     assert!(read.notices.is_empty(), "{:?}", read.notices);
 }
 
-// A preview says what its read said beside the plan: git mid-merge in the
-// tree it observed.
+// A preview's read says nothing of git beside the plan (the library is
+// git-free, owner 2026-11-18).
 #[tokio::test]
-async fn a_preview_carries_the_notices_its_read_said() {
+async fn a_preview_says_nothing_of_git_beside_its_plan() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.catch_up().await;
-    let gits = Arc::new(Gits {
-        work_tree: Some(ROOT.to_string()),
-        motion: Some(ctxloom_ports::Motion::Merging),
-        ..Gits::default()
-    });
+    let gits = Arc::new(Gits::default());
     let api = f
         .restarted()
         .await
@@ -733,8 +631,7 @@ async fn a_preview_carries_the_notices_its_read_said() {
         })
         .await
         .unwrap();
-    let codes: Vec<&str> = run.notices.iter().map(|n| n.code.as_str()).collect();
-    assert_eq!(codes, ["library-api-notice-tree-in-motion"]);
+    assert!(run.notices.is_empty(), "{:?}", run.notices);
 }
 
 fn preview() -> v1::CreateRunRequest {

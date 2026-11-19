@@ -196,6 +196,10 @@ impl Hosting for Loop {
     fn home_gone(&self) -> Option<String> {
         self.home_gone.lock().unwrap().clone()
     }
+
+    fn rounds(&self) -> u32 {
+        17
+    }
 }
 
 /// Every session reads live but `ended-*` ones, unless a test set its
@@ -235,6 +239,9 @@ pub(crate) struct Fixture {
     pub(crate) hosting: Arc<Loop>,
     pub(crate) places: Arc<FakePlaces>,
     pub(crate) locks: Arc<Locks>,
+    /// The pending messages the API reads, caught up only by
+    /// [`Fixture::catch_up_pending`] (a round's, in the daemon).
+    pub(crate) pending: pending_messages::PendingMessages,
     pub(crate) api: Api<World>,
 }
 
@@ -245,10 +252,11 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
     let hosting = Arc::new(Loop::default());
     let places = Arc::new(FakePlaces::default());
     let locks = Arc::new(Locks::default());
+    let pending = pending_messages::PendingMessages::default();
     let api = Api::new(Parts {
         edge: Arc::clone(&world),
         index: index.clone(),
-        pending: pending_messages::PendingMessages::default(),
+        pending: pending.clone(),
         board: board.clone(),
         hosting: Arc::clone(&hosting) as Arc<dyn Hosting>,
         states: Arc::clone(&locks) as Arc<dyn SessionStates>,
@@ -272,6 +280,7 @@ pub(crate) fn fixture(harps: Vec<&'static str>) -> Fixture {
         hosting,
         places,
         locks,
+        pending,
         api,
     }
 }
@@ -287,6 +296,15 @@ impl Fixture {
             .unwrap();
         let mut board = daemon_board::caught_up(self.board.clone());
         board
+            .step(&self.world.store, self.world.registry.catalog())
+            .await
+            .unwrap();
+    }
+
+    /// The pending messages caught up with what the store holds: a round.
+    pub(crate) async fn catch_up_pending(&self) {
+        let mut caught = pending_messages::caught_up(self.pending.clone());
+        caught
             .step(&self.world.store, self.world.registry.catalog())
             .await
             .unwrap();
@@ -438,6 +456,8 @@ async fn get_daemon_says_what_it_hosts_and_how_long_it_has_been_idle() {
     assert_eq!(daemon.runs.len(), 1);
     assert_eq!(daemon.runs[0].harp, "brisk-copper-moth");
     assert_eq!((daemon.idle_seconds, daemon.idle_limit_seconds), (42, 600));
+    // The rounds its loop has finished (step 10c U13, G5(b)).
+    assert_eq!(daemon.rounds, 17);
 }
 
 // OD-52: a daemon whose start-up catch-up failed says so in GetDaemon, as
@@ -1270,85 +1290,20 @@ async fn get_transcript_answers_each_captured_line() {
     assert!(lines[1].contains("second words"), "{lines:?}");
 }
 
-/// git as a read's caller would run it, from a table: the project's work
-/// tree (none: outside git), the operation in progress, and the
-/// environment each read was observed in.
+/// The trees a read sees, from a table: no files, each scan counted.
 #[derive(Default)]
 pub(crate) struct Gits {
-    pub(crate) work_tree: Option<String>,
-    pub(crate) motion: Option<ctxloom_ports::Motion>,
-    pub(crate) envs: std::sync::Mutex<Vec<Vec<(String, String)>>>,
-}
-
-struct TableGit {
-    work_tree: Option<String>,
-    motion: Option<ctxloom_ports::Motion>,
-}
-
-impl ctxloom_ports::TreeObserver for TableGit {
-    fn work_tree(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-        Ok(self.work_tree.clone())
-    }
-    fn check_ignore(
-        &self,
-        _: &str,
-        _: &str,
-    ) -> Result<Option<ctxloom_ports::IgnoreRule>, ctxloom_ports::TreeError> {
-        Ok(None)
-    }
-    fn init_repository(&self, _: &str, _: Option<&str>) -> Result<(), ctxloom_ports::TreeError> {
-        Ok(())
-    }
-    fn head(&self, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-        Ok(Some("c1".to_string()))
-    }
-    fn library_tree(&self, _: &str, _: &str) -> Result<Option<String>, ctxloom_ports::TreeError> {
-        Ok(Some("t1".to_string()))
-    }
-    fn status(
-        &self,
-        _: &str,
-        _: &[&str],
-    ) -> Result<Vec<ctxloom_ports::StatusEntry>, ctxloom_ports::TreeError> {
-        Ok(Vec::new())
-    }
-    fn diff_tree(
-        &self,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: &[&str],
-    ) -> Result<Vec<ctxloom_ports::TreeChange>, ctxloom_ports::TreeError> {
-        Ok(Vec::new())
-    }
-    fn blob_ids(
-        &self,
-        _: &str,
-        _: &[&str],
-    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::TreeError> {
-        Ok(Default::default())
-    }
-    fn blob_id_of(&self, _: &str, _: &str, _: &[u8]) -> Result<String, ctxloom_ports::TreeError> {
-        unreachable!("not asked")
-    }
-
-    fn in_motion(
-        &self,
-        _: &str,
-    ) -> Result<Option<ctxloom_ports::Motion>, ctxloom_ports::TreeError> {
-        Ok(self.motion)
-    }
-    fn commit(&self, _: &str, _: &str, _: &[&str]) -> Result<(), ctxloom_ports::TreeError> {
-        Ok(())
-    }
+    /// How many times its scanner scanned a tree.
+    pub(crate) scans: Arc<std::sync::atomic::AtomicU32>,
+    /// How many times its scanner was told to forget what it saw.
+    pub(crate) forgot: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl library_api::Observers for Gits {
-    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
-        self.envs.lock().unwrap().push(env.to_vec());
-        Box::new(TableGit {
-            work_tree: self.work_tree.clone(),
-            motion: self.motion,
+    fn scanner(&self) -> Arc<dyn ctxloom_ports::LibraryScanner> {
+        Arc::new(NoFiles {
+            scans: Arc::clone(&self.scans),
+            forgot: Arc::clone(&self.forgot),
         })
     }
 
@@ -1357,11 +1312,43 @@ impl library_api::Observers for Gits {
     }
 }
 
+/// A scanner that finds no file (these tests' trees are empty), counting
+/// each scan and each time it is told to forget.
+struct NoFiles {
+    scans: Arc<std::sync::atomic::AtomicU32>,
+    forgot: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl ctxloom_ports::LibraryScanner for NoFiles {
+    fn scan(
+        &self,
+        _: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Default::default())
+    }
+    fn content_ids(
+        &self,
+        _: &str,
+        _: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        Ok(Default::default())
+    }
+    fn forget(&self) {
+        self.forgot
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 struct OneHarp;
 
 impl library_api::CheckoutHarps for OneHarp {
     fn harp(&self, _: &str) -> Result<String, ctxloom_ports::Failure> {
         Ok("brisk-copper-moth".to_string())
+    }
+
+    fn fresh(&self) -> String {
+        "brisk-copper-moth".to_string()
     }
 }
 
@@ -1423,4 +1410,30 @@ impl ctxloom_ports::Operations for NoOperations {
     fn purge_slot(&self, _: &str, _: &str) -> Result<(), ctxloom_ports::Failure> {
         Ok(())
     }
+}
+
+// Step 10c U13 rework (`context refresh`): an assembly asked to refresh
+// has the daemon forget what it saw of the trees before its read observes
+// them; a plain one forgets nothing.
+#[tokio::test]
+async fn test_an_assembly_asked_to_refresh_forgets_what_was_seen_first() {
+    let f = fixture(vec![]);
+    let gits = Arc::new(Gits::default());
+    let api = f.api.observing(observing(&f.world, &gits));
+    let forgot = || gits.forgot.load(std::sync::atomic::Ordering::SeqCst);
+    let _ = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    assert_eq!(forgot(), 0);
+    let _ = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            refresh: true,
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    assert_eq!(forgot(), 1);
 }

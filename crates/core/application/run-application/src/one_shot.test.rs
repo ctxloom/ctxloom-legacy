@@ -212,8 +212,8 @@ impl Planner for ScriptedPlan {
             workspace: String::new(),
             runtime: String::new(),
             engine: self.backend.clone(),
-            profiles: Vec::new(),
-            fragments: Vec::new(),
+            profiles: vec!["dev".to_string()],
+            fragments: vec!["demo#fragments/example".to_string()],
             context: "THE-CONTEXT".to_string(),
             tokens: 0,
             prompt: self.prompt.clone(),
@@ -3349,4 +3349,26 @@ async fn the_plans_surfaces_reach_the_engines_prepare() {
         .unwrap();
     let prepared = prepared.lock().unwrap();
     assert_eq!(prepared[0].surfaces.0.deny_tools, ["PLANNED-DENY"]);
+}
+
+// Step 10c U13: a run's session records what its plan draws on (its agent,
+// profiles and the bundles its fragments came from), as its incarnation's
+// loadout, so a change to one of them is told the session.
+#[tokio::test]
+async fn a_runs_session_records_its_plans_loadout() {
+    let mut rig = rig(Script::answering());
+    let done = rig.runs.one_shot(&Flags::default(), &ask()).await;
+    let answer = done.result.unwrap();
+    let events = session_events(&rig.edge, &answer.session).await;
+    let loadouts: Vec<&sessions::LoadoutRecorded> = events
+        .iter()
+        .filter_map(|e| match e {
+            sessions::SessionEvent::LoadoutRecorded(recorded) => Some(recorded),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(loadouts.len(), 1, "{events:?}");
+    assert_eq!(loadouts[0].incarnation, 1);
+    assert_eq!(loadouts[0].loadout.profiles, ["dev"]);
+    assert_eq!(loadouts[0].loadout.bundles, ["demo"]);
 }

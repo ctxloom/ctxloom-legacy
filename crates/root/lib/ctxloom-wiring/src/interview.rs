@@ -1,6 +1,9 @@
 //! The setup interview's ports (S12), wired: the person's terminal, the
-//! interactive sessions `init` launches, and the interview's text, read
-//! through the project's catalog (owner ruling 128).
+//! interactive sessions `init` launches, the interview's text and the
+//! companions' guidance (the daemon's `GetInitPrompt`, read through the
+//! project's catalog, owner ruling 128) and a first init's companions
+//! registered (the daemon's `CreateCompanion`). Nothing here reads or writes
+//! a library in process (step 10c U6, D9).
 //!
 //! The terminal is the process's own (standard input and output both a
 //! terminal). Under `test-support` the variable `CTXLOOM_TEST_TERMINAL`
@@ -9,7 +12,7 @@
 //! project as it is then, which is what makes the restart see what the
 //! interview configured.
 
-use cli_support::{Exit, ExitClass};
+use cli_support::ExitClass;
 use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
 
@@ -20,6 +23,7 @@ use init_application::{
 use library_application::{Flags, RunRequest};
 use process_env::EnvSnapshot;
 use run_application::{OneShot, RunService};
+use setup_cli::SetupReading as _;
 
 use crate::oneshot::OneShots;
 use crate::Wiring;
@@ -163,99 +167,92 @@ impl Sessions for SetupSessions<'_> {
     }
 }
 
+impl SetupSessions<'_> {
+    /// `GetInitPrompt` where this process stands: the interview as the
+    /// project's catalog holds it now (a project bundle `ctxloom` overrides
+    /// the built-in one whole, once the project is trusted), and each
+    /// enabled companion's guidance.
+    fn read_prompt(&self) -> Result<daemon_proto::v1::GetInitPromptResponse, PromptFailure> {
+        crate::library::DaemonServed::new(Arc::clone(self.env), self.stamp.to_string())
+            .init_prompt(daemon_proto::v1::GetInitPromptRequest {
+                globals: Some(library_api::reads::globals_of(self.flags)),
+                ..daemon_proto::v1::GetInitPromptRequest::default()
+            })
+            .map_err(|failure| PromptFailure {
+                cause: failure.cause,
+                exit: failure.exit,
+            })
+    }
+}
+
 impl Prompts for SetupSessions<'_> {
-    /// The setup interview as the project's catalog holds it now (a project
-    /// bundle `ctxloom` overrides the built-in one whole), read from a library
-    /// built when it is asked, so a first init's reads the new project.
-    ///
-    /// The one library read of init's that runs in process (D8's named
-    /// exception, served with 10b): no RPC answers an operational prompt,
-    /// so the daemon is asked for trust alone, one `GetTrust`, and the
-    /// catalog is read here.
+    /// The setup interview, the daemon's read (step 10c U6), without the
+    /// line `init prompt` prints after it; what reading it noticed said.
     fn setup_interview(&self) -> Result<PromptRead, PromptFailure> {
-        let failed = |cause: init_application::Failure| PromptFailure {
-            cause,
-            exit: Exit::FAILED,
-        };
-        let wiring = Wiring::new(Arc::clone(self.env)).map_err(|e| failed(Box::new(e)))?;
-        let library = crate::library::build(&wiring, None)
-            .map_err(|e| failed(Box::new(e)))?
-            // A project `ctxloom` bundle replaces the interview only once
-            // the user trusts the project: her daemon is asked, once (D4).
-            .with_trust(crate::daemon::trust_ask(&wiring, self.stamp));
-        let read = library.operational_prompt(self.flags, library::builtin::SETUP_INTERVIEW_NAME);
-        let text = read.result.map_err(|e| PromptFailure {
-            exit: e.exit(),
-            cause: Box::new(e),
-        })?;
+        let read = self.read_prompt()?;
+        let text = read
+            .text
+            .strip_suffix('\n')
+            .unwrap_or(&read.text)
+            .to_string();
         Ok(PromptRead {
             text,
             notices: read
                 .notices
-                .into_iter()
-                .filter(|notice| {
-                    matches!(notice, library_application::Notice::PromptUntrusted { .. })
+                .iter()
+                .map(|notice| {
+                    Box::new(library_api::reads::reported(notice)) as init_application::Failure
                 })
-                .map(|notice| Box::new(notice) as init_application::Failure)
                 .collect(),
         })
     }
 
-    /// Each enabled registered companion's setup guidance, asked through
-    /// the library's one probe at the caller's site (OD-8, D1), from a
-    /// library built when it is asked (so a first init's sees the new
-    /// project and the companions it just registered).
+    /// Each enabled registered companion's setup guidance, as the daemon
+    /// reads it (so a first init's sees the companions it just registered).
     fn companion_guidance(&self) -> Vec<String> {
-        let Ok(library) = self.library() else {
-            return Vec::new();
-        };
-        library
-            .companion_inits(self.flags)
-            .result
+        self.read_prompt()
+            .map(|read| read.companion_guidance)
             .unwrap_or_default()
-            .into_iter()
-            .map(|c| c.init.setup_guidance)
-            .filter(|g| !g.is_empty())
-            .collect()
     }
 }
 
-impl SetupSessions<'_> {
-    /// The library over the project as it is now; none where it cannot be
-    /// wired (the command that needs it says why itself).
-    fn library(&self) -> Result<library_application::Library, crate::LibError> {
-        let wiring = Wiring::new(Arc::clone(self.env))?;
-        crate::library::build(&wiring, None)
-    }
-}
-
-/// A first init's companions (M4), registered as `companion add` registers
-/// them, through a library built when it is asked: the new project's.
+/// A first init's companions (M4), each registered as `companion add`
+/// registers it: the daemon's `CreateCompanion`.
 impl Companions for SetupSessions<'_> {
-    fn shipped_available(&self) -> Vec<String> {
-        let Ok(library) = self.library() else {
-            return Vec::new();
-        };
-        library::companion::SHIPPED
-            .iter()
-            .filter(|name| library.companion_available(self.flags, name))
-            .map(ToString::to_string)
-            .collect()
-    }
-
     fn add(&self, name: &str) -> Result<Added, NotAdded> {
-        let library = self.library().map_err(|e| NotAdded::Failed(Box::new(e)))?;
-        if !library.companion_available(self.flags, name) {
-            return Err(NotAdded::Missing {
-                program: library::companion::program(name),
-            });
-        }
-        match library.companion_add(self.flags, name).result {
-            Ok(done) if done.added => Ok(Added::New),
+        use library_cli::Served as _;
+        let served =
+            crate::library::DaemonServed::new(Arc::clone(self.env), self.stamp.to_string());
+        let request = daemon_proto::v1::CreateCompanionRequest {
+            companion_id: name.to_string(),
+            globals: Some(library_api::reads::globals_of(self.flags)),
+            ..daemon_proto::v1::CreateCompanionRequest::default()
+        };
+        match served.create_companion("", request) {
+            Ok(created) if created.applied.unwrap_or(false) => Ok(Added::New),
             Ok(_) => Ok(Added::Already),
-            Err(e) => Err(NotAdded::Failed(Box::new(e))),
+            Err(failure) => Err(not_added(failure)),
         }
     }
+}
+
+/// Why a companion was not registered: its program missing (the program
+/// its refusal names), else the failure itself.
+fn not_added(failure: cli_support::Failure) -> NotAdded {
+    if failure.cause.code() == "library-application-write-companion-program-missing" {
+        let program = failure
+            .cause
+            .args()
+            .into_iter()
+            .find_map(|(name, arg)| match arg {
+                angzarr_diagnostic::Arg::Str(value) if name == "program" => Some(value),
+                _ => None,
+            });
+        if let Some(program) = program {
+            return NotAdded::Missing { program };
+        }
+    }
+    NotAdded::Failed(failure.cause)
 }
 
 #[cfg(test)]

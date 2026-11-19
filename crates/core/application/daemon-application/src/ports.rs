@@ -143,7 +143,7 @@ pub trait ChildHomes: Send + Sync {
     fn records(&self, project_dir: &str) -> Box<dyn SessionRecords>;
 
     /// Take the lock of session `harp` in the project at `project_dir`
-    /// (`<project>/.ctxloom/sessions/<harp>.lock`, the platform's file lock,
+    /// (`<project>/.ctxloom/sessions/<harp>/session.lock`, the platform's file lock,
     /// at once or not at all), held for the hosted child's life, so its
     /// session reads live and no sweep (a one-shot's launcher's included)
     /// takes it for lost while its host holds it. Why not, when it cannot

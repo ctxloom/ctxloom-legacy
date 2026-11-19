@@ -13,10 +13,18 @@ fn files(path: &str, text: &str) -> Vec<(String, String)> {
     vec![(path.to_string(), text.to_string())]
 }
 
-// doctor.feature: "A blanket ignore rule is reported as a warning".
+// doctor.feature: "A blanket ignore rule is reported as a warning, with
+// exit 0" (the library is git-free, owner 2026-11-18: a library git
+// ignores is not refused, so the rule is a warning).
 #[test]
 fn a_blanket_ignore_rule_warns_and_names_the_install() {
-    for rule in [".ctxloom/", ".ctxloom", "/.ctxloom/", ".ctxloom/*"] {
+    for rule in [
+        ".ctxloom/",
+        ".ctxloom",
+        "/.ctxloom/",
+        ".ctxloom/*",
+        ".ctxloom/**",
+    ] {
         let check = checks::gitignore(Some(&format!("target/\n{rule}\n")), &[]);
         assert_eq!(check.status, Status::Warn, "{rule}");
         assert!(check.detail.contains("blanket"));
@@ -643,4 +651,32 @@ fn test_a_stale_distilled_form_is_a_warning_naming_each() {
         "stale distilled forms (their originals are used instead): demo#fragments/rules, demo#commands/review"
     );
     assert!(warned.remedy.contains("ctxloom fragment distill <ref>"));
+}
+
+// doctor.feature: "A bundle in the old metadata layout is a warning naming
+// the git mv" (step 10c U5, D15): each bundle in the old layout is said,
+// with the move that migrates it; none is quiet.
+#[test]
+fn a_bundle_in_the_old_layout_warns_naming_its_move() {
+    let quiet = checks::sidecars(&[]);
+    assert_eq!(
+        (quiet.marker.as_str(), quiet.status),
+        ("DOCTOR-CHECK-SIDECARS-u4", Status::Ok)
+    );
+    let found = checks::sidecars(&[
+        ("demo keeps it at a".to_string(), "git mv a b".to_string()),
+        ("kit keeps it at c".to_string(), "git mv c d".to_string()),
+    ]);
+    assert_eq!(found.status, Status::Warn);
+    assert!(
+        found.detail.contains("demo keeps it at a"),
+        "{}",
+        found.detail
+    );
+    assert!(
+        found.detail.contains("kit keeps it at c"),
+        "{}",
+        found.detail
+    );
+    assert_eq!(found.remedy, "git mv a b; git mv c d");
 }

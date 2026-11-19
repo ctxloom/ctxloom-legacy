@@ -628,6 +628,42 @@ Feature: deps — the installed dependency closure, and everything that moves it
       When I run "ctxloom deps upgrade --format text"
       Then the output contains "1 pin(s) would move."
 
+  Rule: A pull is the daemon's, and runs git as the command that asked would
+
+    The daemon pulls, but the git it runs is the one on the PATH of the
+    command that asked, with that command's HOME and credentials, and
+    nothing of `GIT_*` (scrubbed, as ever). A daemon started by one terminal
+    therefore never lends its environment to another's pull.
+
+    Scenario: A pull runs the git on the asking command's PATH
+      # new: step 10 U4, git runs in the caller's environment.
+      Given an initialized ctxloom project
+      And a git remote "origin" serving a ctxloom bundle
+      And I run "ctxloom remote default origin"
+      And I run "ctxloom profile create dev --include origin/demo"
+      And a ctxloom daemon is serving for this home
+      And a git that records each call is first on the PATH of the next command alone
+      When I run "ctxloom deps pull"
+      Then the command succeeds
+      And the recording git was called for the pull
+      And the file ".ctxloom/lock.yaml" contains "//bundles/demo"
+
+    Scenario: A pull records each tree it installs, and the next read finds it by its marker alone
+      # new: step 10 L9, install facts; the cache is presence and identity, never content.
+      Given an initialized ctxloom project
+      And a git remote "origin" serving a ctxloom bundle
+      And I run "ctxloom remote default origin"
+      And I run "ctxloom profile create dev --include origin/demo"
+      When I run "ctxloom deps pull"
+      And I run "ctxloom test library-events --format json"
+      Then the output reports "events[verb=deps pull].type" as "ChangeIntended"
+      And the output reports "events[verb=deps pull].steps[0].kind" as "create"
+      And the output reports "events[verb=deps pull].steps[1].kind" as "replace"
+      And the output reports "events[verb=deps pull].steps[1].path" as "lock.yaml"
+      When I run "ctxloom deps list --format json"
+      Then the command succeeds
+      And the output contains "//bundles/demo"
+
   Rule: A hold freezes one dependency, even against a forced pull
 
     `deps hold` is the opt-out: a held entry stays frozen against `upgrade`,

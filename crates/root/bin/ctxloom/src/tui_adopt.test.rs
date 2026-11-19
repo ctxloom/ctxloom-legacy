@@ -188,7 +188,7 @@ impl Rig {
         if ran.code != 0 {
             return Vec::new();
         }
-        ran.json()
+        ran.json()["events"]
             .as_array()
             .cloned()
             .unwrap_or_default()
@@ -207,7 +207,7 @@ impl Rig {
     fn run_rows(&self, harp: &str) -> Vec<Value> {
         let ran = self.run(&["test", "session-events", harp, "--run", "1"]);
         assert_eq!(ran.code, 0, "{}", ran.said());
-        ran.json().as_array().cloned().unwrap_or_default()
+        ran.json()["events"].as_array().cloned().unwrap_or_default()
     }
 
     fn types(&self, harp: &str, run: bool) -> Vec<String> {

@@ -91,16 +91,6 @@ pub(crate) struct Landing<'a> {
     pub(crate) observed: &'a Observed,
 }
 
-impl Landing<'_> {
-    /// The root a refusal names: a checkout's root, the home's library.
-    fn root(&self) -> String {
-        match self.site {
-            Site::Checkout { root, .. } => root.clone(),
-            Site::Home { tree } => tree.clone(),
-        }
-    }
-}
-
 /// The request id as the command id's bytes: the client's UUID, or (a
 /// client that named none) one minted for this call alone.
 fn request_bytes(request_id: &str) -> [u8; 16] {
@@ -158,18 +148,18 @@ fn refused(rejection: &library_tree::LibraryTreeRejection) -> ApiError {
 }
 
 /// The write a step is of: its tree's stream, its directory, its request.
-struct Made<'a> {
-    tree: &'a TreeName,
-    dir: &'a str,
-    request_id: &'a str,
+pub(crate) struct Made<'a> {
+    pub(crate) tree: &'a TreeName,
+    pub(crate) dir: &'a str,
+    pub(crate) request_id: &'a str,
 }
 
 /// What a use case planned: its outcome, its recorded writes shaped, and
 /// a tree it writes outside ctxloom's trees, if any (D2's EXCEPTION:
 /// `bundle export`).
-struct Planned<T> {
-    outcome: Outcome<T>,
-    shaped: Result<Option<writes::Shaped>, library_tree::LibraryTreeRejection>,
+pub(crate) struct Planned<T> {
+    pub(crate) outcome: Outcome<T>,
+    pub(crate) shaped: Result<Option<writes::Shaped>, library_tree::LibraryTreeRejection>,
     outside: Option<Outside>,
 }
 
@@ -312,7 +302,6 @@ impl<E: Edge> Api<E> {
         });
         let (etag, trashed) = self
             .carry_out(
-                &site,
                 &landing,
                 (verb, request.etag()),
                 &shaped,
@@ -331,8 +320,8 @@ impl<E: Edge> Api<E> {
         })
     }
 
-    /// Where a write is made, and its trees observed (a tree outside git,
-    /// or one git ignores, refuses it).
+    /// Where a write is made, and its trees observed (in any directory: the
+    /// library is git-free, owner 2026-11-18).
     pub(crate) async fn write_site<Q: LibraryWriteRequest>(
         &self,
         request: &Q,
@@ -352,15 +341,13 @@ impl<E: Edge> Api<E> {
         let trees = observations
             .observe_trees(
                 observers.as_ref(),
-                &site.env,
                 project
                     .as_ref()
                     .map(|(name, root)| (name.clone(), root.as_str())),
             )
             .await
-            .map_err(|error| match error {
-                library_api::ReadError::Refused(rejection) => refused(&rejection),
-                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            .map_err(|library_api::ReadError::Failed(failure)| {
+                ApiError::diagnosed(failure.as_ref())
             })?;
         Ok((site, trees))
     }
@@ -373,7 +360,6 @@ impl<E: Edge> Api<E> {
     /// that took a path into the trash, the notice of where it is kept.
     pub(crate) async fn carry_out(
         &self,
-        site: &crate::library_reads::ReadSite<'_>,
         landing: &Landing<'_>,
         (verb, etag): (&str, &str),
         shaped: &writes::Shaped,
@@ -385,24 +371,15 @@ impl<E: Edge> Api<E> {
             })?;
         let path = shaped.shape.path().to_string();
         let held = observations.held(&landing.observed.tree);
-        let observer = observers.observer(&site.env);
+        let scanner = observers.scanner();
         let evidence = Evidence {
             tree_reads: true,
             plan_rejection: None,
             builtin: false,
-            in_motion: landing
-                .observed
-                .motion
-                .map(library_api::reconcile::motion_of),
-            in_git: true,
-            ignored: None,
-            root: landing.root(),
         };
         let id = request_bytes(request_id);
         let request_id = uuid::Uuid::from_bytes(id).to_string();
         let intended = writes::intent_of(
-            observer.as_ref(),
-            landing.site.tree(),
             &landing.observed.tree.to_string(),
             verb,
             &shaped.shape,
@@ -411,8 +388,7 @@ impl<E: Edge> Api<E> {
             }),
             evidence,
             &request_id,
-        )
-        .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
+        );
         let (start, steps) = match pending {
             Some((done, steps)) => (done, steps),
             None => {
@@ -450,62 +426,26 @@ impl<E: Edge> Api<E> {
             };
             self.make_step(
                 &step_of,
-                observer.as_ref(),
+                scanner.as_ref(),
                 operations.as_ref(),
                 (at, step),
                 &shaped.shape,
             )
             .await?;
         }
-        let mut notices = trashed_notice(landing.site.tree(), &shaped.shape, &request_id);
-        notices.extend(self.home_commit(landing, observer.as_ref(), (verb, &request_id), &steps));
+        let notices = trashed_notice(landing.site.tree(), &shaped.shape, &request_id);
         self.dies_at("done");
         Ok((observations.held(tree).token(&path).to_string(), notices))
-    }
-
-    /// A write to the home recorded done, committed there when ctxloom
-    /// made the home's repository (G3, owner 2026-11-18, night): one
-    /// commit of its own, of the paths its steps changed, never in a
-    /// project's tree, nor a home made before the fact was recorded. A
-    /// failed commit is said, and the write stands.
-    fn home_commit(
-        &self,
-        landing: &Landing<'_>,
-        observer: &dyn ctxloom_ports::TreeObserver,
-        (verb, request_id): (&str, &str),
-        steps: &[library_tree::Step],
-    ) -> Option<v1::Notice> {
-        let (observations, _) = self.observing.as_ref()?;
-        let home = matches!(landing.site, Site::Home { .. });
-        if !home
-            || !observations
-                .held(&landing.observed.tree)
-                .home_repository_made
-        {
-            return None;
-        }
-        let paths = commit_paths(steps);
-        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let dir = landing.site.tree();
-        observer
-            .commit(dir, &commit_message(verb, request_id), &paths)
-            .err()
-            .map(|error| {
-                notice_of(&library_api::LibraryApiNotice::HomeNotCommitted {
-                    path: dir.to_string(),
-                    ext_err_txt: error.diagnostic().to_string(),
-                })
-            })
     }
 
     /// The step `step` (number `at`) of the write `made` makes: its one
     /// atomic operation, its content the plan `planned`'s step for it,
     /// then what it left read back and recorded done. A step that cannot
     /// be made, or made nothing, is recorded failed (final).
-    async fn make_step(
+    pub(crate) async fn make_step(
         &self,
         made: &Made<'_>,
-        observer: &dyn ctxloom_ports::TreeObserver,
+        scanner: &dyn ctxloom_ports::LibraryScanner,
         operations: &dyn ctxloom_ports::Operations,
         (at, step): (u32, &library_tree::Step),
         planned: &writes::Shape,
@@ -540,8 +480,8 @@ impl<E: Edge> Api<E> {
             return Err(why);
         }
         self.dies_at("renamed");
-        let observed = writes::left_by(observer, made.dir, &writes::expected_step(step, shape))
-            .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
+        let observed = writes::left_by(scanner, made.dir, &writes::expected_step(step, shape))
+            .map_err(|failure| ApiError::diagnosed(failure.as_ref()))?;
         let fact = RecordStepDone {
             request_id: request_id.to_string(),
             step: at,
@@ -559,7 +499,7 @@ impl<E: Edge> Api<E> {
     /// outcome, and what it would write shaped into its one step. A
     /// preview's etag is its apply's path's, so its apply is planned too
     /// (recorded, never performed) to name that path.
-    fn planned<T>(
+    pub(crate) fn planned<T>(
         &self,
         site: &crate::library_reads::ReadSite<'_>,
         apply: bool,
@@ -637,10 +577,10 @@ impl<E: Edge> Api<E> {
         let bundle = library_api::names::bundle_under(&site.parent, request.target())
             .unwrap_or_else(|| request.target().to_string());
         let manifest = format!("{}/{bundle}/bundle.yaml", writes::BUNDLES);
-        let observer = observers.observer(&site.env);
+        let scanner = observers.scanner();
         let holds = |dir: &str| {
-            observer
-                .blob_ids(dir, &[manifest.as_str()])
+            scanner
+                .content_ids(dir, &[manifest.as_str()])
                 .is_ok_and(|ids| ids.contains_key(&manifest))
         };
         let Some((source, observed)) = trees.seen.iter().find(|(seen, _)| holds(seen.tree()))
@@ -777,7 +717,12 @@ fn answered_before<T>(
                 let (etag, at) = done_before(&trees.seen, known, observations);
                 return Some(Ok(done(etag, at, String::new(), std::mem::take(notices))));
             }
-            End::Failed | End::Superseded => {
+            End::Superseded => {
+                // An outside change overtook it (step 10c U13): its retry
+                // is refused stale, and performs nothing.
+                return Some(Err(superseded(&trees.seen, known, observations)));
+            }
+            End::Failed => {
                 return Some(Err(ApiError::Failed {
                     detail: format!("the write {request_id} was tried before and did not complete"),
                 }));
@@ -794,6 +739,41 @@ fn answered_before<T>(
         exported.source,
         std::mem::take(notices),
     )))
+}
+
+/// The refusal of a retry whose intent was superseded (step 10c U13,
+/// protos.md §1.3): `PlanStale` of its first step's path, `seen` the token
+/// the intent was decided on and `now` the path's token in its tree now.
+fn superseded(
+    seen: &[(Site, Observed)],
+    known: &library_checkout::Known,
+    observations: &library_api::Observations<impl Edge>,
+) -> ApiError {
+    let step = known.intent.steps.first();
+    let path = step.map(step_path).unwrap_or_default();
+    let decided = step.map_or(0, seen_on);
+    let now = seen
+        .iter()
+        .find(|(_, observed)| observed.tree.root().value.to_vec() == known.root)
+        .map_or(0, |(_, observed)| {
+            observations.held(&observed.tree).token(&path)
+        });
+    refused(&library_tree::LibraryTreeRejection::PlanStale {
+        path,
+        seen: decided,
+        now,
+    })
+}
+
+/// The token a recorded step was decided on.
+fn seen_on(step: &library_tree::Step) -> u64 {
+    if let Some(replace) = &step.replace {
+        return replace.seen_sequence;
+    }
+    if let Some(trash) = &step.trash {
+        return trash.seen_sequence;
+    }
+    step.r#move.as_ref().map_or(0, |moved| moved.seen_sequence)
 }
 
 /// The token and the place of the path a write already done changed (its
@@ -838,36 +818,6 @@ fn step_path(step: &library_tree::Step) -> String {
         .unwrap_or_default()
 }
 
-/// What the commit of a home write names (G3): each library path its
-/// `steps` changed, once, sorted.
-pub(crate) fn commit_paths(steps: &[library_tree::Step]) -> Vec<String> {
-    let mut paths = std::collections::BTreeSet::new();
-    for step in steps {
-        let named = [
-            step.replace.as_ref().map(|replace| replace.path.clone()),
-            step.create.as_ref().map(|create| create.path.clone()),
-            step.trash.as_ref().map(|trash| trash.path.clone()),
-            step.r#move.as_ref().map(|moved| moved.from.clone()),
-            step.r#move
-                .as_ref()
-                .filter(|moved| moved.to_tree.is_empty())
-                .map(|moved| moved.to.clone()),
-        ];
-        paths.extend(
-            named
-                .into_iter()
-                .flatten()
-                .filter(|path| writes::in_library(path)),
-        );
-    }
-    paths.into_iter().collect()
-}
-
-/// The message of a home write's commit (step 10b texts.md 6).
-pub(crate) fn commit_message(verb: &str, request_id: &str) -> String {
-    format!("ctxloom: {verb} ({request_id})")
-}
-
 /// The observed tree a write landing `lands` changes: the content's is the
 /// project's checkout (else the home's), a layer's its scope's.
 pub(crate) fn landing_of(seen: &[(Site, Observed)], lands: Lands) -> Option<Landing<'_>> {
@@ -892,6 +842,10 @@ macro_rules! write_requests {
     ($($request:ident . $($field:ident).+ $(, $etag:ident)? ;)*) => {
         $(
             impl LibraryWriteRequest for v1::$request {
+                // What the request writes, its resource or parent: a
+                // request with a field of its own named `target` (a
+                // materialize's, where it writes on disk) is not that.
+                #[allow(clippy::misnamed_getters)]
                 fn target(&self) -> &str {
                     write_requests!(@get self $($field).+)
                 }
@@ -970,8 +924,23 @@ write_requests! {
     DeleteAgentRequest.name, etag;
     DeleteCompanionRequest.name, etag;
     CleanRequest.project, etag;
+    MaterializeRequest.project, etag;
+    UninstallManageRequest.project, etag;
+    RunDoctorRequest.project, etag;
+    GetAuthStatusRequest.project;
+    CheckManageRequest.project;
+    GetInitPromptRequest.project;
+    InstallGitignoreRequest.project, etag;
+    InitProjectRequest.name, etag;
+    InstallManageRequest.project, etag;
     DistillFragmentRequest.name;
     DistillCommandRequest.name;
+    CreateRemoteRequest.parent;
+    UpdateRemoteRequest.remote.name, etag;
+    DeleteRemoteRequest.name, etag;
+    SetDefaultRemoteRequest.parent;
+    PullDependenciesRequest.parent;
+    UpgradeDependenciesRequest.parent;
 }
 
 #[cfg(test)]

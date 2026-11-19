@@ -81,6 +81,17 @@ enum TestVerb {
         #[arg(long)]
         home: bool,
     },
+    /// Watch the cwd's project's library (or, with --home, the home's)
+    /// through the daemon's WatchLibrary, printing each change as json,
+    /// until --count changes have been printed
+    WatchLibrary {
+        /// The home's library instead
+        #[arg(long)]
+        home: bool,
+        /// Stop once this many changes have been printed
+        #[arg(long)]
+        count: Option<u32>,
+    },
     /// Print every stream of the one store, as json: each event's type,
     /// its payload's bytes, and what the record's readers ask of it
     Record,
@@ -132,6 +143,10 @@ struct SeedArgs {
     /// Its first incarnation ended, so it can be resumed
     #[arg(long)]
     resumable: bool,
+    /// The profile its run was planned on, so its loadout names that
+    /// profile's bundles
+    #[arg(long)]
+    profile: Option<String>,
 }
 
 impl From<SeedArgs> for Seed {
@@ -152,6 +167,9 @@ impl From<SeedArgs> for Seed {
             native,
             other_files: args.other_file,
             resumable: args.resumable,
+            // A profile's loadout is the daemon's assembly of it, made by
+            // the command (`TestVerb::SeedSession`).
+            loadout: None,
         }
     }
 }
@@ -243,7 +261,17 @@ pub(crate) fn run(
         }
         TestVerb::SeedSession(seed) => {
             let wiring = wiring().map_err(failed)?;
-            let id = wiring.seed_session(&seed.into()).map_err(failed)?;
+            // On a profile (step 10c U13): its loadout, as the daemon
+            // assembles the profile, as a launch on it would be planned.
+            let loadout = match &seed.profile {
+                Some(profile) => Some(crate::daemon::profile_loadout(&wiring, version, profile)?),
+                None => None,
+            };
+            let seed = Seed {
+                loadout,
+                ..seed.into()
+            };
+            let id = wiring.seed_session(&seed).map_err(failed)?;
             output(writeln!(out, "{id}"))
         }
         TestVerb::ProjectName => {
@@ -259,12 +287,18 @@ pub(crate) fn run(
         TestVerb::SessionEvents { harp, run } => {
             let wiring = wiring().map_err(failed)?;
             let events = wiring.session_events(&harp, run).map_err(failed)?;
-            output(writeln!(out, "{events}"))
+            // As `test library-events` prints its tree's (step 10c U13: a
+            // scenario reads `events[type=...]`).
+            output(writeln!(out, "{}", serde_json::json!({ "events": events })))
         }
         TestVerb::LibraryEvents { home } => {
             let wiring = wiring().map_err(failed)?;
             let events = wiring.library_events(home, version).map_err(failed)?;
             output(writeln!(out, "{events}"))
+        }
+        TestVerb::WatchLibrary { home, count } => {
+            let wiring = wiring().map_err(failed)?;
+            crate::daemon::watch::watch_library(&wiring, version, home, count, out)
         }
         TestVerb::Record => {
             let wiring = wiring().map_err(failed)?;

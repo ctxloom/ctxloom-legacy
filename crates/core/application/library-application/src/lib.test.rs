@@ -103,6 +103,35 @@ fn test_a_malformed_bundle_is_skipped_with_a_notice_and_the_listing_goes_on() {
     );
 }
 
+// doctor.feature: "A bundle in the old metadata layout is a warning naming
+// the git mv" (step 10c U5, D15): the bundles whose metadata is in the old
+// layout, each its refusal, and no bundle unreadable for another reason.
+#[test]
+fn test_old_layouts_are_the_bundles_in_the_old_layout_alone() {
+    let old: &[(&str, &str)] = &[
+        ENVELOPE,
+        (
+            "skills/.review.meta.yaml",
+            "description: in the old place\n",
+        ),
+    ];
+    let bad: &[(&str, &str)] = &[("bundle.yaml", "")];
+    let library = Setup {
+        bundles: &[("good", DEMO), ("demo", old), ("empty", bad)],
+        layers: &[CONFIG],
+        ..Setup::default()
+    }
+    .library();
+    let found = library.old_layouts(&plain()).result.unwrap();
+    assert!(
+        matches!(
+            &found[..],
+            [library::BundleError::OldLayout { bundle, .. }] if bundle == "demo"
+        ),
+        "{found:?}"
+    );
+}
+
 // bundle show of a bundle that is there and cannot be read says so; of one
 // that is not there, "bundle not found" (golden bad-show-*).
 #[test]

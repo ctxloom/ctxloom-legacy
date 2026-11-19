@@ -18,20 +18,45 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
 use crate::refusal::refuse;
 use crate::{
-    BuiltinReadOnly, LibraryIgnored, NoSuchResource, NoSuchSlot, NotInGit, OneChangePerCall,
-    PlanRejected, PlanStale, ResourceExists, SlotNotDue, TreeInMotion,
+    BuiltinReadOnly, NoSuchResource, NoSuchSlot, OneChangePerCall, PlanRejected, PlanStale,
+    ResourceExists, SlotNotDue,
 };
 use crate::{
     BundleExported, ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath,
     Evidence, External, HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand,
     LibraryEvent, LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordBundleExported,
-    RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed, RecordTreeObserved, ReplaceFile,
-    RunSequence, Step, StepApplied, TrashPath, TreeObserved, KEEP_DAYS,
+    RecordStepDone, RecordStepFailed, RecordTreeInstalled, RecordTreeListed, RecordTreeObserved,
+    ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeInstalled, TreeObserved, KEEP_DAYS,
 };
+use std::collections::BTreeMap;
 
 /// The code a plan's rejection takes when the tree no longer reads and the
 /// plan named no diagnostic of its own.
 pub const TREE_UNREADABLE: &str = "library-tree-tree-unreadable";
+
+/// The verbs that write other tools' files (step 10c U10, L15, T26): only
+/// a sequence of one of them may hold a foreign step.
+pub const FOREIGN_WRITERS: &[&str] = &[
+    "materialize",
+    // A consented pull's project refresh (`deps pull --yes`, step 10c U4).
+    "deps pull",
+    "doctor --fix",
+    "manage install",
+    "manage uninstall",
+    "bundle move",
+];
+
+/// The code of a foreign step planned where no foreign writer's sequence
+/// holds it (protos.md §1.1: a bug of the plan, never the caller's).
+pub const FOREIGN_OUTSIDE_WRITER: &str = "library-tree-foreign-outside-writer";
+
+/// A foreign step planned where nothing may hold one.
+fn foreign_outside() -> LibraryTreeRejection {
+    LibraryTreeRejection::PlanRejected {
+        code: FOREIGN_OUTSIDE_WRITER.to_string(),
+        args: Default::default(),
+    }
+}
 
 /// The library aggregate: one tree, folded from its stream.
 #[derive(Clone, Debug, Default)]
@@ -64,27 +89,10 @@ fn bundle_of(path: &str) -> String {
         .to_string()
 }
 
-/// The evidence's verdict, in order: git, motion, the built-in bundle, the
-/// plan. None when it all holds.
+/// The evidence's verdict, in order: the built-in bundle, the plan. None
+/// when it all holds. git is no evidence (the library is git-free, owner
+/// 2026-11-18).
 fn judge(evidence: &Evidence, path: &str, checks: Checks) -> Result<(), LibraryTreeRejection> {
-    if !evidence.in_git {
-        return Err(match &evidence.ignored {
-            Some(ignored) => LibraryTreeRejection::LibraryIgnored {
-                source: ignored.source.clone(),
-                line: ignored.line,
-                pattern: ignored.pattern.clone(),
-            },
-            None => LibraryTreeRejection::NotInGit {
-                root: evidence.root.clone(),
-            },
-        });
-    }
-    if let Some(motion) = evidence.in_motion {
-        return Err(LibraryTreeRejection::TreeInMotion {
-            motion,
-            root: evidence.root.clone(),
-        });
-    }
     if checks.builtin && evidence.builtin {
         return Err(LibraryTreeRejection::BuiltinReadOnly {
             bundle: bundle_of(path),
@@ -162,7 +170,7 @@ impl LibraryAggregate {
     /// away (T28), so the operation's own NOREPLACE is the word on that
     /// (10b, U8).
     fn step(&self, step: &Step) -> Result<(), LibraryTreeRejection> {
-        if let Some(replace) = &step.replace {
+        if let Some(replace) = step.replace.as_ref().filter(|replace| !replace.foreign) {
             return self.fresh(&replace.path, replace.seen_sequence);
         }
         if let Some(trash) = &step.trash {
@@ -190,6 +198,9 @@ impl LibraryAggregate {
                 steps,
                 base_cause: self.library.last_cause.clone(),
                 done: 0,
+                // A foreign writer's sequence lists its files (step 10c
+                // U10): `sequence` sets them.
+                foreign: Vec::new(),
             },
         }
     }
@@ -247,7 +258,6 @@ impl LibraryAggregate {
             dirty_after: fact.dirty_after,
             tree_after: fact.tree_after,
             baseline,
-            in_motion: fact.in_motion,
         })
     }
 }
@@ -282,7 +292,72 @@ fn leaves(step: &Step) -> Leaves {
     Leaves::Unknown
 }
 
+/// Whether `changes` (an outside observation's) touch a path the step
+/// `step` is still to write, with ids that are not what it writes there
+/// (step 10c U13, protos.md §1.3): the base it was decided on has moved.
+fn overtakes(step: &Step, changes: &[crate::Change]) -> bool {
+    let at_or_under = |path: &str, change: &crate::Change| {
+        let under = format!("{}/", path.trim_end_matches('/'));
+        change.path == path || change.path.starts_with(&under)
+    };
+    if let Some(replace) = &step.replace {
+        return changes
+            .iter()
+            .any(|c| c.path == replace.path && c.to_oid != replace.new_oid);
+    }
+    if let Some(create) = &step.create {
+        let dir = create.path.trim_end_matches('/');
+        return changes.iter().filter(|c| at_or_under(dir, c)).any(|c| {
+            !create
+                .entries
+                .iter()
+                .any(|entry| format!("{dir}/{}", entry.path) == c.path && entry.oid == c.to_oid)
+        });
+    }
+    if let Some(trash) = &step.trash {
+        return changes
+            .iter()
+            .any(|c| at_or_under(&trash.path, c) && !c.to_oid.is_empty());
+    }
+    if let Some(moved) = &step.r#move {
+        return changes.iter().any(|c| {
+            (at_or_under(&moved.from, c) && !c.to_oid.is_empty())
+                || (moved.to_tree.is_empty() && at_or_under(&moved.to, c))
+        });
+    }
+    false
+}
+
+/// The cause a fact's context names: its external id.
+fn fact_cause(ctx: &Context) -> String {
+    match &ctx.command.arm {
+        angzarr_embedded::markup::InputArm::Fact {
+            origin: Some(origin),
+        } => origin.external_id.clone(),
+        _ => String::new(),
+    }
+}
+
 impl LibraryAggregate {
+    /// The pending intents (but `except`) whose steps not yet done an
+    /// outside observation's `changes` overtake, by request id: each is
+    /// superseded (step 10c U13), its retry refused stale.
+    fn superseded(&self, changes: &[crate::Change], except: Option<&str>) -> Vec<String> {
+        self.library
+            .pending
+            .values()
+            .filter(|intent| Some(intent.request_id.as_str()) != except)
+            .filter(|intent| {
+                intent
+                    .steps
+                    .iter()
+                    .skip(intent.done as usize)
+                    .any(|step| overtakes(step, changes))
+            })
+            .map(|intent| intent.request_id.clone())
+            .collect()
+    }
+
     /// The pending intent whose next step's new ids `changes` show (the
     /// first by request id), that step, and what the changes say of its
     /// paths.
@@ -325,6 +400,61 @@ impl LibraryAggregate {
     }
 }
 
+impl LibraryAggregate {
+    /// `observed` recorded, then every pending intent but `except` it
+    /// overtakes superseded, by this observation's cause (step 10c U13).
+    fn outside(
+        &self,
+        observed: TreeObserved,
+        except: Option<&str>,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let superseded = self.superseded(&observed.changes, except);
+        let by_cause = fact_cause(ctx);
+        let mut events = vec![pack_message(&observed)];
+        events.extend(superseded.into_iter().map(|request_id| {
+            pack_message(&IntentSuperseded {
+                request_id,
+                by_cause: by_cause.clone(),
+            })
+        }));
+        Ok(FactEmit::of(events))
+    }
+}
+
+/// The changes from `held` (a tree's last listing, path to content id) to
+/// `found` (every file now): each path added, changed or gone, sorted by
+/// path.
+pub fn listing_changes(held: &BTreeMap<String, String>, found: &[DirtyPath]) -> Vec<crate::Change> {
+    let now: BTreeMap<&str, &str> = found
+        .iter()
+        .map(|file| (file.path.as_str(), file.oid.as_str()))
+        .collect();
+    let mut changes = Vec::new();
+    let paths: std::collections::BTreeSet<&str> = held
+        .keys()
+        .map(String::as_str)
+        .chain(now.keys().copied())
+        .collect();
+    for path in paths {
+        let (was, is) = (held.get(path).map(String::as_str), now.get(path).copied());
+        let status = match (was, is) {
+            (None, Some(_)) => ChangeStatus::Added,
+            (Some(_), None) => ChangeStatus::Deleted,
+            (Some(was), Some(is)) if was != is => ChangeStatus::Modified,
+            _ => continue,
+        };
+        changes.push(crate::Change {
+            path: path.to_string(),
+            status,
+            from_oid: was.unwrap_or_default().to_string(),
+            to_oid: is.unwrap_or_default().to_string(),
+            from_path: String::new(),
+        });
+    }
+    changes
+}
+
 /// An event a fact records, or none.
 fn recorded<E: DomainMessage>(event: Option<E>) -> Result<FactEmit<LibraryAggregate>, Bug> {
     Ok(FactEmit::of(event.map(|event| pack_message(&event))))
@@ -332,19 +462,11 @@ fn recorded<E: DomainMessage>(event: Option<E>) -> Result<FactEmit<LibraryAggreg
 
 #[aggregate(domain = "library", command = LibraryCommand, event = LibraryEvent)]
 impl LibraryAggregate {
-    /// Replace (or create) one file: judged on git, motion, the built-in
-    /// bundle and the plan, then on the path's token.
+    /// Replace (or create) one file: judged on the built-in bundle and the
+    /// plan, then on the path's token.
     #[handles_cmd(
         ReplaceFile,
-        refuses(
-            PlanStale,
-            BuiltinReadOnly,
-            PlanRejected,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored,
-            OneChangePerCall
-        )
+        refuses(PlanStale, BuiltinReadOnly, PlanRejected, OneChangePerCall)
     )]
     fn replace(
         &self,
@@ -356,6 +478,12 @@ impl LibraryAggregate {
             builtin: true,
         };
         judge(&cmd.evidence, &cmd.path, checks)
+            .and_then(|()| {
+                if cmd.foreign {
+                    return Err(foreign_outside());
+                }
+                Ok(())
+            })
             .and_then(|()| self.one_file(&cmd.path))
             .and_then(|()| self.fresh(&cmd.path, cmd.seen_sequence))
             .map_err(|rejection| {
@@ -368,9 +496,6 @@ impl LibraryAggregate {
                         PlanStale { path, seen, now } => PlanStale,
                         BuiltinReadOnly { bundle } => BuiltinReadOnly,
                         PlanRejected { code, args } => PlanRejected,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -388,14 +513,7 @@ impl LibraryAggregate {
     /// A new directory, never over something the record knows is there.
     #[handles_cmd(
         CreateDirectory,
-        refuses(
-            ResourceExists,
-            BuiltinReadOnly,
-            PlanRejected,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored
-        )
+        refuses(ResourceExists, BuiltinReadOnly, PlanRejected)
     )]
     fn create(
         &self,
@@ -417,9 +535,6 @@ impl LibraryAggregate {
                         ResourceExists { path } => ResourceExists,
                         BuiltinReadOnly { bundle } => BuiltinReadOnly,
                         PlanRejected { code, args } => PlanRejected,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -436,17 +551,7 @@ impl LibraryAggregate {
 
     /// A path into the trash: it must not be known gone, and its token
     /// must be the one the caller saw.
-    #[handles_cmd(
-        TrashPath,
-        refuses(
-            NoSuchResource,
-            PlanStale,
-            BuiltinReadOnly,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored
-        )
-    )]
+    #[handles_cmd(TrashPath, refuses(NoSuchResource, PlanStale, BuiltinReadOnly))]
     fn trash(
         &self,
         cmd: TrashPath,
@@ -468,9 +573,6 @@ impl LibraryAggregate {
                         NoSuchResource { path } => NoSuchResource,
                         PlanStale { path, seen, now } => PlanStale,
                         BuiltinReadOnly { bundle } => BuiltinReadOnly,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -487,17 +589,7 @@ impl LibraryAggregate {
 
     /// ctxloom's own move: from a path not known gone, to one not known
     /// there, `from`'s token the one the caller saw.
-    #[handles_cmd(
-        MovePath,
-        refuses(
-            NoSuchResource,
-            ResourceExists,
-            PlanStale,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored
-        )
-    )]
+    #[handles_cmd(MovePath, refuses(NoSuchResource, ResourceExists, PlanStale))]
     fn move_path(
         &self,
         cmd: MovePath,
@@ -519,9 +611,6 @@ impl LibraryAggregate {
                         NoSuchResource { path } => NoSuchResource,
                         ResourceExists { path } => ResourceExists,
                         PlanStale { path, seen, now } => PlanStale,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -538,10 +627,7 @@ impl LibraryAggregate {
 
     /// A retryable sequence (T28): its evidence judged once, each step's
     /// token judged as its own command's; the steps kept in the intent.
-    #[handles_cmd(
-        RunSequence,
-        refuses(PlanStale, PlanRejected, TreeInMotion, NotInGit, LibraryIgnored)
-    )]
+    #[handles_cmd(RunSequence, refuses(PlanStale, PlanRejected))]
     fn sequence(
         &self,
         cmd: RunSequence,
@@ -551,7 +637,18 @@ impl LibraryAggregate {
             plan: true,
             builtin: false,
         };
+        let writes_foreign = FOREIGN_WRITERS.contains(&cmd.verb.as_str());
         judge(&cmd.evidence, "", checks)
+            .and_then(|()| {
+                let foreign = cmd
+                    .steps
+                    .iter()
+                    .any(|step| step.replace.as_ref().is_some_and(|r| r.foreign));
+                if foreign && !writes_foreign {
+                    return Err(foreign_outside());
+                }
+                Ok(())
+            })
             .and_then(|()| cmd.steps.iter().try_for_each(|step| self.step(step)))
             .map_err(|rejection| {
                 refuse!(
@@ -561,13 +658,12 @@ impl LibraryAggregate {
                     [
                         PlanStale { path, seen, now } => PlanStale,
                         PlanRejected { code, args } => PlanRejected,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
-        Ok(Some(self.intent(cmd.verb, cmd.steps, ctx)))
+        let mut intended = self.intent(cmd.verb, cmd.steps, ctx);
+        intended.intent.foreign = cmd.foreign;
+        Ok(Some(intended))
     }
 
     /// The purge of a kept trash slot (G12, L12): the slot must be in the
@@ -629,7 +725,6 @@ impl LibraryAggregate {
     /// else a `TreeObserved` caused by the intent.
     #[handles_fact(RecordTreeObserved)]
     fn observed(&self, fact: RecordTreeObserved, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
-        let _ = ctx;
         let Some(mut observed) = self.observation(fact) else {
             return recorded(None::<TreeObserved>);
         };
@@ -640,10 +735,10 @@ impl LibraryAggregate {
             .as_ref()
             .is_some_and(|external| external.head_after != self.library.head);
         if observed.baseline || moved {
-            return recorded(Some(observed));
+            return self.outside(observed, None, ctx);
         }
         let Some((request_id, step, seen)) = self.attributed(&observed.changes) else {
-            return recorded(Some(observed));
+            return self.outside(observed, None, ctx);
         };
         let whole = seen.len() == observed.changes.len()
             && observed.tree_after == self.library.tree
@@ -661,8 +756,36 @@ impl LibraryAggregate {
             }));
         }
         observed.external = None;
-        observed.intended = Some(request_id);
-        recorded(Some(observed))
+        observed.intended = Some(request_id.clone());
+        self.outside(observed, Some(&request_id), ctx)
+    }
+
+    /// RecordTreeListed (step 10c U13 rework, the scanner): every file the
+    /// scan found, compared with the listing the state holds ([`listing_changes`]),
+    /// recorded as the observation a read's would be: the first a baseline
+    /// of every file, a match nothing, an intent's own change attributed.
+    #[handles_fact(RecordTreeListed)]
+    fn listed(&self, fact: RecordTreeListed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+        // A tree never listed holds no listing: every file is added, and
+        // `observation` records it as the tree's baseline.
+        let held = self.library.listed();
+        let changes = listing_changes(&held, &fact.files);
+        if changes.is_empty() && self.library.baselined {
+            // What the record lists, a path a step took away left out.
+            return recorded(None::<TreeObserved>);
+        }
+        let observed = RecordTreeObserved {
+            name: fact.name,
+            kind: fact.kind,
+            base_cause: fact.base_cause,
+            head_before: self.library.head.clone(),
+            head_after: String::new(),
+            tree_after: String::new(),
+            changes,
+            dirty_after: fact.files,
+            baseline: false,
+        };
+        self.observed(observed, ctx)
     }
 
     /// A pending intent's next step done: what it left becomes its paths'
@@ -682,6 +805,36 @@ impl LibraryAggregate {
         }))
     }
 
+    /// A pending intent's next step, a new directory in the cache, done as
+    /// an installed tree (step 10c U4, protos.md §1.2): its sha's tree
+    /// whole. A step not next, or not a new directory, records nothing.
+    #[handles_fact(RecordTreeInstalled)]
+    fn tree_was_installed(
+        &self,
+        fact: RecordTreeInstalled,
+        ctx: &Context,
+    ) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        let next_create = self
+            .library
+            .pending
+            .get(&fact.request_id)
+            .is_some_and(|intent| {
+                fact.step == intent.done
+                    && intent
+                        .steps
+                        .get(fact.step as usize)
+                        .is_some_and(|step| step.create.is_some())
+            });
+        recorded(next_create.then_some(TreeInstalled {
+            request_id: fact.request_id,
+            step: fact.step,
+            identity: fact.identity,
+            sha: fact.sha,
+            tree: fact.tree,
+        }))
+    }
+
     /// A pending intent's step failed: final.
     #[handles_fact(RecordStepFailed)]
     fn step_failed(&self, fact: RecordStepFailed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
@@ -692,20 +845,6 @@ impl LibraryAggregate {
             step: fact.step,
             ext_err_txt: fact.ext_err_txt,
         }))
-    }
-
-    /// The home step made this tree a repository of ctxloom's own (G3):
-    /// recorded once; said again, it adds nothing.
-    #[handles_fact(RecordHomeRepositoryMade)]
-    fn home_repository_made(
-        &self,
-        fact: RecordHomeRepositoryMade,
-        ctx: &Context,
-    ) -> Result<FactEmit<Self>, Bug> {
-        let _ = ctx;
-        recorded(
-            (!self.library.home_repository_made).then_some(HomeRepositoryMade { name: fact.name }),
-        )
     }
 
     /// A bundle of this tree exported, as it was made (AIP-155).
@@ -733,6 +872,8 @@ impl LibraryAggregate {
         );
     }
 
+    /// Never emitted since the git-free ruling (owner 2026-11-18); a 10b
+    /// stream's is applied as nothing, so the stream still replays.
     #[applies(HomeRepositoryMade)]
     fn home_repository_was_made(&mut self, event: HomeRepositoryMade, page: &PageContext) {
         self.library.apply_page(
@@ -767,6 +908,15 @@ impl LibraryAggregate {
     fn change_failed(&mut self, event: ChangeFailed, page: &PageContext) {
         self.library
             .apply_page(&LibraryEvent::ChangeFailed(event), page.sequence, page.meta);
+    }
+
+    #[applies(TreeInstalled)]
+    fn tree_installed(&mut self, event: TreeInstalled, page: &PageContext) {
+        self.library.apply_page(
+            &LibraryEvent::TreeInstalled(event),
+            page.sequence,
+            page.meta,
+        );
     }
 
     #[applies(IntentSuperseded)]

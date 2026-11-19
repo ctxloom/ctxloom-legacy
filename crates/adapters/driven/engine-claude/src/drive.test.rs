@@ -2141,3 +2141,28 @@ fn a_set_mcp_tool_timeout_is_owned_and_no_permit_replaces_it() {
         Some("1000")
     );
 }
+
+// Step 10c U13 (G6/G7, protos.md §3): claude is handed a re-assembled
+// context at its next UserPromptSubmit or PostToolUse, as the hook's
+// context (its codec writes `hookSpecificOutput.additionalContext`, which
+// claude 2.1.325's hook schema takes on both); any other hook is not the
+// place, and the session stays owed.
+#[test]
+fn a_context_is_handed_to_claude_at_its_next_prompt_or_tool_result() {
+    use run_ports::ContextDelivery as Delivery;
+    let claude = Claude::new();
+    for hook in ["UserPromptSubmit", "PostToolUse"] {
+        assert_eq!(
+            claude.deliver_context(hook, "the context"),
+            Delivery::HookContext("the context".to_string()),
+            "{hook}"
+        );
+    }
+    for hook in ["SessionStart", "Stop", "PreCompact", ""] {
+        assert_eq!(
+            claude.deliver_context(hook, "the context"),
+            Delivery::NotHere,
+            "{hook}"
+        );
+    }
+}

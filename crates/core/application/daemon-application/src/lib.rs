@@ -34,7 +34,9 @@
 mod adopt;
 mod daemon;
 mod one_shot;
+pub mod owed;
 mod ports;
+pub mod reactions;
 mod rehost;
 mod terminal;
 mod watches;

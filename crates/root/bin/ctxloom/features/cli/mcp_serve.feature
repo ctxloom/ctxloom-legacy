@@ -98,10 +98,35 @@ Feature: ctxloom's own MCP server — an engine's way to the daemon, through the
 
     Scenario: An edit the daemon asks for is answered with the document's new text
       # new: an Edit need to a client that is not a terminal.
+      # step 10 U11: green with the elicitations; the tool is the test build's (QUESTIONS.md 7).
       Given an initialized ctxloom project
       And a session "amber-quiet-heron" that is still running
       When its engine calls a tool whose change asks for an edited document, and answers the elicitation with new text
       Then the daemon applied the new text, and no editor was started
+
+  Rule: A close that takes children with it asks first, as an elicitation
+
+    Scenario Outline: child_close of a child that has children of its own asks to confirm the cascade
+      # new: step 10 D16 (S40): the cascade is the preview's Confirm need, elicited from the engine.
+      Given an initialized ctxloom project
+      And a child "brisk-copper-moth" of "amber-quiet-heron" that is open and idle
+      And a child "olive-quiet-finch" of "brisk-copper-moth" that is open and idle
+      When the engine of "amber-quiet-heron" calls "child_close" for "brisk-copper-moth", and answers its elicitation <answer>
+      Then the elicitation asked to confirm closing "brisk-copper-moth" and, with it, "olive-quiet-finch"
+      And <outcome>
+
+      Examples:
+        | answer  | outcome                                                                       |
+        | yes     | "brisk-copper-moth" and "olive-quiet-finch" are closed, and the tool said so   |
+        | no      | neither is closed, and the tool answered that the close was declined         |
+
+    Scenario: child_close of a child with no children of its own closes it without asking
+      # new: step 10 D16, the paired negative; no cascade, no question.
+      Given an initialized ctxloom project
+      And a child "brisk-copper-moth" of "amber-quiet-heron" that is open and idle
+      When the engine of "amber-quiet-heron" calls "child_close" for "brisk-copper-moth"
+      Then no elicitation was sent
+      And "brisk-copper-moth" is closed, and the tool said so
 
   Rule: The approval prompt waits for the human
 

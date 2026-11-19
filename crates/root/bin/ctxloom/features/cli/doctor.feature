@@ -32,6 +32,11 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
   whole report is written. A USAGE error (a --format this build cannot render)
   exits 10.
 
+  THE LIBRARY IS GIT-FREE (DRAFT, owner 2026-11-18, superseding step 10's
+  G1 to G3). A library works in any directory, so doctor has no row for the
+  project's repository, the home's, or a git operation in progress. Doctor
+  is the daemon's, as every command is.
+
   EVERY CHECK NEEDS BOTH HALVES. A check that fired on every project would be
   indistinguishable from one that works and would teach a reader to skip the
   line. So the two checks specified in detail below — the .gitignore posture
@@ -100,6 +105,8 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
     # passed. Parse it, and assert the decoded structure the text form cannot
     # produce.
     Scenario: Doctor's machine-readable form carries the same structured checks
+      # changed: step 10 U5 and D17, the JSON is the daemon's `RunDoctorResponse`.
+      # DRAFT (the library is git-free, owner 2026-11-18): its git checks (GIT-REPO-u1, HOME-REPO-u2) are gone.
       Given an initialized ctxloom project
       When Alice asks for the diagnosis in a form a script can parse:
         """
@@ -268,6 +275,21 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
       When I run "ctxloom --format json doctor"
       Then the command succeeds
       And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GITIGNORE-f6" and whose "status" is "ok"
+
+  Rule: A bundle's layout is a row
+
+    Scenario: A bundle in the old metadata layout is a warning naming the git mv
+      # new: step 10 D15 (T27): the bundle is refused until its metadata moves.
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      And the project already has the file ".ctxloom/content/bundles/v2/demo/skills/.review.meta.yaml":
+        """
+        description: in the old place
+        """
+      When I run "ctxloom --format json doctor"
+      Then the command succeeds
+      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-SIDECARS-u4" and whose "status" is "warn"
+      And the output contains "git mv .ctxloom/content/bundles/v2/demo/skills/.review.meta.yaml .ctxloom/content/bundles/v2/demo/skills/review/.meta.yaml"
 
   Rule: A config every run refuses is a fail row, and fails doctor
 

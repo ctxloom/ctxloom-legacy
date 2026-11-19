@@ -33,14 +33,14 @@ pub type LibraryCommand = LibraryStateCommand;
 /// The library aggregate's events, one variant per event type.
 pub type LibraryEvent = LibraryStateEvent;
 
-pub use aggregate::{LibraryAggregate, TREE_UNREADABLE};
+pub use aggregate::{LibraryAggregate, FOREIGN_OUTSIDE_WRITER, FOREIGN_WRITERS, TREE_UNREADABLE};
 pub use generated::*;
-pub use key::{observation_book, observation_key};
+pub use key::{content_id, listing_book, listing_key, observation_book, observation_key};
 pub use name::{kind_of, tree_root, TreeName, CHECKOUT_FILE, HOME_TREE};
 pub use refusal::NotOurs;
 #[cfg(any(test, feature = "test-support"))]
 pub use rejection::diagnostic_samples;
-pub use rejection::{motion_word, LibraryTreeRejection, EN_US};
+pub use rejection::{LibraryTreeRejection, EN_US};
 pub use state::{cause_of, Library, Resource, Slot, KEEP_DAYS, LIBRARY_DOMAIN};
 
 #[cfg(test)]

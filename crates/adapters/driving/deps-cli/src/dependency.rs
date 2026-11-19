@@ -105,7 +105,7 @@ fn pull_state(status: &str) -> i32 {
 /// one row by its state (OQ-B3), no status, message or count (OQ-B4: an
 /// empty pull, which applied nothing, is `{}`), and the refresh it skipped,
 /// with the command that applies it when it would write or release.
-pub(crate) fn pulled(
+pub fn pulled(
     parent: &str,
     report: &PullReport,
     skipped: Option<&Skipped>,
@@ -278,7 +278,7 @@ pub(crate) fn checked_one(parent: &str, checked: &CheckedRef) -> v1::CheckDepend
 /// `deps upgrade [reference]`: `UpgradeDependenciesResponse`; a preview
 /// that would move or drop a pin carries the command that applies it
 /// (`reference` the one asked, if one was).
-pub(crate) fn upgraded(
+pub fn upgraded(
     report: &UpgradeReport,
     reference: Option<&str>,
 ) -> v1::UpgradeDependenciesResponse {

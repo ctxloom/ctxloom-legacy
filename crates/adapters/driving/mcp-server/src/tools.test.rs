@@ -252,8 +252,14 @@ impl daemon_api::DaemonApi for Launching {
         &self,
         r: daemon_proto::v1::GetSessionRequest,
     ) -> Result<daemon_proto::v1::Session, daemon_api::Called> {
+        // D16: `tall-oak-crow` holds a child of its own.
+        let children = match r.name.ends_with("/sessions/tall-oak-crow") {
+            true => vec!["projects/calm-quiet-heron/sessions/olive-quiet-finch".to_string()],
+            false => Vec::new(),
+        };
         Ok(daemon_proto::v1::Session {
             name: r.name,
+            children,
             ..daemon_proto::v1::Session::default()
         })
     }
@@ -312,6 +318,7 @@ async fn child_launch_launches_the_sessions_own_child() {
     .naming(Box::new(|| "minted-child-name".to_string()));
     let answered = super::dispatch(
         &caller,
+        &Engine::default(),
         "child_launch",
         &args(json!({"name": "brisk-copper-moth", "agent": "reviewer", "task": "t"})),
     )
@@ -329,9 +336,14 @@ async fn child_launch_launches_the_sessions_own_child() {
             "write".to_string()
         ]
     );
-    let minted = super::dispatch(&caller, "child_launch", &args(json!({})))
-        .await
-        .unwrap_or_else(|_| panic!("launched"));
+    let minted = super::dispatch(
+        &caller,
+        &Engine::default(),
+        "child_launch",
+        &args(json!({})),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("launched"));
     let session: serde_json::Value = serde_json::from_str(&minted[0]).unwrap();
     assert_eq!(
         session["name"],
@@ -364,6 +376,7 @@ async fn child_launch_with_a_project_launches_the_child_there() {
     }));
     let answered = super::dispatch(
         &caller,
+        &Engine::default(),
         "child_launch",
         &args(json!({"name": "brisk-copper-moth", "project": "../api", "task": "t"})),
     )
@@ -381,5 +394,136 @@ async fn child_launch_with_a_project_launches_the_child_there() {
             "resolve /work/api".to_string(),
             "hand-off amber-quiet-heron projects/bold-api-pine".to_string(),
         ]
+    );
+}
+
+/// The engine, as a test stands it in (step 10c U11): whether it can be
+/// asked, its answer to each confirmation, and each question it was put.
+#[derive(Default)]
+struct Engine {
+    can: bool,
+    yes: bool,
+    asked: std::sync::Mutex<Vec<serde_json::Value>>,
+}
+
+impl Engine {
+    fn answering(yes: bool) -> Engine {
+        Engine {
+            can: true,
+            yes,
+            ..Engine::default()
+        }
+    }
+
+    fn asked(&self) -> Vec<serde_json::Value> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+impl super::Elicit for Engine {
+    fn can(&self) -> bool {
+        self.can
+    }
+
+    async fn ask(&self, params: serde_json::Value) -> Option<(String, Option<serde_json::Value>)> {
+        self.asked.lock().unwrap().push(params);
+        let action = if self.yes { "accept" } else { "decline" };
+        Some((action.to_string(), Some(json!({"confirmed": true}))))
+    }
+}
+
+fn session_caller(daemons: &Launching) -> daemon_api::Caller<Launching> {
+    daemon_api::Caller::new(
+        daemons.clone(),
+        "projects/calm-quiet-heron/sessions/amber-quiet-heron",
+        daemon_proto::v1::EnvVars::default(),
+        Box::new(|| "id-1".to_string()),
+    )
+    .unwrap_or_else(|_| panic!("a name"))
+}
+
+// D16 (S40): `child_close` of a child holding children of its own asks the
+// engine to confirm the cascade, naming them; a yes closes it, a no closes
+// nothing and says so.
+#[tokio::test]
+async fn child_close_of_a_child_with_children_asks_to_confirm_first() {
+    for yes in [true, false] {
+        let daemons = Launching::default();
+        let engine = Engine::answering(yes);
+        let answered = super::dispatch(
+            &session_caller(&daemons),
+            &engine,
+            "child_close",
+            &args(json!({"child": "tall-oak-crow"})),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("answered"));
+        let asked = engine.asked();
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert_eq!(
+            asked[0]["message"],
+            "Close \"tall-oak-crow\" and, with it, \"olive-quiet-finch\"?"
+        );
+        let wrote = daemons.0.lock().unwrap().contains(&"write".to_string());
+        assert_eq!(wrote, yes, "{answered:?}");
+        assert_eq!(answered[0].contains("was not closed"), !yes, "{answered:?}");
+    }
+}
+
+// A close that takes no child with it is not asked; one an engine that
+// cannot be asked would have to confirm closes nothing.
+#[tokio::test]
+async fn child_close_asks_only_for_a_cascade_and_only_an_engine_that_can_answer() {
+    let daemons = Launching::default();
+    let engine = Engine::answering(true);
+    super::dispatch(
+        &session_caller(&daemons),
+        &engine,
+        "child_close",
+        &args(json!({"child": "brisk-copper-moth"})),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("answered"));
+    assert!(engine.asked().is_empty());
+    assert!(daemons.0.lock().unwrap().contains(&"write".to_string()));
+    let daemons = Launching::default();
+    let mute = Engine::default();
+    let answered = super::dispatch(
+        &session_caller(&daemons),
+        &mute,
+        "child_close",
+        &args(json!({"child": "tall-oak-crow"})),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("answered"));
+    assert!(mute.asked().is_empty());
+    assert!(!daemons.0.lock().unwrap().contains(&"write".to_string()));
+    assert!(answered[0].contains("was not closed"), "{answered:?}");
+}
+
+// A preview's needs presented one by one, each answer kept; none at all is
+// nothing to ask and nothing declined.
+#[tokio::test]
+async fn a_previews_needs_are_each_asked_and_answered() {
+    let confirm = |id: &str| daemon_proto::v1::Need {
+        id: id.to_string(),
+        kind: Some(daemon_proto::v1::need::Kind::Confirm(
+            daemon_proto::v1::Confirm {
+                text: format!("{id}?"),
+                ..daemon_proto::v1::Confirm::default()
+            },
+        )),
+        optional: false,
+    };
+    let engine = Engine::answering(true);
+    let answered = super::answers(&engine, &[confirm("a"), confirm("b")])
+        .await
+        .unwrap();
+    let ids: Vec<&str> = answered.iter().map(|a| a.need_id.as_str()).collect();
+    assert_eq!(ids, ["a", "b"]);
+    assert_eq!(engine.asked().len(), 2);
+    assert_eq!(
+        super::answers(&Engine::default(), &[]).await,
+        Some(Vec::new())
     );
 }

@@ -1,12 +1,11 @@
 //! A primary's hooks deliver its pending messages (the terminal wake, owner
-//! ruling 2026-11-18): the prompt's informs and wakes; a tool call asks for
-//! none (a primary takes no steer); a stale wake line is blocked, a human's
-//! prompt never.
+//! ruling 2026-11-18), in ONE daemon call (the lean hook RPC): the prompt's
+//! informs and wakes; a tool call's delivers none (a primary takes no
+//! steer); a stale wake line is blocked, a human's prompt never.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::fakes::{world, Deliveries, Inbox, CONFIG};
+use crate::fakes::{world, Asked, Deliveries, Inbox, CONFIG};
 use crate::HookMessage;
 
 const HARP: &str = "amber-quiet-heron";
@@ -28,11 +27,8 @@ fn hooked(pending: Option<Vec<HookMessage>>, refusing: bool) -> (crate::Setup, D
     (setup, delivered)
 }
 
-/// [`hooked`], with how many times a hook asked for the messages.
-fn asking(
-    pending: Option<Vec<HookMessage>>,
-    refusing: bool,
-) -> (crate::Setup, Deliveries, Arc<AtomicUsize>) {
+/// [`hooked`], with each call a hook made.
+fn asking(pending: Option<Vec<HookMessage>>, refusing: bool) -> (crate::Setup, Deliveries, Asked) {
     let inbox = Inbox {
         pending: Mutex::new(pending),
         refusing,
@@ -41,7 +37,7 @@ fn asking(
     let delivered = Arc::clone(&inbox.delivered);
     let asked = Arc::clone(&inbox.asked);
     (
-        world(CONFIG).setup.with_hook_messages(Box::new(inbox)),
+        world(CONFIG).setup.with_hook_contexts(Box::new(inbox)),
         delivered,
         asked,
     )
@@ -148,10 +144,11 @@ fn with_no_daemon_a_prompt_goes_on_and_a_wake_line_is_blocked() {
     assert!(delivered.lock().unwrap().is_empty());
 }
 
-// A tool call asks the daemon for nothing: it would deliver a steer alone,
-// and a primary is offered none (owner ruling 2026-11-18; a child's are fed
-// as turns), so the call is not made (its cost was the hook's latency
-// budget). The skill mates line is answered as ever. A prompt still asks.
+// A tool call delivers no message: it would deliver a steer alone, and a
+// primary is offered none (owner ruling 2026-11-18; a child's are fed as
+// turns). Its one call asks for no urgency (it carries the owed context
+// alone); the skill mates line is answered as ever. A prompt asks for its
+// informs and wakes, in one call too.
 #[test]
 fn a_tool_call_asks_for_no_messages_and_delivers_none() {
     let (setup, delivered, asked) = asking(Some(mixed()), false);
@@ -165,8 +162,22 @@ fn a_tool_call_asks_for_no_messages_and_delivers_none() {
     );
     assert!(!out.contains("stop and rebase"), "{out}");
     assert!(!out.contains("the tests pass"), "{out}");
-    assert_eq!(asked.load(Ordering::SeqCst), 0, "a tool call asked");
     assert!(delivered.lock().unwrap().is_empty());
     prompt(&setup, "go on");
-    assert_eq!(asked.load(Ordering::SeqCst), 1, "a prompt asks");
+    let asked = asked.lock().unwrap();
+    let calls: Vec<(&str, Vec<String>)> = asked
+        .iter()
+        .map(|(hook, urgencies, _)| (hook.as_str(), urgencies.clone()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("PostToolUse", Vec::new()),
+            (
+                "UserPromptSubmit",
+                vec!["inform".to_string(), "wake".to_string()]
+            ),
+        ],
+        "one call per hook"
+    );
 }

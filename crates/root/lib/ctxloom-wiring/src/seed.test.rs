@@ -225,3 +225,32 @@ fn a_seeded_sessions_output_dir_is_under_the_projects_output_directory() {
     let expected = wiring.project_dir().join("ctxloom").join(HARP);
     assert_eq!(views[0].record.output_dir, expected.display().to_string());
 }
+
+// Step 10c U13's harness: a session seeded on a profile is one whose run
+// was planned on it: its loadout, as the daemon assembled the profile, is
+// recorded on it, so the index's record carries it.
+#[test]
+fn a_seed_with_a_loadout_records_it_on_the_session() {
+    let world = World::new("seed-profile");
+    let wiring = world.wiring();
+    let loadout = sessions::SessionLoadout {
+        agent: String::new(),
+        profiles: vec!["dev".to_string()],
+        bundles: vec!["demo".to_string()],
+    };
+    let on_profile = Seed {
+        loadout: Some(loadout.clone()),
+        ..seed()
+    };
+    wiring.seed_session(&on_profile).unwrap();
+    let events = wiring.session_events(HARP, None).unwrap();
+    let recorded: Vec<&serde_json::Value> = events
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["type"] == "LoadoutRecorded")
+        .collect();
+    assert_eq!(recorded.len(), 1, "{events}");
+    assert_eq!(recorded[0]["bundles"], serde_json::json!(["demo"]));
+    assert_eq!(recorded[0]["profiles"], serde_json::json!(["dev"]));
+}

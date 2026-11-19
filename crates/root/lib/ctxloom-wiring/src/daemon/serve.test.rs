@@ -175,7 +175,7 @@ fn a_daemon_whose_discovery_file_is_gone_exits_and_makes_it_nothing_again() {
 }
 
 // U6: a hosted child's session lock is the platform's file lock at
-// `<project>/.ctxloom/sessions/<harp>.lock`, its directory made: held, a
+// `<project>/.ctxloom/sessions/<harp>/session.lock`, its directory made: held, a
 // second hold is refused; let go, it is free again.
 #[test]
 fn a_childs_session_lock_is_held_once_and_let_go_when_dropped() {

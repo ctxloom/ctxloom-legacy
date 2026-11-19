@@ -644,10 +644,18 @@ async fn start(
         })
         // The one-shots it hosts (U4).
         .hosting_one_shots(Arc::clone(one_shots))
+        // A live session's re-assembled context is handed through its
+        // engine (step 10c U13).
+        .delivering(Arc::new(EngineDeliveries(
+            engines
+                .iter()
+                .map(|hosted| Arc::clone(&hosted.engine))
+                .collect(),
+        )))
         .watching(Arc::clone(&watches))
         .on_os(&os),
         (fs, files, trash_clock(env)),
-        (home, temp),
+        (home, temp, &stamp),
         (&engines, terminals, kept),
     );
     let listener = HookListener::serve_tcp_beside(
@@ -711,6 +719,16 @@ async fn start(
             let _ = listener.stop().await;
             Err(detail)
         }
+    }
+}
+
+/// The daemon's engines, as a live session's re-assembled context is
+/// handed through them (step 10c U13), by name.
+struct EngineDeliveries(Vec<Arc<dyn run_ports::Engine>>);
+
+impl daemon_api::Deliveries for EngineDeliveries {
+    fn engine(&self, name: &str) -> Option<Arc<dyn run_ports::Engine>> {
+        self.0.iter().find(|engine| engine.name() == name).cloned()
     }
 }
 
@@ -821,7 +839,7 @@ fn trusting(kept: &Projectors, (home, temp): (&Path, &Path)) -> daemon_api::Trus
 fn served(
     api: daemon_api::Api<CoreEdge>,
     (fs, files, clock): (&Arc<dyn Fs>, &DaemonFiles, library_api::Clock),
-    (home, temp): (&Path, &Path),
+    (home, temp, stamp): (&Path, &Path, &str),
     (engines, terminals, kept): (
         &[daemon_application::HostedEngine],
         &Arc<daemon_application::Terminals>,
@@ -842,6 +860,25 @@ fn served(
                 temp: temp.to_path_buf(),
             }))
             .handing_off(super::files::api_hand_offs(fs, (home, temp), engines))
+            // Other tools' files, planned where the caller stands and
+            // written as one sequence (step 10c U10).
+            .writing_foreign(Arc::new(super::foreign::ForeignWriters {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+            }))
+            // The setup reads, each answered where the caller stands (step
+            // 10c U5, U6).
+            .reading_setup(Arc::new(super::setup_reads::SetupReaders {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+                stamp: stamp.to_string(),
+            }))
+            // The remotes', the lock's and the cache's writes, planned
+            // where the caller stands, git in its environment (step 10c U4).
+            .writing_deps(Arc::new(super::deps::DepsWriters {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+            }))
             // The trusts it reads (step 8 U1).
             .trusting(trusting(kept, (home, temp)))
             // The asks it records and reads (step 8 U4).
@@ -857,7 +894,7 @@ fn served(
                 observers: Arc::new(super::places::CallerGits {
                     fs: Arc::clone(fs),
                     home: home.to_path_buf(),
-                    temp: temp.to_path_buf(),
+                    scanner: Arc::new(super::places::TreeScanner::new(Arc::clone(fs))),
                 }),
                 // A write's change is one atomic operation (step 10b U8).
                 operations: Arc::new(content_fs::TreeOperations::new(Arc::clone(fs))),
@@ -1069,6 +1106,13 @@ fn launcher(
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })
+    // What each live session is owed, recorded as each round catches up
+    // (step 10c U13 rework).
+    .owing(Arc::new(super::places::LibraryTrees {
+        fs: Arc::clone(fs),
+        index: kept.index.clone().unwrap_or_default(),
+        home: home.to_path_buf(),
+    }))
     // A child's program found on its own PATH, as every launch's (T10).
     .finding(Arc::new(
         host_launcher::HostLauncher::default().searching(Arc::clone(fs)),
@@ -1525,6 +1569,13 @@ impl daemon_api::Hosting for Shared {
 
     fn home_gone(&self) -> Option<String> {
         (self.home_gone)()
+    }
+
+    /// Told by a test build alone (the harness's "the daemon's next round
+    /// runs", step 10c U13): a plain daemon's status is as it was.
+    #[cfg(feature = "test-support")]
+    fn rounds(&self) -> u32 {
+        u32::try_from(*self.done.borrow()).unwrap_or(u32::MAX)
     }
 
     /// The next round to START after this call (so its catch-up reads what

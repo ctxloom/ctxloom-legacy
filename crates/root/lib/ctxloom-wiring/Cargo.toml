@@ -28,7 +28,6 @@ setup-cli.workspace = true
 ctxloom-ports.workspace = true
 library.workspace = true
 library-application.workspace = true
-library-git.workspace = true
 # The library reads' observation (step 10a U2), served by the daemon.
 library-api.workspace = true
 deps.workspace = true

@@ -10,12 +10,17 @@
 //! `daemon launch|send|close|clear` are gone (owner ruling s4-Q13, hard
 //! migrate).
 
+mod deps;
 mod files;
 pub(crate) mod flush;
+mod foreign;
 pub(crate) mod heard;
 mod places;
 mod serve;
+mod setup_reads;
 pub(crate) mod shutdown;
+#[cfg(feature = "test-support")]
+pub(crate) mod watch;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -856,14 +861,39 @@ fn client_through<'a>(
 /// not be reached (S8); under test-support, not when the command's
 /// environment sets `CTXLOOM_TEST_NO_RETRY` (step 10b's harness: what a
 /// killed daemon left is left).
+/// And, under test-support, the program `CTXLOOM_TEST_BEFORE_RETRY` names
+/// run (and waited for) before that one retry (step 10c U13's harness: a
+/// person's hand edit between the daemon's loss and the write sent again).
 #[cfg(feature = "test-support")]
 fn retrying<'a>(
     wiring: &Wiring,
     client: daemon_api::Client<Reach<'a>>,
 ) -> daemon_api::Client<Reach<'a>> {
-    match wiring.env().non_empty("CTXLOOM_TEST_NO_RETRY") {
+    let client = match wiring.env().non_empty("CTXLOOM_TEST_NO_RETRY") {
         Some(_) => client.without_retry(),
         None => client,
+    };
+    match wiring.env().non_empty(BEFORE_RETRY) {
+        Some(program) => {
+            let program = program.to_owned();
+            client.before_retry(Box::new(move || run_before_retry(&program)))
+        }
+        None => client,
+    }
+}
+
+/// The test-support variable naming what a client runs before its retry.
+#[cfg(feature = "test-support")]
+const BEFORE_RETRY: &str = "CTXLOOM_TEST_BEFORE_RETRY";
+
+/// `program` run to its end; one that cannot be run is said on stderr
+/// and the retry goes on (a test's harness, never a shipped path).
+#[cfg(feature = "test-support")]
+fn run_before_retry(program: &std::ffi::OsStr) {
+    let ran = os::process::spawn_tree(std::process::Command::new(program))
+        .and_then(|mut tree| tree.wait());
+    if let Err(error) = ran {
+        eprintln!("ctxloom: {BEFORE_RETRY} {program:?} did not run: {error}");
     }
 }
 
@@ -947,6 +977,28 @@ pub(crate) fn preview_client<'a>(
 /// This command's client of the daemon for a library read (step 10a U2):
 /// its project registered at its root (its id minted there if it has none
 /// yet), else outside a project.
+/// The loadout of a run planned on `profile` (step 10c U13's seed): the
+/// profile as the daemon assembles it, its fragments' bundles.
+#[cfg(feature = "test-support")]
+pub(crate) fn profile_loadout(
+    wiring: &Wiring,
+    stamp: &str,
+    profile: &str,
+) -> Result<sessions::SessionLoadout, Failure> {
+    use daemon_api::LibraryReads;
+    let client = library_client(wiring, stamp)?;
+    let profiles = vec![profile.to_string()];
+    let assembled = answered(
+        client.assemble_context(daemon_proto::v1::AssembleContextRequest {
+            profiles: profiles.clone(),
+            ..daemon_proto::v1::AssembleContextRequest::default()
+        }),
+    )?;
+    Ok(daemon_application::reactions::loadout_of_assembled(
+        "", &profiles, &assembled,
+    ))
+}
+
 pub(crate) fn library_client<'a>(
     wiring: &'a Wiring,
     stamp: &str,
@@ -1160,6 +1212,22 @@ pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_
     }
     ensure_within(&wiring, env, wait);
     serving(&wiring, &files).ok().flatten()
+}
+
+/// The daemon of this home the discovery file names, NOT probed (the lean
+/// hook RPC: a health check is a TLS connection of its own): what a hook's
+/// one call asks first; reached unreachable, it probes ([`hook_daemon`]).
+/// None for a daemon of another home.
+pub(crate) fn hook_daemon_unprobed(env: &Arc<EnvSnapshot>) -> Option<run_ports::Discovery> {
+    let wiring = Wiring::new(Arc::clone(env)).ok()?;
+    let found = files_of(&wiring).discovery()?;
+    (found.home == wiring.home().display().to_string()).then_some(found)
+}
+
+/// `discovery` published as `wiring`'s home's daemon's, for a test.
+#[cfg(test)]
+pub(crate) fn publish_for_test(wiring: &Wiring, discovery: &run_ports::Discovery) {
+    files_of(wiring).publish(discovery).unwrap();
 }
 
 /// The daemon a hook's library read asks when it may start none (its

@@ -656,6 +656,7 @@ mod writes_asked {
             to: "opencode".to_string(),
             apply_command: "ctxloom agent edit dev --engine opencode --yes".to_string(),
             needs: vec![v1::Need {
+                optional: false,
                 id: "confirm".to_string(),
                 kind: Some(v1::need::Kind::Confirm(v1::Confirm {
                     text: "Apply the move of agent \"dev\"?".to_string(),

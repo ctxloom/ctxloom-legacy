@@ -179,6 +179,18 @@ pub enum ApiRejection {
     EtagInvalid {
         etag: String,
     },
+    /// An apply whose preview's etag no longer matches what stands now
+    /// (`v1::PlanStale`, step 10c U11): `seen` the preview's, `now` the
+    /// current one.
+    PlanStale {
+        seen: String,
+        now: String,
+    },
+    /// An apply that does not answer each need its preview asked
+    /// (`v1::NeedsUnanswered`, step 10c U11).
+    NeedsUnanswered {
+        needs: Vec<String>,
+    },
     /// A project's configuration that does not read.
     ConfigUnreadable {
         root: String,
@@ -233,6 +245,8 @@ impl Diagnostic for ApiRejection {
             ApiRejection::HomeGone { .. } => code!("home-gone"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
             ApiRejection::EtagInvalid { .. } => code!("etag-invalid"),
+            ApiRejection::PlanStale { .. } => code!("plan-stale"),
+            ApiRejection::NeedsUnanswered { .. } => code!("needs-unanswered"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
             ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
             ApiRejection::WakeInformOnly { .. } => code!("wake-inform-only"),
@@ -292,6 +306,10 @@ impl Diagnostic for ApiRejection {
                 ]
             }
             ApiRejection::EtagInvalid { etag } => vec![("etag", etag.as_str().into())],
+            ApiRejection::PlanStale { seen, now } => {
+                vec![("seen", seen.as_str().into()), ("now", now.as_str().into())]
+            }
+            ApiRejection::NeedsUnanswered { needs } => vec![("needs", needs.join(", ").into())],
             ApiRejection::ConfigUnreadable { root, detail } => vec![
                 ("root", root.as_str().into()),
                 ("ext_err_txt", detail.as_str().into()),
@@ -338,6 +356,10 @@ pub enum Rejection {
     /// A library read's use case's (E5): its own diagnostic, by the typed
     /// refusal's type.
     LibraryRead(Report),
+    /// A use case's refusal over the plan's fatal findings (a strict
+    /// `materialize`, step 10c U10: `SetupFatalFindings`): its own
+    /// diagnostic, the command's exit 21.
+    FatalFindings(Report),
 }
 
 impl Rejection {
@@ -351,7 +373,7 @@ impl Rejection {
             Rejection::Trust(trust) => Report::of(trust),
             Rejection::Approvals(approvals) => Report::of(approvals),
             Rejection::Library(library) => Report::of(library),
-            Rejection::LibraryRead(read) => read.clone(),
+            Rejection::LibraryRead(read) | Rejection::FatalFindings(read) => read.clone(),
         }
     }
 }
@@ -498,6 +520,14 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
         }),
         "ctxloom.v1.EtagInvalid" => decode::<v1::EtagInvalid>(refusal)
             .and_then(|r| api(ApiRejection::EtagInvalid { etag: r.etag })),
+        "ctxloom.v1.PlanStale" => decode::<v1::PlanStale>(refusal).and_then(|r| {
+            api(ApiRejection::PlanStale {
+                seen: r.seen,
+                now: r.now,
+            })
+        }),
+        "ctxloom.v1.NeedsUnanswered" => decode::<v1::NeedsUnanswered>(refusal)
+            .and_then(|r| api(ApiRejection::NeedsUnanswered { needs: r.need_ids })),
         "ctxloom.v1.ConfigUnreadable" => decode::<v1::ConfigUnreadable>(refusal).and_then(|r| {
             api(ApiRejection::ConfigUnreadable {
                 root: r.root,
@@ -537,9 +567,42 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 })
             })
         }
+        // A setup use case's (step 10c U10): its own diagnostic, by its
+        // code and args.
+        "ctxloom.v1.SetupDeclined" => decode::<v1::SetupDeclined>(refusal)
+            .map(|r| Rejection::LibraryRead(cause_report(r.cause))),
+        "ctxloom.v1.SetupFatalFindings" => decode::<v1::SetupFatalFindings>(refusal)
+            .map(|r| Rejection::FatalFindings(cause_report(r.cause))),
         _ => domain_rejection(refusal)
             .or_else(|| crate::library_refusals::rejection(refusal).map(Rejection::LibraryRead)),
     }
+}
+
+/// The diagnostic a refusal's `cause` is, by its code and its args.
+fn cause_report(cause: Option<v1::Cause>) -> Report {
+    let cause = cause.unwrap_or_default();
+    run_application::client::report_of(&cause.code, &cause.args)
+}
+
+/// A setup use case's error (step 10c U10: `materialize`, `manage
+/// uninstall`, `doctor --fix`), of the class `exit` it says of itself, as
+/// the call answers it: a decline is its typed refusal (`SetupDeclined`),
+/// fatal findings theirs (`SetupFatalFindings`), each carrying the
+/// diagnostic as its cause; a failure is said in its own words.
+pub fn setup_error(error: &dyn Diagnostic, exit: Exit) -> ApiError {
+    let cause = || {
+        Some(v1::Cause {
+            code: error.code().to_string(),
+            args: run_application::client::flat_args(error),
+        })
+    };
+    if exit == Exit::FATAL_FINDINGS {
+        return ApiError::Refused(ApiRefusal::of(&v1::SetupFatalFindings { cause: cause() }));
+    }
+    if exit == Exit::REFUSED {
+        return ApiError::Refused(ApiRefusal::of(&v1::SetupDeclined { cause: cause() }));
+    }
+    ApiError::diagnosed(error)
 }
 
 /// `refusal`, as the domain message its type names, typed: the first of
@@ -615,11 +678,8 @@ fn domain_rejection(refusal: &Any) -> Option<Rejection> {
     let library: Option<angzarr_embedded::markup::TypedRefusal> = typed_as!(
         refusal,
         [
-            library_tree::NotInGit,
-            library_tree::LibraryIgnored,
             library_tree::PlanRejected,
             // A write's (step 10b U3).
-            library_tree::TreeInMotion,
             library_tree::ResourceExists,
             library_tree::NoSuchResource,
             library_tree::BuiltinReadOnly,
@@ -644,18 +704,7 @@ pub fn library_refusal(rejection: &library_tree::LibraryTreeRejection) -> ApiRef
         )
     }
     match rejection.clone() {
-        Why::NotInGit { root } => typed(&library_tree::NotInGit { root }),
-        Why::LibraryIgnored {
-            source,
-            line,
-            pattern,
-        } => typed(&library_tree::LibraryIgnored {
-            source,
-            line,
-            pattern,
-        }),
         Why::PlanRejected { code, args } => typed(&library_tree::PlanRejected { code, args }),
-        Why::TreeInMotion { motion, root } => typed(&library_tree::TreeInMotion { motion, root }),
         Why::PlanStale { path, seen, now } => typed(&library_tree::PlanStale { path, seen, now }),
         Why::ResourceExists { path } => typed(&library_tree::ResourceExists { path }),
         Why::NoSuchResource { path } => typed(&library_tree::NoSuchResource { path }),
@@ -726,6 +775,13 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ApiRejection::EtagInvalid {
             etag: "abc".to_string(),
         }),
+        Box::new(ApiRejection::PlanStale {
+            seen: "5d3c".to_string(),
+            now: "9a1e".to_string(),
+        }),
+        Box::new(ApiRejection::NeedsUnanswered {
+            needs: vec!["confirm".to_string()],
+        }),
         Box::new(ApiRejection::ConfigUnreadable {
             root: "/work/calm".to_string(),
             detail: "it does not parse".to_string(),
@@ -780,7 +836,7 @@ pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
 /// (`ctxloom.v1.Deps*`, E5, `library_refusals::read_decline`); any other
 /// decline (a write's, 10b) rides as `LibraryDeclined`, its cause the
 /// decline's own code and args.
-pub(crate) fn deps_error(error: &deps_application::AppError) -> ApiError {
+pub fn deps_error(error: &deps_application::AppError) -> ApiError {
     use exit_code::ExitClass;
     let declined = |d: &dyn angzarr_diagnostic::Diagnostic| {
         ApiError::Refused(ApiRefusal::of(&daemon_proto::v1::LibraryDeclined {

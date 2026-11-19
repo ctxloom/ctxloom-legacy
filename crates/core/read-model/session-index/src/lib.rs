@@ -93,6 +93,102 @@ pub struct SessionRecord {
     /// Its resource name, `projects/{project}/sessions/{session}` (slice 2
     /// B3); empty while its project has no harp.
     pub name: String,
+    /// What its run was last planned to draw on (step 10c U13): none until
+    /// one is recorded.
+    pub loadout: Option<sessions::SessionLoadout>,
+    /// What its context covers and what it is owed (step 10c U13
+    /// rework): none until a loadout is recorded.
+    pub context: Option<Handed>,
+}
+
+/// The context a session was handed and what it is owed since (step 10c
+/// U13 rework, owner 2026-11-18: "the projection updates the worker
+/// agents"): its loadout's, re-assemblies' and owed changes' events folded.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Handed {
+    /// When its loadout was recorded: a tree it covers no position of is
+    /// owed the changes recorded after it.
+    pub loaded_at: Timestamp,
+    /// Per tree, the last sequence its context covers.
+    pub covered: BTreeMap<String, u64>,
+    /// The changes owed past `covered`, in the order recorded, one per tree
+    /// and sequence (bundles merged).
+    pub owed: Vec<OwedChange>,
+}
+
+/// One library change a session is owed (`ContextOwed`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OwedChange {
+    pub tree: String,
+    pub sequence: u64,
+    /// The loadout's bundles (and `config`) it touched, sorted.
+    pub bundles: Vec<String>,
+    /// The paths of it the loadout draws on, sorted.
+    pub paths: Vec<String>,
+}
+
+impl Handed {
+    /// Whether a change of `tree` at `sequence`, recorded at `recorded`, is
+    /// one this context has not been given: past its covered position on
+    /// that tree, or, covering none there, recorded after its loadout.
+    pub fn owes(&self, tree: &str, sequence: u64, recorded: Timestamp) -> bool {
+        match self.covered.get(tree) {
+            Some(covered) => sequence > *covered,
+            None => {
+                (recorded.seconds, recorded.nanos) > (self.loaded_at.seconds, self.loaded_at.nanos)
+            }
+        }
+    }
+
+    /// The positions a delivery of everything owed now covers: each owed
+    /// tree's latest sequence; empty when nothing is owed.
+    pub fn owed_positions(&self) -> Vec<sessions::TreePosition> {
+        let mut latest: BTreeMap<&str, u64> = BTreeMap::new();
+        for owed in &self.owed {
+            let at = latest.entry(owed.tree.as_str()).or_default();
+            *at = (*at).max(owed.sequence);
+        }
+        latest
+            .into_iter()
+            .map(|(tree, sequence)| sessions::TreePosition {
+                tree: tree.to_string(),
+                sequence,
+            })
+            .collect()
+    }
+
+    /// Every path owed, with its tree, sorted, each once.
+    pub fn owed_paths(&self) -> Vec<(String, String)> {
+        let named: std::collections::BTreeSet<(String, String)> = self
+            .owed
+            .iter()
+            .flat_map(|owed| {
+                owed.paths
+                    .iter()
+                    .map(|path| (owed.tree.clone(), path.clone()))
+            })
+            .collect();
+        named.into_iter().collect()
+    }
+
+    /// Every bundle owed, sorted, each once.
+    pub fn owed_bundles(&self) -> Vec<String> {
+        let named: std::collections::BTreeSet<&String> =
+            self.owed.iter().flat_map(|owed| &owed.bundles).collect();
+        named.into_iter().cloned().collect()
+    }
+
+    /// `positions` covered: each one's tree moved up to it, and every
+    /// change owed at or below it given.
+    fn cover(&mut self, positions: &[sessions::TreePosition]) {
+        for position in positions {
+            let at = self.covered.entry(position.tree.clone()).or_default();
+            *at = (*at).max(position.sequence);
+        }
+        let covered = &self.covered;
+        self.owed
+            .retain(|owed| covered.get(&owed.tree).is_none_or(|at| owed.sequence > *at));
+    }
 }
 
 /// A project as its stream says it (S54, and its registration, owner
@@ -119,6 +215,9 @@ pub struct SessionIndex {
     /// Each project's harp (S54), by its project stream's root: its id and
     /// the harp it was named with.
     projects: BTreeMap<Vec<u8>, ProjectRow>,
+    /// Each session's last recorded loadout (step 10c U13), by root, and
+    /// what its context covers and is owed.
+    loadouts: BTreeMap<Vec<u8>, (sessions::SessionLoadout, Handed)>,
 }
 
 /// A session's transcript as folded so far.
@@ -209,12 +308,14 @@ impl SessionIndex {
             if book.next_sequence == 0 {
                 self.streams.remove(&root);
                 self.transcripts.remove(&root);
+                self.loadouts.remove(&root);
             }
             return Ok(());
         };
         let mut session = match first.sequence {
             0 => {
                 self.transcripts.remove(&root);
+                self.loadouts.remove(&root);
                 SessionAggregate::default()
             }
             _ => self.streams.remove(&root).unwrap_or_default(),
@@ -237,10 +338,69 @@ impl SessionIndex {
                 .as_ref()
                 .and_then(|meta| meta.recorded_at)
                 .unwrap_or_default();
+            self.handed(&root, &event, recorded);
             self.transcribe(&root, &session, page.sequence, recorded, &event);
         }
         self.streams.insert(root, session);
         Ok(())
+    }
+
+    /// What `event`, recorded at `recorded` on the stream rooted at `root`,
+    /// says of the context the session was handed (step 10c U13): a loadout
+    /// is its plan's, a re-assembly is handed since.
+    fn handed(&mut self, root: &[u8], event: &SessionEvent, recorded: Timestamp) {
+        match event {
+            // A loadout is a fresh assembly: owed only what is past it.
+            SessionEvent::LoadoutRecorded(loadout) => {
+                let mut handed = Handed {
+                    loaded_at: recorded,
+                    ..Handed::default()
+                };
+                handed.cover(&loadout.covered);
+                self.loadouts
+                    .insert(root.to_vec(), (loadout.loadout.clone(), handed));
+            }
+            SessionEvent::ContextOwed(owed) => {
+                let Some((_, handed)) = self.loadouts.get_mut(root) else {
+                    return;
+                };
+                if handed
+                    .covered
+                    .get(&owed.tree)
+                    .is_some_and(|at| owed.sequence <= *at)
+                {
+                    return;
+                }
+                let known = handed
+                    .owed
+                    .iter_mut()
+                    .find(|o| o.tree == owed.tree && o.sequence == owed.sequence);
+                match known {
+                    Some(known) => {
+                        let mut bundles: std::collections::BTreeSet<String> =
+                            known.bundles.drain(..).collect();
+                        bundles.extend(owed.bundles.iter().cloned());
+                        known.bundles = bundles.into_iter().collect();
+                        let mut paths: std::collections::BTreeSet<String> =
+                            known.paths.drain(..).collect();
+                        paths.extend(owed.paths.iter().cloned());
+                        known.paths = paths.into_iter().collect();
+                    }
+                    None => handed.owed.push(OwedChange {
+                        tree: owed.tree.clone(),
+                        sequence: owed.sequence,
+                        bundles: owed.bundles.clone(),
+                        paths: owed.paths.clone(),
+                    }),
+                }
+            }
+            SessionEvent::ContextRedelivered(redelivered) => {
+                if let Some((_, handed)) = self.loadouts.get_mut(root) {
+                    handed.cover(&redelivered.covered);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Fold `event`, page `sequence` of the stream rooted at `root` recorded
@@ -275,6 +435,8 @@ impl SessionIndex {
         SessionRecord {
             last_captured: self.transcripts.get(root).and_then(|t| t.last),
             name: self.name_of(&record),
+            loadout: self.loadouts.get(root).map(|(loadout, _)| loadout.clone()),
+            context: self.loadouts.get(root).map(|(_, handed)| handed.clone()),
             ..record
         }
     }
@@ -477,6 +639,8 @@ fn record_of(root: &[u8], session: &SessionAggregate) -> SessionRecord {
         children: state.children.clone(),
         title: state.title.clone(),
         name: String::new(),
+        loadout: None,
+        context: None,
     }
 }
 

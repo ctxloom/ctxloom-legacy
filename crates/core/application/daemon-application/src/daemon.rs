@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use angzarr_embedded::v1::Uuid;
+use angzarr_embedded::v1::{Cover, Uuid};
 use angzarr_embedded::{Catalog, CatchUp, Failure, Processed, ReadStore, Store, Watch};
 use daemon_board::Boards;
 use pending_launches::{PendingLaunch, PendingModel, StartedRun};
@@ -179,6 +179,9 @@ struct Planned {
     hosted: run_application::HostedChild,
     axis: String,
     agent: String,
+    /// What its plan draws on (step 10c U13): recorded on its session once
+    /// its run is enqueued.
+    loadout: sessions::SessionLoadout,
 }
 
 impl std::ops::Deref for Planned {
@@ -257,6 +260,9 @@ pub struct Daemon<E: Edge> {
     trusts: CatchUp<trust_index::TrustIndexes>,
     approvals: CatchUp<pending_approvals::PendingApprovals>,
     checkouts: CatchUp<library_checkout::LibraryCheckouts>,
+    /// What each live session is owed (step 10c U13 rework), its
+    /// positions in the store; none until [`Daemon::owing`].
+    owed: Option<CatchUp<crate::owed::OwedContexts<E>>>,
     launches: CatchUp<PendingModel>,
     /// Each hosted child's environment, by its session's stable id: its
     /// launcher's, taken from the hand-off at its first start (S6, D-N45),
@@ -407,6 +413,7 @@ impl<E: Edge> Daemon<E> {
             trusts: trust_index::caught_up(folds.trusts),
             approvals: pending_approvals::caught_up(folds.approvals),
             checkouts: library_checkout::caught_up(folds.checkouts),
+            owed: None,
             launches: pending_launches::catch_up(),
             envs: BTreeMap::new(),
             hosted: BTreeMap::new(),
@@ -465,6 +472,20 @@ impl<E: Edge> Daemon<E> {
     /// the ONE named exception to "the daemon never reads a hold").
     pub fn flushing_at_start(mut self, holds: Arc<dyn crate::StartHolds>) -> Daemon<E> {
         self.start_holds = Some(holds);
+        self
+    }
+
+    /// The daemon, recording what each live session is owed as each round
+    /// catches up (step 10c U13 rework), each session's trees told by
+    /// `trees`.
+    pub fn owing(mut self, trees: Arc<dyn crate::owed::SessionTrees>) -> Daemon<E> {
+        let owed = crate::owed::OwedContexts::new(
+            Arc::clone(&self.edge),
+            self.index.projector().clone(),
+            self.checkouts.projector().clone(),
+            trees,
+        );
+        self.owed = Some(crate::owed::caught_up(owed));
         self
     }
 
@@ -997,6 +1018,18 @@ impl<E: Edge> Daemon<E> {
         let _ = self.trusts.step_if_changed(store, catalog).await;
         let _ = self.approvals.step_if_changed(store, catalog).await;
         let _ = self.checkouts.step_if_changed(store, catalog).await;
+        // Once the index and the checkouts are caught up: what each live
+        // session is owed, recorded on it, and the index caught up with it.
+        if let Some(owed) = self.owed.as_mut() {
+            if let Ok(Some(caught)) = owed.step_if_changed(store, catalog).await {
+                for (cover, failure) in caught.failures() {
+                    if self.complained.insert(format!("owed:{}", cover.domain)) {
+                        (self.say)(&format!("an owed context not recorded: {failure:?}"));
+                    }
+                }
+            }
+            let _ = self.index.step_if_changed(store, catalog).await;
+        }
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
         }
@@ -1238,6 +1271,9 @@ impl<E: Edge> Daemon<E> {
         // The child's project's trust, as the daemon's index has it now
         // (step 8 U2): its own settings apply only once the user trusts it.
         let trusted = self.trusts.projector().index().trusts(project_id);
+        // Where its project's trees are, read BEFORE it is planned (step 10c
+        // U13 rework): a change recorded past them is owed to it.
+        let covered = self.positions_of(project_id);
         let child = match self.plan_child(&hosted_engine, &handed.agent, project_dir, &env, trusted)
         {
             Ok(child) => child,
@@ -1277,7 +1313,7 @@ impl<E: Edge> Daemon<E> {
             })
             .await;
         match enqueued {
-            Ok(_) => {}
+            Ok(_) => self.record_loadout(&at, &child.loadout, covered).await,
             // Judged as any child is (rulings 53, 73e): refused for good.
             Err(EnqueueError::Refused(rejection)) => {
                 let code = angzarr_diagnostic::Diagnostic::code(&rejection).to_string();
@@ -1514,6 +1550,58 @@ impl<E: Edge> Daemon<E> {
         );
     }
 
+    /// The loadout of the incarnation `at` planned on, recorded on its
+    /// session (step 10c U13; keyed by the session and the incarnation, so
+    /// a retried start records it once). One not recorded is said: the
+    /// child runs, and a change is told it at no hook.
+    async fn record_loadout(
+        &mut self,
+        at: &RunAt,
+        loadout: &sessions::SessionLoadout,
+        covered: Vec<sessions::TreePosition>,
+    ) {
+        let Ok(root) = uuid::Uuid::parse_str(&at.session) else {
+            return;
+        };
+        let cover = Cover {
+            domain: sessions::SESSION_DOMAIN.to_string(),
+            root: Some(Uuid::from_bytes(*root.as_bytes())),
+            edition: None,
+        };
+        let fact = sessions::RecordLoadout {
+            loadout: loadout.clone(),
+            incarnation: at.incarnation,
+            covered,
+        };
+        let key = sessions::loadout_key(&at.session, at.incarnation);
+        if let Err(failure) = self
+            .edge
+            .handle(sessions::fact_book(cover, &fact, &key))
+            .await
+        {
+            (self.say)(&format!("its loadout was not recorded: {failure:?}"));
+        }
+    }
+
+    /// Where each library tree of the project `project_id` (each checkout's)
+    /// and the home's are, as the checkouts projection holds them now:
+    /// every tree's latest sequence that changed a path (step 10c U13
+    /// rework), sorted by tree.
+    fn positions_of(&self, project_id: &str) -> Vec<sessions::TreePosition> {
+        let prefix = self
+            .index
+            .projector()
+            .index()
+            .project_harp(project_id)
+            .map(|harp| format!("projects/{harp}/checkouts/"));
+        crate::owed::positions(&self.checkouts.projector().checkouts(), |tree| {
+            tree == library_tree::HOME_TREE
+                || prefix
+                    .as_ref()
+                    .is_some_and(|prefix| tree.starts_with(prefix))
+        })
+    }
+
     /// The hosted child of `project_dir` on `engine`, planned by its
     /// project's dry run and judged on `env` (D-N46, D-N47); the plan's
     /// error code where it cannot be planned.
@@ -1534,6 +1622,7 @@ impl<E: Edge> Daemon<E> {
             .find(|agent| !agent.is_empty())
             .cloned()
             .unwrap_or_default();
+        let loadout = crate::reactions::loadout_of_plan(&agent, &plan.profiles, &plan.fragments);
         Ok(Planned {
             hosted: run_application::hosted_child(
                 &previewed,
@@ -1544,6 +1633,7 @@ impl<E: Edge> Daemon<E> {
             ),
             axis: plan.axes.0.clone(),
             agent,
+            loadout,
         })
     }
 

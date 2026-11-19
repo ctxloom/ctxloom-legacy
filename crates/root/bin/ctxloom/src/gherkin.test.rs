@@ -41,6 +41,9 @@ struct Planted {
     keep: bool,
     summary: bool,
     no_lock: bool,
+    /// The profile its run was planned on (step 10c U13), so its loadout
+    /// names that profile's bundles.
+    profile: Option<String>,
 }
 
 #[derive(cucumber::World)]
@@ -92,6 +95,8 @@ struct World {
     init_companions: init_companions::State,
     /// What step 10b's write steps keep.
     writes: writes::State,
+    /// What step 10c's reaction steps keep.
+    reactions: reactions::State,
     /// What the CLI contract features' steps keep.
     cli: cli::State,
 }
@@ -169,6 +174,7 @@ impl World {
             distill: distill::State::default(),
             init_companions: init_companions::State::default(),
             writes: writes::State::default(),
+            reactions: reactions::State::default(),
             cli: cli::State::default(),
         }
     }
@@ -221,6 +227,9 @@ impl World {
             }
             if session.keep {
                 flags.push("--keep");
+            }
+            if let Some(profile) = &session.profile {
+                flags.extend(["--profile", profile]);
             }
             let ran = self.common.project.run(&flags);
             assert_eq!(ran.code, 0, "seeding {}: {}", session.harp, ran.said());
@@ -403,6 +412,7 @@ impl World {
             keep: false,
             summary: false,
             no_lock: false,
+            profile: None,
         });
         self.planted.last_mut().expect("just pushed")
     }
@@ -456,6 +466,8 @@ mod writes;
 
 #[path = "gherkin_cli.test.rs"]
 mod cli;
+#[path = "gherkin_reactions.test.rs"]
+mod reactions;
 
 // ------------------------------------------------------------------ given
 
@@ -545,6 +557,18 @@ fn running_again(w: &mut World, harp: String) {
 #[given(expr = "a session {string} that is still running")]
 fn still_running(w: &mut World, harp: String) {
     w.plant(&harp, "running");
+}
+
+#[given(expr = "a session {string} that is still running on the profile {string}")]
+fn still_running_on(w: &mut World, harp: String, profile: String) {
+    w.plant(&harp, "running").profile = Some(profile);
+    // Planted after the Background's reads, which seeded what was planted
+    // then (nothing), and seeded NOW (step 10c U13): its run is planned on
+    // the profile as the Given says, before the scenario changes anything.
+    // Seeded at the next command, its plan's assembly (a read) would see
+    // the change first, and its context would hold it already.
+    w.seeded = false;
+    w.seed();
 }
 
 #[given(expr = "a session {string} nothing can prove the liveness of")]

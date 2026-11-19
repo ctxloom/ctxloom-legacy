@@ -634,10 +634,44 @@ impl<E: Edge> Api<E> {
                     .await;
             }
         }
+        // The apply of a preview (its etag sent back, step 10c U11): what
+        // the person was shown is what is destroyed, and she answered it.
+        // A session already gone is a retry's, answered below.
+        let known = self.parts.index.index().find_by_id(&name.uid()).is_some();
+        if write && !request.etag.is_empty() && known {
+            if !confirmed(&request.answers) {
+                return Err(ApiError::from(ApiRefusal::of(&v1::NeedsUnanswered {
+                    need_ids: vec![CONFIRM_NEED.to_string()],
+                })));
+            }
+            let now = removal_etag(&self.judged(&request, &name, false).await?);
+            if now != request.etag {
+                return Err(ApiError::from(ApiRefusal::of(&v1::PlanStale {
+                    seen: request.etag.clone(),
+                    now,
+                })));
+            }
+        }
+        let mut plan = self.judged(&request, &name, write).await?;
+        if !write {
+            plan.needs = vec![removal_confirm(&plan.harp)];
+            plan.etag = removal_etag(&plan);
+        }
+        Ok(plan)
+    }
+
+    /// `request`'s session `name` judged by the removal's own refusals, and
+    /// destroyed when `write`; else its plan.
+    async fn judged(
+        &self,
+        request: &v1::DeleteSessionRequest,
+        name: &SessionName,
+        write: bool,
+    ) -> Result<v1::DeleteSessionResponse, ApiError> {
         let record = self.parts.index.index().find_by_id(&name.uid());
         let Some(record) = record else {
             return match write && !request.request_id.is_empty() {
-                true => self.destroyed(&request.name, &name).await,
+                true => self.destroyed(&request.name, name).await,
                 false => Err(not_found(&request.name)),
             };
         };
@@ -656,7 +690,7 @@ impl<E: Edge> Api<E> {
             RemoveRequest {
                 project: Some(record.project_id.clone()),
                 harp: record.harp.clone(),
-                yes: !request.validate_only,
+                yes: write,
                 even_if_live: request.even_if_live,
             },
         )
@@ -1030,6 +1064,48 @@ fn verdict_word(verdict: reclaim_application::Verdict) -> &'static str {
 }
 
 /// A removal (and its worktrees), as `DeleteSession` answers it.
+/// The id of a session removal's one need, its confirmation.
+pub(crate) const CONFIRM_NEED: &str = "confirm";
+
+/// A session removal's Confirm need (step 10c U11): its question, and its
+/// target as the arg a client renders the preview's words with.
+pub(crate) fn removal_confirm(harp: &str) -> v1::Need {
+    let target = format!("session \"{harp}\"");
+    v1::Need {
+        id: CONFIRM_NEED.to_string(),
+        kind: Some(v1::need::Kind::Confirm(v1::Confirm {
+            text: format!("Remove {target}?"),
+            code: String::new(),
+            args: vec![v1::NeedArg {
+                name: "target".to_string(),
+                value: target,
+            }],
+        })),
+        optional: false,
+    }
+}
+
+/// Whether `answers` confirm the removal's need.
+pub(crate) fn confirmed(answers: &[v1::Answer]) -> bool {
+    answers.iter().any(|answer| {
+        answer.need_id == CONFIRM_NEED && answer.answer == Some(v1::answer::Answer::Confirmed(true))
+    })
+}
+
+/// The etag of a removal's plan (AIP-154, step 10c U11): the UUIDv5 of
+/// what it destroys, each file and its size and each worktree and its
+/// verdict, so a plan that changed since its preview is told apart.
+pub(crate) fn removal_etag(plan: &v1::DeleteSessionResponse) -> String {
+    let mut said = format!("{}\n", plan.harp);
+    for file in &plan.files {
+        said.push_str(&format!("f {} {} {}\n", file.rel, file.class, file.bytes));
+    }
+    for row in plan.worktrees.iter().flat_map(|w| &w.worktrees) {
+        said.push_str(&format!("w {} {}\n", row.path, row.verdict));
+    }
+    sessions::root_of(&format!("ctxloom:removal-etag:{said}")).to_string()
+}
+
 pub(crate) fn deletion(
     name: &str,
     removal: &Removal,

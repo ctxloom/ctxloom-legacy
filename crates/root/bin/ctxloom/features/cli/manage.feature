@@ -52,12 +52,16 @@ Feature: manage — wiring ctxloom into a project, and taking it back out
     # in its session home, never in the project.
     Scenario Outline: Installing scaffolds the project and writes no engine file
       # substitution: the nested .gitignore is also asserted to name the private cache, the rule that keeps ctxloom's working state out of source control.
+      # changed: step 10 U6, the scaffold is init's.
+      # DRAFT (the library is git-free, owner 2026-11-18): was "a directory in no repository is made one, and nothing is committed" (G1, superseded).
       Given an empty project directory
       When Alice installs ctxloom for <engine>:
         """
         ctxloom manage install --engine <engine> --no-pull
         """
       Then the command succeeds
+      And the output does not contain "git repository"
+      And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" is valid YAML
       And the file ".ctxloom/config.yaml" contains "<engine>"
       And the file ".ctxloom/.gitignore" contains "ctxloom"
@@ -187,6 +191,7 @@ Feature: manage — wiring ctxloom into a project, and taking it back out
     # files catch an install that scaffolded a project around an engine nobody
     # supports.
     Scenario: A misspelled engine is refused by name, and nothing is scaffolded
+      # changed: step 10 G1, a refused install runs no git init either.
       Given an empty project directory
       When Alice mistypes the engine name:
         """
@@ -197,6 +202,7 @@ Feature: manage — wiring ctxloom into a project, and taking it back out
       And the output contains "totally-bogus-engine"
       And the output contains "claude-code"
       And the file ".ctxloom/config.yaml" does not exist
+      And the file ".git" does not exist
       And the file ".mcp.json" does not exist
 
   Rule: Config create selects the engine without writing any engine files

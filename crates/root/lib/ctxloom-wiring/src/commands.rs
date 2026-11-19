@@ -37,31 +37,44 @@ const OWN_NOUNS: [&str; 2] = ["remote", "deps"];
 /// The dependency use cases over the process's home, working directory and
 /// project.
 pub(crate) fn build_deps(wiring: &Wiring) -> Result<Deps, LibError> {
-    let fs = wiring.fs();
+    let (_, app) = wiring.locate();
+    let files = Arc::new(ProjectFiles::new(wiring.fs(), app.path.clone()));
+    build_deps_over(wiring, files.clone(), files)
+}
+
+/// The dependency use cases over `store`, the deps files they read and
+/// write (a recording one in the daemon, step 10c U4); `files` the
+/// project's own, which a clone's token is looked up in.
+pub(crate) fn build_deps_over(
+    wiring: &Wiring,
+    store: Arc<dyn DepsFiles>,
+    files: Arc<ProjectFiles>,
+) -> Result<Deps, LibError> {
     let env = Arc::clone(wiring.env());
     let (_, app) = wiring.locate();
-    let files = Arc::new(ProjectFiles::new(Arc::clone(&fs), app.path.clone()));
     Ok(Deps::new(
-        Arc::new(
-            GitRemotes::new(
-                Arc::clone(&fs),
-                app.path.join("cache/repos"),
-                Arc::clone(&env),
-            )
-            .with_credentials(
-                Arc::new({
-                    let env = Arc::clone(&env);
-                    move |name| env.utf8(name).map(String::from)
-                }),
-                token_vars(Arc::clone(&files)),
-            ),
-        ),
-        files,
-        Arc::new(ContentFs::new(fs, &app.path)),
+        Arc::new(git_remotes(wiring, files)),
+        store,
+        Arc::new(ContentFs::new(wiring.fs(), &app.path)),
     )
     .with_forge(Arc::new(GitHub::with_env(move |name| {
         env.utf8(name).map(String::from)
     }))))
+}
+
+/// The remotes over git, in `wiring`'s environment (the caller's, in the
+/// daemon: step 10c U4), cloned under its project's cache; a clone's token
+/// looked up in `files`' registry.
+pub(crate) fn git_remotes(wiring: &Wiring, files: Arc<ProjectFiles>) -> GitRemotes {
+    let env = Arc::clone(wiring.env());
+    let (_, app) = wiring.locate();
+    GitRemotes::new(wiring.fs(), app.path.join("cache/repos"), Arc::clone(&env)).with_credentials(
+        Arc::new({
+            let env = Arc::clone(&env);
+            move |name| env.utf8(name).map(String::from)
+        }),
+        token_vars(files),
+    )
 }
 
 /// `run --one-shot`, or `run` (the human's session): the user's daemon plans
@@ -114,9 +127,9 @@ impl Puller for DepsPuller {
 /// into the project's directory, with the context of an engine whose context
 /// rides the launch left alone. Without consent it is a dry run, and answers
 /// only what would change.
-struct SetupRefresh<'a> {
-    setup: &'a Setup,
-    flags: library_application::Flags,
+pub(crate) struct SetupRefresh<'a> {
+    pub(crate) setup: &'a Setup,
+    pub(crate) flags: library_application::Flags,
 }
 
 impl ProjectRefresh for SetupRefresh<'_> {
@@ -246,9 +259,22 @@ pub fn hosted_engines(wiring: &Wiring, program: &str) -> Vec<daemon_application:
 
 /// The setup use cases over the process's home, working directory and
 /// project.
-fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
+pub(crate) fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
+    let files = Arc::new(SurfaceFiles::new(
+        wiring.fs(),
+        wiring.home().join(".ctxloom/records"),
+    ));
+    build_setup_over(wiring, deps, files)
+}
+
+/// The setup use cases over `files`, the surface store they deliver
+/// through (a recording one in the daemon, step 10c U10).
+pub(crate) fn build_setup_over(
+    wiring: &Wiring,
+    deps: Rc<Deps>,
+    files: Arc<SurfaceFiles>,
+) -> Result<Setup, LibError> {
     let fs = wiring.fs();
-    let home = wiring.home().to_path_buf();
     let cwd = wiring.env().cwd().unwrap_or_else(|_| PathBuf::from("."));
     let (_, app) = wiring.locate();
     let project_dir = match app.source {
@@ -257,10 +283,6 @@ fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
         }
         ctxloom_ports::Source::Home => cwd.clone(),
     };
-    let files = Arc::new(SurfaceFiles::new(
-        Arc::clone(&fs),
-        home.join(".ctxloom/records"),
-    ));
     let library = crate::library::build(wiring, Some(deps.clone()))?;
     Ok(Setup::new(
         library,
@@ -278,10 +300,11 @@ fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibError> {
     .with_hook_library(Box::new(
         crate::hook_library::DaemonHookLibrary::starting_now(Arc::clone(wiring.env())),
     ))
-    // A primary's pending messages, delivered by its hooks (the terminal
-    // wake), through the daemon too.
-    .with_hook_messages(Box::new(
-        crate::hook_messages::DaemonHookMessages::starting_now(Arc::clone(wiring.env())),
+    // What a live session's hooks carry (a primary's pending messages, the
+    // terminal wake, and what it is owed, U13), through the daemon too, in
+    // ONE call (the lean hook RPC).
+    .with_hook_contexts(Box::new(
+        crate::hook_messages::DaemonHookContexts::starting_now(Arc::clone(wiring.env())),
     )))
 }
 
@@ -376,7 +399,7 @@ impl Commands {
                 .with_remotes(deps.clone())
                 .with_version(&self.version);
             let surface = build_setup(&wiring, deps.clone())?;
-            let setup = SetupUseCases::build(&wiring, deps.clone(), &self.version)?;
+            let setup = SetupUseCases::build(&wiring, &self.version)?;
             self.wired = Some(Wired {
                 deps,
                 library,
@@ -414,34 +437,20 @@ impl Commands {
         let uses = setup_cli::UseCases {
             auth: &wired.setup.auth,
             cleaning: &cleaning,
+            fixing: &cleaning,
+            reading: &cleaning,
+            globals: library_api::reads::globals_of(&call.globals),
             doctor: &wired.setup.doctor,
-            init: &wired.setup.init,
+            initializing: &cleaning,
             terminal: &terminal,
             sessions: &sessions,
             prompts: &sessions,
             companions: &sessions,
         };
-        let done = setup_cli::run(&uses, noun, call, catalog, out, err)?;
-        if mints(noun, call) {
-            // `init` names the project it set up (owner rulings 2026-11-13
-            // and 14: it mints the project's id), at the root the one
-            // resolver finds now that its `.ctxloom` is there.
-            Wiring::new(Arc::clone(&env))
-                .and_then(|wiring| wiring.mint_project())
-                .map_err(|e| Failure::new(e, Exit::FAILED))?;
-        }
-        Ok(done)
+        // `init` names the project it set up (owner rulings 2026-11-13 and
+        // 14), as the daemon named it (step 10c U6: `Initializing`).
+        setup_cli::run(&uses, noun, call, catalog, out, err)
     }
-}
-
-/// Whether the setup command `noun` mints its project's id: a bare `init`
-/// (owner ruling 2026-11-13), never `init prompt`, which only prints.
-fn mints(noun: &str, call: &Call<'_>) -> bool {
-    noun == "init"
-        && call
-            .matches
-            .subcommand_matches(noun)
-            .is_some_and(|init| init.subcommand_name().is_none())
 }
 
 impl Extension for Commands {
@@ -591,23 +600,20 @@ impl Commands {
             }
         }
         if SURFACE_NOUNS.contains(&noun) {
-            return surface_cli::run(&wired.surface, noun, call, catalog, out, err);
+            let foreign = crate::library::DaemonServed::new(Arc::clone(&env), version.clone());
+            return surface_cli::run(&wired.surface, &foreign, noun, call, catalog, out, err);
         }
         let ours =
             OWN_NOUNS.contains(&noun) || (noun == "bundle" && deps_cli::is_bundle_verb(&verb));
         if !ours {
             return wired.library.run(noun, call, catalog, out, err);
         }
-        let refresh = SetupRefresh {
-            setup: &wired.surface,
-            flags: call.globals.clone(),
-        };
         let served = crate::library::DaemonServed::new(env, version);
+        let globals = library_api::reads::globals_of(&call.globals);
         deps_cli::run(
             &wired.deps,
-            &refresh,
             &names,
-            &served,
+            (&served, Some(globals)),
             noun,
             call,
             catalog,

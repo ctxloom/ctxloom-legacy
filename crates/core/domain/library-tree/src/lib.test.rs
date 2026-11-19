@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use angzarr_diagnostic::Diagnostic;
 
-use crate::{diagnostic_samples, motion_word, LibraryTreeRejection, Motion, EN_US, LIBRARY_DOMAIN};
+use crate::{diagnostic_samples, LibraryTreeRejection, EN_US, LIBRARY_DOMAIN};
 
 #[test]
 fn the_domain_name_is_library() {
@@ -24,7 +24,7 @@ fn every_diagnostic_has_a_message_and_its_code_is_prefixed() {
             assert!(catalog.contains(&format!("${arg}")), "{code} uses {arg}");
         }
     }
-    assert_eq!(diagnostic_samples().len(), 10);
+    assert_eq!(diagnostic_samples().len(), 7);
 }
 
 #[test]
@@ -73,54 +73,20 @@ fn each_rejection_names_its_args() {
         names(LibraryTreeRejection::BuiltinReadOnly { bundle: path() }),
         ["bundle"]
     );
-    assert_eq!(
-        names(LibraryTreeRejection::TreeInMotion {
-            motion: Motion::Merging,
-            root: path()
-        }),
-        ["motion", "root"]
-    );
-    assert_eq!(
-        names(LibraryTreeRejection::NotInGit { root: path() }),
-        ["root"]
-    );
-    assert_eq!(
-        names(LibraryTreeRejection::LibraryIgnored {
-            source: path(),
-            line: 1,
-            pattern: path()
-        }),
-        ["source", "line", "pattern"]
-    );
 }
 
 #[test]
 fn rejections_display_their_code() {
     assert_eq!(
-        LibraryTreeRejection::NotInGit {
-            root: "/w".to_string()
+        LibraryTreeRejection::ResourceExists {
+            path: "x".to_string()
         }
         .code(),
-        "library-tree-not-in-git"
+        "library-tree-resource-exists"
     );
-    assert!(LibraryTreeRejection::NotInGit {
-        root: "/w".to_string()
+    assert!(LibraryTreeRejection::ResourceExists {
+        path: "x".to_string()
     }
     .to_string()
-    .starts_with("library-tree-not-in-git"));
-}
-
-#[test]
-fn each_motion_is_its_catalogs_selector() {
-    let (_, catalog) = EN_US;
-    for (motion, word) in [
-        (Motion::IndexLocked, "index-locked"),
-        (Motion::Merging, "merging"),
-        (Motion::Rebasing, "rebasing"),
-        (Motion::CherryPicking, "cherry-picking"),
-        (Motion::Reverting, "reverting"),
-    ] {
-        assert_eq!(motion_word(motion), word);
-        assert!(catalog.contains(&format!("[{word}]")), "{word}");
-    }
+    .starts_with("library-tree-resource-exists"));
 }

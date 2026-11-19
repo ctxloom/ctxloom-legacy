@@ -53,6 +53,7 @@ pub fn remotes(parent: &str, listing: &RemoteListing) -> v1::ListRemotesResponse
             .map(|row| v1::Remote {
                 name: remote_name(parent, &row.name),
                 url: row.url.clone(),
+                forge: row.forge.clone(),
                 default: Some(row.name == listing.default),
                 ..Default::default()
             })

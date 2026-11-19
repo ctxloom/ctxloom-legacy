@@ -67,6 +67,14 @@ pub trait Hosting: Send + Sync {
     /// ruling 2026-11-17: the daemon never makes a file in its home again
     /// once it has started); none while it is there, or cannot be told.
     fn home_gone(&self) -> Option<String>;
+    /// The rounds its loop has finished (step 10c U13, G5(b)); none told,
+    /// none.
+    // Equivalent: its one mutant (`1`) is the count of a loop that tells
+    // none, which no daemon is.
+    #[cfg_attr(test, mutants::skip)]
+    fn rounds(&self) -> u32 {
+        0
+    }
     /// What the session `session` (its stable id), which it hosts, asks
     /// with (step 8 U4): its run, engine, agent and `approval_timeout`, as
     /// of the last round; none for a session it does not host.
@@ -186,6 +194,33 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("DeleteHandOff")) })
     }
+    /// `WatchLibrary` (step 10c G7): the named trees' changes from now on,
+    /// drained by the poll each time `wake` is called (the catch-up's
+    /// signal, step 10c U13 rework); as `GetTranscript`.
+    fn watch_library(
+        &self,
+        request: v1::WatchLibraryRequest,
+        wake: crate::reactions::Wake,
+    ) -> Answer<'_, crate::reactions::LibraryPoll> {
+        let _ = (request, wake);
+        Box::pin(async { Err(not_served("WatchLibrary")) })
+    }
+    /// `RedeliverContext` (step 10c U13); as `GetTranscript`.
+    fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> Answer<'_, v1::RedeliveredContext> {
+        let _ = request;
+        Box::pin(async { Err(not_served("RedeliverContext")) })
+    }
+    /// `DeliverHookContext` (10c, the lean hook RPC); as `GetTranscript`.
+    fn deliver_hook_context(
+        &self,
+        request: v1::DeliverHookContextRequest,
+    ) -> Answer<'_, v1::HookContext> {
+        let _ = request;
+        Box::pin(async { Err(not_served("DeliverHookContext")) })
+    }
     /// `AssembleContext` (slice 3 step 6); as `GetTranscript`.
     fn assemble_context(
         &self,
@@ -296,6 +331,13 @@ macro_rules! library_read_calls {
     };
 }
 use library_read_calls;
+
+/// A deps write answered as another verb: a bug of the wiring.
+fn misanswered(verb: &str, other: &(crate::deps_writes::DepsAnswer, String)) -> ApiError {
+    ApiError::Failed {
+        detail: format!("{verb} answered {:?}", other.0),
+    }
+}
 
 /// A call this edge does not serve, failed.
 fn not_served(method: &str) -> ApiError {
@@ -409,6 +451,31 @@ impl<E: Edge + 'static> Calls for Api<E> {
         })
     }
 
+    fn redeliver_context(
+        &self,
+        request: v1::RedeliverContextRequest,
+    ) -> Answer<'_, v1::RedeliveredContext> {
+        Box::pin(async move { Api::redeliver_context(self, request).await })
+    }
+
+    fn deliver_hook_context(
+        &self,
+        request: v1::DeliverHookContextRequest,
+    ) -> Answer<'_, v1::HookContext> {
+        Box::pin(async move { Api::deliver_hook_context(self, request).await })
+    }
+
+    fn watch_library(
+        &self,
+        request: v1::WatchLibraryRequest,
+        wake: crate::reactions::Wake,
+    ) -> Answer<'_, crate::reactions::LibraryPoll> {
+        Box::pin(async move {
+            self.open()?;
+            Api::watch_library(self, &request, wake)
+        })
+    }
+
     fn create_run(&self, request: v1::CreateRunRequest) -> Answer<'_, v1::Run> {
         Box::pin(async move {
             self.creating()?;
@@ -483,6 +550,284 @@ impl<E: Edge + 'static> Calls for Api<E> {
     /// `Clean` (step 10b U9): the cache's present trees into the trash.
     fn clean(&self, request: v1::CleanRequest) -> Answer<'_, v1::CleanResponse> {
         Box::pin(async move { self.serve_clean(request).await })
+    }
+
+    /// `Materialize` (step 10c U10): other tools' files, one sequence.
+    fn materialize(&self, request: v1::MaterializeRequest) -> Answer<'_, v1::MaterializeResponse> {
+        Box::pin(async move {
+            let ask = crate::foreign::ForeignAsk::Materialize(&request);
+            match self
+                .foreign_write(&request, "materialize", ask, request.dry_run)
+                .await?
+            {
+                crate::foreign::ForeignAnswer::Materialized(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("materialize answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `UninstallManage` (step 10c U10): every engine's claims given back.
+    fn uninstall_manage(
+        &self,
+        request: v1::UninstallManageRequest,
+    ) -> Answer<'_, v1::UninstallManageResponse> {
+        Box::pin(async move {
+            let ask = crate::foreign::ForeignAsk::Uninstall;
+            match self
+                .foreign_write(&request, "manage uninstall", ask, false)
+                .await?
+            {
+                crate::foreign::ForeignAnswer::Uninstalled(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("manage uninstall answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `RunDoctor` (step 10c U10 serves its `--fix`; U5 the checks).
+    fn run_doctor(&self, request: v1::RunDoctorRequest) -> Answer<'_, v1::RunDoctorResponse> {
+        Box::pin(async move {
+            if !request.fix {
+                let ask = crate::setup_reads::SetupRead::Doctor { deps: request.deps };
+                return match self.setup_read(&request, ask).await? {
+                    crate::setup_reads::SetupAnswer::Doctor(answer) => Ok(answer),
+                    other => Err(ApiError::Failed {
+                        detail: format!("doctor answered {other:?}"),
+                    }),
+                };
+            }
+            let ask = crate::foreign::ForeignAsk::DoctorFix;
+            match self
+                .foreign_write(&request, "doctor --fix", ask, false)
+                .await?
+            {
+                crate::foreign::ForeignAnswer::Fixed(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("doctor --fix answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `GetAuthStatus` (step 10c U5): read where the caller stands.
+    fn get_auth_status(
+        &self,
+        request: v1::GetAuthStatusRequest,
+    ) -> Answer<'_, v1::GetAuthStatusResponse> {
+        Box::pin(async move {
+            let ask = crate::setup_reads::SetupRead::AuthStatus;
+            match self.setup_read(&request, ask).await? {
+                crate::setup_reads::SetupAnswer::AuthStatus(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("auth status answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `CheckManage` (step 10c U5): read where the caller stands.
+    fn check_manage(&self, request: v1::CheckManageRequest) -> Answer<'_, v1::CheckManageResponse> {
+        Box::pin(async move {
+            let ask = crate::setup_reads::SetupRead::CheckManage;
+            match self.setup_read(&request, ask).await? {
+                crate::setup_reads::SetupAnswer::CheckManage(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("manage check answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `GetInitPrompt` (step 10c U6): read where the caller stands.
+    fn get_init_prompt(
+        &self,
+        request: v1::GetInitPromptRequest,
+    ) -> Answer<'_, v1::GetInitPromptResponse> {
+        Box::pin(async move {
+            let ask = crate::setup_reads::SetupRead::InitPrompt;
+            match self.setup_read(&request, ask).await? {
+                crate::setup_reads::SetupAnswer::InitPrompt(answer) => Ok(answer),
+                other => Err(ApiError::Failed {
+                    detail: format!("init prompt answered {other:?}"),
+                }),
+            }
+        })
+    }
+
+    /// `InstallGitignore` (step 10c U5): `.ctxloom/.gitignore`, one library
+    /// write of the caller's project.
+    fn install_gitignore(
+        &self,
+        request: v1::InstallGitignoreRequest,
+    ) -> Answer<'_, v1::InstallGitignoreResponse> {
+        Box::pin(async move {
+            let wrote = self
+                .library_write(&request, "manage gitignore install", |library, _, _| {
+                    library.gitignore_install()
+                })
+                .await?;
+            Ok(crate::setup_reads::gitignore_installed(&wrote))
+        })
+    }
+
+    /// `InstallManage` (step 10c U6): `manage install`, init's creation.
+    fn install_manage(
+        &self,
+        request: v1::InstallManageRequest,
+    ) -> Answer<'_, v1::InstallManageResponse> {
+        Box::pin(Api::install_manage(self, request))
+    }
+
+    /// `InitProject` (step 10c U6): a project's `.ctxloom` created whole.
+    fn init_project(&self, request: v1::InitProjectRequest) -> Answer<'_, v1::InitProjectResponse> {
+        Box::pin(Api::init_project(self, request))
+    }
+
+    /// `CreateRemote` (step 10c U4): `remotes.yaml`, one library write.
+    fn create_remote(
+        &self,
+        request: v1::CreateRemoteRequest,
+    ) -> Answer<'_, v1::CreateRemoteResponse> {
+        Box::pin(async move {
+            let remote = request.remote.clone().unwrap_or_default();
+            let ask = crate::deps_writes::DepsAsk::CreateRemote {
+                name: request.remote_id.clone(),
+                url: remote.url,
+                forge: remote.forge,
+            };
+            match self.deps_write(&request, "remote create", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Created(answer), etag) => {
+                    Ok(v1::CreateRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote create", &other)),
+            }
+        })
+    }
+
+    /// `UpdateRemote` (step 10c U4): the fields its mask names (all it
+    /// carries, with none).
+    fn update_remote(
+        &self,
+        request: v1::UpdateRemoteRequest,
+    ) -> Answer<'_, v1::UpdateRemoteResponse> {
+        Box::pin(async move {
+            let remote = request.remote.clone().unwrap_or_default();
+            // A field the mask names is written as given, empty too (a
+            // forge cleared); with no mask, each field the remote carries.
+            let named = |field: &str, value: &str| match request.update_mask.as_ref() {
+                Some(mask) => mask
+                    .paths
+                    .iter()
+                    .any(|path| path == field)
+                    .then(|| value.to_string()),
+                None => (!value.is_empty()).then(|| value.to_string()),
+            };
+            let current = remote
+                .name
+                .rsplit_once("/remotes/")
+                .map_or(remote.name.as_str(), |(_, id)| id)
+                .to_string();
+            let renamed = named("name", &request.new_remote_id);
+            let ask = crate::deps_writes::DepsAsk::EditRemote {
+                remote: current,
+                name: renamed,
+                url: named("url", &remote.url),
+                forge: named("forge", &remote.forge),
+            };
+            match self.deps_write(&request, "remote edit", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Edited(answer), etag) => {
+                    Ok(v1::UpdateRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote edit", &other)),
+            }
+        })
+    }
+
+    /// `DeleteRemote` (step 10c U4): previewed without `--yes`.
+    fn delete_remote(
+        &self,
+        request: v1::DeleteRemoteRequest,
+    ) -> Answer<'_, v1::DeleteRemoteResponse> {
+        Box::pin(async move {
+            let name = request
+                .name
+                .rsplit_once("/remotes/")
+                .map_or(request.name.as_str(), |(_, id)| id)
+                .to_string();
+            let ask = crate::deps_writes::DepsAsk::RemoveRemote {
+                name,
+                apply: !request.validate_only,
+            };
+            match self.deps_write(&request, "remote remove", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Removed(answer), etag) => {
+                    Ok(v1::DeleteRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote remove", &other)),
+            }
+        })
+    }
+
+    /// `SetDefaultRemote` (step 10c U4): none named, the default cleared.
+    fn set_default_remote(
+        &self,
+        request: v1::SetDefaultRemoteRequest,
+    ) -> Answer<'_, v1::SetDefaultRemoteResponse> {
+        Box::pin(async move {
+            let name = request
+                .remote
+                .rsplit_once("/remotes/")
+                .map_or(request.remote.as_str(), |(_, id)| id)
+                .to_string();
+            let ask = crate::deps_writes::DepsAsk::DefaultRemote {
+                name: (!name.is_empty()).then_some(name),
+            };
+            match self.deps_write(&request, "remote default", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Defaulted(answer), etag) => {
+                    Ok(v1::SetDefaultRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote default", &other)),
+            }
+        })
+    }
+
+    /// `PullDependencies` (step 10c U4): one sequence of whole trees, then
+    /// the lock; its refresh previewed without `--yes` (`validate_only`).
+    fn pull_dependencies(
+        &self,
+        request: v1::PullDependenciesRequest,
+    ) -> Answer<'_, v1::PullDependenciesResponse> {
+        Box::pin(async move {
+            let ask = crate::deps_writes::DepsAsk::Pull {
+                force: request.force,
+                lock: request.lock.unwrap_or(true),
+                yes: !request.validate_only,
+            };
+            match self.deps_write(&request, "deps pull", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Pulled(answer), _) => Ok(answer),
+                other => Err(misanswered("deps pull", &other)),
+            }
+        })
+    }
+
+    /// `UpgradeDependencies` (step 10c U4): as a pull; a preview without
+    /// `--yes`.
+    fn upgrade_dependencies(
+        &self,
+        request: v1::UpgradeDependenciesRequest,
+    ) -> Answer<'_, v1::UpgradeDependenciesResponse> {
+        Box::pin(async move {
+            let ask = crate::deps_writes::DepsAsk::Upgrade {
+                reference: (!request.reference.is_empty()).then(|| request.reference.clone()),
+                apply: !request.validate_only,
+            };
+            match self.deps_write(&request, "deps upgrade", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Upgraded(answer), _) => Ok(answer),
+                other => Err(misanswered("deps upgrade", &other)),
+            }
+        })
     }
 
     /// `DistillFragment` (step 10b, owner 2026-11-18): the model asked as a
@@ -616,6 +961,20 @@ pub struct Api<E> {
     /// The platform's name (`std::env::consts::OS`'s), which a removal's
     /// evidence is judged by (D18); empty is a unix.
     pub(crate) os: String,
+    /// The engines a live session's re-assembled context is handed through
+    /// (step 10c U13); none, `RedeliverContext` answers nothing.
+    pub(crate) deliveries: Option<Arc<dyn crate::reactions::Deliveries>>,
+    /// The setup use cases that write other tools' files (step 10c U10);
+    /// none, `Materialize`, `UninstallManage` and `RunDoctor` fail.
+    pub(crate) foreign: Option<Arc<dyn crate::foreign::ForeignPlans>>,
+    /// The deps use cases that write the remotes, the lock and the cache
+    /// (step 10c U4); none, the remotes' writes, `PullDependencies` and
+    /// `UpgradeDependencies` fail.
+    pub(crate) deps: Option<Arc<dyn crate::deps_writes::DepsPlans>>,
+    /// The setup use cases that read (step 10c U5); none, `RunDoctor`
+    /// without `--fix`, `GetAuthStatus`, `CheckManage` and `GetInitPrompt`
+    /// fail.
+    pub(crate) setup_reads: Option<Arc<dyn crate::setup_reads::SetupReads>>,
     /// The sessions watched for the terminal wake, shared with the daemon's
     /// loop; none, `WatchSession` fails and no session is wakeable.
     pub(crate) watches: Option<Arc<daemon_application::SessionWatches>>,
@@ -637,6 +996,38 @@ impl<E: Edge> Api<E> {
             watches: None,
             me: std::sync::OnceLock::new(),
             os: String::new(),
+            deliveries: None,
+            foreign: None,
+            setup_reads: None,
+            deps: None,
+        }
+    }
+
+    /// The API, the remotes' and the dependencies' writes planned by
+    /// `plans` (step 10c U4).
+    #[must_use]
+    pub fn writing_deps(self, plans: Arc<dyn crate::deps_writes::DepsPlans>) -> Api<E> {
+        Api {
+            deps: Some(plans),
+            ..self
+        }
+    }
+
+    /// The API answering the setup reads through `reads` (step 10c U5).
+    #[must_use]
+    pub fn reading_setup(self, reads: Arc<dyn crate::setup_reads::SetupReads>) -> Api<E> {
+        Api {
+            setup_reads: Some(reads),
+            ..self
+        }
+    }
+
+    /// The API, other tools' files planned by `plans` (step 10c U10).
+    #[must_use]
+    pub fn writing_foreign(self, plans: Arc<dyn crate::foreign::ForeignPlans>) -> Api<E> {
+        Api {
+            foreign: Some(plans),
+            ..self
         }
     }
 
@@ -647,6 +1038,16 @@ impl<E: Edge> Api<E> {
     pub fn on_os(self, os: &str) -> Api<E> {
         Api {
             os: os.to_string(),
+            ..self
+        }
+    }
+
+    /// The API, a live session's re-assembled context handed through
+    /// `deliveries`' engines (step 10c U13).
+    #[must_use]
+    pub fn delivering(self, deliveries: Arc<dyn crate::reactions::Deliveries>) -> Api<E> {
+        Api {
+            deliveries: Some(deliveries),
             ..self
         }
     }
@@ -682,31 +1083,20 @@ impl<E: Edge> Api<E> {
 
     /// A library read's observations (step 10a U2): the project's checkout
     /// at `root` (none: a read outside a project), then the home's
-    /// library, through git in the caller's environment `env`, as the
-    /// notices they say. A tree outside git, or one git ignores, refuses
-    /// the read with the library domain's own refusal; git missing, too
-    /// old or failing fails it.
+    /// library, as the notices they say, in any directory (the library is
+    /// git-free, owner 2026-11-18); a scan or a record failing fails it.
     pub(crate) async fn observed(
         &self,
         project: Option<(ProjectName, &str)>,
-        env: Option<&v1::EnvVars>,
     ) -> Result<Vec<v1::Notice>, ApiError> {
         let Some((observations, observers)) = &self.observing else {
             return Ok(Vec::new());
         };
-        let env: Vec<(String, String)> = env
-            .iter()
-            .flat_map(|env| env.vars.iter())
-            .map(|var| (var.name.clone(), var.value.clone()))
-            .collect();
         let said = observations
-            .observe_read(observers.as_ref(), &env, project)
+            .observe_read(observers.as_ref(), project)
             .await
-            .map_err(|error| match error {
-                library_api::ReadError::Refused(rejection) => {
-                    ApiError::Refused(crate::library_refusal(&rejection))
-                }
-                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            .map_err(|library_api::ReadError::Failed(failure)| {
+                ApiError::diagnosed(failure.as_ref())
             })?;
         Ok(said
             .iter()
@@ -826,6 +1216,13 @@ impl<E: Edge> Api<E> {
         &self,
         request: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, ApiError> {
+        // A refresh (step 10c U13 rework): what was seen of the trees is
+        // forgotten first, so the read's observation hashes every file.
+        if request.refresh {
+            if let Some((observations, observers)) = self.observing.as_ref() {
+                observations.forget(observers.as_ref());
+            }
+        }
         // A library read (step 10a U2, E1): at the caller's directory, in
         // its environment, observed first; what it said rides in the
         // message (the MCP tool's answer is the message alone).
@@ -876,6 +1273,7 @@ impl<E: Edge> Api<E> {
             idle_limit_seconds: about.idle_limit_seconds,
             warnings: self.warnings(),
             draining: self.parts.hosting.draining(),
+            rounds: self.parts.hosting.rounds(),
         }
     }
 

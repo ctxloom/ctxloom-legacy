@@ -969,7 +969,6 @@ dependencies = [
  "library",
  "library-api",
  "library-application",
- "library-git",
  "library-tree",
  "mcp-server",
  "os",
@@ -1015,6 +1014,7 @@ name = "ctxloom-ports"
 version = "0.1.0"
 dependencies = [
  "angzarr-diagnostic",
+ "mutants",
 ]
 
 [[package]]
@@ -1097,7 +1097,6 @@ dependencies = [
  "library-checkout",
  "library-cli",
  "library-domain-proto",
- "library-git",
  "library-tree",
  "liveness",
  "mcp-server",
@@ -1223,6 +1222,8 @@ dependencies = [
  "daemon-proto",
  "deps-application",
  "exit-code",
+ "hex",
+ "init-application",
  "isolation-application",
  "library",
  "library-api",
@@ -1236,6 +1237,7 @@ dependencies = [
  "prost-types",
  "reclaim-application",
  "run-application",
+ "run-launcher",
  "run-ports",
  "runs",
  "session-index",
@@ -1244,6 +1246,8 @@ dependencies = [
  "sessions",
  "sessions-application",
  "sessions-proto",
+ "setup-application",
+ "sha2 0.10.9",
  "tokio",
  "trust",
  "trust-index",
@@ -1473,6 +1477,7 @@ dependencies = [
  "deps-ports",
  "library-api",
  "mutants",
+ "run-application",
  "serde",
  "serde_json",
 ]
@@ -2722,7 +2727,6 @@ dependencies = [
  "deps-application",
  "exit-code",
  "mutants",
- "serde",
 ]
 
 [[package]]
@@ -3029,21 +3033,6 @@ dependencies = [
  "angzarr-build",
  "prost",
  "prost-types",
-]
-
-[[package]]
-name = "library-git"
-version = "0.1.0"
-dependencies = [
- "angzarr-diagnostic",
- "ctxloom-ports",
- "file-system",
- "fixture-program",
- "git-cli",
- "mutants",
- "os",
- "process-env",
- "run-within",
 ]
 
 [[package]]
@@ -4016,6 +4005,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
 ]
 
@@ -4724,6 +4714,7 @@ dependencies = [
  "library",
  "library-api",
  "library-application",
+ "mutants",
  "run-ports",
  "serde",
  "serde_json",
@@ -5145,6 +5136,8 @@ dependencies = [
  "angzarr-presentation",
  "clap",
  "cli-support",
+ "daemon-proto",
+ "library-api",
  "library-application",
  "serde",
  "serde_json",
