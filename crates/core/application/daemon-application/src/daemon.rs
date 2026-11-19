@@ -1764,7 +1764,7 @@ impl<E: Edge> Daemon<E> {
         let sent = &handed.env;
         // Composed for this launch (T21): her settings read now, where her
         // launcher finds them.
-        let (prepares, starts) = engine.launched(&handed.launcher);
+        let (prepares, starts) = engine.launched(&handed.launcher, handed.program.as_ref());
         // The one session-setup path (owner, 2026-11-12): the launcher's,
         // over the child's project's session directories, so a hosted
         // child's home gets what every session's does (the engine's merge,
@@ -1801,7 +1801,7 @@ impl<E: Edge> Daemon<E> {
                 // Its agent's `workspace` (s4-Q11): the project, or a
                 // checkout of its session's own.
                 workspace: spawn.workspace.clone(),
-                env: self.child_environment(at, name, sent),
+                env: self.child_environment(at, name, sent, handed.program.as_ref()),
                 // What the daemon sets for the child, which no permit
                 // replaces (ruling 78b): its HOME (the session home) and the
                 // PATH led by the program's directory.
@@ -1847,21 +1847,26 @@ impl<E: Edge> Daemon<E> {
     }
 
     /// The environment a child's engine is started with: its launcher's,
-    /// ctxloom's home, `PATH` led by the program's directory, and its run and
-    /// session (always the run's own; no endpoint, bearer or certificate:
-    /// slice 4 U7).
+    /// ctxloom's home, `PATH` led by the program's directory (its launcher's
+    /// `program`, else the daemon's own), and its run and session (always the
+    /// run's own; no endpoint, bearer or certificate: slice 4 U7).
     fn child_environment(
         &self,
         at: &RunAt,
         name: &str,
         sent: &BTreeMap<String, String>,
+        program: Option<&crate::Program>,
     ) -> BTreeMap<String, String> {
         let mut env = sent.clone();
         env.insert(
             run_ports::HOME_VARIABLE.to_string(),
             self.place.home.clone(),
         );
-        if let Some(dir) = &self.place.program_dir {
+        let dir = program
+            .map(|program| &program.dir)
+            .filter(|dir| !dir.is_empty())
+            .or(self.place.program_dir.as_ref());
+        if let Some(dir) = dir {
             let path = run_ports::search_path_led_by(
                 &self.place.os,
                 dir,

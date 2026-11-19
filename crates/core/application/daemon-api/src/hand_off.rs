@@ -30,6 +30,7 @@
 use std::collections::BTreeMap;
 
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use sessions::{ProjectName, SessionName};
 
 use crate::refusal::{ApiError, ApiRefusal};
@@ -60,6 +61,9 @@ pub struct HandOffContent {
     pub env: BTreeMap<String, String>,
     pub launcher: BTreeMap<String, String>,
     pub agent: String,
+    /// The launching client's program (owner, 2026-11-18): what the child's
+    /// hooks run and its engine's `PATH` leads with; none, the daemon's own.
+    pub program: Option<daemon_application::Program>,
 }
 
 /// What the child's plan says, as its start's enqueue is judged on it.
@@ -184,7 +188,8 @@ impl<E: run_ports::Edge> Api<E> {
             engine: request.engine.clone(),
             agent: request.agent.clone(),
             env: request
-                .env
+                .caller_env()
+                .cloned()
                 .unwrap_or_default()
                 .vars
                 .into_iter()
@@ -213,7 +218,11 @@ impl<E: run_ports::Edge> Api<E> {
         if let Some((refusal, status)) = runs::pre_launch_refusal(&checks) {
             return Err(ApiRefusal::typed(&refusal, status).into());
         }
-        hand_offs.write(&child, &planned.content).map_err(failed)?;
+        let content = HandOffContent {
+            program: crate::program_of(request.caller_client()),
+            ..planned.content
+        };
+        hand_offs.write(&child, &content).map_err(failed)?;
         Ok(v1::HandOff {
             name: format!("{project}{HAND_OFFS}{child}"),
             engine: planned.engine,

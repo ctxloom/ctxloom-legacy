@@ -373,15 +373,24 @@ const DESTROY_WAIT: Duration = Duration::from_secs(
 /// exit (M3).
 const STOPPED_WAIT: Duration = Duration::from_secs(8);
 
-/// The daemon `found` names, as a client calls it.
-fn client_of(found: &run_ports::Discovery) -> daemon_client::DaemonClient {
-    daemon_client::DaemonClient::new(found, CALL_WAIT).destroying(DESTROY_WAIT)
+/// The daemon `found` names, as a client calls it: each request made on
+/// the user's behalf filled with `caller` (owner, 2026-11-18).
+fn client_of(
+    found: &run_ports::Discovery,
+    caller: daemon_proto::v1::Caller,
+) -> daemon_client::DaemonClient {
+    daemon_client::DaemonClient::new(found, CALL_WAIT)
+        .destroying(DESTROY_WAIT)
+        .filling(caller)
 }
 
 /// The daemon `found` names, as a command calls it: the warnings each of
 /// its answers carries heard, to be said as the command ends (OD-55).
-fn hearing_client_of(found: &run_ports::Discovery) -> daemon_client::DaemonClient {
-    client_of(found).hearing(std::sync::Arc::new(heard::hear))
+fn hearing_client_of(
+    found: &run_ports::Discovery,
+    caller: daemon_proto::v1::Caller,
+) -> daemon_client::DaemonClient {
+    client_of(found, caller).hearing(std::sync::Arc::new(heard::hear))
 }
 
 /// `future`, on a runtime of its own.
@@ -432,8 +441,9 @@ fn reconciled(
     let Some(found) = found else {
         return Ok(());
     };
+    // Its calls (`GetDaemon`, `StopDaemon`) carry no caller.
     let outcome = block_on(daemon_api::reconcile(
-        &hearing_client_of(found),
+        &hearing_client_of(found, daemon_proto::v1::Caller::default()),
         own,
         &found.stamp,
     ))?;
@@ -481,7 +491,12 @@ fn resolve(
             Failure::new(e, exit)
         })?
         .unwrap_or_default();
-    block_on(daemon_api::resolve(&hearing_client_of(&found), request))?.map_err(called)
+    let caller = caller_of(env, daemon_proto::v1::client::Kind::Cli, stamp);
+    block_on(daemon_api::resolve(
+        &hearing_client_of(&found, caller),
+        request,
+    ))?
+    .map_err(called)
 }
 
 /// What `resolve` answers: the project the daemon named.
@@ -669,6 +684,11 @@ impl<'a> Reach<'a> {
         }
     }
 
+    /// The stamp this client compares with the daemon's (M3).
+    pub(crate) fn stamp(&self) -> &str {
+        &self.stamp
+    }
+
     /// This reach as the `daemon` noun's own verbs make it (`status`,
     /// `stop`, `resolve`): it delivers no hold on its way in.
     pub(crate) fn observing(self) -> Reach<'a> {
@@ -690,9 +710,15 @@ impl<'a> Reach<'a> {
     /// The daemon `found` names, as this reach calls it: hearing the
     /// warnings its answers carry (OD-55), unless it shows them.
     fn client(&self, found: &run_ports::Discovery) -> daemon_client::DaemonClient {
+        // A reach that never stops a daemon is a session's MCP server's.
+        let kind = match self.never_stops {
+            true => daemon_proto::v1::client::Kind::Mcp,
+            false => daemon_proto::v1::client::Kind::Cli,
+        };
+        let caller = caller_of(self.wiring.env(), kind, &self.stamp);
         match self.hears {
-            true => hearing_client_of(found),
-            false => client_of(found),
+            true => hearing_client_of(found, caller),
+            false => client_of(found, caller),
         }
     }
 
@@ -809,6 +835,45 @@ pub(crate) fn env_vars(env: &EnvSnapshot) -> daemon_proto::v1::EnvVars {
     }
 }
 
+/// Which client this process is to the daemon (owner, 2026-11-18): `kind`,
+/// the running binary's file name and directory (what a launch it asks for
+/// runs for its hooks and leads its engine's `PATH` with), and its version
+/// stamp (`stamp`, a test's own under test-support), which the daemon
+/// admits only when it is its own.
+pub(crate) fn calling_client(
+    env: &EnvSnapshot,
+    kind: daemon_proto::v1::client::Kind,
+    stamp: &str,
+) -> daemon_proto::v1::Client {
+    let program = crate::program::running();
+    daemon_proto::v1::Client {
+        kind: kind as i32,
+        program: program.name.clone(),
+        program_dir: program.dir.clone(),
+        version: own_stamp(env, stamp).to_string(),
+    }
+}
+
+/// What every request this process makes on its user's behalf carries of
+/// it (owner, 2026-11-18): its working directory, its whole environment
+/// (S7) and [`calling_client`]; a command's own flags and presentable are its
+/// request's.
+pub(crate) fn caller_of(
+    env: &EnvSnapshot,
+    kind: daemon_proto::v1::client::Kind,
+    stamp: &str,
+) -> daemon_proto::v1::Caller {
+    daemon_proto::v1::Caller {
+        cwd: env
+            .cwd()
+            .map(|cwd| cwd.display().to_string())
+            .unwrap_or_default(),
+        env: Some(env_vars(env)),
+        client: Some(calling_client(env, kind, stamp)),
+        ..daemon_proto::v1::Caller::default()
+    }
+}
+
 /// This command's client of the daemon (slice 2 step 6): `wiring`'s
 /// project, its working directory and its whole environment. A project
 /// with no identity yet is read as one where nothing is recorded (a session
@@ -845,15 +910,14 @@ fn client_through<'a>(
     reach: Reach<'a>,
     registration: Option<daemon_proto::v1::ResolveProjectRequest>,
 ) -> daemon_api::Client<Reach<'a>> {
-    let cwd = wiring
-        .env()
-        .cwd()
-        .map(|cwd| cwd.display().to_string())
-        .unwrap_or_default();
+    let caller = caller_of(
+        wiring.env(),
+        daemon_proto::v1::client::Kind::Cli,
+        reach.stamp(),
+    );
     retrying(
         wiring,
-        daemon_api::Client::new(reach, registration, cwd, env_vars(wiring.env()))
-            .with_request_ids(Box::new(request_id)),
+        daemon_api::Client::new(reach, registration, caller).with_request_ids(Box::new(request_id)),
     )
 }
 
@@ -1060,7 +1124,7 @@ pub(crate) fn child_caller<'a>(
     daemon_api::Caller::user(
         Reach::new(wiring, stamp),
         &parent,
-        env_vars(wiring.env()),
+        caller_of(wiring.env(), daemon_proto::v1::client::Kind::Cli, stamp),
         Box::new(request_id),
     )
     .map(|caller| {
@@ -1297,6 +1361,14 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     if let Some(days) = env.non_empty(CLOCK_OFFSET_VARIABLE) {
         kept.push((CLOCK_OFFSET_VARIABLE.into(), days.to_os_string()));
     }
+    // A test's stamp is the daemon its client starts (M3's skew on demand):
+    // the daemon admits only a client of its own version (owner,
+    // 2026-11-18), so the daemon a client of a test's version starts is of
+    // that version too.
+    #[cfg(feature = "test-support")]
+    if let Some(stamp) = env.non_empty(STAMP_VARIABLE) {
+        kept.push((STAMP_VARIABLE.into(), stamp.to_os_string()));
+    }
     // A test's lifeline is its daemon's, whoever starts it.
     #[cfg(feature = "test-support")]
     if let Some(line) = env.non_empty(LIFELINE_VARIABLE) {
@@ -1422,7 +1494,9 @@ pub(crate) fn child_git_user(
 /// builder every per-call read and run is made over): the caller's `env`
 /// as a process at `dir` (its working directory) sees it, `root`, when
 /// given, the project it is in, as `CTXLOOM_ROOT` over any the caller had
-/// (as the platform compares names).
+/// (as the platform compares names), its temporary directory the caller's
+/// ([`caller_temp`]; `temp`, the daemon's, only for a call with no
+/// environment).
 pub(crate) fn caller_env<'a>(
     flavor: os::Flavor,
     temp: &Path,
@@ -1435,10 +1509,43 @@ pub(crate) fn caller_env<'a>(
         .filter(|(name, _)| root.is_none() || flavor.env_key(name) != owned)
         .map(|(name, value)| (name.into(), value.into()))
         .collect();
+    let temp = caller_temp(flavor, &vars, temp);
     if let Some(root) = root {
         vars.push((run_ports::ROOT_VARIABLE.into(), root.into()));
     }
-    EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(dir)), temp.to_path_buf(), vars)
+    EnvSnapshot::from_parts(flavor, Ok(PathBuf::from(dir)), temp, vars)
+}
+
+/// The temporary directory of a call made in `vars` (owner, 2026-11-18):
+/// the CALLER's, as the platform's standard library reads it from an
+/// environment (unix: `TMPDIR`, else `/tmp`; Windows: `TMP`, `TEMP`,
+/// `USERPROFILE`, else the Windows directory), never the daemon's own. A
+/// call that carries no environment at all (the daemon's own work, no
+/// caller's) is the daemon's, `own`.
+pub(crate) fn caller_temp(
+    flavor: os::Flavor,
+    vars: &[(OsString, OsString)],
+    own: &Path,
+) -> PathBuf {
+    if vars.is_empty() {
+        return own.to_path_buf();
+    }
+    let var = |name: &str| {
+        let key = flavor.env_key(name);
+        vars.iter()
+            .find(|(found, value)| {
+                flavor.env_key(&found.to_string_lossy()) == key && !value.is_empty()
+            })
+            .map(|(_, value)| PathBuf::from(value))
+    };
+    match flavor {
+        os::Flavor::Unix => var("TMPDIR").unwrap_or_else(|| PathBuf::from("/tmp")),
+        os::Flavor::Windows => var("TMP")
+            .or_else(|| var("TEMP"))
+            .or_else(|| var("USERPROFILE"))
+            .or_else(|| var("WINDIR"))
+            .unwrap_or_else(|| own.to_path_buf()),
+    }
 }
 
 /// The wiring of a call the daemon serves: [`caller_env`]'s process, with

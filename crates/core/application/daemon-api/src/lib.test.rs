@@ -20,6 +20,7 @@ fn the_samples_hold_every_diagnostic_of_the_crate() {
             "daemon-api-project-unknown",
             "daemon-api-daemon-hosting",
             "daemon-api-draining",
+            "daemon-api-client-version",
             "daemon-api-home-gone",
             "daemon-api-age-invalid",
             "daemon-api-etag-invalid",

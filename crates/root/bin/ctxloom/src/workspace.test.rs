@@ -571,3 +571,90 @@ fn test_nothing_but_the_m10b_kept_list_calls_hook_environment() {
         "hook_environment is M10b's alone (OD-13): {callers:#?}"
     );
 }
+
+/// The `Ctxloom` RPCs whose request carries no [`daemon_proto::v1::Caller`]
+/// (owner, 2026-11-18): the reads by name (a run, a session, its transcript,
+/// an approval, a trust, the project, a worktree listing not yet served) and
+/// the daemon's own lifecycle (`GetDaemon`, `StopDaemon`, which a client of
+/// another version must still reach to stop it). Every other RPC acts on a
+/// user's behalf (it plans, reads the library, runs git, writes or launches)
+/// and carries one.
+const CALLERLESS_RPCS: &[&str] = &[
+    "GetDaemon",
+    "StopDaemon",
+    "GetProject",
+    "GetSession",
+    "ListSessions",
+    "SearchSessions",
+    "GetTranscript",
+    "WatchTranscript",
+    "WatchSession",
+    "ListWorktrees",
+    "DeleteHandOff",
+    "GetRun",
+    "WatchRun",
+    "CreateApproval",
+    "GetApproval",
+    "ListApprovals",
+    "WaitApproval",
+    "GetTrust",
+    "ListTrusts",
+];
+
+/// Each RPC of the `Ctxloom` service, by name, and whether its request has a
+/// `caller` field of type `Caller` at 98.
+fn rpcs_carrying_the_caller() -> Vec<(String, bool)> {
+    let set = daemon_proto::descriptors().expect("the descriptor set decodes");
+    let package: Vec<_> = set
+        .file
+        .iter()
+        .filter(|file| file.package() == "ctxloom.v1")
+        .collect();
+    let carries = |input: &str| {
+        let name = input.trim_start_matches(".ctxloom.v1.");
+        package
+            .iter()
+            .flat_map(|file| &file.message_type)
+            .filter(|message| message.name() == name)
+            .flat_map(|message| &message.field)
+            .any(|field| {
+                field.name() == "caller"
+                    && field.number() == 98
+                    && field.type_name() == ".ctxloom.v1.Caller"
+            })
+    };
+    package
+        .iter()
+        .flat_map(|file| &file.service)
+        .filter(|service| service.name() == "Ctxloom")
+        .flat_map(|service| &service.method)
+        .map(|method| (method.name().to_string(), carries(method.input_type())))
+        .collect()
+}
+
+#[test]
+fn test_every_request_made_on_a_users_behalf_carries_the_caller() {
+    let rpcs = rpcs_carrying_the_caller();
+    assert!(rpcs.len() > 100, "read only {} RPCs", rpcs.len());
+    let without: Vec<_> = rpcs
+        .iter()
+        .filter(|(name, carried)| !carried && !CALLERLESS_RPCS.contains(&name.as_str()))
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        without.is_empty(),
+        "these requests act on a user's behalf and carry no `Caller caller = 98`: {without:#?}"
+    );
+}
+
+#[test]
+fn test_the_callerless_list_names_only_rpcs_that_carry_no_caller() {
+    let rpcs = rpcs_carrying_the_caller();
+    for listed in CALLERLESS_RPCS {
+        match rpcs.iter().find(|(name, _)| name == listed) {
+            None => panic!("{listed} is listed callerless and is no RPC"),
+            Some((_, true)) => panic!("{listed} is listed callerless and carries a Caller"),
+            Some((_, false)) => {}
+        }
+    }
+}

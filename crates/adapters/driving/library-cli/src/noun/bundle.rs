@@ -17,7 +17,7 @@ pub(crate) fn read(
             // The daemon's read (step 10a U2), its text from the message (D10).
             let request = v1::GetBundleRequest {
                 view: v1::bundle::View::Full as i32,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetBundleRequest::default()
             };
             let under = library_api::names::bundle_target(&text_arg(sub, "name"));
@@ -43,7 +43,7 @@ fn listed_by_the_daemon(
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
     let request = v1::ListBundlesRequest {
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ListBundlesRequest::default()
     };
     let in_project = cx.served.in_project();
@@ -87,7 +87,7 @@ fn viewed_by_the_daemon(
         "fragments" => {
             let request = v1::GetFragmentRequest {
                 prefer_distilled,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetFragmentRequest::default()
             };
             let read = cx.served.get_fragment(&under, request);
@@ -102,7 +102,7 @@ fn viewed_by_the_daemon(
         "commands" | "prompts" => {
             let request = v1::GetCommandRequest {
                 prefer_distilled,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetCommandRequest::default()
             };
             let read = cx.served.get_command(&under, request);
@@ -116,7 +116,7 @@ fn viewed_by_the_daemon(
         }
         "skills" => {
             let request = v1::GetSkillRequest {
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetSkillRequest::default()
             };
             let read = cx.served.get_skill(&under, request);
@@ -126,7 +126,7 @@ fn viewed_by_the_daemon(
         }
         "mcp" => {
             let request = v1::GetMcpServerRequest {
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetMcpServerRequest::default()
             };
             let read = cx.served.get_mcp_server(&under, request);
@@ -136,7 +136,7 @@ fn viewed_by_the_daemon(
         }
         "profiles" => {
             let request = v1::GetProfileRequest {
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetProfileRequest::default()
             };
             let read = cx
@@ -150,7 +150,7 @@ fn viewed_by_the_daemon(
             let request = v1::GetBundleRequest {
                 view: v1::bundle::View::Content as i32,
                 prefer_distilled,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::GetBundleRequest::default()
             };
             let read = cx.served.get_bundle(&under, request);
@@ -196,7 +196,7 @@ fn distill(
     // Its items as `bundle show` reads them.
     let request = v1::GetBundleRequest {
         view: v1::bundle::View::Full as i32,
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::GetBundleRequest::default()
     };
     let target = library_api::names::bundle_target(&text_arg(sub, "name"));
@@ -280,7 +280,7 @@ fn create(
             description: text_arg(sub, "description"),
             ..v1::Bundle::default()
         }),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::CreateBundleRequest::default()
     };
     crate::answer_written(
@@ -333,7 +333,7 @@ fn edit(
         remove_commands: many(sub, "remove-prompt"),
         add_mcp_servers: many(sub, "add-mcp"),
         remove_mcp_servers: many(sub, "remove-mcp"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::UpdateBundleRequest::default()
     };
     let under = library_api::names::bundle_target(&text_arg(sub, "name"));
@@ -373,7 +373,7 @@ fn remove(
                 validate_only,
                 answers,
                 etag,
-                globals: cx.globals(),
+                caller: v1::Caller::of(cx.globals(), None),
                 ..v1::DeleteBundleRequest::default()
             };
             cx.served.delete_bundle(&under, request)
@@ -398,7 +398,7 @@ fn export(
     let request = v1::ExportBundleRequest {
         destination: text_arg(sub, "dest"),
         output: text_arg(sub, "output"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ExportBundleRequest::default()
     };
     let under = library_api::names::bundle_target(&text_arg(sub, "name"));
@@ -428,7 +428,7 @@ fn import(
     let request = v1::ImportBundleRequest {
         source: source.clone(),
         force: flag(sub, "force"),
-        globals: cx.globals(),
+        caller: v1::Caller::of(cx.globals(), None),
         ..v1::ImportBundleRequest::default()
     };
     crate::answer_written(

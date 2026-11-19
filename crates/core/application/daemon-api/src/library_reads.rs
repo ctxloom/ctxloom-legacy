@@ -19,6 +19,7 @@
 //! directory, in an environment, opens it.
 
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use deps_application::Deps;
 use library_application::{AppError, Flags, Library, Outcome};
 use run_ports::Edge;
@@ -52,12 +53,10 @@ pub trait Libraries: Send + Sync {
 }
 
 /// What every library read request carries besides its own fields.
-pub trait LibraryRequest {
+/// (its caller: [`daemon_proto::Carries`]).
+pub trait LibraryRequest: daemon_proto::Carries {
     /// What it reads: a resource name, or a parent.
     fn target(&self) -> &str;
-    fn cwd(&self) -> &str;
-    fn env(&self) -> Option<&v1::EnvVars>;
-    fn globals(&self) -> Option<&v1::Globals>;
 }
 
 macro_rules! library_requests {
@@ -66,15 +65,6 @@ macro_rules! library_requests {
             impl LibraryRequest for v1::$request {
                 fn target(&self) -> &str {
                     &self.$target
-                }
-                fn cwd(&self) -> &str {
-                    &self.cwd
-                }
-                fn env(&self) -> Option<&v1::EnvVars> {
-                    self.env.as_ref()
-                }
-                fn globals(&self) -> Option<&v1::Globals> {
-                    self.globals.as_ref()
                 }
             }
         )*
@@ -201,9 +191,9 @@ impl<E: Edge> Api<E> {
         let (mut site, project) = self
             .resolve(
                 request.target(),
-                request.cwd(),
-                request.env(),
-                request.globals(),
+                request.caller_cwd(),
+                request.caller_env(),
+                request.caller_globals(),
             )
             .await?;
         site.said = self
@@ -292,11 +282,13 @@ impl<E: Edge> Api<E> {
     pub async fn preview_run(&self, request: v1::CreateRunRequest) -> Result<v1::Run, ApiError> {
         let project = self.host_project(&request.parent).await?;
         let unnamed = project.is_none()
-            && !request.cwd.is_empty()
+            && !request.caller_cwd().is_empty()
             && self
                 .libraries
                 .as_ref()
-                .and_then(|libraries| libraries.root(&request.cwd, &pairs(request.env.as_ref())))
+                .and_then(|libraries| {
+                    libraries.root(request.caller_cwd(), &pairs(request.caller_env()))
+                })
                 .is_some();
         let (asked, _) = run_application::client::asked_of(&request);
         let read = self

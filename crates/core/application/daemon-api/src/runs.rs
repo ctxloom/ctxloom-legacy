@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use daemon_application::{Created, HostProject, HostRequest, OneShots};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use run_ports::Edge;
 use sessions::ProjectName;
 
@@ -133,8 +134,8 @@ impl<E: Edge> Api<E> {
         let (one_shot, mut flags) = run_application::client::asked_of(request);
         flags.trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
         let env = request
-            .env
-            .clone()
+            .caller_env()
+            .cloned()
             .unwrap_or_default()
             .vars
             .into_iter()
@@ -142,8 +143,9 @@ impl<E: Edge> Api<E> {
             .collect();
         Ok(HostRequest {
             project,
-            cwd: request.cwd.clone(),
+            cwd: request.caller_cwd().to_string(),
             env,
+            program: crate::program_of(request.caller_client()),
             flags,
             request: one_shot,
             launcher_lock: None,

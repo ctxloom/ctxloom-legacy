@@ -117,8 +117,11 @@ async fn a_library_read_is_observed_then_answered_at_the_callers_directory() {
     let read = api
         .list_skills(v1::ListSkillsRequest {
             parent: "projects/calm-quiet-heron".to_string(),
-            cwd: "/work/calm-wt".to_string(),
-            env: path("/opt/git/bin"),
+            caller: Some(v1::Caller {
+                cwd: "/work/calm-wt".to_string(),
+                env: path("/opt/git/bin"),
+                ..v1::Caller::default()
+            }),
             ..v1::ListSkillsRequest::default()
         })
         .await
@@ -274,7 +277,10 @@ async fn assemble_context_observes_the_projects_library_first() {
         .observing(observing(&f.world, &gits));
     let request = v1::AssembleContextRequest {
         name: "projects/calm-quiet-heron".to_string(),
-        env: path("/usr/bin"),
+        caller: Some(v1::Caller {
+            env: path("/usr/bin"),
+            ..v1::Caller::default()
+        }),
         ..v1::AssembleContextRequest::default()
     };
     let made = api.assemble_context(request.clone()).await.unwrap();
@@ -355,7 +361,10 @@ async fn a_preview_is_the_plan_named_under_its_project() {
             parent: "projects/calm-quiet-heron".to_string(),
             mode: v1::run::Mode::Terminal as i32,
             prompt: "hello".to_string(),
-            cwd: "/work/calm-wt".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/calm-wt".to_string(),
+                ..v1::Caller::default()
+            }),
             validate_only: true,
             ..v1::CreateRunRequest::default()
         })
@@ -380,7 +389,10 @@ async fn an_unnamed_projects_preview_names_nothing() {
         .create_run(v1::CreateRunRequest {
             parent: "users/me".to_string(),
             mode: v1::run::Mode::Terminal as i32,
-            cwd: "/work/unnamed".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/unnamed".to_string(),
+                ..v1::Caller::default()
+            }),
             validate_only: true,
             ..v1::CreateRunRequest::default()
         })
@@ -408,7 +420,10 @@ async fn a_deps_read_is_observed_then_answered_and_a_decline_carries_its_cause()
     let read = api
         .list_remotes(v1::ListRemotesRequest {
             parent: "projects/calm-quiet-heron".to_string(),
-            cwd: "/work/calm-wt".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/calm-wt".to_string(),
+                ..v1::Caller::default()
+            }),
             ..v1::ListRemotesRequest::default()
         })
         .await
@@ -421,7 +436,10 @@ async fn a_deps_read_is_observed_then_answered_and_a_decline_carries_its_cause()
     let refused = api
         .list_dependencies(v1::ListDependenciesRequest {
             parent: "projects/calm-quiet-heron".to_string(),
-            cwd: "/work/corrupt".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/corrupt".to_string(),
+                ..v1::Caller::default()
+            }),
             ..v1::ListDependenciesRequest::default()
         })
         .await
@@ -454,7 +472,10 @@ async fn a_remote_is_browsed_as_a_deps_read_and_its_failure_keeps_its_words() {
     let read = api
         .browse_remote(v1::BrowseRemoteRequest {
             name: "projects/calm-quiet-heron/remotes/origin".to_string(),
-            cwd: "/work/calm-wt".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/calm-wt".to_string(),
+                ..v1::Caller::default()
+            }),
             ..v1::BrowseRemoteRequest::default()
         })
         .await
@@ -467,7 +488,10 @@ async fn a_remote_is_browsed_as_a_deps_read_and_its_failure_keeps_its_words() {
     let failed = api
         .browse_remote(v1::BrowseRemoteRequest {
             name: "projects/calm-quiet-heron/remotes/nope".to_string(),
-            cwd: "/work/calm-wt".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/calm-wt".to_string(),
+                ..v1::Caller::default()
+            }),
             ..v1::BrowseRemoteRequest::default()
         })
         .await
@@ -625,7 +649,10 @@ async fn a_preview_says_nothing_of_git_beside_its_plan() {
         .create_run(v1::CreateRunRequest {
             parent: "projects/calm-quiet-heron".to_string(),
             mode: v1::run::Mode::Terminal as i32,
-            cwd: "/work/calm-wt".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/calm-wt".to_string(),
+                ..v1::Caller::default()
+            }),
             validate_only: true,
             ..v1::CreateRunRequest::default()
         })
@@ -638,7 +665,10 @@ fn preview() -> v1::CreateRunRequest {
     v1::CreateRunRequest {
         parent: "projects/calm-quiet-heron".to_string(),
         mode: v1::run::Mode::Terminal as i32,
-        cwd: ROOT.to_string(),
+        caller: Some(v1::Caller {
+            cwd: ROOT.to_string(),
+            ..v1::Caller::default()
+        }),
         validate_only: true,
         ..v1::CreateRunRequest::default()
     }

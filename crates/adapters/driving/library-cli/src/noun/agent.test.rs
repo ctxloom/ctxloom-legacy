@@ -489,15 +489,17 @@ mod mapping {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_agent_reads_carry_the_globals() {
         let (under, show) = asked_once::<v1::GetAgentRequest>(&["agent", "show", "dev"]);
         assert_eq!(under, "/agents/dev");
-        assert_eq!(show.globals, degraded());
+        assert_eq!(show.caller_globals().cloned(), degraded());
         let (under, list) = asked_once::<v1::ListAgentsRequest>(&["agent", "list"]);
         assert_eq!(under, "");
-        assert_eq!(list.globals, degraded());
+        assert_eq!(list.caller_globals().cloned(), degraded());
     }
 }
 
@@ -508,6 +510,8 @@ mod asks {
 mod writes_asked {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_agent_create_asks_create_agent_with_its_fields() {
@@ -539,7 +543,7 @@ mod writes_asked {
         assert_eq!(made.agent_id, "dev");
         assert!(made.home);
         assert!(!made.validate_only);
-        assert_eq!(made.globals, degraded());
+        assert_eq!(made.caller_globals().cloned(), degraded());
         let agent = made.agent.unwrap();
         assert_eq!(agent.engine, "claude-code");
         assert_eq!(
@@ -598,7 +602,7 @@ mod writes_asked {
         let agent = preview.agent.clone().unwrap();
         assert_eq!(agent.runtime, "host");
         assert!(agent.model.is_empty() && agent.env.is_empty());
-        assert_eq!(preview.globals, degraded());
+        assert_eq!(preview.caller_globals().cloned(), degraded());
         let apply = &sent[1];
         assert!(!apply.validate_only);
         assert_eq!(apply.etag, "7");
@@ -770,6 +774,8 @@ mod writes_asked {
 mod default_asked {
     use crate::tests::{go_served, Asks, Project, BARE, TEXT};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     fn asked(line: &[&str]) -> Vec<v1::SetDefaultAgentRequest> {
         let asks = Asks::default();

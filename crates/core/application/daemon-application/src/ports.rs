@@ -15,9 +15,13 @@ pub type Transcripts = Arc<dyn Fn(&ChildSpec) -> Option<String> + Send + Sync>;
 /// The engine a launch sets its session home up and starts its child with,
 /// composed for that launch from what the launcher said of its user's
 /// settings (T21: her settings are read at every launch, where HER launcher
-/// finds them: its `CLAUDE_CONFIG_DIR`, its XDG bases, S7).
-pub type ForLaunch =
-    Arc<dyn Fn(&BTreeMap<String, String>) -> (Arc<dyn Engine>, Arc<dyn ChildEngine>) + Send + Sync>;
+/// finds them: its `CLAUDE_CONFIG_DIR`, its XDG bases, S7), its callbacks
+/// running the launcher's program (owner, 2026-11-18; none: the daemon's).
+pub type ForLaunch = Arc<
+    dyn Fn(&BTreeMap<String, String>, Option<&Program>) -> (Arc<dyn Engine>, Arc<dyn ChildEngine>)
+        + Send
+        + Sync,
+>;
 
 /// One engine the daemon can host a child on, by its name: its `Engine` (the
 /// session home it prepares, its credentials) beside its `ChildEngine` (the
@@ -41,13 +45,15 @@ impl HostedEngine {
     }
 
     /// The engine and the child engine a launch whose launcher said
-    /// `launcher` of its user's settings is set up and started with.
+    /// `launcher` of its user's settings, and ran `program`, is set up and
+    /// started with.
     pub fn launched(
         &self,
         launcher: &BTreeMap<String, String>,
+        program: Option<&Program>,
     ) -> (Arc<dyn Engine>, Arc<dyn ChildEngine>) {
         match &self.for_launch {
-            Some(compose) => compose(launcher),
+            Some(compose) => compose(launcher, program),
             None => (Arc::clone(&self.engine), Arc::clone(&self.child)),
         }
     }
@@ -63,6 +69,22 @@ pub struct HandOff {
     pub env: BTreeMap<String, String>,
     pub launcher: BTreeMap<String, String>,
     pub agent: String,
+    /// The launcher's program (owner, 2026-11-18): what the child's hooks
+    /// run and its engine's `PATH` leads with; none, the daemon's own.
+    pub program: Option<Program>,
+}
+
+/// The program a launch's hook commands and statusline run, and the
+/// directory its engine's `PATH` leads with (owner, 2026-11-18): the
+/// CLIENT's, as its `Caller` named them, not the daemon's own executable.
+/// Taken as sent: the client is the same user as the daemon (ruling 37's
+/// trust boundary), so it can name nothing she could not run herself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Program {
+    /// Its file name, its executable suffix stripped (`ctxloom`).
+    pub name: String,
+    /// The directory it is in.
+    pub dir: String,
 }
 
 /// A hand-off file there is, by its child's stable id.

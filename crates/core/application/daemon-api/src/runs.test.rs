@@ -73,12 +73,15 @@ fn one_shot(parent: &str) -> v1::CreateRunRequest {
         mode: v1::run::Mode::OneShot as i32,
         prompt: "hi".to_string(),
         agent: "dev".to_string(),
-        cwd: "/work/sub".to_string(),
-        env: Some(v1::EnvVars {
-            vars: vec![v1::EnvVar {
-                name: "PATH".to_string(),
-                value: "/bin".to_string(),
-            }],
+        caller: Some(v1::Caller {
+            cwd: "/work/sub".to_string(),
+            env: Some(v1::EnvVars {
+                vars: vec![v1::EnvVar {
+                    name: "PATH".to_string(),
+                    value: "/bin".to_string(),
+                }],
+            }),
+            ..v1::Caller::default()
         }),
         ..v1::CreateRunRequest::default()
     }
@@ -89,7 +92,10 @@ async fn a_one_shot_is_hosted_in_its_project_and_answered_once_placed() {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api
         .resolve_project(v1::ResolveProjectRequest {
-            cwd: "/work".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work".to_string(),
+                ..v1::Caller::default()
+            }),
             project_id: "calm".to_string(),
             root: "/work".to_string(),
             ..v1::ResolveProjectRequest::default()

@@ -85,13 +85,15 @@ mod write {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_config_show_asks_its_view_with_the_globals() {
         let (under, effective) = asked_once::<v1::GetConfigRequest>(&["config", "show"]);
         assert_eq!(under, "/config");
         assert_eq!(effective.view, v1::config::View::Effective as i32);
-        assert_eq!(effective.globals, degraded());
+        assert_eq!(effective.caller_globals().cloned(), degraded());
         let (_, set) = asked_once::<v1::GetConfigRequest>(&["config", "show", "--raw"]);
         assert_eq!(set.view, v1::config::View::Set as i32);
     }
@@ -103,6 +105,8 @@ mod asks {
 mod writes_asked {
     use crate::tests::{go_served, Asks, Project, BARE, TEXT};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_config_edit_previews_presents_its_edit_need_and_applies_the_answer() {
@@ -131,7 +135,7 @@ mod writes_asked {
         let sent = asks.requests::<v1::EditConfigRequest>();
         assert_eq!(sent.len(), 2, "{}", ran.err);
         assert!(sent[0].validate_only);
-        assert!(sent[0].presentable.as_ref().is_some_and(|p| p.can_launch));
+        assert!(sent[0].caller_presentable().is_some_and(|p| p.can_launch));
         assert_eq!(sent[1].etag, "7");
         assert!(!sent[1].validate_only);
         assert_eq!(

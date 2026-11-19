@@ -11,7 +11,7 @@ use daemon_ports::{DaemonApi, Daemons};
 use daemon_proto::v1;
 use serde_json::{json, Value};
 
-use super::{block_on, called, env_vars, library_parent, Reach};
+use super::{block_on, called, library_parent, Reach};
 use ctxloom_cli::{CliError, Failure};
 
 use crate::Wiring;
@@ -83,7 +83,11 @@ pub(crate) fn watch_library(
         let mut changes = api
             .watch_library(v1::WatchLibraryRequest {
                 parent: parent.clone(),
-                env: Some(env_vars(wiring.env())),
+                caller: Some(super::caller_of(
+                    wiring.env(),
+                    v1::client::Kind::Cli,
+                    reach.stamp(),
+                )),
             })
             .await
             .map_err(|call| called(call.into()))?;

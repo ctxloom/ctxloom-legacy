@@ -381,12 +381,15 @@ impl Fixture {
 pub(crate) fn resolve(commit: &str, name: &str) -> v1::ResolveProjectRequest {
     v1::ResolveProjectRequest {
         name: name.to_string(),
-        cwd: ROOT.to_string(),
+        caller: Some(v1::Caller {
+            cwd: ROOT.to_string(),
+            env: None,
+            ..v1::Caller::default()
+        }),
         project_id: PROJECT.to_string(),
         root: ROOT.to_string(),
         git_common_dir: COMMON.to_string(),
         root_commit: commit.to_string(),
-        env: None,
     }
 }
 
@@ -776,7 +779,10 @@ async fn resolve_project_names_and_registers_on_first_sight() {
     // Again, from a worktree and expecting its harp: the same project.
     let again = v1::ResolveProjectRequest {
         root: "/work/calm-wt".to_string(),
-        cwd: "/work/calm-wt".to_string(),
+        caller: Some(v1::Caller {
+            cwd: "/work/calm-wt".to_string(),
+            ..v1::Caller::default()
+        }),
         ..resolve(COMMIT, "projects/calm-quiet-heron")
     };
     assert_eq!(f.api.resolve_project(again).await.unwrap(), project);
@@ -926,7 +932,6 @@ async fn get_session_answers_the_session_by_its_name() {
         .api
         .get_session(v1::GetSessionRequest {
             name: name.to_string(),
-            ..v1::GetSessionRequest::default()
         })
         .await
         .unwrap();
@@ -937,7 +942,6 @@ async fn get_session_answers_the_session_by_its_name() {
         f.api
             .get_session(v1::GetSessionRequest {
                 name: "projects/calm-quiet-heron/sessions/far-heron".to_string(),
-                ..v1::GetSessionRequest::default()
             })
             .await,
     );
@@ -946,7 +950,6 @@ async fn get_session_answers_the_session_by_its_name() {
         f.api
             .get_session(v1::GetSessionRequest {
                 name: "amber-swift-owl".to_string(),
-                ..v1::GetSessionRequest::default()
             })
             .await,
     );
@@ -990,7 +993,6 @@ async fn get_session_says_what_its_latest_run_was_given_and_how_its_last_turn_fa
     let get = || {
         f.api.get_session(v1::GetSessionRequest {
             name: name.to_string(),
-            ..v1::GetSessionRequest::default()
         })
     };
     let before = get().await.unwrap();
@@ -1127,7 +1129,6 @@ async fn get_session_answers_its_record_and_reads_fresh() {
         .api
         .get_session(v1::GetSessionRequest {
             name: "projects/calm-quiet-heron/sessions/amber-swift-owl".to_string(),
-            ..v1::GetSessionRequest::default()
         })
         .await
         .unwrap();
@@ -1185,7 +1186,6 @@ async fn a_name_whose_segment_is_no_harp_says_why() {
         f.api
             .get_session(v1::GetSessionRequest {
                 name: name.to_string(),
-                ..v1::GetSessionRequest::default()
             })
             .await,
     );

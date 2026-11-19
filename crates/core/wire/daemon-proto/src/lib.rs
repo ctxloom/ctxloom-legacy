@@ -179,6 +179,124 @@ macro_rules! library_writes {
     };
 }
 
+/// What a message carries of its client (owner, 2026-11-18): every request
+/// made on a user's behalf carries one [`v1::Caller`] at field 98 (its
+/// directory, its whole environment, its global flags, what it can present
+/// of a need, and which client it is). Implemented for every top-level
+/// message of the package, generated from the protos: `CALLER` says whether
+/// the message has the field. The daemon's edge admits a request that
+/// carries it only from a client of its own version.
+pub trait Carries {
+    /// Whether the message has a `caller` field.
+    const CALLER: bool;
+    /// Its `caller`; none when it carries none, or has no such field.
+    fn caller(&self) -> Option<&v1::Caller>;
+    /// Its `caller` field, to be written; none when it has no such field.
+    fn caller_field(&mut self) -> Option<&mut Option<v1::Caller>>;
+    /// The message, carrying what `filled` says that its own caller does
+    /// not ([`v1::Caller::fill_from`]); a message with no `caller` field is
+    /// left as it is (owner, 2026-11-18: the transport fills every request
+    /// made on a user's behalf).
+    fn fill_caller_from(&mut self, filled: &v1::Caller) {
+        if let Some(field) = self.caller_field() {
+            field
+                .get_or_insert_with(v1::Caller::default)
+                .fill_from(filled);
+        }
+    }
+    /// The caller's whole environment.
+    fn caller_env(&self) -> Option<&v1::EnvVars> {
+        self.caller().and_then(|caller| caller.env.as_ref())
+    }
+    /// The global flags the call is planned under.
+    fn caller_globals(&self) -> Option<&v1::Globals> {
+        self.caller().and_then(|caller| caller.globals.as_ref())
+    }
+    /// The caller's working directory; empty, the project's registered root.
+    fn caller_cwd(&self) -> &str {
+        self.caller().map_or("", |caller| caller.cwd.as_str())
+    }
+    /// What the caller can present of a need.
+    fn caller_presentable(&self) -> Option<&v1::Presentable> {
+        self.caller().and_then(|caller| caller.presentable.as_ref())
+    }
+    /// Which client asked.
+    fn caller_client(&self) -> Option<&v1::Client> {
+        self.caller().and_then(|caller| caller.client.as_ref())
+    }
+}
+
+/// A message with a `caller` field, written: what a client fills.
+pub trait CarriesMut: Carries {
+    /// The field itself.
+    fn caller_slot(&mut self) -> &mut Option<v1::Caller>;
+    /// Its `caller`, made empty where it had none.
+    fn caller_mut(&mut self) -> &mut v1::Caller {
+        self.caller_slot().get_or_insert_with(v1::Caller::default)
+    }
+    /// The message, carrying `env` as its caller's environment.
+    fn set_caller_env(&mut self, env: v1::EnvVars) {
+        self.caller_mut().env = Some(env);
+    }
+    /// The message, at the caller's working directory `cwd`.
+    fn set_caller_cwd(&mut self, cwd: String) {
+        self.caller_mut().cwd = cwd;
+    }
+    /// What `filled` says that the message's own caller does not: its
+    /// directory, environment, flags, presentable and client, each where the
+    /// message names none (a command sets its own flags and presentable; the
+    /// client the rest).
+    fn fill_caller(&mut self, filled: &v1::Caller) {
+        self.caller_mut().fill_from(filled);
+    }
+}
+
+impl v1::Caller {
+    /// A command's own part of its caller: the global flags it is planned
+    /// under and what it can present of a need. The client it runs in fills
+    /// the rest ([`CarriesMut::fill_caller`]).
+    pub fn of(
+        globals: Option<v1::Globals>,
+        presentable: Option<v1::Presentable>,
+    ) -> Option<v1::Caller> {
+        Some(v1::Caller {
+            globals,
+            presentable,
+            ..v1::Caller::default()
+        })
+    }
+
+    /// This caller, with what `filled` says that it does not: its
+    /// directory, environment, flags, presentable and client, each where
+    /// this one names none.
+    pub fn fill_from(&mut self, filled: &v1::Caller) {
+        if self.cwd.is_empty() {
+            self.cwd.clone_from(&filled.cwd);
+        }
+        if self.env.is_none() {
+            self.env.clone_from(&filled.env);
+        }
+        if self.globals.is_none() {
+            self.globals.clone_from(&filled.globals);
+        }
+        if self.presentable.is_none() {
+            self.presentable.clone_from(&filled.presentable);
+        }
+        if self.client.is_none() {
+            self.client.clone_from(&filled.client);
+        }
+    }
+}
+
+// Each message's `Carries`, generated from the protos.
+include!(concat!(env!("OUT_DIR"), "/carries.rs"));
+
+/// The package's descriptor set, as the build compiled it: what a test reads
+/// the service's methods and their messages from.
+pub fn descriptors() -> Result<prost_types::FileDescriptorSet, prost::DecodeError> {
+    prost::Message::decode(&include_bytes!(concat!(env!("OUT_DIR"), "/angzarr.descriptors"))[..])
+}
+
 // The refusals' declared statuses, generated from the protos.
 include!(concat!(env!("OUT_DIR"), "/refusals.rs"));
 

@@ -615,16 +615,12 @@ impl Wiring {
         let vcs = oneshot::identity_git(self).vcs_identity(std::path::Path::new(&root));
         daemon_proto::v1::ResolveProjectRequest {
             name: String::new(),
-            cwd: self
-                .env
-                .cwd()
-                .map(|cwd| cwd.display().to_string())
-                .unwrap_or_default(),
             project_id: project.id,
             root,
             git_common_dir: vcs.git_common_dir,
             root_commit: vcs.root_commit,
-            env: None,
+            // Its client's, filled as every request's is.
+            caller: None,
         }
     }
 

@@ -290,6 +290,18 @@ impl Context<'_> {
         Some(library_api::reads::globals_of(&self.flags))
     }
 
+    /// What this command can present of a need (step 10b U3): it launches
+    /// the editor, and asks nothing else here. Off a terminal too: an
+    /// editor run off one (a script's) is how the spec's editing scenarios
+    /// edit (the owner's 2026-11-18 ruling to say it only at a terminal is
+    /// escalated against them).
+    pub(crate) fn presentable(&self) -> Option<v1::Presentable> {
+        Some(v1::Presentable {
+            can_ask: false,
+            can_launch: true,
+        })
+    }
+
     /// This context answering in `format` (a verb that answers in text
     /// unless json is asked for by name).
     pub(crate) fn formatted(&self, format: Format) -> Context<'_> {

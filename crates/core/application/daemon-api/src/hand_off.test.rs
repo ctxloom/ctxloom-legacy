@@ -53,6 +53,7 @@ impl HandOffs for Kept {
                 env: request.env.clone(),
                 launcher: BTreeMap::new(),
                 agent: request.agent.clone(),
+                program: None,
             },
         })
     }
@@ -92,11 +93,14 @@ fn create(owner: &str) -> v1::CreateHandOffRequest {
         hand_off_id: CHILD.to_string(),
         owner: owner.to_string(),
         agent: "dev".to_string(),
-        env: Some(v1::EnvVars {
-            vars: vec![v1::EnvVar {
-                name: "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
-                value: "a-token".to_string(), // gitleaks:allow
-            }],
+        caller: Some(v1::Caller {
+            env: Some(v1::EnvVars {
+                vars: vec![v1::EnvVar {
+                    name: "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                    value: "a-token".to_string(), // gitleaks:allow
+                }],
+            }),
+            ..v1::Caller::default()
         }),
         ..v1::CreateHandOffRequest::default()
     }
@@ -348,7 +352,10 @@ async fn two_projects(
     f.api.resolve_project(resolve(COMMIT, "")).await.unwrap();
     f.api
         .resolve_project(v1::ResolveProjectRequest {
-            cwd: API_ROOT.to_string(),
+            caller: Some(v1::Caller {
+                cwd: API_ROOT.to_string(),
+                ..v1::Caller::default()
+            }),
             project_id: "api-otter".to_string(),
             root: API_ROOT.to_string(),
             ..v1::ResolveProjectRequest::default()

@@ -98,12 +98,15 @@ fn terminal(parent: &str) -> v1::CreateRunRequest {
         parent: parent.to_string(),
         mode: v1::run::Mode::Terminal as i32,
         agent: "dev".to_string(),
-        cwd: "/work/sub".to_string(),
-        env: Some(v1::EnvVars {
-            vars: vec![v1::EnvVar {
-                name: "TERM".to_string(),
-                value: "xterm".to_string(),
-            }],
+        caller: Some(v1::Caller {
+            cwd: "/work/sub".to_string(),
+            env: Some(v1::EnvVars {
+                vars: vec![v1::EnvVar {
+                    name: "TERM".to_string(),
+                    value: "xterm".to_string(),
+                }],
+            }),
+            ..v1::Caller::default()
         }),
         ..v1::CreateRunRequest::default()
     }
@@ -113,7 +116,10 @@ async fn resolved() -> crate::server::tests::Fixture {
     let f = fixture(vec!["calm-quiet-heron"]);
     f.api
         .resolve_project(v1::ResolveProjectRequest {
-            cwd: "/work".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work".to_string(),
+                ..v1::Caller::default()
+            }),
             project_id: "calm".to_string(),
             root: "/work".to_string(),
             ..v1::ResolveProjectRequest::default()

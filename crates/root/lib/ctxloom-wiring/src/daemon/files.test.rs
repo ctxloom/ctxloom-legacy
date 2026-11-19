@@ -169,6 +169,7 @@ fn a_hand_off_reads_back_what_was_written() {
         env: sent,
         launcher: env(&[("CLAUDE_CONFIG_DIR", "/home/alice/.claude-work")]),
         agent: "reviewer".to_string(),
+        program: None,
     };
     let text = super::encode_hand_off(&handed);
     assert!(text.starts_with("ctxloom-launch-env 3\n"), "{text}");

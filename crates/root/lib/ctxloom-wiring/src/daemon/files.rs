@@ -484,6 +484,8 @@ impl DaemonFiles {
 /// user's settings is the launch's [`super::SETTINGS_PLACES`].
 pub(crate) struct ApiHandOffs {
     files: DaemonFiles,
+    /// Each launch's client program, kept beside its hand-off.
+    programs: HandedPrograms,
     home: PathBuf,
     temp: PathBuf,
     /// The engines a child is hosted on: their names and credentials.
@@ -497,9 +499,11 @@ pub(crate) fn api_hand_offs(
     fs: &Arc<dyn Fs>,
     (home, temp): (&Path, &Path),
     engines: &[daemon_application::HostedEngine],
+    programs: &HandedPrograms,
 ) -> Arc<dyn daemon_api::HandOffs> {
     Arc::new(ApiHandOffs {
         files: DaemonFiles::new(Arc::clone(fs), home),
+        programs: programs.clone(),
         home: home.to_path_buf(),
         temp: temp.to_path_buf(),
         engines: engines.to_vec(),
@@ -560,6 +564,8 @@ impl daemon_api::HandOffs for ApiHandOffs {
                 env: engine_claude::launcher_environment(&child.settings, &caller),
                 launcher: super::settings_places(&caller),
                 agent: request.agent.clone(),
+                // The API's to say: the client that asked.
+                program: None,
             },
         })
     }
@@ -569,15 +575,58 @@ impl daemon_api::HandOffs for ApiHandOffs {
             env: content.env.clone(),
             launcher: content.launcher.clone(),
             agent: content.agent.clone(),
+            program: None,
         };
+        self.programs.keep(child, content.program.clone());
         self.files
             .launching(child, &handed)
             .map_err(|e| e.to_string())
     }
 
     fn delete(&self, child: &str) -> Result<(), String> {
+        self.programs.forget(child);
         self.files.delete_hand_off(child);
         Ok(())
+    }
+}
+
+/// Each hosted launch's client program (owner, 2026-11-18: a launch runs
+/// the CLIENT's program for its hooks and leads its engine's `PATH` with its
+/// directory), by its child's id, from its `CreateHandOff` to its close: in
+/// the daemon's memory, never in the hand-off file (whose format is
+/// unchanged). A daemon started again between the two has none of them, and
+/// the child runs the daemon's own program, which the version rule makes the
+/// same version.
+#[derive(Clone, Default)]
+pub(crate) struct HandedPrograms(
+    Arc<std::sync::Mutex<std::collections::BTreeMap<String, daemon_application::Program>>>,
+);
+
+impl HandedPrograms {
+    /// Keep `program` for the child `child` (none: forget any kept).
+    pub(crate) fn keep(&self, child: &str, program: Option<daemon_application::Program>) {
+        let mut kept = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match program {
+            Some(program) => kept.insert(child.to_string(), program),
+            None => kept.remove(child),
+        };
+    }
+
+    /// The program kept for the child `child`.
+    pub(crate) fn of(&self, child: &str) -> Option<daemon_application::Program> {
+        let kept = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        kept.get(child).cloned()
+    }
+
+    /// Forget the child `child`'s program.
+    pub(crate) fn forget(&self, child: &str) {
+        self.keep(child, None);
     }
 }
 

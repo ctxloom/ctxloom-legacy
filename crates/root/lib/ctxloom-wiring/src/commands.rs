@@ -221,25 +221,31 @@ pub fn hosted_engines(wiring: &Wiring, program: &str) -> Vec<daemon_application:
             temp.clone(),
             program.clone(),
         );
-        Arc::new(move |launcher: &BTreeMap<String, String>| {
-            let engines = crate::daemon::launch_engines_for(
-                &home,
-                user_home.as_deref(),
-                &temp,
-                launcher,
-                &program,
-            );
-            match claude_side {
-                true => (
-                    engines.claude.clone() as Arc<dyn run_ports::Engine>,
-                    engines.claude as Arc<dyn run_ports::ChildEngine>,
-                ),
-                false => (
-                    engines.opencode.clone() as Arc<dyn run_ports::Engine>,
-                    engines.opencode as Arc<dyn run_ports::ChildEngine>,
-                ),
-            }
-        })
+        Arc::new(
+            move |launcher: &BTreeMap<String, String>,
+                  launched: Option<&daemon_application::Program>| {
+                // The launcher's program, else the daemon's own (owner,
+                // 2026-11-18).
+                let program = launched.map_or(program.as_str(), |launched| launched.name.as_str());
+                let engines = crate::daemon::launch_engines_for(
+                    &home,
+                    user_home.as_deref(),
+                    &temp,
+                    launcher,
+                    program,
+                );
+                match claude_side {
+                    true => (
+                        engines.claude.clone() as Arc<dyn run_ports::Engine>,
+                        engines.claude as Arc<dyn run_ports::ChildEngine>,
+                    ),
+                    false => (
+                        engines.opencode.clone() as Arc<dyn run_ports::Engine>,
+                        engines.opencode as Arc<dyn run_ports::ChildEngine>,
+                    ),
+                }
+            },
+        )
     };
     vec![
         daemon_application::HostedEngine {
@@ -265,6 +271,23 @@ pub(crate) fn build_setup(wiring: &Wiring, deps: Rc<Deps>) -> Result<Setup, LibE
         wiring.home().join(".ctxloom/records"),
     ));
     build_setup_over(wiring, deps, files)
+}
+
+/// `setup`, its hooks reading the library and their contexts through the
+/// daemon, as the client stamped `stamp` (a hook process's own setup).
+pub(crate) fn with_hook_clients(setup: Setup, wiring: &Wiring, stamp: &str) -> Setup {
+    setup
+        // The hooks read the library through the daemon (O3), within their
+        // bound from when the use cases were wired, which a hook does first.
+        .with_hook_library(Box::new(
+            crate::hook_library::DaemonHookLibrary::starting_now(Arc::clone(wiring.env()), stamp),
+        ))
+        // What a live session's hooks carry (a primary's pending messages,
+        // the terminal wake, and what it is owed, U13), through the daemon
+        // too, in ONE call (the lean hook RPC).
+        .with_hook_contexts(Box::new(
+            crate::hook_messages::DaemonHookContexts::starting_now(Arc::clone(wiring.env()), stamp),
+        ))
 }
 
 /// The setup use cases over `files`, the surface store they deliver
@@ -294,18 +317,7 @@ pub(crate) fn build_setup_over(
     )
     .with_os(wiring.os_name())
     .with_foreign(files)
-    .with_puller(Rc::new(DepsPuller(deps)))
-    // The hooks read the library through the daemon (O3), within their
-    // bound from when the use cases were wired, which a hook does first.
-    .with_hook_library(Box::new(
-        crate::hook_library::DaemonHookLibrary::starting_now(Arc::clone(wiring.env())),
-    ))
-    // What a live session's hooks carry (a primary's pending messages, the
-    // terminal wake, and what it is owed, U13), through the daemon too, in
-    // ONE call (the lean hook RPC).
-    .with_hook_contexts(Box::new(
-        crate::hook_messages::DaemonHookContexts::starting_now(Arc::clone(wiring.env())),
-    )))
+    .with_puller(Rc::new(DepsPuller(deps))))
 }
 
 /// The engines' callbacks that answer through the setup use cases.
@@ -398,7 +410,8 @@ impl Commands {
             let library = LibraryCommands::new(Arc::clone(&self.env))
                 .with_remotes(deps.clone())
                 .with_version(&self.version);
-            let surface = build_setup(&wiring, deps.clone())?;
+            let surface =
+                with_hook_clients(build_setup(&wiring, deps.clone())?, &wiring, &self.version);
             let setup = SetupUseCases::build(&wiring, &self.version)?;
             self.wired = Some(Wired {
                 deps,

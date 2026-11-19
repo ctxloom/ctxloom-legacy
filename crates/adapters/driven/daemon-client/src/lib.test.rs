@@ -116,7 +116,11 @@ impl Ctxloom for Fake {
         self.admit(&request)?;
         Ok(Response::new(v1::Project {
             name: "projects/calm-quiet-heron".to_string(),
-            root: request.into_inner().cwd,
+            root: request
+                .into_inner()
+                .caller
+                .map(|caller| caller.cwd)
+                .unwrap_or_default(),
             ..v1::Project::default()
         }))
     }
@@ -420,7 +424,6 @@ async fn a_call_pins_the_certificate_and_presents_the_bearer() {
     let daemon = DaemonClient::new(&found, WITHIN)
         .get_daemon(v1::GetDaemonRequest {
             name: "daemon".to_string(),
-            ..v1::GetDaemonRequest::default()
         })
         .await
         .unwrap();
@@ -643,7 +646,10 @@ async fn a_project_a_listing_and_a_search_are_answered() {
     let client = DaemonClient::new(&found, WITHIN);
     let project = client
         .resolve_project(v1::ResolveProjectRequest {
-            cwd: "/work/calm".to_string(),
+            caller: Some(v1::Caller {
+                cwd: "/work/calm".to_string(),
+                ..v1::Caller::default()
+            }),
             ..v1::ResolveProjectRequest::default()
         })
         .await
@@ -675,6 +681,35 @@ async fn a_project_a_listing_and_a_search_are_answered() {
         searched.sessions[0].name,
         "projects/calm-quiet-heron/sessions/auth-refactor"
     );
+}
+
+// Owner, 2026-11-18: a client filling its caller fills every request made
+// on the user's behalf where it names none of its own: the daemon resolves
+// a project from the filled directory, and from the request's own where it
+// names one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_filling_client_fills_each_requests_caller_where_it_names_none() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let client = DaemonClient::new(&found, WITHIN).filling(v1::Caller {
+        cwd: "/work/filled".to_string(),
+        ..v1::Caller::default()
+    });
+    let filled = client
+        .resolve_project(v1::ResolveProjectRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(filled.root, "/work/filled");
+    let own = client
+        .resolve_project(v1::ResolveProjectRequest {
+            caller: Some(v1::Caller {
+                cwd: "/work/own".to_string(),
+                ..v1::Caller::default()
+            }),
+            ..v1::ResolveProjectRequest::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(own.root, "/work/own");
 }
 
 /// An error with the cause it was raised from.
@@ -952,21 +987,21 @@ fn each_infrastructure_error_the_daemon_answers_is_read_back() {
 
 // Step 10a U2: a failure the daemon said in a diagnostic of its own (its
 // ErrorInfo's reason the code, its metadata the args) is that diagnostic,
-// so a command says `library-git-git-missing` and exits 10. It travels
+// so a command says `library-application-bundle-unreadable` and exits 10. It travels
 // failed-precondition (owner ruling 2026-11-17), and is never read as a
 // typed refusal of that status.
 #[test]
 fn a_diagnosed_failure_is_its_diagnostic() {
     let info = super::ErrorInfo {
-        reason: "library-git-git-too-old".to_string(),
+        reason: "library-application-bundle-unreadable".to_string(),
         domain: super::DIAGNOSED_DOMAIN.to_string(),
-        metadata: [("version".to_string(), "2.20.0".to_string())]
+        metadata: [("ask".to_string(), "demo".to_string())]
             .into_iter()
             .collect(),
     };
     let rpc = RpcStatus {
         code: Code::FailedPrecondition as i32,
-        message: "library-git-git-too-old".to_string(),
+        message: "library-application-bundle-unreadable".to_string(),
         details: vec![prost_types::Any {
             type_url: "type.googleapis.com/google.rpc.ErrorInfo".to_string(),
             value: info.encode_to_vec(),
@@ -974,21 +1009,21 @@ fn a_diagnosed_failure_is_its_diagnostic() {
     };
     let status = Status::with_details(
         Code::FailedPrecondition,
-        "library-git-git-too-old",
+        "library-application-bundle-unreadable",
         Bytes::from(rpc.encode_to_vec()),
     );
     let called = super::called("ListBundles", &status);
     assert_eq!(
         called,
         Called::Diagnosed {
-            code: "library-git-git-too-old".to_string(),
-            args: vec![("version".to_string(), "2.20.0".to_string())],
+            code: "library-application-bundle-unreadable".to_string(),
+            args: vec![("ask".to_string(), "demo".to_string())],
         }
     );
     let Called::Diagnosed { code, .. } = &called else {
         panic!("{called:?}");
     };
-    assert_eq!(code, "library-git-git-too-old");
+    assert_eq!(code, "library-application-bundle-unreadable");
 }
 
 // Step 10c G7: a library's changes are streamed as the daemon sends them,

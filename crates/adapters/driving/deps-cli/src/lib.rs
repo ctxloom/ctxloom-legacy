@@ -357,7 +357,7 @@ fn remote_create(
             forge,
             ..Default::default()
         }),
-        globals: cx.globals.clone(),
+        caller: v1::Caller::of(cx.globals.clone(), None),
         ..v1::CreateRemoteRequest::default()
     };
     let mut answered = cx.served.create_remote("", request)?;
@@ -411,7 +411,7 @@ fn remote_edit(
         }),
         new_remote_id: one(args, "name").unwrap_or_default(),
         update_mask: Some(daemon_proto::google::protobuf::FieldMask { paths: given }),
-        globals: cx.globals.clone(),
+        caller: v1::Caller::of(cx.globals.clone(), None),
         ..v1::UpdateRemoteRequest::default()
     };
     let under = library_api::names::named_target("remotes", &asked);
@@ -434,7 +434,7 @@ fn remote_remove(
     let asked = text_arg(args, "remote");
     let request = v1::DeleteRemoteRequest {
         validate_only: !flag(args, "yes"),
-        globals: cx.globals.clone(),
+        caller: v1::Caller::of(cx.globals.clone(), None),
         ..v1::DeleteRemoteRequest::default()
     };
     let under = library_api::names::named_target("remotes", &asked);
@@ -468,7 +468,7 @@ fn remote_default(
     };
     let request = v1::SetDefaultRemoteRequest {
         remote: chosen.unwrap_or_default().to_string(),
-        globals: cx.globals.clone(),
+        caller: v1::Caller::of(cx.globals.clone(), None),
         ..v1::SetDefaultRemoteRequest::default()
     };
     let mut answered = cx.served.set_default_remote("", request)?;
@@ -540,7 +540,7 @@ fn dependencies(
                 force: flag(args, "force"),
                 lock: Some(lock),
                 validate_only: !flag(args, "yes"),
-                globals: cx.globals.clone(),
+                caller: v1::Caller::of(cx.globals.clone(), None),
                 ..v1::PullDependenciesRequest::default()
             };
             let mut answered = cx.served.pull_dependencies("", request)?;
@@ -572,7 +572,7 @@ fn dependencies(
             let request = v1::UpgradeDependenciesRequest {
                 reference: reference.cloned().unwrap_or_default(),
                 validate_only: !flag(args, "yes"),
-                globals: cx.globals.clone(),
+                caller: v1::Caller::of(cx.globals.clone(), None),
                 ..v1::UpgradeDependenciesRequest::default()
             };
             let mut answered = cx.served.upgrade_dependencies("", request)?;

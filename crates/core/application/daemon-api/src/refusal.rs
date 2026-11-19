@@ -59,8 +59,8 @@ pub enum ApiError {
     Refused(ApiRefusal),
     /// Something broke (the store, the kernel): an internal failure.
     Failed { detail: String },
-    /// Failed, in a diagnostic of its own (step 10a U2: git missing or too
-    /// old, `library-git-*`): its code and its flattened args, which the
+    /// Failed, in a diagnostic of its own (step 10a U2: a library that does
+    /// not read): its code and its flattened args, which the
     /// client is told so it says it in that diagnostic's words.
     Diagnosed {
         code: String,
@@ -163,6 +163,14 @@ pub enum ApiRejection {
         daemon: String,
         harps: Vec<String>,
     },
+    /// A call of a client whose version is not the daemon's (owner,
+    /// 2026-11-18): both stamps (`unknown` for a client that named none) and
+    /// the client's kind (`cli`, `mcp`, `hook`).
+    ClientVersion {
+        client: String,
+        daemon: String,
+        kind: String,
+    },
     /// A call that would create files under the daemon's home once that
     /// home's ctxloom directory is gone (owner, 2026-11-17): `home`.
     HomeGone {
@@ -242,6 +250,7 @@ impl Diagnostic for ApiRejection {
             ApiRejection::ProjectUnknown { .. } => code!("project-unknown"),
             ApiRejection::DaemonHosting { .. } => code!("daemon-hosting"),
             ApiRejection::Draining { .. } => code!("draining"),
+            ApiRejection::ClientVersion { .. } => code!("client-version"),
             ApiRejection::HomeGone { .. } => code!("home-gone"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
             ApiRejection::EtagInvalid { .. } => code!("etag-invalid"),
@@ -297,6 +306,15 @@ impl Diagnostic for ApiRejection {
             ApiRejection::Draining { daemon, harps } => vec![
                 ("daemon", daemon.as_str().into()),
                 ("harps", harps.join(", ").into()),
+            ],
+            ApiRejection::ClientVersion {
+                client,
+                daemon,
+                kind,
+            } => vec![
+                ("client", client.as_str().into()),
+                ("daemon", daemon.as_str().into()),
+                ("kind", kind.as_str().into()),
             ],
             ApiRejection::HomeGone { home } => vec![("home", home.as_str().into())],
             ApiRejection::AgeInvalid { key, value } => {
@@ -510,6 +528,7 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 harps: r.harps,
             })
         }),
+        "ctxloom.v1.ClientVersionMismatch" => client_version(refusal).and_then(api),
         "ctxloom.v1.DaemonHomeGone" => decode::<v1::DaemonHomeGone>(refusal)
             .and_then(|r| api(ApiRejection::HomeGone { home: r.home })),
         "ctxloom.v1.AgeInvalid" => decode::<v1::AgeInvalid>(refusal).and_then(|r| {
@@ -721,6 +740,28 @@ pub fn library_refusal(rejection: &library_tree::LibraryTreeRejection) -> ApiRef
     }
 }
 
+/// A `ClientVersionMismatch`'s rejection: both stamps (`unknown` for a
+/// client that named none) and the client's kind.
+fn client_version(refusal: &Any) -> Option<ApiRejection> {
+    decode::<v1::ClientVersionMismatch>(refusal).map(|r| ApiRejection::ClientVersion {
+        client: Some(r.client_version)
+            .filter(|version| !version.is_empty())
+            .unwrap_or_else(|| "unknown".to_string()),
+        daemon: r.daemon_version,
+        kind: client_kind(r.kind).to_string(),
+    })
+}
+
+/// A client's kind as a person reads it.
+fn client_kind(kind: i32) -> &'static str {
+    match v1::client::Kind::try_from(kind) {
+        Ok(v1::client::Kind::Cli) => "cli",
+        Ok(v1::client::Kind::Mcp) => "mcp",
+        Ok(v1::client::Kind::Hook) => "hook",
+        _ => "unnamed",
+    }
+}
+
 fn decode<T: Message + Default>(refusal: &Any) -> Option<T> {
     T::decode(refusal.value.as_slice()).ok()
 }
@@ -764,6 +805,11 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ApiRejection::Draining {
             daemon: "v0.1.0-abc".to_string(),
             harps: vec!["brisk-copper-moth".to_string()],
+        }),
+        Box::new(ApiRejection::ClientVersion {
+            client: "v0.1.1-def".to_string(),
+            daemon: "v0.1.0-abc".to_string(),
+            kind: "cli".to_string(),
         }),
         Box::new(ApiRejection::HomeGone {
             home: "/home/u/.ctxloom".to_string(),

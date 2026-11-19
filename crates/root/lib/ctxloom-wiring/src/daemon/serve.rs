@@ -625,6 +625,8 @@ async fn start(
     // The sessions their ctxloom MCP server watches (the terminal wake):
     // the API's `WatchSession` watches, the loop publishes each round.
     let watches = daemon_application::SessionWatches::new(daemon_application::KEEPALIVE);
+    // Each hosted launch's client program, from its hand-off to its close.
+    let handed = super::files::HandedPrograms::default();
     let calls = served(
         daemon_api::Api::new(daemon_api::Parts {
             edge: Arc::clone(&edge),
@@ -657,6 +659,7 @@ async fn start(
         (fs, files, trash_clock(env)),
         (home, temp, &stamp),
         (&engines, terminals, kept),
+        &handed,
     );
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
@@ -684,14 +687,7 @@ async fn start(
         &edge,
         kept,
         (engines, user_home.clone(), env),
-        Told {
-            home: home.to_string_lossy().into_owned(),
-            program_dir: std::env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
-            os,
-            user_home: user_home.map(|home| home.to_string_lossy().into_owned()),
-        },
+        (told(home, os, user_home), &handed),
         Arc::clone(say),
     )
     .hosting_one_shots(Arc::clone(one_shots))
@@ -845,6 +841,7 @@ fn served(
         &Arc<daemon_application::Terminals>,
         &Projectors,
     ),
+    handed: &super::files::HandedPrograms,
 ) -> Arc<dyn daemon_api::Calls> {
     // Shared, so what follows from a run it hosts (a distill's write, step
     // 10b) reaches it once the call that started the run has answered.
@@ -859,7 +856,12 @@ fn served(
                 home: home.to_path_buf(),
                 temp: temp.to_path_buf(),
             }))
-            .handing_off(super::files::api_hand_offs(fs, (home, temp), engines))
+            .handing_off(super::files::api_hand_offs(
+                fs,
+                (home, temp),
+                engines,
+                handed,
+            ))
             // Other tools' files, planned where the caller stands and
             // written as one sequence (step 10c U10).
             .writing_foreign(Arc::new(super::foreign::ForeignWriters {
@@ -1063,6 +1065,20 @@ fn step_of(book: &angzarr_embedded::v1::CommandBook) -> Option<&'static str> {
     })
 }
 
+/// Where the daemon is, as a child it hosts is told: ctxloom's `home`, the
+/// directory of its own program (a launcher's, where it names one, leads
+/// instead), the `os` and the user's own home.
+fn told(home: &Path, os: String, user_home: Option<PathBuf>) -> Told {
+    Told {
+        home: home.to_string_lossy().into_owned(),
+        program_dir: std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
+        os,
+        user_home: user_home.map(|home| home.to_string_lossy().into_owned()),
+    }
+}
+
 /// The launcher (T18), composed: its ports over this process's home, the
 /// core's `edge` (`home` and `temp` the process's), the folds `kept`
 /// registered in the kernel, the daemon's
@@ -1077,7 +1093,7 @@ fn launcher(
         Option<PathBuf>,
         &Arc<process_env::EnvSnapshot>,
     ),
-    told: Told,
+    (told, handed): (Told, &super::files::HandedPrograms),
     say: Say,
 ) -> Daemon<CoreEdge> {
     Daemon::new(Ports {
@@ -1088,7 +1104,10 @@ fn launcher(
             temp: temp.to_path_buf(),
             user_home,
         }),
-        hand_offs: Box::new(HandOffFiles(DaemonFiles::new(Arc::clone(fs), home))),
+        hand_offs: Box::new(HandOffFiles(
+            DaemonFiles::new(Arc::clone(fs), home),
+            handed.clone(),
+        )),
         homes: Box::new(Homes(Arc::clone(fs))),
         ears: Box::new(Pumps::new()),
         run_locks: Arc::new(liveness::RunLockFiles::new(
@@ -1756,14 +1775,21 @@ impl ChildPlans for Plans {
 
 /// The hand-off files under the daemon's directory (T6: read at each of
 /// the child's starts, deleted at its close, swept).
-struct HandOffFiles(DaemonFiles);
+/// Each read with the launching client's program, as the API kept it.
+struct HandOffFiles(DaemonFiles, super::files::HandedPrograms);
 
 impl HandOffs for HandOffFiles {
     fn read(&self, session: &str) -> Option<daemon_application::HandOff> {
-        self.0.read_hand_off(session)
+        self.0
+            .read_hand_off(session)
+            .map(|handed| daemon_application::HandOff {
+                program: self.1.of(session),
+                ..handed
+            })
     }
 
     fn delete(&self, session: &str) {
+        self.1.forget(session);
         self.0.delete_hand_off(session);
     }
 

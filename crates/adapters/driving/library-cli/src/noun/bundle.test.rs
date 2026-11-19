@@ -588,21 +588,23 @@ mod distill {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_bundle_show_list_and_view_ask_their_view_with_the_globals() {
         let (under, show) = asked_once::<v1::GetBundleRequest>(&["bundle", "show", "demo"]);
         assert_eq!(under, library_api::names::bundle_target("demo"));
         assert_eq!(show.view, v1::bundle::View::Full as i32);
-        assert_eq!(show.globals, degraded());
+        assert_eq!(show.caller_globals().cloned(), degraded());
         let (_, list) = asked_once::<v1::ListBundlesRequest>(&["bundle", "list"]);
-        assert_eq!(list.globals, degraded());
+        assert_eq!(list.caller_globals().cloned(), degraded());
         let (under, whole) =
             asked_once::<v1::GetBundleRequest>(&["bundle", "view", "--distilled", "demo"]);
         assert_eq!(under, library_api::names::bundle_target("demo"));
         assert_eq!(whole.view, v1::bundle::View::Content as i32);
         assert!(whole.prefer_distilled);
-        assert_eq!(whole.globals, degraded());
+        assert_eq!(whole.caller_globals().cloned(), degraded());
     }
 
     #[test]
@@ -618,7 +620,7 @@ mod asks {
             library_api::names::reference_target("demo#fragments/golang")
         );
         assert!(fragment.prefer_distilled);
-        assert_eq!(fragment.globals, degraded());
+        assert_eq!(fragment.caller_globals().cloned(), degraded());
         let (_, command) = asked_once::<v1::GetCommandRequest>(&[
             "bundle",
             "view",
@@ -626,21 +628,21 @@ mod asks {
             "demo#commands/review",
         ]);
         assert!(command.prefer_distilled);
-        assert_eq!(command.globals, degraded());
+        assert_eq!(command.caller_globals().cloned(), degraded());
         let (_, skill) =
             asked_once::<v1::GetSkillRequest>(&["bundle", "view", "demo#skills/reviewer"]);
-        assert_eq!(skill.globals, degraded());
+        assert_eq!(skill.caller_globals().cloned(), degraded());
         let (_, mcp) =
             asked_once::<v1::GetMcpServerRequest>(&["bundle", "view", "demo#mcp/tree-sitter"]);
-        assert_eq!(mcp.globals, degraded());
+        assert_eq!(mcp.caller_globals().cloned(), degraded());
         let (_, profile) =
             asked_once::<v1::GetProfileRequest>(&["bundle", "view", "project#profiles/dev"]);
-        assert_eq!(profile.globals, degraded());
+        assert_eq!(profile.caller_globals().cloned(), degraded());
         let (_, other) =
             asked_once::<v1::GetBundleRequest>(&["bundle", "view", "--distilled", "demo#notes/x"]);
         assert_eq!(other.view, v1::bundle::View::Content as i32);
         assert!(other.prefer_distilled);
-        assert_eq!(other.globals, degraded());
+        assert_eq!(other.caller_globals().cloned(), degraded());
     }
 }
 
@@ -651,6 +653,8 @@ mod asks {
 mod writes_asked {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_bundle_edit_asks_update_bundle_with_its_mask_and_lists() {
@@ -693,7 +697,10 @@ mod writes_asked {
         assert_eq!(edit.add_mcp_servers, ["m"]);
         assert_eq!(edit.remove_mcp_servers, ["n"]);
         assert!(!edit.validate_only);
-        assert_eq!(edit.globals, degraded());
+        assert_eq!(
+            edit.caller.as_ref().and_then(|c| c.globals.clone()),
+            degraded()
+        );
         let (_, bare) = asked_once::<v1::UpdateBundleRequest>(&["bundle", "edit", "demo"]);
         assert!(bare.update_mask.is_none_or(|m| m.paths.is_empty()));
         assert!(bare.add_tags.is_empty() && bare.add_fragments.is_empty());
@@ -706,6 +713,8 @@ mod writes_asked {
 mod export_asked {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_bundle_export_asks_export_bundle_with_its_paths() {
@@ -715,7 +724,7 @@ mod export_asked {
         assert_eq!(asked.destination, "exported");
         assert!(asked.output.is_empty());
         assert!(!asked.validate_only);
-        assert_eq!(asked.globals, degraded());
+        assert_eq!(asked.caller_globals().cloned(), degraded());
         let (_, asked) =
             asked_once::<v1::ExportBundleRequest>(&["bundle", "export", "demo", "-o", "handoff"]);
         assert_eq!(asked.output, "handoff");

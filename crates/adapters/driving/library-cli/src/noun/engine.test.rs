@@ -181,13 +181,15 @@ mod api {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_engine_reads_carry_the_globals() {
         let (under, show) = asked_once::<v1::GetEngineRequest>(&["engine", "show", "claude-code"]);
         assert_eq!(under, "/engines/claude-code");
-        assert_eq!(show.globals, degraded());
+        assert_eq!(show.caller_globals().cloned(), degraded());
         let (_, list) = asked_once::<v1::ListEnginesRequest>(&["engine", "list"]);
-        assert_eq!(list.globals, degraded());
+        assert_eq!(list.caller_globals().cloned(), degraded());
     }
 }

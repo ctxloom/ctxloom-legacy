@@ -305,20 +305,26 @@ fn infrastructure(error: Infrastructure, message: impl Into<String>) -> Status {
 
 impl Served {
     /// Answer `request` (admitted already, by [`Gated`]) with `call`'s use
-    /// case, run on the blocking pool (M10).
+    /// case, run on the blocking pool (M10). A request that carries a
+    /// `Caller` is first admitted by its client's version
+    /// ([`Calls::admit`]): one of another version is refused, and its use
+    /// case never runs.
     async fn answer<T, R, F, Fut>(
         &self,
         request: Request<T>,
         call: F,
     ) -> Result<Response<R>, Status>
     where
-        T: Send + 'static,
+        T: daemon_proto::Carries + Send + 'static,
         R: Send + 'static,
         F: FnOnce(Arc<dyn Calls>, T) -> Fut + Send + 'static,
         Fut: Future<Output = Result<R, ApiError>> + Send,
     {
         let calls = Arc::clone(&self.calls);
         let message = request.into_inner();
+        if T::CALLER {
+            calls.admit(message.caller()).map_err(status_of_error)?;
+        }
         let runtime = tokio::runtime::Handle::current();
         let answered = tokio::task::spawn_blocking(move || runtime.block_on(call(calls, message)))
             .await

@@ -33,6 +33,7 @@ use angzarr_embedded::angzarr_router::hpb::ProjectRequest;
 use angzarr_embedded::v1::{Cover, DeliveryOutcome, EventBook, Uuid};
 use angzarr_embedded::{Failure, Payload, ProjectorHandler, Timestamp};
 use daemon_proto::v1;
+use daemon_proto::Carries as _;
 use isolation_application::{IsolationError, Report, Verdict as Worktree, WorktreeUse};
 use reclaim_application::{
     parse_age, purge_cutoff, ReclaimError, Removals, SweepConfig, SweepRequest,
@@ -675,7 +676,7 @@ impl<E: Edge> Api<E> {
                 false => Err(not_found(&request.name)),
             };
         };
-        let env = env_of(request.env.as_ref());
+        let env = env_of(request.caller_env());
         let retention = self.retentions(std::slice::from_ref(&record), &env)?;
         let mut removing = Removing {
             api: self,
@@ -762,7 +763,7 @@ impl<E: Edge> Api<E> {
         let removing = Removing {
             api: self,
             records: record.iter().cloned().collect(),
-            env: env_of(request.env.as_ref()),
+            env: env_of(request.caller_env()),
             retention: BTreeMap::new(),
             request_id: request.request_id.clone(),
             per_harp: false,
@@ -899,7 +900,7 @@ impl<E: Edge> Api<E> {
         &self,
         request: v1::SweepSessionsRequest,
     ) -> Result<v1::SweepSessionsResponse, ApiError> {
-        let env = env_of(request.env.as_ref());
+        let env = env_of(request.caller_env());
         let views: Vec<View> = self
             .under(&request.parent)
             .await?

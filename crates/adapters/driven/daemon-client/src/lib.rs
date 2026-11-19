@@ -40,6 +40,10 @@ pub struct DaemonClient {
     destroying: Duration,
     /// What is told the warnings each answer carries (OD-55), if anything.
     hears: Option<Hears>,
+    /// What every request made on the user's behalf carries of its client
+    /// (owner, 2026-11-18): filled into each one's `Caller` where the
+    /// request says none of its own.
+    caller: Option<v1::Caller>,
 }
 
 /// What a client tells the daemon's warnings an answer carried: called
@@ -65,6 +69,18 @@ impl DaemonClient {
             within,
             destroying: within,
             hears: None,
+            caller: None,
+        }
+    }
+
+    /// This client, every request that carries a `Caller` filled with
+    /// `caller` where it names none of its own (its directory, environment,
+    /// flags, presentable, client): the one place every request a process
+    /// makes of the daemon is given its client, whatever path built it.
+    pub fn filling(self, caller: v1::Caller) -> DaemonClient {
+        DaemonClient {
+            caller: Some(caller),
+            ..self
         }
     }
 
@@ -126,6 +142,15 @@ impl DaemonClient {
             .await
             .map_err(|e| unreachable(chain(&e)))?;
         Ok(channel)
+    }
+
+    /// `message`, a request of the `Ctxloom` service, its caller filled
+    /// with this client's ([`DaemonClient::filling`]), with the user bearer.
+    fn asked<T: daemon_proto::Carries>(&self, mut message: T) -> Result<Request<T>, Called> {
+        if let Some(caller) = &self.caller {
+            message.fill_caller_from(caller);
+        }
+        self.request(message)
     }
 
     /// `message`, with the user bearer.
@@ -307,12 +332,16 @@ macro_rules! call {
         call!($self, $method, $name, $message, $self.within)
     }};
     ($self:ident, $method:ident, $name:expr, $message:expr, $within:expr) => {{
-        call!($self, client, $method, $name, $message, $within)
+        call!(@on $self, client, asked, $method, $name, $message, $within)
     }};
-    ($self:ident, $client:ident, $method:ident, $name:expr, $message:expr, $within:expr) => {{
+    // The coordinator's own messages carry no caller.
+    ($self:ident, coordinator, $method:ident, $name:expr, $message:expr, $within:expr) => {{
+        call!(@on $self, coordinator, request, $method, $name, $message, $within)
+    }};
+    (@on $self:ident, $client:ident, $made:ident, $method:ident, $name:expr, $message:expr, $within:expr) => {{
         let within: Duration = $within;
         let mut client = $self.$client().await?;
-        let request = $self.request($message)?;
+        let request = $self.$made($message)?;
         let answered = tokio::time::timeout(within, client.$method(request)).await;
         match answered {
             Ok(Ok(response)) => {
@@ -592,7 +621,7 @@ macro_rules! library_write_calls {
             async fn $method(&self, request: v1::$request) -> Result<v1::$response, Called> {
                 let within = self.destroying;
                 let mut client = self.client().await?;
-                let request = self.request(request)?;
+                let request = self.asked(request)?;
                 match tokio::time::timeout(within, client.$method(request)).await {
                     Ok(Ok(response)) => {
                         self.heard(response.metadata());
@@ -622,7 +651,7 @@ macro_rules! library_read_calls {
             ) -> Result<daemon_ports::Read<v1::$response>, Called> {
                 let within = self.destroying;
                 let mut client = self.client().await?;
-                let request = self.request(request)?;
+                let request = self.asked(request)?;
                 match tokio::time::timeout(within, client.$method(request)).await {
                     Ok(Ok(response)) => {
                         self.heard(response.metadata());

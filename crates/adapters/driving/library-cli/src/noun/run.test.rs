@@ -265,6 +265,8 @@ mod unset {
 mod asks {
     use crate::tests::{asked_once, degraded};
     use daemon_proto::v1;
+    #[allow(unused_imports)]
+    use daemon_proto::Carries as _;
 
     #[test]
     fn test_a_dry_run_asks_create_run_validating_only_with_every_flag() {
@@ -282,6 +284,6 @@ mod asks {
         assert_eq!(run.engine, "opencode");
         assert_eq!(run.tags, ["go"]);
         assert_eq!(run.prompt, "hello");
-        assert_eq!(run.globals, degraded());
+        assert_eq!(run.caller_globals().cloned(), degraded());
     }
 }

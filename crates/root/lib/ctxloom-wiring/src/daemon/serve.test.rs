@@ -28,9 +28,13 @@ fn a_hand_off_is_read_as_it_was_left_listed_and_deleted() {
         env: BTreeMap::from([("KEY".to_string(), "v".to_string())]),
         launcher: BTreeMap::from([("XDG_CONFIG_HOME".to_string(), "/c".to_string())]),
         agent: "reviewer".to_string(),
+        program: None,
     };
     files.hand_off(SESSION, &handed).unwrap();
-    let hand_offs = HandOffFiles(DaemonFiles::new(fixtures::fs(), &home));
+    let hand_offs = HandOffFiles(
+        DaemonFiles::new(fixtures::fs(), &home),
+        crate::daemon::files::HandedPrograms::default(),
+    );
     assert_eq!(hand_offs.read(SESSION), Some(handed.clone()));
     assert_eq!(hand_offs.read(SESSION), Some(handed.clone()), "read again");
     let listed = hand_offs.list();
@@ -42,6 +46,43 @@ fn a_hand_off_is_read_as_it_was_left_listed_and_deleted() {
     hand_offs.delete(SESSION);
     assert_eq!(hand_offs.read(SESSION), None, "deleted");
     assert!(hand_offs.list().is_empty());
+}
+
+// Owner, 2026-11-18: a hosted launch runs its launcher's program. The
+// daemon keeps it beside the hand-off, in memory (the file's format is
+// unchanged), so each read of the hand-off carries it until its delete.
+#[test]
+fn a_hand_off_is_read_with_its_launchers_program_until_deleted() {
+    let root = fixtures::root();
+    let home = root.root().join("home");
+    let files = DaemonFiles::new(fixtures::fs(), &home);
+    let handed = daemon_application::HandOff {
+        env: BTreeMap::from([("KEY".to_string(), "v".to_string())]),
+        ..daemon_application::HandOff::default()
+    };
+    files.hand_off(SESSION, &handed).unwrap();
+    let programs = crate::daemon::files::HandedPrograms::default();
+    let program = daemon_application::Program {
+        name: "ctxloom-dev".to_string(),
+        dir: "/opt/client/bin".to_string(),
+    };
+    programs.keep(SESSION, Some(program.clone()));
+    let hand_offs = HandOffFiles(DaemonFiles::new(fixtures::fs(), &home), programs.clone());
+    let read = hand_offs.read(SESSION).unwrap();
+    assert_eq!(read.program, Some(program));
+    assert_eq!(read.env, handed.env);
+    let text = fixtures::fs()
+        .read_to_string(
+            &home
+                .join(run_ports::DAEMON_DIR)
+                .join("launch")
+                .join(SESSION),
+        )
+        .expect("the hand-off file");
+    assert!(text.contains("KEY=v"), "{text}");
+    assert!(!text.contains("ctxloom-dev"), "never in the file: {text}");
+    hand_offs.delete(SESSION);
+    assert_eq!(programs.of(SESSION), None, "forgotten with its hand-off");
 }
 
 // A child's session home and its files are in its project's session
