@@ -61,8 +61,6 @@ pub(super) struct State {
     /// The other process that creates a bundle while a creation is staged:
     /// the bundle, and whether it found the staging and wrote its bundle.
     other: Option<(String, JoinHandle<bool>)>,
-    /// The git remotes the scenario seeds (a pull's, step 10c U4).
-    remotes: Option<crate::tests::deps::Remotes>,
 }
 
 /// The file at `rel` in the project, by its `/`-separated steps.
@@ -815,21 +813,8 @@ fn changed_while_open(w: &mut World, step: &Step, rel: String, back: String) {
 
 // ------------------------------------------------------------------ pulls (10c U4)
 
-/// A bare repository whose `main` publishes the bundle `demo`, registered
-/// in the project (deps.feature's step, for this World's pulls).
-#[given(expr = "a git remote {string} serving a ctxloom bundle")]
-fn git_remote(w: &mut World, name: String) {
-    let env: Vec<(&str, &str)> = w
-        .common
-        .env
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    w.writes
-        .remotes
-        .get_or_insert_with(crate::tests::deps::Remotes::new)
-        .git_remote(&w.common.project, &env, &name);
-}
+// A pull's git remotes are seeded by `cli`'s `a git remote {string}
+// serving a ctxloom bundle` (the World's one such step).
 
 /// The CLI's one retry is off for the next command alone.
 #[given("the command's retry is turned off")]
