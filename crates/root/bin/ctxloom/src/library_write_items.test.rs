@@ -287,11 +287,17 @@ fn test_removing_a_command_removes_exactly_it() {
     demo(&project);
     project.command("demo", "review");
     let others = project.tree(".ctxloom/content/bundles/v2/demo/fragments");
+    // Its reference, exactly: a project's random name may hold `review`.
+    let listed = "demo#commands/review";
+    project
+        .run(&["command", "list"])
+        .succeeds()
+        .contains(listed);
     project
         .run(&["command", "remove", "demo#commands/review", "--yes"])
         .succeeds();
     project.file_is_absent(&format!("{DEMO}/prompts/review.md"));
-    project.run(&["command", "list"]).succeeds().lacks("review");
+    project.run(&["command", "list"]).succeeds().lacks(listed);
     assert_eq!(project.tree(&format!("{DEMO}/fragments")), others);
     let doc = {
         project.command("demo", "again");
