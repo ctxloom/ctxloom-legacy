@@ -123,6 +123,8 @@ pub struct OwedChange {
     pub sequence: u64,
     /// The loadout's bundles (and `config`) it touched, sorted.
     pub bundles: Vec<String>,
+    /// The paths of it the loadout draws on, sorted.
+    pub paths: Vec<String>,
 }
 
 impl Handed {
@@ -153,6 +155,20 @@ impl Handed {
                 sequence,
             })
             .collect()
+    }
+
+    /// Every path owed, with its tree, sorted, each once.
+    pub fn owed_paths(&self) -> Vec<(String, String)> {
+        let named: std::collections::BTreeSet<(String, String)> = self
+            .owed
+            .iter()
+            .flat_map(|owed| {
+                owed.paths
+                    .iter()
+                    .map(|path| (owed.tree.clone(), path.clone()))
+            })
+            .collect();
+        named.into_iter().collect()
     }
 
     /// Every bundle owed, sorted, each once.
@@ -365,11 +381,16 @@ impl SessionIndex {
                             known.bundles.drain(..).collect();
                         bundles.extend(owed.bundles.iter().cloned());
                         known.bundles = bundles.into_iter().collect();
+                        let mut paths: std::collections::BTreeSet<String> =
+                            known.paths.drain(..).collect();
+                        paths.extend(owed.paths.iter().cloned());
+                        known.paths = paths.into_iter().collect();
                     }
                     None => handed.owed.push(OwedChange {
                         tree: owed.tree.clone(),
                         sequence: owed.sequence,
                         bundles: owed.bundles.clone(),
+                        paths: owed.paths.clone(),
                     }),
                 }
             }

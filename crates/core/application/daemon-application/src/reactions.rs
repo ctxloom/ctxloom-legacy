@@ -95,6 +95,31 @@ pub fn touched(loadout: &SessionLoadout, paths: &[String]) -> Vec<String> {
     named.into_iter().collect()
 }
 
+/// The resource name of the fragment at `path` (relative to its tree,
+/// `content/bundles/v2/<b>/fragments/<f>.md`) of the tree `tree`
+/// (`projects/{p}/checkouts/{c}/library`, `users/me/library`):
+/// `projects/{p}/bundles/<b>/fragments/<f>`, or the home's under
+/// `users/me`; none for a path that is no fragment's.
+pub fn fragment_name(tree: &str, path: &str) -> Option<String> {
+    let rest = path.strip_prefix(BUNDLES)?;
+    let (bundle, rest) = rest.split_once("/fragments/")?;
+    let fragment = rest.strip_suffix(".md")?;
+    if bundle.is_empty() || fragment.is_empty() {
+        return None;
+    }
+    let parent = match tree {
+        HOME_TREE => "users/me".to_string(),
+        tree => {
+            let (project, _) = tree.strip_prefix("projects/")?.split_once("/checkouts/")?;
+            format!("projects/{project}")
+        }
+    };
+    Some(format!("{parent}/bundles/{bundle}/fragments/{fragment}"))
+}
+
+/// The home's library tree.
+const HOME_TREE: &str = "users/me/library";
+
 #[cfg(test)]
 #[path = "reactions.test.rs"]
 mod tests;

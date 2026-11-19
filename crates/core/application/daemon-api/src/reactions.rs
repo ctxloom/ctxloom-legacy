@@ -104,6 +104,15 @@ impl<E: Edge> Api<E> {
     }
 }
 
+/// The characters a hook's context may take, as its request asks: 0 is
+/// the whole hook budget, and none is more.
+pub(crate) fn budget_of(asked: u32) -> usize {
+    match usize::try_from(asked).unwrap_or(usize::MAX) {
+        0 => run_launcher::HOOK_CONTEXT_BUDGET,
+        budget => budget.min(run_launcher::HOOK_CONTEXT_BUDGET),
+    }
+}
+
 /// A library's changes as a watcher polls them (step 10c G7): each call
 /// answers those recorded since the last, oldest first, none when none
 /// was.
@@ -248,10 +257,17 @@ impl<E: Edge> Api<E> {
             return Ok(none);
         };
         let env = request.env.clone();
+        let budget = budget_of(request.budget);
+        let reassemble = || self.reassembled(&loadout, (parent, cwd.clone()), env.clone());
+        let fragments =
+            |owed: Vec<(String, String)>| self.changed_fragments(owed, &cwd, env.clone());
         let collected = self
-            .collect(&record, engine.as_ref(), &request.carried_by, || {
-                self.reassembled(&loadout, (parent, cwd), env)
-            })
+            .collect(
+                &record,
+                (engine.as_ref(), &request.carried_by, budget),
+                reassemble,
+                fragments,
+            )
             .await?;
         Ok(
             collected.map_or(none, |(context, changed)| v1::RedeliveredContext {
@@ -261,22 +277,66 @@ impl<E: Edge> Api<E> {
         )
     }
 
+    /// The fragments of `owed` (each its tree and path) as the library has
+    /// them now, each whole: a path that is no fragment's, or a fragment no
+    /// longer there, is left out.
+    async fn changed_fragments(
+        &self,
+        owed: Vec<(String, String)>,
+        cwd: &str,
+        env: Option<v1::EnvVars>,
+    ) -> Vec<run_launcher::ChangedFragment> {
+        let mut fragments = Vec::new();
+        for (tree, path) in owed {
+            let Some(name) = daemon_application::reactions::fragment_name(&tree, &path) else {
+                continue;
+            };
+            let request = v1::GetFragmentRequest {
+                name: name.clone(),
+                env: env.clone(),
+                cwd: cwd.to_string(),
+                globals: Some(v1::Globals {
+                    degraded: true,
+                    ..v1::Globals::default()
+                }),
+                ..v1::GetFragmentRequest::default()
+            };
+            let read = self
+                .library_read(&request, |library, flags, parent| {
+                    library_api::reads::get_fragment(library, flags, parent, &request)
+                })
+                .await;
+            if let Ok(read) = read {
+                fragments.push(run_launcher::ChangedFragment {
+                    name,
+                    body: read.answer.body,
+                });
+            }
+        }
+        fragments
+    }
+
     /// Everything `record`'s session is owed, collected: what the delivery
     /// covers read BEFORE `reassemble` runs (a change recorded while it is
     /// assembled or handed is past it, and stays owed), the context framed
-    /// and handed to `engine` at `carried_by`, and recorded keyed by the
-    /// positions. The text and what changed; none when nothing is owed,
-    /// the engine cannot carry it here, or another hook was handed it first.
-    pub(crate) async fn collect<F, A>(
+    /// within `budget` characters (over it, only the changed `fragments`,
+    /// asked only then, else a pointer: `run_launcher::redelivered_within`),
+    /// handed to `engine` at `carried_by`, and recorded keyed by the
+    /// positions. The text and what changed; none when nothing is owed, the
+    /// budget leaves no room, the engine cannot carry it here, or another
+    /// hook was handed it first.
+    pub(crate) async fn collect<F, A, G, B>(
         &self,
         record: &SessionRecord,
-        engine: &dyn run_ports::Engine,
-        carried_by: &str,
+        (engine, carried_by, budget): (&dyn run_ports::Engine, &str, usize),
         reassemble: F,
+        fragments: G,
     ) -> Result<Option<(String, Vec<String>)>, ApiError>
     where
         F: FnOnce() -> A,
         A: std::future::Future<Output = Result<String, ApiError>>,
+        G: FnOnce(Vec<(String, String)>) -> B,
+        B: std::future::Future<Output = Vec<run_launcher::ChangedFragment>>,
     {
         let Some(handed) = record
             .context
@@ -288,7 +348,17 @@ impl<E: Edge> Api<E> {
         let covered = handed.owed_positions();
         let changed = handed.owed_bundles();
         let context = reassemble().await?;
-        let framed = run_launcher::redelivered_context(&changed, &context);
+        let whole = run_launcher::redelivered_context(&changed, &context);
+        let framed = match whole.chars().count() <= budget {
+            true => whole,
+            false => {
+                let changed_fragments = fragments(handed.owed_paths()).await;
+                run_launcher::redelivered_within(&changed, &context, &changed_fragments, budget)
+            }
+        };
+        if framed.is_empty() {
+            return Ok(None);
+        }
         let ContextDelivery::HookContext(text) = engine.deliver_context(carried_by, &framed) else {
             return Ok(None);
         };

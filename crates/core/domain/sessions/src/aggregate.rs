@@ -525,6 +525,7 @@ impl SessionAggregate {
             tree: fact.tree,
             sequence: fact.sequence,
             bundles: fact.bundles,
+            paths: fact.paths,
         }))
     }
 

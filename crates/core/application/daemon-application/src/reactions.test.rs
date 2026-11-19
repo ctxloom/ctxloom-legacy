@@ -2,7 +2,7 @@
 
 use daemon_proto::v1;
 
-use super::{loadout_of_assembled, touched};
+use super::{fragment_name, loadout_of_assembled, touched};
 
 fn loadout(bundles: &[&str]) -> sessions::SessionLoadout {
     sessions::SessionLoadout {
@@ -54,4 +54,32 @@ fn a_change_touches_the_bundles_a_loadout_names_and_the_config() {
         "a bundle named alike is another"
     );
     assert!(touched(&dev, &paths(&["remotes.yaml"])).is_empty());
+}
+
+// A changed path names its fragment under its tree's parent: a checkout's
+// project's, or the home's; a path that is no fragment's names none.
+#[test]
+fn a_fragment_s_path_names_its_resource_under_its_tree() {
+    let at = "content/bundles/v2/demo/fragments/example.md";
+    assert_eq!(
+        fragment_name("projects/calm/checkouts/c/library", at).as_deref(),
+        Some("projects/calm/bundles/demo/fragments/example")
+    );
+    assert_eq!(
+        fragment_name("users/me/library", at).as_deref(),
+        Some("users/me/bundles/demo/fragments/example")
+    );
+    assert_eq!(fragment_name("users/me/library", "config.yaml"), None);
+    assert_eq!(
+        fragment_name("users/me/library", "content/bundles/v2/demo/bundle.yaml"),
+        None
+    );
+    assert_eq!(
+        fragment_name(
+            "users/me/library",
+            "content/bundles/v2/demo/fragments/x.txt"
+        ),
+        None
+    );
+    assert_eq!(fragment_name("elsewhere", at), None);
 }

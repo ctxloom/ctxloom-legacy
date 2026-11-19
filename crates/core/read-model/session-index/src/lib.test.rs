@@ -1170,6 +1170,7 @@ fn test_a_session_is_owed_each_change_past_what_its_context_covers() {
             tree: tree.to_string(),
             sequence,
             bundles: bundles.iter().map(|b| b.to_string()).collect(),
+            paths: bundles.iter().map(|b| format!("{b}.md")).collect(),
         });
         fact(
             FIRST,
@@ -1200,6 +1201,13 @@ fn test_a_session_is_owed_each_change_past_what_its_context_covers() {
         "each tree's latest, sorted by tree"
     );
     assert_eq!(handed(&index).owed_bundles(), vec!["config", "demo"]);
+    assert_eq!(
+        handed(&index).owed_paths(),
+        [(TREE, "config.md"), (TREE, "demo.md"), (HOME, "demo.md")]
+            .map(|(t, p)| (t.to_string(), p.to_string()))
+            .to_vec(),
+        "every path owed, with its tree, sorted, its merges included"
+    );
     // A delivery of the batch read so far: a change recorded meanwhile
     // (sequence 5) is past what it covers, and stays owed.
     project.run_book(&mut index, owed(TREE, 5, &["demo"]));
@@ -1221,6 +1229,7 @@ fn test_a_session_is_owed_each_change_past_what_its_context_covers() {
             tree: TREE.to_string(),
             sequence: 5,
             bundles: vec!["demo".to_string()],
+            paths: vec!["demo.md".to_string()],
         }]
     );
     // A later incarnation's loadout is a fresh assembly: nothing owed.

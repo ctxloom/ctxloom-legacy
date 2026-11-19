@@ -31,7 +31,10 @@ pub use launch::{
 };
 pub use launcher::{Launched, Launcher, Outcome, Released, Releases, Sweeper, Swept};
 pub use orders::{Order, Orders};
-pub use redelivered::{redelivered_context, ContextRedelivered};
+pub use redelivered::{
+    redelivered_context, redelivered_within, ChangedFragment, ContextChangedOnly,
+    ContextRedelivered, ContextTooLong, HOOK_CONTEXT_BUDGET,
+};
 pub use workspace::{place_workspace, Axis, Placement, Workspace};
 
 /// In-memory ports and a world of the real aggregates, for this crate's tests

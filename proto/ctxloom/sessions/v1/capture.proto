@@ -291,6 +291,10 @@ message RecordContextOwed {
   string tree = 1;
   uint64 sequence = 2;
   repeated string bundles = 3;
+  // The paths (relative to the tree) of the change that the loadout draws
+  // on, sorted: what a delivery over the hook's budget gives whole (its
+  // changed fragments). Additive.
+  repeated string paths = 4;
 }
 
 message ContextOwed {
@@ -299,6 +303,7 @@ message ContextOwed {
   string tree = 1;
   uint64 sequence = 2;
   repeated string bundles = 3;
+  repeated string paths = 4;
 }
 
 message ConversationCleared {

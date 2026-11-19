@@ -1157,6 +1157,7 @@ fn an_owed_change_is_recorded_on_a_live_session_once() {
         tree: "projects/p/checkouts/c/library".to_string(),
         sequence: 4,
         bundles: vec!["demo".to_string()],
+        paths: vec!["content/bundles/v2/demo/fragments/a.md".to_string()],
     };
     let key = crate::owed_key("s", &fact.tree, 4);
     let mut session = Session::minted();
@@ -1166,6 +1167,7 @@ fn an_owed_change_is_recorded_on_a_live_session_once() {
             tree: fact.tree.clone(),
             sequence: 4,
             bundles: fact.bundles.clone(),
+            paths: fact.paths.clone(),
         })]
     );
     assert!(session.fact(fact.clone(), &key).is_empty());

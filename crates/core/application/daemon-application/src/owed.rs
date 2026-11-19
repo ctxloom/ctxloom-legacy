@@ -91,13 +91,23 @@ pub fn change_of(
     })
 }
 
+/// Of `paths`, those `loadout` draws on, sorted, each once.
+pub fn drawn_on(loadout: &SessionLoadout, paths: &[String]) -> Vec<String> {
+    let kept: std::collections::BTreeSet<&String> = paths
+        .iter()
+        .filter(|path| !touched(loadout, std::slice::from_ref(*path)).is_empty())
+        .collect();
+    kept.into_iter().cloned().collect()
+}
+
 /// What `change` owes each of `sessions` (each with the trees it draws
 /// on): the live ones on its tree whose context does not cover it, with the
-/// bundles of their loadout it touched; by session id, in their order.
+/// bundles of their loadout it touched and the paths of it they draw on;
+/// by session id, in their order.
 pub fn owed_by(
     change: &Change,
     sessions: &[(SessionRecord, Vec<String>)],
-) -> Vec<(String, Vec<String>)> {
+) -> Vec<(String, Vec<String>, Vec<String>)> {
     sessions
         .iter()
         .filter(|(record, trees)| record.ended_at.is_none() && trees.contains(&change.tree))
@@ -107,7 +117,8 @@ pub fn owed_by(
                 return None;
             }
             let named = touched(loadout, &change.paths);
-            (!named.is_empty()).then(|| (record.id.clone(), named))
+            (!named.is_empty())
+                .then(|| (record.id.clone(), named, drawn_on(loadout, &change.paths)))
         })
         .collect()
 }
@@ -122,7 +133,7 @@ pub fn owed_at_load(
     loadout: &SessionLoadout,
     covered: &BTreeMap<String, u64>,
     resources: impl Fn(&str) -> Vec<(String, u64)>,
-) -> Vec<(String, u64, Vec<String>)> {
+) -> Vec<(String, u64, Vec<String>, Vec<String>)> {
     let mut owed = Vec::new();
     for (tree, at) in covered {
         let past: Vec<(String, u64)> = resources(tree)
@@ -134,13 +145,14 @@ pub fn owed_at_load(
         if named.is_empty() {
             continue;
         }
+        let drawn = drawn_on(loadout, &paths);
         let latest = past
             .iter()
-            .filter(|(path, _)| !touched(loadout, std::slice::from_ref(path)).is_empty())
+            .filter(|(path, _)| drawn.contains(path))
             .map(|(_, sequence)| *sequence)
             .max()
             .unwrap_or_default();
-        owed.push((tree.clone(), latest, named));
+        owed.push((tree.clone(), latest, named, drawn_on(loadout, &paths)));
     }
     owed
 }
@@ -278,12 +290,13 @@ impl<E: Edge> OwedContexts<E> {
                 continue;
             };
             let sessions = sessions.get_or_insert_with(|| self.sessions());
-            for (session, bundles) in owed_by(&change, sessions) {
+            for (session, bundles, paths) in owed_by(&change, sessions) {
                 let key = sessions::owed_key(&session, &change.tree, change.sequence);
                 let fact = sessions::RecordContextOwed {
                     tree: change.tree.clone(),
                     sequence: change.sequence,
                     bundles,
+                    paths,
                 };
                 self.owe(&session, fact, &key).await?;
             }
@@ -326,12 +339,13 @@ impl<E: Edge> OwedContexts<E> {
                         .unwrap_or_default()
                 })
             };
-            for (tree, sequence, bundles) in owed {
+            for (tree, sequence, bundles, paths) in owed {
                 let key = sessions::owed_at_load_key(&session, &tree, sequence);
                 let fact = sessions::RecordContextOwed {
                     tree,
                     sequence,
                     bundles,
+                    paths,
                 };
                 self.owe(&session, fact, &key).await?;
             }

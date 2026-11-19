@@ -153,6 +153,7 @@ fn owed_at(sequence: u64) -> sessions::RecordContextOwed {
         tree: TREE.to_string(),
         sequence,
         bundles: vec!["demo".to_string()],
+        paths: vec!["content/bundles/v2/demo/fragments/a.md".to_string()],
     }
 }
 
@@ -185,12 +186,17 @@ async fn test_a_change_recorded_while_a_context_is_handed_stays_owed() {
     let before = record();
     let collected = f
         .api
-        .collect(&before, &Carries, "PostToolUse", || async {
-            // Mid-delivery: the next change lands, owed to the session.
-            on_session(&f, "amber-swift-owl", &owed_at(5), "owed:5").await;
-            f.catch_up().await;
-            Ok("the context".to_string())
-        })
+        .collect(
+            &before,
+            (&Carries, "PostToolUse", run_launcher::HOOK_CONTEXT_BUDGET),
+            || async {
+                // Mid-delivery: the next change lands, owed to the session.
+                on_session(&f, "amber-swift-owl", &owed_at(5), "owed:5").await;
+                f.catch_up().await;
+                Ok("the context".to_string())
+            },
+            |_| async { Vec::new() },
+        )
         .await
         .unwrap();
     let (text, changed) = collected.expect("delivered");
@@ -211,18 +217,28 @@ async fn test_a_change_recorded_while_a_context_is_handed_stays_owed() {
     // DUPLICATE, nothing handed.
     let again = f
         .api
-        .collect(&before, &Carries, "PostToolUse", || async {
-            Ok("the context".to_string())
-        })
+        .collect(
+            &before,
+            (&Carries, "PostToolUse", run_launcher::HOOK_CONTEXT_BUDGET),
+            || async { Ok("the context".to_string()) },
+            |_| async { Vec::new() },
+        )
         .await
         .unwrap();
     assert_eq!(again, None);
     // The next hook collects the change left owed, and then nothing is.
     let next = f
         .api
-        .collect(&record(), &Carries, "UserPromptSubmit", || async {
-            Ok("the context, again".to_string())
-        })
+        .collect(
+            &record(),
+            (
+                &Carries,
+                "UserPromptSubmit",
+                run_launcher::HOOK_CONTEXT_BUDGET,
+            ),
+            || async { Ok("the context, again".to_string()) },
+            |_| async { Vec::new() },
+        )
         .await
         .unwrap();
     assert!(next.is_some());
@@ -230,10 +246,121 @@ async fn test_a_change_recorded_while_a_context_is_handed_stays_owed() {
     assert!(record().context.unwrap().owed.is_empty());
     let none = f
         .api
-        .collect(&record(), &Carries, "UserPromptSubmit", || async {
-            panic!("nothing owed is never assembled")
-        })
+        .collect(
+            &record(),
+            (
+                &Carries,
+                "UserPromptSubmit",
+                run_launcher::HOOK_CONTEXT_BUDGET,
+            ),
+            || async { panic!("nothing owed is never assembled") },
+            |_| async { Vec::new() },
+        )
         .await
         .unwrap();
     assert_eq!(none, None);
+}
+
+// Step 10c U13 rework (owner, 2026-11-18): over the hook's budget a
+// delivery is only the fragments that changed, each whole, asked of the
+// library only then (by the owed paths), and recorded as what was handed.
+#[tokio::test]
+async fn test_a_delivery_over_its_budget_gives_the_changed_fragments_alone() {
+    let f = crate::server::tests::fixture(vec![]);
+    f.mint("amber-swift-owl").await;
+    let loadout = sessions::RecordLoadout {
+        loadout: sessions::SessionLoadout {
+            agent: "dev".to_string(),
+            profiles: Vec::new(),
+            bundles: vec!["demo".to_string()],
+        },
+        incarnation: 1,
+        covered: Vec::new(),
+    };
+    on_session(&f, "amber-swift-owl", &loadout, "loadout:1").await;
+    on_session(&f, "amber-swift-owl", &owed_at(4), "owed:4").await;
+    f.catch_up().await;
+    let record = f.index.index().find("amber-swift-owl").unwrap();
+    let asked = std::sync::Mutex::new(Vec::new());
+    let unchanged: String = std::iter::repeat_n('#', 2_000).collect();
+    let (text, _) = f
+        .api
+        .collect(
+            &record,
+            (&Carries, "PostToolUse", 1_000),
+            || async { Ok(unchanged.clone()) },
+            |owed| {
+                asked.lock().unwrap().extend(owed);
+                async {
+                    vec![run_launcher::ChangedFragment {
+                        name: "projects/calm-quiet-heron/bundles/demo/fragments/a".to_string(),
+                        body: "the new a".to_string(),
+                    }]
+                }
+            },
+        )
+        .await
+        .unwrap()
+        .expect("delivered");
+    assert!(text.chars().count() <= 1_000, "{text}");
+    assert!(!text.contains('#'), "{text}");
+    assert!(text.contains("the new a"), "{text}");
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [(
+            TREE.to_string(),
+            "content/bundles/v2/demo/fragments/a.md".to_string()
+        )]
+    );
+    // Within the budget, whole, and the library is never asked.
+    on_session(&f, "amber-swift-owl", &owed_at(5), "owed:5").await;
+    f.catch_up().await;
+    let record = f.index.index().find("amber-swift-owl").unwrap();
+    let whole = f
+        .api
+        .collect(
+            &record,
+            (&Carries, "PostToolUse", 10_000),
+            || async { Ok("small".to_string()) },
+            |_| async { panic!("the library is not asked") },
+        )
+        .await
+        .unwrap()
+        .expect("delivered");
+    assert!(whole.0.ends_with("\n\nsmall"), "{}", whole.0);
+    // No room even for a pointer: nothing handed, still owed.
+    on_session(&f, "amber-swift-owl", &owed_at(6), "owed:6").await;
+    f.catch_up().await;
+    let record = f.index.index().find("amber-swift-owl").unwrap();
+    let none = f
+        .api
+        .collect(
+            &record,
+            (&Carries, "PostToolUse", 5),
+            || async { Ok(unchanged.clone()) },
+            |_| async { Vec::new() },
+        )
+        .await
+        .unwrap();
+    assert_eq!(none, None);
+    f.catch_up().await;
+    assert!(!f
+        .index
+        .index()
+        .find("amber-swift-owl")
+        .unwrap()
+        .context
+        .unwrap()
+        .owed
+        .is_empty());
+}
+
+// A request's budget: 0 is the whole hook budget; less is what it says;
+// more is the hook budget still.
+#[test]
+fn test_a_requests_budget_is_at_most_the_hooks() {
+    use super::budget_of;
+    assert_eq!(budget_of(0), 10_000);
+    assert_eq!(budget_of(2_500), 2_500);
+    assert_eq!(budget_of(10_001), 10_000);
 }

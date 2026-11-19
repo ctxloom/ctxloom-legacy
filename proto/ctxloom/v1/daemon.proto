@@ -1312,6 +1312,11 @@ message RedeliverContextRequest {
   // The engine's native hook the context would ride (`UserPromptSubmit`,
   // `PostToolUse`): what the engine's delivery is asked at.
   string carried_by = 2 [(google.api.field_behavior) = REQUIRED];
+  // 10c (U13 rework): the characters of the hook's one answer this context
+  // may take, what the parts before it (the messages) left of claude's
+  // 10,000; 0 is the whole 10,000. Over it, only the changed fragments are
+  // given whole, else a pointer to `ctxloom context assemble`. Additive.
+  uint32 budget = 3 [(google.api.field_behavior) = OPTIONAL];
   // The caller's whole environment (S7), held in memory for the call's life.
   EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
   // The caller's working directory (E1): the session's checkout.

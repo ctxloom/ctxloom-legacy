@@ -196,6 +196,10 @@ impl<D: Daemons> Client<D> {
             let request = v1::RedeliverContextRequest {
                 name: format!("{}/sessions/{harp}", self.project(api).await?),
                 carried_by: carried_by.to_string(),
+                // The whole hook budget: nothing else rides this answer
+                // yet. The terminal wake (`daemon/s9-wake`) passes what its
+                // messages left, `setup_application::remaining`.
+                budget: 0,
                 env: Some(self.env.clone()),
                 cwd: self.cwd.clone(),
             };

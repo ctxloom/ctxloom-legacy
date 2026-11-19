@@ -80,15 +80,28 @@ fn a_change_is_owed_to_the_live_sessions_it_touches_past_their_context() {
         (live("fresh", &[]), on_tree),
     ];
     assert_eq!(
-        owed_by(&change(TREE, 4, &[DEMO, "config.yaml"]), &sessions),
+        owed_by(
+            &change(
+                TREE,
+                4,
+                &[
+                    DEMO,
+                    "config.yaml",
+                    "content/bundles/v2/other/fragments/x.md"
+                ]
+            ),
+            &sessions
+        ),
         vec![
             (
                 "a".to_string(),
-                vec!["config".to_string(), "demo".to_string()]
+                vec!["config".to_string(), "demo".to_string()],
+                vec!["config.yaml".to_string(), DEMO.to_string()],
             ),
             (
                 "fresh".to_string(),
-                vec!["config".to_string(), "demo".to_string()]
+                vec!["config".to_string(), "demo".to_string()],
+                vec!["config.yaml".to_string(), DEMO.to_string()],
             ),
         ]
     );
@@ -108,7 +121,11 @@ fn a_change_is_owed_to_the_live_sessions_it_touches_past_their_context() {
     };
     assert_eq!(
         owed_by(&early, &sessions),
-        vec![("a".to_string(), vec!["demo".to_string()])]
+        vec![(
+            "a".to_string(),
+            vec!["demo".to_string()],
+            vec![DEMO.to_string()]
+        )]
     );
 }
 
@@ -131,7 +148,8 @@ fn a_loadout_is_owed_what_changed_past_its_positions() {
         vec![(
             TREE.to_string(),
             8,
-            vec!["config".to_string(), "demo".to_string()]
+            vec!["config".to_string(), "demo".to_string()],
+            vec!["config.yaml".to_string(), DEMO.to_string()],
         )],
         "the latest touched path's sequence; an untouched later one counts not"
     );
@@ -277,12 +295,14 @@ async fn minted(edge: &TestEdge, covered: Option<u64>) {
 }
 
 /// The owed changes the session's stream records: tree, sequence, bundles.
-async fn owed(edge: &TestEdge) -> Vec<(String, u64, Vec<String>)> {
+async fn owed(edge: &TestEdge) -> Vec<(String, u64, Vec<String>, Vec<String>)> {
     session_events(edge, SESSION)
         .await
         .into_iter()
         .filter_map(|event| match event {
-            SessionEvent::ContextOwed(owed) => Some((owed.tree, owed.sequence, owed.bundles)),
+            SessionEvent::ContextOwed(owed) => {
+                Some((owed.tree, owed.sequence, owed.bundles, owed.paths))
+            }
             _ => None,
         })
         .collect()
@@ -404,6 +424,7 @@ async fn a_change_between_the_plan_and_the_loadout_is_owed_at_the_loadout() {
     assert_eq!(owed[0].0, TREE);
     assert!(owed[0].1 > 0, "{owed:?}");
     assert_eq!(owed[0].2, vec!["demo".to_string()]);
+    assert_eq!(owed[0].3, vec![DEMO.to_string()], "the paths it draws on");
     let _ = uuid(SESSION);
 }
 
