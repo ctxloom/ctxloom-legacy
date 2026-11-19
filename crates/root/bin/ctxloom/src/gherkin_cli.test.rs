@@ -178,3 +178,10 @@ fn inline_profile(w: &mut World, name: String, bundle: String) {
         &format!("{config}profiles:\n  {name}:\n    bundles:\n      - {bundle}\n"),
     );
 }
+
+/// fault_tolerance.feature: a profile of the project's bundle naming the
+/// bundle `does-not-exist`, which nothing holds.
+#[given(expr = "a profile {string} referencing a missing bundle")]
+fn profile_missing_bundle(w: &mut World, name: String) {
+    w.common.project.profile(&name, "does-not-exist");
+}
