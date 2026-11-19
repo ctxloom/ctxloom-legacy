@@ -180,3 +180,22 @@ fn a_manage_check_report_reads_back_field_for_field() {
         serde_json::to_value(&made).unwrap()
     );
 }
+
+// Step 10c U5: `manage gitignore install`'s report, said by the daemon, is
+// the report the CLI prints, field for field.
+#[test]
+fn a_gitignore_report_reads_back_field_for_field() {
+    use setup_application::GitignoreReport;
+    use surface_cli::wire::{gitignore_installed, gitignore_report};
+    let made = GitignoreReport {
+        status: "updated".to_string(),
+        path: "/work/demo/.gitignore".to_string(),
+        nested_path: "/work/demo/.ctxloom/.gitignore".to_string(),
+        nested_written: true,
+    };
+    let back = gitignore_report(&gitignore_installed(&made));
+    assert_eq!(
+        serde_json::to_value(&back).unwrap(),
+        serde_json::to_value(&made).unwrap()
+    );
+}

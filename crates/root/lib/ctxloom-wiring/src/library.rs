@@ -545,6 +545,16 @@ impl surface_cli::Foreign for DaemonServed {
         let client = crate::daemon::library_client(&wiring, &self.version)?;
         crate::daemon::answered(client.check_manage("", request))
     }
+
+    fn install_gitignore(
+        &self,
+        request: daemon_proto::v1::InstallGitignoreRequest,
+    ) -> Result<daemon_proto::v1::InstallGitignoreResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        let client = crate::daemon::library_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.install_gitignore("", request))
+    }
 }
 
 /// `doctor`, `auth status` and `init prompt` through the daemon (step 10c

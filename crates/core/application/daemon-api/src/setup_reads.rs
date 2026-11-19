@@ -69,6 +69,37 @@ impl<E: Edge> Api<E> {
     }
 }
 
+/// `manage gitignore install`'s answer (step 10c U5) from its write: the
+/// `.ctxloom` the use case wrote in, else (a retry of a write applied
+/// before) the one the file written is in.
+pub(crate) fn gitignore_installed(
+    wrote: &library_api::served_writes::Wrote<library_application::GitignoreInstalled>,
+) -> v1::InstallGitignoreResponse {
+    let (app_dir, written) = match &wrote.answer {
+        Some(installed) => (installed.app_dir.clone(), installed.written),
+        None => (
+            wrote
+                .at
+                .strip_suffix("/.gitignore")
+                .unwrap_or(&wrote.at)
+                .to_string(),
+            wrote.applied,
+        ),
+    };
+    let root = app_dir
+        .strip_suffix("/.ctxloom")
+        .or_else(|| app_dir.strip_suffix("\\.ctxloom"))
+        .unwrap_or(&app_dir);
+    v1::InstallGitignoreResponse {
+        status: if written { "updated" } else { "unchanged" }.to_string(),
+        path: format!("{root}/.gitignore"),
+        nested_path: format!("{app_dir}/.gitignore"),
+        nested_written: written,
+        etag: wrote.etag.clone(),
+        notices: wrote.notices.clone(),
+    }
+}
+
 #[cfg(test)]
 #[path = "setup_reads.test.rs"]
 mod tests;

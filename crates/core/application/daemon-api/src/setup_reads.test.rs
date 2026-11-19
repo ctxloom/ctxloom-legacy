@@ -183,3 +183,59 @@ async fn a_daemon_with_no_setup_reads_fails_them() {
         .unwrap_err();
     assert!(matches!(failed, ApiError::Failed { .. }), "{failed:?}");
 }
+
+// Step 10c U5: `manage gitignore install` answers what it wrote, its files
+// named from the project's `.ctxloom`; the retry of a write applied before
+// (no answer of its own) names them from the file written.
+#[test]
+fn a_gitignore_install_answers_what_it_wrote_and_where() {
+    use library_api::served_writes::Wrote;
+    use library_application::GitignoreInstalled;
+    let wrote = |answer: Option<GitignoreInstalled>, applied: bool, at: &str| Wrote {
+        answer,
+        applied,
+        etag: "7".to_string(),
+        at: at.to_string(),
+        parent: "projects/calm".to_string(),
+        notices: Vec::new(),
+        source: String::new(),
+    };
+    let fresh = super::gitignore_installed(&wrote(
+        Some(GitignoreInstalled {
+            app_dir: "/work/calm/.ctxloom".to_string(),
+            written: true,
+        }),
+        true,
+        "/work/calm/.ctxloom/.gitignore",
+    ));
+    assert_eq!(
+        (
+            fresh.status.as_str(),
+            fresh.path.as_str(),
+            fresh.nested_path.as_str()
+        ),
+        (
+            "updated",
+            "/work/calm/.gitignore",
+            "/work/calm/.ctxloom/.gitignore"
+        )
+    );
+    assert!(fresh.nested_written);
+    assert_eq!(fresh.etag, "7");
+    let same = super::gitignore_installed(&wrote(
+        Some(GitignoreInstalled {
+            app_dir: "/work/calm/.ctxloom".to_string(),
+            written: false,
+        }),
+        false,
+        "",
+    ));
+    assert_eq!(same.status, "unchanged");
+    assert!(!same.nested_written);
+    assert_eq!(same.nested_path, "/work/calm/.ctxloom/.gitignore");
+    let retried = super::gitignore_installed(&wrote(None, true, "/work/calm/.ctxloom/.gitignore"));
+    assert_eq!(
+        (retried.status.as_str(), retried.path.as_str()),
+        ("updated", "/work/calm/.gitignore")
+    );
+}

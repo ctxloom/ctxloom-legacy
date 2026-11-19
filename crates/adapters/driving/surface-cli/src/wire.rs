@@ -6,8 +6,8 @@
 
 use daemon_proto::v1;
 use setup_application::{
-    BackendStatus, CheckReport, MaterializeRequest, MaterializeResult, Setup, SetupError,
-    SurfaceCurrency, SurfaceSpec, UninstallReport,
+    BackendStatus, CheckReport, GitignoreReport, MaterializeRequest, MaterializeResult, Setup,
+    SetupError, SurfaceCurrency, SurfaceSpec, UninstallReport,
 };
 
 use cli_support::{ExitClass, Failure};
@@ -136,6 +136,28 @@ pub fn check_report(answered: &v1::CheckManageResponse) -> CheckReport {
     }
 }
 
+/// `manage gitignore install`'s report as the API says it (step 10c U5).
+pub fn gitignore_installed(report: &GitignoreReport) -> v1::InstallGitignoreResponse {
+    v1::InstallGitignoreResponse {
+        status: report.status.clone(),
+        path: report.path.clone(),
+        nested_path: report.nested_path.clone(),
+        nested_written: report.nested_written,
+        ..v1::InstallGitignoreResponse::default()
+    }
+}
+
+/// The report the API's `manage gitignore install` answer says, as it has
+/// always been printed.
+pub fn gitignore_report(answered: &v1::InstallGitignoreResponse) -> GitignoreReport {
+    GitignoreReport {
+        status: answered.status.clone(),
+        path: answered.path.clone(),
+        nested_path: answered.nested_path.clone(),
+        nested_written: answered.nested_written,
+    }
+}
+
 /// The use case's request a materialize's message asks for, under `flags`.
 ///
 /// # Errors
@@ -191,6 +213,19 @@ impl super::Foreign for InProcess<'_> {
                 notices: done.notices.iter().map(|n| (self.notice_of)(n)).collect(),
                 ..checked(&done.value)
             }),
+            Err(error) => {
+                let exit = error.exit();
+                Err(Failure::new(error, exit))
+            }
+        }
+    }
+
+    fn install_gitignore(
+        &self,
+        _: v1::InstallGitignoreRequest,
+    ) -> Result<v1::InstallGitignoreResponse, Failure> {
+        match self.setup.gitignore_install() {
+            Ok(report) => Ok(gitignore_installed(&report)),
             Err(error) => {
                 let exit = error.exit();
                 Err(Failure::new(error, exit))

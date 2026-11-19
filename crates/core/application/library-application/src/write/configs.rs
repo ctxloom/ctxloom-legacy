@@ -12,7 +12,7 @@ use crate::agents::ENGINES;
 use crate::error::AppError;
 use crate::project::{Library, Outcome};
 use crate::write::editor::editor_from_env;
-use crate::write::views::{ConfigCreated, ConfigEdited};
+use crate::write::views::{ConfigCreated, ConfigEdited, GitignoreInstalled};
 use crate::write::{WriteError, WritePorts};
 
 impl Library {
@@ -29,6 +29,31 @@ impl Library {
     /// Before anything is written, the directory is made a git repository
     /// when it is in none (step 10, G1, [`Library::with_repository_step`]),
     /// and the notice says so.
+    /// `manage gitignore install` (step 10c U5): `.ctxloom/.gitignore`
+    /// written whole through the scaffold when it is not what ctxloom
+    /// writes; whether it was, and the `.ctxloom` it is in.
+    pub fn gitignore_install(&self) -> Outcome<GitignoreInstalled> {
+        let result = (|| {
+            let scaffold = &self.write_side()?.scaffold;
+            let want = scaffold::nested_gitignore();
+            let held = scaffold.read(".gitignore").map_err(AppError::Cause)?;
+            let written = held.as_deref() != Some(want.as_bytes());
+            if written {
+                scaffold
+                    .write(&[Put::file(".gitignore", want)])
+                    .map_err(AppError::Cause)?;
+            }
+            Ok(GitignoreInstalled {
+                app_dir: scaffold.app_dir(),
+                written,
+            })
+        })();
+        Outcome {
+            result,
+            notices: Vec::new(),
+        }
+    }
+
     pub fn config_create(&self, engine: &str) -> Outcome<ConfigCreated> {
         let mut notices = Vec::new();
         let result = self.created(engine, &mut notices);

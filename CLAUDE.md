@@ -416,7 +416,12 @@ into the report it always printed (setup-cli's and surface-cli's
 `wire`), so with no daemon each fails, exit 10, diagnosing nothing in
 process (QUESTIONS 8). doctor's rows hold owned text
 (`doctor_checks::Check`'s `marker` and `name`, auth's `Row` `mode` and
-`usable_by` are `String`s) so the client rebuilds them.
+`usable_by` are `String`s) so the client rebuilds them. `manage gitignore
+install` is a library write (`InstallGitignore`, `surface_cli::Foreign::
+install_gitignore`): `Library::gitignore_install` writes `.ctxloom/.gitignore`
+through the scaffold when it differs (`Scaffold::read`), the recording
+scaffold plans it as `Planned::TreeFiles`, and it is one `ReplaceFile` of the
+content tree.
 
 The remotes' and the dependencies' writes are the daemon's (step 10c U4,
 protos.md §1.2, L9): `remote create|edit|remove|default` (`CreateRemote`,

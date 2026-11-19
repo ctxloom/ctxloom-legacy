@@ -4947,6 +4947,34 @@ message CheckManageResponse {
   repeated Notice notices = 92;
 }
 
+// `manage gitignore install` (step 10c U5), written where the caller
+// stands.
+message InstallGitignoreRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// What `manage gitignore install` did (step 10c U5).
+message InstallGitignoreResponse {
+  // `updated` or `unchanged`.
+  string status = 1;
+  // The project's own `.gitignore`.
+  string path = 2;
+  // `.ctxloom/.gitignore`, the file it writes.
+  string nested_path = 3;
+  bool nested_written = 4;
+  // The file's token once written.
+  string etag = 91;
+  repeated Notice notices = 92;
+}
+
 // `init prompt` (step 10c U6), read where the caller stands.
 message GetInitPromptRequest {
   // The project, `projects/{project}`; empty, the caller's (its `cwd`).

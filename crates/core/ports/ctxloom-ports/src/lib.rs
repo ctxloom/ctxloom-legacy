@@ -269,6 +269,16 @@ pub trait Scaffold {
     /// The files written below that directory, each atomically, its
     /// directories made (mode 0644 files, 0755 directories).
     fn write(&self, files: &[Put]) -> Result<(), Failure>;
+
+    /// The bytes of the file at `rel` below that directory; none where it
+    /// is not there (step 10c U5: what a write compares itself with). None
+    /// by default: a scaffold that keeps no file to read reads as empty.
+    // Equivalent: its one mutant is this default body.
+    #[cfg_attr(test, mutants::skip)]
+    fn read(&self, rel: &str) -> Result<Option<Vec<u8>>, Failure> {
+        let _ = rel;
+        Ok(None)
+    }
 }
 
 /// An editor to run: a program and the arguments that come before the file.

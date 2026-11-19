@@ -638,6 +638,22 @@ impl<E: Edge + 'static> Calls for Api<E> {
         })
     }
 
+    /// `InstallGitignore` (step 10c U5): `.ctxloom/.gitignore`, one library
+    /// write of the caller's project.
+    fn install_gitignore(
+        &self,
+        request: v1::InstallGitignoreRequest,
+    ) -> Answer<'_, v1::InstallGitignoreResponse> {
+        Box::pin(async move {
+            let wrote = self
+                .library_write(&request, "manage gitignore install", |library, _, _| {
+                    library.gitignore_install()
+                })
+                .await?;
+            Ok(crate::setup_reads::gitignore_installed(&wrote))
+        })
+    }
+
     /// `CreateRemote` (step 10c U4): `remotes.yaml`, one library write.
     fn create_remote(
         &self,

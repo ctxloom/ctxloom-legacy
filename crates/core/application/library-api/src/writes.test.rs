@@ -61,6 +61,33 @@ fn test_a_layer_is_its_config_file_replaced_in_its_tree() {
     assert_eq!(shaped.shape.path(), "config.yaml");
 }
 
+// Step 10c U5: a file the scaffold writes below the tree's `.ctxloom`
+// (`manage gitignore install`'s) is that one file replaced in the content
+// tree; several are more than one change.
+#[test]
+fn test_a_scaffold_file_is_that_file_replaced_in_the_content_tree() {
+    let one = Planned::TreeFiles {
+        files: vec![put(".gitignore", "/cache\n")],
+    };
+    let shaped = shape(vec![one], none).unwrap().unwrap();
+    assert_eq!(shaped.lands, Lands::Content);
+    assert_eq!(
+        shaped.shape,
+        Shape::Replace {
+            path: ".gitignore".to_string(),
+            bytes: b"/cache\n".to_vec(),
+            executable: false,
+        }
+    );
+    let several = Planned::TreeFiles {
+        files: vec![put(".gitignore", "a"), put("remotes.yaml", "b")],
+    };
+    assert!(matches!(
+        shape(vec![several], none),
+        Err(LibraryTreeRejection::OneChangePerCall { paths }) if paths == [".gitignore", "remotes.yaml"]
+    ));
+}
+
 #[test]
 fn test_one_file_written_or_taken_away_is_that_one_step() {
     let write = Planned::Changed {

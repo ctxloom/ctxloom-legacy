@@ -216,6 +216,22 @@ pub fn shape(
                 into: Some(app_dir.clone()),
             },
         ),
+        // A file of the tree's own, its scaffold's (step 10c U5): one file
+        // replaced; several are more than one change.
+        Planned::TreeFiles { files } => match &files[..] {
+            [] => Ok(None),
+            [put] => shaped(
+                Lands::Content,
+                Shape::Replace {
+                    path: put.path.clone(),
+                    bytes: put.bytes.clone(),
+                    executable: put.executable,
+                },
+            ),
+            _ => Err(LibraryTreeRejection::OneChangePerCall {
+                paths: paths_of(&one),
+            }),
+        },
         // A tree outside ctxloom's trees is no tree's step (D2's
         // EXCEPTION): the daemon takes it aside before it shapes.
         Planned::Outside { .. } => Ok(None),
@@ -323,6 +339,7 @@ fn paths_of(planned: &Planned) -> Vec<String> {
         Planned::BundleGone { bundle } => vec![bundle.clone()],
         Planned::Changed { changes, .. } => changes.iter().map(change_path).collect(),
         Planned::Outside { dir, .. } => vec![dir.clone()],
+        Planned::TreeFiles { files } => files.iter().map(|put| put.path.clone()).collect(),
         Planned::MovedInto { bundle, .. } => vec![bundle.clone()],
     }
 }

@@ -484,6 +484,22 @@ fn scaffold() -> (Arc<Rooted>, ScaffoldFs) {
     (fs, scaffold)
 }
 
+// Step 10c U5: a scaffold file is read back as it is, and one not there is
+// none, never an error.
+#[test]
+fn test_a_scaffold_file_reads_back_and_one_not_there_is_none() {
+    let (_fs, scaffold) = scaffold();
+    assert_eq!(scaffold.read(".gitignore").unwrap(), None);
+    scaffold
+        .write(&[Put::file(".gitignore", "/cache\n")])
+        .unwrap();
+    assert_eq!(
+        scaffold.read(".gitignore").unwrap().as_deref(),
+        Some(&b"/cache\n"[..])
+    );
+    assert!(scaffold.read("../escape").is_err());
+}
+
 // cli/init.go resolveAppDir(false): under the working directory
 #[test]
 fn test_a_new_project_is_made_under_the_working_directory() {

@@ -31,6 +31,9 @@ pub enum Planned {
     /// A bundle moved whole into ANOTHER tree (a local `bundle move`; step
     /// 10b QUESTIONS 1(a)), whose `.ctxloom` is `app_dir`.
     MovedInto { bundle: String, app_dir: String },
+    /// Files written below the tree's `.ctxloom` by its scaffold (step 10c
+    /// U5: `manage gitignore install`'s `.gitignore`), each relative to it.
+    TreeFiles { files: Vec<Put> },
     /// A tree written OUTSIDE ctxloom's trees (`bundle export`; D2's
     /// EXCEPTION: staged beside it and renamed in NOREPLACE, no intent on
     /// any stream), its directory as the use case named it.
@@ -128,6 +131,12 @@ impl Recorder {
         planned.push(Planned::Layer {
             scope,
             text: text.to_string(),
+        });
+    }
+
+    fn tree_files(&self, files: &[Put]) {
+        self.lock().push(Planned::TreeFiles {
+            files: files.to_vec(),
         });
     }
 
@@ -259,6 +268,32 @@ impl ConfigFiles for RecordingConfig {
     }
 }
 
+/// The scaffold, its writes recorded (step 10c U5); its reads pass
+/// through.
+struct RecordingScaffold {
+    inner: Arc<dyn ctxloom_ports::Scaffold>,
+    recorder: Recorder,
+}
+
+impl ctxloom_ports::Scaffold for RecordingScaffold {
+    fn app_dir(&self) -> String {
+        self.inner.app_dir()
+    }
+
+    fn exists(&self, rel: &str) -> Result<bool, Failure> {
+        self.inner.exists(rel)
+    }
+
+    fn read(&self, rel: &str) -> Result<Option<Vec<u8>>, Failure> {
+        self.inner.read(rel)
+    }
+
+    fn write(&self, files: &[Put]) -> Result<(), Failure> {
+        self.recorder.tree_files(files);
+        Ok(())
+    }
+}
+
 /// The user's files, a tree written outside the trees recorded; reads
 /// pass through. A single file (a profile's or a skill's export) is not
 /// served, and passes through.
@@ -327,6 +362,10 @@ impl Library {
         if let Some(ports) = self.ports.as_mut() {
             ports.user = Arc::new(RecordingUser {
                 inner: Arc::clone(&ports.user),
+                recorder: recorder.clone(),
+            });
+            ports.scaffold = Arc::new(RecordingScaffold {
+                inner: Arc::clone(&ports.scaffold),
                 recorder: recorder.clone(),
             });
         }

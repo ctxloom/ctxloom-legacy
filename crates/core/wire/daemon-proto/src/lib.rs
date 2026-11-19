@@ -164,6 +164,7 @@ macro_rules! library_writes {
             get_auth_status (GetAuthStatus) GetAuthStatusRequest => GetAuthStatusResponse,
             check_manage (CheckManage) CheckManageRequest => CheckManageResponse,
             get_init_prompt (GetInitPrompt) GetInitPromptRequest => GetInitPromptResponse,
+            install_gitignore (InstallGitignore) InstallGitignoreRequest => InstallGitignoreResponse,
             distill_fragment (DistillFragment) DistillFragmentRequest => DistillFragmentResponse,
             distill_command (DistillCommand) DistillCommandRequest => DistillCommandResponse,
             create_remote (CreateRemote) CreateRemoteRequest => CreateRemoteResponse,

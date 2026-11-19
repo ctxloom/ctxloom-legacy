@@ -555,6 +555,10 @@ impl Scaffold for Mem {
         Ok(state.scaffold.contains_key(rel) || state.scaffold.keys().any(|p| p.starts_with(&dir)))
     }
 
+    fn read(&self, rel: &str) -> Result<Option<Vec<u8>>, Failure> {
+        Ok(self.lock().scaffold.get(rel).map(|file| file.bytes.clone()))
+    }
+
     fn write(&self, files: &[Put]) -> Result<(), Failure> {
         let mut state = self.lock();
         state.log.push("scaffold".to_string());

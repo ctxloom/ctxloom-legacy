@@ -64,6 +64,12 @@ pub trait Foreign {
     /// `manage check`, the daemon's read (step 10c U5): each engine's
     /// wiring read off its files where the caller stands.
     fn check(&self, request: v1::CheckManageRequest) -> Result<v1::CheckManageResponse, Failure>;
+    /// `manage gitignore install`, the daemon's write (step 10c U5):
+    /// `.ctxloom/.gitignore`, one file of the project's library.
+    fn install_gitignore(
+        &self,
+        request: v1::InstallGitignoreRequest,
+    ) -> Result<v1::InstallGitignoreResponse, Failure>;
 }
 
 /// The report a materialize's answer says, as it has always been printed.
@@ -248,7 +254,12 @@ fn manage(
         }
         _ => {
             if args.subcommand_name() == Some("install") {
-                let report = cx.setup.gitignore_install().map_err(failed)?;
+                let answered = cx.foreign.install_gitignore(v1::InstallGitignoreRequest {
+                    globals: Some(library_api::reads::globals_of(&cx.flags)),
+                    ..v1::InstallGitignoreRequest::default()
+                })?;
+                say_v1(cx, &answered.notices, err);
+                let report = wire::gitignore_report(&answered);
                 emit(cx, out, &report, |w| text::gitignore(w, &report))?;
             }
         }

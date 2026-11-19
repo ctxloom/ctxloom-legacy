@@ -599,6 +599,11 @@ service Ctxloom {
   // (-- api-linter: core::0131::request-name-required=disabled
   //     aip.dev/not-precedent: a read of the caller's place, its cwd. --)
   rpc GetInitPrompt(GetInitPromptRequest) returns (GetInitPromptResponse);
+  // `manage gitignore install`: `projects/{project}:installGitignore` (step
+  // 10c U5): `.ctxloom/.gitignore` written whole, one `ReplaceFile` of the
+  // project's library, when it is not what ctxloom writes. Additive proto
+  // extension, step 10c U5.
+  rpc InstallGitignore(InstallGitignoreRequest) returns (InstallGitignoreResponse);
   // (-- endregion --)
 
   // `search`: `projects/{project}:searchLibrary` (AIP-136, stateless).
