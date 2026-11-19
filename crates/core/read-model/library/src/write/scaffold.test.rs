@@ -2,12 +2,15 @@ use super::*;
 
 // Owner ruling 111: the registry a new project starts with seeds no remote;
 // it was Go's resources/default-remotes.yaml at ca14d6046, which seeded
-// `ctxloom-default`.
+// `ctxloom-default`. Its header is a DRAFT (smoke 2026-11-19): under rulings
+// 117 and 126 nothing built in is guidance (the built-in bundle is never
+// injected), so a fresh project's assistant is given none until a remote is
+// added; it said "ctxloom's default content is built in and needs no remote".
 #[test]
 fn test_the_default_remotes_seed_no_remote() {
     assert_eq!(
         DEFAULT_REMOTES,
-        "# ctxloom Remote Sources\n# The repositories this project draws bundles and profiles from, under\n# `remotes:` (`ctxloom remote create <name> <url>` adds one).\n#\n# Registering a remote is the trust act: its content reaches the assistant\n# because the project added it. ctxloom's default content is built in and\n# needs no remote.\n\nschema_version: 1\n"
+        "# ctxloom Remote Sources\n# The repositories this project draws bundles and profiles from, under\n# `remotes:` (`ctxloom remote create <name> <url>` adds one).\n#\n# Registering a remote is the trust act: its content reaches the assistant\n# because the project added it. ctxloom builds in no guidance for the\n# assistant: until a remote is added, or the project writes bundles of its\n# own, the assistant is given none.\n\nschema_version: 1\n"
     );
     assert!(!DEFAULT_REMOTES.contains("ctxloom-default"));
 }

@@ -156,11 +156,11 @@ fn deps_want_git_and_an_identity() {
 #[test]
 fn an_agent_with_neither_an_engine_nor_profiles_resolves_to_nothing() {
     let bad = "schema_version: 8\nagents:\n  coder:\n    runtime: host\n";
-    assert_eq!(checks::agents(Some(bad)).status, Status::Warn);
+    assert_eq!(checks::agents(Some(bad), &[]).status, Status::Warn);
     let good = "schema_version: 8\nagents:\n  coder:\n    engine: claude-code\n";
-    assert_eq!(checks::agents(Some(good)).status, Status::Ok);
+    assert_eq!(checks::agents(Some(good), &[]).status, Status::Ok);
     assert_eq!(
-        checks::agents(Some("schema_version: 8\n")).status,
+        checks::agents(Some("schema_version: 8\n"), &[]).status,
         Status::Ok
     );
 }
@@ -426,11 +426,11 @@ fn a_config_that_will_not_parse_is_the_setup_markers_to_report_and_checks_the_de
 #[test]
 fn an_agent_bound_by_profiles_alone_or_engine_alone_is_bound_and_an_empty_list_is_not() {
     let profiles = "schema_version: 8\nagents:\n  a:\n    profiles: [dev]\n";
-    assert_eq!(checks::agents(Some(profiles)).status, Status::Ok);
+    assert_eq!(checks::agents(Some(profiles), &[]).status, Status::Ok);
     let engine = "schema_version: 8\nagents:\n  a:\n    engine: claude-code\n";
-    assert_eq!(checks::agents(Some(engine)).status, Status::Ok);
+    assert_eq!(checks::agents(Some(engine), &[]).status, Status::Ok);
     let empty = "schema_version: 8\nagents:\n  a:\n    profiles: []\n";
-    assert_eq!(checks::agents(Some(empty)).status, Status::Warn);
+    assert_eq!(checks::agents(Some(empty), &[]).status, Status::Warn);
 }
 
 #[test]
@@ -679,4 +679,32 @@ fn a_bundle_in_the_old_layout_warns_naming_its_move() {
         found.detail
     );
     assert_eq!(found.remedy, "git mv a b; git mv c d");
+}
+
+// Smoke 2026-11-19: an agent whose profile includes a bundle that is gone
+// does not resolve; its run would be refused, so the row is a `fail` naming
+// the agent and the bundle, with the plan's remedy.
+#[test]
+fn test_an_agent_that_does_not_resolve_fails_naming_it_and_why() {
+    use library_application::AgentUnresolved;
+    let config = "schema_version: 8\nagents:\n  dev:\n    profiles: [work]\n";
+    let failed = checks::agents(
+        Some(config),
+        &[AgentUnresolved {
+            agent: "dev".to_string(),
+            problems: vec!["bundle not found: mystd".to_string()],
+            fix: "run `ctxloom deps pull` or fix the bundle ref, or pass --degraded".to_string(),
+        }],
+    );
+    assert_eq!(failed.marker, "DOCTOR-CHECK-AGENTS-b2");
+    assert_eq!(failed.status, Status::Fail);
+    assert_eq!(
+        failed.detail,
+        "agent dev does not resolve, so its run is refused: bundle not found: mystd"
+    );
+    assert!(
+        failed.remedy.contains("ctxloom deps pull"),
+        "{}",
+        failed.remedy
+    );
 }

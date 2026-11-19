@@ -60,7 +60,7 @@ pub(crate) fn write(
 /// `profile create <name> [flags] [--bundle B]`: the daemon's
 /// `CreateProfile` (step 10b U3), under the bundle `--bundle` names (none:
 /// the project's own, made with it the first time). Its text from the
-/// response (D10), and json only when asked for by name.
+/// response (D10); json off a terminal, as every verb's (smoke 2026-11-19).
 fn create(
     cx: &Context<'_>,
     sub: &ArgMatches,
@@ -87,9 +87,8 @@ fn create(
         ..v1::CreateProfileRequest::default()
     };
     let asked = request.profile.clone().unwrap_or_default();
-    let cx = text_unless_asked(cx);
     crate::answer_written(
-        &cx,
+        cx,
         cx.served.create_profile(&under, request),
         |m| std::mem::take(&mut m.notices),
         out,

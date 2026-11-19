@@ -475,3 +475,68 @@ fn test_init_names_the_project_a_read_then_names() {
         "the read kept init's id"
     );
 }
+
+// Smoke 2026-11-19: a repository deleted and made again at the same path
+// (another root commit) is not the project this root was registered as.
+// Its init is refused BEFORE anything is written, so a refused init leaves
+// no `.ctxloom` bound to a project no later command could use.
+#[test]
+fn test_an_init_where_another_repository_was_registered_is_refused_before_writing() {
+    let project = Project::bare_in_git();
+    let init = project.run_in(project.dir(), &["init", "--format", "json"]);
+    assert_eq!(init.code, 0, "init: {}", init.said());
+    // A read that registers the project, with its root commit.
+    let listed = project.run_in(project.dir(), &["session", "list", "--format", "json"]);
+    assert_eq!(listed.code, 0, "session list: {}", listed.said());
+    // The repository deleted and made again: another root commit.
+    files::remove_tree(project.dir().join(".git"));
+    files::remove_tree(project.dir().join(".ctxloom"));
+    project.git(&["init", "-q"]);
+    project.git(&["commit", "-q", "--allow-empty", "-m", "another repository"]);
+    let again = project.run_in(project.dir(), &["init", "--format", "json"]);
+    assert_eq!(again.code, 20, "refused: {}", again.said());
+    again.contains("sessions-project-identity-changed");
+    assert!(
+        !project.exists(".ctxloom"),
+        "a refused init writes nothing: {:?}",
+        project.tree(".ctxloom").keys().collect::<Vec<_>>()
+    );
+    // Its fix is a way out: the root's entry in the home's index taken out,
+    // init starts a new project here, and a read that registers it works.
+    again.contains(".ctxloom/projects/index.yaml");
+    let index = project
+        .read_home(".ctxloom/projects/index.yaml")
+        .expect("the home's index");
+    let root = project.dir().display().to_string();
+    let mut kept = Vec::new();
+    let mut skipping = false;
+    for line in index.lines() {
+        if line.starts_with("  - ") {
+            skipping = false;
+        }
+        if line.starts_with("  - ") && index_entry_is(&index, line, &root) {
+            skipping = true;
+        }
+        if !skipping {
+            kept.push(line);
+        }
+    }
+    let mut kept = kept.join("\n") + "\n";
+    if !kept.contains("  - ") {
+        kept = kept.replace("projects:\n", "projects: []\n");
+    }
+    project.write_home(".ctxloom/projects/index.yaml", &kept);
+    let fresh = project.run_in(project.dir(), &["init", "--format", "json"]);
+    assert_eq!(fresh.code, 0, "the way out: {}", fresh.said());
+    let listed = project.run_in(project.dir(), &["session", "list", "--format", "json"]);
+    assert_eq!(listed.code, 0, "and it is usable: {}", listed.said());
+}
+
+/// Whether the index entry starting at `line` is the one for `root`.
+fn index_entry_is(index: &str, line: &str, root: &str) -> bool {
+    let after = index.split_once(line).map_or("", |(_, rest)| rest);
+    after
+        .lines()
+        .take_while(|l| !l.starts_with("  - "))
+        .any(|l| l.trim() == format!("path: {root}"))
+}

@@ -371,7 +371,7 @@ impl Project {
         }
     }
 
-    fn dry_run(&mut self, request: &RunRequest) -> Result<Previewed, AppError> {
+    pub(crate) fn dry_run(&mut self, request: &RunRequest) -> Result<Previewed, AppError> {
         if !request.agent.is_empty() {
             let other = if !request.profile.is_empty() {
                 Some("profile")

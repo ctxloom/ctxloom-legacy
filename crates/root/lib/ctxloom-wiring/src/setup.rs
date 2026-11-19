@@ -76,6 +76,17 @@ impl SetupUseCases {
                     .unwrap_or_default()
             })
         })
+        // The agents whose run would be refused as planned (smoke
+        // 2026-11-19: a profile including a bundle that is gone).
+        .reporting_unresolved({
+            let library = crate::library::build(wiring, None)?;
+            Box::new(move || {
+                library
+                    .agents_unresolved(&library_application::Flags::default())
+                    .result
+                    .unwrap_or_default()
+            })
+        })
         // The distilled forms that no longer match their sources (S51).
         .reporting_stale_distilled({
             let library = crate::library::build(wiring, None)?;

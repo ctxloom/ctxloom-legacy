@@ -247,6 +247,34 @@ impl Render for Status {
     }
 }
 
+/// What `stop` answers (smoke 2026-11-19): the daemon it stopped, as the
+/// stop's answer says it, or none serving; whether it drained first. Its
+/// json is the `Daemon`'s proto3 JSON (ruling 146), `{}` for none.
+struct Stopped(Option<daemon_proto::v1::Daemon>, bool);
+
+impl Render for Stopped {
+    fn json(&self) -> impl Serialize + '_ {
+        self.0.clone().unwrap_or_default()
+    }
+
+    // DRAFT text (smoke 2026-11-19): `daemon stop` said nothing.
+    fn text(&self, out: &mut dyn Write) -> std::io::Result<()> {
+        let Some(daemon) = &self.0 else {
+            return writeln!(out, "no ctxloom daemon was serving: nothing to stop");
+        };
+        let done = if self.1 {
+            "drained and stopped"
+        } else {
+            "stopped"
+        };
+        writeln!(
+            out,
+            "{done} the ctxloom daemon (pid {}), ctxloom {}",
+            daemon.pid, daemon.version
+        )
+    }
+}
+
 /// `warnings`, as `daemon status` says them in text: each its message in
 /// `catalog`'s words, then its fix where the catalog has one.
 fn warned(warnings: &[daemon_proto::v1::Notice], catalog: &Catalog) -> Vec<String> {
@@ -334,12 +362,13 @@ pub(crate) fn run(
             let client = client_reaching(&wiring, reach);
             // Its warnings (a drain's hand-over among them) are heard from
             // the stop's answer, as every call's (OD-55), and said at once.
-            match drain {
+            let stopped = match drain {
                 // OD-54 (3): handed over within the configured timeout.
                 true => block_on(client.drain(None))?,
                 false => block_on(client.stop(even_if_live))?,
             }
             .map_err(called)?;
+            output(render(out, format, &Stopped(stopped, drain)))?;
             Ok(Exit::OK)
         }
         DaemonVerb::Resolve => {
@@ -1124,6 +1153,23 @@ pub(crate) fn preview_client<'a>(
             })?,
         ),
     })
+}
+
+/// A first init's recheck (smoke 2026-11-19): where no `.ctxloom` is but
+/// ctxloom's home already binds this root to a project (a repository
+/// deleted and made again at its place), that project's registration is
+/// rechecked first, so another repository there is refused
+/// (`sessions-project-identity-changed`) before init writes anything.
+/// Nothing is asked where nothing binds the root, or where a `.ctxloom` is
+/// (the preview's own registration rechecks that).
+pub(crate) fn recheck_bound(wiring: &Wiring, stamp: &str) -> Result<(), Failure> {
+    if wiring.ctxloom_project().is_some() {
+        return Ok(());
+    }
+    let Ok(Some(registration)) = wiring.registration() else {
+        return Ok(());
+    };
+    resolved_parent(wiring, stamp, Some(registration)).map(|_| ())
 }
 
 /// This command's client of the daemon for a library read (step 10a U2):

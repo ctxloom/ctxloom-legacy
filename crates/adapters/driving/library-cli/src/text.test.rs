@@ -174,7 +174,16 @@ fn test_a_profile_listing_summarizes_each_profile() {
     };
     assert_eq!(
         shown(|out| profile_list(out, &list)),
-        "Profiles (1):\n  dev (default)\n    dev profile\n    from bundle: ctxloom+local:project, parents: base, 1 bundles\n"
+        "Profiles (1):\n  dev (default)\n    dev profile\n    from bundle: ctxloom+local:project, parents: base, 1 bundle\n"
+    );
+    // Divergence from Go (smoke 2026-11-19): one bundle is "1 bundle", more
+    // are "<n> bundles".
+    let mut two = list.clone();
+    two.rows[0].bundles.push("more".to_string());
+    assert!(
+        shown(|out| profile_list(out, &two)).ends_with("parents: base, 2 bundles\n"),
+        "{}",
+        shown(|out| profile_list(out, &two))
     );
 }
 
