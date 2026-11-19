@@ -1476,6 +1476,7 @@ dependencies = [
  "deps-ports",
  "library-api",
  "mutants",
+ "run-application",
  "serde",
  "serde_json",
 ]

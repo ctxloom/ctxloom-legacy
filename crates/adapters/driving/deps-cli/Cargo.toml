@@ -21,6 +21,8 @@ serde.workspace = true
 
 [dev-dependencies]
 angzarr-yaml.workspace = true
+# A served write's notices as the daemon flattens them (step 10c U4).
+run-application.workspace = true
 deps-ports.workspace = true
 serde_json.workspace = true
 mutants.workspace = true

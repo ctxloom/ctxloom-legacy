@@ -862,6 +862,12 @@ fn served(
                 home: home.to_path_buf(),
                 temp: temp.to_path_buf(),
             }))
+            // The remotes', the lock's and the cache's writes, planned
+            // where the caller stands, git in its environment (step 10c U4).
+            .writing_deps(Arc::new(super::deps::DepsWriters {
+                home: home.to_path_buf(),
+                temp: temp.to_path_buf(),
+            }))
             // The trusts it reads (step 8 U1).
             .trusting(trusting(kept, (home, temp)))
             // The asks it records and reads (step 8 U4).

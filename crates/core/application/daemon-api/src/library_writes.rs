@@ -158,10 +158,10 @@ fn refused(rejection: &library_tree::LibraryTreeRejection) -> ApiError {
 }
 
 /// The write a step is of: its tree's stream, its directory, its request.
-struct Made<'a> {
-    tree: &'a TreeName,
-    dir: &'a str,
-    request_id: &'a str,
+pub(crate) struct Made<'a> {
+    pub(crate) tree: &'a TreeName,
+    pub(crate) dir: &'a str,
+    pub(crate) request_id: &'a str,
 }
 
 /// What a use case planned: its outcome, its recorded writes shaped, and
@@ -502,7 +502,7 @@ impl<E: Edge> Api<E> {
     /// atomic operation, its content the plan `planned`'s step for it,
     /// then what it left read back and recorded done. A step that cannot
     /// be made, or made nothing, is recorded failed (final).
-    async fn make_step(
+    pub(crate) async fn make_step(
         &self,
         made: &Made<'_>,
         observer: &dyn ctxloom_ports::TreeObserver,
@@ -1019,6 +1019,12 @@ write_requests! {
     RunDoctorRequest.project, etag;
     DistillFragmentRequest.name;
     DistillCommandRequest.name;
+    CreateRemoteRequest.parent;
+    UpdateRemoteRequest.remote.name, etag;
+    DeleteRemoteRequest.name, etag;
+    SetDefaultRemoteRequest.parent;
+    PullDependenciesRequest.parent;
+    UpgradeDependenciesRequest.parent;
 }
 
 #[cfg(test)]

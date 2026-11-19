@@ -7,9 +7,13 @@
 //!   the lock names. Installing replaces whatever was installed for the
 //!   identity, in one rename.
 //! - The bundles the project authors, at `<app dir>/content/bundles/v2/`.
+//! - [`RecordingDepsFiles`]: the same files, every write recorded and never
+//!   made (step 10c U4: the daemon plans a pull where the caller stands,
+//!   then makes what it recorded as a sequence of its own).
 
 mod installed;
 mod local;
+mod recording;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -20,6 +24,7 @@ use file_system::{Fs, Kind, Perms};
 use os::Mode;
 
 pub use installed::IDENTITY_MARKER;
+pub use recording::{Install, Recorded, RecordingDepsFiles};
 
 /// `rel`, a `/`-separated path, below `top`, a step at a time, so the host's
 /// own separator joins each step (as the path is shown).

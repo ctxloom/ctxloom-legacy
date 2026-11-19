@@ -10,6 +10,7 @@
 //! `daemon launch|send|close|clear` are gone (owner ruling s4-Q13, hard
 //! migrate).
 
+mod deps;
 mod files;
 pub(crate) mod flush;
 mod foreign;

@@ -26,7 +26,7 @@ pub(crate) struct ForeignWriters {
 }
 
 /// `cause` said as the API says a notice.
-fn notice_of(cause: &dyn angzarr_diagnostic::Diagnostic) -> v1::Notice {
+pub(crate) fn notice_of(cause: &dyn angzarr_diagnostic::Diagnostic) -> v1::Notice {
     v1::Notice {
         code: cause.code().to_string(),
         args: run_application::client::flat_args(cause),
@@ -35,7 +35,7 @@ fn notice_of(cause: &dyn angzarr_diagnostic::Diagnostic) -> v1::Notice {
 }
 
 /// What a recording surface store recorded, as the daemon writes it.
-fn puts_of(store: &SurfaceFiles) -> Vec<ForeignPut> {
+pub(crate) fn puts_of(store: &SurfaceFiles) -> Vec<ForeignPut> {
     store
         .take_recorded()
         .into_iter()

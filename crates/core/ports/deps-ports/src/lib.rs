@@ -82,6 +82,11 @@ pub trait Remotes {
         bundle: &str,
     ) -> Result<Option<RepoTree>, Why>;
 
+    /// git's own id of the tree of the bundle `bundle` at the commit `sha`
+    /// (step 10c U4: what an installed tree is recorded as), as git reports
+    /// it; nothing in ctxloom computes it.
+    fn bundle_tree(&self, repo: &Repository, sha: &str, bundle: &str) -> Result<String, Why>;
+
     /// The names of the bundles at the tip of the default branch (a directory
     /// holding a `bundle.yaml` is a bundle, however deep), sorted.
     fn list_bundles(&self, repo: &Repository) -> Result<Vec<String>, Why>;

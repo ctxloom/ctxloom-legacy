@@ -17,6 +17,9 @@ fn not(flag: &bool) -> bool {
 pub struct RemoteRow {
     pub name: String,
     pub url: String,
+    /// The forge label it is bound to; empty resolves by the URL's host.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub forge: String,
 }
 
 /// `remote list`.

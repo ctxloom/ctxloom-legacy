@@ -9,10 +9,12 @@ fn test_a_remote_listing_reads_back_from_its_message() {
             RemoteRow {
                 name: "acme".to_string(),
                 url: "https://example.com/acme.git".to_string(),
+                forge: String::new(),
             },
             RemoteRow {
                 name: "origin".to_string(),
                 url: "file:///srv/origin.git".to_string(),
+                forge: String::new(),
             },
         ],
         count: 2,

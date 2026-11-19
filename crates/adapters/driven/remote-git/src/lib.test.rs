@@ -436,6 +436,42 @@ fn test_a_bundle_is_read_at_a_commit_with_its_bytes() {
     assert_eq!(later["fragments/a.md"], b"A2\n");
 }
 
+// Step 10c U4: an installed tree is recorded as git's own id of the
+// bundle's tree at the commit, as git reports it (`ls-tree` of the commit
+// names it), a different commit's tree its own; a bundle the commit lacks
+// has none.
+#[test]
+fn test_a_bundles_tree_id_is_gits_own_at_the_commit() {
+    let origin = Origin::new();
+    let first = demo(&origin);
+    let c = cache();
+    let url = origin.url();
+    c.remotes.ensure(&repo(&url)).expect("clones");
+    let tree = c
+        .remotes
+        .bundle_tree(&repo(&url), &first, "demo")
+        .expect("a tree");
+    let listed = git(
+        &origin.bare,
+        &["ls-tree", &first, &format!("{BUNDLE}/demo")],
+    );
+    assert!(
+        listed.contains(&format!("tree {tree}\t")),
+        "{tree} is not git's: {listed}"
+    );
+    assert!(c
+        .remotes
+        .bundle_tree(&repo(&url), &first, "absent")
+        .is_err());
+    let second = origin.commit(&[(&format!("{BUNDLE}/demo/fragments/a.md"), "A2\n", false)]);
+    c.remotes.refresh(&repo(&url)).expect("fetches");
+    let later = c
+        .remotes
+        .bundle_tree(&repo(&url), &second, "demo")
+        .expect("a tree");
+    assert_ne!(later, tree);
+}
+
 #[test]
 fn test_binary_bytes_survive_and_a_link_is_not_a_file_of_the_tree() {
     let origin = Origin::new();

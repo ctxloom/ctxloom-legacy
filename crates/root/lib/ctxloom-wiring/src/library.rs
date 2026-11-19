@@ -552,6 +552,8 @@ impl setup_cli::DoctorFixing for DaemonServed {
 
 impl deps_cli::Served for DaemonServed {
     deps_cli::served_reads!(served_read);
+    // The remotes' and the dependencies' writes (step 10c U4).
+    deps_cli::served_writes!(served_write);
 
     /// A local `bundle move` through the daemon (step 10b U9), as a library
     /// write is sent.

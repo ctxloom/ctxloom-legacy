@@ -393,13 +393,50 @@ sequence of a foreign writer's verb (`library_tree::FOREIGN_WRITERS`,
 `PlanRejected` `library-tree-foreign-outside-writer`, a bug), judges no
 token of one, and folds its `StepApplied` into `LibraryState.foreign`,
 never `resources` or the dirty set. The kill point after the `n`th step
-is `step-<n>`. A use case's own error is answered in band (the response's
-`error` and `exit`, said from the client's catalog), so its exit is what
-it always was. `materialize --diff` and `manage install`'s refresh (and a
-pull's) still deliver in process. The cache's install facts are in the
-domain (`RecordTreeInstalled` completes a pending create step as
-`TreeInstalled`, its cache path tied to its sequence in `resources`);
-nothing sends one yet (U4's pull is not served).
+is `step-<n>`. A use case's own error is the call's, never in band
+(`daemon_api::setup_error`, by the class it says of itself): a decline
+(20) the typed refusal `SetupDeclined`, fatal findings (21)
+`SetupFatalFindings`, each its diagnostic's code and args as its `Cause`
+(the client's `Rejection::LibraryRead`, and `Rejection::FatalFindings`,
+which `CallError` classes 21), a failure (10) said in its own words
+(`ApiError::Diagnosed`); nothing is written. `materialize --diff` and
+`manage install`'s refresh still deliver in process.
+
+The remotes' and the dependencies' writes are the daemon's (step 10c U4,
+protos.md §1.2, L9): `remote create|edit|remove|default` (`CreateRemote`,
+`UpdateRemote` with `new_remote_id` and a mask naming each flag given,
+`DeleteRemote`, `SetDefaultRemote`) and `deps pull|upgrade`
+(`PullDependencies`, `UpgradeDependencies`; additive RPCs), each through
+deps-cli's `Served` writes (`deps_cli::served_writes!`, the wiring's
+`DaemonServed`), its text read back from the answer (deps-cli's
+`written`). The daemon plans each where the caller stands
+(`daemon_api::DepsPlans`, the wiring's `daemon::deps`): the deps use case
+in a wiring of the caller's directory and ENVIRONMENT, so git runs on the
+caller's `PATH` with its `HOME` and credentials (`GIT_*` scrubbed by
+remote-git as ever), over a RECORDING store
+(`deps_files::RecordingDepsFiles`: the registry, the lock, each tree
+installed with its files and identity marker, each tree replaced or pruned
+recorded, never made, and read back by the reads after). A remote's write
+is one library write of `remotes.yaml` (`Api::carry_out`). A pull or an
+upgrade is ONE `RunSequence` (verb `deps pull` or `deps upgrade`) on the
+checkout's stream (`Api::deps_write`, daemon-api's `deps_writes`): a
+`CreateDirectory` per tree, no entries (the cache is presence and
+identity, never content), made whole by `Operation::CreateDir` into
+`cache/bundles/<segments>/<bundle>/<sha>` and completed by
+`RecordTreeInstalled` whose `tree` is git's own tree id as remote-git
+reports it (`Remotes::bundle_tree`; nothing in ctxloom computes a git
+id); then `lock.yaml` (written only where it differs); then each tree it
+no longer keeps into the sequence's own trash and the purge of its slot;
+then, for a consented refresh (`--yes`), each engine file as a foreign
+step (`deps pull` is a foreign writer). A tree already renamed in whole
+is a step done, so a killed pull converges on its retry or its re-run,
+and the lock never names a tree that is not installed. The kill points
+are `tree-installed` (after the first tree), `trees-installed` (after
+the last), `done`. A consented refresh the project refuses once the pull
+applied is the answer's `refresh_refusal`, and the command ends refused
+(20) after the report, as in process. `remote list` gives each remote's
+forge. Not served yet: `deps check`, `hold|unhold`, `bundle push|move
+--to <remote>` and `manage install`'s pull.
 
 Slice S4 (sessions) built the following. The record is the user's durable
 store (owner rulings 87a, T14, which reverses 87's store per project): a

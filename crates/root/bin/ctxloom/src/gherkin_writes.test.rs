@@ -912,24 +912,18 @@ fn installed_whole(w: &mut World) {
         assert_eq!(slots.len(), 1, "{identity} at {sha}: {slots:?}");
         let slot = &slots[0];
         let bundle = identity.rsplit('/').next().expect("a bundle");
+        // The remote publishes each bundle where every repository does
+        // (deps-ports' `BUNDLES_IN_REPOSITORY`).
+        let published = format!(".ctxloom/content/bundles/v2/{bundle}/");
         let repo = PathBuf::from(url.strip_prefix("file://").unwrap_or(&url));
-        let listed = w.common.project.git_output(
-            &repo,
-            &[
-                "ls-tree",
-                "-r",
-                "--name-only",
-                &sha,
-                &format!("bundles/{bundle}/"),
-            ],
-        );
+        let listed = w
+            .common
+            .project
+            .git_output(&repo, &["ls-tree", "-r", "--name-only", &sha, &published]);
         assert!(listed.status.success(), "{identity}: git ls-tree in {url}");
         let mut want: Vec<String> = String::from_utf8_lossy(&listed.stdout)
             .lines()
-            .map(|path| {
-                path.trim_start_matches(&format!("bundles/{bundle}/"))
-                    .to_string()
-            })
+            .map(|path| path.trim_start_matches(&published).to_string())
             .collect();
         want.sort();
         let have: Vec<String> = tree_of(slot)

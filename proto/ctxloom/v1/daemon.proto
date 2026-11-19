@@ -538,6 +538,15 @@ service Ctxloom {
   rpc HoldDependency(HoldDependencyRequest) returns (Dependency);
   // `deps unhold`, `deps hold --undo`: the dependency, released.
   rpc ReleaseDependency(ReleaseDependencyRequest) returns (Dependency);
+  // `deps pull` (step 10c U4, protos.md §1.2): planned where the caller
+  // stands, git run in its environment, then made as ONE retryable
+  // sequence on the checkout's stream: a new directory per pinned commit's
+  // tree, each completed by its `RecordTreeInstalled`, then `lock.yaml`.
+  // A killed pull converges on its retry or its re-run.
+  rpc PullDependencies(PullDependenciesRequest) returns (PullDependenciesResponse);
+  // `deps upgrade [reference] [--yes]` (step 10c U4): as a pull; without
+  // `--yes` (`validate_only`) a preview that writes nothing.
+  rpc UpgradeDependencies(UpgradeDependenciesRequest) returns (UpgradeDependenciesResponse);
   // (-- endregion --)
 
   // (-- region config: `projects/{project}/config`, `users/me/config` (singletons) --)

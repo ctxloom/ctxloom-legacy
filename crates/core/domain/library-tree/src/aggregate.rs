@@ -38,6 +38,8 @@ pub const TREE_UNREADABLE: &str = "library-tree-tree-unreadable";
 /// a sequence of one of them may hold a foreign step.
 pub const FOREIGN_WRITERS: &[&str] = &[
     "materialize",
+    // A consented pull's project refresh (`deps pull --yes`, step 10c U4).
+    "deps pull",
     "doctor --fix",
     "manage install",
     "manage uninstall",

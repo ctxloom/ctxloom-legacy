@@ -135,7 +135,7 @@ pub(crate) fn removal(root: &str, path: &str) -> ctxloom_ports::Operation {
 /// Each of `puts` as its step names it: its path ([`step_path`], from the
 /// project's `root`), git's id for what it leaves (asked of `observer` in
 /// the tree `dir`; none for a removal), and the put itself.
-fn files_of<'a>(
+pub(crate) fn files_of<'a>(
     observer: &dyn ctxloom_ports::TreeObserver,
     (dir, root): (&str, &str),
     puts: &'a [ForeignPut],
@@ -388,8 +388,36 @@ impl<E: Edge> Api<E> {
             detail: "this daemon makes no write".to_string(),
         })?;
         for (at, step) in steps.iter().enumerate().skip(start as usize) {
+            let at = u32::try_from(at).unwrap_or(u32::MAX);
+            self.foreign_step(
+                (tree, dir, root),
+                (request_id, operations.as_ref()),
+                (at, step),
+                files,
+            )
+            .await?;
+            self.dies_at(&after_step(at as usize + 1));
+        }
+        Ok(())
+    }
+
+    /// The foreign step `step` (number `at`) of the write `request_id`
+    /// made by its operation (its content the plan's `files`, or, for a
+    /// removal the plan no longer holds, its intent alone) and recorded
+    /// done. A step that replaces no file is none of a foreign writer's.
+    pub(crate) async fn foreign_step(
+        &self,
+        (tree, dir, root): (&library_tree::TreeName, &str, &str),
+        (request_id, operations): (&str, &dyn ctxloom_ports::Operations),
+        (at, step): (u32, &Step),
+        files: &[(String, String, &ForeignPut)],
+    ) -> Result<(), ApiError> {
+        let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
+            detail: "this daemon observes no library".to_string(),
+        })?;
+        {
             let Some(path) = step.replace.as_ref().map(|replace| replace.path.clone()) else {
-                continue;
+                return Ok(());
             };
             let intended = step
                 .replace
@@ -420,7 +448,6 @@ impl<E: Edge> Api<E> {
             operations
                 .operate(dir, request_id, &operation, &|_| {})
                 .map_err(|failure| ApiError::diagnosed(failure.as_ref()))?;
-            let at = u32::try_from(at).unwrap_or(u32::MAX);
             let fact = RecordStepDone {
                 request_id: request_id.to_string(),
                 step: at,
@@ -433,7 +460,6 @@ impl<E: Edge> Api<E> {
                 .send(step_book(tree, &fact, &format!("done:{request_id}:{at}")))
                 .await
                 .map_err(ApiError::failed)?;
-            self.dies_at(&after_step(at as usize + 1));
         }
         Ok(())
     }

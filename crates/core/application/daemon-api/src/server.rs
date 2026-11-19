@@ -324,6 +324,13 @@ macro_rules! library_read_calls {
 }
 use library_read_calls;
 
+/// A deps write answered as another verb: a bug of the wiring.
+fn misanswered(verb: &str, other: &(crate::deps_writes::DepsAnswer, String)) -> ApiError {
+    ApiError::Failed {
+        detail: format!("{verb} answered {:?}", other.0),
+    }
+}
+
 /// A call this edge does not serve, failed.
 fn not_served(method: &str) -> ApiError {
     ApiError::Failed {
@@ -582,6 +589,150 @@ impl<E: Edge + 'static> Calls for Api<E> {
         })
     }
 
+    /// `CreateRemote` (step 10c U4): `remotes.yaml`, one library write.
+    fn create_remote(
+        &self,
+        request: v1::CreateRemoteRequest,
+    ) -> Answer<'_, v1::CreateRemoteResponse> {
+        Box::pin(async move {
+            let remote = request.remote.clone().unwrap_or_default();
+            let ask = crate::deps_writes::DepsAsk::CreateRemote {
+                name: request.remote_id.clone(),
+                url: remote.url,
+                forge: remote.forge,
+            };
+            match self.deps_write(&request, "remote create", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Created(answer), etag) => {
+                    Ok(v1::CreateRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote create", &other)),
+            }
+        })
+    }
+
+    /// `UpdateRemote` (step 10c U4): the fields its mask names (all it
+    /// carries, with none).
+    fn update_remote(
+        &self,
+        request: v1::UpdateRemoteRequest,
+    ) -> Answer<'_, v1::UpdateRemoteResponse> {
+        Box::pin(async move {
+            let remote = request.remote.clone().unwrap_or_default();
+            // A field the mask names is written as given, empty too (a
+            // forge cleared); with no mask, each field the remote carries.
+            let named = |field: &str, value: &str| match request.update_mask.as_ref() {
+                Some(mask) => mask
+                    .paths
+                    .iter()
+                    .any(|path| path == field)
+                    .then(|| value.to_string()),
+                None => (!value.is_empty()).then(|| value.to_string()),
+            };
+            let current = remote
+                .name
+                .rsplit_once("/remotes/")
+                .map_or(remote.name.as_str(), |(_, id)| id)
+                .to_string();
+            let renamed = named("name", &request.new_remote_id);
+            let ask = crate::deps_writes::DepsAsk::EditRemote {
+                remote: current,
+                name: renamed,
+                url: named("url", &remote.url),
+                forge: named("forge", &remote.forge),
+            };
+            match self.deps_write(&request, "remote edit", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Edited(answer), etag) => {
+                    Ok(v1::UpdateRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote edit", &other)),
+            }
+        })
+    }
+
+    /// `DeleteRemote` (step 10c U4): previewed without `--yes`.
+    fn delete_remote(
+        &self,
+        request: v1::DeleteRemoteRequest,
+    ) -> Answer<'_, v1::DeleteRemoteResponse> {
+        Box::pin(async move {
+            let name = request
+                .name
+                .rsplit_once("/remotes/")
+                .map_or(request.name.as_str(), |(_, id)| id)
+                .to_string();
+            let ask = crate::deps_writes::DepsAsk::RemoveRemote {
+                name,
+                apply: !request.validate_only,
+            };
+            match self.deps_write(&request, "remote remove", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Removed(answer), etag) => {
+                    Ok(v1::DeleteRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote remove", &other)),
+            }
+        })
+    }
+
+    /// `SetDefaultRemote` (step 10c U4): none named, the default cleared.
+    fn set_default_remote(
+        &self,
+        request: v1::SetDefaultRemoteRequest,
+    ) -> Answer<'_, v1::SetDefaultRemoteResponse> {
+        Box::pin(async move {
+            let name = request
+                .remote
+                .rsplit_once("/remotes/")
+                .map_or(request.remote.as_str(), |(_, id)| id)
+                .to_string();
+            let ask = crate::deps_writes::DepsAsk::DefaultRemote {
+                name: (!name.is_empty()).then_some(name),
+            };
+            match self.deps_write(&request, "remote default", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Defaulted(answer), etag) => {
+                    Ok(v1::SetDefaultRemoteResponse { etag, ..answer })
+                }
+                other => Err(misanswered("remote default", &other)),
+            }
+        })
+    }
+
+    /// `PullDependencies` (step 10c U4): one sequence of whole trees, then
+    /// the lock; its refresh previewed without `--yes` (`validate_only`).
+    fn pull_dependencies(
+        &self,
+        request: v1::PullDependenciesRequest,
+    ) -> Answer<'_, v1::PullDependenciesResponse> {
+        Box::pin(async move {
+            let ask = crate::deps_writes::DepsAsk::Pull {
+                force: request.force,
+                lock: request.lock.unwrap_or(true),
+                yes: !request.validate_only,
+            };
+            match self.deps_write(&request, "deps pull", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Pulled(answer), _) => Ok(answer),
+                other => Err(misanswered("deps pull", &other)),
+            }
+        })
+    }
+
+    /// `UpgradeDependencies` (step 10c U4): as a pull; a preview without
+    /// `--yes`.
+    fn upgrade_dependencies(
+        &self,
+        request: v1::UpgradeDependenciesRequest,
+    ) -> Answer<'_, v1::UpgradeDependenciesResponse> {
+        Box::pin(async move {
+            let ask = crate::deps_writes::DepsAsk::Upgrade {
+                reference: (!request.reference.is_empty()).then(|| request.reference.clone()),
+                apply: !request.validate_only,
+            };
+            match self.deps_write(&request, "deps upgrade", &ask).await? {
+                (crate::deps_writes::DepsAnswer::Upgraded(answer), _) => Ok(answer),
+                other => Err(misanswered("deps upgrade", &other)),
+            }
+        })
+    }
+
     /// `DistillFragment` (step 10b, owner 2026-11-18): the model asked as a
     /// run the daemon hosts, its distilled form written once it ends.
     fn distill_fragment(
@@ -719,6 +870,10 @@ pub struct Api<E> {
     /// The setup use cases that write other tools' files (step 10c U10);
     /// none, `Materialize`, `UninstallManage` and `RunDoctor` fail.
     pub(crate) foreign: Option<Arc<dyn crate::foreign::ForeignPlans>>,
+    /// The deps use cases that write the remotes, the lock and the cache
+    /// (step 10c U4); none, the remotes' writes, `PullDependencies` and
+    /// `UpgradeDependencies` fail.
+    pub(crate) deps: Option<Arc<dyn crate::deps_writes::DepsPlans>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -738,6 +893,17 @@ impl<E: Edge> Api<E> {
             os: String::new(),
             deliveries: None,
             foreign: None,
+            deps: None,
+        }
+    }
+
+    /// The API, the remotes' and the dependencies' writes planned by
+    /// `plans` (step 10c U4).
+    #[must_use]
+    pub fn writing_deps(self, plans: Arc<dyn crate::deps_writes::DepsPlans>) -> Api<E> {
+        Api {
+            deps: Some(plans),
+            ..self
         }
     }
 

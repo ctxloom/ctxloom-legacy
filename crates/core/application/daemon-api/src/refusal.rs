@@ -805,7 +805,7 @@ pub(crate) fn app_error(error: &library_application::AppError) -> ApiError {
 /// (`ctxloom.v1.Deps*`, E5, `library_refusals::read_decline`); any other
 /// decline (a write's, 10b) rides as `LibraryDeclined`, its cause the
 /// decline's own code and args.
-pub(crate) fn deps_error(error: &deps_application::AppError) -> ApiError {
+pub fn deps_error(error: &deps_application::AppError) -> ApiError {
     use exit_code::ExitClass;
     let declined = |d: &dyn angzarr_diagnostic::Diagnostic| {
         ApiError::Refused(ApiRefusal::of(&daemon_proto::v1::LibraryDeclined {

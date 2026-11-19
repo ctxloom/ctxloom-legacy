@@ -163,6 +163,12 @@ macro_rules! library_writes {
             run_doctor (RunDoctor) RunDoctorRequest => RunDoctorResponse,
             distill_fragment (DistillFragment) DistillFragmentRequest => DistillFragmentResponse,
             distill_command (DistillCommand) DistillCommandRequest => DistillCommandResponse,
+            create_remote (CreateRemote) CreateRemoteRequest => CreateRemoteResponse,
+            update_remote (UpdateRemote) UpdateRemoteRequest => UpdateRemoteResponse,
+            delete_remote (DeleteRemote) DeleteRemoteRequest => DeleteRemoteResponse,
+            set_default_remote (SetDefaultRemote) SetDefaultRemoteRequest => SetDefaultRemoteResponse,
+            pull_dependencies (PullDependencies) PullDependenciesRequest => PullDependenciesResponse,
+            upgrade_dependencies (UpgradeDependencies) UpgradeDependenciesRequest => UpgradeDependenciesResponse,
         }
     };
 }

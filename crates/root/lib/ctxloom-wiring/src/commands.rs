@@ -37,31 +37,44 @@ const OWN_NOUNS: [&str; 2] = ["remote", "deps"];
 /// The dependency use cases over the process's home, working directory and
 /// project.
 pub(crate) fn build_deps(wiring: &Wiring) -> Result<Deps, LibError> {
-    let fs = wiring.fs();
+    let (_, app) = wiring.locate();
+    let files = Arc::new(ProjectFiles::new(wiring.fs(), app.path.clone()));
+    build_deps_over(wiring, files.clone(), files)
+}
+
+/// The dependency use cases over `store`, the deps files they read and
+/// write (a recording one in the daemon, step 10c U4); `files` the
+/// project's own, which a clone's token is looked up in.
+pub(crate) fn build_deps_over(
+    wiring: &Wiring,
+    store: Arc<dyn DepsFiles>,
+    files: Arc<ProjectFiles>,
+) -> Result<Deps, LibError> {
     let env = Arc::clone(wiring.env());
     let (_, app) = wiring.locate();
-    let files = Arc::new(ProjectFiles::new(Arc::clone(&fs), app.path.clone()));
     Ok(Deps::new(
-        Arc::new(
-            GitRemotes::new(
-                Arc::clone(&fs),
-                app.path.join("cache/repos"),
-                Arc::clone(&env),
-            )
-            .with_credentials(
-                Arc::new({
-                    let env = Arc::clone(&env);
-                    move |name| env.utf8(name).map(String::from)
-                }),
-                token_vars(Arc::clone(&files)),
-            ),
-        ),
-        files,
-        Arc::new(ContentFs::new(fs, &app.path)),
+        Arc::new(git_remotes(wiring, files)),
+        store,
+        Arc::new(ContentFs::new(wiring.fs(), &app.path)),
     )
     .with_forge(Arc::new(GitHub::with_env(move |name| {
         env.utf8(name).map(String::from)
     }))))
+}
+
+/// The remotes over git, in `wiring`'s environment (the caller's, in the
+/// daemon: step 10c U4), cloned under its project's cache; a clone's token
+/// looked up in `files`' registry.
+pub(crate) fn git_remotes(wiring: &Wiring, files: Arc<ProjectFiles>) -> GitRemotes {
+    let env = Arc::clone(wiring.env());
+    let (_, app) = wiring.locate();
+    GitRemotes::new(wiring.fs(), app.path.join("cache/repos"), Arc::clone(&env)).with_credentials(
+        Arc::new({
+            let env = Arc::clone(&env);
+            move |name| env.utf8(name).map(String::from)
+        }),
+        token_vars(files),
+    )
 }
 
 /// `run --one-shot`, or `run` (the human's session): the user's daemon plans
@@ -114,9 +127,9 @@ impl Puller for DepsPuller {
 /// into the project's directory, with the context of an engine whose context
 /// rides the launch left alone. Without consent it is a dry run, and answers
 /// only what would change.
-struct SetupRefresh<'a> {
-    setup: &'a Setup,
-    flags: library_application::Flags,
+pub(crate) struct SetupRefresh<'a> {
+    pub(crate) setup: &'a Setup,
+    pub(crate) flags: library_application::Flags,
 }
 
 impl ProjectRefresh for SetupRefresh<'_> {
@@ -604,16 +617,12 @@ impl Commands {
         if !ours {
             return wired.library.run(noun, call, catalog, out, err);
         }
-        let refresh = SetupRefresh {
-            setup: &wired.surface,
-            flags: call.globals.clone(),
-        };
         let served = crate::library::DaemonServed::new(env, version);
+        let globals = library_api::reads::globals_of(&call.globals);
         deps_cli::run(
             &wired.deps,
-            &refresh,
             &names,
-            &served,
+            (&served, Some(globals)),
             noun,
             call,
             catalog,

@@ -89,7 +89,10 @@ impl Names for Project {
 /// The daemon's reads in the tests: answered as the daemon answers them
 /// (library-api's deps reads), over the fixture's dependencies, each
 /// target [`PARENT`] followed by `under`.
-struct ServedBy<'a>(&'a deps_application::Deps);
+struct ServedBy<'a>(
+    &'a deps_application::Deps,
+    &'a dyn deps_application::ProjectRefresh,
+);
 
 /// [`ServedBy`]'s reads, from [`served_reads!`](crate::served_reads).
 macro_rules! served_by_library_api {
@@ -140,7 +143,147 @@ impl Served for ServedBy<'_> {
             ..daemon_proto::v1::MoveBundleResponse::default()
         })
     }
+
+    // The daemon's writes (step 10c U4) as it answers them: the use case
+    // over the fixture's files (the daemon's over a recording store, its
+    // writes made as a sequence: tested there), its answer as its message.
+    fn create_remote(
+        &self,
+        _: &str,
+        request: daemon_proto::v1::CreateRemoteRequest,
+    ) -> Result<daemon_proto::v1::CreateRemoteResponse, Failure> {
+        let remote = request.remote.unwrap_or_default();
+        let created = written(self.0.remote_create(&deps_application::CreateRequest {
+            name: request.remote_id,
+            url: remote.url,
+            forge: remote.forge.clone(),
+        }))?;
+        Ok(wire::created(PARENT, &created.0, &remote.forge).noticed(created.1))
+    }
+
+    fn update_remote(
+        &self,
+        under: &str,
+        request: daemon_proto::v1::UpdateRemoteRequest,
+    ) -> Result<daemon_proto::v1::UpdateRemoteResponse, Failure> {
+        let remote = request.remote.unwrap_or_default();
+        let mask = request.update_mask.unwrap_or_default();
+        let some =
+            |field: &str, text: String| mask.paths.iter().any(|p| p == field).then_some(text);
+        let edit = deps_application::Edit {
+            name: some("name", request.new_remote_id),
+            url: some("url", remote.url),
+            forge: some("forge", remote.forge),
+        };
+        let asked = under.rsplit('/').next().unwrap_or(under);
+        let edited = written(self.0.remote_edit(asked, &edit))?;
+        Ok(wire::edited(PARENT, &edited.0).noticed(edited.1))
+    }
+
+    fn delete_remote(
+        &self,
+        under: &str,
+        request: daemon_proto::v1::DeleteRemoteRequest,
+    ) -> Result<daemon_proto::v1::DeleteRemoteResponse, Failure> {
+        let asked = under.rsplit('/').next().unwrap_or(under);
+        let removed = written(self.0.remote_remove(asked, !request.validate_only))?;
+        Ok(wire::removed(PARENT, asked, &removed.0).noticed(removed.1))
+    }
+
+    fn set_default_remote(
+        &self,
+        _: &str,
+        request: daemon_proto::v1::SetDefaultRemoteRequest,
+    ) -> Result<daemon_proto::v1::SetDefaultRemoteResponse, Failure> {
+        let name = (!request.remote.is_empty()).then_some(request.remote.as_str());
+        let set = written(self.0.remote_default(name))?;
+        Ok(wire::defaulted(PARENT, &set.0).noticed(set.1))
+    }
+
+    fn pull_dependencies(
+        &self,
+        _: &str,
+        request: daemon_proto::v1::PullDependenciesRequest,
+    ) -> Result<daemon_proto::v1::PullDependenciesResponse, Failure> {
+        let pulled = written(self.0.pull_and_refresh(
+            self.1,
+            request.force,
+            request.lock.unwrap_or(true),
+            !request.validate_only,
+        ))?;
+        let refresh_refusal = pulled
+            .0
+            .failure
+            .as_ref()
+            .map(|failure| daemon_proto::v1::Notice {
+                code: angzarr_diagnostic::Diagnostic::code(failure).to_string(),
+                args: run_application::client::flat_args(failure),
+                text: failure.to_string(),
+            });
+        let catalog = Catalog::en_us(&[deps_application::EN_US]).expect("a catalog");
+        let skipped = pulled.0.skipped.as_ref().map(|r| wire::view(r, &catalog));
+        Ok(daemon_proto::v1::PullDependenciesResponse {
+            refresh_refusal,
+            ..wire::pulled(PARENT, &pulled.0.report, skipped.as_ref()).noticed(pulled.1)
+        })
+    }
+
+    fn upgrade_dependencies(
+        &self,
+        _: &str,
+        request: daemon_proto::v1::UpgradeDependenciesRequest,
+    ) -> Result<daemon_proto::v1::UpgradeDependenciesResponse, Failure> {
+        let reference = (!request.reference.is_empty()).then_some(request.reference.as_str());
+        let apply = !request.validate_only;
+        let report = written(match reference {
+            Some(reference) => self.0.upgrade_only(reference, apply),
+            None => self.0.upgrade(apply),
+        })?;
+        Ok(wire::upgraded(&report.0, reference).noticed(report.1))
+    }
 }
+
+/// A use case's answer and its notices as the daemon says them, or its
+/// error as the failure it ends the command in.
+fn written<T>(
+    outcome: deps_application::Outcome<T>,
+) -> Result<(T, Vec<daemon_proto::v1::Notice>), Failure> {
+    let notices = outcome
+        .notices
+        .iter()
+        .map(|notice| daemon_proto::v1::Notice {
+            code: angzarr_diagnostic::Diagnostic::code(notice).to_string(),
+            args: run_application::client::flat_args(notice),
+            text: notice.to_string(),
+        })
+        .collect();
+    Ok((outcome.result.map_err(IntoFailure::into_failure)?, notices))
+}
+
+/// A served write's message, its notices set.
+trait Noticed {
+    fn noticed(self, notices: Vec<daemon_proto::v1::Notice>) -> Self;
+}
+
+macro_rules! noticed {
+    ($($message:ident),*) => {
+        $(
+            impl Noticed for daemon_proto::v1::$message {
+                fn noticed(self, notices: Vec<daemon_proto::v1::Notice>) -> Self {
+                    daemon_proto::v1::$message { notices, ..self }
+                }
+            }
+        )*
+    };
+}
+noticed!(
+    CreateRemoteResponse,
+    UpdateRemoteResponse,
+    DeleteRemoteResponse,
+    SetDefaultRemoteResponse,
+    PullDependenciesResponse,
+    UpgradeDependenciesResponse
+);
 
 /// A resource name under [`PARENT`].
 fn named(rest: &str) -> String {
@@ -167,9 +310,8 @@ fn go_refreshing(fx: &Fixture, refresh: &FakeRefresh, line: &[&str], how: How) -
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let exit = run(
         &fx.deps,
-        refresh,
         &Project,
-        &ServedBy(&fx.deps),
+        (&ServedBy(&fx.deps, refresh), None),
         &noun,
         &call,
         &catalog,
@@ -215,8 +357,8 @@ fn test_remote_list_json_and_text_and_the_bare_noun() {
     assert_eq!(
         go(&fx, &["remote", "ls"], JSON).json(),
         serde_json::json!({"remotes": [
-            {"name": named("remotes/alpha"), "url": "file:///a.git", "default": false},
-            {"name": named("remotes/zeta"), "url": "file:///z.git", "default": true},
+            {"name": named("remotes/alpha"), "url": "file:///a.git", "forge": "git", "default": false},
+            {"name": named("remotes/zeta"), "url": "file:///z.git", "forge": "git", "default": true},
         ]})
     );
     assert_eq!(
