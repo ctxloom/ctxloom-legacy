@@ -201,17 +201,26 @@ pub fn agents(config: Option<&str>, unresolved: &[library_application::AgentUnre
 
 /// `CREDENTIALS-m5`: whether the credential every configured engine needs is
 /// exported, in the mode the human's session authenticates in. One that is
-/// not is a `fail`: every run is refused for it. Only presence is read, never
-/// a value, and "present" is not "accepted": whether the engine accepts it is
-/// known only by launching the engine's own CLI. A source that is a file
-/// alone is a `warn`: the primary session may run on it, no child can.
+/// not is a `fail` when nothing can run on it (a source of variables alone),
+/// and a `warn` naming what a child needs when the primary can still sign in
+/// (the engine's own login, or the source's file; owner ruling 2026-11-19).
+/// Only presence is read, never a value, and "present" is not "accepted":
+/// whether the engine accepts it is known only by launching the engine's own
+/// CLI. A source that is a file alone is a `warn`: the primary session may
+/// run on it, no child can.
 pub fn credentials(layers: &[String], auth: &Auth) -> Check {
     const M: &str = "DOCTOR-CHECK-CREDENTIALS-m5";
     const N: &str = "credentials";
     let engines =
         library::config::engines::engines_in_use(&library::config::engines::merged(layers));
     let verdicts = auth.needed(&engines, layers);
-    let missing: Vec<_> = verdicts.iter().filter(|v| !v.ready).collect();
+    // Nothing can run on it: the primary has no login to sign in with
+    // either. One the primary signs in without refuses only a child, and is
+    // warned of below (owner ruling 2026-11-19).
+    let missing: Vec<_> = verdicts
+        .iter()
+        .filter(|v| !v.ready && !v.primary_signs_in)
+        .collect();
     if let Some(first) = missing.first() {
         let detail = missing
             .iter()
@@ -231,7 +240,10 @@ pub fn credentials(layers: &[String], auth: &Auth) -> Check {
     // A file alone serves the primary session; every child run of that
     // engine is refused (ruling 53), and the row says so in the refusal's
     // words (ruling 81).
-    let primary_only: Vec<_> = verdicts.iter().filter(|v| v.primary_only).collect();
+    let primary_only: Vec<_> = verdicts
+        .iter()
+        .filter(|v| v.primary_only || v.primary_signs_in)
+        .collect();
     if let Some(first) = primary_only.first() {
         let detail = primary_only
             .iter()
