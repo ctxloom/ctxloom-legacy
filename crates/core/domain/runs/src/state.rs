@@ -1,6 +1,6 @@
 //! The run, folded from its events.
 
-use crate::{EndCause, RunEvent, RunMode, RunnerStartedRecorded, TurnUrgency};
+use crate::{EndCause, Grant, RunEvent, RunMode, RunnerStartedRecorded, TurnUrgency};
 
 /// The runs domain's name: every run stream's `Cover.domain`.
 pub const RUN_DOMAIN: &str = "runs";
@@ -30,6 +30,9 @@ pub struct RunState {
     /// stays live and its next turn queueable.
     pub final_reported: Option<u64>,
     pub ended: Option<EndCause>,
+    /// What the run was given, as its `RunEnqueued` journaled it (step 9):
+    /// none on a run enqueued before the record existed.
+    pub grant: Option<Grant>,
 }
 
 /// A turn queued and not yet ended (S-b).
@@ -58,6 +61,7 @@ fn fold(state: &mut RunState, event: &RunEvent, sequence: u64) {
             state.session = enqueued.session.clone();
             state.incarnation = enqueued.incarnation;
             state.mode = Some(enqueued.mode);
+            state.grant = enqueued.grant.clone();
         }
         RunEvent::RunnerAttachedRecorded(_) => state.runner_attached = true,
         RunEvent::RunnerStartedRecorded(started) => state.runner_started = Some(started.clone()),

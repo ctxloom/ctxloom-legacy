@@ -14,7 +14,7 @@ use sessions::{
     SessionEvent, SessionMinted, SessionRef, Urgency, SESSION_DOMAIN,
 };
 
-use crate::{catch_up, run_text, Board, Boards, EndedTurn, Message};
+use crate::{catch_up, run_text, Board, Boards, EndedTurn, Message, TurnFailure};
 
 const ID: &str = "0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b";
 
@@ -81,6 +81,7 @@ fn run_events() -> Vec<Any> {
             incarnation: 1,
             mode: RunMode::Structured,
             launcher_lock: String::new(),
+            grant: None,
         })
         .to_any(),
         RunEvent::TurnQueued(TurnQueued {
@@ -108,7 +109,7 @@ fn run_events() -> Vec<Any> {
         RunEvent::TurnFailedRecorded(TurnFailedRecorded {
             turn: 3,
             class: TurnFailureClass::Interrupted,
-            detail: String::new(),
+            detail: "cut".to_string(),
             message_ids: vec!["m2".to_string()],
         })
         .to_any(),
@@ -433,4 +434,50 @@ fn a_session_keeps_its_last_incarnations_end() {
         .unwrap();
     assert_eq!(board.last_end(ID), Some((2, "runner-exit")));
     assert_eq!(board.last_end("nobody"), None);
+}
+
+// Step 9 (owner ruling 2026-11-17): a run keeps how its last turn failed, in
+// its class and the engine's words, until a later turn of it completes; and
+// the words its end was recorded with (a launch that failed).
+#[test]
+fn a_run_keeps_how_its_last_turn_failed_until_one_completes_and_its_ends_words() {
+    let mut board = Board::new();
+    let run = run_root(ID, 1);
+    board
+        .project(&book(RUN_DOMAIN, run.clone(), 0, run_events()))
+        .unwrap();
+    assert_eq!(
+        board.run(ID, 1).unwrap().last_failure,
+        Some(TurnFailure {
+            class: TurnFailureClass::Interrupted,
+            detail: "cut".to_string(),
+        })
+    );
+    let later = vec![
+        RunEvent::TurnQueued(TurnQueued {
+            prompt_ref: String::new(),
+            resume: true,
+            message_ids: vec!["m3".to_string()],
+            urgency: TurnUrgency::Wake,
+        })
+        .to_any(),
+        RunEvent::TurnCompletedRecorded(TurnCompletedRecorded {
+            turn: 5,
+            native_key: String::new(),
+            answer_ref: String::new(),
+            exit_code: 0,
+            message_ids: vec!["m3".to_string()],
+        })
+        .to_any(),
+        RunEvent::RunEnded(runs::RunEnded {
+            cause: runs::EndCause::LaunchFailed,
+            exit_code: None,
+            detail: "program not found: claude".to_string(),
+        })
+        .to_any(),
+    ];
+    board.project(&book(RUN_DOMAIN, run, 5, later)).unwrap();
+    let fold = board.run(ID, 1).unwrap();
+    assert_eq!(fold.last_failure, None, "a later turn completed");
+    assert_eq!(fold.end_detail, "program not found: claude");
 }

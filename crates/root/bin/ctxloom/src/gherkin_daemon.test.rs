@@ -15,7 +15,7 @@
 //! a real step with the milestone that builds what it asserts.
 
 use std::path::{Path, PathBuf};
-use std::process::Child;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
@@ -32,6 +32,16 @@ const IDLE_VARIABLE: &str = "CTXLOOM_DAEMON_IDLE_SECONDS";
 /// scenario's wait for it is.
 const IDLE_SECONDS: u64 = 2;
 
+/// The idle time of a daemon a busy scenario starts ("a ctxloom daemon is
+/// serving for this home, with <busy>"), which it must outlive: long enough
+/// for the steps that make it busy (a session seeded and launched, a few
+/// commands) to finish within it on a loaded host. Its daemon's idle clock
+/// runs from its start, and a request does not reset it, so at
+/// [`IDLE_SECONDS`] a busy step that took over 2 s found it already gone
+/// (land of 2026-11-18, load 20 and more). "The daemon's idle time passes"
+/// waits this one out, so "it still serves" is still asked after it.
+const BUSY_IDLE_SECONDS: u64 = 8;
+
 /// The idle time of a daemon a scenario's command starts: long enough to
 /// outlive the scenario's steps, short enough to leave nothing for long.
 const SPAWNED_IDLE_SECONDS: u64 = 15;
@@ -47,6 +57,12 @@ pub(super) struct State {
     /// The stores' evidence as it was before the scenario's command ran.
     store_before: Option<StoreEvidence>,
     pub(super) daemon: Option<Child>,
+    /// The process holding the scenario's own lifeline, when a step gave
+    /// its commands one (the lifeline's forcing test).
+    holder: Option<Child>,
+    /// The idle time "the daemon's idle time passes" waits out, when not
+    /// [`IDLE_SECONDS`]: a busy daemon's [`BUSY_IDLE_SECONDS`].
+    idle_wait: Option<u64>,
     run: Option<Child>,
     /// The file whose presence lets the stub engine end.
     release: Option<PathBuf>,
@@ -131,6 +147,20 @@ pub(super) struct State {
     blocker: Option<(Child, PathBuf)>,
     /// The harp of the interactive session a run.feature step started.
     tui: Option<String>,
+    /// The project's config defines agents of its own (step 9's journeys):
+    /// the stub claude is named in the home config alone, the project's
+    /// config left as the step wrote it.
+    own_agents: bool,
+    /// The session the scenario's orchestrator is (step 9: Alice's).
+    orchestrator: Option<String>,
+    /// The turns each hosted child had taken when its Given was done (step
+    /// 9: several children at once), by harp.
+    child_turns_before: std::collections::BTreeMap<String, usize>,
+    /// The child the last tool call named.
+    tool_child: Option<String>,
+    /// The children a step had write a file at once, and the file's name.
+    writers: Vec<String>,
+    written: Option<String>,
 }
 
 /// An ask the scripted claude made: its server, the call's id, and the
@@ -157,6 +187,10 @@ pub(super) struct Fired {
 
 impl Drop for State {
     fn drop(&mut self) {
+        if let Some(mut holder) = self.holder.take() {
+            let _ = holder.kill();
+            let _ = holder.wait();
+        }
         if let Some(release) = &self.release {
             files::put(release, "go");
         }
@@ -291,7 +325,10 @@ fn stub_claude(w: &mut World, body: &str) -> PathBuf {
         true => project_config_over(w.common.project.read(".ctxloom/config.yaml")),
         false => config_of(&entries),
     };
-    w.common.project.write(".ctxloom/config.yaml", &config);
+    // A project that defines its own agents keeps its config as written.
+    if !w.daemon_spec.own_agents {
+        w.common.project.write(".ctxloom/config.yaml", &config);
+    }
     w.daemon_spec.stub = Some(dir.join("claude"));
     w.daemon_spec.stub_on_path = false;
     write_home_config(w);
@@ -399,6 +436,12 @@ const CHILD_STUB_HEAD: &str = r#"here=$(dirname "$0")
 pwd >> "$here/child-cwds"
 printf '%s\n' "$*" >> "$here/child-args"
 env > "$here/child-env"
+me="${CTXLOOM_SESSION##*/}"
+rec="$here/by/${me:-none}"
+mkdir -p "$rec"
+pwd >> "$rec/child-cwds"
+printf '%s\n' "$*" >> "$rec/child-args"
+env > "$rec/child-env"
 "#;
 
 const CHILD_STUB_TURNS: &str = r#"
@@ -432,13 +475,41 @@ while IFS= read -r line; do
       continue ;;
   esac
   printf '%s %s\n' "$sid" "$line" >> "$here/turns"
+  printf '%s %s\n' "$sid" "$line" >> "$rec/turns"
   : > "$here/child-turn"
+  : > "$rec/child-turn"
+  # Its hooks, as claude fires them, from the payloads a step left.
+  if [ -d "$rec/fire" ]; then
+    for f in "$rec/fire"/*; do
+      ev=${f##*/}; ev=${ev#*-}; ev=${ev%.json}
+      ctxloom hook claude-code execute "$ev" < "$f" > /dev/null 2>> "$rec/hook-errors"
+    done
+    rm -rf "$rec/fire"
+  fi
+  if [ -e "$rec/rate-limit" ]; then
+    rm -f "$rec/rate-limit"
+    printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"API Error: 429 rate limited","session_id":"%s"}\n' "$sid"
+    continue
+  fi
+  # A file written in the turn, then held until every writer has written
+  # (the turns run at the same time).
+  if [ -e "$rec/write" ]; then
+    name=$(cat "$rec/write")
+    rm -f "$rec/write"
+    printf '%s\n' "$me" > "$name"
+    : > "$rec/wrote"
+    i=0
+    while [ "$(ls "$here"/by/*/wrote 2> /dev/null | wc -l)" -lt "$(cat "$here/together" 2> /dev/null || echo 1)" ] && [ "$i" -lt 600 ]; do
+      sleep 0.1
+      i=$((i+1))
+    done
+  fi
   if claim; then
     asks "$here/asking.$$"
     continue
   fi
-  if [ -e "$here/hold" ]; then
-    rm -f "$here/hold"
+  if [ -e "$here/hold" ] || [ -e "$rec/hold" ]; then
+    rm -f "$here/hold" "$rec/hold"
     busy=1
     rm -f "$over"
     (
@@ -456,10 +527,13 @@ while IFS= read -r line; do
     watcher=$!
     continue
   fi
-  printf '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"%s"}\n' "$sid"
+  answer=ok
+  [ -e "$rec/answer" ] && answer=$(cat "$rec/answer")
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","session_id":"%s"}\n' "$answer" "$sid"
 done
 [ -n "$watcher" ] && kill "$watcher" 2>/dev/null
 : > "$here/child-exited"
+: > "$rec/child-exited"
 "#;
 
 /// The stub child's directory.
@@ -738,7 +812,6 @@ pub(super) fn claims(w: &mut World, step: &cucumber::gherkin::Step) -> bool {
 /// change waits for the question, so it falls between the two, always.
 fn removes_at_terminal(w: &mut World, step: &cucumber::gherkin::Step) {
     use std::io::{Read as _, Write as _};
-    use std::process::{Command, Stdio};
     w.before_run();
     let words = line_words(step);
     let project = &w.common.project;
@@ -749,6 +822,7 @@ fn removes_at_terminal(w: &mut World, step: &cucumber::gherkin::Step) {
         .env("HOME", project.home())
         .env("USERPROFILE", project.home())
         .env("TMPDIR", crate::tests::temp_root())
+        .env(crate::tests::LIFELINE, crate::tests::lifeline())
         .env("CTXLOOM_ROOT", project.dir())
         .env("CTXLOOM_TEST_TERMINAL", "1")
         .current_dir(project.dir())
@@ -1305,6 +1379,7 @@ fn alices_session_running(w: &mut World, harp: String) {
     let seeded = run_now(w, &["test", "seed-session", &harp]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
     w.common.set_env("ANTHROPIC_API_KEY", "a-key".to_string()); // gitleaks:allow
+    w.daemon_spec.orchestrator = Some(harp);
 }
 
 /// Alice's assistant on her terminal, as far as its session's liveness
@@ -1609,6 +1684,8 @@ fn serving_idle(w: &mut World) {
 
 #[given(regex = r"^a ctxloom daemon is serving for this home, with (.+)$")]
 fn serving_busy(w: &mut World, busy: String) {
+    w.daemon_spec.idle_wait = Some(BUSY_IDLE_SECONDS);
+    let start_daemon = |w: &mut World| start_daemon_idling(w, BUSY_IDLE_SECONDS);
     match busy.as_str() {
         // The session's daemon is the one serving (U5: a `run` prepares
         // its session through it), so it is started first.
@@ -1880,12 +1957,13 @@ fn child_of_idle(w: &mut World, child: String, owner: String) {
         grandchild_idle(w);
         return;
     }
-    assert_eq!(
-        (child.as_str(), owner.as_str()),
-        ("brisk-copper-moth", "amber-quiet-heron"),
-        "the child and owner the harness hosts"
-    );
-    idle_child(w);
+    if (child.as_str(), owner.as_str()) == ("brisk-copper-moth", "amber-quiet-heron") {
+        return idle_child(w);
+    }
+    // Another child of a running owner (step 9: a hosted orchestrator),
+    // launched by Alice and idle once its first turn ended.
+    user_launches(w, &owner, &child, None);
+    first_turn_told(w, &owner, &child);
 }
 
 /// The hosted claude child, its agent planned on `profile` (step 10c U13:
@@ -1989,15 +2067,97 @@ fn alices_daemon_killed(w: &mut World) {
     w.daemon_spec.hooks = vec![prompt, stop];
 }
 
+/// The lifeline's forcing test (gherkin_features.test.rs): the scenario's
+/// commands are given a lifeline (`CTXLOOM_TEST_LIFELINE`) that a process
+/// of its own holds, not the test process, so a step can kill its holder
+/// outright as nextest's timeout kills a test. The holder is one `sh` that
+/// locks the file on its descriptor 9 and becomes `sleep`, keeping it.
+#[given("the scenario's commands have a lifeline a process of their own holds")]
+fn own_lifeline(w: &mut World) {
+    let path = w.common.project.dir().join("lifeline.lock");
+    let holder = Command::new("sh")
+        .args(["-c", "exec 9>\"$1\"; flock -x 9; exec sleep 600", "sh"])
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the lifeline's holder starts");
+    w.daemon_spec.holder = Some(holder);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while file_lock::lock_within(&*files::fs(), &path, Duration::ZERO).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "the holder never took the lifeline"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    w.common
+        .set_env(crate::tests::LIFELINE, path.display().to_string());
+}
+
+#[when("the lifeline's holder is killed outright")]
+fn holder_killed(w: &mut World) {
+    let mut holder = w.daemon_spec.holder.take().expect("a lifeline's holder");
+    holder.kill().expect("the holder is killed");
+    holder.wait().expect("the holder is reaped");
+}
+
+/// Whether the process `pid` is still there (`kill -0`).
+fn process_is_there(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[then("the daemon and the child it hosts are gone within 30 seconds")]
+fn daemon_and_child_gone(w: &mut World) {
+    let log = daemon_log_text(w);
+    let child = log
+        .lines()
+        .find_map(|line| {
+            line.split_once("started, pid ")
+                .map(|(_, pid)| pid.trim().to_string())
+        })
+        .unwrap_or_else(|| panic!("no hosted child in the daemon's log:\n{log}"));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let daemon = w
+            .daemon_spec
+            .daemon
+            .as_mut()
+            .expect("a daemon the scenario started");
+        let exited = matches!(daemon.try_wait(), Ok(Some(_)));
+        if exited && !process_is_there(&child) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "after 30 s the daemon {} and its child {child} {}; its log:\n{}",
+            if exited { "has exited" } else { "still runs" },
+            if process_is_there(&child) {
+                "still runs"
+            } else {
+                "is gone"
+            },
+            daemon_log_text(w)
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[when("her daemon's idle time passes")]
 fn her_idle_passes(w: &mut World) {
     idle_passes(w);
 }
 
 #[when("the daemon's idle time passes")]
-fn idle_passes(_: &mut World) {
+fn idle_passes(w: &mut World) {
     // Its idle time, and a margin for its poll and its last round.
-    std::thread::sleep(Duration::from_secs(IDLE_SECONDS + 2));
+    let idle = w.daemon_spec.idle_wait.unwrap_or(IDLE_SECONDS);
+    std::thread::sleep(Duration::from_secs(idle + 2));
 }
 
 #[when(expr = "two commands are run at once, {string} and {string}")]
@@ -2492,13 +2652,32 @@ fn first_turn(w: &mut World, _child: String, text: String) {
 }
 
 #[then(regex = r#"^"([^"]+)"'s next turn was "([^"]*)"$"#)]
-fn next_turn(w: &mut World, _child: String, text: String) {
+fn next_turn(w: &mut World, child: String, text: String) {
     turn_on(w, &text);
+    // Its own turn (step 9: several children at once).
+    if files::exists(child_rec(w, &child)) {
+        until(
+            w,
+            &format!("{child}'s turn on {text:?}"),
+            DAEMON_WAIT,
+            |w| {
+                child_turns(w, &child)
+                    .iter()
+                    .any(|(_, line)| line.contains(&text))
+                    .then_some(())
+            },
+        );
+    }
 }
 
 #[then(regex = r#"^"([^"]+)" is listed as closed, and its assistant has exited$"#)]
 fn listed_closed(w: &mut World, child: String) {
     child_is_gone(w, &child, false);
+    if files::exists(child_rec(w, &child)) {
+        until(w, &format!("{child}'s engine exited"), DAEMON_WAIT, |w| {
+            files::exists(child_rec(w, &child).join("child-exited")).then_some(())
+        });
+    }
 }
 
 #[then(regex = r#"^nothing "([^"]+)" was launched with is left at rest$"#)]
@@ -4405,6 +4584,16 @@ fn reports_in_project(w: &mut World, path: String, relative: String, name: Strin
 // engine took, and at least one turn taken since.
 #[then(expr = "{string} lists {string} as waiting for a turn")]
 fn owner_lists_waiting(w: &mut World, owner: String, text: String) {
+    // A child named (`child <harp> ...`) is judged by its own turns (step 9:
+    // several children at once).
+    if let Some(child) = text
+        .strip_prefix("child ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .filter(|child| files::exists(child_rec(w, child)) || text.contains("ended its run"))
+        .map(str::to_string)
+    {
+        return child_told(w, &owner, &child, &text);
+    }
     let before = w.daemon_spec.turns_before.unwrap_or(0);
     until(w, &format!("{owner} told of each turn"), DAEMON_WAIT, |w| {
         let taken = turns(w).len();
@@ -5317,6 +5506,12 @@ fn tool_send(
     urgency: String,
     text: String,
 ) {
+    w.daemon_spec.tool_child = Some(child.clone());
+    // A child that is to answer fires its hooks for the turn (its prompt,
+    // its words), as claude does, so its transcript holds the two.
+    if let Ok(answer) = files::read(child_rec(w, &child).join("answer")) {
+        fire_for_turn(w, &child, &text, &answer);
+    }
     engine_calls(
         w,
         &owner,
@@ -5328,12 +5523,14 @@ fn tool_send(
 #[then("the tool answered with the child's session as the daemon's read model has it after the message")]
 fn tool_answered_view(w: &mut World) {
     let session = tool_session(w);
-    let child = session_name(w, "brisk-copper-moth");
+    let harp = w
+        .daemon_spec
+        .tool_child
+        .clone()
+        .unwrap_or_else(|| "brisk-copper-moth".to_string());
+    let child = session_name(w, &harp);
     assert_eq!(session["name"], child, "{session}");
-    let shown = run_now(
-        w,
-        &["session", "show", "brisk-copper-moth", "--format", "json"],
-    );
+    let shown = run_now(w, &["session", "show", &harp, "--format", "json"]);
     assert_eq!(shown.code, 0, "{}", shown.said());
     let shown = shown.json();
     for field in ["uid", "owner", "engine"] {
@@ -5366,7 +5563,13 @@ fn sent_once(w: &mut World) {
 
 #[when(regex = r#"^the engine of "([^"]+)" calls "([^"]+)" for "([^"]+)"$"#)]
 fn tool_call(w: &mut World, owner: String, tool: String, child: String) {
-    engine_calls(w, &owner, &tool, json!({"child": child}));
+    w.daemon_spec.tool_child = Some(child.clone());
+    // `transcript_show` names its session (step 9), the child tools a child.
+    let key = match tool.as_str() {
+        "transcript_show" => "session",
+        _ => "child",
+    };
+    engine_calls(w, &owner, &tool, json!({ key: child }));
 }
 
 #[then("the tool answered once the new daemon had the close, and the close was applied once")]
@@ -7107,4 +7310,643 @@ fn a_kill_that_changes_a_file_before_the_retry_names_the_file() {
         ),
         None
     );
+}
+// ------------------------------------------ step 9: delegation, several children
+
+/// The stub's record of the child `harp`, kept by its own session's name:
+/// `by/<harp>` beside the stub (several children at once).
+fn child_rec(w: &World, harp: &str) -> PathBuf {
+    stub_dir(w).join("by").join(harp)
+}
+
+/// The turns the child `harp` took: `(conversation, message)`.
+fn child_turns(w: &World, harp: &str) -> Vec<(String, String)> {
+    files::read(child_rec(w, harp).join("turns"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .map(|(sid, rest)| (sid.to_string(), rest.to_string()))
+        .collect()
+}
+
+/// The pending messages of `owner`'s, their texts.
+fn pending_texts(w: &World, owner: &str) -> Vec<String> {
+    shown(w, owner)["pending"]
+        .as_array()
+        .map(|pending| {
+            pending
+                .iter()
+                .filter_map(|m| m["text"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `owner` was told `text` of its child `child`: for a turn's end, every
+/// turn the child took told and one taken since its Given; else (its run's
+/// end) once.
+fn child_told(w: &World, owner: &str, child: &str, text: &str) {
+    let before = w
+        .daemon_spec
+        .child_turns_before
+        .get(child)
+        .copied()
+        .unwrap_or(0);
+    until(w, &format!("{owner} told {text:?}"), DAEMON_WAIT, |w| {
+        let pending = pending_texts(w, owner);
+        let said = pending.iter().any(|t| t.contains(text));
+        if !text.contains("its turn") {
+            return said.then_some(());
+        }
+        let prefix = format!("child {child} ");
+        let told = pending
+            .iter()
+            .filter(|t| t.starts_with(&prefix) && t.contains("its turn"))
+            .count();
+        let taken = child_turns(w, child).len();
+        (said && taken > before && told == taken).then_some(())
+    });
+}
+
+/// Alice launches `child` of `owner` herself (`session launch`), on
+/// `agent` (none: the project's), with a first task.
+fn user_launches(w: &mut World, owner: &str, child: &str, agent: Option<&str>) {
+    hosting_daemon(w);
+    let mut args = vec!["session", "launch", owner, "--name", child];
+    if let Some(agent) = agent {
+        args.extend(["--agent", agent]);
+    }
+    args.push("a task");
+    let mut env = env_of(w);
+    env.push(("ANTHROPIC_API_KEY".to_string(), "a-key".to_string())); // gitleaks:allow
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let launched = w.common.project.run_with(&env, &args);
+    assert_eq!(launched.code, 0, "{}", launched.said());
+}
+
+/// The orchestrator: Alice's session.
+fn orchestrator(w: &World) -> String {
+    w.daemon_spec
+        .orchestrator
+        .clone()
+        .expect("Alice's session is running")
+}
+
+/// Her orchestrator's engine launches `child` on `agent` to `task`
+/// (`child_launch`), answered with the child's session.
+fn launched_by_orchestrator(w: &mut World, child: &str, agent: &str, task: &str) {
+    hosting_daemon(w);
+    let owner = orchestrator(w);
+    engine_calls(
+        w,
+        &owner,
+        "child_launch",
+        json!({"name": child, "agent": agent, "task": task}),
+    );
+    w.daemon_spec.tool_child = Some(child.to_string());
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    assert_ne!(
+        answered["isError"],
+        true,
+        "{answered}: {}",
+        daemon_log_text(w)
+    );
+}
+
+/// `child`'s first turn has ended and `owner` was told so; its turns so
+/// far noted, so a later step's are those after them.
+fn first_turn_told(w: &mut World, owner: &str, child: &str) {
+    let text = format!("child {child} finished its turn");
+    until(
+        w,
+        &format!("{child}'s first turn to end"),
+        DAEMON_WAIT,
+        |w| {
+            pending_texts(w, owner)
+                .iter()
+                .any(|t| t.contains(&text))
+                .then_some(())
+        },
+    );
+    let taken = child_turns(w, child).len();
+    w.daemon_spec
+        .child_turns_before
+        .insert(child.to_string(), taken);
+}
+
+/// The orchestrator has launched `child` on `agent`, and its first turn
+/// ended.
+fn launched_idle(w: &mut World, child: &str, agent: &str) {
+    launched_by_orchestrator(w, child, agent, "a task");
+    let owner = orchestrator(w);
+    first_turn_told(w, &owner, child);
+}
+
+/// The payloads of the hooks `child` fires in its next turn, as claude
+/// fires them: its prompt `prompt`, then its words `answer`.
+fn fire_for_turn(w: &World, child: &str, prompt: &str, answer: &str) {
+    let dir = child_rec(w, child).join("fire");
+    let n = child_turns(w, child).len();
+    let prompt_id = format!("7f000000-0000-4000-8000-{n:012}");
+    let mut submit: Value = serde_json::from_str(USER_PROMPT_SUBMIT).expect("JSON");
+    submit["prompt"] = Value::from(prompt);
+    submit["prompt_id"] = Value::from(prompt_id.as_str());
+    let mut words: Value = serde_json::from_str(MESSAGE_DISPLAY).expect("JSON");
+    words["prompt_id"] = Value::from(prompt_id.as_str());
+    words["message_id"] = Value::from(format!("8f000000-0000-4000-8000-{n:012}"));
+    words["delta"] = Value::from(answer);
+    files::put(dir.join("1-UserPromptSubmit.json"), submit.to_string());
+    files::put(dir.join("2-MessageDisplay.json"), words.to_string());
+}
+
+/// The words of `child`'s launch: what its stub was started with.
+fn args_of_child(w: &World, child: &str) -> Vec<String> {
+    files::read(child_rec(w, child).join("child-args"))
+        .unwrap_or_default()
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The quoted names in `text`, in order.
+fn quoted(text: &str) -> Vec<String> {
+    text.split('"')
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 1)
+        .map(|(_, name)| name.to_string())
+        .collect()
+}
+
+/// The marker of the guidance only `agent`'s own profile carries.
+fn guidance_of(agent: &str) -> String {
+    format!("J002300-GUIDANCE-{}-only", agent.to_uppercase())
+}
+
+/// A bundle of the project's, `name`, carrying `rel` with `text`, and a
+/// profile `profile` that includes it.
+fn bundle_profile(w: &World, name: &str, profile: &str, rel: &str, text: &str) {
+    let root = format!(".ctxloom/content/bundles/v2/{name}");
+    w.common.project.write(
+        &format!("{root}/bundle.yaml"),
+        "schema_version: 4\nversion: 1.0.0\ndescription: an acceptance bundle\n",
+    );
+    w.common.project.write(&format!("{root}/{rel}"), text);
+    w.common.project.write(
+        ".ctxloom/content/bundles/v2/project/bundle.yaml",
+        "schema_version: 4\nversion: 1.0.0\n",
+    );
+    w.common.project.write(
+        &format!(".ctxloom/content/bundles/v2/project/profiles/{profile}.yaml"),
+        &format!("description: acceptance fixture profile\nbundles:\n  - {name}\n"),
+    );
+}
+
+/// The command a bundle's MCP server starts with: never in a grant record.
+fn server_command(server: &str) -> String {
+    format!("/opt/{server}-START-COMMAND")
+}
+
+#[given(
+    regex = r#"^Alice's project defines her own agent "lead" and two agents to delegate to, each on a profile of its own that carries an MCP server of its own, and each with claude permissions of its own:$"#
+)]
+fn delegating_agents(w: &mut World, step: &cucumber::gherkin::Step) {
+    let agents = crate::tests::gherkin_common::doc(step);
+    for (profile, server) in [
+        ("leading", "lead-tools"),
+        ("reviewing", "review-tools"),
+        ("fixing", "fix-tools"),
+    ] {
+        bundle_profile(
+            w,
+            &format!("{profile}-bundle"),
+            profile,
+            &format!("mcp/{server}.yaml"),
+            &format!("command: {}\n", server_command(server)),
+        );
+    }
+    w.common.project.write(
+        ".ctxloom/config.yaml",
+        &format!("schema_version: 9\n{agents}"),
+    );
+    w.daemon_spec.own_agents = true;
+}
+
+#[given(
+    regex = r#"^Alice's orchestrator can delegate to two agents, "([^"]+)" and "([^"]+)", each carrying its own distinct guidance in its own profile$"#
+)]
+fn guided_agents(w: &mut World, first: String, second: String) {
+    let mut config =
+        "schema_version: 9\ndefault_agent: lead\nagents:\n  lead:\n    engine: claude-code\n"
+            .to_string();
+    for agent in [&first, &second] {
+        let profile = format!("{agent}-profile");
+        bundle_profile(
+            w,
+            &format!("{agent}-bundle"),
+            &profile,
+            &format!("fragments/{agent}-guidance.md"),
+            &format!("{}\n", guidance_of(agent)),
+        );
+        config.push_str(&format!(
+            "  {agent}:\n    engine: claude-code\n    profiles: [{profile}]\n"
+        ));
+    }
+    w.common.project.write(".ctxloom/config.yaml", &config);
+    w.daemon_spec.own_agents = true;
+}
+
+#[when(regex = r#"^Alice's orchestrator launches "([^"]+)" on "([^"]+)" to "([^"]*)"$"#)]
+fn launches_one(w: &mut World, child: String, agent: String, task: String) {
+    launched_by_orchestrator(w, &child, &agent, &task);
+}
+
+#[when(
+    regex = r#"^Alice's orchestrator launches "([^"]+)" on "([^"]+)" to "([^"]*)", and "([^"]+)" on "([^"]+)" to "([^"]*)"$"#
+)]
+fn launches_two(
+    w: &mut World,
+    first: String,
+    first_agent: String,
+    first_task: String,
+    second: String,
+    second_agent: String,
+    second_task: String,
+) {
+    launched_by_orchestrator(w, &first, &first_agent, &first_task);
+    launched_by_orchestrator(w, &second, &second_agent, &second_task);
+}
+
+#[given(
+    regex = r#"^Alice's orchestrator has launched "([^"]+)" on "([^"]+)", which is open and idle$"#
+)]
+fn has_launched_idle(w: &mut World, child: String, agent: String) {
+    launched_idle(w, &child, &agent);
+}
+
+#[given(
+    regex = r#"^Alice's orchestrator has launched "([^"]+)" on "([^"]+)", which is idle and will answer its next message "([^"]*)"$"#
+)]
+fn has_launched_answering(w: &mut World, child: String, agent: String, answer: String) {
+    launched_idle(w, &child, &agent);
+    files::put(child_rec(w, &child).join("answer"), &answer);
+}
+
+#[given(
+    regex = r#"^Alice's orchestrator has launched "([^"]+)" on "([^"]+)", which is idle and whose next turn runs into its rate limit$"#
+)]
+fn has_launched_rate_limited(w: &mut World, child: String, agent: String) {
+    launched_idle(w, &child, &agent);
+    files::put(child_rec(w, &child).join("rate-limit"), "once");
+}
+
+#[given(
+    regex = r#"^Alice's orchestrator has launched "([^"]+)" on "([^"]+)", which is in the middle of a turn$"#
+)]
+fn has_launched_busy(w: &mut World, child: String, agent: String) {
+    // Its first turn is taken and left in flight.
+    files::put(child_rec(w, &child).join("hold"), "once");
+    launched_by_orchestrator(w, &child, &agent, "a long task");
+    until(w, &format!("{child}'s turn in flight"), DAEMON_WAIT, |w| {
+        (!child_turns(w, &child).is_empty()).then_some(())
+    });
+}
+
+#[given(
+    regex = r#"^Alice's orchestrator has launched "([^"]+)" on "([^"]+)" and "([^"]+)" on "([^"]+)", both open and idle$"#
+)]
+fn has_launched_two(
+    w: &mut World,
+    first: String,
+    first_agent: String,
+    second: String,
+    second_agent: String,
+) {
+    launched_idle(w, &first, &first_agent);
+    launched_idle(w, &second, &second_agent);
+}
+
+#[then(
+    regex = r#"^"([^"]+)"'s session home registers the MCP servers "([^"]+)" and "([^"]+)", and neither "([^"]+)" nor "([^"]+)"$"#
+)]
+fn home_registers(w: &mut World, child: String, a: String, b: String, c: String, d: String) {
+    until(w, &format!("{child} started"), DAEMON_WAIT, |w| {
+        (!args_of_child(w, &child).is_empty()).then_some(())
+    });
+    let args = args_of_child(w, &child);
+    let file = flag_value(&args, "--mcp-config");
+    let config: Value =
+        serde_json::from_str(&files::read(file).expect("its MCP config")).expect("JSON");
+    let servers = config["mcpServers"]
+        .as_object()
+        .map(|servers| servers.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for name in [&a, &b] {
+        assert!(servers.contains(name), "{name} among {servers:?}");
+    }
+    for name in [&c, &d] {
+        assert!(!servers.contains(name), "{name} not among {servers:?}");
+    }
+}
+
+/// The permissions document claude was given in `child`'s session home:
+/// the `permissions` of its user-scope settings, with ctxloom's own
+/// allowance (OD-4, a stated exception to "verbatim") taken out.
+fn given_permissions(w: &World, child: &str) -> Value {
+    let env = files::read(child_rec(w, child).join("child-env")).unwrap_or_default();
+    let dir = env
+        .lines()
+        .find_map(|line| line.strip_prefix("CLAUDE_CONFIG_DIR="))
+        .expect("its claude config dir");
+    let settings: Value = serde_json::from_str(
+        &files::read(Path::new(dir).join("settings.json")).expect("its settings"),
+    )
+    .expect("JSON");
+    let mut permissions = settings["permissions"].clone();
+    if let Some(allow) = permissions.get_mut("allow").and_then(Value::as_array_mut) {
+        allow.retain(|tool| tool != "mcp__ctxloom__*");
+        if allow.is_empty() {
+            permissions.as_object_mut().map(|doc| doc.remove("allow"));
+        }
+    }
+    permissions
+}
+
+#[then(regex = r#"^"([^"]+)"'s claude was given the permissions (\{.*\})$"#)]
+fn given_the_permissions(w: &mut World, child: String, document: String) {
+    let expected: Value = serde_json::from_str(&document).expect("the step's JSON");
+    assert_eq!(given_permissions(w, &child), expected);
+}
+
+#[then(
+    regex = r#"^the tool answered with the transcript of "([^"]+)", holding "([^"]*)" and then "([^"]*)"$"#
+)]
+fn tool_answered_transcript(w: &mut World, child: String, first: String, then: String) {
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    assert_ne!(answered["isError"], true, "{answered}");
+    let said = answered.to_string();
+    assert!(said.contains(&child), "{said}");
+    let at = |text: &str| {
+        said.find(text)
+            .unwrap_or_else(|| panic!("{text:?} not in the transcript: {said}"))
+    };
+    assert!(at(&first) < at(&then), "{first:?} before {then:?}: {said}");
+}
+
+#[then(regex = r#"^once its rate limit has reset, "([^"]+)" has still run no turn on its own$"#)]
+fn no_turn_on_its_own(w: &mut World, child: String) {
+    let taken = child_turns(w, &child).len();
+    // Each read waits for a daemon round begun after it was asked: two
+    // reads, so a round planned with the failure in the store has passed.
+    for _ in 0..2 {
+        let shown = shown(w, &child);
+        assert!(
+            shown["pending"].as_array().is_none_or(Vec::is_empty),
+            "nothing owed: {shown}"
+        );
+    }
+    assert_eq!(child_turns(w, &child).len(), taken, "no turn on its own");
+}
+
+#[when(regex = r#"^Alice's session dies and she resumes it:$"#)]
+fn dies_and_resumes(w: &mut World, step: &cucumber::gherkin::Step) {
+    // Her session's engine is gone: its lock is free (the seeded session
+    // holds none), and she resumes it at her terminal.
+    w.common.set_env("CTXLOOM_TEST_TERMINAL", "1".to_string());
+    w.alice_runs(step);
+    w.common
+        .env
+        .retain(|(name, _)| name != "CTXLOOM_TEST_TERMINAL");
+}
+
+#[when(
+    regex = r#"^the engine of "([^"]+)" calls "child_launch" for "([^"]+)" with agent "([^"]+)" and task "([^"]*)"$"#
+)]
+fn engine_launches(w: &mut World, owner: String, child: String, agent: String, task: String) {
+    w.daemon_spec
+        .child_turns_before
+        .insert(owner.clone(), child_turns(w, &owner).len());
+    engine_calls(
+        w,
+        &owner,
+        "child_launch",
+        json!({"name": child, "agent": agent, "task": task}),
+    );
+    let answered = w.daemon_spec.tool.clone().expect("a tool was called");
+    assert_ne!(answered["isError"], true, "{answered}");
+}
+
+#[then(regex = r#"^"([^"]+)" was woken, and its next turn began with "([^"]*)"$"#)]
+fn was_woken(w: &mut World, owner: String, text: String) {
+    let before = w
+        .daemon_spec
+        .child_turns_before
+        .get(&owner)
+        .copied()
+        .unwrap_or(0);
+    until(w, &format!("{owner} woken"), DAEMON_WAIT, |w| {
+        child_turns(w, &owner)
+            .iter()
+            .skip(before)
+            .any(|(_, line)| line.contains(&text))
+            .then_some(())
+    });
+}
+
+#[then(regex = r#"^"([^"]+)" reports "([^"]+)"'s guidance, not "([^"]+)"'s$"#)]
+fn reports_guidance(w: &mut World, child: String, own: String, sibling: String) {
+    until(w, &format!("{child}'s turn"), DAEMON_WAIT, |w| {
+        (!child_turns(w, &child).is_empty()).then_some(())
+    });
+    let args = args_of_child(w, &child);
+    let context =
+        files::read(flag_value(&args, "--append-system-prompt-file")).expect("its context");
+    assert!(context.contains(&guidance_of(&own)), "{context}");
+    assert!(!context.contains(&guidance_of(&sibling)), "{context}");
+}
+
+#[given("the claude program a child runs cannot be found")]
+fn claude_not_found(w: &mut World) {
+    hosting_daemon(w);
+    let missing = w.common.project.home().join("no-such-claude/claude");
+    w.daemon_spec.stub = Some(missing);
+    w.daemon_spec.stub_on_path = false;
+    write_home_config(w);
+}
+
+#[then(regex = r#"^"([^"]+)" recorded no turn$"#)]
+fn recorded_no_turn(w: &mut World, child: String) {
+    assert!(
+        child_turns(w, &child).is_empty(),
+        "{:?}",
+        child_turns(w, &child)
+    );
+    let shown = shown(w, &child);
+    assert!(shown["summary"].is_null(), "no prompt: {shown}");
+}
+
+#[given(regex = r#"^Alice's project config says "([^"]+)"$"#)]
+fn project_config_says(w: &mut World, line: String) {
+    let config = w
+        .common
+        .project
+        .read(".ctxloom/config.yaml")
+        .unwrap_or_default();
+    w.common
+        .project
+        .write(".ctxloom/config.yaml", &format!("{config}{line}\n"));
+    // A checkout is cut from a repository: her project is one, committed.
+    let project = &w.common.project;
+    if !files::exists(project.dir().join(".git")) {
+        project.git(&["init", "-q"]);
+    }
+    let committed = project
+        .git_output(project.dir(), &["rev-parse", "--verify", "-q", "HEAD"])
+        .status
+        .success();
+    if !committed {
+        project.git(&["add", "-A"]);
+        project.git(&[
+            "-c",
+            "user.name=Alice",
+            "-c",
+            "user.email=alice@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "her project",
+        ]);
+    }
+    let head = project.git(&["rev-parse", "--verify", "HEAD"]);
+    assert!(!head.trim().is_empty(), "her project has a commit");
+}
+
+#[when(
+    regex = r#"^"([^"]+)" and "([^"]+)" each write "([^"]+)" in turns that run at the same time$"#
+)]
+fn write_at_once(w: &mut World, first: String, second: String, file: String) {
+    files::put(stub_dir(w).join("together"), "2");
+    for child in [&first, &second] {
+        files::put(child_rec(w, child).join("write"), &file);
+    }
+    for child in [&first, &second] {
+        let sent = run_now(
+            w,
+            &["session", "send", child, "wake", &format!("write {file}")],
+        );
+        assert_eq!(sent.code, 0, "{}", sent.said());
+    }
+    for child in [&first, &second] {
+        let owner = orchestrator(w);
+        let before = w
+            .daemon_spec
+            .child_turns_before
+            .get(child.as_str())
+            .copied()
+            .unwrap_or(0);
+        until(
+            w,
+            &format!("{child}'s writing turn to end"),
+            DAEMON_WAIT,
+            |w| {
+                let told = pending_texts(w, &owner)
+                    .iter()
+                    .filter(|t| t.starts_with(&format!("child {child} finished its turn")))
+                    .count();
+                (files::exists(child_rec(w, child).join("wrote")) && told > before).then_some(())
+            },
+        );
+    }
+    w.daemon_spec.writers = vec![first, second];
+    w.daemon_spec.written = Some(file);
+}
+
+/// Where `child` works: the directory its engine was last started in.
+fn child_cwd(w: &World, child: &str) -> PathBuf {
+    let cwds = files::read(child_rec(w, child).join("child-cwds")).unwrap_or_default();
+    PathBuf::from(cwds.lines().last().expect("it was started"))
+}
+
+#[then(regex = r#"^"([^"]+)" works in a checkout of its own, on the branch "([^"]+)"$"#)]
+fn works_in_checkout(w: &mut World, child: String, branch: String) {
+    let cwd = child_cwd(w, &child);
+    let project = files::canonical(w.common.project.dir());
+    assert_ne!(
+        files::canonical(&cwd),
+        project,
+        "not the live project; the daemon's log:\n{}",
+        daemon_log_text(w)
+    );
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&cwd)
+        .output()
+        .expect("git runs");
+    assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), branch);
+}
+
+#[then(
+    regex = r#"^each child's "([^"]+)" is in its own checkout alone, and not in its sibling's or in Alice's project$"#
+)]
+fn each_in_its_own(w: &mut World, file: String) {
+    let writers = w.daemon_spec.writers.clone();
+    assert_eq!(writers.len(), 2, "two children wrote");
+    for (me, sibling) in [(&writers[0], &writers[1]), (&writers[1], &writers[0])] {
+        let mine = files::read(child_cwd(w, me).join(&file)).expect("its own file");
+        assert_eq!(mine.trim(), me.as_str(), "{me}'s {file} is its own");
+        assert_ne!(child_cwd(w, me), child_cwd(w, sibling), "two checkouts");
+    }
+    assert!(
+        !files::exists(w.common.project.dir().join(&file)),
+        "not in Alice's project"
+    );
+}
+
+#[then(regex = r#"^"([^"]+)"'s assistant was asked to stop, and has exited$"#)]
+fn asked_to_stop_and_exited(w: &mut World, child: String) {
+    until(w, &format!("{child}'s engine exited"), DAEMON_WAIT, |w| {
+        files::exists(child_rec(w, &child).join("child-exited")).then_some(())
+    });
+}
+
+#[then(regex = r#"^the record of what "([^"]+)" was launched with names the MCP servers (.*)$"#)]
+fn record_names(w: &mut World, child: String, names: String) {
+    let (named, not) = names
+        .split_once(", and not ")
+        .map_or((names.as_str(), ""), |(named, not)| (named, not));
+    let grant = until(w, &format!("{child}'s record"), DAEMON_WAIT, |w| {
+        let shown = shown(w, &child);
+        shown.get("grant").cloned()
+    });
+    let mut servers: Vec<String> = grant["mcp_servers"]
+        .as_array()
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    servers.sort();
+    let mut expected = quoted(named);
+    expected.sort();
+    assert_eq!(servers, expected, "{grant}");
+    for name in quoted(not) {
+        assert!(!servers.contains(&name), "{name}: {grant}");
+    }
+}
+
+#[then("neither record holds the command that starts an MCP server")]
+fn records_hold_no_command(w: &mut World) {
+    for child in ["quiet-silver-fern", "steady-lunar-pike"] {
+        let shown = shown(w, child).to_string();
+        for server in ["lead-tools", "review-tools", "fix-tools"] {
+            assert!(!shown.contains(&server_command(server)), "{child}: {shown}");
+        }
+        assert!(!shown.contains("START-COMMAND"), "{child}: {shown}");
+    }
 }

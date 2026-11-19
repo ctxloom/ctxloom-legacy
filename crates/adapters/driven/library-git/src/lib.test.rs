@@ -648,6 +648,58 @@ fn a_home_commit_is_ctxloom_s_own_of_its_paths_alone() {
     assert_eq!(count.trim(), "1");
 }
 
+// Owner ruling 2026-11-18: ctxloom's commit in the home runs NONE of her
+// git hooks: a pre-commit that refuses stops nothing, and a post-commit
+// (which `--no-verify` would still run) does not run.
+fn runs_none_of_her_hooks(hooks_of: impl Fn(&std::path::Path) -> std::path::PathBuf) {
+    let (_root, top, trees) = her_home();
+    let home = top.join(".ctxloom");
+    let hooks = hooks_of(&top);
+    let ran = top.join("post-commit-ran");
+    mkdirs(&hooks);
+    fixture_program::install_program(&*fs(), &hooks.join("pre-commit"), "exit 1\n").unwrap();
+    fixture_program::install_program(
+        &*fs(),
+        &hooks.join("post-commit"),
+        &format!("echo ran > '{}'\n", ran.display()),
+    )
+    .unwrap();
+    put(home.join("config.yaml"), "schema_version: 9\n");
+    trees
+        .commit(
+            &home.display().to_string(),
+            "ctxloom: companion add (r-1)",
+            &["config.yaml"],
+        )
+        .unwrap();
+    assert_eq!(log_of(&top, "%B"), "ctxloom: companion add (r-1)");
+    assert!(!exists(&ran), "her post-commit hook ran");
+}
+
+#[test]
+fn a_home_commit_runs_none_of_the_hooks_her_global_config_names() {
+    if !runs_scripts() {
+        return;
+    }
+    runs_none_of_her_hooks(|top| {
+        let hooks = top.join("her-hooks");
+        let config = slurp(top.join(".gitconfig"));
+        put(
+            top.join(".gitconfig"),
+            &format!("{config}[core]\n\thooksPath = {}\n", hooks.display()),
+        );
+        hooks
+    });
+}
+
+#[test]
+fn a_home_commit_runs_none_of_the_repository_s_own_hooks() {
+    if !runs_scripts() {
+        return;
+    }
+    runs_none_of_her_hooks(|top| top.join(".ctxloom/.git/hooks"));
+}
+
 // A path the write took away is committed as its removal; one neither there
 // nor tracked is left out; nothing changed commits nothing.
 #[test]

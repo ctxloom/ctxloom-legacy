@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # The base's scenario list for the ratchet (owner ruling 165): `just
 # ratchet-base <base>`. The feature runner, under GHERKIN_RATCHET, is run
-# on the base commit (its cluster tests, `tests::gherkin_features::
-# clusters::*`, which nextest runs at once and which assemble the one list
-# between them; or a base's one `every_feature_runs` from before them),
+# on the base commit (its tests of one feature file each,
+# `tests::gherkin_features::features::*`, which nextest runs at once and
+# which assemble the one list between them; a base's cluster tests,
+# `tests::gherkin_features::clusters::*`, from before them; or its one
+# `every_feature_runs` from before those),
 # checked out alone in a throwaway worktree beside the checkout
 # (.<checkout>.ratchet-base, its own target dir target/ratchet-base), and its
 # list is cached by the base's sha at target/ratchet/<sha>.list; a cached
@@ -131,19 +133,23 @@ cap=(env MEMORY_CAP_OPT_OUT=TESTS_MEMORY_MAX "$top/gates/memory-cap.sh" ratchet-
 "${cap[@]}" --check
 
 # The feature runner on the base, its list to $1, the rest of the arguments
-# its environment; its output appended to the log. The runner is the base's:
-# its clusters, or its one test from before them; it runs under the cap.
+# its environment; its output appended to the log. Built without cargo's
+# incremental cache (CARGO_INCREMENTAL=0, 2026-11-18): the base's tree is
+# a new commit each time, so the cache is written and never reused, while
+# target/debug and target/staged keep it. The runner is the base's:
+# its feature tests, its clusters, or its one test from before them; it runs
+# under the cap.
 run_features() {
     local list=$1
     shift
-    (cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" "GHERKIN_RATCHET=$list" "$@" \
+    (cd "$wt" && "${scrub[@]}" "CARGO_TARGET_DIR=$top/target/ratchet-base" CARGO_INCREMENTAL=0 "GHERKIN_RATCHET=$list" "$@" \
         "${cap[@]}" cargo nextest run --manifest-path "$wt/Cargo.toml" --package ctxloom --no-fail-fast --no-tests=fail \
         --status-level fail --final-status-level fail --success-output never --failure-output final \
         --hide-progress-bar --cargo-quiet -E "$runner_tests") \
         >> "$log" 2>&1 7>&-
 }
 
-runner_tests='test(=tests::gherkin_features::every_feature_runs) | test(/^tests::gherkin_features::clusters::/)'
+runner_tests='test(=tests::gherkin_features::every_feature_runs) | test(/^tests::gherkin_features::clusters::/) | test(/^tests::gherkin_features::features::/)'
 start=$(date +%s)
 : > "$log"
 if [ -n "$ids" ]; then

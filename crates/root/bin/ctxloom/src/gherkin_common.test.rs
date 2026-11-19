@@ -778,7 +778,139 @@ impl Timings {
 /// cannot run a fake program (`files::put_program`'s [`files::UNSUPPORTED`]
 /// panic, off unix) is skipped, said `SKIP <scenario>: <why>` on stderr, and
 /// fails nothing; on unix no step panics so.
+///
+/// A whole feature's scenarios run at once, [`SCENARIOS_AT_ONCE`] at a
+/// time, each a cucumber run of its own on a thread of its own
+/// ([`scenario_ids`], then this with `only` naming it): within one cucumber
+/// run they take turns, because every step blocks its one executor thread.
+/// Each scenario has a temporary root of its own, so nothing one runs is
+/// another's. Under `GHERKIN_TIMINGS` (and for a feature whose scenarios
+/// cannot be listed, so its parse error is reported as before) the feature
+/// is one run, its scenarios one at a time.
 pub(crate) fn run_feature<W>(file: &Path, only: Option<&str>) -> FeatureRun
+where
+    W: cucumber::World + cucumber::codegen::WorldInventory + fmt::Debug,
+{
+    if only.is_none() && !Timings::asked().on() {
+        if let Some(ids) = scenario_ids(file).filter(|ids| !ids.is_empty()) {
+            return run_scenarios_at_once(&ids, scenarios_at_once(), |id| {
+                run_feature_whole::<W>(file, Some(id))
+            });
+        }
+    }
+    run_feature_whole::<W>(file, only)
+}
+
+/// How many scenarios of one feature run at once: nextest already runs as
+/// many features at once as it runs tests, so a few more each.
+// 2, not 3: measured 2026-11-18 with nextest's 12 threads, as fast on a quiet host and faster under load, at ~60% of 20x3's load average.
+pub(crate) const SCENARIOS_AT_ONCE: usize = 2;
+
+/// How many scenarios of one feature run at once in this test process:
+/// `GHERKIN_SCENARIOS_AT_ONCE`, read once, else [`SCENARIOS_AT_ONCE`] (a
+/// knob for measuring the run, as `NEXTEST_TEST_THREADS` is nextest's).
+fn scenarios_at_once() -> usize {
+    static AT_ONCE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *AT_ONCE.get_or_init(|| {
+        scenarios_at_once_from(super::host_var("GHERKIN_SCENARIOS_AT_ONCE").as_deref())
+    })
+}
+
+/// [`scenarios_at_once`] of the variable's value: unset is the default, a
+/// positive count is that count; anything else panics, so a mistyped knob
+/// never measures the default.
+pub(crate) fn scenarios_at_once_from(value: Option<&std::ffi::OsStr>) -> usize {
+    let Some(value) = value else {
+        return SCENARIOS_AT_ONCE;
+    };
+    value
+        .to_str()
+        .and_then(|text| text.parse::<usize>().ok())
+        .filter(|&count| count > 0)
+        .unwrap_or_else(|| {
+            panic!("GHERKIN_SCENARIOS_AT_ONCE is {value:?}, not a count of 1 or more")
+        })
+}
+
+/// The ids of a feature file's scenarios that a run would run (its pending
+/// ones left out), each once, in the file's order; `None` when it does not
+/// parse.
+pub(crate) fn scenario_ids(file: &Path) -> Option<Vec<String>> {
+    use cucumber::feature::Ext as _;
+    let feature = Feature::parse_path(file, GherkinEnv::default()).ok()?;
+    let feature = join_spaced_placeholders(feature).expand_examples().ok()?;
+    let name = file
+        .strip_prefix(features_dir())
+        .unwrap_or(file)
+        .display()
+        .to_string();
+    let mut ids: Vec<String> = Vec::new();
+    let plain = feature.scenarios.iter().map(|s| (None, s));
+    let ruled = feature
+        .rules
+        .iter()
+        .flat_map(|r| r.scenarios.iter().map(move |s| (Some(r), s)));
+    for (rule, scenario) in plain.chain(ruled) {
+        if is_pending(&feature, rule, scenario) {
+            continue;
+        }
+        let id = scenario_id(&name, rule, scenario);
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Some(ids)
+}
+
+/// Run each of `ids` by `run`, `at_once` at a time, each on a thread of
+/// its own, and put their outcomes together, in the order of `ids`: the
+/// feature passed when every run did.
+pub(crate) fn run_scenarios_at_once(
+    ids: &[String],
+    at_once: usize,
+    run: impl Fn(&str) -> FeatureRun + Sync,
+) -> FeatureRun {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let runs: Vec<std::sync::Mutex<Option<FeatureRun>>> =
+        ids.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..at_once.clamp(1, ids.len().max(1)) {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let Some(id) = ids.get(i) else { break };
+                *runs[i].lock().expect("not poisoned") = Some(run(id));
+            });
+        }
+    });
+    let mut all = FeatureRun {
+        passed: true,
+        scenarios: Vec::new(),
+        failures: Vec::new(),
+    };
+    for (id, one) in ids.iter().zip(runs) {
+        let mut one = one
+            .into_inner()
+            .expect("not poisoned")
+            .expect("every id ran");
+        // An id its own run did not run is red, never left out of the list.
+        if one.scenarios.is_empty() {
+            one.passed = false;
+            one.scenarios.push((id.clone(), false));
+            one.failures.push(Failure {
+                scenario: id.clone(),
+                step: "(none)".to_string(),
+                message: "its own run ran no scenario of this id".to_string(),
+            });
+        }
+        all.passed &= one.passed;
+        all.scenarios.extend(one.scenarios);
+        all.failures.extend(one.failures);
+    }
+    all
+}
+
+/// [`run_feature`]'s one cucumber run.
+fn run_feature_whole<W>(file: &Path, only: Option<&str>) -> FeatureRun
 where
     W: cucumber::World + cucumber::codegen::WorldInventory + fmt::Debug,
 {

@@ -81,6 +81,7 @@ fn on_run(n: u8, incarnation: u32, first: u64, turns: &[&[&str]]) -> EventBook {
             incarnation,
             mode: RunMode::OneShot,
             launcher_lock: String::new(),
+            grant: None,
         }));
     }
     for ids in turns {

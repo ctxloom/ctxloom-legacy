@@ -27,6 +27,9 @@ pub struct EnqueueRequest {
     /// runner is started (rulings 86, 92): journaled, so a later process can
     /// tell when its launcher died.
     pub launcher_lock: String,
+    /// What the run is given (step 9: the grant record, journaled): its MCP
+    /// servers by name and its permissions document; none, no record.
+    pub grant: Option<runs::Grant>,
 }
 
 /// The evidence of a run's pre-launch checks, as the run application asked its
@@ -122,6 +125,7 @@ impl<E: Edge> Enqueuer<E> {
             fatal_findings: request.evidence.fatal_findings,
             launcher_lock: request.launcher_lock,
             untrusted_settings: request.evidence.untrusted_settings,
+            grant: request.grant,
         };
         let book = CommandBook::command_of(cover, &runs::RunCommand::from(enqueue));
         self.edge.handle(book).await.map_err(refused)?;

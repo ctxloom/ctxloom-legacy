@@ -28,7 +28,9 @@
 //!   given its next turn ([`crate::deliver`]);
 //! - feed: each turn queued on a hosted run is handed to its child once;
 //! - clear (M1): each clear asked of a hosted child is handed to it once;
-//! - end (D13, D14): a hosted child whose session closed is ended.
+//! - end (D13, D14): a hosted child whose session closed is ended;
+//! - stop (S19, OD-57): a hosted child whose run was asked to stop has its
+//!   run stopped, the child left open.
 //!
 //! Only this project's sessions are planned, though one board holds every
 //! project's (the one store, T14); a step on one of them reaches across to
@@ -157,6 +159,9 @@ pub enum Step {
     Clear { key: String, at: RunAt },
     /// End the hosted child.
     End { key: String, at: RunAt },
+    /// Stop the hosted child's run, which its stream asked (S19's `session
+    /// stop`, OD-57): its engine ends, the child stays open.
+    Stop { key: String, at: RunAt },
 }
 
 impl Step {
@@ -177,7 +182,8 @@ impl Step {
             | Step::Rehost { key, .. }
             | Step::Feed { key, .. }
             | Step::Clear { key, .. }
-            | Step::End { key, .. } => key,
+            | Step::End { key, .. }
+            | Step::Stop { key, .. } => key,
         }
     }
 }
@@ -345,6 +351,17 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
             true => Urgency::Wake,
             false => Urgency::Inform,
         };
+        // Each incarnation its run ended, but one a re-host continues.
+        let me = here(scene.project_id, id);
+        for ended in scene.board.ends(id) {
+            if [ORPHANED, ENDED_DRAINED].contains(&ended.cause.as_str()) {
+                continue;
+            }
+            if let Some(told) = crate::notice(&me, &child.harp, owner_ref, ended, &supported(owner))
+            {
+                steps.push(Step::Send(told.into()));
+            }
+        }
         for incarnation in 1..=child.incarnation {
             let Some(run) = scene.board.run(id, incarnation) else {
                 continue;
@@ -452,6 +469,14 @@ fn runs(scene: &Scene<'_>, steps: &mut Vec<Step>) {
         if session.closed {
             steps.push(Step::End {
                 key: format!("end:{}", at.run()),
+                at,
+            });
+            continue;
+        }
+        // Its run asked to stop (S19): stopped, the child left open.
+        if run.state.stop_requested {
+            steps.push(Step::Stop {
+                key: format!("stop:{}", at.run()),
                 at,
             });
             continue;

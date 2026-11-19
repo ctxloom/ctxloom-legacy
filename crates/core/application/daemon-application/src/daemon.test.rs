@@ -274,6 +274,7 @@ async fn the_start_sweeps_a_killed_daemons_child_and_ends_it_once() {
             mode: runs::RunMode::Structured,
             evidence: runs_application::Evidence::passing("claude-code"),
             launcher_lock: RUN_LOCK.to_string(),
+            grant: None,
         })
         .await
         .unwrap();
@@ -351,6 +352,7 @@ async fn a_run(edge: &Arc<TestEdge>, started: bool) {
             mode: runs::RunMode::Interactive,
             evidence: runs_application::Evidence::passing("claude-code"),
             launcher_lock: RUN_LOCK.to_string(),
+            grant: None,
         })
         .await
         .unwrap();
@@ -439,6 +441,7 @@ async fn the_start_leaves_a_child_whose_host_holds_its_lock() {
             mode: runs::RunMode::Structured,
             evidence: runs_application::Evidence::passing("claude-code"),
             launcher_lock: RUN_LOCK.to_string(),
+            grant: None,
         })
         .await
         .unwrap();
@@ -533,8 +536,10 @@ async fn a_refused_first_task(edge: &Arc<TestEdge>) -> (Daemon<TestEdge>, Arc<Mu
     assert!(!session_policies::CHILD_ENGINES.contains(&NO_CHILD_ADAPTER));
     mint(edge, OWNER, "boss", "claude-code", None).await;
     mint(edge, CHILD, "kid", NO_CHILD_ADAPTER, Some(OWNER)).await;
+    // Its first incarnation over, so none is started; an idle reap, which
+    // tells its owner nothing (step 9 tells an owner of every other end).
     runs_application::Facts::new(Arc::clone(edge))
-        .incarnation_ended(CHILD, 1, "runner-exit")
+        .incarnation_ended(CHILD, 1, "idle-reaped")
         .await
         .unwrap();
     command(

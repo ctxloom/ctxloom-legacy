@@ -17,6 +17,11 @@
 # --no-mutation <base>): the same gates and judge with no mutants-batch, even
 # one RATCHET_GATES names, said as `land-ratchet`; a subset passes, a new red
 # fails exactly as the closeout's does.
+#
+# The re-confirmation cache (target/ratchet/<sha>.reconfirm): a reproduced
+# re-confirmation is cached and a later land on the same base runs it no
+# more, only the ids not cached; a flaky one is not cached; a run killed
+# during its re-confirmation leaves no cache.
 set -euo pipefail
 while IFS= read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
 here=$(cd "$(dirname "$0")" && pwd)
@@ -202,13 +207,52 @@ rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm" STUB_IDS_SEEN="$tmp/ids"
 grep -qx 'f/b.feature :: three' "$tmp/ids" || fail "the difference was not re-confirmed: $(cat "$tmp/ids")"
 [ "$(grep -c '' "$tmp/ids")" -eq 1 ] || fail "more than the difference re-confirmed: $(cat "$tmp/ids")"
 grep -q '^FLAKY f/b.feature :: three ' <<< "$out" || fail "closeout: flaky not named: $out"
+# A flaky re-confirmation is not cached: the next land runs it again.
+cache=$r/target/ratchet/$(git -C "$r" rev-parse integration).reconfirm
+[ ! -e "$cache" ] || fail "a flaky re-confirmation was cached: $(cat "$cache")"
 printf 'green\tgreen\tf/b.feature :: three\n' > "$tmp/reconfirmed"
 rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm" STUB_IDS_SEEN="$tmp/ids" STUB_RECONFIRMED="$tmp/reconfirmed") || rc=$?
 [ "$rc" -eq 1 ] || fail "closeout of a reproduced new red passed: $out"
 grep -q '^FAIL ratchet: 1 new red scenarios: 1 broke green, 0 added red (' <<< "$out" || fail "closeout reproduced: $out"
-# A re-confirmation that cannot run fails the ratchet, saying so.
+
+# A reproduced re-confirmation is cached by the base's sha, and a later land
+# on the same base runs it no more: the cached colours are judged as found.
+[ "$(cat "$cache" 2>/dev/null)" = "$(printf 'green\tgreen\tf/b.feature :: three')" ] \
+    || fail "the reproduced re-confirmation was not cached: $(cat "$cache" 2>/dev/null)"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/reconfirm-fails"
 chmod +x "$tmp/reconfirm-fails"
+rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm-fails") || rc=$?
+[ "$rc" -eq 1 ] || fail "a cached reproduced new red passed: $out"
+! grep -q 'could not re-confirm' <<< "$out" || fail "a cached id was re-confirmed again: $out"
+grep -q '^FAIL ratchet: 1 new red scenarios: 1 broke green, 0 added red (' <<< "$out" || fail "cached verdict: $out"
+grep -q '^note ratchet: 1 of the 1 scenarios whose colour differs were re-confirmed on ' <<< "$out" || fail "cache note: $out"
+# With a second difference only the one not cached is re-confirmed, and its
+# colours join the cache.
+list "$tmp/slice.list" "red:f/a.feature :: one" "green:f/a.feature :: two" "red:f/b.feature :: three"
+printf 'red\tred\tf/a.feature :: two\n' > "$tmp/reconfirmed"
+rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm" STUB_IDS_SEEN="$tmp/ids" STUB_RECONFIRMED="$tmp/reconfirmed") || rc=$?
+[ "$(cat "$tmp/ids")" = 'f/a.feature :: two' ] || fail "the cached id was re-confirmed beside the new one: $(cat "$tmp/ids")"
+grep -q '^FAIL ratchet: 1 new red scenarios: 1 broke green, 0 added red (' <<< "$out" || fail "mixed verdict: $out"
+grep -q $'^red\tred\tf/a.feature :: two$' "$cache" || fail "the new re-confirmation was not cached: $(cat "$cache")"
+grep -q $'^green\tgreen\tf/b.feature :: three$' "$cache" || fail "the cache lost its earlier line: $(cat "$cache")"
+# A run killed during its re-confirmation leaves no cache: the next one
+# re-confirms again.
+rm -f "$cache" "$cache.failures"
+cat > "$tmp/reconfirm-killed" <<'R'
+#!/usr/bin/env bash
+cp "$STUB_RECONFIRMED" "$3"
+kill -KILL "$PPID"
+R
+chmod +x "$tmp/reconfirm-killed"
+list "$tmp/slice.list" "red:f/a.feature :: one" "red:f/a.feature :: two" "red:f/b.feature :: three"
+printf 'green\tgreen\tf/b.feature :: three\n' > "$tmp/reconfirmed"
+{ closeout RATCHET_RECONFIRM="$tmp/reconfirm-killed" STUB_RECONFIRMED="$tmp/reconfirmed"; } > /dev/null 2>&1 || true
+[ ! -e "$cache" ] || fail "an interrupted re-confirmation was cached: $(cat "$cache")"
+rm -f "$tmp/ids"
+rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm" STUB_IDS_SEEN="$tmp/ids" STUB_RECONFIRMED="$tmp/reconfirmed") || rc=$?
+[ "$(cat "$tmp/ids" 2>/dev/null)" = 'f/b.feature :: three' ] || fail "after an interrupted run the id was not re-confirmed: $out"
+rm -f "$cache" "$cache.failures"
+# A re-confirmation that cannot run fails the ratchet, saying so.
 rc=0; out=$(closeout RATCHET_RECONFIRM="$tmp/reconfirm-fails") || rc=$?
 [ "$rc" -eq 1 ] || fail "a failed re-confirmation passed: $out"
 grep -q '^FAIL ratchet: the base could not re-confirm' <<< "$out" || fail "failed re-confirmation line: $out"

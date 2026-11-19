@@ -207,6 +207,7 @@ impl<E: run_ports::Edge> Api<E> {
             credential: planned.credential,
             fatal_findings: planned.fatal_findings,
             launcher_lock: String::new(),
+            grant: None,
             untrusted_settings: planned.untrusted_settings,
         };
         if let Some((refusal, status)) = runs::pre_launch_refusal(&checks) {

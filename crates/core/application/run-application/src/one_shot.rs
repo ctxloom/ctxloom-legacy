@@ -874,6 +874,9 @@ where
             mode,
             evidence,
             launcher_lock,
+            // A one-shot journals no grant record yet (step 9 records a
+            // hosted child's).
+            grant: None,
         };
         let enqueued = self.enqueuer.enqueue(request).await;
         if let (true, Some(lock)) = (enqueued.is_ok(), own) {

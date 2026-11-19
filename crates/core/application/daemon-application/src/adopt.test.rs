@@ -105,7 +105,12 @@ impl isolation_ports::Workspaces for Checkouts {
 struct AllCheckouts(Arc<Checkouts>);
 
 impl crate::ChildWorkspaces for AllCheckouts {
-    fn of(&self, _: &str, _: &str) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+    fn of(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&std::collections::BTreeMap<String, String>>,
+    ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
         Arc::clone(&self.0) as Arc<dyn isolation_ports::Workspaces + Send + Sync>
     }
 }
@@ -172,6 +177,7 @@ impl Rig {
                 mode: runs::RunMode::Interactive,
                 evidence: runs_application::Evidence::passing("claude-code"),
                 launcher_lock: FRONTEND_LOCK.to_string(),
+                grant: None,
             })
             .await
             .unwrap();

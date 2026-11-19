@@ -3,7 +3,7 @@
 # spec on purpose (owner ruling 165): `just closeout-ratchet <base>`. The
 # gates of `just closeout` (build, lint, lint-deps, test, lint-os,
 # mutants-batch), each as usual, but for one thing: the feature runner (its
-# cluster tests, `tests::gherkin_features::clusters::*`) may fail, so long
+# tests of one feature file each, `tests::gherkin_features::features::*`) may fail, so long
 # as the scenarios red on the slice are a SUBSET of those red on the base.
 # A slice may turn red green; it may never add a red scenario or break a
 # green one (scripts/ratchet-judge.sh).
@@ -19,6 +19,12 @@
 #      base's list first run again on the base, alone and in its feature
 #      (`ratchet-base.sh <base> --reconfirm`): a difference the base does not
 #      reproduce is FLAKY and fails the ratchet (scripts/ratchet-judge.sh).
+#      What a re-confirmation found is cached by the base's sha
+#      (target/ratchet/<sha>.reconfirm, beside the base's list), each id
+#      both re-runs gave its listed colour: a later land on the same base
+#      re-runs only the ids not cached there. A flaky id is never cached,
+#      and the cache is renamed into place only once its re-confirmation
+#      succeeded, so an interrupted run's work does not count.
 #      `mutants-batch` mutation-tests
 #      merge-base(<base>, HEAD)..HEAD with GHERKIN_RATCHET_BASE naming the
 #      base's list when it has red: the feature runner judges every run
@@ -44,7 +50,8 @@
 # usage error.
 #
 # Environment: RATCHET_GATES (space-separated recipe names, default the six
-# above), RATCHET_BASE_LIST (the base's list, instead of `ratchet-base`) and
+# above), RATCHET_BASE_LIST (the base's list, instead of `ratchet-base`),
+# RATCHET_RECONFIRM_CACHE (the re-confirmation cache's path) and
 # RATCHET_RECONFIRM (a command given `<base> <ids> <out>`, instead of
 # `ratchet-base.sh --reconfirm`): the self-test's seams; the mutants-batch
 # variables.
@@ -80,6 +87,7 @@ if [ -z "${RATCHET_BASE_LIST:-}" ]; then
 fi
 dir=$top/target/logs/ratchet
 mkdir -p "$dir"
+reconfirm_cache=${RATCHET_RECONFIRM_CACHE:-$top/target/ratchet/$base_sha.reconfirm}
 slice_list=$dir/slice.list
 rm -f "$slice_list"
 
@@ -104,15 +112,65 @@ judge_ratchet() {
         return
     fi
     : > "$reconfirmed"
+    : > "$reconfirmed.failures"
+    # What an earlier re-confirmation on this base found is cached by its
+    # sha (target/ratchet/<sha>.reconfirm, `<alone><TAB><in its
+    # feature><TAB><id>`, and its failures records in
+    # <sha>.reconfirm.failures): an id cached there is not run again. Only
+    # an id both re-runs gave its listed colour is cached, so a flaky one is
+    # re-run every time. The cache is published by a rename once its
+    # re-confirmation succeeded (its failures first, its list last), so a
+    # run interrupted before that leaves the cache as it was.
+    local todo=$dir/reconfirm.todo fresh=$dir/reconfirm.fresh
+    : > "$todo"
     if [ -s "$ids" ]; then
+        if [ -s "$reconfirm_cache" ]; then
+            awk -F'\t' 'NR == FNR { want[$0] = 1; next } ($3 in want)' "$ids" "$reconfirm_cache" > "$reconfirmed"
+            awk -F'\t' 'NR == FNR { have[$3] = 1; next } !($0 in have)' "$reconfirmed" "$ids" > "$todo"
+            [ ! -e "$reconfirm_cache.failures" ] || records_of "$reconfirmed" "$reconfirm_cache.failures" >> "$reconfirmed.failures"
+        else
+            cp "$ids" "$todo"
+        fi
+        local cached=$(($(grep -c '' "$ids") - $(grep -c '' "$todo")))
+        [ "$cached" -eq 0 ] || echo "note ratchet: $cached of the $(grep -c '' "$ids") scenarios whose colour differs were re-confirmed on ${base_sha:0:7} before (target/ratchet/${base_sha}.reconfirm)"
+    fi
+    if [ -s "$todo" ]; then
         local run=("$here/ratchet-base.sh" "$base_sha" --reconfirm)
         [ -z "$reconfirm" ] || run=("$reconfirm" "$base_sha")
-        if ! "${run[@]}" "$ids" "$reconfirmed" 2>&1; then
-            echo "FAIL ratchet: the base could not re-confirm the $(grep -c '' "$ids") scenarios whose colour differs (full log: target/logs/ratchet-base.log)" >&2
+        rm -f "$fresh" "$fresh.failures"
+        if ! "${run[@]}" "$todo" "$fresh" 2>&1; then
+            echo "FAIL ratchet: the base could not re-confirm the $(grep -c '' "$todo") scenarios whose colour differs (full log: target/logs/ratchet-base.log)" >&2
             return 1
         fi
+        cat "$fresh" >> "$reconfirmed"
+        [ ! -e "$fresh.failures" ] || cat "$fresh.failures" >> "$reconfirmed.failures"
+        cache_reproduced "$fresh"
     fi
     "$here/ratchet-judge.sh" "$base_list" "$slice_list" "$reconfirmed" 2>&1
+}
+
+# The failures records (each from its `red<TAB><id>` line to the next) of
+# the file $2 whose id is the third field of a line of $1.
+records_of() {
+    awk -F'\t' 'NR == FNR { want["red\t" $3] = 1; next } /^red\t/ { keep = ($0 in want) } keep' "$1" "$2"
+}
+
+# Add to the cache the lines of the fresh re-confirmation $1 that both
+# re-runs gave the base's listed colour, with their failures records: into a
+# temporary file beside each, renamed over it, the list last.
+cache_reproduced() {
+    local fresh=$1 good=$dir/reconfirm.good
+    awk -F'\t' 'NR == FNR { listed[$2] = $1; next } $1 == $2 && listed[$3] == $1' "$base_list" "$fresh" > "$good"
+    [ -s "$good" ] || return 0
+    mkdir -p "$(dirname "$reconfirm_cache")"
+    local list_tmp why_tmp
+    list_tmp=$(mktemp "$reconfirm_cache.XXXXXX")
+    why_tmp=$(mktemp "$reconfirm_cache.failures.XXXXXX")
+    { [ ! -e "$reconfirm_cache" ] || cat "$reconfirm_cache"; cat "$good"; } > "$list_tmp"
+    { [ ! -e "$reconfirm_cache.failures" ] || cat "$reconfirm_cache.failures"
+      [ ! -e "$fresh.failures" ] || records_of "$good" "$fresh.failures"; } > "$why_tmp"
+    mv "$why_tmp" "$reconfirm_cache.failures"
+    mv "$list_tmp" "$reconfirm_cache"
 }
 
 failed=()

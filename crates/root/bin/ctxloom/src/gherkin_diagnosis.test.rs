@@ -245,6 +245,7 @@ fn diff(dir: &Path, args: &[String]) -> Ran {
         .env_clear()
         .env("PATH", crate::tests::host_var("PATH").unwrap_or_default())
         .env("TMPDIR", crate::tests::temp_root())
+        .env(crate::tests::LIFELINE, crate::tests::lifeline())
         .output()
         .expect("diff runs");
     Ran::of(output)

@@ -323,6 +323,7 @@ impl<E: Edge> Api<E> {
                 },
                 fatal_findings: u32::try_from(previewed.fatal.len()).unwrap_or(u32::MAX),
                 launcher_lock: String::new(),
+                grant: None,
                 untrusted_settings: plan.untrusted.clone(),
             };
             if let Some((refusal, status)) = runs::pre_launch_refusal(&checks) {

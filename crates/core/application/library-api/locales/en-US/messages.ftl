@@ -10,7 +10,10 @@ library-api-notice-tree-in-motion = git is in the middle of { $motion ->
     [cherry-picking] a cherry-pick
    *[reverting] a revert
   } in { $root }; this read shows the files as they are now, and ctxloom will make no change there until it ends
-library-api-notice-home-repository-made = ctxloom made { $path } a git repository of ctxloom's own files (its .gitignore lists them), so it can see what changes in your home library. It commits there only when it writes.
+# DRAFT (owner ruling 2026-11-18: say why in plain words), for the owner's
+# review; library_changes.feature quotes "a git repository of ctxloom's own
+# files", kept as it was.
+library-api-notice-home-repository-made = ctxloom made { $path } a git repository of ctxloom's own files (its .gitignore lists them). That directory is your home library, where your settings and bundles for every project live, and the repository records each change ctxloom makes to them, so you can see what changed and when. It commits there only when it writes.
 
 # Step 10b (texts.md §3, the 10b red spec's): said by a removal applied
 # into the trash (bundle remove, skill remove, clean); reviewed before
