@@ -586,6 +586,7 @@ where
         }
         let run = RunRequest {
             engine: String::new(),
+            engine_named: true,
             ..request.run.clone()
         };
         self.planner.plan(flags, &run)
