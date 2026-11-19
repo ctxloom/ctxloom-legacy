@@ -1643,11 +1643,11 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `5cdb1906` on angzarr-router `b332189a`;
 - angzarr-build `d0b63bcb` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `a930373b` (its branch `feat/sync-dir`: `Fs::sync_dir`
-  and the `Recording` fake);
-- taskloom's crates `9389e577` and ctxloom-lib's `6a21bd0e` (each on its
-  branch `feat/platform-sync-dir`: its main, moved onto platform
-  `a930373b`), built on the same line,
+- angzarr-platform `4be00eae` (its branch `os-local-socket`:
+  `os::socket::post_local`, the terminal wake's post);
+- taskloom's crates `c321d474` and ctxloom-lib's `1e5a190b` (each on its
+  branch `feat/platform-local-socket`: the rev pinned before, moved onto
+  platform `4be00eae`), built on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
@@ -3624,6 +3624,42 @@ harness asks the hidden `ctxloom test project-name` (test-support; it
 prints the `Names` parent, `projects/<harp>` or `users/me`); an absent field
 reads as its default (`as "false"`, `"0"` or `""` passes where proto3 JSON
 left it out, anything else does not), and an absent list has 0 entries.
+
+## The terminal wake (step 9, owner rulings 2026-11-18)
+
+A primary terminal session is woken through its engine's own messaging
+socket. claude exports `CLAUDE_CODE_MESSAGING_SOCKET` (and `_TOKEN`) to what
+it starts, so `ctxloom mcp serve` (the stdio server it starts from
+`ctxloom-mcp.json`) holds `WatchSession` open for its own session
+(`CTXLOOM_SESSION`; server-streaming, checked as `GetSession` is) and acts on
+`daemon_api::Waker`: a pending wake it never woke for, with none outstanding
+(one at a time), is issued (`sessions.IssueWake`, journaled), posted
+(engine-claude's `messaging_wake`: Go's NDJSON, an auth line then
+`{"type":"user",...,"content":"ctxloom: wake <16 hex> (messages delivered at
+turn start)"}`, `run_ports::wake_line`), and disarmed after 60 s
+(`DisarmWake`; a post that fails, at once). A wake is a nudge: the session's
+pending messages are the truth. Its prompt hook (`turn_start`) delivers its
+informs and wakes as `additionalContext`; a tool call's (`post_tool`) asks for
+none (a primary is offered no steer, and `GetSession` waits for a fresh
+daemon round: about 90 ms a tool call, measured by `just hook-latency`
+against the owner's 20 ms budget). They are recorded first (`DeliverMessages`, which redeems the wake its
+prompt was; pending-messages drops them) and are a primary's alone (a child's
+are fed as turns). A wake line that delivered nothing is blocked; a human's
+prompt never is. One hook answer has ONE 10,000-character context budget
+(claude's cap), shared in order by setup-application's `compose_context`:
+the skill mates line, the messages (given what is left; past it they wait
+behind a pointer to `session show`), then U13's re-delivered context. The
+daemon publishes each watched session's `SessionSignal` every round (its
+pending wakes, its outstanding wake) and repeats it every 5 s, so a gone
+watcher is noticed. A primary takes `Wake` (never `Steer`) only while
+watched (`session_policies::supported(session, wakeable)`, `GetSession`'s
+`wakeable`); a wake to one nobody watches (a `--no-context` session has no
+ctxloom server) is refused client-side, `daemon-api-wake-inform-only`.
+`session show` says `wake: sent, not answered`. The wire is undocumented:
+`just validate-wake-claude` (no gate) re-measures it on each claude bump;
+on 2.1.325 a non-descendant's post is NOT refused. The post is the platform's
+`os::socket::post_local` (a unix socket, each write within 5 s); on Windows,
+whose endpoint is unmeasured, it is `Unsupported`, and the wake fails, said.
 
 ## What an engine cannot carry (M6, j002000)
 

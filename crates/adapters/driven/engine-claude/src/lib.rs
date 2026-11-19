@@ -22,6 +22,7 @@ mod commands;
 mod conversation;
 mod drive;
 mod hooks;
+mod messaging;
 mod skills;
 mod stream;
 
@@ -40,6 +41,7 @@ pub use drive::{
     INTERACTIVE_ENV_ALLOWLIST, MCP_CONFIG_FILE, MCP_TOOL_TIMEOUT, MCP_TOOL_TIMEOUT_FLOOR,
     MCP_TOOL_TIMEOUT_MARGIN,
 };
+pub use messaging::{messaging_wake, MessagingWake, SOCKET_VARIABLE, TOKEN_VARIABLE};
 
 /// The engine's name.
 pub const NAME: &str = "claude-code";

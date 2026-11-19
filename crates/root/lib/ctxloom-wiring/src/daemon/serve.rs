@@ -622,6 +622,9 @@ async fn start(
     let bearer = OsTokenSource.mint();
     let certificate = daemon_certificate()?;
     let started_at = seconds_now();
+    // The sessions their ctxloom MCP server watches (the terminal wake):
+    // the API's `WatchSession` watches, the loop publishes each round.
+    let watches = daemon_application::SessionWatches::new(daemon_application::KEEPALIVE);
     let calls = served(
         daemon_api::Api::new(daemon_api::Parts {
             edge: Arc::clone(&edge),
@@ -649,6 +652,7 @@ async fn start(
                 .map(|hosted| Arc::clone(&hosted.engine))
                 .collect(),
         )))
+        .watching(Arc::clone(&watches))
         .on_os(&os),
         (fs, files, trash_clock(env)),
         (home, temp),
@@ -690,7 +694,8 @@ async fn start(
         },
         Arc::clone(say),
     )
-    .hosting_one_shots(Arc::clone(one_shots));
+    .hosting_one_shots(Arc::clone(one_shots))
+    .watching(watches);
     let launcher = timed(launcher, pace)
         // OD-59 (2), the ONE named exception to "the daemon never reads a
         // hold": its start delivers a judged run's session's hold first.

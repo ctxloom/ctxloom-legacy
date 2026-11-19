@@ -17,7 +17,7 @@ use std::time::Duration;
 use angzarr_embedded::v1::{CommandBook, DeliveryOutcome};
 use angzarr_proto_transport_distributed::v1::command_handler_coordinator_service_client::CommandHandlerCoordinatorServiceClient;
 use angzarr_proto_transport_distributed::v1::HandleSyncRequest;
-use daemon_ports::{Called, DaemonApi, LibraryChanges, RunEvents, Synced};
+use daemon_ports::{Called, DaemonApi, LibraryChanges, RunEvents, SessionSignals, Synced};
 use daemon_proto::service::ctxloom_client::CtxloomClient;
 use daemon_proto::v1;
 use prost::Message;
@@ -480,6 +480,16 @@ impl DaemonApi for DaemonClient {
         Ok(Box::new(WatchingLibrary(streaming)))
     }
 
+    async fn watch_session(
+        &self,
+        request: v1::WatchSessionRequest,
+    ) -> Result<Box<dyn SessionSignals>, Called> {
+        // The stream is answered within the read's deadline; its signals
+        // come for as long as the watch is held, unbounded.
+        let streaming = call!(self, watch_session, "WatchSession", request)?;
+        Ok(Box::new(Signals(streaming)))
+    }
+
     async fn handle(&self, book: CommandBook) -> Result<bool, Called> {
         let result: angzarr_proto_transport_distributed::v1::CommandResult =
             call!(self, coordinator, handle, "Handle", book, self.within)?;
@@ -656,6 +666,22 @@ impl LibraryChanges for WatchingLibrary {
                 Ok(Some(change)) => Some(Ok(change)),
                 Ok(None) => None,
                 Err(status) => Some(Err(came_to("WatchLibrary", &status))),
+            }
+        })
+    }
+}
+
+/// A watched session's signals as `WatchSession` streams them: a status
+/// that ends the stream (the daemon gone) is what it came to.
+struct Signals(tonic::codec::Streaming<v1::SessionSignal>);
+
+impl SessionSignals for Signals {
+    fn next(&mut self) -> daemon_ports::NextSignal<'_> {
+        Box::pin(async move {
+            match self.0.message().await {
+                Ok(Some(signal)) => Some(Ok(signal)),
+                Ok(None) => None,
+                Err(status) => Some(Err(came_to("WatchSession", &status))),
             }
         })
     }

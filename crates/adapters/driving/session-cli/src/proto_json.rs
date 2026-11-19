@@ -131,6 +131,8 @@ pub fn session(session: &v1::Session) -> Value {
         )
         .message("grant", session.grant.as_ref().map(grant))
         .message("last_failure", session.last_failure.as_ref().map(failure))
+        .flag("wakeable", session.wakeable)
+        .text("wake", &session.wake)
         .done()
 }
 

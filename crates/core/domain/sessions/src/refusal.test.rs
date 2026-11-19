@@ -95,6 +95,14 @@ fn table() -> Vec<(TypedRefusal, SessionRejection)> {
                 urgency: "steer".to_string(),
             },
         ),
+        (
+            TypedRefusal::of(&WakeOutstanding {
+                nonce: "0123456789abcdef".to_string(),
+            }),
+            SessionRejection::WakeOutstanding {
+                nonce: "0123456789abcdef".to_string(),
+            },
+        ),
     ]
 }
 

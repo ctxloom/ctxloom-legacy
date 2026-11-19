@@ -191,15 +191,15 @@ impl<D: Daemons> Client<D> {
         &self,
         harp: &str,
         carried_by: &str,
+        budget: usize,
     ) -> Result<v1::RedeliveredContext, CallError> {
         self.on_daemon(async |api: &D::Api| {
             let request = v1::RedeliverContextRequest {
                 name: format!("{}/sessions/{harp}", self.project(api).await?),
                 carried_by: carried_by.to_string(),
-                // The whole hook budget: nothing else rides this answer
-                // yet. The terminal wake (`daemon/s9-wake`) passes what its
-                // messages left, `setup_application::remaining`.
-                budget: 0,
+                // What the hook's other parts left of its one budget
+                // (`setup_application::remaining`).
+                budget: u32::try_from(budget).unwrap_or(u32::MAX),
                 env: Some(self.env.clone()),
                 cwd: self.cwd.clone(),
             };

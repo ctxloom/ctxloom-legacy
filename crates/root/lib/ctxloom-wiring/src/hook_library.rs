@@ -21,11 +21,11 @@ use crate::Wiring;
 
 /// The user's daemon as a hook's library read reaches it, until `until`.
 pub(crate) struct HookDaemons {
-    env: Arc<EnvSnapshot>,
-    until: Instant,
+    pub(crate) env: Arc<EnvSnapshot>,
+    pub(crate) until: Instant,
     /// Whether it may start one (none where the environment names an
     /// endpoint).
-    starts: bool,
+    pub(crate) starts: bool,
 }
 
 impl HookDaemons {
@@ -163,12 +163,12 @@ impl HookLibrary for DaemonHookLibrary {
     /// The context the live session `harp` is owed at `hook`, as the
     /// daemon re-assembled and its engine's delivery put it (step 10c U13);
     /// none owed, or no daemon in time, none.
-    fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
+    fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
         if harp.is_empty() {
             return None;
         }
         self.ask(async |client| {
-            let answered = client.redeliver_context(harp, hook).await.ok()?;
+            let answered = client.redeliver_context(harp, hook, budget).await.ok()?;
             Some(answered.context).filter(|context| !context.is_empty())
         })
     }

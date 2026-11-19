@@ -33,6 +33,7 @@ mod projects;
 mod refusal;
 mod rejection;
 mod state;
+mod wake;
 
 use angzarr_embedded::Timestamp;
 
@@ -152,6 +153,11 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         // A message and a clear are the read side's (the pending messages,
         // the delivery and clear policies): no state of the session.
         SessionEvent::MessageSent(_) | SessionEvent::ClearRequested(_) => {}
+        // The terminal wake's journal; a delivery is the read side's.
+        SessionEvent::WakeIssued(_)
+        | SessionEvent::WakeDisarmed(_)
+        | SessionEvent::WakeRedeemed(_)
+        | SessionEvent::MessagesDelivered(_) => wake::apply(state, event),
         SessionEvent::SessionClosed(_)
         | SessionEvent::SessionReopened(_)
         | SessionEvent::ChildLaunched(_)

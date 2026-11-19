@@ -270,6 +270,12 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("WatchRun")) })
     }
+    /// `WatchSession` (the terminal wake): the session's signals, a stream
+    /// the edge pumps from a blocking thread.
+    fn watch_session(&self, request: v1::WatchSessionRequest) -> Answer<'_, crate::SessionStream> {
+        let _ = request;
+        Box::pin(async { Err(not_served("WatchSession")) })
+    }
     /// The daemon's standing warnings (OD-52's start-up, OD-54's
     /// hand-over), as they stand now: what its edge attaches to every
     /// answer it gives (owner ruling OD-55), so no command asks for them.
@@ -363,6 +369,13 @@ impl<E: Edge + 'static> Calls for Api<E> {
         Box::pin(async move {
             self.open()?;
             Api::get_session(self, request).await
+        })
+    }
+
+    fn watch_session(&self, request: v1::WatchSessionRequest) -> Answer<'_, crate::SessionStream> {
+        Box::pin(async move {
+            self.open()?;
+            Api::watch_session(self, request).await
         })
     }
 
@@ -710,6 +723,9 @@ pub struct Api<E> {
     /// The setup use cases that write other tools' files (step 10c U10);
     /// none, `Materialize`, `UninstallManage` and `RunDoctor` fail.
     pub(crate) foreign: Option<Arc<dyn crate::foreign::ForeignPlans>>,
+    /// The sessions watched for the terminal wake, shared with the daemon's
+    /// loop; none, `WatchSession` fails and no session is wakeable.
+    pub(crate) watches: Option<Arc<daemon_application::SessionWatches>>,
 }
 
 impl<E: Edge> Api<E> {
@@ -725,6 +741,7 @@ impl<E: Edge> Api<E> {
             observing: None,
             write_dies_at: None,
             caches: None,
+            watches: None,
             me: std::sync::OnceLock::new(),
             os: String::new(),
             deliveries: None,
@@ -1295,6 +1312,9 @@ impl<E: Edge> Api<E> {
             session.last_failure =
                 crate::shown::failure_of(&record.harp, record.owner.is_some(), run);
         }
+        // The terminal wake: whether its MCP server watches it, and its wake.
+        session.wakeable = self.wakeable(&record.id);
+        session.wake = crate::watch::wake_of(board.session(&record.id)).to_string();
         Ok(session)
     }
 

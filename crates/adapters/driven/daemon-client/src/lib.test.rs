@@ -236,6 +236,22 @@ impl Ctxloom for Fake {
         Ok(Response::new(Box::pin(tokio_stream::iter(changes))))
     }
 
+    /// Two signals of the session watched, then the stream's end.
+    async fn watch_session(
+        &self,
+        request: Request<v1::WatchSessionRequest>,
+    ) -> Result<Response<tonic::codegen::BoxStream<v1::SessionSignal>>, Status> {
+        self.admit(&request)?;
+        let signal = |wakes: &[&str]| {
+            Ok(v1::SessionSignal {
+                wakes: wakes.iter().map(ToString::to_string).collect(),
+                outstanding_wake: String::new(),
+            })
+        };
+        let signals = vec![signal(&[]), signal(&["m1"])];
+        Ok(Response::new(Box::pin(tokio_stream::iter(signals))))
+    }
+
     async fn sweep_sessions(
         &self,
         request: Request<v1::SweepSessionsRequest>,
@@ -802,6 +818,21 @@ async fn a_run_is_created_read_and_watched() {
         broken.next().await.unwrap(),
         Err(Called::Failed { code, .. }) if code == Code::Internal as i32
     ));
+}
+
+// The terminal wake: a session watched streams its signals as they come.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_session_is_watched_its_signals_as_they_come() {
+    let found = serve(&certificate(), &token(0xab)).await;
+    let mut signals = DaemonClient::new(&found, WITHIN)
+        .watch_session(v1::WatchSessionRequest {
+            name: "projects/calm-otter/sessions/amber-swift-owl".to_string(),
+        })
+        .await
+        .unwrap();
+    assert!(signals.next().await.unwrap().unwrap().wakes.is_empty());
+    assert_eq!(signals.next().await.unwrap().unwrap().wakes, ["m1"]);
+    assert!(signals.next().await.is_none(), "the stream ended");
 }
 
 // U4: a one-shot's stop is the coordinator's `Handle`; a daemon that serves

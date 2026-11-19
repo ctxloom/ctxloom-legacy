@@ -39,6 +39,7 @@ mod ports;
 pub mod reactions;
 mod rehost;
 mod terminal;
+mod watches;
 
 pub use daemon::{Asker, Daemon, Folds, Place, Ports, Taken, HAND_OVER_PERIOD};
 pub use one_shot::{
@@ -55,6 +56,7 @@ pub use terminal::{
     TerminalHost, TerminalRequest, Terminals, Told as TerminalTold, Waits, Watch as TerminalWatch,
     POLL, START_WITHIN,
 };
+pub use watches::{signal_of, SessionWatch, SessionWatches, KEEPALIVE};
 
 #[cfg(test)]
 #[path = "daemon.test.rs"]

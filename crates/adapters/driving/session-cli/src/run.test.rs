@@ -2609,3 +2609,24 @@ fn only_the_four_child_verbs_are_child_verbs() {
     assert!(!crate::is_child(&parsed(&["show", "x"])));
     assert!(crate::is_child(&parsed(&["close", "x"])));
 }
+
+// The terminal wake (owner ruling 2026-11-18): show says a wake sent and not
+// answered, and one still outstanding; nothing when there is neither.
+#[test]
+fn show_in_text_says_a_wake_sent_and_not_answered() {
+    let shown = |wake: &str| {
+        let mut s = session("amber-quiet-heron", v1::session::State::Live);
+        s.wake = wake.to_string();
+        let reads = Reads {
+            sessions: vec![s],
+            ..Reads::default()
+        };
+        read_go(&reads, Format::Text, &["show", "amber-quiet-heron"]).out
+    };
+    let out = shown("not answered");
+    assert!(out.contains("wake:     sent, not answered"), "{out}");
+    let out = shown("outstanding");
+    assert!(out.contains("wake:     sent, awaiting its turn"), "{out}");
+    let out = shown("");
+    assert!(!out.contains("wake:"), "{out}");
+}

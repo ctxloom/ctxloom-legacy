@@ -386,7 +386,7 @@ impl<D: Daemons> Caller<D> {
     /// answered with the target as the index projected it (as `GetSession`
     /// reads it when no projection came back), and whether it was applied
     /// now.
-    async fn write<M: angzarr_embedded::markup::DomainMessage>(
+    pub(crate) async fn write<M: angzarr_embedded::markup::DomainMessage>(
         &self,
         api: &D::Api,
         target: &SessionName,
@@ -418,19 +418,30 @@ impl<D: Daemons> Caller<D> {
         message_id: &str,
         urgency: Urgency,
         text: &str,
-    ) -> Result<(v1::Session, bool), Called> {
+    ) -> Result<Option<(v1::Session, bool)>, Called> {
         let held = self.read(api, target).await?;
         if held.closed {
             return Err(closed_refusal(target));
+        }
+        // The terminal wake: a primary nobody watches takes an inform alone;
+        // its sender is told so here, in its own words (none: refused).
+        if urgency == Urgency::Wake && held.owner.is_empty() && !held.wakeable {
+            return Ok(None);
         }
         let command = SendMessage {
             message_id: message_id.to_string(),
             urgency,
             text: text.to_string(),
             requester: self.requester(api).await?,
-            supported: sessions_application::urgencies_of(!held.owner.is_empty(), &held.engine),
+            supported: sessions_application::urgencies_of(
+                !held.owner.is_empty(),
+                &held.engine,
+                held.wakeable,
+            ),
         };
-        self.write(api, target, &command, message_id).await
+        self.write(api, target, &command, message_id)
+            .await
+            .map(Some)
     }
 
     /// `child_send`: `text` to the child `target`, at `urgency`, under an id
@@ -459,9 +470,16 @@ impl<D: Daemons> Caller<D> {
             Some(id) => id.to_string(),
             None => (self.ids)(),
         };
-        let (session, applied) = on_daemon!(self, |api| self
+        let sent = on_daemon!(self, |api| self
             .sent(api, &name, &message_id, urgency, text)
             .await)?;
+        let Some((session, applied)) = sent else {
+            return Err(CallError::Refused(Rejection::Api(
+                ApiRejection::WakeInformOnly {
+                    harp: name.harp().to_string(),
+                },
+            )));
+        };
         Ok(Written {
             session,
             id: message_id,

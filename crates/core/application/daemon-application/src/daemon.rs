@@ -280,6 +280,11 @@ pub struct Daemon<E: Edge> {
     /// The one-shots it hosts (U4), shared with its API; none, it hosts
     /// none.
     one_shots: Option<Arc<OneShots>>,
+    /// The sessions whose ctxloom MCP server watches them (the terminal
+    /// wake), shared with its API's `WatchSession`: their signals are
+    /// published each round, and a primary among them takes a wake; none,
+    /// no session is watched.
+    watches: Option<Arc<crate::SessionWatches>>,
     /// Where a child works (s4-Q11); none, every child in its project.
     workspaces: Option<Arc<dyn ChildWorkspaces>>,
     /// Whether it hands what it hosts over to the next daemon (OD-3
@@ -428,7 +433,38 @@ impl<E: Edge> Daemon<E> {
             guided: BTreeMap::new(),
             adopted: BTreeMap::new(),
             start_holds: None,
+            watches: None,
         }
+    }
+
+    /// The daemon, publishing each watched session's signal to `watches`
+    /// each round (the terminal wake), and planning a wake for a primary
+    /// among them.
+    pub fn watching(mut self, watches: Arc<crate::SessionWatches>) -> Daemon<E> {
+        self.watches = Some(watches);
+        self
+    }
+
+    /// Each watched session's signal, as the board and the pending
+    /// messages stand now.
+    fn publish_signals(&self) {
+        let Some(watches) = self.watches.as_ref() else {
+            return;
+        };
+        let board = self.board.projector().board();
+        let pending = self.pending.projector().pending();
+        for session in watches.watched() {
+            let signal = crate::signal_of(&pending.pending(&session), board.session(&session));
+            watches.publish(&session, signal);
+        }
+    }
+
+    /// The sessions watched now (stable ids).
+    pub(crate) fn wakeable(&self) -> BTreeSet<String> {
+        self.watches
+            .as_ref()
+            .map(|watches| watches.watched())
+            .unwrap_or_default()
     }
 
     /// The daemon, its start-up sweep delivering, through `holds`, the hold
@@ -997,6 +1033,8 @@ impl<E: Edge> Daemon<E> {
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
         }
+        // What would wake each watched session now (the terminal wake).
+        self.publish_signals();
         // Once the board has caught up, so a child just launched is known.
         if board.is_ok() {
             self.sweep_hand_offs();
@@ -1037,6 +1075,7 @@ impl<E: Edge> Daemon<E> {
         let skip: BTreeSet<String> = self.done.union(&self.refused).cloned().collect();
         let board = self.board.projector().board();
         let pending = self.pending.projector().pending();
+        let wakeable = self.wakeable();
         let projects: BTreeSet<String> = board
             .sessions()
             .map(|(_, session)| session.project_id.clone())
@@ -1050,6 +1089,7 @@ impl<E: Edge> Daemon<E> {
                     pending: &pending,
                     hosted: &hosted,
                     done: &skip,
+                    wakeable: &wakeable,
                 })
                 .into_iter()
                 .map(|step| (project.clone(), step)),

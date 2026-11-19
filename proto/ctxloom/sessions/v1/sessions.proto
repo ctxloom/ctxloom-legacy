@@ -78,6 +78,11 @@ message SessionState {
   // The workspace axis it was minted on (`SessionMinted.workspace`); absent:
   // none was recorded, read as `none`.
   optional string workspace = 27;
+  // The terminal wake's outstanding nonce; empty when none is.
+  string wake_outstanding = 28;
+  // The nonce of the last wake, when it was disarmed unanswered and no
+  // wake was issued or redeemed after it; empty otherwise.
+  string wake_unanswered = 29;
 }
 
 // Who a session was minted for (Go's Origin): an empty origin reads as a

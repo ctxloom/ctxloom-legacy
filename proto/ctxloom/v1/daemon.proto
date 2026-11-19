@@ -217,6 +217,15 @@ service Ctxloom {
   // (-- api-linter: core::0136::response-message-name=disabled
   //     aip.dev/not-precedent: a daemon-folded stream of the resource's lines or events (S44). --)
   rpc WatchTranscript(WatchTranscriptRequest) returns (stream TranscriptLine);
+  // The terminal wake (owner ruling 2026-11-18): a session's ctxloom MCP
+  // server watches its own session for messages that would wake it, and
+  // posts the wake on its engine's messaging socket. While a watch is open
+  // the session can be woken (`Session.wakeable`). A signal is sent when
+  // the watch opens, on each change, and again unchanged every few seconds
+  // (so a watcher gone is noticed).
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: a daemon-folded stream of the resource's lines or events (S44). --)
+  rpc WatchSession(WatchSessionRequest) returns (stream SessionSignal);
   // `session worktrees`: a session's scratch checkouts.
   rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse) {
     option (google.api.method_signature) = "parent";
@@ -1013,6 +1022,13 @@ message Session {
   // failed to start (step 9, owner ruling 2026-11-17); unset when neither
   // did. Nothing tries such a turn again: `session send <harp> wake` does.
   SessionFailure last_failure = 21;
+  // `GetSession` only: its ctxloom MCP server watches it (`WatchSession`),
+  // so a wake reaches it (the terminal wake); a primary session takes a
+  // wake only while it does.
+  bool wakeable = 22 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // `GetSession` only: its terminal wake, `outstanding` (posted, its turn
+  // not yet started), `not answered` (disarmed unanswered), or empty.
+  string wake = 23 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // What a run was launched with: its MCP servers' NAMES and its engine's
@@ -1406,6 +1422,20 @@ message Transcript {
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // Its lines, in the order delivered (`seq`).
   repeated TranscriptLine lines = 2;
+}
+
+// The session to watch for messages that would wake it.
+message WatchSessionRequest {
+  // The Session to watch, `projects/{project}/sessions/{session}`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// What would wake a session now (the terminal wake).
+message SessionSignal {
+  // The ids of its pending messages of urgency `wake`, in the order sent.
+  repeated string wakes = 1;
+  // Its outstanding wake's nonce; empty when none is.
+  string outstanding_wake = 2;
 }
 
 // `session transcript watch <harp>`.

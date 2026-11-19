@@ -161,6 +161,10 @@ pub(super) struct State {
     /// The children a step had write a file at once, and the file's name.
     writers: Vec<String>,
     written: Option<String>,
+    /// The terminal wake: what stands in for the orchestrator's engine's
+    /// messaging socket (a listener that records each post), and the file
+    /// it records them in.
+    wake_socket: Option<(Child, PathBuf)>,
 }
 
 /// An ask the scripted claude made: its server, the call's id, and the
@@ -210,6 +214,10 @@ impl Drop for State {
         if let Some(mut started) = self.started.take() {
             let _ = started.kill();
             let _ = started.wait();
+        }
+        if let Some((mut socket, _)) = self.wake_socket.take() {
+            let _ = socket.kill();
+            let _ = socket.wait();
         }
         if let Some(mut daemon) = self.daemon.take() {
             let _ = daemon.kill();
@@ -7738,8 +7746,109 @@ fn engine_launches(w: &mut World, owner: String, child: String, agent: String, t
     assert_ne!(answered["isError"], true, "{answered}");
 }
 
+/// A listener on a unix socket at `$1` that appends what each connection
+/// sent to `$2`: the stand-in for claude's messaging socket (the live check
+/// is `just validate-wake-claude`).
+fn socket_recorder() -> String {
+    "#!/bin/sh\nexec node -e 'const net = require(\"net\"), fs = require(\"fs\");\nconst [socket, out] = process.argv.slice(1);\nnet.createServer((c) => { let got = \"\"; c.on(\"data\", (d) => { got += d; }); c.on(\"end\", () => fs.appendFileSync(out, got)); }).listen(socket);' \"$1\" \"$2\"\n".to_string()
+}
+
+#[given(
+    regex = r#"^Alice's session "([^"]+)" is idle in her terminal, the ctxloom MCP server its engine started watching it$"#
+)]
+fn idle_in_her_terminal(w: &mut World, harp: String) {
+    // Her engine's messaging socket: a listener that records each post.
+    let dir = w.common.project.home().join("messaging");
+    let socket = dir.join("cc.sock");
+    let posted = dir.join("posted.jsonl");
+    let recorder = dir.join("recorder");
+    files::put_program(&recorder, &socket_recorder());
+    let listening = std::process::Command::new(&recorder)
+        .args([socket.as_os_str(), posted.as_os_str()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the socket's listener starts");
+    w.daemon_spec.wake_socket = Some((listening, posted));
+    until(w, "her engine's socket listens", DAEMON_WAIT, |_| {
+        files::exists(&socket).then_some(())
+    });
+    // The ctxloom MCP server her engine started, the socket exported to it
+    // (claude exports both to what it starts).
+    let me = session_name(w, &harp);
+    let socket = socket.display().to_string();
+    let mut env = env_of(w);
+    env.push(("CLAUDE_CODE_MESSAGING_SOCKET".to_string(), socket));
+    env.push((
+        "CLAUDE_CODE_MESSAGING_TOKEN".to_string(),
+        "a-messaging-token".to_string(),
+    )); // gitleaks:allow
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mcp = crate::tests::mcp_serve::Mcp::for_session(&w.common.project, &me, &env);
+    w.daemon_spec.engine = Some(mcp);
+    // The hold point: nothing goes on until its server watches it.
+    until(w, "her session watched", DAEMON_WAIT, |w| {
+        (shown(w, &harp)["wakeable"] == true).then_some(())
+    });
+}
+
+/// The line the stand-in socket was posted, once it was: its auth line
+/// first, then the user line, whose content is the wake line.
+fn posted_wake(w: &World) -> String {
+    let (_, posted) = w.daemon_spec.wake_socket.as_ref().expect("her socket");
+    let posted = posted.clone();
+    until(w, "a wake posted on her socket", DAEMON_WAIT, |_| {
+        let text = files::read(&posted).ok()?;
+        let lines: Vec<Value> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        let [auth, user, ..] = lines.as_slice() else {
+            return None;
+        };
+        assert_eq!(auth["type"], "auth", "{text}");
+        assert_eq!(auth["token"], "a-messaging-token", "{text}");
+        assert_eq!(user["type"], "user", "{text}");
+        assert_eq!(user["message"]["role"], "user", "{text}");
+        user["message"]["content"].as_str().map(str::to_string)
+    })
+}
+
 #[then(regex = r#"^"([^"]+)" was woken, and its next turn began with "([^"]*)"$"#)]
 fn was_woken(w: &mut World, owner: String, text: String) {
+    // The terminal wake: her engine's next prompt is the posted wake line,
+    // and its hook hands the session what woke it.
+    if w.daemon_spec.wake_socket.is_some() {
+        let line = posted_wake(w);
+        assert!(line.starts_with("ctxloom: wake "), "{line}");
+        let payload = json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "native-amber",
+            "prompt_id": "prompt-1",
+            "prompt": line,
+        })
+        .to_string();
+        let me = session_name(w, &owner);
+        let (ran, _) = hook_run(w, "UserPromptSubmit", &payload, Some(&me));
+        assert_eq!(ran.code, 0, "{}", ran.said());
+        let answered: Value = serde_json::from_str(ran.stdout.trim())
+            .unwrap_or_else(|_| panic!("the hook's answer: {}", ran.said()));
+        let context = answered["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no context: {answered}"));
+        assert!(context.contains(&text), "{context}");
+        assert!(
+            answered.get("decision").is_none(),
+            "not blocked: {answered}"
+        );
+        // Her engine's end closes the server's input: it exits, its poster
+        // with it.
+        let server = w.daemon_spec.engine.take().expect("her server");
+        let (code, err) = server.finish();
+        assert_eq!(code, 0, "her server at the end of its input: {err}");
+        return;
+    }
     let before = w
         .daemon_spec
         .child_turns_before

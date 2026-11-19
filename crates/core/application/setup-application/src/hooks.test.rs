@@ -416,8 +416,11 @@ impl crate::HookLibrary for Owes {
     fn skills(&self) -> Option<Vec<crate::HookSkill>> {
         None
     }
-    fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
-        self.0.lock().unwrap().push(format!("{harp} {hook}"));
+    fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(format!("{harp} {hook} {budget}"));
         Some("re-assembled".to_string())
     }
 }
@@ -436,8 +439,8 @@ fn test_a_prompt_or_a_tool_result_carries_the_context_its_session_is_owed() {
         fn skills(&self) -> Option<Vec<crate::HookSkill>> {
             self.0.skills()
         }
-        fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
-            self.0.redelivered(harp, hook)
+        fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
+            self.0.redelivered(harp, hook, budget)
         }
     }
     let w = crate::fakes::world(CONFIG);
@@ -458,9 +461,10 @@ fn test_a_prompt_or_a_tool_result_carries_the_context_its_session_is_owed() {
     assert_eq!(
         *owes.0.lock().unwrap(),
         [
-            "brisk-copper-moth UserPromptSubmit",
-            "brisk-copper-moth PostToolUse"
-        ]
+            "brisk-copper-moth UserPromptSubmit 10000",
+            "brisk-copper-moth PostToolUse 10000"
+        ],
+        "nothing else in the answer: the whole budget"
     );
 }
 
@@ -481,7 +485,8 @@ fn test_a_skills_mates_and_an_owed_context_are_carried_together() {
             };
             Some(vec![skill("admit"), skill("unattended")])
         }
-        fn redelivered(&self, _: &str, _: &str) -> Option<String> {
+        fn redelivered(&self, _: &str, _: &str, budget: usize) -> Option<String> {
+            assert!(budget < 10_000, "what the mates line left: {budget}");
             Some("re-assembled".to_string())
         }
     }

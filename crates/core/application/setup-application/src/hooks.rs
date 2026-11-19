@@ -7,6 +7,7 @@
 
 use surface_ports::{EngineSurfaces, HookCodec, HookEvent, HookResponse};
 
+use crate::delivery::{compose_context, remaining};
 use crate::{Setup, SetupError};
 
 /// The nudge Go's `operations.AgentSetupNudge` hands a project that has
@@ -40,13 +41,14 @@ pub trait HookLibrary {
     fn skills(&self) -> Option<Vec<HookSkill>>;
 
     /// What the live session `harp` is owed at its engine's hook `hook`
-    /// (step 10c U13, G6/G7, `RedeliverContext`): its re-assembled context,
-    /// as its engine's delivery put it. None when it is owed nothing, or
-    /// no daemon answered in time (it stays owed).
+    /// (step 10c U13, G6/G7, `RedeliverContext`) within `budget` characters
+    /// (what the hook's other parts left): its re-assembled context, as its
+    /// engine's delivery put it. None when it is owed nothing, or no daemon
+    /// answered in time (it stays owed).
     // Equivalent: its one mutant (`None`) is this default body.
     #[cfg_attr(test, mutants::skip)]
-    fn redelivered(&self, harp: &str, hook: &str) -> Option<String> {
-        let _ = (harp, hook);
+    fn redelivered(&self, harp: &str, hook: &str, budget: usize) -> Option<String> {
+        let _ = (harp, hook, budget);
         None
     }
 }
@@ -139,21 +141,36 @@ impl Setup {
                     event: Some(event),
                 })
             }
-            "turn_start" | "post_tool" => {
-                let mut response = match unified.as_str() {
-                    "post_tool" => self.mates_response(codec, &event),
-                    _ => HookResponse::default(),
+            // The terminal wake: a prompt delivers the informs and wakes
+            // (a stale wake line blocked), in the one budget, joined by
+            // `compose_context`; U13's re-delivered context joins as its
+            // last part, within what the messages left (step 10c U13).
+            "turn_start" => {
+                let (messages, block) = self.prompt_delivery(&event.prompt, harp, remaining(&[]));
+                let owed = self.owed_context(harp, native, remaining(&[&messages]));
+                let response = HookResponse {
+                    context: compose_context(&[&messages, &owed]),
+                    block,
+                    reason: match block {
+                        true => crate::hooks_wake::STALE_WAKE.to_string(),
+                        false => String::new(),
+                    },
+                    ..HookResponse::default()
                 };
-                // A change its loadout names, re-assembled (step 10c U13).
-                if let Some(owed) = self
-                    .hook_library()
-                    .and_then(|library| library.redelivered(harp, native))
-                {
-                    response.context = match response.context.is_empty() {
-                        true => owed,
-                        false => format!("{}\n\n{owed}", response.context),
-                    };
-                }
+                Ok(HookAnswer {
+                    stdout: encode(&response)?,
+                    event: Some(event),
+                    ..HookAnswer::default()
+                })
+            }
+            // A tool call asks the daemon for no messages: it would deliver
+            // a steer, and a primary is offered none (owner ruling
+            // 2026-11-18). It carries what the session is owed (U13), after
+            // the skill mates line, in the same budget.
+            "post_tool" => {
+                let mut response = self.mates_response(codec, &event);
+                let owed = self.owed_context(harp, native, remaining(&[&response.context]));
+                response.context = compose_context(&[&response.context, &owed]);
                 Ok(HookAnswer {
                     stdout: encode(&response)?,
                     event: Some(event),
@@ -195,6 +212,15 @@ impl Setup {
                 },
             )
             .map_err(SetupError::cause)
+    }
+
+    /// What the live session `harp` is owed at its engine's hook `native`
+    /// (step 10c U13), within `budget` characters of the hook's answer;
+    /// empty when nothing is, or no daemon answered (it stays owed).
+    fn owed_context(&self, harp: &str, native: &str, budget: usize) -> String {
+        self.hook_library()
+            .and_then(|library| library.redelivered(harp, native, budget))
+            .unwrap_or_default()
     }
 
     /// The session-start notice: the nudge to set up agents when the project
