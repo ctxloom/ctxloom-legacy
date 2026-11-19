@@ -6,8 +6,10 @@
 #   the scenario that replaces them tells); `session pause` and `session ask`
 #   (the daemon has no pause, and `session send` replaces the ask, S19); the
 #   reserved-kind refusal and agent_stop's idempotence, which are
-#   cli/coordination_contract.feature's. Every scenario is told again in the
-#   daemon's vocabulary (OD-44, amended 2026-11-17).
+#   cli/coordination_contract.feature's (rewritten for S46, 2026-11-18: no
+#   kind is reserved, there being no kinds; an urgency outside child_send's
+#   vocabulary is refused, and child_close is idempotent). Every scenario is
+#   told again in the daemon's vocabulary (OD-44, amended 2026-11-17).
 
 @doc
 Feature: Orchestrator delegates isolated work
