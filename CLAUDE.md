@@ -1541,11 +1541,11 @@ a full commit. The angzarr pins are one line, one per family member:
 - angzarr-embedded `5cdb1906` on angzarr-router `b332189a`;
 - angzarr-build `d0b63bcb` (the markup generator, `angzarr-build` and
   `angzarr-codegen`, its own repository);
-- angzarr-platform `a930373b` (its branch `feat/sync-dir`: `Fs::sync_dir`
-  and the `Recording` fake);
-- taskloom's crates `9389e577` and ctxloom-lib's `6a21bd0e` (each on its
-  branch `feat/platform-sync-dir`: its main, moved onto platform
-  `a930373b`), built on the same line,
+- angzarr-platform `4be00eae` (its branch `os-local-socket`:
+  `os::socket::post_local`, the terminal wake's post);
+- taskloom's crates `c321d474` and ctxloom-lib's `1e5a190b` (each on its
+  branch `feat/platform-local-socket`: the rev pinned before, moved onto
+  platform `4be00eae`), built on the same line,
 
 so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
 angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
@@ -3542,9 +3542,9 @@ watched (`session_policies::supported(session, wakeable)`, `GetSession`'s
 ctxloom server) is refused client-side, `daemon-api-wake-inform-only`.
 `session show` says `wake: sent, not answered`. The wire is undocumented:
 `just validate-wake-claude` (no gate) re-measures it on each claude bump;
-on 2.1.325 a non-descendant's post is NOT refused. The unix socket call is
-three lines of engine-claude's `messaging.rs` in `scripts/os-cfg-allow.txt`
-(the os crate has no local socket yet); no other OS is posted to.
+on 2.1.325 a non-descendant's post is NOT refused. The post is the platform's
+`os::socket::post_local` (a unix socket, each write within 5 s); on Windows,
+whose endpoint is unmeasured, it is `Unsupported`, and the wake fails, said.
 
 ## What an engine cannot carry (M6, j002000)
 

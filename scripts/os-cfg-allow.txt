@@ -2,6 +2,3 @@
 # in this workspace that names an OS. One per line:
 #   <file> | <text on the line> | <why>
 # Keep it short: an exception is code the os crate cannot hold.
-crates/adapters/driven/engine-claude/src/messaging.rs | #[cfg(unix)] | the terminal wake posts to claude's unix messaging socket; the os crate has no local socket yet (move it there at the next angzarr-platform pin)
-crates/adapters/driven/engine-claude/src/messaging.rs | let mut socket = std::os::unix::net::UnixStream::connect(path)?; | the same: claude's unix messaging socket
-crates/adapters/driven/engine-claude/src/messaging.rs | #[cfg(not(unix))] | the same: no other socket is posted to (claude's Windows endpoint is unmeasured)

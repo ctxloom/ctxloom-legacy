@@ -10,8 +10,8 @@
 //! optional here" in claude's own log).
 //!
 //! The token never leaves this value: never in a `Debug`, a failure or a log.
-//! Only a unix socket is posted to (claude's Windows endpoint is not
-//! measured): elsewhere a post fails, said.
+//! The post is the platform's (`os::socket::post_local`): a unix socket;
+//! on Windows, whose endpoint is not measured, a post fails, said.
 
 use std::fmt;
 
@@ -23,6 +23,9 @@ pub const SOCKET_VARIABLE: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
 
 /// The token claude admits a sender by, when it exports one.
 pub const TOKEN_VARIABLE: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
+
+/// How long one write of a post may wait on claude reading it.
+const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One session's messaging socket, bound from what claude exported.
 pub struct MessagingWake {
@@ -71,28 +74,10 @@ pub fn wire(token: &str, line: &str) -> String {
 
 impl WakePost for MessagingWake {
     fn post(&self, line: &str) -> Result<(), String> {
-        send(&self.socket, wire(&self.token, line).as_bytes())
+        let socket = std::path::Path::new(&self.socket);
+        os::socket::post_local(socket, wire(&self.token, line).as_bytes(), WRITE_TIMEOUT)
             .map_err(|e| format!("claude's messaging socket {}: {e}", self.socket))
     }
-}
-
-/// `bytes` written to the unix socket at `path`, which is then closed.
-#[cfg(unix)]
-fn send(path: &str, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut socket = std::os::unix::net::UnixStream::connect(path)?;
-    socket.set_write_timeout(Some(std::time::Duration::from_secs(5)))?;
-    socket.write_all(bytes)?;
-    socket.shutdown(std::net::Shutdown::Write)
-}
-
-/// No socket but a unix one is posted to.
-#[cfg(not(unix))]
-fn send(_: &str, _: &[u8]) -> std::io::Result<()> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "only a unix socket is posted to",
-    ))
 }
 
 #[cfg(test)]
