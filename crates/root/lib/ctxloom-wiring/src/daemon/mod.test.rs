@@ -427,3 +427,35 @@ fn test_a_hooks_unprobed_daemon_is_its_homes_discovery_without_a_health_check() 
         "another home's"
     );
 }
+
+/// What `render` says of `value` in text.
+fn said_text(value: &impl angzarr_presentation::Render) -> String {
+    let mut out = Vec::new();
+    angzarr_presentation::render(&mut out, angzarr_presentation::Format::Text, value)
+        .expect("rendered");
+    String::from_utf8(out).expect("utf-8")
+}
+
+// Smoke 2026-11-19: `daemon stop` says what it stopped (DRAFT text), or
+// that nothing was serving, and its json is the stopped daemon's message.
+#[test]
+fn daemon_stop_says_what_it_stopped_and_when_nothing_served() {
+    use super::Stopped;
+    let daemon = daemon_proto::v1::Daemon {
+        pid: 4242,
+        version: "v0.1.0-abc1234".to_string(),
+        ..daemon_proto::v1::Daemon::default()
+    };
+    assert_eq!(
+        said_text(&Stopped(Some(daemon.clone()), false)),
+        "stopped the ctxloom daemon (pid 4242), ctxloom v0.1.0-abc1234\n"
+    );
+    assert_eq!(
+        said_text(&Stopped(Some(daemon), true)),
+        "drained and stopped the ctxloom daemon (pid 4242), ctxloom v0.1.0-abc1234\n"
+    );
+    assert_eq!(
+        said_text(&Stopped(None, false)),
+        "no ctxloom daemon was serving: nothing to stop\n"
+    );
+}

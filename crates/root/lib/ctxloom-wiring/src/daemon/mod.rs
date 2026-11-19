@@ -247,6 +247,34 @@ impl Render for Status {
     }
 }
 
+/// What `stop` answers (smoke 2026-11-19): the daemon it stopped, as the
+/// stop's answer says it, or none serving; whether it drained first. Its
+/// json is the `Daemon`'s proto3 JSON (ruling 146), `{}` for none.
+struct Stopped(Option<daemon_proto::v1::Daemon>, bool);
+
+impl Render for Stopped {
+    fn json(&self) -> impl Serialize + '_ {
+        self.0.clone().unwrap_or_default()
+    }
+
+    // DRAFT text (smoke 2026-11-19): `daemon stop` said nothing.
+    fn text(&self, out: &mut dyn Write) -> std::io::Result<()> {
+        let Some(daemon) = &self.0 else {
+            return writeln!(out, "no ctxloom daemon was serving: nothing to stop");
+        };
+        let done = if self.1 {
+            "drained and stopped"
+        } else {
+            "stopped"
+        };
+        writeln!(
+            out,
+            "{done} the ctxloom daemon (pid {}), ctxloom {}",
+            daemon.pid, daemon.version
+        )
+    }
+}
+
 /// `warnings`, as `daemon status` says them in text: each its message in
 /// `catalog`'s words, then its fix where the catalog has one.
 fn warned(warnings: &[daemon_proto::v1::Notice], catalog: &Catalog) -> Vec<String> {
@@ -334,12 +362,13 @@ pub(crate) fn run(
             let client = client_reaching(&wiring, reach);
             // Its warnings (a drain's hand-over among them) are heard from
             // the stop's answer, as every call's (OD-55), and said at once.
-            match drain {
+            let stopped = match drain {
                 // OD-54 (3): handed over within the configured timeout.
                 true => block_on(client.drain(None))?,
                 false => block_on(client.stop(even_if_live))?,
             }
             .map_err(called)?;
+            output(render(out, format, &Stopped(stopped, drain)))?;
             Ok(Exit::OK)
         }
         DaemonVerb::Resolve => {
