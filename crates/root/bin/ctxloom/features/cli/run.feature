@@ -643,7 +643,8 @@ Feature: run — assembling a project's context and handing it to an engine
         ctxloom run
         """
       Then the command succeeds
-      And the output contains "there is no login at"
+      # The sentence's end is every platform's: where a link cannot be made
+      # (macOS's keychain, Windows) it says why in its own words first.
       And the output contains "the primary session will not be signed in"
       And the assistant was started with the program, arguments, environment and directory of the daemon's launch, and nothing else
 
