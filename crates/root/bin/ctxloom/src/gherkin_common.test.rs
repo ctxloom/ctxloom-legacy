@@ -1266,13 +1266,14 @@ fn the_real_git_is_found_as_git_or_as_git_exe() {
         PathBuf::from("/b"),
         PathBuf::from("/c"),
     ];
-    let found =
-        |holding: &[&str]| real_git(&dirs, |path| holding.contains(&path.to_str().unwrap()));
-    assert_eq!(found(&["/b/git"]), Some(PathBuf::from("/b/git")));
-    assert_eq!(found(&["/b/git.exe"]), Some(PathBuf::from("/b/git.exe")));
+    // Paths are built as the platform joins them (Windows' separator).
+    let at = |dir: &str, name: &str| PathBuf::from(dir).join(name);
+    let found = |holding: &[PathBuf]| real_git(&dirs, |path| holding.iter().any(|h| h == path));
+    assert_eq!(found(&[at("/b", "git")]), Some(at("/b", "git")));
+    assert_eq!(found(&[at("/b", "git.exe")]), Some(at("/b", "git.exe")));
     assert_eq!(
-        found(&["/c/git", "/b/git.exe"]),
-        Some(PathBuf::from("/b/git.exe"))
+        found(&[at("/c", "git"), at("/b", "git.exe")]),
+        Some(at("/b", "git.exe"))
     );
     assert_eq!(found(&[]), None);
 }
