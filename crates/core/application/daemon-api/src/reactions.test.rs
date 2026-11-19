@@ -322,3 +322,76 @@ fn test_a_requests_budget_is_at_most_the_hooks() {
     assert_eq!(budget_of(2_500), 2_500);
     assert_eq!(budget_of(10_001), 10_000);
 }
+
+/// A listing of `tree` recorded through the fixture's kernel, which folds
+/// the checkouts inline.
+async fn listed(world: &crate::server::tests::World, tree: &library_tree::TreeName, oid: &str) {
+    use run_ports::Edge as _;
+    let fact = library_tree::RecordTreeListed {
+        name: tree.to_string(),
+        kind: tree.kind(),
+        base_cause: world
+            .checkouts
+            .checkouts()
+            .tree(&tree.root())
+            .map(|held| held.last_cause.clone())
+            .unwrap_or_default(),
+        files: vec![library_tree::DirtyPath {
+            path: "config.yaml".to_string(),
+            oid: oid.to_string(),
+        }],
+        in_motion: None,
+    };
+    world
+        .handle(library_tree::listing_book(tree, &fact))
+        .await
+        .unwrap();
+}
+
+// Step 10c U13 rework: WatchLibrary is signalled by the catch-up, never
+// polled: a change recorded wakes the watcher, which drains it; a change
+// of a tree it does not watch wakes it and tells it nothing; nothing is
+// kept for a watcher once it is gone.
+#[tokio::test]
+async fn test_a_watcher_is_woken_and_told_each_change_its_trees_record() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+    let f = crate::server::tests::fixture(vec![]);
+    let world = Arc::clone(&f.world);
+    let gits = Arc::new(crate::server::tests::Gits::default());
+    let api = f
+        .api
+        .observing(crate::server::tests::observing(&world, &gits));
+    let woken = Arc::new(AtomicU32::new(0));
+    let wake = Arc::clone(&woken);
+    let mut poll = api
+        .watch_library(
+            &daemon_proto::v1::WatchLibraryRequest {
+                parent: "projects/calm-quiet-heron".to_string(),
+                ..daemon_proto::v1::WatchLibraryRequest::default()
+            },
+            Arc::new(move || {
+                wake.fetch_add(1, Ordering::SeqCst);
+            }),
+        )
+        .unwrap();
+    assert!(poll().is_empty());
+    let checkout = library_tree::TreeName::checkout(
+        sessions::ProjectName::new("calm-quiet-heron").unwrap(),
+        "brisk-copper-moth",
+    )
+    .unwrap();
+    listed(&world, &checkout, "a").await;
+    assert_eq!(woken.load(Ordering::SeqCst), 1);
+    let told = poll();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].tree, checkout.to_string());
+    assert!(poll().is_empty(), "drained once");
+    let home = library_tree::TreeName::home("brisk-copper-moth").unwrap();
+    listed(&world, &home, "h").await;
+    assert_eq!(woken.load(Ordering::SeqCst), 2);
+    assert!(poll().is_empty(), "the home's change is not this watcher's");
+    drop(poll);
+    listed(&world, &checkout, "b").await;
+    assert_eq!(world.checkouts.checkouts().watching(), 0);
+}

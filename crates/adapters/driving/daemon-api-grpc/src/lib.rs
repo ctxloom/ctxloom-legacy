@@ -46,9 +46,6 @@ use tonic::{Code, Request, Response, Status};
 /// How many of a watched run's events wait for its caller to read them.
 const WATCH_BUFFER: usize = 16;
 
-/// How often a library watcher's record is polled for its next changes.
-const WATCH_POLL: std::time::Duration = std::time::Duration::from_millis(50);
-
 /// The service's own name, as a router routes it.
 pub use daemon_proto::service::ctxloom_server::SERVICE_NAME;
 
@@ -560,17 +557,19 @@ impl Ctxloom for Served {
         Ok(Response::new(Box::pin(ReceiverStream::new(heard))))
     }
 
-    /// The named trees' changes (step 10c G7), polled on a task of their
-    /// own at [`WATCH_POLL`] into the response stream until the caller is
-    /// gone: a watcher that goes lets go of the record it polled (and the
-    /// store behind it) within one poll.
+    /// The named trees' changes (step 10c G7), drained on a task of their
+    /// own into the response stream each time the catch-up signals one
+    /// recorded (step 10c U13 rework: no poll), until the caller is gone.
     async fn watch_library(
         &self,
         request: Request<v1::WatchLibraryRequest>,
     ) -> Result<Response<BoxStream<v1::LibraryChange>>, Status> {
+        let signal = std::sync::Arc::new(tokio::sync::Notify::new());
+        let woken = std::sync::Arc::clone(&signal);
+        let wake: daemon_api::Wake = std::sync::Arc::new(move || woken.notify_one());
         let mut poll = self
             .answer(request, |calls, message| async move {
-                calls.watch_library(message).await
+                calls.watch_library(message, wake).await
             })
             .await?
             .into_inner();
@@ -582,10 +581,10 @@ impl Ctxloom for Served {
                         return;
                     }
                 }
-                if tell.is_closed() {
-                    return;
+                tokio::select! {
+                    () = signal.notified() => {}
+                    () = tell.closed() => return,
                 }
-                tokio::time::sleep(WATCH_POLL).await;
             }
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(heard))))

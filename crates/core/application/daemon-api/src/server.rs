@@ -195,12 +195,14 @@ pub trait Calls: Send + Sync {
         Box::pin(async { Err(not_served("DeleteHandOff")) })
     }
     /// `WatchLibrary` (step 10c G7): the named trees' changes from now on,
-    /// as a poll; as `GetTranscript`.
+    /// drained by the poll each time `wake` is called (the catch-up's
+    /// signal, step 10c U13 rework); as `GetTranscript`.
     fn watch_library(
         &self,
         request: v1::WatchLibraryRequest,
+        wake: crate::reactions::Wake,
     ) -> Answer<'_, crate::reactions::LibraryPoll> {
-        let _ = request;
+        let _ = (request, wake);
         Box::pin(async { Err(not_served("WatchLibrary")) })
     }
     /// `RedeliverContext` (step 10c U13); as `GetTranscript`.
@@ -431,10 +433,11 @@ impl<E: Edge + 'static> Calls for Api<E> {
     fn watch_library(
         &self,
         request: v1::WatchLibraryRequest,
+        wake: crate::reactions::Wake,
     ) -> Answer<'_, crate::reactions::LibraryPoll> {
         Box::pin(async move {
             self.open()?;
-            Api::watch_library(self, &request)
+            Api::watch_library(self, &request, wake)
         })
     }
 

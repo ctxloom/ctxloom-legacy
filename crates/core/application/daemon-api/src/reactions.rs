@@ -50,10 +50,14 @@ pub(crate) fn budget_of(asked: u32) -> usize {
     }
 }
 
-/// A library's changes as a watcher polls them (step 10c G7): each call
+/// A library's changes as a watcher drains them (step 10c G7): each call
 /// answers those recorded since the last, oldest first, none when none
-/// was.
+/// was. It is called when its [`Wake`] is (the catch-up's signal, step 10c
+/// U13 rework: no poll, no log).
 pub type LibraryPoll = Box<dyn FnMut() -> Vec<v1::LibraryChange> + Send>;
+
+/// What wakes a watcher once a change of the library is recorded.
+pub type Wake = library_checkout::Wake;
 
 /// Whether a watcher of `parent` (`projects/{p}`, or `users/me`) is told
 /// of the tree `tree`'s changes: every checkout of the project, or the
@@ -98,11 +102,12 @@ pub(crate) fn notice_of(recorded: &library_checkout::Recorded) -> v1::LibraryCha
 
 impl<E: Edge> Api<E> {
     /// `WatchLibrary` (G7): the changes of the trees `request.parent` names
-    /// recorded from now on, as a poll; a daemon that observes no library
-    /// fails it. Never content.
+    /// recorded from now on, drained each time `wake` is called; a daemon
+    /// that observes no library fails it. Never content.
     pub fn watch_library(
         &self,
         request: &v1::WatchLibraryRequest,
+        wake: Wake,
     ) -> Result<LibraryPoll, ApiError> {
         let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon observes no library".to_string(),
@@ -114,17 +119,12 @@ impl<E: Edge> Api<E> {
                 reason: "shape".to_string(),
             })));
         }
-        let checkouts = observations.checkouts();
-        let mut after = checkouts.checkouts().last_recorded();
+        let heard = observations.checkouts().checkouts().watch(wake);
         Ok(Box::new(move || {
-            let recorded = checkouts.checkouts().recorded_since(after);
-            if let Some(last) = recorded.last() {
-                after = last.at;
-            }
-            recorded
-                .iter()
+            heard
+                .try_iter()
                 .filter(|recorded| watches(&parent, &recorded.tree))
-                .map(notice_of)
+                .map(|recorded| notice_of(&recorded))
                 .collect()
         }))
     }

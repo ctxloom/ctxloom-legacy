@@ -324,8 +324,15 @@ fn an_export_is_known_by_its_request_id_with_what_it_answered() {
 // folds the stream afresh logs nothing it logged before; other events are
 // no change.
 #[test]
-fn each_recorded_change_is_logged_once_in_order() {
+fn each_recorded_change_is_told_to_each_watcher_once_in_order() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
     let mut model = LibraryCheckout::new();
+    let woken = Arc::new(AtomicU32::new(0));
+    let wake = Arc::clone(&woken);
+    let heard = model.watch(Arc::new(move || {
+        wake.fetch_add(1, Ordering::SeqCst);
+    }));
     model
         .project(&on(
             LIBRARY_DOMAIN,
@@ -350,9 +357,10 @@ fn each_recorded_change_is_logged_once_in_order() {
     model
         .project(&on(LIBRARY_DOMAIN, 2, vec![applied]))
         .unwrap();
-    let log = model.recorded_since(0);
-    assert_eq!(log.len(), 2, "the intent is no change: {log:?}");
-    let (first, second) = (&log[0], &log[1]);
+    let told: Vec<super::Recorded> = heard.try_iter().collect();
+    assert_eq!(told.len(), 2, "the intent is no change: {told:?}");
+    assert_eq!(woken.load(Ordering::SeqCst), 2, "woken at each change");
+    let (first, second) = (&told[0], &told[1]);
     assert_eq!(first.tree, TREE);
     assert_eq!((first.at, first.sequence), (1, 0));
     assert_eq!(first.cause, "obs:0");
@@ -376,12 +384,25 @@ fn each_recorded_change_is_logged_once_in_order() {
             ("content/bundles/v2/demo/fragments/new.md", "added")
         ]
     );
-    assert_eq!(model.recorded_since(1), std::slice::from_ref(second));
-    assert!(model.recorded_since(2).is_empty());
-    assert_eq!(model.last_recorded(), 2);
-    // Folded afresh from sequence 0 (a catch-up): nothing is logged again.
+    // A watcher from now on is told only what is recorded from now on.
+    let later = model.watch(Arc::new(|| {}));
+    assert!(later.try_iter().next().is_none());
+    // Folded afresh from sequence 0 (a catch-up): nothing is told again.
     model
         .project(&on(LIBRARY_DOMAIN, 0, vec![observed(true, &[(FILE, "a")])]))
         .unwrap();
-    assert_eq!(model.last_recorded(), 2);
+    assert!(heard.try_iter().next().is_none());
+    assert!(later.try_iter().next().is_none());
+    // A watcher gone is let go at the next change: nothing is kept for it.
+    drop(heard);
+    drop(later);
+    model
+        .project(&on(
+            LIBRARY_DOMAIN,
+            3,
+            vec![observed(false, &[(FILE, "d")])],
+        ))
+        .unwrap();
+    assert_eq!(model.watching(), 0);
+    assert_eq!(woken.load(Ordering::SeqCst), 2, "no watcher, nobody woken");
 }

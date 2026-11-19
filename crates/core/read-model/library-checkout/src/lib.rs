@@ -14,7 +14,7 @@
 //! from the store by the daemon's loop ([`caught_up`]), so a tree a daemon
 //! before this one recorded is held too.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use angzarr_embedded::angzarr_router::error::CodedError;
@@ -35,19 +35,25 @@ pub struct LibraryCheckout {
     /// Every export recorded, by its request id (AIP-155), with its tree's
     /// root: what an export's retry is answered with.
     exports: BTreeMap<String, (Vec<u8>, library_tree::BundleExported)>,
-    /// The changes recorded, the latest [`LOG_KEPT`] (step 10c U13, G7):
-    /// what a watcher is streamed and the reaction policy reads.
-    log: VecDeque<Recorded>,
-    /// Each tree's last sequence logged, by its root, so a stream folded
-    /// afresh (a catch-up) logs nothing twice.
+    /// Who is told each change as it is recorded (step 10c U13 rework,
+    /// `WatchLibrary`): no log is kept; a watcher is told what is recorded
+    /// from when it watched, and woken by its own signal.
+    watchers: std::sync::Mutex<Vec<Watcher>>,
+    /// Each tree's last sequence told, by its root, so a stream folded
+    /// afresh (a catch-up) tells nothing twice.
     logged: BTreeMap<Vec<u8>, u64>,
-    /// The place of the last change logged.
+    /// The place of the last change told.
     last: u64,
 }
 
-/// How many recorded changes the log keeps: a watcher further behind
-/// misses the oldest (a thin notice, never the record).
-pub const LOG_KEPT: usize = 1024;
+/// What wakes a watcher once a change is told it: the catch-up's signal.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// One watcher: where its changes go, and what wakes it.
+struct Watcher {
+    told: std::sync::mpsc::Sender<Recorded>,
+    wake: Wake,
+}
 
 /// One recorded change of a tree (step 10c U13, G7; protos.md §4.1): a
 /// `TreeObserved` or a `StepApplied`, as a thin notice. Never content.
@@ -293,7 +299,7 @@ impl LibraryCheckout {
             .and_then(|meta| meta.recorded_at.as_ref())
             .map_or((0, 0), |at| (at.seconds, at.nanos));
         self.last += 1;
-        self.log.push_back(Recorded {
+        let recorded = Recorded {
             at: self.last,
             tree,
             sequence,
@@ -301,24 +307,36 @@ impl LibraryCheckout {
             intended,
             changes,
             recorded_at,
-        });
-        while self.log.len() > LOG_KEPT {
-            self.log.pop_front();
+        };
+        // A watcher gone is let go here; each other is told, then woken.
+        let mut watchers = self
+            .watchers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        watchers.retain(|watcher| watcher.told.send(recorded.clone()).is_ok());
+        for watcher in watchers.iter() {
+            (watcher.wake)();
         }
     }
 
-    /// The changes logged after the place `after`, oldest first.
-    pub fn recorded_since(&self, after: u64) -> Vec<Recorded> {
-        self.log
-            .iter()
-            .filter(|recorded| recorded.at > after)
-            .cloned()
-            .collect()
+    /// A watcher of every change recorded from now on, oldest first: told
+    /// each as it is folded and woken by `wake` (step 10c U13 rework: the
+    /// catch-up's signal, no poll and no log).
+    pub fn watch(&self, wake: Wake) -> std::sync::mpsc::Receiver<Recorded> {
+        let (told, heard) = std::sync::mpsc::channel();
+        self.watchers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Watcher { told, wake });
+        heard
     }
 
-    /// The place of the last change logged (0: none yet).
-    pub fn last_recorded(&self) -> u64 {
-        self.last
+    /// How many watchers are told.
+    pub fn watching(&self) -> usize {
+        self.watchers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// The export recorded under `request_id`, in any tree (AIP-155).
