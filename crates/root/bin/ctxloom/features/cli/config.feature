@@ -183,15 +183,10 @@ Feature: config — the project's one configuration document, read and scaffolde
     # refused the same way: by file, key path and the type that was expected.
     # It used to be a warning, and the command ran on a setting the schema
     # could not vouch for.
-    # Still pending (step 11, needs a ruling): D15 reads every config through
-    # angzarr-yaml, which keeps a scalar as its text and cannot tell `5` from
-    # `"5"`, so no build can say "holds a number, expected string" here; the
-    # refusal names the file and `session_reap_age` and says the value "does
-    # not match pattern '^[0-9]+(d|w|h|m|s)$'". The question has been open
-    # since the S1 report (library_config.test.rs): a typed scalar in
-    # angzarr-yaml, or the scenario redrafted to the pattern's words.
-    @pending
-    Scenario: A config value of the wrong type is refused, naming the file, key and expected type
+    # Redrafted (owner, 2026-11-19): angzarr-yaml keeps a scalar as its text and
+    # cannot tell `5` from `"5"`, so no build can say "expected string"; the
+    # finding is the pattern's own words.
+    Scenario: A config value of the wrong type is refused, naming the file, key and pattern
       Given an initialized ctxloom project
       And the project already has the file ".ctxloom/config.yaml":
         """
@@ -205,16 +200,11 @@ Feature: config — the project's one configuration document, read and scaffolde
       Then the command fails
       And the output contains ".ctxloom/config.yaml"
       And the output contains "`session_reap_age`"
-      And the output contains "expected string"
+      And the output contains "does not match pattern"
 
     # --degraded is the escape hatch for every fatal startup finding, this one
     # included: the violation is still reported, and the command runs.
-    # Still pending (step 11, needs the same ruling as the scenario above):
-    # the finding's words are the pattern's, never "expected string" (D15's
-    # untyped scalars). Also, `config show agents` of a project with no agents
-    # is `{"document": {}}`: nothing names claude-code, so a redraft would
-    # also drop or replace that step.
-    @pending
+    # Redrafted (owner, 2026-11-19): the finding's words are the pattern's.
     Scenario: Under --degraded a config value of the wrong type is warned about and the config loads
       Given an initialized ctxloom project
       And the project already has the file ".ctxloom/config.yaml":
@@ -227,9 +217,8 @@ Feature: config — the project's one configuration document, read and scaffolde
         ctxloom --degraded config show agents
         """
       Then the command succeeds
-      And the output contains "claude-code"
       And the output contains "`session_reap_age`"
-      And the output contains "expected string"
+      And the output contains "does not match pattern"
 
     # The refusal has to be USEFUL, not merely correct: a caller who guessed
     # wrong recovers from the message or not at all, so it names every section
