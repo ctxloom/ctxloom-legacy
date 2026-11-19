@@ -451,6 +451,9 @@ mod library_changes;
 #[path = "gherkin_writes.test.rs"]
 mod writes;
 
+#[path = "gherkin_cli.test.rs"]
+mod cli;
+
 // ------------------------------------------------------------------ given
 
 #[given(expr = "the environment variable {string} is set to {string}")]
