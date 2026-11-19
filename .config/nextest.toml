@@ -179,7 +179,7 @@ test-group = 'ports'
 # library (cli/ bundle, fragment, fragment_draft_premise, command, profile,
 # skill, mcp, mcp_tools, search, materialize, read_extras,
 # context_status, content_distill, companion, agent, library_changes),
-# remotes (cli/ remote, deps), setup (cli/ init, doctor, manage, auth,
+# remotes (cli/ remote, deps, deps_pins, deps_trees, deps_upstream), setup (cli/ init, doctor, manage, auth,
 # config, engine, clean, version, completion), sessions (cli/ session,
 # session_hooks, session_remove, session_worktrees, post_tool_hooks), other
 # (the rest). Windows is slow, not hung: each scenario spawns ctxloom and
@@ -253,12 +253,24 @@ filter = '''
 '''
 slow-timeout = { period = "30s", terminate-after = 15, grace-period = "10s" }
 
+# cli/deps timed out at this 360 s on Windows (CI run 44595606753). Measured
+# 2026-11-19 on windows-latest (CI run 44612264008, GHERKIN_TIMINGS, the
+# scenarios one at a time): the 55 scenario rows took 455 s, 8.3 s a row
+# against 0.7 s on Linux, no row over 21 s and nearly all between 5 and 20 s
+# (a pull's fixtures and daemon, every one), so no step or scenario to fix:
+# the time is spread. The feature is split by Rule into deps, deps_pins,
+# deps_trees and deps_upstream (the owner's way, as daemon's), sequential
+# times about 130, 142, 103 and 94 s (two at once is about half), each
+# within the cluster's unchanged limit below, which is not raised.
 [[profile.default.overrides]]
 platform = 'cfg(windows)'
 filter = '''
     package(ctxloom) & (
         test(=tests::gherkin_features::features::cli::remote)
         | test(=tests::gherkin_features::features::cli::deps)
+        | test(=tests::gherkin_features::features::cli::deps_pins)
+        | test(=tests::gherkin_features::features::cli::deps_trees)
+        | test(=tests::gherkin_features::features::cli::deps_upstream)
     )
 '''
 slow-timeout = { period = "30s", terminate-after = 12, grace-period = "10s" }
