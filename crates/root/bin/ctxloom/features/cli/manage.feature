@@ -5,7 +5,8 @@
 #     the body of the `discover` command, which names `search_library`, an MCP
 #     tool the D8 cut list has not ruled on (D24).
 #   - "After an uninstall, a run delivers into its session ...": needs a
-#     running mock engine (S6).
+#     running mock engine (S6); the mock engine is a surface half alone and
+#     drives no run (step 11).
 #   The mock rows of "Check", "A team's hook" etc. are as Go wrote them; only
 #   the engines this port registers run.
 @doc
