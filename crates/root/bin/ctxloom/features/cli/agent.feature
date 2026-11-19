@@ -74,13 +74,8 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
     # it has no field of its own. The structured rows pin the ENTRY the write
     # returned instead — which is the same claim made against the thing that
     # was actually stored, rather than against the echo.
-    # Still pending (step 11): the text row is stale against the owner's
-    # ruling of 2026-11-17 (a text row names a reference by its short form):
-    # the listing says "profiles: project#profiles/dev", not "profiles: dev".
-    # The json rows run green. A draft edit for the owner: the text row's
-    # `profiles: dev` -> `profiles: project#profiles/dev`.
-    @pending
     Scenario Outline: Creating a binding records every axis, and the listing reads each one back
+      # changed: step 11 (draft), owner ruling 2026-11-17: text prints a reference as its short library reference (project#profiles/dev, demo), json its resource name
       Given an initialized ctxloom project
       And a profile "dev" exists
       When Alice binds an engine and a runtime to a profile:
@@ -103,7 +98,7 @@ Feature: agent — the bindings that decide what runs, on what context, and wher
         | flags         | the binding written | the engine                            | the profile                                     | the runtime                 |
         |               | developer           | projects/{project}/engines/claude-code | projects/{project}/bundles/project/profiles/dev | container-rootless          |
         | --format json | developer           | projects/{project}/engines/claude-code | projects/{project}/bundles/project/profiles/dev | container-rootless          |
-        | --format text | Created agent       | engine: claude-code                   | profiles: dev                                   | runtime: container-rootless |
+        | --format text | Created agent       | engine: claude-code                   | profiles: project#profiles/dev                  | runtime: container-rootless |
 
     # The bare noun answers the question somebody typing it has, rather than
     # teaching them what they could have typed instead. The help-banner check

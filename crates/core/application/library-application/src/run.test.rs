@@ -104,6 +104,45 @@ fn test_a_run_with_no_context_needs_no_agent() {
     assert!(plan.surfaces.mcp.is_empty());
 }
 
+// `run --engine X` runs that engine with its defaults, with no agent named
+// (run.feature's `--engine` Rule): a project with no agent at all is planned,
+// never refused for want of one, so the engine is judged next (ruling 73's
+// order). An engine this build does not drive reaches the plan as
+// `engine_named` alone (ruling 73d), and is planned on the default engine.
+#[test]
+fn test_a_run_naming_an_engine_needs_no_agent() {
+    let library = library(&["schema_version: 9\n"]);
+    for (request, engine) in [
+        (
+            RunRequest {
+                engine: "opencode".to_string(),
+                ..RunRequest::default()
+            },
+            "opencode",
+        ),
+        (
+            RunRequest {
+                engine_named: true,
+                ..RunRequest::default()
+            },
+            "claude-code",
+        ),
+    ] {
+        let plan = library
+            .dry_run(
+                &plain(),
+                &RunRequest {
+                    prompt: "hello".to_string(),
+                    ..request
+                },
+            )
+            .result
+            .unwrap_or_else(|e| panic!("{engine}: {e:?}"))
+            .plan;
+        assert_eq!((plan.agent.as_str(), plan.engine.as_str()), ("", engine));
+    }
+}
+
 // OD-38: no context beside a selection of context is refused, naming both.
 #[test]
 fn test_no_context_beside_a_selection_of_context_is_refused() {

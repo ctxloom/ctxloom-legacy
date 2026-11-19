@@ -1,6 +1,6 @@
 # world: base
 # Ported from fault_tolerance.feature (rev f36e8dfb2)
-# NOT ported: the scenario tagged @pending, with its reason.
+# NOT ported: nothing.
 
 Feature: Fault tolerance
   ctxloom is fault tolerant: a missing reference or an unresolvable remote
@@ -71,10 +71,6 @@ Feature: Fault tolerance
   # attempted; the assertions then name the failing reference, the count, and
   # the underlying git cause — a swallowed diagnostic or a skipped fetch
   # cannot produce any of them.
-  # Still pending (step 11): the behaviour differs. The pull warns of the
-  # failed clone and the unresolved reference, then exits 0 saying "No remote
-  # dependencies to pull.": it does not fail, and says no "Failed: 1".
-  @pending
   Scenario: An unreachable remote fails the pull cleanly rather than crashing
     Given an initialized ctxloom project
     And I run "ctxloom remote create broken file:///nonexistent/ctxloom-repo.git --forge git"

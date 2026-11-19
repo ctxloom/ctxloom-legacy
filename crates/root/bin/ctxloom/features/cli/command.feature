@@ -2,7 +2,7 @@
 # Ported from cli/command.feature (rev f36e8dfb2)
 # NOT ported: the scenarios tagged @pending, each with its reason: create,
 #   the MCP resource reads (`the agent reads resource` has no MCP session in
-#   this port), remove, and distilling a no_distill command.
+#   this port) and remove.
 @doc
 Feature: command — authoring reusable prompt templates for AI coding assistants
 
@@ -203,11 +203,8 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
     # answer is the same whether or not an LLM is even configured — the
     # author's own declaration wins first, and distill says so rather than
     # exiting 0 with no explanation of which of the two reasons applied.
-    # Still pending (step 11): the response's shape differs. `command distill`
-    # of a no_distill command answers `{"applied": false, "detail":
-    # ["no_distill"], ...}` (exit 0): no `reason` for the step to read.
-    @pending
     Scenario Outline: Distilling a command marked no_distill reports why it did nothing
+      # changed: step 11 (draft), step 10b's DistillCommandResponse (library.proto, approved): the reason is a line of `detail`, the response has no `reason`.
       Given an initialized ctxloom project
       And the project already has the bundle "demo":
         """
@@ -222,7 +219,7 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
         ctxloom command distill demo#commands/review <flags>
         """
       Then the command succeeds
-      And the output reports "reason" as "<names no_distill as the reason>"
+      And the output reports "detail" containing "<names no_distill as the reason>"
 
     @json-default
     Examples: no --format at all takes the derived default off a terminal; an explicit one wins in both directions

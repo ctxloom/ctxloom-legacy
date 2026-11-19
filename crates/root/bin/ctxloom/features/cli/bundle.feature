@@ -381,14 +381,6 @@ Feature: bundle — the container authored content lives in, and everything that
 
     # THE REFUSAL IS PROVEN BY WHAT DID NOT HAPPEN: an edit that wrote the
     # first file and refused the second would pass an exit-code check.
-    # Still pending (step 11): the third row's behaviour differs, and the
-    # first two meet a fixture gap. `bundle edit demo --remove-fragment
-    # example --remove-prompt example` is applied (exit 0, both removed) where
-    # the row expects the one-change refusal. The other two are refused as
-    # written, but the refused command's first read mints the checkout harp,
-    # `.ctxloom/state/checkout`, which the fixture project (no scaffold
-    # .gitignore, whose `/state` would hide it) shows git as untracked.
-    @pending
     Scenario Outline: An edit that would change more than one file is refused, and changes none
       # new: T29, S52 (owner): OneChangePerCall, exit 20.
       Given an initialized ctxloom project
@@ -689,12 +681,8 @@ Feature: bundle — the container authored content lives in, and everything that
         | --format json | false                 | 2 fragment(s), 1 command(s)  | ctxloom bundle remove demo --yes   | projects/{project}/bundles/demo |
         | --format text | Nothing was removed   | 2 fragment(s), 1 command(s)  | ctxloom bundle remove demo --yes   | demo                      |
 
-    # Still pending (step 11): stale against OD-23 and ruling 127. After the
-    # removal the listing still holds the built-in `ctxloom` bundle (origin
-    # BUILTIN; text "Installed bundles (1)"), so it is not empty and never
-    # says "No bundles installed.".
-    @pending
     Scenario Outline: Removing a bundle with --yes takes the file and the listing entry
+      # changed: step 11 (draft), OD-23 (owner, 2026-11-16) and ruling 127: the listing keeps the built-in `ctxloom` bundle, so it is never empty; the removed bundle is gone from it.
       Given an initialized ctxloom project
       And a bundle "demo" exists
       When Alice applies the removal:
@@ -704,14 +692,16 @@ Feature: bundle — the container authored content lives in, and everything that
       Then the command succeeds
       And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" does not exist
       When I run "ctxloom bundle list --no-companions <flags>"
-      Then the output reports "bundles" as empty, saying "No bundles installed."
+      Then the command succeeds
+      And the output reports "bundles[name$=/bundles/demo].name" not containing "<the removed bundle>"
+      And the output reports "bundles[name$=/bundles/ctxloom].name" as "<the built-in bundle>"
 
       @json-default
       Examples: no --format at all takes the derived default off a terminal; an explicit one wins in both directions
-        | flags         |
-        |               |
-        | --format json |
-        | --format text |
+        | flags         | the removed bundle              | the built-in bundle                |
+        |               | projects/{project}/bundles/demo | projects/{project}/bundles/ctxloom |
+        | --format json | projects/{project}/bundles/demo | projects/{project}/bundles/ctxloom |
+        | --format text | demo                            | ctxloom (v1.0.0) [built-in]        |
 
     # The aliases are not decoration: `rm` is what a person's fingers type, and
     # an alias that reached a different code path — a different default, a
