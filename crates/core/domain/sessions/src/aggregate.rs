@@ -33,10 +33,15 @@ use crate::{
     SessionClosed, SessionIsClosed, UntrustedTarget, UrgencyUnsupported,
 };
 use crate::{
-    AssistantTextShown, CaptureGapped, Compacted, ContextRedelivered, ConversationCleared,
-    LoadoutRecorded, PromptSubmitted, RecordAssistantText, RecordCaptureGap, RecordCompaction,
-    RecordContextRedelivered, RecordConversationCleared, RecordLoadout, RecordPromptSubmitted,
-    RecordToolCall, RecordTurnEnded, SessionEnded, SessionReopened, ToolCalled, TurnEnded,
+    wake, DeliverMessages, DisarmWake, IssueWake, MessagesDelivered, WakeDisarmed, WakeIssued,
+    WakeOutstanding, WakeRedeemed,
+};
+use crate::{
+    AssistantTextShown, CaptureGapped, Compacted, ContextOwed, ContextRedelivered,
+    ConversationCleared, LoadoutRecorded, PromptSubmitted, RecordAssistantText, RecordCaptureGap,
+    RecordCompaction, RecordContextOwed, RecordContextRedelivered, RecordConversationCleared,
+    RecordLoadout, RecordPromptSubmitted, RecordToolCall, RecordTurnEnded, SessionEnded,
+    SessionReopened, ToolCalled, TurnEnded,
 };
 
 /// The session aggregate: one session, folded from its stream.
@@ -211,6 +216,64 @@ impl SessionAggregate {
             }),
             None => emit,
         })
+    }
+
+    /// Issue the terminal wake (one outstanding at a time).
+    #[handles_cmd(IssueWake, refuses(NoSession, SessionIsClosed, WakeOutstanding))]
+    fn issue_wake(
+        &self,
+        cmd: IssueWake,
+        ctx: &Context,
+    ) -> Result<WakeIssued, Failed<Refuses<Self, IssueWake>>> {
+        let _ = ctx;
+        wake::wake_issued(&self.session, &cmd).map_err(|rejection| {
+            refuse!(
+                SessionRejection,
+                rejection,
+                Refuses<Self, IssueWake>,
+                [NoSession => NoSession, SessionClosed{harp} => SessionIsClosed, WakeOutstanding{nonce} => WakeOutstanding]
+            )
+        })
+    }
+
+    /// Disarm the outstanding wake; nothing for any other.
+    #[handles_cmd(DisarmWake, refuses(NoSession))]
+    fn disarm_wake(
+        &self,
+        cmd: DisarmWake,
+        ctx: &Context,
+    ) -> Result<Option<WakeDisarmed>, Failed<Refuses<Self, DisarmWake>>> {
+        let _ = ctx;
+        wake::wake_disarmed(&self.session, &cmd).map_err(|rejection| {
+            refuse!(
+                SessionRejection,
+                rejection,
+                Refuses<Self, DisarmWake>,
+                [NoSession => NoSession]
+            )
+        })
+    }
+
+    /// The messages a primary's hook delivered, and the wake its prompt
+    /// redeemed.
+    #[handles_cmd(DeliverMessages, refuses(NoSession))]
+    fn deliver_messages(
+        &self,
+        cmd: DeliverMessages,
+        ctx: &Context,
+    ) -> Result<Emit<Self>, Failed<Refuses<Self, DeliverMessages>>> {
+        let _ = ctx;
+        let (delivered, redeemed) = wake::delivered(&self.session, &cmd).map_err(|rejection| {
+            refuse!(
+                SessionRejection,
+                rejection,
+                Refuses<Self, DeliverMessages>,
+                [NoSession => NoSession]
+            )
+        })?;
+        Ok(Emit::of(delivered).then(move |_: &Self, _: &Context| {
+            Ok::<_, Failed<Refuses<Self, DeliverMessages>>>(redeemed)
+        }))
     }
 
     /// Ask the session to clear its conversation (M1).
@@ -498,6 +561,7 @@ impl SessionAggregate {
             size: fact.size,
             sha256: fact.sha256,
             carried_by: fact.carried_by,
+            covered: fact.covered,
         }))
     }
 
@@ -509,6 +573,21 @@ impl SessionAggregate {
         record(live(&self.session).ok().map(|_| LoadoutRecorded {
             loadout: fact.loadout,
             incarnation: fact.incarnation,
+            covered: fact.covered,
+        }))
+    }
+
+    /// RecordContextOwed (step 10c U13 rework): a library change a live
+    /// session's loadout draws on, recorded by the daemon's OwedContexts
+    /// projector; nothing on a stream with no live session.
+    #[handles_fact(RecordContextOwed)]
+    fn context_owed(&self, fact: RecordContextOwed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+        let _ = ctx;
+        record(live(&self.session).ok().map(|_| ContextOwed {
+            tree: fact.tree,
+            sequence: fact.sequence,
+            bundles: fact.bundles,
+            paths: fact.paths,
         }))
     }
 
@@ -543,6 +622,14 @@ impl SessionAggregate {
     #[cfg_attr(test, mutants::skip)]
     #[applies(CaptureGapped)]
     fn applied_capturegapped(&mut self, event: CaptureGapped, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    // Equivalent: an owed change carries no aggregate state (step 10c U13
+    // rework; the session index folds it).
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(ContextOwed)]
+    fn applied_contextowed(&mut self, event: ContextOwed, page: &PageContext) {
         fold(&mut self.session, event.into(), page);
     }
 
@@ -676,6 +763,29 @@ impl SessionAggregate {
     #[cfg_attr(test, mutants::skip)]
     #[applies(ClearRequested)]
     fn clear_requested(&mut self, event: ClearRequested, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    #[applies(WakeIssued)]
+    fn wake_issued(&mut self, event: WakeIssued, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    #[applies(WakeDisarmed)]
+    fn wake_disarmed(&mut self, event: WakeDisarmed, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    #[applies(WakeRedeemed)]
+    fn wake_redeemed(&mut self, event: WakeRedeemed, page: &PageContext) {
+        fold(&mut self.session, event.into(), page);
+    }
+
+    // Equivalent: a delivery is the read side's; `crate::apply` changes no
+    // state for it.
+    #[cfg_attr(test, mutants::skip)]
+    #[applies(MessagesDelivered)]
+    fn messages_delivered(&mut self, event: MessagesDelivered, page: &PageContext) {
         fold(&mut self.session, event.into(), page);
     }
 

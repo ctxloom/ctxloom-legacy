@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use angzarr_embedded::angzarr_ports::CommitNotify;
@@ -622,6 +622,9 @@ async fn start(
     let bearer = OsTokenSource.mint();
     let certificate = daemon_certificate()?;
     let started_at = seconds_now();
+    // The sessions their ctxloom MCP server watches (the terminal wake):
+    // the API's `WatchSession` watches, the loop publishes each round.
+    let watches = daemon_application::SessionWatches::new(daemon_application::KEEPALIVE);
     let calls = served(
         daemon_api::Api::new(daemon_api::Parts {
             edge: Arc::clone(&edge),
@@ -649,12 +652,12 @@ async fn start(
                 .map(|hosted| Arc::clone(&hosted.engine))
                 .collect(),
         )))
+        .watching(Arc::clone(&watches))
         .on_os(&os),
         (fs, files, trash_clock(env)),
         (home, temp, &stamp),
         (&engines, terminals, kept),
     );
-    shared.observing_live(&calls, super::env_vars(env));
     let listener = HookListener::serve_tcp_beside(
         coordinated(&edge, files),
         UserGate::new(&bearer),
@@ -691,7 +694,8 @@ async fn start(
         },
         Arc::clone(say),
     )
-    .hosting_one_shots(Arc::clone(one_shots));
+    .hosting_one_shots(Arc::clone(one_shots))
+    .watching(watches);
     let launcher = timed(launcher, pace)
         // OD-59 (2), the ONE named exception to "the daemon never reads a
         // hold": its start delivers a judged run's session's hold first.
@@ -891,6 +895,7 @@ fn served(
                     fs: Arc::clone(fs),
                     home: home.to_path_buf(),
                     temp: temp.to_path_buf(),
+                    scanner: Arc::new(super::places::TreeScanner::new(Arc::clone(fs))),
                 }),
                 // A write's change is one atomic operation (step 10b U8).
                 operations: Arc::new(content_fs::TreeOperations::new(Arc::clone(fs))),
@@ -1102,6 +1107,13 @@ fn launcher(
         },
         say: Box::new(move |line: &str| said(&say, line)),
     })
+    // What each live session is owed, recorded as each round catches up
+    // (step 10c U13 rework).
+    .owing(Arc::new(super::places::LibraryTrees {
+        fs: Arc::clone(fs),
+        index: kept.index.clone().unwrap_or_default(),
+        home: home.to_path_buf(),
+    }))
     // A child's program found on its own PATH, as every launch's (T10).
     .finding(Arc::new(
         host_launcher::HostLauncher::default().searching(Arc::clone(fs)),
@@ -1231,8 +1243,6 @@ async fn run<E: run_ports::Edge>(
         // A start-up that failed is tried again first (OD-52).
         started_up_again(launcher, core, (files, shared.as_ref()), say).await;
         let busy = launcher.tick(core.store(), core.catalog(), draining).await;
-        // Each tree a live session runs in, observed (step 10c U13, G5(b)).
-        shared.observe_live().await;
         shared.round_done(round);
         // A session it prepares (asked for, or its frontend's TUI running)
         // keeps it: its frontend is a client it serves (U5).
@@ -1375,12 +1385,6 @@ struct Shared {
     /// The daemon's home's ctxloom directory, once it is gone (OD-60, owner
     /// 2026-11-17), looked at each time it is asked.
     home_gone: HomeGone,
-    /// What each round observes the live sessions' trees through (step
-    /// 10c U13, G5(b)), and the daemon's own environment git runs in
-    /// there; set once the API is built.
-    /// Weak: the API's hosting is this, so a strong one would keep the
-    /// API, and the store it holds, past the daemon's end (ruling 131).
-    live: std::sync::OnceLock<(Weak<dyn daemon_api::Calls>, daemon_proto::v1::EnvVars)>,
 }
 
 /// Where [`Shared`] looks for its home: none while it is there.
@@ -1430,25 +1434,6 @@ impl Shared {
             wake: tokio::sync::Notify::new(),
             start_up: Mutex::new(None),
             home_gone: Box::new(|| None),
-            live: std::sync::OnceLock::new(),
-        }
-    }
-
-    /// Each round from now observes the live sessions' trees through
-    /// `calls`, git run in `env` (step 10c U13, G5(b)).
-    fn observing_live(&self, calls: &Arc<dyn daemon_api::Calls>, env: daemon_proto::v1::EnvVars) {
-        let _ = self.live.set((Arc::downgrade(calls), env));
-    }
-
-    /// The live sessions' trees observed (G5(b)): nothing when no session
-    /// is live, or before the API is built.
-    async fn observe_live(&self) {
-        let live = self
-            .live
-            .get()
-            .and_then(|(calls, env)| Some((calls.upgrade()?, env.clone())));
-        if let Some((calls, env)) = live {
-            let _ = calls.observe_live(env).await;
         }
     }
 

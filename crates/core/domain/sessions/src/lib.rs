@@ -33,6 +33,7 @@ mod projects;
 mod refusal;
 mod rejection;
 mod state;
+mod wake;
 
 use angzarr_embedded::Timestamp;
 
@@ -138,6 +139,7 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         | SessionEvent::ConversationCleared(_)
         | SessionEvent::CaptureGapped(_)
         | SessionEvent::ContextRedelivered(_)
+        | SessionEvent::ContextOwed(_)
         | SessionEvent::LoadoutRecorded(_) => {}
         // A run's end is when the session's last run ended (the proto's
         // RecordEnd: IncarnationEnded supersedes it), at its page's instant.
@@ -151,6 +153,11 @@ pub fn apply(state: &mut SessionState, event: &SessionEvent, recorded_at: Timest
         // A message and a clear are the read side's (the pending messages,
         // the delivery and clear policies): no state of the session.
         SessionEvent::MessageSent(_) | SessionEvent::ClearRequested(_) => {}
+        // The terminal wake's journal; a delivery is the read side's.
+        SessionEvent::WakeIssued(_)
+        | SessionEvent::WakeDisarmed(_)
+        | SessionEvent::WakeRedeemed(_)
+        | SessionEvent::MessagesDelivered(_) => wake::apply(state, event),
         SessionEvent::SessionClosed(_)
         | SessionEvent::SessionReopened(_)
         | SessionEvent::ChildLaunched(_)
@@ -326,13 +333,38 @@ pub fn loadout_key(session: &str, incarnation: u32) -> String {
     format!("loadout:{session}:{incarnation}")
 }
 
-/// The external id of a context redelivered to `session` for the change
-/// whose cause is `cause` (step 10c U13, protos.md §2):
-/// `reinject:<session>:<H(cause)>`, H the UUIDv5 of the cause, so the same
-/// change is delivered once.
+/// The external id of a context redelivered to `session` covering the tree
+/// positions `cause` names (step 10c U13 rework, [`positions_text`]):
+/// `reinject:<session>:<H(positions)>`, H the UUIDv5 of the text, so a
+/// batch handed again is a DUPLICATE.
 pub fn redelivery_key(session: &str, cause: &str) -> String {
     let hashed = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, cause.as_bytes());
     format!("reinject:{session}:{hashed}")
+}
+
+/// Tree positions as one text, each `<tree>@<sequence>`, sorted by tree,
+/// joined by `,` (step 10c U13 rework): what a redelivery's key hashes and
+/// its record names as its cause.
+pub fn positions_text(positions: &[TreePosition]) -> String {
+    let mut named: Vec<String> = positions
+        .iter()
+        .map(|position| format!("{}@{}", position.tree, position.sequence))
+        .collect();
+    named.sort();
+    named.join(",")
+}
+
+/// The external id of a change owed to `session` (step 10c U13 rework):
+/// `owed:<session>:<tree>@<sequence>`, so the projector's book handed again
+/// records it once.
+pub fn owed_key(session: &str, tree: &str, sequence: u64) -> String {
+    format!("owed:{session}:{tree}@{sequence}")
+}
+
+/// The external id of a change owed to `session` found when its loadout
+/// was handled (step 10c U13 rework): `owed-at-load:<session>:<tree>@<seq>`.
+pub fn owed_at_load_key(session: &str, tree: &str, sequence: u64) -> String {
+    format!("owed-at-load:{session}:{tree}@{sequence}")
 }
 
 /// The book that records `fact` on the session stream `cover` names, keyed

@@ -76,8 +76,10 @@ pub struct Ordered {
 }
 
 /// The urgencies `engine` takes for a session that is (`child`) or is not
-/// a child the daemon hosts: what a send gives as its capability evidence.
-pub fn urgencies_of(child: bool, engine: &str) -> Vec<Urgency> {
+/// a child the daemon hosts, and whose ctxloom MCP server does or does not
+/// watch it (`wakeable`, the terminal wake): what a send gives as its
+/// capability evidence.
+pub fn urgencies_of(child: bool, engine: &str, wakeable: bool) -> Vec<Urgency> {
     let state = sessions::SessionState {
         owner: child.then(|| sessions::SessionRef {
             project_id: String::new(),
@@ -86,7 +88,7 @@ pub fn urgencies_of(child: bool, engine: &str) -> Vec<Urgency> {
         engine: engine.to_string(),
         ..sessions::SessionState::default()
     };
-    session_policies::supported(&state)
+    session_policies::supported(&state, wakeable)
 }
 
 /// A fresh id's text.
@@ -145,7 +147,8 @@ where
             urgency: request.urgency,
             text: request.text.clone(),
             requester: None,
-            supported: urgencies_of(record.owner.is_some(), &record.engine),
+            // In process, no watch is known: a primary takes an inform.
+            supported: urgencies_of(record.owner.is_some(), &record.engine, false),
         };
         let (harp, recorded) = self
             .order(

@@ -133,22 +133,20 @@ pub(crate) fn removal(root: &str, path: &str) -> ctxloom_ports::Operation {
 }
 
 /// Each of `puts` as its step names it: its path ([`step_path`], from the
-/// project's `root`), git's id for what it leaves (asked of `observer` in
-/// the tree `dir`; none for a removal), and the put itself.
+/// project's `root`), the content id of what it leaves
+/// (`library_tree::content_id`; none for a removal), and the put itself.
 pub(crate) fn files_of<'a>(
-    observer: &dyn ctxloom_ports::TreeObserver,
-    (dir, root): (&str, &str),
+    root: &str,
     puts: &'a [ForeignPut],
-) -> Result<Vec<(String, String, &'a ForeignPut)>, ApiError> {
+) -> Vec<(String, String, &'a ForeignPut)> {
     puts.iter()
         .map(|put| {
-            let oid = match &put.bytes {
-                Some(bytes) => observer
-                    .blob_id_of(dir, file_name(&put.path), bytes)
-                    .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?,
-                None => String::new(),
-            };
-            Ok((step_path(root, &put.path), oid, put))
+            let oid = put
+                .bytes
+                .as_deref()
+                .map(library_tree::content_id)
+                .unwrap_or_default();
+            (step_path(root, &put.path), oid, put)
         })
         .collect()
 }
@@ -215,11 +213,6 @@ fn tolerated(
     }
 }
 
-/// The last segment of a path, its file's name.
-fn file_name(path: &str) -> &str {
-    path.rsplit(['/', '\\']).next().unwrap_or(path)
-}
-
 /// The kill point after a foreign writer's `n`th step (one-based) is
 /// recorded done (the `test-die-at` switch's word).
 pub(crate) fn after_step(n: usize) -> String {
@@ -242,10 +235,9 @@ impl<E: Edge> Api<E> {
             detail: "this daemon writes no other tool's file".to_string(),
         })?;
         let (site, trees) = self.foreign_site(request).await?;
-        let (observations, observers) =
-            self.observing.as_ref().ok_or_else(|| ApiError::Failed {
-                detail: "this daemon observes no library".to_string(),
-            })?;
+        let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
+            detail: "this daemon observes no library".to_string(),
+        })?;
         let notices: Vec<v1::Notice> = trees
             .iter()
             .flat_map(|trees| trees.notices.iter().map(notice_of))
@@ -292,8 +284,7 @@ impl<E: Edge> Api<E> {
             library_api::Site::Home { .. } => String::new(),
         };
         let dir = landing.site.tree();
-        let observer = observers.observer(&site.env);
-        let files = files_of(observer.as_ref(), (dir, &root), &planned.files)?;
+        let files = files_of(&root, &planned.files);
         let evidence = Evidence {
             tree_reads: true,
             plan_rejection: None,

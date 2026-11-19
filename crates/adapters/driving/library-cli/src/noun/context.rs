@@ -23,6 +23,34 @@ pub(crate) fn read(
     })
 }
 
+/// What `context refresh` says once the daemon observed afresh (a DRAFT,
+/// step 10c U13 rework).
+pub(crate) const REFRESHED: &str = "the library was observed afresh: what changed is recorded";
+
+/// `context refresh` (step 10c U13 rework, owner 2026-11-18): the
+/// daemon's `AssembleContext` asked to refresh, so it forgets what it has
+/// seen of the trees and observes them now; what differs is recorded as any
+/// read's observation, and reaches a live session through what is owed. The
+/// assembly itself is not shown.
+pub(crate) fn refresh(
+    cx: &Context<'_>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<Exit, Failure> {
+    let request = v1::AssembleContextRequest {
+        refresh: true,
+        globals: cx.globals(),
+        ..v1::AssembleContextRequest::default()
+    };
+    let read = cx
+        .served
+        .assemble_context(request)
+        .map(|assembled| ((), assembled.notices));
+    served(cx, read, out, err, false, |_, out, _| {
+        writeln!(out, "{REFRESHED}")
+    })
+}
+
 /// An assembly as `context assemble` shows it: its premise index rendered
 /// after its context, at rest (`ctxloom fragment show`); its notices said
 /// as every read's are, and kept in the message too, so its json carries

@@ -139,6 +139,9 @@ pub(crate) struct CallerGits {
     pub(crate) fs: Arc<dyn Fs>,
     pub(crate) home: PathBuf,
     pub(crate) temp: PathBuf,
+    /// The one scanner every read sees a tree through (step 10c U13
+    /// rework), its memo shared.
+    pub(crate) scanner: Arc<TreeScanner>,
 }
 
 impl library_api::Observers for CallerGits {
@@ -150,6 +153,10 @@ impl library_api::Observers for CallerGits {
             Arc::clone(&self.fs),
             Arc::new(snapshot),
         ))
+    }
+
+    fn scanner(&self) -> Arc<dyn ctxloom_ports::LibraryScanner> {
+        Arc::clone(&self.scanner) as Arc<dyn ctxloom_ports::LibraryScanner>
     }
 
     fn home_tree(&self) -> Option<String> {
@@ -300,3 +307,209 @@ impl daemon_api::Trusts for ProjectTrusts {
 #[cfg(test)]
 #[path = "reconcile_bench.test.rs"]
 mod reconcile_bench;
+
+/// The library trees each live session draws on (step 10c U13 rework),
+/// as the daemon's OwedContexts handler asks: its project's checkout's (the
+/// project directory's, and each of its own scratch checkouts', each by the
+/// harp its library was named with: one never read is no tree yet), and the
+/// home's. Read, never minted.
+pub(crate) struct LibraryTrees {
+    pub(crate) fs: Arc<dyn Fs>,
+    pub(crate) index: session_index::SessionIndexes,
+    /// ctxloom's home, whose `worktrees/` holds the sessions' checkouts.
+    pub(crate) home: PathBuf,
+}
+
+impl daemon_application::owed::SessionTrees for LibraryTrees {
+    fn trees(&self, record: &session_index::SessionRecord) -> Vec<String> {
+        let project = self
+            .index
+            .index()
+            .project_harp(&record.project_id)
+            .map(str::to_string);
+        let mut trees = Vec::new();
+        if let Some(project) = project {
+            let checkouts =
+                isolation_ports::session_worktrees(&self.home, &record.project_id, &record.harp);
+            let mut dirs = vec![PathBuf::from(&record.project_dir)];
+            if let Ok(entries) = self.fs.read_dir(&checkouts) {
+                dirs.extend(entries.into_iter().map(|entry| checkouts.join(entry.name)));
+            }
+            for dir in dirs {
+                let app = dir.join(".ctxloom");
+                if let Ok(Some(checkout)) = crate::checkout::checkout_harp(self.fs.as_ref(), &app) {
+                    let tree = format!("projects/{project}/checkouts/{checkout}/library");
+                    if !trees.contains(&tree) {
+                        trees.push(tree);
+                    }
+                }
+            }
+        }
+        trees.push(library_tree::HOME_TREE.to_string());
+        trees
+    }
+}
+
+/// How recently modified a file may be and still have its hash kept: one
+/// changed within a clock tick of its hashing may change again unseen by
+/// its stat (git's racily-clean case), so it is hashed again until then.
+const SETTLED: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// What the memo keeps of one file: its stat when hashed, when, and the
+/// hash.
+#[derive(Clone)]
+struct Hashed {
+    len: u64,
+    modified: std::time::SystemTime,
+    at: std::time::SystemTime,
+    id: String,
+}
+
+impl Hashed {
+    /// Whether this hash still stands for a file of length `len` modified
+    /// at `modified`: its stat unchanged, and it had settled when hashed.
+    fn reusable(&self, len: u64, modified: std::time::SystemTime) -> bool {
+        self.len == len && self.modified == modified && self.modified + SETTLED <= self.at
+    }
+}
+
+/// The daemon's scanner (step 10c U13 rework, owner 2026-11-18): a library
+/// tree walked, each file of [`ctxloom_ports::LIBRARY_PATHS`] hashed
+/// (`library_tree::content_id`), no git asked. Its memo, keyed by each
+/// file's path and stat, reuses a hash whose file has not changed and had
+/// settled when it was hashed ([`SETTLED`]); `forget` drops it.
+pub(crate) struct TreeScanner {
+    fs: Arc<dyn Fs>,
+    memo: std::sync::Mutex<std::collections::BTreeMap<PathBuf, Hashed>>,
+    now: Box<dyn Fn() -> std::time::SystemTime + Send + Sync>,
+}
+
+impl TreeScanner {
+    pub(crate) fn new(fs: Arc<dyn Fs>) -> TreeScanner {
+        TreeScanner::timed(fs, Box::new(std::time::SystemTime::now))
+    }
+
+    /// The scanner, its clock `now`.
+    fn timed(
+        fs: Arc<dyn Fs>,
+        now: Box<dyn Fn() -> std::time::SystemTime + Send + Sync>,
+    ) -> TreeScanner {
+        TreeScanner {
+            fs,
+            memo: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            now,
+        }
+    }
+
+    /// The content id of the file `path` with metadata `meta`: the memo's
+    /// when its stat is unchanged and it had settled, else read and hashed.
+    fn id_of(&self, path: &std::path::Path, meta: &file_system::Meta) -> std::io::Result<String> {
+        let mut memo = self
+            .memo
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(kept) = memo
+            .get(path)
+            .filter(|kept| kept.reusable(meta.len, meta.modified))
+        {
+            return Ok(kept.id.clone());
+        }
+        let id = library_tree::content_id(&self.fs.read(path)?);
+        memo.insert(
+            path.to_path_buf(),
+            Hashed {
+                len: meta.len,
+                modified: meta.modified,
+                at: (self.now)(),
+                id: id.clone(),
+            },
+        );
+        Ok(id)
+    }
+
+    /// Every file under `path` (relative `rel`), into `found`.
+    fn walk(
+        &self,
+        path: &std::path::Path,
+        rel: &str,
+        found: &mut std::collections::BTreeMap<String, String>,
+    ) -> std::io::Result<()> {
+        let meta = match self.fs.metadata(path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        match meta.kind {
+            file_system::Kind::Dir => {
+                let mut entries = self.fs.read_dir(path)?;
+                entries.sort_by(|a, b| a.name.cmp(&b.name));
+                for entry in entries {
+                    let name = entry.name.to_string_lossy().into_owned();
+                    self.walk(&path.join(&name), &format!("{rel}/{name}"), found)?;
+                }
+                Ok(())
+            }
+            file_system::Kind::File => {
+                found.insert(rel.to_string(), self.id_of(path, &meta)?);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// An I/O error of a scan, as a failure naming the tree.
+fn scan_failed(dir: &str, error: &std::io::Error) -> ctxloom_ports::Failure {
+    Box::new(crate::LibError::Scan {
+        path: dir.to_string(),
+        detail: error.to_string(),
+    })
+}
+
+impl ctxloom_ports::LibraryScanner for TreeScanner {
+    fn scan(
+        &self,
+        dir: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        let root = std::path::Path::new(dir);
+        let mut found = std::collections::BTreeMap::new();
+        for path in ctxloom_ports::LIBRARY_PATHS {
+            self.walk(&root.join(path), path, &mut found)
+                .map_err(|e| scan_failed(dir, &e))?;
+        }
+        Ok(found)
+    }
+
+    fn content_ids(
+        &self,
+        dir: &str,
+        paths: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        let root = std::path::Path::new(dir);
+        let mut found = std::collections::BTreeMap::new();
+        for path in paths {
+            let at = root.join(path);
+            match self.fs.metadata(&at) {
+                Ok(meta) if meta.kind == file_system::Kind::File => {
+                    let id = self.id_of(&at, &meta).map_err(|e| scan_failed(dir, &e))?;
+                    found.insert(path.to_string(), id);
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(scan_failed(dir, &e)),
+            }
+        }
+        Ok(found)
+    }
+
+    fn forget(&self) {
+        self.memo
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+}
+
+#[cfg(test)]
+#[path = "scanner.test.rs"]
+mod scanner_tests;

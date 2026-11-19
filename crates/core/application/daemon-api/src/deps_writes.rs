@@ -338,7 +338,7 @@ impl<E: Edge> Api<E> {
         {
             return Ok((answer, String::new()));
         }
-        self.pull_steps(&site, &landing, (verb, request_id), &planned, pending)
+        self.pull_steps(&landing, (verb, request_id), &planned, pending)
             .await?;
         Ok((answer, String::new()))
     }
@@ -348,7 +348,6 @@ impl<E: Edge> Api<E> {
     /// each step from the first not done.
     async fn pull_steps(
         &self,
-        site: &crate::library_reads::ReadSite<'_>,
         landing: &crate::library_writes::Landing<'_>,
         (verb, request_id): (&str, &str),
         planned: &DepsPlanned,
@@ -367,16 +366,16 @@ impl<E: Edge> Api<E> {
             library_api::Site::Checkout { root, .. } => root.clone(),
             library_api::Site::Home { .. } => String::new(),
         };
-        let observer = observers.observer(&site.env);
-        let foreign = files_of(observer.as_ref(), (dir, &root), &planned.foreign)?;
+        let scanner = observers.scanner();
+        let foreign = files_of(&root, &planned.foreign);
         let id = uuid::Uuid::parse_str(request_id).unwrap_or_else(|_| uuid::Uuid::now_v7());
         let request_id = id.to_string();
         let (start, steps) = match pending {
             Some(pending) => pending,
             None => {
-                let parts = (tree, dir, root.as_str());
+                let parts = (tree, root.as_str());
                 let steps = self
-                    .intend_pull(parts, (verb, id), planned, (observer.as_ref(), &foreign))
+                    .intend_pull(parts, (verb, id), planned, &foreign)
                     .await?;
                 (0, steps)
             }
@@ -424,7 +423,7 @@ impl<E: Edge> Api<E> {
             } else {
                 self.make_step(
                     &made,
-                    observer.as_ref(),
+                    scanner.as_ref(),
                     operations.as_ref(),
                     (at_step, step),
                     &shape,
@@ -437,33 +436,25 @@ impl<E: Edge> Api<E> {
     }
 
     /// A pull's plan intended as its sequence under the request `id` on
-    /// `tree` (at `dir`, below the project's `root`): each id asked of
-    /// `observer` (the lock's) or given (`foreign`'s), each token the
+    /// `tree` (below the project's `root`): each id taken of
+    /// its content (the lock's) or given (`foreign`'s), each token the
     /// tree's now. Its recorded steps.
     async fn intend_pull(
         &self,
-        (tree, dir, root): (&library_tree::TreeName, &str, &str),
+        (tree, root): (&library_tree::TreeName, &str),
         (verb, id): (&str, uuid::Uuid),
         planned: &DepsPlanned,
-        (observer, foreign): (
-            &dyn ctxloom_ports::TreeObserver,
-            &[(String, String, &ForeignPut)],
-        ),
+        foreign: &[(String, String, &ForeignPut)],
     ) -> Result<Vec<Step>, ApiError> {
         let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon observes no library".to_string(),
         })?;
         let held = observations.held(tree);
         let request_id = id.to_string();
-        let lock = match &planned.lock {
-            Some(bytes) => Some((
-                observer
-                    .blob_id_of(dir, LOCK, bytes)
-                    .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?,
-                held.token(LOCK),
-            )),
-            None => None,
-        };
+        let lock = planned
+            .lock
+            .as_ref()
+            .map(|bytes| (library_tree::content_id(bytes), held.token(LOCK)));
         let removed: Vec<(String, u64)> = planned
             .removed
             .iter()

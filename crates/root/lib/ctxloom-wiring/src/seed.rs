@@ -72,6 +72,7 @@ fn loadout_book(cover: &Cover, id: [u8; 16], loadout: &sessions::SessionLoadout)
     let fact = sessions::RecordLoadout {
         loadout: loadout.clone(),
         incarnation: 1,
+        covered: Vec::new(),
     };
     sessions::fact_book(cover.clone(), &fact, &sessions::loadout_key(&session, 1))
 }

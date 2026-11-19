@@ -423,7 +423,7 @@ pub const SERVED_VERBS: &[(&str, &[&str])] = &[
     ("agent", &["list", "show"]),
     ("engine", &["list", "show"]),
     ("companion", &["list"]),
-    ("context", &["assemble"]),
+    ("context", &["assemble", "refresh"]),
 ];
 
 /// Whether `noun`, given its matches `sub`, is a read the daemon answers
@@ -531,7 +531,10 @@ fn dispatch(
         ),
         "loadout" => noun::companion::loadout(cx, sub, out, err),
         "search" => noun::search::read(cx, sub, out, err),
-        "context" => noun::context::read(cx, verb(sub, "assemble").1, out, err),
+        "context" => match verb(sub, "assemble") {
+            ("refresh", _) => noun::context::refresh(cx, out, err),
+            (_, sub) => noun::context::read(cx, sub, out, err),
+        },
         _ => noun::run::read(cx, sub, out, err),
     }
 }

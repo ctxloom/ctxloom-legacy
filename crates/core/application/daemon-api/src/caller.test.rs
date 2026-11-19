@@ -91,9 +91,18 @@ impl DaemonApi for Fake {
     async fn get_session(&self, r: v1::GetSessionRequest) -> Result<v1::Session, Called> {
         self.ask(&format!("session {}", r.name));
         assert!(r.env.is_some(), "the caller's environment is sent");
+        // A `lone-` harp is a primary (no owner); a `lone-awake-` one is
+        // watched by its ctxloom MCP server (the terminal wake).
+        let primary = r.name.contains("/sessions/lone-");
+        let wakeable = r.name.contains("/sessions/lone-awake-");
         Ok(v1::Session {
+            owner: if primary {
+                String::new()
+            } else {
+                ME.to_string()
+            },
+            wakeable,
             name: r.name,
-            owner: ME.to_string(),
             engine: "claude-code".to_string(),
             summary: "read".to_string(),
             closed: *self.closed.lock().unwrap(),
@@ -200,6 +209,17 @@ impl DaemonApi for Fake {
         self.ask("handle");
         self.seen.lock().unwrap().books.push(book);
         Ok(true)
+    }
+
+    async fn watch_session(
+        &self,
+        r: v1::WatchSessionRequest,
+    ) -> Result<Box<dyn daemon_ports::SessionSignals>, Called> {
+        self.ask(&format!("watch {}", r.name));
+        Ok(Box::new(OneSignal(Some(v1::SessionSignal {
+            wakes: vec!["m1".to_string()],
+            outstanding_wake: String::new(),
+        }))))
     }
 
     async fn handle_sync(
@@ -510,13 +530,48 @@ async fn a_send_is_the_domains_command_answered_with_the_projection() {
     );
     assert_eq!(
         sent.supported.len(),
-        sessions_application::urgencies_of(true, "claude-code").len()
+        sessions_application::urgencies_of(true, "claude-code", false).len()
     );
     assert_eq!(world.command_ids(), [sessions::command_id("id-1")]);
     assert_eq!(
         world.seen.lock().unwrap().projectors,
         [vec!["session-index".to_string()]]
     );
+}
+
+/// The urgencies the one send in `world` gave as its evidence.
+fn evidence(world: &World) -> Vec<i32> {
+    let commands = world.commands();
+    let [packed] = commands.as_slice() else {
+        panic!("one send: {commands:?}");
+    };
+    wire::SendMessage::decode(packed.value.as_slice())
+        .unwrap()
+        .supported
+}
+
+// The terminal wake: a send's evidence is the target as the daemon has it,
+// so a primary whose ctxloom MCP server watches it takes a wake, and one
+// nobody watches an inform alone.
+#[tokio::test]
+async fn a_sends_evidence_offers_a_wake_to_a_primary_only_while_it_is_watched() {
+    let awake = World::new();
+    awake
+        .caller(true)
+        .send("lone-awake-heron", sessions::Urgency::Inform, "hi")
+        .await
+        .unwrap();
+    assert_eq!(
+        evidence(&awake),
+        [wire::Urgency::Inform as i32, wire::Urgency::Wake as i32]
+    );
+    let asleep = World::new();
+    asleep
+        .caller(true)
+        .send("lone-asleep-heron", sessions::Urgency::Inform, "hi")
+        .await
+        .unwrap();
+    assert_eq!(evidence(&asleep), [wire::Urgency::Inform as i32]);
 }
 
 // S8: a daemon killed after it applied the write is reached again, and the
@@ -1112,4 +1167,146 @@ fn an_assemblys_missing_fragments_and_tags_are_its_notices() {
             ),
         ]
     );
+}
+
+/// A watch that gives one signal, then ends.
+struct OneSignal(Option<v1::SessionSignal>);
+
+impl daemon_ports::SessionSignals for OneSignal {
+    fn next(&mut self) -> daemon_ports::NextSignal<'_> {
+        let signal = self.0.take().map(Ok);
+        Box::pin(async move { signal })
+    }
+}
+
+/// The one command `world` sent: its type's name and its body.
+fn the_command(world: &World) -> prost_types::Any {
+    let commands = world.commands();
+    let [packed] = commands.as_slice() else {
+        panic!("one command: {commands:?}");
+    };
+    packed.clone()
+}
+
+// The terminal wake: a session's MCP server watches its OWN session.
+#[tokio::test]
+async fn a_session_watches_its_own_session() {
+    let world = World::new();
+    let mut signals = world.caller(false).watch_own().await.unwrap();
+    assert_eq!(signals.next().await.unwrap().unwrap().wakes, ["m1"]);
+    assert!(world
+        .seen
+        .lock()
+        .unwrap()
+        .asked
+        .iter()
+        .any(|asked| asked.ends_with(&format!("watch {ME}"))));
+}
+
+// Its wake's issue and disarm are its own stream's commands, keyed by its
+// session and the nonce, so a redelivery is one wake.
+#[tokio::test]
+async fn a_wake_is_issued_and_disarmed_on_the_sessions_own_stream() {
+    let me = sessions::SessionName::parse(ME).unwrap();
+    let issued = World::new();
+    issued
+        .caller(false)
+        .issue_wake("0123456789abcdef")
+        .await
+        .unwrap();
+    let packed = the_command(&issued);
+    assert!(
+        packed.type_url.ends_with("/ctxloom.sessions.v1.IssueWake"),
+        "{packed:?}"
+    );
+    assert_eq!(
+        wire::IssueWake::decode(packed.value.as_slice())
+            .unwrap()
+            .nonce,
+        "0123456789abcdef"
+    );
+    assert_eq!(
+        issued.command_ids(),
+        [sessions::command_id(&format!(
+            "wake:{}:0123456789abcdef",
+            me.uid()
+        ))]
+    );
+    let disarmed = World::new();
+    disarmed
+        .caller(false)
+        .disarm_wake("0123456789abcdef")
+        .await
+        .unwrap();
+    let packed = the_command(&disarmed);
+    assert!(
+        packed.type_url.ends_with("/ctxloom.sessions.v1.DisarmWake"),
+        "{packed:?}"
+    );
+    assert_eq!(
+        disarmed.command_ids(),
+        [sessions::command_id(&format!(
+            "disarm:{}:0123456789abcdef",
+            me.uid()
+        ))]
+    );
+}
+
+// A hook's delivery: the messages it gave its engine, and the wake its
+// prompt was, keyed by both, so a redelivered hook is one delivery.
+#[tokio::test]
+async fn a_delivery_names_its_messages_and_wake_on_the_sessions_own_stream() {
+    let me = sessions::SessionName::parse(ME).unwrap();
+    let world = World::new();
+    let ids = vec!["m1".to_string(), "m2".to_string()];
+    world
+        .caller(false)
+        .deliver(&ids, "0123456789abcdef")
+        .await
+        .unwrap();
+    let packed = the_command(&world);
+    assert!(
+        packed
+            .type_url
+            .ends_with("/ctxloom.sessions.v1.DeliverMessages"),
+        "{packed:?}"
+    );
+    let delivered = wire::DeliverMessages::decode(packed.value.as_slice()).unwrap();
+    assert_eq!(delivered.message_ids, ids);
+    assert_eq!(delivered.wake_nonce, "0123456789abcdef");
+    assert_eq!(
+        world.command_ids(),
+        [sessions::command_id(&format!(
+            "deliver:{}:0123456789abcdef:m1,m2",
+            me.uid()
+        ))]
+    );
+}
+
+// The terminal wake: a wake to a primary nobody watches (no ctxloom MCP
+// server connected, as with `--no-context`) is refused before it is sent,
+// the sender told it takes an inform; an inform goes as ever.
+#[tokio::test]
+async fn a_wake_to_a_primary_nobody_watches_is_refused_in_the_senders_words() {
+    let world = World::new();
+    let refused = world
+        .caller(true)
+        .send("lone-asleep-heron", sessions::Urgency::Wake, "wake up")
+        .await
+        .unwrap_err();
+    let CallError::Refused(crate::refusal::Rejection::Api(
+        crate::refusal::ApiRejection::WakeInformOnly { harp },
+    )) = &refused
+    else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(harp, "lone-asleep-heron");
+    assert!(world.commands().is_empty(), "nothing sent");
+    let awake = World::new();
+    awake
+        .caller(true)
+        .send("lone-awake-heron", sessions::Urgency::Wake, "wake up")
+        .await
+        .unwrap();
+    assert_eq!(awake.commands().len(), 1);
 }

@@ -13,13 +13,12 @@ Feature: library changes — git holds the library, and the daemon records what 
 
   EVERY READ OBSERVES. The daemon answers every read of the library (a
   listing, a show, a search, context assemble, a dry run, a hook's read).
-  First it asks git what it sees:
-    - the commit checked out;
-    - `git status` over the pathspec;
-    - the object id of each file that differs.
-  It compares that with what it last recorded for the tree. If anything
-  differs, it records ONE observation, which lists each path that changed
-  and how: added, modified, deleted, renamed or type-changed. Then it
+  First its scanner walks the tree and hashes each file of the library (the
+  SHA-256 of its bytes; DRAFT, step 10c U13 rework: no git is asked, and a
+  file whose stat is unchanged keeps its hash). It records the listing,
+  and the record compares it with what it last held for the tree. If
+  anything differs, it records ONE observation, which lists each path that
+  changed and how: added, modified or deleted. Then it
   answers from the files as they are. A read that sees nothing new records
   nothing. Two reads that see the same change at once record it once.
 
@@ -37,14 +36,14 @@ Feature: library changes — git holds the library, and the daemon records what 
   read records, carries no sequence of its own: the record gives one to
   the event it makes.
 
-  MOVES ARE GIT'S. A rename git reports, committed or staged, is a rename. A
-  file moved without git is a delete and a create.
+  A MOVE IS A DELETE AND A CREATE (DRAFT, step 10c U13 rework), however it
+  was made: the scanner sees files, never git's pairing.
 
   ONE CHECKOUT, ONE RECORD. Each checkout is named once, by a harp kept in
   its `.ctxloom/state/checkout` (out of git), so a git worktree of the
   project is a checkout of its own. The home is `users/me/library`. A tree's
-  first read records one baseline: the commit and whatever git sees
-  uncommitted.
+  first read records one baseline: every file of the library (DRAFT, step
+  10c U13 rework).
 
   A CHANGE IS REACTED TO (step 10c). Once a change is recorded, ctxloom
   finds each live session whose loadout names what changed (a bundle it
@@ -52,9 +51,11 @@ Feature: library changes — git holds the library, and the daemon records what 
   context. The engine is handed it at the session's NEXT event, through the
   one engine interface every engine implements: for claude, the
   `additionalContext` of the next hook ctxloom answers (a prompt submitted,
-  or a tool's result). It is handed once. A change is seen by the next read,
-  and, for a tree with a live session, by the daemon's next round, read or
-  no read. A write still pending when its paths change under it is
+  or a tool's result). It is handed once. A change is seen when something
+  needs the tree (DRAFT, step 10c U13 rework: no polling): a read, a write,
+  or a hook of a session in it (which trusts a scan of the last five
+  minutes); no round observes a tree. Every change recorded since the
+  session's context was handed is handed in ONE re-assembly. A write still pending when its paths change under it is
   superseded, and its retry refused as stale. A client may watch the
   changes as they are recorded (`WatchLibrary`, an RPC; no command yet),
   read here with the test build's `ctxloom test watch-library`. opencode's
@@ -95,7 +96,8 @@ Feature: library changes — git holds the library, and the daemon records what 
   A change's path is relative to the tree's root (`.ctxloom/`), with `/`
   separators. Changes are sorted by path. An event's `sequence` is its
   place in the tree's record; a change's `oid` is git's id for the path
-  after it (absent when deleted). Reading the stream
+  after it, the SHA-256 of its bytes (absent when deleted; DRAFT, step 10c
+  U13 rework: no longer git's id). Reading the stream
   is not a read of the library: `test library-events` observes nothing.
 
   CTXLOOM'S OWN WRITES ARE INTENDED (step 10b, cli/atomic_writes.feature).
@@ -223,8 +225,9 @@ Feature: library changes — git holds the library, and the daemon records what 
 
   Rule: Each checkout is named once, and its first read records one baseline
 
-    Scenario: The first read names the checkout and records its baseline; a read that sees nothing new records nothing
+    Scenario: The first read names the checkout and records its baseline of every file; a read that sees nothing new records nothing
       # new: L2, L16; a read with no change records nothing.
+      # DRAFT (step 10c U13 rework, the scanner; owner 2026-11-18): the baseline lists every file, and names no commit.
       Given an initialized ctxloom project
       And a bundle "demo" exists
       And the project's changes are committed
@@ -238,20 +241,20 @@ Feature: library changes — git holds the library, and the daemon records what 
       And the output reports "events" having "1" entries
       And the output reports "events[0].type" as "TreeObserved"
       And the output reports "events[0].baseline" as "true"
-      And the output reports "events[0].head_after" as the project's commit "HEAD"
-      And the output reports "events[0].changes" having "0" entries
+      And the output reports "events[0].changes" having "4" entries
 
-    Scenario: A baseline lists what git sees uncommitted, and nothing of what it holds
-      # new: L16, the baseline is one small fact.
+    Scenario: A baseline lists every file of the library, and none of their text
+      # new: L16, the baseline is one fact.
+      # DRAFT (step 10c U13 rework, the scanner; owner 2026-11-18): every file, committed or not.
       Given an initialized ctxloom project
       And a bundle "demo" exists
       When I run "ctxloom bundle list"
       And I run "ctxloom test library-events --format json"
       Then the command succeeds
       And the output reports "events[0].baseline" as "true"
-      And the output reports "events[0].changes" having "3" entries
-      And the output reports "events[0].changes[0].path" as "content/bundles/v2/demo/bundle.yaml"
-      And the output reports "events[0].changes[0].status" as "added"
+      And the output reports "events[0].changes" having "4" entries
+      And the output reports "events[0].changes[1].path" as "content/bundles/v2/demo/bundle.yaml"
+      And the output reports "events[0].changes[1].status" as "added"
       And the output does not contain "Add your content here"
 
     Scenario: A project with no commit yet is baselined on its untracked files, after init's own scaffold
@@ -352,8 +355,9 @@ Feature: library changes — git holds the library, and the daemon records what 
       And the output reports "events[2].changes[0].path" as "content/bundles/v2/demo/bundle.yaml"
       And the output reports "events[3].changes[0].path" as "content/bundles/v2/demo/bundle.yaml"
 
-    Scenario: A commit made outside ctxloom is recorded once, between the commits it moved
+    Scenario: A change committed outside ctxloom is recorded once, as the change it made to the files
       # new: diff-tree between the commits last seen and now.
+      # DRAFT (step 10c U13 rework, the scanner; owner 2026-11-18): a commit is seen as the files it changed; no commit is named.
       When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
         """
         committed by hand
@@ -363,8 +367,6 @@ Feature: library changes — git holds the library, and the daemon records what 
       And I run "ctxloom bundle list"
       And I run "ctxloom test library-events --format json"
       Then the output reports "events" having "2" entries
-      And the output reports "events[1].head_before" as the project's commit "HEAD~1"
-      And the output reports "events[1].head_after" as the project's commit "HEAD"
       And the output reports "events[1].changes[0].path" as "content/bundles/v2/demo/fragments/example.md"
       And the output reports "events[1].changes[0].status" as "modified"
 
@@ -382,6 +384,7 @@ Feature: library changes — git holds the library, and the daemon records what 
 
     Scenario: A branch switch is one observation listing every path it changed
       # new: Q6, a branch switch.
+      # DRAFT (step 10c U13 rework, the scanner; owner 2026-11-18): no commit is named.
       When I run git 'checkout -qb other' in the project
       And the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
         """
@@ -397,8 +400,6 @@ Feature: library changes — git holds the library, and the daemon records what 
       And I run "ctxloom bundle list"
       And I run "ctxloom test library-events --format json"
       Then the output reports "events" having "3" entries
-      And the output reports "events[2].head_before" as the project's commit "other"
-      And the output reports "events[2].head_after" as the project's commit "HEAD"
       And the output reports "events[2].changes" having "2" entries
       And the output reports "events[2].changes[0].path" as "content/bundles/v2/demo/fragments/example.md"
       And the output reports "events[2].changes[0].status" as "modified"
@@ -457,7 +458,9 @@ Feature: library changes — git holds the library, and the daemon records what 
         | remotes.yaml | added    |
         | lock.yaml    | added    |
 
-  Rule: Moves are git's: a rename where git reports one, else a delete and a create
+  Rule: A move is a delete and a create, however it was made
+    # DRAFT (step 10c U13 rework, the scanner; owner 2026-11-18): was "Moves
+    # are git's: a rename where git reports one, else a delete and a create".
 
     Background:
       Given an initialized ctxloom project
@@ -465,25 +468,28 @@ Feature: library changes — git holds the library, and the daemon records what 
       And the project's changes are committed
       And I run "ctxloom bundle list"
 
-    Scenario: A committed git mv is recorded as a rename
-      # new: L7, diff-tree -M.
+    Scenario: A committed git mv is recorded as a delete and a create
+      # new: L7.
+      # DRAFT (step 10c U13 rework, the scanner; owner 2026-11-18): was "recorded as a rename"; git's pairing is not asked.
       When I run git 'mv .ctxloom/content/bundles/v2/demo/fragments/example.md .ctxloom/content/bundles/v2/demo/fragments/renamed.md' in the project
       And I run git 'commit -qm "rename"' in the project
       And I run "ctxloom bundle list"
       And I run "ctxloom test library-events --format json"
-      Then the output reports "events[1].changes" having "1" entries
-      And the output reports "events[1].changes[0].status" as "renamed"
-      And the output reports "events[1].changes[0].path" as "content/bundles/v2/demo/fragments/renamed.md"
-      And the output reports "events[1].changes[0].from_path" as "content/bundles/v2/demo/fragments/example.md"
+      Then the output reports "events[1].changes" having "2" entries
+      And the output reports "events[1].changes[0].path" as "content/bundles/v2/demo/fragments/example.md"
+      And the output reports "events[1].changes[0].status" as "deleted"
+      And the output reports "events[1].changes[1].path" as "content/bundles/v2/demo/fragments/renamed.md"
+      And the output reports "events[1].changes[1].status" as "added"
 
-    Scenario: A git mv not yet committed is recorded as a rename, as git status pairs it
-      # new: L7, porcelain v2's rename entry.
+    Scenario: A git mv not yet committed is recorded as a delete and a create
+      # new: L7.
+      # DRAFT (step 10c U13 rework, the scanner; owner 2026-11-18): was "recorded as a rename, as git status pairs it".
       When I run git 'mv .ctxloom/content/bundles/v2/demo/fragments/example.md .ctxloom/content/bundles/v2/demo/fragments/renamed.md' in the project
       And I run "ctxloom bundle list"
       And I run "ctxloom test library-events --format json"
-      Then the output reports "events[1].changes" having "1" entries
-      And the output reports "events[1].changes[0].status" as "renamed"
-      And the output reports "events[1].changes[0].from_path" as "content/bundles/v2/demo/fragments/example.md"
+      Then the output reports "events[1].changes" having "2" entries
+      And the output reports "events[1].changes[0].status" as "deleted"
+      And the output reports "events[1].changes[1].status" as "added"
 
     Scenario: A file moved without git is recorded as a delete and a create
       # new: L7, nothing pairs an untracked file with a deleted one.
@@ -737,13 +743,21 @@ Feature: library changes — git holds the library, and the daemon records what 
       Then the output reports "events[type=ContextRedelivered].bundles[0]" as "demo"
       And the output does not contain "Changed while it ran"
 
-    Scenario: A change no read sees reaches a live session at the daemon's next round
-      # new: step 10 G5(b), each daemon round for a tree with a live session.
+    Scenario: A hand edit reaches a live session once something observes it, and no round observes it
+      # new: step 10 G5(b), superseded.
+      # DRAFT (step 10c U13 rework, owner 2026-11-18: no polling, observe on
+      # need): was "A change no read sees reaches a live session at the
+      # daemon's next round". No round observes a tree; a read does, and
+      # what it records is owed to the session, collected at its next hook.
       Given a session "brisk-copper-moth" that is still running on the profile "dev"
       When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
         """
         # Changed while it ran
         """
+      And the daemon's next round runs
+      And I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "1" entries
+      When I run "ctxloom bundle list"
       And the daemon's next round runs
       And I run "ctxloom test library-events --format json"
       Then the output reports "events" having "2" entries
@@ -753,6 +767,7 @@ Feature: library changes — git holds the library, and the daemon records what 
 
     Scenario: A tree with no live session is not observed between reads
       # new: step 10 G5(b), the paired negative; no watcher, no round for an idle tree.
+      # (Step 10c U13 rework: no round observes any tree; still true.)
       When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
         """
         # Changed with nobody running

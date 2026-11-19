@@ -189,6 +189,12 @@ pub enum ApiRejection {
     LaunchInProgress {
         harp: String,
     },
+    /// A wake to a primary nobody can wake: no ctxloom MCP server watches
+    /// it (as with `--no-context`), so it takes an inform alone (the
+    /// terminal wake; client-side: the domain refuses it untold).
+    WakeInformOnly {
+        harp: String,
+    },
     /// An ask asked by a session the daemon hosts no run of (step 8 U4).
     SessionNotHosted {
         name: String,
@@ -229,6 +235,7 @@ impl Diagnostic for ApiRejection {
             ApiRejection::EtagInvalid { .. } => code!("etag-invalid"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
             ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
+            ApiRejection::WakeInformOnly { .. } => code!("wake-inform-only"),
             ApiRejection::SessionNotHosted { .. } => code!("session-not-hosted"),
             ApiRejection::ApprovalAmbiguous { .. } => code!("approval-ambiguous"),
             ApiRejection::ApprovalNoneWaiting { .. } => code!("approval-none-waiting"),
@@ -267,7 +274,9 @@ impl Diagnostic for ApiRejection {
                 ("path", path.as_str().into()),
             ],
             ApiRejection::ProjectUnknown { cwd } => vec![("cwd", cwd.as_str().into())],
-            ApiRejection::LaunchInProgress { harp } => vec![("harp", harp.as_str().into())],
+            ApiRejection::LaunchInProgress { harp } | ApiRejection::WakeInformOnly { harp } => {
+                vec![("harp", harp.as_str().into())]
+            }
             ApiRejection::DaemonHosting { runs, harps } => {
                 vec![("runs", (*runs).into()), ("harps", harps.join(", ").into())]
             }
@@ -760,6 +769,9 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(ApiRejection::LaunchInProgress {
             harp: "brisk-copper-moth".to_string(),
+        }),
+        Box::new(ApiRejection::WakeInformOnly {
+            harp: "amber-quiet-heron".to_string(),
         }),
         Box::new(ApiRejection::SessionNotHosted {
             name: "projects/calm-otter/sessions/amber-swift-owl".to_string(),

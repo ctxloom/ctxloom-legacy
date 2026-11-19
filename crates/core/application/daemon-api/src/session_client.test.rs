@@ -91,7 +91,7 @@ impl DaemonApi for Fake {
         self.names
             .lock()
             .unwrap()
-            .push(format!("{} cwd {}", r.name, r.cwd));
+            .push(format!("{} cwd {} budget {}", r.name, r.cwd, r.budget));
         Ok(v1::RedeliveredContext {
             context: format!("owed:{}", r.carried_by),
             changed: Vec::new(),
@@ -856,7 +856,7 @@ async fn what_runs_before_a_retry_runs_once_between_the_two_daemons() {
 async fn a_hook_asks_for_its_sessions_owed_context_by_name() {
     let daemons = Fakes::new();
     let answered = in_project(&daemons)
-        .redeliver_context("brisk-copper-moth", "PostToolUse")
+        .redeliver_context("brisk-copper-moth", "PostToolUse", 4_321)
         .await
         .unwrap();
     assert_eq!(answered.context, "owed:PostToolUse");
@@ -865,7 +865,7 @@ async fn a_hook_asks_for_its_sessions_owed_context_by_name() {
         daemons.names(),
         [
             "p-1",
-            "projects/calm-otter/sessions/brisk-copper-moth cwd /work"
+            "projects/calm-otter/sessions/brisk-copper-moth cwd /work budget 4321"
         ]
     );
     let envs = daemons.template.envs.lock().unwrap().clone();

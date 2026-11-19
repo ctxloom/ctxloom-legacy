@@ -114,6 +114,10 @@ impl Calls for Scripted {
         Box::pin(async { Ok(Box::new(run_events().into_iter()) as daemon_api::RunStream) })
     }
 
+    fn watch_session(&self, _: v1::WatchSessionRequest) -> Answer<'_, daemon_api::SessionStream> {
+        Box::pin(async { Ok(Box::new(session_signals().into_iter()) as daemon_api::SessionStream) })
+    }
+
     fn get_transcript(&self, request: v1::GetTranscriptRequest) -> Answer<'_, v1::Transcript> {
         Box::pin(async move {
             Ok(v1::Transcript {
@@ -802,6 +806,42 @@ async fn a_watch_without_the_user_bearer_is_unauthenticated() {
     let mut client = CtxloomClient::new(serve(Arc::default()).await);
     let status = client
         .watch_run(Request::new(v1::WatchRunRequest::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(status.code(), Code::Unauthenticated);
+}
+
+/// A session's signals as the scripted `WatchSession` streams them.
+fn session_signals() -> Vec<v1::SessionSignal> {
+    vec![
+        v1::SessionSignal::default(),
+        v1::SessionSignal {
+            wakes: vec!["m1".to_string()],
+            outstanding_wake: String::new(),
+        },
+    ]
+}
+
+// The terminal wake: WatchSession streams each signal its use case gives,
+// behind the user bearer as every call is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_session_watch_streams_its_signals_behind_the_bearer() {
+    let mut client = CtxloomClient::new(serve(Arc::default()).await);
+    let request = || v1::WatchSessionRequest {
+        name: "projects/calm-otter/sessions/amber-swift-owl".to_string(),
+    };
+    let mut stream = client
+        .watch_session(with_bearer(request(), BEARER))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut heard = Vec::new();
+    while let Some(signal) = stream.message().await.unwrap() {
+        heard.push(signal);
+    }
+    assert_eq!(heard, session_signals());
+    let status = client
+        .watch_session(Request::new(request()))
         .await
         .unwrap_err();
     assert_eq!(status.code(), Code::Unauthenticated);

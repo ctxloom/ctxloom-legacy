@@ -178,6 +178,57 @@ message ForgetChild {
   optional SessionRef child = 1;
 }
 
+// The terminal wake (owner ruling 2026-11-18): a primary terminal
+// session's ctxloom MCP server is about to post a wake on its engine's
+// messaging socket. One wake is outstanding at a time: refused
+// `WakeOutstanding` while another is. Keyed `wake:<session>:<nonce>`. A
+// wake is a nudge, never the message: what it wakes the session for is its
+// pending messages, which its next prompt's hook delivers.
+message IssueWake {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.WakeIssued"]
+    refuses: "ctxloom.sessions.v1.NoSession"
+    refuses: "ctxloom.sessions.v1.SessionIsClosed"
+    refuses: "ctxloom.sessions.v1.WakeOutstanding"
+  };
+
+  // The wake's nonce: 16 hex digits, minted by the poster.
+  string nonce = 1;
+}
+
+// The outstanding wake `nonce`, not answered within its time (60 s), is
+// disarmed: the messages wait for the next prompt. Records nothing when
+// `nonce` is not the outstanding wake (redeemed first: the race's other
+// side). Keyed `disarm:<session>:<nonce>`.
+message DisarmWake {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.WakeDisarmed"]
+    refuses: "ctxloom.sessions.v1.NoSession"
+  };
+
+  string nonce = 1;
+}
+
+// A primary's hook delivered `message_ids` to its engine (a prompt's
+// `additionalContext`, or a tool call's): they are no longer pending. A
+// prompt that is the wake line of the outstanding wake `wake_nonce`
+// redeems it; any other nonce (disarmed first, or none) redeems nothing.
+// Records nothing when it delivers nothing and redeems nothing. Keyed
+// `deliver:<session>:<wake_nonce>:<message ids, comma-joined>`.
+message DeliverMessages {
+  option (io.angzarr.v1.command) = {
+    component: "ctxloom.sessions.v1.SessionState"
+    emits: ["ctxloom.sessions.v1.MessagesDelivered", "ctxloom.sessions.v1.WakeRedeemed"]
+    refuses: "ctxloom.sessions.v1.NoSession"
+  };
+
+  repeated string message_ids = 1;
+  // The nonce of the wake line the prompt was; empty for any other prompt.
+  string wake_nonce = 2;
+}
+
 // endregion commands
 
 // region facts
@@ -267,6 +318,34 @@ message ChildForgotten {
   optional SessionRef child = 1;
 }
 
+// A wake was posted to the session's engine (the terminal wake).
+message WakeIssued {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  string nonce = 1;
+}
+
+// The outstanding wake was not answered in time, and is no longer awaited.
+message WakeDisarmed {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  string nonce = 1;
+}
+
+// The outstanding wake started a turn: its prompt was the wake line.
+message WakeRedeemed {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  string nonce = 1;
+}
+
+// A primary's hook delivered these messages to its engine.
+message MessagesDelivered {
+  option (io.angzarr.v1.event) = {component: "ctxloom.sessions.v1.SessionState"};
+
+  repeated string message_ids = 1;
+}
+
 // endregion events
 
 // region refusals
@@ -323,6 +402,14 @@ message UrgencyUnsupported {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
 
   string urgency = 1;
+}
+
+// A wake while another is outstanding (the terminal wake: one at a time).
+message WakeOutstanding {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+
+  // The outstanding wake's nonce.
+  string nonce = 1;
 }
 
 // endregion refusals

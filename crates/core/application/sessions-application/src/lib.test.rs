@@ -1129,16 +1129,21 @@ fn the_user_asks_a_session_to_clear() {
 fn the_urgencies_a_send_gives_as_evidence() {
     use sessions::Urgency::{Inform, Steer, Wake};
     assert_eq!(
-        crate::urgencies_of(true, "claude-code"),
+        crate::urgencies_of(true, "claude-code", false),
         [Inform, Wake, Steer]
     );
-    assert_eq!(crate::urgencies_of(false, "claude-code"), [Inform]);
+    assert_eq!(crate::urgencies_of(false, "claude-code", false), [Inform]);
     assert_eq!(
-        crate::urgencies_of(true, "opencode"),
+        crate::urgencies_of(true, "opencode", false),
         [Inform, Wake, Steer],
         "OD-58: opencode's child adapter"
     );
-    assert_eq!(crate::urgencies_of(false, "opencode"), [Inform]);
+    assert_eq!(crate::urgencies_of(false, "opencode", false), [Inform]);
+    assert_eq!(
+        crate::urgencies_of(false, "claude-code", true),
+        [Inform, Wake],
+        "the terminal wake: a primary its MCP server watches"
+    );
 }
 
 // OD-58: `session send` to a child hosted on opencode is accepted for a

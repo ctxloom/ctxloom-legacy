@@ -153,3 +153,35 @@ mod notices {
         assert_eq!(said, [stale]);
     }
 }
+
+mod refresh {
+    use crate::tests::{go_served, Asks, Project, BARE, TEXT};
+    use daemon_proto::v1;
+
+    // Step 10c U13 rework (owner, 2026-11-18): `context refresh` asks the
+    // daemon to assemble with `refresh` set (it forgets what it has seen and
+    // observes now), says it did, and shows no assembly; `context assemble`
+    // never asks it.
+    #[test]
+    fn test_context_refresh_asks_the_daemon_to_observe_afresh() {
+        let asks = Asks::answering(
+            vec![Box::new(v1::AssembledContext {
+                context: "THE-CONTEXT".to_string(),
+                ..v1::AssembledContext::default()
+            })],
+            None,
+        );
+        let ran = go_served(&["context", "refresh"], TEXT, BARE, &Project, Some(&asks));
+        let sent = asks.requests::<v1::AssembleContextRequest>();
+        let [one] = &sent[..] else { panic!("{sent:?}") };
+        assert!(one.refresh);
+        assert!(ran.out.contains(super::super::REFRESHED), "{}", ran.out);
+        assert!(!ran.out.contains("THE-CONTEXT"), "{}", ran.out);
+        let plain = Asks::default();
+        go_served(&["context", "assemble"], TEXT, BARE, &Project, Some(&plain));
+        assert!(plain
+            .requests::<v1::AssembleContextRequest>()
+            .iter()
+            .all(|request| !request.refresh));
+    }
+}

@@ -64,10 +64,10 @@ Feature: Delegation — each child sees only its own context, and hears from and
   # more. The child's turn ends, the orchestrator is woken by being told so,
   # and it starts its next turn with the news, receiving nothing itself.
   Scenario: An idle orchestrator is woken by its child's turn ending, with no receive
-    # substitution: the orchestrator is a child of Alice's session that her daemon runs (every session orchestrates, G2), since only a session the daemon runs can be woken; the child's turn's end is sent to its owner as a wake
-    Given a child "steady-lunar-pike" of "amber-quiet-heron" that is open and idle
-    When the engine of "steady-lunar-pike" calls "child_launch" for "brisk-copper-moth" with agent "librarian" and task "say what guidance you were given"
-    Then "steady-lunar-pike" was woken, and its next turn began with "child brisk-copper-moth finished its turn"
+    # substitution: the orchestrator is Alice's own terminal session (the terminal wake): the ctxloom MCP server her engine started watches it and posts a wake on her engine's messaging socket, and her next prompt's hook hands the session what woke it; the child's turn's end is sent to her session as a wake
+    Given Alice's session "amber-quiet-heron" is idle in her terminal, the ctxloom MCP server its engine started watching it
+    When the engine of "amber-quiet-heron" calls "child_launch" for "brisk-copper-moth" with agent "librarian" and task "say what guidance you were given"
+    Then "amber-quiet-heron" was woken, and its next turn began with "child brisk-copper-moth finished its turn"
     And "brisk-copper-moth" reports "librarian"'s guidance, not "cartographer"'s
 
   # A child that cannot start: its orchestrator is told that its run ended

@@ -1284,6 +1284,8 @@ pub(crate) struct Gits {
     pub(crate) work_tree: Option<String>,
     pub(crate) motion: Option<ctxloom_ports::Motion>,
     pub(crate) envs: std::sync::Mutex<Vec<Vec<(String, String)>>>,
+    /// How many times its scanner was told to forget what it saw.
+    pub(crate) forgot: Arc<std::sync::atomic::AtomicU32>,
 }
 
 struct TableGit {
@@ -1358,8 +1360,35 @@ impl library_api::Observers for Gits {
         })
     }
 
+    fn scanner(&self) -> Arc<dyn ctxloom_ports::LibraryScanner> {
+        Arc::new(NoFiles(Arc::clone(&self.forgot)))
+    }
+
     fn home_tree(&self) -> Option<String> {
         None
+    }
+}
+
+/// A scanner that finds no file (these tests' trees are empty), counting
+/// each time it is told to forget.
+struct NoFiles(Arc<std::sync::atomic::AtomicU32>);
+
+impl ctxloom_ports::LibraryScanner for NoFiles {
+    fn scan(
+        &self,
+        _: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        Ok(Default::default())
+    }
+    fn content_ids(
+        &self,
+        _: &str,
+        _: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+        Ok(Default::default())
+    }
+    fn forget(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -1429,4 +1458,30 @@ impl ctxloom_ports::Operations for NoOperations {
     fn purge_slot(&self, _: &str, _: &str) -> Result<(), ctxloom_ports::Failure> {
         Ok(())
     }
+}
+
+// Step 10c U13 rework (`context refresh`): an assembly asked to refresh
+// has the daemon forget what it saw of the trees before its read observes
+// them; a plain one forgets nothing.
+#[tokio::test]
+async fn test_an_assembly_asked_to_refresh_forgets_what_was_seen_first() {
+    let f = fixture(vec![]);
+    let gits = Arc::new(Gits::default());
+    let api = f.api.observing(observing(&f.world, &gits));
+    let forgot = || gits.forgot.load(std::sync::atomic::Ordering::SeqCst);
+    let _ = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    assert_eq!(forgot(), 0);
+    let _ = api
+        .assemble_context(v1::AssembleContextRequest {
+            name: "projects/calm-quiet-heron".to_string(),
+            refresh: true,
+            ..v1::AssembleContextRequest::default()
+        })
+        .await;
+    assert_eq!(forgot(), 1);
 }

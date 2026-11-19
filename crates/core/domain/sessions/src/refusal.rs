@@ -16,7 +16,7 @@ use crate::{
     DelegationLimit, EngineMismatch, HarpInvalid, NamesTaken, NoClaim, NoNativeSession,
     NoOpenIncarnation, NoSession, NotHolder, NotOwner, OwnerIsClosed, RehostBudgetSpent,
     SessionExists, SessionIsClosed, SessionIsDestroyed, SessionRejection, SessionRunning,
-    SessionUnknown, UntrustedTarget, UrgencyUnsupported, WorkspaceMismatch,
+    SessionUnknown, UntrustedTarget, UrgencyUnsupported, WakeOutstanding, WorkspaceMismatch,
 };
 
 /// What a command handler fails with for `rejection`: the typed refusal
@@ -186,6 +186,9 @@ fn daemon_rejection(refusal: &TypedRefusal) -> Option<SessionRejection> {
     }
     if let Some(UrgencyUnsupported { urgency }) = refusal.object() {
         return Some(SessionRejection::UrgencyUnsupported { urgency });
+    }
+    if let Some(WakeOutstanding { nonce }) = refusal.object() {
+        return Some(SessionRejection::WakeOutstanding { nonce });
     }
     if let Some(RehostBudgetSpent {
         harp,

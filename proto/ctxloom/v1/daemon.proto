@@ -217,6 +217,15 @@ service Ctxloom {
   // (-- api-linter: core::0136::response-message-name=disabled
   //     aip.dev/not-precedent: a daemon-folded stream of the resource's lines or events (S44). --)
   rpc WatchTranscript(WatchTranscriptRequest) returns (stream TranscriptLine);
+  // The terminal wake (owner ruling 2026-11-18): a session's ctxloom MCP
+  // server watches its own session for messages that would wake it, and
+  // posts the wake on its engine's messaging socket. While a watch is open
+  // the session can be woken (`Session.wakeable`). A signal is sent when
+  // the watch opens, on each change, and again unchanged every few seconds
+  // (so a watcher gone is noticed).
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: a daemon-folded stream of the resource's lines or events (S44). --)
+  rpc WatchSession(WatchSessionRequest) returns (stream SessionSignal);
   // `session worktrees`: a session's scratch checkouts.
   rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse) {
     option (google.api.method_signature) = "parent";
@@ -893,6 +902,13 @@ message AssembleContextRequest {
   repeated string fragments = 4 [(google.api.field_behavior) = OPTIONAL];
   // The tags whose fragments to load.
   repeated string tags = 5 [(google.api.field_behavior) = OPTIONAL];
+  // 10c (U13 rework, `ctxloom context refresh`; owner 2026-11-18): the
+  // daemon drops what it has seen of the trees (the scanner's hashes and
+  // when each was scanned) and observes them now, before it assembles.
+  // What differs is recorded as any read's observation; a tree that
+  // matches records nothing, and no session is marked owed by this.
+  // Additive.
+  bool refresh = 6 [(google.api.field_behavior) = OPTIONAL];
   // The caller's whole environment (S7), held in memory for the call's life.
   EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the
@@ -1037,6 +1053,13 @@ message Session {
   // failed to start (step 9, owner ruling 2026-11-17); unset when neither
   // did. Nothing tries such a turn again: `session send <harp> wake` does.
   SessionFailure last_failure = 21;
+  // `GetSession` only: its ctxloom MCP server watches it (`WatchSession`),
+  // so a wake reaches it (the terminal wake); a primary session takes a
+  // wake only while it does.
+  bool wakeable = 22 [(google.api.field_behavior) = OUTPUT_ONLY];
+  // `GetSession` only: its terminal wake, `outstanding` (posted, its turn
+  // not yet started), `not answered` (disarmed unanswered), or empty.
+  string wake = 23 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // What a run was launched with: its MCP servers' NAMES and its engine's
@@ -1343,6 +1366,11 @@ message RedeliverContextRequest {
   // The engine's native hook the context would ride (`UserPromptSubmit`,
   // `PostToolUse`): what the engine's delivery is asked at.
   string carried_by = 2 [(google.api.field_behavior) = REQUIRED];
+  // 10c (U13 rework): the characters of the hook's one answer this context
+  // may take, what the parts before it (the messages) left of claude's
+  // 10,000; 0 is the whole 10,000. Over it, only the changed fragments are
+  // given whole, else a pointer to `ctxloom context assemble`. Additive.
+  uint32 budget = 3 [(google.api.field_behavior) = OPTIONAL];
   // The caller's whole environment (S7), held in memory for the call's life.
   EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
   // The caller's working directory (E1): the session's checkout.
@@ -1425,6 +1453,20 @@ message Transcript {
   string name = 1 [(google.api.field_behavior) = IDENTIFIER];
   // Its lines, in the order delivered (`seq`).
   repeated TranscriptLine lines = 2;
+}
+
+// The session to watch for messages that would wake it.
+message WatchSessionRequest {
+  // The Session to watch, `projects/{project}/sessions/{session}`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// What would wake a session now (the terminal wake).
+message SessionSignal {
+  // The ids of its pending messages of urgency `wake`, in the order sent.
+  repeated string wakes = 1;
+  // Its outstanding wake's nonce; empty when none is.
+  string outstanding_wake = 2;
 }
 
 // `session transcript watch <harp>`.

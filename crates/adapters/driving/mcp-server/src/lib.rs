@@ -24,9 +24,13 @@
 //!   verified shape; a call claude cancels is withdrawn ([`approval`]).
 //! - claude's `server/discover`, sent before `initialize`, is answered `{}`
 //!   by the transport's reader, before rmcp sees it (P0 Q11).
+//! - The terminal wake ([`wake`], owner ruling 2026-11-18): for a session
+//!   whose engine exported its messaging socket to the server, the server
+//!   watches its own session and posts a wake when a message would wake it.
 
 pub mod approval;
 mod tools;
+pub mod wake;
 
 use std::fmt;
 use std::sync::Arc;
@@ -41,6 +45,10 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
 
 pub use tools::{tools, TOOL_NAMES};
+
+/// How long the server's runtime is given, once its input ended, to let
+/// go of what its tasks hold.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The noun's hidden verb.
 pub const VERB: &str = "serve";
@@ -66,6 +74,9 @@ pub struct Server<D> {
     say: Say,
     /// The reasons claude gave for the calls it cancelled.
     cancels: approval::Cancels,
+    /// The terminal wake's poster, started beside the protocol; none, the
+    /// session is never woken (its engine exported no messaging socket).
+    wakes: Option<wake::Wakes>,
 }
 
 impl<D: Daemons + 'static> Server<D> {
@@ -76,6 +87,17 @@ impl<D: Daemons + 'static> Server<D> {
             version: version.to_string(),
             say: Box::new(|d| angzarr_diagnostic::Report::of(d).to_string()),
             cancels: approval::Cancels::default(),
+            wakes: None,
+        }
+    }
+
+    /// This server, keeping its session awake through `wakes` (the
+    /// terminal wake): its own session watched for as long as it serves.
+    #[must_use]
+    pub fn waking(self, wakes: wake::Wakes) -> Server<D> {
+        Server {
+            wakes: Some(wakes),
+            ..self
         }
     }
 
@@ -231,7 +253,7 @@ where
 /// thread), until its input ends.
 // The process's own stdio: an acceptance test drives it (mcp_serve.test.rs).
 #[cfg_attr(test, mutants::skip)]
-pub fn serve<D>(server: Server<D>, out: &mut dyn std::io::Write) -> Result<(), McpError>
+pub fn serve<D>(mut server: Server<D>, out: &mut dyn std::io::Write) -> Result<(), McpError>
 where
     D: Daemons + Send + Sync + 'static,
     D::Api: Send + Sync,
@@ -244,7 +266,11 @@ where
         .map_err(|e| failed(e.to_string()))?;
     let (lines, written) = std::sync::mpsc::channel::<Vec<u8>>();
     let serving = std::thread::spawn(move || {
-        runtime.block_on(async move {
+        let served = runtime.block_on(async move {
+            // The terminal wake's poster, for the server's life.
+            if let Some(wakes) = server.wakes.take() {
+                tokio::spawn(wake::keep_awake(Arc::clone(&server.caller), wakes));
+            }
             // The engine's input, read here first: `server/discover`
             // answered, a cancel heard, the rest passed to rmcp.
             let (feed, input) = tokio::io::duplex(1 << 16);
@@ -265,7 +291,12 @@ where
                 .map_err(|e| failed(e.to_string()))?;
             running.waiting().await.map_err(|e| failed(e.to_string()))?;
             Ok(())
-        })
+        });
+        // What the wake's poster still holds (a call in flight, a blocking
+        // read) is let go within a bound, never waited on: the server ends
+        // with its input.
+        runtime.shutdown_timeout(SHUTDOWN_GRACE);
+        served
     });
     for bytes in written {
         out.write_all(&bytes)

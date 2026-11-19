@@ -1092,6 +1092,10 @@ fn a_redelivered_context_is_recorded_on_a_live_session_once() {
         size: 120,
         sha256: "ab".repeat(32),
         carried_by: "UserPromptSubmit".to_string(),
+        covered: vec![crate::TreePosition {
+            tree: "users/me/library".to_string(),
+            sequence: 7,
+        }],
     };
     let mut session = Session::minted();
     assert_eq!(
@@ -1103,6 +1107,7 @@ fn a_redelivered_context_is_recorded_on_a_live_session_once() {
                 size: 120,
                 sha256: fact.sha256.clone(),
                 carried_by: fact.carried_by.clone(),
+                covered: fact.covered.clone(),
             }
         )]
     );
@@ -1120,9 +1125,14 @@ fn a_loadout_is_recorded_on_a_live_session_once() {
         profiles: vec!["dev".to_string()],
         bundles: vec!["demo".to_string()],
     };
+    let covered = vec![crate::TreePosition {
+        tree: "users/me/library".to_string(),
+        sequence: 3,
+    }];
     let fact = crate::RecordLoadout {
         loadout: loadout.clone(),
         incarnation: 1,
+        covered: covered.clone(),
     };
     let mut session = Session::minted();
     assert_eq!(
@@ -1130,9 +1140,37 @@ fn a_loadout_is_recorded_on_a_live_session_once() {
         [SessionEvent::LoadoutRecorded(crate::LoadoutRecorded {
             loadout,
             incarnation: 1,
+            covered,
         })]
     );
     assert!(session.fact(fact.clone(), "loadout:s:1").is_empty());
     let mut none = Session::new();
     assert!(none.fact(fact, "loadout:x:1").is_empty());
+}
+
+// Step 10c U13 rework: a change a live session's loadout draws on is
+// recorded on it as owed, once per key (the projector's book handed again
+// is a DUPLICATE), and nothing on a stream with no session.
+#[test]
+fn an_owed_change_is_recorded_on_a_live_session_once() {
+    let fact = crate::RecordContextOwed {
+        tree: "projects/p/checkouts/c/library".to_string(),
+        sequence: 4,
+        bundles: vec!["demo".to_string()],
+        paths: vec!["content/bundles/v2/demo/fragments/a.md".to_string()],
+    };
+    let key = crate::owed_key("s", &fact.tree, 4);
+    let mut session = Session::minted();
+    assert_eq!(
+        session.fact(fact.clone(), &key),
+        [SessionEvent::ContextOwed(crate::ContextOwed {
+            tree: fact.tree.clone(),
+            sequence: 4,
+            bundles: fact.bundles.clone(),
+            paths: fact.paths.clone(),
+        })]
+    );
+    assert!(session.fact(fact.clone(), &key).is_empty());
+    let mut none = Session::new();
+    assert!(none.fact(fact, &key).is_empty());
 }

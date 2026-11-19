@@ -58,6 +58,11 @@ pub struct SessionState {
     /// The workspace axis it was minted on; none recorded (a session from
     /// before it was): `none`.
     pub workspace: Option<String>,
+    /// The terminal wake outstanding, by its nonce; empty when none is.
+    pub wake_outstanding: String,
+    /// The last wake, disarmed unanswered with nothing issued or redeemed
+    /// after it, by its nonce: `session show`'s "wake sent, not answered".
+    pub wake_unanswered: String,
 }
 
 impl From<SessionState> for sessions_proto::v1::SessionState {
@@ -93,6 +98,8 @@ impl From<SessionState> for sessions_proto::v1::SessionState {
                 .collect(),
             title: value.title,
             workspace: value.workspace,
+            wake_outstanding: value.wake_outstanding,
+            wake_unanswered: value.wake_unanswered,
         }
     }
 }
@@ -145,6 +152,8 @@ impl TryFrom<sessions_proto::v1::SessionState> for SessionState {
                 .collect::<Result<Vec<_>, _>>()?,
             title: value.title,
             workspace: value.workspace,
+            wake_outstanding: value.wake_outstanding,
+            wake_unanswered: value.wake_unanswered,
         })
     }
 }

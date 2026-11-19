@@ -140,11 +140,11 @@ impl<E: Edge> Daemon<E> {
         let Some(owner_state) = board.session(&owner.session).filter(|o| !o.closed) else {
             return Taken::Done;
         };
-        let urgency = match supported(owner_state).contains(&Urgency::Wake) {
+        let supported = supported(owner_state, self.wakeable().contains(&owner.session));
+        let urgency = match supported.contains(&Urgency::Wake) {
             true => Urgency::Wake,
             false => Urgency::Inform,
         };
-        let supported = supported(owner_state);
         drop(board);
         let Some(cover) = session_cover(&owner.session) else {
             return Taken::Done;

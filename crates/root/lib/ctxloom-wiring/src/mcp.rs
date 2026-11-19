@@ -83,8 +83,27 @@ pub(crate) fn serve(
     })?;
     let server =
         mcp_server::Server::new(caller, stamp).saying(Box::new(move |d| catalog.message(d)));
+    // The terminal wake: where claude exported its messaging socket to this
+    // server (its engine started it), the server keeps its session awake.
+    let exported = |name: &str| {
+        env.non_empty(name)
+            .map(|value| value.to_string_lossy().into_owned())
+    };
+    let server = match engine_claude::messaging_wake(&exported) {
+        Some(socket) => server.waking(mcp_server::wake::Wakes {
+            post: Arc::new(socket),
+            mint: Box::new(nonce),
+        }),
+        None => server,
+    };
     mcp_server::serve(server, out).map_err(|e| Failure::new(e, Exit::FAILED))?;
     Ok(Exit::OK)
+}
+
+/// A wake's nonce: the random tail of a fresh v7 id, 16 hex digits.
+fn nonce() -> String {
+    let id = uuid::Uuid::now_v7().simple().to_string();
+    id[id.len() - run_ports::NONCE_DIGITS..].to_string()
 }
 
 /// The messages a tool's error is said in: the wiring's sources, which hold
@@ -119,3 +138,7 @@ impl Daemons for SessionReach {
             .await
     }
 }
+
+#[cfg(test)]
+#[path = "mcp.test.rs"]
+mod tests;

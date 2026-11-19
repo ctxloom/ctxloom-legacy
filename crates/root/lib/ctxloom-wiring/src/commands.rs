@@ -299,6 +299,11 @@ pub(crate) fn build_setup_over(
     // bound from when the use cases were wired, which a hook does first.
     .with_hook_library(Box::new(
         crate::hook_library::DaemonHookLibrary::starting_now(Arc::clone(wiring.env())),
+    ))
+    // A primary's pending messages, delivered by its hooks (the terminal
+    // wake), through the daemon too.
+    .with_hook_messages(Box::new(
+        crate::hook_messages::DaemonHookMessages::starting_now(Arc::clone(wiring.env())),
     )))
 }
 

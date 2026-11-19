@@ -260,6 +260,9 @@ pub struct Daemon<E: Edge> {
     trusts: CatchUp<trust_index::TrustIndexes>,
     approvals: CatchUp<pending_approvals::PendingApprovals>,
     checkouts: CatchUp<library_checkout::LibraryCheckouts>,
+    /// What each live session is owed (step 10c U13 rework), its
+    /// positions in the store; none until [`Daemon::owing`].
+    owed: Option<CatchUp<crate::owed::OwedContexts<E>>>,
     launches: CatchUp<PendingModel>,
     /// Each hosted child's environment, by its session's stable id: its
     /// launcher's, taken from the hand-off at its first start (S6, D-N45),
@@ -277,6 +280,11 @@ pub struct Daemon<E: Edge> {
     /// The one-shots it hosts (U4), shared with its API; none, it hosts
     /// none.
     one_shots: Option<Arc<OneShots>>,
+    /// The sessions whose ctxloom MCP server watches them (the terminal
+    /// wake), shared with its API's `WatchSession`: their signals are
+    /// published each round, and a primary among them takes a wake; none,
+    /// no session is watched.
+    watches: Option<Arc<crate::SessionWatches>>,
     /// Where a child works (s4-Q11); none, every child in its project.
     workspaces: Option<Arc<dyn ChildWorkspaces>>,
     /// Whether it hands what it hosts over to the next daemon (OD-3
@@ -405,6 +413,7 @@ impl<E: Edge> Daemon<E> {
             trusts: trust_index::caught_up(folds.trusts),
             approvals: pending_approvals::caught_up(folds.approvals),
             checkouts: library_checkout::caught_up(folds.checkouts),
+            owed: None,
             launches: pending_launches::catch_up(),
             envs: BTreeMap::new(),
             hosted: BTreeMap::new(),
@@ -424,7 +433,38 @@ impl<E: Edge> Daemon<E> {
             guided: BTreeMap::new(),
             adopted: BTreeMap::new(),
             start_holds: None,
+            watches: None,
         }
+    }
+
+    /// The daemon, publishing each watched session's signal to `watches`
+    /// each round (the terminal wake), and planning a wake for a primary
+    /// among them.
+    pub fn watching(mut self, watches: Arc<crate::SessionWatches>) -> Daemon<E> {
+        self.watches = Some(watches);
+        self
+    }
+
+    /// Each watched session's signal, as the board and the pending
+    /// messages stand now.
+    fn publish_signals(&self) {
+        let Some(watches) = self.watches.as_ref() else {
+            return;
+        };
+        let board = self.board.projector().board();
+        let pending = self.pending.projector().pending();
+        for session in watches.watched() {
+            let signal = crate::signal_of(&pending.pending(&session), board.session(&session));
+            watches.publish(&session, signal);
+        }
+    }
+
+    /// The sessions watched now (stable ids).
+    pub(crate) fn wakeable(&self) -> BTreeSet<String> {
+        self.watches
+            .as_ref()
+            .map(|watches| watches.watched())
+            .unwrap_or_default()
     }
 
     /// The daemon, its start-up sweep delivering, through `holds`, the hold
@@ -432,6 +472,20 @@ impl<E: Edge> Daemon<E> {
     /// the ONE named exception to "the daemon never reads a hold").
     pub fn flushing_at_start(mut self, holds: Arc<dyn crate::StartHolds>) -> Daemon<E> {
         self.start_holds = Some(holds);
+        self
+    }
+
+    /// The daemon, recording what each live session is owed as each round
+    /// catches up (step 10c U13 rework), each session's trees told by
+    /// `trees`.
+    pub fn owing(mut self, trees: Arc<dyn crate::owed::SessionTrees>) -> Daemon<E> {
+        let owed = crate::owed::OwedContexts::new(
+            Arc::clone(&self.edge),
+            self.index.projector().clone(),
+            self.checkouts.projector().clone(),
+            trees,
+        );
+        self.owed = Some(crate::owed::caught_up(owed));
         self
     }
 
@@ -964,9 +1018,23 @@ impl<E: Edge> Daemon<E> {
         let _ = self.trusts.step_if_changed(store, catalog).await;
         let _ = self.approvals.step_if_changed(store, catalog).await;
         let _ = self.checkouts.step_if_changed(store, catalog).await;
+        // Once the index and the checkouts are caught up: what each live
+        // session is owed, recorded on it, and the index caught up with it.
+        if let Some(owed) = self.owed.as_mut() {
+            if let Ok(Some(caught)) = owed.step_if_changed(store, catalog).await {
+                for (cover, failure) in caught.failures() {
+                    if self.complained.insert(format!("owed:{}", cover.domain)) {
+                        (self.say)(&format!("an owed context not recorded: {failure:?}"));
+                    }
+                }
+            }
+            let _ = self.index.step_if_changed(store, catalog).await;
+        }
         if any_handed(handed(&board), handed(&pending)) {
             self.refused.clear();
         }
+        // What would wake each watched session now (the terminal wake).
+        self.publish_signals();
         // Once the board has caught up, so a child just launched is known.
         if board.is_ok() {
             self.sweep_hand_offs();
@@ -1007,6 +1075,7 @@ impl<E: Edge> Daemon<E> {
         let skip: BTreeSet<String> = self.done.union(&self.refused).cloned().collect();
         let board = self.board.projector().board();
         let pending = self.pending.projector().pending();
+        let wakeable = self.wakeable();
         let projects: BTreeSet<String> = board
             .sessions()
             .map(|(_, session)| session.project_id.clone())
@@ -1020,6 +1089,7 @@ impl<E: Edge> Daemon<E> {
                     pending: &pending,
                     hosted: &hosted,
                     done: &skip,
+                    wakeable: &wakeable,
                 })
                 .into_iter()
                 .map(|step| (project.clone(), step)),
@@ -1201,6 +1271,9 @@ impl<E: Edge> Daemon<E> {
         // The child's project's trust, as the daemon's index has it now
         // (step 8 U2): its own settings apply only once the user trusts it.
         let trusted = self.trusts.projector().index().trusts(project_id);
+        // Where its project's trees are, read BEFORE it is planned (step 10c
+        // U13 rework): a change recorded past them is owed to it.
+        let covered = self.positions_of(project_id);
         let child = match self.plan_child(&hosted_engine, &handed.agent, project_dir, &env, trusted)
         {
             Ok(child) => child,
@@ -1240,7 +1313,7 @@ impl<E: Edge> Daemon<E> {
             })
             .await;
         match enqueued {
-            Ok(_) => self.record_loadout(&at, &child.loadout).await,
+            Ok(_) => self.record_loadout(&at, &child.loadout, covered).await,
             // Judged as any child is (rulings 53, 73e): refused for good.
             Err(EnqueueError::Refused(rejection)) => {
                 let code = angzarr_diagnostic::Diagnostic::code(&rejection).to_string();
@@ -1481,7 +1554,12 @@ impl<E: Edge> Daemon<E> {
     /// session (step 10c U13; keyed by the session and the incarnation, so
     /// a retried start records it once). One not recorded is said: the
     /// child runs, and a change is told it at no hook.
-    async fn record_loadout(&mut self, at: &RunAt, loadout: &sessions::SessionLoadout) {
+    async fn record_loadout(
+        &mut self,
+        at: &RunAt,
+        loadout: &sessions::SessionLoadout,
+        covered: Vec<sessions::TreePosition>,
+    ) {
         let Ok(root) = uuid::Uuid::parse_str(&at.session) else {
             return;
         };
@@ -1493,6 +1571,7 @@ impl<E: Edge> Daemon<E> {
         let fact = sessions::RecordLoadout {
             loadout: loadout.clone(),
             incarnation: at.incarnation,
+            covered,
         };
         let key = sessions::loadout_key(&at.session, at.incarnation);
         if let Err(failure) = self
@@ -1502,6 +1581,25 @@ impl<E: Edge> Daemon<E> {
         {
             (self.say)(&format!("its loadout was not recorded: {failure:?}"));
         }
+    }
+
+    /// Where each library tree of the project `project_id` (each checkout's)
+    /// and the home's are, as the checkouts projection holds them now:
+    /// every tree's latest sequence that changed a path (step 10c U13
+    /// rework), sorted by tree.
+    fn positions_of(&self, project_id: &str) -> Vec<sessions::TreePosition> {
+        let prefix = self
+            .index
+            .projector()
+            .index()
+            .project_harp(project_id)
+            .map(|harp| format!("projects/{harp}/checkouts/"));
+        crate::owed::positions(&self.checkouts.projector().checkouts(), |tree| {
+            tree == library_tree::HOME_TREE
+                || prefix
+                    .as_ref()
+                    .is_some_and(|prefix| tree.starts_with(prefix))
+        })
     }
 
     /// The hosted child of `project_dir` on `engine`, planned by its

@@ -195,6 +195,32 @@ message RecordTreeObserved {
   optional Motion in_motion = 10;
 }
 
+// 10c (U13 rework, the scanner; owner 2026-11-18): every file of a tree's
+// library as the daemon's scanner found it walking the tree, each with its
+// content id (the SHA-256 of its bytes, ctxloom's digest; never git's).
+// The aggregate compares it with the listing its state holds and records a
+// TreeObserved of each path added, changed or gone (the first listing a
+// baseline of every file), or nothing when they match; an intent's own
+// change is attributed as a read's is. Keyed
+// `listed:{tree}:{H(base_cause)}:{H(sorted listing)}` (`listing_key`),
+// chained on the cause the scanner read so A to B to A is three. No git is
+// asked: a library observes in any directory. Additive.
+message RecordTreeListed {
+  option (io.angzarr.v1.fact) = {
+    component: "ctxloom.library.v1.LibraryState"
+    emits: ["ctxloom.library.v1.TreeObserved"]
+  };
+
+  string name = 1;
+  TreeKind kind = 2;
+  // The `last_cause` the scanner read.
+  string base_cause = 3;
+  // Every file found, sorted by path, its `oid` the content id.
+  repeated DirtyPath files = 4;
+  // None when no git operation was in progress.
+  optional Motion in_motion = 5;
+}
+
 // 10b (G3, owner 2026-11-18, night): ctxloom made the home's library a
 // git repository of its own (`git init`, the home step, G2), so its writes
 // are committed there, one commit per write. Recorded where the home step

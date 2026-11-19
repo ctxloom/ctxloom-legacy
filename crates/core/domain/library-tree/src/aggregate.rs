@@ -26,9 +26,10 @@ use crate::{
     Evidence, External, HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand,
     LibraryEvent, LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordBundleExported,
     RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed, RecordTreeInstalled,
-    RecordTreeObserved, ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeInstalled,
-    TreeObserved, KEEP_DAYS,
+    RecordTreeListed, RecordTreeObserved, ReplaceFile, RunSequence, Step, StepApplied, TrashPath,
+    TreeInstalled, TreeObserved, KEEP_DAYS,
 };
+use std::collections::BTreeMap;
 
 /// The code a plan's rejection takes when the tree no longer reads and the
 /// plan named no diagnostic of its own.
@@ -440,6 +441,39 @@ impl LibraryAggregate {
     }
 }
 
+/// The changes from `held` (a tree's last listing, path to content id) to
+/// `found` (every file now): each path added, changed or gone, sorted by
+/// path.
+pub fn listing_changes(held: &BTreeMap<String, String>, found: &[DirtyPath]) -> Vec<crate::Change> {
+    let now: BTreeMap<&str, &str> = found
+        .iter()
+        .map(|file| (file.path.as_str(), file.oid.as_str()))
+        .collect();
+    let mut changes = Vec::new();
+    let paths: std::collections::BTreeSet<&str> = held
+        .keys()
+        .map(String::as_str)
+        .chain(now.keys().copied())
+        .collect();
+    for path in paths {
+        let (was, is) = (held.get(path).map(String::as_str), now.get(path).copied());
+        let status = match (was, is) {
+            (None, Some(_)) => ChangeStatus::Added,
+            (Some(_), None) => ChangeStatus::Deleted,
+            (Some(was), Some(is)) if was != is => ChangeStatus::Modified,
+            _ => continue,
+        };
+        changes.push(crate::Change {
+            path: path.to_string(),
+            status,
+            from_oid: was.unwrap_or_default().to_string(),
+            to_oid: is.unwrap_or_default().to_string(),
+            from_path: String::new(),
+        });
+    }
+    changes
+}
+
 /// An event a fact records, or none.
 fn recorded<E: DomainMessage>(event: Option<E>) -> Result<FactEmit<LibraryAggregate>, Bug> {
     Ok(FactEmit::of(event.map(|event| pack_message(&event))))
@@ -796,6 +830,35 @@ impl LibraryAggregate {
         observed.external = None;
         observed.intended = Some(request_id.clone());
         self.outside(observed, Some(&request_id), ctx)
+    }
+
+    /// RecordTreeListed (step 10c U13 rework, the scanner): every file the
+    /// scan found, compared with the listing the state holds ([`listing_changes`]),
+    /// recorded as the observation a read's would be: the first a baseline
+    /// of every file, a match nothing, an intent's own change attributed.
+    #[handles_fact(RecordTreeListed)]
+    fn listed(&self, fact: RecordTreeListed, ctx: &Context) -> Result<FactEmit<Self>, Bug> {
+        // A tree never listed holds no listing: every file is added, and
+        // `observation` records it as the tree's baseline.
+        let held = self.library.listed();
+        let changes = listing_changes(&held, &fact.files);
+        if changes.is_empty() && self.library.baselined {
+            // What the record lists, a path a step took away left out.
+            return recorded(None::<TreeObserved>);
+        }
+        let observed = RecordTreeObserved {
+            name: fact.name,
+            kind: fact.kind,
+            base_cause: fact.base_cause,
+            head_before: self.library.head.clone(),
+            head_after: String::new(),
+            tree_after: String::new(),
+            changes,
+            dirty_after: fact.files,
+            baseline: false,
+            in_motion: fact.in_motion,
+        };
+        self.observed(observed, ctx)
     }
 
     /// A pending intent's next step done: what it left becomes its paths'

@@ -16,6 +16,7 @@ mod daemon;
 mod error;
 mod frontend;
 mod hook_library;
+mod hook_messages;
 mod interview;
 mod isolation;
 mod library;

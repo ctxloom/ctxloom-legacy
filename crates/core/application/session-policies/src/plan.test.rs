@@ -141,6 +141,9 @@ struct World {
     run: Vec<RunEvent>,
     hosted: bool,
     done: BTreeSet<String>,
+    /// The sessions whose ctxloom MCP server watches them (the terminal
+    /// wake).
+    wakeable: BTreeSet<String>,
 }
 
 impl World {
@@ -222,6 +225,7 @@ impl World {
             pending: &pending,
             hosted: &hosted,
             done: &self.done,
+            wakeable: &self.wakeable,
         })
     }
 }
@@ -636,8 +640,9 @@ fn each_turn_a_child_ended_is_told_to_its_owner() {
 }
 
 // OD-58: a daemon child on an engine with a child adapter (claude-code and
-// opencode) takes every urgency; one on any other engine, and a primary on
-// any, only an inform for now.
+// opencode) takes every urgency; one on any other engine only an inform. A
+// primary takes an inform, and a wake only while its ctxloom MCP server
+// watches it (the terminal wake, owner ruling 2026-11-18); never a steer.
 #[test]
 fn the_urgencies_a_session_takes() {
     let every = [Urgency::Inform, Urgency::Wake, Urgency::Steer];
@@ -646,19 +651,61 @@ fn the_urgencies_a_session_takes() {
         owner: Some(at(OWNER)),
         ..sessions::SessionState::default()
     };
-    assert_eq!(supported(&child), every);
+    assert_eq!(supported(&child, false), every);
     child.engine = "opencode".to_string();
-    assert_eq!(supported(&child), every, "opencode's child adapter");
+    assert_eq!(supported(&child, false), every, "opencode's child adapter");
     child.engine = "mock".to_string();
-    assert_eq!(supported(&child), [Urgency::Inform], "no child adapter");
+    assert_eq!(
+        supported(&child, false),
+        [Urgency::Inform],
+        "no child adapter"
+    );
+    assert_eq!(
+        supported(&child, true),
+        [Urgency::Inform],
+        "a watch wakes a primary alone"
+    );
     assert_eq!(CHILD_ENGINES, ["claude-code", "opencode"]);
     for engine in CHILD_ENGINES {
         let primary = sessions::SessionState {
             engine: engine.to_string(),
             ..sessions::SessionState::default()
         };
-        assert_eq!(supported(&primary), [Urgency::Inform], "{engine}");
+        assert_eq!(supported(&primary, false), [Urgency::Inform], "{engine}");
+        assert_eq!(
+            supported(&primary, true),
+            [Urgency::Inform, Urgency::Wake],
+            "{engine}, watched"
+        );
     }
+}
+
+// The terminal wake: a child's turn's end is told to a primary owner its
+// ctxloom MCP server watches as a WAKE, so it is woken.
+#[test]
+fn a_watched_primary_owner_is_woken_by_its_childs_notice() {
+    let mut world = World::with_child().hosting(vec![
+        enqueued(),
+        queued(&["m1"], TurnUrgency::Wake),
+        RunEvent::TurnCompletedRecorded(TurnCompletedRecorded {
+            turn: 1,
+            native_key: String::new(),
+            answer_ref: String::new(),
+            exit_code: 0,
+            message_ids: vec!["m1".to_string()],
+        }),
+    ]);
+    world.wakeable.insert(OWNER.to_string());
+    let key = format!("notice:{CHILD}:1:1");
+    let steps = world.plan();
+    let notice: SendMessage = command(
+        steps
+            .iter()
+            .find(|s| s.key() == key)
+            .unwrap_or_else(|| panic!("{:?}", keys(&steps))),
+    );
+    assert_eq!(notice.urgency, Urgency::Wake);
+    assert_eq!(notice.supported, [Urgency::Inform, Urgency::Wake]);
 }
 
 // OD-58: an owner that is itself a hosted child on opencode, re-hosted (its

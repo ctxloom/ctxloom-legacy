@@ -1,13 +1,11 @@
 //! A change is reacted to (step 10c U13, G5-G7; protos.md §2, §3).
 //!
-//! A change is seen at each read, and, for a tree with a live session, at
-//! each round of the daemon's loop (G5(b), owner): [`Api::observe_live`]
-//! observes, once each, the trees the live sessions run in, as a read
-//! observes them, in the daemon's own environment (a round has no
-//! caller). A tree no live session runs in is never observed between
-//! reads (no watcher). A session is live by its lock's verdict; one with
-//! an end stamp is never probed, so a round over a home of ended sessions
-//! reads no lock.
+//! A change is seen when something needs the tree (owner, 2026-11-18, no
+//! polling: observe on need, superseding G5(b)): a read, a preview or a
+//! write, or a hook event of a session in it. No round, timer or watcher
+//! observes a tree. A hook's observation trusts a scan of the last
+//! [`HOOK_TRUST_SECONDS`]; every read, preview and write scans again
+//! (through the scanner's stat memo).
 //!
 //! A live session whose loadout a change touched is handed its context
 //! re-assembled at its next event (G6/G7, owner): its hook asks
@@ -24,16 +22,18 @@
 use std::sync::Arc;
 
 use angzarr_embedded::v1::{Cover, DeliveryOutcome, Uuid};
-use daemon_application::reactions::owed;
 use daemon_proto::v1;
 use run_ports::{ContextDelivery, Edge};
-use session_index::{SessionRecord, State};
-use sessions::{ProjectName, SessionName};
+use session_index::SessionRecord;
+use sessions::SessionName;
 use sha2::{Digest, Sha256};
 
-use crate::library_reads::pairs;
 use crate::server::Api;
 use crate::{ApiError, ApiRefusal};
+
+/// How long a hook's re-injection trusts a tree's last scan (owner,
+/// 2026-11-18): five minutes.
+pub const HOOK_TRUST_SECONDS: i64 = 300;
 
 /// The engines a re-assembled context is handed through, by name (step
 /// 10c U13): the daemon's own.
@@ -41,74 +41,23 @@ pub trait Deliveries: Send + Sync {
     fn engine(&self, name: &str) -> Option<Arc<dyn run_ports::Engine>>;
 }
 
-/// The directories the live sessions of `records` run in, each once with
-/// its project's id, in their first session's order: `state` is a
-/// session's lock's verdict (its project directory and harp), asked only
-/// of one with no end stamp.
-pub(crate) fn live_dirs(
-    records: &[SessionRecord],
-    state: impl Fn(&str, &str) -> State,
-) -> Vec<(String, String)> {
-    let mut dirs: Vec<(String, String)> = Vec::new();
-    for record in records.iter().filter(|record| record.ended_at.is_none()) {
-        let known = dirs.iter().any(|(_, dir)| dir == &record.project_dir);
-        if known || state(&record.project_dir, &record.harp) != State::Live {
-            continue;
-        }
-        dirs.push((record.project_id.clone(), record.project_dir.clone()));
-    }
-    dirs
-}
-
-impl<E: Edge> Api<E> {
-    /// A round's observation (G5(b)): each tree a live session runs in,
-    /// its checkout's and the home's, observed as a read observes them,
-    /// git run in `env`; how many sites were observed. A project the
-    /// daemon cannot name, or a tree that does not observe, is passed
-    /// over: the round goes on.
-    pub async fn observe_live(&self, env: &v1::EnvVars) -> u32 {
-        let (Some((observations, observers)), Some(libraries)) =
-            (self.observing.as_ref(), self.libraries.as_deref())
-        else {
-            return 0;
-        };
-        // Inside the loop's round, after its catch-up: the index as it is,
-        // never a wait for a fresher one (the loop would be waiting on
-        // itself).
-        let live = {
-            let index = self.parts.index.index();
-            let records = index.records();
-            live_dirs(&records, |dir, harp| self.parts.states.state(dir, harp))
-                .into_iter()
-                .filter_map(|(project, dir)| {
-                    let name =
-                        ProjectName::parse(&format!("projects/{}", index.project_harp(&project)?))
-                            .ok()?;
-                    Some((name, dir))
-                })
-                .collect::<Vec<_>>()
-        };
-        let env = pairs(Some(env));
-        let mut observed = 0;
-        for (name, dir) in live {
-            let Some(root) = libraries.root(&dir, &env) else {
-                continue;
-            };
-            let trees = observations
-                .observe_trees(observers.as_ref(), &env, Some((name, root.as_str())))
-                .await;
-            if let Ok(trees) = trees {
-                observed += u32::try_from(trees.seen.len()).unwrap_or(u32::MAX);
-            }
-        }
-        observed
+/// The characters a hook's context may take, as its request asks: 0 is
+/// the whole hook budget, and none is more.
+pub(crate) fn budget_of(asked: u32) -> usize {
+    match usize::try_from(asked).unwrap_or(usize::MAX) {
+        0 => run_launcher::HOOK_CONTEXT_BUDGET,
+        budget => budget.min(run_launcher::HOOK_CONTEXT_BUDGET),
     }
 }
 
-/// A library's changes as a watcher polls them (step 10c G7): each call
+/// A library's changes as a watcher drains them (step 10c G7): each call
 /// answers those recorded since the last, oldest first, none when none
-/// was.
+/// was. It is called when its [`Wake`] is (the catch-up's signal, step 10c
+/// U13 rework: no poll, no log).
 pub type LibraryPoll = Box<dyn FnMut() -> Vec<v1::LibraryChange> + Send>;
+
+/// What wakes a watcher once a change of the library is recorded.
+pub type Wake = library_checkout::Wake;
 
 /// Whether a watcher of `parent` (`projects/{p}`, or `users/me`) is told
 /// of the tree `tree`'s changes: every checkout of the project, or the
@@ -153,11 +102,12 @@ pub(crate) fn notice_of(recorded: &library_checkout::Recorded) -> v1::LibraryCha
 
 impl<E: Edge> Api<E> {
     /// `WatchLibrary` (G7): the changes of the trees `request.parent` names
-    /// recorded from now on, as a poll; a daemon that observes no library
-    /// fails it. Never content.
+    /// recorded from now on, drained each time `wake` is called; a daemon
+    /// that observes no library fails it. Never content.
     pub fn watch_library(
         &self,
         request: &v1::WatchLibraryRequest,
+        wake: Wake,
     ) -> Result<LibraryPoll, ApiError> {
         let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon observes no library".to_string(),
@@ -169,24 +119,24 @@ impl<E: Edge> Api<E> {
                 reason: "shape".to_string(),
             })));
         }
-        let checkouts = observations.checkouts();
-        let mut after = checkouts.checkouts().last_recorded();
+        let heard = observations.checkouts().checkouts().watch(wake);
         Ok(Box::new(move || {
-            let recorded = checkouts.checkouts().recorded_since(after);
-            if let Some(last) = recorded.last() {
-                after = last.at;
-            }
-            recorded
-                .iter()
+            heard
+                .try_iter()
                 .filter(|recorded| watches(&parent, &recorded.tree))
-                .map(notice_of)
+                .map(|recorded| notice_of(&recorded))
                 .collect()
         }))
     }
 
     /// `RedeliverContext`: what the live session `request.name` names is
-    /// owed at its engine's hook `request.carried_by`, handed and recorded;
-    /// nothing when it is owed nothing, has no loadout recorded, or its
+    /// owed, COLLECTED at its engine's hook `request.carried_by` (step 10c
+    /// U13 rework): its trees observed first (a hook event is a need), the
+    /// loop's next round awaited (whose OwedContexts handler records what
+    /// the observation owes), then every change its index holds owed, in
+    /// one re-assembly, handed and recorded as covering the positions read
+    /// before it was assembled, so a change recorded meanwhile stays owed.
+    /// Nothing when it is owed nothing, has no loadout recorded, or its
     /// engine cannot carry it at this hook (it stays owed). A session the
     /// daemon does not know is refused `SessionNotFound`.
     pub async fn redeliver_context(
@@ -194,8 +144,7 @@ impl<E: Edge> Api<E> {
         request: v1::RedeliverContextRequest,
     ) -> Result<v1::RedeliveredContext, ApiError> {
         let none = v1::RedeliveredContext::default();
-        let (Some(deliveries), Some((observations, _))) =
-            (self.deliveries.as_ref(), self.observing.as_ref())
+        let (Some(deliveries), Some(_)) = (self.deliveries.as_ref(), self.observing.as_ref())
         else {
             return Ok(none);
         };
@@ -205,84 +154,188 @@ impl<E: Edge> Api<E> {
                 reason: "shape".to_string(),
             }))
         })?;
-        self.parts.hosting.fresh().await;
-        let record = self
-            .parts
-            .index
-            .index()
-            .find_by_id(&name.uid())
-            .ok_or_else(|| {
-                ApiError::from(ApiRefusal::of(&v1::SessionNotFound {
-                    name: request.name.clone(),
-                }))
-            })?;
-        let (Some(loadout), Some(since)) = (record.loadout.clone(), record.context_since) else {
-            return Ok(none);
+        let known = |api: &Self| {
+            api.parts
+                .index
+                .index()
+                .find_by_id(&name.uid())
+                .ok_or_else(|| {
+                    ApiError::from(ApiRefusal::of(&v1::SessionNotFound {
+                        name: request.name.clone(),
+                    }))
+                })
         };
-        // A read (G5(a)): the session's trees observed first, so a change
-        // no read has seen is seen now.
+        let record = known(self)?;
         let parent = name.project().to_string();
         let cwd = match request.cwd.as_str() {
             "" => record.project_dir.clone(),
             cwd => cwd.to_string(),
         };
-        let names = self
-            .session_trees(&parent, &cwd, request.env.as_ref())
+        if record.loadout.is_none() {
+            return Ok(none);
+        }
+        // A hook event is a need: the session's trees observed (trusting a
+        // scan of the last five minutes); what that owes is recorded by the
+        // next round's handler, and collected at a later hook. No round is
+        // awaited: what is owed is read from the projection as it is.
+        self.session_trees(&parent, &cwd, request.env.as_ref())
             .await?;
-        let log = observations.recorded_since(0);
-        let Some(owing) = owed(&loadout, (since.seconds, since.nanos), &names, &log) else {
+        let Some(loadout) = record.loadout.clone() else {
             return Ok(none);
         };
+        if record
+            .context
+            .as_ref()
+            .is_none_or(|handed| handed.owed.is_empty())
+        {
+            return Ok(none);
+        }
         let Some(engine) = deliveries.engine(&record.engine) else {
             return Ok(none);
         };
-        let context = self
-            .reassembled(&loadout, (parent, cwd), request.env.clone())
+        let env = request.env.clone();
+        let budget = budget_of(request.budget);
+        let reassemble = || self.reassembled(&loadout, (parent, cwd.clone()), env.clone());
+        let fragments =
+            |owed: Vec<(String, String)>| self.changed_fragments(owed, &cwd, env.clone());
+        let collected = self
+            .collect(
+                &record,
+                (engine.as_ref(), &request.carried_by, budget),
+                reassemble,
+                fragments,
+            )
             .await?;
-        let framed = run_launcher::redelivered_context(&owing.changed, &context);
-        let ContextDelivery::HookContext(text) =
-            engine.deliver_context(&request.carried_by, &framed)
+        Ok(
+            collected.map_or(none, |(context, changed)| v1::RedeliveredContext {
+                context,
+                changed,
+            }),
+        )
+    }
+
+    /// The fragments of `owed` (each its tree and path) as the library has
+    /// them now, each whole: a path that is no fragment's, or a fragment no
+    /// longer there, is left out.
+    async fn changed_fragments(
+        &self,
+        owed: Vec<(String, String)>,
+        cwd: &str,
+        env: Option<v1::EnvVars>,
+    ) -> Vec<run_launcher::ChangedFragment> {
+        let mut fragments = Vec::new();
+        for (tree, path) in owed {
+            let Some(name) = daemon_application::reactions::fragment_name(&tree, &path) else {
+                continue;
+            };
+            let request = v1::GetFragmentRequest {
+                name: name.clone(),
+                env: env.clone(),
+                cwd: cwd.to_string(),
+                globals: Some(v1::Globals {
+                    degraded: true,
+                    ..v1::Globals::default()
+                }),
+                ..v1::GetFragmentRequest::default()
+            };
+            let read = self
+                .library_read(&request, |library, flags, parent| {
+                    library_api::reads::get_fragment(library, flags, parent, &request)
+                })
+                .await;
+            if let Ok(read) = read {
+                fragments.push(run_launcher::ChangedFragment {
+                    name,
+                    body: read.answer.body,
+                });
+            }
+        }
+        fragments
+    }
+
+    /// Everything `record`'s session is owed, collected: what the delivery
+    /// covers read BEFORE `reassemble` runs (a change recorded while it is
+    /// assembled or handed is past it, and stays owed), the context framed
+    /// within `budget` characters (over it, only the changed `fragments`,
+    /// asked only then, else a pointer: `run_launcher::redelivered_within`),
+    /// handed to `engine` at `carried_by`, and recorded keyed by the
+    /// positions. The text and what changed; none when nothing is owed, the
+    /// budget leaves no room, the engine cannot carry it here, or another
+    /// hook was handed it first.
+    pub(crate) async fn collect<F, A, G, B>(
+        &self,
+        record: &SessionRecord,
+        (engine, carried_by, budget): (&dyn run_ports::Engine, &str, usize),
+        reassemble: F,
+        fragments: G,
+    ) -> Result<Option<(String, Vec<String>)>, ApiError>
+    where
+        F: FnOnce() -> A,
+        A: std::future::Future<Output = Result<String, ApiError>>,
+        G: FnOnce(Vec<(String, String)>) -> B,
+        B: std::future::Future<Output = Vec<run_launcher::ChangedFragment>>,
+    {
+        let Some(handed) = record
+            .context
+            .as_ref()
+            .filter(|handed| !handed.owed.is_empty())
         else {
-            return Ok(none);
+            return Ok(None);
+        };
+        let covered = handed.owed_positions();
+        let changed = handed.owed_bundles();
+        let context = reassemble().await?;
+        let whole = run_launcher::redelivered_context(&changed, &context);
+        let framed = match whole.chars().count() <= budget {
+            true => whole,
+            false => {
+                let changed_fragments = fragments(handed.owed_paths()).await;
+                run_launcher::redelivered_within(&changed, &context, &changed_fragments, budget)
+            }
+        };
+        if framed.is_empty() {
+            return Ok(None);
+        }
+        let ContextDelivery::HookContext(text) = engine.deliver_context(carried_by, &framed) else {
+            return Ok(None);
         };
         let fact = sessions::RecordContextRedelivered {
-            bundles: owing.changed.clone(),
-            cause: owing.cause.clone(),
+            bundles: changed.clone(),
+            cause: sessions::positions_text(&covered),
             size: u64::try_from(text.len()).unwrap_or(u64::MAX),
             sha256: hex::encode(Sha256::digest(text.as_bytes())),
-            carried_by: request.carried_by.clone(),
+            carried_by: carried_by.to_string(),
+            covered,
         };
-        if !self.redelivered(&record, &fact).await? {
-            // Another hook of the same change was handed it first.
-            return Ok(none);
+        if !self.redelivered(record, &fact).await? {
+            // Another hook of the same batch was handed it first.
+            return Ok(None);
         }
-        Ok(v1::RedeliveredContext {
-            context: text,
-            changed: owing.changed,
-        })
+        Ok(Some((text, changed)))
     }
 
     /// The trees a session at `cwd` of the project `parent` draws on (its
-    /// checkout's and the home's), observed as a read observes them: their
-    /// names.
+    /// checkout's and the home's), observed as a hook observes them: each
+    /// scanned again only past [`HOOK_TRUST_SECONDS`].
     async fn session_trees(
         &self,
         parent: &str,
         cwd: &str,
         env: Option<&v1::EnvVars>,
-    ) -> Result<Vec<String>, ApiError> {
+    ) -> Result<(), ApiError> {
         let (observations, observers) =
             self.observing.as_ref().ok_or_else(|| ApiError::Failed {
                 detail: "this daemon observes no library".to_string(),
             })?;
         let (site, project) = self.resolve(parent, cwd, env, None).await?;
-        let trees = observations
-            .observe_trees(
+        observations
+            .observe_trees_trusting(
                 observers.as_ref(),
                 &site.env,
                 project
                     .as_ref()
                     .map(|(name, root)| (name.clone(), root.as_str())),
+                HOOK_TRUST_SECONDS,
             )
             .await
             .map_err(|error| match error {
@@ -290,12 +343,7 @@ impl<E: Edge> Api<E> {
                     ApiError::Refused(crate::library_refusal(&rejection))
                 }
                 library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
-            })?;
-        Ok(trees
-            .seen
-            .iter()
-            .map(|(_, observed)| observed.tree.to_string())
-            .collect())
+            })
     }
 
     /// `loadout`'s context, assembled at `cwd` of the project `parent` as
@@ -329,8 +377,9 @@ impl<E: Edge> Api<E> {
         Ok(assembled.context)
     }
 
-    /// `fact` recorded on `record`'s session, keyed by its change's cause:
-    /// whether this was its first delivery (a repeat is a DUPLICATE).
+    /// `fact` recorded on `record`'s session, keyed by the positions it
+    /// covers: whether this was its first delivery (a batch handed again is
+    /// a DUPLICATE).
     async fn redelivered(
         &self,
         record: &SessionRecord,
@@ -344,7 +393,7 @@ impl<E: Edge> Api<E> {
             root: Some(Uuid::from_bytes(*root.as_bytes())),
             edition: None,
         };
-        let key = sessions::redelivery_key(&record.id, &fact.cause);
+        let key = sessions::redelivery_key(&record.id, &sessions::positions_text(&fact.covered));
         let answered = self
             .parts
             .edge

@@ -13,11 +13,13 @@
 //! `init`, `doctor`, `clean` and `auth` are S12's and are not here.
 
 mod config_write;
+mod delivery;
 mod diff;
 mod error;
 #[cfg(test)]
 mod fakes;
 mod hooks;
+mod hooks_wake;
 mod manage;
 mod materialize;
 mod materialize_diff;
@@ -31,10 +33,14 @@ use library_application::{Library, Notice};
 use surface_ports::{ForeignFiles, Registry, SurfaceStore};
 
 pub use config_write::ConfigWritten;
+pub use delivery::{
+    compose_context, messages_context, remaining, Delivery, HookMessage, HOOK_CONTEXT_BUDGET,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{SetupError, EN_US};
 pub use hooks::{harp_marker, hook_skills, HookAnswer, HookLibrary, HookSkill};
+pub use hooks_wake::HookMessages;
 pub use manage::{
     BackendStatus, CheckReport, GitignoreReport, HookRow, HooksEvent, HooksList, InstallPlan,
     InstallReport, InstallRequest, PullReport, SurfaceCurrency, UninstallReport,
@@ -76,6 +82,9 @@ pub struct Setup {
     /// The library as the hooks read it, through the daemon (O3); none,
     /// the hooks say nothing of the library.
     hook_library: Option<Box<dyn hooks::HookLibrary>>,
+    /// A primary's pending messages, as its hooks deliver them (the
+    /// terminal wake); none, they deliver none.
+    hook_messages: Option<Box<dyn hooks_wake::HookMessages>>,
 }
 
 impl Setup {
@@ -100,6 +109,7 @@ impl Setup {
             cwd: cwd.into(),
             os: String::new(),
             hook_library: None,
+            hook_messages: None,
         }
     }
 
