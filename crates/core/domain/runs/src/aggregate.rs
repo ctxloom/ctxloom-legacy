@@ -123,6 +123,7 @@ fn decide_enqueue(ctx: &Context, cmd: EnqueueRun) -> Result<RunEnqueued, RunReje
         incarnation: cmd.incarnation,
         mode: cmd.mode,
         launcher_lock: cmd.launcher_lock,
+        grant: cmd.grant,
     })
 }
 

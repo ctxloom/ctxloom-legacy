@@ -192,6 +192,22 @@ fn every_field_of_a_session() -> v1::Session {
             transcript_path: "/t/id-1.jsonl".to_string(),
             rotated_at: at(1_784_309_300, 481_200_000),
         }],
+        grant: Some(v1::SessionGrant {
+            mcp_servers: vec!["ctxloom".to_string(), "fix-tools".to_string()],
+            permissions: r#"{"defaultMode":"plan"}"#.to_string(),
+        }),
+        last_failure: Some(v1::SessionFailure {
+            kind: "rate-limited".to_string(),
+            detail: "429 from the API".to_string(),
+            notice: Some(v1::Notice {
+                code: "daemon-api-turn-rate-limited".to_string(),
+                args: vec![v1::NeedArg {
+                    name: "harp".to_string(),
+                    value: "amber-swift-owl".to_string(),
+                }],
+                text: "its last turn ran into its rate limit".to_string(),
+            }),
+        }),
     }
 }
 

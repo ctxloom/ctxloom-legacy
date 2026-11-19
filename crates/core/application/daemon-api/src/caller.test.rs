@@ -97,6 +97,7 @@ impl DaemonApi for Fake {
             engine: "claude-code".to_string(),
             summary: "read".to_string(),
             closed: *self.closed.lock().unwrap(),
+            incarnation: 2,
             ..v1::Session::default()
         })
     }
@@ -192,6 +193,13 @@ impl DaemonApi for Fake {
             state: "expired".to_string(),
             ..v1::Approval::default()
         })
+    }
+
+    // A write no projection is awaited for (a run's RequestStop): applied.
+    async fn handle(&self, book: CommandBook) -> Result<bool, Called> {
+        self.ask("handle");
+        self.seen.lock().unwrap().books.push(book);
+        Ok(true)
     }
 
     async fn handle_sync(
@@ -560,6 +568,33 @@ async fn a_clear_is_keyed_by_the_id_minted_for_it() {
     let clear = wire::ClearChild::decode(packed.value.as_slice()).unwrap();
     assert_eq!(clear.clear_id, "id-1");
     assert_eq!(world.command_ids(), [sessions::command_id("id-1")]);
+}
+
+// S19's `session stop` (OD-57): the target's CURRENT run is asked to stop,
+// keyed by that run, so a second stop of it is the first's duplicate; the
+// session itself is not written (it stays open).
+#[tokio::test]
+async fn a_stop_asks_the_targets_current_run_to_stop_keyed_by_that_run() {
+    let world = World::new();
+    let caller = world.user(true);
+    let written = caller.stop("brisk-copper-moth").await.unwrap();
+    assert!(written.applied);
+    let child = sessions::SessionName::parse(CHILD).unwrap();
+    let commands = world.commands();
+    let [packed] = commands.as_slice() else {
+        panic!("one stop: {commands:?}");
+    };
+    assert!(
+        packed.type_url.ends_with("/ctxloom.runs.v1.RequestStop"),
+        "{packed:?}"
+    );
+    let cover = world.seen.lock().unwrap().books[0].cover.clone().unwrap();
+    assert_eq!(cover.domain, runs::RUN_DOMAIN);
+    assert_eq!(cover.root, Some(runs::run_root(&child.uid(), 2)));
+    assert_eq!(
+        world.command_ids(),
+        [sessions::command_id(&format!("stop:{}:2", child.uid()))]
+    );
 }
 
 // A refused name says why: the harp grammar's reason, or its shape.

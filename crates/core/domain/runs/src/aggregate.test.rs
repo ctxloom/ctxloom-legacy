@@ -12,7 +12,7 @@ use angzarr_embedded::v1::{command_page, CommandBook, CommandPage, Cover, Fact, 
 use angzarr_embedded::{Any, Failure, Handled, Payload, Registry};
 
 use crate::{
-    run_root, CredentialEvidence, EndCause, EnqueueRun, QueueTurn, RecordFinalReported,
+    run_root, CredentialEvidence, EndCause, EnqueueRun, Grant, QueueTurn, RecordFinalReported,
     RecordLaunchFailed, RecordLaunchOrphaned, RecordRunExited, RecordRunnerAttached,
     RecordRunnerLost, RecordRunnerStarted, RecordSummaryReported, RecordTurnCompleted,
     RecordTurnFailed, RecordTurnStarted, RequestStop, RunAggregate, RunCommand, RunEnded, RunEvent,
@@ -146,6 +146,15 @@ fn enqueue() -> EnqueueRun {
         fatal_findings: 0,
         launcher_lock: launcher_lock(),
         untrusted_settings: Vec::new(),
+        grant: None,
+    }
+}
+
+/// What a child was given (step 9): two servers and its claude document.
+fn grant() -> Grant {
+    Grant {
+        mcp_servers: vec!["ctxloom".to_string(), "fix-tools".to_string()],
+        permissions: r#"{"defaultMode":"acceptEdits"}"#.to_string(),
     }
 }
 
@@ -244,6 +253,25 @@ fn enqueue_journals_the_lock_its_launcher_holds() {
         panic!("one RunEnqueued, got {events:?}");
     };
     assert_eq!(enqueued.launcher_lock, launcher_lock());
+}
+
+// Step 9 (owner ruling 2026-11-17): the grant record is journaled. What the
+// command says a run was given is its RunEnqueued's, and its state keeps it,
+// so a later edit of its agent leaves this run's record as it was.
+#[test]
+fn enqueue_journals_what_the_run_was_given() {
+    let mut run = Run::new();
+    let events = run
+        .command(EnqueueRun {
+            grant: Some(grant()),
+            ..enqueue()
+        })
+        .unwrap();
+    let [RunEvent::RunEnqueued(enqueued)] = events.as_slice() else {
+        panic!("one RunEnqueued, got {events:?}");
+    };
+    assert_eq!(enqueued.grant, Some(grant()));
+    assert_eq!(run.state().grant, Some(grant()));
 }
 
 // NEW-DESIGN (plan 3.3: a run is enqueued once).

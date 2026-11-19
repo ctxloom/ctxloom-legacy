@@ -9,7 +9,8 @@ use daemon_application::{ChildHomes, Ears, HandOffs};
 use run_ports::{ChildObservation, Exit};
 
 use super::{
-    advertised, said, stays_for, step_of, why_it_exits, Advertised, HandOffFiles, Homes, Pumps, Say,
+    advertised, said, stays_for, step_of, why_it_exits, Advertised, HandOffFiles, Homes, Pumps,
+    Say, Workspaces,
 };
 use crate::daemon::files::DaemonFiles;
 use crate::fixtures;
@@ -533,4 +534,84 @@ fn a_draining_daemon_stays_only_for_a_live_frontend_within_its_time() {
     assert!(!stays_for(&[], true, false), "no live frontend");
     assert!(!stays_for(&[42], false, false), "its time has passed");
     assert!(!stays_for(&[42], true, true), "a plain stop");
+}
+
+/// A `git` that records who it is and what `MARKER` it saw, then fails.
+fn recording_git(dir: &std::path::Path, who: &str, log: &std::path::Path) {
+    fixtures::mkdirs(dir);
+    fixture_program::install_program(
+        &*fixtures::fs(),
+        &dir.join("git"),
+        &format!(
+            "#!/bin/sh\nprintf '%s MARKER=%s\\n' {who} \"$MARKER\" >> '{}'\nexit 1\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+}
+
+// A child's checkout is made with git in the environment its LAUNCHER sent
+// (the defect of 2026-11-18): the user's `GIT_*` and `SSH_AUTH_SOCK` reach
+// it, never only the daemon's own PATH, LANG and TMPDIR. A sweep, which no
+// launcher asked, runs in the daemon's.
+#[test]
+fn a_childs_checkout_is_made_with_git_in_its_launchers_environment() {
+    if !fixtures::runs_scripts() {
+        return;
+    }
+    let root = fixtures::root();
+    let dir = root.root();
+    let log = dir.join("git.log");
+    let (daemons, launchers) = (dir.join("daemon-bin"), dir.join("launcher-bin"));
+    recording_git(&daemons, "daemon", &log);
+    recording_git(&launchers, "launcher", &log);
+    let (home, project) = (dir.join("home"), dir.join("work"));
+    fixtures::mkdirs(&home);
+    fixtures::mkdirs(&project);
+    let base = crate::tests::host_snapshot();
+    let daemon_env = Arc::new(process_env::EnvSnapshot::from_parts(
+        base.flavor(),
+        Ok(home.clone()),
+        base.temp_dir().to_path_buf(),
+        vec![(
+            "PATH".into(),
+            format!("{}:/usr/bin:/bin", daemons.display()).into(),
+        )],
+    ));
+    let workspaces = Workspaces {
+        fs: fixtures::fs(),
+        home: home.clone(),
+        env: daemon_env,
+    };
+    let launcher = BTreeMap::from([
+        (
+            "PATH".to_string(),
+            format!("{}:/usr/bin:/bin", launchers.display()),
+        ),
+        ("MARKER".to_string(), "the-launchers".to_string()),
+    ]);
+    let request = isolation_ports::Request {
+        project_dir: project.display().to_string(),
+        work_dir: home.join("checkouts/kid").display().to_string(),
+        agent: "dev".to_string(),
+        artifact_patterns: Vec::new(),
+    };
+    let of = |env| {
+        daemon_application::ChildWorkspaces::of(
+            &workspaces,
+            "calm-otter",
+            &project.display().to_string(),
+            env,
+        )
+    };
+    let _ = of(Some(&launcher)).prepare(&request);
+    let ran = fixtures::fs().read_to_string(&log).unwrap_or_default();
+    assert!(ran.contains("launcher MARKER=the-launchers"), "{ran}");
+    assert!(!ran.contains("daemon"), "{ran}");
+    let _ = of(None).prepare(&request);
+    let ran = fixtures::fs().read_to_string(&log).unwrap_or_default();
+    assert!(
+        ran.contains("daemon MARKER="),
+        "the sweep's is the daemon's: {ran}"
+    );
 }

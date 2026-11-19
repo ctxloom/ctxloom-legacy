@@ -200,11 +200,12 @@ pub(crate) fn serve(
         // stop (`--even-if-live`); heard for the daemon's life.
         let terminated = hear_terminate((&fs, home), &shared, &say);
         let frontends = liveness::FrontendLocks::new(Arc::clone(&fs), home);
+        let lifeline = Lifeline::of(&fs, &env);
         let result = run(
             &mut launcher,
             &core,
             (&files, &own, &held, &frontends),
-            (pace, &shared, &terminals),
+            (pace, &shared, &terminals, &lifeline),
             &say,
         )
         .await;
@@ -376,6 +377,43 @@ fn deaf_to_stop(files: &DaemonFiles) -> bool {
 #[cfg(not(feature = "test-support"))]
 fn deaf_to_stop(_: &DaemonFiles) -> bool {
     false
+}
+
+/// Under test-support, the lifeline to the test that started the daemon
+/// (`CTXLOOM_TEST_LIFELINE`, `super::LIFELINE_VARIABLE`): a lock file the
+/// test process holds for its life. Once the daemon can take that lock
+/// (the kernel lets it go however the test ended, SIGKILL included, and a
+/// pid reused names no lock) its test is gone. A plain build has none.
+struct Lifeline {
+    fs: Arc<dyn Fs>,
+    path: Option<PathBuf>,
+}
+
+impl Lifeline {
+    #[cfg(feature = "test-support")]
+    fn of(fs: &Arc<dyn Fs>, env: &process_env::EnvSnapshot) -> Lifeline {
+        Lifeline {
+            fs: Arc::clone(fs),
+            path: env.non_empty(super::LIFELINE_VARIABLE).map(PathBuf::from),
+        }
+    }
+
+    #[cfg(not(feature = "test-support"))]
+    fn of(fs: &Arc<dyn Fs>, _: &process_env::EnvSnapshot) -> Lifeline {
+        Lifeline {
+            fs: Arc::clone(fs),
+            path: None,
+        }
+    }
+
+    /// Whether the test that started it is gone: its lock taken at once
+    /// (and let go at once). Held is alive; a lock that cannot be tried is
+    /// too.
+    fn cut(&self) -> bool {
+        self.path
+            .as_deref()
+            .is_some_and(|path| file_lock::lock_within(&*self.fs, path, Duration::ZERO).is_ok())
+    }
 }
 
 /// How often a SIGTERM's drain looks again at its timeout, to tell the live
@@ -1096,7 +1134,12 @@ async fn run<E: run_ports::Edge>(
         &Instance,
         &liveness::FrontendLocks,
     ),
-    (pace, shared, terminals): (Pace, &Arc<Shared>, &daemon_application::Terminals),
+    (pace, shared, terminals, lifeline): (
+        Pace,
+        &Arc<Shared>,
+        &daemon_application::Terminals,
+        &Lifeline,
+    ),
     say: &Say,
 ) -> Result<(), String> {
     let mut quiet_since = Instant::now();
@@ -1120,6 +1163,14 @@ async fn run<E: run_ports::Edge>(
                 said(say, "asked to stop even if live: ending what it hosts");
                 launcher.end_all();
             }
+            stopping = true;
+            staying.plain = true;
+        }
+        // Under test-support, outliving the test that started it is the
+        // stop even if live: what it hosts ended, then it exits.
+        if !stopping && lifeline.cut() {
+            said(say, "its test is gone: ending what it hosts");
+            launcher.end_all();
             stopping = true;
             staying.plain = true;
         }
@@ -1768,12 +1819,26 @@ impl daemon_application::ChildWorkspaces for Workspaces {
         &self,
         project_id: &str,
         project_dir: &str,
+        env: Option<&BTreeMap<String, String>>,
     ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+        // Its git in the launcher's environment (her `GIT_*`, her ssh
+        // agent), as her git identity is asked; a sweep's in the daemon's.
+        let env = match env {
+            Some(env) => Arc::new(process_env::EnvSnapshot::from_parts(
+                self.env.flavor(),
+                Ok(PathBuf::from(project_dir)),
+                self.env.temp_dir().to_path_buf(),
+                env.iter()
+                    .map(|(name, value)| (name.into(), value.into()))
+                    .collect::<Vec<(std::ffi::OsString, std::ffi::OsString)>>(),
+            )),
+            None => Arc::clone(&self.env),
+        };
         Arc::new(worktree_git::GitWorkspaces::new(
             Arc::clone(&self.fs),
             PathBuf::from(project_dir),
             Some(isolation_ports::worktrees_root(&self.home, project_id)),
-            Arc::clone(&self.env),
+            env,
         ))
     }
 }

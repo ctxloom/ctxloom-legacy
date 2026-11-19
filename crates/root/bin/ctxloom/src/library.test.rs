@@ -224,6 +224,7 @@ impl Project {
             .env("HOME", &self.home)
             .env("USERPROFILE", &self.home)
             .env("TMPDIR", crate::tests::temp_root())
+            .env(crate::tests::LIFELINE, crate::tests::lifeline())
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
             .expect("git runs")
@@ -564,6 +565,7 @@ impl Project {
             .env("HOME", &self.home)
             .env("USERPROFILE", &self.home)
             .env("TMPDIR", crate::tests::temp_root())
+            .env(crate::tests::LIFELINE, crate::tests::lifeline())
             .current_dir(cwd);
         // The user's login passes as it is, so what ctxloom records as her
         // (a trust's actor, step 8 U1) is the account running the test.

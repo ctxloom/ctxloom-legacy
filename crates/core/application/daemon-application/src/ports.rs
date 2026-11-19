@@ -157,11 +157,15 @@ pub trait ChildHomes: Send + Sync {
 /// ctxloom's home) and let go WIP-safe at the child's close and, for a
 /// lost one, at the next start's sweep (OD-19).
 pub trait ChildWorkspaces: Send + Sync {
-    /// The workspaces of the project `project_id` at `project_dir`.
+    /// The workspaces of the project `project_id` at `project_dir`, their
+    /// git run in `env`, the environment the child's launcher sent (its
+    /// `GIT_*`, its `SSH_AUTH_SOCK`); none (a sweep, which no launcher
+    /// asked), the daemon's own.
     fn of(
         &self,
         project_id: &str,
         project_dir: &str,
+        env: Option<&std::collections::BTreeMap<String, String>>,
     ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync>;
 }
 

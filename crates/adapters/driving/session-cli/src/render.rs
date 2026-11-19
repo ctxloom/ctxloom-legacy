@@ -150,6 +150,25 @@ pub(crate) fn session_text(session: &v1::Session, out: &mut dyn Write) -> io::Re
             )?;
         }
     }
+    // What its latest run was launched with, and how its last turn failed
+    // (step 9): each left out when its run said none.
+    if let Some(grant) = &session.grant {
+        writeln!(
+            out,
+            "granted:  MCP servers {}",
+            grant.mcp_servers.join(", ")
+        )?;
+        if !grant.permissions.is_empty() {
+            writeln!(out, "          permissions {}", grant.permissions)?;
+        }
+    }
+    if let Some(failure) = &session.last_failure {
+        let said = failure.notice.as_ref().map_or("", |n| n.text.as_str());
+        writeln!(out, "failed:   {}: {said}", failure.kind)?;
+        if !failure.detail.is_empty() {
+            writeln!(out, "          {}", failure.detail)?;
+        }
+    }
     Ok(())
 }
 

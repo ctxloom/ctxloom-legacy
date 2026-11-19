@@ -997,6 +997,38 @@ message Session {
   string output_dir = 18;
   // Each engine session it was bound to before its native one (a /clear).
   repeated SessionRotation rotations = 19;
+  // `GetSession` only: what its latest run was launched with, as that run's
+  // enqueue journaled it (step 9, owner ruling 2026-11-17); unset for a run
+  // that journaled none. A later edit of its agent changes only the next
+  // run's.
+  SessionGrant grant = 20;
+  // `GetSession` only: how its latest run's last turn failed, or how the run
+  // failed to start (step 9, owner ruling 2026-11-17); unset when neither
+  // did. Nothing tries such a turn again: `session send <harp> wake` does.
+  SessionFailure last_failure = 21;
+}
+
+// What a run was launched with: its MCP servers' NAMES and its engine's
+// permissions document, never a server's command or environment (a trust
+// rule).
+message SessionGrant {
+  // The MCP servers, ctxloom's own among them, by name, sorted.
+  repeated string mcp_servers = 1;
+  // The permissions document, JSON text as the launch passed it; empty for
+  // none (the engine's default).
+  string permissions = 2;
+}
+
+// How a session's latest run failed: its last turn, or its start.
+message SessionFailure {
+  // `rate-limited`, `credential-refused`, `engine-error`, `interrupted` or
+  // `runner-lost` for a turn; `launch-failed` for a run that never started.
+  string kind = 1;
+  // The engine's or the launcher's own words, verbatim; may be empty.
+  string detail = 2;
+  // What happened and what to do, as the code, args and en-US text of a
+  // notice.
+  Notice notice = 3;
 }
 
 // A native session a session was bound to before (its binding rotated).

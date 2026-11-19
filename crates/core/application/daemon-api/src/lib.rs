@@ -71,6 +71,7 @@ mod refusal;
 mod runs;
 mod server;
 mod session_client;
+mod shown;
 mod start_up;
 mod terminal;
 mod trust;

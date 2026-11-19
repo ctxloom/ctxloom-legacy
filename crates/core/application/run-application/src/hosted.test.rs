@@ -224,3 +224,54 @@ fn the_child_is_started_with_its_engines_approval_timeout() {
         run_ports::APPROVAL_TIMEOUT_DEFAULT
     );
 }
+
+/// A carried server, its command and environment secret.
+fn server(name: &str) -> surface_ports::McpServer {
+    surface_ports::McpServer {
+        name: name.to_string(),
+        command: "/opt/secret-server".to_string(),
+        args: vec!["--token".to_string(), "SECRET-ARG".to_string()],
+        env: BTreeMap::from([("API_KEY".to_string(), "SECRET-VALUE".to_string())]),
+        url: String::new(),
+        headers: BTreeMap::new(),
+    }
+}
+
+// Step 9 (owner ruling 2026-11-17): what a hosted child is given is its
+// servers' NAMES, ctxloom's own among them, sorted, and its permissions
+// document as the plan wrote it; never a server's command, arguments or
+// environment (a trust rule).
+#[test]
+fn the_grant_names_the_servers_carried_and_ctxlooms_own_and_the_permissions_document() {
+    let mut planned = previewed("claude-code", builtin(), 0);
+    planned.plan.surfaces.mcp = vec![server("review-tools"), server("fix-tools")];
+    planned.plan.permissions = Some(r#"{"defaultMode":"plan"}"#.to_string());
+    let child = hosted_child(&planned, "claude-code", &drivable(), CLAUDE, &env(&[]));
+    let grant = child.grant();
+    assert_eq!(grant.mcp_servers, ["ctxloom", "fix-tools", "review-tools"]);
+    assert_eq!(grant.permissions, r#"{"defaultMode":"plan"}"#);
+    let recorded = format!("{grant:?}");
+    for secret in [
+        "/opt/secret-server",
+        "SECRET-ARG",
+        "SECRET-VALUE",
+        "API_KEY",
+    ] {
+        assert!(!recorded.contains(secret), "{recorded}");
+    }
+}
+
+// A carried server named `ctxloom` is shadowed by ctxloom's own (OD-6): one
+// name in the record. A launch with no context carries no server at all
+// (OD-38), and a plan with no document records none.
+#[test]
+fn the_grant_names_ctxloom_once_and_no_server_for_a_launch_with_no_context() {
+    let mut planned = previewed("claude-code", builtin(), 0);
+    planned.plan.surfaces.mcp = vec![server("ctxloom"), server("fix-tools")];
+    let child = hosted_child(&planned, "claude-code", &drivable(), CLAUDE, &env(&[]));
+    assert_eq!(child.grant().mcp_servers, ["ctxloom", "fix-tools"]);
+    assert_eq!(child.grant().permissions, "");
+    planned.plan.surfaces.no_context = true;
+    let bare = hosted_child(&planned, "claude-code", &drivable(), CLAUDE, &env(&[]));
+    assert!(bare.grant().mcp_servers.is_empty(), "{:?}", bare.grant());
+}

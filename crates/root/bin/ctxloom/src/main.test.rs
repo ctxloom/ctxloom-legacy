@@ -39,6 +39,42 @@ pub(crate) fn temp_root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
+/// The variable that names a test process's lifeline to every `ctxloom` it
+/// spawns (the wiring's `LIFELINE_VARIABLE`, test-support only).
+pub(crate) const LIFELINE: &str = "CTXLOOM_TEST_LIFELINE";
+
+/// This test process's LIFELINE: a lock file it holds for its life, taken
+/// once, handed to every `ctxloom` it spawns ([`LIFELINE`]). A daemon a test
+/// starts (or that its command starts) that can take the lock has outlived
+/// the test (a test killed by nextest's timeout drops no TempDir and stops
+/// nothing) and exits, ending what it hosts. The files are under the
+/// system's temporary directory, `ctxloom-test-lifelines/<pid>-<nanos>.lock`;
+/// each one whose lock is free is removed when the next is made, so they do
+/// not pile up.
+pub(crate) fn lifeline() -> &'static Path {
+    static LINE: OnceLock<(PathBuf, file_lock::Locked)> = OnceLock::new();
+    &LINE
+        .get_or_init(|| {
+            let fs = files::fs();
+            let dir = temp_root().join("ctxloom-test-lifelines");
+            for stale in files::children(&dir) {
+                if let Ok(free) = file_lock::lock_within(&*fs, &stale, std::time::Duration::ZERO) {
+                    // Another process may have reaped it first.
+                    let _ = fs.remove_file(&stale);
+                    drop(free);
+                }
+            }
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let path = dir.join(format!("{}-{nanos}.lock", std::process::id()));
+            let held = file_lock::lock_within(&*fs, &path, std::time::Duration::ZERO)
+                .expect("this test process's lifeline");
+            (path, held)
+        })
+        .0
+}
+
 /// A variable of the process the tests run in, for passing on to the binary
 /// they spawn (the process's environment is read once, by the snapshot).
 pub(crate) fn host_var(name: &str) -> Option<std::ffi::OsString> {
@@ -194,6 +230,7 @@ impl Env {
             .env("HOME", self.home())
             .env("USERPROFILE", self.home())
             .env("TMPDIR", crate::tests::temp_root())
+            .env(crate::tests::LIFELINE, crate::tests::lifeline())
             .current_dir(self.home());
         for name in ["PATH", "SystemRoot"] {
             if let Some(value) = crate::tests::host_var(name) {

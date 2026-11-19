@@ -144,6 +144,24 @@ message EnqueueRun {
   // paths, sorted. Empty when there are none, or the project is trusted.
   // Evidence, like the fields above: `RunEnqueued` carries none of it.
   repeated string untrusted_settings = 14;
+  // What the run was GIVEN (owner ruling 2026-11-17, step 9: the grant record
+  // is journaled): unlike the evidence above it is journaled, in
+  // `RunEnqueued`, so `session show` says what a child was launched with
+  // after its agent is edited. Names and the permissions document only.
+  optional Grant grant = 15;
+}
+
+// What a run was launched with (owner ruling 2026-11-17): the MCP servers'
+// NAMES and the agent's permissions document as the launch passed it to its
+// engine. Never a server's command, arguments or environment (a trust rule:
+// they may hold a secret).
+message Grant {
+  // The MCP servers the launch carries, ctxloom's own among them, by name,
+  // sorted.
+  repeated string mcp_servers = 1;
+  // The engine's permissions document, JSON text as the plan wrote it; empty
+  // for none.
+  string permissions = 2;
 }
 
 // A child's credential, as the run application found it (ruling 53 and owner
@@ -363,6 +381,9 @@ message RunEnqueued {
   // an orphan. Numbered as in `EnqueueRun`, whose first six fields this
   // event's are.
   string launcher_lock = 12;
+  // What the run was given, as its `EnqueueRun` said (step 9); unset on a
+  // run enqueued before the record existed. Numbered as in `EnqueueRun`.
+  optional Grant grant = 15;
 }
 
 message RunnerAttachedRecorded {

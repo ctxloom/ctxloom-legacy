@@ -62,6 +62,10 @@ env:
   # (whether the Linux one can make a user scope is not relied on). Each
   # test step says so in its output.
   TESTS_MEMORY_MAX: none
+  # nextest's threads stay one a core on a hosted runner (its own default):
+  # the default profile's `test-threads` (.config/nextest.toml) was measured
+  # on a 20-core host shared with other agents, not on a runner's cores.
+  NEXTEST_TEST_THREADS: num-cpus
 
 jobs:
   plan:

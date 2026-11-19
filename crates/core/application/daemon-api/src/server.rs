@@ -1287,6 +1287,16 @@ impl<E: Edge> Api<E> {
                     .unwrap_or_default(),
             })
             .collect();
+        // What its latest run was given and how it failed (step 9).
+        let board = self.parts.board.board();
+        let latest = (1..=record.incarnation)
+            .rev()
+            .find_map(|incarnation| board.run(&record.id, incarnation));
+        if let Some(run) = latest {
+            session.grant = crate::shown::grant_of(run);
+            session.last_failure =
+                crate::shown::failure_of(&record.harp, record.owner.is_some(), run);
+        }
         Ok(session)
     }
 

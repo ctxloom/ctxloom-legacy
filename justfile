@@ -43,6 +43,12 @@ features_prepare := ""
 # or green ones it broke.
 red_judge := ""
 
+# The pre-commit test gate runs no feature file the commit does not stage
+# (2026-11-18): scripts/staged-features.sh narrows `test-staged` to every
+# test but the feature runner's, and those of the staged feature files. The
+# whole suite, every feature, is `test`'s, the landing gate's.
+staged_tests_filter := "scripts/staged-features.sh"
+
 # Mutation kill-rate thresholds, percent, by crate path: the one place they
 # are stated. A mutant is judged by the longest prefix its file matches; one
 # matching none fails the gate, so a new tier gets a threshold before it gets

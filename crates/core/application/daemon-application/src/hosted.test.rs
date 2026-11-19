@@ -928,6 +928,33 @@ async fn a_hosted_childs_home_is_prepared_with_its_agents_permissions() {
     );
 }
 
+// Step 9 (owner ruling 2026-11-17): a hosted child's run journals what it
+// was given, its servers by name (ctxloom's own) and its agent's document,
+// in its RunEnqueued.
+#[tokio::test]
+async fn a_hosted_childs_run_journals_what_it_was_given() {
+    let mut world = World::new(Box::new(Permitted));
+    world.mint(OWNER, "boss", None).await;
+    world.mint(CHILD, "kid", Some(OWNER)).await;
+    world.tick().await;
+    let grant = world
+        .run_events()
+        .await
+        .into_iter()
+        .find_map(|event| match event {
+            RunEvent::RunEnqueued(enqueued) => Some(enqueued.grant),
+            _ => None,
+        })
+        .expect("the child's run is enqueued");
+    assert_eq!(
+        grant,
+        Some(runs::Grant {
+            mcp_servers: vec!["ctxloom".to_string()],
+            permissions: DOCUMENT.to_string(),
+        })
+    );
+}
+
 /// A plan of the child whose run agent denies a tool.
 struct Surfaced;
 
@@ -1436,6 +1463,63 @@ async fn a_childs_start_reads_its_hand_off_and_leaves_it() {
     );
 }
 
+// Step 9 (S19's `session stop`, OD-57): a hosted child whose run is asked to
+// stop has its engine ended, once; its exit ends its incarnation `stopped`;
+// the child stays open, its hand-off kept for its next run.
+#[tokio::test]
+async fn a_hosted_childs_run_asked_to_stop_is_ended_and_the_child_stays_open() {
+    let files = Files::default();
+    let plans = ForAgent::default();
+    let mut world = hosting_from(&files, &plans).await;
+    world
+        .edge
+        .handle(CommandBook::command_of(
+            Cover {
+                domain: runs::RUN_DOMAIN.to_string(),
+                root: Some(runs::run_root(CHILD, 1)),
+                edition: None,
+            },
+            &runs::RunCommand::from(runs::RequestStop {
+                reason: "stop".to_string(),
+            }),
+        ))
+        .await
+        .unwrap();
+    world.tick().await;
+    world.tick().await;
+    assert_eq!(world.engine.asked.lock().unwrap().ends, 1, "ended once");
+    world.say(ChildObservation::Exited {
+        exit: Exit {
+            code: Some(0),
+            signal: None,
+        },
+        detail: String::new(),
+    });
+    world.tick().await;
+    let ended: Vec<(u32, String)> = world
+        .session_events(CHILD)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::IncarnationEnded(ended) => Some((ended.incarnation, ended.cause)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ended, [(1, "stopped".to_string())]);
+    assert!(
+        !world
+            .session_events(CHILD)
+            .await
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SessionClosed(_))),
+        "the child stays open"
+    );
+    assert!(
+        files.deleted.lock().unwrap().is_empty(),
+        "its hand-off kept"
+    );
+}
+
 // T6: a child closed for good has its hand-off deleted.
 #[tokio::test]
 async fn a_closed_childs_hand_off_is_deleted() {
@@ -1672,6 +1756,8 @@ const CHECKOUT: &str = "/home/u/.ctxloom/worktrees/calm-otter/kid/dev";
 struct Checkouts {
     asked: Mutex<Vec<String>>,
     removal: isolation_ports::Removal,
+    /// The environment each workspace was asked in (none: the daemon's).
+    envs: Mutex<Vec<Option<BTreeMap<String, String>>>>,
 }
 
 impl isolation_ports::Workspaces for Checkouts {
@@ -1736,7 +1822,13 @@ impl isolation_ports::Workspaces for Checkouts {
 struct AllCheckouts(Arc<Checkouts>);
 
 impl crate::ChildWorkspaces for AllCheckouts {
-    fn of(&self, _: &str, _: &str) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+    fn of(
+        &self,
+        _: &str,
+        _: &str,
+        env: Option<&BTreeMap<String, String>>,
+    ) -> Arc<dyn isolation_ports::Workspaces + Send + Sync> {
+        self.0.envs.lock().unwrap().push(env.cloned());
         Arc::clone(&self.0) as Arc<dyn isolation_ports::Workspaces + Send + Sync>
     }
 }
@@ -1851,6 +1943,7 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
     let checkouts = Arc::new(Checkouts {
         asked: Mutex::default(),
         removal,
+        envs: Mutex::default(),
     });
     let mut world = World::new(Box::new(WorktreePlans));
     let said: Log = Arc::default();
@@ -1864,7 +1957,11 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
             for_launch: None,
         }],
         plans: Box::new(WorktreePlans),
-        hand_offs: Box::new(Handed::of(BTreeMap::new())),
+        // Her launcher's environment holds her ssh agent.
+        hand_offs: Box::new(Handed::of(BTreeMap::from([(
+            "SSH_AUTH_SOCK".to_string(),
+            "/run/her-agent".to_string(),
+        )]))),
         homes: Box::new(world.homes.clone()),
         ears: Box::new(Listening::default()),
         run_locks: Arc::new(Locks(LockProbe::Unproven)),
@@ -1913,6 +2010,23 @@ async fn in_a_worktree(removal: isolation_ports::Removal) -> (World, Arc<Checkou
 
 /// What the daemon logged.
 type Log = Arc<Mutex<Vec<String>>>;
+
+// The defect of 2026-11-18: a hosted child's checkout is asked of its
+// project's workspaces in the environment its LAUNCHER sent, so its git sees
+// her `GIT_*` and `SSH_AUTH_SOCK`, never the daemon's own alone.
+#[tokio::test]
+async fn a_childs_checkout_is_asked_in_its_launchers_environment() {
+    let (_world, checkouts, _) = in_a_worktree(isolation_ports::Removal::Removed).await;
+    let envs = checkouts.envs.lock().unwrap().clone();
+    assert!(!envs.is_empty(), "its workspaces were asked");
+    assert!(
+        envs.iter().all(|env| env
+            .as_ref()
+            .and_then(|env| env.get("SSH_AUTH_SOCK"))
+            .is_some_and(|sock| sock == "/run/her-agent")),
+        "{envs:?}"
+    );
+}
 
 // s4-Q11: a hosted child follows its agent's `workspace`: its axis is
 // recorded at its mint, it is placed in a checkout of its session's own

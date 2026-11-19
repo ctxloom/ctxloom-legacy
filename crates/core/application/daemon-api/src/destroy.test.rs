@@ -286,6 +286,7 @@ async fn a_run_of(world: &World, session: &str, root: uuid::Uuid) {
         incarnation: 1,
         mode: runs::RunMode::Structured,
         launcher_lock: String::new(),
+        grant: None,
     });
     let page = angzarr_embedded::v1::EventPage {
         sequence: 0,
