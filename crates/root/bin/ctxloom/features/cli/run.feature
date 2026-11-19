@@ -3,9 +3,12 @@
 # Ported from journeys/j001200_recall.feature (rev f36e8dfb2): the Rule on resuming a session
 # Ported from journeys/j002200_isolation.feature (rev f36e8dfb2): the last three Rules
 # NOT ported: the scenarios tagged @pending, each with its reason (the
-#   launch's findings in the agent's context, a resume folding in its
-#   conversation, the worktree's git exclude, the auth refusals, a run on the
-#   mock engine, the containers). Deleted (OD-29, owner 2026-11-13): the
+#   launch's findings in the agent's context, the auth refusals, a run on the
+#   mock engine, the containers). Retired (owner, 2026-11-19; rulings 115,
+#   87a, Q1): the Rule "Resuming a session folds in its recorded conversation"
+#   (a resume is the engine's own session; the transcript is the session's
+#   events) and the Rule "A worktree run hides its per-agent config from the
+#   project's git" (checkouts live outside the project). Deleted (OD-29, owner 2026-11-13): the
 #   Rule "An opencode label runs opencode's own TUI on ctxloom's terminal"
 #   (its label, mail-drain and wake socket are dead terms). Plan override: clap's usage error says
 #   "unexpected argument" where cobra said "unknown flag"; the step maps one to
@@ -529,53 +532,6 @@ Feature: run — assembling a project's context and handing it to an engine
       Then the command exits with code 20
       And the refusal is "sessions-session-unknown"
       And no assistant was launched
-
-  # Superseded by ruling 115 above (resume is the engine's own session, not a
-  # context fold); kept pending as Go's design.
-  # Still pending (step 11): the behaviour differs. A resume is the engine's
-  # own session (`--resume <native id>`, owner ruling 115); nothing folds the
-  # recorded conversation into the assembled context, and no transcript file
-  # is on disk to stay untouched (ruling 87a: the transcript is the session's
-  # events).
-  @pending
-  Rule: Resuming a session folds in its recorded conversation, and leaves the record as it was
-
-    `run --session <harp>` reads the session's recorded conversation, the one
-    ctxloom keeps whatever engine held it, and folds it into the run's
-    context. The fixture's session carries one marker in its title and
-    another only in its conversation, so "found by its title" and "resumed
-    with its conversation" are told apart.
-
-    Scenario: Resuming the March session puts that conversation back in front of a model
-      # substitution: the journey's March fixture is a Given of the scenario, not a Background.
-      Given a design question everyone remembers deciding and nobody remembers why
-      When I run "ctxloom run --session amber-quiet-heron --dry-run -p default"
-      Then the assembled context carries the conversation she had in March
-
-    # A resume that consumed, truncated or rewrote what it read would fail the
-    # second person to ask. The record is read back by its bytes.
-    Scenario: Recalling a session does not consume it
-      # substitution: the journey's March fixture is a Given of the scenario, not a Background.
-      Given a design question everyone remembers deciding and nobody remembers why
-      When I run "ctxloom run --session amber-quiet-heron --dry-run -p default"
-      Then the canonical transcript she recalled from is still on disk, untouched
-
-  # Still pending (step 11): the behaviour differs. A session's checkouts are
-  # under ctxloom's home, outside the project (owner ruling 2026-11-12, Q1),
-  # so nothing writes a per-agent block into the project's .git/info/exclude;
-  # and its steps are the isolation World's.
-  @pending
-  Rule: A worktree run hides its per-agent config from the project's git
-
-    # A worktree run's per-agent config edits are kept out of the shared
-    # project tree through .git/info/exclude, not left as new files a
-    # developer could merge back by accident.
-    Scenario: A worktree run leaves the project tree clean
-      # substitution: the journey's Background is the scenario's first Given
-      Given Alice has a git-backed project with a mock agent
-      When Alice runs the mock agent under workspace "worktree" with prompt "cleanup-check"
-      Then none of the per-agent worktree config artifacts appear in the project's git status
-      And the shared git exclude file carries the ctxloom per-agent worktree config block
 
   # Pending (OD-48, containers): no run launches into a container yet (step 7).
   @pending
