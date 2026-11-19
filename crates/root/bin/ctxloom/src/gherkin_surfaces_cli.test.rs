@@ -2,10 +2,12 @@
 //! that no journey's module has, written as step 11 un-pended them (each
 //! step names its feature).
 
+use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 
 use super::World;
 use crate::tests::files;
+use crate::tests::gherkin_common::CommonWorld;
 
 /// remote.feature: a command run from a subdirectory of the project (made
 /// if it is not there), with no `CTXLOOM_ROOT`, so the project is found by
@@ -41,4 +43,53 @@ fn home_dir_usable(w: &mut World, rel: String) {
 fn home_holds(w: &mut World, rel: String, text: String) {
     let held = w.common.project.read_home(&rel).expect("a home file");
     assert!(held.contains(&text), "{rel}: {held}");
+}
+
+/// A Given or And after a Given that runs Alice's commands (the common
+/// `Alice ...:` step is a When): deps.feature's "Alice has already let a
+/// pull refresh the project:".
+#[given(regex = r"^Alice .*:$")]
+fn alice_already_ran(w: &mut World, step: &Step) {
+    w.alice_runs(step);
+}
+
+/// The seeded remotes, once one was seeded.
+fn remotes(w: &mut World) -> &mut super::super::deps::Remotes {
+    w.remotes.as_mut().expect("a git remote was seeded")
+}
+
+/// deps.feature: Go's `the remote "<name>" changes fragment "<fragment>"
+/// to "<content>"`, as a When (the surfaces World's Given is the same).
+#[when(expr = "the remote {string} changes fragment {string} to {string}")]
+fn remote_changes_fragment(w: &mut World, name: String, fragment: String, content: String) {
+    remotes(w).changes_fragment(&name, &fragment, &content);
+}
+
+/// deps.feature: Go's `the remote "<name>" stops publishing bundle
+/// "<bundle>"`.
+#[given(expr = "the remote {string} stops publishing bundle {string}")]
+fn remote_stops_publishing(w: &mut World, name: String, bundle: String) {
+    remotes(w).stops_publishing(&name, &bundle);
+}
+
+/// deps.feature: Go's `BreakRemote`, its address left pointing at nothing.
+#[given(expr = "the remote {string} becomes unreachable")]
+fn remote_unreachable(w: &mut World, name: String) {
+    remotes(w).becomes_unreachable(&name);
+}
+
+/// deps.feature: Go's `the remote "<name>" ships an MCP server ... and a
+/// skill script printing ...`.
+#[given(
+    expr = "the remote {string} ships an MCP server {string} running {string} and a skill script printing {string}"
+)]
+fn remote_ships(w: &mut World, name: String, server: String, command: String, say: String) {
+    remotes(w).ships(&name, &server, &command, &say);
+}
+
+/// deps.feature: the one cached clone of the remote, reset to its first
+/// commit.
+#[given(expr = "the remote {string}'s cached clone is forced back to its first commit")]
+fn clone_forced_back(w: &mut World, _name: String) {
+    super::super::deps::clone_forced_back_to_first_commit(&w.common.project);
 }
