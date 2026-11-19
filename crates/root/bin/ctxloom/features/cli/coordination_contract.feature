@@ -87,3 +87,17 @@ Feature: The coordination tools advertise a closed vocabulary, and refuse what i
       And "brisk-copper-moth" was closed once
       When the engine of "amber-quiet-heron" calls "child_close" for "calm-hollow-reed"
       Then the tool failed with "daemon-api-session-not-found", naming "calm-hollow-reed"
+
+    # Only a session's owner may send it a message. A session that is not
+    # its owner (here, the child's own child) is refused, and
+    # nothing reaches the child.
+    # DRAFT (2026-11-19): added with the sessions-not-owner scenario the
+    # night report tracked; the owner reviews it with the rest of the file.
+    Scenario: A session that is not a child's owner cannot send it a message
+      # substitution: no Go counterpart; the daemon's ownership rule (sessions-not-owner) seen through child_send
+      Given an initialized ctxloom project
+      And a child "brisk-copper-moth" of "amber-quiet-heron" that is open and idle
+      And a child "olive-quiet-finch" of "brisk-copper-moth" that is open and idle
+      When the engine of "olive-quiet-finch" calls "child_send" for "brisk-copper-moth" with wake "check the tests"
+      Then the tool failed with "sessions-not-owner", naming "only its owner may do that"
+      And no message "check the tests" was sent to "brisk-copper-moth"
