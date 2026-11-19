@@ -93,3 +93,26 @@ fn remote_ships(w: &mut World, name: String, server: String, command: String, sa
 fn clone_forced_back(w: &mut World, _name: String) {
     super::super::deps::clone_forced_back_to_first_commit(&w.common.project);
 }
+
+/// profile.feature: an initialized project whose editor (the home config's
+/// `editor`, through `sh`) rewrites the document's `description:` line to
+/// `EDITED-BY-TEST`, keeping it valid YAML.
+#[given("a ctxloom project with a description-rewriting editor")]
+fn description_rewriting_editor(w: &mut World) {
+    w.common.project = crate::tests::library::Project::initialized();
+    w.common.project.write_home(
+        ".ctxloom/config.yaml",
+        "schema_version: 9\neditor:\n  command: sh\n  args:\n    - \"-c\"\n    - 'sed \"s/^description:.*/description: EDITED-BY-TEST/\" \"$1\" > \"$1.new\" && mv \"$1.new\" \"$1\"'\n    - editor\n",
+    );
+}
+
+/// profile.feature: the engine file registers the MCP server `name` (the
+/// surfaces World's negative step's reading).
+#[then(expr = "the file {string} registers an MCP server named {string}")]
+fn registers_mcp(w: &mut World, rel: String, name: String) {
+    assert!(
+        w.common.project.registers_mcp(&rel, "mcpServers", &name),
+        "{rel} registers no MCP server {name}: {:?}",
+        w.common.project.read(&rel)
+    );
+}
