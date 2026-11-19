@@ -120,6 +120,9 @@ mod onboarding;
 #[path = "gherkin_session_home.test.rs"]
 mod session_home;
 
+#[path = "gherkin_surfaces_cli.test.rs"]
+mod cli;
+
 // ------------------------------------------------------------------ given
 
 /// Go's `a git remote "<name>" serving a ctxloom bundle`: a bare repository
@@ -525,10 +528,17 @@ fn materialize_profile(w: &mut World, profile: String, engine: String) {
 
 // ------------------------------------------------------------------- then
 
-/// A pattern of `\A`, `\z`, `\n`, `\n?`, `[\s\S]*` and literal text, which is
-/// all Go's scenarios use.
+/// A pattern of `\A`, `\z`, `\n`, `\n?`, `\s+`, `[\s\S]*` and literal text,
+/// led by `(?s)` (its `.*` then any text, `[\s\S]*`) or `(?m)^` (starting at
+/// a line's start), which is all Go's scenarios use.
 fn matches(pattern: &str, text: &str) -> bool {
     fn go(p: &str, t: &str, at_start: bool) -> bool {
+        if let Some(rest) = p.strip_prefix("\\s+") {
+            let spaces = t.len() - t.trim_start().len();
+            return (1..=spaces)
+                .filter(|i| t.is_char_boundary(*i))
+                .any(|i| go(rest, &t[i..], false));
+        }
         if let Some(rest) = p.strip_prefix("\\A") {
             return at_start && go(rest, t, at_start);
         }
@@ -551,6 +561,14 @@ fn matches(pattern: &str, text: &str) -> bool {
             (Some(a), Some(b)) if a == b => go(&p[a.len_utf8()..], &t[b.len_utf8()..], false),
             _ => false,
         }
+    }
+    if let Some(rest) = pattern.strip_prefix("(?s)") {
+        return matches(&rest.replace(".*", "[\\s\\S]*"), text);
+    }
+    if let Some(rest) = pattern.strip_prefix("(?m)^") {
+        return (0..=text.len())
+            .filter(|i| *i == 0 || text.as_bytes()[i - 1] == b'\n')
+            .any(|i| go(rest, &text[i..], false));
     }
     // An unanchored pattern may start anywhere.
     if pattern.starts_with("\\A") {
