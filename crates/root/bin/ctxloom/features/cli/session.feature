@@ -1,8 +1,8 @@
 # world: base
 # Ported from cli/session.feature (rev f36e8dfb2)
-# NOT ported: the Rules tagged @pending (the transcript sub-noun and
-#   control): not turned on yet. The reading Rule is on, its
-#   listings in the daemon's shape (owner, 2026-11-13).
+# NOT ported: the Rule tagged @pending (control): not turned on yet.
+#   The reading Rule is on, its listings in the daemon's shape (owner,
+#   2026-11-13).
 #   The rest of Go's file is in the files that say `Ported from cli/session.feature`.
 #   Left out: the `session remove` Rule (retired: `session remove`
 #   is the one destroyer, cli/session_purge.feature) and the `session adopt`
@@ -215,7 +215,6 @@ Feature: session — the record of what your assistant did, and the tools to pru
       Then the command fails
       And the output contains "no-such-harp"
 
-  @pending
   Rule: The transcript is a population of its own
 
     A session's recorded conversation has its own listing, its own stream and
