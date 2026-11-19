@@ -633,6 +633,34 @@ Feature: library changes — the daemon records what changed in a library, once,
         | a session "brisk-copper-moth" that is still running      | PostToolUse, after the tool "Read"   |
         | a claude child "brisk-copper-moth" of "amber-quiet-heron" that is open and idle | UserPromptSubmit |
 
+    Scenario: A refresh that finds nothing changed records nothing and hands nothing
+      # new: DRAFT (step 10c U13 rework, `ctxloom context refresh`, owner 2026-11-18): the memo is dropped and every file hashed again; the record compares, so the same files record no event and owe no session anything.
+      Given a session "brisk-copper-moth" that is still running on the profile "dev"
+      When I run "ctxloom context refresh --format text"
+      Then the command succeeds
+      And the output contains "observed afresh"
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "1" entries
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries no additionalContext
+
+    Scenario: A refresh after a hand edit owes a live session the change, and its next hook collects it
+      # new: DRAFT (step 10c U13 rework, `ctxloom context refresh`, owner 2026-11-18): a hook trusts a scan of the last five minutes, so a hand edit is seen when something needs the tree; a refresh is that need, said out loud.
+      Given a session "brisk-copper-moth" that is still running on the profile "dev"
+      When the file ".ctxloom/content/bundles/v2/demo/fragments/example.md" is changed by hand to:
+        """
+        # Changed while it ran
+        """
+      And I run "ctxloom context refresh"
+      Then the command succeeds
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events" having "2" entries
+      And the output reports "events[1].changes[0].path" as "content/bundles/v2/demo/fragments/example.md"
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries additionalContext containing "Changed while it ran"
+      When the session's assistant fires its UserPromptSubmit hook
+      Then the hook's answer to the engine carries no additionalContext
+
     Scenario: A change to its checkout's config reaches every live session of that checkout
       # new: step 10 U13, the config is in every loadout.
       Given a session "brisk-copper-moth" that is still running on the profile "dev"
