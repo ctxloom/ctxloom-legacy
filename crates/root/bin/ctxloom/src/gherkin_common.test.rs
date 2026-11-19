@@ -705,8 +705,9 @@ where
 }
 
 /// How many scenarios of one feature run at once: nextest already runs as
-/// many features at once as it runs tests (one a core), so a few more each.
-pub(crate) const SCENARIOS_AT_ONCE: usize = 3;
+/// many features at once as it runs tests, so a few more each.
+// 2, not 3: measured 2026-11-18 with nextest's 12 threads, as fast on a quiet host and faster under load, at ~60% of 20x3's load average.
+pub(crate) const SCENARIOS_AT_ONCE: usize = 2;
 
 /// How many scenarios of one feature run at once in this test process:
 /// `GHERKIN_SCENARIOS_AT_ONCE`, read once, else [`SCENARIOS_AT_ONCE`] (a

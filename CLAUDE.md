@@ -4466,7 +4466,11 @@ between worktree paths), but in the ratchet base's tree, built with it off
 (below).
 
 nextest's committed config is `.config/nextest.toml` (workspace-wide): each
-test in a process of its own; SLOW at 30 s and killed at 120 s
+test in a process of its own; 12 tests at once (`test-threads`, measured on
+this 20-core shared host; CI's workflows keep one a core,
+`NEXTEST_TEST_THREADS: num-cpus`), each feature's scenarios 2 at once
+(`SCENARIOS_AT_ONCE`; `GHERKIN_SCENARIOS_AT_ONCE=<n>` overrides it, read
+once, to measure); SLOW at 30 s and killed at 120 s
 (`terminate-after`; the longest unit test takes about 5 s), except the
 feature runner's slowest features, below; a test that leaves a
 child holding its stdout or stderr past 200 ms FAILS (`leak-timeout`

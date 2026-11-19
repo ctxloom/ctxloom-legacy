@@ -73,6 +73,9 @@ filter = 'package(ctxloom)'
 setup = 'build-binaries-windows'
 
 [profile.default]
+# 12 tests at once, not one a core (20): measured 2026-11-18, 12 threads with 2 scenarios at once matched 20x3 on a quiet host (85 s vs 84-92 s) and beat it under the other slots' load (142 s vs 163-187 s) at ~60% of its load average; 8 or 6 were slower.
+test-threads = 12
+
 # Retries stay OFF (ruling 144): a retry passes a flaky test ("treated as
 # ultimately successful", https://nexte.st/docs/features/retries/), which
 # would have hidden the port race of ad31aa071. A flake is a finding.
@@ -121,7 +124,8 @@ test-group = 'ports'
 # the clusters of the owner's ruling of 2026-11-14), named by its path,
 # `tests::gherkin_features::features::<dir>::<file>` (gherkin_features.test.rs),
 # which nextest runs at once, as many as it runs tests; within a feature its
-# scenarios run 3 at once (gherkin_common's SCENARIOS_AT_ONCE), each a
+# scenarios run 2 at once (gherkin_common's SCENARIOS_AT_ONCE; the limits
+# below were measured at 3, and 2 at once ran within them), each a
 # cucumber run of its own. A feature whose measured time would not fit the
 # 120 s above has a limit of its own, an override naming it; every other
 # keeps the 120 s. Not a gate tuned until it passes: measured on 2026-11-18
