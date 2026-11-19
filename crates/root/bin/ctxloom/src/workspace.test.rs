@@ -869,8 +869,8 @@ const DAEMON_LIBRARY_OPENS: &[(&str, usize, &str)] = &[
         "crates/root/lib/ctxloom-wiring/src/daemon/places.rs",
         2,
         "a library read's library, once `library_reads` observed its trees (`read_site`); \
-         DEPARTURE: the trust preview (`GetTrust`, `ListTrusts`, reads by name) reads the \
-         project's own layer at its registered root unobserved",
+         the trust preview's (`GetTrust`), once `get_trust` observed the project's tree at its \
+         registered root",
     ),
     (
         "crates/root/lib/ctxloom-wiring/src/daemon/setup_reads.rs",
@@ -890,9 +890,9 @@ const DAEMON_LIBRARY_OPENS: &[(&str, usize, &str)] = &[
     (
         "crates/root/lib/ctxloom-wiring/src/daemon/mod.rs",
         1,
-        "DEPARTURE: a hosted child's plan (`CreateHandOff`), and its output root and git \
-         identity read again at its launch, are read unobserved (observing at the hand-off \
-         broke library_changes' refresh re-injection scenario: to root-cause first)",
+        "a hosted child's plan at its hand-off, once `create_hand_off` observed its tree; \
+         DEPARTURE: its plan and output root read again at each launch (the daemon loop's \
+         `start`) are read unobserved: the loop has no observation to reach",
     ),
     (
         "crates/root/lib/ctxloom-wiring/src/oneshot.rs",

@@ -25,11 +25,19 @@ struct Kept {
     unplanned: bool,
     /// The untrusted settings the plan says its launch reads.
     untrusted: Vec<String>,
+    /// The observation's scans, counted; how many there had been at each
+    /// plan.
+    scans: Option<Arc<std::sync::atomic::AtomicU32>>,
+    scans_at_plan: Mutex<Vec<u32>>,
 }
 
 impl HandOffs for Kept {
     fn plan(&self, request: &HandingOff) -> Result<Planned, String> {
         self.planned.lock().unwrap().push(request.clone());
+        if let Some(scans) = &self.scans {
+            let seen = scans.load(std::sync::atomic::Ordering::SeqCst);
+            self.scans_at_plan.lock().unwrap().push(seen);
+        }
         if self.unplanned {
             return Err("library-application-config-unreadable".to_string());
         }
@@ -104,6 +112,25 @@ fn create(owner: &str) -> v1::CreateHandOffRequest {
         }),
         ..v1::CreateHandOffRequest::default()
     }
+}
+
+// Step 10 U11: a hand-off's plan reads its project's library, so the
+// tree is observed BEFORE the plan reads it, as a read's is (nothing in
+// the daemon reads a library tree outside the observation).
+#[tokio::test]
+async fn a_hand_off_observes_its_tree_before_it_is_planned() {
+    let gits = Arc::new(crate::server::tests::Gits::default());
+    let kept = Arc::new(Kept {
+        credential_set: true,
+        scans: Some(Arc::clone(&gits.scans)),
+        ..Kept::default()
+    });
+    let (f, api) = with_owner(&kept).await;
+    let api = api.observing(crate::server::tests::observing(&f.world, &gits));
+    api.create_hand_off(create("amber-quiet-heron"))
+        .await
+        .unwrap();
+    assert_eq!(*kept.scans_at_plan.lock().unwrap(), vec![1]);
 }
 
 // The child is planned at the project's registered root, on the one engine

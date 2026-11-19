@@ -121,6 +121,19 @@ fn target_of(
 /// The collection a hand-off's name has under its project.
 const HAND_OFFS: &str = "/handOffs/";
 
+/// The child a hand-off id names, hyphenated; refused `NameInvalid` when
+/// it is no UUID.
+fn child_id(id: &str) -> Result<String, ApiError> {
+    uuid::Uuid::parse_str(id)
+        .map(|child| child.hyphenated().to_string())
+        .map_err(|_| {
+            ApiError::from(ApiRefusal::of(&v1::NameInvalid {
+                name: id.to_string(),
+                reason: "shape".to_string(),
+            }))
+        })
+}
+
 fn failed(detail: String) -> ApiError {
     ApiError::Failed { detail }
 }
@@ -134,30 +147,25 @@ impl<E: run_ports::Edge> Api<E> {
     ) -> Result<v1::HandOff, ApiError> {
         let project = ProjectName::parse(&request.parent)
             .map_err(|rejection| invalid(&request.parent, &rejection))?;
-        let child = uuid::Uuid::parse_str(&request.hand_off_id)
-            .map_err(|_| {
-                ApiError::from(ApiRefusal::of(&v1::NameInvalid {
-                    name: request.hand_off_id.clone(),
-                    reason: "shape".to_string(),
-                }))
-            })?
-            .hyphenated()
-            .to_string();
+        let child = child_id(&request.hand_off_id)?;
         let hand_offs = self
             .hand_offs
             .as_ref()
             .ok_or_else(|| failed("this daemon makes no hand-off".to_string()))?;
         self.parts.hosting.fresh().await;
-        let index = self.parts.index.index();
-        let row = index.project_named_by(project.harp()).ok_or_else(|| {
-            ApiError::from(ApiRefusal::of(&v1::ProjectNotFound {
-                name: request.parent.clone(),
-            }))
-        })?;
-        let (target, target_row) = target_of(&request.project, &project, &row, &index)?;
-        let owner = SessionName::new(project.harp(), &request.owner)
-            .ok()
-            .and_then(|owner| index.find_by_id(&owner.uid()));
+        let (row, target, target_row, owner) = {
+            let index = self.parts.index.index();
+            let row = index.project_named_by(project.harp()).ok_or_else(|| {
+                ApiError::from(ApiRefusal::of(&v1::ProjectNotFound {
+                    name: request.parent.clone(),
+                }))
+            })?;
+            let (target, target_row) = target_of(&request.project, &project, &row, &index)?;
+            let owner = SessionName::new(project.harp(), &request.owner)
+                .ok()
+                .and_then(|owner| index.find_by_id(&owner.uid()));
+            (row, target, target_row, owner)
+        };
         if owner.is_none() {
             let unknown = sessions::SessionUnknown {
                 harp: request.owner.clone(),
@@ -181,6 +189,9 @@ impl<E: run_ports::Edge> Api<E> {
             )
             .into());
         }
+        // Its tree observed before it is planned (step 10 U11).
+        self.observed(Some((target.clone(), target_row.root.as_str())))
+            .await?;
         let handing = HandingOff {
             root: target_row.root.clone(),
             trusted,
