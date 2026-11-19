@@ -58,6 +58,33 @@ pub(crate) fn file_url(path: &Path) -> String {
     }
 }
 
+/// The path a `file://` URL names, the inverse of [`file_url`]: on Windows
+/// `file:///C:/a/b` is `C:/a/b` (no leading `/` before the drive); anything
+/// that is not a file URL is the path as written.
+pub(crate) fn path_of_file_url(url: &str) -> PathBuf {
+    let Some(rest) = url.strip_prefix("file://") else {
+        return PathBuf::from(url);
+    };
+    match os::host().flavor() {
+        os::Flavor::Unix => PathBuf::from(rest),
+        os::Flavor::Windows => PathBuf::from(rest.strip_prefix('/').unwrap_or(rest)),
+    }
+}
+
+// CI on Windows (2026-11-19): a lock's `file:///C:/...` URL was read as the
+// path `/C:/...`, which is no directory there. A URL made of a path is read
+// back as that path.
+#[test]
+fn a_file_url_is_read_back_as_the_path_it_was_made_of() {
+    let dir = root();
+    let path = dir.root().join("remote.git");
+    assert_eq!(path_of_file_url(&file_url(&path)), path);
+    assert_eq!(
+        path_of_file_url("/plain/path"),
+        PathBuf::from("/plain/path")
+    );
+}
+
 /// The host's own filesystem (no root), for real paths.
 pub(crate) fn fs() -> Arc<dyn Fs> {
     let os = os::host();
