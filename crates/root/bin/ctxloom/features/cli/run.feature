@@ -3,7 +3,8 @@
 # Ported from journeys/j001200_recall.feature (rev f36e8dfb2): the Rule on resuming a session
 # Ported from journeys/j002200_isolation.feature (rev f36e8dfb2): the last three Rules
 # NOT ported: the scenarios tagged @pending, each with its reason (the
-#   launch's findings in the agent's context, the auth refusals, a run on the
+#   launch's findings in the agent's context, the untrusted-repository
+#   refusal, a run on the
 #   mock engine, the containers). Retired (owner, 2026-11-19; rulings 115,
 #   87a, Q1): the Rule "Resuming a session folds in its recorded conversation"
 #   (a resume is the engine's own session; the transcript is the session's
@@ -608,16 +609,12 @@ Feature: run — assembling a project's context and handing it to an engine
         |            |
         | --degraded |
 
-  # Still pending (step 11): not built, and its steps are other Worlds'. The
-  # untrusted-repository refusal is not built; and a login session with no
-  # login is not refused: a child under `auth: login` asks for no variable,
-  # and a primary's missing login is said (`login_optional`), never refused,
-  # so nothing names "auth: token" (a ruling: refuse it, or redraft the
-  # scenario to the notice). The steps are the workspace and session-home
-  # Worlds' (`Alice has whatever credentials ...`, `Alice's agent declares
-  # session_home ...`, `Alice runs the isolated ...`); four are in none.
+  # Still pending (step 11): not built, and its steps are the workspace and
+  # session-home Worlds' (`Alice has whatever credentials ...`, `Alice's agent
+  # declares session_home ...`, `Alice runs the isolated ...`). The
+  # untrusted-repository refusal is not built.
   @pending
-  Rule: A run whose engine cannot authenticate, or cannot load its MCP servers, is refused before the engine starts
+  Rule: A run that cannot load its MCP servers is refused before the engine starts
 
     # session_home: host leaves claude's MCP servers in the project's own
     # .mcp.json, which claude loads only in a repository Alice trusted in her
@@ -631,18 +628,24 @@ Feature: run — assembling a project's context and handing it to an engine
       When Alice runs the isolated "claude-code" agent under workspace "none"
       Then the run is refused because an untrusted repository's session cannot load the project's MCP file
 
-    # A login session needs the login: with no claude login on the host, it
-    # is refused before any engine is spawned, naming what to do. The host and
-    # the container refuse alike.
-    Scenario: Alice's login session with no login on the host is refused, naming auth token
-      # substitution: the agent declares session_home where Go's step says engine_home (vocabulary ruling, 2026-11-06)
-      Given Alice has a git-backed project
-      And Alice has no "claude-code" credentials or API key on the host
-      And Alice has no "claude-code" credentials on the host
-      And Alice's agent declares session_home "session"
-      And Alice's own session authenticates with "login"
-      When Alice runs the isolated "claude-code" agent under workspace "none"
-      Then the run is refused without any isolation finding, naming "auth: token"
+  # Redrafted (owner, 2026-11-19): Go refused a login session with no login,
+  # naming "auth: token". Nothing refuses here: a child under `auth: login`
+  # asks for no variable, and a primary's missing login is only said.
+  Rule: A primary session with no login to share is told so, and runs
+
+    Scenario: Alice's interactive session with no login on the host runs, and says no login is shared
+      # substitution: Go refused, naming "auth: token"; here the missing login is a notice.
+      Given Alice has a project that has never used ctxloom
+      And Alice has set ctxloom up in her project
+      And Alice has exported no credential
+      When Alice runs her assistant interactively, through her daemon:
+        """
+        ctxloom run
+        """
+      Then the command succeeds
+      And the output contains "there is no login at"
+      And the output contains "the primary session will not be signed in"
+      And the assistant was started with the program, arguments, environment and directory of the daemon's launch, and nothing else
 
   Rule: A run holds its session's lock for as long as it runs, so its session reads live
 
