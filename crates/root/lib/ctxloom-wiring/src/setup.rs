@@ -138,6 +138,18 @@ impl SetupUseCases {
                     .unwrap_or_default()
             })
         })
+        // The bundles whose metadata is in the old layout (step 10c U5,
+        // D15), each said in the library's words with the move.
+        .reporting_old_layouts({
+            let library = crate::library::build(wiring, None)?;
+            Box::new(move || {
+                let found = library
+                    .old_layouts(&library_application::Flags::default())
+                    .result
+                    .unwrap_or_default();
+                said_old_layouts(&found)
+            })
+        })
         // The enabled registered companions, each asked through the
         // library's one probe (OD-8), as a session's assembly asks them.
         .reporting_companions({
@@ -177,6 +189,28 @@ impl SetupUseCases {
             init,
         })
     }
+}
+
+/// Each bundle in the old layout (step 10c U5, D15), its refusal and the
+/// move that migrates it, in the library's en-US words.
+pub(crate) fn said_old_layouts(found: &[library::BundleError]) -> Vec<(String, String)> {
+    use angzarr_diagnostic::Diagnostic;
+    let Ok(catalog) = angzarr_presentation::Catalog::en_us(&[library::EN_US]) else {
+        return Vec::new();
+    };
+    found
+        .iter()
+        .map(|cause| {
+            let fix = cause.args().into_iter().fold(
+                angzarr_diagnostic::Report::new(format!("{}-fix", cause.code())),
+                |fix, (name, value)| fix.arg(name.to_string(), value),
+            );
+            (
+                catalog.message(cause),
+                catalog.render(&fix).unwrap_or_default(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

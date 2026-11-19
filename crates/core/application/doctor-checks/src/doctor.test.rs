@@ -905,3 +905,37 @@ fn a_doctor_writing_through_other_files_fixes_them_and_leaves_its_own() {
         !through.files.lock().unwrap()["/work/.claude/settings.json"].contains("inject-context")
     );
 }
+
+// doctor.feature: "A bundle in the old metadata layout is a warning naming
+// the git mv" (step 10c U5, D15): a doctor asked for the bundles in the old
+// layout says each as it is told, its fix the move, before the stated
+// limit; one not asked has no such row.
+#[test]
+fn a_doctor_reporting_old_layouts_warns_of_each_naming_the_move() {
+    let mem = project();
+    let report = doctor(&mem, true)
+        .reporting_old_layouts(Box::new(|| {
+            vec![(
+                "demo keeps its skill metadata at old, where ctxloom no longer reads it"
+                    .to_string(),
+                "git mv old new".to_string(),
+            )]
+        }))
+        .report(false);
+    let markers: Vec<&str> = report.checks.iter().map(|c| c.marker).collect();
+    let n = markers.len();
+    assert_eq!(markers[n - 2], "DOCTOR-CHECK-SIDECARS-u4", "{markers:?}");
+    let found = row(&report, "DOCTOR-CHECK-SIDECARS-u4");
+    assert_eq!(found.status, Status::Warn);
+    assert!(
+        found.detail.contains("demo keeps its skill metadata"),
+        "{}",
+        found.detail
+    );
+    assert_eq!(found.remedy, "git mv old new");
+    let plain = doctor(&mem, true).report(false);
+    assert!(!plain
+        .checks
+        .iter()
+        .any(|c| c.marker == "DOCTOR-CHECK-SIDECARS-u4"));
+}

@@ -92,6 +92,13 @@ impl Library {
         self.run(flags, |p| Ok(p.stale_distilled()))
     }
 
+    /// The bundles whose metadata is in the old layout (owner T27, D15),
+    /// each its refusal, naming the move that migrates it: doctor's
+    /// `SIDECARS-u4` row (step 10c U5).
+    pub fn old_layouts(&self, flags: &Flags) -> Outcome<Vec<library::BundleError>> {
+        self.run(flags, |p| Ok(p.old_layouts()))
+    }
+
     /// `fragment premises`.
     pub fn premises(&self, flags: &Flags) -> Outcome<Premises> {
         self.run(flags, |p| Ok(p.premises()))
@@ -288,6 +295,14 @@ impl Project {
             });
         }
         Ok(shown)
+    }
+
+    fn old_layouts(&self) -> Vec<library::BundleError> {
+        self.unreadable
+            .values()
+            .filter(|cause| matches!(cause, library::BundleError::OldLayout { .. }))
+            .cloned()
+            .collect()
     }
 
     fn stale_distilled(&self) -> Vec<String> {

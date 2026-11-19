@@ -59,6 +59,9 @@ pub struct Doctor {
     /// The items whose distilled form is stale (T30, S51), asked when the
     /// report is made; none wired, no row.
     stale: Option<Box<dyn Fn() -> Vec<String>>>,
+    /// The bundles whose metadata is in the old layout (step 10c U5, D15),
+    /// asked when the report is made.
+    old_layouts: Option<OldLayouts>,
     /// The enabled registered companions, each asked for its loadout through
     /// the library's one probe, when the report is made; none wired, no row.
     companions: Option<CompanionsAsked>,
@@ -77,6 +80,12 @@ struct Holds {
 
 /// Asks the enabled registered companions for their loadouts: what
 /// answered, and what was noticed of the rest.
+/// What a doctor asks for the bundles in the old layout (step 10c U5):
+/// each one's refusal and the move that migrates it, as the library's
+/// catalog says them (the composition root renders them: their messages
+/// select on their args).
+pub type OldLayouts = Box<dyn Fn() -> Vec<(String, String)>>;
+
 pub type CompanionsAsked =
     Box<dyn Fn() -> library_application::Outcome<Vec<library_application::CompanionInit>>>;
 
@@ -102,6 +111,7 @@ impl Doctor {
             losses: None,
             worktrees: None,
             stale: None,
+            old_layouts: None,
             companions: None,
             holds: None,
         }
@@ -156,8 +166,18 @@ impl Doctor {
         }
     }
 
+    /// This doctor, asking `old_layouts` which bundles keep their metadata
+    /// in the old layout (the library's, step 10c U5, D15), for a row of
+    /// its own.
+    pub fn reporting_old_layouts(self, old_layouts: OldLayouts) -> Doctor {
+        Doctor {
+            old_layouts: Some(old_layouts),
+            ..self
+        }
+    }
+
     /// This doctor, asking `stale` which items' distilled forms no longer
-    /// match their sources (the library's listing, S51).
+    /// match their sources (S51), for a row of its own.
     pub fn reporting_stale_distilled(self, stale: Box<dyn Fn() -> Vec<String>>) -> Doctor {
         Doctor {
             stale: Some(stale),
@@ -308,6 +328,10 @@ impl Doctor {
         if let Some(stale) = &self.stale {
             let at = report.checks.len() - 1;
             report.checks.insert(at, checks::stale_distilled(&stale()));
+        }
+        if let Some(ask) = &self.old_layouts {
+            let at = report.checks.len() - 1;
+            report.checks.insert(at, checks::sidecars(&ask()));
         }
         if let Some(ask) = &self.companions {
             let at = report.checks.len() - 1;

@@ -290,7 +290,8 @@ pub fn hooks(settings: &[(String, String)], name: &str) -> Check {
 }
 
 /// `GITIGNORE-f6`: a blanket `.ctxloom` ignore rule predates content moving
-/// into `.ctxloom/`; left in place it un-tracks the project's own content.
+/// into `.ctxloom/`; left in place it un-tracks the project's own content,
+/// a fail row.
 /// And the other half: ctxloom's private state that git can see
 /// (`unignored`, the patterns no ignore file covers).
 pub fn gitignore(text: Option<&str>, unignored: &[&str]) -> Check {
@@ -314,10 +315,12 @@ pub fn gitignore(text: Option<&str>, unignored: &[&str]) -> Check {
             )
         });
     match blanket {
+        // A fail (step 10c U5, QUESTIONS 10): a library git ignores is
+        // refused, so every run there is.
         Some(rule) => row(
             M,
             N,
-            Status::Warn,
+            Status::Fail,
             &format!(
                 ".gitignore has the blanket rule `{rule}`: it un-tracks the project's own content under .ctxloom, so `git add` reports nothing and a content repository publishes an empty tree"
             ),
@@ -485,6 +488,33 @@ pub fn stale_distilled(stale: &[String]) -> Check {
             stale.join(", ")
         ),
         "run `ctxloom fragment distill <ref>` (or `ctxloom command distill <ref>`) for each, or `ctxloom bundle distill <bundle>`",
+    )
+}
+
+/// `SIDECARS-u4` (step 10c U5, owner T27, D15): each bundle whose metadata
+/// is in the old layout, where it is no longer read, so the bundle is
+/// refused whole; `found` is each one's message and the move that migrates
+/// it, as the library says them. A warning: every other bundle still runs.
+pub fn sidecars(found: &[(String, String)]) -> Check {
+    const M: &str = "DOCTOR-CHECK-SIDECARS-u4";
+    const N: &str = "every bundle's metadata is where ctxloom reads it";
+    if found.is_empty() {
+        return row(
+            M,
+            N,
+            Status::Ok,
+            "no bundle keeps its metadata in the old layout",
+            "",
+        );
+    }
+    let said =
+        |pick: fn(&(String, String)) -> &str| found.iter().map(pick).collect::<Vec<_>>().join("; ");
+    row(
+        M,
+        N,
+        Status::Warn,
+        &said(|(message, _)| message),
+        &said(|(_, fix)| fix),
     )
 }
 
