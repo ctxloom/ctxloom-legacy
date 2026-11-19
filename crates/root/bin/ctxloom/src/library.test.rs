@@ -440,22 +440,7 @@ impl Project {
     /// Every file below `rel` in the project, by its path below `rel` (slash
     /// separated) and its bytes.
     pub(crate) fn tree(&self, rel: &str) -> std::collections::BTreeMap<String, Vec<u8>> {
-        fn walk(top: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
-            for path in files::children(dir) {
-                if files::is_dir(&path) {
-                    walk(top, &path, out);
-                } else {
-                    let below = path.strip_prefix(top).expect("below the top");
-                    out.insert(
-                        below.to_string_lossy().replace('\\', "/"),
-                        files::read_bytes(&path).expect("a file"),
-                    );
-                }
-            }
-        }
-        let mut out = std::collections::BTreeMap::new();
-        walk(&self.project.join(rel), &self.project.join(rel), &mut out);
-        out
+        tree_of(&self.project.join(rel), |_| {})
     }
 
     /// Give the file at `rel` the execute bits (unix).
@@ -990,4 +975,58 @@ fn test_the_steps_read_proto3_json_a_suffix_selects_and_absent_is_the_default() 
     assert!(holds(&doc, "engines[name$=/opencode].via", "x").is_err());
     assert!(holds(&doc, "engines[name$=/claude-code].runtime.value", "host").is_ok());
     assert!(holds(&doc, "engines[name$=/claude-code].runtime.value", "false").is_err());
+}
+
+/// Every file below `top`, by its path below it (slash separated) and its
+/// bytes, `listed` told each file's path after its directory is listed and
+/// before it is read. A file gone in between (a daemon's write renames its
+/// temporary file into place) was not there to read, and is left out; any
+/// other failure to read one is the test's.
+pub(crate) fn tree_of(
+    top: &Path,
+    mut listed: impl FnMut(&Path),
+) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(
+        top: &Path,
+        dir: &Path,
+        listed: &mut dyn FnMut(&Path),
+        out: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) {
+        for path in files::children(dir) {
+            if files::is_dir(&path) {
+                walk(top, &path, listed, out);
+                continue;
+            }
+            listed(&path);
+            let bytes = match files::read_bytes(&path) {
+                Ok(bytes) => bytes,
+                Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(other) => panic!("{} does not read: {other}", path.display()),
+            };
+            let below = path.strip_prefix(top).expect("below the top");
+            out.insert(below.to_string_lossy().replace('\\', "/"), bytes);
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(top, top, &mut listed, &mut out);
+    out
+}
+
+// CI on macOS (2026-11-19): a file renamed away between a tree's listing
+// and its read (a daemon's write) failed the test reading the tree with
+// `NotFound`. The race forced: the file is removed once it is listed.
+#[test]
+fn a_tree_leaves_out_a_file_gone_between_its_listing_and_its_read() {
+    let project = Project::bare();
+    project.write("t/a.txt", "a");
+    project.write("t/gone.txt", "gone");
+    project.write("t/sub/b.txt", "b");
+    let tree = tree_of(&project.dir().join("t"), |path| {
+        if path.ends_with("gone.txt") {
+            files::remove(path);
+        }
+    });
+    let names: Vec<&str> = tree.keys().map(String::as_str).collect();
+    assert_eq!(names, ["a.txt", "sub/b.txt"]);
+    assert_eq!(tree["sub/b.txt"], b"b");
 }
