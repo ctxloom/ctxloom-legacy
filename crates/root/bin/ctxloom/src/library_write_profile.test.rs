@@ -99,6 +99,7 @@ fn test_creating_a_profile_writes_its_definition_and_it_is_listed_back() {
 fn test_create_says_what_it_wrote_and_refuses_what_it_must() {
     let project = Project::initialized().on_gos_catalog();
     project.bundle("demo");
+    // Go's text, asked for by name (off a terminal the default is json).
     let ran = project.run(&[
         "profile",
         "create",
@@ -107,6 +108,8 @@ fn test_create_says_what_it_wrote_and_refuses_what_it_must() {
         "demo",
         "-d",
         "base d",
+        "--format",
+        "text",
     ]);
     ran.succeeds();
     assert_eq!(
@@ -126,6 +129,8 @@ fn test_create_says_what_it_wrote_and_refuses_what_it_must() {
         "demo",
         "-d",
         "day-to-day-work",
+        "--format",
+        "text",
     ]);
     ran.succeeds()
         .contains("Created profile \"dev\" with parents: base; bundles: demo");
@@ -134,7 +139,15 @@ fn test_create_says_what_it_wrote_and_refuses_what_it_must() {
         Some("description: day-to-day-work\nparents:\n  - base\nbundles:\n  - demo\n")
     );
     project
-        .run(&["profile", "create", "only-parent", "--parent", "base"])
+        .run(&[
+            "profile",
+            "create",
+            "only-parent",
+            "--parent",
+            "base",
+            "--format",
+            "text",
+        ])
         .succeeds()
         .contains("Created profile \"only-parent\" with parents: base\n");
     let before = project.tree(PROFILES);

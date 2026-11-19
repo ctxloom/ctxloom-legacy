@@ -220,13 +220,27 @@ mod write {
             terminal: false,
             degraded: false,
         };
+        // Off a terminal a create is json, as every verb (smoke
+        // 2026-11-19); a modify stays text unless json is asked for by name
+        // (profile.feature: "only an explicit --format json is json").
         let said = run_on(
             &library,
             &["profile", "create", "other", "-i", "demo"],
             unasked,
         );
+        assert_eq!(
+            said.json()["profile"]["name"],
+            "projects/calm-otter/bundles/project/profiles/other",
+            "{}",
+            said.out
+        );
+        let said = run_on(
+            &library,
+            &["profile", "modify", "other", "-d", "x"],
+            unasked,
+        );
         assert!(
-            said.out.starts_with("Created profile \"other\""),
+            said.out.contains("Modified profile \"other\"\n"),
             "{}",
             said.out
         );
