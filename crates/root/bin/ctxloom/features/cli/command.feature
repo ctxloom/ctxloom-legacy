@@ -1,8 +1,8 @@
 # world: surfaces
 # Ported from cli/command.feature (rev f36e8dfb2)
-# NOT ported: the scenarios tagged @pending, each with its reason: create,
-#   the MCP resource reads (`the agent reads resource` has no MCP session in
-#   this port) and remove.
+# NOT ported: deleted (OD-48 amended, owner 2026-11-19: tools-only is the ruled design,
+#   so the MCP server serves no resources): "Reading a single command over
+#   MCP", and the resource-read steps of the create and remove scenarios.
 @doc
 Feature: command — authoring reusable prompt templates for AI coding assistants
 
@@ -45,20 +45,16 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
         | engine      |
         | claude-code |
 
-  # Still pending (step 11): not built here. Its scenario reads the agent's
-  # MCP resource (`the agent reads resource "ctxloom://commands"`), and this
-  # port has no MCP resource reads.
-  @pending
-  Rule: Creating a command writes real content, and it reaches every surface
+  Rule: Creating a command writes real content, and it reaches every listing
 
     # Same hazard as fragment.feature's create scenario: "review" is the
-    # argument the command line passed, and it is the YAML key, the listed
-    # name, and the resource entry alike — so `Content: ""` in cli.createItem
+    # argument the command line passed, and it is the YAML key and the listed
+    # name alike — so `Content: ""` in cli.createItem
     # stored no body at all and every axis stayed green regardless.
     # "Add content here." is the placeholder body create actually writes, and
     # it is the only string here that proves real bytes landed rather than a
-    # name being echoed back three times.
-    Scenario: Alice creates a command and it is listed and exposed to the agent
+    # name being echoed back.
+    Scenario: Alice creates a command and it is listed
       Given an initialized ctxloom project
       And a bundle "demo" exists
       When Alice creates a command for her team:
@@ -70,8 +66,6 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
       And the file ".ctxloom/content/bundles/v2/demo/prompts/review.md" contains "Add content here."
       When I run "ctxloom command list"
       Then the output contains "review"
-      When the agent reads resource "ctxloom://commands"
-      Then the resource contains "review"
 
   Rule: A command's content reaches a person and an agent byte for byte
 
@@ -89,25 +83,6 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
       And the output contains "review"
       And the output contains "COMMAND-BODY-review"
 
-    # The MIME type is a static field on the envelope: every MCP resource
-    # returning an EMPTY body left this green on the type alone. The body is
-    # the resource. The session endpoint serves the command as the SESSION's
-    # package carries it, so the owner stands on a profile that selects it.
-    @pending
-    Scenario: Reading a single command over MCP
-      Given an initialized ctxloom project
-      And a bundle "demo" exists
-      And a command "review" in bundle "demo" exists
-      And a profile "dev" with bundle "demo"
-      And a session owner is standing on the profile "dev"
-      When the agent reads resource "ctxloom://commands/review"
-      Then the resource MIME type is "text/markdown"
-      And the resource contains "COMMAND-BODY-review"
-
-  # Still pending (step 11): not built here. Its scenario reads the agent's
-  # MCP resource (`the agent reads resource "ctxloom://commands"`), and this
-  # port has no MCP resource reads.
-  @pending
   Rule: Removing a command removes it from the manifest and from every listing
 
     # Bare `remove` is a preview: it must leave the manifest untouched. A
@@ -135,8 +110,8 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
     # Both halves are asserted on payload, separately: a remove that only
     # trimmed the cached listing (leaving the YAML entry behind) and a remove
     # that only trimmed the YAML (leaving a stale listing) would each satisfy
-    # exactly one of these three checks alone.
-    Scenario: Removing a command removes it from the manifest, the listing, and the agent's resource
+    # exactly one of these checks alone.
+    Scenario: Removing a command removes it from the manifest and the listing
       Given an initialized ctxloom project
       And a bundle "demo" exists
       And a command "review" in bundle "demo" exists
@@ -148,8 +123,6 @@ Feature: command — authoring reusable prompt templates for AI coding assistant
       And the file ".ctxloom/content/bundles/v2/demo/prompts/review.md" does not exist
       When I run "ctxloom command list"
       Then the output does not contain "review"
-      When the agent reads resource "ctxloom://commands"
-      Then the resource does not contain "review"
 
   Rule: --no-distill controls whether an edit gets re-distilled, honestly
 

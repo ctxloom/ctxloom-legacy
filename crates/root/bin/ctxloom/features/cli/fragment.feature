@@ -1,8 +1,9 @@
 # world: surfaces
 # Ported from cli/fragment.feature (rev f36e8dfb2)
-# NOT ported: the scenarios tagged @pending: those that read the agent's MCP
-#   resource (create, the single read, the removal's), which this port has
-#   no reads of. Left out: the Rule
+# NOT ported: deleted (OD-48 amended, owner 2026-11-19: tools-only is the ruled design,
+#   so the MCP server serves no resources): "Reading a single fragment over
+#   MCP", and the resource-read steps of the create and remove scenarios.
+# Left out: the Rule
 #   "Materializing a profile never destroys a team's hand-authored context
 #   file": j000400_multi_engine already carries it.
 @doc
@@ -28,18 +29,16 @@ Feature: fragment — reusable context units, and the engine surface each one re
   cli/manage.feature, and cli/command.feature respectively — this file owns
   only the context surface.
 
-  @pending
-  Rule: A fragment authored once reaches every axis: manifest, listing, and agent resource
+  Rule: A fragment authored once reaches every axis: manifest and listing
 
-    # Every literal on the three axes below is "testing" — the argument the
-    # command line just passed. It is the YAML key in the manifest, the name
-    # in the listing, and the name in the resource, so a create that stored
-    # ZERO BYTES of content left all three green (Content: "" in
-    # cli.createItem): this project's characteristic silent no-op, on its
+    # Every literal on the two axes below is "testing" — the argument the
+    # command line just passed. It is the YAML key in the manifest and the
+    # name in the listing, so a create that stored ZERO BYTES of content left
+    # both green (Content: "" in cli.createItem): this project's characteristic silent no-op, on its
     # primary authoring verb. "Add content here." is the placeholder body
     # create actually writes, and it appears nowhere else in a freshly
     # created project.
-    Scenario: Alice creates a fragment and it lands in the manifest, the listing, and the agent's resource
+    Scenario: Alice creates a fragment and it lands in the manifest and the listing
       Given an initialized ctxloom project
       And a bundle "demo" exists
       When Alice adds a fragment to the team's shared guidance:
@@ -51,27 +50,8 @@ Feature: fragment — reusable context units, and the engine surface each one re
       And the file ".ctxloom/content/bundles/v2/demo/fragments/testing.md" contains "Add content here."
       When I run "ctxloom fragment list"
       Then the output contains "testing"
-      When the agent reads resource "ctxloom://fragments"
-      Then the resource contains "testing"
 
-  Rule: A fragment's content reaches a person and an agent byte for byte, and is findable by name
-
-    # The MIME type is a static field on the envelope: every MCP resource
-    # returning an EMPTY body left this green on the type alone. The body is
-    # the resource. The session endpoint serves the fragment as the SESSION's
-    # package carries it, so the owner stands on a profile that selects it.
-    # Still pending (step 11): it reads the agent's MCP resource, and this
-    # port has no MCP resource reads.
-    @pending
-    Scenario: Reading a single fragment over MCP
-      Given an initialized ctxloom project
-      And a bundle "demo" exists
-      And a fragment "testing" in bundle "demo" exists
-      And a profile "dev" with bundle "demo"
-      And a session owner is standing on the profile "dev"
-      When the agent reads resource "ctxloom://fragments/testing"
-      Then the resource MIME type is "text/markdown"
-      And the resource contains "FRAGMENT-BODY-testing"
+  Rule: A fragment is findable by name
 
     Scenario: Search finds a fragment by name
       Given an initialized ctxloom project
@@ -107,12 +87,9 @@ Feature: fragment — reusable context units, and the engine surface each one re
 
     # Both halves are asserted on payload, separately: a remove that only
     # trimmed the cached listing (leaving the YAML entry behind) and a remove
-    # that only trimmed the YAML (leaving a stale listing or a stale MCP
-    # resource) would each satisfy exactly one of these three checks alone.
-    # Still pending (step 11): it reads the agent's MCP resource, and this
-    # port has no MCP resource reads.
-    @pending
-    Scenario: Removing a fragment removes it from the manifest, the listing, and the agent's resource
+    # that only trimmed the YAML (leaving a stale listing) would each satisfy
+    # exactly one of these checks alone.
+    Scenario: Removing a fragment removes it from the manifest and the listing
       Given an initialized ctxloom project
       And a bundle "demo" exists
       And a fragment "testing" in bundle "demo" exists
@@ -124,8 +101,6 @@ Feature: fragment — reusable context units, and the engine surface each one re
       And the file ".ctxloom/content/bundles/v2/demo/fragments/testing.md" does not exist
       When I run "ctxloom fragment list"
       Then the output does not contain "testing"
-      When the agent reads resource "ctxloom://fragments"
-      Then the resource does not contain "testing"
 
   Rule: A fragment authored once reaches every engine's own native context surface
 
