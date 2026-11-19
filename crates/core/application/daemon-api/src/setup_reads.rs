@@ -57,7 +57,7 @@ impl<E: Edge> Api<E> {
         let reads = self.setup_reads.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon answers no setup read".to_string(),
         })?;
-        let (site, _) = self
+        let (site, project) = self
             .resolve(
                 request.target(),
                 request.caller_cwd(),
@@ -65,6 +65,13 @@ impl<E: Edge> Api<E> {
                 request.caller_globals(),
             )
             .await?;
+        // Its trees observed before the root reads them (step 10 U11).
+        self.observed(
+            project
+                .as_ref()
+                .map(|(name, root)| (name.clone(), root.as_str())),
+        )
+        .await?;
         reads.read(&site.at, &site.env, &site.flags, ask)
     }
 }

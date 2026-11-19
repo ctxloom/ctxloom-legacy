@@ -51,6 +51,8 @@ impl<E: Edge> Api<E> {
     ) -> Result<v1::Run, ApiError> {
         let terminals = Arc::clone(self.terminals()?);
         let project = self.host_project(&request.parent).await?;
+        // Planned outside the daemon's reads: its trees observed first.
+        self.observe_for(&request).await?;
         let (asked, mut flags) = run_application::client::asked_of(&request);
         // The project's trust is the daemon's to read, never the client's
         // to say (step 8 U2).

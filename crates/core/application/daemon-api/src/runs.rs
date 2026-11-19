@@ -131,6 +131,8 @@ impl<E: Edge> Api<E> {
         request: &v1::CreateRunRequest,
     ) -> Result<HostRequest, ApiError> {
         let project = self.host_project(&request.parent).await?;
+        // Planned outside the daemon's reads: its trees observed first.
+        self.observe_for(request).await?;
         let (one_shot, mut flags) = run_application::client::asked_of(request);
         flags.trusted = project.as_ref().is_some_and(|p| self.trusts(&p.id));
         let env = request

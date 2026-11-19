@@ -185,6 +185,21 @@ impl<E: Edge> Api<E> {
         })
     }
 
+    /// `request`'s trees observed (step 10 U11: nothing in the daemon reads
+    /// a library tree outside the observation), as a read's are, before a
+    /// run it asks for is planned outside this crate (a hosted one-shot, a
+    /// terminal run); what the observation said. A daemon that reads no
+    /// library has none to observe.
+    pub(crate) async fn observe_for<Q: LibraryRequest>(
+        &self,
+        request: &Q,
+    ) -> Result<Vec<v1::Notice>, ApiError> {
+        if self.libraries.is_none() {
+            return Ok(Vec::new());
+        }
+        Ok(self.read_site(request).await?.said)
+    }
+
     /// Where a read is answered: its parent, the directory and environment
     /// it is read at, its flags, and what its observation said.
     async fn read_site<Q: LibraryRequest>(&self, request: &Q) -> Result<ReadSite<'_>, ApiError> {

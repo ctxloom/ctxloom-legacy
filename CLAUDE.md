@@ -1598,6 +1598,23 @@ re-assembled context at its next hook, ONCE per batch:
   changed fragments, whole (asked of the library by the owed paths), else
   a pointer to `ctxloom context assemble`, else nothing (still owed).
 
+Step 10 U11's forcing checks are the binary's `workspace.test.rs`:
+`test_no_cli_crate_depends_on_an_application_crate_but_the_departures` (no
+`*-cli` driving crate's `[dependencies]` names a `crates/core/application`
+crate; today's 23 edges are `CLI_APPLICATION_DEPARTURES`, each with what it
+is used for, because step 10a U2's deletion of them is not done; a new edge
+or a stale entry fails) and
+`test_nothing_in_the_daemon_opens_a_library_tree_outside_the_observation`
+(the daemon's root sources, `ctxloom-wiring`'s `daemon/`, `oneshot.rs` and
+`frontend.rs`, open a library, `library::build(`, `build_setup(`,
+`build_setup_over(`, only at `DAEMON_LIBRARY_OPENS`' files and counts, each
+reached through the observation or a stated departure; daemon-api and
+daemon-application open none). A hosted one-shot and a terminal run observe
+their trees first (`Api::observe_for`), as a setup read does; the trust
+preview and a hosted child's plan (`CreateHandOff`, and its output root at
+its launch) are the departures: observing at the hand-off broke
+library_changes' refresh re-injection scenario, not yet root-caused.
+
 ## Architecture: hexagonal around CQRS/ES (checked by `just lint-arch`, and in review)
 
 Dependencies point inward; a review refuses a change that breaks these, and
