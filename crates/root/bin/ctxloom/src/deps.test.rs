@@ -296,6 +296,11 @@ impl Remotes {
         );
     }
 
+    /// Go's `RemoteFile`: `path` as the remote's default branch holds it.
+    pub(crate) fn remote_file(&self, name: &str, path: &str) -> String {
+        git_in(&self.bare[name], &["show", &format!("HEAD:{path}")])
+    }
+
     /// Go's `BreakRemote`: the bare repository renamed out from under its
     /// `file://` address, so every later clone or fetch fails.
     pub(crate) fn becomes_unreachable(&mut self, name: &str) {
@@ -430,7 +435,7 @@ impl World {
 
     /// Go's `RemoteFile`: `path` as the remote's default branch holds it.
     pub(crate) fn remote_file(&self, name: &str, path: &str) -> String {
-        git_in(&self.remotes.bare[name], &["show", &format!("HEAD:{path}")])
+        self.remotes.remote_file(name, path)
     }
 
     /// Go's `the remote "<name>"'s cached clone is forced back to its first

@@ -7,6 +7,14 @@ use serde_json::Value;
 
 use super::World;
 use crate::stamp;
+use crate::tests::deps::{tree_bundle, Remotes};
+
+/// What the CLI contract features' steps keep.
+#[derive(Default)]
+pub(super) struct State {
+    /// The git remotes a scenario seeds, made on first use.
+    remotes: Option<Remotes>,
+}
 
 /// `ctxloom` with `args`, with the scenario's environment, now.
 fn run_now(w: &World, args: &[&str]) -> crate::tests::Ran {
@@ -124,4 +132,34 @@ fn session_has_no_mcp(w: &mut World) {
         !text.contains("mcp"),
         "the session names an MCP endpoint: {text}"
     );
+}
+
+/// bundle.feature: Go's `a git remote "<name>" serving a ctxloom bundle`: a
+/// bare repository whose `main` publishes the bundle `demo`, registered in
+/// the project (deps_feature.test.rs's fixture).
+#[given(expr = "a git remote {string} serving a ctxloom bundle")]
+fn git_remote(w: &mut World, name: String) {
+    let env: Vec<(&str, &str)> = w
+        .common
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    w.cli
+        .remotes
+        .get_or_insert_with(Remotes::new)
+        .git_remote(&w.common.project, &env, &name);
+}
+
+/// bundle.feature: the remote's default branch holds `file` of `bundle`'s
+/// tree, saying `text`.
+#[then(expr = "the remote {string} holds file {string} of bundle {string} containing {string}")]
+fn remote_holds(w: &mut World, name: String, file: String, bundle: String, text: String) {
+    let held = w
+        .cli
+        .remotes
+        .as_ref()
+        .expect("a git remote was seeded")
+        .remote_file(&name, &format!("{}/{file}", tree_bundle(&bundle)));
+    assert!(held.contains(&text), "{bundle}/{file} on {name}: {held}");
 }

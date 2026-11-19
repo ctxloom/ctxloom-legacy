@@ -92,6 +92,8 @@ struct World {
     init_companions: init_companions::State,
     /// What step 10b's write steps keep.
     writes: writes::State,
+    /// What the CLI contract features' steps keep.
+    cli: cli::State,
 }
 
 impl fmt::Debug for World {
@@ -167,6 +169,7 @@ impl World {
             distill: distill::State::default(),
             init_companions: init_companions::State::default(),
             writes: writes::State::default(),
+            cli: cli::State::default(),
         }
     }
 
