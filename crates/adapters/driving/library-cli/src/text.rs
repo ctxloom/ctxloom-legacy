@@ -427,7 +427,12 @@ pub fn profile_list(out: &mut dyn Write, list: &ProfileList) -> io::Result<()> {
             parts.push(format!("parents: {}", row.parents.join(", ")));
         }
         if !row.bundles.is_empty() {
-            parts.push(format!("{} bundles", row.bundles.len()));
+            // One is "1 bundle" (a divergence from Go's "1 bundles").
+            let count = row.bundles.len();
+            parts.push(format!(
+                "{count} bundle{}",
+                if count == 1 { "" } else { "s" }
+            ));
         }
         if !parts.is_empty() {
             writeln!(out, "    {}", parts.join(", "))?;
