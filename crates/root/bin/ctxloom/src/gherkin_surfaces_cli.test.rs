@@ -128,3 +128,34 @@ fn command_rewriting_editor(w: &mut World) {
         "schema_version: 9\neditor:\n  command: sh\n  args:\n    - \"-c\"\n    - 'sed \"s/^command:.*/command: EDITED-BY-TEST/\" \"$1\" > \"$1.new\" && mv \"$1.new\" \"$1\"'\n    - editor\n",
     );
 }
+
+/// An initialized project whose editor (the home config's `editor`, run
+/// through `sh` on the file it is given) is `script`.
+fn project_with_editor(w: &mut World, script: &str) {
+    w.common.project = crate::tests::library::Project::initialized();
+    w.common.project.write_home(
+        ".ctxloom/config.yaml",
+        &format!(
+            "schema_version: 9\neditor:\n  command: sh\n  args:\n    - \"-c\"\n    - '{script}'\n    - editor\n"
+        ),
+    );
+}
+
+/// command.feature: an editor that adds the line `EDITED-BY-TEST` to the
+/// file it opens.
+#[given("a ctxloom project with a marker editor")]
+fn marker_editor(w: &mut World) {
+    project_with_editor(w, "printf \"\\nEDITED-BY-TEST\\n\" >> \"$1\"");
+}
+
+/// command.feature: an editor that comes back with the file emptied.
+#[given("a ctxloom project with an editor that empties the file")]
+fn emptying_editor(w: &mut World) {
+    project_with_editor(w, ": > \"$1\"");
+}
+
+/// command.feature: "she ...:" runs her commands as "Alice ...:" does.
+#[when(regex = r"^she .*:$")]
+fn she_runs(w: &mut World, step: &Step) {
+    w.alice_runs(step);
+}

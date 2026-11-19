@@ -232,8 +232,9 @@ fn index_records(_w: &mut World, _harp: String, _engine: String) {
 }
 
 /// Go's inline bundle document, as the tree this port reads: the envelope, a
-/// hook per entry (its `order:` in a sidecar), a server per `mcp:` entry, a
-/// skill's tags in its metadata.
+/// hook per entry (its `order:` in a sidecar), a fragment or command per
+/// entry (its fields its front matter), a server per `mcp:` entry, a skill's
+/// tags in its metadata.
 #[given(expr = "the project already has the bundle {string}:")]
 fn project_bundle(w: &mut World, step: &Step, name: String) {
     let parsed = angzarr_yaml::parse(&doc(step)).expect("a bundle document");
@@ -279,6 +280,36 @@ fn project_bundle(w: &mut World, step: &Step, name: String) {
                     &format!("order: {}\n", field("order")),
                 );
             }
+        }
+    }
+    // A fragment or a command is its one file, its `content` the body and
+    // every other field its front matter.
+    for (key, dir) in [("fragments", "fragments"), ("commands", "prompts")] {
+        for (item, body) in parsed
+            .get(key)
+            .and_then(angzarr_yaml::Value::as_map)
+            .unwrap_or_default()
+        {
+            let fields = body.as_map().unwrap_or_default();
+            let content = fields
+                .iter()
+                .find(|(k, _)| k == "content")
+                .and_then(|(_, v)| v.as_str())
+                .unwrap_or_default();
+            let front: Vec<(String, angzarr_yaml::Value)> = fields
+                .iter()
+                .filter(|(k, _)| k != "content")
+                .cloned()
+                .collect();
+            let text = if front.is_empty() {
+                format!("{content}\n")
+            } else {
+                let front = angzarr_yaml::write(&angzarr_yaml::Value::Map(front), usize::MAX);
+                format!("---\n{front}---\n{content}\n")
+            };
+            w.common
+                .project
+                .write(&format!("{root}/{dir}/{item}.md"), &text);
         }
     }
     // A server is its one file, `mcp/<name>.yaml` (owner T27), its fields
