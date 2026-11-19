@@ -91,6 +91,34 @@ fn an_unknown_refusal_is_none() {
     assert_eq!(rejection_of(&other), None);
 }
 
+// Step 10c U11: an apply's refusals, stale or unanswered, are the
+// daemon's own, carrying what they name.
+#[test]
+fn an_applys_refusals_are_the_daemons() {
+    let stale = Any::from_msg(&v1::PlanStale {
+        seen: "a1".to_string(),
+        now: "b2".to_string(),
+    })
+    .unwrap();
+    assert_eq!(
+        rejection_of(&stale),
+        Some(Rejection::Api(ApiRejection::PlanStale {
+            seen: "a1".to_string(),
+            now: "b2".to_string(),
+        }))
+    );
+    let unanswered = Any::from_msg(&v1::NeedsUnanswered {
+        need_ids: vec!["confirm".to_string()],
+    })
+    .unwrap();
+    assert_eq!(
+        rejection_of(&unanswered),
+        Some(Rejection::Api(ApiRejection::NeedsUnanswered {
+            needs: vec!["confirm".to_string()],
+        }))
+    );
+}
+
 // A configuration's refusals are the daemon's own, told in its words.
 #[test]
 fn a_configurations_refusals_are_the_daemons() {
@@ -236,6 +264,19 @@ fn the_diagnostics_display_their_code_and_args() {
                 detail: "bad".to_string(),
             },
             "daemon-api-config-unreadable root=/work ext_err_txt=bad",
+        ),
+        (
+            ApiRejection::PlanStale {
+                seen: "a1".to_string(),
+                now: "b2".to_string(),
+            },
+            "daemon-api-plan-stale seen=a1 now=b2",
+        ),
+        (
+            ApiRejection::NeedsUnanswered {
+                needs: vec!["confirm".to_string(), "dir".to_string()],
+            },
+            "daemon-api-needs-unanswered needs=\"confirm, dir\"",
         ),
     ] {
         assert_eq!(said(&rejection), shown);

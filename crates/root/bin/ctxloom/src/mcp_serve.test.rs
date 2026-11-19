@@ -195,6 +195,22 @@ impl Mcp {
         arguments: Value,
         accept: bool,
     ) -> (Value, Vec<Value>) {
+        let answer = |params: &Value| match accept {
+            true => json!({"action": "accept", "content": accepted_content(params)}),
+            false => json!({"action": "decline"}),
+        };
+        self.call_answering(tool, arguments, &answer)
+    }
+
+    /// [`Mcp::call_eliciting`], each elicitation answered with what
+    /// `answer` makes of its params (step 10c U11: an Edit answered with a
+    /// document's new text).
+    pub(crate) fn call_answering(
+        &mut self,
+        tool: &str,
+        arguments: Value,
+        answer: &dyn Fn(&Value) -> Value,
+    ) -> (Value, Vec<Value>) {
         let id = json!(self.start_call(tool, arguments));
         let mut asked = Vec::new();
         let deadline = Instant::now() + ANSWER_WAIT;
@@ -218,11 +234,7 @@ impl Mcp {
             }
             if message["method"] == "elicitation/create" {
                 let params = message["params"].clone();
-                let result = if accept {
-                    json!({"action": "accept", "content": accepted_content(&params)})
-                } else {
-                    json!({"action": "decline"})
-                };
+                let result = answer(&params);
                 asked.push(params);
                 self.send(json!({"jsonrpc": "2.0", "id": message["id"], "result": result}));
             }

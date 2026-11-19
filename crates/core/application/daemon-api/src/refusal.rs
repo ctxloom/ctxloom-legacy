@@ -179,6 +179,18 @@ pub enum ApiRejection {
     EtagInvalid {
         etag: String,
     },
+    /// An apply whose preview's etag no longer matches what stands now
+    /// (`v1::PlanStale`, step 10c U11): `seen` the preview's, `now` the
+    /// current one.
+    PlanStale {
+        seen: String,
+        now: String,
+    },
+    /// An apply that does not answer each need its preview asked
+    /// (`v1::NeedsUnanswered`, step 10c U11).
+    NeedsUnanswered {
+        needs: Vec<String>,
+    },
     /// A project's configuration that does not read.
     ConfigUnreadable {
         root: String,
@@ -233,6 +245,8 @@ impl Diagnostic for ApiRejection {
             ApiRejection::HomeGone { .. } => code!("home-gone"),
             ApiRejection::AgeInvalid { .. } => code!("age-invalid"),
             ApiRejection::EtagInvalid { .. } => code!("etag-invalid"),
+            ApiRejection::PlanStale { .. } => code!("plan-stale"),
+            ApiRejection::NeedsUnanswered { .. } => code!("needs-unanswered"),
             ApiRejection::ConfigUnreadable { .. } => code!("config-unreadable"),
             ApiRejection::LaunchInProgress { .. } => code!("launch-in-progress"),
             ApiRejection::WakeInformOnly { .. } => code!("wake-inform-only"),
@@ -292,6 +306,10 @@ impl Diagnostic for ApiRejection {
                 ]
             }
             ApiRejection::EtagInvalid { etag } => vec![("etag", etag.as_str().into())],
+            ApiRejection::PlanStale { seen, now } => {
+                vec![("seen", seen.as_str().into()), ("now", now.as_str().into())]
+            }
+            ApiRejection::NeedsUnanswered { needs } => vec![("needs", needs.join(", ").into())],
             ApiRejection::ConfigUnreadable { root, detail } => vec![
                 ("root", root.as_str().into()),
                 ("ext_err_txt", detail.as_str().into()),
@@ -502,6 +520,14 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
         }),
         "ctxloom.v1.EtagInvalid" => decode::<v1::EtagInvalid>(refusal)
             .and_then(|r| api(ApiRejection::EtagInvalid { etag: r.etag })),
+        "ctxloom.v1.PlanStale" => decode::<v1::PlanStale>(refusal).and_then(|r| {
+            api(ApiRejection::PlanStale {
+                seen: r.seen,
+                now: r.now,
+            })
+        }),
+        "ctxloom.v1.NeedsUnanswered" => decode::<v1::NeedsUnanswered>(refusal)
+            .and_then(|r| api(ApiRejection::NeedsUnanswered { needs: r.need_ids })),
         "ctxloom.v1.ConfigUnreadable" => decode::<v1::ConfigUnreadable>(refusal).and_then(|r| {
             api(ApiRejection::ConfigUnreadable {
                 root: r.root,
@@ -748,6 +774,13 @@ pub(crate) fn samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(ApiRejection::EtagInvalid {
             etag: "abc".to_string(),
+        }),
+        Box::new(ApiRejection::PlanStale {
+            seen: "5d3c".to_string(),
+            now: "9a1e".to_string(),
+        }),
+        Box::new(ApiRejection::NeedsUnanswered {
+            needs: vec!["confirm".to_string()],
         }),
         Box::new(ApiRejection::ConfigUnreadable {
             root: "/work/calm".to_string(),

@@ -13,11 +13,22 @@ use std::sync::Arc;
 
 use angzarr_diagnostic::{code, Arg, Diagnostic};
 use daemon_api::{CallError, Caller, Daemons, Launch};
+use daemon_proto::v1;
 use rmcp::model::{JsonObject, Tool};
 use serde_json::{json, Value};
 
 /// The approval tool's name: `mcp__ctxloom__approval_prompt` to claude.
 pub const APPROVAL_PROMPT: &str = "approval_prompt";
+
+/// The test build's tool whose session removal asks to confirm (step 10c
+/// U11): callable, never listed.
+#[cfg(feature = "test-support")]
+pub const TEST_REMOVE_SESSION: &str = "test_remove_session";
+
+/// The test build's tool whose fragment's creation asks for its text, an
+/// Edit need (step 10c U11, QUESTIONS.md 7): callable, never listed.
+#[cfg(feature = "test-support")]
+pub const TEST_CREATE_FRAGMENT: &str = "test_create_fragment";
 
 /// The names of the tools offered, in the order listed.
 pub const TOOL_NAMES: [&str; 9] = [
@@ -244,9 +255,62 @@ fn json_text<T: serde::Serialize>(message: &T) -> String {
     serde_json::to_string(message).unwrap_or_default()
 }
 
-/// What a call came to: its text contents, or why it was not answered.
-pub(crate) async fn dispatch<D: Daemons>(
+/// The engine, asked a question (step 10c U11): the rmcp peer of the call,
+/// or a test's stand-in.
+pub(crate) trait Elicit: Sync {
+    /// Whether the engine said it can be asked (MCP's `elicitation`
+    /// capability, form mode).
+    fn can(&self) -> bool;
+
+    /// The elicitation `params` (`elicitation/create`'s) asked of the
+    /// engine: its `action` and the `content` it answered with; none when
+    /// the question could not be put.
+    fn ask(
+        &self,
+        params: Value,
+    ) -> impl std::future::Future<Output = Option<(String, Option<Value>)>> + Send;
+}
+
+/// `needs`, a preview's, presented to the engine through `elicit`, each as
+/// an elicitation: the apply's answers, or none when the write is declined
+/// (a required need the engine cannot be asked, or did not answer).
+pub(crate) async fn answers<E: Elicit>(elicit: &E, needs: &[v1::Need]) -> Option<Vec<v1::Answer>> {
+    let mut answers = Vec::new();
+    for need in needs {
+        let asked = crate::elicit::request_of(need).filter(|_| elicit.can());
+        let answered = match asked {
+            Some(params) => match elicit.ask(params).await {
+                Some((action, content)) => {
+                    crate::elicit::answer_of(need, &action, content.as_ref())
+                }
+                None => crate::elicit::answer_of(need, "cancel", None),
+            },
+            None => crate::elicit::answer_of(need, "cancel", None),
+        };
+        match answered {
+            crate::elicit::Answered::Answer(answer) => answers.push(answer),
+            crate::elicit::Answered::Skipped => {}
+            crate::elicit::Answered::Declined => return None,
+        }
+    }
+    Some(answers)
+}
+
+/// What a client that can ask a person can present (needs.proto): it asks,
+/// and never puts a program on a terminal.
+#[cfg(feature = "test-support")]
+fn presentable() -> Option<v1::Presentable> {
+    Some(v1::Presentable {
+        can_ask: true,
+        can_launch: false,
+    })
+}
+
+/// What a call came to: its text contents, or why it was not answered;
+/// a question its daemon call asks is put to the engine through `elicit`.
+pub(crate) async fn dispatch<D: Daemons, E: Elicit>(
     caller: &Caller<D>,
+    elicit: &E,
     tool: &str,
     args: &JsonObject,
 ) -> Result<Vec<String>, Refused> {
@@ -307,9 +371,19 @@ pub(crate) async fn dispatch<D: Daemons>(
         }
         "child_close" => {
             let child = text(tool, args, "child").map_err(refused)?;
+            // D16 (S40): a close that takes children with it asks first.
+            let needs = caller.close_needs(child).await.map_err(failed)?;
+            if answers(elicit, &needs).await.is_none() {
+                return Ok(vec![format!(
+                    "\"{child}\" was not closed: its close takes its children with it, and that was not confirmed"
+                )]);
+            }
             let written = caller.close(child).await.map_err(failed)?;
             Ok(vec![json_text(&written.session)])
         }
+        // The test build's tools (step 10c U11, QUESTIONS.md 7).
+        #[cfg(feature = "test-support")]
+        TEST_REMOVE_SESSION | TEST_CREATE_FRAGMENT => test_tool(caller, elicit, tool, args).await,
         "child_clear" => {
             let child = text(tool, args, "child").map_err(refused)?;
             let written = caller.clear(child).await.map_err(failed)?;
@@ -317,6 +391,69 @@ pub(crate) async fn dispatch<D: Daemons>(
                 json_text(&written.session),
                 json!({"clear_id": written.id}).to_string(),
             ])
+        }
+        other => Err(refused(ToolArgs::Unknown {
+            tool: other.to_string(),
+        })),
+    }
+}
+
+/// The test build's tools (step 10c U11, QUESTIONS.md 7): a write whose
+/// preview asks, presented to the engine and applied with its answers.
+/// Never listed.
+#[cfg(feature = "test-support")]
+async fn test_tool<D: Daemons, E: Elicit>(
+    caller: &Caller<D>,
+    elicit: &E,
+    tool: &str,
+    args: &JsonObject,
+) -> Result<Vec<String>, Refused> {
+    let refused = |e: ToolArgs| -> Refused { Box::new(e) };
+    let failed = |e: CallError| -> Refused { Box::new(e) };
+    match tool {
+        TEST_REMOVE_SESSION => {
+            let harp = text(tool, args, "session").map_err(refused)?;
+            let asked = v1::DeleteSessionRequest {
+                validate_only: true,
+                presentable: presentable(),
+                ..v1::DeleteSessionRequest::default()
+            };
+            let preview = caller.delete_session(harp, asked).await.map_err(failed)?;
+            let Some(answers) = answers(elicit, &preview.needs).await else {
+                return Ok(vec![format!("\"{harp}\" was not removed")]);
+            };
+            let apply = v1::DeleteSessionRequest {
+                etag: preview.etag,
+                answers,
+                presentable: presentable(),
+                ..v1::DeleteSessionRequest::default()
+            };
+            let done = caller.delete_session(harp, apply).await.map_err(failed)?;
+            Ok(vec![json_text(&done)])
+        }
+        TEST_CREATE_FRAGMENT => {
+            let bundle = text(tool, args, "bundle").map_err(refused)?;
+            let id = text(tool, args, "fragment").map_err(refused)?;
+            let ask = |validate_only: bool, answers: Vec<v1::Answer>| v1::CreateFragmentRequest {
+                fragment_id: id.to_string(),
+                fragment: Some(v1::Fragment::default()),
+                validate_only,
+                answers,
+                presentable: presentable(),
+                ..v1::CreateFragmentRequest::default()
+            };
+            let preview = caller
+                .create_fragment(bundle, ask(true, Vec::new()))
+                .await
+                .map_err(failed)?;
+            let Some(answers) = answers(elicit, &preview.needs).await else {
+                return Ok(vec![format!("\"{id}\" was not created")]);
+            };
+            let made = caller
+                .create_fragment(bundle, ask(false, answers))
+                .await
+                .map_err(failed)?;
+            Ok(vec![json_text(&made)])
         }
         other => Err(refused(ToolArgs::Unknown {
             tool: other.to_string(),

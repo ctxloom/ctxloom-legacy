@@ -348,6 +348,32 @@ applies nothing (`library_cli::write::removal_served`); an apply refused
 `library-tree-plan-stale` (the bundle changed before her answer) previews
 the removal again, prints it, and ends in the refusal; `--yes` is one
 call. `DeleteCompanion` has no `answers` field, so its apply sends none.
+`session remove`'s preview carries the same Confirm need (step 10c U11:
+`daemon_api::destroy::removal_confirm`, id `confirm`, `Remove session
+"<harp>"?`) and an etag, the UUIDv5 of the plan's files (rel, class, size)
+and worktrees (path, verdict) (`removal_etag`); at her terminal session-cli
+asks it (`session_cli::Asking`) and her yes is
+`SessionRemovals::apply_removal`, the preview's etag and her answer. An
+apply that names an etag is refused, before anything is destroyed,
+`daemon-api-needs-unanswered` (`ctxloom.v1.NeedsUnanswered`) without a
+confirmed answer and `daemon-api-plan-stale` (`ctxloom.v1.PlanStale`,
+ABORTED) when its plan now tags otherwise; a retry whose session is gone is
+answered as before. ctxloom's MCP server is an eliciting client (rmcp's
+`elicitation` feature): each need of a preview is a form elicitation
+(`mcp_server::elicit`: a Confirm the boolean `confirmed`, a Choose a string
+among its choices, an Ask or an Edit the string `text`, the suggestion or
+the document's text its default; an optional need's field not required),
+put only to an engine that declared form elicitation; a required need not
+answered (or not yes) declines the write and nothing is applied. An Edit is
+answered with the document's new text, and no editor is started (the
+request's `presentable` says `can_ask`, never `can_launch`). D16 (S40):
+`child_close` of a child holding open children previews its cascade as
+`GetSession`'s children (`Caller::close_needs`, every open descendant named,
+nearest first) and asks to confirm it; a no is answered `"<child>" was not
+closed: ...` and closes nothing; a child with none closes unasked. The test
+build's tools `test_remove_session` and `test_create_fragment` (callable,
+never listed; QUESTIONS.md 7) drive a removal's Confirm and a fragment's
+Edit through the elicitation.
 A preview's etag is the path's last sequence; the apply sends it back
 (`etag`) and the daemon puts it in the step's command as `seen_sequence`
 (`daemon_api::library_writes::seen_sequence`; empty, a `--yes`, is the

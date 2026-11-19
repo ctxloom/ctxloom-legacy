@@ -134,7 +134,14 @@ impl DaemonApi for Fake {
         &self,
         r: v1::DeleteSessionRequest,
     ) -> Result<v1::DeleteSessionResponse, Called> {
-        let rpc = format!("delete {} {}", r.validate_only, r.even_if_live);
+        let mut rpc = format!("delete {} {}", r.validate_only, r.even_if_live);
+        // An apply of a preview (step 10c U11): its tag and each answer.
+        if !r.etag.is_empty() {
+            rpc.push_str(&format!(" etag={}", r.etag));
+            for answer in &r.answers {
+                rpc.push_str(&format!(" {}={:?}", answer.need_id, answer.answer));
+            }
+        }
         self.request_ids
             .lock()
             .unwrap()
@@ -562,6 +569,32 @@ async fn a_removal_asks_the_daemon_of_this_projects_session() {
         .await
         .unwrap();
     assert_eq!(daemons.asked().last().unwrap(), "2:delete false false");
+}
+
+// Step 10c U11: the apply of a preview sends its tag and the answers, as
+// an apply (not `validate_only`), of this project's session.
+#[tokio::test]
+async fn a_removals_apply_sends_its_previews_tag_and_answers() {
+    let daemons = Fakes::new();
+    let answers = vec![v1::Answer {
+        need_id: "confirm".to_string(),
+        answer: Some(v1::answer::Answer::Confirmed(true)),
+    }];
+    in_project(&daemons)
+        .apply_removal("brisk-copper-moth", true, "e-7", answers)
+        .await
+        .unwrap();
+    assert_eq!(
+        daemons.asked(),
+        [
+            "1:resolve",
+            "1:delete false true etag=e-7 confirm=Some(Confirmed(true))"
+        ]
+    );
+    assert_eq!(
+        daemons.names().last().unwrap(),
+        "projects/calm-otter/sessions/brisk-copper-moth"
+    );
 }
 
 // A refused removal is its plan and why, in the refusing use case's words.

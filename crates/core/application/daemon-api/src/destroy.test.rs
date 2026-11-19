@@ -413,6 +413,105 @@ async fn a_delete_destroys_the_session_its_runs_and_its_directory() {
     assert_eq!(missing.name, NAME);
 }
 
+/// The apply of `plan`, the preview of `NAME`: its etag sent back, and
+/// `answers`.
+fn apply_of(
+    plan: &v1::DeleteSessionResponse,
+    answers: Vec<v1::Answer>,
+) -> v1::DeleteSessionRequest {
+    v1::DeleteSessionRequest {
+        etag: plan.etag.clone(),
+        answers,
+        ..delete(NAME, true)
+    }
+}
+
+/// The removal's confirmation, answered `yes`.
+fn confirm_answer(yes: bool) -> Vec<v1::Answer> {
+    vec![v1::Answer {
+        need_id: "confirm".to_string(),
+        answer: Some(v1::answer::Answer::Confirmed(yes)),
+    }]
+}
+
+// Step 10c U11: the preview asks its one question, a Confirm of the
+// session's removal, and tags what it showed.
+#[tokio::test]
+async fn a_removal_preview_asks_its_confirmation_and_tags_its_plan() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    let plan = f.api.delete_session(delete(NAME, false)).await.unwrap();
+    let asked: Vec<(&str, &str)> = plan
+        .needs
+        .iter()
+        .filter_map(|need| match &need.kind {
+            Some(v1::need::Kind::Confirm(c)) if !need.optional => {
+                Some((need.id.as_str(), c.text.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    let question = format!("Remove session \"{HARP}\"?");
+    assert_eq!(asked, [("confirm", question.as_str())]);
+    assert!(!plan.etag.is_empty());
+    let again = f.api.delete_session(delete(NAME, false)).await.unwrap();
+    assert_eq!(again.etag, plan.etag, "the same plan, the same tag");
+}
+
+// Its apply, with the preview's tag and a yes, destroys the session.
+#[tokio::test]
+async fn an_answered_apply_of_the_preview_destroys_the_session() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    let plan = f.api.delete_session(delete(NAME, false)).await.unwrap();
+    let done = f
+        .api
+        .delete_session(apply_of(&plan, confirm_answer(true)))
+        .await
+        .unwrap();
+    assert_eq!(done.applied, Some(true));
+    assert_eq!(f.places.held().destroyed, [HARP]);
+}
+
+// An apply of the preview that does not say yes to its question is
+// refused `NeedsUnanswered`, and destroys nothing.
+#[tokio::test]
+async fn an_apply_not_confirmed_is_refused_and_destroys_nothing() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    let plan = f.api.delete_session(delete(NAME, false)).await.unwrap();
+    for answers in [Vec::new(), confirm_answer(false)] {
+        let (_, unanswered): (_, v1::NeedsUnanswered) =
+            refused(f.api.delete_session(apply_of(&plan, answers)).await);
+        assert_eq!(unanswered.need_ids, ["confirm"]);
+    }
+    assert!(f.places.held().destroyed.is_empty());
+}
+
+// What the preview showed changed before the answer (a file grew): the apply is refused
+// `PlanStale` (ABORTED), naming both tags, and destroys nothing.
+#[tokio::test]
+async fn an_apply_of_a_plan_that_changed_since_is_refused_stale() {
+    let f = finished(HARP, transcript_and_notes(HARP)).await;
+    let plan = f.api.delete_session(delete(NAME, false)).await.unwrap();
+    f.places.held().survey.insert(
+        HARP.to_string(),
+        vec![
+            file(HARP, "design-notes.md", 9),
+            file(HARP, "native/history.jsonl", 3),
+        ],
+    );
+    let (code, stale): (_, v1::PlanStale) = refused(
+        f.api
+            .delete_session(apply_of(&plan, confirm_answer(true)))
+            .await,
+    );
+    assert_eq!(
+        code,
+        <v1::PlanStale as daemon_proto::Refusal>::REFUSAL_STATUS
+    );
+    assert_eq!(stale.seen, plan.etag);
+    assert_ne!(stale.now, plan.etag);
+    assert!(f.places.held().destroyed.is_empty());
+}
+
 /// The refusal a delete answered, decoded.
 fn removal_refused(result: Result<v1::DeleteSessionResponse, ApiError>) -> v1::RemovalRefusal {
     let (code, refused): (_, v1::RemovalRefusal) = refused(result);

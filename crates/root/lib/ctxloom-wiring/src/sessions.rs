@@ -265,7 +265,12 @@ impl Commands {
             // destroy's warning and discard read this home's.
             let holds =
                 reclaim_application::Holds(fact_spool::Spool::at_home(wiring.fs(), wiring.home()));
-            destroy(&command, &client, &holds, format, out)
+            // At her terminal the removal's confirmation is asked there
+            // (step 10c U11).
+            let asking = TrustTerminal {
+                stood_in: crate::interview::stood_in(&self.env),
+            };
+            destroy(&command, &client, (&holds, &asking), format, out)
         } else {
             let service = self.sessions().map_err(failed)?;
             session_cli::run(&command, service, format, out)
@@ -390,11 +395,14 @@ fn said(
 fn destroy<R: daemon_api::SessionRemovals>(
     command: &session_cli::Session,
     client: &R,
-    holds: &dyn reclaim_application::SessionHolds,
+    (holds, asking): (
+        &dyn reclaim_application::SessionHolds,
+        &dyn session_cli::Asking,
+    ),
     format: Format,
     out: &mut dyn Write,
 ) -> Result<session_cli::Done, session_cli::Failure> {
-    session_cli::destroy(command, client, holds, format, out)
+    session_cli::destroy(command, client, holds, asking, format, out)
 }
 
 /// A plain build has no destroying verb, so nothing is a destroy.
@@ -402,7 +410,10 @@ fn destroy<R: daemon_api::SessionRemovals>(
 fn destroy<R>(
     _: &session_cli::Session,
     _: &R,
-    _: &dyn reclaim_application::SessionHolds,
+    _: (
+        &dyn reclaim_application::SessionHolds,
+        &dyn session_cli::Asking,
+    ),
     _: Format,
     _: &mut dyn Write,
 ) -> Result<session_cli::Done, session_cli::Failure> {
