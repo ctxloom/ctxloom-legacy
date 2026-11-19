@@ -183,9 +183,13 @@ Feature: config — the project's one configuration document, read and scaffolde
     # refused the same way: by file, key path and the type that was expected.
     # It used to be a warning, and the command ran on a setting the schema
     # could not vouch for.
-    # Still pending (step 11): the message differs. The refusal names the file
-    # and `session_reap_age`, but says the value "does not match pattern
-    # '^[0-9]+(d|w|h|m|s)$'", never "expected string".
+    # Still pending (step 11, needs a ruling): D15 reads every config through
+    # angzarr-yaml, which keeps a scalar as its text and cannot tell `5` from
+    # `"5"`, so no build can say "holds a number, expected string" here; the
+    # refusal names the file and `session_reap_age` and says the value "does
+    # not match pattern '^[0-9]+(d|w|h|m|s)$'". The question has been open
+    # since the S1 report (library_config.test.rs): a typed scalar in
+    # angzarr-yaml, or the scenario redrafted to the pattern's words.
     @pending
     Scenario: A config value of the wrong type is refused, naming the file, key and expected type
       Given an initialized ctxloom project
@@ -205,10 +209,11 @@ Feature: config — the project's one configuration document, read and scaffolde
 
     # --degraded is the escape hatch for every fatal startup finding, this one
     # included: the violation is still reported, and the command runs.
-    # Still pending (step 11): the behaviour differs. The config loads and the
-    # finding is said, but `config show agents` of a project with no agents is
-    # `{"document": {}}`: nothing names claude-code; and the finding's words
-    # are the pattern's, never "expected string".
+    # Still pending (step 11, needs the same ruling as the scenario above):
+    # the finding's words are the pattern's, never "expected string" (D15's
+    # untyped scalars). Also, `config show agents` of a project with no agents
+    # is `{"document": {}}`: nothing names claude-code, so a redraft would
+    # also drop or replace that step.
     @pending
     Scenario: Under --degraded a config value of the wrong type is warned about and the config loads
       Given an initialized ctxloom project
@@ -293,21 +298,17 @@ Feature: config — the project's one configuration document, read and scaffolde
     # verbatim: `schema_version: 8` is the fixture's own content (it tracks
     # config.CurrentConfigVersion — bump both together), and `engine:` is a
     # key only the scaffold writes — its absence is what says no scaffold ran.
-    # Still pending (step 11): stale. The fixture's config is the current
-    # generation, `schema_version: 9`, and the scenario's own note says the
-    # `8` tracks the current version ("bump both together"); a draft edit for
-    # the owner: 8 -> 9 in its two steps.
-    @pending
     Scenario: Create refuses an existing config and leaves it byte-for-byte alone
+      # changed: step 11 (draft, owner's standing ruling "accept draft text verbatim"): the fixture's config is the current generation, config::CURRENT = 9, which this scenario's note says it tracks ("bump both together"): 8 -> 9.
       Given an initialized ctxloom project
-      And the file ".ctxloom/config.yaml" contains "schema_version: 8"
+      And the file ".ctxloom/config.yaml" contains "schema_version: 9"
       When Alice scaffolds over a project that already has a configuration:
         """
         ctxloom config create
         """
       Then the command fails
       And the output contains "config already exists"
-      And the file ".ctxloom/config.yaml" contains "schema_version: 8"
+      And the file ".ctxloom/config.yaml" contains "schema_version: 9"
       And the file ".ctxloom/config.yaml" does not contain "engine:"
 
   Rule: Edit refuses to open an editor on a config that is not there
