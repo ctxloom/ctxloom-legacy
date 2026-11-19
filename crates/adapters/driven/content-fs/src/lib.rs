@@ -216,7 +216,12 @@ impl ContentRepo for ContentFs {
     }
 
     fn bundle_dir_in(&self, app_dir: &str, name: &str) -> String {
-        join_rel(&join_rel(Path::new(app_dir), BUNDLES_BELOW_APP_DIR), name)
+        // The app dir's own segments as the platform joins them: the
+        // caller writes it with `/` (`other-project/.ctxloom`), and on
+        // Windows the path it reports was half `/`, half `\\` (CI,
+        // 2026-11-19).
+        let app_dir: PathBuf = Path::new(app_dir).components().collect();
+        join_rel(&join_rel(&app_dir, BUNDLES_BELOW_APP_DIR), name)
             .display()
             .to_string()
     }

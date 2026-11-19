@@ -327,12 +327,7 @@ impl Project {
                 ask: name.to_string(),
             }));
         }
-        // Joined as the platform joins (CI on Windows, 2026-11-19: half `/`,
-        // half `\\`), so the path it reports is spelled as the host spells it.
-        let app_dir = std::path::Path::new(dir.trim_end_matches(['/', '\\']))
-            .join(".ctxloom")
-            .display()
-            .to_string();
+        let app_dir = format!("{}/.ctxloom", dir.trim_end_matches(['/', '\\']));
         let dest = self.content.bundle_dir_in(&app_dir, &entry.name);
         if lexical(&dest) == lexical(&self.content.bundle_dir(&entry.name)) {
             return Err(WriteError::MoveDestinationItself { dest }.into());
