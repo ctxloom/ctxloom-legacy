@@ -412,25 +412,30 @@ Feature: bundle — the container authored content lives in, and everything that
     # An edit with no flags is a person who does not yet know what to type, and
     # the answer is help plus a plain statement that nothing happened — not a
     # silent exit 0 that reads as a successful edit.
-    # Still pending (step 11): the text row. `bundle edit demo --format text`
-    # says "No changes made." and no count, and the step reads the count "0"
-    # from a text output; the json rows run green.
-    @pending
+    # Redrafted (owner, 2026-11-19): the text says "No changes made." and no
+    # count, so the json rows count the changes and the text row says it.
     Scenario Outline: An edit that was told to change nothing says so
       Given an initialized ctxloom project
       And a bundle "demo" exists
       When I run "ctxloom bundle edit demo <flags>"
       Then the command succeeds
-      And the output reports "applied" as "<no changes signal>"
+      And the output reports "applied" as "false"
       And the output reports "changes" having "0" entries
       And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" contains "acceptance fixture bundle"
 
       @json-default
-      Examples: no --format at all takes the derived default off a terminal; an explicit one wins in both directions
-        | flags         | no changes signal |
-        |               | false              |
-        | --format json | false              |
-        | --format text | No changes made.   |
+      Examples: no --format at all takes the derived default off a terminal; an explicit one wins
+        | flags         |
+        |               |
+        | --format json |
+
+    Scenario: An edit that was told to change nothing says "No changes made." in text
+      Given an initialized ctxloom project
+      And a bundle "demo" exists
+      When I run "ctxloom bundle edit demo --format text"
+      Then the command succeeds
+      And the output contains "No changes made."
+      And the file ".ctxloom/content/bundles/v2/demo/bundle.yaml" contains "acceptance fixture bundle"
 
   Rule: A bundle travels as its tree, and an import never clobbers without being told to
 
