@@ -169,10 +169,23 @@ fn test_the_check_report_reads_as_go_prints_it() {
         }],
     };
     let text = words(|w| text::check(w, &report));
-    assert!(text.starts_with("Project: /p\nStatusline (HUD): true\n\n"));
+    // The config's word (rulings 59, 60), never a boolean.
+    assert!(
+        text.starts_with("Project: /p\nStatusline (HUD): ctxloom\n\n"),
+        "{text}"
+    );
     assert!(text.contains("  claude-code: hooks=true statusline=true mcp=false\n"));
     assert!(text.contains("  mock: not configured\n"));
     assert!(text.contains("Materialized surfaces:\n  context (claude-code): materialized\n"));
+    let off = setup_application::CheckReport {
+        manage_statusline: false,
+        ..report.clone()
+    };
+    let text = words(|w| text::check(w, &off));
+    assert!(
+        text.starts_with("Project: /p\nStatusline (HUD): none\n\n"),
+        "{text}"
+    );
 }
 
 #[test]
