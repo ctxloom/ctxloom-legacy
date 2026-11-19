@@ -310,10 +310,15 @@ impl Project {
         self
     }
 
+    /// Run the binary as `program` from now on (as [`Project::run_by`]).
+    pub(crate) fn set_program(&mut self, program: PathBuf) {
+        self.program = Some(program);
+    }
+
     /// The project as run by `program` (a copy of the binary under test
     /// under another name) instead of the binary at its own path.
     pub(crate) fn run_by(mut self, program: PathBuf) -> Project {
-        self.program = Some(program);
+        self.set_program(program);
         self
     }
 

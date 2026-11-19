@@ -832,6 +832,87 @@ fn a_ctxloom_home_not_made_yet_gets_a_daemon() {
     assert_eq!(stopped.code, 0, "{}", stopped.said());
 }
 
+// CI on Windows (2026-11-19): the daemon served on the process's MAIN
+// thread, which Windows gives 1 MiB, and its first round outgrew it in an
+// unoptimized build; every command was `daemon-ports-not-started`. It serves
+// on a thread of its own with a 16 MiB stack, so a start that needs more than
+// its main thread has (12 MiB, the test-support switch
+// `CTXLOOM_TEST_DAEMON_START=stack:<MiB>`) still serves. The command runs
+// under a soft stack limit of 8 MiB (macOS's and a stock Linux's main
+// thread), which the daemon it spawns inherits.
+#[test]
+fn a_daemon_whose_start_needs_more_stack_than_a_main_thread_has_serves() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let mut world = World::new();
+    let small = world.project.home().join("small-stack/ctxloom");
+    files::put_program(
+        &small,
+        &format!(
+            "#!/bin/sh\nulimit -s 8192 || exit 97\nexec '{}' \"$@\"\n",
+            crate::tests::binary().display()
+        ),
+    );
+    world.project.set_program(small);
+    let listed = world.run_also(
+        &[("CTXLOOM_TEST_DAEMON_START", "stack:12")],
+        &["bundle", "list", "--format", "json"],
+    );
+    assert_eq!(listed.code, 0, "{}\n{}", listed.said(), world.log());
+    let _ = world.run(&["daemon", "stop"]);
+}
+
+// The same: a daemon that died at its start said nothing of why (its stderr
+// was the null device, and a stack overflow is not a panic a hook hears).
+// The daemon a command spawns writes its stderr to its log, and the command's
+// error names how it exited and the end of that log.
+#[test]
+fn a_daemon_that_dies_at_its_start_says_why_in_its_log_and_to_its_command() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let world = World::new();
+    let ran = world.run_also(
+        &[("CTXLOOM_TEST_DAEMON_START", "stack:256")],
+        &["bundle", "list"],
+    );
+    assert_eq!(ran.code, 10, "{}", ran.said());
+    let said = ran.said();
+    assert!(
+        said.contains("no ctxloom daemon could be started"),
+        "{said}"
+    );
+    assert!(said.contains("exited"), "{said}");
+    assert!(said.contains("has overflowed its stack"), "{said}");
+    assert!(
+        world.log().contains("has overflowed its stack"),
+        "{}",
+        world.log()
+    );
+}
+
+// The same: a daemon that panics leaves the panic in its log, in its own
+// line, even when its stderr is not the log (`daemon serve` run by hand).
+#[test]
+fn a_daemon_that_panics_leaves_its_panic_in_its_log() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let world = World::new();
+    let ran = world.run_also(
+        &[("CTXLOOM_TEST_DAEMON_START", "panic")],
+        &["daemon", "serve", "--idle-seconds", "30"],
+    );
+    assert_ne!(ran.code, 0, "{}", ran.said());
+    let log = world.log();
+    assert!(
+        log.contains("the daemon panicked: ")
+            && log.contains("the test's daemon panics at its start"),
+        "{log}"
+    );
+}
+
 // The same ruling: `daemon serve` that finds another daemon holding the
 // single-instance lock declines (20), which its spawner reads as another
 // daemon to wait for; the one that serves goes on serving.

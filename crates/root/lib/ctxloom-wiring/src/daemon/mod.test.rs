@@ -6,7 +6,7 @@ use std::path::Path;
 
 use super::{
     account_home, caller_env, caller_wiring, daemon_env, daemon_home, instance_lock, logger,
-    request_id, served_exit, spawn_waits_on, under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT,
+    request_id, served_exit, spawn_waits_on, tail_of, under_home, ACCOUNT_HOME_VARIABLE, CALL_WAIT,
     DELIVERY_MARGIN, DESTROY_WAIT, HOOK_BOUND, SPAWN_WAIT,
 };
 
@@ -426,4 +426,14 @@ fn test_a_hooks_unprobed_daemon_is_its_homes_discovery_without_a_health_check() 
         super::hook_daemon_unprobed(&env).is_none(),
         "another home's"
     );
+}
+
+// A daemon that died before it served is told by the END of its log: its
+// last lines, blank ones left out, in order.
+#[test]
+fn a_died_daemon_is_told_by_its_logs_last_lines() {
+    let log = "1 serving at x\n\n2 a\n3 b\n   \n4 c\n";
+    assert_eq!(tail_of(log, 2), "3 b\n4 c");
+    assert_eq!(tail_of(log, 9), "1 serving at x\n2 a\n3 b\n4 c");
+    assert_eq!(tail_of("", 3), "");
 }

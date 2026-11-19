@@ -466,11 +466,15 @@ fn resolve(
         serving(wiring, &files)?.as_ref(),
         own_stamp(env, stamp),
     )?;
-    ensure(wiring, env);
+    let died = ensure(wiring, env);
     let Some(found) = serving(wiring, &files)? else {
-        return Err(failed(LibError::NoRuntime {
-            detail: "no ctxloom daemon could be started".to_string(),
-        }));
+        let detail = match died {
+            Some(Died { status, tail }) => format!(
+                "no ctxloom daemon could be started: the one started exited ({status}); the end of its log:\n{tail}"
+            ),
+            None => "no ctxloom daemon could be started".to_string(),
+        };
+        return Err(failed(LibError::NoRuntime { detail }));
     };
     // It answers the project's name, so it names it (owner ruling
     // 2026-11-14): one nothing has named gets its id at its root.
@@ -550,7 +554,84 @@ fn be_the_daemon(
         // The environment its children's checkouts' git runs in.
         env: Arc::clone(wiring.env()),
     };
-    served_exit(serve::serve(wiring.fs(), place, pace, say))
+    log_panics(wiring.fs(), files.log_path());
+    #[cfg(feature = "test-support")]
+    let start = env.utf8(START_VARIABLE).map(str::to_string);
+    let fs = wiring.fs();
+    // On a thread of its own, as each hosted session is: the process's main
+    // thread is the platform's to size (1 MiB on Windows), and the daemon's
+    // first round outgrew it in an unoptimized build (CI, 2026-11-19).
+    let serving = std::thread::Builder::new()
+        .name("ctxloom-daemon".to_string())
+        .stack_size(DAEMON_STACK)
+        .spawn(move || {
+            #[cfg(feature = "test-support")]
+            at_start(start.as_deref());
+            serve::serve(fs, place, pace, say)
+        });
+    let served = match serving {
+        // A panic is in the log already ([`log_panics`]).
+        Ok(serving) => serving
+            .join()
+            .unwrap_or_else(|_| Err(serve::Unserved::Failed("the daemon panicked".to_string()))),
+        Err(e) => Err(serve::Unserved::Failed(format!(
+            "the daemon's thread could not be started: {e}"
+        ))),
+    };
+    served_exit(served)
+}
+
+/// The stack the daemon serves on (a hosted session's is the same size).
+const DAEMON_STACK: usize = 16 * 1024 * 1024;
+
+/// Every panic of this daemon process is a line of its log at `path`, then
+/// told as before (to its stderr): a daemon that dies by panic says why
+/// even when its stderr is not the log (`daemon serve` run by hand).
+fn log_panics(fs: Arc<dyn Fs>, path: PathBuf) {
+    let say = std::sync::Mutex::new(logger(fs, path));
+    let told = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(mut say) = say.lock() {
+            say(&format!("the daemon panicked: {info}"));
+        }
+        told(info);
+    }));
+}
+
+/// The test-support variable that makes the daemon's start die or deepen
+/// (CI on Windows, 2026-11-19): `panic` panics on the daemon's thread before
+/// it serves; `stack:<MiB>` uses that much of its stack first (more than
+/// the thread has overflows it). Passed on to a daemon a command starts.
+#[cfg(feature = "test-support")]
+pub(crate) const START_VARIABLE: &str = "CTXLOOM_TEST_DAEMON_START";
+
+/// What [`START_VARIABLE`] says to do at the daemon's start.
+#[cfg(feature = "test-support")]
+fn at_start(switch: Option<&str>) {
+    match switch {
+        Some("panic") => panic!("the test's daemon panics at its start"),
+        Some(other) => {
+            if let Some(mib) = other
+                .strip_prefix("stack:")
+                .and_then(|m| m.parse::<usize>().ok())
+            {
+                let base = 0u8;
+                std::hint::black_box(use_stack(std::ptr::addr_of!(base) as usize, mib << 20));
+            }
+        }
+        None => {}
+    }
+}
+
+/// Recurse until the stack below `base` is `bytes` deep (each frame holding
+/// a page the optimizer cannot drop).
+#[cfg(feature = "test-support")]
+fn use_stack(base: usize, bytes: usize) -> u8 {
+    let page = std::hint::black_box([1u8; 4096]);
+    if base.abs_diff(std::ptr::addr_of!(page) as usize) >= bytes {
+        return page[0];
+    }
+    use_stack(base, bytes).wrapping_add(std::hint::black_box(page)[7])
 }
 
 /// `daemon serve`'s exit: a daemon that lost the single-instance lock to
@@ -788,11 +869,18 @@ impl Daemons for Reach<'_> {
                 Err(busy) => return Err(declined(busy)),
             }
         }
-        ensure(self.wiring, self.wiring.env());
+        let died = ensure(self.wiring, self.wiring.env());
         match serving_here(self.wiring, &files).map_err(declined)? {
             Some(found) => Ok(self.reached(&found)),
-            None => Err(Unreached::NotStarted {
-                log: self.log(&files),
+            None => Err(match died {
+                Some(Died { status, tail }) => Unreached::Exited {
+                    log: self.log(&files),
+                    status,
+                    tail,
+                },
+                None => Unreached::NotStarted {
+                    log: self.log(&files),
+                },
             }),
         }
     }
@@ -1210,7 +1298,7 @@ pub(crate) fn hook_daemon(env: &Arc<EnvSnapshot>, wait: Duration) -> Option<run_
     if let Some(found) = serving(&wiring, &files).ok()? {
         return Some(found);
     }
-    ensure_within(&wiring, env, wait);
+    let _ = ensure_within(&wiring, env, wait);
     serving(&wiring, &files).ok().flatten()
 }
 
@@ -1253,24 +1341,25 @@ const SPAWNS_ITSELF: bool = false;
 /// is left for the new daemon to publish over. A daemon that cannot be
 /// spawned is not this command's failure (what it recorded stands; the next
 /// client spawns one).
-fn ensure(wiring: &Wiring, env: &EnvSnapshot) {
-    ensure_within(wiring, env, SPAWN_WAIT);
+fn ensure(wiring: &Wiring, env: &EnvSnapshot) -> Option<Died> {
+    ensure_within(wiring, env, SPAWN_WAIT)
 }
 
 /// [`ensure`], waiting at most `wait` for a live daemon (a hook's is what
-/// its bound leaves).
-fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
+/// its bound leaves); how the daemon it spawned died, when it exited before
+/// it served and no other is coming.
+fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) -> Option<Died> {
     let files = files_of(wiring);
     // A live daemon, this home's or (refused before the command ran)
     // another's: never a second.
     if files.discovery().is_some_and(|found| live(&found)) {
-        return;
+        return None;
     }
     if !SPAWNS_ITSELF {
-        return;
+        return None;
     }
     let Ok(exe) = std::env::current_exe() else {
-        return;
+        return None;
     };
     let mut command = os::process::Detach::new(exe);
     command.args(["daemon", "serve"]);
@@ -1302,6 +1391,10 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     if let Some(line) = env.non_empty(LIFELINE_VARIABLE) {
         kept.push((LIFELINE_VARIABLE.into(), line.to_os_string()));
     }
+    #[cfg(feature = "test-support")]
+    if let Some(start) = env.non_empty(START_VARIABLE) {
+        kept.push((START_VARIABLE.into(), start.to_os_string()));
+    }
     // The daemon runs in its home, so a home not made yet (`just install`'s
     // `~/.ctxloom-rs` on a new machine) is made first, 0700 as the daemon
     // makes its own directories: a spawn into a missing directory fails.
@@ -1309,6 +1402,15 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
         .fs()
         .create_dir_all(wiring.home(), Mode::from_bits(0o700));
     command.env_clear().envs(kept).current_dir(wiring.home());
+    // Its stderr is its log (appended to, as the daemon writes it), so a
+    // death no panic hook hears (a stack overflow) still says why there.
+    let log = files.log_path();
+    if let Some(dir) = log.parent() {
+        let _ = wiring.fs().create_dir_all(dir, Mode::from_bits(0o700));
+    }
+    if let Ok(file) = wiring.fs().open(&log, Open::Append(Mode::from_bits(0o600))) {
+        command.stderr(os::process::Stream::File(file));
+    }
     // DETACHED (T3, M8): a session of its own on unix (setsid), no console
     // and a process group of its own on Windows, so neither this terminal's
     // hangup or Ctrl-C nor a kill of this command's group reaches it; its
@@ -1316,13 +1418,13 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     // inherited, so a reader of this command's output sees its end when the
     // command exits; dropped, not waited for: it outlives this command.
     let Ok(mut spawned) = os::process::spawn_detached(command) else {
-        return;
+        return None;
     };
     let deadline = Instant::now() + wait;
     let mut exited = false;
     while Instant::now() < deadline {
         if files.discovery().is_some_and(|found| live(&found)) {
-            return;
+            return None;
         }
         // The daemon spawned has exited: unless another holds the lock (and
         // advertises), none is coming, and the wait is over. Looked at once,
@@ -1330,13 +1432,36 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
         if !exited {
             if let Ok(Some(status)) = spawned.try_wait() {
                 if !spawn_waits_on(status.code()) {
-                    return;
+                    let text = wiring.fs().read(&log).unwrap_or_default();
+                    return Some(Died {
+                        status: status.to_string(),
+                        tail: tail_of(&String::from_utf8_lossy(&text), DIED_TAIL),
+                    });
                 }
                 exited = true;
             }
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+    None
+}
+
+/// How a daemon a client spawned died before it served: its exit status,
+/// as the platform says it, and the last lines of its log.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Died {
+    pub(crate) status: String,
+    pub(crate) tail: String,
+}
+
+/// The lines of a daemon's log [`Died`] holds.
+const DIED_TAIL: usize = 12;
+
+/// The last `lines` lines of `text`, joined by a line break, its blank lines
+/// left out.
+fn tail_of(text: &str, lines: usize) -> String {
+    let kept: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    kept[kept.len().saturating_sub(lines)..].join("\n")
 }
 
 /// The variables that say where the user's own engine settings are (her

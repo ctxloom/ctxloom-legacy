@@ -2324,7 +2324,15 @@ answered locally when none serves, status printing `no ctxloom daemon is
 serving`, the empty message in json); `reach` reconciles a daemon of
 another stamp first (M3), else spawns one and waits (S16's bound), and with
 none started is `Unreached::NotStarted`, `daemon-ports-not-started` (exit
-10, naming its log as `~/.ctxloom/daemon/daemon.log` under the home);
+10, naming its log as `~/.ctxloom/daemon/daemon.log` under the home), or,
+when the one it spawned exited first, `Unreached::Exited`,
+`daemon-ports-exited` (10: its exit status and the last lines of that log,
+where the spawned daemon's stderr goes, so a stack overflow says itself;
+CI on Windows, 2026-11-19). `daemon serve` serves on a thread of its own
+with a 16 MiB stack (the wiring's `DAEMON_STACK`; Windows gives the main
+thread 1 MiB), and logs every panic of its process as `the daemon
+panicked: ...`; under test-support `CTXLOOM_TEST_DAEMON_START=panic|
+stack:<MiB>` makes its start panic or use that much stack;
 another home's or a busy other version's is `Unreached::Declined` (20).
 Each call resolves its project first (`ResolveProject`, S6; outside a
 project a read of its own is `ProjectUnknown`; `--all` lists `projects/-`),

@@ -460,6 +460,14 @@ pub trait Daemons: Send + Sync {
 pub enum Unreached {
     /// None serves, and none could be started: where its log is.
     NotStarted { log: String },
+    /// None serves, and the one started for the call exited first: how it
+    /// exited (`status`, as the platform says it) and the end of its log
+    /// (`tail`), where its stderr went.
+    Exited {
+        log: String,
+        status: String,
+        tail: String,
+    },
     /// One serves that this client may not use, said in its own crate's
     /// words (another ctxloom home's daemon; a busy daemon of another
     /// version, M3): a decline.
@@ -472,6 +480,11 @@ impl fmt::Debug for Unreached {
             Unreached::NotStarted { log } => {
                 f.debug_struct("NotStarted").field("log", log).finish()
             }
+            Unreached::Exited { log, status, .. } => f
+                .debug_struct("Exited")
+                .field("log", log)
+                .field("status", status)
+                .finish_non_exhaustive(),
             Unreached::Declined(cause) => f.debug_tuple("Declined").field(&cause.code()).finish(),
         }
     }
@@ -505,6 +518,7 @@ impl Diagnostic for Unreached {
     fn code(&self) -> &str {
         match self {
             Unreached::NotStarted { .. } => code!("not-started"),
+            Unreached::Exited { .. } => code!("exited"),
             Unreached::Declined(cause) => cause.code(),
         }
     }
@@ -512,6 +526,11 @@ impl Diagnostic for Unreached {
     fn args(&self) -> Vec<(&str, Arg)> {
         match self {
             Unreached::NotStarted { log } => vec![("log", log.as_str().into())],
+            Unreached::Exited { log, status, tail } => vec![
+                ("log", log.as_str().into()),
+                ("status", status.as_str().into()),
+                ("tail", tail.as_str().into()),
+            ],
             Unreached::Declined(cause) => cause.args(),
         }
     }
@@ -615,6 +634,11 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         }),
         Box::new(Unreached::NotStarted {
             log: "~/.ctxloom/daemon/daemon.log".to_string(),
+        }),
+        Box::new(Unreached::Exited {
+            log: "~/.ctxloom/daemon/daemon.log".to_string(),
+            status: "exit status: 101".to_string(),
+            tail: "thread 'main' panicked".to_string(),
         }),
     ]
 }
