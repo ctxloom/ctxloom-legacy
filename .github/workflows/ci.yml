@@ -55,7 +55,6 @@ jobs:
   linux:
     name: build and test (linux)
     if: false
-    if: false
     runs-on: ubuntu-24.04
     # Owner ruling 2026-11-12: the Linux job runs IN the dev container, once
     # its image is published (by digest, as every pin):
