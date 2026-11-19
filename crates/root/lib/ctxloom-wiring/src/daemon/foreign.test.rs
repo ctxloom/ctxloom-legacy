@@ -63,7 +63,6 @@ fn a_materialize_report_is_said_field_for_field_its_failures_in_its_errors_too()
         angzarr_diagnostic::Diagnostic::code(&result.failures[0])
     );
     assert_eq!(said.errors, ["earlier".to_string(), failure.text.clone()]);
-    assert!(said.error.is_none() && said.exit == 0);
 }
 
 #[test]

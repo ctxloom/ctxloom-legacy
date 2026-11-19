@@ -207,12 +207,6 @@ fn doctor(
             all: sub.get_flag("all"),
             ..v1::RunDoctorRequest::default()
         })?;
-        if let Some(error) = &answered.error {
-            return Err(Failure::new(
-                library_api::reads::reported(error),
-                Exit::FAILED,
-            ));
-        }
         for r in &answered.removed {
             let _ = writeln!(
                 err,

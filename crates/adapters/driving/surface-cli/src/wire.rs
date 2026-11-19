@@ -9,7 +9,7 @@ use setup_application::{
     MaterializeRequest, MaterializeResult, Setup, SetupError, SurfaceSpec, UninstallReport,
 };
 
-use cli_support::{Exit, ExitClass, Failure};
+use cli_support::{ExitClass, Failure};
 
 /// A diagnostic said as the API says a notice: its code, flattened args and
 /// en-US text (the caller's flattening: run-application's, in the daemon).
@@ -100,11 +100,6 @@ pub fn materialize_request(
     })
 }
 
-/// `error` in band, as a response carries it: its notice and its exit.
-pub fn erred(error: &SetupError, notice_of: NoticeOf<'_>) -> (Option<v1::Notice>, i32) {
-    (Some(notice_of(error)), i32::from(error.exit().code(true)))
-}
-
 /// The setup writes served by the use cases in this process, writing
 /// through their own store: what the CLI is handed in a test.
 pub struct InProcess<'a> {
@@ -120,17 +115,12 @@ impl super::Foreign for InProcess<'_> {
         let flags = library_application::Flags::default();
         let done =
             materialize_request(&request, &flags).and_then(|asked| self.setup.materialize(&asked));
-        Ok(match done {
-            Ok(done) => materialized(&done.value, self.notice_of),
-            Err(error) => {
-                let (error, exit) = erred(&error, self.notice_of);
-                v1::MaterializeResponse {
-                    error,
-                    exit,
-                    ..v1::MaterializeResponse::default()
-                }
-            }
-        })
+        // A use case's error is the call's, of its own class.
+        done.map(|done| materialized(&done.value, self.notice_of))
+            .map_err(|error| {
+                let exit = error.exit();
+                Failure::new(error, exit)
+            })
     }
 
     fn uninstall(
@@ -139,7 +129,10 @@ impl super::Foreign for InProcess<'_> {
     ) -> Result<v1::UninstallManageResponse, Failure> {
         match self.setup.uninstall() {
             Ok(report) => Ok(uninstalled(&report)),
-            Err(error) => Err(Failure::new(error, Exit::FAILED)),
+            Err(error) => {
+                let exit = error.exit();
+                Err(Failure::new(error, exit))
+            }
         }
     }
 }

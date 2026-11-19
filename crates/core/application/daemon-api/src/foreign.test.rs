@@ -40,7 +40,7 @@ fn the_point_after_a_foreign_step_is_named_by_its_place_from_one() {
 }
 
 #[test]
-fn an_answer_erred_when_its_use_case_said_an_error_and_says_the_reads_notices_first() {
+fn an_answer_says_the_reads_notices_before_its_own() {
     let notice = |code: &str| v1::Notice {
         code: code.to_string(),
         ..v1::Notice::default()
@@ -49,37 +49,22 @@ fn an_answer_erred_when_its_use_case_said_an_error_and_says_the_reads_notices_fi
         notices: vec![notice("own")],
         ..v1::UninstallManageResponse::default()
     });
-    assert!(!fine.erred());
     let ForeignAnswer::Uninstalled(said) = fine.saying(vec![notice("read")]) else {
         panic!("not an uninstall")
     };
     let codes: Vec<&str> = said.notices.iter().map(|n| n.code.as_str()).collect();
     assert_eq!(codes, ["read", "own"]);
-    for erred in [
-        ForeignAnswer::Materialized(v1::MaterializeResponse {
-            error: Some(notice("e")),
-            ..v1::MaterializeResponse::default()
-        }),
-        ForeignAnswer::Uninstalled(v1::UninstallManageResponse {
-            error: Some(notice("e")),
-            ..v1::UninstallManageResponse::default()
-        }),
-        ForeignAnswer::Fixed(v1::RunDoctorResponse {
-            error: Some(notice("e")),
-            ..v1::RunDoctorResponse::default()
-        }),
+    for answer in [
+        ForeignAnswer::Materialized(v1::MaterializeResponse::default()),
+        ForeignAnswer::Fixed(v1::RunDoctorResponse::default()),
     ] {
-        assert!(erred.erred(), "{erred:?}");
-        let said = erred.saying(vec![notice("read")]);
-        let notices = match said {
+        let notices = match answer.saying(vec![notice("read")]) {
             ForeignAnswer::Materialized(a) => a.notices,
             ForeignAnswer::Uninstalled(a) => a.notices,
             ForeignAnswer::Fixed(a) => a.notices,
         };
         assert_eq!(notices.len(), 1);
     }
-    assert!(!ForeignAnswer::Fixed(v1::RunDoctorResponse::default()).erred());
-    assert!(!ForeignAnswer::Materialized(v1::MaterializeResponse::default()).erred());
 }
 
 #[test]

@@ -4777,13 +4777,11 @@ message MaterializeResponse {
   // Each refused kind's cause, its code and args: the first is what the
   // command is refused with.
   repeated Notice failures = 8;
-  // The use case's own error, when it refused or failed before anything was
-  // written, in its code and args (the client says it from its catalog);
-  // absent when it did not.
-  Notice error = 9;
-  // The exit that error ends the command with, in ctxloom's codes (10
-  // failed, 20 refused, 21 fatal findings); 0 with no error.
-  int32 exit = 10;
+  // 9 and 10 were an in-band error and exit (prerelease, step 10c U10): a
+  // use case's refusal is the call's typed refusal now (`SetupDeclined`,
+  // `SetupFatalFindings`), its failure the call's diagnosed failure.
+  reserved 9, 10;
+  reserved "error", "exit";
   repeated Notice notices = 92;
 }
 
@@ -4809,13 +4807,10 @@ message UninstallManageResponse {
   repeated string backends = 2;
   repeated string errors = 3;
   string note = 4;
-  // The use case's own error, when it refused or failed before anything was
-  // written, in its code and args (the client says it from its catalog);
-  // absent when it did not.
-  Notice error = 5;
-  // The exit that error ends the command with, in ctxloom's codes (10
-  // failed, 20 refused, 21 fatal findings); 0 with no error.
-  int32 exit = 6;
+  // 5 and 6 were an in-band error and exit (prerelease, step 10c U10), as
+  // `MaterializeResponse`'s 9 and 10.
+  reserved 5, 6;
+  reserved "error", "exit";
   repeated Notice notices = 92;
 }
 
@@ -4852,13 +4847,10 @@ message RemovedHook {
 // What `doctor` did (step 10c U10: the fix's removals; U5 adds the checks).
 message RunDoctorResponse {
   repeated RemovedHook removed = 1;
-  // The use case's own error, when it refused or failed before anything was
-  // written, in its code and args (the client says it from its catalog);
-  // absent when it did not.
-  Notice error = 2;
-  // The exit that error ends the command with, in ctxloom's codes (10
-  // failed, 20 refused, 21 fatal findings); 0 with no error.
-  int32 exit = 3;
+  // 2 and 3 were an in-band error and exit (prerelease, step 10c U10), as
+  // `MaterializeResponse`'s 9 and 10.
+  reserved 2, 3;
+  reserved "error", "exit";
   repeated Notice notices = 92;
 }
 
@@ -5651,6 +5643,23 @@ message DepsLockUnreadable {
 message LibraryDeclined {
   option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
   // The diagnostic that declined.
+  Cause cause = 1;
+}
+
+// A setup use case's decline (`materialize`, `manage uninstall`, step 10c
+// U10): the request or the state forbids it, as that use case's own
+// diagnostic (exit 20).
+message SetupDeclined {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // The diagnostic that declined.
+  Cause cause = 1;
+}
+
+// A setup use case refused over the plan's fatal findings (a strict
+// `materialize`), as its own diagnostic (exit 21).
+message SetupFatalFindings {
+  option (io.angzarr.v1.refusal_status) = REFUSAL_STATUS_FAILED_PRECONDITION;
+  // The diagnostic that refused.
   Cause cause = 1;
 }
 

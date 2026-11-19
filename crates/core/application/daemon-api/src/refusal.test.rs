@@ -410,3 +410,50 @@ fn an_etag_that_is_not_a_number_is_the_daemons_refusal() {
         exit_code::Exit::REFUSED
     );
 }
+
+// Step 10c U10: a setup use case's error is the call's, never in band: a
+// decline its typed refusal `SetupDeclined`, fatal findings
+// `SetupFatalFindings`, each its cause's own code and args; a failure said
+// in its own words. Back at the client each is its own diagnostic again,
+// at the exit its class says: 20, 21, 10.
+#[test]
+fn a_setup_error_is_the_calls_typed_refusal_or_failure_at_its_own_exit() {
+    use exit_code::{Exit, ExitClass};
+    let cause = library_application::AppError::NotViewable {
+        dir: "nowhere".to_string(),
+        path: "x".to_string(),
+    };
+    let client_exit = |error: ApiError| -> (Exit, String) {
+        let called = match error {
+            ApiError::Refused(refused) => daemon_ports::Called::Refused {
+                code: refused.code,
+                refusal: refused.refusal,
+            },
+            ApiError::Diagnosed { code, args } => daemon_ports::Called::Diagnosed {
+                code,
+                args: args.into_iter().map(|a| (a.name, a.value)).collect(),
+            },
+            other => panic!("{other:?}"),
+        };
+        let error = CallError::from(called);
+        (error.exit(), error.code().to_string())
+    };
+    for (exit, type_url) in [
+        (Exit::REFUSED, Some("ctxloom.v1.SetupDeclined")),
+        (Exit::FATAL_FINDINGS, Some("ctxloom.v1.SetupFatalFindings")),
+        (Exit::FAILED, None),
+    ] {
+        let answered = super::setup_error(&cause, exit);
+        match (&answered, type_url) {
+            (ApiError::Refused(refused), Some(url)) => {
+                assert!(refused.refusal.type_url.ends_with(url), "{refused:?}");
+            }
+            (ApiError::Diagnosed { code, args }, None) => {
+                assert_eq!(code, &cause_code());
+                assert!(args.iter().any(|arg| arg.value == "nowhere"), "{args:?}");
+            }
+            other => panic!("{exit:?}: {other:?}"),
+        }
+        assert_eq!(client_exit(answered), (exit, cause_code()), "{exit:?}");
+    }
+}

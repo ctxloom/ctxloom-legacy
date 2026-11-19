@@ -198,7 +198,10 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Trust(trust)) => trust.code(),
             CallError::Refused(crate::refusal::Rejection::Approvals(asked)) => asked.code(),
             CallError::Refused(crate::refusal::Rejection::Library(library)) => library.code(),
-            CallError::Refused(crate::refusal::Rejection::LibraryRead(read)) => read.code(),
+            CallError::Refused(
+                crate::refusal::Rejection::LibraryRead(read)
+                | crate::refusal::Rejection::FatalFindings(read),
+            ) => read.code(),
             CallError::Call(called) => called.code(),
             CallError::Unreached(unreached) => unreached.code(),
             CallError::LaunchLock { .. } => code!("launch-lock"),
@@ -214,7 +217,10 @@ impl Diagnostic for CallError {
             CallError::Refused(crate::refusal::Rejection::Trust(trust)) => trust.args(),
             CallError::Refused(crate::refusal::Rejection::Approvals(asked)) => asked.args(),
             CallError::Refused(crate::refusal::Rejection::Library(library)) => library.args(),
-            CallError::Refused(crate::refusal::Rejection::LibraryRead(read)) => read.args(),
+            CallError::Refused(
+                crate::refusal::Rejection::LibraryRead(read)
+                | crate::refusal::Rejection::FatalFindings(read),
+            ) => read.args(),
             CallError::Call(called) => called.args(),
             CallError::Unreached(unreached) => unreached.args(),
             CallError::LaunchLock { detail } => vec![("ext_err_txt", detail.as_str().into())],
@@ -227,6 +233,8 @@ impl Diagnostic for CallError {
 impl ExitClass for CallError {
     fn exit(&self) -> Exit {
         match self {
+            // Refused over the plan's fatal findings (step 10c U10): 21.
+            CallError::Refused(crate::refusal::Rejection::FatalFindings(_)) => Exit::FATAL_FINDINGS,
             CallError::Refused(_) | CallError::Unreached(daemon_ports::Unreached::Declined(_)) => {
                 Exit::REFUSED
             }

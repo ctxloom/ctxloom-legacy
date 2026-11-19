@@ -54,15 +54,6 @@ pub enum ForeignAnswer {
 }
 
 impl ForeignAnswer {
-    /// Whether the use case refused or failed before planning a write.
-    fn erred(&self) -> bool {
-        match self {
-            ForeignAnswer::Materialized(answer) => answer.error.is_some(),
-            ForeignAnswer::Uninstalled(answer) => answer.error.is_some(),
-            ForeignAnswer::Fixed(answer) => answer.error.is_some(),
-        }
-    }
-
     /// The answer, `notices` said before what it says itself.
     fn saying(self, notices: Vec<v1::Notice>) -> ForeignAnswer {
         let said = |own: Vec<v1::Notice>| notices.iter().cloned().chain(own).collect();
@@ -97,7 +88,8 @@ pub struct ForeignPlanned {
 
 /// The setup use cases that write other tools' files, run where a process
 /// at `dir`, in `env`, under `flags`, would run them, WRITING NOTHING: the
-/// wiring's (over a recording store).
+/// wiring's (over a recording store). A use case's own refusal or failure
+/// is the call's ([`crate::setup_error`]), so nothing is written.
 pub trait ForeignPlans: Send + Sync {
     fn plan(
         &self,
@@ -261,7 +253,7 @@ impl<E: Edge> Api<E> {
         let planned = plans.plan(&site.at, &site.env, &site.flags, ask)?;
         let answer = planned.answer.clone().saying(notices);
         let Some(trees) = trees else {
-            if !(dry || request.validate_only() || answer.erred()) {
+            if !(dry || request.validate_only()) {
                 self.unrecorded(&planned.files)?;
             }
             return Ok(answer);
@@ -276,11 +268,7 @@ impl<E: Edge> Api<E> {
         let resuming = known
             .as_ref()
             .is_some_and(|known| matches!(known.end, End::Pending { .. }));
-        if dry
-            || request.validate_only()
-            || answer.erred()
-            || (planned.files.is_empty() && !resuming)
-        {
+        if dry || request.validate_only() || (planned.files.is_empty() && !resuming) {
             return Ok(answer);
         }
         let landing = landing_of(&trees.seen, Lands::Content).ok_or_else(|| ApiError::Failed {

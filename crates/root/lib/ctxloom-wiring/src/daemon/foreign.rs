@@ -76,40 +76,28 @@ impl daemon_api::ForeignPlans for ForeignWriters {
         ));
         let setup = crate::commands::build_setup_over(&wiring, deps, Arc::clone(&store))
             .map_err(|e| failed(&e))?;
+        let refused = |error: setup_application::SetupError| {
+            use cli_support::ExitClass;
+            let exit = error.exit();
+            daemon_api::setup_error(&error, exit)
+        };
         let answer = match ask {
             ForeignAsk::Materialize(asked) => {
                 let done = wire::materialize_request(asked, flags)
-                    .and_then(|request| setup.materialize(&request));
-                ForeignAnswer::Materialized(match done {
-                    Ok(done) => v1::MaterializeResponse {
-                        notices: done
-                            .notices
-                            .iter()
-                            .map(run_application::client::notice_of)
-                            .collect(),
-                        ..wire::materialized(&done.value, &notice_of)
-                    },
-                    Err(error) => {
-                        let (error, exit) = wire::erred(&error, &notice_of);
-                        v1::MaterializeResponse {
-                            error,
-                            exit,
-                            ..v1::MaterializeResponse::default()
-                        }
-                    }
+                    .and_then(|request| setup.materialize(&request))
+                    .map_err(refused)?;
+                ForeignAnswer::Materialized(v1::MaterializeResponse {
+                    notices: done
+                        .notices
+                        .iter()
+                        .map(run_application::client::notice_of)
+                        .collect(),
+                    ..wire::materialized(&done.value, &notice_of)
                 })
             }
-            ForeignAsk::Uninstall => ForeignAnswer::Uninstalled(match setup.uninstall() {
-                Ok(report) => wire::uninstalled(&report),
-                Err(error) => {
-                    let (error, exit) = wire::erred(&error, &notice_of);
-                    v1::UninstallManageResponse {
-                        error,
-                        exit,
-                        ..v1::UninstallManageResponse::default()
-                    }
-                }
-            }),
+            ForeignAsk::Uninstall => {
+                ForeignAnswer::Uninstalled(wire::uninstalled(&setup.uninstall().map_err(refused)?))
+            }
             ForeignAsk::DoctorFix => unreachable!("answered above"),
         };
         Ok(ForeignPlanned {
@@ -133,23 +121,20 @@ impl ForeignWriters {
             wiring.fs(),
         ))));
         let doctor = uses.doctor.writing_through(files.clone());
-        let answer = match doctor.fix() {
-            Ok(removed) => v1::RunDoctorResponse {
-                removed: removed
-                    .into_iter()
-                    .map(|r| v1::RemovedHook {
-                        file: r.file,
-                        event: r.event,
-                        sub: r.sub,
-                    })
-                    .collect(),
-                ..v1::RunDoctorResponse::default()
-            },
-            Err(failure) => v1::RunDoctorResponse {
-                error: Some(notice_of(failure.as_ref())),
-                exit: i32::from(cli_support::Exit::FAILED.code(true)),
-                ..v1::RunDoctorResponse::default()
-            },
+        // A fix that fails is a failure (10), as in process.
+        let removed = doctor.fix().map_err(|failure| {
+            daemon_api::setup_error(failure.as_ref(), cli_support::Exit::FAILED)
+        })?;
+        let answer = v1::RunDoctorResponse {
+            removed: removed
+                .into_iter()
+                .map(|r| v1::RemovedHook {
+                    file: r.file,
+                    event: r.event,
+                    sub: r.sub,
+                })
+                .collect(),
+            ..v1::RunDoctorResponse::default()
         };
         Ok(ForeignPlanned {
             answer: ForeignAnswer::Fixed(answer),

@@ -329,6 +329,10 @@ pub enum Rejection {
     /// A library read's use case's (E5): its own diagnostic, by the typed
     /// refusal's type.
     LibraryRead(Report),
+    /// A use case's refusal over the plan's fatal findings (a strict
+    /// `materialize`, step 10c U10: `SetupFatalFindings`): its own
+    /// diagnostic, the command's exit 21.
+    FatalFindings(Report),
 }
 
 impl Rejection {
@@ -342,7 +346,7 @@ impl Rejection {
             Rejection::Trust(trust) => Report::of(trust),
             Rejection::Approvals(approvals) => Report::of(approvals),
             Rejection::Library(library) => Report::of(library),
-            Rejection::LibraryRead(read) => read.clone(),
+            Rejection::LibraryRead(read) | Rejection::FatalFindings(read) => read.clone(),
         }
     }
 }
@@ -528,9 +532,42 @@ pub fn rejection_of(refusal: &Any) -> Option<Rejection> {
                 })
             })
         }
+        // A setup use case's (step 10c U10): its own diagnostic, by its
+        // code and args.
+        "ctxloom.v1.SetupDeclined" => decode::<v1::SetupDeclined>(refusal)
+            .map(|r| Rejection::LibraryRead(cause_report(r.cause))),
+        "ctxloom.v1.SetupFatalFindings" => decode::<v1::SetupFatalFindings>(refusal)
+            .map(|r| Rejection::FatalFindings(cause_report(r.cause))),
         _ => domain_rejection(refusal)
             .or_else(|| crate::library_refusals::rejection(refusal).map(Rejection::LibraryRead)),
     }
+}
+
+/// The diagnostic a refusal's `cause` is, by its code and its args.
+fn cause_report(cause: Option<v1::Cause>) -> Report {
+    let cause = cause.unwrap_or_default();
+    run_application::client::report_of(&cause.code, &cause.args)
+}
+
+/// A setup use case's error (step 10c U10: `materialize`, `manage
+/// uninstall`, `doctor --fix`), of the class `exit` it says of itself, as
+/// the call answers it: a decline is its typed refusal (`SetupDeclined`),
+/// fatal findings theirs (`SetupFatalFindings`), each carrying the
+/// diagnostic as its cause; a failure is said in its own words.
+pub fn setup_error(error: &dyn Diagnostic, exit: Exit) -> ApiError {
+    let cause = || {
+        Some(v1::Cause {
+            code: error.code().to_string(),
+            args: run_application::client::flat_args(error),
+        })
+    };
+    if exit == Exit::FATAL_FINDINGS {
+        return ApiError::Refused(ApiRefusal::of(&v1::SetupFatalFindings { cause: cause() }));
+    }
+    if exit == Exit::REFUSED {
+        return ApiError::Refused(ApiRefusal::of(&v1::SetupDeclined { cause: cause() }));
+    }
+    ApiError::diagnosed(error)
 }
 
 /// `refusal`, as the domain message its type names, typed: the first of

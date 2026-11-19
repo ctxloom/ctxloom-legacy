@@ -96,7 +96,8 @@ pub use library_api::premise::{render_premise_index, Shown};
 pub use library_reads::{Libraries, LibraryRequest};
 pub use reactions::{Deliveries, LibraryPoll};
 pub use refusal::{
-    library_refusal, rejection_of, ApiError, ApiRefusal, ApiRejection, Rejection, RemovalRejection,
+    library_refusal, rejection_of, setup_error, ApiError, ApiRefusal, ApiRejection, Rejection,
+    RemovalRejection,
 };
 /// The infrastructure tree's one root (owner, 2026-11-14), for the daemon's
 /// service, which answers an error that is no refusal through it.

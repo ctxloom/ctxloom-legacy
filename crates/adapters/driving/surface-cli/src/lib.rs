@@ -63,20 +63,6 @@ pub trait Foreign {
     ) -> Result<v1::UninstallManageResponse, Failure>;
 }
 
-/// A use case's error the daemon answered in band (its code and args, said
-/// from this catalog), ending the command with the exit it said.
-fn in_band(error: Option<&v1::Notice>, exit: i32) -> Result<(), Failure> {
-    let Some(error) = error else {
-        return Ok(());
-    };
-    let exit = match u8::try_from(exit).unwrap_or(10) {
-        20 => Exit::REFUSED,
-        21 => Exit::FATAL_FINDINGS,
-        _ => Exit::FAILED,
-    };
-    Err(Failure::new(library_api::reads::reported(error), exit))
-}
-
 /// The report a materialize's answer says, as it has always been printed.
 pub fn materialize_report(answered: &v1::MaterializeResponse) -> MaterializeResult {
     MaterializeResult {
@@ -205,7 +191,6 @@ fn manage(
                 ..v1::UninstallManageRequest::default()
             })?;
             say_v1(cx, &answered.notices, err);
-            in_band(answered.error.as_ref(), answered.exit)?;
             let report = UninstallReport {
                 status: answered.status,
                 backends: answered.backends,
@@ -328,7 +313,6 @@ fn materialize(
         ..v1::MaterializeRequest::default()
     })?;
     say_v1(cx, &answered.notices, err);
-    in_band(answered.error.as_ref(), answered.exit)?;
     let report = materialize_report(&answered);
     emit(cx, out, &report, |w| text::materialize(w, &report))?;
     // A delivery that was refused leaves the file as it was, and the command
