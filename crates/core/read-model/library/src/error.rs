@@ -359,10 +359,15 @@ impl BundleError {
                 new,
                 ..
             } => {
-                let separator = if dir.starts_with(r"\\") || dir.as_bytes().get(1) == Some(&b':') {
-                    '\\'
+                let absolute_windows =
+                    dir.starts_with(r"\\") || dir.as_bytes().get(1) == Some(&b':');
+                let separator = if absolute_windows { '\\' } else { '/' };
+                // A relative directory as it is typed from the project's root:
+                // `/` throughout, however the host joined it.
+                let dir = if absolute_windows {
+                    dir.to_string()
                 } else {
-                    '/'
+                    dir.replace('\\', "/")
                 };
                 let below = |rel: &str| {
                     format!(
