@@ -65,6 +65,8 @@ struct World {
     onboarding: onboarding::State,
     /// The git remotes the scenario seeds (search, deps), made on first use.
     remotes: Option<super::deps::Remotes>,
+    /// What the CLI contract features' steps keep.
+    cli: cli::State,
 }
 
 impl fmt::Debug for World {
@@ -102,6 +104,7 @@ impl World {
             command: String::new(),
             onboarding: onboarding::State::default(),
             remotes: None,
+            cli: cli::State::default(),
         }
     }
 

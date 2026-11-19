@@ -1,9 +1,7 @@
 # world: surfaces
 # Ported from cli/deps.feature (rev f36e8dfb2)
 # Ported from journeys/j001400_bundle_distribution.feature (rev f36e8dfb2)
-# NOT ported: the Rule tagged @pending (a pull keeps a published tree
-#   byte for byte): its steps (Trent's directory-form bundle "atelier",
-#   published and pulled) are not written yet.
+# NOT ported: nothing.
 
 @doc
 Feature: deps — the installed dependency closure, and everything that moves it
@@ -738,7 +736,6 @@ Feature: deps — the installed dependency closure, and everything that moves it
       And the file "out/CLAUDE.md" contains "MARKER-STALE-CHECKOUT-current"
       And the file "out/CLAUDE.md" does not contain "Demo fragment content."
 
-  @pending
   Rule: A pull keeps a published bundle's tree exactly as it was published
 
     A pulled bundle is the publisher's tree, file for file. Each kind keeps its

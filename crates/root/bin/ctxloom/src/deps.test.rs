@@ -301,6 +301,24 @@ impl Remotes {
         git_in(&self.bare[name], &["show", &format!("HEAD:{path}")])
     }
 
+    /// A bare repository whose `main` holds `files`, registered in
+    /// `project` as the remote `name`.
+    pub(crate) fn publish(
+        &mut self,
+        project: &Project,
+        env: &[(&str, &str)],
+        name: &str,
+        files: &[(String, String)],
+    ) {
+        let bare = self.seed_bare(files);
+        self.register(project, env, name, bare);
+    }
+
+    /// The `file://` address the remote `name` was registered at.
+    pub(crate) fn url(&self, name: &str) -> String {
+        files::file_url(&self.seeded[name])
+    }
+
     /// Go's `BreakRemote`: the bare repository renamed out from under its
     /// `file://` address, so every later clone or fetch fails.
     pub(crate) fn becomes_unreachable(&mut self, name: &str) {
