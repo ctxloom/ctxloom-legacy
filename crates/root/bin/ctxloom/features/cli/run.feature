@@ -2,9 +2,10 @@
 # Ported from cli/run.feature (rev f36e8dfb2)
 # Ported from journeys/j001200_recall.feature (rev f36e8dfb2): the Rule on resuming a session
 # Ported from journeys/j002200_isolation.feature (rev f36e8dfb2): the last three Rules
-# NOT ported: the scenarios tagged @pending (the mock engine's recorded input,
-#   one-shot, tag and agent selection, deny_tools, the opencode TUI):
-#   they need `run` to launch an engine. Plan override: clap's usage error says
+# NOT ported: the scenarios tagged @pending, each with its reason (the
+#   launch's findings in the agent's context, a resume folding in its
+#   conversation, the worktree's git exclude, the auth refusals, a run on the
+#   mock engine, the opencode TUI, the containers). Plan override: clap's usage error says
 #   "unexpected argument" where cobra said "unknown flag"; the step maps one to
 #   the other (plan 8.2).
 @doc
@@ -103,7 +104,6 @@ Feature: run — assembling a project's context and handing it to an engine
     # engine and runtime, so combining it with the flags that assemble context
     # by hand is a caller asking for two different answers to the same
     # question.
-    @pending
     Scenario: An agent binding and a hand-assembled profile cannot both decide the context
       Given an initialized ctxloom project
       And a profile "dev" exists
@@ -114,7 +114,6 @@ Feature: run — assembling a project's context and handing it to an engine
       Then the command fails
       And the output contains "none of the others can be"
 
-  @pending
   Rule: A one-shot takes exactly one turn, and refuses to take an empty one
 
     Scenario: Run hands the assembled context to the model and returns its reply
@@ -351,7 +350,6 @@ Feature: run — assembling a project's context and handing it to an engine
       And the assistant's settings still register ctxloom's hooks
       And the assistant's settings hold the permissions '{"defaultMode": "acceptEdits"}'
 
-  @pending
   Rule: What the profile declares reaches the launched backend
 
     A profile carries more than fragments: tool denials, permission posture,
@@ -376,6 +374,9 @@ Feature: run — assembling a project's context and handing it to an engine
       Then the command succeeds
       And the mock recorded input contains "WebFetch"
 
+  # Still pending (step 11): not built. No launch delivers its findings into
+  # the agent's context (no DOCTOR-CHECK-STARTUP-FINDINGS or
+  # DOCTOR-CHECK-WITHHELD-ITEMS row), and run has no --no-startup-findings.
   @pending
   Rule: What the launch learned about its own environment reaches the agent
 
@@ -548,6 +549,11 @@ Feature: run — assembling a project's context and handing it to an engine
 
   # Superseded by ruling 115 above (resume is the engine's own session, not a
   # context fold); kept pending as Go's design.
+  # Still pending (step 11): the behaviour differs. A resume is the engine's
+  # own session (`--resume <native id>`, owner ruling 115); nothing folds the
+  # recorded conversation into the assembled context, and no transcript file
+  # is on disk to stay untouched (ruling 87a: the transcript is the session's
+  # events).
   @pending
   Rule: Resuming a session folds in its recorded conversation, and leaves the record as it was
 
@@ -571,6 +577,10 @@ Feature: run — assembling a project's context and handing it to an engine
       When I run "ctxloom run --session amber-quiet-heron --dry-run -p default"
       Then the canonical transcript she recalled from is still on disk, untouched
 
+  # Still pending (step 11): the behaviour differs. A session's checkouts are
+  # under ctxloom's home, outside the project (owner ruling 2026-11-12, Q1),
+  # so nothing writes a per-agent block into the project's .git/info/exclude;
+  # and its steps are the isolation World's.
   @pending
   Rule: A worktree run hides its per-agent config from the project's git
 
@@ -658,6 +668,9 @@ Feature: run — assembling a project's context and handing it to an engine
         |            |
         | --degraded |
 
+  # Still pending (step 11): its steps are the isolation and session-home
+  # journeys' (another World's), and the untrusted-repository refusal is not
+  # built.
   @pending
   Rule: A run whose engine cannot authenticate, or cannot load its MCP servers, is refused before the engine starts
 
@@ -961,7 +974,6 @@ Feature: run — assembling a project's context and handing it to an engine
       Then the command succeeds
       And opencode's data directory held a link to her opencode login, not a copy
 
-  @pending
   Rule: --engine runs the engine it names, with that engine's defaults
 
     A run says what runs in one of two ways: `--agent <name>` runs an agent,
@@ -969,6 +981,10 @@ Feature: run — assembling a project's context and handing it to an engine
     no agent named. An engine ctxloom does not have is refused by name, and
     nothing runs.
 
+    # Still pending (step 11): the behaviour differs. The mock engine is a
+    # surface half alone and drives no run, so `run --one-shot --engine mock`
+    # is refused; a run on an engine is claude-code's or opencode's.
+    @pending
     Scenario: A run naming an engine runs that engine with its defaults
       # new: run takes --engine.
       Given an initialized ctxloom project
@@ -980,6 +996,11 @@ Feature: run — assembling a project's context and handing it to an engine
       Then the command succeeds
       And the run was on the mock engine, with its engine defaults
 
+    # Still pending (step 11): the behaviour differs. In a project with no
+    # agent the run is refused `library-application-launch-no-agents` ("no
+    # agents are configured") before the engine is judged, so the refusal
+    # never names bogus-engine: --engine does not run without an agent.
+    @pending
     Scenario: A run naming an engine ctxloom does not have is refused, naming it
       # new: run refuses an unknown engine.
       Given an initialized ctxloom project

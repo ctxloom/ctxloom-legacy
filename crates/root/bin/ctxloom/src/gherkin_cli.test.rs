@@ -86,3 +86,42 @@ fn stdout_is_ndjson(w: &mut World) {
         assert!(value.is_object(), "not an object: {line}");
     }
 }
+
+/// run.feature: a profile of `bundle` that denies `tool` (`deny_tools`).
+#[given(expr = "a profile {string} with bundle {string} and deny_tools {string}")]
+fn profile_denying(w: &mut World, name: String, bundle: String, tool: String) {
+    w.common.project.profile(&name, &bundle);
+    w.common.project.write(
+        &format!(".ctxloom/content/bundles/v2/project/profiles/{name}.yaml"),
+        &format!(
+            "description: acceptance fixture profile\nbundles:\n  - {bundle}\ndeny_tools:\n  - {tool}\n"
+        ),
+    );
+}
+
+/// run.feature: a session cannot be recorded where its run would mint it:
+/// the project's sessions directory, `.ctxloom/sessions`, is a file. (The
+/// one store itself unopenable is no daemon at all, a fault of its own.)
+#[given("the session store cannot be opened")]
+fn store_unopenable(w: &mut World) {
+    w.common
+        .project
+        .write(".ctxloom/sessions", "not a directory\n");
+}
+
+/// run.feature: the run's session, as `session show` gives it, names no
+/// MCP endpoint (a one-shot serves its hooks' listener and no MCP server).
+#[then("the run's session record carries no MCP endpoint")]
+fn session_has_no_mcp(w: &mut World) {
+    let harp = w.common.json()["harp"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the reply names its session: {}", w.common.ran().said()))
+        .to_string();
+    let shown = run_now(w, &["session", "show", &harp, "--format", "json"]);
+    assert_eq!(shown.code, 0, "{}", shown.said());
+    let text = shown.stdout.to_lowercase();
+    assert!(
+        !text.contains("mcp"),
+        "the session names an MCP endpoint: {text}"
+    );
+}

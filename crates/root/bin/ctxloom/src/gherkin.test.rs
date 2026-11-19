@@ -462,19 +462,24 @@ fn env_set(w: &mut World, name: String, value: String) {
     w.common.env.push((name, value));
 }
 
-/// The mock LLM. In j001200 it is that journey's stub claude
-/// ([`recall::mock_responds`]); elsewhere the mock engine is the default
-/// agent's, and no reply is ever asked of it on this World (a dry run
-/// launches nothing), so the reply is not kept.
+/// The mock LLM: j001200's stub claude, first on `PATH`, answering `reply`
+/// and writing down what it was asked ([`recall::mock_responds`], once one
+/// is staged), with the token a child run needs, and the project's default
+/// agent on Claude Code: a one-shot launches the stub, a dry run nothing.
 #[given(expr = "the mock LLM responds {string}")]
 fn mock_responds(w: &mut World, reply: String) {
     distill::remember(w, &reply);
     if recall::mock_responds(w, &reply) {
         return;
     }
+    adopt::claude_code(w);
+    adopt::token(w);
+    let bin = w.adopt_scratch().join("bin");
+    recall::stub_model(&bin);
+    files::put(bin.join("model-reply"), &reply);
     w.common.project.write(
         ".ctxloom/config.yaml",
-        "schema_version: 9\nagents:\n  default:\n    engine: mock\ndefault_agent: default\n",
+        "schema_version: 9\nagents:\n  default:\n    engine: claude-code\ndefault_agent: default\n",
     );
 }
 
