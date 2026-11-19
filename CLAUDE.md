@@ -1612,8 +1612,11 @@ reached through the observation or a stated departure; daemon-api and
 daemon-application open none). A hosted one-shot and a terminal run observe
 their trees first (`Api::observe_for`), as a setup read does; the trust
 preview and a hosted child's plan (`CreateHandOff`, and its output root at
-its launch) are the departures: observing at the hand-off broke
-library_changes' refresh re-injection scenario, not yet root-caused.
+its launch) are the departures. A plan's loadout
+(`run_application::loadout_of_plan`) names a local bundle by its directory
+(`ctxloom+local:demo` is `demo`), as a change's path is judged against it:
+spelled as referenced, a bundle edit observed apart from a config edit owed
+a hosted child nothing.
 
 ## Architecture: hexagonal around CQRS/ES (checked by `just lint-arch`, and in review)
 
