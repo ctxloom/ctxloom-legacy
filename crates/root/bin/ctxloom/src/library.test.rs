@@ -980,8 +980,10 @@ fn test_the_steps_read_proto3_json_a_suffix_selects_and_absent_is_the_default() 
 /// Every file below `top`, by its path below it (slash separated) and its
 /// bytes, `listed` told each file's path after its directory is listed and
 /// before it is read. A file gone in between (a daemon's write renames its
-/// temporary file into place) was not there to read, and is left out; any
-/// other failure to read one is the test's.
+/// temporary file into place) was not there to read, and is left out, as is
+/// one another process holds a lock on where the platform refuses its read
+/// for it (Windows' byte-range lock, `ERROR_LOCK_VIOLATION`; a daemon's lock
+/// file); any other failure to read one is the test's.
 pub(crate) fn tree_of(
     top: &Path,
     mut listed: impl FnMut(&Path),
@@ -1001,6 +1003,9 @@ pub(crate) fn tree_of(
             let bytes = match files::read_bytes(&path) {
                 Ok(bytes) => bytes,
                 Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(locked) if on_windows() && locked.raw_os_error() == Some(LOCK_VIOLATION) => {
+                    continue
+                }
                 Err(other) => panic!("{} does not read: {other}", path.display()),
             };
             let below = path.strip_prefix(top).expect("below the top");
@@ -1010,6 +1015,36 @@ pub(crate) fn tree_of(
     let mut out = std::collections::BTreeMap::new();
     walk(top, top, &mut listed, &mut out);
     out
+}
+
+/// Windows' `ERROR_LOCK_VIOLATION`: a read of a range another process locked.
+const LOCK_VIOLATION: i32 = 33;
+
+/// Whether the host is Windows, as the platform crate says.
+fn on_windows() -> bool {
+    os::host().flavor() == os::Flavor::Windows
+}
+
+// CI on Windows (2026-11-19): a tree read a lock file a daemon held, and
+// Windows refuses that read (`os error 33`). The lock is held while the tree
+// is read: on Windows the file is left out; elsewhere (an advisory lock) it
+// reads.
+#[test]
+fn a_tree_leaves_out_a_file_whose_read_another_lock_refuses() {
+    let project = Project::bare();
+    project.write("t/a.txt", "a");
+    let held = project.dir().join("t/held.lock");
+    let lock = file_lock::lock_within(&*files::fs(), &held, std::time::Duration::ZERO)
+        .expect("the lock is free");
+    let tree = tree_of(&project.dir().join("t"), |_| {});
+    drop(lock);
+    assert_eq!(tree["a.txt"], b"a");
+    assert_eq!(
+        tree.contains_key("held.lock"),
+        !on_windows(),
+        "{:?}",
+        tree.keys()
+    );
 }
 
 // CI on macOS (2026-11-19): a file renamed away between a tree's listing
