@@ -143,6 +143,10 @@ pub(crate) struct Walk<'a> {
     /// The repositories fetched this walk, and whether they could be.
     pub fetched: BTreeMap<String, Result<(), String>>,
     bundles: BTreeMap<(String, String, String), Option<Bundle>>,
+    /// The references that could not be resolved and that the lock has no
+    /// pin for, as (identity, cause): the repository's fetch failure when
+    /// it had one, else the resolution's.
+    pub unresolved: Vec<(String, String)>,
     pub notices: Vec<Notice>,
 }
 
@@ -167,6 +171,7 @@ impl<'a> Walk<'a> {
             resolved: BTreeMap::new(),
             fetched: BTreeMap::new(),
             bundles: BTreeMap::new(),
+            unresolved: Vec::new(),
             notices: Vec::new(),
         }
     }
@@ -343,6 +348,11 @@ impl<'a> Walk<'a> {
                         "could not resolve {}@{}; skipping: {cause}",
                         remote.identity, remote.constraint
                     )));
+                    let why = match self.fetched.get(&remote.url) {
+                        Some(Err(fetch)) => fetch.clone(),
+                        _ => cause.to_string(),
+                    };
+                    self.unresolved.push((remote.identity.clone(), why));
                 }
                 locked
             }
