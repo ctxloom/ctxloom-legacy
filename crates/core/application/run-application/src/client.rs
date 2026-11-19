@@ -121,6 +121,7 @@ pub fn asked_of(request: &v1::CreateRunRequest) -> (OneShot, Flags) {
             fragments: request.fragments.clone(),
             tags: request.tags.clone(),
             engine: request.engine.clone(),
+            engine_named: false,
             prompt: request.prompt.clone(),
             saved_command: request.command.clone(),
             workspace: request.workspace.clone(),

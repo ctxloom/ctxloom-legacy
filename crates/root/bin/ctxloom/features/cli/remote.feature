@@ -307,11 +307,6 @@ Feature: remote — registering the sources content comes from, and browsing the
     # Outside any project a remote is registered in the home layer, and on a
     # machine ctxloom has never run on, that registration creates the home
     # .ctxloom directory — which its owner must then be able to use.
-    # Still pending (step 11): the harness names the project by CTXLOOM_ROOT
-    # on every run, so an empty directory IS the project and the remote is
-    # registered in its .ctxloom; outside any project needs a run with no
-    # root (remote_feature.test.rs's contract test runs it so).
-    @pending
     Scenario: Registering a first remote outside any project creates a usable home registry
       Given an empty project directory
       And the home has no ".ctxloom" directory yet

@@ -37,6 +37,7 @@ fn asked() -> Asked {
                 fragments: vec!["f".to_string()],
                 tags: vec!["t".to_string()],
                 engine: "claude-code".to_string(),
+                engine_named: false,
                 prompt: "hi".to_string(),
                 saved_command: "c".to_string(),
                 workspace: "worktree".to_string(),

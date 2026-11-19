@@ -1374,6 +1374,12 @@ fn ensure_within(wiring: &Wiring, env: &EnvSnapshot, wait: Duration) {
     if let Some(line) = env.non_empty(LIFELINE_VARIABLE) {
         kept.push((LIFELINE_VARIABLE.into(), line.to_os_string()));
     }
+    // The daemon runs in its home, so a home not made yet (`just install`'s
+    // `~/.ctxloom-rs` on a new machine) is made first, 0700 as the daemon
+    // makes its own directories: a spawn into a missing directory fails.
+    let _ = wiring
+        .fs()
+        .create_dir_all(wiring.home(), Mode::from_bits(0o700));
     command.env_clear().envs(kept).current_dir(wiring.home());
     // DETACHED (T3, M8): a session of its own on unix (setsid), no console
     // and a process group of its own on Windows, so neither this terminal's

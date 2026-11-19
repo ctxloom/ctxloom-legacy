@@ -668,9 +668,14 @@ Feature: run — assembling a project's context and handing it to an engine
         |            |
         | --degraded |
 
-  # Still pending (step 11): its steps are the isolation and session-home
-  # journeys' (another World's), and the untrusted-repository refusal is not
-  # built.
+  # Still pending (step 11): not built, and its steps are other Worlds'. The
+  # untrusted-repository refusal is not built; and a login session with no
+  # login is not refused: a child under `auth: login` asks for no variable,
+  # and a primary's missing login is said (`login_optional`), never refused,
+  # so nothing names "auth: token" (a ruling: refuse it, or redraft the
+  # scenario to the notice). The steps are the workspace and session-home
+  # Worlds' (`Alice has whatever credentials ...`, `Alice's agent declares
+  # session_home ...`, `Alice runs the isolated ...`); four are in none.
   @pending
   Rule: A run whose engine cannot authenticate, or cannot load its MCP servers, is refused before the engine starts
 
@@ -996,11 +1001,6 @@ Feature: run — assembling a project's context and handing it to an engine
       Then the command succeeds
       And the run was on the mock engine, with its engine defaults
 
-    # Still pending (step 11): the behaviour differs. In a project with no
-    # agent the run is refused `library-application-launch-no-agents` ("no
-    # agents are configured") before the engine is judged, so the refusal
-    # never names bogus-engine: --engine does not run without an agent.
-    @pending
     Scenario: A run naming an engine ctxloom does not have is refused, naming it
       # new: run refuses an unknown engine.
       Given an initialized ctxloom project

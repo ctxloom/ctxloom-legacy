@@ -881,3 +881,38 @@ fn test_a_bundle_moved_into_another_tree_is_one_move_out_of_this_one() {
         })
     );
 }
+
+// T29 (S52, owner): several removals are one change only when they are one
+// item's (its file and its distilled form); a fragment and a prompt taken
+// away together are two, refused, each named (bundle.feature's
+// `--remove-fragment example --remove-prompt example`).
+#[test]
+fn test_two_items_removed_together_are_two_changes_refused() {
+    let two = Planned::Changed {
+        bundle: "demo".to_string(),
+        changes: vec![
+            Change::Remove {
+                path: "fragments/example.md".to_string(),
+            },
+            Change::Remove {
+                path: "fragments/example.distilled.md".to_string(),
+            },
+            Change::Remove {
+                path: "prompts/example.md".to_string(),
+            },
+        ],
+    };
+    let Err(LibraryTreeRejection::OneChangePerCall { paths }) =
+        shape(vec![two], |_: &str, _: &str| Vec::new())
+    else {
+        panic!("two items' removals were let through");
+    };
+    assert!(
+        paths.contains(&"fragments/example.md".to_string()),
+        "{paths:?}"
+    );
+    assert!(
+        paths.contains(&"prompts/example.md".to_string()),
+        "{paths:?}"
+    );
+}

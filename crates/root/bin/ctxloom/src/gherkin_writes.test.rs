@@ -189,13 +189,27 @@ pub(super) fn before_run(w: &mut World) {
     }
 }
 
-/// `git status --porcelain -uall` in the project, when it is in git.
+/// `git status --porcelain -uall` in the project, when it is in git, but
+/// for `.ctxloom/state/`: ctxloom's private working state (a read mints the
+/// checkout harp there), which a scaffolded project's `.ctxloom/.gitignore`
+/// (`/state`) hides and the fixture project, made without the scaffold, does
+/// not; as [`before_run`]'s tree leaves it out.
 fn git_status(w: &World) -> Option<String> {
     let project = &w.common.project;
     if !files::exists(project.dir().join(".git")) {
         return None;
     }
-    let output = project.git_output(project.dir(), &["status", "--porcelain", "-uall"]);
+    let output = project.git_output(
+        project.dir(),
+        &[
+            "status",
+            "--porcelain",
+            "-uall",
+            "--",
+            ".",
+            ":(exclude).ctxloom/state",
+        ],
+    );
     output
         .status
         .success()

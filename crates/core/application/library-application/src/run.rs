@@ -27,6 +27,10 @@ pub struct RunRequest {
     pub tags: Vec<String>,
     /// `--engine`: the engine to drive instead of the agent's.
     pub engine: String,
+    /// An `--engine` was named though `engine` is empty: one this build
+    /// does not drive, planned on the agent's own engine (ruling 73d). With
+    /// no agent configured, as for `engine`, none is bound.
+    pub engine_named: bool,
     pub prompt: String,
     /// `--command <name>`: the saved command whose body is the prompt.
     pub saved_command: String,
@@ -142,7 +146,8 @@ impl Project {
     }
 
     /// The profiles, fragments and tags a run takes: the agent's binding, the
-    /// hand-assembled flags, or the default agent's binding.
+    /// hand-assembled flags, none for `--engine` where no agent is
+    /// configured, or the default agent's binding.
     fn selection(&self, request: &RunRequest) -> Result<Selection, AppError> {
         if !request.agent.is_empty() {
             return self.binding(&request.agent);
@@ -160,6 +165,18 @@ impl Project {
                 },
                 fragments: request.fragments.clone(),
                 tags: request.tags.clone(),
+            });
+        }
+        // `--engine X` runs that engine with its defaults, no agent named:
+        // with no agent configured there is none to bind, and the engine is
+        // judged next (ruling 73's order), never refused for want of one.
+        let named = !request.engine.is_empty() || request.engine_named;
+        if named && self.config.agents().is_empty() && !self.no_project() {
+            return Ok(Selection {
+                agent: None,
+                profiles: Vec::new(),
+                fragments: Vec::new(),
+                tags: Vec::new(),
             });
         }
         self.binding(&self.config.default_agent())
