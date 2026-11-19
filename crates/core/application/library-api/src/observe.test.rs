@@ -28,6 +28,8 @@ struct World {
     samples: Mutex<Samples>,
     /// How many books it was handed.
     handled: Mutex<u32>,
+    /// Whether it refuses every book (a store that has failed).
+    refusing: std::sync::atomic::AtomicBool,
 }
 
 impl World {
@@ -44,6 +46,7 @@ impl World {
             store: MemoryStore::default(),
             samples: Mutex::new(Samples::starting_at(1_000)),
             handled: Mutex::new(0),
+            refusing: std::sync::atomic::AtomicBool::new(false),
         })
     }
 }
@@ -55,6 +58,13 @@ impl Edge for World {
 
     async fn handle(&self, book: CommandBook) -> Result<Answered, Failure<Rejected>> {
         *self.handled.lock().unwrap() += 1;
+        if self.refusing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Failure::Kernel(angzarr_embedded::KernelError::Malformed(
+                angzarr_embedded::Malformed::UnknownDomain {
+                    domain: "stand-in".to_string(),
+                },
+            )));
+        }
         let sampled: Sampled = self.samples.lock().unwrap().next_sample();
         let kernel = Kernel::new(&self.registry).on_retryable(OnRetryable {
             max_retries: 0,
@@ -680,4 +690,41 @@ async fn test_a_hook_trusts_a_scan_within_its_window_and_forget_drops_it() {
             .unwrap();
     }
     assert_eq!(scans(&unclocked), 2);
+}
+
+// Review 6: a tree counts as scanned only once its listing is recorded. A
+// record that failed leaves it unscanned, so the next hook observes it
+// again instead of trusting it for the window with nothing recorded.
+#[tokio::test(flavor = "current_thread")]
+async fn test_a_failed_record_leaves_the_tree_unscanned_for_the_next_hook() {
+    use std::sync::atomic::Ordering;
+    let under = under();
+    let observations = Observations::new(
+        Arc::clone(&under.world),
+        under.checkouts.clone(),
+        Arc::clone(&under.harps) as Arc<dyn CheckoutHarps>,
+    )
+    .purging(Arc::new(|| 1_000));
+    let hooked = callers(|| Tree::default().file("config.yaml", "c0"), None);
+    let project = || Some((ProjectName::new("calm-otter").unwrap(), "/work/demo"));
+    under.world.refusing.store(true, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap_err();
+    under.world.refusing.store(false, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(
+        *hooked.scans.lock().unwrap(),
+        2,
+        "the failed one was not trusted"
+    );
+    assert_eq!(
+        events(&under.world).await.len(),
+        1,
+        "and the retry recorded it"
+    );
 }

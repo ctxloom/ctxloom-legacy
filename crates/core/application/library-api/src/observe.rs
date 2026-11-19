@@ -283,12 +283,6 @@ impl<E: Edge> Observations<E> {
             checkouts.tree(&tree.root()).cloned().unwrap_or_default()
         };
         let files = scanner.scan(site.tree()).map_err(ReadError::Failed)?;
-        if let Some(clock) = &self.clock {
-            self.scanned
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(site.tree().to_string(), clock());
-        }
         if !listed_as_held(&held, &files) {
             let fact = RecordTreeListed {
                 name: tree.to_string(),
@@ -303,6 +297,14 @@ impl<E: Edge> Observations<E> {
                 .handle(listing_book(&tree, &fact))
                 .await
                 .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
+        }
+        // Scanned only once the listing is recorded (review 6): a record
+        // that failed must not let the next hook trust the tree.
+        if let Some(clock) = &self.clock {
+            self.scanned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(site.tree().to_string(), clock());
         }
         self.purge_due(site.tree(), &tree).await?;
         Ok(Observed {
