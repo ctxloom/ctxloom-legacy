@@ -217,6 +217,7 @@ impl Project {
                 "-c",
                 "commit.gpgsign=false",
             ])
+            .args(NO_MAINTENANCE)
             .args(args)
             .current_dir(dir)
             .env_clear()
@@ -1023,6 +1024,25 @@ const LOCK_VIOLATION: i32 = 33;
 /// Whether the host is Windows, as the platform crate says.
 fn on_windows() -> bool {
     os::host().flavor() == os::Flavor::Windows
+}
+
+/// The harness's git runs no automatic maintenance: newer git starts a
+/// DETACHED `git maintenance run --auto` after a commit, whose
+/// `.git/objects/maintenance.lock` comes and goes under a test comparing the
+/// project's tree before and after a command (CI on macOS, 2026-11-19).
+pub(crate) const NO_MAINTENANCE: [&str; 4] = ["-c", "maintenance.auto=false", "-c", "gc.auto=0"];
+
+// The same: the harness's git, the one its fixtures commit with, runs with
+// automatic maintenance and gc off.
+#[test]
+fn the_harness_git_runs_no_automatic_maintenance() {
+    let project = Project::bare();
+    project.git(&["init", "-q"]);
+    assert_eq!(
+        project.git(&["config", "--get", "maintenance.auto"]).trim(),
+        "false"
+    );
+    assert_eq!(project.git(&["config", "--get", "gc.auto"]).trim(), "0");
 }
 
 // CI on Windows (2026-11-19): a tree read a lock file a daemon held, and
