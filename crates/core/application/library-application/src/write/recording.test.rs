@@ -306,7 +306,7 @@ fn test_a_first_init_is_planned_as_one_new_tree_and_writes_nothing() {
         premised: None,
     };
     let (recording, recorder) = library.recording();
-    let init = recording.project_init(&answered).result.unwrap();
+    let init = recording.project_init("", &answered).result.unwrap();
     assert_eq!(init.app_dir, "/work/.ctxloom");
     assert!(!init.existed);
     assert_eq!(mem.scaffold_text("config.yaml"), None);
@@ -337,10 +337,37 @@ fn test_init_of_a_project_there_plans_nothing() {
     let (library, mem) = world();
     let (recording, recorder) = library.recording();
     let init = recording
-        .project_init(&library::write::scaffold::Answered::default())
+        .project_init("", &library::write::scaffold::Answered::default())
         .result
         .unwrap();
     assert!(init.existed);
     assert!(recorder.take().is_empty());
     assert_eq!(mem.writes(), 0);
+}
+
+// `manage install --engine` (step 10c U6): the new tree's default agent
+// runs that engine; one this build does not know is refused, nothing
+// planned.
+#[test]
+fn a_new_tree_s_engine_is_the_one_asked_and_an_unknown_one_is_refused() {
+    use library::write::scaffold::{self, Answered};
+    let (library, mem) = world();
+    mem.set_fresh_for_test();
+    let (recording, recorder) = library.clone().recording();
+    recording
+        .project_init("opencode", &Answered::default())
+        .result
+        .unwrap();
+    let planned = recorder.take();
+    let [Planned::NewTree { files }] = &planned[..] else {
+        panic!("{planned:?}")
+    };
+    assert_eq!(
+        files[0].bytes,
+        scaffold::initial_config_with("opencode", &Answered::default()).into_bytes()
+    );
+    let (recording, recorder) = library.recording();
+    let refused = recording.project_init("totally-bogus", &Answered::default());
+    assert!(refused.result.is_err());
+    assert!(recorder.take().is_empty());
 }

@@ -20,8 +20,8 @@ use daemon_proto::v1;
 use library_application::Flags;
 use serde::Serialize;
 use setup_application::{
-    DiffRequest, EngineOutcome, InstallRequest, MaterializeResult, NotCarried, Setup, SetupError,
-    SurfaceSpec, UninstallReport,
+    DiffRequest, EngineOutcome, MaterializeResult, NotCarried, Setup, SetupError, SurfaceSpec,
+    UninstallReport,
 };
 
 pub use commands::nouns;
@@ -70,6 +70,16 @@ pub trait Foreign {
         &self,
         request: v1::InstallGitignoreRequest,
     ) -> Result<v1::InstallGitignoreResponse, Failure>;
+    /// `manage install`, the daemon's write (step 10c U6): a new project
+    /// created whole as init creates it, or one there given its
+    /// `.gitignore`.
+    fn install_manage(
+        &self,
+        request: v1::InstallManageRequest,
+    ) -> Result<v1::InstallManageResponse, Failure>;
+    /// The project the daemon named `project_id` bound at its root; empty,
+    /// the one there, named as found.
+    fn bind_project(&self, project_id: &str) -> Result<(), Failure>;
 }
 
 /// The report a materialize's answer says, as it has always been printed.
@@ -165,6 +175,41 @@ fn emit<T: Serialize>(
     })
 }
 
+/// `manage install`, the daemon's (step 10c U6): the engine refused by
+/// name first, and asked of a project there refused from the preview, so
+/// nothing is written either way.
+fn install(
+    cx: &Context<'_>,
+    args: &ArgMatches,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), Failure> {
+    let engine = one(args, "engine");
+    cx.setup.check_engine(engine.as_deref()).map_err(failed)?;
+    let request = v1::InstallManageRequest {
+        engine: engine.clone().unwrap_or_default(),
+        globals: Some(library_api::reads::globals_of(&cx.flags)),
+        ..v1::InstallManageRequest::default()
+    };
+    let preview = cx.foreign.install_manage(v1::InstallManageRequest {
+        validate_only: true,
+        ..request.clone()
+    })?;
+    setup_application::engine_applies(engine.as_deref(), !preview.initialized).map_err(failed)?;
+    let answered = cx.foreign.install_manage(request)?;
+    cx.foreign.bind_project(&answered.project_id)?;
+    say_v1(cx, &answered.notices, err);
+    let report = setup_application::InstallReport {
+        app_dir: answered.app_dir,
+        initialized: answered.initialized,
+        gitignore: answered.gitignore,
+        gitignore_status: answered.gitignore_status,
+        pull: cx.setup.pull_report(flag(args, "no-pull")),
+    };
+    emit(cx, out, &report, |w| text::install(w, &report))?;
+    Ok(())
+}
+
 fn manage(
     cx: &Context<'_>,
     sub: &ArgMatches,
@@ -182,18 +227,7 @@ fn manage(
                 .map_err(failed)?;
             emit(cx, out, &plan, |w| text::plan(w, &plan))?;
         }
-        "install" => {
-            let done = cx
-                .setup
-                .install(&InstallRequest {
-                    engine: one(args, "engine"),
-                    no_pull: flag(args, "no-pull"),
-                    flags: cx.flags.clone(),
-                })
-                .map_err(failed)?;
-            say_notices(&done.notices, PROG, cx.format, cx.catalog, err);
-            emit(cx, out, &done.value, |w| text::install(w, &done.value))?;
-        }
+        "install" => install(cx, args, out, err)?,
         "uninstall" => {
             let answered = cx.foreign.uninstall(v1::UninstallManageRequest {
                 globals: Some(library_api::reads::globals_of(&cx.flags)),

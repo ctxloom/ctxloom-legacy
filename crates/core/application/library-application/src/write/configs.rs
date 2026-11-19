@@ -58,12 +58,31 @@ impl Library {
     /// through the scaffold when its directory is not there, the config
     /// holding what init was `answered`; a directory that is there is init's
     /// re-run, and nothing is written. No git: the library is git-free.
-    pub fn project_init(&self, answered: &scaffold::Answered) -> Outcome<ProjectInitialized> {
+    /// The default agent's engine is `engine` (`manage install --engine`),
+    /// claude-code where it is empty; an engine this build does not know
+    /// is refused, nothing written.
+    pub fn project_init(
+        &self,
+        engine: &str,
+        answered: &scaffold::Answered,
+    ) -> Outcome<ProjectInitialized> {
         let result = (|| {
             let scaffold = &self.write_side()?.scaffold;
             let existed = !scaffold.is_new().map_err(AppError::Cause)?;
             if !existed {
-                let config = scaffold::initial_config_with("claude-code", answered);
+                let engine = if engine.is_empty() {
+                    "claude-code"
+                } else {
+                    engine
+                };
+                if !ENGINES.contains(&engine) {
+                    return Err(WriteError::ConfigEngine {
+                        engine: engine.to_string(),
+                        valid: ENGINES.join(", "),
+                    }
+                    .into());
+                }
+                let config = scaffold::initial_config_with(engine, answered);
                 let files = scaffold_files(scaffold.as_ref(), config)?;
                 scaffold.write(&files).map_err(AppError::Cause)?;
             }

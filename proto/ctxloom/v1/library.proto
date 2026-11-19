@@ -4975,6 +4975,38 @@ message InstallGitignoreResponse {
   repeated Notice notices = 92;
 }
 
+// `manage install` (step 10c U6). Additive.
+message InstallManageRequest {
+  // The project, `projects/{project}`; empty, the caller's (its `cwd`).
+  string project = 1 [(google.api.field_behavior) = OPTIONAL];
+  // `--engine`: the new project's default agent's engine; empty,
+  // claude-code.
+  string engine = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The client's id for this write (AIP-155), sent again on the one retry.
+  string request_id = 90 [(google.api.field_behavior) = OPTIONAL];
+  string etag = 91 [(google.api.field_behavior) = OPTIONAL];
+  bool validate_only = 92 [(google.api.field_behavior) = OPTIONAL];
+  EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
+  Globals globals = 96 [(google.api.field_behavior) = OPTIONAL];
+  string cwd = 97 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// What `manage install` did (step 10c U6).
+message InstallManageResponse {
+  // The project's `.ctxloom`.
+  string app_dir = 1;
+  // It was not there, and was created whole (on a preview: it would be).
+  bool initialized = 2;
+  // The project's own `.gitignore`.
+  string gitignore = 3;
+  // `updated` or `unchanged`: `.ctxloom/.gitignore`.
+  string gitignore_status = 4;
+  // The id a new project was named by, for the client to bind at its
+  // root; empty when it was there.
+  string project_id = 5;
+  repeated Notice notices = 92;
+}
+
 // `init prompt` (step 10c U6), read where the caller stands.
 message GetInitPromptRequest {
   // The project, `projects/{project}`; empty, the caller's (its `cwd`).

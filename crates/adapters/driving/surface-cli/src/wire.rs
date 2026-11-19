@@ -233,6 +233,32 @@ impl super::Foreign for InProcess<'_> {
         }
     }
 
+    /// As the daemon answers it, from the plan: the project there or not
+    /// (the creation itself is the daemon's, step 10c U6).
+    fn install_manage(
+        &self,
+        request: v1::InstallManageRequest,
+    ) -> Result<v1::InstallManageResponse, Failure> {
+        let engine = (!request.engine.is_empty()).then_some(request.engine.as_str());
+        match self.setup.install_plan(engine) {
+            Ok(plan) => Ok(v1::InstallManageResponse {
+                app_dir: plan.ctxloom_dir,
+                initialized: !plan.ctxloom_dir_exists,
+                gitignore: plan.gitignore,
+                gitignore_status: "unchanged".to_string(),
+                ..v1::InstallManageResponse::default()
+            }),
+            Err(error) => {
+                let exit = error.exit();
+                Err(Failure::new(error, exit))
+            }
+        }
+    }
+
+    fn bind_project(&self, _: &str) -> Result<(), Failure> {
+        Ok(())
+    }
+
     fn uninstall(
         &self,
         _: v1::UninstallManageRequest,

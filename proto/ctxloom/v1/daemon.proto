@@ -613,6 +613,10 @@ service Ctxloom {
   // project's library, when it is not what ctxloom writes. Additive proto
   // extension, step 10c U5.
   rpc InstallGitignore(InstallGitignoreRequest) returns (InstallGitignoreResponse);
+  // `manage install` (step 10c U6): a new project's `.ctxloom` created whole,
+  // as init creates it, for the engine asked; one there gets ctxloom's
+  // `.gitignore`. Additive.
+  rpc InstallManage(InstallManageRequest) returns (InstallManageResponse);
   // (-- endregion --)
 
   // `search`: `projects/{project}:searchLibrary` (AIP-136, stateless).

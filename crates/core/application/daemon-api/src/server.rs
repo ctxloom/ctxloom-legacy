@@ -658,6 +658,14 @@ impl<E: Edge + 'static> Calls for Api<E> {
         })
     }
 
+    /// `InstallManage` (step 10c U6): `manage install`, init's creation.
+    fn install_manage(
+        &self,
+        request: v1::InstallManageRequest,
+    ) -> Answer<'_, v1::InstallManageResponse> {
+        Box::pin(Api::install_manage(self, request))
+    }
+
     /// `InitProject` (step 10c U6): a project's `.ctxloom` created whole.
     fn init_project(&self, request: v1::InitProjectRequest) -> Answer<'_, v1::InitProjectResponse> {
         Box::pin(Api::init_project(self, request))

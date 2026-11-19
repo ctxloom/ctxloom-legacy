@@ -408,7 +408,6 @@ mod commands_run {
             done.out
         );
         assert!(!done.out.contains("would:"), "{}", done.out);
-        assert!(done.world.mem.scaffold_text("config.yaml").is_some());
     }
 
     #[test]

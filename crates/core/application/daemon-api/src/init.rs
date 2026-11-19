@@ -100,6 +100,29 @@ pub(crate) fn tree_of(known: &library_checkout::Known) -> Option<TreeName> {
     TreeName::parse_checkout(&create.name)
 }
 
+/// What `manage install` answers: the project's `.ctxloom` at `app_dir`,
+/// whether it was created and its `.gitignore`'s status, the id a new one
+/// was named by.
+pub(crate) fn installed_of(
+    app_dir: &str,
+    (initialized, gitignore_status): (bool, String),
+    project_id: String,
+    notices: Vec<v1::Notice>,
+) -> v1::InstallManageResponse {
+    let root = app_dir
+        .strip_suffix("/.ctxloom")
+        .or_else(|| app_dir.strip_suffix("\\.ctxloom"))
+        .unwrap_or(app_dir);
+    v1::InstallManageResponse {
+        app_dir: app_dir.to_string(),
+        initialized,
+        gitignore: format!("{root}/.gitignore"),
+        gitignore_status,
+        project_id,
+        notices,
+    }
+}
+
 /// What init's apply answers.
 fn answered_init(
     initialized: &ProjectInitialized,
@@ -130,6 +153,65 @@ impl<E: Edge> Api<E> {
         &self,
         request: v1::InitProjectRequest,
     ) -> Result<v1::InitProjectResponse, ApiError> {
+        self.init_with(request, ("", VERB)).await
+    }
+
+    /// `InstallManage` (step 10c U6): a new project created whole as
+    /// init creates it, its default agent on `engine`, recorded as `manage
+    /// install`; one that is there gets ctxloom's `.gitignore` (the
+    /// `manage gitignore install` write).
+    pub(crate) async fn install_manage(
+        &self,
+        request: v1::InstallManageRequest,
+    ) -> Result<v1::InstallManageResponse, ApiError> {
+        let init = v1::InitProjectRequest {
+            name: request.project.clone(),
+            cwd: request.cwd.clone(),
+            request_id: request.request_id.clone(),
+            validate_only: request.validate_only,
+            env: request.env.clone(),
+            globals: request.globals.clone(),
+            ..v1::InitProjectRequest::default()
+        };
+        let done = self
+            .init_with(init, (&request.engine, "manage install"))
+            .await?;
+        let mut notices = done.notices;
+        let mut status = "unchanged".to_string();
+        if done.existed && !request.validate_only {
+            let gitignore = v1::InstallGitignoreRequest {
+                project: request.project.clone(),
+                request_id: request.request_id.clone(),
+                env: request.env.clone(),
+                globals: request.globals.clone(),
+                cwd: request.cwd.clone(),
+                ..v1::InstallGitignoreRequest::default()
+            };
+            let wrote = self
+                .library_write(&gitignore, "manage gitignore install", |library, _, _| {
+                    library.gitignore_install()
+                })
+                .await?;
+            let installed = crate::setup_reads::gitignore_installed(&wrote);
+            status = installed.status;
+            notices.extend(installed.notices);
+        }
+        Ok(installed_of(
+            &done.app_dir,
+            (!done.existed, status),
+            done.project_id,
+            notices,
+        ))
+    }
+
+    /// [`Api::init_project`]'s preview or apply, the new project's default
+    /// agent on `engine` (empty: claude-code), its intent recorded as
+    /// `verb`.
+    async fn init_with(
+        &self,
+        request: v1::InitProjectRequest,
+        (engine, verb): (&str, &str),
+    ) -> Result<v1::InitProjectResponse, ApiError> {
         self.open()?;
         let (site, _) = self
             .resolve(
@@ -155,7 +237,7 @@ impl<E: Edge> Api<E> {
         // is not `Send`.
         let (mut notices, initialized, shaped) = {
             let planned = self.planned(&site, !request.validate_only, &|library, _, _| {
-                library.project_init(&answered)
+                library.project_init(engine, &answered)
             })?;
             let notices: Vec<v1::Notice> = planned
                 .outcome
@@ -219,7 +301,7 @@ impl<E: Edge> Api<E> {
         let made = self
             .create_tree(
                 (&tree, &initialized.app_dir, &root),
-                &shape,
+                (verb, &shape),
                 &request_id,
                 pending.map(|(done, known)| (done, known.intent.steps.clone())),
             )
@@ -326,7 +408,7 @@ impl<E: Edge> Api<E> {
     async fn create_tree(
         &self,
         (tree, dir, root): (&TreeName, &str, &str),
-        shape: &Shape,
+        (verb, shape): (&str, &Shape),
         request_id: &str,
         pending: Option<(u32, Vec<library_tree::Step>)>,
     ) -> Result<Vec<v1::Notice>, ApiError> {
@@ -354,7 +436,7 @@ impl<E: Edge> Api<E> {
             None => {
                 let intended = writes::intent_of(
                     &tree.to_string(),
-                    VERB,
+                    verb,
                     shape,
                     (0, &|_: &str| 0),
                     evidence,

@@ -42,8 +42,8 @@ pub use error::{SetupError, EN_US};
 pub use hooks::{harp_marker, hook_skills, HookAnswer, HookLibrary, HookSkill};
 pub use hooks_wake::HookMessages;
 pub use manage::{
-    BackendStatus, CheckReport, GitignoreReport, HookRow, HooksEvent, HooksList, InstallPlan,
-    InstallReport, InstallRequest, PullReport, SurfaceCurrency, UninstallReport,
+    engine_applies, BackendStatus, CheckReport, GitignoreReport, HookRow, HooksEvent, HooksList,
+    InstallPlan, InstallReport, InstallRequest, PullReport, SurfaceCurrency, UninstallReport,
 };
 pub use materialize::{
     EngineOutcome, MaterializeRequest, MaterializeResult, NotCarried, SurfaceSpec,

@@ -516,6 +516,21 @@ impl setup_cli::Cleaning for DaemonServed {
 /// The setup writes of other tools' files through the daemon (step 10c
 /// U10), as a library write is sent.
 impl surface_cli::Foreign for DaemonServed {
+    fn install_manage(
+        &self,
+        request: daemon_proto::v1::InstallManageRequest,
+    ) -> Result<daemon_proto::v1::InstallManageResponse, Failure> {
+        use daemon_api::LibraryWrites;
+        let wiring = self.wiring()?;
+        // Never minted here, as init's (step 10c U6).
+        let client = crate::daemon::preview_client(&wiring, &self.version)?;
+        crate::daemon::answered(client.install_manage("", request))
+    }
+
+    fn bind_project(&self, project_id: &str) -> Result<(), Failure> {
+        setup_cli::Initializing::bind_project(self, project_id)
+    }
+
     fn materialize(
         &self,
         request: daemon_proto::v1::MaterializeRequest,

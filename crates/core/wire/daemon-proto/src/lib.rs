@@ -166,6 +166,7 @@ macro_rules! library_writes {
             get_init_prompt (GetInitPrompt) GetInitPromptRequest => GetInitPromptResponse,
             install_gitignore (InstallGitignore) InstallGitignoreRequest => InstallGitignoreResponse,
             init_project (InitProject) InitProjectRequest => InitProjectResponse,
+            install_manage (InstallManage) InstallManageRequest => InstallManageResponse,
             distill_fragment (DistillFragment) DistillFragmentRequest => DistillFragmentResponse,
             distill_command (DistillCommand) DistillCommandRequest => DistillCommandResponse,
             create_remote (CreateRemote) CreateRemoteRequest => CreateRemoteResponse,

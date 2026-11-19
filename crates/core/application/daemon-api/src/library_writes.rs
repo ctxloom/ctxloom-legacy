@@ -1020,6 +1020,7 @@ write_requests! {
     GetInitPromptRequest.project;
     InstallGitignoreRequest.project, etag;
     InitProjectRequest.name, etag;
+    InstallManageRequest.project, etag;
     DistillFragmentRequest.name;
     DistillCommandRequest.name;
     CreateRemoteRequest.parent;

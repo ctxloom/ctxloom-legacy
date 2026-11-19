@@ -7,7 +7,7 @@ use init_application::needs::{self, Given};
 use library_api::writes::Shape;
 use library_tree::TreeName;
 
-use super::{given_of, need_of, tree_of, with_checkout};
+use super::{given_of, installed_of, need_of, tree_of, with_checkout};
 
 #[test]
 fn test_every_need_init_asks_is_optional_and_keeps_its_kind() {
@@ -134,4 +134,21 @@ fn intent(steps: Vec<library_tree::Step>) -> library_tree::Intent {
         done: 0,
         foreign: Vec::new(),
     }
+}
+
+// `manage install` answers the project's own `.gitignore` beside its
+// `.ctxloom`, and what it did.
+#[test]
+fn test_manage_install_answers_the_project_s_gitignore_and_what_it_did() {
+    let made = installed_of(
+        "/work/calm/.ctxloom",
+        (true, "unchanged".to_string()),
+        "calm-otter".to_string(),
+        Vec::new(),
+    );
+    assert_eq!(made.gitignore, "/work/calm/.gitignore");
+    assert_eq!(made.app_dir, "/work/calm/.ctxloom");
+    assert!(made.initialized);
+    assert_eq!(made.gitignore_status, "unchanged");
+    assert_eq!(made.project_id, "calm-otter");
 }
