@@ -327,22 +327,18 @@ impl<E: Edge> Api<E> {
             self.observing.as_ref().ok_or_else(|| ApiError::Failed {
                 detail: "this daemon observes no library".to_string(),
             })?;
-        let (site, project) = self.resolve(parent, cwd, env, None).await?;
+        let (_, project) = self.resolve(parent, cwd, env, None).await?;
         observations
             .observe_trees_trusting(
                 observers.as_ref(),
-                &site.env,
                 project
                     .as_ref()
                     .map(|(name, root)| (name.clone(), root.as_str())),
                 HOOK_TRUST_SECONDS,
             )
             .await
-            .map_err(|error| match error {
-                library_api::ReadError::Refused(rejection) => {
-                    ApiError::Refused(crate::library_refusal(&rejection))
-                }
-                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            .map_err(|library_api::ReadError::Failed(failure)| {
+                ApiError::diagnosed(failure.as_ref())
             })
     }
 

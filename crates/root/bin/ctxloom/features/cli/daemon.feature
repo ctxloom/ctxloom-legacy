@@ -99,7 +99,9 @@ Feature: daemon — the one per-user process every ctxloom command is a client o
   items, profiles, agents, engines, companions, remotes, dependencies, the
   config, search, context assemble, the premise index, the loadout, a dry
   run, and a hook's read) is the daemon's. It first observes the tree
-  through git and records what changed (cli/library_changes.feature), then
+  (its scanner hashes each file; DRAFT, the library is git-free, owner
+  2026-11-18: no git is asked) and records what changed
+  (cli/library_changes.feature), then
   answers from the files, holding back what an untrusted project may not
   say (cli/trust.feature). No command reads a library tree itself.
 

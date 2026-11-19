@@ -7,18 +7,17 @@
 //! {"tree": "projects/<p>/checkouts/<c>/library",
 //!  "events": [{"type": "TreeObserved", "sequence": n, "baseline": bool,
 //!              "head_before": "<oid>", "head_after": "<oid>",
-//!              "in_motion": bool,
 //!              "changes": [{"path", "status", "from_path", "oid"}]}]}
 //! ```
 //!
-//! A change's `from_path` is there for a rename alone, and its `oid` (git's
-//! id for the path after it) is absent when it was deleted. A tree no read
+//! A change's `from_path` is there for a rename alone, and its `oid` (the
+//! content id of the path after it) is absent when it was deleted. A tree no read
 //! has named yet (no checkout harp) is `"tree": null` with no event. It
 //! reads the record; it never observes, mints or records anything.
 
 use angzarr_embedded::v1::{event_page, Cover, EventPage};
 use angzarr_embedded::{EventStore, Payload, StreamRef};
-use library_tree::{motion_word, Change, ChangeStatus, LibraryEvent, TreeName, LIBRARY_DOMAIN};
+use library_tree::{Change, ChangeStatus, LibraryEvent, TreeName, LIBRARY_DOMAIN};
 use serde_json::{json, Value};
 
 use crate::{TestError, Wiring};
@@ -90,10 +89,6 @@ pub(crate) fn event_row(page: &EventPage) -> Option<Value> {
             row["baseline"] = observed.baseline.into();
             row["head_before"] = before.into();
             row["head_after"] = after.into();
-            row["in_motion"] = observed.in_motion.is_some().into();
-            if let Some(motion) = observed.in_motion {
-                row["motion"] = motion_word(motion).into();
-            }
             if let Some(intended) = observed.intended {
                 row["intended"] = intended.into();
             }

@@ -264,9 +264,9 @@ Feature: config — the project's one configuration document, read and scaffolde
         ctxloom config create
         """
       Then the command succeeds
-      # changed: step 10, G1 (QUESTIONS.md E): the scaffold makes the directory a git repository, as init does.
-      And the output contains "made this directory a git repository"
-      And the file ".git/HEAD" exists
+      # DRAFT (the library is git-free, owner 2026-11-18): was "the scaffold makes the directory a git repository, as init does" (G1, QUESTIONS.md E, superseded).
+      And the output does not contain "git repository"
+      And the file ".git" does not exist
       And the file ".ctxloom/config.yaml" is valid YAML
       And the file ".ctxloom/config.yaml" contains "engine: claude-code"
       And the file ".ctxloom/remotes.yaml" contains "schema_version: 1"

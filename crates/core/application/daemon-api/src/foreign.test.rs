@@ -128,34 +128,3 @@ fn a_removal_resumed_from_its_intent_alone_empties_nothing_above_its_root() {
         ("CLAUDE.md".to_string(), String::new())
     );
 }
-
-#[test]
-fn a_tree_git_cannot_hold_leaves_the_files_unrecorded_and_any_other_refusal_stands() {
-    use library_tree::LibraryTreeRejection;
-    let trees = || library_api::Trees {
-        seen: Vec::new(),
-        notices: Vec::new(),
-    };
-    let refused = |rejection| super::tolerated(Err(library_api::ReadError::Refused(rejection)));
-    assert!(matches!(super::tolerated(Ok(trees())), Ok(Some(_))));
-    assert!(matches!(
-        refused(LibraryTreeRejection::NotInGit {
-            root: "/work".to_string()
-        }),
-        Ok(None)
-    ));
-    assert!(matches!(
-        refused(LibraryTreeRejection::LibraryIgnored {
-            source: ".gitignore".to_string(),
-            line: 1,
-            pattern: ".ctxloom".to_string(),
-        }),
-        Ok(None)
-    ));
-    assert!(matches!(
-        refused(LibraryTreeRejection::NoSuchResource {
-            path: "x".to_string()
-        }),
-        Err(crate::ApiError::Refused(_))
-    ));
-}

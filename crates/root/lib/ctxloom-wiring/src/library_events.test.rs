@@ -5,7 +5,7 @@ use angzarr_embedded::v1::{event_page, EventPage};
 use angzarr_embedded::Payload;
 use library_tree::{
     Change, ChangeFailed, ChangeIntended, ChangeStatus, External, Intent, IntentSuperseded,
-    LibraryEvent, Motion, StepApplied, TreeName, TreeObserved,
+    LibraryEvent, StepApplied, TreeName, TreeObserved,
 };
 use serde_json::json;
 
@@ -31,7 +31,7 @@ fn change(path: &str, status: ChangeStatus, to: &str, from_path: &str) -> Change
     }
 }
 
-fn observed(changes: Vec<Change>, in_motion: Option<Motion>) -> LibraryEvent {
+fn observed(changes: Vec<Change>) -> LibraryEvent {
     LibraryEvent::TreeObserved(TreeObserved {
         name: "users/me/library".to_string(),
         external: Some(External {
@@ -43,28 +43,24 @@ fn observed(changes: Vec<Change>, in_motion: Option<Motion>) -> LibraryEvent {
         dirty_after: Vec::new(),
         tree_after: "t".to_string(),
         baseline: false,
-        in_motion,
     })
 }
 
 #[test]
-fn an_observation_prints_its_sequence_commits_motion_and_changes() {
+fn an_observation_prints_its_sequence_commits_and_changes() {
     let tree = TreeName::home("brisk-copper-moth").unwrap();
     let renamed = "content/bundles/v2/demo/fragments/renamed.md";
     let doc = document(
         Some(&tree),
         &[page(
             3,
-            observed(
-                vec![
-                    change(FILE, ChangeStatus::Deleted, "", ""),
-                    change(renamed, ChangeStatus::Renamed, "f1", FILE),
-                    change("config.yaml", ChangeStatus::TypeChanged, "c1", ""),
-                    change("lock.yaml", ChangeStatus::Added, "l1", ""),
-                    change("remotes.yaml", ChangeStatus::Modified, "r1", ""),
-                ],
-                Some(Motion::Merging),
-            ),
+            observed(vec![
+                change(FILE, ChangeStatus::Deleted, "", ""),
+                change(renamed, ChangeStatus::Renamed, "f1", FILE),
+                change("config.yaml", ChangeStatus::TypeChanged, "c1", ""),
+                change("lock.yaml", ChangeStatus::Added, "l1", ""),
+                change("remotes.yaml", ChangeStatus::Modified, "r1", ""),
+            ]),
         )],
     );
     assert_eq!(
@@ -77,8 +73,6 @@ fn an_observation_prints_its_sequence_commits_motion_and_changes() {
                 "baseline": false,
                 "head_before": "h-0",
                 "head_after": "h-1",
-                "in_motion": true,
-                "motion": "merging",
                 "changes": [
                     {"path": FILE, "status": "deleted"},
                     {"path": renamed, "status": "renamed", "from_path": FILE, "oid": "f1"},
@@ -92,16 +86,15 @@ fn an_observation_prints_its_sequence_commits_motion_and_changes() {
 }
 
 #[test]
-fn an_observation_of_no_motion_and_no_outside_cause_prints_empty_commits() {
-    let LibraryEvent::TreeObserved(mut ours) = observed(Vec::new(), None) else {
+fn an_observation_of_no_outside_cause_prints_empty_commits() {
+    let LibraryEvent::TreeObserved(mut ours) = observed(Vec::new()) else {
         unreachable!()
     };
     ours.external = None;
     ours.intended = Some("r-1".to_string());
     ours.baseline = true;
     let row = event_row(&page(0, LibraryEvent::TreeObserved(ours))).unwrap();
-    assert_eq!(row["in_motion"], json!(false));
-    assert!(row.get("motion").is_none());
+    assert!(row.get("in_motion").is_none());
     assert_eq!(row["head_before"], json!(""));
     assert_eq!(row["head_after"], json!(""));
     assert_eq!(row["baseline"], json!(true));
@@ -131,10 +124,6 @@ fn an_intent_and_its_steps_print_their_request() {
                         tree_reads: true,
                         plan_rejection: None,
                         builtin: false,
-                        in_motion: None,
-                        in_git: true,
-                        ignored: None,
-                        root: String::new(),
                     },
                 }),
                 purge: None,

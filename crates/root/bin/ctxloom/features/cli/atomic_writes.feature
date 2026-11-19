@@ -373,6 +373,16 @@ Feature: writes — every change to ctxloom's own trees is whole or absent, and 
         | ctxloom doctor --fix                   | 1    |
         | ctxloom manage uninstall --yes         | 1    |
 
+    Scenario: Another tool's files are recorded as their command's intent in a project outside git too
+      # new: DRAFT (the library is git-free, owner 2026-11-18): U10's unrecorded outside-git fallback is gone; a foreign write is recorded in any directory.
+      Given an initialized ctxloom project outside git
+      When I run 'ctxloom materialize --target out --yes'
+      Then the command succeeds
+      When I run "ctxloom test library-events --format json"
+      Then the output reports "events[1].type" as "ChangeIntended"
+      And the output reports "events[1].verb" as "materialize"
+      And the output reports "events[2].type" as "StepApplied"
+
   Rule: A pull is a sequence of whole trees, then the lock, and a killed pull converges
 
     Scenario Outline: A pull killed between its steps converges when it is run again

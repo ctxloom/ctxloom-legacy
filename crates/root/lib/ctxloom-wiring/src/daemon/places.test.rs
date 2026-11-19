@@ -217,11 +217,9 @@ fn a_checkouts_harp_is_minted_once_into_its_tree() {
     assert_eq!(kept.trim(), first);
 }
 
-// Step 10a U2: git as the read's caller runs it, on the caller's PATH (none
-// with git on it: git is missing, exit 10's failure); the home's library is
-// observed where the home has one.
+// Step 10a U2: the home's library is observed where the home has one.
 #[test]
-fn a_reads_git_is_the_callers_and_its_home_is_ctxloom_s_own() {
+fn a_reads_home_is_ctxloom_s_own() {
     use library_api::Observers;
     let root = fixtures::root();
     let home = root.root().join("home");
@@ -229,7 +227,6 @@ fn a_reads_git_is_the_callers_and_its_home_is_ctxloom_s_own() {
     let gits = super::CallerGits {
         fs: fixtures::fs(),
         home: home.clone(),
-        temp: root.root().join("tmp"),
         scanner: std::sync::Arc::new(super::TreeScanner::new(fixtures::fs())),
     };
     assert_eq!(gits.home_tree(), None);
@@ -238,11 +235,6 @@ fn a_reads_git_is_the_callers_and_its_home_is_ctxloom_s_own() {
         gits.home_tree(),
         Some(home.join(".ctxloom").display().to_string())
     );
-    let empty = root.root().join("nowhere");
-    fixtures::mkdirs(&empty);
-    let observer = gits.observer(&[("PATH".to_string(), empty.display().to_string())]);
-    let missing = observer.work_tree(&home.display().to_string()).unwrap_err();
-    assert_eq!(missing.diagnostic().code(), "library-git-git-missing");
 }
 
 // Step 10a U2 (E1): a library read is opened where the caller is, as a

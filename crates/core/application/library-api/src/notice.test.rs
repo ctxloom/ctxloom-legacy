@@ -1,5 +1,4 @@
 use angzarr_diagnostic::Diagnostic;
-use ctxloom_ports::Motion;
 
 use super::{diagnostic_samples, LibraryApiNotice, EN_US};
 
@@ -8,7 +7,7 @@ fn every_notice_has_a_message_using_exactly_its_args_and_its_code_is_prefixed() 
     let (name, catalog) = EN_US;
     assert_eq!(name, "library-api");
     let samples = diagnostic_samples();
-    assert_eq!(samples.len(), 4);
+    assert_eq!(samples.len(), 1);
     for sample in samples {
         let code = sample.code();
         assert!(code.starts_with("library-api-notice-"), "{code}");
@@ -35,50 +34,14 @@ fn every_notice_has_a_message_using_exactly_its_args_and_its_code_is_prefixed() 
 }
 
 #[test]
-fn a_motion_is_named_by_its_selector_word() {
-    let notice = LibraryApiNotice::TreeInMotion {
-        motion: Motion::IndexLocked,
-        root: "/r".to_string(),
-    };
-    assert_eq!(notice.code(), "library-api-notice-tree-in-motion");
-    let args: Vec<String> = notice
-        .args()
-        .into_iter()
-        .map(|(n, v)| format!("{n}={v:?}"))
-        .collect();
-    assert!(
-        args[0].starts_with("motion=") && args[0].contains("index-locked"),
-        "{args:?}"
-    );
-    assert!(
-        args[1].starts_with("root=") && args[1].contains("/r"),
-        "{args:?}"
-    );
-}
-
-#[test]
-fn the_home_notice_names_the_path() {
-    let notice = LibraryApiNotice::HomeRepositoryMade {
-        path: "/h/.ctxloom".to_string(),
-    };
-    assert_eq!(notice.code(), "library-api-notice-home-repository-made");
-    let args: Vec<String> = notice
-        .args()
-        .into_iter()
-        .map(|(n, v)| format!("{n}={v:?}"))
-        .collect();
-    assert_eq!(args.len(), 1);
-    assert!(args[0].starts_with("path=") && args[0].contains("/h/.ctxloom"));
-}
-
-#[test]
 fn a_notice_displays_as_its_code_and_args() {
-    let notice = LibraryApiNotice::HomeRepositoryMade {
-        path: "/home/alice/.ctxloom".to_string(),
+    let notice = LibraryApiNotice::Trashed {
+        path: "demo".to_string(),
+        slot: "trash/r1/".to_string(),
     };
     assert_eq!(
         notice.to_string(),
-        "library-api-notice-home-repository-made path=/home/alice/.ctxloom"
+        "library-api-notice-trashed path=demo slot=trash/r1/"
     );
 }
 

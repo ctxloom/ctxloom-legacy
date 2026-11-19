@@ -32,12 +32,10 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
   whole report is written. A USAGE error (a --format this build cannot render)
   exits 10.
 
-  GIT HOLDS THE LIBRARY (step 10). A project's library is refused outside
-  git, and where git ignores it, so each is a `fail` row: every run there is
-  refused. The home's repository, and a git operation in progress, are
-  reported too. Doctor is the daemon's, as every command is; it diagnoses
-  what no other command will read, so a project whose library is refused is
-  still diagnosed, row by row.
+  THE LIBRARY IS GIT-FREE (DRAFT, owner 2026-11-18, superseding step 10's
+  G1 to G3). A library works in any directory, so doctor has no row for the
+  project's repository, the home's, or a git operation in progress. Doctor
+  is the daemon's, as every command is.
 
   EVERY CHECK NEEDS BOTH HALVES. A check that fired on every project would be
   indistinguishable from one that works and would teach a reader to skip the
@@ -107,7 +105,8 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
     # passed. Parse it, and assert the decoded structure the text form cannot
     # produce.
     Scenario: Doctor's machine-readable form carries the same structured checks
-      # changed: step 10 U5 and D17, the JSON is the daemon's `RunDoctorResponse`, its git checks among them.
+      # changed: step 10 U5 and D17, the JSON is the daemon's `RunDoctorResponse`.
+      # DRAFT (the library is git-free, owner 2026-11-18): its git checks (GIT-REPO-u1, HOME-REPO-u2) are gone.
       Given an initialized ctxloom project
       When Alice asks for the diagnosis in a form a script can parse:
         """
@@ -119,8 +118,6 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
       And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-AGENTS-b2"
       And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-VERSION-c3"
       And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-HOOKS-TRUST-d4"
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GIT-REPO-u1"
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-HOME-REPO-u2"
       And every object in the JSON output array "checks" has a non-empty "status"
       And every object in the JSON output array "checks" has a non-empty "detail"
 
@@ -201,18 +198,15 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
       Then the command succeeds
       And the output contains "git is there but has no identity"
 
-  Rule: The ignore posture is reported at full volume; a library git cannot see fails doctor
+  Rule: A finding is reported at full volume and still exits 0
 
     A blanket `.ctxloom` ignore rule predates version-controlled content moving
     INTO `.ctxloom/`. Left in place it silently un-tracks the project's own
     content: `git add` reports nothing, and a content repository publishes an
-    empty tree while every consumer's bundle refs fail to resolve. Since step
-    10 every library command there is refused (git holds the library), so the
-    blanket rule is a `fail` row; private state git can see is still a
-    warning, with exit 0.
+    empty tree while every consumer's bundle refs fail to resolve. Nothing else
+    in the system can see it, which is exactly the kind of thing doctor is for.
 
-    Scenario: A blanket ignore rule is a fail row, and fails doctor
-      # substitution: step 10 G1, a library git ignores is refused, so every run there is refused: a fail row, exit 20 (was a warning, exit 0).
+    Scenario: A blanket ignore rule is reported as a warning, with exit 0
       Given an initialized ctxloom project
       And the project already has the file ".gitignore":
         """
@@ -222,13 +216,13 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
         """
         ctxloom doctor
         """
-      Then the command exits with code 20
+      Then the command succeeds
       And the output contains "DOCTOR-CHECK-GITIGNORE-f6"
       And the output contains "blanket"
       And the output contains "ctxloom manage gitignore install"
       When I run "ctxloom --format json doctor"
-      Then the command exits with code 20
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GITIGNORE-f6" and whose "status" is "fail"
+      Then the command succeeds
+      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GITIGNORE-f6" and whose "status" is "warn"
 
     # THE PAIRED NEGATIVE, and the one that keeps the check honest. The
     # granular `.ctxloom/<subdir>/` patterns are the CURRENT spelling and must
@@ -251,18 +245,17 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
 
     Scenario: A blanket rule spelled as a glob is the same finding
       # new: `.ctxloom/*` hides the project's content as surely as `.ctxloom/`, and doctor names the command that replaces it.
-      # substitution: step 10 G1, a fail row, exit 20.
       Given an initialized ctxloom project
       And the project already has the file ".gitignore":
         """
         .ctxloom/*
         """
       When I run "ctxloom doctor"
-      Then the command exits with code 20
+      Then the command succeeds
       And the output contains "ctxloom manage gitignore install"
       When I run "ctxloom --format json doctor"
-      Then the command exits with code 20
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GITIGNORE-f6" and whose "status" is "fail"
+      Then the command succeeds
+      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GITIGNORE-f6" and whose "status" is "warn"
 
     # The other half of the posture: ctxloom's private state (session homes
     # holding an engine's login state, the cache, the project id) must be
@@ -283,57 +276,7 @@ Feature: doctor — the deterministic diagnosis, and the one finding that fails 
       Then the command succeeds
       And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GITIGNORE-f6" and whose "status" is "ok"
 
-  Rule: git holds the library: the project's repository, the home's, and a git operation in progress are each a row
-
-    Scenario: A project outside git is a fail row naming git init, and is still diagnosed
-      # new: step 10 G1 and U5, doctor's git checks; every library command there is refused.
-      Given an initialized ctxloom project outside git
-      When I run "ctxloom --format json doctor"
-      Then the command exits with code 20
-      And the output is valid JSON
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GIT-REPO-u1" and whose "status" is "fail"
-      And the output contains "git init"
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-AGENTS-b2"
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-SETUP-MARKER-e5"
-
-    Scenario: A project in git keeps the repository check quiet
-      # new: the paired negative.
-      Given an initialized ctxloom project
-      When I run "ctxloom --format json doctor"
-      Then the command succeeds
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GIT-REPO-u1" and whose "status" is "ok"
-
-    Scenario Outline: The home's repository is named, with whether ctxloom commits there
-      # new: step 10 G2, G3 and 10a's QUESTIONS C, D.
-      Given an initialized ctxloom project
-      And <home>
-      And I run "ctxloom bundle list"
-      When I run "ctxloom doctor --all --format text"
-      Then the command succeeds
-      And the output contains "DOCTOR-CHECK-HOME-REPO-u2"
-      And the output contains "<said>"
-
-      Examples:
-        | home                                                                     | said                                                   |
-        | the home's ".ctxloom" is in no git repository yet                        | a repository ctxloom made; it commits its writes there |
-        | the home directory is a git repository of its own                        | inside your repository; ctxloom commits nothing there  |
-        | the home's ".ctxloom" is already a git repository with the commit "mine" | your repository; ctxloom commits nothing there         |
-
-    Scenario Outline: A git operation in progress is a warning that writes wait for it
-      # new: step 10 L11; reads go on, writes are refused until it ends.
-      Given an initialized ctxloom project
-      And a bundle "demo" exists
-      And the project's changes are committed
-      And git in the project is in the middle of <operation> on ".ctxloom/content/bundles/v2/demo/fragments/example.md"
-      When I run "ctxloom --format json doctor"
-      Then the command succeeds
-      And the JSON output array "checks" contains an object whose "marker" is "DOCTOR-CHECK-GIT-MOTION-u3" and whose "status" is "warn"
-      And the output contains "<said>"
-
-      Examples:
-        | operation                          | said            |
-        | a merge stopped on a conflict      | a merge         |
-        | a commit that holds the index lock | holds the index |
+  Rule: A bundle's layout is a row
 
     Scenario: A bundle in the old metadata layout is a warning naming the git mv
       # new: step 10 D15 (T27): the bundle is refused until its metadata moves.

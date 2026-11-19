@@ -52,21 +52,10 @@ pub struct Library {
     /// Where the user's trust of the project is asked when a flag does not
     /// say it ([`Library::with_trust`]); none, an untrusted project.
     pub(crate) trust: Option<TrustAsk>,
-    /// The step `config create` takes first ([`Library::with_repository_step`]);
-    /// none, no git step.
-    pub(crate) repository: Option<RepositoryStep>,
     /// How a diagnostic is said in a read's answer (an agent's resolution
     /// error): the composition root's catalog; none, its code and args.
     pub(crate) words: Option<Words>,
 }
-
-/// Make the project's directory a git repository when it is in none (step
-/// 10, G1): init's own step, which `config create` takes too, as init's
-/// scaffold without the interview (QUESTIONS.md E). Its notice (in init's
-/// words) when it made one; git missing, too old or failing is the
-/// observer's error.
-pub type RepositoryStep =
-    Rc<dyn Fn() -> Result<Option<run_ports::Advice>, ctxloom_ports::TreeError>>;
 
 /// Whether the user trusts the project, asked of her daemon (step 8 U2, D4:
 /// one `GetTrust`, which may start one): asked only where it decides
@@ -130,7 +119,6 @@ impl Library {
             engines: Vec::new(),
             hook_losses: crate::losses::HookLosses::new(),
             trust: None,
-            repository: None,
             words: None,
         }
     }
@@ -149,13 +137,6 @@ impl Library {
             Some(words) => words(diagnostic),
             None => diagnostic.to_string(),
         }
-    }
-
-    /// The library whose `config create` takes `step` before it writes
-    /// anything (step 10, G1).
-    pub fn with_repository_step(mut self, step: RepositoryStep) -> Library {
-        self.repository = Some(step);
-        self
     }
 
     /// The library asking `trust` whether the user trusts the project, where

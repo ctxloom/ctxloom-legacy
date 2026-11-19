@@ -3,11 +3,10 @@
 //! fact of the library domain, and only then opens the library. The tree is
 //! seen by the daemon's scanner (step 10c U13 rework: every file with its
 //! content's SHA-256, no git), and the aggregate compares its listing. A
-//! tree outside git, or one git ignores, is refused (G1); a git operation
-//! in progress is said (L11).
+//! library is read in any directory, in git or not (the library is
+//! git-free, owner 2026-11-18, superseding G1 and L11).
 //!
-//! - [`locate::refusal`]: a project's library outside git or ignored.
-//! - [`Observations`]: the two, recorded through the daemon's edge.
+//! - [`Observations`]: the observations, recorded through the daemon's edge.
 //! - [`names`]: the library's resource names, the one naming every answer
 //!   gives;
 //! - [`resources`]: a library view as its API message, the one mapping;
@@ -17,18 +16,15 @@
 
 pub mod deps;
 pub mod distill;
-mod locate;
 pub mod names;
 mod notice;
 mod observe;
 pub mod premise;
 pub mod reads;
-pub mod reconcile;
 pub mod resources;
 pub mod served_writes;
 pub mod writes;
 
-pub use locate::refusal;
 #[cfg(any(test, feature = "test-support"))]
 pub use notice::diagnostic_samples;
 pub use notice::{LibraryApiNotice, EN_US};

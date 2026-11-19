@@ -91,16 +91,6 @@ pub(crate) struct Landing<'a> {
     pub(crate) observed: &'a Observed,
 }
 
-impl Landing<'_> {
-    /// The root a refusal names: a checkout's root, the home's library.
-    fn root(&self) -> String {
-        match self.site {
-            Site::Checkout { root, .. } => root.clone(),
-            Site::Home { tree } => tree.clone(),
-        }
-    }
-}
-
 /// The request id as the command id's bytes: the client's UUID, or (a
 /// client that named none) one minted for this call alone.
 fn request_bytes(request_id: &str) -> [u8; 16] {
@@ -312,7 +302,6 @@ impl<E: Edge> Api<E> {
         });
         let (etag, trashed) = self
             .carry_out(
-                &site,
                 &landing,
                 (verb, request.etag()),
                 &shaped,
@@ -331,8 +320,8 @@ impl<E: Edge> Api<E> {
         })
     }
 
-    /// Where a write is made, and its trees observed (a tree outside git,
-    /// or one git ignores, refuses it).
+    /// Where a write is made, and its trees observed (in any directory: the
+    /// library is git-free, owner 2026-11-18).
     pub(crate) async fn write_site<Q: LibraryWriteRequest>(
         &self,
         request: &Q,
@@ -352,15 +341,13 @@ impl<E: Edge> Api<E> {
         let trees = observations
             .observe_trees(
                 observers.as_ref(),
-                &site.env,
                 project
                     .as_ref()
                     .map(|(name, root)| (name.clone(), root.as_str())),
             )
             .await
-            .map_err(|error| match error {
-                library_api::ReadError::Refused(rejection) => refused(&rejection),
-                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            .map_err(|library_api::ReadError::Failed(failure)| {
+                ApiError::diagnosed(failure.as_ref())
             })?;
         Ok((site, trees))
     }
@@ -373,7 +360,6 @@ impl<E: Edge> Api<E> {
     /// that took a path into the trash, the notice of where it is kept.
     pub(crate) async fn carry_out(
         &self,
-        site: &crate::library_reads::ReadSite<'_>,
         landing: &Landing<'_>,
         (verb, etag): (&str, &str),
         shaped: &writes::Shaped,
@@ -385,19 +371,11 @@ impl<E: Edge> Api<E> {
             })?;
         let path = shaped.shape.path().to_string();
         let held = observations.held(&landing.observed.tree);
-        let observer = observers.observer(&site.env);
         let scanner = observers.scanner();
         let evidence = Evidence {
             tree_reads: true,
             plan_rejection: None,
             builtin: false,
-            in_motion: landing
-                .observed
-                .motion
-                .map(library_api::reconcile::motion_of),
-            in_git: true,
-            ignored: None,
-            root: landing.root(),
         };
         let id = request_bytes(request_id);
         let request_id = uuid::Uuid::from_bytes(id).to_string();
@@ -455,45 +433,9 @@ impl<E: Edge> Api<E> {
             )
             .await?;
         }
-        let mut notices = trashed_notice(landing.site.tree(), &shaped.shape, &request_id);
-        notices.extend(self.home_commit(landing, observer.as_ref(), (verb, &request_id), &steps));
+        let notices = trashed_notice(landing.site.tree(), &shaped.shape, &request_id);
         self.dies_at("done");
         Ok((observations.held(tree).token(&path).to_string(), notices))
-    }
-
-    /// A write to the home recorded done, committed there when ctxloom
-    /// made the home's repository (G3, owner 2026-11-18, night): one
-    /// commit of its own, of the paths its steps changed, never in a
-    /// project's tree, nor a home made before the fact was recorded. A
-    /// failed commit is said, and the write stands.
-    fn home_commit(
-        &self,
-        landing: &Landing<'_>,
-        observer: &dyn ctxloom_ports::TreeObserver,
-        (verb, request_id): (&str, &str),
-        steps: &[library_tree::Step],
-    ) -> Option<v1::Notice> {
-        let (observations, _) = self.observing.as_ref()?;
-        let home = matches!(landing.site, Site::Home { .. });
-        if !home
-            || !observations
-                .held(&landing.observed.tree)
-                .home_repository_made
-        {
-            return None;
-        }
-        let paths = commit_paths(steps);
-        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let dir = landing.site.tree();
-        observer
-            .commit(dir, &commit_message(verb, request_id), &paths)
-            .err()
-            .map(|error| {
-                notice_of(&library_api::LibraryApiNotice::HomeNotCommitted {
-                    path: dir.to_string(),
-                    ext_err_txt: error.diagnostic().to_string(),
-                })
-            })
     }
 
     /// The step `step` (number `at`) of the write `made` makes: its one
@@ -874,36 +816,6 @@ fn step_path(step: &library_tree::Step) -> String {
         .as_ref()
         .map(|moved| moved.from.clone())
         .unwrap_or_default()
-}
-
-/// What the commit of a home write names (G3): each library path its
-/// `steps` changed, once, sorted.
-pub(crate) fn commit_paths(steps: &[library_tree::Step]) -> Vec<String> {
-    let mut paths = std::collections::BTreeSet::new();
-    for step in steps {
-        let named = [
-            step.replace.as_ref().map(|replace| replace.path.clone()),
-            step.create.as_ref().map(|create| create.path.clone()),
-            step.trash.as_ref().map(|trash| trash.path.clone()),
-            step.r#move.as_ref().map(|moved| moved.from.clone()),
-            step.r#move
-                .as_ref()
-                .filter(|moved| moved.to_tree.is_empty())
-                .map(|moved| moved.to.clone()),
-        ];
-        paths.extend(
-            named
-                .into_iter()
-                .flatten()
-                .filter(|path| writes::in_library(path)),
-        );
-    }
-    paths.into_iter().collect()
-}
-
-/// The message of a home write's commit (step 10b texts.md 6).
-pub(crate) fn commit_message(verb: &str, request_id: &str) -> String {
-    format!("ctxloom: {verb} ({request_id})")
 }
 
 /// The observed tree a write landing `lands` changes: the content's is the

@@ -97,7 +97,7 @@ impl<E: Edge> Api<E> {
         request: v1::CleanRequest,
     ) -> Result<v1::CleanResponse, ApiError> {
         self.open()?;
-        let (site, trees) = self.write_site(&request).await?;
+        let (_, trees) = self.write_site(&request).await?;
         let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon observes no library".to_string(),
         })?;
@@ -138,7 +138,6 @@ impl<E: Edge> Api<E> {
         };
         let (_, trashed) = self
             .carry_out(
-                &site,
                 &landing,
                 (VERB, ""),
                 &shaped,

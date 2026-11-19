@@ -340,7 +340,6 @@ async fn listed(world: &crate::server::tests::World, tree: &library_tree::TreeNa
             path: "config.yaml".to_string(),
             oid: oid.to_string(),
         }],
-        in_motion: None,
     };
     world
         .handle(library_tree::listing_book(tree, &fact))

@@ -68,9 +68,6 @@ pub struct Library {
     pub baseline_sequence: u64,
     /// Whether a baseline was ever recorded.
     pub baselined: bool,
-    /// Whether ctxloom made this tree a repository of its own (G3): only
-    /// then are its writes committed.
-    pub home_repository_made: bool,
     /// Each foreign writer's file (step 10c U10, L15), project-relative,
     /// at the sequence of the step that wrote it: a record only, never
     /// observed and never a token.
@@ -154,7 +151,9 @@ impl Library {
             LibraryEvent::StepApplied(applied) => self.applied(applied, sequence),
             LibraryEvent::ChangeFailed(failed) => self.failed(failed),
             LibraryEvent::IntentSuperseded(superseded) => self.superseded(superseded),
-            LibraryEvent::HomeRepositoryMade(_) => self.home_repository_made = true,
+            // Never emitted since the git-free ruling: a 10b stream's is
+            // nothing to fold (its cause still chains).
+            LibraryEvent::HomeRepositoryMade(_) => {}
             // The read model keeps it; the tree is as it was.
             LibraryEvent::BundleExported(_) => {}
             LibraryEvent::TreeInstalled(installed) => self.installed(installed, sequence),
@@ -387,7 +386,6 @@ impl Library {
                 })
                 .collect(),
             baseline_sequence: self.baseline_sequence,
-            home_repository_made: self.home_repository_made,
             foreign: self
                 .foreign
                 .iter()

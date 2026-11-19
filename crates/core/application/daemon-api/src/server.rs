@@ -810,31 +810,20 @@ impl<E: Edge> Api<E> {
 
     /// A library read's observations (step 10a U2): the project's checkout
     /// at `root` (none: a read outside a project), then the home's
-    /// library, through git in the caller's environment `env`, as the
-    /// notices they say. A tree outside git, or one git ignores, refuses
-    /// the read with the library domain's own refusal; git missing, too
-    /// old or failing fails it.
+    /// library, as the notices they say, in any directory (the library is
+    /// git-free, owner 2026-11-18); a scan or a record failing fails it.
     pub(crate) async fn observed(
         &self,
         project: Option<(ProjectName, &str)>,
-        env: Option<&v1::EnvVars>,
     ) -> Result<Vec<v1::Notice>, ApiError> {
         let Some((observations, observers)) = &self.observing else {
             return Ok(Vec::new());
         };
-        let env: Vec<(String, String)> = env
-            .iter()
-            .flat_map(|env| env.vars.iter())
-            .map(|var| (var.name.clone(), var.value.clone()))
-            .collect();
         let said = observations
-            .observe_read(observers.as_ref(), &env, project)
+            .observe_read(observers.as_ref(), project)
             .await
-            .map_err(|error| match error {
-                library_api::ReadError::Refused(rejection) => {
-                    ApiError::Refused(crate::library_refusal(&rejection))
-                }
-                library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
+            .map_err(|library_api::ReadError::Failed(failure)| {
+                ApiError::diagnosed(failure.as_ref())
             })?;
         Ok(said
             .iter()

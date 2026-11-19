@@ -18,16 +18,15 @@ use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
 use crate::refusal::refuse;
 use crate::{
-    BuiltinReadOnly, LibraryIgnored, NoSuchResource, NoSuchSlot, NotInGit, OneChangePerCall,
-    PlanRejected, PlanStale, ResourceExists, SlotNotDue, TreeInMotion,
+    BuiltinReadOnly, NoSuchResource, NoSuchSlot, OneChangePerCall, PlanRejected, PlanStale,
+    ResourceExists, SlotNotDue,
 };
 use crate::{
     BundleExported, ChangeFailed, ChangeIntended, ChangeStatus, CreateDirectory, DirtyPath,
     Evidence, External, HomeRepositoryMade, Intent, IntentSuperseded, Library, LibraryCommand,
     LibraryEvent, LibraryTreeRejection, MovePath, PurgeSlot, PurgeTrash, RecordBundleExported,
-    RecordHomeRepositoryMade, RecordStepDone, RecordStepFailed, RecordTreeInstalled,
-    RecordTreeListed, RecordTreeObserved, ReplaceFile, RunSequence, Step, StepApplied, TrashPath,
-    TreeInstalled, TreeObserved, KEEP_DAYS,
+    RecordStepDone, RecordStepFailed, RecordTreeInstalled, RecordTreeListed, RecordTreeObserved,
+    ReplaceFile, RunSequence, Step, StepApplied, TrashPath, TreeInstalled, TreeObserved, KEEP_DAYS,
 };
 use std::collections::BTreeMap;
 
@@ -88,27 +87,10 @@ fn bundle_of(path: &str) -> String {
         .to_string()
 }
 
-/// The evidence's verdict, in order: git, motion, the built-in bundle, the
-/// plan. None when it all holds.
+/// The evidence's verdict, in order: the built-in bundle, the plan. None
+/// when it all holds. git is no evidence (the library is git-free, owner
+/// 2026-11-18).
 fn judge(evidence: &Evidence, path: &str, checks: Checks) -> Result<(), LibraryTreeRejection> {
-    if !evidence.in_git {
-        return Err(match &evidence.ignored {
-            Some(ignored) => LibraryTreeRejection::LibraryIgnored {
-                source: ignored.source.clone(),
-                line: ignored.line,
-                pattern: ignored.pattern.clone(),
-            },
-            None => LibraryTreeRejection::NotInGit {
-                root: evidence.root.clone(),
-            },
-        });
-    }
-    if let Some(motion) = evidence.in_motion {
-        return Err(LibraryTreeRejection::TreeInMotion {
-            motion,
-            root: evidence.root.clone(),
-        });
-    }
     if checks.builtin && evidence.builtin {
         return Err(LibraryTreeRejection::BuiltinReadOnly {
             bundle: bundle_of(path),
@@ -274,7 +256,6 @@ impl LibraryAggregate {
             dirty_after: fact.dirty_after,
             tree_after: fact.tree_after,
             baseline,
-            in_motion: fact.in_motion,
         })
     }
 }
@@ -479,19 +460,11 @@ fn recorded<E: DomainMessage>(event: Option<E>) -> Result<FactEmit<LibraryAggreg
 
 #[aggregate(domain = "library", command = LibraryCommand, event = LibraryEvent)]
 impl LibraryAggregate {
-    /// Replace (or create) one file: judged on git, motion, the built-in
-    /// bundle and the plan, then on the path's token.
+    /// Replace (or create) one file: judged on the built-in bundle and the
+    /// plan, then on the path's token.
     #[handles_cmd(
         ReplaceFile,
-        refuses(
-            PlanStale,
-            BuiltinReadOnly,
-            PlanRejected,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored,
-            OneChangePerCall
-        )
+        refuses(PlanStale, BuiltinReadOnly, PlanRejected, OneChangePerCall)
     )]
     fn replace(
         &self,
@@ -521,9 +494,6 @@ impl LibraryAggregate {
                         PlanStale { path, seen, now } => PlanStale,
                         BuiltinReadOnly { bundle } => BuiltinReadOnly,
                         PlanRejected { code, args } => PlanRejected,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -541,14 +511,7 @@ impl LibraryAggregate {
     /// A new directory, never over something the record knows is there.
     #[handles_cmd(
         CreateDirectory,
-        refuses(
-            ResourceExists,
-            BuiltinReadOnly,
-            PlanRejected,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored
-        )
+        refuses(ResourceExists, BuiltinReadOnly, PlanRejected)
     )]
     fn create(
         &self,
@@ -570,9 +533,6 @@ impl LibraryAggregate {
                         ResourceExists { path } => ResourceExists,
                         BuiltinReadOnly { bundle } => BuiltinReadOnly,
                         PlanRejected { code, args } => PlanRejected,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -589,17 +549,7 @@ impl LibraryAggregate {
 
     /// A path into the trash: it must not be known gone, and its token
     /// must be the one the caller saw.
-    #[handles_cmd(
-        TrashPath,
-        refuses(
-            NoSuchResource,
-            PlanStale,
-            BuiltinReadOnly,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored
-        )
-    )]
+    #[handles_cmd(TrashPath, refuses(NoSuchResource, PlanStale, BuiltinReadOnly))]
     fn trash(
         &self,
         cmd: TrashPath,
@@ -621,9 +571,6 @@ impl LibraryAggregate {
                         NoSuchResource { path } => NoSuchResource,
                         PlanStale { path, seen, now } => PlanStale,
                         BuiltinReadOnly { bundle } => BuiltinReadOnly,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -640,17 +587,7 @@ impl LibraryAggregate {
 
     /// ctxloom's own move: from a path not known gone, to one not known
     /// there, `from`'s token the one the caller saw.
-    #[handles_cmd(
-        MovePath,
-        refuses(
-            NoSuchResource,
-            ResourceExists,
-            PlanStale,
-            TreeInMotion,
-            NotInGit,
-            LibraryIgnored
-        )
-    )]
+    #[handles_cmd(MovePath, refuses(NoSuchResource, ResourceExists, PlanStale))]
     fn move_path(
         &self,
         cmd: MovePath,
@@ -672,9 +609,6 @@ impl LibraryAggregate {
                         NoSuchResource { path } => NoSuchResource,
                         ResourceExists { path } => ResourceExists,
                         PlanStale { path, seen, now } => PlanStale,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -691,10 +625,7 @@ impl LibraryAggregate {
 
     /// A retryable sequence (T28): its evidence judged once, each step's
     /// token judged as its own command's; the steps kept in the intent.
-    #[handles_cmd(
-        RunSequence,
-        refuses(PlanStale, PlanRejected, TreeInMotion, NotInGit, LibraryIgnored)
-    )]
+    #[handles_cmd(RunSequence, refuses(PlanStale, PlanRejected))]
     fn sequence(
         &self,
         cmd: RunSequence,
@@ -725,9 +656,6 @@ impl LibraryAggregate {
                     [
                         PlanStale { path, seen, now } => PlanStale,
                         PlanRejected { code, args } => PlanRejected,
-                        TreeInMotion { motion, root } => TreeInMotion,
-                        NotInGit { root } => NotInGit,
-                        LibraryIgnored { source, line, pattern } => LibraryIgnored,
                     ]
                 )
             })?;
@@ -854,7 +782,6 @@ impl LibraryAggregate {
             changes,
             dirty_after: fact.files,
             baseline: false,
-            in_motion: fact.in_motion,
         };
         self.observed(observed, ctx)
     }
@@ -918,20 +845,6 @@ impl LibraryAggregate {
         }))
     }
 
-    /// The home step made this tree a repository of ctxloom's own (G3):
-    /// recorded once; said again, it adds nothing.
-    #[handles_fact(RecordHomeRepositoryMade)]
-    fn home_repository_made(
-        &self,
-        fact: RecordHomeRepositoryMade,
-        ctx: &Context,
-    ) -> Result<FactEmit<Self>, Bug> {
-        let _ = ctx;
-        recorded(
-            (!self.library.home_repository_made).then_some(HomeRepositoryMade { name: fact.name }),
-        )
-    }
-
     /// A bundle of this tree exported, as it was made (AIP-155).
     #[handles_fact(RecordBundleExported)]
     fn bundle_exported(
@@ -957,6 +870,8 @@ impl LibraryAggregate {
         );
     }
 
+    /// Never emitted since the git-free ruling (owner 2026-11-18); a 10b
+    /// stream's is applied as nothing, so the stream still replays.
     #[applies(HomeRepositoryMade)]
     fn home_repository_was_made(&mut self, event: HomeRepositoryMade, page: &PageContext) {
         self.library.apply_page(

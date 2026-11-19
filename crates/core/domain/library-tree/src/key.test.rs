@@ -87,7 +87,6 @@ fn an_observations_book_is_a_fact_on_the_trees_stream_keyed_by_what_it_saw() {
         changes: Vec::new(),
         dirty_after: vec![dirty("a", "1")],
         baseline: false,
-        in_motion: None,
     };
     let book = observation_book(&tree, &fact);
     let cover = book.cover.unwrap();

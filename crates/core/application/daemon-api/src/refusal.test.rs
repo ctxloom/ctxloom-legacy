@@ -259,28 +259,18 @@ fn the_diagnostics_display_their_code_and_args() {
 
 // Step 10a U2: a library read's refusal is the library domain's own typed
 // refusal, under its message's status, and the client maps it back by its
-// type to the same rejection (NotInGit, LibraryIgnored and PlanRejected:
-// what a read refuses); every rejection packs.
+// type to the same rejection (PlanRejected: what a read refuses); every
+// rejection packs.
 #[test]
 fn a_library_refusal_travels_as_the_domains_own_and_comes_back_by_its_type() {
     use library_tree::LibraryTreeRejection as Why;
-    let read = [
-        Why::NotInGit {
-            root: "/work/demo".to_string(),
-        },
-        Why::LibraryIgnored {
-            source: ".gitignore".to_string(),
-            line: 2,
-            pattern: ".ctxloom/".to_string(),
-        },
-        Why::PlanRejected {
-            code: "library-application-profile-unknown".to_string(),
-            args: std::collections::BTreeMap::from([("name".to_string(), "x".to_string())]),
-        },
-    ];
+    let read = [Why::PlanRejected {
+        code: "library-application-profile-unknown".to_string(),
+        args: std::collections::BTreeMap::from([("name".to_string(), "x".to_string())]),
+    }];
     for rejection in read {
         let packed = crate::library_refusal(&rejection);
-        assert_eq!(packed.code, not_in_git_status(), "{rejection:?}");
+        assert_eq!(packed.code, precondition_status(), "{rejection:?}");
         assert_eq!(
             crate::rejection_of(&packed.refusal),
             Some(crate::Rejection::Library(rejection.clone()))
@@ -293,10 +283,6 @@ fn a_library_refusal_travels_as_the_domains_own_and_comes_back_by_its_type() {
         );
     }
     for rejection in [
-        Why::TreeInMotion {
-            motion: library_tree::Motion::Merging,
-            root: "/r".to_string(),
-        },
         Why::PlanStale {
             path: "p".to_string(),
             seen: 1,
@@ -320,12 +306,12 @@ fn a_library_refusal_travels_as_the_domains_own_and_comes_back_by_its_type() {
     }
 }
 
-/// The status `library_tree::NotInGit` declares, as the gRPC code: what
-/// every read refusal of the library domain is answered under.
-pub(crate) fn not_in_git_status() -> i32 {
+/// The status `library_tree::PlanRejected` declares, as the gRPC code: what
+/// a read refusal of the library domain is answered under.
+pub(crate) fn precondition_status() -> i32 {
     use library_tree::Refusal;
     angzarr_embedded::angzarr_router::error::GrpcCode::from(
-        <library_tree::NotInGit as Refusal>::REFUSAL_STATUS,
+        <library_tree::PlanRejected as Refusal>::REFUSAL_STATUS,
     ) as i32
 }
 

@@ -195,8 +195,7 @@ a profile its short library reference), `config edit` (`EditConfig`,
 an additive RPC, owner ruling 2026-11-18: the config of where it is run
 through the editor as a round trip, the preview's Edit need its text and
 the apply its answer written whole and unparsed, so a config that does not
-load can still be mended; left as it was, nothing applied; outside git it
-is refused `library-tree-not-in-git` first), `profile create`
+load can still be mended; left as it was, nothing applied), `profile create`
 (`CreateProfile`, under the bundle its parent names, `--bundle`, else
 the project's own, `project`, made with it the first time as one new
 directory; `--add-skill` is the INPUT_ONLY `Profile.skills`, additive),
@@ -2833,8 +2832,7 @@ does a motion alone. `RecordStepDone` (the pending intent's next step ties
 its `observed` paths to its event's sequence) and `RecordStepFailed` record
 for a pending intent only. The five commands (`ReplaceFile`,
 `CreateDirectory`, `TrashPath`, `MovePath`, `RunSequence`, each with a
-`verb`) are decided on `Evidence` in order (git: `NotInGit`/
-`LibraryIgnored`; `TreeInMotion`; `BuiltinReadOnly`; the plan's
+`verb`) are decided on `Evidence` in order (`BuiltinReadOnly`; the plan's
 `PlanRejected`, which speaks as the plan's own diagnostic, or
 `library-tree-tree-unreadable`), then existence as the record knows it
 (`ResourceExists`, `NoSuchResource`) and the token the caller saw
@@ -2843,10 +2841,13 @@ sequence's steps their tokens alone; they record a `ChangeIntended`, which
 moves no token. Nothing sends them before 10b (U3). The texts are 10a's and
 10b's accepted drafts. Departures from the approved proto, each forced by
 angzarr-build's domain layer and wire-compatible: `Step`'s arms and
-`TreeObserved`'s cause are `optional` fields (no `oneof` is mapped), each
-`in_motion` an `optional` enum; `Evidence.root` and `TreeInMotion.root`
-carry the root the texts name; `OneChangePerCall` waits for 10b (U8), as no
-command refuses it yet. Not built here: the observer (U12's git port, U2's
+`TreeObserved`'s cause are `optional` fields (no `oneof` is mapped);
+`OneChangePerCall` waits for 10b (U8), as no command refuses it yet. git is
+no evidence (the library is git-free, below): the git refusals
+`NotInGit`, `LibraryIgnored` and `TreeInMotion`, the `Motion` enum and every
+`in_motion` field are gone, their fields RESERVED (`Evidence` 4 to 7,
+`TreeObserved` 8, `RecordTreeObserved` 10, `RecordTreeListed` 5) and their
+names never reused. Not built here: the observer (U12's git port, U2's
 reconcile), intent attribution and supersession (10b, U13), trash. The observer and
 the reconcile are U2's (below, "A library read observes its trees first").
 
@@ -2858,71 +2859,45 @@ facts (runs-application's `EdgeCommands::reach`, `user_allowlist`). Under
 `test-support` only, `ctxloom test library-events [--home] --format json`
 (QUESTIONS G) reads the cwd checkout's (or the home's) stream from the one
 store: `{"tree", "events": [{type, sequence, baseline, head_before,
-head_after, in_motion, changes: [{path, status, from_path?, oid?}]}]}`,
+head_after, changes: [{path, status, from_path?, oid?}]}]}`,
 `"tree": null` where no checkout harp was minted; it mints and records
 nothing.
 
-## git holds the library (step 10, U12; plan `t13-step10.plan.md` G1, G2, G9, G11)
+## The library is git-free (owner 2026-11-18; superseding G1, G2, G3 and L11)
 
-A library tree (a project checkout's `.ctxloom`, the home's) is in git, and
-what ctxloom knows of it is what git says: ctxloom-ports' `TreeObserver`
-(the work tree a directory is in, the ignore rule that ignores a path, a
-repository made, the commit checked out, the library's tree in a commit,
-`status --porcelain=v2 -z -uall --renames`, `diff-tree -r -M`, each file's
-object id by `hash-object --stdin-paths`, nothing stored, and the git
-operation in progress by `rev-parse --git-path` of `rebase-merge`,
-`rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` and
-`index.lock`), every path relative to the directory asked about
-(QUESTIONS.md I). `adapters/driven/library-git`'s `GitTrees` implements it,
-git on the caller's `PATH` in the caller's environment, every invocation
-`git --no-optional-locks -c core.longpaths=true`, so a read writes nothing
-into `.git`. It asks git its version once: none on the `PATH` is
-`library-git-git-missing`, older than 2.25 `library-git-git-too-old` (G11,
-QUESTIONS.md F), both failures, exit 10; a version line it cannot read is
-not judged.
+The scanner sees a library tree (below), so nothing on the library path
+asks git: a library works in ANY directory, in git or not, whatever git
+ignores and whatever git is doing. No read or write is refused for git's
+sake (`library-tree-not-in-git`, `-library-ignored` and `-tree-in-motion`
+are gone, with `locate::refusal`, `reconcile::motion_of` and the read
+notices `library-api-notice-tree-in-motion`); git missing fails no library
+command. The HOME is never made a repository (the home step,
+`ensure_home_repository`, `HOME_GITIGNORE` and
+`library-api-notice-home-repository-made` are gone) and ctxloom commits
+nothing, in the home or a project (G3's home commit, `home_commit`,
+`library-api-notice-home-not-committed` and the `RecordHomeRepositoryMade`
+fact are gone): the event store is the history. The home's library is
+observed whenever it has a `.ctxloom`. `config create` makes no
+repository (`with_repository_step` and `Notice::Git` are gone). Foreign
+writes (U10) are recorded in any directory: U10's unrecorded outside-git
+fallback is gone. Accepted cost: the home loses its per-write git history.
+`HomeRepositoryMade` stays a decodable EVENT, never emitted and folded as
+nothing but its cause, so a stream a 10b daemon wrote replays
+(`LibraryState.home_repository_made`, 11, is reserved).
 
-- `init` makes the directory it is run in a git repository when it is in
-  no work tree (G1: unasked, committing nothing), BEFORE it scaffolds, so a
-  missing git leaves nothing (exit 10); a directory below a repository's
-  root is in git, and left alone. It says
-  `init-application-notice-git-initialized` (`init_application::
-  ensure_repository`, `Init::with_repository`). `config create` takes the
-  same step before it writes (QUESTIONS.md E; `Library::
-  with_repository_step`, its notice `Notice::Git` in init's words).
-- The HOME is made a repository at its first read (G2, QUESTIONS.md B):
-  every library command first takes `library_application::
-  ensure_home_repository` over the home's `.ctxloom` (the wiring's
-  `library::home_repository`, which is also where git missing fails a read,
-  exit 10; a home with no `.ctxloom` yet is passed over). In no work tree,
-  or in one that ignores its `config.yaml` (a dotfiles repository ignoring
-  `.ctxloom`, QUESTIONS.md C: then nested), it is `git init`ed with the
-  ALLOWLIST `.gitignore` (`HOME_GITIGNORE`: `/*` then `!/.gitignore
-  !/config.yaml !/remotes.yaml !/lock.yaml !/content/`), written first and
-  only where there is none (once there it is hers), committing nothing;
-  any other work tree (her own repository at `.ctxloom`, or a dotfiles one
-  keeping it) is used as it is.
-- NOT built here (10a's other units): the reads moving into the daemon,
-  which then takes the home step per home and says the home's notice
-  `library-api-notice-home-repository-made` (U2, blocked: below).
-- The HOME COMMIT (G3, owner 2026-11-18, night; step 10b): when the
-  daemon's home step (`Observations::observe_trees`) `git init`s the home
-  and git then holds it, it records `RecordHomeRepositoryMade` on the home
-  tree's stream (keyed `home-repository-made:{tree}`; `HomeRepositoryMade`,
-  `LibraryState.home_repository_made`, all additive). After a write to the
-  home is recorded done, and only on a stream holding it, the daemon
-  commits that write (`carry_out`'s `home_commit`, through
-  `TreeObserver::commit`, library-git over git-cli): `git -c
-  user.name=ctxloom -c user.email=ctxloom@localhost -c commit.gpgsign=false
-  commit -q -m "ctxloom: <verb> (<request id>)" -- <paths>` (the library
-  paths its steps changed, staged first with `add -A`; `GIT_AUTHOR_*` and
-  `GIT_COMMITTER_*` are set to ctxloom too, as they outrank `-c`), one commit
-  per write; nothing changed, nothing committed. Never in a project tree,
-  nor in a home made before the fact existed, nor in a repository ctxloom
-  did not make; a home first made by an in-process verb (not a served one)
-  gets no fact either. A failed commit is the notice
-  `library-api-notice-home-not-committed` (a draft), and the write stands.
-- `TreeObserver::blob_ids` leaves out a path with no file (absent): the
-  reconcile asks the ids of paths it last saw dirty, some since taken away.
+git stays where a feature needs it: child checkouts (`worktree-git`),
+remote bundles (`remote-git`), the session home's identity seed, and,
+until slot-1's U6 rebuilds init in the daemon without it, init's own git
+step: `init` makes the directory it is run in a git repository when it is
+in no work tree (`init_application::ensure_repository`,
+`Init::with_repository`, `init-application-notice-git-initialized`), over
+ctxloom-ports' `TreeObserver` and `adapters/driven/library-git`'s
+`GitTrees` (git on the caller's `PATH`, every invocation `git
+--no-optional-locks -c core.longpaths=true`; git missing is
+`library-git-git-missing`, older than 2.25 `library-git-git-too-old`, exit
+10). That step is the port's and the crate's LAST user: they go with it
+(their status, diff, blob-id, motion and commit methods, and the commit's
+no-hooks override, serve nothing on the library path now).
 
 ## A library read observes its trees first (step 10a U2, in part)
 
@@ -2946,45 +2921,37 @@ sorted; a move is a delete and a create) and records the `TreeObserved`
 a read's would be, the first a baseline of every file, an intent's own
 change attributed as before. Writes' intents and steps name content ids
 (`writes::intent_of` asks nothing; `left_by` and an export's manifest ask
-the scanner). git is still asked for G1's refusals, the home step and a
-git operation in progress (`TreeObserver::in_motion`) until the git-free
-undo (plan "The library is git-free"); library-api's git reconcile
-(`sight`, `PATHSPEC`) is gone.
-`locate::refusal` is G1's: a project whose root is in no work tree is
-`library-tree-not-in-git`, one whose `.ctxloom/config.yaml` git ignores
-(`check-ignore` from the root) `library-tree-library-ignored`.
-`Observations::observe` runs both for a `Site` (a checkout's, or the
-home's, which takes no G1 check), naming the checkout first
-(`CheckoutHarps`: the wiring's `TreeHarps`, `mint_checkout_harp`) only
-after the refusal, reconciling against the kernel's `library-checkout`
+the scanner). No git is asked at all (the library is git-free, above).
+`Observations::observe(scanner, site)` observes a `Site` (a checkout's, or
+the home's), naming the checkout first (`CheckoutHarps`: the wiring's
+`TreeHarps`, `mint_checkout_harp`), reconciling against the kernel's `library-checkout`
 (projected inline, so the next read sees the last one's), and records the
 fact through the edge (`observation_book`); no lock is held across the
 recording: one sight twice against one state is a DUPLICATE, and one
 against a moved state records what it adds (forced in `observe.test.rs`).
 `observe_read` is a read's whole step: the project's checkout, then the
-home's library where it is in a work tree git does not ignore it in, in
-the caller's environment (`Observers`: the wiring's `CallerGits`, git on
-the request's `env` PATH). Its notices are `library-api-notice-tree-in-
-motion` and `-home-repository-made` (texts.md, accepted verbatim).
+home's library when it has one (`Observers`: the wiring's `CallerGits`,
+the daemon's one scanner and the home); it says no notice of its own now
+(its `notices` plumbing is kept, empty).
 `library_api::names` is the library's resource naming, one copy
 (library-cli re-exports it until each noun is served).
 
 The daemon's `Api::observing(Observing)` (serve.rs) makes every library
 read it serves (`Api::library_read`, `AssembleContext` among them) observe
-first: a refusal is the library domain's own typed refusal under its
-message's status (`daemon_api::library_refusal`; `rejection_of` maps
-`NotInGit`, `LibraryIgnored` and `PlanRejected` back to
-`Rejection::Library`, exit 20), a motion a notice. git failing is an
-internal failure; git MISSING or TOO OLD is a DIAGNOSED failure (step 10a
-U2, owner ruling 2026-11-17): `ApiError::Diagnosed {code, args}` (the
-`library-git` diagnostic's), answered FAILED_PRECONDITION
+first: the library domain's refusals travel as its own typed refusals
+under their messages' status (`daemon_api::library_refusal`;
+`rejection_of` maps `PlanRejected` and the write refusals back to
+`Rejection::Library`, exit 20). A failure an adapter diagnoses (once git
+missing or too old, now e.g. a deps read's) is a DIAGNOSED failure (step
+10a U2, owner ruling 2026-11-17): `ApiError::Diagnosed {code, args}` (the
+adapter's diagnostic's), answered FAILED_PRECONDITION
 (`run_ports::Infrastructure::Unmet`, never UNAVAILABLE, which a client
 reads as an unreachable daemon) carrying a `google.rpc.ErrorInfo` whose
 domain is `run_ports::DIAGNOSED` (`ctxloom.dev/diagnostic`), reason the
 code and metadata the args; the client reads it back as
 `Called::Diagnosed` (`daemon_client::called`, before any status is read),
-so the command says `library-git-git-missing` in its own catalog's words
-and exits 10.
+so the command says the diagnostic in its own catalog's words and exits
+10.
 
 `just bench-reconcile` (O7; `LIBRARY_BENCH=reconcile`, else the test says
 SKIP) times an observation's scan over `CallerGits`' scanner, its memo
@@ -3133,12 +3100,10 @@ built:
   read fails (`daemon-api-unreached`, exit 10), text or json alike: a text
   answer no longer reaches no daemon (so `scripts/plain-engines-check.sh`
   proves the plain engine list by an agent written on a mock, refused in
-  process naming the list). The home step (G2) is the daemon's, at a read
-  (`observe_read`), said as `library-api-notice-home-repository-made`; the
-  caller takes none before a served read (`library_cli::is_served_read`,
-  its `SERVED_VERBS` table, `mcp server list|show`, `search`, `loadout`
-  and `run --dry-run`; one path), and a verb still in process takes it in process
-  first.
+  process naming the list). There is no home step (git-free), in the
+  daemon or in process (`library_cli::is_served_read`'s `SERVED_VERBS`
+  table, `mcp server list|show`, `search`, `loadout` and `run --dry-run`,
+  still says which verbs are served).
 - Text prints CANONICAL forms (owner rulings 2026-11-17), as the message
   holds them, never the spelling written (no as-written field crosses the
   wire): a reference is its SHORT library reference, harp-free, as a
@@ -3155,8 +3120,7 @@ built:
   (profile.tsv, mcp.tsv, run.tsv; library_parity's `as_canonical`).
 - `run --dry-run` is `CreateRun` with `validate_only` (`Api::preview_run`,
   `LibraryReads::preview_run`, library-cli's `Served::preview_run`): planned
-  as a library read (its trees observed first, so a library outside git is
-  refused `library-tree-not-in-git`) at the caller's directory, in its
+  as a library read (its trees observed first) at the caller's directory, in its
   environment, under the project's trust as the daemon reads it, then
   judged on the untrusted project settings it reads as the runs aggregate
   judges an enqueue (`runs::pre_launch_refusal`, owner answer H:

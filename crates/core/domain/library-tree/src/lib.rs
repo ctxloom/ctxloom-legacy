@@ -40,7 +40,7 @@ pub use name::{kind_of, tree_root, TreeName, CHECKOUT_FILE, HOME_TREE};
 pub use refusal::NotOurs;
 #[cfg(any(test, feature = "test-support"))]
 pub use rejection::diagnostic_samples;
-pub use rejection::{motion_word, LibraryTreeRejection, EN_US};
+pub use rejection::{LibraryTreeRejection, EN_US};
 pub use state::{cause_of, Library, Resource, Slot, KEEP_DAYS, LIBRARY_DOMAIN};
 
 #[cfg(test)]

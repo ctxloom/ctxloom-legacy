@@ -131,30 +131,19 @@ fn pairs(env: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
         .map(|(name, value)| (name.as_str(), value.as_str()))
 }
 
-/// git as a library read's caller runs it (step 10a U2, protos.md §2): on
-/// the caller's `PATH`, in the caller's environment (git-cli scrubs its
-/// repository variables), over this process's filesystem; and the home's
-/// library, `<home>/.ctxloom`, when there is one.
+/// What a library read's trees are seen by (step 10a U2; the library is
+/// git-free, owner 2026-11-18): the daemon's one scanner, over this
+/// process's filesystem, and the home's library, `<home>/.ctxloom`, when
+/// there is one.
 pub(crate) struct CallerGits {
     pub(crate) fs: Arc<dyn Fs>,
     pub(crate) home: PathBuf,
-    pub(crate) temp: PathBuf,
     /// The one scanner every read sees a tree through (step 10c U13
     /// rework), its memo shared.
     pub(crate) scanner: Arc<TreeScanner>,
 }
 
 impl library_api::Observers for CallerGits {
-    fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
-        let home = self.home.display().to_string();
-        let snapshot =
-            super::caller_env(os::host().flavor(), &self.temp, (&home, None), pairs(env));
-        Box::new(library_git::GitTrees::new(
-            Arc::clone(&self.fs),
-            Arc::new(snapshot),
-        ))
-    }
-
     fn scanner(&self) -> Arc<dyn ctxloom_ports::LibraryScanner> {
         Arc::clone(&self.scanner) as Arc<dyn ctxloom_ports::LibraryScanner>
     }

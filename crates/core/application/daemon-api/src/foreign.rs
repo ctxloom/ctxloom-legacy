@@ -5,8 +5,8 @@
 //! stands (its directory, its environment), writing nothing, then made as
 //! ONE retryable sequence on the checkout's stream: each file a step of its
 //! own (`ReplaceFile` marked `foreign`), the writer's own record of what it
-//! claims FIRST, every path and git's id for what it will hold listed in
-//! the intent. Each step, once made, is recorded done, so a write killed
+//! claims FIRST, every path and the content id of what it will hold listed
+//! in the intent. Each step, once made, is recorded done, so a write killed
 //! between its steps is finished by its retry, from the first step not
 //! done; and a re-run converges, for a step whose file already holds what
 //! it would write is made by writing nothing.
@@ -197,27 +197,6 @@ fn sequence_of(
     }
 }
 
-/// An observation's outcome for a foreign writer: the trees, or none where
-/// git cannot hold the record (a tree outside git, or one it ignores):
-/// another tool's files are none of the library's, so they are written as
-/// they always were, unrecorded (the library is git-free, owner 2026-11-18,
-/// superseding G1). Any other refusal or failure is the write's.
-fn tolerated(
-    observed: Result<library_api::Trees, library_api::ReadError>,
-) -> Result<Option<library_api::Trees>, ApiError> {
-    match observed {
-        Ok(trees) => Ok(Some(trees)),
-        Err(library_api::ReadError::Refused(
-            library_tree::LibraryTreeRejection::NotInGit { .. }
-            | library_tree::LibraryTreeRejection::LibraryIgnored { .. },
-        )) => Ok(None),
-        Err(library_api::ReadError::Refused(rejection)) => {
-            Err(ApiError::Refused(crate::library_refusal(&rejection)))
-        }
-        Err(library_api::ReadError::Failed(failure)) => Err(ApiError::diagnosed(failure.as_ref())),
-    }
-}
-
 /// The kill point after a foreign writer's `n`th step (one-based) is
 /// recorded done (the `test-die-at` switch's word).
 pub(crate) fn after_step(n: usize) -> String {
@@ -243,18 +222,9 @@ impl<E: Edge> Api<E> {
         let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
             detail: "this daemon observes no library".to_string(),
         })?;
-        let notices: Vec<v1::Notice> = trees
-            .iter()
-            .flat_map(|trees| trees.notices.iter().map(notice_of))
-            .collect();
+        let notices: Vec<v1::Notice> = trees.notices.iter().map(notice_of).collect();
         let planned = plans.plan(&site.at, &site.env, &site.flags, ask)?;
         let answer = planned.answer.clone().saying(notices);
-        let Some(trees) = trees else {
-            if !(dry || request.validate_only() || answer.erred()) {
-                self.unrecorded(&planned.files)?;
-            }
-            return Ok(answer);
-        };
         let request_id = request.request_id();
         let known = (!request_id.is_empty())
             .then(|| observations.known(request_id))
@@ -298,10 +268,6 @@ impl<E: Edge> Api<E> {
             tree_reads: true,
             plan_rejection: None,
             builtin: false,
-            in_motion: None,
-            in_git: true,
-            ignored: None,
-            root: root.clone(),
         };
         let tree = &landing.observed.tree;
         let id = uuid::Uuid::parse_str(request_id).unwrap_or_else(|_| uuid::Uuid::now_v7());
@@ -334,18 +300,13 @@ impl<E: Edge> Api<E> {
         Ok(answer)
     }
 
-    /// Where a foreign writer writes, and its trees observed: none where
-    /// git cannot hold the record ([`tolerated`]).
+    /// Where a foreign writer writes, and its trees observed, in any
+    /// directory (the library is git-free, owner 2026-11-18): another
+    /// tool's files are recorded everywhere.
     async fn foreign_site<Q: LibraryWriteRequest>(
         &self,
         request: &Q,
-    ) -> Result<
-        (
-            crate::library_reads::ReadSite<'_>,
-            Option<library_api::Trees>,
-        ),
-        ApiError,
-    > {
+    ) -> Result<(crate::library_reads::ReadSite<'_>, library_api::Trees), ApiError> {
         let (site, project) = self
             .resolve(
                 request.target(),
@@ -361,13 +322,15 @@ impl<E: Edge> Api<E> {
         let observed = observations
             .observe_trees(
                 observers.as_ref(),
-                &site.env,
                 project
                     .as_ref()
                     .map(|(name, root)| (name.clone(), root.as_str())),
             )
-            .await;
-        Ok((site, tolerated(observed)?))
+            .await
+            .map_err(|library_api::ReadError::Failed(failure)| {
+                ApiError::diagnosed(failure.as_ref())
+            })?;
+        Ok((site, observed))
     }
 
     /// The steps of a foreign writer's intent from `start`, each made by its
@@ -434,29 +397,6 @@ impl<E: Edge> Api<E> {
                 .await
                 .map_err(ApiError::failed)?;
             self.dies_at(&after_step(at as usize + 1));
-        }
-        Ok(())
-    }
-
-    /// `files` written as they are, each by its own operation, recorded in
-    /// no stream: another tool's files where no tree can hold the record.
-    fn unrecorded(&self, files: &[ForeignPut]) -> Result<(), ApiError> {
-        let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
-            detail: "this daemon observes no library".to_string(),
-        })?;
-        let operations = observations.operations().ok_or_else(|| ApiError::Failed {
-            detail: "this daemon makes no write".to_string(),
-        })?;
-        for put in files {
-            let operation = ctxloom_ports::Operation::Outside {
-                path: put.path.clone(),
-                bytes: put.bytes.clone(),
-                executable: put.executable,
-                keep: put.keep.clone(),
-            };
-            operations
-                .operate("", "unrecorded", &operation, &|_| {})
-                .map_err(|failure| ApiError::diagnosed(failure.as_ref()))?;
         }
         Ok(())
     }
