@@ -974,6 +974,23 @@ pub(crate) fn preview_client<'a>(
     })
 }
 
+/// A first init's recheck (smoke 2026-11-19): where no `.ctxloom` is but
+/// ctxloom's home already binds this root to a project (a repository
+/// deleted and made again at its place), that project's registration is
+/// rechecked first, so another repository there is refused
+/// (`sessions-project-identity-changed`) before init writes anything.
+/// Nothing is asked where nothing binds the root, or where a `.ctxloom` is
+/// (the preview's own registration rechecks that).
+pub(crate) fn recheck_bound(wiring: &Wiring, stamp: &str) -> Result<(), Failure> {
+    if wiring.ctxloom_project().is_some() {
+        return Ok(());
+    }
+    let Ok(Some(registration)) = wiring.registration() else {
+        return Ok(());
+    };
+    resolved_parent(wiring, stamp, Some(registration)).map(|_| ())
+}
+
 /// This command's client of the daemon for a library read (step 10a U2):
 /// its project registered at its root (its id minted there if it has none
 /// yet), else outside a project.
