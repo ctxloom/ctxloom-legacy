@@ -122,10 +122,31 @@ pub fn deps(git_found: bool, identity_known: bool) -> Check {
 }
 
 /// `AGENTS-b2`: every configured agent names the engine it runs, or the
-/// profiles it is for (an agent bound to neither resolves nothing).
-pub fn agents(config: Option<&str>) -> Check {
+/// profiles it is for (an agent bound to neither resolves nothing), and
+/// resolves: one whose run would be refused as planned (`unresolved`, the
+/// library's word: a bundle its profiles include that is not there, a
+/// profile nobody has) is a `fail` naming the agent and why.
+pub fn agents(config: Option<&str>, unresolved: &[library_application::AgentUnresolved]) -> Check {
     const M: &str = "DOCTOR-CHECK-AGENTS-b2";
     const N: &str = "agents";
+    if !unresolved.is_empty() {
+        let detail: Vec<String> = unresolved
+            .iter()
+            .map(|agent| {
+                format!(
+                    "agent {} does not resolve, so its run is refused: {}",
+                    agent.agent,
+                    agent.problems.join("; ")
+                )
+            })
+            .collect();
+        let fix = unresolved
+            .iter()
+            .map(|agent| agent.fix.as_str())
+            .find(|fix| !fix.is_empty())
+            .unwrap_or("ctxloom agent edit <name> --profiles <profile>");
+        return row(M, N, Status::Fail, &detail.join("; "), fix);
+    }
     let Some(Ok(value)) = config.map(angzarr_yaml::parse) else {
         return row(
             M,

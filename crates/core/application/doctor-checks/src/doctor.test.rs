@@ -701,6 +701,29 @@ fn a_doctor_reporting_losses_warns_of_each() {
     assert!(lost.detail.contains("agent dev on opencode cannot carry"));
 }
 
+// A doctor reporting unresolved agents asks for them, and the agents row
+// fails naming each (smoke 2026-11-19).
+#[test]
+fn a_doctor_reporting_unresolved_agents_fails_the_agents_row() {
+    use library_application::AgentUnresolved;
+    let report = doctor(&project(), true)
+        .reporting_unresolved(Box::new(|| {
+            vec![AgentUnresolved {
+                agent: "dev".to_string(),
+                problems: vec!["bundle not found: mystd".to_string()],
+                fix: String::new(),
+            }]
+        }))
+        .report(false);
+    let agents = row(&report, "DOCTOR-CHECK-AGENTS-b2");
+    assert_eq!(agents.status, Status::Fail);
+    assert!(
+        agents.detail.contains("agent dev does not resolve"),
+        "{}",
+        agents.detail
+    );
+}
+
 /// The project's foreign worktrees, as a fake lists them, recording where it
 /// was asked.
 struct Foreign(Mutex<Vec<String>>);

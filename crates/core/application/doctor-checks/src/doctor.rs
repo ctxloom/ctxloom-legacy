@@ -8,7 +8,7 @@ use auth_application::Auth;
 use ctxloom_ports::{
     ConfigFiles, Executables, Failure, ForeignWorktrees, GitIdentity, Scope, Source, UserFiles,
 };
-use library_application::{AgentLosses, LegacyGo};
+use library_application::{AgentLosses, AgentUnresolved, LegacyGo};
 use run_ports::HeldFacts;
 use serde::Serialize;
 
@@ -54,6 +54,9 @@ pub struct Doctor {
     /// What each agent's engine cannot carry of its profiles, asked when the
     /// report is made; none asked, none.
     losses: Option<Box<dyn Fn() -> Vec<AgentLosses>>>,
+    /// The agents whose run would be refused as planned, asked when the
+    /// report is made; none asked, none.
+    unresolved: Option<Box<dyn Fn() -> Vec<AgentUnresolved>>>,
     /// The project's worktrees ctxloom did not create; none wired, no row.
     worktrees: Option<Arc<dyn ForeignWorktrees>>,
     /// The items whose distilled form is stale (T30, S51), asked when the
@@ -109,6 +112,7 @@ impl Doctor {
             version: version.to_string(),
             program: "ctxloom".to_string(),
             losses: None,
+            unresolved: None,
             worktrees: None,
             stale: None,
             old_layouts: None,
@@ -162,6 +166,15 @@ impl Doctor {
     pub fn reporting_losses(self, losses: Box<dyn Fn() -> Vec<AgentLosses>>) -> Doctor {
         Doctor {
             losses: Some(losses),
+            ..self
+        }
+    }
+
+    /// This doctor, asking `unresolved` which agents' runs would be refused
+    /// as planned (the library's, for `AGENTS-b2`).
+    pub fn reporting_unresolved(self, unresolved: Box<dyn Fn() -> Vec<AgentUnresolved>>) -> Doctor {
+        Doctor {
+            unresolved: Some(unresolved),
             ..self
         }
     }
@@ -307,7 +320,14 @@ impl Doctor {
                     refused.as_ref().map(|(m, f)| (m.as_str(), f.as_str())),
                 ),
                 deps,
-                checks::agents(config.as_deref()),
+                checks::agents(
+                    config.as_deref(),
+                    &self
+                        .unresolved
+                        .as_ref()
+                        .map(|ask| ask())
+                        .unwrap_or_default(),
+                ),
                 checks::credentials(&layers, &self.auth),
                 checks::version(&self.version),
                 checks::hooks(&settings, &self.program),
