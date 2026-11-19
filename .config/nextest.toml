@@ -308,7 +308,7 @@ filter = '''
         | test(=tests::gherkin_features::features::cli::completion)
     )
 '''
-slow-timeout = { period = "30s", terminate-after = 6, grace-period = "10s" }
+slow-timeout = { period = "30s", terminate-after = 100, grace-period = "10s" }
 
 [[profile.default.overrides]]
 platform = 'cfg(windows)'

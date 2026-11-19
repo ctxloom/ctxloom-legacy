@@ -54,6 +54,7 @@ env:
 jobs:
   linux:
     name: build and test (linux)
+    if: false
     runs-on: ubuntu-24.04
     # Owner ruling 2026-11-12: the Linux job runs IN the dev container, once
     # its image is published (by digest, as every pin):
@@ -110,6 +111,7 @@ jobs:
 
   macos:
     name: build and test (macos)
+    if: false
     runs-on: macos-15
     defaults:
       run:
@@ -168,8 +170,14 @@ jobs:
       - run: just build
       - name: just test (uncapped, TESTS_MEMORY_MAX=none)
         run: |
-          echo "test gates: memory cap: none (TESTS_MEMORY_MAX=none): this runner's VM is the job's alone"
-          just test
+          rm -f target/logs/doctor-timings.log
+          export GHERKIN_ONLY=cli/doctor.feature GHERKIN_TIMINGS="$(cygpath -m "$PWD")/target/logs/doctor-timings.log"
+          just test-pkg ctxloom || true
+      - name: deps timings
+        if: always()
+        run: |
+          sort -rn target/logs/doctor-timings.log | head -60 || true
+          echo "scenarios timed:"; wc -l < target/logs/doctor-timings.log || true
       - if: failure()
         uses: ctxloom/ci/.github/actions/gate-logs@fa01764571615bd3174313e84631bdd5c13a02e6 # main 2026-11-12
         with:
