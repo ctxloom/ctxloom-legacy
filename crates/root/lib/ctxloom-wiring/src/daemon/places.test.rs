@@ -230,6 +230,7 @@ fn a_reads_git_is_the_callers_and_its_home_is_ctxloom_s_own() {
         fs: fixtures::fs(),
         home: home.clone(),
         temp: root.root().join("tmp"),
+        scanner: std::sync::Arc::new(super::TreeScanner::new(fixtures::fs())),
     };
     assert_eq!(gits.home_tree(), None);
     fixtures::mkdirs(home.join(".ctxloom"));

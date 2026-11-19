@@ -1,13 +1,11 @@
 //! A change is reacted to (step 10c U13, G5-G7; protos.md §2, §3).
 //!
-//! A change is seen at each read, and, for a tree with a live session, at
-//! each round of the daemon's loop (G5(b), owner): [`Api::observe_live`]
-//! observes, once each, the trees the live sessions run in, as a read
-//! observes them, in the daemon's own environment (a round has no
-//! caller). A tree no live session runs in is never observed between
-//! reads (no watcher). A session is live by its lock's verdict; one with
-//! an end stamp is never probed, so a round over a home of ended sessions
-//! reads no lock.
+//! A change is seen when something needs the tree (owner, 2026-11-18, no
+//! polling: observe on need, superseding G5(b)): a read, a preview or a
+//! write, or a hook event of a session in it. No round, timer or watcher
+//! observes a tree. A hook's observation trusts a scan of the last
+//! [`HOOK_TRUST_SECONDS`]; every read, preview and write scans again
+//! (through the scanner's stat memo).
 //!
 //! A live session whose loadout a change touched is handed its context
 //! re-assembled at its next event (G6/G7, owner): its hook asks
@@ -26,82 +24,21 @@ use std::sync::Arc;
 use angzarr_embedded::v1::{Cover, DeliveryOutcome, Uuid};
 use daemon_proto::v1;
 use run_ports::{ContextDelivery, Edge};
-use session_index::{SessionRecord, State};
-use sessions::{ProjectName, SessionName};
+use session_index::SessionRecord;
+use sessions::SessionName;
 use sha2::{Digest, Sha256};
 
-use crate::library_reads::pairs;
 use crate::server::Api;
 use crate::{ApiError, ApiRefusal};
+
+/// How long a hook's re-injection trusts a tree's last scan (owner,
+/// 2026-11-18): five minutes.
+pub const HOOK_TRUST_SECONDS: i64 = 300;
 
 /// The engines a re-assembled context is handed through, by name (step
 /// 10c U13): the daemon's own.
 pub trait Deliveries: Send + Sync {
     fn engine(&self, name: &str) -> Option<Arc<dyn run_ports::Engine>>;
-}
-
-/// The directories the live sessions of `records` run in, each once with
-/// its project's id, in their first session's order: `state` is a
-/// session's lock's verdict (its project directory and harp), asked only
-/// of one with no end stamp.
-pub(crate) fn live_dirs(
-    records: &[SessionRecord],
-    state: impl Fn(&str, &str) -> State,
-) -> Vec<(String, String)> {
-    let mut dirs: Vec<(String, String)> = Vec::new();
-    for record in records.iter().filter(|record| record.ended_at.is_none()) {
-        let known = dirs.iter().any(|(_, dir)| dir == &record.project_dir);
-        if known || state(&record.project_dir, &record.harp) != State::Live {
-            continue;
-        }
-        dirs.push((record.project_id.clone(), record.project_dir.clone()));
-    }
-    dirs
-}
-
-impl<E: Edge> Api<E> {
-    /// A round's observation (G5(b)): each tree a live session runs in,
-    /// its checkout's and the home's, observed as a read observes them,
-    /// git run in `env`; how many sites were observed. A project the
-    /// daemon cannot name, or a tree that does not observe, is passed
-    /// over: the round goes on.
-    pub async fn observe_live(&self, env: &v1::EnvVars) -> u32 {
-        let (Some((observations, observers)), Some(libraries)) =
-            (self.observing.as_ref(), self.libraries.as_deref())
-        else {
-            return 0;
-        };
-        // Inside the loop's round, after its catch-up: the index as it is,
-        // never a wait for a fresher one (the loop would be waiting on
-        // itself).
-        let live = {
-            let index = self.parts.index.index();
-            let records = index.records();
-            live_dirs(&records, |dir, harp| self.parts.states.state(dir, harp))
-                .into_iter()
-                .filter_map(|(project, dir)| {
-                    let name =
-                        ProjectName::parse(&format!("projects/{}", index.project_harp(&project)?))
-                            .ok()?;
-                    Some((name, dir))
-                })
-                .collect::<Vec<_>>()
-        };
-        let env = pairs(Some(env));
-        let mut observed = 0;
-        for (name, dir) in live {
-            let Some(root) = libraries.root(&dir, &env) else {
-                continue;
-            };
-            let trees = observations
-                .observe_trees(observers.as_ref(), &env, Some((name, root.as_str())))
-                .await;
-            if let Ok(trees) = trees {
-                observed += u32::try_from(trees.seen.len()).unwrap_or(u32::MAX);
-            }
-        }
-        observed
-    }
 }
 
 /// The characters a hook's context may take, as its request asks: 0 is
@@ -237,12 +174,12 @@ impl<E: Edge> Api<E> {
         if record.loadout.is_none() {
             return Ok(none);
         }
-        // A hook event is a need: the session's trees observed, then the
-        // round after it, whose handler records what that owes.
+        // A hook event is a need: the session's trees observed (trusting a
+        // scan of the last five minutes); what that owes is recorded by the
+        // next round's handler, and collected at a later hook. No round is
+        // awaited: what is owed is read from the projection as it is.
         self.session_trees(&parent, &cwd, request.env.as_ref())
             .await?;
-        self.parts.hosting.fresh().await;
-        let record = known(self)?;
         let Some(loadout) = record.loadout.clone() else {
             return Ok(none);
         };
@@ -378,26 +315,27 @@ impl<E: Edge> Api<E> {
     }
 
     /// The trees a session at `cwd` of the project `parent` draws on (its
-    /// checkout's and the home's), observed as a read observes them: their
-    /// names.
+    /// checkout's and the home's), observed as a hook observes them: each
+    /// scanned again only past [`HOOK_TRUST_SECONDS`].
     async fn session_trees(
         &self,
         parent: &str,
         cwd: &str,
         env: Option<&v1::EnvVars>,
-    ) -> Result<Vec<String>, ApiError> {
+    ) -> Result<(), ApiError> {
         let (observations, observers) =
             self.observing.as_ref().ok_or_else(|| ApiError::Failed {
                 detail: "this daemon observes no library".to_string(),
             })?;
         let (site, project) = self.resolve(parent, cwd, env, None).await?;
-        let trees = observations
-            .observe_trees(
+        observations
+            .observe_trees_trusting(
                 observers.as_ref(),
                 &site.env,
                 project
                     .as_ref()
                     .map(|(name, root)| (name.clone(), root.as_str())),
+                HOOK_TRUST_SECONDS,
             )
             .await
             .map_err(|error| match error {
@@ -405,12 +343,7 @@ impl<E: Edge> Api<E> {
                     ApiError::Refused(crate::library_refusal(&rejection))
                 }
                 library_api::ReadError::Failed(failure) => ApiError::diagnosed(failure.as_ref()),
-            })?;
-        Ok(trees
-            .seen
-            .iter()
-            .map(|(_, observed)| observed.tree.to_string())
-            .collect())
+            })
     }
 
     /// `loadout`'s context, assembled at `cwd` of the project `parent` as

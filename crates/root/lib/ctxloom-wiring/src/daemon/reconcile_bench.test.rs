@@ -1,8 +1,9 @@
-//! The reconcile's bench (step 10a U2; plan O7): a read's observation, as
-//! the daemon makes it (library-api's `sight` over `CallerGits`' git), on
-//! a repository of 100 000 files whose `.ctxloom` holds 500, its p95 held
-//! to the budget, 50 ms per reconcile, for a read that sees nothing new
-//! and for one that sees a hand edit.
+//! The observation's bench (step 10a U2; plan O7; step 10c U13 rework: the
+//! scanner): a read's scan, as the daemon makes it (`CallerGits`' scanner,
+//! its memo warm, then compared with the record's listing), on a repository
+//! of 100 000 files whose `.ctxloom` holds 500, its p95 held to the budget,
+//! 50 ms per observation, for a read that sees nothing new and for one that
+//! sees a hand edit.
 //!
 //! It builds its repository (about half a minute), so it runs only when
 //! asked: `just bench-reconcile` (`LIBRARY_BENCH=reconcile`); any other
@@ -12,8 +13,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use library_api::Observers;
-use library_tree::{Library, TreeName};
-use sessions::ProjectName;
+use library_tree::Library;
 
 use crate::fixtures;
 
@@ -76,16 +76,9 @@ fn files(dir: &Path, count: usize, body: &str) {
 }
 
 /// The record's state after `fact` (what the aggregate folds of a sight).
-fn held_after(fact: &library_tree::RecordTreeObserved) -> Library {
+fn held_after(listed: std::collections::BTreeMap<String, String>) -> Library {
     Library {
-        name: fact.name.clone(),
-        head: fact.head_after.clone(),
-        tree: fact.tree_after.clone(),
-        dirty: fact
-            .dirty_after
-            .iter()
-            .map(|d| (d.path.clone(), d.oid.clone()))
-            .collect(),
+        dirty: listed,
         last_cause: "bench".to_string(),
         baselined: true,
         ..Library::default()
@@ -125,23 +118,19 @@ fn a_reconcile_on_a_large_repository_is_within_its_budget() {
         fs: fixtures::fs(),
         home: root.root().join("home"),
         temp: root.root().join("tmp"),
+        scanner: std::sync::Arc::new(super::TreeScanner::new(fixtures::fs())),
     };
-    let observer = gits.observer(&[("PATH".to_string(), path())]);
+    let scanner = gits.scanner();
     let tree = repo.join(".ctxloom").display().to_string();
-    let name =
-        TreeName::checkout(ProjectName::new("calm-otter").unwrap(), "brisk-copper-moth").unwrap();
-    let baseline = library_api::sight(observer.as_ref(), &tree, &name, &Library::default())
-        .unwrap()
-        .fact
-        .expect("a baseline");
-    let held = held_after(&baseline);
+    let held = held_after(scanner.scan(&tree).unwrap());
     let time = |held: &Library, expect_change: bool| {
         (0..ROUNDS)
             .map(|_| {
                 let started = Instant::now();
-                let seen = library_api::sight(observer.as_ref(), &tree, &name, held).unwrap();
+                let found = scanner.scan(&tree).unwrap();
+                let seen = !library_api::listed_as_held(held, &found);
                 let took = started.elapsed();
-                assert_eq!(seen.fact.is_some(), expect_change);
+                assert_eq!(seen, expect_change);
                 took
             })
             .collect::<Vec<_>>()

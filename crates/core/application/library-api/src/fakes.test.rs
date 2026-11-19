@@ -50,14 +50,6 @@ impl Git {
         self
     }
 
-    /// `git status` pairing `path` with `from` as a rename.
-    pub(crate) fn renamed(mut self, path: &str, from: &str) -> Git {
-        self.status
-            .push(entry(path, PathStatus::Renamed, Some(from)));
-        self.status.sort_by(|a, b| a.path.cmp(&b.path));
-        self
-    }
-
     /// Every call asked so far, by its method's name.
     pub(crate) fn calls(&self) -> Vec<String> {
         self.asked.lock().unwrap().clone()
@@ -88,18 +80,23 @@ pub(crate) fn entry(path: &str, status: PathStatus, from: Option<&str>) -> Statu
     }
 }
 
-pub(crate) fn changed(
-    path: &str,
-    status: PathStatus,
-    from: Option<&str>,
-    ids: (Option<&str>, Option<&str>),
-) -> TreeChange {
-    TreeChange {
-        path: path.to_string(),
-        status,
-        from_path: from.map(str::to_string),
-        from_oid: ids.0.map(str::to_string),
-        to_oid: ids.1.map(str::to_string),
+/// The scanner over the same table (step 10c U13 rework): every file on
+/// disk, by its id.
+impl ctxloom_ports::LibraryScanner for Git {
+    fn scan(&self, _: &str) -> Result<BTreeMap<String, String>, ctxloom_ports::Failure> {
+        self.asked.lock().unwrap().push("scan".to_string());
+        Ok(self.files.clone())
+    }
+
+    fn content_ids(
+        &self,
+        _: &str,
+        paths: &[&str],
+    ) -> Result<BTreeMap<String, String>, ctxloom_ports::Failure> {
+        Ok(paths
+            .iter()
+            .filter_map(|path| Some((path.to_string(), self.files.get(*path)?.clone())))
+            .collect())
     }
 }
 

@@ -21,6 +21,7 @@ use crate::{
 const TREE: &str = "projects/amber-quiet-heron/checkouts/brisk-copper-moth/library";
 const FILE: &str = "content/bundles/v2/demo/fragments/example.md";
 const YAML: &str = "content/bundles/v2/demo/bundle.yaml";
+const FRAGMENT: &str = "content/bundles/v2/demo/fragments/a.md";
 const BUNDLE: &str = "content/bundles/v2/demo";
 
 fn cover() -> Cover {
@@ -267,6 +268,121 @@ fn resource(sequence: u64, oid: &str) -> Resource {
 }
 
 // region observations
+
+/// A listing of `files` (path, content id) against the tree's last cause.
+fn listing(tree: &Tree, files: &[(&str, &str)]) -> crate::RecordTreeListed {
+    crate::RecordTreeListed {
+        name: TREE.to_string(),
+        kind: TreeKind::Checkout,
+        base_cause: tree.library().last_cause,
+        files: dirty(files),
+        in_motion: None,
+    }
+}
+
+/// `fact` recorded keyed as a scanner keys it.
+fn listed(tree: &mut Tree, fact: crate::RecordTreeListed) -> Vec<LibraryEvent> {
+    let key = crate::listing_key(TREE, &fact.base_cause, &fact.files);
+    tree.fact(fact, &key)
+}
+
+// Step 10c U13 rework (the scanner, owner 2026-11-18): a listing of every
+// file with its content id is compared with the listing the state holds:
+// the first is a baseline of every file; then each path added, changed or
+// gone is one change of one event, each path's token its sequence; a
+// listing that matches records nothing; A to B to A is three, never a
+// duplicate. No git is asked: no head, no tree id.
+#[test]
+fn test_a_listing_records_each_path_added_changed_or_gone_against_the_last() {
+    let mut tree = Tree::new();
+    let first = listing(&tree, &[(YAML, "y1"), (FRAGMENT, "f1")]);
+    let events = listed(&mut tree, first);
+    let [LibraryEvent::TreeObserved(baseline)] = &events[..] else {
+        panic!("one baseline: {events:?}")
+    };
+    assert!(baseline.baseline);
+    assert_eq!(baseline.changes.len(), 2, "every file: {baseline:?}");
+    assert!(baseline
+        .changes
+        .iter()
+        .all(|c| c.status == ChangeStatus::Added));
+    let same = listing(&tree, &[(YAML, "y1"), (FRAGMENT, "f1")]);
+    assert!(
+        listed(&mut tree, same).is_empty(),
+        "a match records nothing"
+    );
+    let next = listing(&tree, &[(FRAGMENT, "f2"), ("remotes.yaml", "r1")]);
+    let events = listed(&mut tree, next);
+    let [LibraryEvent::TreeObserved(observed)] = &events[..] else {
+        panic!("one observation: {events:?}")
+    };
+    assert!(!observed.baseline);
+    let said: Vec<(&str, ChangeStatus, &str, &str)> = observed
+        .changes
+        .iter()
+        .map(|c| {
+            (
+                c.path.as_str(),
+                c.status,
+                c.from_oid.as_str(),
+                c.to_oid.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (YAML, ChangeStatus::Deleted, "y1", ""),
+            (FRAGMENT, ChangeStatus::Modified, "f1", "f2"),
+            ("remotes.yaml", ChangeStatus::Added, "", "r1"),
+        ],
+        "sorted by path"
+    );
+    let library = tree.library();
+    assert_eq!(library.resources.get(FRAGMENT), Some(&resource(1, "f2")));
+    assert_eq!(library.resources.get(YAML), Some(&resource(1, "")));
+    assert_eq!((library.head.as_str(), library.tree.as_str()), ("", ""));
+    // Back to what it was, then on again: each is recorded.
+    let back = listing(&tree, &[(FRAGMENT, "f1"), ("remotes.yaml", "r1")]);
+    assert_eq!(listed(&mut tree, back).len(), 1);
+    let again = listing(&tree, &[(FRAGMENT, "f2"), ("remotes.yaml", "r1")]);
+    assert_eq!(listed(&mut tree, again).len(), 1);
+    assert_eq!(
+        tree.library().resources.get(FRAGMENT),
+        Some(&resource(3, "f2"))
+    );
+}
+
+// A path a step took away is held with an empty id: absent. A listing
+// without it matches, and records nothing.
+#[test]
+fn test_a_path_held_gone_is_absent_from_the_listing_compared() {
+    let mut tree = Tree::new();
+    let first = listing(&tree, &[(YAML, "y1"), (FRAGMENT, "f1")]);
+    listed(&mut tree, first);
+    let mut held = tree.library();
+    held.dirty.insert(FRAGMENT.to_string(), String::new());
+    assert_eq!(held.listed().get(FRAGMENT), None, "gone");
+    assert_eq!(
+        super::listing_changes(&held.listed(), &dirty(&[(YAML, "y1")])),
+        Vec::new(),
+        "nothing changed"
+    );
+}
+
+// A listing's key chains on the cause the scanner read and hashes the
+// listing in path order: the same listing against another cause is another
+// key; one listed in any order is the same.
+#[test]
+fn test_a_listing_key_chains_on_its_cause_and_is_its_listing_s_whatever_the_order() {
+    let a = dirty(&[(YAML, "y"), (FRAGMENT, "f")]);
+    let b = dirty(&[(FRAGMENT, "f"), (YAML, "y")]);
+    let key = crate::listing_key(TREE, "c1", &a);
+    assert!(key.starts_with(&format!("listed:{TREE}:")), "{key}");
+    assert_eq!(key, crate::listing_key(TREE, "c1", &b));
+    assert_ne!(key, crate::listing_key(TREE, "c2", &a));
+    assert_ne!(key, crate::listing_key(TREE, "c1", &dirty(&[(YAML, "y")])));
+}
 
 #[test]
 fn a_trees_first_observation_is_its_baseline_listing_what_is_dirty() {

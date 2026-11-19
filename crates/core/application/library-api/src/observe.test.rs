@@ -148,10 +148,18 @@ async fn events(world: &World) -> Vec<EventPage> {
 async fn a_first_read_records_the_baseline_and_a_read_that_sees_nothing_new_records_nothing() {
     let under = under();
     let git = Git::at("c1", "t1");
-    let observed = under.observations.observe(&git, &site()).await.unwrap();
+    let observed = under
+        .observations
+        .observe((&git, &git), &site())
+        .await
+        .unwrap();
     assert_eq!(observed.tree, tree());
     assert!(observed.notices.is_empty());
-    under.observations.observe(&git, &site()).await.unwrap();
+    under
+        .observations
+        .observe((&git, &git), &site())
+        .await
+        .unwrap();
     assert_eq!(events(&under.world).await.len(), 1);
     assert_eq!(*under.world.handled.lock().unwrap(), 1);
     let held = under
@@ -161,7 +169,8 @@ async fn a_first_read_records_the_baseline_and_a_read_that_sees_nothing_new_reco
         .cloned()
         .unwrap();
     assert!(held.baselined);
-    assert_eq!(held.head, "c1");
+    // Seen by the scanner (step 10c U13 rework): no commit is recorded.
+    assert_eq!((held.head.as_str(), held.tree.as_str()), ("", ""));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -169,14 +178,22 @@ async fn a_change_is_recorded_once_by_the_read_that_sees_it() {
     let under = under();
     under
         .observations
-        .observe(&Git::at("c1", "t1"), &site())
+        .observe((&Git::at("c1", "t1"), &Git::at("c1", "t1")), &site())
         .await
         .unwrap();
     let edited = Git::at("c1", "t1")
         .file(BUNDLE, "b2")
         .says(BUNDLE, PathStatus::Modified);
-    under.observations.observe(&edited, &site()).await.unwrap();
-    under.observations.observe(&edited, &site()).await.unwrap();
+    under
+        .observations
+        .observe((&edited, &edited), &site())
+        .await
+        .unwrap();
+    under
+        .observations
+        .observe((&edited, &edited), &site())
+        .await
+        .unwrap();
     assert_eq!(events(&under.world).await.len(), 2);
     let held = under
         .checkouts
@@ -195,25 +212,29 @@ async fn two_reads_that_see_one_change_against_one_state_record_it_once() {
     let under = under();
     under
         .observations
-        .observe(&Git::at("c1", "t1"), &site())
+        .observe((&Git::at("c1", "t1"), &Git::at("c1", "t1")), &site())
         .await
         .unwrap();
-    let edited = Git::at("c1", "t1")
-        .file(BUNDLE, "b2")
-        .says(BUNDLE, PathStatus::Modified);
     let held = under
         .checkouts
         .checkouts()
         .tree(&tree().root())
         .cloned()
         .unwrap();
-    let first = crate::sight(&edited, "/work/demo/.ctxloom", &tree(), &held).unwrap();
-    let second = crate::sight(&edited, "/work/demo/.ctxloom", &tree(), &held).unwrap();
-    for sight in [first, second] {
-        let fact = sight.fact.unwrap();
+    let listing = library_tree::RecordTreeListed {
+        name: tree().to_string(),
+        kind: library_tree::TreeKind::Checkout,
+        base_cause: held.last_cause.clone(),
+        files: vec![library_tree::DirtyPath {
+            path: BUNDLE.to_string(),
+            oid: "b2".to_string(),
+        }],
+        in_motion: None,
+    };
+    for _ in 0..2 {
         under
             .world
-            .handle(library_tree::observation_book(&tree(), &fact))
+            .handle(library_tree::listing_book(&tree(), &listing))
             .await
             .unwrap();
     }
@@ -224,7 +245,11 @@ async fn two_reads_that_see_one_change_against_one_state_record_it_once() {
 async fn a_read_outside_git_is_refused_before_its_checkout_is_named() {
     let under = under();
     let git = Git::default();
-    let refused = under.observations.observe(&git, &site()).await.unwrap_err();
+    let refused = under
+        .observations
+        .observe((&git, &git), &site())
+        .await
+        .unwrap_err();
     assert!(matches!(
         refused,
         ReadError::Refused(LibraryTreeRejection::NotInGit { ref root }) if root == "/work/demo"
@@ -242,7 +267,11 @@ async fn a_read_of_a_library_git_ignores_is_refused_before_its_checkout_is_named
         line: 1,
         pattern: ".ctxloom/".to_string(),
     });
-    let refused = under.observations.observe(&git, &site()).await.unwrap_err();
+    let refused = under
+        .observations
+        .observe((&git, &git), &site())
+        .await
+        .unwrap_err();
     assert!(matches!(
         refused,
         ReadError::Refused(LibraryTreeRejection::LibraryIgnored { .. })
@@ -260,7 +289,11 @@ async fn the_home_is_observed_without_the_project_checks() {
     let home = Site::Home {
         tree: "/h/.ctxloom".to_string(),
     };
-    let observed = under.observations.observe(&git, &home).await.unwrap();
+    let observed = under
+        .observations
+        .observe((&git, &git), &home)
+        .await
+        .unwrap();
     assert_eq!(observed.tree, TreeName::home(HARP).unwrap());
     assert!(!git.calls().iter().any(|c| c == "work_tree"));
     assert_eq!(home.tree(), "/h/.ctxloom");
@@ -271,7 +304,11 @@ async fn a_read_during_a_git_operation_says_so_naming_the_tree() {
     let under = under();
     let mut git = Git::at("c1", "t1");
     git.motion = Some(Motion::Rebasing);
-    let observed = under.observations.observe(&git, &site()).await.unwrap();
+    let observed = under
+        .observations
+        .observe((&git, &git), &site())
+        .await
+        .unwrap();
     assert_eq!(
         observed.notices,
         vec![LibraryApiNotice::TreeInMotion {
@@ -356,10 +393,27 @@ async fn git_failing_fails_the_read() {
             unreachable!("not asked")
         }
     }
+    impl ctxloom_ports::LibraryScanner for Broken {
+        fn scan(
+            &self,
+            _: &str,
+        ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+            Err(Box::new(LibraryTreeRejection::NotInGit {
+                root: "stand-in".to_string(),
+            }))
+        }
+        fn content_ids(
+            &self,
+            _: &str,
+            _: &[&str],
+        ) -> Result<std::collections::BTreeMap<String, String>, ctxloom_ports::Failure> {
+            unreachable!("not asked")
+        }
+    }
     let under = under();
     let failed = under
         .observations
-        .observe(&Broken, &site())
+        .observe((&Broken, &Broken), &site())
         .await
         .unwrap_err();
     assert!(matches!(failed, ReadError::Failed(_)));
@@ -378,6 +432,10 @@ impl super::Observers for Callers {
     fn observer(&self, env: &[(String, String)]) -> Box<dyn ctxloom_ports::TreeObserver> {
         self.env.lock().unwrap().push(env.to_vec());
         Box::new((self.git)())
+    }
+
+    fn scanner(&self) -> Arc<dyn ctxloom_ports::LibraryScanner> {
+        Arc::new((self.git)())
     }
 
     fn home_tree(&self) -> Option<String> {
@@ -633,12 +691,12 @@ async fn a_tree_s_staging_is_swept_at_its_first_observation_alone() {
     )
     .sweeping(Arc::clone(&sweeps) as Arc<dyn ctxloom_ports::Operations>);
     let git = Git::at("c1", "t1");
-    observations.observe(&git, &site()).await.unwrap();
-    observations.observe(&git, &site()).await.unwrap();
+    observations.observe((&git, &git), &site()).await.unwrap();
+    observations.observe((&git, &git), &site()).await.unwrap();
     let home = Site::Home {
         tree: "/home/alice/.ctxloom".to_string(),
     };
-    observations.observe(&git, &home).await.unwrap();
+    observations.observe((&git, &git), &home).await.unwrap();
     assert_eq!(
         *sweeps.0.lock().unwrap(),
         vec!["/work/demo/.ctxloom", "/home/alice/.ctxloom"]
@@ -657,7 +715,9 @@ async fn a_refused_tree_is_not_swept() {
         Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
     )
     .sweeping(Arc::clone(&sweeps) as Arc<dyn ctxloom_ports::Operations>);
-    let refused = observations.observe(&Git::default(), &site()).await;
+    let refused = observations
+        .observe((&Git::default(), &Git::default()), &site())
+        .await;
     assert!(refused.is_err());
     assert!(sweeps.0.lock().unwrap().is_empty());
 }
@@ -711,7 +771,7 @@ async fn with_a_slot(
         Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
     );
     let git = Git::at("c1", "t1");
-    plain.observe(&git, &site()).await.unwrap();
+    plain.observe((&git, &git), &site()).await.unwrap();
     let trash = crate::writes::Intended::Trash(library_tree::TrashPath {
         name: tree().to_string(),
         verb: "bundle remove".to_string(),
@@ -763,13 +823,13 @@ async fn with_a_slot(
 async fn a_kept_slot_seven_days_old_is_purged_at_its_tree_s_next_observation_once() {
     let (observations, purges, _world, _) = with_a_slot(8).await;
     let git = Git::at("c1", "t1");
-    observations.observe(&git, &site()).await.unwrap();
+    observations.observe((&git, &git), &site()).await.unwrap();
     assert_eq!(
         *purges.0.lock().unwrap(),
         vec![("/work/demo/.ctxloom".to_string(), REMOVAL.to_string())]
     );
     assert!(observations.held(&tree()).trashed.is_empty());
-    observations.observe(&git, &site()).await.unwrap();
+    observations.observe((&git, &git), &site()).await.unwrap();
     assert_eq!(purges.0.lock().unwrap().len(), 1, "purged once");
 }
 
@@ -779,9 +839,110 @@ async fn a_kept_slot_seven_days_old_is_purged_at_its_tree_s_next_observation_onc
 async fn a_slot_younger_than_seven_days_is_kept() {
     let (observations, purges, _world, _) = with_a_slot(6).await;
     observations
-        .observe(&Git::at("c1", "t1"), &site())
+        .observe((&Git::at("c1", "t1"), &Git::at("c1", "t1")), &site())
         .await
         .unwrap();
     assert!(purges.0.lock().unwrap().is_empty());
     assert!(observations.held(&tree()).trashed.contains_key(REMOVAL));
+}
+
+// Step 10c U13 rework: a scan that finds what the record lists records
+// nothing; one of a tree never listed, or one git last saw (it held no
+// listing), or one that differs, is recorded.
+#[test]
+fn test_a_scan_is_as_held_only_against_a_listing_of_the_same_files() {
+    let files = std::collections::BTreeMap::from([(BUNDLE.to_string(), "b1".to_string())]);
+    let listed = library_tree::Library {
+        baselined: true,
+        dirty: files.clone(),
+        ..library_tree::Library::default()
+    };
+    assert!(crate::listed_as_held(&listed, &files));
+    let other = std::collections::BTreeMap::from([(BUNDLE.to_string(), "b2".to_string())]);
+    assert!(!crate::listed_as_held(&listed, &other));
+    let never = library_tree::Library {
+        baselined: false,
+        ..listed.clone()
+    };
+    assert!(!crate::listed_as_held(&never, &files));
+    let by_git = library_tree::Library {
+        head: "c1".to_string(),
+        ..listed.clone()
+    };
+    assert!(!crate::listed_as_held(&by_git, &files));
+    let by_git_tree = library_tree::Library {
+        tree: "t1".to_string(),
+        ..listed
+    };
+    assert!(!crate::listed_as_held(&by_git_tree, &files));
+    let mut taken = library_tree::Library {
+        baselined: true,
+        dirty: files.clone(),
+        ..library_tree::Library::default()
+    };
+    taken.dirty.insert("gone.md".to_string(), String::new());
+    assert!(
+        crate::listed_as_held(&taken, &files),
+        "a path held gone is absent"
+    );
+}
+
+// Step 10c U13 rework (owner, 2026-11-18): a hook's observation trusts a
+// scan of its trees within the trust window by the daemon's clock, and
+// scans nothing then; past it, or once `forget` dropped what was seen,
+// it scans again. Without a clock every hook scans.
+#[tokio::test(flavor = "current_thread")]
+async fn test_a_hook_trusts_a_scan_within_its_window_and_forget_drops_it() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let now = Arc::new(AtomicI64::new(1_000));
+    let clock = Arc::clone(&now);
+    let under = under();
+    let observations = Observations::new(
+        Arc::clone(&under.world),
+        under.checkouts.clone(),
+        Arc::clone(&under.harps) as Arc<dyn CheckoutHarps>,
+    )
+    .purging(Arc::new(move || clock.load(Ordering::SeqCst)));
+    let hooked = callers(|| Git::at("c1", "t1"), None);
+    let project = || Some((ProjectName::new("calm-otter").unwrap(), "/work/demo"));
+    let scans = |callers: &Callers| callers.env.lock().unwrap().len();
+    observations
+        .observe_trees_trusting(&hooked, &[], project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 1, "never scanned: scanned");
+    now.store(1_299, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, &[], project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 1, "within the window: trusted");
+    now.store(1_300, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, &[], project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 2, "at the window's end: scanned");
+    observations.forget(&hooked);
+    observations
+        .observe_trees_trusting(&hooked, &[], project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 3, "forgotten: scanned");
+    // A read always scans.
+    observations
+        .observe_trees(&hooked, &[], project())
+        .await
+        .unwrap();
+    assert_eq!(scans(&hooked), 4);
+    // No clock: every hook scans.
+    let unclocked = callers(|| Git::at("c1", "t1"), None);
+    for _ in 0..2 {
+        under
+            .observations
+            .observe_trees_trusting(&unclocked, &[], project(), 300)
+            .await
+            .unwrap();
+    }
+    assert_eq!(scans(&unclocked), 2);
 }

@@ -194,14 +194,6 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("DeleteHandOff")) })
     }
-    /// A daemon round's observation of the library trees a live session
-    /// runs in (step 10c U13, G5(b)), git run in `env` (the daemon's own:
-    /// a round has no caller): how many trees it observed. An edge that
-    /// observes nothing observes none.
-    fn observe_live(&self, env: v1::EnvVars) -> Answer<'_, u32> {
-        let _ = env;
-        Box::pin(async { Ok(0) })
-    }
     /// `WatchLibrary` (step 10c G7): the named trees' changes from now on,
     /// as a poll; as `GetTranscript`.
     fn watch_library(
@@ -417,10 +409,6 @@ impl<E: Edge + 'static> Calls for Api<E> {
             self.open()?;
             Api::get_transcript(self, request).await
         })
-    }
-
-    fn observe_live(&self, env: v1::EnvVars) -> Answer<'_, u32> {
-        Box::pin(async move { Ok(Api::observe_live(self, &env).await) })
     }
 
     fn assemble_context(
@@ -946,6 +934,13 @@ impl<E: Edge> Api<E> {
         &self,
         request: v1::AssembleContextRequest,
     ) -> Result<v1::AssembledContext, ApiError> {
+        // A refresh (step 10c U13 rework): what was seen of the trees is
+        // forgotten first, so the read's observation hashes every file.
+        if request.refresh {
+            if let Some((observations, observers)) = self.observing.as_ref() {
+                observations.forget(observers.as_ref());
+            }
+        }
         // A library read (step 10a U2, E1): at the caller's directory, in
         // its environment, observed first; what it said rides in the
         // message (the MCP tool's answer is the message alone).

@@ -862,6 +862,13 @@ message AssembleContextRequest {
   repeated string fragments = 4 [(google.api.field_behavior) = OPTIONAL];
   // The tags whose fragments to load.
   repeated string tags = 5 [(google.api.field_behavior) = OPTIONAL];
+  // 10c (U13 rework, `ctxloom context refresh`; owner 2026-11-18): the
+  // daemon drops what it has seen of the trees (the scanner's hashes and
+  // when each was scanned) and observes them now, before it assembles.
+  // What differs is recorded as any read's observation; a tree that
+  // matches records nothing, and no session is marked owed by this.
+  // Additive.
+  bool refresh = 6 [(google.api.field_behavior) = OPTIONAL];
   // The caller's whole environment (S7), held in memory for the call's life.
   EnvVars env = 94 [(google.api.field_behavior) = OPTIONAL];
   // The global flags (`--degraded`, `--no-companions`, `--config-set`) the

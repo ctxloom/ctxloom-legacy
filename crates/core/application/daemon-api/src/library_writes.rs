@@ -386,6 +386,7 @@ impl<E: Edge> Api<E> {
         let path = shaped.shape.path().to_string();
         let held = observations.held(&landing.observed.tree);
         let observer = observers.observer(&site.env);
+        let scanner = observers.scanner();
         let evidence = Evidence {
             tree_reads: true,
             plan_rejection: None,
@@ -401,8 +402,6 @@ impl<E: Edge> Api<E> {
         let id = request_bytes(request_id);
         let request_id = uuid::Uuid::from_bytes(id).to_string();
         let intended = writes::intent_of(
-            observer.as_ref(),
-            landing.site.tree(),
             &landing.observed.tree.to_string(),
             verb,
             &shaped.shape,
@@ -411,8 +410,7 @@ impl<E: Edge> Api<E> {
             }),
             evidence,
             &request_id,
-        )
-        .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
+        );
         let (start, steps) = match pending {
             Some((done, steps)) => (done, steps),
             None => {
@@ -450,7 +448,7 @@ impl<E: Edge> Api<E> {
             };
             self.make_step(
                 &step_of,
-                observer.as_ref(),
+                scanner.as_ref(),
                 operations.as_ref(),
                 (at, step),
                 &shaped.shape,
@@ -505,7 +503,7 @@ impl<E: Edge> Api<E> {
     async fn make_step(
         &self,
         made: &Made<'_>,
-        observer: &dyn ctxloom_ports::TreeObserver,
+        scanner: &dyn ctxloom_ports::LibraryScanner,
         operations: &dyn ctxloom_ports::Operations,
         (at, step): (u32, &library_tree::Step),
         planned: &writes::Shape,
@@ -540,8 +538,8 @@ impl<E: Edge> Api<E> {
             return Err(why);
         }
         self.dies_at("renamed");
-        let observed = writes::left_by(observer, made.dir, &writes::expected_step(step, shape))
-            .map_err(|error| ApiError::diagnosed(error.into_failure().as_ref()))?;
+        let observed = writes::left_by(scanner, made.dir, &writes::expected_step(step, shape))
+            .map_err(|failure| ApiError::diagnosed(failure.as_ref()))?;
         let fact = RecordStepDone {
             request_id: request_id.to_string(),
             step: at,
@@ -637,10 +635,10 @@ impl<E: Edge> Api<E> {
         let bundle = library_api::names::bundle_under(&site.parent, request.target())
             .unwrap_or_else(|| request.target().to_string());
         let manifest = format!("{}/{bundle}/bundle.yaml", writes::BUNDLES);
-        let observer = observers.observer(&site.env);
+        let scanner = observers.scanner();
         let holds = |dir: &str| {
-            observer
-                .blob_ids(dir, &[manifest.as_str()])
+            scanner
+                .content_ids(dir, &[manifest.as_str()])
                 .is_ok_and(|ids| ids.contains_key(&manifest))
         };
         let Some((source, observed)) = trees.seen.iter().find(|(seen, _)| holds(seen.tree()))

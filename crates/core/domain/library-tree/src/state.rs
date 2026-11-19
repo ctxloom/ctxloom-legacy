@@ -162,6 +162,17 @@ impl Library {
         self.last_cause = cause;
     }
 
+    /// The tree's listing as its record holds it (step 10c U13 rework):
+    /// every path at its content id, one a step took away (its id empty)
+    /// left out.
+    pub fn listed(&self) -> BTreeMap<String, String> {
+        self.dirty
+            .iter()
+            .filter(|(_, oid)| !oid.is_empty())
+            .map(|(path, oid)| (path.clone(), oid.clone()))
+            .collect()
+    }
+
     /// The dirty set once `left` (paths and the ids a step left there,
     /// empty when it took them away) is laid over this one: what a step
     /// done makes it. ctxloom never commits in a project, so a path it

@@ -15,13 +15,24 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use ctxloom_ports::{Failure, Operations, TreeError, TreeObserver};
+use ctxloom_ports::{Failure, LibraryScanner, Operations, TreeError, TreeObserver};
 use library_checkout::LibraryCheckouts;
-use library_tree::{observation_book, LibraryTreeRejection, TreeName};
+use library_tree::{listing_book, DirtyPath, LibraryTreeRejection, RecordTreeListed, TreeName};
 use run_ports::Edge;
 use sessions::ProjectName;
 
 use crate::{locate, reconcile, LibraryApiNotice};
+
+/// Whether a scan that found `files` is what `held` already lists: a
+/// tree listed before (never a git-era one, which held no listing), the
+/// same paths at the same content ids (a path a step took away, held with
+/// an empty id, absent). Such a scan records nothing.
+pub fn listed_as_held(
+    held: &library_tree::Library,
+    files: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    held.baselined && held.head.is_empty() && held.tree.is_empty() && held.listed() == *files
+}
 
 /// Where a checkout's harp is kept (`<tree>/state/checkout`, out of git),
 /// minted at its tree's first read and read back after.
@@ -36,6 +47,10 @@ pub trait CheckoutHarps: Send + Sync {
 pub trait Observers: Send + Sync {
     /// The observer of a read whose caller's environment is `env`.
     fn observer(&self, env: &[(String, String)]) -> Box<dyn TreeObserver>;
+
+    /// The scanner every tree is seen through (step 10c U13 rework): no
+    /// git, so no environment; its memo shared by every read.
+    fn scanner(&self) -> Arc<dyn LibraryScanner>;
 
     /// The home's library directory (its `.ctxloom`), when it has one.
     fn home_tree(&self) -> Option<String>;
@@ -121,6 +136,9 @@ pub struct Observations<E> {
     /// The daemon's clock, in seconds since the epoch, by which a kept
     /// trash slot's age is told (G12); none, nothing is purged.
     clock: Option<Clock>,
+    /// When each tree (its directory) was last scanned, by the clock (step
+    /// 10c U13 rework): what a hook's observation trusts.
+    scanned: Mutex<std::collections::BTreeMap<String, i64>>,
 }
 
 /// The daemon's clock: now, in seconds since the epoch.
@@ -141,6 +159,7 @@ impl<E: Edge> Observations<E> {
             operations: None,
             swept: Mutex::new(BTreeSet::new()),
             clock: None,
+            scanned: Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
@@ -276,11 +295,13 @@ impl<E: Edge> Observations<E> {
         Ok(())
     }
 
-    /// Observe `site` through `observer` (git in the caller's environment),
-    /// recording what changed since the record's state of it.
+    /// Observe `site`: its files found by `scanner` (step 10c U13 rework:
+    /// no git sees the tree) and, when they differ from what the record
+    /// lists, the listing recorded for the aggregate to compare; the git
+    /// operation in progress asked of `observer` (L11).
     pub async fn observe(
         &self,
-        observer: &dyn TreeObserver,
+        (observer, scanner): (&dyn TreeObserver, &dyn LibraryScanner),
         site: &Site,
     ) -> Result<Observed, ReadError> {
         if let Site::Checkout { root, .. } = site {
@@ -294,16 +315,32 @@ impl<E: Edge> Observations<E> {
             let checkouts = self.checkouts.checkouts();
             checkouts.tree(&tree.root()).cloned().unwrap_or_default()
         };
-        let sight = reconcile::sight(observer, site.tree(), &tree, &held)?;
-        if let Some(fact) = &sight.fact {
+        let motion = observer.in_motion(site.tree())?;
+        let files = scanner.scan(site.tree()).map_err(ReadError::Failed)?;
+        if let Some(clock) = &self.clock {
+            self.scanned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(site.tree().to_string(), clock());
+        }
+        if !listed_as_held(&held, &files) {
+            let fact = RecordTreeListed {
+                name: tree.to_string(),
+                kind: tree.kind(),
+                base_cause: held.last_cause.clone(),
+                files: files
+                    .into_iter()
+                    .map(|(path, oid)| DirtyPath { path, oid })
+                    .collect(),
+                in_motion: motion.map(reconcile::motion_of),
+            };
             self.edge
-                .handle(observation_book(&tree, fact))
+                .handle(listing_book(&tree, &fact))
                 .await
                 .map_err(|failure| ReadError::Failed(Box::new(failure)))?;
         }
         self.purge_due(site.tree(), &tree).await?;
-        let notices = sight
-            .motion
+        let notices = motion
             .map(|motion| LibraryApiNotice::TreeInMotion {
                 motion,
                 root: site.tree().to_string(),
@@ -313,7 +350,7 @@ impl<E: Edge> Observations<E> {
         Ok(Observed {
             tree,
             notices,
-            motion: sight.motion,
+            motion,
         })
     }
 }
@@ -345,11 +382,13 @@ impl<E: Edge> Observations<E> {
         project: Option<(ProjectName, &str)>,
     ) -> Result<Trees, ReadError> {
         let observer = observers.observer(env);
+        let scanner = observers.scanner();
+        let seeing = (observer.as_ref(), scanner.as_ref());
         let mut seen = Vec::new();
         let mut notices = Vec::new();
         if let Some((project, root)) = project {
             let site = Site::checkout(project, root);
-            let observed = self.observe(observer.as_ref(), &site).await?;
+            let observed = self.observe(seeing, &site).await?;
             notices.extend(observed.notices.iter().cloned());
             seen.push((site, observed));
         }
@@ -369,12 +408,59 @@ impl<E: Edge> Observations<E> {
                     self.record_home_made(&home).await?;
                 }
                 let site = Site::Home { tree: home };
-                let observed = self.observe(observer.as_ref(), &site).await?;
+                let observed = self.observe(seeing, &site).await?;
                 notices.extend(observed.notices.iter().cloned());
                 seen.push((site, observed));
             }
         }
         Ok(Trees { seen, notices })
+    }
+
+    /// [`Observations::observe_trees`] as a hook asks it (step 10c U13
+    /// rework: re-injection trusts an observation up to `trust` seconds
+    /// old): nothing when every tree it would observe was scanned within
+    /// `trust` by the daemon's clock, else every one observed. With no
+    /// clock every hook observes.
+    pub async fn observe_trees_trusting(
+        &self,
+        observers: &dyn Observers,
+        env: &[(String, String)],
+        project: Option<(ProjectName, &str)>,
+        trust: i64,
+    ) -> Result<(), ReadError> {
+        let dirs: Vec<String> = project
+            .as_ref()
+            .map(|(name, root)| Site::checkout(name.clone(), root).tree().to_string())
+            .into_iter()
+            .chain(observers.home_tree())
+            .collect();
+        if let Some(clock) = &self.clock {
+            let now = clock();
+            let scanned = self
+                .scanned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let trusted = dirs
+                .iter()
+                .all(|dir| scanned.get(dir).is_some_and(|at| now - at < trust));
+            if trusted {
+                return Ok(());
+            }
+        }
+        self.observe_trees(observers, env, project)
+            .await
+            .map(|_| ())
+    }
+
+    /// Every memo of what was seen dropped (`ctxloom context refresh`):
+    /// the scanner's hashes and when each tree was scanned, so the next
+    /// observation hashes every file again. The record is untouched.
+    pub fn forget(&self, observers: &dyn Observers) {
+        observers.scanner().forget();
+        self.scanned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// The record's state of `tree` now (a default one for a tree never
