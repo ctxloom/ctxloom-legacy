@@ -1,8 +1,7 @@
 # world: surfaces
 # Ported from cli/mcp.feature (rev f36e8dfb2)
-# NOT ported: the Rules tagged @pending: server show, edit and set, the
-#   config-level store's absence, the retired native mcp: block, ctxloom's own
-#   server in its companion loadout, and the bare noun's refusal.
+# NOT ported: the Rules tagged @pending, each with its reason: ctxloom's own
+#   server in its companion loadout, and showing it.
 @doc
 Feature: mcp — the MCP servers ctxloom hands to every engine
 
@@ -32,6 +31,10 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
       Then the command succeeds
       And the output reports "mcp_servers[name$=/mcpServers/toolserver].command" as "j000400-mcp-tool-9e1b52"
 
+  # Still pending (step 11): not built. ctxloom's own loadout declares its
+  # server (library::write::loadout, `served_by: session-endpoint`), but no
+  # catalog joins it where no companion is configured: `mcp server list` is
+  # `{}` and `mcp server show ctxloom` is `library-application-mcp-not-found`.
   @pending
   Rule: ctxloom's own MCP server ships in ctxloom's own companion loadout, so it needs no configuration
 
@@ -48,6 +51,8 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
       And the output contains "ctxloom"
       And the output contains "ctxloom+companion:ctxloom"
 
+  # Still pending (step 11): not built, as the Rule above: `mcp server show
+  # ctxloom` is `library-application-mcp-not-found` (exit 20).
   @pending
   Rule: Showing a server surfaces how it is reached, not just its name
 
@@ -84,7 +89,6 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
         | --format json | projects/{project}/companions/ctxloom/bundles/loadout/mcpServers/ctxloom | session-endpoint |
         | --format text | ctxloom+companion:ctxloom   | Served by: the running session's endpoint |
 
-  @pending
   Rule: There is no config-level MCP store to create in or remove from
 
     # The ruling this noun is shaped by: an MCP server lives in a bundle and
@@ -115,7 +119,6 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
         | register   |
         | unregister |
 
-  @pending
   Rule: A config carrying the retired native mcp: block is refused, not ignored
 
     # A setting that looks applied and is not is the worse outcome, so a
@@ -138,7 +141,6 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
       Then the command fails
       And the output contains "unknown key `mcp`"
 
-  @pending
   Rule: Editing a bundle's server is a round trip through the user's editor
 
     # `mcp server edit` is the only leaf here that hands control to an
@@ -181,7 +183,6 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
       Then the command fails
       And the output contains "not found"
 
-  @pending
   Rule: Setting a bundle's server from flags changes exactly the fields passed
 
     # `mcp server set` is a PATCH: a typed flag reaches the entry, an untyped
@@ -280,7 +281,6 @@ Feature: mcp — the MCP servers ctxloom hands to every engine
         | engine      |
         | claude-code |
 
-  @pending
   Rule: The bare noun answers a person and refuses a protocol client
 
     `ctxloom mcp` on its own lists the MCP servers this project registers, the

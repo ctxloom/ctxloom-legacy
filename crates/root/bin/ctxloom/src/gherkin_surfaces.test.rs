@@ -232,7 +232,8 @@ fn index_records(_w: &mut World, _harp: String, _engine: String) {
 }
 
 /// Go's inline bundle document, as the tree this port reads: the envelope, a
-/// hook per entry (its `order:` in a sidecar), a skill's tags in its metadata.
+/// hook per entry (its `order:` in a sidecar), a server per `mcp:` entry, a
+/// skill's tags in its metadata.
 #[given(expr = "the project already has the bundle {string}:")]
 fn project_bundle(w: &mut World, step: &Step, name: String) {
     let parsed = angzarr_yaml::parse(&doc(step)).expect("a bundle document");
@@ -279,6 +280,18 @@ fn project_bundle(w: &mut World, step: &Step, name: String) {
                 );
             }
         }
+    }
+    // A server is its one file, `mcp/<name>.yaml` (owner T27), its fields
+    // as Go's inline entry gave them.
+    for (server, body) in parsed
+        .get("mcp")
+        .and_then(angzarr_yaml::Value::as_map)
+        .unwrap_or_default()
+    {
+        w.common.project.write(
+            &format!("{root}/mcp/{server}.yaml"),
+            &angzarr_yaml::write(body, usize::MAX),
+        );
     }
     for (skill, body) in parsed
         .get("skills")

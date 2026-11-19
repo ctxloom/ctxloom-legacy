@@ -116,3 +116,15 @@ fn registers_mcp(w: &mut World, rel: String, name: String) {
         w.common.project.read(&rel)
     );
 }
+
+/// mcp.feature: an initialized project whose editor (the home config's
+/// `editor`, through `sh`) rewrites the buffer's `command:` line to
+/// `command: EDITED-BY-TEST`, keeping the rest of the entry.
+#[given("a ctxloom project with a command-rewriting editor")]
+fn command_rewriting_editor(w: &mut World) {
+    w.common.project = crate::tests::library::Project::initialized();
+    w.common.project.write_home(
+        ".ctxloom/config.yaml",
+        "schema_version: 9\neditor:\n  command: sh\n  args:\n    - \"-c\"\n    - 'sed \"s/^command:.*/command: EDITED-BY-TEST/\" \"$1\" > \"$1.new\" && mv \"$1.new\" \"$1\"'\n    - editor\n",
+    );
+}
