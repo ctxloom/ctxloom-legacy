@@ -696,7 +696,7 @@ where
 {
     if only.is_none() && !Timings::asked().on() {
         if let Some(ids) = scenario_ids(file).filter(|ids| !ids.is_empty()) {
-            return run_scenarios_at_once(&ids, SCENARIOS_AT_ONCE, |id| {
+            return run_scenarios_at_once(&ids, scenarios_at_once(), |id| {
                 run_feature_whole::<W>(file, Some(id))
             });
         }
@@ -705,8 +705,35 @@ where
 }
 
 /// How many scenarios of one feature run at once: nextest already runs as
-/// many features at once as it runs tests (one a core), so a few more each.
-pub(crate) const SCENARIOS_AT_ONCE: usize = 3;
+/// many features at once as it runs tests, so a few more each.
+// 2, not 3: measured 2026-11-18 with nextest's 12 threads, as fast on a quiet host and faster under load, at ~60% of 20x3's load average.
+pub(crate) const SCENARIOS_AT_ONCE: usize = 2;
+
+/// How many scenarios of one feature run at once in this test process:
+/// `GHERKIN_SCENARIOS_AT_ONCE`, read once, else [`SCENARIOS_AT_ONCE`] (a
+/// knob for measuring the run, as `NEXTEST_TEST_THREADS` is nextest's).
+fn scenarios_at_once() -> usize {
+    static AT_ONCE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *AT_ONCE.get_or_init(|| {
+        scenarios_at_once_from(super::host_var("GHERKIN_SCENARIOS_AT_ONCE").as_deref())
+    })
+}
+
+/// [`scenarios_at_once`] of the variable's value: unset is the default, a
+/// positive count is that count; anything else panics, so a mistyped knob
+/// never measures the default.
+pub(crate) fn scenarios_at_once_from(value: Option<&std::ffi::OsStr>) -> usize {
+    let Some(value) = value else {
+        return SCENARIOS_AT_ONCE;
+    };
+    value
+        .to_str()
+        .and_then(|text| text.parse::<usize>().ok())
+        .filter(|&count| count > 0)
+        .unwrap_or_else(|| {
+            panic!("GHERKIN_SCENARIOS_AT_ONCE is {value:?}, not a count of 1 or more")
+        })
+}
 
 /// The ids of a feature file's scenarios that a run would run (its pending
 /// ones left out), each once, in the file's order; `None` when it does not
