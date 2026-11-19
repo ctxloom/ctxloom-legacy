@@ -269,8 +269,9 @@ whose content and config ports record what it writes and write nothing,
 shaped by `library_api::writes::shape` into ONE step (a file replaced, a
 new directory, a path trashed; more than one file is
 `library-tree-one-change-per-call`), then INTENDED (the step's command
-under the request id, git's ids for what it writes from
-`TreeObserver::blob_id_of`), made by ONE atomic operation (U8,
+under the request id, the content ids of what it writes,
+`library_tree::content_id`, the SHA-256 of the bytes; step 10c U13 rework),
+made by ONE atomic operation (U8,
 `ctxloom_ports::Operations`, content-fs's `TreeOperations`, through the
 `Observing`'s `operations`; `library_api::writes::operation` maps the
 step): a file written under the tree's `state/staging/<request id>/` and
@@ -1443,6 +1444,76 @@ Windows are unverified live. Settings apply to the engine the plan resolved, and
 X` asks the plan for X (its engine block drives it). A launch whose agent `runtime` weakens
 the engine's (or swaps container ownerships) says so as a notice. `init`'s
 token guide asks the configured source.
+
+## The general flow: facts in, aggregates decide, projections drive the work (owner, 2026-11-18)
+
+THE pattern for every domain (owner: "events/facts come in, aggregate
+decides, emits events, projector/agent runner handles those events
+(possibly batching them)"; "we read from the projection, and the
+projection updates the worker agents"):
+
+1. Outside state enters as FACTS (an angzarr `Fact`), keyed by
+   `FactOrigin.external_id`, so a resend is a DUPLICATE (the coordinator
+   derives the command id from it). A tree's files enter as one
+   `RecordTreeListed`; a hook's observations as the capture facts.
+2. AGGREGATES decide and apply, purely (`#[handles_fact]`, `decide`,
+   `#[applies]`): the library aggregate compares a listing with the hashes
+   its state holds and records only what differs.
+3. PROJECTORS fold events into read models (angzarr `ProjectorHandler`,
+   caught up by `CatchUp`: held in memory, `CatchUp::new`, or with its
+   positions in the store, `CatchUp::stored`).
+4. Every READ answers from a projection (the session index, the library
+   checkouts, the board), never by folding a stream or observing per call
+   beyond its own need.
+5. Event HANDLERS (a projector, or the agent runner that hosts the
+   sessions) consume those events, possibly batching them, and drive work
+   outward: the runner sets or delivers what a session is owed, and the
+   edge (a hook, or a stream) hands it to the engine. Built: the daemon's
+   loop (`daemon_application::Daemon::tick`, the runner) steps
+   `daemon_application::owed::OwedContexts` under `CatchUp::stored` over
+   the library and sessions domains (positions under `owed-contexts`, so
+   a later daemon resumes and a re-handed book records nothing twice); it
+   records `RecordContextOwed` on each live session a change touches
+   (keyed `owed:<session>:<tree>@<seq>`), the session index folds it, and
+   the hook only COLLECTS (`RedeliverContext`). `WatchLibrary` is woken by
+   the fold itself (`LibraryCheckout::watch`), never polled.
+6. A CACHE in front of an observation is the edge's (never projector
+   state), keyed by stat; an invalidation (`ctxloom context refresh`,
+   `Observations::forget`) wipes the memo, never the projection, and the
+   re-observation emits facts only where content hashes differ.
+
+## Re-injection is projection-driven (step 10c U13 rework, owner 2026-11-18)
+
+A live session whose loadout a library change touches is handed its
+re-assembled context at its next hook, ONCE per batch:
+
+- Per-tree stream POSITIONS, not time: a session's loadout records the
+  positions its project's trees were at before its plan
+  (`RecordLoadout.covered`, read from the checkouts projection by the
+  daemon; a one-shot's and a seed's cover none, and then a change recorded
+  after the loadout is owed). The session index folds
+  `session_index::Handed` (`loaded_at`, `covered`, `owed`: one
+  `OwedChange {tree, sequence, bundles, paths}` per tree and sequence).
+  A loadout is also owed at once what its trees changed past its
+  positions (`owed-at-load:` keys), so a change between the plan and the
+  loadout is not lost.
+- COLLECTION (`daemon_api::Api::redeliver_context`, then `collect`): the
+  positions it covers are read BEFORE the re-assembly, so a change recorded
+  mid-delivery stays owed (the race forced in daemon-api's reactions
+  test); one delivery covers every change owed (batching), keyed
+  `reinject:<session>:<H(positions)>` (`sessions::positions_text`), and
+  records `RecordContextRedelivered.covered`. No round is awaited: a hook
+  observes its trees only past `HOOK_TRUST_SECONDS` (300) since their last
+  scan (`Observations::observe_trees_trusting`), and what that records is
+  collected at a later hook. No round, timer or watcher observes a tree
+  (G5(b) superseded); every read, preview and write scans (through the
+  memo).
+- ONE BUDGET per hook answer, claude's 10,000 characters
+  (`run_launcher::HOOK_CONTEXT_BUDGET`): `RedeliverContextRequest.budget`
+  is what the parts before it left (0, the whole). Over it,
+  `run_launcher::redelivered_within` gives a framing line and only the
+  changed fragments, whole (asked of the library by the owed paths), else
+  a pointer to `ctxloom context assemble`, else nothing (still owed).
 
 ## Architecture: hexagonal around CQRS/ES (checked by `just lint-arch`, and in review)
 
@@ -2855,19 +2926,30 @@ not judged.
 
 ## A library read observes its trees first (step 10a U2, in part)
 
-`core/application/library-api` is the daemon's library reads' crate. Its
-reconcile (`reconcile::sight`, pure over `TreeObserver`) asks git, in
-order: the operation in progress, HEAD and the library's tree id in it,
-`status` over the library's pathspec (`PATHSPEC`: `content/bundles/v2`,
-`config.yaml`, `remotes.yaml`, `lock.yaml`; L13), and the ids of every
-path that differs now or was dirty at the record's last sight; when the
-library's tree id moved it diffs the commits (`diff-tree -M`), and a
-last-seen commit git no longer has (or an empty HEAD) re-baselines. Each
-path is judged against what the record knew (its last dirty id, else the
-diff's, else "present at HEAD"): added, deleted, renamed where git paired
-it, type-changed, else modified; a tree's first sight is its baseline,
-what git sees uncommitted as git classes it. Nothing differing records
-nothing (no fact sent; HEAD alone moving is nothing, QUESTIONS A).
+`core/application/library-api` is the daemon's library reads' crate. A
+tree is SEEN BY THE SCANNER, never by git (step 10c U13 rework, owner
+2026-11-18): `ctxloom_ports::LibraryScanner` (the wiring's `TreeScanner`,
+handed out by `Observers::scanner`, one per daemon) walks the library's
+paths (`ctxloom_ports::LIBRARY_PATHS`: `content/bundles/v2`, `config.yaml`,
+`remotes.yaml`, `lock.yaml`; L13) and hashes each file:
+`library_tree::content_id`, the SHA-256 of its bytes, ctxloom's digest and
+never git's (no SHA-1 is added). Its edge memo, keyed by path and stat
+(length and mtime), reuses a hash whose file is unchanged and had settled
+(`SETTLED`, 2 s, git's racily-clean case) when hashed; `forget` drops it.
+`Observations::observe` sends ONE `RecordTreeListed` (every file and its
+content id, keyed `listed:{tree}:{H(base_cause)}:{H(sorted listing)}`,
+`library_tree::listing_key`, chained so A to B to A is three) unless the
+scan matches what the record lists (`listed_as_held`; a path a step took
+away, held with an empty id, is absent: `Library::listed`); the AGGREGATE
+compares it (`listing_changes`: each path added, modified or deleted,
+sorted; a move is a delete and a create) and records the `TreeObserved`
+a read's would be, the first a baseline of every file, an intent's own
+change attributed as before. Writes' intents and steps name content ids
+(`writes::intent_of` asks nothing; `left_by` and an export's manifest ask
+the scanner). git is still asked for G1's refusals, the home step and a
+git operation in progress (`TreeObserver::in_motion`) until the git-free
+undo (plan "The library is git-free"); library-api's git reconcile
+(`sight`, `PATHSPEC`) is gone.
 `locate::refusal` is G1's: a project whose root is in no work tree is
 `library-tree-not-in-git`, one whose `.ctxloom/config.yaml` git ignores
 (`check-ignore` from the root) `library-tree-library-ignored`.
@@ -2905,11 +2987,11 @@ so the command says `library-git-git-missing` in its own catalog's words
 and exits 10.
 
 `just bench-reconcile` (O7; `LIBRARY_BENCH=reconcile`, else the test says
-SKIP) times `sight` over `CallerGits` on 100 000 files with 500 in
-`.ctxloom`: p95 under 50 ms for a read seeing nothing new and one seeing a
-hand edit (2026-11-17, git 2.47, this machine: p95 46 ms and 50 ms; `status`
-alone is about 28 ms, so the margin is thin; the next mitigations are O7's
-untrackedCache or fsmonitor, or fewer `rev-parse` processes).
+SKIP) times an observation's scan over `CallerGits`' scanner, its memo
+warm, on a repository of 100 000 files with 500 in `.ctxloom` (the
+scanner walks the library alone): p95 under 50 ms for a read seeing nothing
+new and one seeing a hand edit. (Its git-era figures, p95 46 and 50 ms, were
+`git status`'s.)
 
 The owner's rulings of 2026-11-17 (E1, E2, E5, O3, the read notices) are
 built:
