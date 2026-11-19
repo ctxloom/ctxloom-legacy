@@ -420,14 +420,34 @@ impl TreeScanner {
         Ok(id)
     }
 
-    /// Every file under `path` (relative `rel`), into `found`.
+    /// Whether a link is among the steps of `rel` below `root` (the last
+    /// one included): the library is read through no link, as the write side
+    /// refuses a path through one (a cloned repository's `x -> /` must not
+    /// hash the disk, nor a loop fail every read). `root` itself may be one.
+    fn through_link(&self, root: &std::path::Path, rel: &str) -> std::io::Result<bool> {
+        let mut here = root.to_path_buf();
+        for part in rel.split('/') {
+            here.push(part);
+            match self.fs.symlink_metadata(&here) {
+                Ok(meta) if meta.kind == file_system::Kind::Symlink => return Ok(true),
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(false)
+    }
+
+    /// Every file under `path` (relative `rel`), into `found`. A link is
+    /// skipped, not followed, and not said: the scanner has no notice to
+    /// give, and a refusal would let one hostile entry refuse every read.
     fn walk(
         &self,
         path: &std::path::Path,
         rel: &str,
         found: &mut std::collections::BTreeMap<String, String>,
     ) -> std::io::Result<()> {
-        let meta = match self.fs.metadata(path) {
+        let meta = match self.fs.symlink_metadata(path) {
             Ok(meta) => meta,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e),
@@ -467,6 +487,12 @@ impl ctxloom_ports::LibraryScanner for TreeScanner {
         let root = std::path::Path::new(dir);
         let mut found = std::collections::BTreeMap::new();
         for path in ctxloom_ports::LIBRARY_PATHS {
+            if self
+                .through_link(root, path)
+                .map_err(|e| scan_failed(dir, &e))?
+            {
+                continue;
+            }
             self.walk(&root.join(path), path, &mut found)
                 .map_err(|e| scan_failed(dir, &e))?;
         }
@@ -482,7 +508,13 @@ impl ctxloom_ports::LibraryScanner for TreeScanner {
         let mut found = std::collections::BTreeMap::new();
         for path in paths {
             let at = root.join(path);
-            match self.fs.metadata(&at) {
+            if self
+                .through_link(root, path)
+                .map_err(|e| scan_failed(dir, &e))?
+            {
+                continue;
+            }
+            match self.fs.symlink_metadata(&at) {
                 Ok(meta) if meta.kind == file_system::Kind::File => {
                     let id = self.id_of(&at, &meta).map_err(|e| scan_failed(dir, &e))?;
                     found.insert(path.to_string(), id);
