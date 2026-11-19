@@ -128,6 +128,42 @@ pub struct Observations<E> {
     /// When each tree (its directory) was last scanned, by the clock (step
     /// 10c U13 rework): what a hook's observation trusts.
     scanned: Mutex<std::collections::BTreeMap<String, i64>>,
+    /// What the purge has seen of the clock's own progress (review 5).
+    ticks: Mutex<Ticks>,
+}
+
+/// The longest stretch between two of the daemon's own purge checks that
+/// still counts as the clock running on. The daemon checks at every
+/// observation, so a longer one is the clock set forward (or the machine
+/// suspended): either way it is not seven days of the slot's keeping.
+const MAX_GAP: i64 = 3_600;
+
+/// The clock as the purge has watched it: its last reading, and the
+/// stretches between readings too long to be time passing, summed. A slot's
+/// age is told by the clock less that sum, so a clock set forward cannot
+/// purge a slot early (a loss), while a quiet daemon only purges later (the
+/// slot is kept longer, never lost). A clock set
+/// back adds nothing and is simply followed. One wall clock cannot tell a
+/// jump it was not watching, so a daemon (re)started on a clock already set
+/// forward is not protected.
+#[derive(Default)]
+struct Ticks {
+    last: Option<i64>,
+    skipped: i64,
+}
+
+impl Ticks {
+    /// The reading `now` taken into account: `now` less the jumps seen.
+    fn steady(&mut self, now: i64) -> i64 {
+        if let Some(last) = self.last {
+            let gap = now.saturating_sub(last);
+            if gap > MAX_GAP {
+                self.skipped = self.skipped.saturating_add(gap);
+            }
+        }
+        self.last = Some(now);
+        now.saturating_sub(self.skipped)
+    }
 }
 
 /// The daemon's clock: now, in seconds since the epoch.
@@ -149,6 +185,7 @@ impl<E: Edge> Observations<E> {
             swept: Mutex::new(BTreeSet::new()),
             clock: None,
             scanned: Mutex::new(std::collections::BTreeMap::new()),
+            ticks: Mutex::new(Ticks::default()),
         }
     }
 
@@ -208,7 +245,11 @@ impl<E: Edge> Observations<E> {
         let (Some(clock), Some(operations)) = (&self.clock, &self.operations) else {
             return Ok(());
         };
-        let now = clock();
+        let now = self
+            .ticks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .steady(clock());
         let due: Vec<(String, u32)> = self
             .held(tree)
             .trashed
@@ -377,9 +418,11 @@ impl<E: Edge> Observations<E> {
                 .scanned
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let trusted = dirs
-                .iter()
-                .all(|dir| scanned.get(dir).is_some_and(|at| now - at < trust));
+            let trusted = dirs.iter().all(|dir| {
+                scanned
+                    .get(dir)
+                    .is_some_and(|at| (0..trust).contains(&(now - at)))
+            });
             if trusted {
                 return Ok(());
             }
