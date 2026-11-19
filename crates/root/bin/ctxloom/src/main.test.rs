@@ -68,11 +68,47 @@ pub(crate) fn lifeline() -> &'static Path {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_nanos());
             let path = dir.join(format!("{}-{nanos}.lock", std::process::id()));
-            let held = file_lock::lock_within(&*fs, &path, std::time::Duration::ZERO)
-                .expect("this test process's lifeline");
+            let held = take_own_lifeline(&*fs, &path);
             (path, held)
         })
         .0
+}
+
+/// How long a test process waits for its own new lifeline's lock: another
+/// process's reaper, which locks every lifeline it finds free to see whether
+/// it was left behind, may hold a NEW one for an instant.
+const OWN_LIFELINE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The lock of this test process's own lifeline at `path`, waited for within
+/// [`OWN_LIFELINE_WAIT`] (a reaper that removed the file meanwhile is the
+/// lock's own re-check: it is taken again on a new file).
+fn take_own_lifeline(fs: &dyn file_system::Fs, path: &Path) -> file_lock::Locked {
+    file_lock::lock_within(fs, path, OWN_LIFELINE_WAIT).expect("this test process's lifeline")
+}
+
+// CI on macOS (2026-11-19): a test process took its new lifeline's lock
+// without waiting, and failed (`Timeout { waited_ms: 0 }`) because another
+// test process's reaper held it at that instant. The race forced: another
+// taker holds the lock when it is taken, and lets it go a moment later.
+#[test]
+fn a_lifeline_another_process_holds_for_an_instant_is_still_taken() {
+    let fs = files::fs();
+    let dir = temp_root().join(format!("ctxloom-test-lifeline-race-{}", std::process::id()));
+    let path = dir.join("own.lock");
+    let reaper =
+        file_lock::lock_within(&*fs, &path, std::time::Duration::ZERO).expect("the lock is free");
+    let let_go = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        drop(reaper);
+    });
+    let own = take_own_lifeline(&*fs, &path);
+    let_go.join().expect("the reaper let go");
+    assert!(
+        file_lock::lock_within(&*fs, &path, std::time::Duration::ZERO).is_err(),
+        "the process holds its lifeline"
+    );
+    drop(own);
+    let _ = fs.remove_dir_all(&dir);
 }
 
 /// A variable of the process the tests run in, for passing on to the binary
