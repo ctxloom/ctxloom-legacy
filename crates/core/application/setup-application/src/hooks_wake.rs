@@ -6,7 +6,8 @@
 //!   wakes; a prompt that IS a wake line (`run_ports::wake_nonce`) redeems
 //!   its wake, and is blocked when it delivered nothing (a stale wake: no
 //!   model call spent on it); a human's prompt is never blocked;
-//! - `post_tool` (PostToolUse) delivers its steers alone, mid-turn.
+//! - `post_tool` (PostToolUse) asks for none: it would deliver a steer,
+//!   and a primary is offered none (a child's messages are its turns).
 //!
 //! What is delivered is what was recorded delivered first
 //! ([`HookMessages::delivered`]): what could not be recorded waits, never
@@ -22,9 +23,6 @@ pub(crate) const STALE_WAKE: &str =
 
 /// The urgencies a prompt delivers.
 const AT_A_PROMPT: &[&str] = &["inform", "wake"];
-
-/// The urgencies a tool call delivers.
-const MID_TURN: &[&str] = &["steer"];
 
 /// A primary's pending messages as its hooks reach them: THROUGH THE
 /// DAEMON, within the hook's bound, as the library reads are.
@@ -85,11 +83,6 @@ impl Setup {
         let context = self.deliver_messages(AT_A_PROMPT, wake.unwrap_or_default(), harp, budget);
         let block = wake.is_some() && context.is_empty();
         (context, block)
-    }
-
-    /// A tool call's delivery: its steers' context.
-    pub(crate) fn steer_delivery(&self, harp: &str, budget: usize) -> String {
-        self.deliver_messages(MID_TURN, "", harp, budget)
     }
 }
 

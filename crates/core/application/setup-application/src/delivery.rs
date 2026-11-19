@@ -1,7 +1,7 @@
 //! What a primary's hooks deliver of its pending messages (the terminal
 //! wake, owner ruling 2026-11-18): the prompt's hook (`turn_start`) its
-//! informs and wakes, a tool call's (`post_tool`) its steers, each as the
-//! engine's model-visible context. One hook answer has ONE budget,
+//! informs and wakes, as the engine's model-visible context (a primary is
+//! offered no steer, so a tool call's hook delivers none). One hook answer has ONE budget,
 //! [`HOOK_CONTEXT_BUDGET`] characters (claude caps a hook's
 //! `additionalContext` at 10,000, 2.1.325; owner ruling 2026-11-18,
 //! replacing Go's 7500), shared by every part: the messages first, then

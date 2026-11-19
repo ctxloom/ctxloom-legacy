@@ -130,8 +130,7 @@ impl Setup {
                 })
             }
             // The terminal wake: a prompt delivers the informs and wakes
-            // (a stale wake line blocked), a tool call the steers, each in
-            // the one budget after what came before it, joined by
+            // (a stale wake line blocked), in the one budget, joined by
             // `compose_context` (where U13's re-delivered context joins
             // too, as its last part).
             "turn_start" => {
@@ -151,10 +150,11 @@ impl Setup {
                     ..HookAnswer::default()
                 })
             }
+            // A tool call asks the daemon for no messages: it would deliver
+            // a steer, and a primary is offered none (owner ruling
+            // 2026-11-18), so the call would only cost the hook its latency.
             "post_tool" => {
-                let mut response = self.mates_response(codec, &event);
-                let steers = self.steer_delivery(harp, remaining(&[&response.context]));
-                response.context = compose_context(&[&response.context, &steers]);
+                let response = self.mates_response(codec, &event);
                 Ok(HookAnswer {
                     stdout: encode(&response)?,
                     event: Some(event),

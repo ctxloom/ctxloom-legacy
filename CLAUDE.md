@@ -3526,8 +3526,10 @@ it starts, so `ctxloom mcp serve` (the stdio server it starts from
 turn start)"}`, `run_ports::wake_line`), and disarmed after 60 s
 (`DisarmWake`; a post that fails, at once). A wake is a nudge: the session's
 pending messages are the truth. Its prompt hook (`turn_start`) delivers its
-informs and wakes as `additionalContext`, and a tool call's (`post_tool`) its
-steers. They are recorded first (`DeliverMessages`, which redeems the wake its
+informs and wakes as `additionalContext`; a tool call's (`post_tool`) asks for
+none (a primary is offered no steer, and `GetSession` waits for a fresh
+daemon round: about 90 ms a tool call, measured by `just hook-latency`
+against the owner's 20 ms budget). They are recorded first (`DeliverMessages`, which redeems the wake its
 prompt was; pending-messages drops them) and are a primary's alone (a child's
 are fed as turns). A wake line that delivered nothing is blocked; a human's
 prompt never is. One hook answer has ONE 10,000-character context budget

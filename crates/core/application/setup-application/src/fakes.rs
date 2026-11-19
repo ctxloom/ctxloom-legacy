@@ -420,10 +420,13 @@ pub(crate) struct Inbox {
     pub(crate) pending: std::sync::Mutex<Option<Vec<crate::HookMessage>>>,
     pub(crate) delivered: Deliveries,
     pub(crate) refusing: bool,
+    /// How many times a hook asked for the pending messages.
+    pub(crate) asked: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl crate::HookMessages for Inbox {
     fn pending(&self) -> Option<Vec<crate::HookMessage>> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.pending.lock().unwrap().clone()
     }
 

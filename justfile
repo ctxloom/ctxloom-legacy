@@ -708,6 +708,38 @@ selftest:
 validate-wake-claude *args:
     @python3 -I {{TOP}}/scripts/validate-wake-claude.py {{args}}
 
+# What the terminal wake adds to a primary's PostToolUse hook (and, reported
+# only, its UserPromptSubmit hook), nothing pending (owner ruling 2026-11-18:
+# under 20 ms at p95): the
+# test-support binary of <base> (default the wake's merge base, built in a
+# throwaway worktree beside the checkout, its own target dir
+# target/latency-base) against this tree's, each with a daemon of its own in
+# a temporary home, the calls interleaved (scripts/hook-latency.py). Not a
+# gate; run it on a quiet machine. Exit 1 when the budget is spent. `profile`
+# is cargo's (`ci-artifact`: release's optimizations, no LTO).
+[group('check')]
+[doc("Measure the wake's PostToolUse hook latency: hook-latency [base] [calls] [profile]")]
+hook-latency base="2579730b1" calls="200" profile="dev":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    while IFS= read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
+    built() {
+        cargo build --quiet --message-format=json-render-diagnostics \
+            --manifest-path "$1/Cargo.toml" --package ctxloom \
+            --features test-support,session-destroy --bin ctxloom --profile {{profile}} "${@:2}" \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "ctxloom"
+                and .executable != null) | .executable'
+    }
+    sha=$(git -C {{TOP}} rev-parse --verify --quiet "{{base}}^{commit}") \
+        || { echo "FAIL hook-latency: {{base}} is not a commit" >&2; exit 1; }
+    wt=$(dirname {{TOP}})/.$(basename {{TOP}}).latency-base
+    {{TOP}}/gates/drop-worktree.sh {{TOP}} "$wt"
+    git -C {{TOP}} worktree add -q --detach "$wt" "$sha"
+    trap '{{TOP}}/gates/drop-worktree.sh {{TOP}} "$wt"' EXIT
+    before=$(built "$wt" --target-dir {{TOP}}/target/latency-base)
+    after=$(built {{TOP}})
+    python3 -I {{TOP}}/scripts/hook-latency.py "$before" "$after" {{calls}}
+
 # Run the ctxloom binary (cargo run, quiet) with the given arguments.
 [group('dev')]
 [doc("Run the ctxloom binary: run [args...]")]

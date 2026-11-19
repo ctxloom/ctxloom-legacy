@@ -1,7 +1,9 @@
 //! A primary's hooks deliver its pending messages (the terminal wake, owner
-//! ruling 2026-11-18): the prompt's informs and wakes, a tool call's steers;
-//! a stale wake line is blocked, a human's prompt never.
+//! ruling 2026-11-18): the prompt's informs and wakes; a tool call asks for
+//! none (a primary takes no steer); a stale wake line is blocked, a human's
+//! prompt never.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::fakes::{world, Deliveries, Inbox, CONFIG};
@@ -22,15 +24,26 @@ fn message(id: &str, urgency: &str, text: &str) -> HookMessage {
 /// The setup, its hooks reaching `pending` (`None`: no daemon answered),
 /// each delivery recorded unless `refusing`.
 fn hooked(pending: Option<Vec<HookMessage>>, refusing: bool) -> (crate::Setup, Deliveries) {
+    let (setup, delivered, _) = asking(pending, refusing);
+    (setup, delivered)
+}
+
+/// [`hooked`], with how many times a hook asked for the messages.
+fn asking(
+    pending: Option<Vec<HookMessage>>,
+    refusing: bool,
+) -> (crate::Setup, Deliveries, Arc<AtomicUsize>) {
     let inbox = Inbox {
         pending: Mutex::new(pending),
         refusing,
         ..Inbox::default()
     };
     let delivered = Arc::clone(&inbox.delivered);
+    let asked = Arc::clone(&inbox.asked);
     (
         world(CONFIG).setup.with_hook_messages(Box::new(inbox)),
         delivered,
+        asked,
     )
 }
 
@@ -135,26 +148,25 @@ fn with_no_daemon_a_prompt_goes_on_and_a_wake_line_is_blocked() {
     assert!(delivered.lock().unwrap().is_empty());
 }
 
-// Mid-turn, a tool call delivers the steers alone, after the skill mates
-// line, in the one budget.
+// A tool call asks the daemon for nothing: it would deliver a steer alone,
+// and a primary is offered none (owner ruling 2026-11-18; a child's are fed
+// as turns), so the call is not made (its cost was the hook's latency
+// budget). The skill mates line is answered as ever. A prompt still asks.
 #[test]
-fn a_tool_call_delivers_the_steers_alone_after_the_mates_line() {
-    let (setup, delivered) = hooked(Some(mixed()), false);
+fn a_tool_call_asks_for_no_messages_and_delivers_none() {
+    let (setup, delivered, asked) = asking(Some(mixed()), false);
     let out = setup
         .execute_hook("claude-code", "PostToolUse", r#"{"skill":"admit"}"#, HARP)
         .unwrap()
         .stdout;
-    let mates = out.find("Skill admit completed").expect("the mates line");
-    let steer = out
-        .find("- from the user (steer): stop and rebase")
-        .expect("the steer");
-    assert!(mates < steer, "{out}");
     assert!(
-        !out.contains("the tests pass"),
-        "an inform waits for a prompt: {out}"
+        out.contains("Skill admit completed"),
+        "the mates line: {out}"
     );
-    assert_eq!(
-        *delivered.lock().unwrap(),
-        [(vec!["m2".to_string()], String::new())]
-    );
+    assert!(!out.contains("stop and rebase"), "{out}");
+    assert!(!out.contains("the tests pass"), "{out}");
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "a tool call asked");
+    assert!(delivered.lock().unwrap().is_empty());
+    prompt(&setup, "go on");
+    assert_eq!(asked.load(Ordering::SeqCst), 1, "a prompt asks");
 }
