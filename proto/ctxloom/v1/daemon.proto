@@ -654,6 +654,19 @@ service Ctxloom {
   // (-- api-linter: core::0136::response-message-name=disabled
   //     aip.dev/not-precedent: the hook's answer, a context or none. --)
   rpc DeliverHookContext(DeliverHookContextRequest) returns (HookContext);
+  // (-- region message-delivery-ack --)
+  // `projects/{project}/sessions/{session}:acknowledgeHookDelivery`
+  // (AIP-136; message delivery, owner 2026-11-19: AT-LEAST-ONCE, never
+  // marked delivered before it has been): the hook, once it has PRINTED
+  // and FLUSHED the context `DeliverHookContext` offered, records the
+  // messages it offered delivered (and redeems the wake its prompt was).
+  // Idempotent per message id: an id already delivered is a no-op. A hook
+  // that dies before this call leaves the messages pending, offered again.
+  // Additive.
+  // (-- api-linter: core::0136::response-message-name=disabled
+  //     aip.dev/not-precedent: the hook's ack, the ids it recorded. --)
+  rpc AcknowledgeHookDelivery(AcknowledgeHookDeliveryRequest) returns (HookDeliveryAcknowledged);
+  // (-- endregion message-delivery-ack --)
 
   // The rest of the CLI, drafted with the milestone that ports each, by
   // these rules (S33): hooks; remotes' DiscoverRemotes;
@@ -1445,7 +1458,34 @@ message HookContext {
   // The bundles (and `config`) whose change the owed context answers,
   // sorted.
   repeated string changed = 3;
+  // Message delivery (owner 2026-11-19): `DeliverHookContext` marks nothing
+  // delivered, so `delivered` (2) is no longer set. The ids of the messages
+  // whose elements `context` carries, in the order sent; the hook sends
+  // them in `AcknowledgeHookDelivery` once it has printed them. (A wake
+  // prompt with none offered is stale.)
+  repeated string offered = 4;
 }
+
+// (-- region message-delivery-ack --)
+// Message delivery (owner 2026-11-19): the hook's ack after it printed.
+message AcknowledgeHookDeliveryRequest {
+  // `projects/{project}/sessions/{session}`.
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  // The ids `HookContext.offered` named, which the hook has printed and
+  // flushed; none: only the wake is redeemed.
+  repeated string message_ids = 2 [(google.api.field_behavior) = OPTIONAL];
+  // The wake the hook's prompt was; empty: none.
+  string wake_nonce = 3 [(google.api.field_behavior) = OPTIONAL];
+  // The client's working context (needs.proto).
+  Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
+}
+
+message HookDeliveryAcknowledged {
+  // The ids this call recorded delivered (those still pending; an id
+  // already acknowledged is not among them).
+  repeated string delivered = 1;
+}
+// (-- endregion message-delivery-ack --)
 
 // 10c (U13): what the hook carries to its engine: the re-assembled context,
 // framed, as the engine's delivery put it; empty when none is owed, or this

@@ -222,6 +222,15 @@ pub trait Calls: Send + Sync {
         let _ = request;
         Box::pin(async { Err(not_served("DeliverHookContext")) })
     }
+    /// `AcknowledgeHookDelivery` (message delivery, 2026-11-19); as
+    /// `GetTranscript`.
+    fn acknowledge_hook_delivery(
+        &self,
+        request: v1::AcknowledgeHookDeliveryRequest,
+    ) -> Answer<'_, v1::HookDeliveryAcknowledged> {
+        let _ = request;
+        Box::pin(async { Err(not_served("AcknowledgeHookDelivery")) })
+    }
     /// `AssembleContext` (slice 3 step 6); as `GetTranscript`.
     fn assemble_context(
         &self,
@@ -478,6 +487,13 @@ impl<E: Edge + 'static> Calls for Api<E> {
         request: v1::DeliverHookContextRequest,
     ) -> Answer<'_, v1::HookContext> {
         Box::pin(async move { Api::deliver_hook_context(self, request).await })
+    }
+
+    fn acknowledge_hook_delivery(
+        &self,
+        request: v1::AcknowledgeHookDeliveryRequest,
+    ) -> Answer<'_, v1::HookDeliveryAcknowledged> {
+        Box::pin(async move { Api::acknowledge_hook_delivery(self, request).await })
     }
 
     fn watch_library(

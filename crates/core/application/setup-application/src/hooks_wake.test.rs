@@ -43,12 +43,15 @@ fn asking(pending: Option<Vec<HookMessage>>, refusing: bool) -> (crate::Setup, D
     )
 }
 
-fn prompt(setup: &crate::Setup, text: &str) -> String {
+fn answer(setup: &crate::Setup, text: &str) -> crate::HookAnswer {
     let payload = serde_json::json!({ "prompt": text }).to_string();
     setup
         .execute_hook("claude-code", "UserPromptSubmit", &payload, HARP)
         .unwrap()
-        .stdout
+}
+
+fn prompt(setup: &crate::Setup, text: &str) -> String {
+    answer(setup, text).stdout
 }
 
 fn mixed() -> Vec<HookMessage> {
@@ -59,18 +62,24 @@ fn mixed() -> Vec<HookMessage> {
     ]
 }
 
-// A human's prompt: its informs and wakes delivered, recorded with no wake;
-// never blocked.
+// A human's prompt: its informs and wakes are OFFERED, each in an element
+// with its id, and NOTHING is recorded until the hook acknowledges them
+// (after it printed): then they are, with no wake. Never blocked.
 #[test]
-fn a_prompt_delivers_the_informs_and_wakes_and_records_them() {
+fn a_prompt_offers_the_informs_and_wakes_and_records_them_only_when_acknowledged() {
     let (setup, delivered) = hooked(Some(mixed()), false);
-    let out = prompt(&setup, "go on");
+    let answered = answer(&setup, "go on");
+    let out = &answered.stdout;
     assert!(
-        out.contains("- from the user (inform): the tests pass"),
+        out.contains(
+            r#"<message id="m1" from="the user" urgency="inform">the tests pass</message>"#
+        ),
         "{out}"
     );
     assert!(
-        out.contains("- from the user (wake): child kid finished its turn"),
+        out.contains(
+            r#"<message id="m3" from="the user" urgency="wake">child kid finished its turn</message>"#
+        ),
         "{out}"
     );
     assert!(
@@ -78,20 +87,34 @@ fn a_prompt_delivers_the_informs_and_wakes_and_records_them() {
         "a steer is a tool call's: {out}"
     );
     assert!(!out.contains(";block="), "{out}");
+    assert!(
+        delivered.lock().unwrap().is_empty(),
+        "an answer marks nothing delivered"
+    );
+    assert_eq!(
+        answered.offered,
+        crate::Offered {
+            ids: vec!["m1".to_string(), "m3".to_string()],
+            wake: String::new(),
+        }
+    );
+    assert!(setup.acknowledge(&answered.offered));
     assert_eq!(
         *delivered.lock().unwrap(),
         [(vec!["m1".to_string(), "m3".to_string()], String::new())]
     );
 }
 
-// The wake line: what it woke the session for delivered, its nonce
-// redeemed.
+// The wake line: what it woke the session for offered, its nonce carried
+// to the ack that redeems it.
 #[test]
-fn a_wake_line_delivers_and_redeems_its_wake() {
+fn a_wake_line_offers_and_its_ack_redeems_its_wake() {
     let (setup, delivered) = hooked(Some(mixed()), false);
-    let out = prompt(&setup, &run_ports::wake_line(NONCE));
-    assert!(out.contains("child kid finished its turn"), "{out}");
-    assert!(!out.contains(";block="), "{out}");
+    let answered = answer(&setup, &run_ports::wake_line(NONCE));
+    assert!(answered.stdout.contains("child kid finished its turn"));
+    assert!(!answered.stdout.contains(";block="), "{}", answered.stdout);
+    assert!(delivered.lock().unwrap().is_empty());
+    setup.acknowledge(&answered.offered);
     assert_eq!(
         *delivered.lock().unwrap(),
         [(vec!["m1".to_string(), "m3".to_string()], NONCE.to_string())]
@@ -99,13 +122,14 @@ fn a_wake_line_delivers_and_redeems_its_wake() {
 }
 
 // A stale wake line (nothing waits for it): blocked, so no model call is
-// spent on it; its nonce still redeemed (recorded with no message).
+// spent on it; its nonce is still acknowledged (redeemed with no message).
 #[test]
 fn a_stale_wake_line_is_blocked() {
     let (setup, delivered) = hooked(Some(vec![message("m2", "steer", "x")]), false);
-    let out = prompt(&setup, &run_ports::wake_line(NONCE));
-    assert!(out.contains(";block="), "{out}");
-    assert!(out.starts_with("context=;"), "{out}");
+    let answered = answer(&setup, &run_ports::wake_line(NONCE));
+    assert!(answered.stdout.contains(";block="), "{}", answered.stdout);
+    assert!(answered.stdout.starts_with("context=;"));
+    setup.acknowledge(&answered.offered);
     assert_eq!(
         *delivered.lock().unwrap(),
         [(Vec::new(), NONCE.to_string())]
@@ -113,25 +137,45 @@ fn a_stale_wake_line_is_blocked() {
 }
 
 // A human's prompt is never blocked: with nothing waiting it is answered
-// silence, and nothing is recorded.
+// silence, and nothing is offered or acknowledged.
 #[test]
 fn a_human_prompt_with_nothing_waiting_is_never_blocked() {
     let (setup, delivered) = hooked(Some(Vec::new()), false);
     let quoting = format!("why did I see {}?", run_ports::wake_line(NONCE));
     for text in ["go on", quoting.as_str()] {
-        let out = prompt(&setup, text);
-        assert_eq!(out, "context=;notice=\n", "{text}");
+        let answered = answer(&setup, text);
+        assert_eq!(answered.stdout, "context=;notice=\n", "{text}");
+        assert!(answered.offered.is_empty(), "{text}");
+        setup.acknowledge(&answered.offered);
     }
     assert!(delivered.lock().unwrap().is_empty());
 }
 
-// What could not be recorded is not delivered (it waits, never given
-// twice); a wake line then delivers nothing and is blocked.
+// An ack the daemon did not record is reported: the messages stay pending
+// and are offered again (a duplicate is tolerated, a loss is not).
 #[test]
-fn a_delivery_not_recorded_gives_nothing() {
-    let (setup, _) = hooked(Some(mixed()), true);
-    assert_eq!(prompt(&setup, "go on"), "context=;notice=\n");
-    assert!(prompt(&setup, &run_ports::wake_line(NONCE)).contains(";block="));
+fn an_ack_not_recorded_is_reported_and_the_messages_are_offered_again() {
+    let (setup, delivered) = hooked(Some(mixed()), true);
+    let first = answer(&setup, "go on");
+    assert!(!setup.acknowledge(&first.offered));
+    assert!(delivered.lock().unwrap().is_empty());
+    let again = answer(&setup, "go on");
+    assert_eq!(again.offered.ids, ["m1", "m3"]);
+    assert_eq!(again.stdout, first.stdout);
+}
+
+// Nothing to acknowledge asks nothing of the daemon.
+#[test]
+fn an_empty_offer_is_acknowledged_without_asking_the_daemon() {
+    // A daemon that refuses every ack: an empty offer never reaches it.
+    let (setup, delivered) = hooked(Some(Vec::new()), true);
+    assert!(setup.acknowledge(&crate::Offered::default()));
+    assert!(delivered.lock().unwrap().is_empty());
+    let offer = crate::Offered {
+        ids: vec!["m1".to_string()],
+        wake: String::new(),
+    };
+    assert!(!setup.acknowledge(&offer), "a refused ack is reported");
 }
 
 // No daemon answered: a human's prompt goes on as ever; a wake line, which

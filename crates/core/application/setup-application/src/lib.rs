@@ -40,7 +40,7 @@ pub use delivery::{
 pub use error::diagnostic_samples;
 pub use error::{SetupError, EN_US};
 pub use hooks::{harp_marker, hook_skills, HookAnswer, HookLibrary, HookSkill};
-pub use hooks_wake::{HookCarried, HookContexts};
+pub use hooks_wake::{HookCarried, HookContexts, Offered};
 pub use manage::{
     engine_applies, BackendStatus, CheckReport, GitignoreReport, HookRow, HooksEvent, HooksList,
     InstallPlan, InstallReport, InstallRequest, PullReport, SurfaceCurrency, UninstallReport,
