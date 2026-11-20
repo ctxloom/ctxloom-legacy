@@ -439,3 +439,6 @@ fn a_run_owed_a_runner_is_not_started() {
     assert!(model.started().is_empty());
     assert_eq!(model.launches().len(), 1);
 }
+
+#[path = "bus.test.rs"]
+mod bus;

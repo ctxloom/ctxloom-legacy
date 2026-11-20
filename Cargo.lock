@@ -348,6 +348,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "angzarr-test-dir"
+version = "0.1.0"
+source = "git+https://github.com/angzarr-io/angzarr?rev=71b453a4c0ee43bf9de3659f1a9339c110f6ae59#71b453a4c0ee43bf9de3659f1a9339c110f6ae59"
+
+[[package]]
 name = "angzarr-yaml"
 version = "0.1.0"
 source = "git+https://github.com/angzarr-io/angzarr?rev=71b453a4c0ee43bf9de3659f1a9339c110f6ae59#71b453a4c0ee43bf9de3659f1a9339c110f6ae59"
@@ -3456,9 +3461,11 @@ name = "pending-launches"
 version = "0.1.0"
 dependencies = [
  "angzarr-embedded",
+ "angzarr-test-dir",
  "mutants",
  "runs",
  "sessions",
+ "tokio",
  "uuid",
 ]
 
