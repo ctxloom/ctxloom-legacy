@@ -476,15 +476,22 @@ fn test_init_names_the_project_a_read_then_names() {
     );
 }
 
-// Smoke 2026-11-19: a repository deleted and made again at the same path
-// (another root commit) is not the project this root was registered as.
-// Its init is refused BEFORE anything is written, so a refused init leaves
-// no `.ctxloom` bound to a project no later command could use.
+// Owner ruling 2026-11-19 (batch 3, amending the smoke fix): a repository
+// deleted and made again at the same path (another root commit), with no
+// `.ctxloom` of its own, is initialized and RE-BOUND: the root is bound to
+// the id the daemon names, replacing the home index's old binding, and the
+// root's next command works. The old project's rows stay under the old id.
+// DRAFT (spec text under the owner's standing ruling).
 #[test]
-fn test_an_init_where_another_repository_was_registered_is_refused_before_writing() {
+fn test_an_init_where_another_repository_was_registered_rebinds_the_root() {
     let project = Project::bare_in_git();
     let init = project.run_in(project.dir(), &["init", "--format", "json"]);
     assert_eq!(init.code, 0, "init: {}", init.said());
+    let old = project
+        .read(".ctxloom/project-id")
+        .expect("the id")
+        .trim()
+        .to_string();
     // A read that registers the project, with its root commit.
     let listed = project.run_in(project.dir(), &["session", "list", "--format", "json"]);
     assert_eq!(listed.code, 0, "session list: {}", listed.said());
@@ -494,49 +501,43 @@ fn test_an_init_where_another_repository_was_registered_is_refused_before_writin
     project.git(&["init", "-q"]);
     project.git(&["commit", "-q", "--allow-empty", "-m", "another repository"]);
     let again = project.run_in(project.dir(), &["init", "--format", "json"]);
-    assert_eq!(again.code, 20, "refused: {}", again.said());
-    again.contains("sessions-project-identity-changed");
-    assert!(
-        !project.exists(".ctxloom"),
-        "a refused init writes nothing: {:?}",
-        project.tree(".ctxloom").keys().collect::<Vec<_>>()
-    );
-    // Its fix is a way out: the root's entry in the home's index taken out,
-    // init starts a new project here, and a read that registers it works.
-    again.contains(".ctxloom/projects/index.yaml");
+    assert_eq!(again.code, 0, "re-bound: {}", again.said());
+    let new = project
+        .read(".ctxloom/project-id")
+        .expect("the id")
+        .trim()
+        .to_string();
+    assert_ne!(new, old, "the root is bound to the id the daemon named");
     let index = project
         .read_home(".ctxloom/projects/index.yaml")
         .expect("the home's index");
     let root = project.dir().display().to_string();
-    let mut kept = Vec::new();
-    let mut skipping = false;
-    for line in index.lines() {
-        if line.starts_with("  - ") {
-            skipping = false;
-        }
-        if line.starts_with("  - ") && index_entry_is(&index, line, &root) {
-            skipping = true;
-        }
-        if !skipping {
-            kept.push(line);
-        }
-    }
-    let mut kept = kept.join("\n") + "\n";
-    if !kept.contains("  - ") {
-        kept = kept.replace("projects:\n", "projects: []\n");
-    }
-    project.write_home(".ctxloom/projects/index.yaml", &kept);
-    let fresh = project.run_in(project.dir(), &["init", "--format", "json"]);
-    assert_eq!(fresh.code, 0, "the way out: {}", fresh.said());
+    assert_eq!(
+        index.matches(&format!("path: {root}")).count(),
+        1,
+        "one binding for the root, the old one replaced: {index}"
+    );
+    assert!(index.contains(&new), "{index}");
+    assert!(!index.contains(&old), "{index}");
     let listed = project.run_in(project.dir(), &["session", "list", "--format", "json"]);
     assert_eq!(listed.code, 0, "and it is usable: {}", listed.said());
 }
 
-/// Whether the index entry starting at `line` is the one for `root`.
-fn index_entry_is(index: &str, line: &str, root: &str) -> bool {
-    let after = index.split_once(line).map_or("", |(_, rest)| rest);
-    after
-        .lines()
-        .take_while(|l| !l.starts_with("  - "))
-        .any(|l| l.trim() == format!("path: {root}"))
+// A root that HAS a `.ctxloom` of its own naming a project that another
+// repository's root commit registered is a genuine identity conflict: still
+// refused, exit 20, nothing changed.
+#[test]
+fn test_a_command_where_the_roots_ctxloom_names_another_repositorys_project_is_refused() {
+    let project = Project::bare_in_git();
+    let init = project.run_in(project.dir(), &["init", "--format", "json"]);
+    assert_eq!(init.code, 0, "init: {}", init.said());
+    let listed = project.run_in(project.dir(), &["session", "list", "--format", "json"]);
+    assert_eq!(listed.code, 0, "session list: {}", listed.said());
+    // The repository made again, its `.ctxloom` (project-id too) kept.
+    files::remove_tree(project.dir().join(".git"));
+    project.git(&["init", "-q"]);
+    project.git(&["commit", "-q", "--allow-empty", "-m", "another repository"]);
+    let again = project.run_in(project.dir(), &["session", "list", "--format", "json"]);
+    assert_eq!(again.code, 20, "refused: {}", again.said());
+    again.contains("sessions-project-identity-changed");
 }

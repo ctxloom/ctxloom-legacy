@@ -26,6 +26,7 @@ mod mcp;
 mod oneshot;
 mod process_env;
 mod program;
+mod rebind;
 #[cfg(feature = "test-support")]
 mod record;
 mod scheduling;
@@ -526,8 +527,21 @@ impl Wiring {
     /// The project the daemon named `project_id` for a first init (step 10c
     /// U6) bound at its root: taskloom's registry mints it as that id (its
     /// index and its marker), as a first naming would have minted one.
+    ///
+    /// A root the home's index binds to ANOTHER project (a repository deleted
+    /// and made again at its place: its `.ctxloom` is gone, so nothing else
+    /// names the old project) is re-bound to `project_id`: the old binding
+    /// is taken out first (owner ruling 2026-11-19, `rebind`).
     pub(crate) fn bind_project(&self, project_id: &str) -> Result<ports::Project, LibError> {
         use ports::ProjectIdentity as _;
+        if !project_id.is_empty() {
+            let identity = registry(Arc::clone(&self.fs), self.environment(), HarpNames);
+            let root = identity
+                .identity_root()
+                .map_err(|e| LibError::Project(angzarr_diagnostic::Report::of(&e)))?;
+            rebind::unbind_stale(&*self.fs, &self.home, &root, project_id)
+                .map_err(LibError::Project)?;
+        }
         registry(
             Arc::clone(&self.fs),
             self.environment(),

@@ -2606,6 +2606,19 @@ changed). Every reader folds a project's stream with the domain's one
 `ProjectRow`). The hidden `ctxloom daemon resolve` is its client today;
 step 6's clients call it first.
 
+A RE-CREATED REPOSITORY IS RE-BOUND (owner ruling 2026-11-19, batch 3, over
+the smoke fix that refused it): a repository deleted and made again at its
+path (another root commit) has no `.ctxloom`, so `ctxloom init` there asks the
+daemon unregistered and, once the daemon has named the new project, the
+wiring's `bind_project` takes the home index's old binding of the root out
+first (`rebind::unbind_stale`, under the registry's own `index.yaml.lock`)
+and binds the root to the new id: no refusal, no hand edit. Accepted cost:
+the old project's sessions and store rows stay under the old id, orphaned,
+until cleaned. Still refused (`sessions-project-identity-changed`, exit 20):
+any command run where the root HAS a `.ctxloom` (its `project-id`, else the
+index's binding) naming a project whose registered root commit is not the
+repository's, init's own preview included.
+
 The daemon's kernel registers its read models as projectors (S32):
 `session-index`, `pending-messages` and `daemon-board`, by those names, so a
 `HandleSync` (T16: `run_ports::Edge::serve_sync`, the kernel's `handle_sync`

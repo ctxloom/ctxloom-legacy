@@ -544,10 +544,9 @@ impl setup_cli::Initializing for DaemonServed {
         let wiring = self.wiring()?;
         // Never minted here: a new project's id is the daemon's to name,
         // and minting it would make `.ctxloom` before init creates it whole
-        // (step 10c U6).
-        if request.validate_only {
-            crate::daemon::recheck_bound(&wiring, &self.version)?;
-        }
+        // (step 10c U6). A root with no `.ctxloom` is asked unregistered
+        // whatever the home's index binds it to; the bind re-binds it
+        // (owner ruling 2026-11-19).
         let client = crate::daemon::preview_client(&wiring, &self.version)?;
         crate::daemon::answered(client.init_project("", request))
     }
