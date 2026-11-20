@@ -2,34 +2,8 @@
 //! programs are on her machine are offered one by one, then any others she
 //! names, as the daemon's preview needs ([`crate::needs`], step 10c U6).
 //! The answers come back as data (D2): the terminal lives in the driving
-//! adapter alone. Each companion she accepts or names is registered exactly
-//! as `companion add` registers it (the [`Companions`] port); one whose
-//! program is not on her machine is refused, said, and the others are still
-//! added.
-
-use ctxloom_ports::Failure;
-
-/// What init needs of the companion registration.
-pub trait Companions {
-    /// `name` registered as `companion add <name>` registers it.
-    fn add(&self, name: &str) -> Result<Added, NotAdded>;
-}
-
-/// A registration that was made, or was there already.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Added {
-    New,
-    Already,
-}
-
-/// Why a companion was not registered.
-#[derive(Debug)]
-pub enum NotAdded {
-    /// Its program is not on her machine: the program looked for.
-    Missing { program: String },
-    /// Anything else: why.
-    Failed(Failure),
-}
+//! adapter alone. Registering each accepted name is the daemon's
+//! (`daemon-api`'s init), from [`accepted`].
 
 /// The question that asks for companions by name; its answer is the names,
 /// separated by spaces or commas.
@@ -49,17 +23,6 @@ pub fn offer_question(name: &str) -> String {
 pub struct Answer {
     pub id: String,
     pub given: Option<String>,
-}
-
-/// What came of the companion answers, each name once, in the order asked.
-#[derive(Debug, Default)]
-pub struct CompanionsAnswered {
-    /// Registered now, or already registered.
-    pub added: Vec<(String, Added)>,
-    /// Not registered: its program is not on her machine (name, program).
-    pub missing: Vec<(String, String)>,
-    /// Not registered for another reason.
-    pub failed: Vec<(String, Failure)>,
 }
 
 /// The names `answers` accept, each once, in the order asked: an offer
@@ -84,19 +47,6 @@ pub fn accepted(answers: &[Answer]) -> Vec<String> {
         }
     }
     names
-}
-
-/// Each accepted or named companion registered through `companions`.
-pub fn register(companions: &dyn Companions, answers: &[Answer]) -> CompanionsAnswered {
-    let mut done = CompanionsAnswered::default();
-    for name in accepted(answers) {
-        match companions.add(&name) {
-            Ok(added) => done.added.push((name, added)),
-            Err(NotAdded::Missing { program }) => done.missing.push((name, program)),
-            Err(NotAdded::Failed(why)) => done.failed.push((name, why)),
-        }
-    }
-    done
 }
 
 #[cfg(test)]
