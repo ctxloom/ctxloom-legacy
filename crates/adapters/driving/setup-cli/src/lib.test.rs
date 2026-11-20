@@ -63,11 +63,21 @@ impl Terminal for Person {
 #[derive(Default)]
 struct NoCompanions;
 
-impl init_application::Companions for NoCompanions {
-    fn add(&self, name: &str) -> Result<init_application::Added, init_application::NotAdded> {
-        Err(init_application::NotAdded::Missing {
-            program: format!("ctxloom-companion-{name}"),
-        })
+/// What the fake daemon of this file needs of her machine's companions: a
+/// registration, as the daemon's init makes one.
+trait Companions {
+    /// `name` registered; `Err` holds the program that is not on her machine.
+    fn add(&self, name: &str) -> Result<Added, String>;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Added {
+    New,
+}
+
+impl Companions for NoCompanions {
+    fn add(&self, name: &str) -> Result<Added, String> {
+        Err(format!("ctxloom-companion-{name}"))
     }
 }
 
@@ -152,7 +162,7 @@ struct InitIn<'a> {
     world: &'a World,
     shipped: Vec<String>,
     /// The companions on her machine, as the daemon finds them.
-    companions: &'a dyn init_application::Companions,
+    companions: &'a dyn Companions,
     deps: Rc<deps_application::Deps>,
     bound: Mutex<Vec<String>>,
 }
@@ -257,7 +267,6 @@ impl InitIn<'_> {
         mut done: daemon_proto::v1::InitProjectResponse,
     ) -> daemon_proto::v1::InitProjectResponse {
         use daemon_proto::v1;
-        use init_application::Added;
         if !done.existed {
             let answers: Vec<init_application::Answer> = request
                 .answers
@@ -273,7 +282,13 @@ impl InitIn<'_> {
                     },
                 })
                 .collect();
-            let made = init_application::register_companions(self.companions, &answers);
+            let mut made = Made::default();
+            for name in init_application::accepted_companions(&answers) {
+                match self.companions.add(&name) {
+                    Ok(added) => made.added.push((name, added)),
+                    Err(program) => made.missing.push((name, program)),
+                }
+            }
             let said = |name: &str, outcome: &str| v1::InitCompanionResult {
                 name: name.to_string(),
                 outcome: outcome.to_string(),
@@ -592,7 +607,7 @@ fn go_with_companions(
     out: &mut dyn Write,
     person: &Person,
     sessions: &Launches,
-    (companions, shipped): (&dyn init_application::Companions, &[&str]),
+    (companions, shipped): (&dyn Companions, &[&str]),
 ) -> Run {
     let world = Arc::new(World::default());
     let fixture = Fixture::new();
@@ -1031,6 +1046,13 @@ fn a_first_init_at_a_terminal_asks_for_the_output_directory_and_says_where_outpu
     );
 }
 
+/// What registering her accepted companions came to.
+#[derive(Default)]
+struct Made {
+    added: Vec<(String, Added)>,
+    missing: Vec<(String, String)>,
+}
+
 /// The shipped companions `ltk` and `reprise` on her machine, `acme` there
 /// too; what was added.
 #[derive(Default)]
@@ -1038,15 +1060,13 @@ struct SomeCompanions {
     added: Mutex<Vec<String>>,
 }
 
-impl init_application::Companions for SomeCompanions {
-    fn add(&self, name: &str) -> Result<init_application::Added, init_application::NotAdded> {
+impl Companions for SomeCompanions {
+    fn add(&self, name: &str) -> Result<Added, String> {
         if !["ltk", "reprise", "acme"].contains(&name) {
-            return Err(init_application::NotAdded::Missing {
-                program: format!("ctxloom-companion-{name}"),
-            });
+            return Err(format!("ctxloom-companion-{name}"));
         }
         self.added.lock().unwrap().push(name.to_string());
-        Ok(init_application::Added::New)
+        Ok(Added::New)
     }
 }
 

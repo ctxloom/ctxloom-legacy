@@ -22,8 +22,7 @@ pub use ctxloom_ports::{Failure, Scaffold, UserFiles};
 use exit_code::Exit;
 
 pub use companions::{
-    accepted as accepted_companions, offer_question, register as register_companions, Added,
-    Answer, Companions, CompanionsAnswered, NotAdded, BY_NAME_ID, COMPANIONS_BY_NAME,
+    accepted as accepted_companions, offer_question, Answer, BY_NAME_ID, COMPANIONS_BY_NAME,
 };
 pub use interview::{
     interview, Ended, Interviewed, LaunchFailure, Outcome, Sessions, Terminal, RESTART_COMMAND,

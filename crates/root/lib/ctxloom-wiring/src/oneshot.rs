@@ -192,14 +192,8 @@ where
         vec![claude as Arc<dyn Engine>, opencode as Arc<dyn Engine>],
         Arc::clone(&orders),
         Limits::new(TURN_DEADLINE),
-    )
-    .with_locks(Arc::clone(&run_locks))
-    .with_workspaces(workspaces)
-    // A turn's wait parks a blocking thread, never an async worker.
-    .with_parks(Arc::new(crate::daemon::runtime::BlockingParks))
-    // Each command measured against this platform's command line before
-    // it is spawned (a terminal session's opening prompt is on it).
-    .on_os(wiring.os_name());
+    );
+    let launcher = equipped(launcher, (&run_locks, workspaces, wiring.os_name()));
     let enqueuer = Enqueuer::new(core.edge());
     let output_root = output_root(&project_dir, output_dir);
     Runs::new(Parts {
@@ -226,6 +220,31 @@ where
         run_locks,
         git_user: git_user(wiring, &project_dir),
     })
+}
+
+/// The launcher as every run has it: the run locks other processes' runs are
+/// judged by, the checkouts' port, the turn's wait PARKED on a blocking
+/// thread, never an async worker (owner, 2026-11-19), and each command
+/// measured against this platform's command line before it is spawned (a
+/// terminal session's opening prompt is on it).
+pub(crate) fn equipped<E, L, R>(
+    launcher: Launcher<E, L, R>,
+    (run_locks, workspaces, os): (
+        &Arc<dyn run_ports::RunLocks>,
+        Arc<dyn isolation_ports::Workspaces + Send + Sync>,
+        &str,
+    ),
+) -> Launcher<E, L, R>
+where
+    E: run_ports::Edge,
+    L: run_ports::RunnerLauncher,
+    R: run_ports::SessionRecords,
+{
+    launcher
+        .with_locks(Arc::clone(run_locks))
+        .with_workspaces(workspaces)
+        .with_parks(Arc::new(crate::daemon::runtime::BlockingParks))
+        .on_os(os)
 }
 
 /// The engines a launch is driven on, as the composition root builds them
