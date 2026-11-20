@@ -78,10 +78,7 @@ const SESSION_STACK: usize = 16 * 1024 * 1024;
 /// its reports make progress while the TUI is waited for on a blocking
 /// thread ([`run_ports::Running::finish`] blocks).
 pub(crate) fn run_runtime() -> std::io::Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
+    crate::daemon::runtime::build(1)
 }
 
 // ----------------------------------------------------------- the daemon's

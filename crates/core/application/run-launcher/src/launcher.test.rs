@@ -2351,3 +2351,75 @@ fn rig_quiet() -> Rig {
         orders_with(order("fake")),
     )
 }
+
+// Owner, 2026-11-19 evening: a turn is waited on by PARKING a thread, and
+// never a runtime worker (`finish` blocks). Forced, no sleep: a runtime of ONE
+// worker, a turn whose command is held at a point the test releases, and an
+// unrelated task that must run meanwhile. With the wait on the worker it
+// never does (the bound only turns that hang into a failure).
+#[test]
+fn a_parked_turn_does_not_take_the_only_worker() {
+    parked_turn_leaves_the_worker(false);
+}
+
+// The terminal session is waited on the same way.
+#[test]
+fn a_parked_terminal_session_does_not_take_the_only_worker() {
+    parked_turn_leaves_the_worker(true);
+}
+
+fn parked_turn_leaves_the_worker(interactive: bool) {
+    let mut order = order("fake");
+    order.interactive = interactive;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut rig = rig(
+        ScriptedEngine::answering("A", None),
+        ScriptedRunner::exits(0),
+        orders_with(order),
+    );
+    rig.launcher = rig.launcher.with_parks(Arc::new(BlockingPool));
+    let (parked, hear_parked) = std::sync::mpsc::channel::<()>();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let (parked, held) = (Mutex::new(parked), Mutex::new(held));
+    *rig.runner.during.lock().unwrap() = Some(Arc::new(move || {
+        parked.lock().unwrap().send(()).unwrap();
+        held.lock().unwrap().recv().unwrap();
+    }));
+    let edge = Arc::clone(&rig.edge);
+    let turn = runtime.spawn(async move {
+        enqueued(&edge, SESSION, HARP).await;
+        rig.step().await
+    });
+    hear_parked.recv().unwrap();
+    let (done, hear_done) = std::sync::mpsc::channel::<()>();
+    runtime.spawn(async move {
+        let _ = done.send(());
+    });
+    let ran = hear_done.recv_timeout(std::time::Duration::from_secs(30));
+    release.send(()).unwrap();
+    assert!(
+        ran.is_ok(),
+        "an unrelated task ran while the turn was parked"
+    );
+    assert_eq!(runtime.block_on(turn).unwrap().len(), 1);
+}
+
+/// The composition root's parking, as a runtime with a blocking pool gives it.
+struct BlockingPool;
+
+impl run_ports::Parks for BlockingPool {
+    fn park(
+        &self,
+        running: Box<dyn run_ports::Running>,
+    ) -> run_ports::BoxFuture<'static, Result<run_ports::TurnOutput, LaunchFailure>> {
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || running.finish())
+                .await
+                .expect("the parked thread did not panic")
+        })
+    }
+}

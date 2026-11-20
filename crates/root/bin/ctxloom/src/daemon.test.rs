@@ -2225,6 +2225,33 @@ fn two_sigterms_at_once_stop_an_idle_daemon_within_a_bound() {
     );
 }
 
+// FORCED (daemon/stop-flake2; CI: the test above exited -1, killed by the
+// signal): the daemon advertised itself before it listened for SIGTERM, so
+// a SIGTERM in between hit the default disposition and killed it. Held at
+// `serving` (the point just after the advertisement), a SIGTERM is sent
+// there; the daemon must hear it (a drain: an idle daemon exits 0), not die.
+#[test]
+fn a_sigterm_sent_the_moment_the_daemon_advertises_is_heard_not_fatal() {
+    if !files::runs_scripts() {
+        return;
+    }
+    let world = World::new();
+    let dir = world.project.home().join(".ctxloom/daemon");
+    files::mkdirs(&dir);
+    let hold = dir.join("test-hold-at");
+    files::put(&hold, "serving\n");
+    let (daemon, _) = served(&world);
+    let mut daemon = Killed(daemon);
+    signal(daemon.0.id(), "-TERM");
+    files::remove(&hold);
+    assert_eq!(
+        exited_within(&mut daemon.0, Duration::from_secs(20)),
+        Some(0),
+        "a SIGTERM sent as it advertised is a drain, not its death; its log:\n{}",
+        world.log()
+    );
+}
+
 // The same with its home removed first (OD-60's exit racing the signals):
 // whichever is heard first, the daemon exits within the bound.
 #[test]

@@ -172,6 +172,20 @@ pub trait Running: Send {
     fn finish(self: Box<Self>) -> Result<TurnOutput, LaunchFailure>;
 }
 
+/// Where a command's end is waited for. [`Running::finish`] blocks, and a turn
+/// is waited on by PARKING a thread (owner, 2026-11-19): this is the port by
+/// which the waiter says on WHICH thread, so that a parked turn never takes an
+/// async runtime worker, which stay free for messages, steers and requests.
+/// The parked threads are bounded by construction: a runner runs one agent,
+/// and an agent has one turn at a time.
+pub trait Parks: Send + Sync {
+    /// `running`'s end, waited for on a thread of the implementation's own.
+    fn park(
+        &self,
+        running: Box<dyn Running>,
+    ) -> crate::BoxFuture<'static, Result<TurnOutput, LaunchFailure>>;
+}
+
 /// Starts one turn's command. [`Running::finish`] blocks until it is over.
 pub trait RunnerLauncher: Send + Sync {
     /// Spawn the command under `limits`. An `Err` started nothing.

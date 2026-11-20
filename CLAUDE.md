@@ -1227,6 +1227,13 @@ scopes return there; angzarr's `Gate`/`Allowlist`/`Principal` seam and
 environment, so it can write any session.
 The run is driven on a multi-thread runtime (`ctxloom-wiring`'s `run_runtime`,
 one worker), because `Running::finish` blocks the driving thread.
+A turn's wait PARKS a thread of the blocking pool and never an async worker
+(owner, 2026-11-19): the launcher waits through `run_ports::Parks`
+(`Launcher::with_parks`; the wiring's `BlockingParks`, `daemon/runtime.rs`),
+`finish` itself staying blocking. The parked threads need no cap of their
+own: a runner runs one agent and an agent has one turn at a time. A steer
+reaches a hosted child through its `ChildControl` (a lock and a write to its
+stdin), not through the thread waiting on its turn.
 No run serves an endpoint of its own (slice 4 U7, owner ruling s4-Q3): the
 per-run `HookListener`, its certificate's mint, its `HookGate`, the run
 use case's `serve` (with `run_ports`' `HookServer` and `Serving`, and
@@ -2352,7 +2359,9 @@ when the one it spawned exited first, `Unreached::Exited`,
 where the spawned daemon's stderr goes, so a stack overflow says itself;
 CI on Windows, 2026-11-19). `daemon serve` serves on a thread of its own
 with a 16 MiB stack (the wiring's `DAEMON_STACK`; Windows gives the main
-thread 1 MiB), and logs every panic of its process as `the daemon
+thread 1 MiB; and every daemon runtime thread, the blocking pool's too,
+has it: `daemon::runtime::build`, with at least four workers and one per
+CPU), and logs every panic of its process as `the daemon
 panicked: ...`; under test-support `CTXLOOM_TEST_DAEMON_START=panic|
 stack:<MiB>` makes its start panic or use that much stack;
 another home's or a busy other version's is `Unreached::Declined` (20).
