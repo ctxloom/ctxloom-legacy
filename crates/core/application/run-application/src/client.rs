@@ -217,7 +217,7 @@ fn integer_or_text(value: &str) -> Arg {
     Arg::Str(value.to_string())
 }
 
-/// The exit a hosted run's `exit` says, by its block (ctxloom-lib's
+/// The exit a hosted run's `exit` says, by its block (rust-support's
 /// convention): 0-9 a success, 10-19 a failure, 20-29 a decline, 128 and
 /// over a signal; anything else a failure.
 pub fn exit_of(code: i32) -> Exit {

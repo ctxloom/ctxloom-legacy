@@ -15,13 +15,17 @@ import 'gates/gates.just'
 import 'gates/os-gates.just'
 import 'gates/fixture-gates.just'
 import 'gates/arch-gates.just'
-import 'gates/dev-local.just'
+# Cross-project dependency automation (dev-local, repin, land, pins-check): the
+# shared dev module of rust-support's tools/dev, linked as .dev (gitignored;
+# `tools/dev/install.sh` in a rust-support checkout). Optional: absent in a clone
+# or CI without the sibling.
+mod? dev '.dev'
 
 # What gates/arch-gates.just takes from this justfile: the arch-lint binary, built
-# from the same ctxloom-lib commit the workspace pins (arch_lint_rev, kept
+# from the same rust-support commit the workspace pins (arch_lint_rev, kept
 # equal to Cargo.toml's by `_arch-lint-ready`'s check) and installed once per
 # commit into the user's cache, shared by every worktree.
-arch_lint_rev := "b4095392316095550345797679d7943e282f4c8a"
+arch_lint_rev := "35253db8c72ee60b46fa90dca142fad39883cade"
 arch_lint_root := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") / ".cache") / "ctxloom-arch-lint" / arch_lint_rev
 arch_lint := arch_lint_root / "bin/arch-lint"
 
@@ -100,11 +104,11 @@ workspace_wide := "Cargo.toml Cargo.lock rust-toolchain.toml proto/* .cargo/conf
 # dependencies (those need a mingw C compiler).
 windows_packages := "-p content-fs -p config-files -p cache-files -p surface-files -p remote-git -p library-git -p liveness -p session-files -p deps-files -p editor-process"
 
-# Where this machine's checkout of ctxloom-lib's templates/clippy-disallowed.toml
+# Where this machine's checkout of rust-support's templates/clippy-disallowed.toml
 # is, the canonical OS and filesystem list `lint-clippy-sync` compares
 # clippy.toml with. A sibling checkout of the repository by default; set
-# CTXLOOM_LIB_TEMPLATE to the file's path elsewhere (a worktree).
-clippy_template := env("CTXLOOM_LIB_TEMPLATE", TOP + "/../ctxloom-lib/templates/clippy-disallowed.toml")
+# RUST_SUPPORT_TEMPLATE to the file's path elsewhere (a worktree).
+clippy_template := env("RUST_SUPPORT_TEMPLATE", TOP + "/../rust-support/templates/clippy-disallowed.toml")
 
 # Build every crate. Needs protoc on PATH and access to github.com (angzarr-proto).
 # Then the plain binary it made is held to its checks (`plain-binary`).
@@ -357,18 +361,18 @@ release-package os out="dist" name="" profile="release":
     fi
     {{TOP}}/scripts/release-package.sh '{{os}}' "${bin%.exe}" '{{out}}' "$name"
 
-# Install the arch-lint binary at the pinned ctxloom-lib commit, unless it is
+# Install the arch-lint binary at the pinned rust-support commit, unless it is
 # there; and refuse a pin that differs from the one Cargo.toml has.
 [private]
 _arch-lint-ready:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! grep -q 'ctxloom-lib", rev = "{{arch_lint_rev}}"' {{TOP}}/Cargo.toml; then
-        echo "FAIL lint-arch: arch_lint_rev in the justfile is not the ctxloom-lib rev Cargo.toml pins" >&2
+    if ! grep -q 'rust-support", rev = "{{arch_lint_rev}}"' {{TOP}}/Cargo.toml; then
+        echo "FAIL lint-arch: arch_lint_rev in the justfile is not the rust-support rev Cargo.toml pins" >&2
         exit 1
     fi
     [ -x '{{arch_lint}}' ] && exit 0
-    cargo install --quiet --git https://github.com/ctxloom/ctxloom-lib --rev {{arch_lint_rev}} \
+    cargo install --quiet --git https://github.com/benjaminabbitt/rust-support --rev {{arch_lint_rev}} \
         arch-lint --locked --root '{{arch_lint_root}}' 2>&1 | tail -n 20
 
 # Clippy, warnings denied, including the core's purity rules
@@ -690,7 +694,7 @@ selftest:
     @{{TOP}}/scripts/scratch-tree-lock.selftest.sh
     @{{TOP}}/scripts/tests-lock.selftest.sh
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
-    @{{TOP}}/scripts/dev-local.selftest.sh
+    @if [ -e {{TOP}}/.dev ]; then just dev::selftest; fi
     @{{TOP}}/scripts/path-deps-check.selftest.sh
     @{{TOP}}/scripts/vendor-googleapis.selftest.sh
     @{{TOP}}/scripts/commit-msg.selftest.sh

@@ -1,5 +1,5 @@
 //! The [`RunnerLauncher`] port on the host (step 1b-i): one turn's command run
-//! to its end through ctxloom-lib's `run-within`. The command runs under a
+//! to its end through rust-support's `run-within`. The command runs under a
 //! deadline, its whole process tree is killed when the deadline passes, its
 //! output is bounded per stream and the wait for that output is bounded too
 //! (`drain_grace`). Its environment is exactly the command's: nothing of this

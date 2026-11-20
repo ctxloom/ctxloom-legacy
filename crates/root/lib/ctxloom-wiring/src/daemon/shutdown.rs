@@ -3,7 +3,7 @@
 //! stop before it replaces the binary): the daemon and the live
 //! interactive frontends, which outlive their daemon (U5's adoption).
 //!
-//! `<when>` is a span of the one grammar (ctxloom-lib's `duration-text`: `15m`,
+//! `<when>` is a span of the one grammar (rust-support's `duration-text`: `15m`,
 //! `1h30m`, `now`); none given, the home config's `daemon.drain_timeout`,
 //! else [`daemon_application::HAND_OVER_PERIOD`]. A span that is not `now`
 //! DRAINS the daemon within it (`daemon stop --drain`'s request, its

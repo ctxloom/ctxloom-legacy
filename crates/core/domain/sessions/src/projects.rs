@@ -7,7 +7,7 @@
 //! the user because a stream is.
 
 use angzarr_embedded::markup::{
-    pack_message, Bug, Context, Emit, FactEmit, Failed, PageContext, Refuses,
+    pack_message, Bug, Context, Emit, FactEmit, Failed, PageContext, Refuses, Snapshots,
 };
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
@@ -97,6 +97,11 @@ impl ProjectAggregate {
     pub fn state(&self) -> &ProjectState {
         &self.project
     }
+}
+
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for ProjectAggregate {
+    type Anchor = crate::generated::ProjectState;
 }
 
 #[aggregate(domain = "projects", command = ProjectCommand, event = ProjectEvent)]
@@ -359,6 +364,11 @@ impl ProjectNameAggregate {
     pub fn state(&self) -> &ProjectNameState {
         &self.claim
     }
+}
+
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for ProjectNameAggregate {
+    type Anchor = crate::generated::ProjectNameState;
 }
 
 #[aggregate(domain = "project-names", command = ProjectNameCommand, event = ProjectNameEvent)]

@@ -50,7 +50,7 @@ fn owner<'a>(code: &str, packages: &'a [Package]) -> Option<&'a Package> {
 
 /// The `$variables` of `code`'s message in the crate's en-US catalogs: the
 /// message's own lines, up to the next message. None when no catalog has it.
-/// A crate whose build prefixes its catalog with its name (ctxloom-lib's, as
+/// A crate whose build prefixes its catalog with its name (rust-support's, as
 /// taskloom's) writes the id without that prefix.
 fn message_vars(package: &Package, code: &str) -> Option<BTreeSet<String>> {
     let bare = code.strip_prefix(&format!("{}-", package.name));

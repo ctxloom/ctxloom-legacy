@@ -2,7 +2,7 @@
 //! ask has it, so an ask's name is unique among its project's asks because
 //! a stream is.
 
-use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses};
+use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses, Snapshots};
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd};
 
 use crate::refusal::name_taken;
@@ -31,6 +31,11 @@ impl ApprovalNameAggregate {
     pub fn state(&self) -> &NameClaim {
         &self.claim
     }
+}
+
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for ApprovalNameAggregate {
+    type Anchor = crate::generated::ApprovalNameState;
 }
 
 #[aggregate(domain = "approval-names", command = ApprovalNameCommand, event = ApprovalNameEvent)]

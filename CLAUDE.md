@@ -1233,7 +1233,7 @@ the URL's host. The private key lives in memory in
 `run_ports::HookCertificate` (whose `Debug` withholds it) and goes to
 `hook-listener`'s `TlsIdentity` and nowhere else: never journaled, logged, in
 an environment or in an error. The listener's limits are angzarr's generic
-`Listener` defaults (core `03663846`; `hook-listener` sets none): a TLS
+`Listener` defaults (angzarr `8159ea33`; `hook-listener` sets none): a TLS
 handshake within 10 s, an HTTP/2 keepalive ping every 60 s answered within
 20 s, a connection closed after 1 h plus a 30 s grace (never zero: a zero
 grace is `ListenError::ZeroConnectionAgeGrace` at bind, which
@@ -1653,7 +1653,7 @@ Dependencies point inward; a review refuses a change that breaks these, and
 `just lint-arch` (part of `just lint`) holds every edge between workspace
 crates to `arch-rules.toml`: a table of which role (`crates/<ring>/<role>`)
 may depend on which, with the known departures listed as exceptions, each with
-its reason and a fix (debt; a stale one fails). The lint is ctxloom-lib's
+its reason and a fix (debt; a stale one fails). The lint is rust-support's
 `arch-lint`, installed at the pinned commit into `~/.cache/ctxloom-arch-lint`.
 A dev-dependency finding is a warning.
 
@@ -1767,24 +1767,19 @@ shutdown` flushes the holds before an install (no alias table).
 
 The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
-a full commit. The angzarr pins are one line, one per family member:
-
-- angzarr core `03663846` (`angzarr-diagnostic`, `angzarr-yaml`,
-  `angzarr-presentation`; `angzarr-coordinator-grpc`'s `tls` feature, which
-  `hook-listener` enables, is `Listener::tls`);
-- angzarr-embedded `23a507fa` on angzarr-router `5e887e16` (it carries the
-  `Bus`, step 10e; cherenkov's line);
-- angzarr-build `4201d14e` (the markup generator, `angzarr-build` and
-  `angzarr-codegen`, its own repository);
-- angzarr-platform `ef3a446d` (its main: `os::socket::post_local`, the
-  terminal wake's post, merged with `CommitNotify`);
-- taskloom's crates `f3866b92` and ctxloom-lib's `b4095392` (each its main),
-  built on the same line,
-
-so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
-angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
-angzarr core's, all `Apache-2.0 OR BSD-3-Clause`; this workspace is
-`AGPL-3.0-only`.
+a full commit. The angzarr pins are one commit of one repository,
+`8159ea33` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
+router, the platform crates, `angzarr-build` and `angzarr-codegen` were five
+repositories and are crates of that workspace now; `angzarr-coordinator-grpc`'s
+`tls` feature, which `hook-listener` enables, is `Listener::tls`). taskloom's
+crates (`d9e7f11a`, on its branch `chore/repoint-rust-support`) and
+rust-support's (`35253db8`) are built on the same commit, so moving one moves
+all. The lock holds one of every angzarr crate. The platform crates (`os`,
+`file-system`, `file-lock`) are `Apache-2.0 OR BSD-3-Clause`; the shared runtime
+crates (`angzarr-diagnostic`, `angzarr-presentation`, `angzarr-yaml`,
+`angzarr-embedded`...) are AGPL-3.0-only with angzarr's runtime exception and
+the coordinators with its gRPC API permission, each allowed by name in
+`deny.toml`; this workspace is `AGPL-3.0-only`.
 
 The API protos' annotations and their linter are pinned too (owner rulings
 S36, S37, S57, D6; step 10 U1). googleapis' `google/api/{resource,
@@ -1833,15 +1828,15 @@ jni and its family for Android).
 The driving edge's shared shims (`cli-support`: `Call<G>`, `Failure` with its
 `refusals`, the notices printers, `report_failure`, `say_failure` and its json
 `Reported`, the argument readers) are
-ctxloom-lib's (`github.com/ctxloom/ctxloom-lib`), a git dependency pinned by
+rust-support's (`github.com/benjaminabbitt/rust-support`), a git dependency pinned by
 full commit over https. Its angzarr pins are this workspace's, and the lock
 holds one `cli-support` (the same test). The application's own global flags
 (`library_application::Flags`) ride in the call as `Call<Flags>`'s `globals`;
-ctxloom-lib itself knows no ctxloom word (its vocabulary check).
+rust-support itself knows no ctxloom word (its vocabulary check).
 
 Every adapter that runs a program (`remote-git`, `worktree-git`,
 `companion-probe`, `container-runtime`, `taskloom-cli-client`) runs it
-through ctxloom-lib's `run-within`: the program under a deadline, its whole
+through rust-support's `run-within`: the program under a deadline, its whole
 process tree killed when the deadline passes (not only the program: a git
 hook or a shell's `sleep` would otherwise live on holding the pipes; killed
 is SIGKILL sent to the group and the program reaped: a descendant dies when
@@ -1872,30 +1867,43 @@ not its descendants (SIGTERM to that one process, `os::process::request_stop`;
 none on Windows), gives it `Terminal::STOP_GRACE` (5 s; `run_terminal_with`
 takes a `Terminal` of another), then kills it. Tested on unix; macOS and Windows are not. No adapter bypasses
 `run-within` any more.
-All of ctxloom-lib's crates are pinned at one rev (`cli-support`,
+All of rust-support's crates are pinned at one rev (`cli-support`,
 `process-env`, `project-dir`, `run-within`), and so is each family above.
 
-## Co-developing a sibling or ctxloom-lib
+## Co-developing a sibling or rust-support
 
-In development the whole git dependency family (angzarr, -router, -embedded,
--platform, -build, harp, taskloom, ctxloom-lib) is used by path. `just
-dev-local [root]` generates the gitignored `.cargo/config.toml`: a `[patch]`
-per git source in Cargo.lock, every crate it takes from there mapped to its
-absolute path in the sibling checkout under `root` (default `~/workspace`;
-`DEV_LOCAL_<REPO>`, e.g. `DEV_LOCAL_ANGZARR`, `DEV_LOCAL_CTXLOOM_LIB`, names a
+In development the whole git dependency family (angzarr, harp, taskloom,
+rust-support) is used by path, by the shared
+dev module (rust-support's `tools/dev`, which ctxloom, taskloom and Cherenkov
+use alike; its README is the reference). Link it once per clone
+(`tools/dev/install.sh <this checkout>` in a rust-support checkout: `.dev`,
+gitignored; the justfile's `mod? dev '.dev'` is optional, so a clone without it
+simply has no `dev::` recipes). `just dev::local [root]` generates the
+gitignored `.cargo/config.toml`: a `[patch]` per git source in Cargo.lock (and
+Cargo.toml), every crate it takes from there mapped to its absolute path in the
+sibling checkout, found through `~/.config/angzarr-dev/repos.toml` (name or URL
+to path; optional) or the usual places under `root` (default `~/workspace`;
+`DEV_LOCAL_<REPO>`, e.g. `DEV_LOCAL_ANGZARR`, `DEV_LOCAL_RUST_SUPPORT`, names a
 checkout; one at the lock's rev is preferred; a crate not found fails and
-names it). `just dev-local-off` removes it (only a file it generated) and
-restores Cargo.lock. Nothing path-based is ever committed: the pre-commit
-gate refuses an outside-repo path dependency and a tracked
-`.cargo/config.toml`, and the gates build the staged tree without the patch.
+names it). `just dev::local-off` removes it (only a file it generated) and
+restores Cargo.lock. `just dev::doctor` says what was found. Nothing
+path-based is ever committed: the pre-commit gate refuses an outside-repo path
+dependency and a tracked `.cargo/config.toml` (`scripts/path-deps-check.sh`,
+and `just dev::pins-check`, which also wants full-hash pins), and the gates
+build the staged tree without the patch.
 Under the patch Cargo.lock loses its git sources, so the two lock tests in
 `workspace.test.rs` that read sources (`test_every_git_pinned_crate_is_in_the_lock_once`
 and `test_the_git_pins_of_the_one_of_each_crates_are_the_pins_of_one_repository_each`)
 skip, printing `SKIP <test>: <reason>`, only while `.cargo/config.toml` exists
-and its first line is exactly `# generated by just dev-local`; with no config,
-or one without that line, they assert as ever, and the commit gates (which
-build the staged tree without the patch) run them. Re-pin once per landing: push the sibling (ctxloom-lib's gates and
-mutation first), bump the revs in Cargo.toml, `just dev-local-off`.
+and its first line is exactly `# generated by just dev-local` (the module keeps
+that line); with no config, or one without that line, they assert as ever, and
+the commit gates (which build the staged tree without the patch) run them.
+`just dev::repin` moves every pin of a registered dependency (Cargo.toml and
+`pins.toml`'s `arch_lint_rev` in the justfile) to that checkout's HEAD;
+`just dev::land` prints, and with `--go` performs, the push order across
+repositories; `just dev::pins-reachable` (pre-push) refuses a pin that is not on
+its remote. Re-pin once per landing: push the sibling (rust-support's gates and
+mutation first), bump the revs in Cargo.toml, `just dev::local-off`.
 
 ## The daemon's one launcher, and the read models it registers (slice 1)
 
@@ -2438,7 +2446,7 @@ plain stop, `--even-if-live`, ruling 114's stop of each engine). A drain is
 never refused for what the daemon hosts; `even_if_live` wins over it. Its
 TIMEOUT is the first that says: the request's `drain_timeout_seconds`, the
 home config's `daemon.drain_timeout` (a span of the one grammar,
-ctxloom-lib's `duration-text`, whose `now` is zero; home layer only, `HOME_ONLY`), READ AGAIN AT EACH
+rust-support's `duration-text`, whose `now` is zero; home layer only, `HOME_ONLY`), READ AGAIN AT EACH
 ROUND (`Shared::drain_period`, `Daemon::hand_over_within`; logged `the drain
 waits <n>s from its start`), so a change written while it drains (the
 config is no client of the daemon, so nothing refuses the write) is the
@@ -2523,7 +2531,7 @@ reports.
 SHUTDOWN (owner, 2026-11-15, OD-62; `ctxloom-wiring`'s `daemon/shutdown.rs`).
 `ctxloom shutdown [<duration> | now]` stops every running ctxloom of this
 home, as an installer must before it replaces the binary. Its time is a
-span of the one grammar (ctxloom-lib's `duration-text`, read directly:
+span of the one grammar (rust-support's `duration-text`, read directly:
 `15m`, `1h30m`, `90s`, `0s`, and its word `now`, zero);
 none given, `daemon.drain_timeout`, else five minutes; one that is no span
 is refused before anything is asked, `ctxloom-wiring-shutdown-bad-time`
@@ -3395,7 +3403,7 @@ ctxloom's store is ONE per user (owner T14): angzarr-store-sqlite's
 `SqliteStore` (through angzarr-embedded's `sqlite` feature), opened at
 `<ctxloom home>/.ctxloom/ctxloom.db` (the home resolved as everywhere:
 `CTXLOOM_HOME` first) by `ctxloom-store-sqlite` (the file name, the placement
-and the `ProjectStores` port, over ctxloom-lib's `sqlite-store-opener`, which
+and the `ProjectStores` port, over rust-support's `sqlite-store-opener`, which
 refuses a store from before the embedded store, `ctxloom.db.pre-embedded`
 naming its backup). Every project's streams are in it, each rooted on its
 resource name (slice 2 re-root, above), so nothing routes by file: there is no `route.rs` and no routing metadata. taskloom's
@@ -3454,7 +3462,7 @@ nothing else. ctxloom writes no SQL of its own.
 ## A test's fake program is `fixture_program::install_program`
 
 A test that needs a program on a path (an editor, a `git`, a runtime, a
-companion) calls ctxloom-lib's `fixture_program::install_program(fs, path,
+companion) calls rust-support's `fixture_program::install_program(fs, path,
 body)` (a dev-dependency) and runs what it returns. Writing a script with an
 executable mode and exec'ing it is racy in a multithreaded test process (a
 thread's fork holds a copy of the writer: "text file busy", ETXTBSY); the
@@ -3466,7 +3474,7 @@ a test line that gives a file an executable mode, unless
 `scripts/exec-mode-allow.txt` lists it with why (a mode that is data: the bit
 git commits, a listing reports, a PATH search wants). Its self-test is
 `scripts/exec-mode-check.selftest.sh` (`just selftest`). The script and the
-`gates/fixture-gates.just` recipe are copies of ctxloom-lib's.
+`gates/fixture-gates.just` recipe are copies of rust-support's.
 
 ## Errors are localizable: a code, args, and an en-US message
 
@@ -3494,10 +3502,10 @@ verb says "Did you mean" and lists the verbs, `-v` is accepted everywhere
 and changes no output.
 
 Exit codes (owner rulings 149, 152, 153; a hard migrate from Go's 0, 1, 2,
-3) follow ctxloom-lib's convention, `docs/exit-codes.md` in that repository
+3) follow rust-support's convention, `docs/exit-codes.md` in that repository
 (blocks: 0-9 successes, 10-19 failures, 20-29 declines, 128+n signals; the
 more severe of two outcomes, the higher detailed code, wins), encoded as
-ctxloom-lib's `exit-code` crate's `Exit` (re-exported by `cli-support`). An
+rust-support's `exit-code` crate's `Exit` (re-exported by `cli-support`). An
 application error says its class by implementing `ExitClass`; a `Failure`
 carries an `Exit`; `ctxloom_cli::run` turns it into the status with
 `Exit::code(detailed)`, the one place the collapse lives. ctxloom's codes:
@@ -4513,7 +4521,7 @@ lower layer's whole, so an agent the project also binds says `host` only
 once the project's binding is gone. `approval_timeout` (OD-41, D16, step 8
 U3) is how long an ask of the engine's child waits for an answer, the
 engine's alone (no agent says it; a project layer may): a span
-(`schema::engine_block`'s `Pat::Span`, ctxloom-lib's `duration-text`, as
+(`schema::engine_block`'s `Pat::Span`, rust-support's `duration-text`, as
 `daemon.drain_timeout`) or `now` (zero: every ask denied at once), unsaid
 `5m` (`engines::APPROVAL_TIMEOUT_DEFAULT`, 300 s; one that does not read,
 under `--degraded`, is the default too). `Effective::approval_timeout` holds

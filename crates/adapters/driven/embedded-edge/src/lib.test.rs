@@ -63,7 +63,7 @@ mod through_an_app {
     use std::sync::atomic::{AtomicU8, Ordering};
     use std::sync::Arc;
 
-    use angzarr_embedded::markup::{Context, DomainMessage, Failed, Unrefusable};
+    use angzarr_embedded::markup::{Context, DomainMessage, Failed, Snapshots, Unrefusable};
     use angzarr_embedded::testing::MemoryStore;
     use angzarr_embedded::v1::{CommandBook, Cover, EventPage, Uuid};
     use angzarr_embedded::{pack, CommandBookExt, Registry, Sampled, Timestamp, WireError};
@@ -91,6 +91,7 @@ mod through_an_app {
         message!(SwitchOff);
         message!(SwitchedOn);
         message!(SwitchedOff);
+        message!(LampState);
     }
 
     macro_rules! domain_type {
@@ -115,6 +116,7 @@ mod through_an_app {
     domain_type!(SwitchOff);
     domain_type!(SwitchedOn);
     domain_type!(SwitchedOff);
+    domain_type!(LampState);
 
     const DOMAIN: &str = "lamp";
 
@@ -122,6 +124,11 @@ mod through_an_app {
     #[derive(Clone, Default, PartialEq, Debug)]
     pub struct Lamp {
         on: bool,
+    }
+
+    /// Names the anchor, and takes no snapshots.
+    impl Snapshots for Lamp {
+        type Anchor = LampState;
     }
 
     #[aggregate(domain = "lamp")]

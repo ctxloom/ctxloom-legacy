@@ -1,6 +1,6 @@
 //! The trust aggregate on angzarr-embedded's markup.
 
-use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses, Unrefusable};
+use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses, Snapshots, Unrefusable};
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd};
 
 use crate::refusal::plan_stale;
@@ -19,6 +19,11 @@ impl TrustAggregate {
     pub fn state(&self) -> &Trusted {
         &self.trust
     }
+}
+
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for TrustAggregate {
+    type Anchor = crate::generated::TrustState;
 }
 
 #[aggregate(domain = "trust", command = TrustCommand, event = TrustEvent)]

@@ -55,8 +55,8 @@ expect 1 "$(fixture patch-crates Cargo.toml "$pkg
 [patch.crates-io]
 x = { path = \"../x\" }")" "[patch.crates-io]"
 expect 1 "$(fixture patch-git Cargo.toml "$pkg
-[patch.\"https://github.com/ctxloom/ctxloom-lib\"]
-x = { path = \"../ctxloom-lib/x\" }")" "[patch.\"https://...\"]"
+[patch.\"https://github.com/benjaminabbitt/rust-support\"]
+x = { path = \"../rust-support/x\" }")" "[patch.\"https://...\"]"
 expect 1 "$(fixture replace Cargo.toml "$pkg
 [replace]
 \"x:0.1.0\" = { path = \"../x\" }")" "[replace]"

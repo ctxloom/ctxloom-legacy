@@ -13,7 +13,9 @@
 //! - one `#[applies]` per event, folding at its page's `recorded_at`;
 //! - no snapshot: a session's stream is short, and every load replays it.
 
-use angzarr_embedded::markup::{Bug, Context, Emit, FactEmit, Failed, PageContext, Refuses};
+use angzarr_embedded::markup::{
+    Bug, Context, Emit, FactEmit, Failed, PageContext, Refuses, Snapshots,
+};
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
 use crate::refusal::refuse;
@@ -62,6 +64,10 @@ impl SessionAggregate {
 fn fold(session: &mut SessionState, event: SessionEvent, page: &PageContext) {
     let recorded_at = page.meta.and_then(|meta| meta.recorded_at);
     crate::apply(session, &event, recorded_at.unwrap_or_default());
+}
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for SessionAggregate {
+    type Anchor = crate::generated::SessionState;
 }
 
 // The domain is SESSION_DOMAIN, spelled as the markup takes it, a literal

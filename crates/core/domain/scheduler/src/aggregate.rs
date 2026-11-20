@@ -5,7 +5,7 @@
 //! `RecordAlarmDue` is a fact, never refused, and records nothing it cannot use.
 
 use angzarr_embedded::markup::{
-    pack_message, Bug, Context, FactEmit, Failed, PageContext, Refuses, Unrefusable,
+    pack_message, Bug, Context, FactEmit, Failed, PageContext, Refuses, Snapshots, Unrefusable,
 };
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
@@ -63,6 +63,10 @@ impl SchedulerAggregate {
             at: cmd.at,
         }))
     }
+}
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for SchedulerAggregate {
+    type Anchor = crate::generated::SchedulerState;
 }
 
 #[aggregate(domain = "scheduler", command = SchedulerCommand, event = SchedulerEvent)]

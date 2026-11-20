@@ -12,7 +12,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use angzarr_embedded::markup::{
-    pack_message, Bug, Context, DomainMessage, FactEmit, Failed, PageContext, Refuses,
+    pack_message, Bug, Context, DomainMessage, FactEmit, Failed, PageContext, Refuses, Snapshots,
 };
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
@@ -458,6 +458,11 @@ pub fn listing_changes(held: &BTreeMap<String, String>, found: &[DirtyPath]) -> 
 /// An event a fact records, or none.
 fn recorded<E: DomainMessage>(event: Option<E>) -> Result<FactEmit<LibraryAggregate>, Bug> {
     Ok(FactEmit::of(event.map(|event| pack_message(&event))))
+}
+
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for LibraryAggregate {
+    type Anchor = crate::generated::LibraryState;
 }
 
 #[aggregate(domain = "library", command = LibraryCommand, event = LibraryEvent)]

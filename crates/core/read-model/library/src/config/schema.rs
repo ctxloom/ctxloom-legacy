@@ -81,7 +81,7 @@ fn shown(path: &str) -> &str {
 enum Pat {
     Duration,
     Age,
-    /// A span of ctxloom-lib's grammar, or `now` ([`super::span`]).
+    /// A span of rust-support's grammar, or `now` ([`super::span`]).
     Span,
     ListWindow,
     PrefixKey,

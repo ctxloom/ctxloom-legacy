@@ -12,7 +12,7 @@ const ONE_OF_EACH: [&str; 8] = [
     "angzarr-diagnostic",
     "angzarr-embedded",
     "angzarr-embedded-runner",
-    // ctxloom-lib's: its own angzarr pins are ours, so it must not be held
+    // rust-support's: its own angzarr pins are ours, so it must not be held
     // at two commits (one from a transitive consumer).
     "cli-support",
     "process-env",
@@ -122,7 +122,7 @@ fn check_one_repository_each(lock: &str) -> Result<(), String> {
             return Err(format!("{name}: {sources:?}"));
         }
         if !(sources[0].contains("github.com/angzarr-io/")
-            || sources[0].contains("github.com/ctxloom/ctxloom-lib"))
+            || sources[0].contains("github.com/benjaminabbitt/rust-support"))
         {
             return Err(format!("{name}: {}", sources[0]));
         }

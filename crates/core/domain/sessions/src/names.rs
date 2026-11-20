@@ -3,7 +3,7 @@
 //! owner 2026-11-12, slice 2 B3/re-root): the session's own stream root, in
 //! the `session-names` domain, so a name is unique because a stream is.
 
-use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses};
+use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses, Snapshots};
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd};
 
 use crate::refusal::refuse;
@@ -23,6 +23,10 @@ impl NameClaimAggregate {
     pub fn state(&self) -> &NameClaimState {
         &self.claim
     }
+}
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for NameClaimAggregate {
+    type Anchor = crate::generated::NameClaimState;
 }
 
 // The domain is NAMES_DOMAIN, spelled as the markup takes it, a literal.

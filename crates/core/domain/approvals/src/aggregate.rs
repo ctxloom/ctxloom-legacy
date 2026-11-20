@@ -6,7 +6,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use angzarr_embedded::markup::{
-    pack_message, Bug, Context, FactEmit, Failed, PageContext, Refuses,
+    pack_message, Bug, Context, FactEmit, Failed, PageContext, Refuses, Snapshots,
 };
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
@@ -70,6 +70,11 @@ fn option_of<'a>(
         });
     }
     Ok(option)
+}
+
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for ApprovalAggregate {
+    type Anchor = crate::generated::ApprovalState;
 }
 
 #[aggregate(domain = "approvals", command = ApprovalCommand, event = ApprovalEvent)]
