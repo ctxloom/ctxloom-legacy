@@ -1,4 +1,4 @@
-# The architecture gate, copied from ctxloom-lib's templates/arch-gates.just
+# The architecture gate, copied from rust-support's templates/arch-gates.just
 # (the copies are independent) and imported by the justfile:
 #
 #     import 'gates/arch-gates.just'

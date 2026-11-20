@@ -1,5 +1,5 @@
 //! The [`RunnerLauncher`] port on the host (step 1b-i): one turn's command run
-//! to its end through ctxloom-lib's `run-within`. The command runs under a
+//! to its end through rust-support's `run-within`. The command runs under a
 //! deadline, its whole process tree is killed when the deadline passes, its
 //! output is bounded per stream and the wait for that output is bounded too
 //! (`drain_grace`). Its environment is exactly the command's: nothing of this
@@ -16,7 +16,7 @@
 //! has this process's stdin, stdout and stderr, stays in this process's
 //! process group (so a Ctrl-C at the terminal reaches it as it reaches any
 //! program she started), and has no deadline. A [`Stop`] given at
-//! [`HostLauncher::stopped_by`] ends it: only the DIRECT child is killed, not
+//! [`HostLauncher::stopped_by`] ends it: only the DIRECT child is asked to stop (then killed after the grace), not
 //! its descendants. Unix is what is tested; macOS and Windows are not.
 //!
 //! The same [`Stop`] ends a turn (ruling 114): its whole process tree is
@@ -55,7 +55,8 @@ pub struct HostLauncher {
 impl HostLauncher {
     /// A launcher whose turns and terminal sessions end when `stop` is
     /// requested: a turn's tree asked to stop, then killed after the grace; a
-    /// terminal session's direct child killed.
+    /// terminal session's direct child asked to stop, then killed after the
+    /// grace.
     pub fn stopped_by(stop: Stop) -> HostLauncher {
         HostLauncher { stop, fs: None }
     }

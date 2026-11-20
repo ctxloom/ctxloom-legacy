@@ -461,15 +461,42 @@ fn a_terminal_session_stays_in_the_callers_process_group_and_a_turn_does_not() {
     assert_ne!(held[0], held[1], "a turn is in a group of its own");
 }
 
-// A stop requested from outside ends a terminal session (the direct child);
-// forced, not waited for: the stop is requested once the pid is heard, which
-// is when the child is known to run.
+// A stop requested from outside asks a terminal session (the direct child) to
+// stop (SIGTERM) and leaves it its own status when it obeys: run-within gives
+// it a grace before any kill. The stop is requested once the pid is heard,
+// which is when the child is known to run.
 #[test]
-fn a_requested_stop_kills_the_terminal_sessions_direct_child() {
+fn a_requested_stop_asks_the_terminal_sessions_direct_child_to_stop() {
     if !runs_scripts() {
         return;
     }
     let (_dir, mut command) = program("#!/bin/sh\nexec sleep 30\n");
+    command
+        .env
+        .insert("PATH".to_string(), "/usr/bin:/bin".to_string());
+    let stop = Stop::new();
+    let launcher = HostLauncher::stopped_by(stop.clone());
+    let running = launcher.launch_terminal(&command).unwrap();
+    let began = Instant::now();
+    stop.request();
+    let output = running.finish().unwrap();
+    assert_eq!(
+        output.exit,
+        Exit {
+            code: None,
+            signal: Some(15)
+        }
+    );
+    assert!(began.elapsed() < Duration::from_secs(4), "inside the grace");
+}
+
+// A session that ignores the ask is killed once the grace has passed.
+#[test]
+fn a_requested_stop_kills_a_terminal_session_that_ignores_the_ask() {
+    if !runs_scripts() {
+        return;
+    }
+    let (_dir, mut command) = program("#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n");
     command
         .env
         .insert("PATH".to_string(), "/usr/bin:/bin".to_string());

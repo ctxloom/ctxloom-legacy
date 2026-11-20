@@ -2,7 +2,7 @@
 # A test does not write an executable file to run it: exec'ing a file a test
 # has just written fails with "text file busy" (ETXTBSY) whenever another
 # thread's fork holds a copy of the writer. A fake program is
-# `fixture_program::install_program` (ctxloom-lib's fixture-program crate),
+# `fixture_program::install_program` (rust-support's fixture-program crate),
 # which never execs a file the test wrote.
 #
 # Fail on an executable octal mode (any of the owner, group or other execute
@@ -88,7 +88,7 @@ for i in "${!files[@]}"; do
 done
 
 if [ "$found" -gt 0 ]; then
-  echo "FAIL lint-fixtures: $found test lines give a file an executable mode: a fake program to run is fixture_program::install_program (ctxloom-lib's fixture-program crate), never a written 0o755 file (ETXTBSY); or, if the mode is the point of the test, list the line in $allow_file with why" >&2
+  echo "FAIL lint-fixtures: $found test lines give a file an executable mode: a fake program to run is fixture_program::install_program (rust-support's fixture-program crate), never a written 0o755 file (ETXTBSY); or, if the mode is the point of the test, list the line in $allow_file with why" >&2
   exit 1
 fi
 if [ "$stale" -gt 0 ]; then

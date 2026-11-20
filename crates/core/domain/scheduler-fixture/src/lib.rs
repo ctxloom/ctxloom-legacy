@@ -7,7 +7,7 @@
 
 use std::convert::Infallible;
 
-use angzarr_embedded::markup::{pack_message, Commands, FactEmit, PageContext};
+use angzarr_embedded::markup::{pack_message, Commands, FactEmit, PageContext, Snapshots};
 use angzarr_embedded::Timestamp;
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact, on_event, policy};
 use scheduler::{stream_for, AlarmReached, ArmAlarm, CancelAlarm, SchedulerAggregate, Stream};
@@ -45,6 +45,11 @@ pub struct DummyAggregate {
     pub deadline: Option<Timestamp>,
     pub closed: bool,
     pub passed: bool,
+}
+
+/// Names the anchor, and takes no snapshots.
+impl Snapshots for DummyAggregate {
+    type Anchor = DummyState;
 }
 
 #[aggregate(domain = "dummy", command = DummyCommand, event = DummyEvent)]

@@ -10,7 +10,7 @@
 #                     e.g. "-p adapter-a -p adapter-b" (or "--workspace");
 #   clippy_template   where the consumer's checkout of
 #                     templates/clippy-disallowed.toml is, e.g.
-#                     "../ctxloom-lib/templates/clippy-disallowed.toml".
+#                     "../rust-support/templates/clippy-disallowed.toml".
 #
 # and has scripts/os-cfg-check.sh, scripts/os-cfg-allow.txt and
 # scripts/clippy-sync-check.sh from this repository's scripts/ (copied; the
@@ -27,11 +27,11 @@ lint-os:
     @{{TOP}}/scripts/os-cfg-check.sh
 
 # This workspace's clippy.toml still holds every entry of the canonical OS and
-# filesystem list (templates/clippy-disallowed.toml in ctxloom-lib): run it
+# filesystem list (templates/clippy-disallowed.toml in rust-support): run it
 # after a change to either. It may disallow more, never less.
 [no-exit-message]
 [group('check')]
-[doc("clippy.toml holds every entry of ctxloom-lib's canonical list")]
+[doc("clippy.toml holds every entry of rust-support's canonical list")]
 lint-clippy-sync:
     @{{TOP}}/scripts/clippy-sync-check.sh {{TOP}}/clippy.toml {{clippy_template}}
 

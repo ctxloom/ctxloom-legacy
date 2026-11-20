@@ -6,7 +6,7 @@
 //! once; folding the end revokes every credential (D29).
 
 use angzarr_embedded::markup::{
-    pack_message, Bug, Context, DomainMessage, FactEmit, Failed, PageContext, Refuses,
+    pack_message, Bug, Context, DomainMessage, FactEmit, Failed, PageContext, Refuses, Snapshots,
 };
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd, handles_fact};
 
@@ -254,6 +254,10 @@ fn launch_refused(refusals: Vec<RunRejection>, fatal_findings: u32) -> LaunchRef
         }
     }
     message
+}
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for RunAggregate {
+    type Anchor = crate::generated::RunState;
 }
 
 #[aggregate(domain = "runs", command = RunCommand, event = RunEvent)]

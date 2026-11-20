@@ -1,7 +1,7 @@
 //! The name-claim aggregate: one stream per (project, harp text), holding
 //! which session has the name (D5 Q1, owner-approved).
 
-use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses};
+use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses, Snapshots};
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd};
 
 use crate::refusal::refuse;
@@ -40,6 +40,10 @@ impl NameClaimAggregate {
     pub fn state(&self) -> &NameClaimState {
         &self.claim
     }
+}
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for NameClaimAggregate {
+    type Anchor = crate::generated::NameClaimState;
 }
 
 // The domain is NAMES_DOMAIN, spelled as the markup takes it, a literal.

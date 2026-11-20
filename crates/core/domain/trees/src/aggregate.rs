@@ -1,6 +1,6 @@
 //! The tree aggregate on angzarr-embedded's markup.
 
-use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses};
+use angzarr_embedded::markup::{Context, Failed, PageContext, Refuses, Snapshots};
 use angzarr_embedded_macros::{aggregate, applies, handles_cmd};
 
 use crate::refusal::refuse;
@@ -19,6 +19,10 @@ impl TreeAggregate {
     pub fn state(&self) -> &TreeState {
         &self.tree
     }
+}
+/// Names the anchor, and takes no snapshots: the stream is folded whole.
+impl Snapshots for TreeAggregate {
+    type Anchor = crate::generated::TreeState;
 }
 
 #[aggregate(domain = "trees", command = TreeCommand, event = TreeEvent)]

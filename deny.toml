@@ -40,6 +40,54 @@ allow = [
 ]
 confidence-threshold = 0.9
 
+# angzarr's crates carry AGPL-3.0-only plus an additional permission (the
+# runtime exception, or the gRPC API permission, in its LICENSE files); the
+# SPDX expression with the additional term is not in `allow`, so each crate is
+# allowed by name.
+[[licenses.exceptions]]
+crate = "angzarr-bus"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-diagnostic"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-embedded"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-embedded-host"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-embedded-runner"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-ports"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-presentation"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-yaml"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-runtime-exception"]
+
+[[licenses.exceptions]]
+crate = "angzarr-coordinator"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-grpc-api-permission"]
+
+[[licenses.exceptions]]
+crate = "angzarr-coordinator-base"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-grpc-api-permission"]
+
+[[licenses.exceptions]]
+crate = "angzarr-coordinator-grpc"
+allow = ["AGPL-3.0-only WITH AdditionRef-angzarr-grpc-api-permission"]
+
 [licenses.private]
 # Not ignored: the git dependencies (angzarr-proto) are `publish = false`
 # too, and their licenses are exactly what must be checked.
@@ -56,22 +104,15 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
-  # angzarr core's shared crates: angzarr-proto, angzarr-ports,
-  # angzarr-diagnostic, angzarr-presentation.
+  # angzarr: one workspace (core, the platform crates os, file-system and
+  # file-lock, angzarr-build and angzarr-codegen, angzarr-embedded and the
+  # router it runs handlers through).
   "https://github.com/angzarr-io/angzarr",
-  # os, file-system and file-lock: the platform crates.
-  "https://github.com/angzarr-io/angzarr-platform",
-  # angzarr-build (with angzarr-codegen): the markup domain layer generator, a build dependency.
-  "https://github.com/angzarr-io/angzarr-build",
-  # angzarr-embedded: the in-app runtime and its SQLite store.
-  "https://github.com/angzarr-io/angzarr-embedded",
-  # angzarr-router, which angzarr-embedded runs handlers through.
-  "https://github.com/angzarr-io/angzarr-router",
   # taskloom, by commit: harp-names and its ports.
   "https://github.com/ctxloom/taskloom",
-  # ctxloom-lib, by commit: the shared driving-edge shims (cli-support) and the
-  # environment snapshot (process-env).
-  "https://github.com/ctxloom/ctxloom-lib",
+  # rust-support, by commit: the shared driving-edge shims (cli-support), the
+  # environment snapshot (process-env) and the rest of the shared substrate.
+  "https://github.com/benjaminabbitt/rust-support",
   # harp-core: the word lists ids are minted from.
   "https://github.com/benjaminabbitt/harp",
 ]

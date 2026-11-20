@@ -810,7 +810,7 @@ Dependencies point inward; a review refuses a change that breaks these, and
 `just lint-arch` (part of `just lint`) holds every edge between workspace
 crates to `arch-rules.toml`: a table of which role (`crates/<ring>/<role>`)
 may depend on which, with the known departures listed as exceptions, each with
-its reason and a fix (debt; a stale one fails). The lint is ctxloom-lib's
+its reason and a fix (debt; a stale one fails). The lint is rust-support's
 `arch-lint`, installed at the pinned commit into `~/.cache/ctxloom-arch-lint`.
 A dev-dependency finding is a warning.
 
@@ -861,22 +861,19 @@ stream is a DUPLICATE; the event it produces records the origin on its
 
 The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
-a full commit. The angzarr pins are one line, one per family member:
-
-- angzarr core `f6fed5e5` (`angzarr-diagnostic`, `angzarr-yaml`,
-  `angzarr-presentation`; `angzarr-coordinator-grpc`'s `tls` feature, which
-  `hook-listener` enables, is `Listener::tls`);
-- angzarr-embedded `94f630a3` on angzarr-router `bec0c2bf`;
-- angzarr-build `7547415e` (the markup generator, `angzarr-build` and
-  `angzarr-codegen`, its own repository);
-- angzarr-platform `a35789ef`;
-- taskloom's crates `7af05807` and ctxloom-lib's `fb8e8212`, built on the
-  same line,
-
-so moving one moves all. The lock holds one of every angzarr crate. The platform crates (`os`, `file-system`, `file-lock`) are
-angzarr-platform's, and `angzarr-presentation` and `angzarr-diagnostic` are
-angzarr core's, all `Apache-2.0 OR BSD-3-Clause`; this workspace is
-`AGPL-3.0-only`.
+a full commit. The angzarr pins are one commit of one repository,
+`8159ea33` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
+router, the platform crates, `angzarr-build` and `angzarr-codegen` were five
+repositories and are crates of that workspace now; `angzarr-coordinator-grpc`'s
+`tls` feature, which `hook-listener` enables, is `Listener::tls`). taskloom's
+crates (`d9e7f11a`, on its branch `chore/repoint-rust-support`) and
+rust-support's (`35253db8`) are built on the same commit, so moving one moves
+all. The lock holds one of every angzarr crate. The platform crates (`os`,
+`file-system`, `file-lock`) are `Apache-2.0 OR BSD-3-Clause`; the shared runtime
+crates (`angzarr-diagnostic`, `angzarr-presentation`, `angzarr-yaml`,
+`angzarr-embedded`...) are AGPL-3.0-only with angzarr's runtime exception and
+the coordinators with its gRPC API permission, each allowed by name in
+`deny.toml`; this workspace is `AGPL-3.0-only`.
 
 The callback's TLS stack is one crypto provider, ring (owner, ruling 35):
 tonic's `tls-ring` (never `tls-aws-lc`; `hook-listener` and `hook-sink-grpc`
@@ -899,15 +896,15 @@ jni and its family for Android).
 The driving edge's shared shims (`cli-support`: `Call<G>`, `Failure` with its
 `refusals`, the notices printers, `report_failure`, `say_failure` and its json
 `Reported`, the argument readers) are
-ctxloom-lib's (`github.com/ctxloom/ctxloom-lib`), a git dependency pinned by
+rust-support's (`github.com/benjaminabbitt/rust-support`), a git dependency pinned by
 full commit over https. Its angzarr pins are this workspace's, and the lock
 holds one `cli-support` (the same test). The application's own global flags
 (`library_application::Flags`) ride in the call as `Call<Flags>`'s `globals`;
-ctxloom-lib itself knows no ctxloom word (its vocabulary check).
+rust-support itself knows no ctxloom word (its vocabulary check).
 
 Every adapter that runs a program (`remote-git`, `worktree-git`,
 `companion-probe`, `container-runtime`, `taskloom-cli-client`) runs it
-through ctxloom-lib's `run-within`: the program under a deadline, its whole
+through rust-support's `run-within`: the program under a deadline, its whole
 process tree killed when the deadline passes (not only the program: a git
 hook or a shell's `sleep` would otherwise live on holding the pipes; killed
 is SIGKILL sent to the group and the program reaped: a descendant dies when
@@ -930,23 +927,23 @@ its own (a Ctrl-C reaches it), no deadline, and a `Stop` (a cloneable flag the
 caller sets, e.g. from `Os::signals`) that kills only the DIRECT child, not
 its descendants. Tested on unix; macOS and Windows are not. No adapter bypasses
 `run-within` any more.
-All of ctxloom-lib's crates are pinned at one rev (`cli-support`,
+All of rust-support's crates are pinned at one rev (`cli-support`,
 `process-env`, `project-dir`, `run-within`), and so is each family above.
 
-## Co-developing a sibling or ctxloom-lib
+## Co-developing a sibling or rust-support
 
-In development the whole git dependency family (angzarr, -router, -embedded,
--platform, -build, harp, taskloom, ctxloom-lib) is used by path, by the shared
-dev module (ctxloom-lib's `tools/dev`, which ctxloom, taskloom and Cherenkov
+In development the whole git dependency family (angzarr, harp, taskloom,
+rust-support) is used by path, by the shared
+dev module (rust-support's `tools/dev`, which ctxloom, taskloom and Cherenkov
 use alike; its README is the reference). Link it once per clone
-(`tools/dev/install.sh <this checkout>` in a ctxloom-lib checkout: `.dev`,
+(`tools/dev/install.sh <this checkout>` in a rust-support checkout: `.dev`,
 gitignored; the justfile's `mod? dev '.dev'` is optional, so a clone without it
 simply has no `dev::` recipes). `just dev::local [root]` generates the
 gitignored `.cargo/config.toml`: a `[patch]` per git source in Cargo.lock (and
 Cargo.toml), every crate it takes from there mapped to its absolute path in the
 sibling checkout, found through `~/.config/angzarr-dev/repos.toml` (name or URL
 to path; optional) or the usual places under `root` (default `~/workspace`;
-`DEV_LOCAL_<REPO>`, e.g. `DEV_LOCAL_ANGZARR`, `DEV_LOCAL_CTXLOOM_LIB`, names a
+`DEV_LOCAL_<REPO>`, e.g. `DEV_LOCAL_ANGZARR`, `DEV_LOCAL_RUST_SUPPORT`, names a
 checkout; one at the lock's rev is preferred; a crate not found fails and
 names it). `just dev::local-off` removes it (only a file it generated) and
 restores Cargo.lock. `just dev::doctor` says what was found. Nothing
@@ -965,7 +962,7 @@ the commit gates (which build the staged tree without the patch) run them.
 `pins.toml`'s `arch_lint_rev` in the justfile) to that checkout's HEAD;
 `just dev::land` prints, and with `--go` performs, the push order across
 repositories; `just dev::pins-reachable` (pre-push) refuses a pin that is not on
-its remote. Re-pin once per landing: push the sibling (ctxloom-lib's gates and
+its remote. Re-pin once per landing: push the sibling (rust-support's gates and
 mutation first), bump the revs in Cargo.toml, `just dev-local-off`.
 
 ## Storage is angzarr-store-sqlite
@@ -973,7 +970,7 @@ mutation first), bump the revs in Cargo.toml, `just dev-local-off`.
 A project's store is angzarr-store-sqlite's `SqliteStore` (through
 angzarr-embedded's `sqlite` feature), opened at
 `~/.ctxloom/projects/<project-id>/ctxloom.db` by `ctxloom-store-sqlite` (the
-file name, the placement and the port, over ctxloom-lib's `sqlite-store-opener`,
+file name, the placement and the port, over rust-support's `sqlite-store-opener`,
 which refuses a store from before the embedded store, `ctxloom.db.pre-embedded`
 naming its backup), beside taskloom's `state.db` and never the same file (D26).
 The store is its owner's alone (owner ruling 2026-11-12): every open, to
@@ -1013,7 +1010,7 @@ nothing else. ctxloom writes no SQL of its own.
 ## A test's fake program is `fixture_program::install_program`
 
 A test that needs a program on a path (an editor, a `git`, a runtime, a
-companion) calls ctxloom-lib's `fixture_program::install_program(fs, path,
+companion) calls rust-support's `fixture_program::install_program(fs, path,
 body)` (a dev-dependency) and runs what it returns. Writing a script with an
 executable mode and exec'ing it is racy in a multithreaded test process (a
 thread's fork holds a copy of the writer: "text file busy", ETXTBSY); the
@@ -1025,7 +1022,7 @@ a test line that gives a file an executable mode, unless
 `scripts/exec-mode-allow.txt` lists it with why (a mode that is data: the bit
 git commits, a listing reports, a PATH search wants). Its self-test is
 `scripts/exec-mode-check.selftest.sh` (`just selftest`). The script and the
-`gates/fixture-gates.just` recipe are copies of ctxloom-lib's.
+`gates/fixture-gates.just` recipe are copies of rust-support's.
 
 ## Errors are localizable: a code, args, and an en-US message
 
@@ -1053,10 +1050,10 @@ verb says "Did you mean" and lists the verbs, `-v` is accepted everywhere
 and changes no output.
 
 Exit codes (owner rulings 149, 152, 153; a hard migrate from Go's 0, 1, 2,
-3) follow ctxloom-lib's convention, `docs/exit-codes.md` in that repository
+3) follow rust-support's convention, `docs/exit-codes.md` in that repository
 (blocks: 0-9 successes, 10-19 failures, 20-29 declines, 128+n signals; the
 more severe of two outcomes, the higher detailed code, wins), encoded as
-ctxloom-lib's `exit-code` crate's `Exit` (re-exported by `cli-support`). An
+rust-support's `exit-code` crate's `Exit` (re-exported by `cli-support`). An
 application error says its class by implementing `ExitClass`; a `Failure`
 carries an `Exit`; `ctxloom_cli::run` turns it into the status with
 `Exit::code(detailed)`, the one place the collapse lives. ctxloom's codes:

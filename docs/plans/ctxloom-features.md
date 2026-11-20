@@ -84,7 +84,7 @@ feature file; it belongs in git history.
     152, 153; this replaced the planned 4).
   - The engine-swap preview is `agent edit --engine`'s confirmation.
 - **Exit codes** (owner rulings 149, 152, 153, superseding D28's ladder; the convention is
-  ctxloom-lib's `docs/exit-codes.md`): 0-9 successes, where 1-9 are returned only under
+  rust-support's `docs/exit-codes.md`): 0-9 successes, where 1-9 are returned only under
   `--detailed-exitcode` (1 a plan or preview would change something); 10 failed; 20 refused
   (usage errors included); 21 fatal findings; 128+n stopped by signal n. The planned 5
   (succeeded but a side effect degraded) and 6 (a check found something: `doctor --strict`,

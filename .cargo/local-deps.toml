@@ -2,5 +2,5 @@
 # .cargo/config.toml with a [patch."<git url>"] for every git source in
 # Cargo.lock, each crate mapped to its path in the sibling checkout, and
 # `just dev-local-off`, which removes it and restores Cargo.lock. See
-# CLAUDE.md, "Co-developing a sibling or ctxloom-lib". Nothing path-based is
+# CLAUDE.md, "Co-developing a sibling or rust-support". Nothing path-based is
 # ever committed.
