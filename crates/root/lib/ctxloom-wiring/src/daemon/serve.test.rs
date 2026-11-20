@@ -656,3 +656,76 @@ fn a_childs_checkout_is_made_with_git_in_its_launchers_environment() {
         "the sweep's is the daemon's: {ran}"
     );
 }
+
+/// What a task holds until it has finished being dropped, slowly: its
+/// release is the test's to hold back (the race rule: the interleaving of a
+/// cancelled task's drop with the store's close is forced, not waited for).
+struct SlowRelease(Option<Arc<()>>);
+
+impl Drop for SlowRelease {
+    fn drop(&mut self) {
+        std::thread::sleep(Duration::from_millis(400));
+        self.0.take();
+    }
+}
+
+// RED, EXPECTED (daemon/stop-flake; the CI flake "the stopped daemon never
+// closed its store", `cli::run` on Linux, `cli::daemon` on macOS): the
+// daemon's exit CUTS its SIGTERM listener with `JoinHandle::abort` and never
+// waits for it, but the listener holds an `Arc<Shared>` (the read models,
+// each through `StoreFill` a holder of the store), and a cancelled task is
+// dropped later, by its worker. `core.close()` then finds the store held
+// ("the run's store is still held (10 holders past the run's end) and was
+// not closed"), leaves its `-wal` behind and the daemon exits with the
+// store unclosed. The fix is `lifelong_ended` joining what it aborted
+// (`terminated.abort(); let _ = terminated.await;`); the test passes then.
+#[test]
+fn a_terminate_listener_the_exit_cut_has_let_go_of_what_it_held_when_the_exit_goes_on() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    runtime.block_on(async {
+        let fs = Arc::new(file_system::Rooted::temp().expect("a temporary home"));
+        let store = ctxloom_store_sqlite::Stores::new(fs.clone(), "/home/u")
+            .open()
+            .await
+            .expect("the store opens");
+        let mut kept = crate::Projectors::default();
+        let core = crate::InProcessCore::start_with(store, |store| {
+            kept = crate::Projectors::filled(store);
+            kept.clone()
+        })
+        .await;
+        let scheduler = crate::scheduling::start(
+            core.share(),
+            kept.due.clone().unwrap_or_default(),
+            Arc::new(crate::SystemClock),
+            Duration::from_secs(3600),
+            Arc::new(|_: &str| {}),
+        );
+        let held = Arc::new(());
+        let (started, running) = tokio::sync::oneshot::channel();
+        let task = {
+            let guard = SlowRelease(Some(Arc::clone(&held)));
+            tokio::spawn(async move {
+                let _guard = guard;
+                let _ = started.send(());
+                std::future::pending::<()>().await;
+            })
+        };
+        running.await.expect("the listener is running");
+        let say: Say = Arc::new(Mutex::new(Box::new(|_: &str| {})));
+        super::lifelong_ended(Some(task), scheduler, &say).await;
+        assert_eq!(
+            Arc::strong_count(&held),
+            1,
+            "RED (daemon/stop-flake): the exit cut its SIGTERM listener and went on without \
+             waiting for it to be dropped, so what it held (the read models, so the store) was \
+             still held when the store closed: `lifelong_ended` must join what it aborts"
+        );
+        drop(kept);
+        core.close().await.expect("the store closes");
+    });
+}
