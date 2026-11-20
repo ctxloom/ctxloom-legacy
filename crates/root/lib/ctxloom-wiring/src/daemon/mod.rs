@@ -627,7 +627,7 @@ fn be_the_daemon(
 }
 
 /// The stack the daemon serves on (a hosted session's is the same size).
-const DAEMON_STACK: usize = 16 * 1024 * 1024;
+pub(crate) const DAEMON_STACK: usize = 16 * 1024 * 1024;
 
 /// Every panic of this daemon process is a line of its log at `path`, then
 /// told as before (to its stderr): a daemon that dies by panic says why
