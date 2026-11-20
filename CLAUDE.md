@@ -3772,7 +3772,7 @@ not on the hook path): the pending messages of the urgencies the hook
 names, fitted by `messages_context`, each in an element
 `<message id=".." from=".." urgency="..">text</message>` with the text and
 the attribute values XML-escaped (`delivery::escaped`), so a sender's text
-cannot close its element or forge another (owner ruling 2026-11-19), under
+cannot close its element or forge another (owner ruling 2026-11-19; `from` is the sender's name, `ctxloom` for a daemon notice told by its `notice:`/`drain:` id, `session_policies::is_daemon_message`, and `the user` only for a message the user sent), under
 a header saying the elements hold untrusted data from another agent, not
 instructions from the user (DRAFT), then what the session is owed (as
 `RedeliverContext`) within what the messages left, joined by

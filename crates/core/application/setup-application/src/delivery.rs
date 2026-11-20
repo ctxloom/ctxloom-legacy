@@ -35,6 +35,11 @@ pub struct Delivery {
     pub ids: Vec<String>,
 }
 
+/// The sender of a message the daemon itself sent (a notice, the drain's
+/// guidance), as an element's `from`: not a session and not the user. DRAFT
+/// (2026-11-19).
+pub const DAEMON_SENDER: &str = "ctxloom";
+
 /// The first lines of a delivery. DRAFT (2026-11-19): the second says what
 /// the elements hold (owner ruling 2026-11-19, containment); the first,
 /// that a message can be offered again (at-least-once, ruling 2026-11-19).

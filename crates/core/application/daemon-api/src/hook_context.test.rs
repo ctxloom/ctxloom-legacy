@@ -278,3 +278,54 @@ async fn test_a_session_the_index_does_not_hold_is_refused_without_a_round() {
     );
     assert_eq!(*f.hosting.freshened.lock().unwrap(), 0, "no round awaited");
 }
+
+// Who a message is from (coordinator ruling 2026-11-19): a notice the
+// daemon minted reads `from="ctxloom"`, never the user; the user's own send
+// reads `the user`, and nothing else is ever labelled the user.
+#[tokio::test]
+async fn test_a_daemon_notice_is_offered_from_ctxloom_and_only_a_users_send_from_the_user() {
+    let f = fixture(vec![]);
+    f.mint(HARP).await;
+    send(&f, "notice:kid:1", "child kid ended its run 1: done").await;
+    send(&f, "drain:kid:1", "ctxloom is being upgraded").await;
+    send(&f, "m1", "from the user").await;
+    f.catch_up().await;
+    f.catch_up_pending().await;
+    let read = f.api.deliver_hook_context(at_a_prompt("")).await.unwrap();
+    let c = &read.context;
+    assert!(
+        c.contains(r#"<message id="notice:kid:1" from="ctxloom" urgency="inform">"#),
+        "{c}"
+    );
+    assert!(
+        c.contains(r#"<message id="drain:kid:1" from="ctxloom" urgency="inform">"#),
+        "{c}"
+    );
+    assert!(
+        c.contains(r#"<message id="m1" from="the user" urgency="inform">"#),
+        "{c}"
+    );
+    assert_eq!(c.matches(r#"from="the user""#).count(), 1, "{c}");
+}
+
+// A message with a real requester keeps it, whatever its id says.
+#[test]
+fn a_real_requester_is_kept_and_only_no_requester_is_the_user_or_the_daemon() {
+    use super::hook_sender;
+    let named = Some("projects/p/sessions/kid".to_string());
+    assert_eq!(hook_sender(named.clone(), "m1"), "projects/p/sessions/kid");
+    assert_eq!(
+        hook_sender(named, "notice:x:1"),
+        "projects/p/sessions/kid",
+        "an id cannot make a session the daemon"
+    );
+    assert_eq!(
+        hook_sender(None, "notice:x:1"),
+        setup_application::DAEMON_SENDER
+    );
+    assert_eq!(
+        hook_sender(None, "drain:x:1"),
+        setup_application::DAEMON_SENDER
+    );
+    assert_eq!(hook_sender(None, "m1"), "", "the user");
+}

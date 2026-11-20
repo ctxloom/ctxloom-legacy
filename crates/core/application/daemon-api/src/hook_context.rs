@@ -106,13 +106,13 @@ impl<E: Edge> Api<E> {
                 .pending(&record.id)
                 .into_iter()
                 .map(|message| HookMessage {
+                    sender: hook_sender(
+                        message.sender.map(|sender| index.name_of_ref(&sender)),
+                        &message.message_id,
+                    ),
                     id: message.message_id,
                     urgency: sessions::urgency_word(message.urgency).to_string(),
                     text: message.text,
-                    sender: message
-                        .sender
-                        .map(|sender| index.name_of_ref(&sender))
-                        .unwrap_or_default(),
                 })
                 .collect()
         };
@@ -189,6 +189,21 @@ impl<E: Edge> Api<E> {
             return Ok(Vec::new());
         }
         Ok(delivered_ids(answered.events.as_ref()))
+    }
+}
+
+/// Who a message is from, as its element says (`HookMessage::sender`): the
+/// session that sent it, by name; with no requester, the daemon's own
+/// notices (told by their id, `session_policies::is_daemon_message`) are
+/// `ctxloom`, and the rest (empty) the user's. Nothing but a message the
+/// user sent is ever from the user. DRAFT (2026-11-19).
+fn hook_sender(requester: Option<String>, id: &str) -> String {
+    match requester {
+        Some(name) => name,
+        None if session_policies::is_daemon_message(id) => {
+            setup_application::DAEMON_SENDER.to_string()
+        }
+        None => String::new(),
     }
 }
 

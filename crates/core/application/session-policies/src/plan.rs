@@ -374,7 +374,7 @@ fn notices(scene: &Scene<'_>, steps: &mut Vec<Step>) {
                 continue;
             };
             for ended in &run.ended_turns {
-                let key = format!("notice:{id}:{incarnation}:{}", ended.turn);
+                let key = format!("{}{id}:{incarnation}:{}", crate::NOTICE_PREFIX, ended.turn);
                 let how = if ended.failed { "failed" } else { "finished" };
                 steps.push(Step::Send(
                     Keyed {
