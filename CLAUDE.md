@@ -542,7 +542,7 @@ the store grows without bound (ruling 90; compaction is taskloom
 - `core/read-model/session-index` (the rows, state, title, search, retention,
   and each session's transcript folded from its capture events: `Projection`,
   D27's lines, `seq` counting them);
-- `core/ports/session-ports` (a project's store, with `Purge`; `Liveness` and
+- `core/ports/session-ports` (the user's store through `ProjectStores`, with `Purge`; `Liveness` and
   `SessionLock`; a session's files, Go's session directories);
 - `core/application/sessions-application` (list, search, show, keep, title,
   bind, the transcripts; a removal's types and the head-guarded `purge` the
@@ -3577,7 +3577,7 @@ daemon client's `registration()` and the names' `library_registration()`
 (the same, but `users/me` outside a ctxloom project) all use, so a
 subdirectory names its root's project and a monorepo subfolder with a
 `.ctxloom` of its own is a project of its own (accepted cost: its runs move
-to that project's store). A COMMAND THAT MUST NAME THE PROJECT MINTS its
+to that project's streams in the one store). A COMMAND THAT MUST NAME THE PROJECT MINTS its
 id at the RESOLVED ROOT (owner ruling 2026-11-14, revising 2026-11-13's
 "only run and init mint", since `.ctxloom/project-id` is gitignored and every
 fresh clone has none; never in a subfolder): a json library or deps answer

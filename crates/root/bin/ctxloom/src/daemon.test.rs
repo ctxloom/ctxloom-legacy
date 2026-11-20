@@ -828,6 +828,15 @@ fn a_ctxloom_home_not_made_yet_gets_a_daemon() {
         files::exists(fresh.join(".ctxloom/daemon/daemon.log")),
         "the daemon served from the new home"
     );
+    // The client made the home itself, the user's alone (a mutation of the
+    // mode survived: the daemon's own directories are under it, not it).
+    if os::host().flavor() == os::Flavor::Unix {
+        assert_eq!(
+            files::mode_of(&fresh).map(|m| m & 0o777),
+            Some(0o700),
+            "the home the client made is 0700"
+        );
+    }
     let stopped = world.project.run_with(&env, &["daemon", "stop"]);
     assert_eq!(stopped.code, 0, "{}", stopped.said());
 }
