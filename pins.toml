@@ -1,0 +1,10 @@
+# What is specific to ctxloom for the dev module (ctxloom-lib's tools/dev).
+schema = 1
+min_version = "1.0.0"
+
+# The justfile's arch_lint_rev is the ctxloom-lib rev Cargo.toml pins (the
+# `_arch-lint-ready` check refuses a difference): repin moves both.
+[[site]]
+dep = "ctxloom-lib"
+file = "justfile"
+pattern = 'arch_lint_rev := "{rev}"'

@@ -15,7 +15,11 @@ import 'gates/gates.just'
 import 'gates/os-gates.just'
 import 'gates/fixture-gates.just'
 import 'gates/arch-gates.just'
-import 'gates/dev-local.just'
+# Cross-project dependency automation (dev-local, repin, land, pins-check): the
+# shared dev module of ctxloom-lib's tools/dev, linked as .dev (gitignored;
+# `tools/dev/install.sh` in a ctxloom-lib checkout). Optional: absent in a clone
+# or CI without the sibling.
+mod? dev '.dev'
 
 # What gates/arch-gates.just takes from this justfile: the arch-lint binary, built
 # from the same ctxloom-lib commit the workspace pins (arch_lint_rev, kept
@@ -490,7 +494,7 @@ selftest:
     @{{TOP}}/scripts/test-staged.selftest.sh
     @{{TOP}}/scripts/red-commit-judge.selftest.sh
     @{{TOP}}/scripts/exec-mode-check.selftest.sh
-    @{{TOP}}/scripts/dev-local.selftest.sh
+    @if [ -e {{TOP}}/.dev ]; then just dev::selftest; fi
     @{{TOP}}/scripts/path-deps-check.selftest.sh
     @{{TOP}}/scripts/commit-msg.selftest.sh
     @{{TOP}}/scripts/release-package.selftest.sh
