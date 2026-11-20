@@ -324,6 +324,11 @@ async fn lifelong_ended(
 ) {
     if let Some(terminated) = terminated {
         terminated.abort();
+        // An aborted task is dropped later by its worker, and it holds an
+        // `Arc<Shared>` whose read models hold the store: the exit must wait
+        // until it has let go, or `InProcessCore::close` finds the store
+        // still held and leaves its `-wal` behind (daemon/stop-flake).
+        let _ = terminated.await;
     }
     if !scheduler.stop(SCHEDULER_END).await {
         said(say, "the scheduler did not stop in time: it was cut");
