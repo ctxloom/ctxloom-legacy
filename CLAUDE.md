@@ -1233,7 +1233,7 @@ the URL's host. The private key lives in memory in
 `run_ports::HookCertificate` (whose `Debug` withholds it) and goes to
 `hook-listener`'s `TlsIdentity` and nowhere else: never journaled, logged, in
 an environment or in an error. The listener's limits are angzarr's generic
-`Listener` defaults (angzarr `8159ea33`; `hook-listener` sets none): a TLS
+`Listener` defaults (angzarr `71b453a4`; `hook-listener` sets none): a TLS
 handshake within 10 s, an HTTP/2 keepalive ping every 60 s answered within
 20 s, a connection closed after 1 h plus a 30 s grace (never zero: a zero
 grace is `ListenError::ZeroConnectionAgeGrace` at bind, which
@@ -1768,12 +1768,12 @@ shutdown` flushes the holds before an install (no alias table).
 The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
 a full commit. The angzarr pins are one commit of one repository,
-`8159ea33` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
+`71b453a4` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
 router, the platform crates, `angzarr-build` and `angzarr-codegen` were five
 repositories and are crates of that workspace now; `angzarr-coordinator-grpc`'s
 `tls` feature, which `hook-listener` enables, is `Listener::tls`). taskloom's
-crates (`d9e7f11a`, on its branch `chore/repoint-rust-support`) and
-rust-support's (`35253db8`) are built on the same commit, so moving one moves
+crates (`d43fb683`) and
+rust-support's (`d543b4e9`) are built on the same commit, so moving one moves
 all. The lock holds one of every angzarr crate. The platform crates (`os`,
 `file-system`, `file-lock`) are `Apache-2.0 OR BSD-3-Clause`; the shared runtime
 crates (`angzarr-diagnostic`, `angzarr-presentation`, `angzarr-yaml`,
