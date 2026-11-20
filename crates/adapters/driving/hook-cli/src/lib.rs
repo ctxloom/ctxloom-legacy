@@ -28,7 +28,7 @@ pub use capture::{execute_recording, NotRecorded, Recording, Unrecorded};
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{HookError, HookWarning, EN_US};
-pub use execute::{execute, Outcome, STATUSLINE};
+pub use execute::{acknowledge, deliver, execute, Outcome, STATUSLINE};
 pub use hud::{
     bar_color, context_bar, hud, render, StatusPayload, CYAN, DIM, GREEN, RED, RESET, YELLOW,
 };
@@ -74,6 +74,14 @@ pub trait HookService {
         payload: &str,
         harp: &str,
     ) -> Result<setup_application::HookAnswer, Box<dyn Diagnostic>>;
+
+    /// The ack of what an answer offered, after it was printed and flushed
+    /// ([`acknowledge`]). Whether it was recorded. The default has nothing
+    /// to acknowledge.
+    fn acknowledge(&self, offered: &setup_application::Offered) -> bool {
+        let _ = offered;
+        true
+    }
 }
 
 #[cfg(test)]

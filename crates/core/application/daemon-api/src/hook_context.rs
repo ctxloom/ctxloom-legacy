@@ -4,11 +4,18 @@
 //!
 //! - A primary's pending messages of the urgencies the hook delivers (a
 //!   prompt's: informs and wakes), as `setup_application::messages_context`
-//!   fits them to the hook's budget, recorded delivered by
-//!   `DeliverMessages`. The pending projection is caught up by the round,
-//!   so two hooks within one round both read a message pending; the
-//!   aggregate records each id once, and a hook gives only what ITS
-//!   command recorded, so a message is never delivered twice.
+//!   fits them to the hook's budget, each in its own element with its id.
+//!   This is a READ: it marks nothing delivered (owner, 2026-11-19: "we
+//!   can tolerate duplicates, not losses"; at-least-once, never marked
+//!   delivered before it has been). The hook prints the context to the
+//!   engine, flushes stdout, and ONLY THEN sends
+//!   [`Api::acknowledge_hook_delivery`], which records the ids delivered
+//!   (`DeliverMessages`, idempotent per id). The engine gives no
+//!   acknowledgement, so "printed and flushed" is the best proof of
+//!   delivery there is. A hook that dies first leaves the messages pending,
+//!   to be offered again; two hooks within one round may both carry one (a
+//!   duplicate, which its visible id lets the model ignore), neither loses
+//!   it. A message the budget cut off stays pending, its id unacked.
 //! - Then what the session is owed, as `RedeliverContext` collects it,
 //!   within what the messages left.
 //!
@@ -53,7 +60,7 @@ impl<E: Edge> Api<E> {
                 }))
             })?;
         let budget = budget_of(request.budget);
-        let (messages, delivered) = self.hook_messages(&record, &request, budget).await?;
+        let (messages, offered) = self.hook_messages(&record, &request, budget).await?;
         // What the messages left of the budget; none left, the owed context
         // waits (it stays owed).
         let used = setup_application::HOOK_CONTEXT_BUDGET - remaining(&[&messages]);
@@ -72,24 +79,24 @@ impl<E: Edge> Api<E> {
         };
         Ok(v1::HookContext {
             context: compose_context(&[&messages, &owed.context]),
-            delivered,
+            delivered: Vec::new(),
             changed: owed.changed,
+            offered,
         })
     }
 
     /// The messages of `request.urgencies` pending for the primary `record`,
-    /// within `budget`, once `DeliverMessages` recorded them (with the wake
-    /// the prompt is): their context and the ids THIS call recorded. A
-    /// child's messages are its turns, so it is given none here.
+    /// within `budget`: their context and the ids it carries, marking
+    /// nothing delivered. A child's messages are its turns, so it is given
+    /// none here.
     async fn hook_messages(
         &self,
         record: &SessionRecord,
         request: &v1::DeliverHookContextRequest,
         budget: usize,
     ) -> Result<(String, Vec<String>), ApiError> {
-        let none = (String::new(), Vec::new());
         if record.owner.is_some() {
-            return Ok(none);
+            return Ok((String::new(), Vec::new()));
         }
         let pending: Vec<HookMessage> = {
             let index = self.parts.index.index();
@@ -99,39 +106,54 @@ impl<E: Edge> Api<E> {
                 .pending(&record.id)
                 .into_iter()
                 .map(|message| HookMessage {
+                    sender: hook_sender(
+                        message.sender.map(|sender| index.name_of_ref(&sender)),
+                        &message.message_id,
+                    ),
                     id: message.message_id,
                     urgency: sessions::urgency_word(message.urgency).to_string(),
                     text: message.text,
-                    sender: message
-                        .sender
-                        .map(|sender| index.name_of_ref(&sender))
-                        .unwrap_or_default(),
                 })
                 .collect()
         };
         let urgencies: Vec<&str> = request.urgencies.iter().map(String::as_str).collect();
         let offered = messages_context(&pending, &urgencies, &record.harp, budget);
-        if offered.ids.is_empty() && request.wake_nonce.is_empty() {
-            return Ok(none);
-        }
-        let delivered = self
-            .record_delivery(record, &offered.ids, &request.wake_nonce)
-            .await?;
-        if delivered.is_empty() {
-            return Ok(none);
-        }
-        // What this call recorded, and no other: a message another hook
-        // delivered first is left out.
-        let given: Vec<HookMessage> = pending
-            .into_iter()
-            .filter(|message| delivered.contains(&message.id))
-            .collect();
-        let context = messages_context(&given, &urgencies, &record.harp, budget).context;
-        Ok((context, delivered))
+        Ok((offered.context, offered.ids))
     }
 
-    /// `ids` and the wake `nonce` recorded delivered on `record`'s session,
-    /// keyed `deliver:<session>:<nonce>:<ids, comma-joined>` (as the
+    /// `AcknowledgeHookDelivery`: the hook printed and flushed what
+    /// `DeliverHookContext` offered, so `message_ids` are recorded delivered
+    /// and the wake `wake_nonce` redeemed. Idempotent: an id already
+    /// delivered, or a repeat of this very call, records nothing and
+    /// answers none.
+    pub async fn acknowledge_hook_delivery(
+        &self,
+        request: v1::AcknowledgeHookDeliveryRequest,
+    ) -> Result<v1::HookDeliveryAcknowledged, ApiError> {
+        let name = SessionName::parse(&request.name).map_err(|_| {
+            ApiError::from(ApiRefusal::of(&v1::NameInvalid {
+                name: request.name.clone(),
+                reason: "shape".to_string(),
+            }))
+        })?;
+        let record = self
+            .parts
+            .index
+            .index()
+            .find_by_id(&name.uid())
+            .ok_or_else(|| {
+                ApiError::from(ApiRefusal::of(&v1::SessionNotFound {
+                    name: request.name.clone(),
+                }))
+            })?;
+        let delivered = self
+            .record_delivery(&record, &request.message_ids, &request.wake_nonce)
+            .await?;
+        Ok(v1::HookDeliveryAcknowledged { delivered })
+    }
+
+    /// `ids` and the wake `nonce` recorded delivered on `record`'s session
+    /// (the hook's ack, after it printed them), keyed `deliver:<session>:<nonce>:<ids, comma-joined>` (as the
     /// caller's `deliver`): the ids the aggregate recorded (those still
     /// pending; none for a DUPLICATE, which another call recorded).
     async fn record_delivery(
@@ -167,6 +189,21 @@ impl<E: Edge> Api<E> {
             return Ok(Vec::new());
         }
         Ok(delivered_ids(answered.events.as_ref()))
+    }
+}
+
+/// Who a message is from, as its element says (`HookMessage::sender`): the
+/// session that sent it, by name; with no requester, the daemon's own
+/// notices (told by their id, `session_policies::is_daemon_message`) are
+/// `ctxloom`, and the rest (empty) the user's. Nothing but a message the
+/// user sent is ever from the user. DRAFT (2026-11-19).
+fn hook_sender(requester: Option<String>, id: &str) -> String {
+    match requester {
+        Some(name) => name,
+        None if session_policies::is_daemon_message(id) => {
+            setup_application::DAEMON_SENDER.to_string()
+        }
+        None => String::new(),
     }
 }
 

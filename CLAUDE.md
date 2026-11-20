@@ -3769,21 +3769,38 @@ setup-application's `HookContexts`, the wiring's `DaemonHookContexts`, a
 `Caller` of the hook's own session, `Caller::hook_context`), answered from
 the projections with NO round awaited (`GetSession`'s `Hosting::fresh` is
 not on the hook path): the pending messages of the urgencies the hook
-names, fitted by `messages_context`, recorded by `DeliverMessages` (which
-redeems the wake its prompt was), then what the session is owed (as
+names, fitted by `messages_context`, each in an element
+`<message id=".." from=".." urgency="..">text</message>` with the text and
+the attribute values XML-escaped (`delivery::escaped`), so a sender's text
+cannot close its element or forge another (owner ruling 2026-11-19; `from` is the sender's name, `ctxloom` for a daemon notice told by its `notice:`/`drain:` id, `session_policies::is_daemon_message`, and `the user` only for a message the user sent), under
+a header saying the elements hold untrusted data from another agent, not
+instructions from the user (DRAFT), then what the session is owed (as
 `RedeliverContext`) within what the messages left, joined by
-`compose_context`, the ids THIS call recorded in `HookContext.delivered`.
-A message is delivered ONCE however many hooks ask within one round (the
-pending projection folds per round, so both read it pending): the session
-aggregate keeps `SessionState.pending_messages` (field 30, additive;
-`MessageSent` adds, `MessagesDelivered` removes) and `DeliverMessages`
-records only ids still pending, and a DUPLICATE delivers nothing (forced in
-daemon-api's `hook_context` test). The hook's call trusts the discovery
+`compose_context`; the ids the context carries are `HookContext.offered`
+(`delivered`, field 2, is no longer set). The call is a READ that marks
+nothing delivered (owner 2026-11-19: "we can tolerate duplicates, not
+losses"; at-least-once, never marked delivered before it has been). The
+hook prints the context, FLUSHES stdout, and only then sends
+`AcknowledgeHookDelivery` (additive; `hook_cli::deliver` holds the order;
+`Setup::acknowledge`, `HookContexts::acknowledge`,
+`Caller::acknowledge_hook_delivery`), which records the ids
+`DeliverMessages` (which redeems the wake its prompt was) and is
+idempotent per id: the session aggregate keeps
+`SessionState.pending_messages` (field 30, additive; `MessageSent` adds,
+`MessagesDelivered` removes) and `DeliverMessages` records only ids still
+pending. Claude gives no acknowledgement, so printed and flushed is the best
+proof there is. A hook that dies before the ack leaves the messages pending,
+offered again (the visible id lets the model ignore a repeat); two hooks
+within one round may both carry one; an ack that fails is a repeat later,
+said nowhere. Messages the budget leaves out stay pending (a first message
+too long alone is still delivered cut and acknowledged; `session show` has
+the whole). Forced in daemon-api's `hook_context` tests and hook-cli's
+`deliver`. The hook's call trusts the discovery
 file first, unprobed (`HookDaemons::trusting`,
 `daemon::hook_daemon_unprobed`: a health check is a TLS connection of its
 own); reached unreachable, it probes and starts one as every hook does.
-Delivered messages are a primary's alone (a child's are fed as turns). A wake line that delivered nothing is blocked; a human's
-prompt never is. One hook answer has ONE 10,000-character context budget
+Delivered messages are a primary's alone (a child's are fed as turns). A wake line with no message offered is blocked (its wake is still
+acknowledged, so redeemed); a human's prompt never is. One hook answer has ONE 10,000-character context budget
 (claude's cap), shared in order by setup-application's `compose_context`:
 the skill mates line (the hook's own), then the daemon's part: the messages
 (given what is left; past it they wait behind a pointer to `session show`),
