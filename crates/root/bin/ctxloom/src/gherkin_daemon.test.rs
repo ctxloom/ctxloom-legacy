@@ -52,6 +52,10 @@ const SPAWNED_IDLE_SECONDS: u64 = 15;
 /// is kill-tolerant) and reaped.
 #[derive(Default)]
 pub(super) struct State {
+    /// A step changed a tracked file by hand since the last hook fired: the
+    /// daemon owes the session's next hook the change only once a round of
+    /// its own has recorded it ([`settled`]).
+    pub(crate) edited_by_hand: bool,
     /// The bundle changed between a preview and Alice's answer, if any.
     changes_before_answer: Option<String>,
     /// The stores' evidence as it was before the scenario's command ran.
@@ -717,6 +721,25 @@ fn hosted_child(w: &mut World) {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+    conversation_bound(w);
+}
+
+/// The hosted child's conversation is bound: its first turn's `init` was
+/// heard by the daemon and recorded as the session's native conversation.
+/// A scenario that kills the daemon "in the middle of a turn" and expects
+/// the child re-hosted in its own conversation must wait for this first: the
+/// stub's `child-turn` file says the child printed its `init`, not that the
+/// daemon has heard and recorded it, and a daemon killed in between leaves a
+/// child with no conversation to resume, which is not re-hosted
+/// (`session_policies::plan`'s `rehosts`; CI on macOS, 2026-11-19 and
+/// 2026-11-20: "timed out waiting for the child started again").
+fn conversation_bound(w: &World) {
+    until(w, "the child's conversation bound", DAEMON_WAIT, |w| {
+        shown(w, CHILD)["native_session"]
+            .as_str()
+            .is_some_and(|native| !native.is_empty())
+            .then_some(())
+    });
 }
 
 /// A hosted child whose first turn has ended: its owner was told so.
@@ -1441,6 +1464,7 @@ fn alices_session_with_child(w: &mut World, owner: String, child: String) {
     until(w, "the child's first turn", DAEMON_WAIT, |_| {
         files::exists(dir.join("child-turn")).then_some(())
     });
+    conversation_bound(w);
 }
 
 /// The state `session list` gives `harp`, if it lists it.
@@ -2281,6 +2305,33 @@ fn hook_run(
     (ran, started.elapsed())
 }
 
+/// The rounds the serving daemon has finished, by `daemon status`.
+fn rounds_done(w: &World) -> Option<u64> {
+    let ran = run_now(w, &["daemon", "status", "--format", "json"]);
+    (ran.code == 0)
+        .then(|| ran.json()["rounds"].as_u64())
+        .flatten()
+}
+
+/// The daemon has finished a round that began after this call: what a
+/// command committed before it (a read that saw a file changed by hand) is
+/// recorded on the sessions it owes by the daemon's next round, and a hook
+/// collects it from the projection as it is, no round awaited (the owner's
+/// design, `daemon_api::reactions::redeliver_context`): a hook fired before
+/// that round answers nothing, by design, and collects the change at a
+/// later one. A scenario that says the NEXT hook collects it waits for the
+/// round first (CI on macOS, 2026-11-19: a hook answered `{}`). Two rounds
+/// are finished: the one running when this is asked may have begun before.
+/// No daemon serving: nothing to wait for.
+fn settled(w: &World) {
+    let Some(before) = rounds_done(w) else {
+        return;
+    };
+    until(w, "the daemon's next round", DAEMON_WAIT, |w| {
+        rounds_done(w).filter(|now| *now >= before + 2).map(|_| ())
+    });
+}
+
 /// The session's assistant fires its `native` hook with `payload`.
 fn fire(w: &mut World, native: &str, payload: &str) {
     w.seed();
@@ -2291,6 +2342,9 @@ fn fire(w: &mut World, native: &str, payload: &str) {
     assert_eq!(named.code, 0, "{}", named.said());
     let name = named.stdout.trim().to_string();
     let events_before = session_events(w, &harp).len();
+    if std::mem::take(&mut w.daemon_spec.edited_by_hand) {
+        settled(w);
+    }
     let (unrecorded, _) = hook_run(w, native, payload, None);
     let (ran, took) = hook_run(w, native, payload, Some(&name));
     w.daemon_spec.fired = Some(Fired {
@@ -5251,15 +5305,7 @@ fn rehosted_n(w: &mut World, child: String, owner: String, times: i64) {
         "the child and owner the harness hosts"
     );
     child_mid_turn(w, child.clone());
-    // The seed re-hosts its session, which needs the native conversation its
-    // first turn binds: waited for, not raced (CI on macOS, 2026-11-19:
-    // `NoNativeSession`).
-    until(w, "the child's conversation bound", DAEMON_WAIT, |w| {
-        shown(w, CHILD)["native_session"]
-            .as_str()
-            .is_some_and(|native| !native.is_empty())
-            .then_some(())
-    });
+    // Its conversation is bound (`hosted_child` waited for it).
     // Its daemon is killed outright with its turn in flight; then its past
     // re-hosts are planted, as earlier daemons would have recorded them,
     // its host lost again after the last.

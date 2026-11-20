@@ -126,6 +126,7 @@ fn no_git(w: &mut World) {
 #[given(expr = "the file {string} is changed by hand to:")]
 #[when(expr = "the file {string} is changed by hand to:")]
 fn changed_by_hand(w: &mut World, step: &Step, rel: String) {
+    w.daemon_spec.edited_by_hand = true;
     files::put(in_project(w, &rel), format!("{}\n", doc(step)));
 }
 
@@ -153,6 +154,7 @@ fn home_line_added(w: &mut World, rel: String, line: String) {
 /// reaches every live session).
 #[when(expr = "the file {string} has the line {string} added by hand")]
 fn line_added(w: &mut World, rel: String, line: String) {
+    w.daemon_spec.edited_by_hand = true;
     let path = in_project(w, &rel);
     let mut text = files::read(&path).unwrap_or_default();
     if !text.is_empty() && !text.ends_with('\n') {
