@@ -293,12 +293,23 @@ filter = '''
 '''
 slow-timeout = { period = "30s", terminate-after = 12, grace-period = "10s" }
 
+# cli/doctor timed out at the setup cluster's 180 s on Windows (CI runs
+# 44622601022 and 44634219864, the full ci-platform run). Measured 2026-11-19
+# on windows-latest (CI run 44641431002, GHERKIN_TIMINGS, the scenarios one at
+# a time, nothing else running): the 33 rows took 122 s, 3.7 s a row, none
+# over 8 s; the feature has grown since the cluster's 65 s was measured. Its
+# limit is about 2.4 times that (the rule above), 300 s (30 s x 10), a limit
+# of its own, the rest of the setup cluster keeping its 180 s.
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(ctxloom) & test(=tests::gherkin_features::features::cli::doctor)'
+slow-timeout = { period = "30s", terminate-after = 10, grace-period = "10s" }
+
 [[profile.default.overrides]]
 platform = 'cfg(windows)'
 filter = '''
     package(ctxloom) & (
         test(=tests::gherkin_features::features::cli::init)
-        | test(=tests::gherkin_features::features::cli::doctor)
         | test(=tests::gherkin_features::features::cli::manage)
         | test(=tests::gherkin_features::features::cli::auth)
         | test(=tests::gherkin_features::features::cli::config)
