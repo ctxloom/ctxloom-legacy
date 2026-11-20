@@ -166,6 +166,9 @@ pub(crate) fn serve(
         let one_shots = one_shots_over(&core, home, &temp);
         let shared = shared_over(&kept, &one_shots, (&fs, home), pace);
         let terminals = terminals_over(&core, home, &temp);
+        // Listening for SIGTERM BEFORE it advertises: a signal sent as the
+        // advertisement is seen must not meet the default disposition.
+        let terminated = hear_terminate((&fs, home), &shared, &say);
         let started = start(
             &fs,
             (home, &temp),
@@ -181,10 +184,8 @@ pub(crate) fn serve(
             Err(detail) => {
                 // A start that fails before it serves closes its store as
                 // every exit does (ruling 131): what holds it is let go first.
-                drop(shared);
-                drop(kept);
-                drop(one_shots);
-                drop(terminals);
+                cut(terminated).await;
+                drop((shared, kept, one_shots, terminals));
                 said(&say, &format!("the start failed: {detail}"));
                 match core.close().await {
                     Ok(()) => said(&say, "the store is closed"),
@@ -195,10 +196,12 @@ pub(crate) fn serve(
         };
         let endpoint = own.endpoint.clone();
         said(&say, &format!("serving at {endpoint}"));
+        // Under test-support, held while `test-hold-at` names `serving`.
+        #[cfg(feature = "test-support")]
+        files.hold_at("serving");
         let scheduler = scheduler_over(&core, &kept, (pace, &files), &say);
         // A SIGTERM is a drain (owner, 2026-11-15), a second one the plain
         // stop (`--even-if-live`); heard for the daemon's life.
-        let terminated = hear_terminate((&fs, home), &shared, &say);
         let frontends = liveness::FrontendLocks::new(Arc::clone(&fs), home);
         let lifeline = Lifeline::of(&fs, &env);
         let result = run(
@@ -313,6 +316,16 @@ impl scheduler_ports::Clock for HeldAlarms {
     }
 }
 
+/// The SIGTERM listener cut and JOINED: an aborted task is dropped later by
+/// its worker, and what it holds (the read models, so the store) must be let
+/// go before the store closes.
+async fn cut(terminated: Option<tokio::task::JoinHandle<()>>) {
+    if let Some(terminated) = terminated {
+        terminated.abort();
+        let _ = terminated.await;
+    }
+}
+
 /// What runs for the daemon's life, ended once its loop returns and before
 /// anything else is let go: the SIGTERM listener, then the scheduler, whose
 /// copy of the core goes before the store closes (ruling 131). A scheduler
@@ -322,14 +335,7 @@ async fn lifelong_ended(
     scheduler: crate::scheduling::Scheduler,
     say: &Say,
 ) {
-    if let Some(terminated) = terminated {
-        terminated.abort();
-        // An aborted task is dropped later by its worker, and it holds an
-        // `Arc<Shared>` whose read models hold the store: the exit must wait
-        // until it has let go, or `InProcessCore::close` finds the store
-        // still held and leaves its `-wal` behind (daemon/stop-flake).
-        let _ = terminated.await;
-    }
+    cut(terminated).await;
     if !scheduler.stop(SCHEDULER_END).await {
         said(say, "the scheduler did not stop in time: it was cut");
     }
