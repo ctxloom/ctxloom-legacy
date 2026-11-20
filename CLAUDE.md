@@ -862,12 +862,12 @@ stream is a DUPLICATE; the event it produces records the origin on its
 The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
 a full commit. The angzarr pins are one commit of one repository,
-`52d48ccf` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
+`71b453a4` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
 router, the platform crates, `angzarr-build` and `angzarr-codegen` were five
 repositories and are crates of that workspace now; `angzarr-coordinator-grpc`'s
 `tls` feature, which `hook-listener` enables, is `Listener::tls`). taskloom's
-crates (`d9e7f11a`, on its branch `chore/repoint-rust-support`) and
-rust-support's (`35253db8`) are built on the same commit, so moving one moves
+crates (`d43fb683`) and
+rust-support's (`d543b4e9`) are built on the same commit, so moving one moves
 all. The lock holds one of every angzarr crate. The platform crates (`os`,
 `file-system`, `file-lock`) are `Apache-2.0 OR BSD-3-Clause`; the shared runtime
 crates (`angzarr-diagnostic`, `angzarr-presentation`, `angzarr-yaml`,
