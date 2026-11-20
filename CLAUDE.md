@@ -873,7 +873,7 @@ all. The lock holds one of every angzarr crate. The platform crates (`os`,
 crates (`angzarr-diagnostic`, `angzarr-presentation`, `angzarr-yaml`,
 `angzarr-embedded`...) are AGPL-3.0-only with angzarr's runtime exception and
 the coordinators with its gRPC API permission, each allowed by name in
-`deny.toml`; this workspace is `AGPL-3.0-only`.
+`deny.toml`; this workspace is `Apache-2.0 OR BSD-3-Clause`.
 
 The callback's TLS stack is one crypto provider, ring (owner, ruling 35):
 tonic's `tls-ring` (never `tls-aws-lc`; `hook-listener` and `hook-sink-grpc`

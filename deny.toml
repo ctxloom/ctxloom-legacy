@@ -25,9 +25,8 @@ ignore = [
 
 [licenses]
 version = 2
-# ctxloom is AGPL-3.0-only; every license here may be combined with it.
+# ctxloom is Apache-2.0 OR BSD-3-Clause; every license here may be combined with it.
 allow = [
-  "AGPL-3.0-only",
   "Apache-2.0",
   "BSD-3-Clause",
   # ring (`Apache-2.0 AND ISC`), untrusted and rustls-webpki, the crypto
