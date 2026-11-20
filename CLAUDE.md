@@ -464,8 +464,9 @@ remote's) said on stderr; `--format text` is the prose (`Created ctxloom
 directory`, `Added remote`, `Added companion`, warnings on stderr). A
 `.ctxloom` that is there with no project named yet (a clone's) is named by the
 apply when it has remotes to register (`name_existing`, its id answered for
-the client to bind). Under `test-support` the binary's `CTXLOOM_TEST_TERMINAL`
-stands in for a terminal in the default format too, so the acceptance
+the client to bind). The acceptance harness's stood-in terminal
+(`CTXLOOM_TEST_TERMINAL`) runs `init` with `--format text` (a real terminal's
+default; the binary's own default format still follows the stream), so the
 scenarios that stand a terminal in read the prose.
 
 The remotes' and the dependencies' writes are the daemon's (step 10c U4,

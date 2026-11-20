@@ -101,7 +101,7 @@ impl Common {
                 })
                 .collect();
             assert_eq!(words.first().map(String::as_str), Some("ctxloom"), "{line}");
-            let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+            let mut args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
             let env: Vec<(&str, &str)> = self
                 .env
                 .iter()
@@ -109,6 +109,12 @@ impl Common {
                 .chain(next_env.iter())
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();
+            // A stood-in terminal reads what a real one does: `init`'s prose
+            // (the default format off a stream that is no terminal is json).
+            let at_terminal = env.iter().any(|(k, _)| *k == "CTXLOOM_TEST_TERMINAL");
+            if at_terminal && args.first() == Some(&"init") && !args.contains(&"--format") {
+                args.extend(["--format", "text"]);
+            }
             let ran = if let Some(cwd) = cwd {
                 self.project.run_in_with(cwd, &env, &args)
             } else if input.is_empty() {
