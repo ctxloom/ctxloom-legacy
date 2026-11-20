@@ -706,3 +706,48 @@ mod opencode_recent_models {
         assert_eq!(opencode_recent_models(&wiring), None);
     }
 }
+
+// Owner, 2026-11-19: every run's launcher waits for a turn on a parked
+// blocking thread, never an async worker (`equipped`, which `runs_over`
+// builds each launcher through): a launcher not so equipped waits on the
+// calling thread.
+#[test]
+fn every_runs_launcher_parks_its_turns() {
+    use std::sync::Arc;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dir = crate::fixtures::root();
+    let fs = crate::fixtures::fs();
+    let core = runtime.block_on(async {
+        let store = ctxloom_store_sqlite::Stores::new(Arc::clone(&fs), dir.root().join("home"))
+            .open()
+            .await
+            .unwrap();
+        crate::InProcessCore::start(store).await
+    });
+    let bare = run_launcher::Launcher::new(
+        core.edge(),
+        host_launcher::HostLauncher::default(),
+        session_files::SessionDirs::new(Arc::clone(&fs), dir.root().to_path_buf()),
+        Vec::new(),
+        Arc::new(run_launcher::Orders::new()),
+        run_ports::Limits::new(std::time::Duration::from_secs(1)),
+    );
+    assert!(!bare.parks_turns(), "a new launcher parks nothing");
+    let locks: Arc<dyn run_ports::RunLocks> =
+        Arc::new(liveness::RunLockFiles::new(Arc::clone(&fs), dir.root()));
+    let workspaces = Arc::new(worktree_git::GitWorkspaces::new(
+        Arc::clone(&fs),
+        dir.root().to_path_buf(),
+        None,
+        Arc::new(EnvSnapshot::of(Vec::<(&str, &str)>::new())),
+    ));
+    let equipped = super::equipped(bare, (&locks, workspaces, "linux"));
+    assert!(equipped.parks_turns());
+    drop(equipped);
+    runtime.block_on(core.close()).unwrap();
+}

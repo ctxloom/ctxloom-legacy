@@ -2423,3 +2423,18 @@ impl run_ports::Parks for BlockingPool {
         })
     }
 }
+
+// `parks_turns` says what `with_parks` set, and a new launcher parks nothing.
+#[test]
+fn a_launcher_parks_its_turns_only_once_told_to() {
+    let rig = rig(
+        ScriptedEngine::answering("A", None),
+        ScriptedRunner::exits(0),
+        orders_with(order("fake")),
+    );
+    assert!(!rig.launcher.parks_turns());
+    assert!(rig
+        .launcher
+        .with_parks(Arc::new(BlockingPool))
+        .parks_turns());
+}

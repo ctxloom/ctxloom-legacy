@@ -198,6 +198,12 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         self
     }
 
+    /// Whether a turn's end is waited for on a parked thread
+    /// ([`Self::with_parks`] was said).
+    pub fn parks_turns(&self) -> bool {
+        self.parks.is_some()
+    }
+
     /// The command's end, waited for where [`Self::with_parks`] said.
     async fn park(
         &self,
