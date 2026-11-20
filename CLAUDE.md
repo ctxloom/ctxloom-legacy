@@ -4797,7 +4797,20 @@ exits with codes of its own, never nextest's passed through (nextest's 102
 is "cargo metadata failed"): 0 passed, 100 a test failed, 101 not built, 120
 a doc test failed, 121 nextest failed otherwise (`nextest exited <code>` in
 the log); 100 and 120 are red tests, 101 and 121 are refused on every
-branch (`scripts/tests-exit.selftest.sh`).
+branch (`scripts/tests-exit.selftest.sh`). `test-staged` runs
+`_tests-checked`, which after a 100 or 120 asks `gates/red-sanity.sh` (owner,
+2026-11-19, R0 and R1) whether the red is tests' or the environment's, and
+exits 122 (refused on every branch, never red; not 121, which is the
+runner's) when it is the environment's: R0, the staged worktree, its target
+directory or a program the setup script named (`CTXLOOM_TEST_BINARY`,
+`CTXLOOM_TEST_COMPANION_STUB`, listed in the target directory's
+`nextest-binaries.list`) is gone after the run; R1, over 100 failures, half
+or more of the run, in packages that have a `*.test.rs` at HEAD (a red-first
+new crate is exempt; an unreadable Summary or a failure in no package is
+refused). Accepted: a deliberate commit breaking over 100 existing tests at
+once is refused, and a gross but sub-threshold break (101 of 5,000) passes
+the commit gate for the land ratchet to catch
+(`scripts/red-commit-sanity.selftest.sh`).
 
 The feature runner is ONE TEST PER FEATURE FILE (2026-11-18, superseding
 the clusters of the owner's ruling of 2026-11-14, whose
