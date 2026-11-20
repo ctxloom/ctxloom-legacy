@@ -2678,6 +2678,9 @@ fn a_child_in_another_project_tells_its_owner_and_ends_with_its_close() {
 // delivered: the daemon's pending list no longer holds it.
 #[test]
 fn test_a_prompt_hook_prints_the_contained_message_then_acknowledges_it() {
+    if !files::runs_scripts() {
+        return;
+    }
     let world = World::new();
     let seeded = world.run(&["test", "seed-session", OWNER]);
     assert_eq!(seeded.code, 0, "{}", seeded.said());
