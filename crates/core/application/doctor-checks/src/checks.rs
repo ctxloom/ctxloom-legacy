@@ -90,7 +90,9 @@ pub fn setup_marker(
 
 /// `DEPS-a1`: what the machine needs whatever the project is: git, and the
 /// identity it commits with (as git resolves it where ctxloom runs, in her
-/// own environment: `ctxloom_ports::GitIdentity`).
+/// own environment: `ctxloom_ports::GitIdentity`). The library itself no
+/// longer commits; `bundle push` does, so that is what a missing identity
+/// breaks (the session home's identity is seeded from the same).
 pub fn deps(git_found: bool, identity_known: bool) -> Check {
     const M: &str = "DOCTOR-CHECK-DEPS-a1";
     const N: &str = "system dependencies";
@@ -108,7 +110,7 @@ pub fn deps(git_found: bool, identity_known: bool) -> Check {
             M,
             N,
             Status::Warn,
-            "git is there but has no identity (user.name and user.email): a commit would fail",
+            "git is there but has no identity (user.name and user.email): a bundle push, which commits, would fail",
             "git config --global user.name \"Your Name\" && git config --global user.email you@example.com",
         );
     }

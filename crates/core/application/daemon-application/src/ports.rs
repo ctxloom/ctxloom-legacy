@@ -64,7 +64,7 @@ impl HostedEngine {
 /// (the variables that place them: `CLAUDE_CONFIG_DIR`, the XDG bases),
 /// which the launch reads her settings from and never hands the child, and
 /// the agent it is planned for (empty: the project's default).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct HandOff {
     pub env: BTreeMap<String, String>,
     pub launcher: BTreeMap<String, String>,
@@ -72,6 +72,18 @@ pub struct HandOff {
     /// The launcher's program (owner, 2026-11-18): what the child's hooks
     /// run and its engine's `PATH` leads with; none, the daemon's own.
     pub program: Option<Program>,
+}
+
+impl std::fmt::Debug for HandOff {
+    /// Both maps by name alone: a value may be a credential.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HandOff")
+            .field("env", &run_ports::RedactedEnv(&self.env))
+            .field("launcher", &run_ports::RedactedEnv(&self.launcher))
+            .field("agent", &self.agent)
+            .field("program", &self.program)
+            .finish()
+    }
 }
 
 /// The program a launch's hook commands and statusline run, and the
@@ -250,3 +262,7 @@ impl HoldFlushed {
         self.set_aside == 0 && self.left.is_none()
     }
 }
+
+#[cfg(test)]
+#[path = "ports.test.rs"]
+mod tests;

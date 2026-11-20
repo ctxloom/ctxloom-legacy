@@ -933,3 +933,132 @@ fn test_the_sweep_drops_a_new_tree_s_staging_beside_it() {
         .unwrap();
     assert!(!fs.exists(&beside("")).unwrap());
 }
+
+/// A directory outside the tree, and `rel` (below the tree) a link to it.
+fn linked(fs: &Rooted, rel: &str) -> PathBuf {
+    let elsewhere = PathBuf::from(os::host().flavor().from_top("/elsewhere"));
+    fs.create_dir_all(&elsewhere, Mode::from_bits(0o755))
+        .unwrap();
+    if let Some(parent) = at(rel).parent() {
+        fs.create_dir_all(parent, Mode::from_bits(0o755)).unwrap();
+    }
+    fs.symlink_dir(&elsewhere, &at(rel)).unwrap();
+    elsewhere
+}
+
+fn skip_off_unix() -> bool {
+    if os::host().flavor() == os::Flavor::Unix {
+        return false;
+    }
+    let test = std::thread::current();
+    eprintln!(
+        "SKIP {}: a directory link is a junction there, made with a privilege",
+        test.name().unwrap_or("a test")
+    );
+    true
+}
+
+// Review 9: a cloned repository's `.ctxloom/state -> /elsewhere` (or its
+// `state/staging`, `state/trash`) must make ctxloom create nothing and remove
+// nothing there: every operation that builds a path below `state/` refuses a
+// link at it, with a typed diagnostic and a fix.
+#[test]
+fn test_a_link_at_state_is_refused_by_every_operation_that_uses_it() {
+    if skip_off_unix() {
+        return;
+    }
+    for link in ["state", "state/staging", "state/trash"] {
+        let (fs, ops) = setup();
+        let elsewhere = linked(&fs, link);
+        fs.write_atomic(
+            &elsewhere.join("keep.txt"),
+            b"theirs",
+            Perms::Exact(Mode::from_bits(0o644)),
+        )
+        .unwrap();
+        put(&fs, "content/bundles/v2/demo/bundle.yaml", b"d\n");
+        let stages = [
+            Operation::Replace(Put::file("config.yaml", "x")),
+            Operation::CreateDir {
+                path: "content/bundles/v2/new".to_string(),
+                files: vec![Put::file("bundle.yaml", "n")],
+            },
+        ];
+        let trashes = [
+            Operation::Trash {
+                path: "content/bundles/v2/demo".to_string(),
+            },
+            Operation::Move {
+                from: "content/bundles/v2/demo".to_string(),
+                to: "content/bundles/v2/other".to_string(),
+                into: None,
+            },
+            Operation::Purge,
+        ];
+        // Each operation is refused for the links it goes through: staging
+        // writes use `state` and `state/staging`, the trash `state` and
+        // `state/trash`.
+        let refused_here: Vec<&Operation> = match link {
+            "state" => stages.iter().chain(trashes.iter()).collect(),
+            "state/staging" => stages.iter().collect(),
+            _ => trashes.iter().collect(),
+        };
+        for operation in refused_here {
+            let refused = ops
+                .operate(&tree(), REQUEST, operation, &|_| {})
+                .expect_err(&format!("{link}: {operation:?}"));
+            assert_eq!(
+                refused.code(),
+                "content-fs-state-link",
+                "{link}: {operation:?}"
+            );
+            assert!(refused.to_string().contains(link), "{refused}");
+        }
+        if link != "state/trash" {
+            let swept = ops.sweep_staging(&tree()).expect_err(link);
+            assert_eq!(swept.code(), "content-fs-state-link");
+        }
+        if link != "state/staging" {
+            let purged = ops.purge_slot(&tree(), REQUEST).expect_err(link);
+            assert_eq!(purged.code(), "content-fs-state-link");
+        }
+        // Nothing was made or removed through the link, and the tree's own
+        // content was not touched.
+        assert_eq!(fs.read(&elsewhere.join("keep.txt")).unwrap(), b"theirs");
+        assert_eq!(fs.read_dir(&elsewhere).unwrap().len(), 1, "{link}");
+        assert!(read(&fs, "content/bundles/v2/demo/bundle.yaml").is_some());
+    }
+}
+
+// The same for the staging beside the tree (`<tree>.staging`, a first init's
+// whole tree): a link there is refused, and swept by nobody.
+#[test]
+fn test_a_link_at_the_staging_beside_the_tree_is_refused() {
+    if skip_off_unix() {
+        return;
+    }
+    let (fs, ops) = setup();
+    let elsewhere = PathBuf::from(os::host().flavor().from_top("/elsewhere"));
+    fs.create_dir_all(&elsewhere, Mode::from_bits(0o755))
+        .unwrap();
+    fs.write_atomic(
+        &elsewhere.join("keep.txt"),
+        b"theirs",
+        Perms::Exact(Mode::from_bits(0o644)),
+    )
+    .unwrap();
+    let beside = PathBuf::from(format!("{}.staging", tree()));
+    fs.symlink_dir(&elsewhere, &beside).unwrap();
+    let whole = Operation::CreateDir {
+        path: String::new(),
+        files: vec![Put::file("config.yaml", "c")],
+    };
+    let refused = ops
+        .operate(&tree(), REQUEST, &whole, &|_| {})
+        .expect_err("a made whole tree stages beside it");
+    assert_eq!(refused.code(), "content-fs-state-link");
+    let swept = ops.sweep_staging(&tree()).expect_err("sweeping it");
+    assert_eq!(swept.code(), "content-fs-state-link");
+    assert_eq!(fs.read(&elsewhere.join("keep.txt")).unwrap(), b"theirs");
+    assert_eq!(fs.read_dir(&elsewhere).unwrap().len(), 1);
+}

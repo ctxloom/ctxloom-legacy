@@ -47,6 +47,18 @@ pub mod google {
 
 mod wkt;
 
+impl std::fmt::Debug for v1::EnvVar {
+    /// The name alone: a value may be a credential, and `Caller` and
+    /// `EnvVars` print their variables through this (the convention of
+    /// `run_ports::RedactedEnv`; the build skips prost's derived `Debug`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvVar")
+            .field("name", &self.name)
+            .field("value", &"<redacted>")
+            .finish()
+    }
+}
+
 mod names;
 pub use names::with_unresolved_names;
 

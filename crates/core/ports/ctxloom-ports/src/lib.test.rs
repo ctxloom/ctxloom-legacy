@@ -86,6 +86,50 @@ fn test_a_plain_relative_name_has_no_windows_separator_root_or_drive() {
     }
 }
 
+// NTFS reads `name:stream` as an alternate data stream, a reserved device
+// name (with or without an extension) as the device, and drops a trailing dot
+// or space; none of those is a plain name, on any host.
+#[test]
+fn test_a_plain_relative_name_has_no_stream_device_or_trailing_dot_or_space() {
+    for bad in [
+        "a:stream",
+        "dir/file.txt:hidden",
+        "a/b:$DATA",
+        "NUL",
+        "nul",
+        "a/CON",
+        "con.txt",
+        "PRN.tar.gz",
+        "aux",
+        "COM1",
+        "com9.log",
+        "LPT1",
+        "lpt9.x",
+        "x/NUL/y",
+        "a.",
+        "a /b",
+        "a/b ",
+        "a/b.",
+        "a./b",
+    ] {
+        assert!(!is_plain_relative(bad), "{bad:?}");
+    }
+    for ok in [
+        "nullable",
+        "console",
+        "COM0",
+        "COM10",
+        "LPT",
+        "com",
+        "a b",
+        "a.b",
+        "auxiliary/x",
+        "x.nul",
+    ] {
+        assert!(is_plain_relative(ok), "{ok:?}");
+    }
+}
+
 // D1: a probe site's environment may hold a secret, so its Debug names each
 // variable and shows no value.
 #[test]

@@ -383,15 +383,39 @@ pub trait ProjectCache {
 /// out of the directory it is joined to. The same on every host: a backslash
 /// (Windows' separator, so `a\..\b` would climb there) and a drive prefix
 /// (`C:`, rooted there) are refused on Linux too. An adapter adds what its
-/// own filesystem also refuses (a NUL).
+/// own filesystem also refuses (a NUL). Windows' own name rules are held on
+/// every host too: no `:` (NTFS reads `name:stream` as an alternate data
+/// stream), no reserved device name (`NUL`, `CON`, `PRN`, `AUX`, `COM1-9`,
+/// `LPT1-9`, with or without an extension), and no segment ending in a dot or
+/// a space (Windows drops it, so two names become one).
 pub fn is_plain_relative(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('/')
         && !name.contains('\\')
+        && !name.contains(':')
         && !has_drive_prefix(name)
-        && !name
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
+        && !name.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || part.ends_with('.')
+                || part.ends_with(' ')
+                || is_reserved_device(part)
+        })
+}
+
+/// Whether a segment's stem (before its first dot) is a Windows device name.
+fn is_reserved_device(segment: &str) -> bool {
+    let stem = segment.split('.').next().unwrap_or(segment);
+    let upper = stem.to_ascii_uppercase();
+    match upper.as_str() {
+        "NUL" | "CON" | "PRN" | "AUX" => true,
+        _ => {
+            (upper.starts_with("COM") || upper.starts_with("LPT"))
+                && upper.len() == 4
+                && matches!(upper.as_bytes()[3], b'1'..=b'9')
+        }
+    }
 }
 
 /// Whether `name` starts with a Windows drive, a letter and a colon.

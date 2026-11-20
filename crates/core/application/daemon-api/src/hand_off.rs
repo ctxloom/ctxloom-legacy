@@ -37,7 +37,7 @@ use crate::refusal::{ApiError, ApiRefusal};
 use crate::server::{invalid, Api};
 
 /// What a hand-off is made for: the child of a project.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HandingOff {
     /// The registered root of the project the child works in (its owner's,
     /// or the one its launch named, step 8 Q1).
@@ -56,7 +56,7 @@ pub struct HandingOff {
 
 /// What the child is handed: the environment it may be given, where its
 /// launcher finds its user's settings, and the agent it is planned for.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct HandOffContent {
     pub env: BTreeMap<String, String>,
     pub launcher: BTreeMap<String, String>,
@@ -64,6 +64,32 @@ pub struct HandOffContent {
     /// The launching client's program (owner, 2026-11-18): what the child's
     /// hooks run and its engine's `PATH` leads with; none, the daemon's own.
     pub program: Option<daemon_application::Program>,
+}
+
+impl std::fmt::Debug for HandingOff {
+    /// The environment by name alone: a value may be a credential.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HandingOff")
+            .field("root", &self.root)
+            .field("trusted", &self.trusted)
+            .field("child", &self.child)
+            .field("engine", &self.engine)
+            .field("agent", &self.agent)
+            .field("env", &run_ports::RedactedEnv(&self.env))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for HandOffContent {
+    /// Both maps by name alone: a value may be a credential.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HandOffContent")
+            .field("env", &run_ports::RedactedEnv(&self.env))
+            .field("launcher", &run_ports::RedactedEnv(&self.launcher))
+            .field("agent", &self.agent)
+            .field("program", &self.program)
+            .finish()
+    }
 }
 
 /// What the child's plan says, as its start's enqueue is judged on it.
