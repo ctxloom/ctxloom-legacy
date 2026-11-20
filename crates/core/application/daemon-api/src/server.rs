@@ -353,7 +353,10 @@ macro_rules! library_read_calls {
 use library_read_calls;
 
 /// A deps write answered as another verb: a bug of the wiring.
-fn misanswered(verb: &str, other: &(crate::deps_writes::DepsAnswer, String)) -> ApiError {
+pub(crate) fn misanswered(
+    verb: &str,
+    other: &(crate::deps_writes::DepsAnswer, String),
+) -> ApiError {
     ApiError::Failed {
         detail: format!("{verb} answered {:?}", other.0),
     }
@@ -722,20 +725,7 @@ impl<E: Edge + 'static> Calls for Api<E> {
         &self,
         request: v1::CreateRemoteRequest,
     ) -> Answer<'_, v1::CreateRemoteResponse> {
-        Box::pin(async move {
-            let remote = request.remote.clone().unwrap_or_default();
-            let ask = crate::deps_writes::DepsAsk::CreateRemote {
-                name: request.remote_id.clone(),
-                url: remote.url,
-                forge: remote.forge,
-            };
-            match self.deps_write(&request, "remote create", &ask).await? {
-                (crate::deps_writes::DepsAnswer::Created(answer), etag) => {
-                    Ok(v1::CreateRemoteResponse { etag, ..answer })
-                }
-                other => Err(misanswered("remote create", &other)),
-            }
-        })
+        Box::pin(async move { self.create_remote_write(&request).await })
     }
 
     /// `UpdateRemote` (step 10c U4): the fields its mask names (all it

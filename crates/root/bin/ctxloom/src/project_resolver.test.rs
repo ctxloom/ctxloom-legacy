@@ -523,6 +523,47 @@ fn test_an_init_where_another_repository_was_registered_rebinds_the_root() {
     assert_eq!(listed.code, 0, "and it is usable: {}", listed.said());
 }
 
+// Owner ruling 2026-11-19 (init answers one message): a `.ctxloom` that is
+// there and has no project named yet (a fresh clone's: no `project-id`, no
+// binding in the home's index) still has its `--remote` registered by the
+// apply: the daemon names the project for it, the answer carries the id, and
+// the root is bound to it, so the next command works.
+#[test]
+fn test_an_init_remote_on_an_unnamed_ctxloom_names_the_project_and_registers_it() {
+    let project = Project::bare_in_git();
+    let init = project.run_in(project.dir(), &["init", "--format", "json"]);
+    assert_eq!(init.code, 0, "init: {}", init.said());
+    // As a clone has it: the `.ctxloom` tracked, no id, nothing bound.
+    files::remove(project.dir().join(".ctxloom/project-id"));
+    project.write_home(".ctxloom/projects/index.yaml", "projects: []\n");
+    let again = project.run_in(
+        project.dir(),
+        &[
+            "init",
+            "--remote",
+            "file:///nowhere/acceptance-remote.git",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(again.code, 0, "init: {}", again.said());
+    let said = again.json();
+    assert_eq!(said["existed"], true, "{said}");
+    assert_eq!(said["remotes"][0]["remote_id"], "personal", "{said}");
+    assert_eq!(said["remotes"][0]["registered"], true, "{said}");
+    let id = said["project_id"].as_str().unwrap_or_default().to_string();
+    assert!(!id.is_empty(), "the daemon named the project: {said}");
+    assert_eq!(
+        project.read(".ctxloom/project-id").expect("bound").trim(),
+        id,
+        "the root is bound to the id the answer carries"
+    );
+    let remotes = project.read(".ctxloom/remotes.yaml").expect("remotes.yaml");
+    assert!(remotes.contains("acceptance-remote"), "{remotes}");
+    let listed = project.run_in(project.dir(), &["session", "list", "--format", "json"]);
+    assert_eq!(listed.code, 0, "and it is usable: {}", listed.said());
+}
+
 // A root that HAS a `.ctxloom` of its own naming a project that another
 // repository's root commit registered is a genuine identity conflict: still
 // refused, exit 20, nothing changed.

@@ -84,13 +84,6 @@ pub trait Initializing {
     /// named it, `project_id`, for a new one; for one that was there
     /// (`project_id` empty), the id it has, else one minted.
     fn bind_project(&self, project_id: &str) -> Result<(), Failure>;
-
-    /// `--remote`'s repository registered as `remote create` registers it
-    /// (`CreateRemote`).
-    fn add_remote(
-        &self,
-        request: v1::CreateRemoteRequest,
-    ) -> Result<v1::CreateRemoteResponse, Failure>;
 }
 
 /// The report `answered` says, as `clean` has always printed it.
@@ -134,8 +127,6 @@ pub struct UseCases<'a> {
     /// The setup interview, read through the project's catalog (owner
     /// ruling 128).
     pub prompts: &'a dyn Prompts,
-    /// The companion registration a first init offers (M4).
-    pub companions: &'a dyn init_application::Companions,
 }
 
 fn failure(cause: impl Diagnostic + 'static, exit: Exit) -> Failure {
@@ -374,97 +365,63 @@ fn chosen(terminal: &dyn Terminal, choose: &v1::Choose) -> String {
     first
 }
 
-/// The companion answers among `answers` as init's companion registration
-/// reads them (D2): an offer's `yes` or `no`, the names typed.
-fn companion_answers(answers: &[v1::Answer]) -> Vec<init_application::Answer> {
-    answers
-        .iter()
-        .filter(|answer| {
-            answer.need_id.starts_with("companion:")
-                || answer.need_id == init_application::BY_NAME_ID
+/// Each `--remote` as the apply registers it (owner ruling 2026-11-19: init
+/// answers one message), named `personal` and then numbered.
+fn remotes_of(sub: &ArgMatches) -> Vec<v1::InitRemote> {
+    let forge = sub.get_one::<String>("forge").cloned().unwrap_or_default();
+    sub.get_many::<String>("remote")
+        .map(|urls| {
+            urls.enumerate()
+                .map(|(index, url)| v1::InitRemote {
+                    remote_id: personal_name(index),
+                    url: url.clone(),
+                    forge: forge.clone(),
+                })
+                .collect()
         })
-        .map(|answer| init_application::Answer {
-            id: answer.need_id.clone(),
-            given: match &answer.answer {
-                Some(v1::answer::Answer::Confirmed(yes)) => {
-                    Some(if *yes { "yes" } else { "no" }.to_string())
-                }
-                Some(v1::answer::Answer::Text(text)) => Some(text.clone()),
-                _ => None,
-            },
-        })
-        .collect()
+        .unwrap_or_default()
 }
 
-/// A first init's companions registered from her `answers` (M4), and what
-/// came of each said.
-fn add_companions(
-    uses: &UseCases<'_>,
-    answers: &[v1::Answer],
-    out: &mut dyn Write,
-    err: &mut dyn Write,
-) -> Result<(), Failure> {
-    use init_application::Added;
-    let done = init_application::register_companions(uses.companions, &companion_answers(answers));
-    for (name, added) in &done.added {
-        match added {
-            Added::New => writeln!(out, "Added companion \"{name}\""),
-            Added::Already => writeln!(out, "Companion \"{name}\" is already registered"),
-        }
-        .map_err(output)?;
-    }
-    for (name, program) in &done.missing {
-        writeln!(
-            err,
-            "{PROG}: could not add companion \"{name}\": its program {program} is not on this machine"
-        )
-        .map_err(output)?;
-    }
-    for (name, why) in &done.failed {
-        writeln!(err, "{PROG}: could not add companion \"{name}\": {why}").map_err(output)?;
-    }
-    Ok(())
-}
-
-/// Each `--remote` registered, said; one that would not register is a
-/// warning, and init goes on.
-fn add_remotes(
-    uses: &UseCases<'_>,
-    sub: &ArgMatches,
+/// What the apply answered of the companions and the remotes, said in
+/// text: each companion added, each one that was not (a warning), each
+/// remote added, each one that would not register (a warning); init goes on.
+fn say_registered(
+    done: &v1::InitProjectResponse,
     catalog: &Catalog,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), Failure> {
-    let forge = sub.get_one::<String>("forge").cloned().unwrap_or_default();
-    let urls: Vec<String> = sub
-        .get_many::<String>("remote")
-        .map(|v| v.cloned().collect())
-        .unwrap_or_default();
-    for (index, url) in urls.iter().enumerate() {
-        let name = personal_name(index);
-        let request = v1::CreateRemoteRequest {
-            remote_id: name.clone(),
-            remote: Some(v1::Remote {
-                url: url.clone(),
-                forge: forge.clone(),
-                ..Default::default()
-            }),
-            caller: v1::Caller::of(Some(uses.globals.clone()), None),
-            ..v1::CreateRemoteRequest::default()
-        };
-        match uses.initializing.add_remote(request) {
-            Ok(created) => {
-                say_v1(&created.notices, Format::Text, catalog, err);
-                let url = created.remote.map_or_else(|| url.clone(), |r| r.url);
-                writeln!(out, "Added remote \"{name}\": {url}").map_err(output)?;
-            }
-            Err(failure) => {
-                let why = Notice::text(format!(
-                    "failed to add remote \"{name}\" ({url}): {}",
-                    catalog.message(failure.cause.as_ref())
-                ));
-                say_warning(&why, PROG, Format::Text, catalog, err);
-            }
+    for companion in &done.companions {
+        let name = &companion.name;
+        match companion.outcome.as_str() {
+            "added" => writeln!(out, "Added companion \"{name}\""),
+            "already" => writeln!(out, "Companion \"{name}\" is already registered"),
+            "missing" => writeln!(
+                err,
+                "{PROG}: could not add companion \"{name}\": its program {} is not on this machine",
+                companion.program
+            ),
+            _ => writeln!(
+                err,
+                "{PROG}: could not add companion \"{name}\": {}",
+                companion.error.as_ref().map_or("", |e| e.text.as_str())
+            ),
+        }
+        .map_err(output)?;
+    }
+    for remote in &done.remotes {
+        say_v1(&remote.notices, Format::Text, catalog, err);
+        if remote.registered {
+            writeln!(out, "Added remote \"{}\": {}", remote.remote_id, remote.url)
+                .map_err(output)?;
+        } else {
+            let why = Notice::text(format!(
+                "failed to add remote \"{}\" ({}): {}",
+                remote.remote_id,
+                remote.url,
+                remote.error.as_ref().map_or("", |e| e.text.as_str())
+            ));
+            say_warning(&why, PROG, Format::Text, catalog, err);
         }
     }
     Ok(())
@@ -510,14 +467,65 @@ fn init(
     } else {
         Vec::new()
     };
-    let done = uses.initializing.init_project(v1::InitProjectRequest {
+    let mut done = uses.initializing.init_project(v1::InitProjectRequest {
         etag: preview.etag.clone(),
-        answers: answers.clone(),
+        answers,
+        remotes: remotes_of(sub),
         caller: v1::Caller::of(Some(uses.globals.clone()), None),
         ..v1::InitProjectRequest::default()
     })?;
     say_v1(&done.notices, format, catalog, err);
     uses.initializing.bind_project(&done.project_id)?;
+    if format == Format::Json {
+        // ONE message (ruling 146): what the apply answered, its notices
+        // (and each remote's) said, so not in it.
+        for remote in &mut done.remotes {
+            say_v1(&std::mem::take(&mut remote.notices), format, catalog, err);
+        }
+        done.notices.clear();
+        done.etag.clear();
+        write_json(out, &done).map_err(output)?;
+    } else {
+        say_created(&done, out)?;
+        say_registered(&done, catalog, out, err)?;
+    }
+    // Delegated agents authenticate with a token the human mints and
+    // exports; init guides her to it, and never blocks on it or asks for it.
+    let layers = uses.doctor.layer_texts();
+    if !uses.auth.agent_token_exported(&layers) {
+        say_notices(&[token_guide()], PROG, format, catalog, err);
+    }
+    // An engine whose source is a file alone authenticates no child (owner
+    // ruling 64): said as its children's runs are refused.
+    say_notices(&uses.auth.file_only(&layers), PROG, format, catalog, err);
+    // On a terminal, the setup interview, and the offer to restart into the
+    // session it configured. Off one, nothing is launched and nothing asked.
+    let interviewed = interview(uses.terminal, uses.sessions, uses.prompts)
+        .map_err(|launch| Failure::boxed(launch.cause, launch.exit))?;
+    for notice in &interviewed.notices {
+        say_warning(notice.as_ref(), PROG, Format::Text, catalog, err);
+    }
+    Ok(match interviewed.outcome {
+        Outcome::NotATerminal => Exit::OK,
+        Outcome::Declined => {
+            if format == Format::Text {
+                writeln!(
+                    out,
+                    "Start your configured session when you are ready: {}",
+                    init_application::RESTART_COMMAND
+                )
+                .map_err(output)?;
+            }
+            Exit::OK
+        }
+        Outcome::Interrupted { code } | Outcome::Restarted { code } => {
+            Exit::from_child_status(code, None)
+        }
+    })
+}
+
+/// What a text init says of the directory it made or kept.
+fn say_created(done: &v1::InitProjectResponse, out: &mut dyn Write) -> Result<(), Failure> {
     if done.existed {
         // A re-run is no refusal: the directory is kept and init goes on, to
         // the remotes it was given, the token guide and the interview.
@@ -545,42 +553,8 @@ fn init(
             };
             writeln!(out, "{said} (config.premised: {})", done.premised).map_err(output)?;
         }
-        // Then the companions she accepted (M4), each registered as
-        // `companion add` registers it.
-        add_companions(uses, &answers, out, err)?;
     }
-    add_remotes(uses, sub, catalog, out, err)?;
-    // Delegated agents authenticate with a token the human mints and
-    // exports; init guides her to it, and never blocks on it or asks for it.
-    let layers = uses.doctor.layer_texts();
-    if !uses.auth.agent_token_exported(&layers) {
-        say_notices(&[token_guide()], PROG, format, catalog, err);
-    }
-    // An engine whose source is a file alone authenticates no child (owner
-    // ruling 64): said as its children's runs are refused.
-    say_notices(&uses.auth.file_only(&layers), PROG, format, catalog, err);
-    // On a terminal, the setup interview, and the offer to restart into the
-    // session it configured. Off one, nothing is launched and nothing asked.
-    let interviewed = interview(uses.terminal, uses.sessions, uses.prompts)
-        .map_err(|launch| Failure::boxed(launch.cause, launch.exit))?;
-    for notice in &interviewed.notices {
-        say_warning(notice.as_ref(), PROG, Format::Text, catalog, err);
-    }
-    Ok(match interviewed.outcome {
-        Outcome::NotATerminal => Exit::OK,
-        Outcome::Declined => {
-            writeln!(
-                out,
-                "Start your configured session when you are ready: {}",
-                init_application::RESTART_COMMAND
-            )
-            .map_err(output)?;
-            Exit::OK
-        }
-        Outcome::Interrupted { code } | Outcome::Restarted { code } => {
-            Exit::from_child_status(code, None)
-        }
-    })
+    Ok(())
 }
 
 #[cfg(test)]

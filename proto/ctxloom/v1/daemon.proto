@@ -891,6 +891,50 @@ message InitProjectRequest {
   // The client's working context (needs.proto), as every request made on a
   // user's behalf carries it (owner, 2026-11-18).
   Caller caller = 98 [(google.api.field_behavior) = REQUIRED];
+  // 2026-11-20 (additive; owner ruling 2026-11-19, batch 3: init answers ONE
+  // json message): each `--remote` to register, as `CreateRemote` takes it.
+  // The apply registers them after the project is created, in order, and
+  // answers each in `InitProjectResponse.remotes`. The companions she
+  // accepted ride `answers` already (`companion:<name>` confirmed, and the
+  // by-name question's text) and are answered in `companions`.
+  repeated InitRemote remotes = 3 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// One `--remote` of `init`, as `CreateRemote` takes it (additive, 2026-11-20).
+message InitRemote {
+  // The remote's id, its config key (`personal`, `personal2`, ...).
+  string remote_id = 1;
+  // Its repository's url.
+  string url = 2;
+  // Its forge (`--forge`); empty, none named.
+  string forge = 3;
+}
+
+// What came of one `--remote` (additive, 2026-11-20). A remote that would not
+// register is a warning and init goes on.
+message InitRemoteResult {
+  string remote_id = 1;
+  // The url as registered, else as asked.
+  string url = 2;
+  // It was registered (a remote that was there already, with this url, is
+  // registered too).
+  bool registered = 3;
+  // Why not, when it was not: the refusal or failure as a notice.
+  Notice error = 4;
+  // What is said beside it.
+  repeated Notice notices = 5;
+}
+
+// What came of one companion she accepted or named (additive, 2026-11-20).
+message InitCompanionResult {
+  string name = 1;
+  // `added`, `already` (registered before), `missing` (its program is not on
+  // her machine) or `failed`.
+  string outcome = 2;
+  // For `missing`, the program looked for.
+  string program = 3;
+  // For `failed`, why.
+  Notice error = 4;
 }
 
 // What a client does next, decided by the daemon (API Q7).
@@ -928,6 +972,12 @@ message InitProjectResponse {
   string etag = 91;
   // What is said beside the result, each notice its code, args and text.
   repeated Notice notices = 92;
+  // 2026-11-20 (additive): what came of each `remotes` of the request, in
+  // order.
+  repeated InitRemoteResult remotes = 8;
+  // 2026-11-20 (additive): what came of each companion the answers accepted
+  // or named, in order asked.
+  repeated InitCompanionResult companions = 9;
 }
 
 // `context assemble`: the context a run would get.

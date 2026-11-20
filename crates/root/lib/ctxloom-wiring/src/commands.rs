@@ -462,7 +462,6 @@ impl Commands {
             terminal: &terminal,
             sessions: &sessions,
             prompts: &sessions,
-            companions: &sessions,
         };
         // `init` names the project it set up (owner rulings 2026-11-13 and
         // 14), as the daemon named it (step 10c U6: `Initializing`).

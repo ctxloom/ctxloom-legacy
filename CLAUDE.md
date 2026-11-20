@@ -449,6 +449,25 @@ through the scaffold when it differs (`Scaffold::read`), the recording
 scaffold plans it as `Planned::TreeFiles`, and it is one `ReplaceFile` of the
 content tree.
 
+INIT ANSWERS ONE MESSAGE (owner ruling 2026-11-19, batch 3; ruling 146): the
+apply's `InitProjectRequest` carries each `--remote` (`remotes`, additive,
+named `personal`, `personal-2`, ...) and the apply, after the project is
+made, registers each as `remote create` registers it
+(`Api::create_remote_write`) and each companion its answers accepted as
+`companion add` does, each under a request id derived from the init's own
+(`init::derived_id`: a retry finds each write as it left it), answering them
+in `InitProjectResponse.remotes` and `.companions`; one that would not
+register is said there (`error`), never a failure of the init. The CLI sends
+that ONE call and prints that ONE message: json (the default off a terminal,
+or `--format json`) is the response as a message, its notices (and each
+remote's) said on stderr; `--format text` is the prose (`Created ctxloom
+directory`, `Added remote`, `Added companion`, warnings on stderr). A
+`.ctxloom` that is there with no project named yet (a clone's) is named by the
+apply when it has remotes to register (`name_existing`, its id answered for
+the client to bind). Under `test-support` the binary's `CTXLOOM_TEST_TERMINAL`
+stands in for a terminal in the default format too, so the acceptance
+scenarios that stand a terminal in read the prose.
+
 The remotes' and the dependencies' writes are the daemon's (step 10c U4,
 protos.md §1.2, L9): `remote create|edit|remove|default` (`CreateRemote`,
 `UpdateRemote` with `new_remote_id` and a mask naming each flag given,
@@ -4634,10 +4653,11 @@ most three times, then the suggestion stands), and writes it as
 `config.premised`. Then it offers the companions (M4): an `Add the <n>
 companion?` `[Y/n]` for each shipped companion whose program is on her
 `PATH`, then `Add companions by name?`; each accepted or named one is
-registered as `companion add` registers it, one whose program is not there
-said and skipped (`init_application::companion_questions` and
-`register_companions`: the questions out and the answers in as data at the
-use case's port, D2; the terminal is setup-cli's alone). Off a terminal none
+registered by the apply as `companion add` registers it (the daemon's
+`CreateCompanion`, from the apply's own answers by
+`init_application::accepted_companions`), one whose program is not there
+said and skipped (`init_application::companion_questions`: the questions out
+and the answers in as data, D2; the terminal is setup-cli's alone). Off a terminal none
 is asked and nothing is written. The interview's opening is the setup
 interview, then each enabled companion's `init.setup_guidance` as it wrote
 it, each after the assembly's `---` separator (`Prompts::companion_guidance`,

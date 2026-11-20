@@ -151,6 +151,8 @@ impl Sessions for Launches {
 struct InitIn<'a> {
     world: &'a World,
     shipped: Vec<String>,
+    /// The companions on her machine, as the daemon finds them.
+    companions: &'a dyn init_application::Companions,
     deps: Rc<deps_application::Deps>,
     bound: Mutex<Vec<String>>,
 }
@@ -201,11 +203,14 @@ impl super::Initializing for InitIn<'_> {
             });
         }
         if existed {
-            return Ok(v1::InitProjectResponse {
-                app_dir,
-                existed,
-                ..v1::InitProjectResponse::default()
-            });
+            return Ok(self.registered(
+                &request,
+                v1::InitProjectResponse {
+                    app_dir,
+                    existed,
+                    ..v1::InitProjectResponse::default()
+                },
+            ));
         }
         fresh.store(false, std::sync::atomic::Ordering::SeqCst);
         let given: Vec<(String, needs::Given)> = request
@@ -224,38 +229,99 @@ impl super::Initializing for InitIn<'_> {
             })
             .collect();
         let chosen = needs::chosen(&given);
-        Ok(v1::InitProjectResponse {
-            app_dir,
-            project_id: "calm-otter".to_string(),
-            output_dir: chosen.output_dir.unwrap_or_default(),
-            premised: chosen.premised.unwrap_or_default(),
-            ..v1::InitProjectResponse::default()
-        })
+        Ok(self.registered(
+            &request,
+            v1::InitProjectResponse {
+                app_dir,
+                project_id: "calm-otter".to_string(),
+                output_dir: chosen.output_dir.unwrap_or_default(),
+                premised: chosen.premised.unwrap_or_default(),
+                ..v1::InitProjectResponse::default()
+            },
+        ))
     }
 
     fn bind_project(&self, project_id: &str) -> Result<(), Failure> {
         self.bound.lock().unwrap().push(project_id.to_string());
         Ok(())
     }
+}
 
-    fn add_remote(
+impl InitIn<'_> {
+    /// What the apply registers beside the project, as the daemon answers
+    /// it: the companions her answers accepted (a project made now only),
+    /// then each remote, one that would not register said in its result.
+    fn registered(
         &self,
-        request: daemon_proto::v1::CreateRemoteRequest,
-    ) -> Result<daemon_proto::v1::CreateRemoteResponse, Failure> {
-        let remote = request.remote.unwrap_or_default();
-        let outcome = self.deps.remote_create(&deps_application::CreateRequest {
-            name: request.remote_id,
-            url: remote.url,
-            forge: remote.forge,
-        });
-        let created = outcome.result.map_err(|e| Failure::new(e, Exit::FAILED))?;
-        Ok(daemon_proto::v1::CreateRemoteResponse {
-            remote: Some(daemon_proto::v1::Remote {
-                url: created.url,
-                ..Default::default()
-            }),
-            ..daemon_proto::v1::CreateRemoteResponse::default()
-        })
+        request: &daemon_proto::v1::InitProjectRequest,
+        mut done: daemon_proto::v1::InitProjectResponse,
+    ) -> daemon_proto::v1::InitProjectResponse {
+        use daemon_proto::v1;
+        use init_application::Added;
+        if !done.existed {
+            let answers: Vec<init_application::Answer> = request
+                .answers
+                .iter()
+                .map(|answer| init_application::Answer {
+                    id: answer.need_id.clone(),
+                    given: match &answer.answer {
+                        Some(v1::answer::Answer::Confirmed(yes)) => {
+                            Some(if *yes { "yes" } else { "no" }.to_string())
+                        }
+                        Some(v1::answer::Answer::Text(text)) => Some(text.clone()),
+                        _ => None,
+                    },
+                })
+                .collect();
+            let made = init_application::register_companions(self.companions, &answers);
+            let said = |name: &str, outcome: &str| v1::InitCompanionResult {
+                name: name.to_string(),
+                outcome: outcome.to_string(),
+                ..v1::InitCompanionResult::default()
+            };
+            for (name, added) in &made.added {
+                done.companions.push(said(
+                    name,
+                    if *added == Added::New {
+                        "added"
+                    } else {
+                        "already"
+                    },
+                ));
+            }
+            for (name, program) in &made.missing {
+                done.companions.push(v1::InitCompanionResult {
+                    program: program.clone(),
+                    ..said(name, "missing")
+                });
+            }
+        }
+        for remote in &request.remotes {
+            let outcome = self.deps.remote_create(&deps_application::CreateRequest {
+                name: remote.remote_id.clone(),
+                url: remote.url.clone(),
+                forge: remote.forge.clone(),
+            });
+            done.remotes.push(match outcome.result {
+                Ok(created) => v1::InitRemoteResult {
+                    remote_id: remote.remote_id.clone(),
+                    url: created.url,
+                    registered: true,
+                    ..v1::InitRemoteResult::default()
+                },
+                Err(error) => v1::InitRemoteResult {
+                    remote_id: remote.remote_id.clone(),
+                    url: remote.url.clone(),
+                    error: Some(v1::Notice {
+                        code: Diagnostic::code(&error).to_string(),
+                        text: error.to_string(),
+                        ..v1::Notice::default()
+                    }),
+                    ..v1::InitRemoteResult::default()
+                },
+            });
+        }
+        done
     }
 }
 
@@ -545,6 +611,7 @@ fn go_with_companions(
     let initializing = InitIn {
         world: &world,
         shipped: shipped.iter().map(ToString::to_string).collect(),
+        companions,
         deps: Rc::new(fixture.deps),
         bound: Mutex::default(),
     };
@@ -563,7 +630,6 @@ fn go_with_companions(
         terminal: person,
         sessions,
         prompts: sessions,
-        companions,
     };
     let mut full = vec!["ctxloom"];
     full.extend(line);
@@ -785,17 +851,24 @@ fn init_says_the_directory_exists_is_kept_and_init_goes_on() {
     assert_eq!(r.err, "");
 }
 
+/// What init says on stdout of a directory that was there, in `format`: the
+/// prose in text, the apply's one message in json (ruling 146).
+fn kept_directory_said(format: Format) -> &'static str {
+    match format {
+        Format::Json => "{\n  \"app_dir\": \"/work/.ctxloom\",\n  \"existed\": true\n}\n",
+        _ => "ctxloom directory already exists: /work/.ctxloom (kept as it is; init goes on)\n",
+    }
+}
+
 // Owner ruling 2026-11-08: init guides the human to the token delegated
-// agents need. It is a notice: exit 0, stdout unchanged, in any format.
+// agents need. It is a notice: exit 0, the same stdout whatever the notice
+// says, in any format.
 #[test]
 fn init_with_no_token_guides_to_claude_setup_token_and_still_exits_zero() {
     for format in [Format::Text, Format::Json] {
         let r = go(&["init"], format, none);
         assert_eq!(r.exit.unwrap(), Exit::OK);
-        assert_eq!(
-            r.out,
-            "ctxloom directory already exists: /work/.ctxloom (kept as it is; init goes on)\n"
-        );
+        assert_eq!(r.out, kept_directory_said(format));
         assert!(r.err.contains("delegated agents need a token"), "{}", r.err);
         assert!(r.err.contains("claude setup-token"), "{}", r.err);
         assert!(
@@ -835,10 +908,7 @@ fn init_warns_of_an_engine_whose_source_is_a_file_alone() {
             );
         });
         assert_eq!(r.exit.unwrap(), Exit::OK);
-        assert_eq!(
-            r.out,
-            "ctxloom directory already exists: /work/.ctxloom (kept as it is; init goes on)\n"
-        );
+        assert_eq!(r.out, kept_directory_said(format));
         assert!(
             r.err.contains("engines.claude-code.auth names only a file"),
             "{}",
@@ -1128,6 +1198,111 @@ fn init_adds_each_remote_and_reports_one_that_would_not_register_as_a_warning() 
     );
 }
 
+// Owner ruling 2026-11-19 (ruling 146): init answers ONE json message, the
+// apply's: the project made and each --remote's result in it, no prose.
+#[test]
+fn init_in_json_answers_one_message_with_the_remotes_in_it() {
+    let r = go(
+        &["init", "--remote", "https://example.com/a/b.git"],
+        Format::Json,
+        |world, f| {
+            world.fresh.store(true, std::sync::atomic::Ordering::SeqCst);
+            f.remotes.serve("https://example.com/a/b.git");
+        },
+    );
+    assert_eq!(r.exit.unwrap(), Exit::OK);
+    let said: serde_json::Value = serde_json::from_str(&r.out)
+        .unwrap_or_else(|e| panic!("one json message, not prose ({e}): {}", r.out));
+    assert_eq!(said["app_dir"], "/work/.ctxloom", "{said}");
+    assert_eq!(said["project_id"], "calm-otter", "{said}");
+    let remotes = said["remotes"].as_array().expect("the remotes' results");
+    assert_eq!(remotes.len(), 1, "{said}");
+    assert_eq!(remotes[0]["remote_id"], "personal");
+    assert_eq!(remotes[0]["url"], "https://example.com/a/b.git");
+    assert_eq!(remotes[0]["registered"], true);
+    assert!(!r.out.contains("Added remote"), "{}", r.out);
+}
+
+// The text format says what the apply answered: each companion and remote
+// added on stdout; one that would not register, a warning on stderr (init
+// goes on).
+#[test]
+fn the_registered_companions_and_remotes_are_said_and_the_failures_warned() {
+    use daemon_proto::v1;
+    let done = v1::InitProjectResponse {
+        companions: vec![
+            v1::InitCompanionResult {
+                name: "ltk".to_string(),
+                outcome: "added".to_string(),
+                ..v1::InitCompanionResult::default()
+            },
+            v1::InitCompanionResult {
+                name: "reprise".to_string(),
+                outcome: "already".to_string(),
+                ..v1::InitCompanionResult::default()
+            },
+            v1::InitCompanionResult {
+                name: "nowhere".to_string(),
+                outcome: "missing".to_string(),
+                program: "ctxloom-companion-nowhere".to_string(),
+                ..v1::InitCompanionResult::default()
+            },
+            v1::InitCompanionResult {
+                name: "broken".to_string(),
+                outcome: "failed".to_string(),
+                error: Some(v1::Notice {
+                    text: "it broke".to_string(),
+                    ..v1::Notice::default()
+                }),
+                ..v1::InitCompanionResult::default()
+            },
+        ],
+        remotes: vec![
+            v1::InitRemoteResult {
+                remote_id: "personal".to_string(),
+                url: "https://example.com/a.git".to_string(),
+                registered: true,
+                ..v1::InitRemoteResult::default()
+            },
+            v1::InitRemoteResult {
+                remote_id: "personal-2".to_string(),
+                url: "https://example.com/b.git".to_string(),
+                error: Some(v1::Notice {
+                    text: "already registered".to_string(),
+                    ..v1::Notice::default()
+                }),
+                ..v1::InitRemoteResult::default()
+            },
+        ],
+        ..v1::InitProjectResponse::default()
+    };
+    let catalog = Catalog::en_us(&[deps_application::EN_US, EN_US]).expect("catalog");
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    super::say_registered(&done, &catalog, &mut out, &mut err).unwrap();
+    let (out, err) = (
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    );
+    assert_eq!(
+        out,
+        "Added companion \"ltk\"\nCompanion \"reprise\" is already registered\nAdded remote \"personal\": https://example.com/a.git\n"
+    );
+    assert!(
+        err.contains("ctxloom: could not add companion \"nowhere\": its program ctxloom-companion-nowhere is not on this machine"),
+        "{err}"
+    );
+    assert!(
+        err.contains("ctxloom: could not add companion \"broken\": it broke"),
+        "{err}"
+    );
+    assert!(
+        err.contains(
+            "failed to add remote \"personal-2\" (https://example.com/b.git): already registered"
+        ),
+        "{err}"
+    );
+}
+
 #[test]
 fn init_prompt_prints_the_interview_and_nothing_else() {
     let r = go(&["init", "prompt"], Format::Json, none);
@@ -1221,6 +1396,7 @@ fn a_noun_the_line_does_not_carry_is_a_usage_failure() {
     let initializing = InitIn {
         world: &world,
         shipped: Vec::new(),
+        companions: &NoCompanions,
         deps: Rc::new(fixture.deps),
         bound: Mutex::default(),
     };
@@ -1239,7 +1415,6 @@ fn a_noun_the_line_does_not_carry_is_a_usage_failure() {
         terminal: &Person::default(),
         sessions: &Launches::default(),
         prompts: &Launches::default(),
-        companions: &NoCompanions,
     };
     let matches = nouns()
         .into_iter()
@@ -1369,6 +1544,66 @@ fn init_at_a_terminal_interviews_then_restarts_on_a_yes_and_exits_as_the_session
 }
 
 // A no ends init with the command that starts the configured session later.
+// Ruling 146: in json even a declined restart says nothing but the one
+// message on stdout (the offer's own question is the terminal's).
+#[test]
+fn init_in_json_at_a_terminal_that_declines_the_restart_writes_the_one_message_alone() {
+    let person = Person {
+        terminal: true,
+        yes: false,
+        ..Person::default()
+    };
+    let sessions = Launches {
+        interview_code: Some(0),
+        ..Launches::default()
+    };
+    let mut out = Vec::new();
+    let run = go_with(&["init"], Format::Json, token, &mut out, &person, &sessions);
+    assert_eq!(run.exit.expect("ran"), Exit::OK);
+    let out = String::from_utf8(out).unwrap();
+    let said: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("one json message, nothing after it ({e}): {out}"));
+    assert_eq!(said["app_dir"], "/work/.ctxloom");
+}
+
+// Each `--remote` is sent to the apply, named `personal` and then numbered,
+// with the one `--forge`.
+#[test]
+fn the_remotes_of_the_command_line_are_named_and_carry_the_forge() {
+    let matches = nouns()
+        .into_iter()
+        .fold(Command::new("ctxloom"), Command::subcommand)
+        .try_get_matches_from([
+            "ctxloom",
+            "init",
+            "--remote",
+            "https://a/x.git",
+            "--remote",
+            "https://b/y.git",
+            "--forge",
+            "git",
+        ])
+        .expect("parses");
+    let (_, init) = matches.subcommand().expect("init");
+    let remotes: Vec<(String, String, String)> = super::remotes_of(init)
+        .into_iter()
+        .map(|r| (r.remote_id, r.url, r.forge))
+        .collect();
+    assert_eq!(
+        remotes,
+        [
+            ("personal".into(), "https://a/x.git".into(), "git".into()),
+            ("personal-2".into(), "https://b/y.git".into(), "git".into()),
+        ]
+    );
+    let bare = nouns()
+        .into_iter()
+        .fold(Command::new("ctxloom"), Command::subcommand)
+        .try_get_matches_from(["ctxloom", "init"])
+        .expect("parses");
+    assert!(super::remotes_of(bare.subcommand().unwrap().1).is_empty());
+}
+
 #[test]
 fn init_at_a_terminal_names_the_command_to_run_later_on_a_no() {
     let (_, sessions, run) = at_a_terminal(false, Some(0), Some(3));

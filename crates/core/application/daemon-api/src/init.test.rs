@@ -7,7 +7,11 @@ use init_application::needs::{self, Given};
 use library_api::writes::Shape;
 use library_tree::TreeName;
 
-use super::{given_of, installed_of, need_of, tree_of, with_checkout};
+use super::{
+    companion_answers, derived_id, error_notice, given_of, installed_of, need_of, project_of,
+    tree_of, with_checkout,
+};
+use crate::refusal::{ApiError, ApiRefusal};
 
 #[test]
 fn test_every_need_init_asks_is_optional_and_keeps_its_kind() {
@@ -147,4 +151,98 @@ fn test_manage_install_answers_the_project_s_gitignore_and_what_it_did() {
     assert!(made.initialized);
     assert_eq!(made.gitignore_status, "unchanged");
     assert_eq!(made.project_id, "calm-otter");
+}
+
+// Each write init makes beside the project is keyed by the init's own request
+// id, so its retry finds each as it left it; none where the init has none.
+#[test]
+fn test_a_write_beside_the_project_is_keyed_by_the_inits_request_id() {
+    let init = "0192c3a0-7b1e-7a10-8a3e-5d2f4c6b8a90";
+    let remote = derived_id(init, "remote:personal");
+    assert!(uuid::Uuid::parse_str(&remote).is_ok(), "{remote}");
+    assert_eq!(remote, derived_id(init, "remote:personal"), "stable");
+    assert_ne!(remote, derived_id(init, "remote:personal-2"));
+    assert_ne!(remote, derived_id(init, "companion:personal"));
+    assert_ne!(remote, init);
+    assert_ne!(
+        remote,
+        derived_id("0192c3a0-7b1e-7a10-8a3e-5d2f4c6b8a91", "remote:personal")
+    );
+    assert_eq!(derived_id("", "remote:personal"), "");
+    assert_eq!(derived_id("not-a-uuid", "remote:personal"), "");
+}
+
+#[test]
+fn test_the_companion_answers_are_read_as_init_application_reads_them() {
+    let answer = |id: &str, answer: Option<v1::answer::Answer>| v1::Answer {
+        need_id: id.to_string(),
+        answer,
+    };
+    let read = companion_answers(&[
+        answer("companion:ltk", Some(v1::answer::Answer::Confirmed(true))),
+        answer(
+            "companion:reprise",
+            Some(v1::answer::Answer::Confirmed(false)),
+        ),
+        answer(
+            "companions",
+            Some(v1::answer::Answer::Text("acme beta".to_string())),
+        ),
+        answer(
+            "premised",
+            Some(v1::answer::Answer::Chosen("always".to_string())),
+        ),
+    ]);
+    let given: Vec<(&str, Option<&str>)> = read
+        .iter()
+        .map(|a| (a.id.as_str(), a.given.as_deref()))
+        .collect();
+    assert_eq!(
+        given,
+        [
+            ("companion:ltk", Some("yes")),
+            ("companion:reprise", Some("no")),
+            ("companions", Some("acme beta")),
+            ("premised", None),
+        ]
+    );
+    assert_eq!(
+        init_application::accepted_companions(&read),
+        ["ltk", "acme", "beta"]
+    );
+}
+
+// A write that would not register is said in its own words: a declined
+// write by its cause's code and args, a failure by the daemon's.
+#[test]
+fn test_a_write_init_could_not_make_is_said_in_its_own_words() {
+    let declined = ApiError::Refused(ApiRefusal::of(&v1::LibraryDeclined {
+        cause: Some(v1::Cause {
+            code: "library-application-write-companion-program-missing".to_string(),
+            args: vec![v1::NeedArg {
+                name: "program".to_string(),
+                value: "ctxloom-companion-x".to_string(),
+            }],
+        }),
+    }));
+    let notice = error_notice(&declined);
+    assert_eq!(
+        notice.code,
+        "library-application-write-companion-program-missing"
+    );
+    assert_eq!(notice.args.len(), 1, "{notice:?}");
+    assert_eq!(notice.args[0].value, "ctxloom-companion-x");
+    let failed = error_notice(&ApiError::Failed {
+        detail: "disk full".to_string(),
+    });
+    assert_eq!(failed.code, "daemon-api-failed");
+    assert!(failed.text.contains("disk full"), "{failed:?}");
+}
+
+#[test]
+fn test_the_project_a_tree_is_of_is_its_resource_name() {
+    let tree =
+        TreeName::parse_checkout("projects/amber-quiet-heron/checkouts/brisk-copper-moth/library")
+            .expect("a checkout tree");
+    assert_eq!(project_of(&tree), "projects/amber-quiet-heron");
 }

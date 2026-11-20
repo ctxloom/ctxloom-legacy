@@ -253,6 +253,24 @@ fn evidence() -> Evidence {
 }
 
 impl<E: Edge> Api<E> {
+    /// `CreateRemote` (step 10c U4): `remotes.yaml`, one library write; init
+    /// makes it for each `--remote` too.
+    pub(crate) async fn create_remote_write(
+        &self,
+        request: &v1::CreateRemoteRequest,
+    ) -> Result<v1::CreateRemoteResponse, ApiError> {
+        let remote = request.remote.clone().unwrap_or_default();
+        let ask = DepsAsk::CreateRemote {
+            name: request.remote_id.clone(),
+            url: remote.url,
+            forge: remote.forge,
+        };
+        match self.deps_write(request, "remote create", &ask).await? {
+            (DepsAnswer::Created(answer), etag) => Ok(v1::CreateRemoteResponse { etag, ..answer }),
+            other => Err(crate::server::misanswered("remote create", &other)),
+        }
+    }
+
     /// The deps write `request` served (step 10c U4), as `verb`: planned
     /// where the caller stands, then written as the module says.
     pub(crate) async fn deps_write<Q: LibraryWriteRequest>(

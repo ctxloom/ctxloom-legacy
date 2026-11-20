@@ -85,7 +85,7 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
       When Alice runs setup again on a project that already has it:
         """
-        ctxloom init
+        ctxloom init --format text
         """
       Then the command succeeds
       And the output contains "ctxloom directory already exists"
@@ -111,15 +111,31 @@ Feature: init — the setup interview, and what it does to a project that alread
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
       When Alice adds her own content repository while re-running setup:
         """
-        ctxloom init --remote file:///tmp/acceptance-remote.git --forge git
+        ctxloom init --remote file:///tmp/acceptance-remote.git --forge git --format json
         """
       Then the command succeeds
-      And the output contains "Added remote"
+      # DRAFT (owner ruling 2026-11-19, ruling 146): init answers ONE json
+      # message, the remotes it registered in it; the prose is `--format text`.
+      And the JSON output array "remotes" contains an object whose "remote_id" is "personal" and whose "registered" is "true"
       And the file ".ctxloom/remotes.yaml" contains "personal"
       And the file ".ctxloom/remotes.yaml" contains "acceptance-remote"
       When I run "ctxloom remote list"
       Then the command succeeds
       And the output contains "personal"
+
+    # new: DRAFT (owner ruling 2026-11-19, ruling 146): the prose of the same
+    # answer, in the text format.
+    Scenario: In text, init says each remote it added
+      Given an initialized ctxloom project
+      And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
+      When Alice adds her own content repository while re-running setup:
+        """
+        ctxloom init --remote file:///tmp/acceptance-remote.git --format text
+        """
+      Then the command succeeds
+      And the output contains "Added remote"
+      And the output contains "file:///tmp/acceptance-remote.git"
+      And the output does not contain "registered"
 
   Rule: A first init seeds a bare default profile, and nothing is fetched for it
 
@@ -216,7 +232,7 @@ Feature: init — the setup interview, and what it does to a project that alread
       # new: DRAFT (owner, 2026-11-18, the library is git-free): replaces step 10 G1's "Re-running init on a project outside git makes it a repository, and leaves its configuration alone".
       Given an initialized ctxloom project outside git
       And the environment variable "CLAUDE_CODE_OAUTH_TOKEN" is set to "sk-ant-oat01-acceptance-fixture-not-real"
-      When I run "ctxloom init"
+      When I run "ctxloom init --format text"
       Then the command succeeds
       And the output contains "ctxloom directory already exists"
       And the file ".git" does not exist

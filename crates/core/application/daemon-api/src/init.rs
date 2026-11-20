@@ -12,10 +12,17 @@
 //! under the same request id finds its tree's names in its intent and
 //! finishes it.
 //!
-//! The companions she accepts are registered by the client as `companion
-//! add` registers them (`CreateCompanion`, a write of the home's library),
-//! and the interview is a terminal `CreateRun`, as every `ctxloom run`.
+//! Init answers ONE message (owner ruling 2026-11-19, batch 3; ruling 146):
+//! the request carries each `--remote` (`remotes`), and the apply registers
+//! them as `remote create` registers them, and the companions the answers
+//! accepted as `companion add` registers them (`CreateCompanion`, a write of
+//! the home's library), after the project is made, each under a request id
+//! derived from the init's own (a retry finds each write as it left it). What
+//! came of each is in the response (`remotes`, `companions`); one that would
+//! not register is said there, never a failure of the init. The interview
+//! is a terminal `CreateRun`, as every `ctxloom run`.
 
+use angzarr_diagnostic::Diagnostic as _;
 use daemon_proto::v1;
 use daemon_proto::Carries as _;
 use init_application::needs::{self, Given};
@@ -124,6 +131,82 @@ pub(crate) fn installed_of(
     }
 }
 
+/// The refusal code of a companion whose program is not on the caller's
+/// machine (`companion add`'s own).
+const PROGRAM_MISSING: &str = "library-application-write-companion-program-missing";
+
+/// The request id of a write init makes beside the project: derived from
+/// the init's own, so a retry of the init finds each write as it left it;
+/// none where the init named none.
+pub(crate) fn derived_id(request_id: &str, key: &str) -> String {
+    match uuid::Uuid::parse_str(request_id) {
+        Ok(namespace) => uuid::Uuid::new_v5(&namespace, key.as_bytes()).to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+/// The companion answers of an apply, as init-application reads them: a
+/// confirmed offer is `yes`, a text the by-name question's line.
+pub(crate) fn companion_answers(answers: &[v1::Answer]) -> Vec<init_application::Answer> {
+    answers
+        .iter()
+        .map(|answer| init_application::Answer {
+            id: answer.need_id.clone(),
+            given: match &answer.answer {
+                Some(v1::answer::Answer::Confirmed(yes)) => {
+                    Some(if *yes { "yes" } else { "no" }.to_string())
+                }
+                Some(v1::answer::Answer::Text(text)) => Some(text.clone()),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
+/// What a person is told of `error`: a typed refusal this crate knows in
+/// its own words (a declined write is its cause's code and args), anything
+/// else the error itself.
+pub(crate) fn error_report(error: &ApiError) -> angzarr_diagnostic::Report {
+    if let ApiError::Refused(refused) = error {
+        if let Some(rejection) = crate::refusal::rejection_of(&refused.refusal) {
+            return rejection.report();
+        }
+    }
+    angzarr_diagnostic::Report::of(error)
+}
+
+/// `error` as the notice a result says it in.
+pub(crate) fn error_notice(error: &ApiError) -> v1::Notice {
+    let report = error_report(error);
+    v1::Notice {
+        code: report.code().to_string(),
+        args: run_application::client::flat_args(&report),
+        text: report.to_string(),
+    }
+}
+
+/// The scaffold's one create as the plan shaped it: an empty one where the
+/// plan made none; the plan's own refusal where it was refused.
+fn scaffold_shape(
+    shaped: Result<Option<library_api::writes::Shaped>, library_tree::LibraryTreeRejection>,
+) -> Result<Shape, ApiError> {
+    match shaped.map_err(|rejection| ApiError::Refused(crate::library_refusal(&rejection)))? {
+        Some(shaped) => Ok(shaped.shape),
+        None => Ok(Shape::Create {
+            path: String::new(),
+            files: Vec::new(),
+        }),
+    }
+}
+
+/// The resource name of the project a checkout `tree` is of.
+fn project_of(tree: &TreeName) -> String {
+    match tree {
+        TreeName::Checkout { project, .. } => project.to_string(),
+        TreeName::Home { .. } => unreachable!("an init's tree is a checkout's"),
+    }
+}
+
 /// What init's apply answers.
 fn answered_init(
     initialized: &ProjectInitialized,
@@ -210,6 +293,20 @@ impl<E: Edge> Api<E> {
         request: v1::InitProjectRequest,
         (engine, verb): (&str, &str),
     ) -> Result<v1::InitProjectResponse, ApiError> {
+        let (done, project) = self.init_applied(&request, (engine, verb)).await?;
+        if request.validate_only {
+            return Ok(done);
+        }
+        self.registered_after(&request, done, project).await
+    }
+
+    /// The project's `.ctxloom` as the apply (or the preview) leaves it,
+    /// and the project it is of when this call named or found it.
+    async fn init_applied(
+        &self,
+        request: &v1::InitProjectRequest,
+        (engine, verb): (&str, &str),
+    ) -> Result<(v1::InitProjectResponse, Option<String>), ApiError> {
         self.open()?;
         let (site, _) = self
             .resolve(
@@ -251,19 +348,22 @@ impl<E: Edge> Api<E> {
         };
         let initialized = initialized?;
         if request.validate_only {
-            return self.previewed(&site, initialized, notices);
+            return Ok((self.previewed(&site, initialized, notices)?, None));
         }
         let pending = match known.as_ref() {
             Some(known) => match known.end {
                 End::Pending { done } => Some((done, known)),
                 End::Done => {
                     // Made, its answer lost: answered from its tree's names.
-                    let (_, project_id) = self.named_before(known).await?;
+                    let (tree, project_id) = self.named_before(known).await?;
                     let made = ProjectInitialized {
                         existed: false,
                         ..initialized
                     };
-                    return Ok(answered_init(&made, &project_id, &answered, notices));
+                    return Ok((
+                        answered_init(&made, &project_id, &answered, notices),
+                        Some(project_of(&tree)),
+                    ));
                 }
                 End::Failed | End::Superseded => {
                     return Err(ApiError::Failed {
@@ -276,24 +376,16 @@ impl<E: Edge> Api<E> {
             None => None,
         };
         if initialized.existed && pending.is_none() {
-            return Ok(answered_init(&initialized, "", &answered, notices));
+            return Ok((answered_init(&initialized, "", &answered, notices), None));
         }
-        let shape = match shaped
-            .map_err(|rejection| ApiError::Refused(crate::library_refusal(&rejection)))?
-        {
-            Some(shaped) => shaped.shape,
-            None => Shape::Create {
-                path: String::new(),
-                files: Vec::new(),
-            },
-        };
+        let shape = scaffold_shape(shaped)?;
         let root = site.at.clone();
         let (tree, project_id) = match pending {
             Some((_, known)) => {
                 let (tree, project_id) = self.named_before(known).await?;
                 (tree, project_id)
             }
-            None => self.name_new(observations, &root, &request).await?,
+            None => self.name_new(observations, &root, request).await?,
         };
         let shape = with_checkout(shape, tree.checkout_harp());
         let made = self
@@ -309,7 +401,160 @@ impl<E: Edge> Api<E> {
             existed: false,
             ..initialized
         };
-        Ok(answered_init(&initialized, &project_id, &answered, notices))
+        Ok((
+            answered_init(&initialized, &project_id, &answered, notices),
+            Some(project_of(&tree)),
+        ))
+    }
+
+    /// `done` with what the request registered beside the project (module
+    /// docs): the companions its answers accepted (a project made now only),
+    /// then each `--remote`, in order, each answered in the message.
+    async fn registered_after(
+        &self,
+        request: &v1::InitProjectRequest,
+        mut done: v1::InitProjectResponse,
+        project: Option<String>,
+    ) -> Result<v1::InitProjectResponse, ApiError> {
+        let names = if done.existed {
+            Vec::new()
+        } else {
+            init_application::accepted_companions(&companion_answers(&request.answers))
+        };
+        if names.is_empty() && request.remotes.is_empty() {
+            return Ok(done);
+        }
+        let parent = match project {
+            Some(project) => project,
+            None if ProjectName::parse(request.target()).is_ok() => request.target().to_string(),
+            None => self.name_existing(request, &mut done).await?,
+        };
+        for name in &names {
+            let result = self.add_companion(request, &parent, name).await;
+            done.companions.push(result);
+        }
+        for remote in &request.remotes {
+            let result = self.add_remote(request, &parent, remote).await;
+            done.remotes.push(result);
+        }
+        Ok(done)
+    }
+
+    /// A project that has its `.ctxloom` and no name yet (a clone's), named
+    /// as a new project is (`name_new`, its id minted and registered at the
+    /// root) so its remotes have a parent; its id is answered for the client
+    /// to bind.
+    async fn name_existing(
+        &self,
+        request: &v1::InitProjectRequest,
+        done: &mut v1::InitProjectResponse,
+    ) -> Result<String, ApiError> {
+        let (observations, _) = self.observing.as_ref().ok_or_else(|| ApiError::Failed {
+            detail: "this daemon observes no library".to_string(),
+        })?;
+        let (site, _) = self
+            .resolve(
+                request.target(),
+                request.caller_cwd(),
+                request.caller_env(),
+                request.caller_globals(),
+            )
+            .await?;
+        let root = site.at.clone();
+        let (tree, project_id) = self.name_new(observations, &root, request).await?;
+        done.project_id = project_id;
+        Ok(project_of(&tree))
+    }
+
+    /// The companion `name` registered under `parent` as `companion add`
+    /// registers it, and what came of it.
+    async fn add_companion(
+        &self,
+        request: &v1::InitProjectRequest,
+        parent: &str,
+        name: &str,
+    ) -> v1::InitCompanionResult {
+        let create = v1::CreateCompanionRequest {
+            parent: parent.to_string(),
+            companion_id: name.to_string(),
+            request_id: derived_id(&request.request_id, &format!("companion:{name}")),
+            caller: request.caller.clone(),
+            ..v1::CreateCompanionRequest::default()
+        };
+        let wrote = self
+            .library_write(&create, "companion add", |library, flags, apply| {
+                library_api::served_writes::create_companion::plan(library, flags, &create, apply)
+            })
+            .await;
+        let mut result = v1::InitCompanionResult {
+            name: name.to_string(),
+            ..v1::InitCompanionResult::default()
+        };
+        match wrote {
+            Ok(wrote) => {
+                let made = library_api::served_writes::create_companion::respond(&create, wrote);
+                result.outcome = if made.applied.unwrap_or(false) {
+                    "added"
+                } else {
+                    "already"
+                }
+                .to_string();
+            }
+            Err(error) if error_report(&error).code() == PROGRAM_MISSING => {
+                result.outcome = "missing".to_string();
+                result.program = error_report(&error)
+                    .args()
+                    .into_iter()
+                    .find_map(|(name, arg)| match arg {
+                        angzarr_diagnostic::Arg::Str(value) if name == "program" => Some(value),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+            }
+            Err(error) => {
+                result.outcome = "failed".to_string();
+                result.error = Some(error_notice(&error));
+            }
+        }
+        result
+    }
+
+    /// The remote `remote` registered under `parent` as `remote create`
+    /// registers it, and what came of it.
+    async fn add_remote(
+        &self,
+        request: &v1::InitProjectRequest,
+        parent: &str,
+        remote: &v1::InitRemote,
+    ) -> v1::InitRemoteResult {
+        let create = v1::CreateRemoteRequest {
+            parent: parent.to_string(),
+            remote_id: remote.remote_id.clone(),
+            remote: Some(v1::Remote {
+                url: remote.url.clone(),
+                forge: remote.forge.clone(),
+                ..Default::default()
+            }),
+            request_id: derived_id(&request.request_id, &format!("remote:{}", remote.remote_id)),
+            caller: request.caller.clone(),
+            ..v1::CreateRemoteRequest::default()
+        };
+        match self.create_remote_write(&create).await {
+            Ok(created) => v1::InitRemoteResult {
+                remote_id: remote.remote_id.clone(),
+                url: created.remote.map_or_else(|| remote.url.clone(), |r| r.url),
+                registered: true,
+                notices: created.notices,
+                ..v1::InitRemoteResult::default()
+            },
+            Err(error) => v1::InitRemoteResult {
+                remote_id: remote.remote_id.clone(),
+                url: remote.url.clone(),
+                registered: false,
+                error: Some(error_notice(&error)),
+                ..v1::InitRemoteResult::default()
+            },
+        }
     }
 
     /// A preview's answer: the project's `.ctxloom`, whether it is there,

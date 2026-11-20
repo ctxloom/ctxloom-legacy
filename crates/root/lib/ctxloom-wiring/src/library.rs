@@ -533,8 +533,8 @@ impl surface_cli::Foreign for DaemonServed {
 }
 
 /// `init` through the daemon (step 10c U6): its preview and apply where this
-/// process stands, the project it named bound at its root, and each
-/// `--remote` registered as `remote create` registers it.
+/// process stands, and the project it named bound at its root; each
+/// `--remote` and companion is registered by the apply itself.
 impl setup_cli::Initializing for DaemonServed {
     fn init_project(
         &self,
@@ -561,13 +561,6 @@ impl setup_cli::Initializing for DaemonServed {
         bound
             .map(|_| ())
             .map_err(|e| Failure::new(e, cli_support::Exit::FAILED))
-    }
-
-    fn add_remote(
-        &self,
-        request: daemon_proto::v1::CreateRemoteRequest,
-    ) -> Result<daemon_proto::v1::CreateRemoteResponse, Failure> {
-        deps_cli::Served::create_remote(self, "", request)
     }
 }
 

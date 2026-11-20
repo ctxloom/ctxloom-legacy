@@ -118,6 +118,19 @@ fn diagnostic_samples() -> Vec<Box<dyn angzarr_diagnostic::Diagnostic>> {
     all
 }
 
+/// Under `test-support`, a terminal stood in (`CTXLOOM_TEST_TERMINAL`, which
+/// the wiring reads for its questions) is one for the output's default
+/// format too: text, as at a terminal. A plain build asks the stream alone.
+#[cfg(feature = "test-support")]
+fn stood_in_for_a_terminal(env: &EnvSnapshot) -> bool {
+    env.non_empty("CTXLOOM_TEST_TERMINAL").is_some()
+}
+
+#[cfg(not(feature = "test-support"))]
+fn stood_in_for_a_terminal(_: &EnvSnapshot) -> bool {
+    false
+}
+
 fn main() -> ExitCode {
     let catalog = match catalog() {
         Ok(catalog) => catalog,
@@ -143,7 +156,7 @@ fn main() -> ExitCode {
     let context = Context {
         version: version.to_string(),
         lock_protocol: file_lock::LOCK_PROTOCOL,
-        stdout_is_terminal: io::stdout().is_terminal(),
+        stdout_is_terminal: io::stdout().is_terminal() || stood_in_for_a_terminal(&env),
     };
     let (stdout, stderr) = (io::stdout(), io::stderr());
     ExitCode::from(ctxloom_cli::run(

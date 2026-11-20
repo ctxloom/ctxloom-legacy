@@ -17,8 +17,7 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
 
 use init_application::{
-    Added, Companions, Ended, LaunchFailure, NotAdded, PromptFailure, PromptRead, Prompts,
-    Sessions, Terminal,
+    Ended, LaunchFailure, PromptFailure, PromptRead, Prompts, Sessions, Terminal,
 };
 use library_application::{Flags, RunRequest};
 use process_env::EnvSnapshot;
@@ -217,48 +216,6 @@ impl Prompts for SetupSessions<'_> {
             .map(|read| read.companion_guidance)
             .unwrap_or_default()
     }
-}
-
-/// A first init's companions (M4), each registered as `companion add`
-/// registers it: the daemon's `CreateCompanion`.
-impl Companions for SetupSessions<'_> {
-    fn add(&self, name: &str) -> Result<Added, NotAdded> {
-        use library_cli::Served as _;
-        let served =
-            crate::library::DaemonServed::new(Arc::clone(self.env), self.stamp.to_string());
-        let request = daemon_proto::v1::CreateCompanionRequest {
-            companion_id: name.to_string(),
-            caller: daemon_proto::v1::Caller::of(
-                Some(library_api::reads::globals_of(self.flags)),
-                None,
-            ),
-            ..daemon_proto::v1::CreateCompanionRequest::default()
-        };
-        match served.create_companion("", request) {
-            Ok(created) if created.applied.unwrap_or(false) => Ok(Added::New),
-            Ok(_) => Ok(Added::Already),
-            Err(failure) => Err(not_added(failure)),
-        }
-    }
-}
-
-/// Why a companion was not registered: its program missing (the program
-/// its refusal names), else the failure itself.
-fn not_added(failure: cli_support::Failure) -> NotAdded {
-    if failure.cause.code() == "library-application-write-companion-program-missing" {
-        let program = failure
-            .cause
-            .args()
-            .into_iter()
-            .find_map(|(name, arg)| match arg {
-                angzarr_diagnostic::Arg::Str(value) if name == "program" => Some(value),
-                _ => None,
-            });
-        if let Some(program) = program {
-            return NotAdded::Missing { program };
-        }
-    }
-    NotAdded::Failed(failure.cause)
 }
 
 #[cfg(test)]
