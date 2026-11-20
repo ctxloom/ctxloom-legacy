@@ -528,6 +528,16 @@ impl Ctxloom for Served {
         .await
     }
 
+    async fn acknowledge_hook_delivery(
+        &self,
+        request: Request<v1::AcknowledgeHookDeliveryRequest>,
+    ) -> Result<Response<v1::HookDeliveryAcknowledged>, Status> {
+        self.answer(request, |calls, message| async move {
+            calls.acknowledge_hook_delivery(message).await
+        })
+        .await
+    }
+
     async fn get_run(
         &self,
         request: Request<v1::GetRunRequest>,

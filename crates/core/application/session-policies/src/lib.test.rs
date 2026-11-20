@@ -12,8 +12,8 @@ use sessions::{
 };
 
 use crate::{
-    cascade, child_ended, deliver, destroy, drain_guidance, launch, launch_failed, notice,
-    run_cover, session_cover, RunGate, DRAIN_GUIDANCE,
+    cascade, child_ended, deliver, destroy, drain_guidance, is_daemon_message, launch,
+    launch_failed, notice, run_cover, session_cover, RunGate, DRAIN_GUIDANCE,
 };
 
 const OWNER: &str = "0a0a0a0a-0a0a-0a0a-0a0a-0a0a0a0a0a0a";
@@ -401,4 +401,37 @@ fn a_notice_redelivered_is_one_message() {
         matches!(first.as_slice(), [SessionEvent::MessageSent(m)] if m.message_id == sent_notice.key)
     );
     assert_eq!(sent(&mut owner, sent_notice.book()), None);
+}
+
+// ------------------------------------------------- who a message is from
+
+// A message the daemon minted (a notice, the drain's guidance) is told
+// apart from one the user sent by its id; the ids the policies mint are
+// always told, and no other id is.
+#[test]
+fn a_message_the_daemon_minted_is_told_by_its_id() {
+    let every = [Urgency::Inform, Urgency::Wake, Urgency::Steer];
+    let ended_run = ended(true);
+    let notice_id = notice(&at(CHILD), "kid", &at(OWNER), &ended_run, &every)
+        .unwrap()
+        .command
+        .message_id;
+    let drain_id = drain_guidance(&at(CHILD), 2, &every)
+        .unwrap()
+        .command
+        .message_id;
+    assert!(is_daemon_message(&notice_id), "{notice_id}");
+    assert!(is_daemon_message(&drain_id), "{drain_id}");
+    assert!(is_daemon_message("notice:a:1:rehost-budget"));
+    for user in [
+        "",
+        "m1",
+        "notices",
+        "xnotice:a",
+        "NOTICE:a",
+        "drains:a",
+        " drain:a",
+    ] {
+        assert!(!is_daemon_message(user), "{user:?}");
+    }
 }

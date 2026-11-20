@@ -409,7 +409,7 @@ pub(crate) fn world_of(
     World { setup, store, mem }
 }
 
-/// Each delivery a fake inbox recorded: its ids and its wake.
+/// Each acknowledgement a fake inbox recorded: its ids and its wake.
 pub(crate) type Deliveries = std::sync::Arc<std::sync::Mutex<Vec<(Vec<String>, String)>>>;
 
 /// Each call a hook made: its hook, urgencies and budget.
@@ -417,11 +417,13 @@ pub(crate) type Asked = Arc<std::sync::Mutex<Vec<(String, Vec<String>, usize)>>>
 
 /// A daemon as a hook's one call reaches it (`DeliverHookContext`): the
 /// session's pending messages, unless the daemon did not answer (`None`),
-/// each delivery recorded (refused when `refusing`: nothing delivered),
-/// then `owed`, joined within the budget, as the daemon joins them.
+/// OFFERED (nothing marked), then `owed`, joined within the budget, as the
+/// daemon joins them; and each ack recorded in `delivered` (refused when
+/// `refusing`: nothing recorded).
 #[derive(Default)]
 pub(crate) struct Inbox {
     pub(crate) pending: std::sync::Mutex<Option<Vec<crate::HookMessage>>>,
+    /// Each ack received, as the daemon recorded it.
     pub(crate) delivered: Deliveries,
     pub(crate) refusing: bool,
     /// What the session is owed (U13).
@@ -435,7 +437,7 @@ impl crate::HookContexts for Inbox {
         &self,
         hook: &str,
         urgencies: &[&str],
-        wake: &str,
+        _wake: &str,
         budget: usize,
     ) -> Option<crate::HookCarried> {
         self.asked.lock().unwrap().push((
@@ -445,19 +447,20 @@ impl crate::HookContexts for Inbox {
         ));
         let pending = self.pending.lock().unwrap().clone()?;
         let offered = crate::messages_context(&pending, urgencies, "amber-quiet-heron", budget);
-        let mut messages = String::new();
-        let mut delivered = false;
-        if (!offered.ids.is_empty() || !wake.is_empty()) && !self.refusing {
-            self.delivered
-                .lock()
-                .unwrap()
-                .push((offered.ids.clone(), wake.to_string()));
-            delivered = !offered.ids.is_empty();
-            messages = offered.context;
-        }
         Some(crate::HookCarried {
-            context: crate::compose_context(&[&messages, &self.owed]),
-            delivered,
+            context: crate::compose_context(&[&offered.context, &self.owed]),
+            offered: offered.ids,
         })
+    }
+
+    fn acknowledge(&self, offered: &crate::Offered) -> bool {
+        if self.refusing {
+            return false;
+        }
+        self.delivered
+            .lock()
+            .unwrap()
+            .push((offered.ids.clone(), offered.wake.clone()));
+        true
     }
 }

@@ -297,6 +297,8 @@ impl Commands {
         // The session the hooks run in, by its resource name (s3-Q3).
         let harp = crate::capture::harp_of(self.env.utf8(run_ports::SESSION_VARIABLE));
         let hook_cli::HookVerb::Execute { hook_name } = &hook.verb;
+        // The service the answer's ack goes through, once it is printed.
+        let mut acknowledging: Option<crate::commands::Hooks<'_>> = None;
         let outcome = if hook_name == hook_cli::STATUSLINE {
             // Rendering only: it needs neither the application nor a home.
             hook_cli::execute(&hook.engine, hook_name, input, &harp, &NoService)
@@ -337,14 +339,21 @@ impl Commands {
                     ))
                 }
             };
-            let setup = self.hooks().map_err(|e| failed(Box::new(e)))?;
-            hook_cli::execute_recording(&hook.engine, hook_name, input, &harp, &setup, &*recording)
+            let setup = acknowledging.insert(self.hooks().map_err(|e| failed(Box::new(e)))?);
+            hook_cli::execute_recording(&hook.engine, hook_name, input, &harp, &*setup, &*recording)
         }
         .map_err(declined)?;
         for warning in &outcome.warnings {
             say_warning(warning, PROG, format, catalog, err);
         }
-        let written = out.write_all(outcome.stdout.as_bytes());
+        // Print, FLUSH, and only then acknowledge what was offered
+        // (`hook_cli::deliver`): a hook that dies before the ack leaves its
+        // messages pending, to be offered again (at-least-once, owner
+        // 2026-11-19). An ack that was not recorded is a repeat later.
+        let written = match &acknowledging {
+            Some(service) => hook_cli::deliver(&outcome, out, service).map(|_| ()),
+            None => out.write_all(outcome.stdout.as_bytes()),
+        };
         written.map_err(|e| {
             Failure::new(
                 CliError::Output {

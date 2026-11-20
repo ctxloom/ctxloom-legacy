@@ -232,6 +232,21 @@ pub fn child_ended(
 
 // ----------------------------------------------------------------- notice
 
+/// The start of the id of a notice the daemon sends (a child's turn or run
+/// ended, a re-host's budget). DRAFT (2026-11-19).
+pub const NOTICE_PREFIX: &str = "notice:";
+
+/// The start of the id of the drain's guidance.
+pub const DRAIN_PREFIX: &str = "drain:";
+
+/// Whether the message `id` was minted by the daemon, not sent by the user.
+/// Both carry no requester (the user's authority, ruling 37), so the id is
+/// what tells them apart: what a model is told a message is from. A session
+/// that is a requester is told by its name, never by an id.
+pub fn is_daemon_message(id: &str) -> bool {
+    id.starts_with(NOTICE_PREFIX) || id.starts_with(DRAIN_PREFIX)
+}
+
 /// The notice: a child's run ended with `notice_parent`, so its owner is
 /// sent a message saying so, a wake when the owner's engine can take one,
 /// else an inform, else none. Its message id is its key,
@@ -249,7 +264,7 @@ pub fn notice(
     let urgency = [Urgency::Wake, Urgency::Inform]
         .into_iter()
         .find(|urgency| supported.contains(urgency))?;
-    let key = format!("notice:{}:{}", child.session, ended.incarnation);
+    let key = format!("{NOTICE_PREFIX}{}:{}", child.session, ended.incarnation);
     Some(Keyed {
         project_id: owner.project_id.clone(),
         cover: session_cover(&owner.session)?,
@@ -287,7 +302,7 @@ pub fn drain_guidance(
     if !supported.contains(&Urgency::Steer) {
         return None;
     }
-    let key = format!("drain:{}:{incarnation}", child.session);
+    let key = format!("{DRAIN_PREFIX}{}:{incarnation}", child.session);
     Some(Keyed {
         project_id: child.project_id.clone(),
         cover: session_cover(&child.session)?,

@@ -25,6 +25,7 @@ cp "$gates" "$fx/gates/gates.just"
 cp "$(dirname "$gates")/drop-worktree.sh" "$fx/gates/drop-worktree.sh"
 cp "$(dirname "$gates")/memory-cap.sh" "$fx/gates/memory-cap.sh"
 cp "$(dirname "$gates")/tests-lock.sh" "$fx/gates/tests-lock.sh"
+cp "$(dirname "$gates")/red-sanity.sh" "$fx/gates/red-sanity.sh"
 # The fixture's workspace runs take a test lock of their own, never the
 # machine's (gates/tests-lock.sh), and are inside no other run's.
 export TESTS_LOCK_FILE=$tmp/workspace-tests.lock
@@ -113,6 +114,33 @@ for code in 102 105 104 4; do
     tests_rc "nextest exits $code" 121 FAKE_NEXTEST_RC="$code"
     grep -q "^nextest exited $code: not a test failure" "$tmp/out" || fail "_tests, nextest $code: not named: $(cat "$tmp/out")"
 done
+# `_tests-checked` (what `test-staged` runs) is `_tests` plus
+# gates/red-sanity.sh on a red run (scripts/red-commit-sanity.selftest.sh has
+# the rule's cases): a test that fails is still 100; one that fails and takes
+# the worktree's .git with it is 122, the environment's failure, said in the
+# extract, and green stays 0.
+checked_rc() { # name expected
+    local rc=0
+    (cd "$fx" && just _tests-checked --workspace > "$tmp/out" 2>&1) || rc=$?
+    [ "$rc" -eq "$2" ] || fail "_tests-checked, $1: exit $rc, want $2: $(tail -n 20 "$tmp/out")"
+}
+lib "$doc_ok
+$(unit 1)"; checked_rc "everything passes" 0
+lib "$doc_ok
+$(unit 2)"; checked_rc "a test fails" 100
+lib "$doc_ok
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn t() { std::fs::remove_dir_all(\"../../.git\").unwrap(); panic!(\"gone\"); }
+}"; checked_rc "a test fails and the worktree is gone" 122
+grep -q '^red-sanity: the staged worktree is gone' "$tmp/out" || fail "_tests-checked, worktree gone: not said: $(cat "$tmp/out")"
+git -C "$fx" init -q -b main
+git -C "$fx" -c user.email=t@e -c user.name=t commit -q --allow-empty -m init
+said=$(cd "$fx" && just _extract-tests "$tmp/out" 122)
+grep -q "^not red tests, the environment's failure: the staged worktree is gone" <<< "$said" || fail "extract 122: $said"
+lib "$doc_ok
+$(unit 1)"
 # The memory cap (gates/memory-cap.sh, `tests_memory_max`): the fixture
 # opts out, and the run says so; with a cap and no user bus to reach, the
 # run FAILS before anything is built, 121, the cap's FAIL line and its fix

@@ -506,6 +506,18 @@ impl DaemonApi for DaemonClient {
         call!(self, deliver_hook_context, "DeliverHookContext", request)
     }
 
+    async fn acknowledge_hook_delivery(
+        &self,
+        request: v1::AcknowledgeHookDeliveryRequest,
+    ) -> Result<v1::HookDeliveryAcknowledged, Called> {
+        call!(
+            self,
+            acknowledge_hook_delivery,
+            "AcknowledgeHookDelivery",
+            request
+        )
+    }
+
     async fn watch_library(
         &self,
         request: v1::WatchLibraryRequest,

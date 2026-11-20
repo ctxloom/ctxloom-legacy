@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use daemon_api::Caller;
 use process_env::EnvSnapshot;
-use setup_application::{HookCarried, HookContexts};
+use setup_application::{HookCarried, HookContexts, Offered};
 
 use crate::hook_library::HookDaemons;
 
@@ -36,14 +36,10 @@ impl DaemonHookContexts {
     }
 }
 
-impl HookContexts for DaemonHookContexts {
-    fn hook_context(
-        &self,
-        hook: &str,
-        urgencies: &[&str],
-        wake: &str,
-        budget: usize,
-    ) -> Option<HookCarried> {
+impl DaemonHookContexts {
+    /// The hook's session as a caller of the user's daemon, and the
+    /// working directory it speaks from; None with no session named.
+    fn caller(&self) -> Option<(Caller<HookDaemons>, String)> {
         let session = self.env.non_empty(run_ports::SESSION_VARIABLE)?;
         let session = session.to_string_lossy().into_owned();
         let starts = self
@@ -63,25 +59,50 @@ impl HookContexts for DaemonHookContexts {
             .cwd()
             .map(|cwd| cwd.display().to_string())
             .unwrap_or_default();
+        Some((caller, cwd))
+    }
+
+    /// `call` on a runtime of its own, within what is left of the hook's
+    /// bound.
+    fn within<T>(&self, call: impl std::future::Future<Output = T>) -> Option<T> {
         let within = self.until.saturating_duration_since(Instant::now());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .ok()?;
-        let answered = runtime
-            .block_on(async {
-                tokio::time::timeout(
-                    within,
-                    caller.hook_context(hook, (urgencies, wake), budget, &cwd),
-                )
-                .await
-            })
-            .ok()?
+        runtime
+            .block_on(async { tokio::time::timeout(within, call).await })
+            .ok()
+    }
+}
+
+impl HookContexts for DaemonHookContexts {
+    fn hook_context(
+        &self,
+        hook: &str,
+        urgencies: &[&str],
+        wake: &str,
+        budget: usize,
+    ) -> Option<HookCarried> {
+        let (caller, cwd) = self.caller()?;
+        let answered = self
+            .within(caller.hook_context(hook, (urgencies, wake), budget, &cwd))?
             .ok()?;
         Some(HookCarried {
             context: answered.context,
-            delivered: !answered.delivered.is_empty(),
+            offered: answered.offered,
         })
+    }
+
+    /// The ack, a call of its own AFTER the hook printed and flushed. Not
+    /// answered in time, it is not recorded: the messages stay pending and
+    /// are offered again.
+    fn acknowledge(&self, offered: &Offered) -> bool {
+        let Some((caller, cwd)) = self.caller() else {
+            return false;
+        };
+        self.within(caller.acknowledge_hook_delivery(&offered.ids, &offered.wake, &cwd))
+            .is_some_and(|answered| answered.is_ok())
     }
 }
 

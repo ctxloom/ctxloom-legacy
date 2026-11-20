@@ -335,6 +335,10 @@ impl hook_cli::HookService for Hooks<'_> {
             .execute_hook(engine, native, payload, harp)
             .map_err(|e| Box::new(e) as _)
     }
+
+    fn acknowledge(&self, offered: &setup_application::Offered) -> bool {
+        self.0.acknowledge(offered)
+    }
 }
 
 /// The variables a clone address's token is read from: the forge the
