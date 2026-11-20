@@ -227,7 +227,10 @@ fn bundle_and_item(name: &str) -> (String, String) {
 
 /// The answer to `needs`' Edit need, the editor launched on its document
 /// (step 10b U3: the preview's Edit need, presented by the CLI); none
-/// when it asks none.
+/// when it asks none, and none for an Edit with no launch (the caller was
+/// not at a terminal): no editor is run, the apply goes unanswered and
+/// the daemon answers the preview again, nothing applied (needs.proto: a CLI
+/// off a terminal shows the preview and applies nothing).
 pub(crate) fn edit_answers(
     cx: &Context<'_>,
     needs: &[v1::Need],
@@ -235,6 +238,9 @@ pub(crate) fn edit_answers(
     let mut answers = Vec::new();
     for need in needs {
         if let Some(v1::need::Kind::Edit(edit)) = &need.kind {
+            if edit.launch.is_none() {
+                continue;
+            }
             let edited = cx.served.edit_document(edit)?;
             answers.push(v1::Answer {
                 need_id: need.id.clone(),

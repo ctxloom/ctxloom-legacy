@@ -81,6 +81,11 @@ pub(crate) struct Project {
     /// The processes its `start_*` started, ended when it is dropped if
     /// they still run (see its `Drop`).
     started: std::sync::Mutex<Vec<u32>>,
+    /// Its runs stand at a terminal (`CTXLOOM_TEST_TERMINAL`, the binary's
+    /// stand-in, as init's terminal scenarios use): the CLI says
+    /// `can_launch` there only, so an editor is launched at one alone (the
+    /// Caller ruling, kept 2026-11-19).
+    terminal: std::sync::atomic::AtomicBool,
 }
 
 impl Project {
@@ -251,7 +256,21 @@ impl Project {
             program: None,
             path_first: std::sync::Mutex::new(Vec::new()),
             started: std::sync::Mutex::new(Vec::new()),
+            terminal: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Every later run stands at no terminal (the default).
+    pub(crate) fn off_a_terminal(&self) {
+        self.terminal
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Every later run stands at a terminal, as an editor is launched at
+    /// one only.
+    pub(crate) fn at_a_terminal(&self) {
+        self.terminal
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Every later run's `PATH` starts with `dir` (one naming its own `PATH`
@@ -462,6 +481,7 @@ impl Project {
         project.write(".ctxloom/config.yaml", MINIMAL_CONFIG);
         project.write_home(".ctxloom/config.yaml", editor.home_config());
         project.git_init_committing(&[".ctxloom/config.yaml"]);
+        project.at_a_terminal();
         project.named()
     }
 
@@ -487,6 +507,34 @@ impl Project {
     /// As [`run_in`](Project::run_in), with these environment variables too.
     pub(crate) fn run_in_with(&self, dir: &Path, env: &[(&str, &str)], args: &[&str]) -> Ran {
         self.spawn(dir, env, args)
+    }
+
+    /// `ctxloom args` on a pseudo-terminal: util-linux's `script` runs it
+    /// with a pty for its standard input, output and error (`-e` returns the
+    /// child's status), no stand-in set.
+    pub(crate) fn run_on_a_pty(&self, args: &[&str]) -> Ran {
+        let mut line = vec![binary().to_str().expect("utf-8").to_string()];
+        line.extend(args.iter().map(|a| (*a).to_string()));
+        let quoted: Vec<String> = line
+            .iter()
+            .map(|word| format!("'{}'", word.replace('\'', "'\\''")))
+            .collect();
+        let root = self.project.to_str().expect("utf-8");
+        let mut all = vec![("CTXLOOM_ROOT", root)];
+        all.extend_from_slice(&[]);
+        let command = self.process(&self.project, &all, &[]);
+        let mut script = Command::new("script");
+        script
+            .args(["-qefc", &quoted.join(" "), "/dev/null"])
+            .env_clear()
+            .current_dir(&self.project)
+            .stdin(std::process::Stdio::null());
+        for (name, value) in command.get_envs() {
+            if let Some(value) = value {
+                script.env(name, value);
+            }
+        }
+        Ran::of(script.output().expect("script runs"))
     }
 
     /// As [`run_with`](Project::run_with), started and not waited for: its
@@ -575,6 +623,9 @@ impl Project {
         }
         if self.gos_catalog {
             command.env("CTXLOOM_TEST_NO_BUILTINS", "1");
+        }
+        if self.terminal.load(std::sync::atomic::Ordering::SeqCst) {
+            command.env("CTXLOOM_TEST_TERMINAL", "1");
         }
         for (name, value) in env {
             command.env(name, value);

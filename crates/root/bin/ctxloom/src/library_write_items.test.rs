@@ -11,6 +11,7 @@
 //! its digest.
 
 use super::library::{reports_as, Editor, Project};
+use crate::tests::files;
 
 const FORMATS: [&[&str]; 3] = [&[], &["--format", "json"], &["--format", "text"]];
 
@@ -385,6 +386,58 @@ fn test_editing_a_fragment_lands_the_change_across_axes() {
         .succeeds();
     project.file_contains(&format!("{DEMO}/fragments/testing.md"), "EDITED-BY-TEST");
     project.file_is_absent(&format!("{DEMO}/fragments/testing.distilled.md"));
+}
+
+// The Caller ruling (kept 2026-11-19): off a terminal the CLI does not say
+// `can_launch`, so the preview's Edit need carries no launch and the editor
+// is not run; the apply goes unanswered and answers the preview again
+// (needs.proto: a CLI off a terminal shows the preview and applies nothing,
+// exit 0), the Edit need carrying the text and no launch, and the file stays
+// as it was.
+#[test]
+fn test_an_edit_off_a_terminal_launches_no_editor_and_applies_nothing() {
+    let project = Project::with_editor(Editor::Marker).on_gos_catalog();
+    project.off_a_terminal();
+    demo(&project);
+    project.fragment("demo", "testing");
+    let before = project.read(&format!("{DEMO}/fragments/testing.md"));
+    let ran = project.run(&["fragment", "edit", "demo#fragments/testing"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    let said = ran.json();
+    assert_eq!(said["applied"], false, "{said}");
+    assert_eq!(said["needs"][0]["edit"]["text"], "FRAGMENT-BODY-testing");
+    assert!(said["needs"][0]["edit"].get("launch").is_none(), "{said}");
+    assert_eq!(
+        project.read(&format!("{DEMO}/fragments/testing.md")),
+        before
+    );
+    project.file_lacks(&format!("{DEMO}/fragments/testing.md"), "EDITED-BY-TEST");
+}
+
+// The same at a real pseudo-terminal (`script` runs the binary on a pty, so
+// its standard input and output are a terminal and no stand-in is set): the
+// editor launches. Unix with `script` only; skipped, said, elsewhere.
+#[test]
+fn test_an_edit_on_a_real_pty_launches_the_editor() {
+    if !files::runs_scripts() || !on_a_pty_available() {
+        eprintln!("SKIP test_an_edit_on_a_real_pty_launches_the_editor: no `script` (util-linux) to stand a pty in");
+        return;
+    }
+    let project = Project::with_editor(Editor::Marker).on_gos_catalog();
+    project.off_a_terminal();
+    demo(&project);
+    project.fragment("demo", "testing");
+    let ran = project.run_on_a_pty(&["fragment", "edit", "demo#fragments/testing"]);
+    assert_eq!(ran.code, 0, "{}", ran.said());
+    project.file_contains(&format!("{DEMO}/fragments/testing.md"), "EDITED-BY-TEST");
+}
+
+/// Whether util-linux's `script` is here to stand a pty in.
+fn on_a_pty_available() -> bool {
+    std::process::Command::new("script")
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("util-linux"))
 }
 
 // editing.feature: Scenario: Editing a prompt lands the change in the bundle

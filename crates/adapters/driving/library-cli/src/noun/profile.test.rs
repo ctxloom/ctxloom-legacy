@@ -478,7 +478,11 @@ mod writes_asked {
                 kind: Some(v1::need::Kind::Edit(v1::Edit {
                     file_name: "dev.yaml".to_string(),
                     text: "bundles:\n  - demo\n".to_string(),
-                    launch: None,
+                    launch: Some(v1::Launch {
+                        kind: v1::launch::Kind::Editor as i32,
+                        program: "ed".to_string(),
+                        ..v1::Launch::default()
+                    }),
                 })),
             }],
             ..v1::UpdateProfileResponse::default()

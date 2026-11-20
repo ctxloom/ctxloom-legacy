@@ -160,6 +160,10 @@ impl Served for ServedBy<'_> {
     fn hear_stops(&self) {}
 
     /// The library's own editor, as the CLI would launch it.
+    fn at_terminal(&self) -> bool {
+        true
+    }
+
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure> {
         self.library
             .edit_document(&edit.file_name, &edit.text)
@@ -543,9 +547,18 @@ pub(crate) struct Asks {
     /// What the person at the terminal answers a Confirm need; none: no
     /// terminal.
     confirms: Option<bool>,
+    /// That the command is not at a terminal (stdin and stdout), whatever
+    /// `confirms` says: [`Served::at_terminal`] answers false.
+    off_terminal: bool,
 }
 
 impl Asks {
+    /// This fake, not at a terminal.
+    pub(crate) fn off_terminal(mut self) -> Asks {
+        self.off_terminal = true;
+        self
+    }
+
     /// The fake that answers `answers` in turn, and `confirms` at its
     /// terminal.
     pub(crate) fn answering(answers: Vec<Box<dyn std::any::Any>>, confirms: Option<bool>) -> Asks {
@@ -627,6 +640,10 @@ impl Served for Asks {
     crate::served_reads!(asked_of_the_daemon);
 
     crate::served_writes!(written_to_the_daemon);
+
+    fn at_terminal(&self) -> bool {
+        !self.off_terminal
+    }
 
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure> {
         self.ask("", edit.clone())

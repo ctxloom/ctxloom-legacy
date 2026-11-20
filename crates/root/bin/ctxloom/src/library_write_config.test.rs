@@ -151,6 +151,7 @@ fn test_edit_opens_the_config_in_the_editor_of_the_environment() {
         return;
     }
     let project = Project::initialized();
+    project.at_a_terminal();
     let editor = project.dir().join("editor.sh");
     files::put_program(&editor, "#!/bin/sh\nprintf '# edited\\n' >> \"$1\"\n");
     let editor = editor.to_str().expect("utf-8");

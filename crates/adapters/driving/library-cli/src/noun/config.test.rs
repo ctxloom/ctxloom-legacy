@@ -119,7 +119,11 @@ mod writes_asked {
                 kind: Some(v1::need::Kind::Edit(v1::Edit {
                     file_name: "config.yaml".to_string(),
                     text: "schema_version: 9\n".to_string(),
-                    launch: None,
+                    launch: Some(v1::Launch {
+                        kind: v1::launch::Kind::Editor as i32,
+                        program: "ed".to_string(),
+                        ..v1::Launch::default()
+                    }),
                 })),
             }],
             ..v1::EditConfigResponse::default()
@@ -152,5 +156,60 @@ mod writes_asked {
             1,
             "the editor launched once"
         );
+    }
+
+    fn previewed_edit(launch: Option<v1::Launch>) -> v1::EditConfigResponse {
+        v1::EditConfigResponse {
+            applied: Some(false),
+            etag: "7".to_string(),
+            needs: vec![v1::Need {
+                optional: false,
+                id: "edit".to_string(),
+                kind: Some(v1::need::Kind::Edit(v1::Edit {
+                    file_name: "config.yaml".to_string(),
+                    text: "schema_version: 9\n".to_string(),
+                    launch,
+                })),
+            }],
+            ..v1::EditConfigResponse::default()
+        }
+    }
+
+    // The Caller ruling (kept 2026-11-19): the CLI says `can_launch` when
+    // it is at a terminal, and only then (stdin and stdout, as it asks).
+    #[test]
+    fn test_a_write_says_it_can_launch_only_at_a_terminal() {
+        for at_terminal in [true, false] {
+            let asks = Asks::answering(vec![Box::new(previewed_edit(None))], None);
+            let asks = if at_terminal {
+                asks
+            } else {
+                asks.off_terminal()
+            };
+            go_served(&["config", "edit"], TEXT, BARE, &Project, Some(&asks));
+            let sent = asks.requests::<v1::EditConfigRequest>();
+            assert!(!sent.is_empty());
+            for request in &sent {
+                let presentable = request.caller_presentable();
+                assert_eq!(
+                    presentable.map(|p| p.can_launch),
+                    Some(at_terminal),
+                    "at a terminal: {at_terminal}"
+                );
+            }
+        }
+    }
+
+    // Off a terminal the preview carries no launch, so no editor is run
+    // (an editor on no terminal hangs or garbles): the apply goes with no
+    // answer, and the daemon answers the preview again, applying nothing.
+    #[test]
+    fn test_an_edit_need_with_no_launch_runs_no_editor_and_sends_no_answer() {
+        let asks = Asks::answering(vec![Box::new(previewed_edit(None))], None).off_terminal();
+        go_served(&["config", "edit"], TEXT, BARE, &Project, Some(&asks));
+        assert!(asks.requests::<v1::Edit>().is_empty(), "no editor launched");
+        let sent = asks.requests::<v1::EditConfigRequest>();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[1].answers.is_empty());
     }
 }

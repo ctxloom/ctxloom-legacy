@@ -129,6 +129,11 @@ pub trait Served {
     /// it left. A need with no launch cannot be presented here.
     fn edit_document(&self, edit: &v1::Edit) -> Result<String, Failure>;
 
+    /// Whether this command is at a terminal: its standard input and output
+    /// are one (as it asks a person), or a test stands one in. An editor
+    /// needs the controlling terminal, so this is what `can_launch` says.
+    fn at_terminal(&self) -> bool;
+
     /// A write's Confirm need presented (step 10b U3): `question` asked of
     /// the person at this command's terminal, `[y/N]`; none when there is
     /// no terminal to ask at (the preview is then printed and nothing is
@@ -291,14 +296,14 @@ impl Context<'_> {
     }
 
     /// What this command can present of a need (step 10b U3): it launches
-    /// the editor, and asks nothing else here. Off a terminal too: an
-    /// editor run off one (a script's) is how the spec's editing scenarios
-    /// edit (the owner's 2026-11-18 ruling to say it only at a terminal is
-    /// escalated against them).
+    /// the editor, and asks nothing else here, and only at a terminal (the
+    /// Caller ruling, kept 2026-11-19: an editor needs the controlling
+    /// terminal, [`Served::at_terminal`]). Off one the preview carries no
+    /// launch and no editor is run (`item::edit_answers`).
     pub(crate) fn presentable(&self) -> Option<v1::Presentable> {
         Some(v1::Presentable {
             can_ask: false,
-            can_launch: true,
+            can_launch: self.served.at_terminal(),
         })
     }
 
