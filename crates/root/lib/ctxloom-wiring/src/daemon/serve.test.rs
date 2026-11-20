@@ -729,3 +729,63 @@ fn a_terminate_listener_the_exit_cut_has_let_go_of_what_it_held_when_the_exit_go
         core.close().await.expect("the store closes");
     });
 }
+
+/// Recurse `depth` frames of about a kilobyte each, answering `depth`.
+#[inline(never)]
+fn deep(depth: usize) -> usize {
+    let frame = std::hint::black_box([depth as u8; 1024]);
+    if depth == 0 {
+        0
+    } else {
+        deep(depth - 1) + 1 + usize::from(frame[1] / 255 > 1)
+    }
+}
+
+// The daemon serves on the runtime `build(workers())` makes: its workers
+// (never fewer than the minimum) are what keep messages flowing beside the
+// turns parked, and its blocking pool has the daemon's stack, which a deep
+// request needs (owner, 2026-11-19 evening). Seen from inside the served
+// runtime, at the daemon's own "serving" line.
+#[test]
+fn the_daemon_serves_on_a_runtime_of_its_workers() {
+    let root = fixtures::root();
+    let home = root.root().join("home");
+    fixtures::mkdirs(&home);
+    let temp = root.root().join("tmp");
+    fixtures::mkdirs(&temp);
+    let home_text = home.display().to_string();
+    let place = super::Place {
+        stamp: "v0.0.0-test".to_string(),
+        home: home.clone(),
+        instance_lock: root.root().join("instance.lock"),
+        temp,
+        os: std::env::consts::OS.to_string(),
+        user_home: None,
+        engines: Vec::new(),
+        env: Arc::new(process_env::EnvSnapshot::of([("HOME", home_text.as_str())])),
+    };
+    let pace = super::Pace {
+        idle: Duration::from_millis(300),
+        poll: Duration::from_millis(20),
+        hand_over: Duration::from_secs(1),
+    };
+    let seen: Arc<Mutex<Vec<(usize, usize)>>> = Arc::default();
+    let log = Arc::clone(&seen);
+    let say: Box<dyn FnMut(&str) + Send> = Box::new(move |line: &str| {
+        if line.starts_with("serving at ") {
+            let runtime = tokio::runtime::Handle::current();
+            let depth = 6 * 1024;
+            let (done, deeply) = std::sync::mpsc::channel();
+            runtime.spawn_blocking(move || done.send(deep(depth)).unwrap());
+            let deeply = deeply.recv_timeout(Duration::from_secs(60)).unwrap();
+            log.lock()
+                .unwrap()
+                .push((runtime.metrics().num_workers(), deeply));
+        }
+    });
+    super::serve(fixtures::fs(), place, pace, say).expect("served to its idle end");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [(crate::daemon::runtime::workers(), 6 * 1024)]
+    );
+}
