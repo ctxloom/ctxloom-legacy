@@ -195,6 +195,8 @@ where
     )
     .with_locks(Arc::clone(&run_locks))
     .with_workspaces(workspaces)
+    // A turn's wait parks a blocking thread, never an async worker.
+    .with_parks(Arc::new(crate::daemon::runtime::BlockingParks))
     // Each command measured against this platform's command line before
     // it is spawned (a terminal session's opening prompt is on it).
     .on_os(wiring.os_name());

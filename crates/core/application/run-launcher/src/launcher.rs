@@ -150,6 +150,10 @@ pub struct Launcher<E: Edge, L: RunnerLauncher, R: SessionRecords> {
     /// Where a worktree is made; none: a run asking for one works in the
     /// project, and says so.
     workspaces: Option<Arc<dyn isolation_ports::Workspaces + Send + Sync>>,
+    /// Where a turn's end is waited for (owner, 2026-11-19: on a thread
+    /// parked for it, never an async worker); none: on the calling thread,
+    /// which only a test without a runtime of workers should do.
+    parks: Option<Arc<dyn run_ports::Parks>>,
 }
 
 impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
@@ -173,6 +177,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
             pending: catch_up(),
             locks: None,
             workspaces: None,
+            parks: None,
         }
     }
 
@@ -184,6 +189,24 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
     ) -> Self {
         self.workspaces = Some(workspaces);
         self
+    }
+
+    /// The launcher, waiting for each command's end where `parks` says
+    /// ([`run_ports::Parks`]): the composition root's, a blocking thread.
+    pub fn with_parks(mut self, parks: Arc<dyn run_ports::Parks>) -> Self {
+        self.parks = Some(parks);
+        self
+    }
+
+    /// The command's end, waited for where [`Self::with_parks`] said.
+    async fn park(
+        &self,
+        running: Box<dyn run_ports::Running>,
+    ) -> Result<run_ports::TurnOutput, run_ports::LaunchFailure> {
+        match &self.parks {
+            Some(parks) => parks.park(running).await,
+            None => running.finish(),
+        }
     }
 
     /// The launcher, probing `locks` for the owners of other processes' runs:
@@ -341,7 +364,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         // Started: the run's own lock has done its work (ruling 92).
         self.orders.release(&launch.session, launch.incarnation);
         self.record(&who, turn_started()).await?;
-        let output = match running.finish() {
+        let output = match self.park(running).await {
             Ok(output) => output,
             Err(failure) => return self.never_started(&who, failure, done).await,
         };
@@ -425,7 +448,7 @@ impl<E: Edge, L: RunnerLauncher, R: SessionRecords> Launcher<E, L, R> {
         self.record(who, runner_started(order, cwd, running.pid()))
             .await?;
         self.orders.release(&who_session(who), who.incarnation);
-        let output = match running.finish() {
+        let output = match self.park(running).await {
             Ok(output) => output,
             Err(failure) => return self.never_started(who, failure, done).await,
         };
