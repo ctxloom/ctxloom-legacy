@@ -1246,6 +1246,13 @@ scopes return there; angzarr's `Gate`/`Allowlist`/`Principal` seam and
 environment, so it can write any session.
 The run is driven on a multi-thread runtime (`ctxloom-wiring`'s `run_runtime`,
 one worker), because `Running::finish` blocks the driving thread.
+A turn's wait PARKS a thread of the blocking pool and never an async worker
+(owner, 2026-11-19): the launcher waits through `run_ports::Parks`
+(`Launcher::with_parks`; the wiring's `BlockingParks`, `daemon/runtime.rs`),
+`finish` itself staying blocking. The parked threads need no cap of their
+own: a runner runs one agent and an agent has one turn at a time. A steer
+reaches a hosted child through its `ChildControl` (a lock and a write to its
+stdin), not through the thread waiting on its turn.
 No run serves an endpoint of its own (slice 4 U7, owner ruling s4-Q3): the
 per-run `HookListener`, its certificate's mint, its `HookGate`, the run
 use case's `serve` (with `run_ports`' `HookServer` and `Serving`, and
@@ -2371,7 +2378,9 @@ when the one it spawned exited first, `Unreached::Exited`,
 where the spawned daemon's stderr goes, so a stack overflow says itself;
 CI on Windows, 2026-11-19). `daemon serve` serves on a thread of its own
 with a 16 MiB stack (the wiring's `DAEMON_STACK`; Windows gives the main
-thread 1 MiB), and logs every panic of its process as `the daemon
+thread 1 MiB; and every daemon runtime thread, the blocking pool's too,
+has it: `daemon::runtime::build`, with at least four workers and one per
+CPU), and logs every panic of its process as `the daemon
 panicked: ...`; under test-support `CTXLOOM_TEST_DAEMON_START=panic|
 stack:<MiB>` makes its start panic or use that much stack;
 another home's or a busy other version's is `Unreached::Declined` (20).
@@ -4847,7 +4856,20 @@ exits with codes of its own, never nextest's passed through (nextest's 102
 is "cargo metadata failed"): 0 passed, 100 a test failed, 101 not built, 120
 a doc test failed, 121 nextest failed otherwise (`nextest exited <code>` in
 the log); 100 and 120 are red tests, 101 and 121 are refused on every
-branch (`scripts/tests-exit.selftest.sh`).
+branch (`scripts/tests-exit.selftest.sh`). `test-staged` runs
+`_tests-checked`, which after a 100 or 120 asks `gates/red-sanity.sh` (owner,
+2026-11-19, R0 and R1) whether the red is tests' or the environment's, and
+exits 122 (refused on every branch, never red; not 121, which is the
+runner's) when it is the environment's: R0, the staged worktree, its target
+directory or a program the setup script named (`CTXLOOM_TEST_BINARY`,
+`CTXLOOM_TEST_COMPANION_STUB`, listed in the target directory's
+`nextest-binaries.list`) is gone after the run; R1, over 100 failures, half
+or more of the run, in packages that have a `*.test.rs` at HEAD (a red-first
+new crate is exempt; an unreadable Summary or a failure in no package is
+refused). Accepted: a deliberate commit breaking over 100 existing tests at
+once is refused, and a gross but sub-threshold break (101 of 5,000) passes
+the commit gate for the land ratchet to catch
+(`scripts/red-commit-sanity.selftest.sh`).
 
 The feature runner is ONE TEST PER FEATURE FILE (2026-11-18, superseding
 the clusters of the owner's ruling of 2026-11-14, whose

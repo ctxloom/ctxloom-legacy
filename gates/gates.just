@@ -414,7 +414,7 @@ _test-affected scope:
     if [ '{{scope}}' != dependents ]; then
         mapfile -t packages < <(printf '%s\n' "${!selected[@]}" | sort)
         exec just --justfile "$root/justfile" _run test-staged "changed: ${changed% }$narrowed" tests \
-            just --justfile "$root/justfile" _tests ${narrow[@]+"${narrow[@]}"} "${packages[@]}"
+            just --justfile "$root/justfile" _tests-checked ${narrow[@]+"${narrow[@]}"} "${packages[@]}"
     fi
     # Dependents, transitively: every workspace crate depending (normal, dev or
     # build) on a selected one is selected too, until nothing changes.
@@ -434,7 +434,7 @@ _test-affected scope:
     done
     mapfile -t packages < <(printf '%s\n' "${!selected[@]}" | sort)
     exec just --justfile "$root/justfile" _run test-staged "changed: ${changed% }; with dependents: ${packages[*]}$narrowed" tests \
-        just --justfile "$root/justfile" _tests ${narrow[@]+"${narrow[@]}"} "${packages[@]}"
+        just --justfile "$root/justfile" _tests-checked ${narrow[@]+"${narrow[@]}"} "${packages[@]}"
 
 # The test run of `test` and `test-staged`: cargo-nextest over the packages
 # named (or --workspace), held to the filterset of a leading
@@ -453,6 +453,8 @@ _test-affected scope:
 #   120  a doc test failed (once every other test passed);
 #   121  nextest failed some other way (any other code, a signal included),
 #        named in the log on a line `nextest exited <code>`.
+# (`test-staged` runs `_tests-checked`, which adds 122, gates/red-sanity.sh's
+# refusal of red tests that are an environment's failure.)
 # 100 and 120 are red tests, which `test-commit` allows off the default
 # branch; 101 and 121 are not. Its self-test is scripts/tests-exit.selftest.sh.
 # NEXTEST_PROFILE, when set, is the nextest profile (nextest reads it itself;
@@ -494,6 +496,27 @@ _tests +packages:
         0|100|101|120|121) exit "$rc" ;;
         *) echo "the capped test run exited $rc: not a test failure"; exit 121 ;;
     esac
+
+# `_tests`, then, when it exits 100 or 120 (red tests), gates/red-sanity.sh's
+# rule on its output, inside the tree it ran in: a run whose staged worktree,
+# target directory or test programs are gone (R0), or in which over 100 tests
+# of packages that had tests at HEAD failed, half or more of them (R1), is
+# not red tests but a broken environment, and exits 122, which `test-commit`
+# refuses on every branch. `test-staged` runs this, `test` runs `_tests`.
+[positional-arguments]
+[no-exit-message]
+_tests-checked +packages:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    root='{{gates_root}}'
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    just --justfile "$root/justfile" _tests "$@" 2>&1 | tee "$tmp"
+    rc=${PIPESTATUS[0]}
+    case "$rc" in
+        100|120) "$root/gates/red-sanity.sh" "$tmp" "$rc" || exit $? ;;
+    esac
+    exit "$rc"
 
 # `_tests`' run, inside its memory cap.
 [positional-arguments]
@@ -956,7 +979,7 @@ _test-workspace gate scope *narrow:
     gate=$1 scope=$2
     shift 2
     exec '{{gates_root}}/gates/tests-lock.sh' "$gate" just --justfile '{{gates_root}}/justfile' _run "$gate" "$scope" tests \
-        just --justfile '{{gates_root}}/justfile' _tests "$@" --workspace
+        just --justfile '{{gates_root}}/justfile' _tests"$([ "$gate" != test-staged ] || echo -checked)" "$@" --workspace
 
 # lefthook's post-merge step. A fast-forward runs no hook git has, so no
 # hook can refuse one; this checks the default branch just after one. When a
@@ -1099,6 +1122,7 @@ _extract-tests log rc:
         101) echo "the tests did not build ($(grep -cE '^[^ ]+:[0-9]+:[0-9]+: error' "$1" || true) errors)" ;;
         120) echo "doc tests failed: $(grep -m1 -E '^test result: FAILED' "$1" || echo 'see the log')" ;;
         121) echo "the test runner failed, not a test: $(grep -m1 -oE '^nextest exited [0-9]+' "$1" || echo 'see the log')" ;;
+        122) echo "not red tests, the environment's failure: $(grep -m1 -E '^red-sanity: ' "$1" | sed 's/^red-sanity: //' || echo 'see the log')" ;;
         *) echo "the test run failed (exit $2)" ;;
     esac
     # The failing tests' names first (never a passing one), then their output;
