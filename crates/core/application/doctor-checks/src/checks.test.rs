@@ -150,6 +150,15 @@ fn deps_want_git_and_an_identity() {
     assert!(checks::deps(false, true).detail.contains("not on the PATH"));
     assert_eq!(checks::deps(true, false).status, Status::Warn);
     assert!(checks::deps(true, false).detail.contains("has no identity"));
+    // What the identity is for: the library no longer commits, but a
+    // `bundle push` still does, and the warning names that, not "a commit".
+    let warned = checks::deps(true, false);
+    assert!(warned.detail.contains("bundle push"), "{}", warned.detail);
+    assert!(
+        !warned.detail.contains("a commit would fail"),
+        "{}",
+        warned.detail
+    );
     assert_eq!(checks::deps(true, true).status, Status::Ok);
 }
 

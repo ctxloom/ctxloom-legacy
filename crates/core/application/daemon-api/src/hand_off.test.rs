@@ -550,3 +550,31 @@ async fn a_hand_off_into_a_project_nobody_registered_is_not_found() {
     assert_eq!(missing.name, "projects/far-away-heron");
     assert!(kept.written.lock().unwrap().is_empty());
 }
+
+// Review 4: a hand-off's environments may hold credentials; their Debug
+// names the variables and shows no value.
+#[test]
+fn test_a_hand_off_s_debug_names_its_variables_and_shows_no_value() {
+    let env = BTreeMap::from([("TOKEN".to_string(), "sk-not-shown".to_string())]); // gitleaks:allow
+    let launcher = BTreeMap::from([("SETTINGS".to_string(), "hidden-too".to_string())]);
+    let handing = HandingOff {
+        root: "/work/demo".to_string(),
+        trusted: true,
+        child: CHILD.to_string(),
+        engine: "claude-code".to_string(),
+        agent: String::new(),
+        env: env.clone(),
+    };
+    let content = HandOffContent {
+        env,
+        launcher,
+        ..HandOffContent::default()
+    };
+    for shown in [format!("{handing:?}"), format!("{content:?}")] {
+        assert!(shown.contains("TOKEN"), "{shown}");
+        assert!(!shown.contains("sk-not-shown"), "{shown}");
+        assert!(!shown.contains("hidden-too"), "{shown}");
+    }
+    assert!(format!("{handing:?}").contains("/work/demo"));
+    assert!(format!("{content:?}").contains("SETTINGS"));
+}

@@ -8,9 +8,10 @@
 #   - the home lockfile: ctxloom's own loadout carries none of its text, the
 #     `isolation-axes` fragment included (library::write::loadout, D24), so
 #     `-f isolation-axes` resolves nothing; and an unreadable lock is
-#     `deps-lock-unreadable`, never "failed to parse lockfile";
-#   - the refused run's record: a refused run leaves nothing, no session
-#     minted (owner ruling 73g), so no record says why it ended.
+#     `deps-lock-unreadable`, never "failed to parse lockfile".
+#   Retired (owner, 2026-11-19, ruling 73g): the scenario "A run refused by a
+#   fatal startup finding records why its session ended": a refused run leaves
+#   no session, and run.feature covers it.
 
 @pending
 Feature: What a start writes, and whose pins it reads
@@ -158,28 +159,3 @@ Feature: What a start writes, and whose pins it reads
       When I run "ctxloom run --dry-run --agent session-owner -f isolation-axes hello"
       Then the startup aborts on a fatal bundle finding
       And the output contains "failed to parse lockfile"
-
-  # A run refused before its engine launches still leaves the session the
-  # resolver minted. The terminal output that said why is gone with the
-  # terminal, so the session's own record must carry the reason: without it the
-  # session is a directory and two timestamps. The assertion is on the
-  # RECORD's bytes (class, exit status and the printed finding), because a
-  # run that exited 21 and wrote nothing is this project's characteristic bug.
-  @end-reason
-  Scenario: A run refused by a fatal startup finding records why its session ended
-    # substitution: exit codes per rulings 149, 152, 153 (21 fatal findings; Go's 3).
-    # changed: step 10, G1: the project is in git, so the startup gate is what refuses it.
-    Given an empty project directory that is a git repository
-    And the home config declares the agent "session-owner" bound to the mock engine
-    And the project already has the file ".ctxloom/lock.yaml":
-      """
-      schema_version: 2
-      bundles:
-        broken:
-          sha: "abc
-          pinned: true
-      """
-    When I run "ctxloom run --one-shot --agent session-owner -f isolation-axes hello"
-    Then the startup aborts on a fatal bundle finding
-    And the minted session's record says it ended before launch as "fatal-startup" with exit 21
-    And the session record's findings include "failed to parse lockfile"

@@ -104,6 +104,9 @@ fn json(out: &Path, set: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         .enable_type_names()
         .btree_map(["."])
         .compile_well_known_types()
+        // A variable's value may be a credential: its Debug is written by
+        // hand (`lib.rs`), the name alone.
+        .skip_debug([format!(".{PACKAGE}.EnvVar")])
         .out_dir(&dir)
         .compile_fds(fds)?;
     pbjson_build::Builder::new()

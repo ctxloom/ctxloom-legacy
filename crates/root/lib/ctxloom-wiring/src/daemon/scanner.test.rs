@@ -108,3 +108,77 @@ fn an_edit_is_seen_and_forget_drops_the_memo() {
     scanner.forget();
     assert!(scanner.memo.lock().unwrap().is_empty());
 }
+
+// Review 2: a link is never followed. A cloned repository's
+// `bundles/v2/x -> /` must not hash the disk into the journal, a link loop
+// must not fail every read (ELOOP), and a link to a file, or one above a
+// library path, reads as nothing. The write side refuses a path through a
+// link; a read skips it, so one hostile entry cannot refuse the rest.
+#[test]
+fn a_scan_skips_every_link_and_still_lists_the_rest() {
+    if !fixtures::runs_scripts() {
+        return;
+    }
+    let root = fixtures::root();
+    let fs = fixtures::fs();
+    let tree = root.root().join(".ctxloom");
+    let outside = root.root().join("outside");
+    fixtures::mkdirs(&outside);
+    fixtures::put_mode(outside.join("secret.md"), "not the library\n", 0o644);
+    fixtures::put_mode(outside.join("config.yaml"), "outside config\n", 0o644);
+    let bundles = tree.join("content/bundles/v2");
+    fixtures::mkdirs(bundles.join("demo"));
+    fixtures::put_mode(bundles.join("demo/bundle.yaml"), "name: demo\n", 0o644);
+    // A link to a directory outside the tree, one to the root, and a loop.
+    fs.symlink_dir(&outside, &bundles.join("escape")).unwrap();
+    fs.symlink_dir(std::path::Path::new("/"), &bundles.join("everything"))
+        .unwrap();
+    fs.symlink_dir(&bundles, &bundles.join("demo/loop"))
+        .unwrap();
+    // A link to a file.
+    fs.symlink_dir(&outside.join("config.yaml"), &tree.join("config.yaml"))
+        .unwrap();
+    let scanner = TreeScanner::new(fs);
+    let dir = tree.display().to_string();
+    let found = scanner.scan(&dir).unwrap();
+    assert_eq!(
+        found.keys().collect::<Vec<_>>(),
+        ["content/bundles/v2/demo/bundle.yaml"],
+        "only the real file"
+    );
+    let ids = scanner
+        .content_ids(
+            &dir,
+            &["config.yaml", "content/bundles/v2/demo/bundle.yaml"],
+        )
+        .unwrap();
+    assert_eq!(
+        ids.keys().collect::<Vec<_>>(),
+        ["content/bundles/v2/demo/bundle.yaml"],
+        "a link is no file"
+    );
+}
+
+// A link ABOVE a library path (`content -> elsewhere`) is a link in the
+// path: nothing below it is read.
+#[test]
+fn a_scan_reads_nothing_through_a_link_above_a_library_path() {
+    if !fixtures::runs_scripts() {
+        return;
+    }
+    let root = fixtures::root();
+    let fs = fixtures::fs();
+    let tree = root.root().join(".ctxloom");
+    let outside = root.root().join("outside");
+    fixtures::mkdirs(outside.join("bundles/v2/evil"));
+    fixtures::put_mode(outside.join("bundles/v2/evil/bundle.yaml"), "x\n", 0o644);
+    fixtures::mkdirs(&tree);
+    fs.symlink_dir(&outside, &tree.join("content")).unwrap();
+    let scanner = TreeScanner::new(fs);
+    let dir = tree.display().to_string();
+    assert!(scanner.scan(&dir).unwrap().is_empty());
+    assert!(scanner
+        .content_ids(&dir, &["content/bundles/v2/evil/bundle.yaml"])
+        .unwrap()
+        .is_empty());
+}

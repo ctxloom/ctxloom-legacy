@@ -154,11 +154,7 @@ impl Common {
             .or_else(|| super::host_var("PATH"))
             .unwrap_or_default();
         let dirs = files::search_path(&path);
-        let real = dirs
-            .iter()
-            .map(|dir| dir.join("git"))
-            .find(|git| files::exists(git))
-            .expect("a git on the PATH");
+        let real = real_git(&dirs, |git| files::exists(git)).expect("a git on the PATH");
         let dir = self.recording_git_dir();
         let log = dir.join("calls.log");
         files::put_program(
@@ -411,6 +407,13 @@ pub(crate) fn doc(step: &Step) -> String {
         .expect("a docstring")
         .trim()
         .to_string()
+}
+
+/// The first `git` (or Windows' `git.exe`) of `dirs` that `exists`.
+fn real_git(dirs: &[PathBuf], exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    dirs.iter()
+        .flat_map(|dir| ["git", "git.exe"].map(|name| dir.join(name)))
+        .find(|git| exists(git))
 }
 
 /// The recording git's log, `<parent pid> <args>` a line, as `(pid, args)`;
@@ -1251,6 +1254,28 @@ pub(crate) fn world_of(text: &str) -> Result<&str, String> {
             "`# world:` must be one of base, surfaces, isolation, once: {other:?}"
         )),
     }
+}
+
+/// The real git is found by either spelling, the first directory holding
+/// one: Windows' is `git.exe` (found there, the recording git step reaches
+/// `put_program`, whose unsupported-host panic skips the scenario).
+#[test]
+fn the_real_git_is_found_as_git_or_as_git_exe() {
+    let dirs = [
+        PathBuf::from("/a"),
+        PathBuf::from("/b"),
+        PathBuf::from("/c"),
+    ];
+    // Paths are built as the platform joins them (Windows' separator).
+    let at = |dir: &str, name: &str| PathBuf::from(dir).join(name);
+    let found = |holding: &[PathBuf]| real_git(&dirs, |path| holding.iter().any(|h| h == path));
+    assert_eq!(found(&[at("/b", "git")]), Some(at("/b", "git")));
+    assert_eq!(found(&[at("/b", "git.exe")]), Some(at("/b", "git.exe")));
+    assert_eq!(
+        found(&[at("/c", "git"), at("/b", "git.exe")]),
+        Some(at("/b", "git.exe"))
+    );
+    assert_eq!(found(&[]), None);
 }
 
 /// Only `put_program`'s unsupported-host panic skips a scenario: any other

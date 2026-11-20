@@ -28,6 +28,8 @@ struct World {
     samples: Mutex<Samples>,
     /// How many books it was handed.
     handled: Mutex<u32>,
+    /// Whether it refuses every book (a store that has failed).
+    refusing: std::sync::atomic::AtomicBool,
 }
 
 impl World {
@@ -44,6 +46,7 @@ impl World {
             store: MemoryStore::default(),
             samples: Mutex::new(Samples::starting_at(1_000)),
             handled: Mutex::new(0),
+            refusing: std::sync::atomic::AtomicBool::new(false),
         })
     }
 }
@@ -55,6 +58,13 @@ impl Edge for World {
 
     async fn handle(&self, book: CommandBook) -> Result<Answered, Failure<Rejected>> {
         *self.handled.lock().unwrap() += 1;
+        if self.refusing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Failure::Kernel(angzarr_embedded::KernelError::Malformed(
+                angzarr_embedded::Malformed::UnknownDomain {
+                    domain: "stand-in".to_string(),
+                },
+            )));
+        }
         let sampled: Sampled = self.samples.lock().unwrap().next_sample();
         let kernel = Kernel::new(&self.registry).on_retryable(OnRetryable {
             max_retries: 0,
@@ -680,4 +690,143 @@ async fn test_a_hook_trusts_a_scan_within_its_window_and_forget_drops_it() {
             .unwrap();
     }
     assert_eq!(scans(&unclocked), 2);
+}
+
+// Review 6: a tree counts as scanned only once its listing is recorded. A
+// record that failed leaves it unscanned, so the next hook observes it
+// again instead of trusting it for the window with nothing recorded.
+#[tokio::test(flavor = "current_thread")]
+async fn test_a_failed_record_leaves_the_tree_unscanned_for_the_next_hook() {
+    use std::sync::atomic::Ordering;
+    let under = under();
+    let observations = Observations::new(
+        Arc::clone(&under.world),
+        under.checkouts.clone(),
+        Arc::clone(&under.harps) as Arc<dyn CheckoutHarps>,
+    )
+    .purging(Arc::new(|| 1_000));
+    let hooked = callers(|| Tree::default().file("config.yaml", "c0"), None);
+    let project = || Some((ProjectName::new("calm-otter").unwrap(), "/work/demo"));
+    under.world.refusing.store(true, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap_err();
+    under.world.refusing.store(false, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(
+        *hooked.scans.lock().unwrap(),
+        2,
+        "the failed one was not trusted"
+    );
+    assert_eq!(
+        events(&under.world).await.len(),
+        1,
+        "and the retry recorded it"
+    );
+}
+
+// Review 5: a clock set back makes a scan look to be from the future; that
+// is never within the window, so the next hook scans (hand edits are seen).
+#[tokio::test(flavor = "current_thread")]
+async fn test_a_clock_set_back_does_not_keep_the_trust_window_true() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let now = Arc::new(AtomicI64::new(100_000));
+    let clock = Arc::clone(&now);
+    let under = under();
+    let observations = Observations::new(
+        Arc::clone(&under.world),
+        under.checkouts.clone(),
+        Arc::clone(&under.harps) as Arc<dyn CheckoutHarps>,
+    )
+    .purging(Arc::new(move || clock.load(Ordering::SeqCst)));
+    let hooked = callers(Tree::default, None);
+    let project = || Some((ProjectName::new("calm-otter").unwrap(), "/work/demo"));
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(*hooked.scans.lock().unwrap(), 1);
+    now.store(50_000, Ordering::SeqCst);
+    observations
+        .observe_trees_trusting(&hooked, project(), 300)
+        .await
+        .unwrap();
+    assert_eq!(
+        *hooked.scans.lock().unwrap(),
+        2,
+        "a scan from the future is not trusted"
+    );
+}
+
+/// The observations of `with_a_slot`'s kind, their clock a shared cell the
+/// test moves: `start` days after the slot's time.
+async fn with_a_slot_on_a_moving_clock(
+    start_hours: i64,
+) -> (
+    Observations<World>,
+    Arc<Purges>,
+    Arc<std::sync::atomic::AtomicI64>,
+    i64,
+) {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let (fixed, purges, world, checkouts) = with_a_slot(0).await;
+    let trashed_at = fixed.held(&tree()).trashed[REMOVAL].trashed_at;
+    let now = Arc::new(AtomicI64::new(trashed_at + start_hours * 3_600));
+    let clock = Arc::clone(&now);
+    let observations = Observations::new(
+        Arc::clone(&world),
+        checkouts,
+        Arc::new(Harps::default()) as Arc<dyn CheckoutHarps>,
+    )
+    .sweeping(Arc::clone(&purges) as Arc<dyn ctxloom_ports::Operations>)
+    .purging(Arc::new(move || clock.load(Ordering::SeqCst)));
+    (observations, purges, now, trashed_at)
+}
+
+// Review 5 (the one that matters: a loss): a clock set FORWARD must not
+// purge a kept slot early. A gap between two of the daemon's own checks
+// longer than an hour is a jump (or a suspension); the whole gap is taken
+// out of every later reading, so the slot is purged only after seven days
+// of the daemon's own continuous time.
+#[tokio::test(flavor = "current_thread")]
+async fn test_a_clock_set_forward_does_not_purge_a_slot_early() {
+    use std::sync::atomic::Ordering;
+    let (observations, purges, now, trashed_at) = with_a_slot_on_a_moving_clock(24).await;
+    let git = Tree::default();
+    observations.observe(&git, &site()).await.unwrap();
+    assert!(purges.0.lock().unwrap().is_empty(), "one day old");
+    // Set forward eight days: by the clock the slot is nine days old.
+    now.store(trashed_at + 9 * 86_400, Ordering::SeqCst);
+    observations.observe(&git, &site()).await.unwrap();
+    assert!(purges.0.lock().unwrap().is_empty(), "a jump purges nothing");
+    // The clock then runs on hour by hour: the slot's age is the daemon's
+    // own one day plus what has run since, so the seventh day is 144 hours on.
+    for _ in 0..143 {
+        now.fetch_add(3_600, Ordering::SeqCst);
+        observations.observe(&git, &site()).await.unwrap();
+    }
+    assert!(purges.0.lock().unwrap().is_empty(), "six days and 23 hours");
+    now.fetch_add(3_600, Ordering::SeqCst);
+    observations.observe(&git, &site()).await.unwrap();
+    assert_eq!(purges.0.lock().unwrap().len(), 1, "seven days: purged");
+}
+
+// A clock set back purges nothing either, and a clock then restored is no
+// jump forward of its own: the slot is not early for it.
+#[tokio::test(flavor = "current_thread")]
+async fn test_a_clock_set_back_and_restored_does_not_purge_a_slot_early() {
+    use std::sync::atomic::Ordering;
+    let (observations, purges, now, trashed_at) = with_a_slot_on_a_moving_clock(24).await;
+    let git = Tree::default();
+    observations.observe(&git, &site()).await.unwrap();
+    now.store(trashed_at, Ordering::SeqCst);
+    observations.observe(&git, &site()).await.unwrap();
+    assert!(purges.0.lock().unwrap().is_empty());
+    now.store(trashed_at + 25 * 3_600, Ordering::SeqCst);
+    observations.observe(&git, &site()).await.unwrap();
+    assert!(purges.0.lock().unwrap().is_empty(), "a day and an hour old");
 }

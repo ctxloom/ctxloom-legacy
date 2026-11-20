@@ -482,6 +482,31 @@ impl<D: Daemons> Caller<D> {
         }))
     }
 
+    /// `called`, a refusal with its requester told: the coordinator names a
+    /// refused command's refusal by its type alone (the status carries no
+    /// object), so a `NotOwner` arrives with no requester and reads
+    /// "session  is not this session's owner". The requester is this caller
+    /// itself, whose id it knows. Any other call is as it came.
+    fn naming_requester(&self, called: Called) -> Called {
+        let (Called::Refused { code, refusal }, Some(me)) = (&called, &self.me) else {
+            return called;
+        };
+        if !refusal.type_url.ends_with("/ctxloom.sessions.v1.NotOwner") || !refusal.value.is_empty()
+        {
+            return called;
+        }
+        let named = sessions_proto::v1::NotOwner {
+            requester: me.uid(),
+        };
+        match angzarr_embedded::Any::from_msg(&named) {
+            Ok(refusal) => Called::Refused {
+                code: *code,
+                refusal,
+            },
+            Err(_) => called,
+        }
+    }
+
     /// This caller's project, as the daemon has it.
     async fn project_of(&self, api: &D::Api) -> Result<v1::Project, Called> {
         api.get_project(v1::GetProjectRequest {
@@ -509,7 +534,8 @@ impl<D: Daemons> Caller<D> {
         let book = sessions::keyed_book(cover, command, key);
         let synced = api
             .handle_sync(book, vec![SESSION_INDEX.to_string()])
-            .await?;
+            .await
+            .map_err(|called| self.naming_requester(called))?;
         let session = match synced.projection::<v1::Session>(SESSION_INDEX) {
             Some(session) => session,
             None => self.read(api, target).await?,

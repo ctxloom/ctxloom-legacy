@@ -77,14 +77,53 @@ impl TreeOperations {
         Ok(join_rel(tree, rel))
     }
 
+    /// `rel` (a path below `tree`, `state/staging`) refused when `state/` or
+    /// any step of it is a link (review 9): a cloned repository's
+    /// `state -> /elsewhere` would make ctxloom create and remove files
+    /// there. A step not there is fine; the last step is judged too.
+    fn state_clear(&self, tree: &Path, rel: &str) -> Result<(), Failure> {
+        let mut here = tree.to_path_buf();
+        for part in rel.split('/') {
+            here.push(part);
+            match self.fs.symlink_metadata(&here) {
+                Ok(meta) if meta.kind == Kind::Symlink => {
+                    return Err(Box::new(ContentError::StateLink {
+                        path: here.display().to_string(),
+                    }))
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => break,
+                Err(e) => return Err(failed_at(ContentError::list_dir, &here, &e)),
+                Ok(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// `<tree>.staging` refused when it is a link (a first init's tree is
+    /// built there).
+    fn beside_clear(&self, tree: &Path) -> Result<(), Failure> {
+        let at = beside(tree);
+        match self.fs.symlink_metadata(&at) {
+            Ok(meta) if meta.kind == Kind::Symlink => Err(Box::new(ContentError::StateLink {
+                path: at.display().to_string(),
+            })),
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                Err(failed_at(ContentError::list_dir, &at, &e))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The request's own directory below `under` (its staging, its trash
-    /// slot), refused unless the id is one plain name.
-    fn of_request(tree: &Path, under: &str, request_id: &str) -> Result<PathBuf, Failure> {
+    /// slot), refused unless the id is one plain name and `under` goes
+    /// through no link.
+    fn of_request(&self, tree: &Path, under: &str, request_id: &str) -> Result<PathBuf, Failure> {
         if !is_plain_relative(request_id) || request_id.contains('/') {
             return Err(Box::new(ContentError::BadRequest {
                 request_id: request_id.to_string(),
             }));
         }
+        self.state_clear(tree, under)?;
         Ok(join_rel(tree, under).join(request_id))
     }
 
@@ -123,7 +162,7 @@ impl TreeOperations {
 
     /// A fresh staging for the request: an earlier try's dropped.
     fn staging(&self, tree: &Path, request_id: &str) -> Result<PathBuf, Failure> {
-        self.fresh(&Self::of_request(tree, STAGING_DIR, request_id)?)
+        self.fresh(&self.of_request(tree, STAGING_DIR, request_id)?)
     }
 
     /// `dir` removed when nothing is left in it (another request's staging
@@ -232,6 +271,7 @@ impl TreeOperations {
                     request_id: request_id.to_string(),
                 }));
             }
+            self.beside_clear(tree)?;
             let staging = self.fresh(&beside(tree).join(request_id))?;
             (tree.to_path_buf(), staging.clone(), staging)
         } else {
@@ -267,7 +307,7 @@ impl TreeOperations {
         at: &dyn Fn(Point),
     ) -> Result<Operated, Failure> {
         let source = self.inside(tree, path)?;
-        let slot = join_rel(&Self::of_request(tree, TRASH_DIR, request_id)?, path);
+        let slot = join_rel(&self.of_request(tree, TRASH_DIR, request_id)?, path);
         if !self.exists(&source)? {
             // Retried after its rename: what it took is in its slot.
             return Ok(if self.exists(&slot)? {
@@ -393,11 +433,11 @@ impl Operations for TreeOperations {
             }
             Operation::Trash { path } => self.trash(tree, request_id, path, at),
             Operation::Move { from, to, into } => {
-                Self::of_request(tree, TRASH_DIR, request_id)?;
+                self.of_request(tree, TRASH_DIR, request_id)?;
                 self.move_path(tree, (from, to), into.as_deref().map(Path::new))
             }
             Operation::Purge => {
-                self.purge(&Self::of_request(tree, TRASH_DIR, request_id)?)?;
+                self.purge(&self.of_request(tree, TRASH_DIR, request_id)?)?;
                 Ok(Operated::Done)
             }
             Operation::Outside {
@@ -415,12 +455,15 @@ impl Operations for TreeOperations {
     }
 
     fn sweep_staging(&self, tree: &str) -> Result<(), Failure> {
-        self.remove_all(&join_rel(Path::new(tree), STAGING_DIR))?;
-        self.remove_all(&beside(Path::new(tree)))
+        let tree = Path::new(tree);
+        self.state_clear(tree, STAGING_DIR)?;
+        self.beside_clear(tree)?;
+        self.remove_all(&join_rel(tree, STAGING_DIR))?;
+        self.remove_all(&beside(tree))
     }
 
     fn purge_slot(&self, tree: &str, request_id: &str) -> Result<(), Failure> {
-        self.purge(&Self::of_request(Path::new(tree), TRASH_DIR, request_id)?)
+        self.purge(&self.of_request(Path::new(tree), TRASH_DIR, request_id)?)
     }
 }
 

@@ -41,6 +41,10 @@ pub enum ContentError {
     /// A request id that is not one plain name (its staging and its trash
     /// slot are named by it).
     BadRequest { request_id: String },
+    /// A link where the tree's private working state lives (`state/`,
+    /// `state/staging`, `state/trash`, or the `<tree>.staging` beside it):
+    /// a write would create and remove files wherever it points.
+    StateLink { path: String },
 }
 
 impl ContentError {
@@ -87,6 +91,7 @@ impl Diagnostic for ContentError {
             ContentError::Rename { .. } => code!("rename"),
             ContentError::SyncDir { .. } => code!("sync-dir"),
             ContentError::BadRequest { .. } => code!("bad-request"),
+            ContentError::StateLink { .. } => code!("state-link"),
         }
     }
 
@@ -103,7 +108,9 @@ impl Diagnostic for ContentError {
                 ("ext_err_txt", detail.as_str().into()),
             ],
             ContentError::BadName { name } => vec![("name", name.as_str().into())],
-            ContentError::BadPath { path } => vec![("path", path.as_str().into())],
+            ContentError::BadPath { path } | ContentError::StateLink { path } => {
+                vec![("path", path.as_str().into())]
+            }
             ContentError::Rename { from, to, detail } => vec![
                 ("from", from.as_str().into()),
                 ("to", to.as_str().into()),
@@ -162,6 +169,9 @@ pub fn diagnostic_samples() -> Vec<Box<dyn Diagnostic>> {
         Box::new(ContentError::SyncDir { path, detail }),
         Box::new(ContentError::BadRequest {
             request_id: "../x".to_string(),
+        }),
+        Box::new(ContentError::StateLink {
+            path: "/p/.ctxloom/state".to_string(),
         }),
     ]
 }

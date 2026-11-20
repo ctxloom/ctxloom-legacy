@@ -109,3 +109,36 @@ fn test_a_document_is_the_value_itself_and_bytes_a_decimal_string() {
     };
     assert_eq!(json(&exported), serde_json::json!({"bytes": "4096"}));
 }
+
+// Review 4: the client's whole environment may hold a credential, so the
+// Debug of a variable, of the list and of a `Caller` carrying it names each
+// variable and shows no value (the convention of `run_ports::RedactedEnv`).
+#[test]
+fn test_a_callers_debug_names_its_variables_and_shows_no_value() {
+    let var = |name: &str, value: &str| v1::EnvVar {
+        name: name.to_string(),
+        value: value.to_string(),
+    };
+    let secret = v1::EnvVar {
+        name: "ANTHROPIC_API_KEY".to_string(),
+        value: "sk-not-shown".to_string(), // gitleaks:allow
+    };
+    let caller = v1::Caller {
+        cwd: "/work/demo".to_string(),
+        env: Some(v1::EnvVars {
+            vars: vec![secret.clone(), var("PATH", "/secret/bin")],
+        }),
+        ..v1::Caller::default()
+    };
+    for shown in [
+        format!("{secret:?}"),
+        format!("{:?}", caller.env),
+        format!("{caller:?}"),
+        format!("{caller:#?}"),
+    ] {
+        assert!(shown.contains("ANTHROPIC_API_KEY"), "{shown}");
+        assert!(!shown.contains("sk-not-shown"), "{shown}");
+        assert!(!shown.contains("/secret/bin"), "{shown}");
+    }
+    assert!(format!("{caller:?}").contains("/work/demo"));
+}

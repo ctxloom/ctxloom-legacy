@@ -816,7 +816,7 @@ fn two_sigterms_under_a_live_tui(home_removed: bool) {
     });
     let daemon = rig.daemon_pid().expect("a daemon serves");
     if home_removed {
-        files::remove_tree(rig.project.home().join(".ctxloom"));
+        files::remove_tree_settling(rig.project.home().join(".ctxloom"));
     }
     send(daemon, "-TERM");
     // The second once the first was heard, where its log can say so: two

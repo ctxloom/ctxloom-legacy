@@ -3,9 +3,13 @@
 # Ported from journeys/j001200_recall.feature (rev f36e8dfb2): the Rule on resuming a session
 # Ported from journeys/j002200_isolation.feature (rev f36e8dfb2): the last three Rules
 # NOT ported: the scenarios tagged @pending, each with its reason (the
-#   launch's findings in the agent's context, a resume folding in its
-#   conversation, the worktree's git exclude, the auth refusals, a run on the
-#   mock engine, the containers). Deleted (OD-29, owner 2026-11-13): the
+#   launch's findings in the agent's context, the untrusted-repository
+#   refusal, a run on the
+#   mock engine, the containers). Retired (owner, 2026-11-19; rulings 115,
+#   87a, Q1): the Rule "Resuming a session folds in its recorded conversation"
+#   (a resume is the engine's own session; the transcript is the session's
+#   events) and the Rule "A worktree run hides its per-agent config from the
+#   project's git" (checkouts live outside the project). Deleted (OD-29, owner 2026-11-13): the
 #   Rule "An opencode label runs opencode's own TUI on ctxloom's terminal"
 #   (its label, mail-drain and wake socket are dead terms). Plan override: clap's usage error says
 #   "unexpected argument" where cobra said "unknown flag"; the step maps one to
@@ -530,53 +534,6 @@ Feature: run — assembling a project's context and handing it to an engine
       And the refusal is "sessions-session-unknown"
       And no assistant was launched
 
-  # Superseded by ruling 115 above (resume is the engine's own session, not a
-  # context fold); kept pending as Go's design.
-  # Still pending (step 11): the behaviour differs. A resume is the engine's
-  # own session (`--resume <native id>`, owner ruling 115); nothing folds the
-  # recorded conversation into the assembled context, and no transcript file
-  # is on disk to stay untouched (ruling 87a: the transcript is the session's
-  # events).
-  @pending
-  Rule: Resuming a session folds in its recorded conversation, and leaves the record as it was
-
-    `run --session <harp>` reads the session's recorded conversation, the one
-    ctxloom keeps whatever engine held it, and folds it into the run's
-    context. The fixture's session carries one marker in its title and
-    another only in its conversation, so "found by its title" and "resumed
-    with its conversation" are told apart.
-
-    Scenario: Resuming the March session puts that conversation back in front of a model
-      # substitution: the journey's March fixture is a Given of the scenario, not a Background.
-      Given a design question everyone remembers deciding and nobody remembers why
-      When I run "ctxloom run --session amber-quiet-heron --dry-run -p default"
-      Then the assembled context carries the conversation she had in March
-
-    # A resume that consumed, truncated or rewrote what it read would fail the
-    # second person to ask. The record is read back by its bytes.
-    Scenario: Recalling a session does not consume it
-      # substitution: the journey's March fixture is a Given of the scenario, not a Background.
-      Given a design question everyone remembers deciding and nobody remembers why
-      When I run "ctxloom run --session amber-quiet-heron --dry-run -p default"
-      Then the canonical transcript she recalled from is still on disk, untouched
-
-  # Still pending (step 11): the behaviour differs. A session's checkouts are
-  # under ctxloom's home, outside the project (owner ruling 2026-11-12, Q1),
-  # so nothing writes a per-agent block into the project's .git/info/exclude;
-  # and its steps are the isolation World's.
-  @pending
-  Rule: A worktree run hides its per-agent config from the project's git
-
-    # A worktree run's per-agent config edits are kept out of the shared
-    # project tree through .git/info/exclude, not left as new files a
-    # developer could merge back by accident.
-    Scenario: A worktree run leaves the project tree clean
-      # substitution: the journey's Background is the scenario's first Given
-      Given Alice has a git-backed project with a mock agent
-      When Alice runs the mock agent under workspace "worktree" with prompt "cleanup-check"
-      Then none of the per-agent worktree config artifacts appear in the project's git status
-      And the shared git exclude file carries the ctxloom per-agent worktree config block
-
   # Pending (OD-48, containers): no run launches into a container yet (step 7).
   @pending
   Rule: Every gate that loses a requested container refuses the run, --degraded or not
@@ -652,16 +609,12 @@ Feature: run — assembling a project's context and handing it to an engine
         |            |
         | --degraded |
 
-  # Still pending (step 11): not built, and its steps are other Worlds'. The
-  # untrusted-repository refusal is not built; and a login session with no
-  # login is not refused: a child under `auth: login` asks for no variable,
-  # and a primary's missing login is said (`login_optional`), never refused,
-  # so nothing names "auth: token" (a ruling: refuse it, or redraft the
-  # scenario to the notice). The steps are the workspace and session-home
-  # Worlds' (`Alice has whatever credentials ...`, `Alice's agent declares
-  # session_home ...`, `Alice runs the isolated ...`); four are in none.
+  # Still pending (step 11): not built, and its steps are the workspace and
+  # session-home Worlds' (`Alice has whatever credentials ...`, `Alice's agent
+  # declares session_home ...`, `Alice runs the isolated ...`). The
+  # untrusted-repository refusal is not built.
   @pending
-  Rule: A run whose engine cannot authenticate, or cannot load its MCP servers, is refused before the engine starts
+  Rule: A run that cannot load its MCP servers is refused before the engine starts
 
     # session_home: host leaves claude's MCP servers in the project's own
     # .mcp.json, which claude loads only in a repository Alice trusted in her
@@ -675,18 +628,25 @@ Feature: run — assembling a project's context and handing it to an engine
       When Alice runs the isolated "claude-code" agent under workspace "none"
       Then the run is refused because an untrusted repository's session cannot load the project's MCP file
 
-    # A login session needs the login: with no claude login on the host, it
-    # is refused before any engine is spawned, naming what to do. The host and
-    # the container refuse alike.
-    Scenario: Alice's login session with no login on the host is refused, naming auth token
-      # substitution: the agent declares session_home where Go's step says engine_home (vocabulary ruling, 2026-11-06)
-      Given Alice has a git-backed project
-      And Alice has no "claude-code" credentials or API key on the host
-      And Alice has no "claude-code" credentials on the host
-      And Alice's agent declares session_home "session"
-      And Alice's own session authenticates with "login"
-      When Alice runs the isolated "claude-code" agent under workspace "none"
-      Then the run is refused without any isolation finding, naming "auth: token"
+  # Redrafted (owner, 2026-11-19): Go refused a login session with no login,
+  # naming "auth: token". Nothing refuses here: a child under `auth: login`
+  # asks for no variable, and a primary's missing login is only said.
+  Rule: A primary session with no login to share is told so, and runs
+
+    Scenario: Alice's interactive session with no login on the host runs, and says no login is shared
+      # substitution: Go refused, naming "auth: token"; here the missing login is a notice.
+      Given Alice has a project that has never used ctxloom
+      And Alice has set ctxloom up in her project
+      And Alice has exported no credential
+      When Alice runs her assistant interactively, through her daemon:
+        """
+        ctxloom run
+        """
+      Then the command succeeds
+      # The sentence's end is every platform's: where a link cannot be made
+      # (macOS's keychain, Windows) it says why in its own words first.
+      And the output contains "the primary session will not be signed in"
+      And the assistant was started with the program, arguments, environment and directory of the daemon's launch, and nothing else
 
   Rule: A run holds its session's lock for as long as it runs, so its session reads live
 
