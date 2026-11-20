@@ -862,7 +862,7 @@ stream is a DUPLICATE; the event it produces records the origin on its
 The lock holds ONE `angzarr-embedded`, `angzarr-proto`, `angzarr-ports` and
 `angzarr-diagnostic` (a test reads Cargo.lock). Every pin in `Cargo.toml` is
 a full commit. The angzarr pins are one commit of one repository,
-`8159ea33` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
+`52d48ccf` of github.com/angzarr-io/angzarr (core, `angzarr-embedded` and its
 router, the platform crates, `angzarr-build` and `angzarr-codegen` were five
 repositories and are crates of that workspace now; `angzarr-coordinator-grpc`'s
 `tls` feature, which `hook-listener` enables, is `Listener::tls`). taskloom's
