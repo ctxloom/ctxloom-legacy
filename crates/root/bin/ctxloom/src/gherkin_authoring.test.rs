@@ -207,6 +207,11 @@ impl World {
         if let Some(path) = crate::tests::host_var("SystemRoot") {
             command.env("SystemRoot", path);
         }
+        // Her editor is launched at her terminal only (the Caller ruling),
+        // stood in as init's terminal scenarios stand one in.
+        if files::exists(self.editor_dir().join("editor.sh")) {
+            command.env("CTXLOOM_TEST_TERMINAL", "1");
+        }
         for (name, value) in &self.common.env {
             command.env(name, value);
         }

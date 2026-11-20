@@ -357,6 +357,14 @@ impl library_cli::Served for DaemonServed {
         terminal.is_terminal().then(|| terminal.confirm(question))
     }
 
+    fn at_terminal(&self) -> bool {
+        use session_cli::Asking as _;
+        crate::sessions::TrustTerminal {
+            stood_in: crate::interview::stood_in(&self.env),
+        }
+        .is_terminal()
+    }
+
     fn edit_document(&self, edit: &daemon_proto::v1::Edit) -> Result<String, Failure> {
         use ctxloom_ports::Editor as _;
         let launch = edit.launch.as_ref().ok_or_else(|| {

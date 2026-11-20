@@ -447,7 +447,9 @@ fn loose_notes(w: &mut World) {
         NOTES,
         &format!("How we deploy\n\n{OLDER}: tag the release, then run the deploy job.\n"),
     );
-    // Her editor: she writes the notes up into whatever file it opens.
+    // Her editor: she writes the notes up into whatever file it opens, at
+    // her terminal (an editor is launched at one only).
+    project.at_a_terminal();
     let notes = project.dir().join(NOTES);
     project.write_home(
         ".ctxloom/config.yaml",

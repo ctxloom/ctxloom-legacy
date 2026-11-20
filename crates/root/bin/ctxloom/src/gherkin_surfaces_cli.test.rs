@@ -100,6 +100,7 @@ fn clone_forced_back(w: &mut World, _name: String) {
 #[given("a ctxloom project with a description-rewriting editor")]
 fn description_rewriting_editor(w: &mut World) {
     w.common.project = crate::tests::library::Project::initialized();
+    w.common.project.at_a_terminal();
     w.common.project.write_home(
         ".ctxloom/config.yaml",
         "schema_version: 9\neditor:\n  command: sh\n  args:\n    - \"-c\"\n    - 'sed \"s/^description:.*/description: EDITED-BY-TEST/\" \"$1\" > \"$1.new\" && mv \"$1.new\" \"$1\"'\n    - editor\n",
@@ -123,6 +124,7 @@ fn registers_mcp(w: &mut World, rel: String, name: String) {
 #[given("a ctxloom project with a command-rewriting editor")]
 fn command_rewriting_editor(w: &mut World) {
     w.common.project = crate::tests::library::Project::initialized();
+    w.common.project.at_a_terminal();
     w.common.project.write_home(
         ".ctxloom/config.yaml",
         "schema_version: 9\neditor:\n  command: sh\n  args:\n    - \"-c\"\n    - 'sed \"s/^command:.*/command: EDITED-BY-TEST/\" \"$1\" > \"$1.new\" && mv \"$1.new\" \"$1\"'\n    - editor\n",
@@ -133,6 +135,7 @@ fn command_rewriting_editor(w: &mut World) {
 /// through `sh` on the file it is given) is `script`.
 fn project_with_editor(w: &mut World, script: &str) {
     w.common.project = crate::tests::library::Project::initialized();
+    w.common.project.at_a_terminal();
     w.common.project.write_home(
         ".ctxloom/config.yaml",
         &format!(
