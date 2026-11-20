@@ -685,6 +685,7 @@ selftest:
     @{{TOP}}/scripts/ltk-rules-check.sh
     @{{TOP}}/scripts/output-budget.selftest.sh
     @{{TOP}}/scripts/tests-exit.selftest.sh
+    @{{TOP}}/scripts/red-commit-sanity.selftest.sh
     @{{TOP}}/scripts/test-staged.selftest.sh
     @{{TOP}}/scripts/scratch-tree-lock.selftest.sh
     @{{TOP}}/scripts/tests-lock.selftest.sh

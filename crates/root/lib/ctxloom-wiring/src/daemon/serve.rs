@@ -138,11 +138,7 @@ pub(crate) fn serve(
     let files = DaemonFiles::with_instance(Arc::clone(&fs), home, instance_lock);
     let held = instance(&files)?;
     let say: Say = Arc::new(Mutex::new(say));
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
+    let runtime = super::runtime::build(super::runtime::workers()).map_err(|e| e.to_string())?;
     let served = runtime.block_on(async move {
         let code = |e: &dyn angzarr_diagnostic::Diagnostic| e.code().to_string();
         let store = Stores::new(Arc::clone(&fs), home.to_path_buf())

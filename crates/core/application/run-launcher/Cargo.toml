@@ -33,7 +33,7 @@ surface-ports.workspace = true
 angzarr-embedded = { workspace = true, features = ["test-support"] }
 run-ports = { workspace = true, features = ["test-support"] }
 mutants.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [features]
 # `diagnostic_samples`, for other crates' catalog tests, and `fakes`: the

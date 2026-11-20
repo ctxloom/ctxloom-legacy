@@ -420,7 +420,7 @@ impl crate::HookContexts for Owes {
         self.0.lock().unwrap().push(format!("{hook} {budget}"));
         Some(crate::HookCarried {
             context: "re-assembled".to_string(),
-            delivered: false,
+            ..crate::HookCarried::default()
         })
     }
 }
@@ -496,7 +496,7 @@ fn test_a_skills_mates_and_an_owed_context_are_carried_together() {
             assert!(budget < 10_000, "what the mates line left: {budget}");
             Some(crate::HookCarried {
                 context: "re-assembled".to_string(),
-                delivered: false,
+                ..crate::HookCarried::default()
             })
         }
     }

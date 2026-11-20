@@ -59,7 +59,8 @@ impl<D: Daemons> Caller<D> {
     /// `DeliverHookContext` of this caller's own session (10c, the lean
     /// hook RPC): all its hook `carried_by` carries, in ONE call: its
     /// pending messages of `urgencies` (with the wake `nonce` its prompt
-    /// is, empty for none), each recorded delivered once, then what it is
+    /// is, empty for none), offered (marking nothing delivered: the hook
+    /// acknowledges after it printed), then what it is
     /// owed, within `budget` characters (0: the whole), at `cwd`.
     pub async fn hook_context(
         &self,
@@ -80,6 +81,32 @@ impl<D: Daemons> Caller<D> {
             }),
         };
         on_daemon!(self, |api| api.deliver_hook_context(request.clone()).await)
+    }
+
+    /// `AcknowledgeHookDelivery` of this caller's own session (message
+    /// delivery, 2026-11-19): its hook printed and flushed the context
+    /// `hook_context` offered, so `ids` (its `offered`) are recorded
+    /// delivered and the wake `nonce` its prompt was (empty: none)
+    /// redeemed; the ids this call recorded. Idempotent.
+    pub async fn acknowledge_hook_delivery(
+        &self,
+        ids: &[String],
+        nonce: &str,
+        cwd: &str,
+    ) -> Result<Vec<String>, CallError> {
+        let request = v1::AcknowledgeHookDeliveryRequest {
+            name: self.own()?.to_string(),
+            message_ids: ids.to_vec(),
+            wake_nonce: nonce.to_string(),
+            caller: Some(v1::Caller {
+                cwd: cwd.to_string(),
+                ..self.context().clone()
+            }),
+        };
+        let acknowledged = on_daemon!(self, |api| api
+            .acknowledge_hook_delivery(request.clone())
+            .await)?;
+        Ok(acknowledged.delivered)
     }
 
     /// The messages `ids` its hook delivered, and the wake `nonce` its

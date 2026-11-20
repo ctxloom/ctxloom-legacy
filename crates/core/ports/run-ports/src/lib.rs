@@ -70,8 +70,8 @@ pub use host::{
 pub use infrastructure::{Code, Infrastructure, DEAD_LETTERED, DIAGNOSED};
 pub use launch::{Launch, LaunchAt, LaunchKind, Stdio, StopPolicy, STOP_GRACE, STOP_SIGNAL};
 pub use launcher::{
-    Exit, LaunchEvent, LaunchFailure, Limits, RunnerLauncher, Running, TurnCommand, TurnLaunch,
-    TurnOutput,
+    Exit, LaunchEvent, LaunchFailure, Limits, Parks, RunnerLauncher, Running, TurnCommand,
+    TurnLaunch, TurnOutput,
 };
 pub use locks::{HeldLock, LockError, LockProbe, RunLocks};
 pub use login::{LinkState, LoginLinks};

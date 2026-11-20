@@ -224,6 +224,17 @@ pub trait DaemonApi: Send + Sync {
         async { Err(unserved("DeliverHookContext")) }
     }
 
+    /// `AcknowledgeHookDelivery` (message delivery, 2026-11-19): the hook
+    /// printed what `DeliverHookContext` offered; record it delivered. The
+    /// default is a daemon that does not serve it.
+    fn acknowledge_hook_delivery(
+        &self,
+        request: v1::AcknowledgeHookDeliveryRequest,
+    ) -> impl Future<Output = Result<v1::HookDeliveryAcknowledged, Called>> + Send {
+        let _ = request;
+        async { Err(unserved("AcknowledgeHookDelivery")) }
+    }
+
     /// `WatchLibrary` (step 10c G7): each recorded change of the named
     /// library trees, as a thin notice, from the call on; unbounded in time.
     /// The default is a daemon that does not serve it.

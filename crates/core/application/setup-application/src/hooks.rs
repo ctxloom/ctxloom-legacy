@@ -79,6 +79,9 @@ pub struct HookAnswer {
     /// The event the codec decoded, for the
     /// caller that records it. `None` for an answer made without one.
     pub event: Option<HookEvent>,
+    /// What to acknowledge to the daemon once `stdout` is printed and
+    /// flushed (message delivery, 2026-11-19); empty: nothing.
+    pub offered: crate::Offered,
 }
 
 /// The harp self-id marker, `<ctxloom name="..." kind="harp" />`: the only
@@ -127,6 +130,7 @@ impl Setup {
                     stdout,
                     harp_missing: !usable,
                     event: Some(event),
+                    ..HookAnswer::default()
                 })
             }
             // The terminal wake: a prompt delivers the informs and wakes
@@ -134,7 +138,8 @@ impl Setup {
             // 10c U13), in ONE daemon call (the lean hook RPC), which joins
             // them by `compose_context` within the one budget.
             "turn_start" => {
-                let (carried, block) = self.prompt_delivery(&event.prompt, native, remaining(&[]));
+                let (carried, offered, block) =
+                    self.prompt_delivery(&event.prompt, native, remaining(&[]));
                 let response = HookResponse {
                     context: compose_context(&[&carried]),
                     block,
@@ -147,6 +152,7 @@ impl Setup {
                 Ok(HookAnswer {
                     stdout: encode(&response)?,
                     event: Some(event),
+                    offered,
                     ..HookAnswer::default()
                 })
             }

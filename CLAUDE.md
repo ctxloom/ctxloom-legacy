@@ -1227,6 +1227,13 @@ scopes return there; angzarr's `Gate`/`Allowlist`/`Principal` seam and
 environment, so it can write any session.
 The run is driven on a multi-thread runtime (`ctxloom-wiring`'s `run_runtime`,
 one worker), because `Running::finish` blocks the driving thread.
+A turn's wait PARKS a thread of the blocking pool and never an async worker
+(owner, 2026-11-19): the launcher waits through `run_ports::Parks`
+(`Launcher::with_parks`; the wiring's `BlockingParks`, `daemon/runtime.rs`),
+`finish` itself staying blocking. The parked threads need no cap of their
+own: a runner runs one agent and an agent has one turn at a time. A steer
+reaches a hosted child through its `ChildControl` (a lock and a write to its
+stdin), not through the thread waiting on its turn.
 No run serves an endpoint of its own (slice 4 U7, owner ruling s4-Q3): the
 per-run `HookListener`, its certificate's mint, its `HookGate`, the run
 use case's `serve` (with `run_ports`' `HookServer` and `Serving`, and
@@ -2352,7 +2359,9 @@ when the one it spawned exited first, `Unreached::Exited`,
 where the spawned daemon's stderr goes, so a stack overflow says itself;
 CI on Windows, 2026-11-19). `daemon serve` serves on a thread of its own
 with a 16 MiB stack (the wiring's `DAEMON_STACK`; Windows gives the main
-thread 1 MiB), and logs every panic of its process as `the daemon
+thread 1 MiB; and every daemon runtime thread, the blocking pool's too,
+has it: `daemon::runtime::build`, with at least four workers and one per
+CPU), and logs every panic of its process as `the daemon
 panicked: ...`; under test-support `CTXLOOM_TEST_DAEMON_START=panic|
 stack:<MiB>` makes its start panic or use that much stack;
 another home's or a busy other version's is `Unreached::Declined` (20).
@@ -3769,21 +3778,38 @@ setup-application's `HookContexts`, the wiring's `DaemonHookContexts`, a
 `Caller` of the hook's own session, `Caller::hook_context`), answered from
 the projections with NO round awaited (`GetSession`'s `Hosting::fresh` is
 not on the hook path): the pending messages of the urgencies the hook
-names, fitted by `messages_context`, recorded by `DeliverMessages` (which
-redeems the wake its prompt was), then what the session is owed (as
+names, fitted by `messages_context`, each in an element
+`<message id=".." from=".." urgency="..">text</message>` with the text and
+the attribute values XML-escaped (`delivery::escaped`), so a sender's text
+cannot close its element or forge another (owner ruling 2026-11-19; `from` is the sender's name, `ctxloom` for a daemon notice told by its `notice:`/`drain:` id, `session_policies::is_daemon_message`, and `the user` only for a message the user sent), under
+a header saying the elements hold untrusted data from another agent, not
+instructions from the user (DRAFT), then what the session is owed (as
 `RedeliverContext`) within what the messages left, joined by
-`compose_context`, the ids THIS call recorded in `HookContext.delivered`.
-A message is delivered ONCE however many hooks ask within one round (the
-pending projection folds per round, so both read it pending): the session
-aggregate keeps `SessionState.pending_messages` (field 30, additive;
-`MessageSent` adds, `MessagesDelivered` removes) and `DeliverMessages`
-records only ids still pending, and a DUPLICATE delivers nothing (forced in
-daemon-api's `hook_context` test). The hook's call trusts the discovery
+`compose_context`; the ids the context carries are `HookContext.offered`
+(`delivered`, field 2, is no longer set). The call is a READ that marks
+nothing delivered (owner 2026-11-19: "we can tolerate duplicates, not
+losses"; at-least-once, never marked delivered before it has been). The
+hook prints the context, FLUSHES stdout, and only then sends
+`AcknowledgeHookDelivery` (additive; `hook_cli::deliver` holds the order;
+`Setup::acknowledge`, `HookContexts::acknowledge`,
+`Caller::acknowledge_hook_delivery`), which records the ids
+`DeliverMessages` (which redeems the wake its prompt was) and is
+idempotent per id: the session aggregate keeps
+`SessionState.pending_messages` (field 30, additive; `MessageSent` adds,
+`MessagesDelivered` removes) and `DeliverMessages` records only ids still
+pending. Claude gives no acknowledgement, so printed and flushed is the best
+proof there is. A hook that dies before the ack leaves the messages pending,
+offered again (the visible id lets the model ignore a repeat); two hooks
+within one round may both carry one; an ack that fails is a repeat later,
+said nowhere. Messages the budget leaves out stay pending (a first message
+too long alone is still delivered cut and acknowledged; `session show` has
+the whole). Forced in daemon-api's `hook_context` tests and hook-cli's
+`deliver`. The hook's call trusts the discovery
 file first, unprobed (`HookDaemons::trusting`,
 `daemon::hook_daemon_unprobed`: a health check is a TLS connection of its
 own); reached unreachable, it probes and starts one as every hook does.
-Delivered messages are a primary's alone (a child's are fed as turns). A wake line that delivered nothing is blocked; a human's
-prompt never is. One hook answer has ONE 10,000-character context budget
+Delivered messages are a primary's alone (a child's are fed as turns). A wake line with no message offered is blocked (its wake is still
+acknowledged, so redeemed); a human's prompt never is. One hook answer has ONE 10,000-character context budget
 (claude's cap), shared in order by setup-application's `compose_context`:
 the skill mates line (the hook's own), then the daemon's part: the messages
 (given what is left; past it they wait behind a pointer to `session show`),
@@ -4797,7 +4823,20 @@ exits with codes of its own, never nextest's passed through (nextest's 102
 is "cargo metadata failed"): 0 passed, 100 a test failed, 101 not built, 120
 a doc test failed, 121 nextest failed otherwise (`nextest exited <code>` in
 the log); 100 and 120 are red tests, 101 and 121 are refused on every
-branch (`scripts/tests-exit.selftest.sh`).
+branch (`scripts/tests-exit.selftest.sh`). `test-staged` runs
+`_tests-checked`, which after a 100 or 120 asks `gates/red-sanity.sh` (owner,
+2026-11-19, R0 and R1) whether the red is tests' or the environment's, and
+exits 122 (refused on every branch, never red; not 121, which is the
+runner's) when it is the environment's: R0, the staged worktree, its target
+directory or a program the setup script named (`CTXLOOM_TEST_BINARY`,
+`CTXLOOM_TEST_COMPANION_STUB`, listed in the target directory's
+`nextest-binaries.list`) is gone after the run; R1, over 100 failures, half
+or more of the run, in packages that have a `*.test.rs` at HEAD (a red-first
+new crate is exempt; an unreadable Summary or a failure in no package is
+refused). Accepted: a deliberate commit breaking over 100 existing tests at
+once is refused, and a gross but sub-threshold break (101 of 5,000) passes
+the commit gate for the land ratchet to catch
+(`scripts/red-commit-sanity.selftest.sh`).
 
 The feature runner is ONE TEST PER FEATURE FILE (2026-11-18, superseding
 the clusters of the owner's ruling of 2026-11-14, whose

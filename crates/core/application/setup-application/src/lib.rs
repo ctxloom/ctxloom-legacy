@@ -34,13 +34,14 @@ use surface_ports::{ForeignFiles, Registry, SurfaceStore};
 
 pub use config_write::ConfigWritten;
 pub use delivery::{
-    compose_context, messages_context, remaining, Delivery, HookMessage, HOOK_CONTEXT_BUDGET,
+    compose_context, messages_context, remaining, Delivery, HookMessage, DAEMON_SENDER,
+    HOOK_CONTEXT_BUDGET,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use error::diagnostic_samples;
 pub use error::{SetupError, EN_US};
 pub use hooks::{harp_marker, hook_skills, HookAnswer, HookLibrary, HookSkill};
-pub use hooks_wake::{HookCarried, HookContexts};
+pub use hooks_wake::{HookCarried, HookContexts, Offered};
 pub use manage::{
     engine_applies, BackendStatus, CheckReport, GitignoreReport, HookRow, HooksEvent, HooksList,
     InstallPlan, InstallReport, InstallRequest, PullReport, SurfaceCurrency, UninstallReport,

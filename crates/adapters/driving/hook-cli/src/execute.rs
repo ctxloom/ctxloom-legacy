@@ -5,7 +5,7 @@
 //! the registry's engine codec.
 
 use angzarr_diagnostic::Diagnostic;
-use setup_application::HookAnswer;
+use setup_application::{HookAnswer, Offered};
 
 use crate::{hud, HookService, HookWarning};
 
@@ -17,6 +17,35 @@ pub const STATUSLINE: &str = "statusline";
 pub struct Outcome {
     pub stdout: String,
     pub warnings: Vec<HookWarning>,
+    /// What to acknowledge to the daemon once `stdout` is printed and
+    /// flushed ([`acknowledge`]); empty: nothing.
+    pub offered: Offered,
+}
+
+/// Print the outcome to the engine, FLUSH, and only then acknowledge what it
+/// offered: the one place the order lives (message delivery, owner
+/// 2026-11-19). A write or flush that fails sends no ack, so the messages
+/// stay pending and are offered again. The error is the write's; the
+/// answer is whether the ack was recorded (see [`acknowledge`]).
+pub fn deliver(
+    outcome: &Outcome,
+    out: &mut dyn std::io::Write,
+    service: &dyn HookService,
+) -> std::io::Result<bool> {
+    out.write_all(outcome.stdout.as_bytes())?;
+    out.flush()?;
+    Ok(acknowledge(outcome, service))
+}
+
+/// The ack of an outcome's offer: call it ONLY after `outcome.stdout` has
+/// been written to the engine and flushed (message delivery, owner
+/// 2026-11-19: never marked delivered before it has been). The engine gives
+/// no acknowledgement, so printed and flushed is the best proof of delivery
+/// there is. A hook that dies before this leaves the messages pending, to
+/// be offered again. Whether the daemon recorded it (an unrecorded ack is a
+/// repeat later, never a loss).
+pub fn acknowledge(outcome: &Outcome, service: &dyn HookService) -> bool {
+    outcome.offered.is_empty() || service.acknowledge(&outcome.offered)
 }
 
 /// Run the callback. `input` is stdin, `harp` the session the hook runs in
@@ -51,7 +80,7 @@ pub(crate) fn answer(
         return Ok((
             Outcome {
                 stdout: hud(input, harp, 0),
-                warnings: Vec::new(),
+                ..Outcome::default()
             },
             None,
         ));
@@ -64,6 +93,7 @@ pub(crate) fn answer(
                 warnings: vec![HookWarning::NoUsableHarp {
                     harp: harp.to_string(),
                 }],
+                ..Outcome::default()
             },
             None,
         ));
@@ -71,6 +101,7 @@ pub(crate) fn answer(
     let outcome = Outcome {
         stdout: answer.stdout.clone(),
         warnings: Vec::new(),
+        offered: answer.offered.clone(),
     };
     Ok((outcome, Some(answer)))
 }
